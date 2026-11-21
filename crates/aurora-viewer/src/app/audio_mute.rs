@@ -38,9 +38,51 @@ pub(super) fn media_volume(audio: &AudioSettings, minimized_mute: bool) -> f32 {
     channel(0) * channel(5)
 }
 
+/// AURORA_DEMO_AUTO_UNMUTE: the ambient sounds and the sound effects
+/// muted, and both unmuted by a teleport (with AURORA_DEMO_TP=remote).
+pub(super) fn apply_demo(audio: &mut AudioSettings) {
+    if std::env::var_os("AURORA_DEMO_AUTO_UNMUTE").is_some() {
+        audio.muted[2] = true;
+        audio.muted[3] = true;
+        audio.auto_unmute_ambient = true;
+        audio.auto_unmute_sounds = true;
+    }
+}
+
+/// FSAutoUnmuteAmbient and FSAutoUnmuteSounds
+/// (process_agent_movement_complete, llviewermessage.cpp, on a teleport):
+/// the channels it unmuted (`settings::audio_channels`), ambient first.
+pub(super) fn unmute_after_teleport(audio: &mut AudioSettings) -> Vec<usize> {
+    let mut unmuted = Vec::new();
+    for (i, on) in [(2, audio.auto_unmute_ambient), (3, audio.auto_unmute_sounds)] {
+        if on && audio.muted[i] {
+            audio.muted[i] = false;
+            unmuted.push(i);
+        }
+    }
+    unmuted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_teleport_unmutes_only_the_channels_asked_and_muted() {
+        let mut audio = AudioSettings {
+            muted: [true; 7],
+            ..Default::default()
+        };
+        assert!(unmute_after_teleport(&mut audio).is_empty(), "off by default");
+        assert_eq!(audio.muted, [true; 7]);
+        audio.auto_unmute_sounds = true;
+        assert_eq!(unmute_after_teleport(&mut audio), vec![3]);
+        assert_eq!(audio.muted, [true, true, true, false, true, true, true]);
+        audio.auto_unmute_ambient = true;
+        assert_eq!(unmute_after_teleport(&mut audio), vec![2], "the sounds are already on");
+        assert!(unmute_after_teleport(&mut audio).is_empty());
+        assert!(audio.muted[0], "never the master");
+    }
 
     #[test]
     fn minimized_mute_survives_the_renderer_taking_the_window() {

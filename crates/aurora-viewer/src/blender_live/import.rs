@@ -231,7 +231,10 @@ mod tests {
         let shared = Arc::new(super::super::Shared::default());
         shared.status.lock().connected = true;
         let mut live = Live {
-            server: Some(super::super::Server { shared: shared.clone() }),
+            server: Some(super::super::Server {
+                shared: shared.clone(),
+                _token: None,
+            }),
             ..Default::default()
         };
         live.request_import(Uuid::from_u128(456));

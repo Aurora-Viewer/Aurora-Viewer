@@ -1,6 +1,10 @@
 //! Synthetic inventory for context-menu validation; never reads grid data.
 
 use super::*;
+use aurora_net::inventory::FolderContents;
+use aurora_net::inventory::ais::{FetchError, FetchFailure};
+use aurora_net::{NetCommand, NetEvent};
+use std::collections::HashMap;
 
 pub const LOST_FOLDER: Uuid = Uuid::from_u128(50_016);
 
@@ -43,6 +47,36 @@ pub fn seed_lost(inv: &mut Inventory, agent: Uuid) {
         if let Some(folder) = inv.folders.get_mut(&parent) {
             folder.children.push(id);
         }
+    }
+    inv.generation += 1;
+}
+
+/// A Lost and Found folder alone, when the demo inventory has none (the
+/// script recovery scenario puts the recovered scripts there).
+pub fn seed_lost_folder(inv: &mut Inventory) {
+    if inv.system_folder(16).is_some() {
+        return;
+    }
+    inv.folders.insert(
+        LOST_FOLDER,
+        Folder {
+            info: InvFolder {
+                id: LOST_FOLDER,
+                parent: inv.root,
+                name: aurora_i18n::tr!("common-lost-and-found").to_owned(),
+                type_default: 16,
+                version: 1,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items: Vec::new(),
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    let root = inv.root;
+    if let Some(folder) = inv.folders.get_mut(&root) {
+        folder.children.push(LOST_FOLDER);
     }
     inv.generation += 1;
 }
@@ -453,6 +487,18 @@ pub fn seed_received_big(inv: &mut Inventory, agent: Uuid, folders: u128, items:
 }
 
 pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
+    // Clipboard feedback scenarios reuse the same source tree in either layout.
+    let view = view
+        .strip_prefix("aurora-")
+        .filter(|mode| mode.starts_with("clipboard"))
+        .unwrap_or(view);
+    let view = if view.starts_with("clipboard-cut-folder") {
+        "clipboard-cut-folder"
+    } else if view.starts_with("clipboard-cut") {
+        "clipboard-cut"
+    } else {
+        view
+    };
     if let Some(mode) = view.strip_prefix("aurora-menu-") {
         return target(
             match mode {
@@ -494,23 +540,36 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "properties-no-mod"
         | "properties-no-creator"
         | "rename"
+        | "rename-focus"
+        | "aurora-rename-focus"
+        | "rename-window"
+        | "aurora-rename-window"
         | "multi-add"
         | "multi-detach"
         | "delete"
         | "delete-key"
         | "delete-button"
+        | "delete-enter"
+        | "delete-tab"
         | "clipboard"
         | "clipboard-copy"
         | "clipboard-cut"
         | "clipboard-folder"
+        | "delete-confirm"
+        | "aurora-delete-confirm"
+        | "aurora-delete-confirm-medium"
+        | "aurora-delete-confirm-wide"
         | "clipboard-cut-folder"
         | "clipboard-progress"
         | "clipboard-window"
         | "keyboard"
         | "keyboard-fold"
+        | "keyboard-down"
         | "aurora-keyboard"
         | "aurora-keyboard-fold"
+        | "aurora-keyboard-down"
         | "aurora-keyboard-wide" => 8100,
+        "keyboard-click-top" | "keyboard-click-bottom" | "aurora-keyboard-click-top" | "aurora-keyboard-click-bottom" => 11000,
         "animation"
         | "animation-open"
         | "animation-play-local"
@@ -526,8 +585,8 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
         | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" | "note-drop" | "note-image" | "note-landmark"
         | "note-copy" | "note-task-embedded" | "note-menu-right" | "note-markdown" | "note-source" | "note-classic" | "note-format"
-        | "note-remember" | "note-lsl" | "note-lsl-markdown" => 8103,
-        "nocopy" => 8109,
+        | "note-remember" | "note-lsl" | "note-lsl-markdown" | "note-rez" | "note-find" | "note-replace" | "task-preview" => 8103,
+        "nocopy" | "offer-unsent" | "offer-sent" | "offer-uncertain" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
         "link-icons" | "aurora-link-icons" => 83_000,
@@ -583,6 +642,17 @@ pub fn seed_clipboard_tree(inv: &mut Inventory) {
     inv.add_items(items);
 }
 
+/// The pose notecard of `AURORA_DEMO_INVENTORY=note-find` and `note-replace`:
+/// data lines, not interface text.
+const POSE_NOTE: &str = "SITTER 0\n\
+    POSE Sit1|sit_female_01|<0.0,0.0,0.6>|<0,0,0>\n\
+    POSE Sit2|sit_female_02|<0.1,0.0,0.6>|<0,0,0>\n\
+    POSE Lean|lean_female_01|<0.0,0.2,0.6>|<0,0,90>\n\
+    SITTER 1\n\
+    POSE Sit1|sit_male_01|<0.0,0.6,0.6>|<0,0,180>\n\
+    POSE Sit2|sit_male_02|<0.1,0.6,0.6>|<0,0,180>\n\
+    POSE Lean|lean_male_01|<0.0,0.8,0.6>|<0,0,270>";
+
 pub fn note_asset(embedded: bool) -> Vec<u8> {
     let markdown = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| {
         matches!(
@@ -591,14 +661,19 @@ pub fn note_asset(embedded: bool) -> Vec<u8> {
         )
     });
     let lsl = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "note-lsl" | "note-lsl-markdown"));
-    let text = if lsl {
+    // the find scenarios: a pose notecard, the kind creators clean with
+    // Replace all (#4153), with items to show that they stay
+    let poses = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "note-find" | "note-replace"));
+    let text = if poses {
+        POSE_NOTE
+    } else if lsl {
         aurora_i18n::tr!("notecard-lsl-demo")
     } else if markdown {
         aurora_i18n::tr!("notecard-markdown-demo")
     } else {
         aurora_i18n::tr!("notecard-demo-text")
     };
-    let embedded = embedded || markdown;
+    let embedded = embedded || markdown || poses;
     if embedded {
         let mut card = aurora_net::inventory::notecard::Notecard::default();
         let mut text = format!("{text}\n");
@@ -736,6 +811,65 @@ pub fn seed_view(inv: &mut Inventory, agent: Uuid, large: bool) {
     inv.sort_all();
 }
 
+/// The pictures of the gallery scenarios (`AURORA_DEMO_INVENTORY=aurora-
+/// gallery…`, `aurora-combination`): the demo's own textures on some of the
+/// right-click tests' entries, a folder among them, and on every item of the
+/// large folder; the others keep their type's icon.
+pub fn seed_gallery(inv: &mut Inventory) {
+    use crate::demo::{TEX_FRAMES, TEX_GRADIENT, TEX_ORM_DISC, TEX_SNAPSHOT, TEX_TILES};
+    let pictures = [TEX_SNAPSHOT, TEX_TILES, TEX_GRADIENT, TEX_FRAMES, TEX_ORM_DISC];
+    for (n, picture) in [
+        (8100, TEX_SNAPSHOT),
+        (8106, TEX_FRAMES),
+        (8107, TEX_GRADIENT),
+        (8108, TEX_ORM_DISC),
+        (8111, TEX_TILES),
+    ] {
+        if let Some(it) = inv.items.get_mut(&Uuid::from_u128(n)) {
+            it.thumbnail = picture;
+        }
+    }
+    for n in 0..1500u128 {
+        if let Some(it) = inv.items.get_mut(&Uuid::from_u128(10000 + n)) {
+            it.thumbnail = pictures[(n % pictures.len() as u128) as usize];
+        }
+    }
+    if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(8001)) {
+        folder.info.thumbnail = TEX_TILES;
+    }
+    inv.generation += 1;
+}
+
+/// Hundreds of empty top folders, as some residents keep: still a long list
+/// once every folder is collapsed.
+pub fn seed_many_folders(inv: &mut Inventory, count: u128) {
+    let root = inv.root;
+    for n in 0..count {
+        let id = Uuid::from_u128(0x00c0_11a9_5e00_0000 + n);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent: root,
+                    name: aurora_i18n::tr!("world-inventory-demo-folder", n = format!("{n:03}")),
+                    type_default: -1,
+                    version: 1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(folder) = inv.folders.get_mut(&root) {
+            folder.children.push(id);
+        }
+    }
+    inv.sort_all();
+}
+
 /// Long labels in nested folders, for narrowing and horizontal scrolling.
 pub fn seed_long_names(inv: &mut Inventory) {
     for (id, name) in [
@@ -767,13 +901,15 @@ pub fn seed_long_names(inv: &mut Inventory) {
     inv.sort_all();
 }
 
-/// `AURORA_DEMO_INVENTORY=big[:<items>][,recent][,search=<text>][,toggle=<s>][,churn=<ms>][,replace]`:
+/// `AURORA_DEMO_INVENTORY=big[:<items>][,recent][,search=<text>][,toggle=<s>][,churn=<ms>][,replace][,fetch]`:
 /// a big inventory (`seed_big`) to measure what the Inventory window costs.
 /// `recent` opens the Recent tab, `search` filters the list, `toggle` opens
 /// and closes the window every `s` seconds (closed and open alternate in one
 /// run), `churn` changes one item every `ms` milliseconds, as the server's
 /// inventory updates do, `replace` opens Replace links on the first object
-/// (`BIG_LINKED`), which a link of every fifty items points to.
+/// (`BIG_LINKED`), which a link of every fifty items points to. `fetch` loads
+/// the inventory through a simulated AIS server instead of seeding it ready:
+/// `AURORA_DEMO_INVENTORY_FAULT` then injects its failures.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Big {
     pub items: usize,
@@ -782,6 +918,7 @@ pub struct Big {
     pub toggle: f32,
     pub churn_ms: u64,
     pub replace: bool,
+    pub fetch: bool,
 }
 
 /// The first object of `seed_big`: the links of every block of fifty items
@@ -803,11 +940,13 @@ pub fn parse_big(mode: &str) -> Option<Big> {
         toggle: 0.0,
         churn_ms: 0,
         replace: false,
+        fetch: false,
     };
     for part in parts {
         match part.split_once('=') {
             None if part == "recent" => big.recent = true,
             None if part == "replace" => big.replace = true,
+            None if part == "fetch" => big.fetch = true,
             Some(("search", text)) => big.search = text.into(),
             Some(("toggle", s)) => big.toggle = s.parse().unwrap_or(0.0),
             Some(("churn", ms)) => big.churn_ms = ms.parse().unwrap_or(0),
@@ -1000,6 +1139,269 @@ pub fn seed_big(inv: &mut Inventory, agent: Uuid, items: usize) -> Vec<Uuid> {
     open
 }
 
+/// `AURORA_DEMO_INVENTORY=big:...,fetch`: what the simulated AIS server
+/// answers from, while the live inventory starts empty.
+pub struct FetchSource {
+    by_parent: HashMap<Uuid, Vec<InvItem>>,
+    by_id: HashMap<Uuid, Uuid>,
+}
+
+impl FetchSource {
+    /// Take the seeded inventory's items out of the live model, leaving its
+    /// folder tree in place and every folder to be fetched.
+    pub fn take_from(inv: &mut Inventory) -> Self {
+        let by_parent: HashMap<Uuid, Vec<InvItem>> = inv
+            .folders
+            .values()
+            .filter_map(|folder| {
+                let items: Vec<InvItem> = folder.items.iter().filter_map(|id| inv.items.get(id).cloned()).collect();
+                (!items.is_empty()).then_some((folder.info.id, items))
+            })
+            .collect();
+        let by_id = inv.items.values().map(|item| (item.id, item.parent)).collect();
+        inv.items.drain();
+        for folder in inv.folders.values_mut() {
+            folder.items.clear();
+            folder.state = FetchState::Unknown;
+        }
+        inv.generation += 1;
+        FetchSource { by_parent, by_id }
+    }
+
+    fn items(&self, folder: Uuid) -> Vec<InvItem> {
+        self.by_parent.get(&folder).cloned().unwrap_or_default()
+    }
+
+    fn item(&self, id: Uuid) -> Option<InvItem> {
+        let parent = *self.by_id.get(&id)?;
+        self.by_parent.get(&parent)?.iter().find(|item| item.id == id).cloned()
+    }
+}
+
+/// `AURORA_DEMO_INVENTORY_FAULT=transient[=<n>][,too-big][,limit=<n>]`: the
+/// intended failures of the `fetch` demo. Ignored without a `fetch` mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Faults {
+    pub transient_left: u32,
+    pub too_big: bool,
+    pub limit: usize,
+    pub over_limit: Option<Uuid>,
+}
+
+impl Default for Faults {
+    fn default() -> Self {
+        Faults {
+            transient_left: 0,
+            too_big: false,
+            limit: Self::DEFAULT_LIMIT,
+            over_limit: None,
+        }
+    }
+}
+
+impl Faults {
+    /// A reply over this many folders and items is refused with the server's
+    /// 403, as AIS refuses a reply that would be too big.
+    pub const DEFAULT_LIMIT: usize = 20_000;
+
+    pub fn from_env() -> Self {
+        std::env::var("AURORA_DEMO_INVENTORY_FAULT")
+            .ok()
+            .map(|mode| Self::parse(&mode))
+            .unwrap_or_default()
+    }
+
+    pub fn parse(mode: &str) -> Self {
+        let mut faults = Self::default();
+        for part in mode.split(',') {
+            match part.split_once('=') {
+                None if part == "transient" => faults.transient_left = 1,
+                None if part == "too-big" => faults.too_big = true,
+                Some(("transient", n)) => faults.transient_left = n.parse().unwrap_or(1),
+                Some(("limit", n)) => faults.limit = n.parse().unwrap_or(Self::DEFAULT_LIMIT).max(1),
+                _ => log::warn!("AURORA_DEMO_INVENTORY_FAULT: unknown option {part}"),
+            }
+        }
+        faults
+    }
+
+    /// Point `too-big` at the seeded inventory's loose-objects folder.
+    pub fn arm(&mut self, loose: Uuid) {
+        if self.too_big {
+            self.over_limit = Some(loose);
+        }
+    }
+}
+
+/// The `fetch` demo's cold load: seed the tree and items, then move the items
+/// into the source so the background walk is the only loader.
+pub fn seed_big_fetch(inv: &mut Inventory, agent: Uuid, items: usize) -> (Vec<Uuid>, FetchSource) {
+    let open = seed_big(inv, agent, items);
+    let source = FetchSource::take_from(inv);
+    (open, source)
+}
+
+fn under(inv: &Inventory, mut id: Uuid, ancestor: Uuid) -> bool {
+    for _ in 0..=inv.folders.len() {
+        if id == ancestor {
+            return true;
+        }
+        let Some(folder) = inv.folders.get(&id) else {
+            return false;
+        };
+        if folder.info.parent.is_nil() {
+            return false;
+        }
+        id = folder.info.parent;
+    }
+    false
+}
+
+fn fault_for(inv: &Inventory, targets: &[Uuid], depth: i32, tree: bool, faults: &mut Faults) -> Option<FetchError> {
+    if let Some(wanted) = faults.over_limit
+        && (targets.contains(&wanted) || (tree && depth > 0 && targets.iter().any(|target| under(inv, wanted, *target))))
+    {
+        return Some(FetchError::new(FetchFailure::TooBig, Some(403)));
+    }
+    if tree && faults.transient_left > 0 {
+        faults.transient_left -= 1;
+        return Some(FetchError::new(FetchFailure::Transient, Some(503)));
+    }
+    None
+}
+
+fn subtree(
+    inv: &Inventory,
+    source: &FetchSource,
+    owner: Uuid,
+    folder: Uuid,
+    depth: i32,
+    budget: &mut usize,
+    out: &mut Vec<FolderContents>,
+) -> Result<(), FetchError> {
+    if depth < 0 {
+        return Ok(());
+    }
+    let children = inv.folders.get(&folder).map(|folder| folder.children.clone()).unwrap_or_default();
+    let items = source.items(folder);
+    let cost = 1 + children.len() + items.len();
+    if cost > *budget {
+        return Err(FetchError::new(FetchFailure::TooBig, Some(403)));
+    }
+    *budget -= cost;
+    let folders = children
+        .iter()
+        .filter_map(|id| inv.folders.get(id).map(|folder| folder.info.clone()))
+        .collect();
+    let version = inv.folders.get(&folder).map_or(1, |folder| folder.info.version.max(1));
+    out.push(FolderContents {
+        folder_id: folder,
+        owner_id: owner,
+        version,
+        folders,
+        items,
+    });
+    if depth > 0 {
+        for child in children {
+            subtree(inv, source, owner, child, depth - 1, budget, out)?;
+        }
+    }
+    Ok(())
+}
+
+fn tree(
+    inv: &Inventory,
+    source: &FetchSource,
+    owner: Uuid,
+    parent: Uuid,
+    children: &[Uuid],
+    depth: i32,
+    budget: &mut usize,
+) -> Result<Vec<FolderContents>, FetchError> {
+    let mut out = Vec::new();
+    if children.is_empty() {
+        subtree(inv, source, owner, parent, depth, budget, &mut out)?;
+    } else {
+        for child in children {
+            subtree(inv, source, owner, *child, depth - 1, budget, &mut out)?;
+        }
+    }
+    Ok(out)
+}
+
+/// The `fetch` demo's AIS server: answers tree, folder and item reads from
+/// the seeded source, with the intended failures of [`Faults`]. `None` for
+/// any other command (the ordinary demo reply then handles it).
+pub fn fetch_reply(cmd: &NetCommand, inv: &Inventory, source: &FetchSource, faults: &mut Faults) -> Option<Vec<NetEvent>> {
+    match cmd {
+        NetCommand::FetchInventoryTree {
+            request,
+            parent,
+            children,
+            depth,
+            owner,
+            ..
+        } => {
+            let targets: Vec<Uuid> = if children.is_empty() { vec![*parent] } else { children.clone() };
+            let result = match fault_for(inv, &targets, *depth, true, faults) {
+                Some(error) => Err(error),
+                None => {
+                    let mut budget = faults.limit;
+                    tree(inv, source, *owner, *parent, children, *depth, &mut budget)
+                }
+            };
+            Some(vec![NetEvent::InventoryTreeFetched { request: *request, result }])
+        }
+        NetCommand::FetchInventory { folders, owner, .. } => {
+            let mut contents = Vec::new();
+            let mut failed = Vec::new();
+            let mut too_big = Vec::new();
+            for folder in folders {
+                match fault_for(inv, &[*folder], 0, false, faults) {
+                    Some(error) if error.kind == FetchFailure::TooBig => too_big.push(*folder),
+                    Some(_) => failed.push(*folder),
+                    None => {
+                        let mut budget = faults.limit;
+                        match tree(inv, source, *owner, *folder, &[], 0, &mut budget) {
+                            Ok(mut read) => contents.append(&mut read),
+                            Err(error) if error.kind == FetchFailure::TooBig => too_big.push(*folder),
+                            Err(_) => failed.push(*folder),
+                        }
+                    }
+                }
+            }
+            let mut events = Vec::new();
+            if !contents.is_empty() {
+                events.push(NetEvent::InventoryContents(contents));
+            }
+            if !failed.is_empty() {
+                events.push(NetEvent::InventoryFetchFailed {
+                    folders: failed,
+                    too_big: false,
+                    status: None,
+                });
+            }
+            if !too_big.is_empty() {
+                events.push(NetEvent::InventoryFetchFailed {
+                    folders: too_big,
+                    too_big: true,
+                    status: Some(403),
+                });
+            }
+            Some(events)
+        }
+        NetCommand::FetchItems { items, .. } => {
+            let found: Vec<InvItem> = items.iter().filter_map(|id| source.item(*id)).collect();
+            Some(if found.is_empty() {
+                Vec::new()
+            } else {
+                vec![NetEvent::InventoryItems(found)]
+            })
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1010,6 +1412,8 @@ mod tests {
         assert_eq!(parse_big("big").map(|b| b.items), Some(30_000));
         assert_eq!(parse_big("big:5000").map(|b| b.items), Some(5_000));
         assert_eq!(parse_big("bigger"), None);
+        assert!(parse_big("big:800,fetch").is_some_and(|big| big.fetch));
+        assert_eq!(parse_big("big").map(|b| b.fetch), Some(false));
         let big = parse_big("big:800,recent,search=jacket,toggle=4,churn=250,replace").expect("big mode");
         assert_eq!(
             big,
@@ -1020,6 +1424,7 @@ mod tests {
                 toggle: 4.0,
                 churn_ms: 250,
                 replace: true,
+                fetch: false,
             }
         );
     }
@@ -1060,5 +1465,153 @@ mod tests {
         let listed: usize = inv.folders.values().map(|f| f.items.len()).sum();
         assert_eq!(listed, 12_000);
         assert!(open.iter().all(|id| inv.folders.contains_key(id)));
+    }
+
+    fn fetch_fixture(items: usize) -> (Inventory, FetchSource, Vec<Uuid>) {
+        let mut inv = Inventory {
+            root: Uuid::from_u128(1),
+            owner: Uuid::from_u128(2),
+            ..Default::default()
+        };
+        inv.folders.insert(
+            inv.root,
+            Folder {
+                info: InvFolder {
+                    id: inv.root,
+                    name: "My Inventory".into(),
+                    type_default: 8,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        let (open, source) = seed_big_fetch(&mut inv, Uuid::from_u128(2), items);
+        (inv, source, open)
+    }
+
+    #[test]
+    fn fetch_source_moves_the_items_out_and_leaves_an_unfetched_tree() {
+        let (inv, source, open) = fetch_fixture(12_000);
+        assert_eq!(inv.item_count(), 0, "the live model starts cold");
+        assert!(inv.folders.values().all(|folder| folder.state == FetchState::Unknown));
+        assert!(inv.folders.values().all(|folder| folder.items.is_empty()));
+        assert!(open.iter().all(|id| inv.folders.contains_key(id)));
+        assert_eq!(source.by_parent.values().map(Vec::len).sum::<usize>(), 12_000);
+        assert_eq!(source.by_id.len(), 12_000);
+        assert!(!inv.folders[&inv.root].children.is_empty(), "the tree is still known");
+    }
+
+    #[test]
+    fn fetch_reply_mirrors_ais_depth_subset_and_budget() {
+        let (inv, source, open) = fetch_fixture(300);
+        let mut faults = Faults::default();
+        let read = |parent: Uuid, children: Vec<Uuid>, depth: i32| NetCommand::FetchInventoryTree {
+            request: 1,
+            parent,
+            children,
+            depth,
+            owner: inv.owner,
+            library: false,
+        };
+        let contents = |events: Vec<NetEvent>| match events.into_iter().next() {
+            Some(NetEvent::InventoryTreeFetched { result: Ok(contents), .. }) => contents,
+            _ => panic!("tree reply"),
+        };
+
+        let all = contents(fetch_reply(&read(inv.root, vec![], 50), &inv, &source, &mut faults).expect("tree"));
+        assert_eq!(all.len(), inv.folders.len(), "the whole seeded tree");
+        assert_eq!(all[0].folder_id, inv.root, "parents first");
+        assert_eq!(all.iter().map(|folder| folder.items.len()).sum::<usize>(), 300);
+
+        let shallow = contents(fetch_reply(&read(inv.root, vec![], 0), &inv, &source, &mut faults).expect("tree"));
+        assert_eq!(shallow.len(), 1, "depth 0 is the folder alone");
+
+        let child = inv.folders[&inv.root].children[0];
+        let subset = contents(fetch_reply(&read(inv.root, vec![child], 50), &inv, &source, &mut faults).expect("subset"));
+        assert_eq!(subset[0].folder_id, child);
+        assert!(
+            subset.iter().all(|folder| folder.folder_id != inv.root),
+            "only the requested subtree"
+        );
+
+        let over = |faults: &mut Faults| {
+            let read = read(inv.root, vec![], 50);
+            fetch_reply(&read, &inv, &source, faults).expect("tree")
+        };
+        assert!(matches!(
+            over(&mut Faults { limit: 1, ..Default::default() }).as_slice(),
+            [NetEvent::InventoryTreeFetched { result: Err(error), .. }] if error.kind == FetchFailure::TooBig
+        ));
+
+        let mut transient = Faults {
+            transient_left: 1,
+            ..Default::default()
+        };
+        assert!(matches!(
+            over(&mut transient).as_slice(),
+            [NetEvent::InventoryTreeFetched { result: Err(error), .. }] if error.kind == FetchFailure::Transient
+        ));
+        assert!(matches!(
+            over(&mut transient).as_slice(),
+            [NetEvent::InventoryTreeFetched { result: Ok(_), .. }]
+        ));
+
+        let mut too_big = Faults {
+            too_big: true,
+            ..Default::default()
+        };
+        too_big.arm(open[0]);
+        let loose = NetCommand::FetchInventoryTree {
+            request: 2,
+            parent: open[0],
+            children: Vec::new(),
+            depth: 0,
+            owner: inv.owner,
+            library: false,
+        };
+        assert!(matches!(
+            fetch_reply(&loose, &inv, &source, &mut too_big).expect("tree").as_slice(),
+            [NetEvent::InventoryTreeFetched { result: Err(error), .. }] if error.kind == FetchFailure::TooBig
+        ));
+        let failed = NetCommand::FetchInventory {
+            folders: vec![open[0]],
+            owner: inv.owner,
+            library: false,
+        };
+        assert!(matches!(
+            fetch_reply(&failed, &inv, &source, &mut too_big).expect("folders").as_slice(),
+            [NetEvent::InventoryFetchFailed { folders, too_big: true, status: Some(403) }] if folders == &[open[0]]
+        ));
+    }
+
+    #[test]
+    fn fetch_reply_serves_link_originals_by_id() {
+        let (inv, source, _) = fetch_fixture(300);
+        let id = source.by_id.keys().copied().next().expect("item");
+        let read = NetCommand::FetchItems {
+            items: vec![id],
+            owner: inv.owner,
+        };
+        let events = fetch_reply(&read, &inv, &source, &mut Faults::default()).expect("items");
+        assert!(matches!(
+            events.as_slice(),
+            [NetEvent::InventoryItems(items)] if items.iter().any(|item| item.id == id)
+        ));
+    }
+
+    #[test]
+    fn fault_modes_are_read_and_armed() {
+        let mut faults = Faults::parse("transient=2,too-big,limit=5000");
+        assert_eq!(faults.transient_left, 2);
+        assert!(faults.too_big);
+        assert_eq!(faults.limit, 5_000);
+        assert_eq!(faults.over_limit, None);
+        faults.arm(Uuid::from_u128(20_000_000));
+        assert_eq!(faults.over_limit, Some(Uuid::from_u128(20_000_000)));
+        assert_eq!(Faults::parse("transient").transient_left, 1);
+        assert_eq!(Faults::parse("").limit, Faults::DEFAULT_LIMIT);
     }
 }

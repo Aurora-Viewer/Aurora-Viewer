@@ -134,18 +134,23 @@ pub(crate) fn quality(level: u8) -> Quality {
 }
 
 /// From this many pixels the occlusion is computed at half the scene's
-/// resolution at every level: a 1440p screen, also in a window short of its
-/// title and task bars (2560 x 1369, 3.5 MP), where High took 0.84 ms of a
-/// 4.4 ms frame at full resolution and 0.27 ms at half, 219 -> 250 fps
-/// (demo crowd of 40, RTX 4090), with the same image at 1:1; 1080p screens
-/// (2.1 MP) and a 2560 x 1080 one (2.8 MP) stay at full resolution. At
+/// resolution at every level: a 1080p screen, also maximised short of its
+/// title and task bars (1920 x 1009, 1.9 MP), and anything larger. At
+/// 1920 x 1080, High took 0.46 ms at full resolution and 0.17 ms at half,
+/// the whole GPU frame 1.67 -> 1.38 ms, and Ultra 1.37 -> 0.44 ms, 2.73 ->
+/// 1.88 ms (demo plaza, RTX 4090, 2026-11-14): a third of what High adds
+/// to Medium on a mid-range card at 1080p, with the same final image (only
+/// the occlusion view loses a little fine detail). A 1440p window
+/// (2560 x 1369, 3.5 MP) went half first: High 0.84 -> 0.27 ms of a 4.4 ms
+/// frame, 219 -> 250 fps (demo crowd of 40, RTX 4090). Smaller windows
+/// (1600 x 900, 1.4 MP) stay at full resolution. At
 /// 3840 x 2054 ultra took 8.9 ms of a 16.7 ms frame at full resolution and
 /// 2.3 ms at half (RTX 5070, #1489): a half-resolution texel still covers less of the scene than a
 /// 1080p pixel, the accumulation spreads the samples over frames, and the
 /// depth-aware upsample (`upsample` in gtao.wgsl) keeps the occlusion from
 /// crossing silhouettes; the frames showed no difference but along them,
 /// where the bilinear stretch of low quality left a thin line.
-const HALF_RES_PIXELS: u64 = 3_200_000;
+const HALF_RES_PIXELS: u64 = 1_800_000;
 
 /// The quality of `level` for a scene of `width` x `height`.
 pub(crate) fn quality_for(level: u8, width: u32, height: u32) -> Quality {
@@ -1211,13 +1216,22 @@ mod tests {
     #[test]
     fn large_scenes_compute_every_level_at_half_resolution() {
         for level in 0..4 {
-            // 1080p, its window and a 2560 x 1080 screen: as the level says
-            for (w, h) in [(1920, 1080), (1920, 1009), (2560, 1080)] {
+            // windows smaller than a maximised 1080p: as the level says
+            for (w, h) in [(1600, 900), (1680, 1009), (1280, 1024)] {
                 assert_eq!(quality_for(level, w, h), quality(level), "{w} x {h}");
             }
-            // 1440p and its window short of its bars, 4K and a 150 % 4K
-            // window: half, the rest unchanged
-            for (w, h) in [(2560, 1369), (2560, 1440), (3840, 2054), (5760, 3081)] {
+            // 1080p and its window short of its bars, 2560 x 1080, 1440p
+            // and its window, 4K and a 150 % 4K window: half, the rest
+            // unchanged
+            for (w, h) in [
+                (1920, 1080),
+                (1920, 1009),
+                (2560, 1080),
+                (2560, 1369),
+                (2560, 1440),
+                (3840, 2054),
+                (5760, 3081),
+            ] {
                 let q = quality_for(level, w, h);
                 assert!(q.half_res, "level {level} at {w} x {h}");
                 assert_eq!((q.slices, q.steps, q.denoise_passes), {

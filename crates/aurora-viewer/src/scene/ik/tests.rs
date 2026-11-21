@@ -26,7 +26,6 @@ fn finger_contacts_keep_the_animated_knuckle_plane_when_already_on_target() {
                 let expected = rig.world_with(&pose.rotations, Vec3::ZERO, &pose.positions, &scale);
                 let (_, q, p) = expected[bone].to_scale_rotation_translation();
                 let goal = Goal {
-                    follow: None,
                     bone,
                     root,
                     position: p,
@@ -86,7 +85,6 @@ fn finger_bend_planes_follow_the_wrist_instead_of_avatar_axes() {
                     let inward = (p - matrices[root].w_axis.truncate()).normalize() * -0.004;
                     let position = p + q * contact + inward + wq * Vec3::X * 0.001;
                     let goal = Goal {
-                        follow: None,
                         bone,
                         root,
                         position,
@@ -136,7 +134,6 @@ fn authored_strength_blends_each_limb_without_feedback_or_stretching() {
         let bone = rig.names[name];
         let root = default_root(rig, bone);
         let mut goal = Goal {
-            follow: None,
             bone,
             root,
             position: rest[bone].w_axis.truncate() + Vec3::new(0.06, 0.01, 0.02),
@@ -167,7 +164,6 @@ fn authored_strength_blends_each_limb_without_feedback_or_stretching() {
     }
     let bone = rig.names["mHead"];
     let mut goal = Goal {
-        follow: None,
         bone,
         root: bone,
         position: rest[bone].w_axis.truncate() + Vec3::X * 0.1,
@@ -183,128 +179,6 @@ fn authored_strength_blends_each_limb_without_feedback_or_stretching() {
     let mut half = local(rig);
     apply_goal(rig, &mut half, Vec3::ZERO, &rig.scale, &goal);
     assert!(half.positions[bone].distance(rig.local_pos[bone].lerp(full.positions[bone], 0.5)) < 1e-6);
-}
-
-#[test]
-fn disabling_each_limb_unbakes_live_ik_from_the_frozen_animation_base() {
-    let lib = AvatarLibrary::load();
-    let rig = &lib.rig;
-    let now = Instant::now();
-    let rest = rig.world_with(&rig.local_rot, Vec3::ZERO, &rig.local_pos, &rig.scale);
-    let goals: Vec<_> = ["mWristLeft", "mWristRight", "mAnkleLeft", "mAnkleRight"]
-        .map(|name| {
-            let bone = rig.names[name];
-            Goal {
-                follow: None,
-                bone,
-                root: default_root(rig, bone),
-                position: rest[bone].w_axis.truncate() + Vec3::X * 0.08,
-                rotation: None,
-                contact: Vec3::ZERO,
-                pole: None,
-                mode: Mode::Ik,
-                weight: 1.0,
-            }
-        })
-        .to_vec();
-    let mut pose = Pose {
-        targets: goals.clone(),
-        ..Default::default()
-    };
-    for step in 0..8 {
-        pose.apply(
-            rig,
-            &rig.local_rot,
-            &rig.local_pos,
-            Vec3::ZERO,
-            &rig.scale,
-            now + Duration::from_millis(step * 50),
-            false,
-        );
-    }
-    pose.edit = EditRequest {
-        active: true,
-        goals: goals.clone(),
-        released: Vec::new(),
-        ..Default::default()
-    };
-    for (i, released) in goals.iter().enumerate() {
-        pose.edit.goals.retain(|g| g.bone != released.bone);
-        pose.edit.released.push(released.bone);
-        let output = pose
-            .apply(
-                rig,
-                &rig.local_rot,
-                &rig.local_pos,
-                Vec3::ZERO,
-                &rig.scale,
-                now + Duration::from_secs(1 + i as u64),
-                true,
-            )
-            .unwrap();
-        for goal in &goals[..=i] {
-            for j in chain(rig, goal.bone, goal.root).unwrap() {
-                assert_eq!(output.rotations[j], rig.local_rot[j], "released {}", rig.canonical_names[j]);
-            }
-        }
-    }
-    let output = pose
-        .apply(
-            rig,
-            &rig.local_rot,
-            &rig.local_pos,
-            Vec3::ZERO,
-            &rig.scale,
-            now + Duration::from_secs(8),
-            true,
-        )
-        .unwrap();
-    assert_eq!(output.rotations, rig.local_rot);
-    assert_eq!(output.positions, rig.local_pos);
-}
-
-#[test]
-fn editor_release_bypasses_shared_script_constraints_before_snapshotting() {
-    use crate::scene::anim::Controller;
-    let lib = AvatarLibrary::load();
-    let rig = &lib.rig;
-    let now = Instant::now();
-    let mut controller = Controller::for_control_avatar();
-    controller.ik.targets = vec![Goal {
-        follow: None,
-        bone: rig.names["mWristLeft"],
-        root: rig.names["mShoulderLeft"],
-        position: Vec3::new(0.25, 0.3, 1.4),
-        rotation: None,
-        contact: Vec3::ZERO,
-        pole: None,
-        mode: Mode::Ik,
-        weight: 1.0,
-    }];
-    let mut output = vec![[[0.0; 4]; 4]; rig.len()];
-    for i in 0..8 {
-        controller.evaluate(rig, now + Duration::from_millis(i * 40), None, &mut output);
-    }
-    let wrist = rig.names["mWristLeft"];
-    let active = glam::Mat4::from_cols_array_2d(&output[wrist]);
-    controller.set_paused(true, now + Duration::from_millis(300));
-    controller.ik.edit = EditRequest {
-        active: true,
-        released: vec![wrist],
-        goals: Vec::new(),
-        ..Default::default()
-    };
-    controller.evaluate(rig, now + Duration::from_millis(400), None, &mut output);
-    let rest = rig.world_with(&rig.local_rot, Vec3::ZERO, &rig.local_pos, &rig.scale);
-    assert!(glam::Mat4::from_cols_array_2d(&output[wrist]).abs_diff_eq(rest[wrist], 1e-5));
-    assert!(!active.abs_diff_eq(rest[wrist], 0.01));
-    controller.ik.edit = EditRequest::default();
-    controller.set_paused(false, now + Duration::from_millis(500));
-    controller.evaluate(rig, now + Duration::from_millis(600), None, &mut output);
-    assert!(
-        glam::Mat4::from_cols_array_2d(&output[wrist]).abs_diff_eq(active, 1e-5),
-        "closing returns to the existing live contact"
-    );
 }
 
 #[test]
@@ -334,7 +208,6 @@ fn limb_poles_swivel_all_four_limbs_without_moving_contacts_or_changing_lengths(
                 for angle in [-1.2, 0.0, 0.8, 2.6] {
                     let bend = Quat::from_axis_angle(axis, angle) * start;
                     let goal = Goal {
-                        follow: None,
                         weight: 1.0,
                         bone: end,
                         root,
@@ -371,7 +244,6 @@ fn limb_poles_handle_collinear_targets_and_unreachable_effectors_without_stretch
         for pole in [a, position, a + (c - a) * 2.0] {
             let mut result = local(rig);
             let goal = Goal {
-                follow: None,
                 weight: 1.0,
                 bone: end,
                 root,
@@ -402,7 +274,6 @@ fn bone_ik_direct_reaches_every_named_bone_with_shape_scale_contact_and_pelvis_o
     for (name, &bone) in &rig.names {
         let mut pose = local(rig);
         let goal = Goal {
-            follow: None,
             weight: 1.0,
             bone,
             root: bone,
@@ -456,7 +327,6 @@ fn bone_ik_analytic_arms_legs_and_long_finger_chain_reach_without_translation_ed
         let expected = rig.world_with(&author.rotations, Vec3::ZERO, &author.positions, &rig.scale);
         let mut pose = local(rig);
         let goal = Goal {
-            follow: None,
             weight: 1.0,
             bone,
             root,
@@ -505,7 +375,6 @@ fn bone_ik_freezes_a_copy_orders_parent_before_child_and_restores_animation_inpu
         .expect("frozen");
     assert_eq!(first.rotations, frozen.rotations);
     let child = Goal {
-        follow: None,
         weight: 1.0,
         bone,
         root: bone,
@@ -554,12 +423,11 @@ fn bone_ik_freezes_a_copy_orders_parent_before_child_and_restores_animation_inpu
 }
 
 #[test]
-fn bone_ik_bounds_bad_chains_unreachable_targets_and_releases_runtime_contacts() {
+fn bone_ik_bounds_bad_chains_and_unreachable_targets_and_rests_without_an_edit() {
     let lib = AvatarLibrary::load();
     let rig = &lib.rig;
     let bone = rig.names["mWristLeft"];
     let goal = Goal {
-        follow: None,
         weight: 1.0,
         bone,
         root: rig.names["mShoulderLeft"],
@@ -589,119 +457,10 @@ fn bone_ik_bounds_bad_chains_unreachable_targets_and_releases_runtime_contacts()
     ] {
         assert!(!apply_goal(rig, &mut output, Vec3::ZERO, &rig.scale, &invalid));
     }
-    let now = Instant::now();
-    let mut runtime = Pose {
-        targets: vec![goal],
-        ..Default::default()
-    };
-    for frame in 0..8 {
-        assert!(
-            runtime
-                .apply(
-                    rig,
-                    &rig.local_rot,
-                    &rig.local_pos,
-                    Vec3::ZERO,
-                    &rig.scale,
-                    now + Duration::from_millis(frame * 50),
-                    false
-                )
-                .is_some()
-        );
-    }
-    runtime.targets.clear();
-    for frame in 8..16 {
-        runtime.apply(
-            rig,
-            &rig.local_rot,
-            &rig.local_pos,
-            Vec3::ZERO,
-            &rig.scale,
-            now + Duration::from_millis(frame * 50),
-            false,
-        );
-    }
+    // Without an edit session, the pose leaves the animation untouched.
+    let mut idle = Pose::default();
     assert!(
-        runtime
-            .apply(
-                rig,
-                &rig.local_rot,
-                &rig.local_pos,
-                Vec3::ZERO,
-                &rig.scale,
-                now + Duration::from_secs(1),
-                false
-            )
+        idle.apply(rig, &rig.local_rot, &rig.local_pos, Vec3::ZERO, &rig.scale, Instant::now(), false)
             .is_none()
     );
-}
-
-#[test]
-fn editor_can_hide_script_ik_without_stopping_its_updates_or_local_authoring() {
-    let lib = AvatarLibrary::load();
-    let rig = &lib.rig;
-    let now = Instant::now();
-    let rest = rig.world_with(&rig.local_rot, Vec3::ZERO, &rig.local_pos, &rig.scale);
-    let head = rig.names["mHead"];
-    let hand = rig.names["mWristLeft"];
-    let goal = |bone: usize, shift: f32| Goal {
-        follow: None,
-        weight: 1.0,
-        bone,
-        root: bone,
-        position: rest[bone].w_axis.truncate() + Vec3::X * shift,
-        rotation: None,
-        contact: Vec3::ZERO,
-        pole: None,
-        mode: Mode::Direct,
-    };
-    let mut pose = Pose {
-        targets: vec![goal(head, 0.1)],
-        ..Default::default()
-    };
-    for step in 0..8 {
-        pose.apply(
-            rig,
-            &rig.local_rot,
-            &rig.local_pos,
-            Vec3::ZERO,
-            &rig.scale,
-            now + Duration::from_millis(step * 50),
-            false,
-        );
-    }
-    pose.edit = EditRequest {
-        active: true,
-        suppress_script_ik: true,
-        goals: vec![goal(hand, 0.05)],
-        ..Default::default()
-    };
-    let sample = |pose: &mut Pose, ms: u64| {
-        pose.apply(
-            rig,
-            &rig.local_rot,
-            &rig.local_pos,
-            Vec3::ZERO,
-            &rig.scale,
-            now + Duration::from_millis(ms),
-            true,
-        )
-        .unwrap()
-    };
-    let hidden = sample(&mut pose, 500);
-    assert!(hidden.positions[head].abs_diff_eq(rig.local_pos[head], 1e-6));
-    assert!(hidden.positions[hand].distance(rig.local_pos[hand]) > 0.04);
-    pose.targets[0] = goal(head, 0.2);
-    sample(&mut pose, 550);
-    pose.edit.suppress_script_ik = false;
-    let shown = sample(&mut pose, 600);
-    assert!(
-        shown.positions[head].distance(rig.local_pos[head]) > 0.19,
-        "runtime target kept updating under the local mask"
-    );
-    assert!(shown.positions[hand].abs_diff_eq(hidden.positions[hand], 1e-6));
-    pose.edit.suppress_script_ik = true;
-    assert!(sample(&mut pose, 650).positions[head].abs_diff_eq(rig.local_pos[head], 1e-6));
-    pose.edit = EditRequest::default();
-    assert!(sample(&mut pose, 700).positions[head].distance(rig.local_pos[head]) > 0.19);
 }

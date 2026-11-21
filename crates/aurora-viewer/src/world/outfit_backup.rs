@@ -209,6 +209,12 @@ pub fn valid_name(name: &str) -> bool {
 /// Apply the strictest common filename rules on every OS, so a backup
 /// proposed on Linux is also a usable Windows/macOS filename.
 pub fn file_name(name: &str) -> String {
+    format!("{}.json", file_stem(name, "outfit"))
+}
+
+/// `name` made safe as a file name on every system (`fallback` when nothing
+/// is left), without its extension; also used by the appearance XML export.
+pub fn file_stem(name: &str, fallback: &str) -> String {
     let mut stem: String = name
         .chars()
         .map(|ch| if ch.is_control() || "<>:\"/\\|?*".contains(ch) { '_' } else { ch })
@@ -229,9 +235,9 @@ pub fn file_name(name: &str) -> String {
         stem.insert(0, '_');
     }
     if stem.is_empty() {
-        stem = "outfit".into();
+        stem = fallback.into();
     }
-    format!("{stem}.json")
+    stem
 }
 
 #[cfg(test)]

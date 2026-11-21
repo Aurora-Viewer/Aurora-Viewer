@@ -15,7 +15,7 @@ mod paste_tests;
 #[path = "texture_drop.rs"]
 pub(super) mod texture_drop;
 
-use super::common::{Edit, check, combo, row, same, small, spin, swatch};
+use super::common::{check, combo, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
 use crate::build::{BuildSettings, BuildTool, Tool, texture_copy};
@@ -35,27 +35,30 @@ pub const DEFAULT_NORMAL: Uuid = Uuid::from_u128(0x85f28839_7a1c_b4e3_d71d_96779
 /// Default specular map.
 pub const DEFAULT_SPECULAR: Uuid = Uuid::from_u128(0x87e0e8f7_8729_1ea8_cfc9_8915773009db);
 
-/// "Bumpiness" (bump codes 0..17).
+/// "Bumpiness" (bump codes 0..17), the items of the Legacy Viewer's
+/// "combobox bumpiness" (panel_tools_texture.xml): Brightness, Darkness,
+/// woodgrain, bark, bricks, checker, concrete, crustytile, cutstone, discs,
+/// gravel, petridish, siding, stonetile, stucco, suction, weave.
 fn bumps() -> [&'static str; 18] {
     [
         aurora_i18n::tr!("common-none"),
-        aurora_i18n::tr!("build-ui-texture-shininess"),
+        aurora_i18n::tr!("build-ui-texture-brightness"),
         aurora_i18n::tr!("build-ui-texture-darkness"),
         aurora_i18n::tr!("build-ui-texture-wood-grain"),
         aurora_i18n::tr!("build-ui-texture-bark"),
-        "briques",
-        "damier",
+        aurora_i18n::tr!("build-ui-texture-bricks"),
+        aurora_i18n::tr!("build-ui-texture-checker"),
         aurora_i18n::tr!("build-ui-texture-concrete"),
         aurora_i18n::tr!("build-ui-texture-crusty"),
         aurora_i18n::tr!("build-ui-texture-cut-stone"),
-        "disques",
-        "gravier",
-        aurora_i18n::tr!("build-ui-texture-trouble"),
-        "bardage",
+        aurora_i18n::tr!("build-ui-texture-discs"),
+        aurora_i18n::tr!("build-ui-texture-gravel"),
+        aurora_i18n::tr!("build-ui-texture-petri-dish"),
+        aurora_i18n::tr!("build-ui-texture-siding"),
         aurora_i18n::tr!("build-ui-texture-stone-tiles"),
-        "stuc",
-        "aspiration",
-        "trame",
+        aurora_i18n::tr!("build-ui-texture-stucco"),
+        aurora_i18n::tr!("build-ui-texture-suction"),
+        aurora_i18n::tr!("build-ui-texture-weave"),
     ]
 }
 /// Index of "Use texture" (BUMPY_TEXTURE / SHINY_TEXTURE).
@@ -280,12 +283,19 @@ impl BuildTool {
     fn edit_legacy(&mut self, env: &Env, world: &World, sel: &[Sel], f: impl Fn(&mut LegacyMaterial)) {
         let mut puts = Vec::new();
         for s in sel {
-            let default = default_legacy(env, &s.te);
+            let default = default_legacy_for_face(env, world, s);
             let mut m = self
                 .face_legacy(env, world, s.idx, s.face, &s.te)
                 .unwrap_or_else(|| default.clone());
             f(&mut m);
-            let empty = m == default;
+            // A local diffuse can have alpha while the server texture is opaque.
+            // Keep an explicit mode: removing it would restore auto detection
+            // of the local image and make None transparent again.
+            let local_diffuse = world.objects.get(s.idx).is_some_and(|o| {
+                o.local_texture(s.face as usize, crate::world::objects::LocalTextureSlot::Diffuse)
+                    .is_some()
+            });
+            let empty = m == default && !local_diffuse;
             let m = (!empty).then_some(m);
             if let Some(o) = world.objects.get(s.idx) {
                 self.ui.legacy_pending.insert((o.full_id, s.face), (s.te.material_id, m.clone()));
@@ -298,12 +308,18 @@ impl BuildTool {
     /// Change the GLTF override of the selected faces with a material
     /// (FSRenderMaterialOverrideFunctor): only the faces with a base material.
     fn edit_gltf(&mut self, world: &mut World, sel: &[Sel], f: impl Fn(&mut PbrOverride)) {
+        self.edit_gltf_faces(world, sel, |_, o| f(o));
+    }
+
+    /// `edit_gltf` with the index of each face in `sel`.
+    fn edit_gltf_faces(&mut self, world: &mut World, sel: &[Sel], f: impl Fn(usize, &mut PbrOverride)) {
         let updates: Vec<GltfUpdate> = sel
             .iter()
-            .filter(|s| BuildTool::gltf_asset(world, s.idx, s.face).is_some())
-            .map(|s| {
+            .enumerate()
+            .filter(|(_, s)| BuildTool::gltf_asset(world, s.idx, s.face).is_some())
+            .map(|(k, s)| {
                 let mut o = BuildTool::gltf_override(world, s.idx, s.face);
-                f(&mut o);
+                f(k, &mut o);
                 GltfUpdate {
                     object: s.idx,
                     face: s.face,
@@ -383,16 +399,24 @@ impl BuildTool {
     }
 }
 
-/// A face without a legacy material derives its alpha mode from the diffuse.
+/// A face without a legacy material derives its alpha mode from the format of
+/// the diffuse (LLPanelFace::createDefaultMaterial). Blending a texture whose
+/// texels are all opaque keeps its face in the opaque pass (`classify`).
 pub(super) fn default_legacy(env: &Env, te: &TextureFace) -> LegacyMaterial {
     LegacyMaterial {
-        diffuse_alpha_mode: if env.scene.textures.has_alpha(&te.texture).unwrap_or(false) {
-            alpha_mode::BLEND
-        } else {
-            alpha_mode::NONE
-        },
+        diffuse_alpha_mode: env.scene.textures.default_alpha_mode(&te.texture),
         ..Default::default()
     }
+}
+
+/// LLPanelFace::createDefaultMaterial uses the diffuse currently displayed,
+/// including a local bitmap (LLLocalBitmap::updateUserPrims).
+pub(super) fn default_legacy_for_face(env: &Env, world: &World, selected: &Sel) -> LegacyMaterial {
+    let te = world
+        .objects
+        .get(selected.idx)
+        .map_or(selected.te, |o| o.visual_texture_face(selected.face as usize));
+    default_legacy(env, &te)
 }
 
 /// The selected faces of modifiable volume prims.
@@ -568,6 +592,7 @@ fn material_asset(
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", "PbrMaterial".to_string())), response.rect));
         crate::ui::widgets::local_texture::asset(ui, p, response.rect, asset);
         texture_drop::slot(ui, p, tool, world, response.rect, PickTarget::PbrMaterial, true);
+        select_same_menu(p, &response, tool, world, None, PickTarget::PbrMaterial, asset.filter(|_| !mixed));
         let caption = aurora_i18n::tr!("build-ui-texture-material");
         ui.add_sized(
             [size, if super::legacy::active(ui) { 14.0 } else { 16.0 }],
@@ -585,6 +610,46 @@ fn material_asset(
             tool.ui.pick_target = Some(PickTarget::PbrMaterial);
         }
     });
+}
+
+/// Right click on a swatch in Face mode: "Select faces with this texture",
+/// every face of the selected linksets showing `id` in that slot. The
+/// Legacy Viewer has it as a button beside the swatch
+/// (LLPanelFace::onClickBtnSelectSameTexture, indra/newview/llpanelface.cpp).
+fn select_same_menu(
+    p: &Palette,
+    response: &egui::Response,
+    tool: &mut BuildTool,
+    world: &World,
+    env: Option<&Env>,
+    target: PickTarget,
+    id: Option<Uuid>,
+) {
+    let Some(id) = id.filter(|_| tool.face_mode()) else { return };
+    crate::ui::menu::context_menu(response, p, |ui| {
+        if crate::ui::menu::item(ui, p, "select-all", aurora_i18n::tr!("build-ui-texture-select-same")) {
+            tool.select_same_faces(world, id, |tool, world, idx, face| slot_id(tool, env, world, target, idx, face));
+        }
+    });
+}
+
+/// The id a face shows in a Texture tab slot, as the swatches read it.
+fn slot_id(tool: &mut BuildTool, env: Option<&Env>, world: &World, target: PickTarget, idx: usize, face: u8) -> Option<Uuid> {
+    let o = world.objects.get(idx)?;
+    match target {
+        PickTarget::Diffuse => Some(o.visual_texture_face(face as usize).texture),
+        PickTarget::Normal | PickTarget::Specular => {
+            let te = *o.te.as_ref()?.face(face as usize);
+            let m = tool.face_legacy(env?, world, idx, face, &te)?;
+            Some(if target == PickTarget::Normal {
+                m.normal_map
+            } else {
+                m.specular_map
+            })
+        }
+        PickTarget::PbrMaterial => BuildTool::gltf_asset(world, idx, face),
+        _ => None,
+    }
 }
 
 fn material_map(
@@ -606,6 +671,7 @@ fn material_map(
         // A material asset is glTF, not an image: only its maps enter the image loader.
         let response = swatch(ui, p, env.images, &mut tool.ui.wanted_images, id, "", size, mixed, enabled);
         texture_drop::slot(ui, p, tool, world, response.rect, target, enabled);
+        select_same_menu(p, &response, tool, world, Some(&*env), target, id.filter(|_| !mixed && enabled));
         #[cfg(test)]
         ui.ctx()
             .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", format!("{target:?}"))), response.rect));
@@ -651,6 +717,13 @@ fn material_map(
 }
 
 /// Two UV rows, with scale/flip, offset and rotation visible together.
+///
+/// Returns the components to write to every selected face: one committed
+/// with a new value, or typed over a mixed ("—") field even when it equals
+/// the first face's hidden value. LLPanelFace sends each spinner's commit on
+/// its own (onCommitTextureScaleX / onCommitGLTFTextureScaleU…,
+/// indra/newview/llpanelface.cpp): only that component reaches the faces and
+/// the other, possibly mixed, components keep each face's value.
 fn uv_controls(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -659,8 +732,8 @@ fn uv_controls(
     decimals: usize,
     enabled: bool,
     axes: [&str; 2],
-) -> Edit {
-    let mut edit = Edit::default();
+) -> [bool; 5] {
+    let mut write = [false; 5];
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
@@ -684,7 +757,8 @@ fn uv_controls(
                                 1 => (0.01, -1.0..=1.0, decimals),
                                 _ => (1.0, -360.0..=360.0, decimals.min(2)),
                             };
-                            edit = edit.or(super::common::spin_with_min_decimals(
+                            let before = values[index];
+                            let edit = super::common::spin_with_min_decimals(
                                 ui,
                                 &mut values[index],
                                 increment,
@@ -693,13 +767,20 @@ fn uv_controls(
                                 if column == 2 { 71.0 } else { 65.0 },
                                 mixed[index],
                                 d.min(3),
-                            ));
+                            );
+                            // A release that moved nothing sends nothing; a
+                            // number typed over "—" is sent as it is.
+                            if edit.typed_over_mixed || (edit.commit && (values[index] - before).abs() > 1e-6) {
+                                write[index] = true;
+                            }
+                            // FSPanelFace::onCommitFlip negates the shown value
+                            // and forces the spinner's commit.
                             if column == 0
                                 && super::compact::icon_button(ui, p, "arrows-exchange", aurora_i18n::tr!("common-rotate"), enabled)
                                     .clicked()
                             {
                                 values[index] = -values[index];
-                                edit.commit = true;
+                                write[index] = true;
                             }
                         });
                     }
@@ -707,7 +788,7 @@ fn uv_controls(
             }
         });
     });
-    edit
+    write
 }
 
 // ---------------------------------------------------------------- PBR
@@ -738,10 +819,15 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     {
         appearance.apply_pbr(&mut mat);
     }
+    let face_transforms: Vec<[TextureTransform; 4]> = sel.iter().map(|x| face_pbr_transforms(world, env, x)).collect();
+    // What each face's server override inherits; None while a material is
+    // still loading: the UV fields wait for it rather than guess the pair.
+    let inherited: Option<Vec<[TextureTransform; 4]>> = sel.iter().map(|x| face_server_pbr_transforms(world, env, x)).collect();
     // LLMaterialEditor::canModifyObjectsMaterial; not editable, the maps show no id
     let faces: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
     let editable = has_all && tool.material_edit_allowed(world, &faces);
     let shown = |id: Option<Uuid>| id.filter(|_| editable);
+    let maps_mixed = pbr_maps_mixed(sel.iter().map(|x| pbr_maps_shown(world, env, x.idx, x.face)));
     tool.ui.material_previews.poll();
     let model = asset.filter(|_| loaded && !asset_mixed).and_then(|asset| {
         tool.ui.material_previews.material_model(
@@ -754,7 +840,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         )
     });
     if super::legacy::active(ui) {
-        legacy_texture::pbr_surface(ui, p, tool, world, env, sel, &mat, asset, asset_mixed, model, editable);
+        legacy_texture::pbr_surface(ui, p, tool, world, env, sel, &mat, asset, asset_mixed, maps_mixed, model, editable);
     } else {
         let size = preview_size(ui, 3);
         egui::Grid::new("pbr_map_grid")
@@ -778,7 +864,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                         world,
                         env,
                         shown(id),
-                        false,
+                        editable && maps_mixed[channel],
                         caption,
                         PickTarget::PbrMap(channel),
                         editable,
@@ -815,34 +901,157 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
             tabs(ui, p, &mut ch, &labels);
         }
         tool.ui.pbr_channel = ch;
-        // "All" shows the base color's, mixed when the channels differ;
-        // the others in the panel's order: base, normal, ORM, emissive
-        let (t, mixed) = if ch == 0 {
-            (mat.transforms[0], mat.transforms.iter().any(|x| *x != mat.transforms[0]))
-        } else {
-            (mat.transforms[ch - 1], false)
-        };
-        let mut nt = t;
-        let mut rot = nt.rotation.to_degrees();
-        let mut e = Edit::default();
-
-        let mut values = [nt.scale[0], nt.scale[1], nt.offset[0], nt.offset[1], rot];
-        e = e.or(uv_controls(ui, p, &mut values, [mixed; 5], 5, editable, ["U", "V"]));
-        nt.scale = [values[0], values[1]];
-        nt.offset = [values[2], values[3]];
-        rot = values[4];
-
-        nt.rotation = rot.to_radians();
-        if e.commit && nt != t {
-            tool.edit_gltf(world, sel, |o| {
-                if ch == 0 {
-                    o.transforms = [nt; 4];
-                } else {
-                    o.transforms[ch - 1] = nt;
+        // "All" covers the four channels and shows the base color's; the
+        // others in the panel's order: base, normal, ORM, emissive. A
+        // component is mixed when it differs between the selected faces or,
+        // under "All", between the channels
+        // (LLPanelFace::setMaterialOverridesFromSelection).
+        let channels = if ch == 0 { 0..4 } else { ch - 1..ch };
+        let components = |t: &TextureTransform| [t.scale[0], t.scale[1], t.offset[0], t.offset[1], t.rotation];
+        let shown = components(&mat.transforms[channels.start]);
+        let mixed: [bool; 5] = std::array::from_fn(|i| {
+            face_transforms
+                .iter()
+                .flat_map(|transforms| &transforms[channels.clone()])
+                .any(|t| (components(t)[i] - shown[i]).abs() > 1e-5)
+        });
+        let mut values = shown;
+        values[4] = values[4].to_degrees();
+        let write = uv_controls(ui, p, &mut values, mixed, 5, editable && inherited.is_some(), ["U", "V"]);
+        if let Some(inherited) = inherited.as_deref()
+            && write.contains(&true)
+        {
+            // LLPanelFace::updateGLTFTextureTransform: the committed
+            // component only, on each face's override and each channel.
+            // apply_override takes a scale or an offset as a whole pair, so
+            // a pair with a committed component starts from what that face
+            // and channel inherit on the server: the other component keeps
+            // its value, the base material's when the override has none.
+            // Better than LLPanelFace, which starts from the raw override
+            // and resets that component to the identity. Like it, a pair
+            // that ends at the identity (scale 1 1, offset 0 0) is "no
+            // override" to applyOverride: the material's own pair shows.
+            let new = [values[0], values[1], values[2], values[3], values[4].to_radians()];
+            tool.edit_gltf_faces(world, sel, |k, o| {
+                for channel in channels.clone() {
+                    let shown = inherited[k][channel];
+                    let t = &mut o.transforms[channel];
+                    if write[0] || write[1] {
+                        t.scale = shown.scale;
+                    }
+                    if write[2] || write[3] {
+                        t.offset = shown.offset;
+                    }
+                    let mut a = components(t);
+                    for i in (0..5).filter(|&i| write[i]) {
+                        a[i] = new[i];
+                    }
+                    *t = TextureTransform {
+                        scale: [a[0], a[1]],
+                        offset: [a[2], a[3]],
+                        rotation: a[4],
+                    };
                 }
             });
         }
     });
+}
+
+/// The texture transforms a face's server override applies over: its
+/// server material's (never a local material's preview, which only this
+/// viewer shows) under that override (LLGLTFMaterial::applyOverride).
+/// None while the material loads; a material that cannot be had renders
+/// as the default one, so the override applies over the identity.
+fn face_server_pbr_transforms(world: &World, env: &mut Env, x: &Sel) -> Option<[TextureTransform; 4]> {
+    let mut mat = aurora_assets::PbrMaterial::default();
+    if let Some(asset) = BuildTool::gltf_asset(world, x.idx, x.face) {
+        match env.scene.materials.resolve(&asset) {
+            crate::scene::meshes::MaterialStatus::Loaded(m) => mat.transforms = m.transforms,
+            crate::scene::meshes::MaterialStatus::Pending => return None,
+            crate::scene::meshes::MaterialStatus::Missing => {}
+        }
+    }
+    mat.apply_override(&BuildTool::gltf_override(world, x.idx, x.face));
+    Some(mat.transforms)
+}
+
+/// The textures a face shows on its four PBR maps: its override's, else its
+/// base material's, nil for none; `None` while that material is not loaded
+/// (the `texture_map_id` of LLSelectedTEGetmatId::apply,
+/// indra/newview/fspanelface.cpp). A local file comes first, as in `pbr`.
+pub(super) fn pbr_maps_shown(world: &World, env: &Env, idx: usize, face: u8) -> Option<[Uuid; 4]> {
+    use crate::world::objects::LocalTextureSlot;
+    let object = world.objects.get(idx)?;
+    let asset = object
+        .local_texture(face as usize, LocalTextureSlot::Material)
+        .or_else(|| BuildTool::gltf_asset(world, idx, face))?;
+    let base = env.scene.materials.peek(&asset)?;
+    let mut shown = [
+        base.base_color_texture,
+        base.normal_texture,
+        base.metallic_roughness_texture,
+        base.emissive_texture,
+    ]
+    .map(Option::unwrap_or_default);
+    if !world.local_assets.contains_key(&asset) {
+        for (shown, over) in shown.iter_mut().zip(BuildTool::gltf_override(world, idx, face).textures) {
+            // applyOverrideUUID
+            if over == aurora_assets::material::OVERRIDE_NULL_UUID {
+                *shown = Uuid::nil();
+            } else if !over.is_nil() {
+                *shown = over;
+            }
+        }
+    }
+    for (channel, shown) in shown.iter_mut().enumerate() {
+        if let Some(local) = object.local_texture(face as usize, LocalTextureSlot::Pbr(channel)) {
+            *shown = local;
+        }
+    }
+    Some(shown)
+}
+
+/// Per PBR map, whether the faces show different textures: the map's swatch
+/// and picker are then tentative (LLSelectedTEGetmatId's `mIdenticalMap` and
+/// FSPanelFace::updateUIGLTF's `setTentative(!func.mIdenticalMap[...])`,
+/// indra/newview/fspanelface.cpp). A face whose material is still loading
+/// counts as different.
+pub(super) fn pbr_maps_mixed(shown: impl IntoIterator<Item = Option<[Uuid; 4]>>) -> [bool; 4] {
+    let mut mixed = [false; 4];
+    let mut first: Option<[Uuid; 4]> = None;
+    for (n, shown) in shown.into_iter().enumerate() {
+        match (first, shown) {
+            (None, shown) if n == 0 => first = shown,
+            (Some(first), Some(shown)) => {
+                for (mixed, (first, shown)) in mixed.iter_mut().zip(first.iter().zip(&shown)) {
+                    *mixed |= first != shown;
+                }
+            }
+            _ => mixed = [true; 4],
+        }
+    }
+    mixed
+}
+
+/// The texture transforms a face renders with: its material's under its
+/// override (LLGLTFMaterial::applyOverride), as `pbr` builds the first face's.
+fn face_pbr_transforms(world: &World, env: &mut Env, x: &Sel) -> [TextureTransform; 4] {
+    let asset = world
+        .objects
+        .get(x.idx)
+        .and_then(|object| object.local_texture(x.face as usize, crate::world::objects::LocalTextureSlot::Material))
+        .or_else(|| BuildTool::gltf_asset(world, x.idx, x.face));
+    let mut mat = aurora_assets::PbrMaterial {
+        transforms: asset
+            .and_then(|asset| env.scene.materials.get(&asset))
+            .map(|m| m.transforms)
+            .unwrap_or_default(),
+        ..Default::default()
+    };
+    if !asset.is_some_and(|asset| world.local_assets.contains_key(&asset)) {
+        mat.apply_override(&BuildTool::gltf_override(world, x.idx, x.face));
+    }
+    mat.transforms
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -963,7 +1172,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
         .map(|x| {
             let mut material = tool.face_legacy(env, world, x.idx, x.face, &x.te);
             if let Some(appearance) = world.objects.get(x.idx).and_then(|object| object.local_appearance(x.face as usize)) {
-                let value = material.get_or_insert_with(|| default_legacy(env, &x.te));
+                let value = material.get_or_insert_with(|| default_legacy_for_face(env, world, x));
                 appearance.apply_legacy(value);
             }
             material
@@ -1048,7 +1257,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             ui.label("%");
         });
         // alpha mode, mask cutoff
-        let has_alpha = tex.and_then(|t| env.scene.textures.has_alpha(&t)).unwrap_or(false);
+        let has_alpha = tex.and_then(|t| env.scene.textures.has_alpha_channel(&t)).unwrap_or(false);
         let transp_zero = sel.iter().all(|x| x.te.color[3] >= 1.0);
         let default_mode = if has_alpha { alpha_mode::BLEND } else { alpha_mode::NONE };
         let (mode, mode_mixed) = same(
@@ -1226,16 +1435,14 @@ fn bp_transforms(
         v[0] *= k;
         v[1] *= k;
         v[4] = v[4].to_degrees();
-        let before = v;
         let decimals = s.decimal_precision.min(7) as usize;
-        let mut e = Edit::default();
 
         let axes = if super::legacy::active(ui) { ["U", "V"] } else { ["H", "V"] };
-        e = e.or(uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, axes));
+        let write = uv_controls(ui, p, &mut v, std::array::from_fn(mixed), decimals, editable, axes);
 
-        if e.commit && v != before {
-            // only the values that moved are written (non-tentative spinners)
-            let changed: Vec<usize> = (0..5).filter(|&i| (v[i] - before[i]).abs() > 1e-6).collect();
+        if write.contains(&true) {
+            // only the committed components; the others keep each face's value
+            let changed: Vec<usize> = (0..5).filter(|&i| write[i]).collect();
             let new = [v[0] / k, v[1] / k, v[2], v[3], v[4].to_radians()];
             let set = |a: &mut [f32; 5]| {
                 for &i in &changed {
@@ -1561,10 +1768,24 @@ fn paste_faces(tool: &mut BuildTool, world: &mut World, env: &Env, sel: &[Sel]) 
     };
     let mut image_ok = Vec::with_capacity(sel.len());
     let mut gltf_ok = Vec::with_capacity(sel.len());
+    let mut refusal = None;
     for (i, x) in sel.iter().enumerate() {
         let c = pick(i);
-        image_ok.push(through(tool, world, x.idx, c.image));
-        gltf_ok.push(c.gltf.is_none() || c.maps.iter().all(|m| m.full) && through(tool, world, x.idx, c.material));
+        // a worn prim asks what a drop asks, before anything moves
+        let mut refused = |a: &texture_copy::Availability| {
+            let it = crate::build::contents_drop::worn_paste_refused(world, x.idx, a.item);
+            if let Some(it) = it {
+                refusal.get_or_insert(crate::build::contents_drop::worn_refusal_text(it, world.agent_id));
+            }
+            it.is_some()
+        };
+        let image_refused = refused(&c.image);
+        let material_refused = c.gltf.is_some() && refused(&c.material);
+        image_ok.push(!image_refused && through(tool, world, x.idx, c.image));
+        gltf_ok.push(c.gltf.is_none() || (!material_refused && c.maps.iter().all(|m| m.full) && through(tool, world, x.idx, c.material)));
+    }
+    if let Some(text) = refusal {
+        world.system_notice(text, Topic::Items);
     }
     let order: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
     tool.edit_faces(world, |f, idx, face| {
@@ -1789,5 +2010,69 @@ mod tests {
         assert_eq!(te_st_axes(0), (0, 1));
         assert_eq!(te_st_axes(2), (1, 2));
         assert_eq!(te_st_axes(7), (0, 1));
+    }
+}
+
+#[cfg(test)]
+mod local_alpha_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn creator_local_alpha_uses_displayed_texture_and_none_is_sent_explicitly() {
+        let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(avatars.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for event in crate::demo::events().into_iter().chain(crate::demo::worn::events()) {
+            world.apply(event);
+        }
+        let index = world.worn_attachment(&crate::demo::worn::item_id()).unwrap();
+        let local = Uuid::from_u128(0xcfea);
+        let object = world.objects.get_mut(index).unwrap();
+        let id = object.full_id;
+        Arc::make_mut(object.te.as_mut().unwrap()).faces[0].texture = aurora_prim::te::BLANK_TEXTURE;
+        Arc::make_mut(object.te.as_mut().unwrap()).faces[0].material_id = Uuid::nil();
+        object
+            .render
+            .local_appearance
+            .insert(Some(0), crate::world::objects::LocalAppearance::Texture(local));
+        let te = *object.te.as_ref().unwrap().face(0);
+        let mut scene = crate::scene::Scene::new(std::env::temp_dir(), avatars);
+        scene.textures.alpha_channel_by_slot.resize(1, false);
+        scene
+            .textures
+            .register_local_image(local, 0, crate::scene::jobs::AlphaKind::Blend, true);
+        let images = HashMap::new();
+        let mut media = crate::media::MediaManager::default();
+        let mut lines = false;
+        let env = Env {
+            images: &images,
+            media: &mut media,
+            scene: &mut scene,
+            zoom_fraction: 0.0,
+            property_lines: &mut lines,
+            demo: true,
+        };
+        let selected = [Sel { idx: index, face: 0, te }];
+        assert_eq!(default_legacy(&env, &te).diffuse_alpha_mode, alpha_mode::NONE);
+        assert_eq!(
+            default_legacy_for_face(&env, &world, &selected[0]).diffuse_alpha_mode,
+            alpha_mode::BLEND
+        );
+        let mut tool = BuildTool::default();
+        for mode in [alpha_mode::NONE, alpha_mode::MASK, alpha_mode::BLEND] {
+            tool.edit_legacy(&env, &world, &selected, |m| m.diffuse_alpha_mode = mode);
+            assert_eq!(tool.ui.legacy_pending[&(id, 0)].1.as_ref().unwrap().diffuse_alpha_mode, mode);
+            let command = tool.out.last().unwrap();
+            let aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Cap { body, .. }) = command else {
+                panic!("material PUT")
+            };
+            let body = crate::scene::legacy_mat::unzip_llsd(body.get("Zipped").as_binary()).unwrap();
+            let material = body.get("FullMaterialsPerFace").as_array()[0].get("Material");
+            assert!(material.as_map().is_some(), "explicit alpha must not remove the material");
+            assert_eq!(material.get("DiffuseAlphaMode").as_i32(), i32::from(mode));
+        }
+        assert_eq!(world.objects.get(index).unwrap().te.as_ref().unwrap().face(0).texture, te.texture);
     }
 }

@@ -112,5 +112,8 @@ function Get-PolicyLine([string[]]$StableTagMessage, [string]$Version, $Defaults
             if (-not $policy[$field] -or [version]$value -gt [version]$policy[$field]) { $policy[$field] = $value }
         }
     }
+    # a beta keeping the stable's minimum keeps its grace period (an urgent
+    # release stays at once); absent, the viewer gives 12 h
+    if ($previous -and $null -ne $previous.grace_hours -and $policy.minimum_supported_version -eq $previous.minimum_supported_version) { $policy.grace_hours = $previous.grace_hours }
     'Aurora-Update-Policy: ' + ([pscustomobject]$policy | ConvertTo-Json -Compress)
 }

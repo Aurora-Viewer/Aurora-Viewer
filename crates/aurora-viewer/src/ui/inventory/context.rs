@@ -13,8 +13,10 @@ pub(super) fn exposes_asset_uuid(kind: i32) -> bool {
     matches!(kind, 0 | 1 | 3 | 5 | 7 | 13 | 20 | 21 | 56 | 57 | 58 | 59)
 }
 
-pub(super) fn copyable_asset_uuid(inv: &Inventory, item: &aurora_net::inventory::InvItem) -> Option<Uuid> {
-    (exposes_asset_uuid(item.asset_type) && rules::held(inv, item) & rules::FULL == rules::FULL && !item.asset_id.is_nil())
+/// The asset UUID of a full-permission item, or of any for a god
+/// (LLViewerInventoryItem::getProtectedAssetUUID: isGodlikeWithoutAdminMenuFakery).
+pub(super) fn copyable_asset_uuid(inv: &Inventory, item: &aurora_net::inventory::InvItem, god: bool) -> Option<Uuid> {
+    (exposes_asset_uuid(item.asset_type) && (god || rules::held(inv, item) & rules::FULL == rules::FULL) && !item.asset_id.is_nil())
         .then_some(item.asset_id)
 }
 
@@ -98,11 +100,14 @@ pub(super) fn wear_toggle(it: &aurora_net::inventory::InvItem, worn: bool, prefs
 /// llinventoryfunctions.cpp): nothing wearable is opened, so worn, from the
 /// listings, active or not. The Legacy Viewer checks it on "open" only, and
 /// a double-click there still wears the item: here neither does.
-fn listing_wear(inv: &Inventory, id: Uuid, st: &mut InventoryUi) -> bool {
+pub(super) fn listing_wear(inv: &Inventory, id: Uuid, st: &mut InventoryUi) -> bool {
     let wearable = rules::original(inv, id)
         .and_then(|original| inv.items.get(&original))
-        .is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13));
-    if wearable && crate::world::marketplace::root(inv).is_some_and(|root| rules::under(inv, id, root)) {
+        .filter(|it| matches!(it.asset_type, 5 | 6 | 13));
+    if let Some(item) = wearable
+        && let Some(root) = crate::world::marketplace::root(inv)
+        && (rules::under(inv, id, root) || (item.id != id && rules::under(inv, item.id, root)))
+    {
         st.message = aurora_i18n::tr!("marketplace-alert-cannot-wear").into();
         return true;
     }
@@ -121,7 +126,7 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mu
     }
     // Resource windows are independent of document editors and their drafts.
     if let Some(item) = crate::ui::texture_library::catalogue::resource(inv, id) {
-        actions.push(InvAction::Preview(item.id));
+        actions.push(InvAction::Preview(item.id, Some(clipboard::focus_id(st))));
         return;
     }
     let Some(original) = rules::original(inv, id) else {
@@ -140,12 +145,12 @@ pub(super) fn open(inv: &Inventory, id: Uuid, st: &mut InventoryUi, actions: &mu
     } else if it.asset_type == 3 && !it.asset_id.is_nil() {
         actions.push(InvAction::TeleportLandmark(it.asset_id));
     } else if it.asset_type == 10 {
-        actions.push(InvAction::Preview(original));
+        actions.push(InvAction::Preview(original, Some(clipboard::focus_id(st))));
     } else if it.asset_type == 56 && crate::world::env_select::SettingsKind::from_flags(it.flags).is_some() {
         // LLSettingsBridgeAction: a sky, water or day cycle opens its editor
         actions.push(InvAction::EditEnvironment(original));
     } else {
-        actions.push(InvAction::Preview(original));
+        actions.push(InvAction::Preview(original, Some(clipboard::focus_id(st))));
     }
 }
 pub(super) fn new_menu(
@@ -158,7 +163,11 @@ pub(super) fn new_menu(
     actions: &mut Vec<InvAction>,
 ) {
     if menu::item_if(ui, p, "folder-filled", aurora_i18n::tr!("common-new-folder"), enabled) {
-        submit(st, actions, rules::create_folder(id, aurora_i18n::tr!("common-new-folder")));
+        submit(
+            st,
+            actions,
+            rules::create_folder(id, crate::text_validation::default_name("common-new-folder")),
+        );
     }
     for (kind, icon, name) in [
         (NewItem::Script, "code", aurora_i18n::tr!("common-new-script")),
@@ -405,7 +414,7 @@ mod tests {
             }]);
             let mut actions = Vec::new();
             open(&inv, id, &mut st, &mut actions);
-            assert!(matches!(actions.as_slice(), [InvAction::Preview(item)] if *item == id));
+            assert!(matches!(actions.as_slice(), [InvAction::Preview(item, _)] if *item == id));
             assert_eq!(st.preview, Some(document));
             assert!(st.preview_dirty);
             assert_eq!(st.preview_text, Some(Ok("unsaved draft".into())));
@@ -487,7 +496,7 @@ mod tests {
             item.asset_type = kind;
             let allowed = [0, 1, 3, 5, 7, 13, 20, 21, 56, 57, 58, 59].contains(&kind);
             assert_eq!(
-                copyable_asset_uuid(&Inventory::default(), &item),
+                copyable_asset_uuid(&Inventory::default(), &item, false),
                 allowed.then_some(item.asset_id),
                 "asset type {kind}"
             );
@@ -496,14 +505,56 @@ mod tests {
         for missing in [rules::COPY, rules::MODIFY, rules::TRANSFER] {
             item.owner_mask = full_perm & !missing;
             assert_eq!(
-                copyable_asset_uuid(&Inventory::default(), &item),
+                copyable_asset_uuid(&Inventory::default(), &item, false),
                 None,
                 "missing permission {missing:x}"
+            );
+            assert_eq!(
+                copyable_asset_uuid(&Inventory::default(), &item, true),
+                Some(item.asset_id),
+                "a god copies it"
             );
         }
         item.owner_mask = full_perm;
         item.asset_id = Uuid::nil();
-        assert_eq!(copyable_asset_uuid(&Inventory::default(), &item), None);
+        assert_eq!(copyable_asset_uuid(&Inventory::default(), &item, false), None);
+    }
+
+    #[test]
+    fn god_permissions_asset_uuid_copy_uses_held_rights() {
+        let agent = Uuid::from_u128(9901);
+        let other = Uuid::from_u128(9902);
+        let inv = Inventory {
+            owner: agent,
+            ..Default::default()
+        };
+        for (name, owner, group_owned, owner_mask, everyone_mask, ordinary) in [
+            ("other owner", other, false, rules::FULL, rules::COPY, false),
+            ("group owned", agent, true, rules::FULL, rules::COPY, false),
+            ("Library", other, false, rules::COPY, rules::FULL, true),
+            ("own full", agent, false, rules::FULL, 0, true),
+            ("own no copy", agent, false, rules::FULL & !rules::COPY, 0, false),
+            ("own no transfer", agent, false, rules::FULL & !rules::TRANSFER, 0, false),
+            ("own no modify", agent, false, rules::FULL & !rules::MODIFY, 0, false),
+        ] {
+            let item = aurora_net::inventory::InvItem {
+                id: Uuid::from_u128(9903),
+                asset_id: Uuid::from_u128(9904),
+                asset_type: 0,
+                owner,
+                group_owned,
+                owner_mask,
+                everyone_mask,
+                ..Default::default()
+            };
+            for god in [false, true] {
+                assert_eq!(
+                    copyable_asset_uuid(&inv, &item, god),
+                    (ordinary || god).then_some(item.asset_id),
+                    "{name}, god={god}"
+                );
+            }
+        }
     }
 
     #[test]

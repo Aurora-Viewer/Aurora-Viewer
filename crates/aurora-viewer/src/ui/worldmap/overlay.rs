@@ -24,6 +24,7 @@ use crate::world::place_details::Source;
 use crate::world::social::rights;
 use crate::world::tphistory::{self, HistoryItem};
 use crate::world::worldmap::location_label;
+use aurora_i18n::UiUpper;
 use aurora_net::map_item;
 use egui::{Align, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use std::collections::{HashMap, HashSet};
@@ -65,7 +66,7 @@ const FOLDER_LANDMARKS: i32 = 3;
 const FOLDER_TRASH: i32 = 14;
 const FOLDER_FAVORITES: i32 = 23;
 
-fn search_id() -> egui::Id {
+pub(super) fn search_id() -> egui::Id {
     egui::Id::unique("worldmap-search")
 }
 
@@ -225,7 +226,7 @@ enum Selection {
 /// The floating panels' state.
 #[derive(Default)]
 pub(super) struct Overlay {
-    query: String,
+    pub(super) query: String,
     /// The suggestions show (typing, focus); a touch of the map closes them.
     suggest: bool,
     highlight: usize,
@@ -615,6 +616,7 @@ impl WorldMapUi {
         pictures: &MapPictures,
         actions: &mut Vec<WorldMapAction>,
     ) {
+        let focus_search = std::mem::take(&mut self.focus_search);
         let now = ui.input(|i| i.time);
         let area = ui.available_rect_before_wrap();
         let size = vec2(area.width().max(160.0).floor(), area.height().max(160.0).floor());
@@ -661,7 +663,7 @@ impl WorldMapUi {
             let bottom = card.map_or(map.bottom() - EDGE, |c| c.top() - GAP);
             self.drawer(ui, p, world, tiles, cam, pictures, map, tab, top, bottom, fade, actions);
         }
-        self.search_panel(ui, p, world, cam, pictures, map, fade, now);
+        self.search_panel(ui, p, world, cam, pictures, map, fade, now, focus_search);
     }
 
     /// Ask the folders of Landmarks and Favorites not fetched yet.
@@ -807,6 +809,7 @@ impl WorldMapUi {
         map: Rect,
         fade: f32,
         now: f64,
+        focus_search: bool,
     ) {
         let mut panel = self.ov.open(
             ui,
@@ -833,17 +836,19 @@ impl WorldMapUi {
                 icon(ui.painter(), "search-filled", r.center(), 15.0, p.muted);
                 let hint_w = if self.ov.query.is_empty() { 0.0 } else { 44.0 };
                 let w = (ui.available_width() - 26.0 - hint_w).max(60.0);
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut self.ov.query)
-                        .id(id)
-                        .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
-                            ui.ctx(),
-                            &egui::TextStyle::Body.resolve(ui.style()),
-                        )))
+                let margin = widgets::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
+                let r = widgets::search_text_edit_with_margin(ui, p, &mut self.ov.query, margin, |edit| {
+                    edit.id(id)
+                        .frame(egui::Frame::NONE)
                         .hint_text(aurora_i18n::tr!("ui-worldmap-search-anything"))
-                        .desired_width(w),
-                );
-                if !self.ov.query.is_empty() {
+                        .desired_width(w)
+                });
+                if focus_search {
+                    r.request_focus();
+                }
+                // only where room was kept before the field: the first
+                // characters typed fill the query after `hint_w` was measured
+                if hint_w > 0.0 {
                     let (hr, _) = ui.allocate_exact_size(Vec2::new(hint_w - 6.0, 22.0), Sense::hover());
                     ui.painter().text(
                         hr.right_center(),
@@ -1121,7 +1126,12 @@ impl WorldMapUi {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0.0, |d| d.as_secs_f64());
-                for (section, items) in crate::ui::places::history_sections(&world.tp_storage.items, filter, now) {
+                for (section, items) in crate::ui::places::history_sections(
+                    &world.tp_storage.items,
+                    filter,
+                    now,
+                    crate::ui::places::history_offset(self.history_zone, now),
+                ) {
                     rows.push(Row::Section(section));
                     rows.extend(items.into_iter().map(Row::History));
                 }
@@ -1193,7 +1203,7 @@ impl WorldMapUi {
             }
             Row::Section(i) => {
                 let font = egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx()));
-                let name = tphistory::history_sections()[(*i).min(8)].to_uppercase();
+                let name = tphistory::history_sections()[(*i).min(8)].ui_upper();
                 widgets::paint_elided(ui, &name, pos2(rect.left() + 2.0, rect.center().y), rect.width(), font, p.muted_dim);
                 None
             }
@@ -1806,8 +1816,9 @@ impl WorldMapUi {
         }
         Self::friend_altitude_hint(ui, p, world);
         ui.add_space(8.0);
-        let (mut go, mut copy, mut info, mut show, mut clear) = (false, false, false, false, false);
-        ui.horizontal(|ui| {
+        let (mut go, mut copy, mut info, mut show, mut clear, mut track_region) = (false, false, false, false, false, false);
+        // wraps: Track region makes the row wider than a narrow card
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let h = Vec2::new(0.0, BUTTON_H);
             let icon_only = Vec2::new(30.0, BUTTON_H);
@@ -1845,6 +1856,16 @@ impl WorldMapUi {
             show = widgets::action_button_if(ui, p, "focus-centered", "", ActionKind::Flat, icon_only, track.is_some())
                 .on_hover_text(aurora_i18n::tr!("ui-worldmap-show-selection"))
                 .clicked();
+            track_region = widgets::action_button_if(
+                ui,
+                p,
+                "location-filled",
+                aurora_i18n::tr!("region-tracker-track-region"),
+                ActionKind::Flat,
+                h,
+                region.is_some() && !world.rlva.has("showloc"),
+            )
+            .clicked();
             clear = widgets::action_button(ui, p, "backspace-filled", "", ActionKind::Flat, icon_only)
                 .on_hover_text(format!(
                     "{}\n{}",
@@ -1855,6 +1876,13 @@ impl WorldMapUi {
         });
         let ctx = ui.ctx().clone();
         let rect = self.ov.close(panel);
+
+        if track_region
+            && !world.rlva.has("showloc")
+            && let Some((_, sim)) = &region
+        {
+            actions.push(WorldMapAction::TrackRegion(sim.name.clone()));
+        }
 
         if let Some((x, y, z, moved)) = edited {
             // another spot: no landmark nor friend any more; a height only:
@@ -1925,7 +1953,7 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, text: &str) {
     let font = egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx()));
     widgets::paint_elided(
         ui,
-        &text.to_uppercase(),
+        &text.ui_upper(),
         pos2(rect.left() + 8.0, rect.center().y + 2.0),
         rect.width() - 16.0,
         font,
@@ -2032,6 +2060,7 @@ mod tests {
             favorite: false,
             favorite_known: false,
             thumbnail: Uuid::nil(),
+            thumbnail_known: false,
         }
     }
 

@@ -32,6 +32,14 @@ pub(super) struct ImageJobs {
     pub capture: Option<Uuid>,
     pub capturing: Option<Uuid>,
     pub auto_capture_pending: bool,
+    /// An outfit's picture waiting for the photo pass, or drawn by it.
+    pub photo: Option<(Uuid, bool)>,
+    /// The request of the gallery's Take snapshot under way (#2716), drawn,
+    /// encoded or sent: a job of its own, that no image editor shows, so
+    /// one the user has open on another item is left as it is.
+    outfit: Option<Uuid>,
+    /// The outfit's paid HD picture (`outfit_hd`).
+    pub hd: super::outfit_hd::OutfitHd,
 }
 impl Default for ImageJobs {
     fn default() -> Self {
@@ -45,6 +53,9 @@ impl Default for ImageJobs {
             capture: None,
             capturing: None,
             auto_capture_pending: false,
+            photo: None,
+            outfit: None,
+            hd: Default::default(),
         }
     }
 }
@@ -58,6 +69,18 @@ fn panel(st: &mut InventoryUi, request: Uuid) -> Option<&mut ThumbnailUi> {
         return Some(&mut st.thumbnail);
     }
     st.windows.iter_mut().find_map(|w| panel(&mut w.state, request))
+}
+fn inventory_panel(app: &mut App, request: Uuid) -> Option<&mut ThumbnailUi> {
+    panel(&mut app.inventory_ui, request).or_else(|| panel(&mut app.dual_inventory_ui, request))
+}
+fn inventory_state(st: &mut InventoryUi, request: Uuid) -> Option<&mut InventoryUi> {
+    if st.thumbnail.pending == Some(request) {
+        return Some(st);
+    }
+    st.windows.iter_mut().find_map(|window| inventory_state(&mut window.state, request))
+}
+fn inventory_request_state(app: &mut App, request: Uuid) -> Option<&mut InventoryUi> {
+    inventory_state(&mut app.inventory_ui, request).or_else(|| inventory_state(&mut app.dual_inventory_ui, request))
 }
 impl App {
     pub(super) fn demo_inventory_file_choices(&mut self, landscape: bool) {
@@ -200,6 +223,59 @@ impl App {
             let _ = tx.send(Reply { request, result });
         });
     }
+    /// The gallery's Take snapshot (#2716): the scene, square, saved as the
+    /// outfit's picture at once; the image editor's own steps, with no
+    /// window. Appearance says why one is refused or fails.
+    pub(super) fn outfit_snapshot(&mut self, outfit: Uuid) {
+        if self.inventory_images.outfit.is_some() {
+            self.appearance_ui.message = aurora_i18n::tr!("app-inventory-thumbnail-a-snapshot-is-already-in-progress").into();
+            return;
+        }
+        let request = Uuid::new_v4();
+        self.appearance_ui.message.clear();
+        self.inventory_images.outfit = Some(request);
+        self.inventory_images.requests.insert(request, outfit);
+        self.inventory_images.photo = Some((request, false));
+    }
+
+    /// The outfit's auto portrait, confirmed (`app::outfit_portrait`): its
+    /// pixels go the gallery snapshot's way, reduced to the free square
+    /// thumbnail. False when another is still on its way.
+    pub(super) fn outfit_photo_pixels(&mut self, outfit: Uuid, (w, h): (u32, u32), pixels: Vec<u8>) -> bool {
+        if self.inventory_images.outfit.is_some() {
+            self.appearance_ui.message = aurora_i18n::tr!("app-inventory-thumbnail-a-snapshot-is-already-in-progress").into();
+            return false;
+        }
+        let request = Uuid::new_v4();
+        self.appearance_ui.message.clear();
+        self.inventory_images.outfit = Some(request);
+        self.inventory_images.requests.insert(request, outfit);
+        self.prepare_inventory_photo(request, w, h, pixels);
+        true
+    }
+
+    /// An outfit's picture is still being drawn, encoded or sent.
+    pub(super) fn outfit_photo_busy(&self) -> bool {
+        self.inventory_images.outfit.is_some()
+    }
+
+    /// Every frame: the outfit's picture starts once no photo is being
+    /// drawn; a job that ended without its pixels says so.
+    pub(super) fn poll_outfit_photo(&mut self, renderer: &aurora_render::Renderer) {
+        let Some((request, started)) = self.inventory_images.photo else {
+            return;
+        };
+        if self.snapshots.drawing() {
+            return;
+        }
+        if started {
+            self.inventory_images.photo = None;
+            self.finish_inventory_image(request, Some(aurora_i18n::tr!("photo-draw-failed").into()));
+        } else {
+            self.inventory_images.photo = Some((request, true));
+            self.photo_job(super::snapshot::Purpose::Outfit(request), renderer);
+        }
+    }
     pub(super) fn prepare_inventory_photo(&mut self, request: Uuid, w: u32, h: u32, pixels: Vec<u8>) {
         let tx = self.inventory_images.tx.clone();
         std::thread::spawn(move || {
@@ -212,17 +288,24 @@ impl App {
     }
     pub(super) fn finish_inventory_image(&mut self, request: Uuid, error: Option<String>) {
         self.inventory_images.requests.remove(&request);
-        if let Some(st) = panel(&mut self.inventory_ui, request) {
+        if self.inventory_images.outfit == Some(request) {
+            // the gallery's snapshot has no window: Appearance says why
+            self.inventory_images.outfit = None;
+            if let Some(error) = error {
+                self.appearance_ui.message = error;
+            }
+            return;
+        }
+        if let Some(st) = inventory_panel(self, request) {
             st.pending = None;
             st.error = error.unwrap_or_default();
         }
     }
     pub(super) fn finish_inventory_image_upload(&mut self, request: Uuid, error: Option<String>) {
-        if let Some(st) = panel(&mut self.inventory_ui, request) {
-            st.saved = error.is_none();
+        if let Some(st) = inventory_request_state(self, request) {
+            st.thumbnail.saved = error.is_none();
+            st.finish_thumbnail_upload(request, error.as_deref(), std::time::Instant::now());
         }
-        self.inventory_ui
-            .finish_thumbnail_upload(request, error.as_deref(), std::time::Instant::now());
         self.finish_inventory_image(request, error);
     }
     /// The item image window's Copy: an id the asset id rule allows went on
@@ -251,7 +334,8 @@ impl App {
             let Some(item) = self.inventory_images.requests.get(&reply.request).copied() else {
                 continue;
             };
-            if panel(&mut self.inventory_ui, reply.request).is_none_or(|st| st.item != Some(item)) {
+            let outfit = self.inventory_images.outfit == Some(reply.request);
+            if !outfit && inventory_panel(self, reply.request).is_none_or(|st| st.item != Some(item)) {
                 self.finish_inventory_image(reply.request, None);
                 continue;
             }
@@ -259,10 +343,18 @@ impl App {
                 Err(error) => self.finish_inventory_image(reply.request, Some(error)),
                 Ok(None) => self.finish_inventory_image(reply.request, None),
                 Ok(Some(Prepared::Choices(pixels))) => {
-                    if let Some(st) = panel(&mut self.inventory_ui, reply.request) {
-                        st.set_file_choices(&self.egui_ctx, pixels);
+                    let ctx = self.egui_ctx.clone();
+                    if let Some(st) = inventory_panel(self, reply.request) {
+                        st.set_file_choices(&ctx, pixels);
                     }
                     self.finish_inventory_image(reply.request, None);
+                }
+                // the gallery's snapshot is saved at once, with no preview
+                Ok(Some(Prepared::Photo(pixels))) if outfit => {
+                    self.inventory_images.requests.remove(&reply.request);
+                    let request = Uuid::new_v4();
+                    self.inventory_images.outfit = Some(request);
+                    self.inventory_image_action(request, item, ImageInput::Pixels(Arc::new(pixels)));
                 }
                 Ok(Some(Prepared::Photo(pixels))) => {
                     let texture = self.egui_ctx.load_texture(
@@ -270,7 +362,7 @@ impl App {
                         egui::ColorImage::from_rgba_unmultiplied([256, 256], &pixels),
                         egui::TextureOptions::LINEAR,
                     );
-                    if let Some(st) = panel(&mut self.inventory_ui, reply.request) {
+                    if let Some(st) = inventory_panel(self, reply.request) {
                         st.photo = Some(texture);
                         st.pixels = Some(Arc::new(pixels));
                     }
@@ -308,7 +400,9 @@ impl App {
                             ) {
                                 Ok(change) => {
                                     self.inventory_ui.pending = Some(reply.request);
-                                    self.inventory_ui.begin_thumbnail_upload(reply.request);
+                                    if let Some(st) = inventory_request_state(self, reply.request) {
+                                        st.begin_thumbnail_upload(reply.request);
+                                    }
                                     self.inventory_ui.pending_refresh = change.refresh.clone();
                                     self.send(NetCommand::EditInventory {
                                         request: reply.request,
@@ -320,7 +414,9 @@ impl App {
                         }
                         Prepared::Upload(data) => {
                             self.inventory_ui.pending = Some(reply.request);
-                            self.inventory_ui.begin_thumbnail_upload(reply.request);
+                            if let Some(st) = inventory_request_state(self, reply.request) {
+                                st.begin_thumbnail_upload(reply.request);
+                            }
                             self.inventory_ui.pending_refresh = vec![parent];
                             self.send(NetCommand::UploadInventoryThumbnail {
                                 request: reply.request,
@@ -359,6 +455,7 @@ impl App {
             }
         }
         poll(&mut self.inventory_ui, &self.world.inventory, &mut self.scene.anims);
+        poll(&mut self.dual_inventory_ui, &self.world.inventory, &mut self.scene.anims);
     }
 }
 
@@ -497,6 +594,22 @@ fn crop_at(image: &image::RgbaImage, [x, y]: [u32; 2]) -> Result<image::RgbaImag
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumbnail_callbacks_resolve_to_the_pane_that_started_the_request() {
+        let mut primary = InventoryUi::default();
+        let mut dual = InventoryUi::default();
+        let primary_request = Uuid::from_u128(101);
+        let dual_request = Uuid::from_u128(202);
+        primary.thumbnail.pending = Some(primary_request);
+        dual.thumbnail.pending = Some(dual_request);
+
+        assert!(inventory_state(&mut primary, dual_request).is_none());
+        assert!(inventory_state(&mut dual, primary_request).is_none());
+        assert!(inventory_state(&mut primary, primary_request).is_some());
+        assert!(inventory_state(&mut dual, dual_request).is_some());
+    }
+
     #[test]
     fn a_copy_kept_in_the_viewer_pastes_until_the_clipboard_changes() {
         let kept = Uuid::from_u128(0xa1);

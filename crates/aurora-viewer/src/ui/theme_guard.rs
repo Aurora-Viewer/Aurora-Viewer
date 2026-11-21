@@ -186,7 +186,14 @@ const ALLOWED: &[(&str, &str, &str)] = &[
 const MARKER: &str = "// theme-guard:";
 
 /// What is scanned, under `src/`.
-const ROOTS: &[&str] = &["ui", "build/ui", "crash/window.rs", "imports/ui", "imports/ui.rs"];
+const ROOTS: &[&str] = &[
+    "ui",
+    "build/ui",
+    "crash/window.rs",
+    "splash/window.rs",
+    "imports/ui",
+    "imports/ui.rs",
+];
 
 fn sources(path: &Path, out: &mut Vec<PathBuf>) {
     if path.is_dir() {

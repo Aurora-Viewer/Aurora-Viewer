@@ -51,7 +51,9 @@ fn import_menu_is_in_build_and_requests_the_chooser_toggle_without_a_type_submen
             },
             |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
-                    ui.menu_button(aurora_i18n::tr!("common-build"), |ui| build_menu(ui, &p, &mut action, "", false));
+                    ui.menu_button(aurora_i18n::tr!("common-build"), |ui| {
+                        build_menu(ui, &p, &mut panels, &mut action, "", false, false, Default::default())
+                    });
                     ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| {
                         contents_menu(ui, &p, &mut panels, &mut action, true, false)
                     });
@@ -196,6 +198,7 @@ fn menu_toolbar_right_click_import_adds_and_removes_without_running_it() {
     let layout = Layout::default();
     let mut settings = ToolbarSettings::default();
     let mut toolbar = ToolbarUi::default();
+    let mut panels = Panels::from_settings(&crate::settings::Settings::default());
     toolbar.commit_with_menus(&ctx, &layout, &mut settings);
     let mut time = 0.0;
     let mut frame = |events| {
@@ -211,7 +214,9 @@ fn menu_toolbar_right_click_import_adds_and_removes_without_running_it() {
             |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     ui.menu_button(aurora_i18n::tr!("common-build"), |ui| {
-                        menu::searchable(ui, &p, |ui| build_menu(ui, &p, &mut action, "", false));
+                        menu::searchable(ui, &p, |ui| {
+                            build_menu(ui, &p, &mut panels, &mut action, "", false, false, Default::default())
+                        });
                     });
                 });
                 crate::ui::toolbar::show_command_context(&ctx, &p);
