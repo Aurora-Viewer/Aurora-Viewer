@@ -3489,7 +3489,6 @@ ui-sound-object-creation = Création d'un objet
 session-inventory-upload-creation-denied-invalid-type-size-or-upload-count = Création refusée : type, taille ou nombre de chargements invalide.
 ui-contacts-create = Créer
 build-ui-tools-create-ctrl-4 = Créer (Ctrl+4)
-ui-bars-create-prims-ctrl-4 = Créer des prims (Ctrl+4)
 ui-places-create-folder = Créer un dossier
 ui-inventory-context-create-folder-from-selection = Créer un dossier à partir de la sélection
 common-create-favorite = Créer un favori
@@ -5585,14 +5584,12 @@ ui-place-details-edit-this-landmark = Modifier ce repère
 ui-appearance-edit-this-outfit = Modifier cette tenue
 ui-appearance-show-current-outfit = Afficher la tenue actuelle dans la liste
 ui-appearance-current-outfit-not-in-my-outfits = La tenue actuelle n’est pas enregistrée dans Mes tenues
-ui-bars-edit-objects-ctrl-3 = Modifier des objets (Ctrl+3)
 build-ui-tools-edit-parcel = Modifier la parcelle
 ui-context-edit-shape = Modifier la silhouette
 ui-context-export-shape-xml = Exporter la silhouette (XML)
 ui-context-edit-outfit = Modifier la tenue
 ui-context-edit-pbr-material = Modifier le matériau PBR
 ui-context-edit-land = Modifier le terrain
-ui-bars-edit-land-ctrl-5 = Modifier le terrain (Ctrl+5)
 ui-land-options-edit-land = Modifier le terrain :
 build-ui-tools-edit-selected-land = Modifier le terrain sélectionné
 ui-profile-edit-text = Modifier le texte
@@ -15565,6 +15562,14 @@ picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventai
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
+
+# Menu commands can be added to or removed from a toolbar.
+toolbar-add-from-menu = Ajouter à la barre d’outils
+toolbar-remove-from-menu = Retirer de la barre d’outils
+# Build › Edit objects, Create prims and Edit land as toolbar buttons (the menu shows their Ctrl+3/4/5 keys apart)
+toolbar-command-build-edit = Modifier des objets
+toolbar-command-build-create = Créer des prims
+toolbar-command-build-land = Modifier le terrain
 
 # La fenêtre Photo 360° (LLFloater360Capture, floater_360capture.xml)
 capture-360-quality-preview = Aperçu (rapide)
