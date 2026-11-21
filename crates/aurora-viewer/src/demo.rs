@@ -5922,13 +5922,15 @@ pub fn events() -> Vec<NetEvent> {
                 Quat::IDENTITY,
                 Vec3::splat(0.2),
                 sphere,
-                te([1.0, 1.0, 1.0, 1.0], 0, true, 0.3),
+                te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
                 ExtraParams {
+                    // (bright on the slab: a weak lamp's colour is lost in
+                    // the night's ambiance, which the panes do not colour)
                     light: Some(LightParams {
                         color: [1.0, 1.0, 1.0, 1.0],
-                        radius: 8.0,
+                        radius: 12.0,
                         cutoff: 0.0,
-                        falloff: 0.5,
+                        falloff: 0.0,
                     }),
                     ..Default::default()
                 },
