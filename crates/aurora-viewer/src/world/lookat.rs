@@ -69,6 +69,7 @@ pub struct Settings {
     pub private_local: bool,
     /// PrivatePointAtTarget: suppress selection hints and the editing arm.
     pub private_point_at: bool,
+    pub private_edit_beam: bool,
     /// FSLookAtTargetLimitDistance / FSLookAtTargetMaxDistance (m): a
     /// farther target is brought back to this distance from our head.
     pub limit_distance: bool,
@@ -117,6 +118,7 @@ impl Default for Settings {
             private: false,
             private_local: false,
             private_point_at: false,
+            private_edit_beam: false,
             limit_distance: false,
             max_distance: 1.0,
             head_yaw: 90.0,

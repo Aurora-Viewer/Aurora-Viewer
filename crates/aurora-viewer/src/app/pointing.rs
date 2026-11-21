@@ -88,7 +88,8 @@ impl App {
             points.set(None, now);
         }
         points.set(target, now);
-        self.update_own_beam(target, now);
+        let beam_target = selected.filter(|_| send_edit_beam(!self.settings.lookat.private_point_at, !self.settings.lookat.private_edit_beam));
+        self.update_own_beam(beam_target, now);
         let own = &mut self.world.point_at.own;
         if own.needs_send {
             let cmd = NetCommand::PointAt {
@@ -147,5 +148,22 @@ impl App {
         }
         let objects = &self.world.objects;
         self.world.beams.forget(now, |id| objects.index_of_uuid(id).is_some());
+    }
+}
+
+fn send_edit_beam(point_at_allowed: bool, beam_allowed: bool) -> bool {
+    point_at_allowed && beam_allowed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::send_edit_beam;
+
+    #[test]
+    fn editing_beam_privacy_is_independent_of_point_at_hints() {
+        assert!(send_edit_beam(true, true));
+        assert!(!send_edit_beam(true, false));
+        assert!(!send_edit_beam(false, true));
+        assert!(!send_edit_beam(false, false));
     }
 }
