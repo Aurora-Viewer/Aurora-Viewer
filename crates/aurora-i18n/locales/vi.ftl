@@ -15829,3 +15829,156 @@ ui-appearance-date-oldest-first = Ngày: cũ nhất trước
 ui-appearance-favorites-to-top = Đưa mục yêu thích lên đầu
 ui-appearance-images-to-top = Đưa bộ trang phục có ảnh lên đầu
 ui-options-group-emotes = Gộp biểu cảm với tin nhắn của người gửi
+
+### Release translations
+
+ui-options-planet-curvature = Đường cong hành tinh
+ui-options-planet-curvature-help = Vẽ thế giới trên một hành tinh tròn: nước mở rơi xuống chân trời thật thay vì chạy ra khỏi tầm mắt, với bầu trời bên dưới. Chỉ có hình ảnh mới thay đổi: vùng, vật lý và những gì người khác nhìn thấy vẫn phẳng. Trên Trái Đất, khoảng cách vẽ là vài centimet; nó được hiển thị trên biển xa. Khác với trình xem cũ
+ui-options-planet-radius = Bán kính hành tinh
+ui-options-planet-radius-help = Bán kính của hành tinh được vẽ, bằng kilômét. Bán cầu Trái Đất là 6. 371 km: từ độ cao 10 m, biển chấm dứt cách khoảng 11 km. Một hành tinh nhỏ hơn sẽ mang chân trời đến gần hơn
+ui-options-camera-frame-while-posing = Hình ảnh avatar trong khi đứng
+ui-options-camera-frame-while-posing-tip = Mở cửa sổ poser để chụp hình nhân vật, và nhấn vào một điểm kết nối sẽ đưa máy ảnh đến gần hơn với nó. Kéo một điểm liên kết không bao giờ di chuyển máy ảnh.
+ui-options-camera-still-while-posing = Giữ máy ảnh yên khi chụp hình
+ui-options-camera-still-while-posing-tip = Trong khi bạn đứng, máy ảnh dừng theo dõi hình tượng, tập trung và các phần cơ thể của nó, và đi không khởi động lại. Quỹ đạo, phóng to, xoay và mặc định vẫn hoạt động.
+ui-options-group-emotes-hint = Trong kiểu trò chuyện Aurora, một hành động như “/me waves” hiển thị dưới cùng tiêu đề với các tin nhắn do chính người đó gửi ngay trước hoặc sau hành động. Hành động không có tiêu đề riêng.
+content-perms-nested = Tạo hình ảnh
+content-perms-nested-help = Điều này cũng chỉnh sửa nội dung của các đối tượng lồng nhau, sâu tới năm cấp. Mỗi đối tượng được đặt trong thế giới hai mét trên nguyên thủy chứa nó. Các văn lệnh chạy của nó sẽ bị dừng lại, nội dung thay đổi, và các văn lược bắt đầu lại. Sau đó đối tượng sẽ được lưu lại vào hộp chứa. Quyền truy cập của đối tượng trong hộp được thiết lập và kiểm tra trước khi sao tạm thời của nó trong thế gian bị xóa. Các đối tượng không thể sao chép, chuyển hoặc sửa đổi vẫn đóng lại. Bạn cần quyền xây dựng tại vị trí đặt.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } vật thể trong nội dung sẽ được mở, bỏ qua: { $skipped }.
+       *[other] { $objects } các đối tượng trong nội dung sẽ được mở, bỏ qua: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = không sao chép hay chuyển
+content-perms-nested-skip-no-modify = không thể sửa đổi
+content-perms-nested-skip-depth = hơn 5 cấp độ sâu
+content-perms-nested-rezzing = Đang đưa “{ $name }” ra thế giới (cấp lồng { $level })…
+content-perms-nested-stopping = Đang dừng các văn bản của "{ $name }"...
+content-perms-nested-applying = Đang thay đổi nội dung của "{ $name }"...
+content-perms-nested-restoring = Đang khởi động lại văn lệnh của "{ $name }"...
+content-perms-nested-saving = Đang lưu đối tượng “{ $name }” trở lại vào hộp chứa...
+content-perms-nested-deleting = Đang xóa bản sao tạm thời trong thế giới của "{ $name }"...
+content-perms-nested-finished = Vật phẩm đã cập nhật: { $count }. Đối tượng lồng nhau: { $objects }. Đã bỏ qua: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } được giữ bên cạnh bản gốc: tên gọi khác nhau.
+       *[other] { $kept } được giữ lại bên cạnh bản gốc: tên gọi khác nhau.
+    }
+content-perms-nested-stopped = Dừng: các bản sao tạm thời trong thế giới đã bị xóa, các mục ban đầu được để lại như cũ.
+content-perms-nested-stop-help = Dừng thao tác và xóa các bản sao tạm còn trong thế giới. Vật phẩm gốc giữ nguyên. Các đối tượng đã lưu trở lại vẫn giữ những thay đổi đã thực hiện.
+content-perms-nested-scripts-warning = Mỗi đối tượng được đưa ra thế giới (rez), nên tập lệnh có thể kích hoạt hành động lúc xuất hiện, chẳng hạn như gây nổ, dịch chuyển hoặc trao vật phẩm, trước khi bị dừng. Để ngăn việc đó, hãy bật Tắt tập lệnh trong Vùng / Điền trang ở vùng bạn quản lý, rồi tắt tùy chọn này sau khi hoàn tất.
+content-perms-nested-original-kept = “{ $name }” đã được lưu lại, nhưng mục gốc của nó không thể bị xóa: cả hai đều nằm trong nội dung.
+content-perms-nested-copy-left = Bản sao tạm thời trong thế giới của "{ $name }" không thể bị xóa: xóa nó bằng tay.
+content-perms-nested-save-unconfirmed = việc lưu lại không được xác nhận
+content-perms-nested-saved-perms-unconfirmed = Đã dừng: không thể xác nhận quyền của đối tượng đã được lưu lại trong thùng chứa. Các bản sao làm việc tạm thời trên thế giới đã được giữ; hãy kiểm tra chúng trước khi gỡ bỏ chúng.
+content-perms-nested-timeout = bộ mô phỏng không đáp ứng kịp thời
+content-perms-nested-rez-refused = Dừng lại: mô phỏng từ chối đặt vào thế giới “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Dừng: “ { $name } ” không xuất hiện trong vòng 15 giây. Nếu nó xuất hiện sau trên đối tượng nguyên thủy, hãy xoá nó đi.
+content-perms-nested-not-ours = Dừng lại: đối tượng được đặt trong thế giới cho "{ $name }" không đến từ nội dung này, nó đã bị bỏ lại trong thế gian.
+content-perms-nested-unverified = Dừng lại: đối tượng xuất hiện cho "{ $name }" không thể được kiểm tra như được đặt trong thế giới từ nội dung này, vì vậy nó được để lại trong thế gian.
+content-perms-nested-group-split = Đã dừng: “ { $name } ” (một số đối tượng được lưu như một) trở lại như một đối tượng duy nhất. Các phần của nó được đặt trong thế giới được giữ trong thế gian: chọn tất cả chúng và lấy chúng để tạo nhóm lại.
+content-perms-nested-failed = “{ $name }Không thay đổi: { $reason }.
+content-perms-nested-original-gone = “{ $name }” được giữ trong thế giới: lưu lại của nó đã không được xác nhận và mục đích ban đầu của nó bị mất.
+content-perms-nested-gone = vật thể đã rời khỏi thế giới
+content-perms-nested-land-denied = Dừng: bạn không thể xây dựng trên đối tượng nguyên thủy này, nơi các đối tượng sẽ được đặt trong thế giới.
+content-perms-nested-parcel-full = Dừng lại: gói không còn chỗ cho các bản sao tạm thời trên thế giới.
+content-perms-nested-rlva = Dừng: đặt các đối tượng trong thế giới bị hạn chế (RLVa).
+content-perms-nested-too-many = quá nhiều văn lệnh
+content-perms-nested-unreadable = không thể đọc nội dung của nó
+content-perms-demo-chest = Hộp chứa
+content-perms-demo-notes = Ghi chú bên trong hộp chứa
+content-perms-demo-outer = Hộp bên ngoài
+content-perms-demo-glow = Văn lệnh làm cho vật thể phát sáng
+content-perms-demo-readme = Đọc tôi trước đi.
+content-perms-demo-inner = Hộp chứa bên trong
+content-perms-demo-inner-note = Ghi chú trong hộp bên trong
+content-perms-demo-tiny = Rất nhỏ
+content-perms-demo-spin = Văn lệnh xoay đối tượng
+content-perms-demo-heirloom = Di sản gia đình.
+content-perms-demo-sealed = Hộp đóng kín
+content-perms-demo-linked = Nhóm các đối tượng kết hợp
+content-perms-demo-pebble = Đá tròn nhỏName
+content-perms-demo-stack = Xếp chồng hộp
+dev-toolbox-o10 = Hộp nhấn ảnh tượng
+rlva-selftest-confirm-wear = Nó đeo vật thể của nó ở chân sau phải, chân sau trái và đầu đuôi, và viết một văn lệnh truyền tải nhỏ trong hai trong số chúng. Những gì bạn đea trên ba điểm này có thể được cởi ra.
+ui-environment-sort-by-name = Sắp xếp theo bảng chữ cái
+ui-environment-sorted-by-name = Hiện đang sắp xếp theo tên. Nhấn để phục hồi thứ tự từ kho của bạn.
+ui-environment-in-inventory-order = Theo thứ tự của đồ đạc. Nhấn để sắp xếp chúng A–Z.
+ui-chat-contacts-groups-sub = Nhóm · { $count }
+ui-options-soft-shadows = Bóng mềm
+ui-options-soft-shadows-help = Bóng Mặt Trời với các cạnh mềm dẻo hơn khi vật thể càng xa khỏi cái nó che bóng, giống như trong cuộc sống thực: bóng của một cột cao bị mờ dần về phía đầu của nó trong khi chân vẫn còn sắc nét. Thí nghiệm, tắt mặc định; tốn một phần trăm mili giây trên card đồ họa
+ui-options-shadow-softness = Độ mềm bóng
+ui-options-shadow-softness-help = Kích thước của ánh sáng cho bóng mềm: 1 là một ánh đèn có đường kính 2,3 độ, 2 là một cái lớn hơn làm bóng mỏng gấp đôi (Mặt trời thực sự khoảng 0,2), 0 là một đèn không kích thước: bóng mờ vẫn như trước, bao gồm cả máy chiếu
+ui-options-shadow-softness-needs-soft = Bật bóng mềm để sử dụng nó
+ui-options-shadow-intensity = Cường độ bóng
+ui-options-shadow-intensity-help = Độ tối của bóng Mặt Trời: 1 là độ tối bình thường, thấp hơn cho phép nhiều ánh sáng vào
+ui-options-system-fonts-searching = Đang tìm kiếm phông chữ...
+demo-emotes-nova = /me sắp xếp một cái ghế cạnh suối nước.
+demo-emotes-orion = Từ đây trông rất tuyệt!
+demo-teleport-access-neighbour = Hàng xóm ở vùng Người lớn (bản thử)
+photo-light-shadow-softness = Độ mềm bóng
+photo-light-shadow-intensity = Cường độ bóng
+photo-light-shadow-reset = Trở lại giá trị của Tùy chọn
+world-teleport-access-blocked-title = Thông tin bị chặn.
+world-teleport-access-adults-only = Vùng mà bạn đang thăm có chứa { $rating } nội dung, chỉ dành cho người lớn.
+world-teleport-access-change-and-reteleport = Vùng bạn muốn đến có nội dung được xếp hạng { $rating }. Tùy chọn hiện tại của bạn loại trừ nội dung xếp hạng { $rating }. Bạn có thể đổi tùy chọn để tiếp tục dịch chuyển hoặc hủy chuyến dịch chuyển.
+world-teleport-access-change = Vùng bạn muốn đến có nội dung được xếp hạng { $rating }. Tùy chọn hiện tại của bạn loại trừ nội dung xếp hạng { $rating }. Bạn có thể đổi tùy chọn hoặc hủy chuyến dịch chuyển. Sau khi đổi tùy chọn, hãy thử dịch chuyển lại.
+world-teleport-access-out-of-sync = Chúng tôi đang gặp khó khăn về kỹ thuật với việc truyền tải của anh bởi vì sự ưa thích của anh không đồng bộ với máy chủ.
+world-teleport-access-rated = Vị trí mà anh chọn được xếp hạng { $rating }.
+world-teleport-access-allow = Tùy chọn hiện tại của bạn chưa cho phép nội dung xếp hạng { $rating }. Khi cho phép, tùy chọn của bạn sẽ được cập nhật.
+world-teleport-access-allow-button = Cho phép nội dung { $rating }
+world-teleport-access-not-on-account = Vùng mà bạn đang cố đến được xếp hạng { $rating }, không có sẵn trên loại tài khoản của bạn.
+world-teleport-access-change-and-continue = Thay đổi và tiếp tục
+world-teleport-access-change-preferences = Thay đổi tùy chọn
+world-teleport-access-preference-changed-title = Đánh giá nội dung đã thay đổi
+world-teleport-access-preference-changed = Bạn sẽ không nhận được thông báo nào nữa về việc sắp đến thăm một vùng có nội dung { $rating }. Bạn có thể thay đổi các tùy chọn nội dung trong tương lai trong Tùy chọn › Bảo mật.
+people-show-group-sheet = Hiển thị chi tiết nhóm
+people-group-details-empty = Không có nhóm để hiển thị
+ao-import-unfinished-retry = Không hoàn thành. AO nhập đã có trong #Aurora/{ $folder }Dùng thông báo khôi phục trong AO cửa sổ trước khi thử lại.
+ao-unfinished-import =
+    { $count ->
+        [one] Chưa nhập xong AO trong #Aurora/{ $folder }. Số bộ: { $count }.
+       *[other] Chưa nhập xong AO trong #Aurora/{ $folder }. Số bộ: { $count }.
+    }
+ao-finish-import = Kết thúc nhập
+ao-show-in-inventory = Hiển thị trong kho
+ao-duplicate-native =
+    { $count ->
+        [one] Đã tìm thấy một thư mục khác: #Aurora/{ $folder }. Số bộ: { $count }. Bạn muốn hợp nhất thư mục này vào thư mục AO đang hoạt động không?
+       *[other] Đã tìm thấy một thư mục khác: #Aurora/{ $folder }. Số bộ: { $count }. Bạn muốn hợp nhất thư mục này vào thư mục AO đang hoạt động không?
+    }
+ao-native-already-exists = Một bản ghi động với tên này đã tồn tại
+rlva-im-ended-local = { $name } đã đóng cửa từ xa IM cuộc trò chuyện với @stopim
+rlva-blocked-script-dialog = Không thể hiển thị hộp thoại văn lệnh hay hộp văn bản do hạn chế RLV
+rlva-blocked-nearby = Không thể thấy sự hiện diện của các hình tượng gần đó do hạn chế RLV
+rlva-tools-retained = Giữ cho đến khi đăng nhập
+rlva-read-at-login = Sửa đổi sẽ có hiệu lực vào lần đăng nhập tiếp theo.
+rlva-debug-commands-chat = Mỗi lệnh cũng nhận được một dòng trong chat gần đó, dưới tên của đối tượng: điều nó thực hiện, những gì thất bại và tại sao, điều gì chờ đăng nhập.
+rlva-blocked-start-im = Không thể khởi động IM phiên chạy với { $recipient } do RLV hạn chế
+rlva-blocked-start-conference = Không thể bắt đầu cuộc họp với [RECIPIENT] do RLV hạn chế
+rlva-anonym-waiting = (Đang tải...)
+rlva-anonym-unknown = (Không biết)
+rlva-blocked-teleport = Không thể khởi động chuyển tuyến do hạn chế RLV
+rlva-blocked-permission-attach = Cố gắng kết nối '{ $object }' đã bị từ chối do RLV hạn chế
+rlva-blocked-permission-teleport = '{ $object }'đã bị từ chối cho phép chuyển cậu vì... RLV hạn chế
+rlva-blocked-view-notecard = Không thể mở notecard vì hạn chế RLVa.
+rlva-blocked-view-script = Không thể mở văn lệnh do hạn chế RLVa.
+rlva-blocked-view-texture = Không thể mở kết cấu do hạn chế RLVa.
+rlva-debug-explicit-point = Bỏ qua tên điểm gắn trên mục và thư mục kho
+rlva-debug-explicit-point-hint = Trong khi một điểm gắn kết được khóa, Wear và Add gửi một đối tượng đến điểm mặc định của nó thay vì điểm tên của nó hoặc tên thư mục của nó cho (không hoàn chỉnh).
+ui-bars-clouds-paused-tip = Các đám mây được giữ yên trong phiên chạy này. Nhấn để cho chúng di chuyển lại.
+phototools-tab-dof-glow = Độ sâu trường ảnh và hiệu ứng phát sáng
+phototools-lights-shadows = Thiết lập ánh sáng và bóng
+phototools-ambient-occlusion = Thiết lập che khuất môi trường
+phototools-dof = Thiết lập độ sâu trường ảnh
+phototools-tone-mapping = Thiết lập bản đồ màu sắc HDR
+phototools-glow = Thiết lập ánh sáng
+phototools-photo-banner = Cửa sổ ảnh mở: các hàng cửa sổ hình ảnh cũng thay đổi ảnh. Độ sâu của vùng được giữ lại cho ảnh tiếp theo; ánh sáng, phơi sáng, bóng tối, chặn môi trường và ánh đèn hư hỏng kéo dài cho đến khi cửa sập ảnh đóng lại.
+phototools-photo-boost = Chất lượng ảnh được nâng lên: các hàng đồ họa hiển thị giá trị được nâng, và một thay đổi bạn làm ở đó sẽ được giữ như là của riêng bạn.
+phototools-photo-focus-help = Nhấn: điểm cuối cùng được nhấn trên thế giới. Con trỏ: điểm dưới con trỏ. Hướng dẫn: khoảng cách bạn đặt.
+phototools-photo-distance-help = Khoảng cách mà thấu kính tập trung khi tập trung thủ công.
+phototools-director-lens = Thấu kính của đạo diễn được hiển thị khi cửa sổ của nó mở, trên các thiết lập bên dưới.
+phototools-view-angle-viewfinder = Kính nhìn sở hữu góc nhìn: của bạn trở lại khi nó đóng.
+ui-options-dof-show-focus-point = Hiện điểm tập trung
+ui-options-dof-show-focus-point-help = Một dấu chéo nhỏ trên điểm mà thấu kính tập trung vào: màu vàng khi nó tự do, đỏ khi nó bị khóa.

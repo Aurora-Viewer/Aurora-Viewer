@@ -15861,3 +15861,156 @@ ui-appearance-date-oldest-first = তারিখ: পুরোনোগুল�
 ui-appearance-favorites-to-top = পছন্দের পোশাক আগে
 ui-appearance-images-to-top = ছবিসহ পোশাক আগে
 ui-options-group-emotes = ইমোট প্রেরকের বার্তার সঙ্গে রাখুন
+
+### Release translations
+
+ui-options-planet-curvature = গ্রহের বক্রতা
+ui-options-planet-curvature-help = একটি গোলাকার গ্রহের উপর পৃথিবী আঁকা হয়: খোলা পানি চোখের উচ্চতা পর্যন্ত চলে যাওয়ার পরিবর্তে সত্যিকার দিগন্তের দিকে পড়ে যায়, এর নিচে আকাশ থাকে । শুধুমাত্র প্রদর্শন পরিবর্তন করে: অঞ্চল, পদার্থবিজ্ঞান এবং অন্যরা যা দেখে তা সমতল থাকে । পৃথিবীতে আঁকার দূরত্বের মধ্যে পড়ে কয়েক সেন্টিমিটার; এটি দূর সমুদ্রে দেখা যায় । পুরনো প্রদর্শক থেকে ভিন্ন
+ui-options-planet-radius = গ্রহের ব্যাস
+ui-options-planet-radius-help = কিলোমিটার এককে আঁকা গ্রহের ব্যাসার্ধ । পৃথিবীর ব্যাসার্ধিক রেখা ৬,৩৭১ কিলোমিটারের মত: ১০ মিটার উঁচু থেকে সমুদ্রের শেষ প্রান্ত প্রায় ১১ কিমি দূরে অবস্থিত । ছোট গ্রহগুলো দিগন্তকে আরও কাছে নিয়ে আসে
+ui-options-camera-frame-while-posing = পোজ দেওয়ার সময় অ্যাভাটারকে ফ্রেম করা হবে
+ui-options-camera-frame-while-posing-tip = পোজার খোলা হলে অ্যাভাটার ফ্রেম করা হবে, এবং একটি জয়েন্টে ক্লিক করলে ক্যামেরাটি এর কাছাকাছি নিয়ে আসবে। একটি জয়েন্ট টেনে আনা হলে ক্যামেরাকে সরানো হবে না।
+ui-options-camera-still-while-posing = পোজ দেওয়ার সময় ক্যামেরা স্থির রাখো
+ui-options-camera-still-while-posing-tip = আপনি যখন পোজ দিচ্ছেন, তখন ক্যামেরা আভাটার অনুসরণ বন্ধ করে দেয়, এর ফোকাস এবং শরীরের অংশগুলোর দিকে নজর রাখে, এবং হাঁটলে এটি পুনরায় সেট করা হয় না। কক্ষপথ, জুম, প্যান এবং প্রাক-নির্ধারিত মানগুলি এখনও কাজ করে।
+ui-options-group-emotes-hint = Aurora চ্যাট স্টাইলে /me waves-এর মতো কোনো ইমোট ঠিক আগে বা পরে একই ব্যক্তি যে বার্তা পাঠিয়েছেন, তার শিরোনামের নিচেই দেখানো হয়। ইমোটের জন্য আলাদা শিরোনাম হয় না।
+content-perms-nested = বস্তুর মধ্যে বস্তু অন্তর্ভুক্ত করো
+content-perms-nested-help = এটি ইনস্টলকৃত বস্তুর বিষয়বস্তুও সম্পাদন করে, সর্বোচ্চ পাঁচ স্তর গভীরে । প্রতিটি বস্তুকে প্রাথমিকের দু' মিটার উপরে রাখা হয় যেখানে এটি রয়েছে । এর চলমান স্ক্রিপ্ট বন্ধ করা হয়, এর বিষয়বস্থা পরিবর্তন করা হয় এবং তার স্ক্রিপ্ট পুনরায় আরম্ভ করা হয় । বস্তুটি তখন কন্টেইনার- এ সংরক্ষণ করা হয়। কনটেইনারের মধ্যে বস্তুর অনুমতি নির্ধারণ করা হয় ও পরীক্ষা করা হয় পৃথিবীতে এর অস্থায়ী কপি মুছে ফেলার পূর্বে । আপনি যে বস্তুগুলি কপি করতে পারবেন না, স্থানান্তর করতে পারেন না অথবা পরিবর্তন করতে পারেন তা বন্ধ অবস্থায় থাকে । আপনার অবস্থান নির্মাণ করার জন্য অনুমতি প্রয়োজন ।
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } বিষয়বস্তুতে অবজেক্ট খোলা হবে, ছাড়ো: { $skipped }.
+       *[other] { $objects } বিষয়বস্তুতে অবজেক্ট খোলা হবে, ছেড়ে দেওয়া হবে: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = অনুলিপি অথবা স্থানান্তর নেই
+content-perms-nested-skip-no-modify = পরিবর্তন করা যাবে না
+content-perms-nested-skip-depth = ৫ স্তর গভীরতার বেশি
+content-perms-nested-rezzing = বস্তুটি স্থাপন করা হচ্ছে “{ $name }“ বিশ্বে (নেস্টিং লেভেল { $level })…
+content-perms-nested-stopping = “ এর স্ক্রিপ্ট বন্ধ করা হচ্ছে{ $name }”…
+content-perms-nested-applying = “-এর বিষয়বস্তু পরিবর্তন করা হচ্ছে{ $name }”…
+content-perms-nested-restoring = “ এর স্ক্রিপ্ট আরম্ভ করা হচ্ছে{ $name }“আবার…
+content-perms-nested-saving = বস্তু সংরক্ষণ করা হচ্ছে “{ $name }তার কন্টেইনারে ফিরিয়ে আনা হয়েছে...
+content-perms-nested-deleting = “-এর অস্থায়ী কপি মুছে ফেলা হচ্ছে{ $name }”…
+content-perms-nested-finished = আপডেট করা আইটেম: { $count }। ভেতরের অবজেক্ট: { $objects }। বাদ দেওয়া হয়েছে: { $skipped }।
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } মূলের পাশে রাখা হয়েছে: নামগুলো ভিন্ন ছিল।
+       *[other] { $kept } তাদের মূলের পাশে রাখা: নামগুলি ভিন্ন ছিল।
+    }
+content-perms-nested-stopped = বন্ধ করা হয়েছে: বিশ্বের অস্থায়ী অনুলিপি মুছে ফেলা হয়েছে, মূল বস্তুগুলো তাদের অবস্থায় রেখে দেওয়া হয়েছে।
+content-perms-nested-stop-help = প্রক্রিয়া থামায় এবং জগতে থাকা অস্থায়ী কপিগুলো মুছে দেয়। মূল আইটেম অপরিবর্তিত থাকে। যে অবজেক্টগুলো ইতিমধ্যে সংরক্ষণ করা হয়েছে, সেগুলোর পরিবর্তন বজায় থাকে।
+content-perms-nested-scripts-warning = প্রতিটি অবজেক্ট জগতে রেজ করা হয়। তাই স্ক্রিপ্ট থামানোর আগেই রেজের সময়কার কাজগুলো চলবে, যেমন বিস্ফোরণ, টেলিপোর্ট বা কোনো আইটেম দেওয়া। তা ঠেকাতে আপনার পরিচালিত অঞ্চলে «অঞ্চল / এস্টেট» থেকে আগে স্ক্রিপ্ট নিষ্ক্রিয় করুন এবং কাজ শেষে আবার চালু করুন।
+content-perms-nested-original-kept = “{ $name }“ পুনরায় সংরক্ষণ করা হয়েছে, কিন্তু এর মূল বিষয়বস্তু মুছে ফেলা যায়নি: উভয়টিই বিষয়বস্থার মধ্যে রয়েছে।
+content-perms-nested-copy-left = বিশ্বের অস্থায়ী কপি “{ $name }” মুছে ফেলা যায়নি: এটি নিজেই মুছে ফেলুন।
+content-perms-nested-save-unconfirmed = সংরক্ষণের পূর্বাবস্থা নিশ্চিত করা হয়নি
+content-perms-nested-saved-perms-unconfirmed = থামানো হয়েছে: অবজেক্টের অনুমতি তার কন্টেইনার-এ পুনরায় সংরক্ষণ করা সম্ভব হয়নি। বিশ্বের অস্থায়ী কাজের অনুলিপি সংরক্ষিত আছে; অপসারণ করার পূর্বে পরীক্ষা করুন।
+content-perms-nested-timeout = সিমুলেটর সময়মত উত্তর দেয়নি
+content-perms-nested-rez-refused = বন্ধ: সিমুলেটর পৃথিবীতে স্থান দিতে অস্বীকার করেছে “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = বন্ধ করা হয়েছে: “{ $name }” ১৫ সেকেন্ডের মধ্যে প্রদর্শিত হয়নি । প্রাথমিক অবজেক্টের উপর যদি পরে এটি প্রদর্শন করা হয়, তাহলে তা মুছে ফেলুন ।
+content-perms-nested-not-ours = থামিয়ে দেওয়া হয়েছে: “-এর জন্য পৃথিবীতে স্থাপন করা বস্তু{ $name }“ এই বিষয়বস্তু থেকে আসে না, এটি বিশ্বে ছেড়ে দেয়া হয়েছে।
+content-perms-nested-unverified = বন্ধ করা হয়েছে: “- এর জন্য দেখানো বস্তু{ $name }এই বিষয়বস্তু থেকে বিশ্বে স্থাপন করা হয়েছে কিনা তা পরীক্ষা করা যায়নি, তাই এটিকে বিশ্বে ছেড়ে দেয়া হয়েছে।
+content-perms-nested-group-split = বন্ধ করা হয়েছে: “{ $name }” (একাধিক বস্তুকে এক হিসেবে সংরক্ষণ করা) একটি একক বস্তু হিসাবে ফিরে আসে। এর বিশ্বের অংশগুলি বিশ্বে রাখা হয়: তাদের সবাইকে নির্বাচন করুন এবং তাদের গ্রুপটি পুনরায় তৈরি করতে নিন।
+content-perms-nested-failed = “{ $name }” পরিবর্তন না করে রাখা হয়েছে: { $reason }.
+content-perms-nested-original-gone = “{ $name }“ বিশ্বে রাখা হয়েছে: এর সংরক্ষণ ফিরে পাওয়া নিশ্চিত করা হয়নি এবং এর মূল উপাদান হারিয়ে গেছে।
+content-perms-nested-gone = বস্তুটি পৃথিবী ছেড়ে চলে গেছে
+content-perms-nested-land-denied = বন্ধ করা হয়েছে: আপনি এই প্রাথমিক বস্তুর উপরে নির্মাণ করতে পারবেন না, যেখানে বস্তুগুলো পৃথিবীতে স্থাপন করা হবে।
+content-perms-nested-parcel-full = বন্ধ করা হয়েছে: এই প্যাকেজটিতে পৃথিবীর অস্থায়ী কপি সংরক্ষণের জন্য আর কোন জায়গা নেই।
+content-perms-nested-rlva = বন্ধ: বিশ্বে বস্তু স্থাপন করা নিষিদ্ধ (RLVa).
+content-perms-nested-too-many = অত্যধিক সংখ্যক স্ক্রিপ্ট
+content-perms-nested-unreadable = এর বিষয়বস্তু পড়া যায়নি
+content-perms-demo-chest = সংরক্ষণাগার
+content-perms-demo-notes = সংরক্ষণাগারের মধ্যে নোট
+content-perms-demo-outer = বাইরের বাক্স
+content-perms-demo-glow = অবজেক্টটিকে জ্বলন্ত করে তোলার জন্য স্ক্রিপ্ট
+content-perms-demo-readme = প্রথমে আমাকে পড়ো
+content-perms-demo-inner = অভ্যন্তরীণ কন্টেইনার
+content-perms-demo-inner-note = অভ্যন্তরীণ বাক্সের মধ্যে নোট
+content-perms-demo-tiny = খুব ছোট বাক্স
+content-perms-demo-spin = বস্তুকে আবর্তন করার জন্য স্ক্রিপ্ট
+content-perms-demo-heirloom = পারিবারিক ঐতিহ্য
+content-perms-demo-sealed = বন্ধ বাক্স
+content-perms-demo-linked = সংযুক্ত বস্তুর গ্রুপ
+content-perms-demo-pebble = ছোট গোলাকার পাথর
+content-perms-demo-stack = ক্রেট স্ট্যাক
+dev-toolbox-o10 = অ্যাভাটার হিটবক্স
+rlva-selftest-confirm-wear = ডান পিছনের পা, বাম পিছনের প্যাটার্ন এবং টেইল টিপ- এ এটি তার বস্তুগুলি পরবে এবং তাদের দুটিতে একটি ছোট রিলে স্ক্রিপ্ট লিখবে । এই তিনটি বিন্দুতে আপনি যা পরেন তা সরিয়ে ফেলা যেতে পারে ।
+ui-environment-sort-by-name = বর্ণানুক্রমে সাজাও
+ui-environment-sorted-by-name = বর্তমানে নাম অনুযায়ী সাজানো হয়েছে। আপনার ইনভেন্টরি থেকে ক্রম পুনরুদ্ধার করতে ক্লিক করুন।
+ui-environment-in-inventory-order = আপনার ইনভেস্টমেন্টের ক্রম অনুযায়ী। তাদের সাজাতে ক্লিক করুন A–Z.
+ui-chat-contacts-groups-sub = গ্রুপ { $count }
+ui-options-soft-shadows = নরম ছায়া
+ui-options-soft-shadows-help = সূর্যের ছায়া যত বেশি দূরে থাকবে, ততই এর প্রান্তগুলো নরম হয়ে যাবে, বাস্তব জীবনের মতো: একটি উঁচু স্তম্ভের ছায়া তার শীর্ষের দিকে অস্পষ্ট হয়ে যায়, কিন্তু একটি পা তীক্ষ্ণ থাকে। পরীক্ষামূলক, ডিফল্টভাবে নিষ্ক্রিয়; গ্রাফিক্স কার্ডে মিলিসেকেন্ডের এক অংশ খরচ হয়
+ui-options-shadow-softness = ছায়ার নরমতা
+ui-options-shadow-softness-help = নরম ছায়ার জন্য আলোর আকার: ১ হল ২. ৩ ডিগ্রি ব্যাসার্ধের আলো, ২ একটি বড় আলো যা ছায়াকে দ্বিগুণভাবে নরম করে (প্রকৃত সূর্য প্রায় ০. ২), ০ কোন আকারবিহীন আলো: প্রজেক্টরের ছায়া সহ ছায়া পূর্বের মতই থাকবে
+ui-options-shadow-softness-needs-soft = এটি ব্যবহার করার জন্য নরম ছায়া সক্রিয় করুন
+ui-options-shadow-intensity = ছায়ার গভীরতা
+ui-options-shadow-intensity-help = সূর্যের ছায়া কতটা অন্ধকার: ১ হল স্বাভাবিক অন্ধকারাচ্ছন্নতা, কম হলে এতে বেশি আলো প্রবেশ করবে
+ui-options-system-fonts-searching = ফন্ট অনুসন্ধান করা হচ্ছে...
+demo-emotes-nova = /me ফোঁটা দ্বারা একটি বেঞ্চ নিচে সেট
+demo-emotes-orion = এখান থেকে দেখলে চমৎকার লাগছে!
+demo-teleport-access-neighbour = প্রাপ্তবয়স্ক প্রতিবেশী (ডেমো)
+photo-light-shadow-softness = ছায়ার নরমতা
+photo-light-shadow-intensity = ছায়ার গভীরতা
+photo-light-shadow-reset = পছন্দের মান পুনরায় প্রদর্শন করো
+world-teleport-access-blocked-title = টেলিপোর্ট বন্ধ করা হয়েছে
+world-teleport-access-adults-only = আপনি যে অঞ্চলটি পরিদর্শন করতে চাচ্ছেন তাতে রয়েছে { $rating } এই ধরনের বিষয়বস্তু শুধুমাত্র প্রাপ্তবয়স্কদের জন্য উপলব্ধ।
+world-teleport-access-change-and-reteleport = আপনি যে অঞ্চলে যেতে চাইছেন সেখানে { $rating } রেটিংয়ের কনটেন্ট আছে। বর্তমান পছন্দের সেটিংসে { $rating } রেটিংয়ের কনটেন্ট বাদ দেওয়া হয়েছে। সেটিংস বদলে টেলিপোর্ট চালিয়ে যেতে পারেন বা টেলিপোর্ট বাতিল করতে পারেন।
+world-teleport-access-change = আপনি যে অঞ্চলে যেতে চাইছেন সেখানে { $rating } রেটিংয়ের কনটেন্ট আছে। বর্তমান পছন্দের সেটিংসে { $rating } রেটিংয়ের কনটেন্ট বাদ দেওয়া হয়েছে। সেটিংস বদলাতে পারেন বা টেলিপোর্ট বাতিল করতে পারেন। সেটিংস বদলালে আবার টেলিপোর্ট করার চেষ্টা করুন।
+world-teleport-access-out-of-sync = আপনার টেলিপোর্টের সাথে আমাদের প্রযুক্তিগত সমস্যা রয়েছে কারণ আপনার পছন্দ সার্ভারের সাথে সামঞ্জস্যপূর্ণ নয়।
+world-teleport-access-rated = আপনি যে অবস্থানটি বেছে নিয়েছেন তা রেটিংকৃত { $rating }.
+world-teleport-access-allow = আপনার বর্তমান সেটিংসে { $rating } রেটিংয়ের কনটেন্ট অনুমোদিত নয়। অনুমতি দিলে সেটিংস আপডেট হবে।
+world-teleport-access-allow-button = { $rating } বিষয়বস্তু অনুমতি দিন
+world-teleport-access-not-on-account = আপনি যে অঞ্চলটি পরিদর্শন করতে চাচ্ছেন তা রেটিংকৃত { $rating }, যা আপনার অ্যাকাউন্ট ধরনের জন্য উপলব্ধ নয়।
+world-teleport-access-change-and-continue = পরিবর্তন এবং চালিয়ে যাও
+world-teleport-access-change-preferences = পছন্দ পরিবর্তন করুন
+world-teleport-access-preference-changed-title = বিষয়বস্তু রেটিং পরিবর্তন করা হয়েছে
+world-teleport-access-preference-changed = আপনি আর কোনো বিজ্ঞপ্তি পাবেন না যে আপনি { $rating } বিষয়বস্তু সহ একটি অঞ্চল পরিদর্শন করতে যাচ্ছেন। ভবিষ্যতে পছন্দ › গোপনীয়তা বিভাগে আপনার বিষয়বস্থার পছন্দে পরিবর্তন করতে পারেন।
+people-show-group-sheet = গ্রুপের বিস্তারিত বিবরণ দেখাও
+people-group-details-empty = প্রদর্শনের জন্য কোনো গ্রুপ নেই
+ao-import-unfinished-retry = একটি অসমাপ্ত AO ইম্পোর্ট ইতিমধ্যেই বিদ্যমান #Aurora/{ $folder }. পুনরুদ্ধার নোটিশ ব্যবহার করুন AO পুনরায় চেষ্টা করার পূর্বে উইণ্ডো বন্ধ করা হবে ।
+ao-unfinished-import =
+    { $count ->
+        [one] #Aurora/{ $folder }-এ AO ইম্পোর্ট অসম্পূর্ণ। সেটের সংখ্যা: { $count }।
+       *[other] #Aurora/{ $folder }-এ AO ইম্পোর্ট অসম্পূর্ণ। সেটের সংখ্যা: { $count }।
+    }
+ao-finish-import = ইম্পোর্ট শেষ করো
+ao-show-in-inventory = তালিকায় দেখাও
+ao-duplicate-native =
+    { $count ->
+        [one] অন্য একটি ফোল্ডার পাওয়া গেছে: #Aurora/{ $folder }। সেটের সংখ্যা: { $count }। এটি সক্রিয় AO ফোল্ডারের সঙ্গে একত্র করবেন?
+       *[other] অন্য একটি ফোল্ডার পাওয়া গেছে: #Aurora/{ $folder }। সেটের সংখ্যা: { $count }। এটি সক্রিয় AO ফোল্ডারের সঙ্গে একত্র করবেন?
+    }
+ao-native-already-exists = এই নামের একটি অভ্যন্তরীণ অ্যানিমেশন ওভাররাইড ইতিমধ্যেই বিদ্যমান
+rlva-im-ended-local = { $name } দূরবর্তী বন্ধ করেছে IM সঙ্গে কথাবার্তা @stopim
+rlva-blocked-script-dialog = RLV সীমাবদ্ধতার কারণে স্ক্রিপ্ট ডায়ালগ অথবা টেক্সট বাক্স প্রদর্শন করা যায়নি
+rlva-blocked-nearby = RLV-এর সীমিততার কারণে নিকটবর্তী অ্যাভাটারের উপস্থিতি দেখা যায়নি
+rlva-tools-retained = লগ- ইন পর্যন্ত সংরক্ষিত
+rlva-read-at-login = পরবর্তী লগ- ইনকালে পরিবর্তনগুলি প্রয়োগ করা হবে ।
+rlva-debug-commands-chat = প্রত্যেকটি কমান্ডের কাছের আড্ডায় একটি লাইন পাওয়া যায়, বস্তুর নামের নিচে: এটি কি করে, কী ব্যর্থ হয় এবং কেন, লগইন করার জন্য কি অপেক্ষা করছে।
+rlva-blocked-start-im = আরম্ভ করতে ব্যর্থ IM এর সাথে সেশন { $recipient } কারণ RLV সীমাবদ্ধতা
+rlva-blocked-start-conference = কনফারেন্স আরম্ভ করতে ব্যর্থ [RECIPIENT] কারণ RLV সীমাবদ্ধতা
+rlva-anonym-waiting = (লোড করা হচ্ছে...)
+rlva-anonym-unknown = (অজানা)
+rlva-blocked-teleport = RLV সীমাবদ্ধতার কারণে টেলিপোর্ট আরম্ভ করা যায়নি
+rlva-blocked-permission-attach = সংযুক্ত করার চেষ্টা '{ $object }' এর কারণে প্রত্যাখ্যান করা হয়েছে RLV সীমাবদ্ধতা
+rlva-blocked-permission-teleport = '{ $object }' আপনাকে টেলিপোর্ট করার অনুমতি প্রত্যাখ্যান করা হয়েছে কারণ RLV সীমাবদ্ধতা
+rlva-blocked-view-notecard = RLVa সীমাবদ্ধতার কারণে নোটকার্ড খুলতে অক্ষম।
+rlva-blocked-view-script = RLVa সীমাবদ্ধতার কারণে স্ক্রিপ্টটি খোলা যায়নি ।
+rlva-blocked-view-texture = RLVa সীমাবদ্ধতার কারণে টেক্সচারটি খোলা যায়নি।
+rlva-debug-explicit-point = ইনভেস্টরি আইটেম এবং ফোল্ডারের সংযুক্ত পয়েন্টের নাম উপেক্ষা করো
+rlva-debug-explicit-point-hint = সংযুক্ত পয়েন্ট লক করা অবস্থায়, Wear and Add একটি বস্তুকে তার নাম অথবা ফোল্ডারের নাম দ্বারা প্রদত্ত পয়ন্টের পরিবর্তে তার ডিফল্ট পয়ন্তে প্রেরণ করে (অপূর্ণ)।
+ui-bars-clouds-paused-tip = মেঘমালা এই সেশনের জন্য স্থির রাখা হয়েছে । তাদেরকে আবার সরে যেতে দিতে ক্লিক করুন ।
+phototools-tab-dof-glow = ডেপথ অব ফিল্ড ও আভা
+phototools-lights-shadows = আলোক ও ছায়া সংক্রান্ত বৈশিষ্ট্য
+phototools-ambient-occlusion = অ্যাম্বিয়েন্ট অক্লুশন সেটিংস
+phototools-dof = ডেপথ অব ফিল্ড সেটিংস
+phototools-tone-mapping = HDR টোন ম্যাপিং সেটিংস
+phototools-glow = জ্বলন্ত সেটিংস
+phototools-photo-banner = ফটো উইন্ডো খোলা: ফটোউইন্ডোর সারিগুলিও ফটো পরিবর্তন করে। আপনার পরবর্তী ছবির জন্য ফিল্ডের গভীরতা সংরক্ষণ করা হয়; আলো, এক্সপোজার, ছায়া, পরিবেশগত অক্লাসশন এবং ব্যবহৃত আলোকচিত্র ফটো-উইণ্ডো বন্ধ হওয়া পর্যন্ত অব্যাহত থাকে।
+phototools-photo-boost = ছবির গুণমান উন্নত করা হয়েছে: গ্রাফিক্স সারিগুলোতে উন্নত মান দেখানো হয়েছে, এবং আপনি যে পরিবর্তন করেছেন তা আপনার নিজস্ব হিসেবে সংরক্ষিত হবে।
+phototools-photo-focus-help = ক্লিক: পৃথিবীর যে বিন্দুতে সর্বশেষ ক্লিক করা হয়েছিল । পয়েন্টার: পয়ন্টারের নিচে অবস্থিত বিন্দুর নাম । ম্যানুয়াল: আপনি নির্ধারিত দূরত্ব ।
+phototools-photo-distance-help = নিজে হাতে ফোকাস করার সময় লেন্সের ফোকাসের দূরত্ব ।
+phototools-director-lens = উইন্ডোটি খোলা থাকলে পরিচালকের লেন্স নীচের বৈশিষ্ট্যের ওপর প্রদর্শিত হবে।
+phototools-view-angle-viewfinder = ভিউফাইন্ডারের নিজস্ব প্রদর্শন কোণ আছে: এটি বন্ধ করা হলে আপনার কোণ ফিরে আসবে।
+ui-options-dof-show-focus-point = ফোকাস বিন্দু দেখাও
+ui-options-dof-show-focus-point-help = লেন্সের ফোকাস পয়েন্টের উপর একটি ছোট ক্রসহায়ার: হলুদ যখন এটি মুক্ত, লাল যখন এটি বন্ধ করা হয়েছে।

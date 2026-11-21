@@ -15857,3 +15857,156 @@ ui-appearance-date-oldest-first = Päiväys: vanhimmat ensin
 ui-appearance-favorites-to-top = Suosikit ylimmäksi
 ui-appearance-images-to-top = Kuvalliset asut ylimmäksi
 ui-options-group-emotes = Ryhmittele eleet lähettäjän viestien kanssa
+
+### Release translations
+
+ui-options-planet-curvature = Planeetan kaarevuus
+ui-options-planet-curvature-help = Piirtää maailman pyöreällä planeetalla: avoin vesi laskeutuu todelliseen horisonttiin sen sijaan, että se juoksisi silmien tasolle, taivaan alla. Vain näkymä muuttuu: alueet, fysiikka ja se, mitä muut näkevät, pysyvät tasaisena. Maapallolla pudotus piirtoetäisyyden sisällä on muutama senttimetri; se näkyy kaukana merellä. Eroaa Legacy Viewerista
+ui-options-planet-radius = Planeetan säde
+ui-options-planet-radius-help = Planeetan säde kilometrinä. Maan säde on 6371 km: 10 metrin korkeudessa meri päättyy noin 11 km etäisyydelle. Pienempi planeetta tuo horisontin lähemmäksi
+ui-options-camera-frame-while-posing = Kehystä avatar poseeratessasi
+ui-options-camera-frame-while-posing-tip = Avatarin avaaminen kehystää sen, ja nivelen klikkaaminen tuo kameran lähemmäksi sitä, mutta nivelen vetäminen ei koskaan liikuta kameraa.
+ui-options-camera-still-while-posing = Pidä kamera paikallaan poseeratessasi
+ui-options-camera-still-while-posing-tip = Poseeratessa kamera lakkaa seuraamasta avatar-hahmoa, sen tarkennusta ja kehon osia. Käveleminen ei nollaa sitä. Kiertorata, zoomaus, panorointi ja esiasetukset toimivat edelleen.
+ui-options-group-emotes-hint = Aurora-tyylisessä chatissa ele, kuten ”/me waves”, näytetään saman otsikon alla kuin saman lähettäjän juuri sitä ennen tai sen jälkeen lähettämät viestit. Eleelle ei luoda omaa otsikkoa.
+content-perms-nested = Objektien sisällyttäminen objektien sisään
+content-perms-nested-help = Tämä muokkaa myös sisäkkäisten objektien sisältöä, jopa viiden tason syvyyteen asti. Jokainen objekti sijoitetaan maailmaan kaksi metriä sen sisältävän primitiivin yläpuolelle. Sen käynnissä olevat skriptit pysäytetään, sen sisältö muuttuu ja sen skriptit käynnistetään uudelleen. Objekti tallennetaan sitten takaisin säiliöön. Säiliössä olevan objektin oikeudet asetetaan ja tarkistetaan ennen kuin sen väliaikainen kopio maailmassa poistetaan. Objektit, joita et voi kopioida, siirtää tai muokata, pysyvät suljettuina. Tarvitset oikeuden rakentaa sijoituspaikassa.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } Sisällön objekti avataan, ohitetaan: { $skipped }.
+       *[other] { $objects } Sisällön objektit avataan, ohitetaan: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = Ei kopiointia tai siirtoa
+content-perms-nested-skip-no-modify = Ei voi muokata
+content-perms-nested-skip-depth = Yli 5 tasoa syvä
+content-perms-nested-rezzing = Objektin sijoittaminen ”{ $name }” maailmassa (pesintätaso { $level })…
+content-perms-nested-stopping = Pysäytetään ”{ $name }”:n skriptejä…
+content-perms-nested-applying = Muutetaan “{ $name }”:n sisältöä…
+content-perms-nested-restoring = Aloitetaan ”{ $name }”:n skriptit uudelleen…
+content-perms-nested-saving = Tallennetaan objektia “{ $name }” takaisin sen säiliöön…
+content-perms-nested-deleting = Poistetaan tilapäistä kopiota maailmassa ”{ $name }”…
+content-perms-nested-finished = Päivitetyt kohteet: { $count }. Sisäkkäiset esineet: { $objects }. Ohitettu: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } säilytettiin alkuperäisen vieressä: nimet erosivat.
+       *[other] { $kept } säilytettiin alkuperäisten rinnalla: nimet erosivat.
+    }
+content-perms-nested-stopped = Pysähdys: maailmassa olevat väliaikaiset kopiot poistettiin, alkuperäiset kohteet jätettiin sellaisiksi kuin ne olivat.
+content-perms-nested-stop-help = Pysäyttää toiminnon ja poistaa maailmassa vielä olevat väliaikaiset kopiot. Alkuperäiset tavarat säilyvät ennallaan. Jo takaisin tallennetut esineet säilyttävät muutoksensa.
+content-perms-nested-scripts-warning = Jokainen esine tuodaan maailmaan (rez). Sen komentosarjojen käynnistystoiminnot, kuten räjähdys, teleporttaus tai esineen antaminen, ehtivät siksi suorittua ennen kuin komentosarjat voi pysäyttää. Voit estää tämän ottamalla Skriptien poisto käytöstä -asetuksen ensin käyttöön hallinnoimasi alueen Alue / Tila -asetuksissa ja poistamalla asetuksen käytöstä työn jälkeen.
+content-perms-nested-original-kept = ”{ $name }” tallennettiin takaisin, mutta sen alkuperäistä kohdetta ei voitu poistaa: molemmat ovat sisällössä.
+content-perms-nested-copy-left = Maailmassa olevaa väliaikaista kopiota ”{ $name }” ei voitu poistaa: poista se käsin.
+content-perms-nested-save-unconfirmed = Tallenna takaisin ei vahvistettu
+content-perms-nested-saved-perms-unconfirmed = Pysäytetty: takaisin säilöön tallennetun kohteen oikeuksia ei voitu vahvistaa. Maailman väliaikaiset työkopiot on säilytetty. Tarkista ne ennen niiden poistamista.
+content-perms-nested-timeout = Simulaattori ei vastannut ajoissa
+content-perms-nested-rez-refused = Pysähtynyt: simulaattori kieltäytyi sijoittamasta maailmaan “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Pysähtynyt: ”{ $name }” ei ilmestynyt 15 sekunnin kuluessa.Jos se ilmestyy myöhemmin primitiivisen objektin yläpuolelle, poista se.
+content-perms-nested-not-ours = Pysäytetty: maailmaan sijoitettu esine ”{ $name }” ei ole peräisin näistä sisällöistä, se jätettiin maailmaan.
+content-perms-nested-unverified = Pysäytetty: esinettä, joka ilmestyi kohdalle "{ $name }", ei voitu tarkistaa maailmaan sijoitetuksi näiden sisältöjen perusteella, joten se jätettiin maailmaan.
+content-perms-nested-group-split = Pysäytetty: ”{ $name }” (useita objekteja tallennettuna yhtenä) tuli takaisin yksittäisenä objektina. Sen maailmaan sijoitetut osat säilyivät maailmassa: valitse ne kaikki ja ota ne ryhmän tekemiseksi uudelleen.
+content-perms-nested-failed = “{ $name }” jätettiin muuttumattomaksi: { $reason }.
+content-perms-nested-original-gone = “{ $name }” on säilytetty maailmassa: sen tallennusta ei vahvistettu ja sen alkuperäinen esine on poissa.
+content-perms-nested-gone = Objekti lähti maailmasta
+content-perms-nested-land-denied = Pysähtynyt: et voi rakentaa tämän alkuperäisen kohteen yläpuolelle, johon kohteet sijoitettaisiin maailmassa.
+content-perms-nested-parcel-full = Pysäytetty: paketissa ei ole enää tilaa maailmassa oleville väliaikaisille kopioille.
+content-perms-nested-rlva = Lopetettu: esineiden sijoittaminen maailmaan on rajoitettu (RLVa).
+content-perms-nested-too-many = Liian monta komentosarjaa
+content-perms-nested-unreadable = Sivua ei voitu lukea.
+content-perms-demo-chest = Säilytyslaatikko
+content-perms-demo-notes = Muistiinpanoja säilytysarkun sisällä
+content-perms-demo-outer = Ulkopakkaus
+content-perms-demo-glow = Komentosarja, joka saa objektin hehkumaan
+content-perms-demo-readme = Lue minut ensin
+content-perms-demo-inner = Sisäsäiliö
+content-perms-demo-inner-note = Huomautus sisäpakkauksen sisällä
+content-perms-demo-tiny = Erittäin pieni laatikko
+content-perms-demo-spin = Objektia kiertävä komentosarja
+content-perms-demo-heirloom = Perheen perintöesine
+content-perms-demo-sealed = Suljettu laatikko
+content-perms-demo-linked = Yhdistettyjen objektien ryhmä
+content-perms-demo-pebble = Pieni pyöristetty kivi
+content-perms-demo-stack = Laatikkopino
+dev-toolbox-o10 = Avatar-hittilaatikot
+rlva-selftest-confirm-wear = Se käyttää esineitään oikeassa takajalkassa, vasemmassa takajalka ja hännän kärjessä, ja kirjoittaa pienen viestin kahteen niistä.Mitä käytät näissä kolmessa pisteessä voidaan ottaa pois.
+ui-environment-sort-by-name = Lajittele aakkosittain
+ui-environment-sorted-by-name = Tällä hetkellä lajiteltu nimen mukaan. Napsauta palauttaaksesi tilauksen varastosta.
+ui-environment-in-inventory-order = Varastosi järjestyksessä. Napsauta lajitellaksesi ne A–Z.
+ui-chat-contacts-groups-sub = Ryhmät · { $count }
+ui-options-soft-shadows = Pehmeät varjot
+ui-options-soft-shadows-help = Auringonvarjot, joiden reunat ovat pehmeämpiä sitä kauempana kohde on varjostamastaan kohteesta, kuten tosielämässä: korkean pylvään varjo sumenee sen kärjessä, kun taas jalka pysyy terävänä. Kokeellinen, oletusarvoisesti pois päältä; maksaa näytönohjaimelta millisekunnin murto-osan
+ui-options-shadow-softness = Varjojen pehmeys
+ui-options-shadow-softness-help = Pehmeiden varjojen valon koko: 1 on valo, jonka halkaisija on 2.3 astetta, 2 suurempi valo, joka pehmentää varjoja kaksi kertaa enemmän (todellinen aurinko on noin 0.2), 0 valo, jolla ei ole kokoa: varjot ovat kuin ennen, projektorit mukaan lukien
+ui-options-shadow-softness-needs-soft = Ota pehmeät varjot käyttöön, jotta voit käyttää tätä
+ui-options-shadow-intensity = Varjon voimakkuus
+ui-options-shadow-intensity-help = Kuinka tummia auringon varjot ovat: 1 on normaali pimeys, pienempi päästää enemmän valoa niihin
+ui-options-system-fonts-searching = Etsitkö fontteja…
+demo-emotes-nova = /me asettaa penkin suihkulähteen viereen
+demo-emotes-orion = Näyttää mahtavalta täältä!
+demo-teleport-access-neighbour = Aikuinen naapuri (demo)
+photo-light-shadow-softness = Varjojen pehmeys
+photo-light-shadow-intensity = Varjon voimakkuus
+photo-light-shadow-reset = Takaisin asetusten arvoon
+world-teleport-access-blocked-title = Teleportti estetty
+world-teleport-access-adults-only = Alueella, jolla yrität vierailla, on { $rating } sisältöä, joka on vain aikuisten käytettävissä.
+world-teleport-access-change-and-reteleport = Alueella, jolle yrität siirtyä, on luokituksen { $rating } sisältöä. Nykyiset asetuksesi estävät luokituksen { $rating } sisällön. Voit muuttaa asetuksiasi ja jatkaa teleporttausta tai peruuttaa sen.
+world-teleport-access-change = Alueella, jolle yrität siirtyä, on luokituksen { $rating } sisältöä. Nykyiset asetuksesi estävät luokituksen { $rating } sisällön. Voit muuttaa asetuksia tai peruuttaa teleporttauksen. Yritä teleporttausta uudelleen asetusten muuttamisen jälkeen.
+world-teleport-access-out-of-sync = Meillä on teknisiä ongelmia teleporttisi kanssa, koska asetuksesi eivät ole synkronoitu palvelimen kanssa.
+world-teleport-access-rated = Valitsemasi sijainti on luokiteltu { $rating }.
+world-teleport-access-allow = Nykyiset asetuksesi estävät luokituksen { $rating } sisällön. Sen salliminen päivittää asetuksesi.
+world-teleport-access-allow-button = Salli { $rating } sisältö
+world-teleport-access-not-on-account = Alue, jolla yrität vierailla, on luokiteltu { $rating }:ksi, joka ei ole käytettävissä tilityypissäsi.
+world-teleport-access-change-and-continue = Muuta ja jatka
+world-teleport-access-change-preferences = Muuta asetuksia
+world-teleport-access-preference-changed-title = Sisältöluokitus muuttunut
+world-teleport-access-preference-changed = Et saa enää ilmoituksia siitä, että olet menossa alueelle, jolla on { $rating }-sisältöä. Voit muuttaa sisältöasetuksiasi tulevaisuudessa kohdassa Asetukset › Tietosuoja. Näytä kaikki
+people-show-group-sheet = Näytä ryhmän tiedot
+people-group-details-empty = Ei näytettävää ryhmää
+ao-import-unfinished-retry = Keskeneräinen AO Tuonti on jo olemassa #Aurora/{ $folder }. Käytä palautusilmoitusta AO Sulje ikkuna ennen uudelleenyritystä.
+ao-unfinished-import =
+    { $count ->
+        [one] Keskeneräinen AO-tuonti kansiossa #Aurora/{ $folder }. Sarjojen määrä: { $count }.
+       *[other] Keskeneräinen AO-tuonti kansiossa #Aurora/{ $folder }. Sarjojen määrä: { $count }.
+    }
+ao-finish-import = Lopeta tuonti
+ao-show-in-inventory = Näytä varastossa
+ao-duplicate-native =
+    { $count ->
+        [one] Löydettiin toinen kansio: #Aurora/{ $folder }. Sarjojen määrä: { $count }. Yhdistetäänkö se aktiiviseen AO-kansioon?
+       *[other] Löydettiin toinen kansio: #Aurora/{ $folder }. Sarjojen määrä: { $count }. Yhdistetäänkö se aktiiviseen AO-kansioon?
+    }
+ao-native-already-exists = Sisäänrakennettu animaation ohitus tällä nimellä on jo olemassa
+rlva-im-ended-local = { $name } Suljettu etähallinta. IM keskustelu kanssa @stopim
+rlva-blocked-script-dialog = Komentosarjan valintaikkunaa tai tekstiruutua ei voi näyttää RLV-rajoitusten vuoksi
+rlva-blocked-nearby = Lähistöllä olevien avatarien läsnäoloa ei voida nähdä RLV-rajoitusten vuoksi
+rlva-tools-retained = Säilytetään kirjautumiseen asti
+rlva-read-at-login = Muutokset tulevat voimaan seuraavan kirjautumisen yhteydessä.
+rlva-debug-commands-chat = Jokainen komento saa myös rivin läheisessä chatissa, kohteen nimen alla: mitä se suorittaa, mikä epäonnistuu ja miksi, mikä odottaa kirjautumista.
+rlva-blocked-start-im = Käynnistyminen ei onnistu IM Istunnon kesto { $recipient } johtuen RLV rajoitukset
+rlva-blocked-start-conference = Konferenssin aloittaminen ei onnistunut [RECIPIENT] johtuen RLV rajoitukset
+rlva-anonym-waiting = Katso lisää...
+rlva-anonym-unknown = (Tuntematon)
+rlva-blocked-teleport = Teleporttia ei voi aloittaa RLV-rajoituksen vuoksi
+rlva-blocked-permission-attach = Yritä liittää '{ $object }' evättiin seuraavista syistä: RLV rajoitukset
+rlva-blocked-permission-teleport = '{ $object }' ei saanut lupaa teleportoida sinua johtuen RLV rajoitukset
+rlva-blocked-view-notecard = Notecardia ei voi avata RLVa-rajoituksen vuoksi.
+rlva-blocked-view-script = Komentosarjaa ei voi avata RLVa-rajoitusten vuoksi.
+rlva-blocked-view-texture = Tekstuuria ei voi avata RLVa-rajoitusten vuoksi.
+rlva-debug-explicit-point = Ohita liitetiedostojen nimet inventaariokohteissa ja kansioissa
+rlva-debug-explicit-point-hint = Kun kiinnityspiste on lukittu, Wear and Add lähettää objektin sen oletuspisteeseen sen sijaan, että piste sen nimestä tai sen kansion nimestä antaa (epätäydellinen).
+ui-bars-clouds-paused-tip = Pilvet pysyvät paikallaan tämän istunnon ajan. Napsauta, jos haluat antaa niiden liikkua uudelleen.
+phototools-tab-dof-glow = Syväterävyys ja hehku
+phototools-lights-shadows = Valojen ja varjojen asetukset
+phototools-ambient-occlusion = Ympäristövarjostuksen asetukset
+phototools-dof = Syväterävyyden asetukset
+phototools-tone-mapping = HDR-sävykartoituksen asetukset
+phototools-glow = Glow-asetukset
+phototools-photo-banner = Kuva-ikkuna auki: kuva-ikkunan rivit muuttuvat myös kuvassa. Syväterävyys säilyy seuraavissa kuvissasi. Valo, valotus, varjot, ympäristön okluusio ja kuluneet valot pysyvät, kunnes kuva-ikkuna suljetaan.
+phototools-photo-boost = Kuvan laatu on parannettu: grafiikkarivillä näkyvät korotetut arvot, ja siellä tekemäsi muutos säilyy omana muutoksena.
+phototools-photo-focus-help = Klikkaus: viimeksi klikattu piste maailmassa. Osoitin: osoittimen alla oleva piste. Manuaalinen: etäisyys, jonka asetat.
+phototools-photo-distance-help = Etäisyys, jolle objektiivi tarkentaa manuaalisen tarkennuksen aikana.
+phototools-director-lens = Ohjaajan linssi näkyy, kun sen ikkuna on auki, alla olevien asetusten yläpuolella.
+phototools-view-angle-viewfinder = Etsin hallitsee kuvakulmaa: sinun kuvakulmasi palaa takaisin, kun etsin suljetaan.
+ui-options-dof-show-focus-point = Näytä tarkennuspiste
+ui-options-dof-show-focus-point-help = Linssin tarkennuspisteessä on pieni tähtäinristi: keltainen, kun se on vapaa, punainen, jos se on lukittu.

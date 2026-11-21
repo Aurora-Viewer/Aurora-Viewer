@@ -15868,3 +15868,156 @@ ui-appearance-date-oldest-first = تاریخ: پرانے پہلے
 ui-appearance-favorites-to-top = پسندیدہ سب سے اوپر
 ui-appearance-images-to-top = تصویر والے ملبوسات سب سے اوپر
 ui-options-group-emotes = ایموٹس کو بھیجنے والے کے پیغامات کے ساتھ گروپ کریں
+
+### Release translations
+
+ui-options-planet-curvature = سیارے کا منحني
+ui-options-planet-curvature-help = دائري سیارے پر دنيا کھيلتا هے: کھلا پانی حقيقي افق تک گر تا هے اسکے بر عوض چشمي سطح تک چلتا هئے، اسکے نيچے آسمان کے ساتھ صرف منظر ميں تبديلي آ تا هئے: علاقے ، طبعيات اور جو دوسروں نے د ايں سا صاف رہتا هے۔ زمين پر ڈرائنگ فاصلے کے اندر پھٹنا چند سينتي ميٹر هو تا هے۔ یہ دور سمندر پر دکھا يا جاتا هے ليجسٹي ويوزر سے مختلف هے
+ui-options-planet-radius = سیارے
+ui-options-planet-radius-help = سیارے کي ري ڈي ، کلو ميٹر ميں ديرا هي جا تا هے زمين کي ري دي 6,371 کلو ميٹرا هے 10 ميٹر اوپر سے سمندر کا خاتمہ تقريبا 11 کلو ميٽر دور هے چھوٹا سیارہ افق کو قریب لاتا هے
+ui-options-camera-frame-while-posing = پوزنگ کے دوران آوٹار کو فریم کریں
+ui-options-camera-frame-while-posing-tip = پوزر کو کھول کر آ وٹرا فريم کر تا هے ، اور جڑ پر کلک کر کے کيمرا اسکے قریب لاتا هے جڑ کھينچنے سے کيمرے کي حرکت نہیں ہوتی
+ui-options-camera-still-while-posing = پوزنگ کے دوران کيمرا سست رکھيں
+ui-options-camera-still-while-posing-tip = جب آپ پو ز کر رہے هيں ، کيمرا آ ویٹر کو پيرو ں کر نے سے رک جاتا هے ، اسکے فوکس اور جسم کے حصوں کو ، اور چلنا اسکو ريسٹال نہیں کر تا orbit، zoom، pan اور preset اب بھی کام کر تا هے
+ui-options-group-emotes-hint = Aurora چیٹ انداز میں «/me waves» جیسا عمل اسی سرخی کے نیچے دکھائی دیتا ہے جس کے تحت اسی شخص کے فوراً پہلے یا بعد کے پیغامات آتے ہیں۔ عمل کی الگ سرخی نہیں بنتی۔
+content-perms-nested = چیزوں کو چیزوں کے اندر شامل کریں
+content-perms-nested-help = یہ نسٹڈ اشيا ں کے مواد کو بھی ايڈٹ کر تا هے ، پانچ ليول تک گہرا ہر شے کي دنيا ميں دو میٹر اوپر رکھا جاتا هے اسکے رو ننے والے سکيپٹس بند کر ديے جا تے هيں اسکے مواد ميں تبديلي آ تا هئے هيں اور اسکے سکيپٹس کو دوبارہ شروع کر دیا جا تا هے۔ اسکے بعد شيئ کو کنٹینر ميں واپس محفوظ کر دیا جاتا هے۔ کنٽينر مي میں شيئ کے حق مقرر کيے جاتے هيں او ر چيک کيے جا تا هيں قبل اسکے عالم ميں غير معين کاپي کو حذف کر نے سے ۔ آپکو ان اشياء کي نقل ، منتقلي يا ترميم نہیں کر سکي هيں وہ بند رہتا هے آپکو لگنے کے مقام پر بنا نے کے ليے اجازت گهريے
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } مضامین میں چیز کھولی جائے گی، چھوڑ دی گئی: { $skipped }.
+       *[other] { $objects } مضامین میں اشیا کھولے جائیں گے، چھوڑ دیئے جائیں گے: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = کوئی نقل یا کاپی نہیں
+content-perms-nested-skip-no-modify = تبدیل نہیں کیا جاسکتا
+content-perms-nested-skip-depth = 5 ليول سے زائد گہرا
+content-perms-nested-rezzing = عين ت کي جگہ{ $name }” دنیا میں (نسٹنگ سطح) { $level })…
+content-perms-nested-stopping = “{ $name }” کی سکرپٹس بند کی جارہی ہیں...
+content-perms-nested-applying = “{ $name }” کے مضامین کو تبدیل کیا جارہا ہے...
+content-perms-nested-restoring = “{ $name }” کی سکرپٹس دوبارہ شروع کی جارہی ہیں...
+content-perms-nested-saving = اشیاء "{ $name }" کو اس کے کنٹینر میں واپس محفوظ کیا جارہا ہے...
+content-perms-nested-deleting = دنیا میں “{ $name }” کی عارضی کاپی حذف کی جارہی ہے...
+content-perms-nested-finished = اپ ڈیٹ کیے گئے آئٹمز: { $count }۔ اندر موجود آبجیکٹس: { $objects }۔ چھوڑے گئے: { $skipped }۔
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } اسکے اصل کے پاس رکھا گيا هے: نام مختلف هے
+       *[other] { $kept } انکے اصل ناموں کے پاس رکھا گيا: نام مختلف هے
+    }
+content-perms-nested-stopped = روک دیا گیا: دنیا میں عارضی کاپییں حذف کی گئیں، اصل آیٹموں کو اس طرح چھوڑ دیا گیا جیسے وہ تھے.
+content-perms-nested-stop-help = عمل روک دیتا ہے اور دنیا میں باقی عارضی نقلیں حذف کر دیتا ہے۔ اصل آئٹم اپنی حالت میں رہتے ہیں۔ واپس محفوظ کیے گئے آبجیکٹس کی تبدیلیاں برقرار رہتی ہیں۔
+content-perms-nested-scripts-warning = ہر آبجیکٹ دنیا میں ظاہر کیا جاتا ہے (rez)، اس لیے ظاہر ہونے پر چلنے والے اسکرپٹ کے اعمال، جیسے دھماکا، ٹیلی پورٹ یا کوئی آئٹم دینا، اسکرپٹ کو روکنے سے پہلے ہو جاتے ہیں۔ اس سے بچنے کے لیے اپنے زیر انتظام علاقے میں علاقہ / اسٹیٹ کی ترتیبات سے پہلے اسکرپٹ غیر فعال کریں اور کام مکمل ہونے پر یہ اختیار بند کر دیں۔
+content-perms-nested-original-kept = "{ $name }" واپس محفوظ کیا گیا تھا، لیکن اس کی اصل آیٹم کو حذف نہیں کیا جاسکتا: دونوں مواد میں ہیں.
+content-perms-nested-copy-left = دنيا ميں “{ $name }” کي عارضي کاپي کو حذف نہیں کي جا سکا: اسے ہاتھ سے حذ ف کريں
+content-perms-nested-save-unconfirmed = بچاؤ واپسی کو تصدیق نہیں کی گئی
+content-perms-nested-saved-perms-unconfirmed = روکا گیا: اس کے کنٹينر میں واپس محفوظ کئے گئے اوبجیکٹ کے اجازے کو تصديق نہیں کريا جا سکا. دنيا ميں عارضي کام کر نے والے کاپي محفوظ کيے گئے هے، انکو حذف کرنے سے پہلے انکي جانچ کريں
+content-perms-nested-timeout = سيمو لا ر نے وقت پر جواب نہ ديا
+content-perms-nested-rez-refused = روک دیا: سیمولیٹر نے دنیا میں جگہ دینے سے انکار کیا "{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = بند: 15 سيکنڈ کے اندر "{ $name }" نما ئيں نہیں آتا اگر وہ بعد ميں پرائمري او جيکٹ کے اوپر دکھائيے تو اسے حذف کريں
+content-perms-nested-not-ours = بند: دنيا ميں “{ $name }” کے ليے رکھا گيا او ڑي ان مواد سے نہیں آ تا ، اس کو دنيا مي میں چھوڑ دیا گیا هو
+content-perms-nested-unverified = بند کريے گيا يه: جس شيٹ کو "{ $name }" کے ليے د ايں جا تا هے اس کي چيک کر نے کي ضرورت نهيں هے جو دنيا ميں رکھا جا تا هيں اسليے اسے دنيا ميے ميں چھوڑ دیا گیا
+content-perms-nested-group-split = بند: "{ $name }" (کئي اشيا ں کو ایک کے طور پر محفوظ کر يا گيا هو ئے هيں )کوئي واحد شيٹ کے طورپر واپس آ تا هے اسکے دنيا ميں رکھے گئے حصوں کو دنيا مي میں رکھا جا تا هے۔ ان سب کو منتخب کريں اور گروہ کو دوباره بنا نے کے ليے انکو لے ييں
+content-perms-nested-failed = “{ $name }”غیر تبدیل چھوڑا: { $reason }.
+content-perms-nested-original-gone = "{ $name }" دنيا ميں محفوظ هے: اسکے بچا نے کي تصديق نہيں کي گئي اور اسکے اصل ايٹم غائب هيں
+content-perms-nested-gone = عينيت دنيا کو چھوڑ گيا
+content-perms-nested-land-denied = بند : آپ اس ابتدائي اشيا کے اوپر بنا نہیں سکتے ، جہاں اشيا دنيا ميں رکھا جا تا هے
+content-perms-nested-parcel-full = روک دیا گیا: پیکل کے پاس دنیا میں عارضی کاپیوں کے لیے کوئی جگہ نہیں بچی.
+content-perms-nested-rlva = بند: دنيا ميں اشياء کو رکھنا محدود هے (RLVa)
+content-perms-nested-too-many = بہت سی سکریپٹس
+content-perms-nested-unreadable = اس کا مواد نہیں پڑھا جاسکتا
+content-perms-demo-chest = ذخيرہ بند
+content-perms-demo-notes = ذخيرہ کي سيني ميں نوٹس
+content-perms-demo-outer = خارجي باکس
+content-perms-demo-glow = اسکریپٹ جو اشياء کو روشن کر تا هے
+content-perms-demo-readme = مجھے پہلے پڑھو
+content-perms-demo-inner = اندروني کنٹينر
+content-perms-demo-inner-note = اندروني بکس ميں نوٹ
+content-perms-demo-tiny = بہت چھوٹا باکس
+content-perms-demo-spin = اسکریپٹ جو اشياء کو موڑتا هے
+content-perms-demo-heirloom = خانداني وارثيت
+content-perms-demo-sealed = بند باکس
+content-perms-demo-linked = ملے ہوئے اشياء کا گروپ
+content-perms-demo-pebble = چھوٹا گول پتھر
+content-perms-demo-stack = کريٹ اسٽاک
+dev-toolbox-o10 = آوٹار هيٹ باکس
+rlva-selftest-confirm-wear = اس نے دائيں جانب کے فٹ ، با ئيں جانبکے فٹ اور تيل ٹيپ پر اپنے عائدات پہن ليے هيں اور ان میں سے دو ميں چھوٹا سا ريلے سکريبٹ لکھتا هے جو آپ نے ان تین نقطوں پر پہن لیا هے وہ اتار دیا جا سکتا هے
+ui-environment-sort-by-name = حروف کے مطابق ترتیب دیں
+ui-environment-sorted-by-name = حاليں نام کے مطابق ترتيب دي گيا هے آپکے انسٹاليشن سے ترتيب کي بحالي کے ليے کلک کريں
+ui-environment-in-inventory-order = آپکے ذخيرے کے ترتيب ميں ان کو مرتب کر نے کے ليے کلک کريں A–Z.
+ui-chat-contacts-groups-sub = گروپ { $count }
+ui-options-soft-shadows = نرم سائے
+ui-options-soft-shadows-help = سورج کے سا يں نرمي سروں کے ساتھ سا ئے جو اس چیز سے دور هے جس پر سا يا کر تا هے ، حقيقي زندگي ميں هے: بلند پول کا سا ي اسکے سر کے طرف ابھرتا هے جب پا ئے واضح رہتا هئے تجرباتي، ديافترا عي طور پر بند; گرافيک کارڈ پر مليسيکنڈ کے ایک حصے کي قيمت
+ui-options-shadow-softness = سائے کا نرمي
+ui-options-shadow-softness-help = نرم سائے کے ليے روشني کا سائز: 1 2.3 ڈگريوں کے ليئے روشني هے، 2 سا يں دوگنا نرم کر تا هے (اصل سورج تقريبا 0.2 هے)،0کوئي سائز کي روشني نهيں هے: سا يے اس سے پہلے کے طرح هيں ، پروجيکٹر شامل هے
+ui-options-shadow-softness-needs-soft = اس کو استعمال کرنے کے ليے نرم سائے فعال کريں
+ui-options-shadow-intensity = سائے کی شدت
+ui-options-shadow-intensity-help = سورج کے سائے کتنے اندھیرے ہیں: 1 عام اندھیرا ہے، کم ان میں زیادہ روشني لاتا هے
+ui-options-system-fonts-searching = فونٹس کے لیے تلاش
+demo-emotes-nova = /me چشمے سے نیچے ایک بینک مقرر
+demo-emotes-orion = یہاں سے بہت اچھا لگتا ہے!
+demo-teleport-access-neighbour = بالغ ہمسا يں (ديمو)
+photo-light-shadow-softness = سائے کا نرمي
+photo-light-shadow-intensity = سائے کی شدت
+photo-light-shadow-reset = ترجیحات کے قدر پر واپس جائیں
+world-teleport-access-blocked-title = ٹیلی پورٹ روک دیا گیا
+world-teleport-access-adults-only = آپ جو علاقہ دیکھنے کی کوشش کر رہے ہیں اس میں { $rating } مواد موجود ہے، جو صرف بزرگوں کے لئے رسائی ہے.
+world-teleport-access-change-and-reteleport = جس علاقے میں آپ جانا چاہتے ہیں وہاں { $rating } درجے کا مواد ہے۔ آپ کی موجودہ ترجیحات { $rating } درجے کے مواد کی اجازت نہیں دیتیں۔ آپ ترجیحات بدل کر ٹیلی پورٹ جاری رکھ سکتے ہیں یا اسے منسوخ کر سکتے ہیں۔
+world-teleport-access-change = جس علاقے میں آپ جانا چاہتے ہیں وہاں { $rating } درجے کا مواد ہے۔ آپ کی موجودہ ترجیحات { $rating } درجے کے مواد کی اجازت نہیں دیتیں۔ آپ ترجیحات بدل سکتے ہیں یا ٹیلی پورٹ منسوخ کر سکتے ہیں۔ ترجیحات بدلنے کے بعد دوبارہ ٹیلی پورٹ کرنے کی کوشش کریں۔
+world-teleport-access-out-of-sync = ہم آپ کے teleport کے ساتھ تکنیکی مشکلات ہو رہے ہیں کیونکہ آپ کی ترجیح سرور کے ساتھ سینک سے باہر ہے.
+world-teleport-access-rated = آپ نے منتخب کیا ہے جگہ { $rating } درجه بندی ہے.
+world-teleport-access-allow = آپ کی موجودہ ترجیحات { $rating } درجے کے مواد کی اجازت نہیں دیتیں۔ اسے اجازت دینے سے آپ کی ترجیحات اپ ڈیٹ ہو جائیں گی۔
+world-teleport-access-allow-button = { $rating } مواد کو اجازت دیں
+world-teleport-access-not-on-account = وہ علاقہ جسے آپ دیکھنے کی کوشش کررہے ہیں اس کا درجہ { $rating } ہے، جو آپ کے اکاؤنٹ کی قسم پر دستیاب نہیں ہے۔
+world-teleport-access-change-and-continue = تبدیل کریں اور جاری رکھیں
+world-teleport-access-change-preferences = ترجیحات تبدیل کریں
+world-teleport-access-preference-changed-title = مواد کی درجہ بندی بدلی گئی
+world-teleport-access-preference-changed = آپ کو مزید کوئی اطلاع نہیں ملے گی کہ آپ { $rating } مواد کے ساتھ ایک خطے کا دورہ کرنے والے ہیں۔ آپ مستقبل میں ترجیحات › رازداری میں اپنے مواد کی ترجیحیوں کو تبدیل کر سکتے ہیں۔
+people-show-group-sheet = گروپ کی تفصیلات دکھائیں
+people-group-details-empty = کوئی گروپ دکھانے کے لیے نہیں
+ao-import-unfinished-retry = ایک نا مکمل AO واردات پہلے ہی موجود ہے #Aurora/{ $folder }. استعمال میں واپسی نوٹ AO دوبارہ کوشش کرنے سے پہلے ونڈو بند کرو.
+ao-unfinished-import =
+    { $count ->
+        [one] #Aurora/{ $folder } میں AO کی درآمد نامکمل ہے۔ سیٹوں کی تعداد: { $count }۔
+       *[other] #Aurora/{ $folder } میں AO کی درآمد نامکمل ہے۔ سیٹوں کی تعداد: { $count }۔
+    }
+ao-finish-import = واردات ختم کریں
+ao-show-in-inventory = انسٹالیشن میں دکھائیں
+ao-duplicate-native =
+    { $count ->
+        [one] ایک اور فولڈر ملا: #Aurora/{ $folder }۔ سیٹوں کی تعداد: { $count }۔ اسے فعال AO فولڈر میں ضم کریں؟
+       *[other] ایک اور فولڈر ملا: #Aurora/{ $folder }۔ سیٹوں کی تعداد: { $count }۔ اسے فعال AO فولڈر میں ضم کریں؟
+    }
+ao-native-already-exists = اس نام کے ساتھ ایک اندرونی متحرک اووررائڈ پہلے ہی موجود ہے
+rlva-im-ended-local = { $name } ریموٹ سے بند کر دیا ہے IM بات چیت @stopim
+rlva-blocked-script-dialog = RLV محدودیتوں کی وجہ سے اسکریپت ڈائیلاگ یا ٹیکس باکس دکھانے میں ناقابل
+rlva-blocked-nearby = RLV پابندی کے وجہ سے قریبی آوٹار کی موجودگی نہیں دیکھ سکتے
+rlva-tools-retained = لاگ ان تک محفوظ
+rlva-read-at-login = تبدیلیاں اگلے لاگ ان پر اثر انداز ہوں گی.
+rlva-debug-commands-chat = ہر کمانڈ کو قریبی بات چیت میں بھی ایک لائن ملتی ہے، چیز کے نام کے نیچے: وہ کیا چلاتا ہے، کیا ناکام ہوتا ہے اور کیوں، لاگ ان کے لیے کیا انتظار کرتا ہے.
+rlva-blocked-start-im = شروع نہیں ہو سکتا IM سیشن { $recipient } سبب RLV قيود
+rlva-blocked-start-conference = اس کے ساتھ کانفرنس شروع نہیں ہوسکتی [RECIPIENT] سبب RLV قيود
+rlva-anonym-waiting = لوڈ کیا جارہا ہے
+rlva-anonym-unknown = (نامعلوم)
+rlva-blocked-teleport = RLV محدودیتوں کی وجہ سے ٹیلی پورٹ شروع کرنے میں ناکام
+rlva-blocked-permission-attach = متصل کرنے کی کوشش '{ $object }'کی وجہ سے انکار کیا گیا تھا RLV قيود
+rlva-blocked-permission-teleport = '{ $object }'کی وجہ سے آپ کو teleport کرنے کی اجازت سے انکار کیا گیا تھا RLV قيود
+rlva-blocked-view-notecard = نوٹ کارڈ کھولنے میں ناکامی RLVa پابندیوں کی وجہ سے
+rlva-blocked-view-script = RLVa پابندیوں کی وجہ سے اسسکرپٹ کو کھولنے میں ناکام.
+rlva-blocked-view-texture = RLVa محدودیتوں کی وجہ سے ٹیکسچر کھولنے میں ناکام.
+rlva-debug-explicit-point = انسٹالیشن آیٹیمز اور فولڈرز پر متصلہ نقطہ ناموں کو نظرانداز کریں
+rlva-debug-explicit-point-hint = جب تک ايک ضميم پو اينٹ تا لو کر يا هے ، ويزر اور اضافي کو ايک شيز کو اسکے دي فائل پو اينٽ ميں بھیجنا چا هيے جو اسکے نام يا فولڈر کے نام کے بدلے (نا مکمل) هے
+ui-bars-clouds-paused-tip = با ڑ اس سيشن کے ليے خاموش رکھا جا تا هے ان کو پھر سے منتقل کر نے کے ليئے کلک کريں
+phototools-tab-dof-glow = میدان کی گہرائی اور چمک
+phototools-lights-shadows = روشنی اور سائے کی ترتیبات
+phototools-ambient-occlusion = محیطی سایہ کاری کی ترتیبات
+phototools-dof = میدان کی گہرائی کی ترتیبات
+phototools-tone-mapping = HDR ٹن میپنگ ترتیبات
+phototools-glow = گلو تنظیمات
+phototools-photo-banner = فوٹو وينڈو کھوليں: فوٹو وينڈو کے قطاروں ميں فوٹو ميں تبديلي آتي هے فائل کی گہرائي آپکے اگلے فوٹو کے ليے محفوظ کيا جا تا هے روشني، ايکسپوزر، سائے، ماحولي اوکلشن اور استعمال شدہ روشني فوٹو ونڈو بند کر نے تک چلتا هے
+phototools-photo-boost = فوٹو کي معيار بلند کريے گيا هے : گرافکس کے قطاروں ميں اونچا کيا جا نے والا قدر د ليے جا تا هے ، اور آپ کو اس ميں جو تبديلي کر نےيں هيں وہ آپکے اپنے طور پر محفوظ کي جا تا هيں
+phototools-photo-focus-help = کلک کريں : دنيا ميں آ خري کلک کيا جا نے والا نقطہ اشارے کے نيچے پو اينٹ ميں دستي: آپ کا مقرر کردہ فاصلہ
+phototools-photo-distance-help = فاصلہ جس پر لینز مینو فوکوس میں توجہ مرکوز کرتا ہے.
+phototools-director-lens = ڈائرکٹر کا لینز اس وقت دکھایا جاتا ہے جب اس کی ونڈو کھلی ہوتی ہے، نیچے کے ترتیبات پر.
+phototools-view-angle-viewfinder = ويو فاينڈر کو وِيو اينج ملتا هے: آپ کا واپس آتا هئے جب اس کو بند کريں
+ui-options-dof-show-focus-point = فوکس پوائنٹ دکھائیں
+ui-options-dof-show-focus-point-help = لينز کے فوکسس پر يک چھوٹا سا کرس هير: پيلو جب آزاد هے ، سرخ جب تا لو ک هے

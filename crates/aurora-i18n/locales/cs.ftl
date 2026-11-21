@@ -15867,3 +15867,156 @@ ui-appearance-date-oldest-first = Datum: od nejstarších
 ui-appearance-favorites-to-top = Oblíbené nahoru
 ui-appearance-images-to-top = Oděvy s obrázkem nahoru
 ui-options-group-emotes = Seskupit emoty se zprávami odesílatele
+
+### Release translations
+
+ui-options-planet-curvature = Křivka planety
+ui-options-planet-curvature-help = Nakreslí svět na kulaté planetě: otevřená voda padá k reálnému horizontu místo toho, aby vytekla do výšky očí, s nebem pod ní. Změní se pouze pohled: oblasti, fyzika a to, co vidí ostatní, zůstávají ploché. Na Zemi je kapka v kreslené vzdálenosti několik centimetrů; zobrazuje se na vzdáleném moři.
+ui-options-planet-radius = Poloměr planety
+ui-options-planet-radius-help = Poloměr planety je nakreslen v kilometrech. Země má poloměr 6371 km: z výšky 10 metrů končí moře asi 11 km daleko. Menší planeta přibližuje horizont
+ui-options-camera-frame-while-posing = Rámování avatara při pózování
+ui-options-camera-frame-while-posing-tip = Když otevřete pózu, avatar se rámuje a kliknutím na kloub se k němu přiblíží kamera.Tažení kloubu nikdy nepohybuje kamerou.
+ui-options-camera-still-while-posing = Udržujte fotoaparát při pózování v klidu
+ui-options-camera-still-while-posing-tip = Když pózujete, fotoaparát přestane sledovat avatara, jeho zaostření a části těla. Při chůzi fotoaparátu se nezresetuje. Orbit, zoom, pan a presety stále fungují.
+ui-options-group-emotes-hint = Ve stylu chatu Aurora se emote, například „/me waves“, zobrazí pod stejným záhlavím jako zprávy stejného uživatele těsně před ním nebo po něm. Nevytváří vlastní záhlaví.
+content-perms-nested = Zahrnutí objektů uvnitř objektů
+content-perms-nested-help = Toto také upravuje obsah vnořených objektů, až do hloubky pěti úrovní. Každý objekt je umístěn ve světě dva metry nad primitivem, který jej obsahuje. Jeho spuštěné skripty jsou zastaveny, jeho obsah změněn a jeho skripty restartovány. Objekt je pak uložen zpět do kontejneru. Oprávnění objektu v kontejneri jsou nastavena a zkontrolována předtím, než je jeho dočasná kopie ve světe smazána. Objekty, které nelze kopírovat, přenášet nebo upravovat, zůstávají zavřené. Potřebujete oprávnění k vytvoření v umístění umísťování.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } objekt v obsahu bude otevřen, přeskočen: { $skipped }.
+       *[other] { $objects } objekty v obsahu budou otevřeny, přeskočené: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = žádné kopírování ani převod
+content-perms-nested-skip-no-modify = nelze změnit
+content-perms-nested-skip-depth = více než 5 úrovní hluboké
+content-perms-nested-rezzing = Umístění objektu „{ $name }„ ve světě (úroveň hnízdění { $level })…
+content-perms-nested-stopping = Zastavení skriptů „{ $name }“…
+content-perms-nested-applying = Změna obsahu stránky „{ $name }“…
+content-perms-nested-restoring = Spuštění skriptů „{ $name }“ znovu…
+content-perms-nested-saving = Ukládání objektu „{ $name }“ zpět do jeho kontejneru…
+content-perms-nested-deleting = Mazání dočasné kopie ve světě „{ $name }“…
+content-perms-nested-finished = Aktualizované položky: { $count }. Vnořené objekty: { $objects }. Přeskočeno: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } byl ponechán vedle svého originálu: názvy se lišily.
+       *[other] { $kept } udržovány vedle svých originálů: názvy se lišily.
+    }
+content-perms-nested-stopped = Zastaveno: dočasné kopie ve světě byly smazány, původní položky byly ponechány tak, jak byly.
+content-perms-nested-stop-help = Zastaví operaci a odstraní dočasné kopie, které ještě zůstaly ve světě. Původní položky zůstanou beze změny. Změny již uložených objektů zůstanou zachovány.
+content-perms-nested-scripts-warning = Každý objekt se nejprve umístí do světa (rezne). Ještě před zastavením skriptů se proto mohou spustit jejich akce při umístění, například výbuch, teleport nebo předání předmětu. Chcete-li tomu zabránit, na regionu, který spravujete, nejprve zapněte volbu Zakázat skripty v nastavení Region / Panství a po dokončení ji vypněte.
+content-perms-nested-original-kept = „{ $name }“ byl uložen zpět, ale jeho původní položka nemohla být odstraněna: oba jsou v obsahu.
+content-perms-nested-copy-left = Dočasná kopie ve světě „{ $name }“ nemohla být smazána: smažte ji ručně.
+content-perms-nested-save-unconfirmed = Uložení zpět nebylo potvrzeno
+content-perms-nested-saved-perms-unconfirmed = Zastaveno: oprávnění objektu uloženého zpět do jeho kontejneru nemohla být potvrzena.Dočasné pracovní kopie ve světě byly ponechány; zkontrolujte je před jejich odstraněním.
+content-perms-nested-timeout = Simulátor neodpověděl včas
+content-perms-nested-rez-refused = Zastaveno: simulátor odmítl umístit do světa “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Zastaveno: „{ $name }“ se neobjevil do 15 sekund, pokud se objeví později nad primitivním objektem, smažte jej.
+content-perms-nested-not-ours = Zastaveno: objekt umístěný do světa pro „{ $name }“ nepochází z tohoto obsahu, byl ponechán ve světě.
+content-perms-nested-unverified = Zastaveno: objekt, který se objevil pro „{ $name }“, nemohl být zkontrolován jako umístěný ve světě z tohoto obsahu, takže byl ponechán ve světe.
+content-perms-nested-group-split = Zastaveno: „{ $name }“ (několik objektů uložených jako jeden) se vrátil jako jediný objekt, jeho části umístěné ve světě byly ponechány ve světe: vyberte je všechny a vezměte je k vytvoření skupiny znovu.
+content-perms-nested-failed = “{ $name }” zůstal beze změny: { $reason }.
+content-perms-nested-original-gone = „{ $name }“ je uložen ve světě: jeho uložení nebylo potvrzeno a původní položka je pryč.
+content-perms-nested-gone = Objekt opustil svět
+content-perms-nested-land-denied = Zastaveno: nemůžete stavět nad tímto primitivním objektem, kde by byly objekty umístěny ve světě.
+content-perms-nested-parcel-full = Zastaveno: v balíčku nezbývá místo pro dočasné kopie na světě.
+content-perms-nested-rlva = Zastaveno: umístění objektů ve světě je omezeno (RLVa).
+content-perms-nested-too-many = Příliš mnoho skriptů
+content-perms-nested-unreadable = Stránka nebyla nalezena.
+content-perms-demo-chest = Úložná truhla
+content-perms-demo-notes = Poznámky uvnitř úložného boxu
+content-perms-demo-outer = Vnější krabice
+content-perms-demo-glow = Skript, který dělá objekt září
+content-perms-demo-readme = Přečtěte si mě jako první
+content-perms-demo-inner = Vnitřní nádoba
+content-perms-demo-inner-note = Poznámka uvnitř vnitřní krabice
+content-perms-demo-tiny = Velmi malá krabička
+content-perms-demo-spin = Skript, který otočí objekt
+content-perms-demo-heirloom = Rodinný dědictví
+content-perms-demo-sealed = Uzavřená krabice
+content-perms-demo-linked = Skupina spojených objektů
+content-perms-demo-pebble = Malý zaoblený kámen
+content-perms-demo-stack = Přepravka
+dev-toolbox-o10 = Hitboxy k Avatarovi
+rlva-selftest-confirm-wear = Nosí své předměty na pravé zadní noze, levé zadní nohy a špičce ocasu a ve dvou z nich píše malý štafetový skript.Co nosíte na těchto třech bodech, můžete sundat.
+ui-environment-sort-by-name = Třídit podle abecedy
+ui-environment-sorted-by-name = Aktuálně seřazené podle názvu. Kliknutím obnovíte pořadí z inventáře.
+ui-environment-in-inventory-order = V pořadí vašeho inventáře. Kliknutím je seřaďte A–Z.
+ui-chat-contacts-groups-sub = Skupiny uživatelů · { $count }
+ui-options-soft-shadows = Měkké stíny
+ui-options-soft-shadows-help = Sluneční stíny s měkčími hranami, čím je objekt vzdálenější od toho, co stínuje, stejně jako v reálném životě: stín vysokého sloupu se rozostřuje směrem k jeho špičce, zatímco noha zůstává ostrá. Experimentální, standardně vypnuto; stojí zlomek milisekundy na grafické kartě
+ui-options-shadow-softness = Měkkost stínu
+ui-options-shadow-softness-help = Velikost světla pro měkké stíny: 1 je světlo o průměru 2,3 stupňů, 2 je větší světlo, které změkčuje stínu dvakrát tolik (skutečné slunce má asi 0,2), 0 světlo bez velikosti: stíni jsou stejní jako předtím, včetně projektorů
+ui-options-shadow-softness-needs-soft = Chcete-li použít tuto funkci, zapněte možnost Měkké stíny.
+ui-options-shadow-intensity = Intenzita stínu
+ui-options-shadow-intensity-help = Jak tmavé jsou sluneční stíny: 1 je normální temnota, nižší propustí do nich více světla
+ui-options-system-fonts-searching = Hledám písma…
+demo-emotes-nova = /me položí lavičku u fontány
+demo-emotes-orion = Vypadá to skvěle odsud!
+demo-teleport-access-neighbour = Dospělý soused (demo)
+photo-light-shadow-softness = Měkkost stínu
+photo-light-shadow-intensity = Intenzita stínu
+photo-light-shadow-reset = Zpět k hodnotě Preference
+world-teleport-access-blocked-title = Teleport blokován
+world-teleport-access-adults-only = Region, který se pokoušíte navštívit, obsahuje { $rating } obsahu, který je přístupný pouze dospělým.
+world-teleport-access-change-and-reteleport = Oblast, kterou chcete navštívit, obsahuje obsah s hodnocením { $rating }. Ve svém aktuálním nastavení obsah s hodnocením { $rating } vylučujete. Můžete změnit nastavení a pokračovat v teleportu nebo jej zrušit.
+world-teleport-access-change = Oblast, kterou chcete navštívit, obsahuje obsah s hodnocením { $rating }. Ve svém aktuálním nastavení obsah s hodnocením { $rating } vylučujete. Můžete změnit nastavení nebo teleport zrušit. Po změně nastavení bude nutné teleport zkusit znovu.
+world-teleport-access-out-of-sync = Máme technické potíže s vaším teleportem, protože vaše preference nejsou synchronizovány se serverem.
+world-teleport-access-rated = Lokalita, kterou jste si vybrali, má hodnocení { $rating }.
+world-teleport-access-allow = Aktuální nastavení nepovoluje obsah s hodnocením { $rating }. Když jej povolíte, nastavení se aktualizuje.
+world-teleport-access-allow-button = Povolit { $rating } obsah
+world-teleport-access-not-on-account = Oblast, kterou se pokoušíte navštívit, má hodnocení { $rating }, které není pro váš typ účtu dostupné.
+world-teleport-access-change-and-continue = Změnit a pokračovat
+world-teleport-access-change-preferences = Změna předvoleb
+world-teleport-access-preference-changed-title = Hodnocení obsahu změněno
+world-teleport-access-preference-changed = Nebudete již dostávat žádná oznámení o tom, že se chystáte navštívit oblast s obsahem { $rating }.Nastavení obsahu můžete v budoucnu změnit v části Předvolby › Soukromí.
+people-show-group-sheet = Zobrazit detaily skupiny
+people-group-details-empty = Žádná skupina k zobrazení
+ao-import-unfinished-retry = Nedokončený příběh AO import již existuje v #Aurora/{ $folder }. Použijte upozornění na obnovení v AO Před opakováním zavřete okno.
+ao-unfinished-import =
+    { $count ->
+        [one] Nedokončený import AO v #Aurora/{ $folder }. Počet sad: { $count }.
+       *[other] Nedokončený import AO v #Aurora/{ $folder }. Počet sad: { $count }.
+    }
+ao-finish-import = Dokončit import
+ao-show-in-inventory = Zobrazit v inventáři
+ao-duplicate-native =
+    { $count ->
+        [one] Další nalezená složka: #Aurora/{ $folder }. Počet sad: { $count }. Sloučit ji s aktivní složkou AO?
+       *[other] Další nalezená složka: #Aurora/{ $folder }. Počet sad: { $count }. Sloučit ji s aktivní složkou AO?
+    }
+ao-native-already-exists = Vestavěná animace s tímto názvem již existuje
+rlva-im-ended-local = { $name } Vzdáleně zavřel okno. IM Konverzace s paní doktorkou @stopim
+rlva-blocked-script-dialog = Nelze zobrazit dialog skriptu nebo textové pole kvůli omezením RLV
+rlva-blocked-nearby = Nelze vidět přítomnost blízkých avatarů kvůli omezením RLV
+rlva-tools-retained = Uchováváno do přihlášení
+rlva-read-at-login = Změny se projeví při příštím přihlášení.
+rlva-debug-commands-chat = Každý příkaz také dostane řádek v nedalekém chatu, pod názvem objektu: co provádí, co selže a proč, co čeká na přihlášení.
+rlva-blocked-start-im = Kvůli omezením RLV nelze zahájit soukromý chat s uživatelem { $recipient }
+rlva-blocked-start-conference = Nelze zahájit konferenci s [RECIPIENT] kvůli RLV omezení
+rlva-anonym-waiting = Načítám další...
+rlva-anonym-unknown = (Neznámý)
+rlva-blocked-teleport = Nelze zahájit teleport kvůli omezením RLV
+rlva-blocked-permission-attach = Pokus o připojení '{ $object }' byl zamítnut kvůli RLV omezení
+rlva-blocked-permission-teleport = '{ $object }' bylo odepřeno oprávnění k teleportování vás kvůli RLV omezení
+rlva-blocked-view-notecard = Notecard nelze otevřít kvůli omezením RLVa.
+rlva-blocked-view-script = Skript nelze otevřít z důvodu omezení RLVa.
+rlva-blocked-view-texture = Texturu nelze otevřít kvůli omezením RLVa.
+rlva-debug-explicit-point = Ignorovat názvy bodů připojení na položkách inventáře a složek
+rlva-debug-explicit-point-hint = Zatímco je bod připojení zamčený, Wear and Add odešle objekt do výchozího bodu namísto bodu, který dává jeho název nebo jméno složky (neúplný).
+ui-bars-clouds-paused-tip = Mraky jsou pro tuto relaci drženy nehybně. Kliknutím je necháte znovu se pohybovat.
+phototools-tab-dof-glow = Hloubka ostrosti a záře
+phototools-lights-shadows = Nastavení světel a stínů
+phototools-ambient-occlusion = Nastavení ambientní okluze
+phototools-dof = Nastavení hloubky ostrosti
+phototools-tone-mapping = Nastavení mapování tónů HDR
+phototools-glow = Nastavení záře
+phototools-photo-banner = Hloubka ostrosti je zachována pro vaše další fotografie; světlo, expozice, stíny, okolní okluze a opotřebovaná světla přetrvávají až do zavření okna s fotografií.Foto okno otevřené: řádky foto okna také mění fotografii.
+phototools-photo-boost = Kvalita fotografie je zvýšena: grafické řádky zobrazují zvýšené hodnoty a změna, kterou tam provedete, se zachová jako vaše vlastní.
+phototools-photo-focus-help = Kliknutí: poslední bod na světě, na který jste kliknuli. Ukazatel: bod pod ukazatelem. Manuál: vzdálenost, kterou nastavíte.
+phototools-photo-distance-help = Vzdálenost, na kterou objektiv zaostří při manuálním ostření.
+phototools-director-lens = Objektiv režiséra je zobrazen, když je jeho okno otevřené, nad nastavením níže.
+phototools-view-angle-viewfinder = Hledáček vlastní zorný úhel: ten váš se vrátí, když se zavře.
+ui-options-dof-show-focus-point = Zobrazit bod zaostření
+ui-options-dof-show-focus-point-help = Malý zaměřovací kříž na místě, kde se objektiv zaostřuje: žlutý, když je volný, červený, když se uzamkne.

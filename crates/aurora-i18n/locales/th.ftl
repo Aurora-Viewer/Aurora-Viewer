@@ -15858,3 +15858,156 @@ ui-appearance-date-oldest-first = วันที่: เก่าสุดก�
 ui-appearance-favorites-to-top = รายการโปรดอยู่ด้านบน
 ui-appearance-images-to-top = ชุดที่มีภาพอยู่ด้านบน
 ui-options-group-emotes = จัดกลุ่มอีโมตกับข้อความของผู้ส่ง
+
+### Release translations
+
+ui-options-planet-curvature = เส้นโค้งของดาวเคราะห์
+ui-options-planet-curvature-help = วาดภาพโลกบนดาวเคราะห์รูปวงกลม: นํ้าที่เปิดอยู่จะตกลงมาถึงขอบฟ้าจริง ๆ แทนที่จะไหลออกมาในระดับตา และมีท้องฟ้าอยู่ด้านล่างของมัน มีเพียงมุมมองเท่านั้นที่เปลี่ยนแปลง: ภูมิภาค ฟิสิกส์ และสิ่งที่คนอื่นเห็นจะยังคงเรียบเรียงอยู่บนพื้นผิวของโลก การตกลงของน้ำในระยะการวาดคือไม่กี่เซนติเมตร; มันแสดงให้เห็นในทะเลที่ห่างไกล ต่างจากตัวดูแบบเก่า
+ui-options-planet-radius = เส้นผ่าศูนย์กลางของดาวเคราะห์
+ui-options-planet-radius-help = เส้นผ่านศูนย์กลางของดาวเคราะห์ที่ถูกวาดขึ้น เป็นหน่วยเป็นกิโลเมตร วงโคจรของโลกคือ 6, 371 กิโล เมตร: จากระดับความสูง 10 เมตร ทะเลจะจบลงที่ระยะห่างประมาณ 11 กม. ดาวเครดิตที่เล็กกว่า จะทำให้เสาอากาศใกล้ขึ้น
+ui-options-camera-frame-while-posing = กรอบภาพของอวตารขณะโพสต์
+ui-options-camera-frame-while-posing-tip = การเปิดโพเซอร์จะกรอบภาพอวตาร และคลิกที่ข้อต่อ จะทำให้กล้องเข้าใกล้มัน ลากข้อต่อจะไม่เคลื่อนกล้อง
+ui-options-camera-still-while-posing = เก็บกล้องไว้ที่จุดเดียวเมื่อถ่ายรูป
+ui-options-camera-still-while-posing-tip = ขณะที่คุณโพสต์ภาพ กล้องจะหยุดติดตามอวตาร โฟกัส และส่วนต่างๆของร่างกาย และการเดินไม่สามารถรีเซ็ตมันได้ วงโคจร, การปรับขนาด, ปั่นและค่าตั้งค่าก่อนหน้ายังทำงานได้
+ui-options-group-emotes-hint = ในรูปแบบแชต Aurora อีโมตอย่าง “/me waves” จะแสดงใต้หัวข้อเดียวกับข้อความที่คนเดียวกันส่งก่อนหน้าหรือถัดไปทันที โดยไม่มีหัวข้อแยก
+content-perms-nested = เพิ่มวัตถุเข้าไปในวัตต์อื่น
+content-perms-nested-help = ตัวเลือกนี้ยังสามารถแก้ไขเนื้อหาของวัตถุที่ซ่อนอยู่ได้อีกด้วย โดยมีความลึกสูงสุดถึงห้าระดับ ทุกวัตต์จะถูกวางไว้ในโลก2เมตรเหนือจากโปรไฟล์พื้นฐานที่เก็บมันไว้ สคริปต์ที่ทำงานอยู่จะถูกหยุด การเปลี่ยนเนื้อหา และเริ่มสคริพต์ใหม่ จากนั้นวัตตต์ก็จะถูกบันทึกกลับไปยังพื้นที่เก็บข้อมูล สิทธิ์ในการใช้งานของวั ตถุในพื้นที่เก็บอนุญาตจะถูกตั้งค่าและตรวจสอบก่อนที่จะทำการลบสำเนาชั่วคราวออกจากโลก วั ตต์ที่คุณไม่สามารถคัดลอก, ย้ายหรือแก้ไขอ้างอิงจะยังคงปิดอยู่ คุณจำเป็นต้องมีสิทธิ์เพื่อสร้างในตำแหน่งที่วาง
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } วัตถุในรายการเนื้อหาจะถูกเปิด โดยข้ามไป: { $skipped }.
+       *[other] { $objects } สิ่งของในเนื้อหาจะถูกเปิด, ข้าม: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = ไม่มีคัดลอกหรือไม่ส่งต่อ
+content-perms-nested-skip-no-modify = ไม่สามารถแก้ไขได้
+content-perms-nested-skip-depth = มากกว่า5ระดับ
+content-perms-nested-rezzing = วางตัวอย่าง{ $name }ในโลกนี้ (ระดับที่อยู่อาศัย) { $level })…
+content-perms-nested-stopping = หยุดสคริปต์ของ "{ $name }"...
+content-perms-nested-applying = กำลังเปลี่ยนเนื้อหาของ "{ $name }"...
+content-perms-nested-restoring = กำลังเริ่มสคริปต์ของ "{ $name }" อีกครั้ง...
+content-perms-nested-saving = กำลังบันทึกวัตถุ "{ $name }" กลับไปยังคอนเทนเนอร์...
+content-perms-nested-deleting = กำลังลบสำเนาชั่วคราวในโลกของ "{ $name }"...
+content-perms-nested-finished = ไอเทมที่อัปเดต: { $count } วัตถุซ้อน: { $objects } ข้าม: { $skipped }
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } เก็บไว้ใกล้กับต้นฉบับของมัน: ชื่อที่แตกต่างกัน
+       *[other] { $kept } เก็บไว้ใกล้กับตัวต้นฉบับของพวกเขา ชื่อแตกต่างกัน
+    }
+content-perms-nested-stopped = หยุด: สำเนาชั่วคราวในโลกจะถูกลบออก ส่วนต้นฉบับจะยังคงเป็นเช่นเดิม
+content-perms-nested-stop-help = หยุดการทำงานและลบสำเนาชั่วคราวที่ยังอยู่ในโลก ไอเทมต้นฉบับจะคงเดิม และวัตถุที่บันทึกกลับไปแล้วจะเก็บการเปลี่ยนแปลงไว้
+content-perms-nested-scripts-warning = วัตถุแต่ละชิ้นจะถูกสร้างในโลก (rez) สคริปต์จึงเรียกใช้การทำงานตอนสร้างวัตถุ เช่น การระเบิด การเทเลพอร์ต หรือการมอบไอเทม ก่อนที่ระบบจะหยุดสคริปต์ได้ เพื่อป้องกัน ให้เปิด «ปิดการทำงานของสคริปต์» ในการตั้งค่าภูมิภาค / ที่ดินของภูมิภาคที่คุณดูแล แล้วปิดตัวเลือกนี้เมื่อเสร็จ
+content-perms-nested-original-kept = "{ $name }" ถูกบันทึกกลับมาแล้ว แต่ไม่สามารถลบรายการต้นฉบับของมันได้: ทั้งสองอยู่ในเนื้อหา
+content-perms-nested-copy-left = ไม่สามารถลบสำเนาชั่วคราวในโลกของ “{ $name }” ได้ โปรดลบมันด้วยมือ
+content-perms-nested-save-unconfirmed = ยังไม่มีการยืนยันการบันทึกกลับ
+content-perms-nested-saved-perms-unconfirmed = หยุด: ไม่สามารถยืนยันสิทธิ์ของวัตถุที่ถูกบันทึกกลับไปยังคอนเทนเนอร์ได้ สำเนางานชั่วคราวในโลกจะถูกเก็บไว้ โปรดตรวจสอบก่อนที่จะลบมันออก
+content-perms-nested-timeout = เครื่องจำลองไม่ตอบสนองในเวลาที่กำหนด
+content-perms-nested-rez-refused = หยุด: เครื่องจำลองปฏิเสธที่จะวางในโลก{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = หยุด: "{ $name }" ไม่ได้ปรากฏในเวลา 15 วินาที หากมันปรากฎขึ้นหลังจากนั้น บนวัตถุพื้นฐาน ให้ลบมันออก
+content-perms-nested-not-ours = หยุด: วัตถุที่วางไว้ในโลกสำหรับ "{ $name }" ไม่ได้มาจากเนื้อหานี้ มันถูกทิ้งไว้ที่โลก
+content-perms-nested-unverified = หยุด: วัตถุที่ปรากฏสำหรับ "{ $name }" ไม่สามารถตรวจสอบได้ว่าถูกวางไว้ในโลกจากเนื้อหาเหล่านี้ ดังนั้นจึงถูกทิ้งในโลก
+content-perms-nested-group-split = หยุด: "{ $name }" (วัตถุหลายชิ้นที่บันทึกไว้เป็นหนึ่ง) กลับมาเป็นวัตต์เดียว ส่วนของมันที่วางอยู่ในโลกจะถูกเก็บไว้ในโลก เลือกทั้งหมด แล้วนำไปใช้เพื่อสร้างกลุ่มใหม่
+content-perms-nested-failed = “{ $name }ไม่เปลี่ยนแปลง: { $reason }.
+content-perms-nested-original-gone = “{ $name }” ถูกเก็บไว้ในโลก: การจัดเก็บกลับของมันยังไม่ได้รับการยืนยัน และรายการต้นฉบับของมันหายไป
+content-perms-nested-gone = วัตถุที่ออกจากโลก
+content-perms-nested-land-denied = หยุด: คุณไม่สามารถสร้างบนวัตถุพื้นฐานนี้ได้ ซึ่งเป็นจุดที่วัตต์จะถูกวางไว้ในโลก
+content-perms-nested-parcel-full = หยุด: แพกเกจไม่มีพื้นที่เหลือสำหรับสำเนาชั่วคราวในโลก
+content-perms-nested-rlva = หยุด: การวางวัตถุในโลกถูกจำกัด (RLVa)
+content-perms-nested-too-many = สคริปต์มากเกินไป
+content-perms-nested-unreadable = ไม่สามารถอ่านเนื้อหาได้
+content-perms-demo-chest = กล่องเก็บของ
+content-perms-demo-notes = ข้อความในหีบ
+content-perms-demo-outer = กล่องด้านนอก
+content-perms-demo-glow = สคริปต์ที่จะทำให้วัตถุสว่าง
+content-perms-demo-readme = อ่านฉันก่อน
+content-perms-demo-inner = ตัวบรรจุภายใน
+content-perms-demo-inner-note = ข้อความภายในกล่อง
+content-perms-demo-tiny = กล่องเล็กมาก
+content-perms-demo-spin = สคริปต์ที่จะหมุนวัตถุ
+content-perms-demo-heirloom = ของที่ระลึกของครอบครัว
+content-perms-demo-sealed = กล่องปิดผนึก
+content-perms-demo-linked = ตั้งค่า...
+content-perms-demo-pebble = หินกลมเล็กๆ
+content-perms-demo-stack = กองถัง
+dev-toolbox-o10 = กล่องจับภาพอวตาร
+rlva-selftest-confirm-wear = มันสวมสิ่งของที่เท้าหลังขวา เท้าหลังซ้าย และปลายหาง และเขียนสคริปต์เล็ก ๆ ในสองในนั้น สิ่งที่คุณสวมบนสามจุดนี้สามารถถูกถอดออก
+ui-environment-sort-by-name = จัดเรียงตามตัวอักษร
+ui-environment-sorted-by-name = เรียงลำดับตามชื่อตอนนี้ คลิกเพื่อคืนสภาพจากคลังของคุณ
+ui-environment-in-inventory-order = ตามลำดับของเครื่องมือของคุณ คลิกเพื่อจัดเรียงพวกเขา A–Z
+ui-chat-contacts-groups-sub = กลุ่ม ·{ $count }
+ui-options-soft-shadows = เงาบางๆ
+ui-options-soft-shadows-help = ใช้เงาของดวงอาทิตย์ โดยใช้ขอบที่บางลง ยิ่งวัตถุอยู่ห่างจากสิ่งที่เป็นเงามากเท่าไหร่ เหมือนกับในชีวิตจริง: เงาสะท้อนของเสาสูงจะมืดลงไปทางปลายของมัน ในขณะที่เท้ายังคงคมชัดอยู่ การทดลอง ปิดการใช้งานโดยปริยาย; ใช้เวลาเพียงส่วนหนึ่งของมิลลิวินาทีบนกราฟิกการ์ด
+ui-options-shadow-softness = ความนุ่มของเงา
+ui-options-shadow-softness-help = ขนาดของแสงสำหรับเงาบาง ๆ: 1 คือแสงที่กว้าง 2.3องศา,2เป็นแสงที่มีขนาดใหญ่กว่า และทำให้เงาเบาขึ้นสองเท่า (ดวงอาทิตย์จริงมีขนาดประมาณ 0.2),0เป็นแสงสว่างไม่มีขนาด: เงาจะยังคงเหมือนเดิม รวมถึงโปรเจกเตอร์ด้วย
+ui-options-shadow-softness-needs-soft = เปิดใช้งานเงาบาง ๆ เพื่อใช้ตัวเลือกนี้
+ui-options-shadow-intensity = ความเข้มของเงา
+ui-options-shadow-intensity-help = ระดับความมืดของเงาของดวงอาทิตย์: 1 คือความมึดปกติ, ต่ำกว่า จะให้แสงเข้าไปมากขึ้น
+ui-options-system-fonts-searching = กำลังค้นหาแบบอักษร...
+demo-emotes-nova = /me วางโต๊ะลงที่น้ำพุ
+demo-emotes-orion = ดูดีมากจากที่นี่!
+demo-teleport-access-neighbour = เพื่อนบ้านผู้ใหญ่ (ตัวอย่าง)
+photo-light-shadow-softness = ความนุ่มของเงา
+photo-light-shadow-intensity = ความเข้มของเงา
+photo-light-shadow-reset = กลับไปยังค่าของตัวเลือก
+world-teleport-access-blocked-title = การส่งข้อมูลถูกบล็อก
+world-teleport-access-adults-only = ภูมิภาคที่คุณกำลังพยายามจะเข้าไป มีเนื้อหา { $rating } ที่สามารถเข้าถึงได้โดยผู้ใหญ่เท่านั้น
+world-teleport-access-change-and-reteleport = ภูมิภาคที่คุณกำลังจะไปมีเนื้อหาระดับ { $rating } การตั้งค่าปัจจุบันของคุณไม่อนุญาตเนื้อหาระดับ { $rating } คุณเปลี่ยนการตั้งค่าแล้วเทเลพอร์ตต่อ หรือยกเลิกการเทเลพอร์ตได้
+world-teleport-access-change = ภูมิภาคที่คุณกำลังจะไปมีเนื้อหาระดับ { $rating } การตั้งค่าปัจจุบันของคุณไม่อนุญาตเนื้อหาระดับ { $rating } คุณเปลี่ยนการตั้งค่าหรือยกเลิกการเทเลพอร์ตได้ หลังจากเปลี่ยนการตั้งค่าแล้ว ให้ลองเทเลพอร์ตอีกครั้ง
+world-teleport-access-out-of-sync = เรากำลังมีปัญหาทางเทคนิค กับการเชื่อมต่อของคุณ เพราะว่าคุณต้องการที่จะออกจาก sync กับเซิร์ฟเวอร์
+world-teleport-access-rated = สถานที่ที่คุณเลือก มีคะแนน { $rating }
+world-teleport-access-allow = การตั้งค่าปัจจุบันของคุณไม่อนุญาตเนื้อหาระดับ { $rating } หากอนุญาต ระบบจะอัปเดตการตั้งค่าของคุณ
+world-teleport-access-allow-button = อนุญาตเนื้อหา { $rating }
+world-teleport-access-not-on-account = ภูมิภาคที่คุณพยายามจะเข้าชม มีระดับความปลอดภัย { $rating } ซึ่งไม่เหมาะสมกับประเภทบัญชีผู้ใช้ของคุณ
+world-teleport-access-change-and-continue = เปลี่ยนและทำต่อไป
+world-teleport-access-change-preferences = เปลี่ยนค่าที่ตั้ง
+world-teleport-access-preference-changed-title = การจัดอันดับเนื้อหาเปลี่ยนไป
+world-teleport-access-preference-changed = คุณจะไม่ได้รับแจ้งให้ทราบอีกต่อไป ว่าคุณกำลังจะเข้าเยี่ยมชมภูมิภาคที่มีเนื้อหา { $rating } คุณสามารถเปลี่ยนความต้องการของเนื้อหาของคุณในอนาคตได้ที่ ตัวเลือก › ความเป็นส่วนตัว
+people-show-group-sheet = แสดงรายละเอียดกลุ่ม
+people-group-details-empty = ไม่มีกลุ่มที่จะแสดง
+ao-import-unfinished-retry = ยังไม่เสร็จ AO มีแฟ้มนำเข้าอยู่แล้วใน #Aurora/{ $folder }ใช้การแจ้งเตือนในการฟื้นฟูใน AO ปิดหน้าต่างก่อนที่จะพยายามใหม่
+ao-unfinished-import =
+    { $count ->
+        [one] การนำเข้า AO ใน #Aurora/{ $folder } ยังไม่เสร็จ จำนวนชุด: { $count }
+       *[other] การนำเข้า AO ใน #Aurora/{ $folder } ยังไม่เสร็จ จำนวนชุด: { $count }
+    }
+ao-finish-import = เสร็จสมบูรณ์การนำเข้า
+ao-show-in-inventory = แสดงในรายการ
+ao-duplicate-native =
+    { $count ->
+        [one] พบอีกโฟลเดอร์หนึ่ง: #Aurora/{ $folder } จำนวนชุด: { $count } ต้องการรวมกับโฟลเดอร์ AO ที่ใช้งานอยู่หรือไม่
+       *[other] พบอีกโฟลเดอร์หนึ่ง: #Aurora/{ $folder } จำนวนชุด: { $count } ต้องการรวมกับโฟลเดอร์ AO ที่ใช้งานอยู่หรือไม่
+    }
+ao-native-already-exists = มีตัวกรองการเคลื่อนไหวที่ติดตั้งไว้ด้วยชื่อนี้อยู่แล้ว
+rlva-im-ended-local = { $name } ปิดเครื่องจากระยะไกล IM การสนทนากับ @stopim
+rlva-blocked-script-dialog = ไม่สามารถแสดงกล่องโต้ตอบสคริปต์หรือกล่องข้อความได้ เพราะมีข้อจำกัด RLV
+rlva-blocked-nearby = ไม่สามารถเห็นการมีตัวอวตารอยู่ใกล้ๆ ได้ เพราะมีการจำกัด RLV
+rlva-tools-retained = เก็บไว้จนกว่าจะล็อกอิน
+rlva-read-at-login = การเปลี่ยนแปลงจะมีผลเมื่อล็อกอินครั้งต่อไป
+rlva-debug-commands-chat = คำสั่งแต่ละคำจะได้รับบรรทัดที่อยู่ใกล้เคียงกับการสนทนา ภายใต้ชื่อของวัตถุ: สิ่งที่มันทำ, สิ่งที่ล้มเหลวและเหตุผล, อะไรรอการล็อกอิน
+rlva-blocked-start-im = ไม่สามารถเริ่มการทำงานได้ IM วาระการทำงานกับ { $recipient } เนื่องจาก RLV ข้อจำกัด
+rlva-blocked-start-conference = ไม่สามารถเริ่มการประชุมด้วย [RECIPIENT] เนื่องจาก RLV ข้อจำกัด
+rlva-anonym-waiting = กำลังโหลด...
+rlva-anonym-unknown = ชื่อแฟ้ม
+rlva-blocked-teleport = ไม่สามารถเริ่มเทเลพอร์ตได้ เนื่องจากข้อจำกัดของ RLV
+rlva-blocked-permission-attach = กำลังพยายามเชื่อมต่อ '{ $object }'ถูกปฏิเสธเนื่องจาก RLV ข้อจำกัด
+rlva-blocked-permission-teleport = '{ $object }'ถูกปฏิเสธอนุญาตให้เทเลพอร์ตคุณเพราะ RLV ข้อจำกัด
+rlva-blocked-view-notecard = ไม่สามารถเปิดโน้ตการ์ดได้ เนื่องจากข้อจำกัดของ RLVa
+rlva-blocked-view-script = ไม่สามารถเปิดสคริปต์ได้ เพราะมีข้อจำกัด RLVa
+rlva-blocked-view-texture = ไม่สามารถเปิดเนื้อหาได้ เนื่องจากข้อจำกัดของ RLVa
+rlva-debug-explicit-point = ไม่สนใจชื่อของจุดที่เกี่ยวข้องบนรายการและโฟลเดอร์ในบัญชี
+rlva-debug-explicit-point-hint = ขณะที่จุดการเชื่อมโยงถูกล็อคไว้ การใส่และเพิ่ม จะส่งวัตถุไปยังจุดปริยายของมัน แทนที่จะเป็นจุดที่ชื่อหรือชื่อโฟลเดอร์ของมันให้ (ไม่สมบูรณ์)
+ui-bars-clouds-paused-tip = เมฆจะยังคงอยู่ในช่วงเวลานี้ คลิกเพื่อปล่อยให้มันเคลื่อนที่อีกครั้ง
+phototools-tab-dof-glow = ระยะชัดลึกและแสงเรือง
+phototools-lights-shadows = ตั้งค่าแสงและเงา
+phototools-ambient-occlusion = การตั้งค่าเงาสัมผัส (Ambient Occlusion)
+phototools-dof = การตั้งค่าระยะชัดลึก
+phototools-tone-mapping = ตั้งค่าการวางตำแหน่งสีของ HDR
+phototools-glow = ตั้งค่าแสงสว่าง
+phototools-photo-banner = เปิดหน้าต่างรูปภาพ: แถวของหน้าต่างภาพถ่ายยังมีการเปลี่ยนแปลงรูปภาพด้วย ความลึกของสนามจะถูกเก็บไว้สำหรับรูปภาพถัดไปของคุณ; แสง, การเปิดเผย, เงา, การปิดกั้นสภาพแวดล้อมและแสงที่ใช้แล้วจะคงอยู่จนกว่าจะปิดหน้าต่างของรูปภาพ
+phototools-photo-boost = เพิ่มคุณภาพของรูปภาพ: แถวกราฟิกจะแสดงค่าที่เพิ่มขึ้น และการเปลี่ยนแปลงที่คุณทำจะถูกเก็บไว้เป็นของคุณเอง
+phototools-photo-focus-help = คลิก: จุดที่ถูกคลิกครั้งสุดท้ายในโลก ตัวชี้: เส้นทางที่อยู่ใต้ตัวชั่ง คำสั่งง่าย: ระยะทางที่คุณตั้งไว้
+phototools-photo-distance-help = ระยะห่างที่เลนส์จะโฟกัสในระบบโฟคัสแบบมือ
+phototools-director-lens = เลนส์ของผู้กำกับจะถูกแสดงเมื่อเปิดหน้าต่างของมัน โดยใช้การตั้งค่าด้านล่างนี้
+phototools-view-angle-viewfinder = มุมมองของกล้องจะขึ้นอยู่กับเครื่องมองภาพ ของคุณจะกลับมาเมื่อมันปิด
+ui-options-dof-show-focus-point = แสดงจุดโฟกัส
+ui-options-dof-show-focus-point-help = เส้นตรงเล็ก ๆ ที่จุดที่เลนส์มองเห็น สีเหลืองเมื่อมันเป็นอิสระ แดงเมื่อมันล็อค

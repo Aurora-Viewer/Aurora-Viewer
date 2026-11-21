@@ -15865,3 +15865,156 @@ ui-appearance-date-oldest-first = Petsa: pinakaluma muna
 ui-appearance-favorites-to-top = Mga paborito sa itaas
 ui-appearance-images-to-top = Mga outfit na may larawan sa itaas
 ui-options-group-emotes = Isama ang mga emote sa mga mensahe ng nagpadala
+
+### Release translations
+
+ui-options-planet-curvature = Planeta kurbada
+ui-options-planet-curvature-help = Gumagawa ng mundo sa isang bilog na planeta: ang bukas na tubig ay bumabagsak papunta sa isang tunay na hangganan sa halip na tumatakbo sa antas ng mata, na may langit sa ibaba nito. Lamang ang pagbabago ng view: mga rehiyon, pisika at kung ano ang nakikita ng iba manatili flat. Sa Earth ang drop sa loob ng draw distansya ay ilang sentimetro; ito ay ipinapakita sa malayo dagat. Iba sa Legacy Viewer
+ui-options-planet-radius = Radius ng planeta
+ui-options-planet-radius-help = Ang radius ng planeta drawn, sa kilometro. Earth's ay 6,371 km: mula sa 10 m up, ang dagat nagtatapos tungkol sa 20 km ang layo. Isang mas maliit na planeta ay nagdadala ng mga hangganan malapit
+ui-options-camera-frame-while-posing = I-frame ang avatar habang nagpo-pose
+ui-options-camera-frame-while-posing-tip = Ang pagbubukas ng poser frame ang avatar, at pag-click sa isang joint ay nagdadala ng camera mas malapit sa ito. Pag-drag ng isang joint hindi kailanman ilipat ang camera.
+ui-options-camera-still-while-posing = Panatilihin ang camera na tahimik habang nagpo-pose
+ui-options-camera-still-while-posing-tip = Habang nagpo-pose ka, tumitigil ang camera sa pagsunod sa avatar, ang focus nito at mga bahagi ng katawan nito, at hindi ito narereset sa paglalakad. Ang orbit, zoom, pan at presets ay gumagana pa rin.
+ui-options-group-emotes-hint = Sa chat style na Aurora, ang emote na tulad ng “/me waves” ay lilitaw sa ilalim ng header ng mga mensaheng ipinadala ng parehong tao kaagad bago o pagkatapos nito. Wala itong sariling header.
+content-perms-nested = Kasama ang mga bagay sa loob ng mga bagay
+content-perms-nested-help = Ito rin ay nag-eedit ng mga nilalaman ng mga nested na bagay, hanggang sa limang antas ng malalim. Ang bawat bagay ay inilagay sa mundo dalawang metro sa itaas ng primitive na naglalaman nito. Ang mga tumatakbo nitong script ay tumigil, ang mga nilalamang ito ay nagbago, at ang mga script nito ay muling sinimulan. Ang bagay ay pagkatapos ay nai-save pabalik sa lalagyan. Ang pahintulot ng bagay sa lalagyang ay naka-set at na-check bago ang kanyang pansamantalang kopya sa mundo ay tinanggal. Mga bagay na hindi mo maaaring kopyahin, ilipat o baguhin mananatiling sarado. Kailangan mo ng pahintulut upang bumuo sa placement location.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } bagay sa mga nilalaman ay bukas, skipped: { $skipped }.
+       *[other] { $objects } bagay sa mga nilalaman ay bukas, skipped: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = walang kopya o walang paglipat
+content-perms-nested-skip-no-modify = hindi maaaring baguhin
+content-perms-nested-skip-depth = higit sa5na antas ng malalim
+content-perms-nested-rezzing = Paglagay ng bagay “{ $name }” sa mundo (nesting antas { $level })…
+content-perms-nested-stopping = Pagpigil sa mga script ng “{ $name }” …
+content-perms-nested-applying = Pagbabago ng mga nilalaman ng “{ $name }”…
+content-perms-nested-restoring = Pagsisimula ng mga script ng “{ $name }” muli …
+content-perms-nested-saving = Pag-save ng bagay “{ $name }” bumalik sa kanyang lalagyan…
+content-perms-nested-deleting = Pagtanggal ng pansamantalang kopya sa mundo ng “{ $name }”…
+content-perms-nested-finished = Mga item na na-update: { $count }. Mga object sa loob ng iba: { $objects }. Nilaktawan: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] Ang { $kept } ay isang planetang hindi pangunahin.
+       *[other] Ang { $kept } ay isang planetang hindi pangunahin.
+    }
+content-perms-nested-stopped = Stopped: ang mga pansamantalang kopya sa mundo ay tinanggal, ang orihinal na mga item ay iniwan bilang sila ay.
+content-perms-nested-stop-help = Ititigil ang operasyon at buburahin ang mga pansamantalang kopyang nasa mundo pa. Mananatili ang mga orihinal na item. Mananatili rin ang mga pagbabago sa mga object na na-save na pabalik.
+content-perms-nested-scripts-warning = Nire-rez sa mundo ang bawat object, kaya tatakbo muna ang mga aksyon ng script sa pag-rez, gaya ng pagsabog, pag-teleport o pagbibigay ng item, bago mapahinto ang mga script. Para maiwasan ito, i-on muna ang Disable scripts sa Region / Estate sa isang rehiyong pinamamahalaan mo, at i-off ito pagkatapos.
+content-perms-nested-original-kept = “{ $name }” ay nai-save pabalik, ngunit ang kanyang orihinal na item ay hindi maaaring alisin: parehong ay sa mga nilalaman.
+content-perms-nested-copy-left = Ang pansamantalang kopya sa mundo ng “{ $name }” ay hindi maaaring matanggal: tanggalin ito sa pamamagitan ng kamay.
+content-perms-nested-save-unconfirmed = ang i-save bumalik ay hindi nakumpirma
+content-perms-nested-saved-perms-unconfirmed = Stopped: ang mga pahintulot ng bagay na nai-save pabalik sa kanyang container ay hindi maaaring kumpirmahin. Ang pansamantalang gumaganang kopya sa mundo ay pinananatili; suriin ang mga ito bago alisin ang mga iyon.
+content-perms-nested-timeout = ang simulator ay hindi tumugon sa oras
+content-perms-nested-rez-refused = Natigil: ang simulator tumanggi na ilagay sa mundo “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Stopped: “{ $name }” ay hindi lumitaw sa loob ng 15 segundo. Kung ito ay lilitaw mamaya sa itaas ng primitive bagay, tanggalin ito.
+content-perms-nested-not-ours = Stopped: ang bagay na inilagay sa mundo para sa “{ $name }” ay hindi mula sa mga nilalaman, ito ay kaliwa sa mundo.
+content-perms-nested-unverified = Stopped: ang bagay na lumitaw para sa “{ $name }” ay hindi maaaring suriin bilang inilagay sa mundo mula sa mga nilalaman na ito, kaya ito ay kaliwa sa mundo.
+content-perms-nested-group-split = Stopped: “{ $name }” (ilang mga bagay na nai-save bilang isa) ay bumalik bilang isang solong bagay. Ito inilagay sa mundo bahagi ay pinananatili sa mundo: piliin ang lahat ng mga ito at dalhin ang mga ito upang gumawa ng grupo muli.
+content-perms-nested-failed = “{ $name }” kaliwa hindi nagbago: { $reason }.
+content-perms-nested-original-gone = “{ $name }” ay pinananatiling sa mundo: ang pag-save nito ay hindi nakumpirma at ang orihinal na item ay nawala.
+content-perms-nested-gone = ang bagay kaliwa ang mundo
+content-perms-nested-land-denied = Stopped: hindi mo maaaring bumuo sa itaas na ito primitive bagay, kung saan ang mga bagay ay inilagay sa mundo.
+content-perms-nested-parcel-full = Stopped: ang parcel ay walang silid na kaliwa para sa mga pansamantalang kopya sa mundo.
+content-perms-nested-rlva = Stopped: paglalagay ng mga bagay sa mundo ay limitado (RLVa).
+content-perms-nested-too-many = masyadong maraming mga script
+content-perms-nested-unreadable = nilalaman nito ay hindi maaaring basahin
+content-perms-demo-chest = Pag-iimbak dibdib
+content-perms-demo-notes = Mga tala sa loob ng imbakan dibdib
+content-perms-demo-outer = Panlabas na kahon
+content-perms-demo-glow = Script na gumagawa ng bagay glow
+content-perms-demo-readme = Basahin ako unang
+content-perms-demo-inner = Panloob na lalagyan
+content-perms-demo-inner-note = Tandaan sa loob ng panloob na kahon
+content-perms-demo-tiny = Napaka maliit na kahon
+content-perms-demo-spin = Script na gumagalaw ang bagay
+content-perms-demo-heirloom = Pamilya heirloom
+content-perms-demo-sealed = Naka-seal na kahon
+content-perms-demo-linked = Grupo ng mga pinagsamang bagay
+content-perms-demo-pebble = Maliit na bilog bato
+content-perms-demo-stack = Stack ng kahon
+dev-toolbox-o10 = Avatar hitbox
+rlva-selftest-confirm-wear = Ito wears kanyang mga bagay-bagay sa Right Hind Foot, Kaliwa Hind Foot at Tail Tip, at magsusulat ng isang maliit na relay script sa dalawa sa kanila. Ano ang iyong magsuot sa tatlong puntos na ito ay maaaring kinuha off.
+ui-environment-sort-by-name = I-sort ayon sa alpabeto
+ui-environment-sorted-by-name = Kasalukuyang naka-sort sa pamamagitan ng pangalan. Mag-click upang ibalik ang order mula sa iyong imbentaryo.
+ui-environment-in-inventory-order = Sa order ng iyong imbentaryo. Mag-click upang ayusin ang mga ito A–Z.
+ui-chat-contacts-groups-sub = Mga grupo · { $count }
+ui-options-soft-shadows = Malalambot na anino
+ui-options-soft-shadows-help = Sun shadows na may softer gilid ang mas malayo ang bagay ay mula sa kung ano ito shadow, tulad ng sa tunay na buhay: ang lilim ng isang mataas na pole blurs patungo sa kanyang tip habang ang isang paa ay nananatiling matalim. Experimental, off sa pamamagitan ng default; gastos ng isang fraction ng isang millisecond sa graphic card
+ui-options-shadow-softness = Liwanag softness
+ui-options-shadow-softness-help = Ang laki ng ilaw para sa mga soft shadows: 1 ay isang ilaw 2.3 degree sa kabuuan,2isang mas malaking isa na softens shadow dalawang beses bilang marami (ang tunay na araw ay tungkol sa 0.2),0isang ilaw na walang laki: ang mga shadow ay tulad ng sila ay bago, ang projectors' kasama
+ui-options-shadow-softness-needs-soft = I-on ang Soft shadows upang gamitin ito
+ui-options-shadow-intensity = Intensidad ng lilim
+ui-options-shadow-intensity-help = Paano madilim ang mga lilim ng araw ay: 1 ay ang normal na kadiliman, mas mababang nagbibigay-daan sa higit pang ilaw sa kanila
+ui-options-system-fonts-searching = Naghahanap para sa mga font…
+demo-emotes-nova = /me set ng isang bench pababa sa pamamagitan ng fountain
+demo-emotes-orion = Tila mahusay na mula dito!
+demo-teleport-access-neighbour = Adult kapitbahay (demo)
+photo-light-shadow-softness = Liwanag softness
+photo-light-shadow-intensity = Intensidad ng lilim
+photo-light-shadow-reset = Bumalik sa halaga ng Mga Kagustuhan
+world-teleport-access-blocked-title = Hinarang ang pag-teleport
+world-teleport-access-adults-only = Ang rehiyon na sinusubukan mong bisitahin ay naglalaman ng { $rating } nilalaman, na magagamit lamang sa mga matatanda.
+world-teleport-access-change-and-reteleport = May nilalamang may rating na { $rating } ang rehiyong gusto mong puntahan. Hindi pinapayagan ng kasalukuyan mong settings ang nilalamang may rating na { $rating }. Maaari mong baguhin ang settings at ituloy ang teleport, o kanselahin ito.
+world-teleport-access-change = May nilalamang may rating na { $rating } ang rehiyong gusto mong puntahan. Hindi pinapayagan ng kasalukuyan mong settings ang nilalamang may rating na { $rating }. Maaari mong baguhin ang settings o kanselahin ang teleport. Subukan ulit ang teleport matapos baguhin ang settings.
+world-teleport-access-out-of-sync = Kami ay may teknikal na mga problema sa iyong teleport dahil ang iyong mga kagustuhan ay out ng sync sa server.
+world-teleport-access-rated = Ang lokasyon na pinili mo ay may markang { $rating }.
+world-teleport-access-allow = Hindi pinapayagan ng kasalukuyan mong settings ang nilalamang may rating na { $rating }. Maa-update ang settings kapag pinayagan mo ito.
+world-teleport-access-allow-button = Payagan ang { $rating } nilalaman
+world-teleport-access-not-on-account = Ang rehiyon na sinusubukan mong bisitahin ay may markang { $rating }, na hindi magagamit sa iyong uri ng account.
+world-teleport-access-change-and-continue = Baguhin at magpatuloy
+world-teleport-access-change-preferences = Baguhin ang mga kagustuhan
+world-teleport-access-preference-changed-title = Ang rating ng nilalaman ay nagbago
+world-teleport-access-preference-changed = Hindi mo na tatanggapin ang anumang mga notification na malapit kang bumisita sa isang rehiyon na may { $rating } content. Maaari mong baguhin ang iyong mga kagustuhan sa content sa hinaharap sa Mga Kagustuhan › Privacy.
+people-show-group-sheet = Ipakita ang mga detalye ng grupo
+people-group-details-empty = Walang grupo na ipapakita
+ao-import-unfinished-retry = Ang isang hindi natapos AO import na umiiral na sa #Aurora/{ $folder }. Gamitin ang notice pagbawi sa AO window bago muling pagtatangka.
+ao-unfinished-import =
+    { $count ->
+        [one] Hindi pa tapos ang pag-import ng AO sa #Aurora/{ $folder }. Bilang ng mga set: { $count }.
+       *[other] Hindi pa tapos ang pag-import ng AO sa #Aurora/{ $folder }. Bilang ng mga set: { $count }.
+    }
+ao-finish-import = Mag-import ng mga file
+ao-show-in-inventory = Ipakita sa inventaris
+ao-duplicate-native =
+    { $count ->
+        [one] May nakitang ibang folder: #Aurora/{ $folder }. Bilang ng mga set: { $count }. Isama ito sa aktibong AO folder?
+       *[other] May nakitang ibang folder: #Aurora/{ $folder }. Bilang ng mga set: { $count }. Isama ito sa aktibong AO folder?
+    }
+ao-native-already-exists = Ang isang built-in na animasyon override sa pangalan na ito ay umiiral na
+rlva-im-ended-local = { $name } ay remote na sarado ang IM pag-uusap sa @stopim
+rlva-blocked-script-dialog = Hindi maaaring ipakita ang script dialog o textbox dahil sa RLV paghihigpit
+rlva-blocked-nearby = Hindi makita ang pagkakaroon ng mga kalapit na avatar dahil sa RLV paghihigpit
+rlva-tools-retained = Pinapanatili hanggang sa login
+rlva-read-at-login = Ang mga pagbabago ay magdadala ng epekto sa susunod na login.
+rlva-debug-commands-chat = Ang bawat utos din ay makakakuha ng isang linya sa malapit na chat, sa ilalim ng pangalan ng bagay: kung ano ito executes, kung ano ang nabigo at bakit, kung saan naghihintay para sa login.
+rlva-blocked-start-im = Hindi magsimula IM session na may { $recipient } dahil sa RLV mga paghihigpit
+rlva-blocked-start-conference = Hindi magsimula ng conference na may [RECIPIENT] dahil sa RLV mga paghihigpit
+rlva-anonym-waiting = (Paglo-load ng...)
+rlva-anonym-unknown = (Hindi kilalang)
+rlva-blocked-teleport = Hindi maaaring simulan ang teleport dahil sa RLV mga paghihigpit
+rlva-blocked-permission-attach = Subukan upang i-attach '{ $object }'ay tinanggihan dahil sa RLV mga paghihigpit
+rlva-blocked-permission-teleport = '{ $object }'ay tinanggihan pahintulot upang teleport ka dahil sa RLV mga paghihigpit
+rlva-blocked-view-notecard = Hindi maaaring buksan ang notecard dahil sa RLVa paghihigpit.
+rlva-blocked-view-script = Hindi maaaring buksan ang script dahil sa RLVa paghihigpit.
+rlva-blocked-view-texture = Hindi maaaring buksan ang texture dahil sa RLVa paghihigpit.
+rlva-debug-explicit-point = Huwag pansinin ang mga pangalan ng attachment point sa inventaris item at folder
+rlva-debug-explicit-point-hint = Ang isang bagay ay maaaring maging isang bagay na may katangian o katangi-tanging mga katangiang pisikal, ngunit hindi ito dapat ikalito sa isang bagay (o bagay) na walang katangiang pisikal.
+ui-bars-clouds-paused-tip = Ang mga ulap ay gaganapin pa rin para sa session na ito. Mag-click upang hayaan ang mga ito ilipat muli.
+phototools-tab-dof-glow = Depth of field at glow
+phototools-lights-shadows = Mga setting ng ilaw at lilim
+phototools-ambient-occlusion = Mga setting ng ambient occlusion
+phototools-dof = Mga setting ng depth of field
+phototools-tone-mapping = Mga setting ng HDR tone mapping
+phototools-glow = Mga setting ng glow
+phototools-photo-banner = Photo window bukas: ang mga hilera ng photo window din ay may baguhin ang larawan. Ang lalim ng field ay pinananatili para sa iyong susunod na mga larawan; ang ilaw, exposure, shadows, kapaligiran occlusion at suot ilaw huling hanggang sa photo window sarado.
+phototools-photo-boost = Photo kalidad ay nadagdagan: ang mga graphic hilera ipakita ang nadagdagang halaga, at isang pagbabago na ginawa mo doon ay pinananatili bilang iyong sarili.
+phototools-photo-focus-help = I-click: ang puntong huling na-click sa mundo. Punan: ang puntos sa ilalim ng punan. Manwal: isang distansya na iyong itakda.
+phototools-photo-distance-help = Ang distansiya ang lens focus sa sa manual focus.
+phototools-director-lens = Ang lens ng Direktor ay ipinapakita habang ang window nito ay bukas, sa ibabaw ng mga setting sa ibaba.
+phototools-view-angle-viewfinder = Ang viewfinder nagmamay-ari ng view na anggulo: iyong bumalik kapag ito ay sarado.
+ui-options-dof-show-focus-point = Ipakita ang punto ng focus
+ui-options-dof-show-focus-point-help = Ang isang maliit na crosshair sa punto ng lens focuses sa: pula kapag ito ay libre, pulang kapag naka-lock.

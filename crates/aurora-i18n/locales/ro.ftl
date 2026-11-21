@@ -15869,3 +15869,156 @@ ui-appearance-date-oldest-first = Dată: cele mai vechi primele
 ui-appearance-favorites-to-top = Favoritele în partea de sus
 ui-appearance-images-to-top = Ținutele cu imagini în partea de sus
 ui-options-group-emotes = Grupează emote-urile cu mesajele expeditorului
+
+### Release translations
+
+ui-options-planet-curvature = Curbura planetară
+ui-options-planet-curvature-help = Desenează lumea pe o planetă rotundă: apa deschisă cade la un orizont real în loc să curgă la nivelul ochilor, cu cerul de sub ea. Numai vizualizarea se schimbă: regiunile, fizica și ceea ce văd alții rămân plate. Pe Pământ, scăderea din distanța de desen este de câțiva centimetri; se arată pe marea îndepărtată. Diferă de Legacy Viewer
+ui-options-planet-radius = Raza planetei
+ui-options-planet-radius-help = Raza planetei trasată, în kilometri. A Pământului este de 6.371 km: de la 10 m înălţime, marea se termină la aproximativ 11 km distanţă. O planetă mai mică aduce orizontul mai aproape
+ui-options-camera-frame-while-posing = Încadrați avatrul în timp ce pozați
+ui-options-camera-frame-while-posing-tip = Deschiderea poseitorului încadrează avatarul, iar apăsarea pe un joint aduce camera mai aproape de el.Tragerea unui joint nu mișcă niciodată camera.
+ui-options-camera-still-while-posing = Păstraţi aparatul foto nemişcat în timp ce pozaţi
+ui-options-camera-still-while-posing-tip = În timp ce pozați, camera nu mai urmărește avatar-ul, focalizarea și părțile corpului acestuia, iar mersul pe jos nu îl resetează.Orbita, zoomul, panoramarea și presetările funcționează în continuare.
+ui-options-group-emotes-hint = În stilul de chat Aurora, o acțiune precum „/me waves” apare sub același antet ca mesajele trimise de aceeași persoană imediat înainte sau după. Acțiunea nu primește un antet propriu.
+content-perms-nested = Includerea obiectelor în interiorul obiectelor
+content-perms-nested-help = Acest lucru editează și conținutul obiectelor imbricate, până la cinci niveluri adâncime. Fiecare obiect este plasat în lume la doi metri deasupra primitivei care îl conține. Scripturile sale rulante sunt oprite, conținatul său este schimbat și scripturile sale sunt repornite. Obiectul este apoi salvat înapoi în container. Permisiunile obiectului din container sunt setate și verificate înainte ca copia sa temporară din lume să fie ștearsă. Obiectivele pe care nu le puteți copia, transfera sau modifica rămân închise. Aveți nevoie de permisiunea de a construi în locația de plasare.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } Obiectul din cuprins va fi deschis, sărit: { $skipped }.
+       *[other] { $objects } Obiectele din conținut vor fi deschise, sărite: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = Fără copie sau transfer
+content-perms-nested-skip-no-modify = Nu poate fi modificat
+content-perms-nested-skip-depth = Mai mult de 5 niveluri adânci
+content-perms-nested-rezzing = Plasarea obiectului „{ $name }” în lume (nivelul de cuibărit { $level })…
+content-perms-nested-stopping = Oprirea scripturilor de “{ $name }”…
+content-perms-nested-applying = Schimbarea conținutului „{ $name }”…
+content-perms-nested-restoring = Se pornesc din nou scripturile pentru „{ $name }”…
+content-perms-nested-saving = Salvarea obiectului “{ $name }” înapoi în containerul său…
+content-perms-nested-deleting = Ștergerea copiei temporare din lumea „{ $name }”…
+content-perms-nested-finished = Elemente actualizate: { $count }. Obiecte imbricate: { $objects }. Omise: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } păstrat lângă originalul său: numele diferă.
+       *[other] { $kept } păstrate alături de originalele lor: numele diferă.
+    }
+content-perms-nested-stopped = Oprit: copiile temporare din lume au fost șterse, obiectele originale au rămas așa cum erau.
+content-perms-nested-stop-help = Oprește operațiunea și șterge copiile temporare care se mai află în lume. Elementele originale rămân neschimbate. Obiectele deja salvate înapoi își păstrează modificările.
+content-perms-nested-scripts-warning = Fiecare obiect este adus în lume (rez), așa că acțiunile scripturilor la apariție, cum ar fi o explozie, o teleportare sau oferirea unui articol, se execută înainte ca scripturile să poată fi oprite. Pentru a le preveni, activează mai întâi Dezactivează scripturile în Regiune / Domeniu, într-o regiune pe care o administrezi, și dezactivează opțiunea la final.
+content-perms-nested-original-kept = „{ $name }” a fost salvat înapoi, dar elementul său original nu a putut fi eliminat: ambele sunt în conținut.
+content-perms-nested-copy-left = Copia temporară din lumea „{ $name }” nu a putut fi ștearsă: șterge-o manual.
+content-perms-nested-save-unconfirmed = Salvarea nu a fost confirmată
+content-perms-nested-saved-perms-unconfirmed = Oprit: permisiunile obiectului salvat înapoi în containerul său nu au putut fi confirmate Copiile de lucru temporare din lume au fost păstrate; verificați-le înainte de a le șterge.
+content-perms-nested-timeout = Simulatorul nu a răspuns la timp
+content-perms-nested-rez-refused = Oprit: simulatorul a refuzat să plaseze în lume “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Oprit: „{ $name }” nu a apărut în 15 secunde.Dacă apare mai târziu deasupra obiectului primitiv, ștergeți-l.
+content-perms-nested-not-ours = Oprit: obiectul plasat în lume pentru “{ $name }” nu provine din acest conținut, a fost lăsat în lume.
+content-perms-nested-unverified = Oprit: obiectul care a apărut pentru „{ $name }” nu a putut fi verificat ca plasat în lume din acest conținut, deci a fost lăsat în lume.
+content-perms-nested-group-split = Oprit: “{ $name }” (mai multe obiecte salvate ca unul singur) a revenit ca un singur obiect, părțile sale plasate în lume au fost păstrate în lume: selectați-le pe toate și luați-le pentru a face din nou grupul.
+content-perms-nested-failed = “{ $name }” a rămas neschimbată: { $reason }.
+content-perms-nested-original-gone = „{ $name }” este păstrat în lume: salvarea sa nu a fost confirmată și obiectul său original a dispărut.
+content-perms-nested-gone = Obiectul a părăsit lumea
+content-perms-nested-land-denied = Oprit: nu poți construi deasupra acestui obiect primitiv, unde ar fi plasate obiectele în lume.
+content-perms-nested-parcel-full = Oprit: pachetul nu mai are loc pentru copiile temporare din lume.
+content-perms-nested-rlva = Oprit: plasarea obiectelor în lume este restricționată (RLVa).
+content-perms-nested-too-many = Prea multe scripturi
+content-perms-nested-unreadable = Conținutul său nu a putut fi citit
+content-perms-demo-chest = Piept de depozitare
+content-perms-demo-notes = Note în interiorul pieptului de depozitare
+content-perms-demo-outer = Cutie exterioară
+content-perms-demo-glow = Script care face obiectul să strălucească
+content-perms-demo-readme = Citește-mă primul
+content-perms-demo-inner = Recipient interior
+content-perms-demo-inner-note = Notă în interiorul cutiei interioare
+content-perms-demo-tiny = Cutie foarte mică
+content-perms-demo-spin = Script care rotește obiectul
+content-perms-demo-heirloom = Moștenire de familie
+content-perms-demo-sealed = Cutie sigilată
+content-perms-demo-linked = Grup de obiecte asociate
+content-perms-demo-pebble = Piatră mică rotunjită
+content-perms-demo-stack = Stivă de cutii
+dev-toolbox-o10 = Hitbox-uri pentru Avatar
+rlva-selftest-confirm-wear = Poartă obiectele sale pe piciorul din spate drept, pe piciul din spata stanga și pe vârful cozii și scrie un mic script de releu în două dintre ele.Ceea ce purtați în aceste trei puncte poate fi scos.
+ui-environment-sort-by-name = Sortare alfabetică
+ui-environment-sorted-by-name = În prezent sortate după nume. Faceți clic pentru a restabili ordinea din inventarul dvs.
+ui-environment-in-inventory-order = În ordinea inventarului tău. Fă clic pentru a le sorta A–Z.
+ui-chat-contacts-groups-sub = Grupuri de prieteni · { $count }
+ui-options-soft-shadows = Umbre moi
+ui-options-soft-shadows-help = Umbrele de soare cu margini mai moi, pe măsură ce obiectul este mai departe de ceea ce umbrește, ca în viața reală: umbra unui stâlp înalt se estompează spre vârful său, în timp ce un picior rămâne clar Experimental, dezactivat în mod implicit; costă o fracțiune de milisecundă pe placa grafică
+ui-options-shadow-softness = Moliciunea umbrei
+ui-options-shadow-softness-help = Dimensiunea luminii pentru umbrele moi: 1 este o lumină cu diametrul de 2,3 grade, 2 una mai mare care înmoaie umbrele de două ori mai mult (soarele real are un diametru de aproximativ 0,2), 0 este o lampă fără dimensiune: umbrele sunt la fel ca înainte, inclusiv proiectoarele
+ui-options-shadow-softness-needs-soft = Activează Umbre moi pentru a folosi această funcție.
+ui-options-shadow-intensity = Intensitatea umbrei
+ui-options-shadow-intensity-help = Cât de întunecate sunt umbrele soarelui: 1 este întunericul normal, mai mic lasă mai multă lumină în ele
+ui-options-system-fonts-searching = Căutați fonturi…
+demo-emotes-nova = /me pune o bancă lângă fântână
+demo-emotes-orion = Arata grozav de aici!
+demo-teleport-access-neighbour = Vecinul adult (demo)
+photo-light-shadow-softness = Moliciunea umbrei
+photo-light-shadow-intensity = Intensitatea umbrei
+photo-light-shadow-reset = Înapoi la valoarea Preferințelor
+world-teleport-access-blocked-title = Teleportarea a fost blocată
+world-teleport-access-adults-only = Regiunea pe care încercați să o vizitați conține { $rating } de conținuturi, accesibile doar adulților.
+world-teleport-access-change-and-reteleport = Regiunea pe care încerci să o vizitezi conține materiale cu clasificarea { $rating }. Preferințele tale actuale exclud materialele cu clasificarea { $rating }. Poți schimba preferințele și continua teleportarea sau o poți anula.
+world-teleport-access-change = Regiunea pe care încerci să o vizitezi conține materiale cu clasificarea { $rating }. Preferințele tale actuale exclud materialele cu clasificarea { $rating }. Poți schimba preferințele sau anula teleportarea. După schimbarea preferințelor, încearcă să te teleportezi din nou.
+world-teleport-access-out-of-sync = Avem dificultăți tehnice cu teleportul tău deoarece preferințele tale nu sunt sincronizate cu serverul.
+world-teleport-access-rated = Locația pe care ați ales-o este evaluată la { $rating }.
+world-teleport-access-allow = Preferințele tale actuale exclud materialele cu clasificarea { $rating }. Dacă le permiți, preferințele vor fi actualizate.
+world-teleport-access-allow-button = Permite { $rating } conținut
+world-teleport-access-not-on-account = Regiunea pe care încercați să o vizitați este evaluată la { $rating }, ceea ce nu este disponibil pentru tipul dvs. de cont.
+world-teleport-access-change-and-continue = Schimbă și continuă
+world-teleport-access-change-preferences = Modificarea preferințelor
+world-teleport-access-preference-changed-title = Evaluarea conținutului a fost modificată
+world-teleport-access-preference-changed = Nu veți mai primi notificări cu privire la faptul că sunteți pe cale să vizitați o regiune cu conținut { $rating }.Vă puteți modifica preferințele privind conținutul în Preferințe › Confidențialitate.
+people-show-group-sheet = Arată detaliile grupului
+people-group-details-empty = Niciun grup de afișat
+ao-import-unfinished-retry = Un lucru neterminat AO Importul există deja în #Aurora/{ $folder }. Utilizaţi notificarea de recuperare din AO Închideţi fereastra înainte de a reîncerca.
+ao-unfinished-import =
+    { $count ->
+        [one] Import AO neterminat în #Aurora/{ $folder }. Număr de seturi: { $count }.
+       *[other] Import AO neterminat în #Aurora/{ $folder }. Număr de seturi: { $count }.
+    }
+ao-finish-import = Termină importul
+ao-show-in-inventory = Arată în inventar
+ao-duplicate-native =
+    { $count ->
+        [one] A fost găsit încă un dosar: #Aurora/{ $folder }. Număr de seturi: { $count }. Îl îmbini cu dosarul AO activ?
+       *[other] A fost găsit încă un dosar: #Aurora/{ $folder }. Număr de seturi: { $count }. Îl îmbini cu dosarul AO activ?
+    }
+ao-native-already-exists = Există deja o suprascriere de animație încorporată cu acest nume
+rlva-im-ended-local = { $name } A închis de la distanţă IM O conversatie cu mine @stopim
+rlva-blocked-script-dialog = Nu se poate afișa dialogul de script sau caseta text din cauza restricțiilor RLV
+rlva-blocked-nearby = Nu se poate vedea prezența avatarelor din apropiere datorită restricțiilor RLV
+rlva-tools-retained = Păstrat până la conectare
+rlva-read-at-login = Modificările intră în vigoare la următoarea autentificare.
+rlva-debug-commands-chat = Fiecare comandă primește și o linie în chat-ul din apropiere, sub numele obiectului: ce execută, ce eșuează și de ce, ce așteaptă conectarea.
+rlva-blocked-start-im = Imposibil de pornit IM Sesiunea de lucru cu { $recipient } din cauza RLV Restricții
+rlva-blocked-start-conference = Nu se poate începe conferința cu [RECIPIENT] din cauza RLV Restricții
+rlva-anonym-waiting = Mai multe detalii...
+rlva-anonym-unknown = (Necunoscut)
+rlva-blocked-teleport = Nu se poate iniția teleportul din cauza restricțiilor RLV
+rlva-blocked-permission-attach = Încercarea de a atașa '{ $object }' a fost refuzat din cauza RLV Restricții
+rlva-blocked-permission-teleport = '{ $object }' a fost refuzată permisiunea de a te teleporta din cauza RLV Restricții
+rlva-blocked-view-notecard = Nu se poate deschide notecard din cauza restricțiilor RLVa.
+rlva-blocked-view-script = Nu se poate deschide scriptul din cauza restricțiilor RLVa.
+rlva-blocked-view-texture = Nu se poate deschide textura din cauza restricțiilor RLVa.
+rlva-debug-explicit-point = Ignorați numele punctelor de atașare pe elementele și folderele de inventar
+rlva-debug-explicit-point-hint = În timp ce un punct de atașare este blocat, Purtați și Adăugați trimite un obiect la punctul său implicit în loc de punctul pe care îl dă numele sau numele folderului (incomplet).
+ui-bars-clouds-paused-tip = Norii sunt ținuți în loc pentru această sesiune. Faceți clic pentru a le lăsa să se miște din nou.
+phototools-tab-dof-glow = Profunzimea câmpului și strălucire
+phototools-lights-shadows = Setări pentru lumini și umbre
+phototools-ambient-occlusion = Setări de ocluzie ambientală
+phototools-dof = Setări pentru profunzimea câmpului
+phototools-tone-mapping = Setări de mapare a tonurilor HDR
+phototools-glow = Setări de strălucire
+phototools-photo-banner = Adâncimea câmpului este păstrată pentru fotografiile următoare; lumina, expunerea, umbrele, ocluzia ambientală și luminile uzate durează până la închiderea ferestrei foto.În acest caz, adâncime de câmp se modifică în funcție de dimensiunea imaginii.
+phototools-photo-boost = Calitatea fotografiei este ridicată: rândurile grafice arată valorile ridicate, iar o modificare pe care o faceți acolo este păstrată ca a ta.
+phototools-photo-focus-help = Click: ultimul punct din lume pe care ai dat click. Indicator: punctul de sub indicator. Manual: o distanță pe care o setați.
+phototools-photo-distance-help = Distanța la care obiectivul focalizează în focalizarea manuală.
+phototools-director-lens = Obiectivul directorului este afișat în timp ce fereastra sa este deschisă, peste setările de mai jos.
+phototools-view-angle-viewfinder = Vizorul deţine unghiul de vizualizare: al tău revine când se închide.
+ui-options-dof-show-focus-point = Afişarea punctului de focalizare
+ui-options-dof-show-focus-point-help = O mică cruce pe punctul focalizat de lentilă: galben când este liber, roșu când este blocat.

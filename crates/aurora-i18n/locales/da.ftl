@@ -15868,3 +15868,156 @@ ui-appearance-date-oldest-first = Dato: ældste først
 ui-appearance-favorites-to-top = Favoritter øverst
 ui-appearance-images-to-top = Outfits med billeder øverst
 ui-options-group-emotes = Gruppér emotes med afsenderens beskeder
+
+### Release translations
+
+ui-options-planet-curvature = Planetens krumning
+ui-options-planet-curvature-help = Tegner verden på en rund planet: åbent vand falder væk til en rigtig horisont i stedet for at løbe ud i øjenhøjde, med himlen under det. Kun visningen ændres: regioner, fysik og hvad andre ser forbliver fladt. På Jorden er faldet inden for tegneafstanden et par centimeter; det vises på det fjerne hav. Forskellige fra Legacy Viewer
+ui-options-planet-radius = Planetens radius
+ui-options-planet-radius-help = Planetens radius er tegnet i kilometer. Jordens er 6.371 km: fra 10 m op, ender havet omkring 11 km væk. En mindre planet bringer horisonten tættere på
+ui-options-camera-frame-while-posing = Indram avataren, mens du poserer
+ui-options-camera-frame-while-posing-tip = Når du åbner poseren, indrammes avataren, og når du klikker på en joint, flyttes kameraet tættere på den.
+ui-options-camera-still-while-posing = Hold kameraet stille, mens du poserer
+ui-options-camera-still-while-posing-tip = Når du poser, stopper kameraet med at følge avataren, dens fokus og kropsdele, og det nulstilles ikke, når du går.Omløb, zoom, panorering og forudindstillinger fungerer stadig.
+ui-options-group-emotes-hint = I chatstilen Aurora vises en emote som »/me waves« under samme overskrift som beskeder fra den samme afsender lige før eller efter. Den får ingen egen overskrift.
+content-perms-nested = Medtag objekter i objekter
+content-perms-nested-help = Dette redigerer også indholdet af indlejrede objekter, op til fem niveauer dybt. Hvert objekt placeres i verden to meter over den primitive der indeholder det. Dets kørende scripts stoppes, dets indhold ændres og dets scripts genstartes. Objektet gemmes derefter tilbage i containeren. Tilladelserne for objektet i container er sat og kontrolleret før dets midlertidige kopi i verden slettes. Objekter du ikke kan kopiere, overføre eller ændre forbliver lukkede. Du skal have tilladelse til at bygge på placeringsstedet.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } objekt i indholdet vil blive åbnet, springet over: { $skipped }.
+       *[other] { $objects } objekter i indholdet vil blive åbnet, springet over: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = Ingen kopiering eller overførsel
+content-perms-nested-skip-no-modify = kan ikke ændres
+content-perms-nested-skip-depth = mere end 5 niveauer dybt
+content-perms-nested-rezzing = Placering af objektet “{ $name }” i verden (nesting niveau { $level })…
+content-perms-nested-stopping = Stopper scripts af "{ $name }"...
+content-perms-nested-applying = Ændring af indholdet af “{ $name }”…
+content-perms-nested-restoring = Starter scripts af "{ $name }" igen...
+content-perms-nested-saving = Gemmer objektet “{ $name }” tilbage i dets container…
+content-perms-nested-deleting = Sletning af den midlertidige kopi i verden af “{ $name }”…
+content-perms-nested-finished = Opdaterede genstande: { $count }. Indlejrede objekter: { $objects }. Sprunget over: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } holdt ved siden af sin oprindelige: navnene var forskellige.
+       *[other] { $kept } holdt ved siden af deres originaler: navnene var forskellige.
+    }
+content-perms-nested-stopped = Stoppet: De midlertidige kopier i verden blev slettet, de originale genstande blev efterladt som de var.
+content-perms-nested-stop-help = Stopper handlingen og sletter de midlertidige kopier, der stadig er i verdenen. Originalerne bevares, og objekter, der allerede er gemt tilbage, beholder ændringerne.
+content-perms-nested-scripts-warning = Hvert objekt rezzes i verdenen. Derfor udføres scriptenes rez-handlinger, f.eks. en eksplosion, en teleportering eller overdragelse af en genstand, før scriptene kan stoppes. For at undgå det skal du først slå Deaktiver scripts til under Region / Estate i en region, du administrerer, og slå det fra igen bagefter.
+content-perms-nested-original-kept = “{ $name }” blev gemt tilbage, men dens oprindelige element kunne ikke fjernes: begge er i indholdet.
+content-perms-nested-copy-left = Den midlertidige kopi i verden af “{ $name }” kunne ikke slettes: slet den manuelt.
+content-perms-nested-save-unconfirmed = Gem tilbage blev ikke bekræftet
+content-perms-nested-saved-perms-unconfirmed = Stoppet: Tilladelserne for objektet gemt tilbage i dets container kunne ikke bekræftes. De midlertidige arbejdskopier i verden er blevet bevaret; tjek dem før du fjerner dem.
+content-perms-nested-timeout = Simulatoren svarede ikke i tide
+content-perms-nested-rez-refused = Stoppet: simulatoren nægtede at placere i verden “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Stoppet: "{ $name }" blev ikke vist inden for 15 sekunder.Hvis det vises senere over det primitive objekt, skal du slette det.
+content-perms-nested-not-ours = Stoppet: objektet placeret i verden for "{ $name }" kommer ikke fra dette indhold, det blev efterladt i verden.
+content-perms-nested-unverified = Stoppet: Objektet, der dukkede op for "{ $name }", kunne ikke kontrolleres som placeret i verden fra dette indhold, så det blev efterladt i verden.
+content-perms-nested-group-split = Stoppet: “{ $name }” (flere objekter gemt som et) kom tilbage som et enkelt objekt, dets placerede i verden dele blev holdt i verden: Vælg dem alle og tage dem til at gøre gruppen igen.
+content-perms-nested-failed = “{ $name }” forblev uændret: { $reason }.
+content-perms-nested-original-gone = "{ $name }" er holdt i verden: dens gemme tilbage blev ikke bekræftet, og dens oprindelige element er væk.
+content-perms-nested-gone = Objektet forlod verden
+content-perms-nested-land-denied = Stoppet: du kan ikke bygge over dette primitive objekt, hvor objekterne ville blive placeret i verden.
+content-perms-nested-parcel-full = Stoppet: Pakken har ikke plads til de midlertidige kopier i verden.
+content-perms-nested-rlva = Stoppet: Placering af objekter i verden er begrænset (RLVa).
+content-perms-nested-too-many = For mange scripts
+content-perms-nested-unreadable = Indholdet kunne ikke læses
+content-perms-demo-chest = Opbevarings kiste med låg
+content-perms-demo-notes = Noter inde i opbevaringskisten
+content-perms-demo-outer = Ydre æske
+content-perms-demo-glow = Script, der får objektet til at gløde
+content-perms-demo-readme = Læs mig først
+content-perms-demo-inner = Indvendig beholder
+content-perms-demo-inner-note = Bemærk inde i den indre kasse
+content-perms-demo-tiny = Meget lille æske
+content-perms-demo-spin = Script, der roterer objektet
+content-perms-demo-heirloom = Familiens arvestykke
+content-perms-demo-sealed = Forseglet æske
+content-perms-demo-linked = Gruppe af forbundne objekter
+content-perms-demo-pebble = Lille afrundet sten
+content-perms-demo-stack = Kassestabel
+dev-toolbox-o10 = Hitboks til avatarer
+rlva-selftest-confirm-wear = Den bærer sine genstande på Højre Bagfod, Venstre Bagfod og Halespids, og skriver et lille relæscript i to af dem; hvad du bære på disse tre punkter kan tages af.
+ui-environment-sort-by-name = Sorter alfabetisk
+ui-environment-sorted-by-name = Sorteret efter navn. Klik for at gendanne rækkefølgen fra din beholdning.
+ui-environment-in-inventory-order = I dit inventar. Klik for at sortere dem A–Z.
+ui-chat-contacts-groups-sub = Grupper · { $count }
+ui-options-soft-shadows = Bløde skygger
+ui-options-soft-shadows-help = Solskygger med blødere kanter, jo længere væk objektet er fra det, det skygger, ligesom i virkeligheden: Skyggen af en høj pæl sløres mod spidsen, mens en fod forbliver skarp. Eksperimentelt, slået fra som standard; koster en brøkdel af et millisekund på grafikkortet
+ui-options-shadow-softness = Skyggeblødhed
+ui-options-shadow-softness-help = Størrelsen af lyset til de bløde skygger: 1 er et lys med en diameter på 2,3 grader, 2 et større lys der blødgør skyggerne dobbelt så meget (den virkelige sol er ca. 0,2), 0 et lys uden størrelse: skygger er som de var før, projektorerne inkluderet
+ui-options-shadow-softness-needs-soft = Slå Bløde skygger til for at bruge dette
+ui-options-shadow-intensity = Skyggeintensitet
+ui-options-shadow-intensity-help = Hvor mørke solens skygger er: 1 er det normale mørke, lavere lukker mere lys ind i dem
+ui-options-system-fonts-searching = Leder du efter skrifttyper…
+demo-emotes-nova = /me sætter en bænk ned ved springvandet
+demo-emotes-orion = Ser godt ud herfra!
+demo-teleport-access-neighbour = Voksen nabo (demo)
+photo-light-shadow-softness = Skyggeblødhed
+photo-light-shadow-intensity = Skyggeintensitet
+photo-light-shadow-reset = Tilbage til værdien af præferencer
+world-teleport-access-blocked-title = Teleport blokeret
+world-teleport-access-adults-only = Den region, du forsøger at besøge, indeholder { $rating } indhold, som kun er tilgængeligt for voksne.
+world-teleport-access-change-and-reteleport = Regionen, du vil besøge, har indhold med klassificeringen { $rating }. Dine nuværende indstillinger udelukker indhold med klassificeringen { $rating }. Du kan ændre indstillingerne og fortsætte teleporteringen eller annullere den.
+world-teleport-access-change = Regionen, du vil besøge, har indhold med klassificeringen { $rating }. Dine nuværende indstillinger udelukker indhold med klassificeringen { $rating }. Du kan ændre indstillingerne eller annullere teleporteringen. Efter ændringen skal du forsøge at teleportere igen.
+world-teleport-access-out-of-sync = Vi har tekniske problemer med din teleport, fordi dine præferencer ikke er synkroniseret med serveren.
+world-teleport-access-rated = Den placering, du har valgt, er bedømt til { $rating }.
+world-teleport-access-allow = Dine nuværende indstillinger udelukker indhold med klassificeringen { $rating }. Tillader du det, opdateres dine indstillinger.
+world-teleport-access-allow-button = Tillad { $rating }-indhold
+world-teleport-access-not-on-account = Det område, du forsøger at besøge, er klassificeret som { $rating }, hvilket ikke er tilgængeligt på din kontotype.
+world-teleport-access-change-and-continue = Skift og fortsæt
+world-teleport-access-change-preferences = Skift dine præferencer
+world-teleport-access-preference-changed-title = Indholdsklassificering ændret
+world-teleport-access-preference-changed = Du modtager ikke flere meddelelser om, at du er ved at besøge et område med { $rating }-indhold.Du kan ændre dine indstillinger for indhold i fremtiden under Indstillinger › Beskyttelse af personlige oplysninger.
+people-show-group-sheet = Vis gruppeoplysninger
+people-group-details-empty = Ingen gruppe at vise
+ao-import-unfinished-retry = En ufærdig historie AO import findes allerede i #Aurora/{ $folder }. Brug meddelelsen om gendannelse i AO Luk vinduet, før du forsøger igen.
+ao-unfinished-import =
+    { $count ->
+        [one] Uafsluttet AO-import i #Aurora/{ $folder }. Antal sæt: { $count }.
+       *[other] Uafsluttet AO-import i #Aurora/{ $folder }. Antal sæt: { $count }.
+    }
+ao-finish-import = Afslut import
+ao-show-in-inventory = Vis i lagerbeholdning
+ao-duplicate-native =
+    { $count ->
+        [one] Der blev fundet en anden mappe: #Aurora/{ $folder }. Antal sæt: { $count }. Skal den flettes ind i den aktive AO-mappe?
+       *[other] Der blev fundet en anden mappe: #Aurora/{ $folder }. Antal sæt: { $count }. Skal den flettes ind i den aktive AO-mappe?
+    }
+ao-native-already-exists = Der findes allerede en indbygget animationstilsidesættelse med dette navn
+rlva-im-ended-local = { $name } har fjernbetjent lukket døren IM En samtale med @stopim
+rlva-blocked-script-dialog = Kan ikke vise script dialog eller tekstboks på grund af RLV restriktioner
+rlva-blocked-nearby = Kan ikke se tilstedeværelsen af nærliggende avatarer på grund af RLV-begrænsninger
+rlva-tools-retained = Opbevares indtil login
+rlva-read-at-login = Ændringer træder i kraft ved næste login.
+rlva-debug-commands-chat = Hver kommando får også en linje i nærliggende chat, under objektets navn: hvad det udfører, hvad der mislykkes og hvorfor, hvad venter på login.
+rlva-blocked-start-im = Kan ikke starte IM session med en ven { $recipient } på grund af RLV begrænsninger
+rlva-blocked-start-conference = Kan ikke starte konference med [RECIPIENT] på grund af RLV begrænsninger
+rlva-anonym-waiting = Læs mere her...
+rlva-anonym-unknown = (Ukendt)
+rlva-blocked-teleport = Kan ikke starte teleport på grund af RLV begrænsninger
+rlva-blocked-permission-attach = Forsøg på at vedhæfte '{ $object }' blev nægtet på grund af RLV begrænsninger
+rlva-blocked-permission-teleport = '{ $object }' blev nægtet tilladelse til at teleportere dig på grund af RLV begrænsninger
+rlva-blocked-view-notecard = Kan ikke åbne notecard på grund af RLVa begrænsninger.
+rlva-blocked-view-script = Kan ikke åbne scriptet på grund af RLVa-begrænsninger.
+rlva-blocked-view-texture = Kan ikke åbne teksturen på grund af RLVa-begrænsninger.
+rlva-debug-explicit-point = Ignorer vedhæftede punktnavne på lagerartikler og mapper
+rlva-debug-explicit-point-hint = Mens et vedhæftningspunkt er låst, sender Wear and Add et objekt til dets standardpunkt i stedet for det punkt, som navnet eller mappens navn giver (ufuldstændigt).
+ui-bars-clouds-paused-tip = Skyerne holdes stille i denne session. Klik for at lade dem bevæge sig igen.
+phototools-tab-dof-glow = Dybdeskarphed og glød
+phototools-lights-shadows = Indstillinger for lys og skygge
+phototools-ambient-occlusion = Indstillinger for ambient occlusion
+phototools-dof = Indstillinger for dybdeskarphed
+phototools-tone-mapping = Indstillinger for HDR-tonekortlægning
+phototools-glow = Indstillinger for glød
+phototools-photo-banner = Fotovindue åbent: Rækkerne i fotovinduet ændrer også billedet. Dybdeskarpheden bevares til dine næste fotos; lys, eksponering, skygger, omgivende okklusion og slidte lys varer, indtil foto vinduet lukkes.
+phototools-photo-boost = Billedkvaliteten er forbedret: Grafikrækkerne viser de forbedrede værdier, og en ændring, du foretager der, bevares som din egen.
+phototools-photo-focus-help = Klik: det punkt, der sidst blev klikket på i verden. Markør: punktet under markøren. Manuel: en afstand du indstiller.
+phototools-photo-distance-help = Afstanden, som objektivet fokuserer på i manuel fokus.
+phototools-director-lens = Instruktørens linse vises, mens vinduet er åbent, over indstillingerne nedenfor.
+phototools-view-angle-viewfinder = Søgeren ejer synsvinklen: Din kommer tilbage, når den lukkes.
+ui-options-dof-show-focus-point = Vis fokuspunkt
+ui-options-dof-show-focus-point-help = Et lille trådkors på det punkt, som linsen fokuserer på: gult, når det er frit, rødt når det låses.

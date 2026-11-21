@@ -15842,3 +15842,156 @@ ui-appearance-date-oldest-first = Tanggal: terlama dahulu
 ui-appearance-favorites-to-top = Favorit di atas
 ui-appearance-images-to-top = Setelan dengan gambar di atas
 ui-options-group-emotes = Kelompokkan emote dengan pesan pengirimnya
+
+### Release translations
+
+ui-options-planet-curvature = Lengkungan planet
+ui-options-planet-curvature-help = Menggambar dunia di planet bulat: air terbuka jatuh ke cakrawala nyata bukannya mengalir keluar pada ketinggian mata, dengan langit di bawahnya. Hanya pandangan yang berubah: wilayah, fisika dan apa yang dilihat orang lain tetap datar. Di Bumi jatuh dalam jarak menggambar adalah beberapa sentimeter; terlihat di laut jauh. Berbeda dari Pelihat Legacy
+ui-options-planet-radius = Planet
+ui-options-planet-radius-help = Radius planet yang digambar, dalam kilometer. Bumi adalah 6,371 km: dari 10 m ke atas, laut berakhir sekitar 11 km jauhnya. Planet yang lebih kecil membawa cakrawala lebih dekat
+ui-options-camera-frame-while-posing = Bingkai avatar saat berpose
+ui-options-camera-frame-while-posing-tip = Membuka poser membuat avatar menjadi berbingkai, dan mengklik joint membawa kamera lebih dekat kenya. Menyeret joint tidak pernah memindahkan kamera.
+ui-options-camera-still-while-posing = Tahan kamera tetap saat berpose
+ui-options-camera-still-while-posing-tip = Ketika Anda berpose, kamera berhenti mengikuti avatar, fokusnya dan bagian tubuhnya, dan berjalan tidak meresetnya. Orbit, zoom, pan dan preset masih bekerja.
+ui-options-group-emotes-hint = Dalam gaya obrolan Aurora, emote seperti “/me waves” tampil di bawah judul yang sama dengan pesan dari pengirim yang sama tepat sebelum atau sesudahnya. Emote tidak memiliki judul tersendiri.
+content-perms-nested = Termasuk objek di dalam objek
+content-perms-nested-help = Hal ini juga mengedit isi dari objek bersarang, hingga lima tingkat dalam. Setiap objek ditempatkan di dunia dua meter di atas primitive yang berisi objek tersebut. Skriptnya yang berjalan dihentikan, isinya diubah, dan skripnya dimulai kembali. Objek kemudian disimpan kembali ke dalam kontener. Keizinan objek di kontener ditetapkan dan diperiksa sebelum salinan sementaranya di dunia dihapus. Objekt yang tidak dapat Anda salin, pindahkan atau modifikasi tetap tertutup. Anda memerlukan izin untuk membangun di lokasi pemasangan.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } objek di dalam isi akan dibuka, dilewatkan: { $skipped }.
+       *[other] { $objects } Objek dalam isi akan dibuka, dilewatkan: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = tidak ada salinan atau transfer
+content-perms-nested-skip-no-modify = tidak dapat diubah
+content-perms-nested-skip-depth = lebih dari 5 tingkat dalam
+content-perms-nested-rezzing = Meletakkan objek “{ $name }” di dunia (tingkat bertelur { $level })…
+content-perms-nested-stopping = Menghentikan skrip "{ $name }"...
+content-perms-nested-applying = Mengubah isi "{ $name }"...
+content-perms-nested-restoring = Memulai skrip "{ $name }" lagi...
+content-perms-nested-saving = Menyimpan objek “{ $name }” kembali ke dalam wadahnya…
+content-perms-nested-deleting = Menghapus salinan sementara di dunia dari "{ $name }"...
+content-perms-nested-finished = Item diperbarui: { $count }. Objek di dalam objek lain: { $objects }. Dilewati: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } disimpan di samping aslinya: nama-nama berbeda.
+       *[other] { $kept } disimpan di samping aslinya: nama-nama berbeda.
+    }
+content-perms-nested-stopped = Dihentikan: salinan sementara di dunia dihapus, item asli ditinggalkan seperti yang mereka lakukan.
+content-perms-nested-stop-help = Menghentikan operasi dan menghapus salinan sementara yang masih ada di dunia. Item asli tetap seperti semula. Objek yang sudah disimpan kembali tetap menyimpan perubahannya.
+content-perms-nested-scripts-warning = Setiap objek dimunculkan di dunia (rez), sehingga tindakan skrip saat objek muncul, seperti ledakan, teleportasi, atau pemberian item, terjadi sebelum skrip sempat dihentikan. Untuk mencegahnya, aktifkan Nonaktifkan skrip terlebih dahulu di Region / Estate pada region yang Anda kelola, lalu matikan opsi tersebut setelah selesai.
+content-perms-nested-original-kept = “{ $name }” disimpan kembali, tetapi item aslinya tidak dapat dihapus: keduanya ada dalam isi.
+content-perms-nested-copy-left = Salinan sementara di dunia dari "{ $name }" tidak dapat dihapus: hapus dengan tangan.
+content-perms-nested-save-unconfirmed = penyimpanan kembali tidak dikonfirmasi
+content-perms-nested-saved-perms-unconfirmed = Dihentikan: keizinan dari objek yang disimpan kembali ke kontennya tidak dapat dikonfirmasi. Salinan kerja sementara di dunia telah dipelihara; periksa sebelum menghapusnya.
+content-perms-nested-timeout = simulator tidak menjawab tepat waktu
+content-perms-nested-rez-refused = Dihentikan: simulator menolak untuk menempatkan di dunia "{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Dihentikan: "{ $name }" tidak muncul dalam 15 detik. Jika muncul kemudian di atas objek primitif, hapuslah.
+content-perms-nested-not-ours = Dihentikan: objek yang ditempatkan di dunia untuk "{ $name }" tidak berasal dari isi ini, ia ditinggalkan di world.
+content-perms-nested-unverified = Dihentikan: obyek yang muncul untuk "{ $name }" tidak dapat diperiksa sebagai ditempatkan di dunia dari isi ini, jadi ia ditinggalkan di world.
+content-perms-nested-group-split = Dihentikan: "{ $name }" (beberapa objek disimpan sebagai satu) kembali sebagai objek tunggal. Bagian-bagiannya yang ditempatkan di dunia tetap ada di dunia: pilih semua dan ambil untuk membuat kelompok lagi.
+content-perms-nested-failed = “{ $name }” tidak berubah: { $reason }.
+content-perms-nested-original-gone = "{ $name }" disimpan di dunia: penyimpanan kembalinya tidak dikonfirmasi dan item aslinya hilang.
+content-perms-nested-gone = Objek meninggalkan dunia
+content-perms-nested-land-denied = Dihentikan: Anda tidak dapat membangun di atas objek primitif ini, di mana objek akan ditempatkan di dunia.
+content-perms-nested-parcel-full = Dihentikan: paket tidak memiliki ruang yang tersisa untuk salinan sementara di dunia.
+content-perms-nested-rlva = Dihentikan: meletakkan objek di dunia dibatasi (RLVa).
+content-perms-nested-too-many = terlalu banyak skrip
+content-perms-nested-unreadable = isinya tidak dapat dibaca
+content-perms-demo-chest = Ruang penyimpanan
+content-perms-demo-notes = Catatan di dalam peti penyimpanan
+content-perms-demo-outer = Kotak luar
+content-perms-demo-glow = Skrip yang membuat objek bersinar
+content-perms-demo-readme = Baca aku dulu.
+content-perms-demo-inner = Kontainer dalam
+content-perms-demo-inner-note = Catatan di dalam kotak dalam
+content-perms-demo-tiny = Kotak yang sangat kecil
+content-perms-demo-spin = Skrip yang memutar objek
+content-perms-demo-heirloom = Warisan keluarga.
+content-perms-demo-sealed = Kotak tertutup
+content-perms-demo-linked = Kelompok objek yang digabungkan
+content-perms-demo-pebble = Batu bulat kecil
+content-perms-demo-stack = Tumpukan kotak
+dev-toolbox-o10 = Hitbox Avatar
+rlva-selftest-confirm-wear = Dia memakai objeknya di kaki belakang kanan, kaki belakang kiri dan ujung ekor, dan menulis skrip relay kecil di dua dari mereka. Apa yang Anda pakai pada tiga titik ini dapat dilepas.
+ui-environment-sort-by-name = Isih alfabetis
+ui-environment-sorted-by-name = Saat ini diurutkan menurut nama. Klik untuk mengembalikan urutan dari inventaris Anda.
+ui-environment-in-inventory-order = Dalam urutan inventaris Anda. Klik untuk menyusun mereka A–Z.
+ui-chat-contacts-groups-sub = Kelompok · { $count }
+ui-options-soft-shadows = Bayang lembut
+ui-options-soft-shadows-help = Bayangan matahari dengan tepi yang lebih lembut semakin jauh objek dari apa yang dibayanginya, seperti dalam kehidupan nyata: bayangan tiang tinggi kabur ke ujungnya sementara kaki tetap tajam. Eksperimental, mati secara default; menghabiskan sebagian milidetik pada kartu grafis
+ui-options-shadow-softness = Keluasan Bayang
+ui-options-shadow-softness-help = Ukuran cahaya untuk bayangan lembut: 1 adalah cahaya dengan lebar 2.3 derajat, 2 yang lebih besar yang melembutkan bayangan dua kali lipat (matahari sebenarnya sekitar 0.2), 0 cahaya tanpa ukuran: bayangan tetap seperti sebelumnya, termasuk proyektor
+ui-options-shadow-softness-needs-soft = Aktifkan Bayangan lembut untuk menggunakan ini
+ui-options-shadow-intensity = Intensitas Bayang
+ui-options-shadow-intensity-help = Seberapa gelap bayangan matahari: 1 adalah kegelapan normal, lebih rendah memungkinkan lebih banyak cahaya masuk ke dalamnya
+ui-options-system-fonts-searching = Mencari fonta...
+demo-emotes-nova = /me menempatkan sebuah bangku di dekat air mancur
+demo-emotes-orion = Terlihat bagus dari sini!
+demo-teleport-access-neighbour = Tetangga dewasa (demo)
+photo-light-shadow-softness = Keluasan Bayang
+photo-light-shadow-intensity = Intensitas Bayang
+photo-light-shadow-reset = Kembali ke nilai Preferensi
+world-teleport-access-blocked-title = Teleport terblokir
+world-teleport-access-adults-only = Wilayah yang kau coba kunjungi berisi konten { $rating }, yang hanya bisa diakses orang dewasa.
+world-teleport-access-change-and-reteleport = Region yang ingin Anda kunjungi berisi konten dengan klasifikasi { $rating }. Preferensi saat ini mengecualikan konten dengan klasifikasi { $rating }. Anda dapat mengubah preferensi dan melanjutkan teleportasi atau membatalkannya.
+world-teleport-access-change = Region yang ingin Anda kunjungi berisi konten dengan klasifikasi { $rating }. Preferensi saat ini mengecualikan konten dengan klasifikasi { $rating }. Anda dapat mengubah preferensi atau membatalkan teleportasi. Setelah preferensi diubah, coba teleportasi lagi.
+world-teleport-access-out-of-sync = Kami mengalami kesulitan teknis dengan teleport Anda karena preferensi Anda tidak sinkron dengan server.
+world-teleport-access-rated = Lokasi yang kau pilih memiliki rating { $rating }.
+world-teleport-access-allow = Preferensi saat ini tidak mengizinkan konten dengan klasifikasi { $rating }. Mengizinkannya akan memperbarui preferensi Anda.
+world-teleport-access-allow-button = Izinkan konten { $rating }
+world-teleport-access-not-on-account = Wilayah yang Anda coba kunjungi memiliki peringkat { $rating }, yang tidak tersedia pada jenis akun Anda.
+world-teleport-access-change-and-continue = Ubah dan lanjutkan
+world-teleport-access-change-preferences = Ubah Preferensi
+world-teleport-access-preference-changed-title = Penilaian konten berubah
+world-teleport-access-preference-changed = Anda tidak akan menerima pemberitahuan lagi bahwa Anda akan mengunjungi wilayah dengan konten { $rating }. Anda dapat mengubah preferensi konten Anda di masa depan di Preferensi › Privasi.
+people-show-group-sheet = Tampilkan rincian grup
+people-group-details-empty = Tidak ada grup yang akan ditampilkan
+ao-import-unfinished-retry = Sebuah yang belum selesai AO impor sudah ada di #Aurora/{ $folder }. Gunakan pemberitahuan pemulihan di AO jendela sebelum mencoba lagi.
+ao-unfinished-import =
+    { $count ->
+        [one] Impor AO di #Aurora/{ $folder } belum selesai. Jumlah set: { $count }.
+       *[other] Impor AO di #Aurora/{ $folder } belum selesai. Jumlah set: { $count }.
+    }
+ao-finish-import = Akhiri impor
+ao-show-in-inventory = Tampilkan dalam inventaris
+ao-duplicate-native =
+    { $count ->
+        [one] Ditemukan folder lain: #Aurora/{ $folder }. Jumlah set: { $count }. Gabungkan ke folder AO aktif?
+       *[other] Ditemukan folder lain: #Aurora/{ $folder }. Jumlah set: { $count }. Gabungkan ke folder AO aktif?
+    }
+ao-native-already-exists = Sebuah override animasi tertanam dengan nama ini sudah ada
+rlva-im-ended-local = { $name } telah menutup dari jauh IM percakapan dengan @stopim
+rlva-blocked-script-dialog = Tidak dapat menampilkan dialog skrip atau kotak teks karena pembatasan RLV
+rlva-blocked-nearby = Tidak dapat melihat keberadaan avatar dekat karena pembatasan RLV
+rlva-tools-retained = Dipertahankan sampai login
+rlva-read-at-login = Perubahan akan berlaku pada login berikutnya.
+rlva-debug-commands-chat = Setiap perintah juga mendapatkan sebuah baris di chat terdekat, di bawah nama objek: apa yang dilakukannya, apa yang gagal dan mengapa, apa menunggu login.
+rlva-blocked-start-im = Tidak dapat memulai IM sesi dengan { $recipient } karena RLV pembatasan
+rlva-blocked-start-conference = Tidak dapat memulai konferensi dengan [RECIPIENT] karena RLV pembatasan
+rlva-anonym-waiting = (Memuat...)
+rlva-anonym-unknown = (Tidak diketahui)
+rlva-blocked-teleport = Tidak dapat memulai teleport karena pembatasan RLV
+rlva-blocked-permission-attach = Upaya untuk melampirkan '{ $object }' ditolak karena RLV pembatasan
+rlva-blocked-permission-teleport = '{ $object }'ditolak izin untuk teleport Anda karena RLV pembatasan
+rlva-blocked-view-notecard = Tidak dapat membuka notecard karena pembatasan RLVa.
+rlva-blocked-view-script = Tidak dapat membuka skrip karena pembatasan RLVa.
+rlva-blocked-view-texture = Tidak dapat membuka tekstur karena keterbatasan RLVa.
+rlva-debug-explicit-point = Abai nama titik lampiran pada item inventaris dan folder
+rlva-debug-explicit-point-hint = Ketika titik lampiran terkunci, Wear and Add mengirimkan sebuah objek ke titik defaultnya bukan ke titik yang diberi nama atau nama foldernya (tidak lengkap).
+ui-bars-clouds-paused-tip = Awan tetap diam selama sesi ini. Klik untuk membiarkan awan bergerak lagi.
+phototools-tab-dof-glow = Kedalaman bidang dan pendar
+phototools-lights-shadows = Pengaturan cahaya dan bayangan
+phototools-ambient-occlusion = Pengaturan oklusi ambien
+phototools-dof = Pengaturan kedalaman bidang
+phototools-tone-mapping = Pengaturan pemetaan ton HDR
+phototools-glow = Pengaturan Cahaya
+phototools-photo-banner = Jendela foto terbuka: baris-baris jendela foto juga mengubah foto. Kedalaman medan dipelihara untuk foto berikutnya; cahaya, paparan, bayangan, oklusi lingkungan dan cahaya yang rusak bertahan sampai jendela fotografi ditutup.
+phototools-photo-boost = Kualitas foto meningkat: baris grafik menunjukkan nilai yang meningkat, dan perubahan yang Anda buat di sana disimpan sebagai milik Anda.
+phototools-photo-focus-help = Klik: titik terakhir yang diklik di dunia. Penunjuk: titik di bawah penunjuk. Manual: jarak yang Anda tetapkan.
+phototools-photo-distance-help = Jarak fokus lensa dalam fokus manual.
+phototools-director-lens = Lensa sutradara ditampilkan saat jendelanya terbuka, di atas pengaturan di bawah.
+phototools-view-angle-viewfinder = Viewfinder memiliki sudut pandang: Anda kembali ketika ia menutup.
+ui-options-dof-show-focus-point = Tampilkan titik fokus
+ui-options-dof-show-focus-point-help = Sebuah crosshair kecil pada titik fokus lensa: kuning ketika bebas, merah ketika terkunci.

@@ -15832,3 +15832,156 @@ ui-appearance-date-oldest-first = 날짜: 오래된 순
 ui-appearance-favorites-to-top = 즐겨찾기를 맨 위에
 ui-appearance-images-to-top = 이미지가 있는 의상을 맨 위에
 ui-options-group-emotes = 이모트를 보낸 사람의 메시지와 묶기
+
+### Release translations
+
+ui-options-planet-curvature = 행성의 곡률
+ui-options-planet-curvature-help = 원형 행성에 세계를 그립니다: 눈높이까지 흐르는 물 대신 실제 지평선으로 떨어지며, 하늘은 아래쪽에 있습니다. 보기만 바뀝니다: 지역, 물리학 및 다른 사람이 보는 것은 평평하게 남아 있습니다. 지구에서 그리는 거리 내의 떨림은 몇 센티미터입니다; 먼 바다에서 보입니다. Legacy Viewer와 다릅니다
+ui-options-planet-radius = 행성 반지름
+ui-options-planet-radius-help = 지구의 반지름은 6,371km이며, 10m 위에서 바다가 끝나는 거리는 약 11km입니다. 작은 행성은 수평선을 가까이로 이끌어 줍니다.
+ui-options-camera-frame-while-posing = 포즈를 취하는 동안 아바타 프레임
+ui-options-camera-frame-while-posing-tip = 포저를 열면 아바타가 프레임이 되고, 관절을 클릭하면 카메라가 가까이 다가옵니다. 관절 드래그는 결코 카メ라를 이동시키지 않습니다.
+ui-options-camera-still-while-posing = 포즈를 취하는 동안 카메라를 고정
+ui-options-camera-still-while-posing-tip = 포즈를 취하는 동안 카메라는 아바타, 초점 및 신체 부위를 추적하지 않으며 걷기로 인해 다시 설정되지 않습니다. 궤도, 확대/축소, 팬 및 사전 설정은 여전히 작동합니다.
+ui-options-group-emotes-hint = Aurora 채팅 스타일에서는 “/me waves”와 같은 이모트가 별도 머리글 없이, 같은 사람이 바로 앞이나 뒤에 보낸 메시지와 같은 머리글 아래에 표시됩니다.
+content-perms-nested = 개체 안에 개체 포함하기
+content-perms-nested-help = 이것은 또한 최대 5단계까지 내재된 개체의 내용을 편집합니다. 각 개체는 그것을 포함하는 프리미티브보다 2미터 위로 세계에 배치됩니다. 실행 중인 스크립트가 중지되고, 내용이 변경되며, 스크랩이 다시 시작됩니다. 그런 다음 개체가 컨테이너에 다시 저장됩니다. 세계에서 임시 복사본을 삭제하기 전에 콘테이널에 있는 개체에 대한 권한이 설정되고 확인됩니다. 복제, 전송, 수정할 수 없는 개체들은 닫혀 있습니다. 배치 위치에서 빌드하려면 권리가 필요합니다.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } 내용에 있는 객체가 열립니다, 건너뜁니다: { $skipped }.
+       *[other] { $objects } 내용에 있는 개체는 열리며 건너뜁니다: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = 복사 또는 전송 불가
+content-perms-nested-skip-no-modify = 수정할 수 없음
+content-perms-nested-skip-depth = 5 레벨 이상의 깊이
+content-perms-nested-rezzing = 개체를 배치 “{ $name }세계에서 가장 높은 건물 { $level })…
+content-perms-nested-stopping = “{ $name }”의 스크립트를 중지합니다.
+content-perms-nested-applying = “{ $name }”의 내용 변경…
+content-perms-nested-restoring = “{ $name }”의 스크립트를 다시 시작하는 중…
+content-perms-nested-saving = “{ $name }” 객체를 다시 컨테이너에 저장하는 중…
+content-perms-nested-deleting = 세계에서 임시 사본을 삭제하는 “{ $name }”…
+content-perms-nested-finished = 업데이트한 아이템: { $count }. 중첩 오브젝트: { $objects }. 건너뜀: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept }은 원래 모델과 함께 유지되었으며, 이름이 다르다.
+       *[other] { $kept }은 원본과 함께 보관되었으며, 이름이 다르다.
+    }
+content-perms-nested-stopped = 중지됨: 세계의 임시 사본이 삭제되었고, 원래 아이템은 그대로 남았습니다.
+content-perms-nested-stop-help = 작업을 중지하고 월드에 남아 있는 임시 복사본을 삭제합니다. 원본 아이템은 그대로 유지됩니다. 이미 다시 저장한 오브젝트에는 변경 사항이 유지됩니다.
+content-perms-nested-scripts-warning = 각 오브젝트는 월드에 생성(rez)됩니다. 따라서 스크립트를 중지하기 전에 폭발, 순간이동, 아이템 전달과 같은 생성 시 동작이 실행됩니다. 이를 막으려면 관리하는 지역의 지역 / 영지 설정에서 먼저 스크립트 비활성화를 켜고, 작업이 끝나면 끄세요.
+content-perms-nested-original-kept = “{ $name }”은 다시 저장되었지만 원래 항목을 제거할 수 없습니다. 둘 다 내용물에 있습니다.
+content-perms-nested-copy-left = 세계에 있는 “{ $name }”의 임시 사본을 삭제할 수 없습니다. 수동으로 삭 제하십시오.
+content-perms-nested-save-unconfirmed = 저장 백업이 확인되지 않았습니다
+content-perms-nested-saved-perms-unconfirmed = 중단됨: 컨테이너에 다시 저장된 개체의 권한을 확인할 수 없습니다. 세계의 임시 작업 사본은 유지되었습니다. 제거하기 전에 확인하십시오.
+content-perms-nested-timeout = 시뮬레이터가 시간에 응답하지 않았습니다
+content-perms-nested-rez-refused = 중지 : 시뮬레이터는 세계에 배치를 거부 “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = 중지됨: 15초 이내에 "{ $name }"이 나타나지 않았습니다. 원시 개체 위에 나중에 나타난다면 삭제하십시오.
+content-perms-nested-not-ours = 중지 : “{ $name }”에 대한 세계에 배치 된 개체는 이러한 내용에서 오지 않습니다, 그것은 세계에서 남아있다.
+content-perms-nested-unverified = 중지됨: “{ $name }”에 나타난 개체는 이러한 내용으로부터 세계에 배치된 것으로 확인할 수 없었으므로 세계에서 남겨졌습니다.
+content-perms-nested-group-split = 중지됨: “{ $name }” (여러 개체가 하나로 저장됨)이 단일 개체로 돌아왔습니다. 세계에 배치된 부분은 세계에서 유지되었습니다. 모두 선택하고 그룹을 다시 만들기 위해 가져옵니다.
+content-perms-nested-failed = “{ $name }” 변경되지 않은 상태로 남겨: { $reason }.
+content-perms-nested-original-gone = “{ $name }”는 세계에 보관되어 있습니다: 그것의 저장 뒤로 확인되지 않았고 원래 아이템이 사라졌습니다.
+content-perms-nested-gone = 물체가 세상을 떠났습니다.
+content-perms-nested-land-denied = 중지됨: 이 원시 개체 위에 빌드할 수 없습니다.
+content-perms-nested-parcel-full = 중지됨: 팩은 세계에서 임시 사본을 위한 공간이 남아 있지 않습니다.
+content-perms-nested-rlva = 중지됨: 세계에 물체를 배치하는 것이 제한됩니다(RLVa).
+content-perms-nested-too-many = 너무 많은 스크립트
+content-perms-nested-unreadable = 내용을 읽을 수 없습니다.
+content-perms-demo-chest = 스토리지 캐스트
+content-perms-demo-notes = 스토리지 상자 안에 노트
+content-perms-demo-outer = 외부 상자
+content-perms-demo-glow = 개체를 빛나게 하는 스크립트
+content-perms-demo-readme = 먼저 나를 읽어라
+content-perms-demo-inner = 내부 컨테이너
+content-perms-demo-inner-note = 내부 상자 안에 메모
+content-perms-demo-tiny = 매우 작은 상자
+content-perms-demo-spin = 개체를 회전시키는 스크립트
+content-perms-demo-heirloom = 가족의 유산
+content-perms-demo-sealed = 봉인된 상자
+content-perms-demo-linked = 연결된 개체 그룹
+content-perms-demo-pebble = 작은 둥근 돌
+content-perms-demo-stack = 상자 스택
+dev-toolbox-o10 = 아바타 핫박스
+rlva-selftest-confirm-wear = 오른쪽 뒷다리, 왼쪽 뒤다리와 꼬리끝에 물체를 착용하고, 그 중 두 개에 작은 릴레이 스크립트를 작성합니다. 이 세 지점에서 착用하는 것은 벗겨질 수 있습니다.
+ui-environment-sort-by-name = 알파벳순으로 정렬
+ui-environment-sorted-by-name = 현재 이름에 의해 정렬 됩니다. 인벤토리에서 순서를 복원 하려면 클릭 합니다.
+ui-environment-in-inventory-order = 인벤토리의 순서대로. 정렬하려면 클릭 A–Z.
+ui-chat-contacts-groups-sub = 그룹 · { $count }
+ui-options-soft-shadows = 부드러운 그림자
+ui-options-soft-shadows-help = 태양 그림자는 물체가 멀어질수록 부드러운 가장자리를 가집니다. 실제와 비슷합니다: 높은 기둥의 그림이 끝을 향해 흐려지지만 발은 선명하게 남아 있습니다. 실험적, 기본적으로 꺼짐; 그래픽 카드에 밀리초의 일부만 소요됩니다.
+ui-options-shadow-softness = 그림자 부드러움
+ui-options-shadow-softness-help = 부드러운 그림자를 위한 조명의 크기: 1은 2.3도 폭의 조명이고, 2는 두 배로 부드럽게 만드는 더 큰 조명입니다(실제 태양은 0.2도 정도입니다), 0은 크지 않은 조명으로 프로젝터가 포함되어 있으므로 이전과 같습니다
+ui-options-shadow-softness-needs-soft = 이것을 사용하려면 부드러운 그림자를 켜십시오
+ui-options-shadow-intensity = 그림자 강도
+ui-options-shadow-intensity-help = 태양의 그림자가 얼마나 어두운지: 1은 정상적인 어둠이며, 더 낮은 것은 더 많은 빛을 들여다 볼 수 있습니다.
+ui-options-system-fonts-searching = 글꼴을 찾는 중...
+demo-emotes-nova = /me 분수 옆에 벤치를 설치
+demo-emotes-orion = 여기서 멋지게 보여요!
+demo-teleport-access-neighbour = 성인 이웃 (데모)
+photo-light-shadow-softness = 그림자 부드러움
+photo-light-shadow-intensity = 그림자 강도
+photo-light-shadow-reset = 환경설정의 값으로 돌아가기
+world-teleport-access-blocked-title = 텔레포트 차단됨
+world-teleport-access-adults-only = 방문하려는 지역에는 성인 전용의 { $rating }개의 콘텐츠가 있습니다.
+world-teleport-access-change-and-reteleport = 방문하려는 지역에는 { $rating } 등급 콘텐츠가 있습니다. 현재 설정에서는 { $rating } 등급 콘텐츠가 제외되어 있습니다. 설정을 바꾼 뒤 순간이동을 계속하거나 순간이동을 취소할 수 있습니다.
+world-teleport-access-change = 방문하려는 지역에는 { $rating } 등급 콘텐츠가 있습니다. 현재 설정에서는 { $rating } 등급 콘텐츠가 제외되어 있습니다. 설정을 바꾸거나 순간이동을 취소할 수 있습니다. 설정을 바꾼 후에는 순간이동을 다시 시도해야 합니다.
+world-teleport-access-out-of-sync = 귀하의 선호도가 서버와 동기화되지 않아서 텔레포트에 기술적 문제가 발생했습니다.
+world-teleport-access-rated = 선택하신 위치는 { $rating }등급입니다.
+world-teleport-access-allow = 현재 설정에서는 { $rating } 등급 콘텐츠가 제외되어 있습니다. 허용하면 설정이 업데이트됩니다.
+world-teleport-access-allow-button = { $rating } 내용 허용
+world-teleport-access-not-on-account = 방문하려는 지역의 등급은 { $rating }이며, 이 계정 유형에서는 사용할 수 없습니다.
+world-teleport-access-change-and-continue = 변경하고 계속하기
+world-teleport-access-change-preferences = 환경설정 변경
+world-teleport-access-preference-changed-title = 콘텐츠 등급 변경
+world-teleport-access-preference-changed = { $rating } 콘텐츠가 있는 지역을 방문하려고 한다는 알림을 더 이상 받지 않게 됩니다. 향후에도 환경설정 › 개인정보 보호에서 컨텐츠 기본 설정을 변경할 수 있습니다.
+people-show-group-sheet = 그룹 정보 보이기
+people-group-details-empty = 표시할 그룹이 없습니다
+ao-import-unfinished-retry = 미완성 AO 가져오기가 이미 존재합니다.Aurora/{ $folder }복구 알림을 사용하십시오. AO 다시 시도하기 전에 창을 닫습니다.
+ao-unfinished-import =
+    { $count ->
+        [one] #Aurora/{ $folder }에서 AO 가져오기를 완료하지 않았습니다. 세트 수: { $count }.
+       *[other] #Aurora/{ $folder }에서 AO 가져오기를 완료하지 않았습니다. 세트 수: { $count }.
+    }
+ao-finish-import = 가져오기 완료
+ao-show-in-inventory = 인벤토리에 보이기
+ao-duplicate-native =
+    { $count ->
+        [one] 다른 폴더를 찾았습니다: #Aurora/{ $folder }. 세트 수: { $count }. 활성 AO 폴더에 병합할까요?
+       *[other] 다른 폴더를 찾았습니다: #Aurora/{ $folder }. 세트 수: { $count }. 활성 AO 폴더에 병합할까요?
+    }
+ao-native-already-exists = 이 이름의 내장된 애니메이션 오버라이드가 이미 존재합니다
+rlva-im-ended-local = { $name } 원격으로 닫았습니다. IM 와 대화 @stopim
+rlva-blocked-script-dialog = RLV 제한으로 인해 스크립트 대화 상자 또는 텍스트 상자를 표시할 수 없습니다.
+rlva-blocked-nearby = RLV 제한으로 인해 주변 아바타의 존재를 볼 수 없습니다.
+rlva-tools-retained = 로그인할 때까지 보관됨
+rlva-read-at-login = 변경 사항은 다음 로그인에서 적용됩니다.
+rlva-debug-commands-chat = 각 명령은 또한 인근 채팅에서 개체의 이름 아래에 줄을 얻는다: 그것이 실행하는, 무엇이 실패하고 왜, 로그인을 기다리는.
+rlva-blocked-start-im = 시작할 수 없음 IM 세션 { $recipient } 이유: RLV 제한 사항
+rlva-blocked-start-conference = 다음으로 회의를 시작할 수 없습니다 [RECIPIENT] 이유: RLV 제한 사항
+rlva-anonym-waiting = 2015년 1월 1일...
+rlva-anonym-unknown = (알 수 없음)
+rlva-blocked-teleport = RLV 제한으로 인해 텔레포트를 시작할 수 없습니다
+rlva-blocked-permission-attach = 연결 시도 중 '{ $object }' 로 인해 거부되었습니다 RLV 제한 사항
+rlva-blocked-permission-teleport = '{ $object }'는 당신을 텔레포트 할 수 없습니다 RLV 제한 사항
+rlva-blocked-view-notecard = RLVa 제한으로 인해 notecard를 열 수 없습니다.
+rlva-blocked-view-script = RLVa 제한으로 인해 스크립트를 열 수 없습니다.
+rlva-blocked-view-texture = RLVa 제한으로 인해 텍스처를 열 수 없습니다.
+rlva-debug-explicit-point = 인벤토리 항목 및 폴더의 첨부 포인트 이름 무시
+rlva-debug-explicit-point-hint = 첨부 포인트가 잠겨 있는 동안, Wear and Add는 개체를 이름이나 폴더 이름에서 제공하는 포인터 대신 기본 포인팅으로 보냅니다(불완전).
+ui-bars-clouds-paused-tip = 구름은 이 세션 동안 움직이지 않습니다. 클릭하면 구름을 다시 이동합니다.
+phototools-tab-dof-glow = 피사계 심도와 글로우
+phototools-lights-shadows = 빛과 그림자 설정
+phototools-ambient-occlusion = 앰비언트 오클루전 설정
+phototools-dof = 피사계 심도 설정
+phototools-tone-mapping = HDR 톤 매핑 설정
+phototools-glow = 빛 설정
+phototools-photo-banner = 사진 윈도우 열기: 사진의 행은 사진을 변경합니다. 피사체 깊이는 다음 사진에 유지되며, 조명, 노출, 그림자, 주변 오클루전 및 마모된 조명은 사실 사진이 닫히기 전까지 지속됩니다.
+phototools-photo-boost = 사진 품질이 향상됩니다. 그래픽 행은 향화된 값을 보여주며, 여기에서 수행한 변경사항은 사용자의 것으로 유지됩니다.
+phototools-photo-focus-help = 클릭: 세계에서 마지막으로 누른 지점 포인터: 포인트 아래의 지점 설명: 설정한 거리
+phototools-photo-distance-help = 수동 포커스에서 렌즈가 초점을 맞추는 거리입니다.
+phototools-director-lens = 감독의 렌즈는 창이 열려 있을 때 아래 설정 위에 표시됩니다.
+phototools-view-angle-viewfinder = 뷰파인더는 시야각을 소유합니다: 그것이 닫히면 당신의 각도가 돌아옵니다.
+ui-options-dof-show-focus-point = 초점 지점 보이기
+ui-options-dof-show-focus-point-help = 렌즈가 초점을 맞추는 지점에 작은 십자선: 자유로울 때 노란색, 잠겨 있을 때 빨간색.

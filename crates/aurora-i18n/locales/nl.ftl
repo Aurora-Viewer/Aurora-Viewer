@@ -15866,3 +15866,156 @@ ui-appearance-date-oldest-first = Datum: oudste eerst
 ui-appearance-favorites-to-top = Favorieten bovenaan
 ui-appearance-images-to-top = Outfits met afbeelding bovenaan
 ui-options-group-emotes = Groepeer emotes met berichten van de afzender
+
+### Release translations
+
+ui-options-planet-curvature = Planeetkromming
+ui-options-planet-curvature-help = Tekent de wereld op een ronde planeet: open water valt weg naar een echte horizon in plaats van uit te lopen tot ooghoogte, met de hemel eronder. Alleen het uitzicht verandert: regio's, natuurkunde en wat anderen zien blijven plat. Op aarde is de daling binnen de tekenafstand een paar centimeter; het ziet er op de verre zee uit. Verschilt van de Legacy Viewer
+ui-options-planet-radius = Straal van planeet
+ui-options-planet-radius-help = De straal van de planeet in kilometers, die van de aarde is 6.371 km: vanaf 10 m hoogte eindigt de zee op ongeveer 11 km afstand. Een kleinere planeet brengt de horizon dichterbij
+ui-options-camera-frame-while-posing = Frame de avatar terwijl je poseert
+ui-options-camera-frame-while-posing-tip = Als je de poser opent, wordt de avatar ingelijst en als je op een joint klikt, komt de camera dichterbij.
+ui-options-camera-still-while-posing = Houd de camera stil tijdens het poseren
+ui-options-camera-still-while-posing-tip = Terwijl je poseert, stopt de camera met het volgen van de avatar, de focus en lichaamsdelen. Lopen reset de camera niet. Orbit, zoom, pan en presets werken nog steeds.
+ui-options-group-emotes-hint = In de Aurora-chatstijl verschijnt een actie zoals ‘/me waves’ onder dezelfde kop als de berichten die dezelfde afzender vlak ervoor of erna verstuurt. De actie krijgt geen eigen kop.
+content-perms-nested = Objecten in objecten opnemen
+content-perms-nested-help = Dit bewerkt ook de inhoud van geneste objecten, tot vijf niveaus diep. Elk object wordt in de wereld geplaatst twee meter boven de primitief die het bevat. De draaiende scripts worden gestopt, de inhouden veranderd en de scripts opnieuw gestart. Het object wordt vervolgens weer opgeslagen in de container. De rechten van het object in de Container worden ingesteld en gecontroleerd voordat de tijdelijke kopie in de Wereld wordt verwijderd. Objecten die u niet kunt kopiëren, overbrengen of wijzigen blijven gesloten. U hebt toestemming nodig om te bouwen op de plaatsingslocatie.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } Het object in de inhoud zal worden geopend, overgeslagen: { $skipped }.
+       *[other] { $objects } Objecten in de inhoud worden geopend, overgeslagen: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = Geen kopie of overdracht
+content-perms-nested-skip-no-modify = Kan niet worden gewijzigd
+content-perms-nested-skip-depth = Meer dan 5 niveaus diep
+content-perms-nested-rezzing = Het object plaatsen “{ $name }” in de wereld (nesting level { $level })…
+content-perms-nested-stopping = Stoppen van de scripts van “{ $name }”…
+content-perms-nested-applying = De inhoud van “{ $name }” wijzigen…
+content-perms-nested-restoring = De scripts van “{ $name }” opnieuw starten…
+content-perms-nested-saving = Het object “{ $name }” terug opslaan in zijn container…
+content-perms-nested-deleting = De tijdelijke kopie in de wereld van “{ $name }” verwijderen…
+content-perms-nested-finished = Bijgewerkte items: { $count }. Geneste objecten: { $objects }. Overgeslagen: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } naast het origineel gehouden: de namen verschilden.
+       *[other] { $kept } naast hun originelen gehouden: de namen verschilden.
+    }
+content-perms-nested-stopped = Gestopt: de tijdelijke kopieën in de wereld werden verwijderd, de originele items bleven zoals ze waren.
+content-perms-nested-stop-help = Stopt de bewerking en verwijdert tijdelijke kopieën die nog in de wereld staan. De oorspronkelijke items blijven zoals ze zijn. Objecten die al zijn teruggezet, behouden hun wijzigingen.
+content-perms-nested-scripts-warning = Elk object wordt in de wereld gerezzed. Daardoor worden de acties van scripts bij het rezzen, zoals een explosie, teleportatie of het geven van een item, uitgevoerd voordat je de scripts kunt stoppen. Schakel om dit te voorkomen eerst Scripts uitschakelen in onder Regio / Landgoed in een regio die je beheert en schakel die optie na afloop weer uit.
+content-perms-nested-original-kept = “{ $name }” werd terug opgeslagen, maar het oorspronkelijke item kon niet worden verwijderd: beide zijn in de inhoud.
+content-perms-nested-copy-left = De tijdelijke kopie in de wereld van “{ $name }” kon niet worden verwijderd: verwijder deze handmatig.
+content-perms-nested-save-unconfirmed = De opslag terug werd niet bevestigd
+content-perms-nested-saved-perms-unconfirmed = Gestopt: de rechten van het object dat terug in zijn container werd opgeslagen konden niet worden bevestigd.De tijdelijke werkkopieën in de wereld zijn bewaard gebleven; controleer ze voordat u ze verwijdert.
+content-perms-nested-timeout = De simulator reageerde niet op tijd
+content-perms-nested-rez-refused = Gestopt: de simulator weigerde te plaatsen in de wereld “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Gestopt: “{ $name }” verscheen niet binnen 15 seconden.Als het later boven het primitieve object verschijnt, verwijder het dan.
+content-perms-nested-not-ours = Gestopt: het object dat in de wereld is geplaatst voor “{ $name }” komt niet uit deze inhoud, het werd in de Wereld achtergelaten.
+content-perms-nested-unverified = Gestopt: het object dat verscheen voor “{ $name }” kon niet worden gecontroleerd als geplaatst in de wereld van deze inhoud, dus het werd in de Wereld gelaten.
+content-perms-nested-group-split = Gestopt: “{ $name }” (verscheidene objecten die als één werden opgeslagen) kwam terug als een enkel object, waarvan de in de wereld geplaatste delen in de Wereld bleven: selecteer ze allemaal en neem ze mee om de groep opnieuw te maken.
+content-perms-nested-failed = “{ $name }” ongewijzigd gelaten: { $reason }.
+content-perms-nested-original-gone = “{ $name }” wordt bewaard in de wereld: zijn opslag terug werd niet bevestigd en het oorspronkelijke item is verdwenen.
+content-perms-nested-gone = Het object verliet de wereld
+content-perms-nested-land-denied = Gestopt: je kunt niet boven dit primitieve object bouwen, waar de objecten in de wereld zouden worden geplaatst.
+content-perms-nested-parcel-full = Gestopt: het pakket heeft geen ruimte meer voor de tijdelijke kopieën in de wereld.
+content-perms-nested-rlva = Gestopt: het plaatsen van objecten in de wereld is beperkt (RLVa).
+content-perms-nested-too-many = Te veel scripts
+content-perms-nested-unreadable = De inhoud kon niet worden gelezen
+content-perms-demo-chest = Opbergkist met deksel
+content-perms-demo-notes = Notities in de opbergkist
+content-perms-demo-outer = De buitenste doos
+content-perms-demo-glow = Script dat het object gloeit
+content-perms-demo-readme = Lees mij eerst
+content-perms-demo-inner = De binnencontainer
+content-perms-demo-inner-note = Opmerking binnen de binnendoos
+content-perms-demo-tiny = Zeer kleine doos
+content-perms-demo-spin = Script dat het object draait
+content-perms-demo-heirloom = Familie erfstuk van de familie
+content-perms-demo-sealed = Een verzegelde doos
+content-perms-demo-linked = Groep van samengevoegde objecten
+content-perms-demo-pebble = Kleine afgeronde steen
+content-perms-demo-stack = Stapel van kratten
+dev-toolbox-o10 = Raakvlakken van avatars
+rlva-selftest-confirm-wear = Het draagt zijn voorwerpen op Rechter Achtervoet, Linker Achtervoorvoet en Staartpunt, en schrijft een klein relaisscript in twee van hen.Wat je draag op deze drie punten kan worden afgenomen.
+ui-environment-sort-by-name = Alfabetisch sorteren
+ui-environment-sorted-by-name = Momenteel gesorteerd op naam. Klik om de bestelling uit je inventaris te herstellen.
+ui-environment-in-inventory-order = In de volgorde van je inventaris. Klik om ze te sorteren A–Z.
+ui-chat-contacts-groups-sub = Groepen · { $count }
+ui-options-soft-shadows = De zachte schaduwen
+ui-options-soft-shadows-help = Zonneschaduwen met zachtere randen naarmate het object verder van de schaduw af staat, net als in het echte leven: de schaduwen van een hoge paal vervagen naar de punt toe terwijl een voet scherp blijft. Experimenteel, standaard uitgeschakeld; kost een fractie van een milliseconde op de grafische kaart
+ui-options-shadow-softness = De zachtheid van schaduw
+ui-options-shadow-softness-help = De grootte van het licht voor de zachte schaduwen: 1 is een licht met een diameter van 2,3 graden, 2 is een groter licht dat de schaduw twee keer zo verzacht (de echte zon is ongeveer 0,2), 0 is een niet-groot licht: de schaduven zijn zoals ze vroeger waren, inclusief de projectoren
+ui-options-shadow-softness-needs-soft = Schakel Zachte schaduwen in om dit te gebruiken
+ui-options-shadow-intensity = Intensiteit van schaduw
+ui-options-shadow-intensity-help = Hoe donker de schaduwen van de zon zijn: 1 is de normale duisternis, lager laat meer licht in hen
+ui-options-system-fonts-searching = Op zoek naar lettertypen…
+demo-emotes-nova = /me zet een bankje neer bij de fontein
+demo-emotes-orion = Ziet er geweldig uit vanaf hier!
+demo-teleport-access-neighbour = Volwassen buurman (demo)
+photo-light-shadow-softness = De zachtheid van schaduw
+photo-light-shadow-intensity = Intensiteit van schaduw
+photo-light-shadow-reset = Terug naar de waarde van Voorkeuren
+world-teleport-access-blocked-title = Teleport geblokkeerd
+world-teleport-access-adults-only = De regio die je probeert te bezoeken bevat { $rating } inhoud, die alleen toegankelijk is voor volwassenen.
+world-teleport-access-change-and-reteleport = De regio die je wilt bezoeken bevat inhoud met classificatie { $rating }. Je huidige voorkeuren sluiten inhoud met classificatie { $rating } uit. Je kunt je voorkeuren wijzigen en doorgaan met teleporteren, of de teleport annuleren.
+world-teleport-access-change = De regio die je wilt bezoeken bevat inhoud met classificatie { $rating }. Je huidige voorkeuren sluiten inhoud met classificatie { $rating } uit. Je kunt je voorkeuren wijzigen of de teleport annuleren. Probeer na het wijzigen opnieuw te teleporteren.
+world-teleport-access-out-of-sync = We hebben technische problemen met uw teleport omdat uw voorkeuren niet gesynchroniseerd zijn met de server.
+world-teleport-access-rated = De locatie die je hebt gekozen is beoordeeld met { $rating }.
+world-teleport-access-allow = Je huidige voorkeuren staan inhoud met classificatie { $rating } niet toe. Als je die toestaat, worden je voorkeuren bijgewerkt.
+world-teleport-access-allow-button = { $rating }-inhoud toestaan
+world-teleport-access-not-on-account = De regio die u probeert te bezoeken heeft de classificatie { $rating }, die niet beschikbaar is voor uw accounttype.
+world-teleport-access-change-and-continue = Wijzigen en doorgaan
+world-teleport-access-change-preferences = Uw voorkeuren wijzigen
+world-teleport-access-preference-changed-title = Inhoudsclassificatie gewijzigd
+world-teleport-access-preference-changed = U ontvangt geen meldingen meer dat u een regio met { $rating }-inhoud gaat bezoeken.U kunt uw inhoudsvoorkeuren in de toekomst wijzigen in Voorkeuren › Privacy.
+people-show-group-sheet = Toon groepsdetails
+people-group-details-empty = Geen groep om weer te geven
+ao-import-unfinished-retry = Een onvoltooide droom AO Import bestaat al in #Aurora/{ $folder }. Gebruik het herstelbericht in de AO Sluit het venster voordat u opnieuw probeert.
+ao-unfinished-import =
+    { $count ->
+        [one] Onvoltooide AO-import in #Aurora/{ $folder }. Aantal sets: { $count }.
+       *[other] Onvoltooide AO-import in #Aurora/{ $folder }. Aantal sets: { $count }.
+    }
+ao-finish-import = Import beëindigen
+ao-show-in-inventory = Toon in inventaris
+ao-duplicate-native =
+    { $count ->
+        [one] Een andere map gevonden: #Aurora/{ $folder }. Aantal sets: { $count }. Wil je die samenvoegen met de actieve AO-map?
+       *[other] Een andere map gevonden: #Aurora/{ $folder }. Aantal sets: { $count }. Wil je die samenvoegen met de actieve AO-map?
+    }
+ao-native-already-exists = Er bestaat al een ingebouwde animatie-override met deze naam
+rlva-im-ended-local = { $name } Op afstand gesloten. IM Een gesprek met @stopim
+rlva-blocked-script-dialog = Kan scriptdialoogvenster of tekstvak niet weergeven vanwege RLV-beperkingen
+rlva-blocked-nearby = Kan de aanwezigheid van nabijgelegen avatars niet zien vanwege RLV-beperkingen
+rlva-tools-retained = Behouden tot inloggen
+rlva-read-at-login = Wijzigingen worden van kracht bij de volgende login.
+rlva-debug-commands-chat = Elk commando krijgt ook een regel in de nabijgelegen chat, onder de naam van het object: wat het uitvoert, wat mislukt en waarom, wat wacht op de login.
+rlva-blocked-start-im = Kan niet starten IM Een sessie met { $recipient } als gevolg van RLV Beperkingen
+rlva-blocked-start-conference = Kan de conferentie niet starten met [RECIPIENT] als gevolg van RLV Beperkingen
+rlva-anonym-waiting = Lees meer...
+rlva-anonym-unknown = (Onbekend)
+rlva-blocked-teleport = Kan teleport niet starten vanwege RLV beperkingen
+rlva-blocked-permission-attach = Poging om te koppelen '{ $object }' werd geweigerd vanwege RLV Beperkingen
+rlva-blocked-permission-teleport = '{ $object }' werd toestemming geweigerd om je te teleporteren vanwege RLV Beperkingen
+rlva-blocked-view-notecard = Kan de notecard niet openen vanwege RLVa beperkingen.
+rlva-blocked-view-script = Het script kan niet worden geopend vanwege RLVa-beperkingen.
+rlva-blocked-view-texture = Kan de textuur niet openen vanwege RLVa beperkingen.
+rlva-debug-explicit-point = Negeer namen van bijlagepunten op inventarisartikelen en mappen
+rlva-debug-explicit-point-hint = Terwijl een bevestigingspunt is vergrendeld, stuurt Wear and Add een object naar het standaardpunt in plaats van het punt dat de naam of de mapnaam geeft (onvolledig).
+ui-bars-clouds-paused-tip = De wolken worden voor deze sessie stil gehouden. Klik om ze weer te laten bewegen.
+phototools-tab-dof-glow = Scherptediepte en gloed
+phototools-lights-shadows = Instellingen voor lichten en schaduwen
+phototools-ambient-occlusion = Instellingen voor omgevingsocclusie
+phototools-dof = Instellingen voor scherptediepte
+phototools-tone-mapping = Instellingen voor HDR-toontoewijzing
+phototools-glow = Instellingen voor gloed
+phototools-photo-banner = Fotovenster open: de rijen die het fotovenster ook heeft veranderen de foto.De scherptediepte wordt behouden voor uw volgende foto's; het licht, de belichting, schaduwen, omgevingsocclusie en versleten lichten blijven totdat het foto-venster sluit.
+phototools-photo-boost = De fotokwaliteit wordt verhoogd: de grafische rijen tonen de verhoogde waarden, en een wijziging die u daar aanbrengt, wordt als uw eigen behouden.
+phototools-photo-focus-help = Klik: het laatste punt in de wereld waar je op geklikt hebt. Aanwijzer: het punt onder de aanwijzer. Handmatig: een afstand die je instelt.
+phototools-photo-distance-help = De afstand waarop de lens scherpstelt bij handmatige scherpestelling.
+phototools-director-lens = De lens van de Directeur wordt getoond terwijl het venster geopend is, over de instellingen hieronder.
+phototools-view-angle-viewfinder = De zoeker is eigenaar van de beeldhoek: die van jou komt terug als hij dichtgaat.
+ui-options-dof-show-focus-point = Scherpstelpunt weergeven
+ui-options-dof-show-focus-point-help = Een klein kruisje op het punt waar de lens scherpstelt: geel als het vrij is, rood als het vergrendeld is.

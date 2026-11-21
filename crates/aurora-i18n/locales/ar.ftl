@@ -15882,3 +15882,156 @@ ui-appearance-date-oldest-first = التاريخ: الأقدم أولاً
 ui-appearance-favorites-to-top = المفضّلة أولاً
 ui-appearance-images-to-top = الأزياء ذات الصور أولاً
 ui-options-group-emotes = جمع الحركات التعبيرية مع رسائل مرسلها
+
+### Release translations
+
+ui-options-planet-curvature = منحنى الكوكب
+ui-options-planet-curvature-help = يرسم العالم على كوكب دائري: تسقط المياه المفتوحة بعيداً إلى أفق حقيقي بدلاً من التدفق إلى مستوى العين، مع السماء أسفلها. يتغير العرض فقط: المناطق والفيزياء وما يراه الآخرون تظل مستوية. على الأرض، تسقط داخل مسافة الرسم بضعة سنتيمترات؛ وهي تظهر في البحر البعيد. يختلف عن المراقب القديم
+ui-options-planet-radius = نصف قطر الكوكب
+ui-options-planet-radius-help = نصف قطر الكوكب المرسوم، بالكيلومترات. نصف الكرة الأرضية هو 6371 كيلومتر: من 10 أمتار فوق سطح البحر، ينتهي البحر على بعد حوالي 11 كم. كوكب أصغر يقرب الأفق
+ui-options-camera-frame-while-posing = إطار الصورة أثناء الوضع
+ui-options-camera-frame-while-posing-tip = إن فتح الموقف يضع الصورة في إطارها، والنقر على مفصل يجعل الكاميرا أقرب إليه. وتسحب المفصل لا تحرك الكاميرا أبداً.
+ui-options-camera-still-while-posing = إبقي الكاميرا ثابتة أثناء التقاط الصور
+ui-options-camera-still-while-posing-tip = عندما تضع نفسك، تتوقف الكاميرا عن متابعة الصورة، وتركيزها وأجزاء جسمها، والمشي لا يعيدها. المدار، والتكبير، والدوران، والتعديلات المسبقة لا تزال تعمل.
+ui-options-group-emotes-hint = في نمط دردشة Aurora، يظهر وصف الحركة مثل «/me waves» تحت عنوان الرسائل التي أرسلها الشخص نفسه قبله أو بعده مباشرة، من دون عنوان مستقل.
+content-perms-nested = إدراج الأشياء داخل الأشياء
+content-perms-nested-help = هذا أيضاً يقوم بتعديل محتويات الأشياء المتداخلة، حتى خمسة مستويات عمقاً. كل كائن يتم وضعه في العالم مترين فوق البدائي الذي يحتوي عليه. النصوص التشغيلية الخاصة به تتوقف، ومحتوياته تتغير، ونصوصه تبدأ من جديد. ثم يتم حفظ الكائن مرة أخرى إلى الحاوية. الإذن للكائن في الحاوية يتم تحديدها والتحقق منها قبل حذف نسخته المؤقتة في العالم. الأشياء التي لا يمكنك نسخها أو نقلها أو تعديلها تبقى مغلقة. أنت بحاجة إلى إذن لبناء في موقع التوضيح.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } سيفتح الكائن في المحتويات، سيتخطى: { $skipped }.
+       *[other] { $objects } سوف تفتح الأشياء في المحتويات، سيتم تجاوزها: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = لا نسخة أو نقل
+content-perms-nested-skip-no-modify = لا يمكن تعديلها
+content-perms-nested-skip-depth = أكثر من 5 مستويات عمق
+content-perms-nested-rezzing = وضع الجسم "{ $name }" في العالم (مستوى التسلق) { $level })…
+content-perms-nested-stopping = وقف النصوص من "{ $name }" ...
+content-perms-nested-applying = تغيير محتويات " { $name } ". ...
+content-perms-nested-restoring = أنا أبدأ كتابة "{ $name }" مجدداً
+content-perms-nested-saving = حفظ الجسم " { $name } ".. ", من جديد في حاويته ...
+content-perms-nested-deleting = حذف النسخة المؤقتة في العالم من "{ $name }" ...
+content-perms-nested-finished = العناصر المحدّثة: { $count }. الكائنات المتداخلة: { $objects }. المتجاوزة: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } احتفظت بجانب أصلها: الأسماء مختلفة.
+       *[other] { $kept } تم الاحتفاظ بها بجانب أصولها: الأسماء مختلفة.
+    }
+content-perms-nested-stopped = توقفت: تم حذف النسخ المؤقتة في العالم، وترك البنود الأصلية كما هي.
+content-perms-nested-stop-help = يوقف العملية ويحذف النسخ المؤقتة التي ما زالت في العالم. تبقى العناصر الأصلية كما هي، وتحتفظ الكائنات التي حُفظت بالفعل بتغييراتها.
+content-perms-nested-scripts-warning = يُنشأ كل كائن في العالم (rez)، لذلك تعمل إجراءات الإنشاء في برامجه النصية، مثل الانفجار أو الانتقال الآني أو إعطاء عنصر، قبل أن يتسنى إيقافها. لمنع ذلك، فعّل «تعطيل البرامج النصية» في «المنطقة / العقار» على منطقة تديرها، ثم ألغِ التعطيل بعد الانتهاء.
+content-perms-nested-original-kept = وقد تم إنقاذ " { $name } ", ولكن لم يمكن حذف بنده الأصلي: وكلاهما موجود في المحتويات.
+content-perms-nested-copy-left = النسخة المؤقتة في العالم من "{ $name }" لا يمكن حذفها: حذفه يدويا.
+content-perms-nested-save-unconfirmed = لم يتم تأكيد إعادة الحفظ
+content-perms-nested-saved-perms-unconfirmed = توقفت: لم يكن من الممكن التأكد من أذونات الكائن الذي تم حفظه مرة أخرى في حاويته. تم الاحتفاظ بنسخ العمل المؤقتة في العالم؛ تحقق منها قبل إزالتها.
+content-perms-nested-timeout = لم تستجب المحاكاة في الوقت المناسب
+content-perms-nested-rez-refused = توقفت: رفضت المحاكاة وضع في العالم "{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = توقّفت العملية: لم يظهر «{ $name }» خلال 15 ثانية. إذا ظهر لاحقًا فوق الجزء الأساسي، فاحذفه.
+content-perms-nested-not-ours = توقفت: الشيء الذي وضع في العالم لـ "{ $name }" لا يأتي من هذه المحتويات، فقد تركت في العالم.
+content-perms-nested-unverified = توقفت: لم يكن من الممكن التحقق من أن الكائن الذي ظهر لـ"{ $name }" قد وضع في العالم من هذه المحتويات، لذلك تركت في العالم.
+content-perms-nested-group-split = توقف: "{ $name }" (عدة أجسام محفوظة كواحد) عادت كجسم واحد. أجزاءه الموضعة في العالم تم الاحتفاظ بها في العالم: اخترها جميعا وأخذها لإنشاء المجموعة مرة أخرى.
+content-perms-nested-failed = “{ $name }" بقيت دون تغيير: { $reason }.
+content-perms-nested-original-gone = "{ $name }" يحتفظ به في العالم: لم يتم تأكيد إعادة حفظه وذهب بنده الأصلي.
+content-perms-nested-gone = لقد غادر الجسم العالم
+content-perms-nested-land-denied = توقف: لا يمكنك بناء فوق هذا الكائن البدائي، حيث ستوضع الأشياء في العالم.
+content-perms-nested-parcel-full = توقفت: الطرد ليس لديه مساحة متبقية للنسخ المؤقتة في العالم.
+content-perms-nested-rlva = توقف: وضع الأشياء في العالم مقيد (RLVa).
+content-perms-nested-too-many = الكثير من النصوص
+content-perms-nested-unreadable = لا يمكن قراءة محتوياته
+content-perms-demo-chest = صندوق تخزين
+content-perms-demo-notes = مذكرات داخل صندوق التخزين
+content-perms-demo-outer = الصندوق الخارجي
+content-perms-demo-glow = النص الذي يجعل الكائن يشرق
+content-perms-demo-readme = اقرأني أولاً
+content-perms-demo-inner = حاوية داخلية
+content-perms-demo-inner-note = ملاحظة داخل الصندوق الداخلي
+content-perms-demo-tiny = صندوق صغير جدا
+content-perms-demo-spin = النص الذي يدور الكائن
+content-perms-demo-heirloom = تراث الأسرة
+content-perms-demo-sealed = صندوق مختوم
+content-perms-demo-linked = مجموعة من الأجسام المرتبطة
+content-perms-demo-pebble = حجر صغير مستدير
+content-perms-demo-stack = كومة صناديق
+dev-toolbox-o10 = أفاتار hitboxes
+rlva-selftest-confirm-wear = إنها ترتدي أجسامها على القدم الخلفية اليمنى، والقدم الخلفيّة اليسرى، وطرف الذيل، وتكتب نصاً صغيراً في اثنين منهما. وما ترتديه على هذه النقاط الثلاث يمكن أن يُنزع.
+ui-environment-sort-by-name = الترتيب الأبجدي
+ui-environment-sorted-by-name = مرتبة حاليا حسب الاسم. انقر لإعادة الترتيب من مخزونك.
+ui-environment-in-inventory-order = في ترتيب مخزونك، انقر لترتيبهم A–Z.
+ui-chat-contacts-groups-sub = المجموعات { $count }
+ui-options-soft-shadows = ظلال ناعمة
+ui-options-soft-shadows-help = ظل الشمس مع حواف أكثر مرونة كلما كان الجسم أبعد عن ما يظله، كما في الحياة الحقيقية: ظل عمود طويل يتلاشى نحو قمته بينما تبقى القدم واضحة. تجريبي، منقطع بصورة افتراضية؛ يكلف جزءا من الملي ثانية على بطاقة الرسوميات
+ui-options-shadow-softness = مرونة الظل
+ui-options-shadow-softness-help = حجم الضوء للظلال الناعمة: 1 هو ضوء بعرض 2.3 درجة، 2 أكبر من ذلك يخفف الظلال مرتين (الشمس الحقيقية حوالي 0.2)، 0 ضوء بدون حجم: ظلال كما كانت قبلا، بما في ذلك المصابيح
+ui-options-shadow-softness-needs-soft = تفعيل الظلال الناعمة لاستخدام هذا
+ui-options-shadow-intensity = كثافة الظل
+ui-options-shadow-intensity-help = مدى ظلمة ظلال الشمس: 1 هو الظلام العادي، أقل يسمح بمزيد من الضوء فيهم
+ui-options-system-fonts-searching = البحث عن خطوط...
+demo-emotes-nova = /me يضع مقعداً عند النافذة
+demo-emotes-orion = يبدو رائعاً من هنا
+demo-teleport-access-neighbour = جار بالغ (عرض)
+photo-light-shadow-softness = مرونة الظل
+photo-light-shadow-intensity = كثافة الظل
+photo-light-shadow-reset = العودة إلى قيمة الأفضليات
+world-teleport-access-blocked-title = تم إيقاف النقل
+world-teleport-access-adults-only = المنطقة التي تحاول زيارتها تحتوي على محتوى { $rating }، الذي يمكن الوصول إليه للبالغين فقط.
+world-teleport-access-change-and-reteleport = تحتوي المنطقة التي تحاول زيارتها على محتوى من التصنيف { $rating }. تستبعد تفضيلاتك الحالية المحتوى من التصنيف { $rating }. يمكنك تغيير تفضيلاتك ومتابعة الانتقال الآني أو إلغاؤه.
+world-teleport-access-change = تحتوي المنطقة التي تحاول زيارتها على محتوى من التصنيف { $rating }. تستبعد تفضيلاتك الحالية المحتوى من التصنيف { $rating }. يمكنك تغيير تفضيلاتك أو إلغاء الانتقال. بعد تغيير التفضيلات، حاول الانتقال مجددًا.
+world-teleport-access-out-of-sync = نحن نواجه صعوبات تقنية مع نقلك عن بعد لأن تفضيلاتك ليست متزامنة مع الخادم
+world-teleport-access-rated = المكان الذي اخترته هو { $rating }
+world-teleport-access-allow = لا تسمح تفضيلاتك الحالية بمحتوى من التصنيف { $rating }. سيؤدي السماح به إلى تحديث تفضيلاتك.
+world-teleport-access-allow-button = السماح بمحتوى { $rating }
+world-teleport-access-not-on-account = المنطقة التي تحاول زيارتها مصنفة على أنها { $rating }، وهي غير متاحة لنوع حسابك.
+world-teleport-access-change-and-continue = التغيير والاستمرار
+world-teleport-access-change-preferences = تغيير الأفضليات
+world-teleport-access-preference-changed-title = تغير تصنيف المحتوى
+world-teleport-access-preference-changed = لن تتلقى أي إشعارات أخرى بأنك على وشك زيارة منطقة تحتوي على محتوى { $rating }. يمكنك تغيير أفضليات المحتوى الخاصة بك في المستقبل في Preferences › Privacy.
+people-show-group-sheet = أظهر تفاصيل المجموعة
+people-group-details-empty = لا توجد مجموعة للعرض
+ao-import-unfinished-retry = غير منتهية AO الاستيراد موجود بالفعل في #Aurora/{ $folder }:: استخدام إشعار الاسترداد في AO نافذة قبل المحاولة مجدداً.
+ao-unfinished-import =
+    { $count ->
+        [one] استيراد AO غير مكتمل في #Aurora/{ $folder }. عدد المجموعات: { $count }.
+       *[other] استيراد AO غير مكتمل في #Aurora/{ $folder }. عدد المجموعات: { $count }.
+    }
+ao-finish-import = انتهاء الاستيراد
+ao-show-in-inventory = يظهر في المخزون
+ao-duplicate-native =
+    { $count ->
+        [one] عُثر على مجلد آخر: #Aurora/{ $folder }. عدد المجموعات: { $count }. هل تريد دمجه في مجلد AO النشط؟
+       *[other] عُثر على مجلد آخر: #Aurora/{ $folder }. عدد المجموعات: { $count }. هل تريد دمجه في مجلد AO النشط؟
+    }
+ao-native-already-exists = يوجد بالفعل إغفال حركة مدمج بهذا الاسم
+rlva-im-ended-local = { $name } أغلقت عن بعد IM محادثة مع @stopim
+rlva-blocked-script-dialog = لا يمكن عرض حوار النص أو مربع النص بسبب القيود RLV
+rlva-blocked-nearby = غير قادر على رؤية وجود صور قريبة بسبب القيود RLV
+rlva-tools-retained = احتفظ به حتى الدخول
+rlva-read-at-login = وتدخل التغييرات حيز النفاذ عند الدخول التالي.
+rlva-debug-commands-chat = كل أمر يحصل أيضا على خط في الدردشة القريبة، تحت اسم الكائن: ما الذي ينفذه، وما الذي يفشل ولماذا، وما ينتظر الدخول.
+rlva-blocked-start-im = غير قادر على البدء IM الدورة التاسعة والخمسون { $recipient } بسبب RLV القيود
+rlva-blocked-start-conference = لا يمكن بدء المؤتمر مع [RECIPIENT] بسبب RLV القيود
+rlva-anonym-waiting = (تحميل...)
+rlva-anonym-unknown = (غير معروف)
+rlva-blocked-teleport = غير قادر على بدء النقل عن بعد بسبب القيود RLV
+rlva-blocked-permission-attach = محاولة ربط{ $object }تم رفضه بسبب RLV القيود
+rlva-blocked-permission-teleport = '{ $object }لقد رفضت السماح لي بنقلك بسبب RLV القيود
+rlva-blocked-view-notecard = لا يمكن فتح بطاقة الملاحظات بسبب القيود RLVa.
+rlva-blocked-view-script = لا يمكن فتح النص بسبب القيود RLVa.
+rlva-blocked-view-texture = لا يمكن فتح النسيج بسبب القيود RLVa.
+rlva-debug-explicit-point = تجاهل أسماء نقاط الإرفاق على بنود الجرد والمجلدات
+rlva-debug-explicit-point-hint = عندما تكون نقطة الإرفاق مغلقة، يرسل Wear and Add كائنًا إلى نقطته الافتراضية بدلاً من النقطة التي يعطيها اسمه أو اسم مجلده (غير كامل).
+ui-bars-clouds-paused-tip = تبقى السحب ثابتة في هذه الجلسة. انقر للسماح لها بالتحرك مرة أخرى.
+phototools-tab-dof-glow = عمق المجال والتوهج
+phototools-lights-shadows = إعدادات الأضواء والظلال
+phototools-ambient-occlusion = إعدادات الإطباق المحيطي
+phototools-dof = إعدادات عمق المجال
+phototools-tone-mapping = إعدادات رسم خرائط اللون HDR
+phototools-glow = إعدادات الإضاءة
+phototools-photo-banner = نافذة الصور مفتوحة: الصفوف التي تحتويها نافذه الصور أيضاً تتغير الصورة. يتم الاحتفاظ بعمق الحقل لصورك التالية؛ يستمر الضوء والتعرض والظلال وانعكاس البيئة والأضواء المستهلكة حتى تغلق نافذاة الصور.
+phototools-photo-boost = يتم رفع جودة الصور: تظهر صفوف الرسوم البيانية القيم المرتفعة، وأي تغيير تقوم به هناك يُحتفظ به كتغيير خاص بك.
+phototools-photo-focus-help = النقر: آخر نقطة تم النقر عليها في العالم. المؤشر: النقطة تحت المؤشر. اليدوي: مسافة تحددها.
+phototools-photo-distance-help = المسافة التي تركز عليها العدسة في التركيز اليدوي.
+phototools-director-lens = يتم عرض عدسة المدير بينما تكون نافذته مفتوحة، فوق الإعدادات أدناه.
+phototools-view-angle-viewfinder = الباحث يملك زاوية الرؤية: زاويتك تعود عندما يغلق.
+ui-options-dof-show-focus-point = أظهر نقطة التركيز
+ui-options-dof-show-focus-point-help = صليب صغير على النقطة التي تركز عليها العدسة: أصفر عندما تكون حرة، أحمر عندما يكون مقفلاً.

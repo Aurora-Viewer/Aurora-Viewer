@@ -15862,3 +15862,156 @@ ui-appearance-date-oldest-first = تاریخ: قدیمی‌ترین اول
 ui-appearance-favorites-to-top = موارد دلخواه در بالا
 ui-appearance-images-to-top = پوشش‌های دارای تصویر در بالا
 ui-options-group-emotes = گروه‌بندی حرکات نمایشی با پیام‌های فرستنده
+
+### Release translations
+
+ui-options-planet-curvature = خم شدن سیاره
+ui-options-planet-curvature-help = جهان را بر روی سیارۀ گرد ترسیم می‌کند: آب باز به جای سقوط به سطح چشم ، به افق واقعی می‌افتد ، با آسمان زیر آن. فقط نمای تغییر می‌کند: مناطق ، فیزیک و آنچه که دیگران می‌بینند صاف باقی می‌مانند. در زمین ، قطره در فاصله ترسیم چند سانتی‌متر است ، در دریاهای دور نشان داده می‌شود. با نمایشگر Legacy متفاوت است
+ui-options-planet-radius = شعاع سیاره
+ui-options-planet-radius-help = شعاع سیارۀ ترسیم‌شده ، به کیلومترها. شعاع زمین ۶٬۳۷۱ کیلومتر است: از ۱۰ متر بالا، دریا حدود ۱۱ کیلومتر دورتر پایان می‌یابد. یک سیارۀ کوچکتر افق را نزدیک‌تر می‌کند
+ui-options-camera-frame-while-posing = قاب‌بندی آواتار در حین قرار گرفتن
+ui-options-camera-frame-while-posing-tip = باز کردن پوز ، آواتار را فریم می‌کند ، و کلیک بر روی یک مفصل دوربین را به آن نزدیک‌تر می‌کند. کشیدن یک مفاصل هرگز دوربین حرکت نمی‌کند.
+ui-options-camera-still-while-posing = دوربین را در حین عکاسی ثابت نگه دارید
+ui-options-camera-still-while-posing-tip = هنگامی که شما در حال پویش هستید ، دوربین از دنبال کردن آواتار ، تمرکز آن و قسمت‌های بدنش متوقف می‌شود ، و راه رفتن آن را بازنگرداند. مدار ، بزرگنمایی ، چرخش و پیش‌فرض‌ها همچنان کار می‌کنند.
+ui-options-group-emotes-hint = در سبک گفت‌وگوی Aurora، حرکت نمایشی مانند «/me waves» زیر همان عنوان پیام‌هایی نمایش داده می‌شود که همان شخص بلافاصله پیش یا پس از آن فرستاده است. این حرکت عنوان جداگانه‌ای ندارد.
+content-perms-nested = شامل شیء در شیء
+content-perms-nested-help = این همچنین محتوای اشیا تو در تو را تا عمق پنج سطوح ویرایش می‌کند. هر شیء در جهان دو متر بالاتر از ابتدایی که آن را شامل می‌شود قرار می‌گیرد. دست‌نوشته‌های در حال اجرا متوقف می‌شوند ، محتوای آن تغییر می‌کند ، و دست‌نویس‌های آن دوباره آغاز می‌شوند. سپس شیء به داخل ظرف ذخیره می‌شود. مجوزهای شیئ در ظرف قبل از حذف رونوشت موقت آن در جهان تنظیم و بررسی می‌شوند. اشیاء که نمی‌توانید رونوشتی کنید ، انتقال دهید یا تغییر دهید بسته باقی می‌مانند. برای ساختن در موقعیت قرار دادن ، نیاز به مجوز دارید.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } شیء در محتوا باز خواهد شد ، پرش: { $skipped }.
+       *[other] { $objects } اشیا در محتوا باز خواهند شد ، پرش: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = بدون رونوشت یا انتقال
+content-perms-nested-skip-no-modify = نمی‌توان تغییر داد
+content-perms-nested-skip-depth = عمق بیش از ۵ سطح
+content-perms-nested-rezzing = قرار دادن شیء »{ $name }"در جهان (مرحله لانه‌سازی) { $level })…
+content-perms-nested-stopping = متوقف کردن دست‌نوشته‌های « »{ $name }”…
+content-perms-nested-applying = در حال تغییر محتوای “{ $name }”…
+content-perms-nested-restoring = آغاز دست‌نوشته‌های «% 1 »{ $name }دوباره
+content-perms-nested-saving = ذخیرۀ شیء »{ $name }"برگرد به ظرفش...
+content-perms-nested-deleting = حذف رونوشت موقت در جهان "{ $name }”…
+content-perms-nested-finished = موارد به‌روزشده: { $count }. اشیای تودرتو: { $objects }. موارد ردشده: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } در کنار نام اصلی خود باقی ماند: نام‌ها متفاوت بودند.
+       *[other] { $kept } در کنار نسخه‌های اصلی خود باقی ماند: نام‌ها متفاوت بودند.
+    }
+content-perms-nested-stopped = توقف: کپی‌های موقت در جهان حذف شدند، و اشیاء اصلی همان‌طور که بودند باقی ماندند.
+content-perms-nested-stop-help = عملیات را متوقف می‌کند و نسخه‌های موقتی را که هنوز در جهان هستند حذف می‌کند. موارد اصلی به همان شکل می‌مانند و اشیایی که تا این مرحله ذخیره شده‌اند تغییرات خود را حفظ می‌کنند.
+content-perms-nested-scripts-warning = هر شیء ابتدا در جهان ظاهر می‌شود (rez)، بنابراین فرمان‌های اسکریپت هنگام ظاهر شدن، مانند انفجار، تله‌پورت یا دادن یک مورد، پیش از آنکه بتوان آن‌ها را متوقف کرد اجرا می‌شوند. برای جلوگیری از این کار، در منطقه‌ای که مدیریت می‌کنید ابتدا گزینهٔ غیرفعال کردن اسکریپت‌ها را در «منطقه / املاک» فعال کنید و پس از پایان آن را خاموش کنید.
+content-perms-nested-original-kept = “{ $name }” به عقب ذخیره شد، اما آیتم اصلی آن را نمی‌توان حذف کرد: هر دو در محتوا هستند.
+content-perms-nested-copy-left = نسخه موقت در دنياي "{ $name }” نمی‌توان حذف کرد: با دست حذفش کنید.
+content-perms-nested-save-unconfirmed = ذخیره‌سازی برگشت تأیید نشد
+content-perms-nested-saved-perms-unconfirmed = متوقف شد: اجازه‌های شیء ذخیره‌شده در مخزنش را نمی‌توان تأیید کرد. رونوشت‌های کاری موقت در جهان نگه داشته شده‌اند؛ قبل از حذف آن‌ها، آن‌ها را بررسی کنید.
+content-perms-nested-timeout = شبیه‌ساز به موقع پاسخ نداد
+content-perms-nested-rez-refused = متوقف شد: شبیه‌ساز از قرار دادن در جهان امتناع کرد{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = متوقف شد: “{ $name }” تا ۱۵ ثانیه ظاهر نشد. اگر بعداً در بالای شیء اولیه ظاهر شد ، آن را حذف کنید.
+content-perms-nested-not-ours = متوقف شد: شیء برای «» در جهان قرار داده شده است{ $name }"از این محتواها نشأت نمی‌گیرد، در جهان رها شده است.
+content-perms-nested-unverified = متوقف شد: شیء که برای "{ $name }" ظاهر شد نمی‌توانست از این محتواها به عنوان قرار دادن در جهان بررسی شود، بنابراین در جهان باقی ماند.
+content-perms-nested-group-split = متوقف شد: “{ $name }(اشیا متعددی که به عنوان یک واحد ذخیره شده‌اند) به عنوان اشیاء تکی بازگشتند. قسمت‌های آن در جهان قرار گرفته‌اند و در جهان نگه داشته شده‌اند: همه آن‌ها را انتخاب کنید و دوباره گروه را تشکیل دهید.
+content-perms-nested-failed = “{ $name }” بدون تغییر گذاشته شد: { $reason }.
+content-perms-nested-original-gone = “{ $name }«در جهان نگه داشته می‌شود: پشتیبان‌گیری آن تأیید نشد و آیتم اصلی آن از بین رفت.
+content-perms-nested-gone = شیء دنیا رو ترک کرد
+content-perms-nested-land-denied = متوقف شده: شما نمی‌توانید بر روی این شیء اولیه، جایی که اشیا در جهان قرار می‌گیرند، بنا کنید.
+content-perms-nested-parcel-full = متوقف شده: بسته هیچ فضایی برای کپی‌های موقت در جهان باقی نمی‌گذارد.
+content-perms-nested-rlva = متوقف شده: قرار دادن اشیا در جهان محدود است (RLVa).
+content-perms-nested-too-many = دست‌نوشته‌های زیادی وجود دارد
+content-perms-nested-unreadable = محتویات آن را نمی‌توان خواند
+content-perms-demo-chest = صندوق ذخیره
+content-perms-demo-notes = يادداشت‌هاي داخل صندوق ذخيره ساز
+content-perms-demo-outer = جعبه بیرونی
+content-perms-demo-glow = دست‌نوشته‌ای که شیء را درخشان می‌کند
+content-perms-demo-readme = اول منو بخون
+content-perms-demo-inner = مخزن داخلی
+content-perms-demo-inner-note = یادداشت درون جعبه داخلی
+content-perms-demo-tiny = جعبه بسیار کوچک
+content-perms-demo-spin = دست‌نوشته‌ای که شیء را می‌چرخاند
+content-perms-demo-heirloom = ميراث خانوادگي
+content-perms-demo-sealed = جعبه محكم
+content-perms-demo-linked = گروه شیءهای پیوسته
+content-perms-demo-pebble = سنگ گرد کوچک
+content-perms-demo-stack = پشته صندوق
+dev-toolbox-o10 = جعبههای ضربه آواتار
+rlva-selftest-confirm-wear = او اشیای خود را در پاهای عقب راست، عقب چپ و نوک دم می‌پوشد و یک اسکریپت کوچک را در دو تا از آن‌ها می‌نویسد. آنچه که شما در این سه نقطه می‌پوشید می‌تواند برداشته شود.
+ui-environment-sort-by-name = مرتب‌سازی به ترتیب الفبا
+ui-environment-sorted-by-name = در حال حاضر بر اساس نام مرتب‌سازی شده‌اند. برای بازگرداندن ترتیب از موجودی خود کلیک کنید.
+ui-environment-in-inventory-order = به ترتیب موجودی شما. برای مرتب کردن آنها کلیک کنید A–Z
+ui-chat-contacts-groups-sub = گروهها { $count }
+ui-options-soft-shadows = سایه‌های نرم
+ui-options-soft-shadows-help = سایه‌های خورشید با لبه‌های نرم‌تر هر چه شیء از چیزی که سایه می‌اندازد دورتر باشد ، درست مانند زندگی واقعی: سایۀ یک ستون بلند به سمت نوک آن محو می‌شود ، در حالی که پای آن تیز باقی می‌ماند. آزمایشی ، پیش‌فرض غیرفعال است؛ هزینه آن بر روی کارت گرافیکی کسری از میلی ثانیه است
+ui-options-shadow-softness = نرمی سایه
+ui-options-shadow-softness-help = اندازه نور برای سایه‌های نرم: ۱ یک نور با عرض ۲٫۳ درجه است، ۲ یکی بزرگتر که سایه‌ها را دو برابر نرم می‌کند (خورشید واقعی حدود ۰٫۲ است)، ۰ یک نور بدون اندازه: سایه‌ها همانند قبل هستند، از جمله پروژکتورها
+ui-options-shadow-softness-needs-soft = برای استفاده از این ، سایه‌های نرم را فعال کنید
+ui-options-shadow-intensity = شدت سایه
+ui-options-shadow-intensity-help = چقدر سایه‌های خورشید تاریک هستند: ۱ تاریکی عادی است ، کمتر اجازه می‌دهد نور بیشتری وارد آنها شود
+ui-options-system-fonts-searching = در حال جستجو برای قلمها...
+demo-emotes-nova = /me يه صندلي رو کنار چشمه آب ميگذاره
+demo-emotes-orion = از اينجا عاليه!
+demo-teleport-access-neighbour = همسایه بزرگسال (نمایش)
+photo-light-shadow-softness = نرمی سایه
+photo-light-shadow-intensity = شدت سایه
+photo-light-shadow-reset = برگشت به مقدار ترجیحات
+world-teleport-access-blocked-title = انتقال موقت مسدود شد
+world-teleport-access-adults-only = منطقه ای که سعی دارید بازدید کنید شامل { $rating } محتوايي که فقط براي بزرگسالان قابل دسترسي است
+world-teleport-access-change-and-reteleport = منطقه‌ای که می‌خواهید به آن بروید محتوایی با رده‌بندی { $rating } دارد. تنظیمات فعلی شما محتوای رده‌بندی { $rating } را مجاز نمی‌داند. می‌توانید تنظیمات را عوض کنید و تله‌پورت را ادامه دهید یا آن را لغو کنید.
+world-teleport-access-change = منطقه‌ای که می‌خواهید به آن بروید محتوایی با رده‌بندی { $rating } دارد. تنظیمات فعلی شما محتوای رده‌بندی { $rating } را مجاز نمی‌داند. می‌توانید تنظیمات را عوض کنید یا تله‌پورت را لغو کنید. پس از تغییر تنظیمات باید دوباره برای تله‌پورت تلاش کنید.
+world-teleport-access-out-of-sync = ما مشکل فني با انتقال شما داريم چون ترجيحات شما با سرور هماهنگ نيست
+world-teleport-access-rated = مکاني که انتخاب کردين رتبه { $rating } رو داره
+world-teleport-access-allow = تنظیمات فعلی شما محتوای رده‌بندی { $rating } را مجاز نمی‌داند. با اجازه دادن به این محتوا تنظیماتتان به‌روزرسانی می‌شود.
+world-teleport-access-allow-button = اجازه { $rating } محتوا
+world-teleport-access-not-on-account = ناحیه‌ای که سعی دارید بازدیدش کنید درجه‌بندی شده است { $rating }، که برای نوع حساب شما موجود نیست.
+world-teleport-access-change-and-continue = تغییر و ادامه
+world-teleport-access-change-preferences = تغییر ترجیحات
+world-teleport-access-preference-changed-title = رتبۀ محتوا تغییر کرد
+world-teleport-access-preference-changed = شما دیگر هیچ اطلاعی از اینکه قصد دارید منطقه ای را با { $rating } محتویات. می‌توانید ترجیحات محتوای خود را در آینده در Preferrences › Privacy تغییر دهید.
+people-show-group-sheet = نمایش جزئیات گروه
+people-group-details-empty = گروهی برای نمایش وجود ندارد
+ao-import-unfinished-retry = يه کار ناتمام AO واردات از قبل در # وجود داردAurora/{ $folder }از اطلاعيه بازيابي استفاده کنيد AO پنجره قبل از تلاش مجدد.
+ao-unfinished-import =
+    { $count ->
+        [one] درون‌ریزی AO در #Aurora/{ $folder } ناتمام مانده است. تعداد مجموعه‌ها: { $count }.
+       *[other] درون‌ریزی AO در #Aurora/{ $folder } ناتمام مانده است. تعداد مجموعه‌ها: { $count }.
+    }
+ao-finish-import = پایان واردات
+ao-show-in-inventory = نمایش در فهرست
+ao-duplicate-native =
+    { $count ->
+        [one] پوشهٔ دیگری پیدا شد: #Aurora/{ $folder }. تعداد مجموعه‌ها: { $count }. آن را با پوشهٔ فعال AO ادغام می‌کنید؟
+       *[other] پوشهٔ دیگری پیدا شد: #Aurora/{ $folder }. تعداد مجموعه‌ها: { $count }. آن را با پوشهٔ فعال AO ادغام می‌کنید؟
+    }
+ao-native-already-exists = یک جایگزینی پویانمایی درونی با این نام از قبل وجود دارد
+rlva-im-ended-local = { $name } از راه دور IM گفتگو با @stopim
+rlva-blocked-script-dialog = قادر به نمایش محاورۀ دست‌نوشته‌ها یا جعبه متن نیست RLV محدودیت‌ها
+rlva-blocked-nearby = به دلیل محدودیت‌های RLV، نمی‌توان حضور آواتارهای نزدیک را دید
+rlva-tools-retained = تا ورود نگهداشته شد
+rlva-read-at-login = تغییرات در ورود بعدی اعمال می‌شود.
+rlva-debug-commands-chat = هر فرمان همچنین یک خط در چت نزدیک، زیر نام شیء دریافت می‌کند: آنچه را که اجرا می‌کند، آنچه شکست می‌خورد و چرا، چه چیزی منتظر ورود است.
+rlva-blocked-start-im = قادر به آغاز نیست IM نشست { $recipient } به خاطر RLV محدودیت‌ها
+rlva-blocked-start-conference = نمی‌توان کنفرانس را با آغاز کرد [RECIPIENT] به خاطر RLV محدودیت‌ها
+rlva-anonym-waiting = (در حال بارگذاری...)
+rlva-anonym-unknown = (ناشناس)
+rlva-blocked-teleport = قادر به آغاز انتقال از راه دور نیست RLV محدودیت‌ها
+rlva-blocked-permission-attach = تلاش برای پیوست »{ $object }به خاطر اينکه RLV محدودیت‌ها
+rlva-blocked-permission-teleport = '{ $object }اجازه انتقال شما به خاطر RLV محدودیت‌ها
+rlva-blocked-view-notecard = نمی‌توان نوت‌کارد را به دلیل RLVa محدوديت ها
+rlva-blocked-view-script = نتوانست دست‌نوشته را به دلیل باز کند RLVa محدوديت ها
+rlva-blocked-view-texture = نمی‌توان بافت را به دلیل باز کرد RLVa محدوديت ها
+rlva-debug-explicit-point = نادیده گرفتن نامهای نقطه پیوست بر روی اشیای فهرست و پوشه‌ها
+rlva-debug-explicit-point-hint = هنگامی که یک نقطهٔ پیوندی قفل شده باشد، Wear and Add شیء را به جای نقطهٔ نام یا نام پوشه به نقطهٔ پیش‌فرض آن می‌فرستد (ناقص).
+ui-bars-clouds-paused-tip = ابرها برای این نشست ثابت نگه داشته می‌شوند. برای اجازه دادن به حرکت مجدد آنها ، فشار دهید.
+phototools-tab-dof-glow = عمق میدان و درخشش
+phototools-lights-shadows = تنظیمات روشنایی و سایه‌ها
+phototools-ambient-occlusion = تنظیمات انسداد محیطی
+phototools-dof = تنظیمات عمق میدان
+phototools-tone-mapping = تنظیمات نگاشت رنگ HDR
+phototools-glow = تنظیمات درخشش
+phototools-photo-banner = پنجره‌ی عکس باز است: سطرهای پنجرۀ عکس نیز عکس را تغییر می‌دهند. عمق میدان برای عکس‌های بعدی شما نگه داشته می‌شود؛ نور، روشنایی، سایه‌ها، پوشش محیط و نورهای استفاده‌شده تا زمانی که پنجره عکس بسته شود باقی می‌مانند.
+phototools-photo-boost = کیفیت عکس افزایش می‌یابد: سطرهای گرافیکی مقادیر افزایش یافته را نشان می‌دهند، و هر تغییری که در آنجا انجام دهید به عنوان خودتان نگه داشته می‌شود.
+phototools-photo-focus-help = فشار: آخرین نقطه در جهان که فشار داده شد. اشاره‌گر: نقطه زیر نشانگر. دستی: فاصله‌ای که شما تنظیم کرده‌اید.
+phototools-photo-distance-help = فاصله‌ای که لنز در آن در حالت فوکوس دستی تمرکز می‌کند.
+phototools-director-lens = لنز کارگردان هنگامی که پنجره آن باز است، بر روی تنظیمات زیر نشان داده می‌شود.
+phototools-view-angle-viewfinder = ناظر زاویه دید را در اختیار دارد: زاویه شما وقتی بسته می‌شود برمی‌گردد.
+ui-options-dof-show-focus-point = نمایش نقطه تمرکز
+ui-options-dof-show-focus-point-help = یک صلیب کوچک بر روی نقطه ای که لنز تمرکز می‌کند: زرد هنگامی که آزاد است، قرمز زمانی که قفل شده‌است.

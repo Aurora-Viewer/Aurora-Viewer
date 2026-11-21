@@ -15856,3 +15856,156 @@ ui-appearance-date-oldest-first = תאריך: הישנים תחילה
 ui-appearance-favorites-to-top = מועדפים בראש הרשימה
 ui-appearance-images-to-top = תלבושות עם תמונה בראש הרשימה
 ui-options-group-emotes = קבצו תיאורי פעולה עם ההודעות של השולח
+
+### Release translations
+
+ui-options-planet-curvature = עקמומיות כוכב לכת
+ui-options-planet-curvature-help = מצייר את העולם על כוכב לכת עגול: מים פתוחים נופלים אל האופק האמיתי במקום לרדת לגובה העיניים, עם השמיים מתחתיו. רק התצוגה משתנה: האזורים, הפיזיקה ומה שאחרים רואים נשארים שטוחים. על כדור הארץ הנפילה במרחק הציור היא כמה סנטימטרים; היא מופיעה על הים הרחוק. שונה מהצופה המקורי
+ui-options-planet-radius = רדיוס כוכב הלכת
+ui-options-planet-radius-help = הרדיוס של כוכב הלכת המוצג, בקילומטרים. רדיוס כדור הארץ הוא 6,371 ק"מ: מ- 10 מטרים מעל פני הים, הים מסתיים במרחק של 11 קילומטר. כוכב לכת קטן יותר מביא את האופק קרוב יותר
+ui-options-camera-frame-while-posing = מסגרת את האווטאר בזמן שהוא עומד
+ui-options-camera-frame-while-posing-tip = כשאתה פותח את ה-Poser, הוא מסגר את האווטאר, ולחיצה על מגע מביאה את המצלמה קרוב יותר אליו.
+ui-options-camera-still-while-posing = שמור את המצלמה במצב יציב בזמן שהיא פוזה
+ui-options-camera-still-while-posing-tip = בזמן שאתה פוזה, המצלמה מפסיקת לעקוב אחרי האווטאר, המיקוד שלו וחלקי הגוף שלו, והליכה לא מאפסת אותו. מסלול, זום, פנורמה והגדרות מראש עדיין עובדות.
+ui-options-group-emotes-hint = בסגנון הצ׳אט של Aurora, פעולה כמו ‎/me waves‎ מוצגת תחת אותה כותרת כמו הודעות שאותו אדם שלח מיד לפניה או אחריה. לא נפתחת עבורה כותרת נפרדת.
+content-perms-nested = כולל עצמים בתוך עצמים
+content-perms-nested-help = זה גם מעבד את תוכן האובייקטים הקשורים, עד חמש רמות בעומק. כל אובייקט מוצב בעולם מטריים מעל הפרימיטיבי שמכיל אותו. התסריטים שלו נעצרים, התוכן שלו משתנה והתסריטות שלו מתחילות מחדש. לאחר מכן האוביקט נשמר בחזרה במכל. הרשות של האובייקטים במכל מוגדרת ובוחנת לפני שהעותק הזמני שלהם בעולם נמחקה. עצמים שאינך יכול להעתיק, להעביר או לשנות נשארים סגור. אתה זקוק לרשות כדי לבנות במקום ההנחה.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } אובייקט בתוכן ייפתח, נדחה: { $skipped }.
+       *[other] { $objects } אובייקטים בתוכן יפתחו, נדחקו: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = אין העברה או העתק.
+content-perms-nested-skip-no-modify = לא ניתן לשנות
+content-perms-nested-skip-depth = יותר מ-5 רמות עמוק
+content-perms-nested-rezzing = מניחים את העצמים "{ $name }"בעולם (רמת הקינון { $level })…
+content-perms-nested-stopping = עוצרת את התסריטים של "{ $name }"...
+content-perms-nested-applying = שינוי תוכן של "{ $name }"...
+content-perms-nested-restoring = מתחיל את התסריט של "{ $name }" שוב...
+content-perms-nested-saving = שומרת את האובייקט "{ $name }" בחזרה למכל שלו...
+content-perms-nested-deleting = מחיקת העתק זמני בעולם של "{ $name }"...
+content-perms-nested-finished = פריטים שעודכנו: { $count }. אובייקטים מקוננים: { $objects }. דולגו: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } נשאר ליד המקור שלו: השמות היו שונים.
+       *[other] { $kept } נשאר ליד המקור שלהם: השמות היו שונים.
+    }
+content-perms-nested-stopped = עצרה: העותקים הזמניים בעולם נמחקו, והחפצים המקוריים נותרו כפי שהיו.
+content-perms-nested-stop-help = עוצר את הפעולה ומוחק את העותקים הזמניים שעדיין בעולם. הפריטים המקוריים נשארים כפי שהם. אובייקטים שכבר נשמרו בחזרה שומרים על השינויים שלהם.
+content-perms-nested-scripts-warning = כל אובייקט מוצב בעולם (rez), ולכן פעולות הסקריפטים בעת ההצבה, כגון פיצוץ, טלפורט או מסירת פריט, מתבצעות לפני שאפשר לעצור אותם. כדי למנוע זאת, הפעילו תחילה את האפשרות להשבית סקריפטים ב״אזור / אחוזה״ באזור שאתם מנהלים, וכבו אותה לאחר סיום הפעולה.
+content-perms-nested-original-kept = "{ $name }" נשמר בחזרה, אך לא ניתן היה להסיר את הרכיב המקורי שלו: שניהם נמצאים בתוכן.
+content-perms-nested-copy-left = העתק זמני בעולם של "{ $name }" לא ניתן למחוק: יש למחוק אותו ביד.
+content-perms-nested-save-unconfirmed = החזרה לא אושרה.
+content-perms-nested-saved-perms-unconfirmed = עצרה: לא ניתן היה לאשר את הרשאות האובייקט שנשמר בחזרה למכל שלו. העתק העבודה הזמני בעולם נשמר; בדוק אותם לפני שמסירים אותם.
+content-perms-nested-timeout = הסימולטור לא ענה בזמן.
+content-perms-nested-rez-refused = עצר: הסימולטור סירב לשים בעולם "{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = עצר: "{ $name }" לא הופיע בתוך 15 שניות. אם הוא מופיע מאוחר יותר מעל האובייקט הפרימיטיבי, מחק אותו.
+content-perms-nested-not-ours = עצרה: האובייקט שהוצב בעולם עבור "{ $name }" לא מגיע מהתוכן הזה, הוא נשאר בעולם.
+content-perms-nested-unverified = עצרה: האובייקט שהופיעה עבור "{ $name }" לא ניתן היה לבדוק כמקובל בעולם מתוך התוכן הזה, אז הוא נשאר בעולם.
+content-perms-nested-group-split = עצר: "{ $name }" (כמה עצמים ששומרו כעצמ אחד) חזר כסובייקט יחיד. חלקיו שנמצאו בעולם נשארו בעולם: בחר את כולם וקח אותם כדי ליצור את הקבוצה מחדש.
+content-perms-nested-failed = “{ $name }לא השתנה: { $reason }.
+content-perms-nested-original-gone = "{ $name }" נשמר בעולם: החזרה שלו לא אושרה והדבר המקורי שלו נעלם.
+content-perms-nested-gone = החפץ עזב את העולם.
+content-perms-nested-land-denied = עצרה: אתה לא יכול לבנות מעל האובייקט הפרימיטיבי הזה, היכן שהאובייקטים יהיו ממוקמים בעולם.
+content-perms-nested-parcel-full = עצרה: לחבילה לא נשאר מקום עבור העותקים הזמניים בעולם.
+content-perms-nested-rlva = עצרה: העמדת עצמים בעולם מוגבלת (RLVa).
+content-perms-nested-too-many = יותר מדי תסריטים
+content-perms-nested-unreadable = לא ניתן לקרוא את התוכן שלו
+content-perms-demo-chest = תא אחסון
+content-perms-demo-notes = הערות בתוך תא האחסון.
+content-perms-demo-outer = קופסה חיצונית
+content-perms-demo-glow = תסריט שגורם לאובייקט להאירName
+content-perms-demo-readme = קראו לי קודם.
+content-perms-demo-inner = מיכל פנימי
+content-perms-demo-inner-note = הערה בתוך הקופסא הפנימית
+content-perms-demo-tiny = קופסה קטנה מאוד
+content-perms-demo-spin = תסריט שמסתובב את העצמים
+content-perms-demo-heirloom = תכשיט משפחתי.
+content-perms-demo-sealed = קופסה סגורה.
+content-perms-demo-linked = קבוצה של עצמים משולבים
+content-perms-demo-pebble = אבן עגולה קטנה.
+content-perms-demo-stack = ערימה של תיבות
+dev-toolbox-o10 = אווטאר
+rlva-selftest-confirm-wear = היא לובשת את האובייקטים שלה על הרגל האחורית הימנית, הרגל אחורית השמאלית וקצה הזנב, וכותבת תסריט מעבר קטן בשניים מהם מה שאתה לובש בשלוש הנקודות הללו יכול להיות מוסר.
+ui-environment-sort-by-name = מיון אלפביתי
+ui-environment-sorted-by-name = ממוינים כעת לפי שם. לחץ כדי לשחזר את הסדר מהמלאי שלך.
+ui-environment-in-inventory-order = בסדר המזומנים שלך, לחץ כדי לסדר אותם A–Z.
+ui-chat-contacts-groups-sub = קבוצות · { $count }
+ui-options-soft-shadows = צללים רכים
+ui-options-soft-shadows-help = צללי שמש עם קצות רכים יותר ככל שהעצם רחוק יותר ממה שהוא מצלם, כמו בחיים האמיתיים: הצל של מוט גבוה מטושטש לכיוון הקצה שלו בעוד שרגל נשארת חדה. ניסיוני, כבוי ברירת המחדל; עולה חלקיק מילישנייה על הכרטיס הגרפי
+ui-options-shadow-softness = רכות הצללים.
+ui-options-shadow-softness-help = גודל האור עבור הצללים הרכים: 1 הוא אור ברוחב של 2. 3 מעלות, 2 גדול יותר אשר מרכך את הצללים פי שניים (השמש האמיתית היא בערך 0. 2), 0 אור ללא גודל: הצללים הם כמו שהיו לפני, כולל המקרנים
+ui-options-shadow-softness-needs-soft = הפעל את צללים רכים כדי להשתמש בזה
+ui-options-shadow-intensity = עוצמת הצללים
+ui-options-shadow-intensity-help = כמה כהות הצללים של השמש: 1 היא החשיכה הנורמאלית, נמוכה יותר מאפשרת יותר אור להיכנס אליהם
+ui-options-system-fonts-searching = מחפשת פונטים...
+demo-emotes-nova = /me מציב ספסל ליד המזרקה
+demo-emotes-orion = נראה נהדר מכאן!
+demo-teleport-access-neighbour = שכן מבוגר (דמו)
+photo-light-shadow-softness = רכות הצללים.
+photo-light-shadow-intensity = עוצמת הצללים
+photo-light-shadow-reset = בחזרה לערכים של העדפות
+world-teleport-access-blocked-title = טלפורט חסום.
+world-teleport-access-adults-only = האזור שאתה מנסה לבקר מכיל { $rating } תוכן, אשר נגיש רק למבוגרים.
+world-teleport-access-change-and-reteleport = האזור שאליו אתם מנסים להגיע מכיל תוכן בדירוג { $rating }. ההעדפות הנוכחיות שלכם חוסמות תוכן בדירוג { $rating }. אפשר לשנות את ההעדפות ולהמשיך בטלפורט, או לבטל אותו.
+world-teleport-access-change = האזור שאליו אתם מנסים להגיע מכיל תוכן בדירוג { $rating }. ההעדפות הנוכחיות שלכם חוסמות תוכן בדירוג { $rating }. אפשר לשנות את ההעדפות או לבטל את הטלפורט. לאחר שינוי ההעדפות, נסו לבצע את הטלפורט שוב.
+world-teleport-access-out-of-sync = יש לנו קשיים טכניים עם הטלפורט שלך בגלל שההעדפות שלך לא מסונכרנות עם השרת.
+world-teleport-access-rated = המיקום שבחרת הוא דירוג { $rating }.
+world-teleport-access-allow = ההעדפות הנוכחיות שלכם חוסמות תוכן בדירוג { $rating }. אישור התוכן יעדכן את ההעדפות שלכם.
+world-teleport-access-allow-button = הרשאת תוכן { $rating }
+world-teleport-access-not-on-account = האזור שאתה מנסה לבקר בו דירוג { $rating }, שזה לא זמין בסוג החשבון שלך.
+world-teleport-access-change-and-continue = שינוי והמשך
+world-teleport-access-change-preferences = שינוי העדפות
+world-teleport-access-preference-changed-title = דירוג התוכן שונה
+world-teleport-access-preference-changed = אתה לא תקבל יותר הודעות שאתה עומד לבקר באזור עם תוכן { $rating }. אתה יכול לשנות את העדפות התוכן שלך בעתיד באפשרויות › פרטיות.
+people-show-group-sheet = הראה פרטים על הקבוצה
+people-group-details-empty = אין קבוצה להציג
+ao-import-unfinished-retry = לא גמור. AO ייבוא כבר קיים ב #Aurora/{ $folder }השתמש בהודעה על ההחזר ב- AO חלון לפני ניסיונות נוספים.
+ao-unfinished-import =
+    { $count ->
+        [one] ייבוא ה-AO ב-#Aurora/{ $folder } טרם הסתיים. מספר הערכות: { $count }.
+       *[other] ייבוא ה-AO ב-#Aurora/{ $folder } טרם הסתיים. מספר הערכות: { $count }.
+    }
+ao-finish-import = סיים ייבוא
+ao-show-in-inventory = הראה במזומנים
+ao-duplicate-native =
+    { $count ->
+        [one] נמצאה תיקייה נוספת: #Aurora/{ $folder }. מספר הערכות: { $count }. האם למזג אותה עם תיקיית ה-AO הפעילה?
+       *[other] נמצאה תיקייה נוספת: #Aurora/{ $folder }. מספר הערכות: { $count }. האם למזג אותה עם תיקיית ה-AO הפעילה?
+    }
+ao-native-already-exists = יש כבר תוספת של האנימציה בשם זה
+rlva-im-ended-local = { $name } סגרה את הטלפון מרחוק. IM שיחה עם @stopim
+rlva-blocked-script-dialog = לא ניתן להציג דיאלוג תסריט או קופסת טקסט בגלל מגבלות RLV
+rlva-blocked-nearby = לא ניתן לראות נוכחות של אווטארים קרובים בגלל מגבלות RLV
+rlva-tools-retained = נשמר עד ההרשמה
+rlva-read-at-login = שינויים יבוצעו בעת ההתחברות הבאה.
+rlva-debug-commands-chat = כל פקודה גם מקבלת שורה בצ'אט הקרוב, מתחת לשם האובייקט: מה היא מבצעת, מה נכשלת ומדוע, מה מחכה להרשמה.
+rlva-blocked-start-im = לא ניתן להתחיל IM הרצאה עם { $recipient } בגלל RLV הגבלות
+rlva-blocked-start-conference = לא ניתן להתחיל את הוועידה עם [RECIPIENT] בגלל RLV הגבלות
+rlva-anonym-waiting = (הטענה...)
+rlva-anonym-unknown = לא ידוע
+rlva-blocked-teleport = לא ניתן להתחיל בטלפורטציה בגלל מגבלות של RLV
+rlva-blocked-permission-attach = ניסיון להוסיף '{ $object }'נדחתה בגלל RLV הגבלות
+rlva-blocked-permission-teleport = '{ $object }"לא ניתנה לי רשות להעביר אותך בגלל RLV הגבלות
+rlva-blocked-view-notecard = לא ניתן לפתוח את הכרטיסייה בגלל מגבלות של RLVa.
+rlva-blocked-view-script = לא ניתן לפתוח את התסריט בגלל מגבלות RLVa.
+rlva-blocked-view-texture = לא ניתן לפתוח את המרקם בגלל מגבלות של RLVa.
+rlva-debug-explicit-point = התעלם משמות של נקודות צירוף על פריטים ותיקיות במזומנים
+rlva-debug-explicit-point-hint = בעוד נקודת הצטרפות נעול, Wear and Add לשלוח אובייקט לנקודה ברירת המחדל שלו במקום הנקודה ששמו או שם התיקיה שלו נותן (לא שלם).
+ui-bars-clouds-paused-tip = העננים נשארים במקומם למשך השהייה הזו. לחץ כדי לתת להם לזוז שוב.
+phototools-tab-dof-glow = עומק שדה וזוהר
+phototools-lights-shadows = הגדרות אורות וצללים
+phototools-ambient-occlusion = הגדרות הצללה סביבתית
+phototools-dof = הגדרות עומק שדה
+phototools-tone-mapping = הגדרות מיפוי צליל HDR
+phototools-glow = הגדרות זוהר
+phototools-photo-banner = חלון תמונה פתוח: השורות של חלון התמונה גם משנות את התמונה. עומק השדה נשמר לתמונות הבאות שלך; האור, החשיפה, הצללים, סגירת הסביבה והאורים הכבדים נמשכים עד שחלון התצלום נסגרת.
+phototools-photo-boost = איכות התמונה עולה: שורות הגרפיקה מראות את הערכים הגבוהים, ושינוי שאתה עושה שם נשמר כשייך לך.
+phototools-photo-focus-help = לחיצה: הנקודה האחרונה שבה לחצת בעולם. מצביע: הנקודה מתחת למצביע. ידנית: מרחק שאתה קובע.
+phototools-photo-distance-help = המרחק שבו העדשה ממוקדת במיקוד ידני.
+phototools-director-lens = עדשת הבמאי מופיעה בזמן שהחלון שלה פתוח, מעל ההגדרות שמתחת.
+phototools-view-angle-viewfinder = הספקטרום הוא בעל זווית התצפית: שלך חוזר כשהוא סגור.
+ui-options-dof-show-focus-point = הראה נקודה של מיקוד
+ui-options-dof-show-focus-point-help = צלב קטן על הנקודה שבה העדשה ממוקדת: צהוב כשהיא חופשית, אדום כשהיא נעולת.

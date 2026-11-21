@@ -15840,3 +15840,156 @@ ui-appearance-date-oldest-first = तारीख: सबसे पुरान�
 ui-appearance-favorites-to-top = पसंदीदा सबसे ऊपर
 ui-appearance-images-to-top = तस्वीर वाले पहनावे ऊपर
 ui-options-group-emotes = इमोट को भेजने वाले के संदेशों के साथ रखें
+
+### Release translations
+
+ui-options-planet-curvature = ग्रह वक्रता
+ui-options-planet-curvature-help = गोलाकार ग्रह पर दुनिया को आरेखित करता है: आँख के स्तर तक निकलने के बजाए खुला पानी एक वास्तविक क्षितिज पर गिरता है, इसके नीचे आकाश के साथ. सिर्फ दृश्य बदलता है: क्षेत्र, भौतिकी तथा जो अन्य लोग देखते हैं फ्लैट रहते हैं. पृथ्वी पर रेखांकित दूरी के भीतर गिरना कुछ सेंटीमीटर होता है; यह दूर समुद्र में दिखाई देता है. लेगेसी प्रदर्शक से भिन्न
+ui-options-planet-radius = ग्रह त्रिज्या
+ui-options-planet-radius-help = ग्रह की त्रिज्या, किलोमीटर में. पृथ्वी की 6,371 किमी है: 10 मीटर ऊपर से, समुद्र लगभग 11 किमी दूर समाप्त होता है. एक छोटा ग्रह क्षितिज को करीब लाता है
+ui-options-camera-frame-while-posing = पोज़िंग के दौरान अवतार को फ्रेम करें
+ui-options-camera-frame-while-posing-tip = पोज़र को खोलने से अवतार फ्रेम होता है, और एक जोड़ी पर क्लिक करने से कैमरा इसके करीब आ जाता है. जोड़ी को खींचने से कभी भी कैमरा नहीं खिसकता.
+ui-options-camera-still-while-posing = पोज़िंग के दौरान कैमरा को स्थिर रखें
+ui-options-camera-still-while-posing-tip = जब आप पोज करते हैं, कैमरा अवतार, इसका फोकस और शरीर के हिस्सों का अनुसरण करना बंद कर देता है, और चलना इसे रीसेट नहीं करता है. कक्षा, ज़ूम, पैन और पूर्वनिर्धारित अभी भी काम करते हैं.
+ui-options-group-emotes-hint = Aurora चैट शैली में “/me waves” जैसा इमोट उसी शीर्षक के नीचे दिखता है जो उसी व्यक्ति ने ठीक पहले या बाद में भेजे गए संदेशों के लिए इस्तेमाल किया है। इमोट का अलग शीर्षक नहीं बनता।
+content-perms-nested = वस्तुओं के भीतर वस्तुएँ शामिल करें
+content-perms-nested-help = यह नेस्टेड वस्तुओं की सामग्री को भी संपादित करता है, पांच स्तर तक गहराई तक. हर वस्तु को दुनिया में प्राथमिक के ऊपर दो मीटर में रखा जाता है जो इसे रखता है. इसके चलने वाले स्क्रिप्ट बंद हो जाते हैं, इसकी सामग्री बदल जाती है और इसकी स्क्रीप्ट फिर से शुरू होती है. वस्तु को फिर से कंटेनर में सहेजा जाता है. कंटेनरों में वस्तु की अनुमतियाँ सेट की जाती हैं और विश्व में अस्थाई प्रतिलिपि को मिटा देने से पहले जाँची जाती हैं. वस्तु जो आप नक़ल नहीं कर सकते, स्थानांतरित या परिवर्तित बंद रहती हैं. आपको स्थान पर निर्माण करने के लिए अनुमति चाहिए.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } विषयवस्तु में वस्तु खोला जाएगा, छोड़ा गया: { $skipped }.
+       *[other] { $objects } विषय- वस्तु में वस्तुएँ खोली जाएँगी, छोड़ी जाएंगी: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = कोई नक़ल या हस्तांतरण नहीं
+content-perms-nested-skip-no-modify = परिवर्धित नहीं किया जा सकता
+content-perms-nested-skip-depth = 5से अधिक स्तर गहरी
+content-perms-nested-rezzing = वस्तु को रखना “{ $name }” दुनिया में (नेस्टिंग स्तर { $level })…
+content-perms-nested-stopping = “{ $name }” की स्क्रिप्ट रोक रहा है...
+content-perms-nested-applying = “{ $name }” की सामग्री बदल रहा है…
+content-perms-nested-restoring = “{ $name }” की स्क्रिप्ट फिर से प्रारंभ कर रहा है...
+content-perms-nested-saving = वस्तु “{ $name }” को उसके कंटेनर में वापस सहेजा जा रहा है...
+content-perms-nested-deleting = दुनिया में “{ $name }” की अस्थायी प्रतिलिपि मिटा रहा है...
+content-perms-nested-finished = अपडेट किए गए आइटम: { $count }। अंदर के ऑब्जेक्ट: { $objects }। छोड़े गए: { $skipped }।
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } को मूल के पास रखा गया: नाम अलग थे।
+       *[other] { $kept } को उनके मूल के पास रखा गया: नाम अलग थे।
+    }
+content-perms-nested-stopped = रोक दिया: दुनिया में अस्थायी प्रतियां मिटा दी गईं, मूल वस्तुओं को वैसे ही छोड़ दिया गया जैसा कि वे थे.
+content-perms-nested-stop-help = कार्रवाई रोकता है और दुनिया में बची अस्थायी प्रतियाँ हटाता है। मूल आइटम वैसे ही रहते हैं। जिन ऑब्जेक्ट को वापस सहेजा जा चुका है, उनमें बदलाव बने रहते हैं।
+content-perms-nested-scripts-warning = हर ऑब्जेक्ट पहले दुनिया में रखा जाता है (rez)। इसलिए स्क्रिप्ट रोके जाने से पहले रखने पर चलने वाली क्रियाएँ, जैसे विस्फोट, टेलीपोर्ट या कोई आइटम देना, चल जाती हैं। इसे रोकने के लिए अपने प्रबंधन वाले क्षेत्र में क्षेत्र / एस्टेट के तहत पहले स्क्रिप्ट अक्षम करें और काम पूरा होने पर यह विकल्प बंद कर दें।
+content-perms-nested-original-kept = "{ $name }" वापस सहेजा गया था, लेकिन इसकी मूल वस्तु को हटाया नहीं जा सकता: दोनों सामग्री में हैं।
+content-perms-nested-copy-left = "{ $name }" की दुनिया में अस्थायी प्रतिलिपि को मिटाया नहीं जा सका: इसे हाथ से मिटाएं.
+content-perms-nested-save-unconfirmed = सहेजना वापस पुष्टि नहीं की गई थी
+content-perms-nested-saved-perms-unconfirmed = रोक दिया गया: वस्तु की अनुमतियाँ उसके कंटेनर में सहेजी गई पुष्टि नहीं की जा सकी. विश्व में अस्थायी कार्य प्रतियां रखी गई हैं; उन्हें हटाने से पहले जाँचें.
+content-perms-nested-timeout = सिमुलेटर ने समय पर जवाब नहीं दिया
+content-perms-nested-rez-refused = रोक दिया: सिमुलेटर ने दुनिया में स्थान देने से इनकार कर दिया “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = रोका गया: “{ $name }” 15 सेकण्ड के भीतर नहीं दिखाई दिया. यदि यह बाद में प्राथमिक वस्तु के ऊपर दिखाई देता है, इसे मिटाएँ.
+content-perms-nested-not-ours = इसका अर्थ यह है कि "{ $name }" के लिए दुनिया में रखी गई वस्तु इन सामग्री से नहीं आती है, इसे दुनिया में छोड़ दिया गया था।
+content-perms-nested-unverified = रोक दिया: वस्तु जो “ के लिए दिखाई दे रहा था{ $name }” इन सामग्री से दुनिया में रखा गया था के रूप में जांचा नहीं जा सकता है, इसलिए यह दुनिया में छोड़ दिया गया था।
+content-perms-nested-group-split = बंद: “{ $name }” (एक के रूप में सहेजे गये अनेक वस्तु) एक एकल वस्तु के रूप मे वापस आये. इसके विश्व में रखे हुए भागों को विश्व में रखा गया: उन सबको चुनें और फिर से समूह बनाने के लिये उन्हें ले जाएँ.
+content-perms-nested-failed = “{ $name }” अपरिवर्तित छोड़ा: { $reason }.
+content-perms-nested-original-gone = "{ $name }" दुनिया में रखा गया है: इसका सहेजा हुआ बैकअप पुष्टि नहीं किया गया और इसकी मूल वस्तु गायब हो गई।
+content-perms-nested-gone = वस्तु ने दुनिया छोड़ दी
+content-perms-nested-land-denied = रोक दिया गया: आप इस प्राथमिक वस्तु के ऊपर नहीं बना सकते, जहाँ वस्तुओं को दुनिया में रखा जाएगा.
+content-perms-nested-parcel-full = रोक दिया: पैकेट में दुनिया में अस्थायी प्रतियों के लिए कोई जगह नहीं बची है।
+content-perms-nested-rlva = रोक दिया: दुनिया में वस्तुओं को रखना प्रतिबंधित है (RLVa).
+content-perms-nested-too-many = बहुत से स्क्रिप्ट
+content-perms-nested-unreadable = इसकी सामग्रियों को पढ़ा नहीं जा सका
+content-perms-demo-chest = भंडारण बक्सा
+content-perms-demo-notes = भंडारण बक्सा के अंदर नोट्स
+content-perms-demo-outer = बाहरी बक्सा
+content-perms-demo-glow = स्क्रिप्ट जो वस्तु को चमकाता है
+content-perms-demo-readme = पहले मुझे पढ़ें
+content-perms-demo-inner = आंतरिक कंटेनर
+content-perms-demo-inner-note = आंतरिक बक्सा के अंदर नोट
+content-perms-demo-tiny = बहुत छोटा बक्सा
+content-perms-demo-spin = स्क्रिप्ट जो वस्तु को घुमाता है
+content-perms-demo-heirloom = परिवार का विरासत
+content-perms-demo-sealed = सीलबंद बक्सा
+content-perms-demo-linked = जुड़ी वस्तुओं का समूह
+content-perms-demo-pebble = छोटा गोल पत्थर
+content-perms-demo-stack = क्रेटे स्टैक
+dev-toolbox-o10 = अवतार हिटबाक्स
+rlva-selftest-confirm-wear = यह अपने वस्तुओं को दाएँ पीछे के पैर, बाएँ पीछे का पैर तथा टायल टिप पर पहनता है और उनमें से दो में एक छोटी रिले स्क्रिप्ट लिखता है. इन तीन बिंदुओं पर जो आप पहनते हैं उसे हटाया जा सकता है.
+ui-environment-sort-by-name = वर्णानुक्रम में छांटें
+ui-environment-sorted-by-name = वर्तमान में नाम के अनुसार क्रमबद्ध. अपने सूचीपत्र से अनुक्रम को बहाल करने के लिए क्लिक करें.
+ui-environment-in-inventory-order = अपनी सूची के क्रम में. उन्हें क्रमबद्ध करने के लिए क्लिक करें A–Z.
+ui-chat-contacts-groups-sub = समूह ·{ $count }
+ui-options-soft-shadows = नरम छाया
+ui-options-soft-shadows-help = सूर्य छाया के साथ नरम किनारों के साथ जितना दूर वस्तु है जिससे यह छाया करता है, जैसे कि वास्तविक जीवन में: एक ऊँची पोल की छाया अपने सिरे की ओर धुंधली हो जाती है जबकि एक पैर तीखा रहता है. प्रयोगात्मक, डिफ़ॉल्ट से बंद; ग्राफिक्स कार्ड पर मिलीसेकेंड का एक अंश खर्च होता है
+ui-options-shadow-softness = छाया नरमपन
+ui-options-shadow-softness-help = नरम छाया के लिए प्रकाश का आकार: 1 एक प्रकाश है 2.3डिग्री चौड़ा,2एक बड़ा एक जो छाया को दोगुना नरम करता है (सच्चा सूर्य लगभग 0.2है),0एक प्रकाश जिसका कोई आकार नहीं है: छाया पहले जैसी है, प्रोजेक्टर शामिल है
+ui-options-shadow-softness-needs-soft = इसका उपयोग करने के लिए सॉफ्ट शेड्स सक्षम करें
+ui-options-shadow-intensity = छाया तीव्रता
+ui-options-shadow-intensity-help = सूर्य के छाया कितने गहरे हैं: 1 सामान्य अंधेरा है, कम उन्हें अधिक प्रकाश में छोड़ता है
+ui-options-system-fonts-searching = फ़ॉन्ट के लिए खोज रहा है...
+demo-emotes-nova = /me फव्वारे के नीचे एक बेंच सेट करता है
+demo-emotes-orion = यहाँ से अच्छा लगता है!
+demo-teleport-access-neighbour = वयस्क पड़ोसी (डेमो)
+photo-light-shadow-softness = छाया नरमपन
+photo-light-shadow-intensity = छाया तीव्रता
+photo-light-shadow-reset = वरीयताओं के मान पर वापस जाएँ
+world-teleport-access-blocked-title = टेलिपोर्ट अवरुद्ध
+world-teleport-access-adults-only = क्षेत्र जिसे आप देखने की कोशिश कर रहे हैं उसमें { $rating } सामग्री है, जो केवल वयस्कों के लिए उपलब्ध है.
+world-teleport-access-change-and-reteleport = आप जिस क्षेत्र में जाना चाहते हैं, उसमें { $rating } रेटिंग की सामग्री है। आपकी मौजूदा प्राथमिकताएँ { $rating } रेटिंग की सामग्री की अनुमति नहीं देतीं। आप प्राथमिकताएँ बदलकर टेलीपोर्ट जारी रख सकते हैं या उसे रद्द कर सकते हैं।
+world-teleport-access-change = आप जिस क्षेत्र में जाना चाहते हैं, उसमें { $rating } रेटिंग की सामग्री है। आपकी मौजूदा प्राथमिकताएँ { $rating } रेटिंग की सामग्री की अनुमति नहीं देतीं। आप प्राथमिकताएँ बदल सकते हैं या टेलीपोर्ट रद्द कर सकते हैं। प्राथमिकताएँ बदलने के बाद टेलीपोर्ट फिर से आज़माएँ।
+world-teleport-access-out-of-sync = आपके टेलीपोर्ट के साथ हमें तकनीकी कठिनाईयाँ हो रही हैं क्योंकि आपकी प्राथमिकताएँ सर्वर के साथ सिंक से बाहर हैं.
+world-teleport-access-rated = आप चुने स्थान { $rating } रेटिंग है.
+world-teleport-access-allow = आपकी मौजूदा प्राथमिकताएँ { $rating } रेटिंग की सामग्री की अनुमति नहीं देतीं। इसे अनुमति देने से प्राथमिकताएँ अपडेट होंगी।
+world-teleport-access-allow-button = { $rating } सामग्री स्वीकारें
+world-teleport-access-not-on-account = क्षेत्र जिसे आप देखने की कोशिश कर रहे हैं उसका रेटिंग { $rating } है, जो आपके खाता प्रकार पर उपलब्ध नहीं है.
+world-teleport-access-change-and-continue = बदलें तथा जारी रखें
+world-teleport-access-change-preferences = वरीयताएँ बदलें
+world-teleport-access-preference-changed-title = सामग्री रेटिंग बदल गया
+world-teleport-access-preference-changed = आपको कोई अधिक अधिसूचना नहीं मिलेगी कि आप { $rating } सामग्री के साथ क्षेत्र में जाने वाले हैं. आप भविष्य में अपनी सामग्री प्राथमिकताओं को वरीयताएँ › गोपनीयता में बदल सकते हैं.
+people-show-group-sheet = समूह विवरण दिखाएँ
+people-group-details-empty = दिखाने के लिए कोई समूह नहीं
+ao-import-unfinished-retry = एक अपूर्ण AO आयात पहले से ही # में मौजूद हैAurora/{ $folder }. इस में पुनर्प्राप्ति अधिसूचना का उपयोग करें AO फिर से कोशिश करने से पहले विंडो बंद करें.
+ao-unfinished-import =
+    { $count ->
+        [one] #Aurora/{ $folder } में AO आयात अधूरा है। सेट की संख्या: { $count }।
+       *[other] #Aurora/{ $folder } में AO आयात अधूरा है। सेट की संख्या: { $count }।
+    }
+ao-finish-import = आयात समाप्त करें
+ao-show-in-inventory = सूची में दिखाएँ
+ao-duplicate-native =
+    { $count ->
+        [one] एक और फ़ोल्डर मिला: #Aurora/{ $folder }। सेट की संख्या: { $count }। क्या उसे सक्रिय AO फ़ोल्डर में मिलाएँ?
+       *[other] एक और फ़ोल्डर मिला: #Aurora/{ $folder }। सेट की संख्या: { $count }। क्या उसे सक्रिय AO फ़ोल्डर में मिलाएँ?
+    }
+ao-native-already-exists = इस नाम के साथ एक अंतर्निर्मित एनिमेशन ओवरराइड पहले से ही मौजूद है
+rlva-im-ended-local = { $name } रिमोट से बंद किया है IM के साथ बातचीत @stopim
+rlva-blocked-script-dialog = स्क्रिप्ट संवाद या पाठ बक्सा दिखाने में अक्षम क्योंकि RLV प्रतिबंध हैं
+rlva-blocked-nearby = RLV प्रतिबंध के कारण निकटवर्ती अवतार की उपस्थिति देखने में अक्षम
+rlva-tools-retained = लॉगइन तक रखा गया
+rlva-read-at-login = परिवर्तन अगले लॉगइन पर प्रभावी होंगे.
+rlva-debug-commands-chat = प्रत्येक कमांड को निकटवर्ती चैट में भी एक पंक्ति मिलती है, वस्तु के नाम के नीचे: यह क्या निष्पादित करता है, क्या विफल होता है और क्यों, लॉगइन के लिए क्या इंतजार करता है।
+rlva-blocked-start-im = प्रारंभ करने में अक्षम IM सत्र के साथ { $recipient } के कारण RLV प्रतिबंध
+rlva-blocked-start-conference = इस के साथ कॉन्फ्रेंस प्रारंभ करने में अक्षम [RECIPIENT] के कारण RLV प्रतिबंध
+rlva-anonym-waiting = (लोड हो रहा है...)
+rlva-anonym-unknown = (अज्ञात)
+rlva-blocked-teleport = RLV प्रतिबंधों के कारण टेलीपोर्ट प्रारंभ करने में अक्षम
+rlva-blocked-permission-attach = संलग्न करने की कोशिश '{ $object }'के कारण अस्वीकृत किया गया RLV प्रतिबंध
+rlva-blocked-permission-teleport = '{ $object }' कारण से आप टेलीपोर्ट करने के लिए अनुमति अस्वीकार कर दिया गया था RLV प्रतिबंध
+rlva-blocked-view-notecard = RLVa प्रतिबंधों के कारण नोटकार्ड खोलने में अक्षम.
+rlva-blocked-view-script = RLVa प्रतिबंधों के कारण स्क्रिप्ट को खोलने में अक्षम.
+rlva-blocked-view-texture = RLVa प्रतिबंधों के कारण टेक्सचर खोलने में अक्षम.
+rlva-debug-explicit-point = सूचीपत्र वस्तुओं तथा फ़ोल्डरों पर संलग्नक बिंदु नामों को नज़रअंदाज़ करें
+rlva-debug-explicit-point-hint = जबकि एक संलग्नक बिंदु तालाबंद है, वेयर एंड ऐड एक वस्तु को उसके नाम या फ़ोल्डर के नाम (अपूर्ण) के बजाय अपने डिफ़ॉल्ट बिंदु पर भेजता है।
+ui-bars-clouds-paused-tip = इस सत्र के लिए बादल को स्थिर रखा गया है. उन्हें फिर से खिसकाने के लिए क्लिक करें.
+phototools-tab-dof-glow = डेप्थ ऑफ़ फ़ील्ड और चमक
+phototools-lights-shadows = प्रकाश तथा छाया विन्यास
+phototools-ambient-occlusion = एम्बिएंट ऑक्लूज़न की सेटिंग
+phototools-dof = डेप्थ ऑफ़ फ़ील्ड की सेटिंग
+phototools-tone-mapping = HDR टोन मैपिंग विन्यास
+phototools-glow = चमकीलापन विन्यास
+phototools-photo-banner = फोटो विंडो खोलें: पंक्तियाँ जो फोटो विन्डो में भी हैं फोटो को बदलते हैं. क्षेत्र की गहराई आपके अगले फोटो के लिए रखा जाता है; प्रकाश, एक्सपोज़र, छाया, वातावरण ओक्ल्यूशन और पहने हुए प्रकाश तब तक रहते हैं जब तक कि फोटो विण्डो बंद हो जाता है.
+phototools-photo-boost = फोटो गुणवत्ता बढ़ाया गया है: ग्राफिक्स पंक्तियाँ उठाए गए मूल्यों को दिखाती हैं, और एक परिवर्तन आप वहाँ करते हैं अपने स्वयं के रूप में रखा जाता है.
+phototools-photo-focus-help = क्लिक: विश्व में अंतिम बार क्लिक किया गया बिंदु. संकेतक: संकेतक के नीचे का बिन्दु. मैनुअल: आपकी तय की गई दूरी.
+phototools-photo-distance-help = मैनुअल फोकस में लेंस का फोकस दूरी.
+phototools-director-lens = इस विंडो के ऊपरी भाग में मेन्यू विंडो है, जिसके नीचे स्क्रीन दिखाई देती है।
+phototools-view-angle-viewfinder = इसका अर्थ है - जब आपकी आँखें खुलती हैं, तो आप अपने आप को देख सकते हैं।
+ui-options-dof-show-focus-point = फोकस बिन्दु दिखाएँ
+ui-options-dof-show-focus-point-help = एक छोटा क्रॉसहेयर लेंस पर ध्यान केंद्रित करने वाले बिंदु पर: पीला जब यह मुक्त है, लाल जब यह ताला लगा हुआ है।
