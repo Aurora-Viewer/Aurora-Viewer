@@ -979,8 +979,8 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
     let geo = normalize(in.normal);
     let material = terrain_material(in, dx, dy, blend_dx, blend_dy, false, lin_clamp);
     surface_occlusion = normal_map_occlusion(geo, material.normal, in.world_pos, 1.0 / in.clip.w);
-    screen_surface = true;
-    contact_surface = true;
+    screen_share = 1.0;
+    contact_share = 1.0;
     if (material.color.a < material.cutoff) { discard; }
     let n = material.normal;
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
@@ -3069,8 +3069,8 @@ fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
 fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3<f32>, lit: vec3<f32>) -> vec4<f32> {
     // the screen-space terms (ambient occlusion, contact shadows) were
     // made from the depth under the snow: what it buries would darken it
-    screen_surface = false;
-    contact_surface = false;
+    screen_share = 0.0;
+    contact_share = 0.0;
     // "Snow settles" off: none drawn, whatever falls (it was read from the
     // puddles' switch, rain_look.x, which is the snow's only while it
     // snows: in rain or clear weather the snow melting away showed)

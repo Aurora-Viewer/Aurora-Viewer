@@ -178,6 +178,7 @@ mod viewfinder;
 mod wearable_editor;
 mod wearable_favorites;
 mod world_click_demo;
+mod world_look;
 mod worn_demo;
 
 enum Screen {
@@ -1153,6 +1154,7 @@ pub struct App {
     rez_demo: Option<crate::demo::rez::RezDemo>,
     arrival_demo: Option<crate::demo::arrival::ArrivalDemo>,
     outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
+    avatar_cache_demo: Option<crate::demo::avatar_cache::AvatarCacheDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
     /// AURORA_DEMO_MASK_255: a Mask of cutoff 255 over an alpha under opaque.
@@ -1745,7 +1747,7 @@ impl App {
         // (an adapter known to drop under many downloads keeps them
         // limited: #1545, net_adapters.rs)
         let net = NetClient::new(crate::net_adapters::startup_mode(settings.download_connections))?;
-        net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
+        net.set_agent_language(aurora_i18n::grid_language(), settings.language_is_public);
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
         let updater = crate::updater::Updater::new(net.runtime(), settings.update_channel);
@@ -1859,6 +1861,7 @@ impl App {
             window_icon: None,
             world: {
                 let mut w = World::new(lib);
+                w.avatar_cache.set_store(Some(cache_root.clone()));
                 w.cache_dir = Some(cache_root);
                 // OmnifilterEngine::init (the demo's rules are its own)
                 match crate::demo::omnifilter::rules().filter(|_| std::env::var("AURORA_DEMO").as_deref() == Ok("1")) {
@@ -2283,6 +2286,7 @@ impl App {
             rez_demo: None,
             arrival_demo: None,
             outfit_restore_demo: None,
+            avatar_cache_demo: None,
             tex_refresh_demo: None,
             mask_255_demo: None,
             texture_res_demo: None,
@@ -2520,6 +2524,18 @@ impl App {
             self.world.maturity.hold(cmd, actor);
             return;
         }
+        // LLAgent::mTeleportRequest: what a refusal for the rating restarts
+        if matches!(
+            cmd,
+            NetCommand::TeleportTo { .. }
+                | NetCommand::TeleportLandmark(_)
+                | NetCommand::TeleportToRegion { .. }
+                | NetCommand::TeleportHome
+                | NetCommand::AcceptLure { .. }
+        ) {
+            let show_progress = self.world.tp_show_progress;
+            self.world.teleport_access.sent(&cmd, actor, self.tp_dest.clone(), show_progress);
+        }
         // AURORA_DEMO_EXPERIENCE: the simulator and the capabilities
         if self.demo
             && let Some(reply) = self.experience_demo.as_mut().and_then(|demo| demo.reply(&cmd))
@@ -2567,6 +2583,22 @@ impl App {
             log::info!("demo maturity: asked {maturity}, answer {result:?}");
             self.world.apply(NetEvent::MaturityPreference(result));
             return;
+        }
+        // AURORA_DEMO_TELEPORT_ACCESS: the adult neighbour refuses the
+        // preference (TeleportFailed with its AlertInfo)
+        if self.demo {
+            let away = match &cmd {
+                NetCommand::TeleportTo { handle, .. } => Some(*handle) != self.world.main_region,
+                NetCommand::AcceptLure { .. } => true,
+                _ => false,
+            };
+            if away && let Some(blocked) = crate::demo::teleport_access_refusal(self.world.agent_access().preferred) {
+                log::info!("demo teleport refused for its rating: {}", blocked.code);
+                self.world.apply(NetEvent::TeleportAccessBlocked(blocked));
+                // the prompt replaces the simulator's reason
+                self.world.apply(NetEvent::TeleportFailed { reason: String::new() });
+                return;
+            }
         }
         if self.demo && self.gesture_demo_command(&cmd) {
             return;
@@ -5105,6 +5137,7 @@ impl App {
                     .data_mut(|d| d.insert_temp(ui::environment::demo_open_id(&salt), String::new()));
             }
             Step::Search(kind, text) => self.env_ui.search_list = Some((kind, text)),
+            Step::ListsByName => self.settings.env_lists_by_name = true,
         }
     }
 
@@ -6524,8 +6557,15 @@ impl App {
         let sounds = &mut self.scene.sounds;
         // the 3D sound for headphones (Aurora's own; off: panned)
         let binaural = crate::scene::sounds::binaural_forced().unwrap_or(self.settings.audio.sound_hrtf);
-        let listener = crate::scene::sounds::Listener::looking(
+        // the ear at the camera or the avatar (MediaSoundsEarLocation), the
+        // camera's axes either way (audio_update_listener)
+        let ear = crate::scene::sounds::ear_position(
+            self.settings.audio.media_sounds_ear,
             self.camera.position,
+            self.world.agent.position,
+        );
+        let listener = crate::scene::sounds::Listener::looking(
+            ear,
             self.camera.target - self.camera.position,
             self.camera.position.z < self.world.main_water_height(),
             binaural,
@@ -10231,6 +10271,13 @@ impl App {
         // for it
         if !self.settings.rlva_enabled {
             self.world.maturity.cancel_script_teleports();
+            self.world.teleport_access.cancel_script_teleports();
+        }
+        // a teleport refused for its rating, restarted (teleport_access.rs):
+        // its screen again while it waits for the preference
+        if let Some(restart) = self.world.teleport_access.take_restart() {
+            let dest = restart.dest.unwrap_or_default();
+            self.begin_teleport(dest, restart.show_progress);
         }
         for (actor, c) in self.world.maturity.take_commands() {
             if matches!(
@@ -10393,6 +10440,47 @@ impl App {
         }
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
+        }
+        // AURORA_DEMO_TELEPORT_ACCESS: a teleport to the eastern neighbour
+        // (a lure accepted for `lure`), once settled
+        if self.demo
+            && self.frame_count == 700
+            && let Some((scene, _)) = crate::demo::teleport_access_scene()
+            && let Some(main) = self.world.main_region
+        {
+            if scene == "lure" {
+                self.send(NetCommand::AcceptLure {
+                    lure_id: uuid::Uuid::nil(),
+                    godlike: false,
+                });
+            } else {
+                let east = main + (256u64 << 32);
+                let teleport = NetCommand::TeleportTo {
+                    handle: east,
+                    position: Vec3::new(128.0, 128.0, 30.0),
+                    look_at: Vec3::X,
+                };
+                self.request_user_teleport(teleport, aurora_i18n::tr!("demo-teleport-access-neighbour").into(), true);
+            }
+        }
+        // AURORA_DEMO_TELEPORT_ACCESS=…:accept: the prompt's first button
+        if self.demo
+            && self.frame_count == 760
+            && crate::demo::teleport_access_scene().is_some_and(|(_, accept)| accept)
+            && let Some(id) = self
+                .world
+                .notifications
+                .list
+                .iter()
+                .rev()
+                .find(|n| matches!(n.data, crate::world::notifications::Data::MaturityChange { .. }))
+                .map(|n| n.id)
+        {
+            log::info!("demo: the rating prompt accepted");
+            let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Accept);
+            for c in commands {
+                self.send(c);
+            }
         }
         // AURORA_DEMO_HOME=<outcome>:set: World › Set Home to Here, once settled
         if self.demo
@@ -10769,6 +10857,9 @@ impl App {
             // outfit restore at login (queues the COF fetch below)
             let second_life = !matches!(self.settings.grid, crate::settings::GridChoice::Custom);
             self.world.update_outfit(second_life, Instant::now());
+            // copies of the worn objects on their way (world/avatar_cache)
+            self.world.avatar_cache.set_enabled(self.settings.avatar_cache);
+            self.world.update_avatar_cache(Instant::now());
             // a new account's outfit: worn like the Welcome Pack's folders
             if let Some(outfit) = self.world.outfit.take_initial_outfit() {
                 self.welcome_wears
@@ -11819,6 +11910,7 @@ impl App {
                 let frame = crate::media::MediaFrame {
                     view: &cull,
                     camera: self.camera.position,
+                    ear: crate::scene::sounds::ear_position(a.media_sounds_ear, self.camera.position, self.world.agent.position),
                     settings: &self.settings.media,
                     autoplay: a.media_autoplay,
                     channel_volume: self.media_volume(),
@@ -11827,7 +11919,7 @@ impl App {
                     gaming_mode: self.gaming_mode.on,
                     net: (!self.demo).then(|| (self.net.runtime(), self.net.caps_http())),
                     cache_dir: &cache_dir,
-                    language: aurora_i18n::language(),
+                    language: aurora_i18n::grid_language(),
                 };
                 self.media.update(&mut self.world, &mut self.scene, &mut gfx.renderer, &frame);
                 for url in std::mem::take(&mut self.media.links) {
@@ -12692,8 +12784,12 @@ impl App {
         self.snapshots.look_focus = focus;
         fp.look = match &photo {
             Some(f) => f.look.clone(),
-            // the spinning cat's colours, when the photo mode shows no look
-            None => self.live_look((w, h), focus).or_else(|| self.oiia.look(w, h)),
+            // the spinning cat's colours, when the photo mode shows no look,
+            // then the world's own filters
+            None => self
+                .live_look((w, h), focus)
+                .or_else(|| self.oiia.look(w, h))
+                .or_else(|| self.world_look((w, h), focus)),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 
@@ -13342,7 +13438,7 @@ impl App {
             crate::language_file::select(&self.settings.language, self.settings.custom_language);
             crate::crash::update(&self.skin.theme, &self.settings);
             self.net
-                .set_agent_language(aurora_i18n::language(), self.settings.language_is_public);
+                .set_agent_language(aurora_i18n::grid_language(), self.settings.language_is_public);
             if self.settings.vsync != vsync {
                 gfx.renderer.set_vsync(self.settings.vsync);
             }
@@ -14780,6 +14876,9 @@ impl App {
                 self.panels.appearance = true;
                 self.appearance_ui.open(2, false);
             }
+        }
+        if let Some(demo) = &mut self.avatar_cache_demo {
+            demo.tick(self.frame_count, &mut self.world, Instant::now());
         }
         if let (Some(demo), Some(g)) = (&mut self.rez_demo, &mut self.gfx) {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene, &mut g.renderer);
@@ -16919,7 +17018,7 @@ impl App {
                 self.world.opensim_extras(),
                 login_search,
                 self.search_ui.web_query(self.settings.classic_search),
-                aurora_i18n::language(),
+                aurora_i18n::grid_language(),
                 self.world.agent_access().preferred,
             )
             .map(|url| crate::world::search::WebHome { url, identified: false });
@@ -16928,7 +17027,7 @@ impl App {
             self.search_grid(),
             self.search_ui.web_query(self.settings.classic_search),
             self.world.agent_access(),
-            aurora_i18n::language(),
+            aurora_i18n::grid_language(),
             self.search_session(),
         )
     }
@@ -17000,7 +17099,7 @@ impl App {
     /// (compact, wide, legacy, empty) have the Second Life guide's.
     fn destination_guide(&self) -> Option<String> {
         use ui::destinations::{GuideGrid, guide_url};
-        let language = aurora_i18n::language();
+        let language = aurora_i18n::grid_language();
         if self.demo {
             let page = std::env::var("AURORA_DEMO_DESTINATIONS").ok().filter(|u| !u.trim().is_empty())?;
             if page.trim() == "sl" || crate::demo::destinations::mode().is_some() {
@@ -17039,7 +17138,7 @@ impl App {
     /// demo, "sl" for the Second Life page's address.
     fn avatar_welcome_page(&self) -> Option<String> {
         use ui::avatar_welcome::{PackGrid, pack_url};
-        let language = aurora_i18n::language();
+        let language = aurora_i18n::grid_language();
         if self.demo {
             let page = std::env::var("AURORA_DEMO_AVATAR_WELCOME").ok().filter(|u| !u.trim().is_empty())?;
             return match page.trim() {
@@ -17108,7 +17207,7 @@ impl App {
             return;
         }
         let paths = self.media.plugins(&self.settings.media).cloned();
-        let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language(), &self.settings.media);
+        let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::grid_language(), &self.settings.media);
         let env = ui::signup::SignupWeb {
             paths: paths.as_ref(),
             browser: &browser,
@@ -17723,6 +17822,9 @@ impl App {
         if !open {
             self.options_ui.cancel_capture();
         }
+        if res.open_world_look {
+            self.panels.world_look = true;
+        }
         if res.clear_cache {
             self.disk_cache.clear();
             self.net.send(NetCommand::ClearObjectCache);
@@ -17862,6 +17964,12 @@ impl App {
         let p = self.palette;
         let ctx = ui.ctx().clone();
         ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
+        // a list's A–Z switch last frame, saved before it is published again
+        if let Some(by_name) = ui::environment::take_lists_by_name_change(&ctx) {
+            self.settings.env_lists_by_name = by_name;
+            self.settings.save();
+        }
+        ui::environment::set_lists_by_name(&ctx, self.settings.env_lists_by_name);
         ui::widgets::local_texture::sync(
             &ctx,
             self.world.local_assets.keys().copied().chain(
@@ -18091,6 +18199,7 @@ impl App {
                 // playing, the reel's quick view) never keeps a look that was
                 // only pointed at on the live view and its film.
                 self.snapshots.ui.looks.hover = None;
+                self.snapshots.world_ui.looks.hover = None;
                 // the Director's track plays: the world alone, and the
                 // countdown of its start delay
                 if self.director_playing() {
@@ -18277,9 +18386,13 @@ impl App {
                     self.settings.contact_marker_anchor,
                     self.settings.contact_markers && !bare && (!self.interface.immersive || self.settings.immersive_name_tags),
                 );
-                // RenderTrackerBeacon (LLTracker::render3D, renderBeacon)
-                if !self.camera.mouselook() && !bare && self.settings.tracker_beacon {
-                    self.beacon_hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered);
+                // RenderTrackerBeacon (LLTracker::render3D, renderBeacon): drawn
+                // in every camera mode, mouselook included. There the pointer
+                // is captured, so the beacon is neither hovered nor clicked.
+                if !bare && self.settings.tracker_beacon {
+                    let mouselook = self.camera.mouselook();
+                    let hit = ui::minimap::draw_beacon(&ctx, &p, &self.world, projector, beacon_hovered && !mouselook);
+                    self.beacon_hit = hit.filter(|_| !mouselook);
                 } else {
                     self.beacon_hit = None;
                 }
@@ -19124,7 +19237,7 @@ impl App {
                     }
                 }
                 if self.skin.layout.chat_toasts
-                    && (crate::demo::chat_volume_comparison() || !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)))
+                    && (crate::demo::chat_volume_comparison() || !ui::chat::nearby_chat_shown(&ctx, &self.chat_ui, self.panels.chat))
                 {
                     // FSBubblesHideConsoleAndToasts: the residents' lines are
                     // in their bubbles
@@ -19319,7 +19432,11 @@ impl App {
                 let volume = self.media_volume();
                 self.chat_ui.previews.web = self.chat_ui.previews.playing().then(|| ui::chat::previews::WebEnv {
                     paths: self.media.plugins(&self.settings.media).cloned(),
-                    browser: crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language(), &self.settings.media),
+                    browser: crate::media::browser_settings(
+                        &crate::settings::cache_dir(),
+                        aurora_i18n::grid_language(),
+                        &self.settings.media,
+                    ),
                     volume,
                 });
                 // who hears the nearby chat, and who of them types (the
@@ -20381,6 +20498,7 @@ impl App {
                 }
                 self.blacklist_window(&ctx, &p);
                 self.group_titles_window(&ctx, &p);
+                self.world_look_window(&ctx, &p);
                 self.area_search_window(&ctx, &p);
                 self.sound_explorer_window(&ctx, &p);
                 self.animation_explorer_window(&ctx, &p);
@@ -20435,7 +20553,8 @@ impl App {
                 }
                 // the "Feed" tab: a browser on the grid's web profiles
                 let paths = self.media.plugins(&self.settings.media).cloned();
-                let browser = crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language(), &self.settings.media);
+                let browser =
+                    crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::grid_language(), &self.settings.media);
                 let cookie = self.media.openid.cookie();
                 let profile_base = match self.settings.grid {
                     // AURORA_DEMO_FEED=<page>: the feed browser on a local page
@@ -21562,6 +21681,14 @@ impl ApplicationHandler for App {
                 crate::world::radar::ANIM_AGENT_TYPE,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
             );
+            // AURORA_DEMO_AVATAR_CACHE: the animation a worn object's
+            // script plays on us
+            if crate::demo::avatar_cache::enabled() {
+                self.scene.anims.insert(
+                    crate::demo::avatar_cache::WORN_MOTION,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
+                );
+            }
             if crate::demo::pose_stand::mode().is_some() {
                 for (id, anim) in crate::demo::pose_stand::animations() {
                     self.scene
@@ -22686,7 +22813,7 @@ impl ApplicationHandler for App {
                 }
             }
             // AURORA_DEMO_MATURITY: "General" asked once the login is known
-            if crate::demo::maturity_scene().is_some() {
+            if crate::demo::maturity_scene().is_some() || crate::demo::teleport_access_scene().is_some() {
                 self.world.set_maturity_preference(aurora_net::search::SIM_ACCESS_PG);
             }
             // AURORA_DEMO_LURE=card-answered / notification-answered: the
@@ -22868,7 +22995,14 @@ impl ApplicationHandler for App {
                     }
                     // the offline messages open Nova's conversation; the
                     // Chat Service's pages come through `demo_reply`
-                    Mode::Offline | Mode::Service => {}
+                    Mode::Offline => {}
+                    // service:skew: a live IM the demo service keeps too
+                    // (#4233)
+                    Mode::Service => {
+                        if chatlog::service_skew() {
+                            self.world.apply(chatlog::skewed_live_message(me));
+                        }
+                    }
                     Mode::Shared { on } => {
                         // the synthetic Legacy Viewer folder, chosen for this
                         // run only: never saved in the demo's settings, which
@@ -23841,6 +23975,10 @@ impl ApplicationHandler for App {
             if let Some(demo) = &mut self.outfit_restore_demo {
                 demo.setup(&mut self.world);
                 self.panels.perf = false;
+            }
+            self.avatar_cache_demo = crate::demo::avatar_cache::AvatarCacheDemo::from_env();
+            if let Some(demo) = &mut self.avatar_cache_demo {
+                demo.setup(&mut self.world);
             }
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
             self.mask_255_demo = crate::demo::mask_255::Mask255Demo::from_env();

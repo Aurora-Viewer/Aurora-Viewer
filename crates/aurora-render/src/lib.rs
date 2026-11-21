@@ -188,17 +188,21 @@ pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
     water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER)
 }
 
-/// object.wgsl as the device takes it: without the attribute of the early
-/// depth test (`fs_blend_once`) where the device does not know it, as on
-/// Metal. naga refuses a whole module for one entry point it cannot read,
-/// so every module made from object.wgsl (the scene, the stochastic
-/// transparency, the impostors) takes it from here (#3751).
+/// object.wgsl as the device takes it: without the attributes of the early
+/// depth test (`fs_blend_once`; `fs_depth_occlusion`, which then runs for
+/// the texels the depth would have ruled out, and writes the same) where
+/// the device does not know them, as on Metal. naga refuses a whole module
+/// for one entry point it cannot read, so every module made from
+/// object.wgsl (the scene, the stochastic transparency, the impostors)
+/// takes it from here (#3751).
 pub(crate) fn object_shader_source(features: wgpu::Features) -> String {
     let source = water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"));
     if features.contains(blend_exact::EARLY_TEST) {
         source.into_owned()
     } else {
-        source.replace("@early_depth_test(force)", "")
+        source
+            .replace("@early_depth_test(force)", "")
+            .replace("@early_depth_test(less_equal)", "")
     }
 }
 

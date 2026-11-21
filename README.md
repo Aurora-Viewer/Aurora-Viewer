@@ -21,7 +21,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 <sub>This software is not provided or supported by Linden Lab, the makers of Second Life.</sub>
 
-[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
+[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing) · [Code signing policy](https://aurora-viewer.org/code-signing/)
 
 </div>
 
@@ -415,7 +415,9 @@ are planned or in progress: they are not in the viewer yet.
 - **Borderless fullscreen**: Alt+Enter fills the screen without a title bar
   or borders, at once and without a restart, and gives the window back
   exactly as it was (Preferences › Graphics).
-- **In English, French and Japanese (日本語)**: the whole interface follows
+- **In fifteen languages** (English, French, Japanese, German, Spanish,
+  Italian, Brazilian and European Portuguese, Polish, Russian, Ukrainian,
+  Turkish, Norwegian Bokmål, Simplified and Traditional Chinese): the interface follows
   your system language or your choice, applied at once. Japanese uses Second
   Life's official Japanese terms (インベントリ, 区画, フレンド…), Japanese
   interface fonts and Japanese dates ([details](#language)).
@@ -724,7 +726,7 @@ frame on your own PC.
   tools, folder colours, outfit backups to JSON, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
-- **Interface** — in English, French and Japanese; flat Aurora theme, Inter font, Tabler icons, glass island bars,
+- **Interface** — in fifteen languages, flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; an immersive mode that keeps only the chat; Aurora team and
@@ -786,18 +788,25 @@ Manager) and, when you tick it, a 30-day MFA authorization.
 
 ### Language
 
-The interface is available in English, French and Japanese (日本語): system
-language detection, a choice saved in Preferences and applied at once. The
+The viewer ships English, French, Japanese (日本語), Simplified Chinese
+(简体中文), Traditional Chinese (繁體中文), Russian (Русский), German (Deutsch),
+Brazilian Portuguese (Português (Brasil)), Spanish (Español), Italian
+(Italiano), Polish (Polski), Turkish (Türkçe), European Portuguese (Português
+(Portugal)), Norwegian Bokmål (Norsk bokmål) and Ukrainian (Українська). It
+detects the system language
+by default. A choice saved in Preferences applies at once. The
 Japanese translation covers every message, with the official Second Life
 Japanese terms; it draws with Japanese interface fonts (Meiryo UI, Yu Gothic
-UI or MS UI Gothic) and writes dates the Japanese way. Fluent catalogues make
-it possible to add a language; see [the translation guide](docs/TRANSLATING.md).
+UI or MS UI Gothic) and writes dates the Japanese way. The other languages
+use the Second Life terms of the Legacy Viewer's interface in that language,
+and Chinese draws with the system's Chinese fonts (Microsoft YaHei or
+Microsoft JhengHei on Windows). Fluent catalogues make it possible to add a
+language; see [the translation guide](docs/TRANSLATING.md).
 
-The viewer first follows the language saved in **Preferences › Interface ›
-Language**, then the system's if "System language" is selected. English is
-the fallback. The change applies at once; the "Language visible to scripts"
-setting is on by default, like the Legacy Viewer. The translations are in
-`crates/aurora-i18n/locales/`.
+Find the language picker and the custom Fluent file option in
+**Preferences › Language and updates**. Untranslated messages appear in
+English. The "Language visible to scripts" setting is on by default, like
+the Legacy Viewer. The translations are in `crates/aurora-i18n/locales/`.
 
 ### Frame limiter
 

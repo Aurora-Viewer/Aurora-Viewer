@@ -16,6 +16,7 @@ use crate::world::World;
 use crate::world::chat_log::format::Slt;
 use crate::world::notification_history::{self as history, Entry, Follow, History, Outcome};
 use crate::world::notifications::{Data, Kind, Notification, Notifications, Response};
+use aurora_i18n::UiUpper;
 use egui::{Rect, RichText, Vec2};
 
 /// Width of the panel under the bell (the mockup's 360 px), with
@@ -786,7 +787,7 @@ pub(super) fn history_list(
             for (index, e) in found {
                 let day = day_label(e.time, today);
                 if last_day.as_ref() != Some(&day) {
-                    ui.label(RichText::new(day.to_uppercase()).size(10.5).strong().color(p.muted_dim));
+                    ui.label(RichText::new(day.ui_upper()).size(10.5).strong().color(p.muted_dim));
                     last_day = Some(day);
                 }
                 if let Some(follow) = history_card(ui, p, icons, world, &e) {

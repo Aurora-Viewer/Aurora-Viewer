@@ -679,6 +679,9 @@ pub struct Settings {
     pub parcel_music_accounts: std::collections::HashSet<uuid::Uuid>,
     /// Photo window (Firestorm's snapshot floater settings).
     pub snapshot: crate::snapshot::Settings,
+    /// The world look (Preferences › Graphics › Image): a stack of looks of
+    /// its own on the 3D view, apart from the photos' (`snapshot::looks`).
+    pub world_look: crate::snapshot::looks::WorldLook,
     /// Depth of field (Preferences › Graphics).
     pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
@@ -753,6 +756,10 @@ pub struct Settings {
     pub env_persist: bool,
     /// The weather of this viewer (the Environment window's "Weather").
     pub weather: crate::weather::WeatherSettings,
+    /// Sky, water and day cycle lists A–Z instead of the inventory's order
+    /// (an Aurora switch on the lists, off: the order since #812; the
+    /// Legacy Viewer's lists are always by name).
+    pub env_lists_by_name: bool,
     /// Which stars the night sky shows: the real sky over Paris (Aurora's
     /// default) or the Legacy Viewer's random stars (world/night_sky.rs).
     pub night_sky: crate::world::night_sky::NightSky,
@@ -1830,6 +1837,10 @@ pub struct Settings {
     /// Avatars still loading: 0 particle cloud + progress bar under the name
     /// (Firestorm), 1 progress bar only (drawn as they load), 2 nothing.
     pub loading_avatars: u8,
+    /// Aurora's own: while an avatar's worn objects are on their way, draw
+    /// copies of the ones kept from the last time (world/avatar_cache), then
+    /// the region's own.
+    pub avatar_cache: bool,
     /// RenderAvatarComplexityMode: 0 limit everyone, 1 always show friends
     /// fully, 2 show only friends.
     pub complexity_mode: u8,
@@ -1998,7 +2009,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 43;
+const SETTINGS_VERSION: u32 = 44;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2243,6 +2254,9 @@ pub struct AudioSettings {
     pub collision_sounds: bool,
     /// Sounds of other avatars' gestures (EnableGestureSounds, on).
     pub gesture_sounds: bool,
+    /// Where world sounds and media are heard from: the camera or the
+    /// avatar (MediaSoundsEarLocation, panel_preferences_sound.xml; camera).
+    pub media_sounds_ear: VoiceEar,
     /// Doppler shift of moving world sounds, 0 (off) to 2: the Legacy
     /// Viewer's is a fixed 1 (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp).
     pub doppler: f32,
@@ -2311,6 +2325,7 @@ impl Default for AudioSettings {
             mic_gain: 1.0,
             collision_sounds: true,
             gesture_sounds: true,
+            media_sounds_ear: VoiceEar::Camera,
             doppler: 1.0,
             sound_occlusion: true,
             sound_hrtf: false,
@@ -2325,7 +2340,8 @@ impl Default for AudioSettings {
     }
 }
 
-/// VoiceEarLocation (panel_preferences_sound.xml); SL exposes two choices.
+/// VoiceEarLocation and MediaSoundsEarLocation (panel_preferences_sound.xml):
+/// the same two choices for voice and for sounds and media.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum VoiceEar {
     #[default]
@@ -2439,6 +2455,7 @@ impl Default for Settings {
             env_manual_transition: 0.0,
             env_persist: true,
             weather: Default::default(),
+            env_lists_by_name: false,
             night_sky: Default::default(),
             night_sky_place: Default::default(),
             night_sky_latitude: crate::world::night_sky::LATITUDE as f32,
@@ -2525,6 +2542,7 @@ impl Default for Settings {
             friends_only: Default::default(),
             parcel_music_accounts: Default::default(),
             snapshot: Default::default(),
+            world_look: Default::default(),
             dof: Default::default(),
             loading_backdrop: true,
             mouse_sensitivity: 1.0,
@@ -2818,6 +2836,7 @@ impl Default for Settings {
             max_attachment_area: 1000.0,
             complexity_notice_seconds: 0,
             loading_avatars: 0,
+            avatar_cache: true,
             complexity_mode: 0,
             avatar_physics: true,
             avatar_physics_detail: 1.0,
@@ -3566,6 +3585,11 @@ impl Settings {
             // Aurora Weather's main and card switches, off by default: an
             // earlier file keeps on what it drew
             self.weather.upgrade_to_switches();
+        }
+        if self.settings_version < 44 {
+            // the wind's defaults, a breeze: a wind off and left still
+            // takes them, so that switching it on blows
+            self.weather.upgrade_wind_defaults();
         }
         if !self.audio.enabled[VOICE_CHANNEL] {
             // this box used to switch a mixer channel of its own, leaving

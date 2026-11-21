@@ -69,6 +69,10 @@ pub const SNOW_DISTANCE_DEFAULT: f32 = 60.0;
 /// (RTX 3090, 1080p, 2026-11-15).
 pub const DEEP_SNOW_REACH: std::ops::RangeInclusive<f32> = 10.0..=40.0;
 pub const DEEP_SNOW_REACH_DEFAULT: f32 = 15.0;
+/// The wind's defaults, its lulls and its gusts (0..1): a breeze, gusting
+/// to a steady wind (`ui/weather_window.rs` `wind_word`).
+pub const WIND_MIN_DEFAULT: f32 = 0.1;
+pub const WIND_MAX_DEFAULT: f32 = 0.35;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -151,8 +155,9 @@ impl Default for WeatherSettings {
             // strength
             amount: 1.0,
             wind_on: false,
-            wind_min: 0.0,
-            wind_max: 0.0,
+            // and once the wind is on, it blows: a breeze
+            wind_min: WIND_MIN_DEFAULT,
+            wind_max: WIND_MAX_DEFAULT,
             wind_follow_region: true,
             wind_from: 270.0,
             puddles: true,
@@ -218,6 +223,16 @@ impl WeatherSettings {
         self.enabled = self.precipitation_on || self.wind_on || self.aurora;
         if self.amount <= 0.0 {
             self.amount = 1.0;
+        }
+    }
+
+    /// A file from before the wind's defaults (settings version 44): a wind
+    /// switched off and left still takes them, so that switching it on
+    /// blows, as a new one does.
+    pub fn upgrade_wind_defaults(&mut self) {
+        if !self.wind_on && self.wind_max <= 0.0 {
+            self.wind_min = WIND_MIN_DEFAULT;
+            self.wind_max = WIND_MAX_DEFAULT;
         }
     }
 
@@ -822,9 +837,29 @@ mod tests {
     }
 
     #[test]
+    fn a_still_wind_switched_off_takes_the_breeze_and_a_set_one_is_kept() {
+        let d = WeatherSettings::default();
+        assert_eq!(d.wind_range(), (WIND_MIN_DEFAULT, WIND_MAX_DEFAULT));
+        let read = |json: &str| {
+            let mut w: WeatherSettings = serde_json::from_str(json).expect("parse");
+            w.upgrade_wind_defaults();
+            w
+        };
+        // still and off: switched on, it blows
+        let still = read("{\"wind_on\": false, \"wind_min\": 0.0, \"wind_max\": 0.0}");
+        assert_eq!(still.wind_range(), (WIND_MIN_DEFAULT, WIND_MAX_DEFAULT));
+        // set by hand, or on: kept as it is
+        let set = read("{\"wind_on\": false, \"wind_min\": 0.0, \"wind_max\": 0.6}");
+        assert_eq!(set.wind_range(), (0.0, 0.6));
+        let on = read("{\"wind_on\": true, \"wind_min\": 0.0, \"wind_max\": 0.0}");
+        assert_eq!(on.wind_range(), (0.0, 0.0));
+    }
+
+    #[test]
     fn old_settings_files_keep_their_wind_as_the_gusts() {
         let read: WeatherSettings = serde_json::from_str("{\"wind\": 0.6}").expect("parse");
-        assert_eq!(read.wind_range(), (0.0, 0.6));
+        // the lulls they had not are the default's
+        assert_eq!(read.wind_range(), (WIND_MIN_DEFAULT, 0.6));
         assert!(read.wind_follow_region);
         assert_eq!(read.thunder_frequency, 0.5);
     }

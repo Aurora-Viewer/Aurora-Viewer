@@ -1,5 +1,6 @@
 //! Canonical paired Bento/collision rows. Technical names remain data/tooltips.
 use super::*;
+use aurora_i18n::UiUpper;
 use std::collections::BTreeMap;
 
 fn stem(name: &str) -> (&str, Option<bool>) {
@@ -199,7 +200,7 @@ fn stretched_choice(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, option
 }
 /// A small capitals caption over a group of controls.
 pub(super) fn caption(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    ui.label(egui::RichText::new(text.to_uppercase()).size(10.5).color(p.muted));
+    ui.label(egui::RichText::new(text.ui_upper()).size(10.5).color(p.muted));
 }
 
 impl Editor {

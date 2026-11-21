@@ -951,7 +951,7 @@ impl SnapshotUi {
             luts: &self.lut_names,
             pano: self.pano,
         };
-        self.looks.show(ui, p, s, opts, out);
+        self.looks.show(ui, p, super::looks_editor::Stack::photo(s), opts, out);
         if std::mem::take(&mut self.looks.reveal) {
             ui.scroll_to_rect(filter.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
         }

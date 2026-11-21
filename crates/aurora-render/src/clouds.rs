@@ -423,9 +423,6 @@ pub(crate) struct Clouds {
     pipelines: Pipelines,
     uniform: wgpu::Buffer,
     sampler: wgpu::Sampler,
-    /// Clamped copy of the sampler for the screen-space history and the
-    /// composite: the repeat sampler would blend the opposite edge in.
-    screen_sampler: wgpu::Sampler,
     base: wgpu::TextureView,
     detail: wgpu::TextureView,
     curl: wgpu::TextureView,
@@ -523,22 +520,14 @@ impl Clouds {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let screen_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("clouds screen"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("clouds"),
             size: std::mem::size_of::<CloudU>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // the composite's group: the uniform, the image, the sampler
+        // the composite's group: the uniform and the image (read texel by
+        // texel: clouds.wgsl `read_samples`)
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("clouds composite"),
             entries: &[
@@ -550,12 +539,6 @@ impl Clouds {
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
@@ -575,7 +558,6 @@ impl Clouds {
             pipelines,
             uniform,
             sampler,
-            screen_sampler,
             base: view(&base),
             detail: view(&detail),
             curl: view(&curl),
@@ -873,11 +855,7 @@ impl Clouds {
             self.composite_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("clouds composite"),
                 layout: &self.layout,
-                entries: &[
-                    entry(0, self.uniform.as_entire_binding()),
-                    entry(9, wgpu::BindingResource::Sampler(&self.screen_sampler)),
-                    entry(15, tv(target)),
-                ],
+                entries: &[entry(0, self.uniform.as_entire_binding()), entry(15, tv(target))],
             }));
             return;
         }
@@ -915,7 +893,6 @@ impl Clouds {
                 "recon",
                 &[
                     entry(0, self.uniform.as_entire_binding()),
-                    entry(9, wgpu::BindingResource::Sampler(&self.screen_sampler)),
                     entry(13, tv(&sized.trace)),
                     entry(14, tv(&sized.depth)),
                     entry(15, tv(&sized.history[read])),
@@ -928,11 +905,7 @@ impl Clouds {
         self.composite_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("clouds composite"),
             layout: &self.layout,
-            entries: &[
-                entry(0, self.uniform.as_entire_binding()),
-                entry(9, wgpu::BindingResource::Sampler(&self.screen_sampler)),
-                entry(15, tv(&sized.history[write])),
-            ],
+            entries: &[entry(0, self.uniform.as_entire_binding()), entry(15, tv(&sized.history[write]))],
         }));
         self.latest = Some(write);
         self.prev_vp = p.vp;
