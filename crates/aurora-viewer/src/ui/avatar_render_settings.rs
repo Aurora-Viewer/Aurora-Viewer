@@ -18,7 +18,6 @@ pub struct Row {
     pub id: Uuid,
     pub name: String,
     pub mode: u8,
-    pub can_name: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -68,7 +67,7 @@ impl AvatarRenderSettings {
         let filter = self.filter.trim().to_lowercase();
         let mut shown: Vec<_> = rows
             .iter()
-            .filter(|r| r.name.to_lowercase().contains(&filter) || (r.can_name && r.id.to_string().contains(&filter)))
+            .filter(|r| r.name.to_lowercase().contains(&filter) || r.id.to_string().contains(&filter))
             .collect();
         shown.sort_by(|a, b| {
             let name = crate::natural_order::cmp(&a.name, &b.name);
@@ -130,15 +129,9 @@ impl AvatarRenderSettings {
                 if super::find_shortcut::take(ui, &[search.id]) {
                     search.request_focus();
                 }
-                let add = widgets::action_button_if(
-                    ui,
-                    p,
-                    "plus",
-                    add_label,
-                    ActionKind::Flat,
-                    Vec2::new(0.0, 26.0),
-                    !world.rlva.has("shownames"),
-                );
+                // LLFloaterAvatarRenderSettings has no RLVa test: the
+                // picker's own tabs follow `@shownames`
+                let add = widgets::action_button(ui, p, "plus", add_label, ActionKind::Flat, Vec2::new(0.0, 26.0));
                 menu::dropdown(&add, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                     for mode in [2, 1] {
                         if menu::item(ui, p, icon(mode), label(mode)) {
@@ -227,11 +220,7 @@ impl AvatarRenderSettings {
                                     egui::FontId::proportional(12.0),
                                     p.muted,
                                 );
-                                let tip = if row.can_name {
-                                    format!("{}\n{}", row.name, row.id)
-                                } else {
-                                    row.name.clone()
-                                };
+                                let tip = format!("{}\n{}", row.name, row.id);
                                 resp.clone().on_hover_text(tip);
                                 if resp.clicked() {
                                     self.click(row.id, &order, ui.input(|i| i.modifiers));
@@ -285,7 +274,7 @@ impl AvatarRenderSettings {
                 change = Some(self.change(0, &order));
             }
         });
-        if !*open || world.rlva.has("shownames") {
+        if !*open {
             self.picker.open = false;
         }
         if let Some(ids) = self.picker.show(ctx, p, world) {

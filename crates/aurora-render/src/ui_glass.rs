@@ -4,7 +4,8 @@
 //! The world's labels (`ui_world`) are drawn under the HUD attachments, and
 //! the windows over them: the labels sample a blur of the scene alone, made
 //! where they are, and the windows a blur of the scene with its labels and
-//! the HUD attachments.
+//! the HUD attachments. Preferences › Accessibility › Disable glass
+//! (`set_ui_blur`) skips the blur; the viewer also makes surfaces opaque.
 
 use std::sync::Arc;
 
@@ -48,6 +49,13 @@ pub fn glass_diamond(rect: egui::Rect, opacity: f32, shade: f32) -> egui::Shape 
 }
 
 fn region(rect: egui::Rect, radius: f32, opacity: f32, shade: f32, diamond: bool) -> egui::Shape {
+    blur_region(super::ui_blur::enabled(), rect, radius, opacity, shade, diamond)
+}
+
+fn blur_region(enabled: bool, rect: egui::Rect, radius: f32, opacity: f32, shade: f32, diamond: bool) -> egui::Shape {
+    if !enabled {
+        return egui::Shape::Noop;
+    }
     egui::Shape::Callback(egui::PaintCallback {
         rect,
         callback: Arc::new(Region {
@@ -395,5 +403,12 @@ mod tests {
             }
         }
         assert!(tints > 0, "the tinted frame is still drawn");
+    }
+
+    #[test]
+    fn disable_glass_skips_the_blur_callback() {
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(40.0, 20.0));
+        assert!(matches!(blur_region(false, rect, 8.0, 1.0, 1.0, false), egui::Shape::Noop));
+        assert!(matches!(blur_region(true, rect, 8.0, 1.0, 1.0, false), egui::Shape::Callback(_)));
     }
 }

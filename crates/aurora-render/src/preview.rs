@@ -3,6 +3,7 @@
 //! UI gets an image in the same frame without a readback or a GPU wait.
 
 use crate::pipeline_cache::CachedPipelines;
+pub use crate::preview_mesh::paint as paint_antialiased_mesh;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use std::{
@@ -265,6 +266,9 @@ struct Target {
 pub(crate) struct Cache {
     pipeline: Option<Pipelines>,
     targets: HashMap<egui::Id, Target>,
+    /// The panorama viewers (panorama.rs), drawn the same way.
+    pano: crate::panorama::Cache,
+    meshes: crate::preview_mesh::Cache,
 }
 
 type ImageMap = HashMap<(usize, bool), (Option<Weak<Image>>, wgpu::TextureView)>;
@@ -722,7 +726,7 @@ const MAX_TARGET: f32 = 2048.0;
 /// The render target of a preview of `size` points. A large preview is
 /// scaled down as a whole: clamping each side alone gave the target another
 /// shape than its rectangle, and egui stretched the picture to fill it.
-fn target_size(size: egui::Vec2, scale: f32) -> [u32; 2] {
+pub(crate) fn target_size(size: egui::Vec2, scale: f32) -> [u32; 2] {
     let pixels = size * scale;
     let fit = (MAX_TARGET / pixels.max_elem()).min(1.0);
     [
@@ -741,11 +745,25 @@ impl Cache {
         primitives: &mut [egui::ClippedPrimitive],
         scale: f32,
     ) {
+        self.meshes.render(device, encoder, egui, primitives, scale);
         let mut seen = HashSet::new();
+        let mut pano_seen = HashSet::new();
         for primitive in primitives {
             let egui::epaint::Primitive::Callback(callback) = &primitive.primitive else {
                 continue;
             };
+            if let Some(pano) = callback.callback.downcast_ref::<crate::panorama::PanoRegion>() {
+                let rect = callback.rect;
+                if !primitive.clip_rect.intersects(rect) {
+                    primitive.primitive = egui::epaint::Primitive::Mesh(egui::Mesh::default());
+                    primitive.clip_rect = egui::Rect::NOTHING;
+                    continue;
+                }
+                let mesh = self.pano.render(device, queue, encoder, egui, pano, rect, scale);
+                pano_seen.insert(pano.id());
+                primitive.primitive = egui::epaint::Primitive::Mesh(mesh);
+                continue;
+            }
             let Some(region) = callback.callback.downcast_ref::<Region>() else {
                 continue;
             };
@@ -790,6 +808,7 @@ impl Cache {
                 false
             }
         });
+        self.pano.retain(&pano_seen, egui);
         // Image UUIDs are immutable; all min/max views share their GPU maps.
         // Weak owners bound the cache to the images still held by previews.
         if let Some(pipeline) = &mut self.pipeline {
