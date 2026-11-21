@@ -17,10 +17,11 @@
 //
 // Glass: a ray that nothing stops goes on through the blended faces (the
 // `GLASS` instances, rt_common.wgsl `glass_passes`), and what they leave of
-// the sun's red, green and blue is `out_glass`: 1 where it meets none. Its
-// ray goes to another point of the sun's disc each frame, as the shadow's:
-// the lights' passes average it as they do the shadow (rt_lights.wgsl
-// `glass_history`) into the frame's binding 29 (common.wgsl `sun_glass`).
+// the sun's red, green and blue is `out_glass`: 1 where it meets none, 0
+// where the ray was stopped. Its ray goes to another point of the sun's
+// disc each frame, as the shadow's: the lights' passes average it as they
+// do the shadow (rt_lights.wgsl `glass_history`), over the rays that
+// arrived, into the frame's binding 29 (common.wgsl `sun_glass`).
 
 // After rt_common.wgsl, rt_view.wgsl and wgpu_ray_query's enable
 // (rt_shadows.rs `source`).
@@ -129,6 +130,7 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
             }
         }
     }
-    textureStore(out_glass, pixel, vec4<f32>(glass, 1.0));
+    // (a stopped ray's 0: the average is over those that arrived)
+    textureStore(out_glass, pixel, vec4<f32>(select(glass, vec3<f32>(0.0), shadow > 0.5), 1.0));
     textureStore(out_tex, pixel, vec4<f32>(select(max(shadow, contact), contact, soft), shadow, 0.0, 0.0));
 }

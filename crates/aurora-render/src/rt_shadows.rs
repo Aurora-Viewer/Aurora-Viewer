@@ -4597,6 +4597,8 @@ impl Lights {
                 texture_entry(19, unfiltered),
                 texture_entry(23, unfiltered),
                 storage_texture_entry(24, RESULT_FORMAT),
+                texture_entry(25, unfiltered),
+                texture_entry(26, unfiltered),
             ],
         });
         let pipeline = |label: &'static str, layouts: &[Option<&wgpu::BindGroupLayout>], entry: &'static str| {
@@ -4974,6 +4976,8 @@ impl RtShadows {
                 view(19, denoised_tint.unwrap_or(&lt.tint[write])),
                 view(23, &lt.glass[write]),
                 view(24, &t.glass),
+                view(25, &lt.share[write]),
+                view(26, &lt.guide[write]),
             ],
         });
         {

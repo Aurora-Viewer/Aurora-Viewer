@@ -43,7 +43,8 @@
 // as AMD's FidelityFX shadow denoiser does, so the floor clears at once
 // instead of holding a trail. The colour the glass gives the sun
 // (rt_shadows.wgsl `out_glass`, its ray as noisy as the shadow's) is
-// averaged the same way beside it (`glass_history`).
+// averaged the same way beside it (`glass_history`), then over the rays
+// that arrived (`glass_of`).
 // `cs_lights_filter`: the denoised tint and sun, written with the contact
 // shadows into the mask the frame binds: `.r` the sun's shadow (1 in
 // shadow, the darker of the traced and the contact shadow), `.gba` the
@@ -195,6 +196,11 @@ const MID_DRAWN: u32 = 0x200u;
 @group(0) @binding(22) var out_glass_history: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(23) var glass_kept: texture_2d<f32>;
 @group(0) @binding(24) var out_glass: texture_storage_2d<rgba8unorm, write>;
+// cs_lights_filter: this frame's share and guide as cs_lights_reuse wrote
+// them (`out_share`, `out_guide`), before the denoiser: the sun's light
+// the glass history goes with, and the surfaces (`glass_of`).
+@group(0) @binding(25) var share_now: texture_2d<f32>;
+@group(0) @binding(26) var guide_now: texture_2d<f32>;
 
 // common.wgsl `ll_light_atten`.
 fn light_atten(d: f32, falloff: f32) -> f32 {
@@ -874,9 +880,10 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// The colour the glass gives the sun at `pixel`, averaged over the frames
-// as the sun's shadow is (cs_lights_reuse): its ray goes to another point
-// of the sun's disc each frame, so a pane's edge is a penumbra of colour.
+// The colour the glass gives the sun at `pixel` times its light (a stopped
+// ray's is 0, rt_shadows.wgsl), averaged over the frames as the sun's
+// shadow is (cs_lights_reuse): its ray goes to another point of the sun's
+// disc each frame, so a pane's edge is a penumbra of colour.
 // A history this frame's rays around the pixel disagree with (a pane
 // carried off) comes to them at once, its length down by as much. `back`
 // is last frame's pixel; rgb the colour, a the frames.
@@ -908,6 +915,37 @@ fn glass_history(pixel: vec2<i32>, size: vec2<i32>, back: vec2<i32>, now: vec3<f
     return vec4<f32>(mix(was, now, 1.0 / frames), frames);
 }
 
+// The colour the glass gives the sunlight that arrives at `pixel`: the
+// glass history (the colour times the light) over the sun's light history,
+// over the pixels of its 3 × 3 on the same surface, which smooths what the
+// history's reprojection leaves of the rays' grain where the view moves.
+// A stopped ray counting white would pale a pane's colour within the
+// penumbra of another shadow; over the light, it does not count. Where
+// hardly any light arrives the colour fades to 1: it lights nothing there.
+fn glass_of(pixel: vec2<i32>) -> vec3<f32> {
+    let size = vec2<i32>(params.screen.xy);
+    let centre = textureLoad(guide_now, pixel, 0);
+    if (centre.z <= 0.0) {
+        return vec3<f32>(1.0);
+    }
+    let n = unpack_normal(centre.xy);
+    var colour = vec3<f32>(0.0);
+    var light = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let q = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
+            let g = textureLoad(guide_now, q, 0);
+            if (g.z <= 0.0 || abs(g.z - centre.z) > 0.01 + 0.02 * centre.z || dot(n, unpack_normal(g.xy)) < 0.9) {
+                continue;
+            }
+            colour += textureLoad(glass_kept, q, 0).rgb;
+            light += textureLoad(share_now, q, 0).g;
+        }
+    }
+    let through = clamp(colour / max(light, 1e-4), vec3<f32>(0.0), vec3<f32>(1.0));
+    return mix(vec3<f32>(1.0), through, clamp(light * 20.0, 0.0, 1.0));
+}
+
 @compute @workgroup_size(8, 8)
 fn cs_lights_filter(@builtin(global_invocation_id) id: vec3<u32>) {
     let pixel = vec2<i32>(id.xy);
@@ -922,5 +960,5 @@ fn cs_lights_filter(@builtin(global_invocation_id) id: vec3<u32>) {
         tint = clamp(textureLoad(tint_tex, pixel, 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     textureStore(out_mask, pixel, vec4<f32>(max(shadow, ray.r), tint));
-    textureStore(out_glass, pixel, vec4<f32>(textureLoad(glass_kept, pixel, 0).rgb, 1.0));
+    textureStore(out_glass, pixel, vec4<f32>(glass_of(pixel), 1.0));
 }
