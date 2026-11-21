@@ -536,6 +536,21 @@ mod tests {
     }
 
     #[test]
+    fn a_parcel_is_not_known_while_the_next_region_awaits_its_own() {
+        // walking into the next region: MainRegionChanged comes before the
+        // new region's ParcelProperties, and a pin clicked between them must
+        // not pair the new region's UUID with the parcel left behind
+        let mut world = a_world_on(3);
+        let next = HANDLE + (256u64 << 32);
+        world.ensure_region(next, (256, 256)).info = Some(Arc::new(region_info(next, Uuid::from_u128(0xB))));
+        world.apply(aurora_net::NetEvent::MainRegionChanged { handle: next });
+        assert_eq!(world.agent_place(), None);
+        world.save_parcel_environment();
+        assert_eq!(world.parcel_environment_frame(), Outcome::NotSaved);
+        assert!(world.parcel_env.saves.entries.is_empty());
+    }
+
+    #[test]
     fn a_saved_parcel_gets_its_environment_without_asking_the_server() {
         let mut world = a_world_on(3);
         let place = place_of(&world);

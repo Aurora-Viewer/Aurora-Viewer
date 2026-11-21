@@ -1418,6 +1418,41 @@ mod tests {
     }
 
     #[test]
+    fn the_parcel_save_row_takes_an_environment_whoever_owns_it() {
+        // AGENTS.md §2's owner cases, with no permission and with all
+        let me = Uuid::from_u128(2);
+        let group = Uuid::from_u128(4244);
+        let item = Uuid::from_u128(8103);
+        let facts = Facts { agent: me, ..facts() };
+        for (case, owner, group_owned, library) in [
+            ("mine", me, false, false),
+            ("group-owned", group, true, false),
+            ("someone else's", Uuid::from_u128(4245), false, false),
+            ("the Library's", Uuid::from_u128(4246), false, true),
+        ] {
+            for mask in [crate::world::inventory::actions::FULL, 0] {
+                let mut inv = inventory();
+                let settings = inv.items.get_mut(&item).expect("demo item");
+                settings.asset_type = 56;
+                settings.inv_type = 56;
+                settings.asset_id = Uuid::from_u128(4243);
+                settings.base_mask = mask;
+                settings.owner_mask = mask;
+                settings.owner = owner;
+                settings.group_owned = group_owned;
+                settings.group_id = if group_owned { group } else { Uuid::nil() };
+                let parent = settings.parent;
+                if library {
+                    inv.folders.get_mut(&parent).expect("demo folder").library = true;
+                }
+                let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), &facts);
+                let row = c.entries.iter().find(|e| e.id == "apply-save-parcel").expect("parcel save row");
+                assert!(row.enabled, "{case}, mask {mask:#x}");
+            }
+        }
+    }
+
+    #[test]
     fn landmark_destination_actions_use_link_targets_and_require_one_available_asset() {
         let mut inv = inventory();
         let item = Uuid::from_u128(8103);

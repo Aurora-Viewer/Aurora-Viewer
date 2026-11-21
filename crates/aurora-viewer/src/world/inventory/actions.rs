@@ -1304,6 +1304,32 @@ mod environment_local_tests {
     }
 
     #[test]
+    fn an_environment_applies_to_myself_whoever_owns_it_like_the_legacy_viewer() {
+        // AGENTS.md §2's owner cases: "apply_settings_local" asks nothing of
+        // the owner. A Library item is its folder's matter, owned by the
+        // Library's owner; the context menu's test covers the folder.
+        let me = Uuid::from_u128(1);
+        let group = Uuid::from_u128(2);
+        let cases = [
+            ("mine", me, Uuid::nil(), false),
+            ("group-owned", group, group, true),
+            ("someone else's", Uuid::from_u128(3), Uuid::nil(), false),
+            ("the Library's", Uuid::from_u128(4), Uuid::nil(), false),
+        ];
+        for (case, owner, group_id, group_owned) in cases {
+            for mask in [FULL, 0] {
+                let item = InvItem {
+                    owner,
+                    group_id,
+                    group_owned,
+                    ..environment(mask)
+                };
+                assert!(environment_applies_locally(&item), "{case}, mask {mask:#x}");
+            }
+        }
+    }
+
+    #[test]
     fn only_an_environment_with_an_asset_applies() {
         let no_asset = InvItem {
             asset_id: Uuid::nil(),
