@@ -459,6 +459,45 @@ fn roles_and_their_name_colors() {
     assert_ne!(Role::Friend.name_color(&p, &on), Role::Resident.name_color(&p, &on));
 }
 
+/// A light background (any chosen one, the system theme's included) moves a
+/// relation tag that would not read, further toward the ink than on a
+/// window; the skin's own panel leaves every tag as configured.
+#[test]
+fn relation_tags_move_toward_the_ink_on_a_light_panel_only() {
+    use crate::interface_colors::{contrast, on_ground};
+    let k = crate::settings::ColorSettings {
+        relation_names: true,
+        ..Default::default()
+    };
+    let c = crate::ui::colors::c;
+    let tags = [c(k.tag_me), c(k.tag_friend), c(k.tag_linden), c(k.tag_muted)];
+    // the system theme's light background and text
+    let ground = crate::theme::hex("#F2F3F7");
+    let ink = crate::theme::hex("#1B1E26");
+    let mut moved_any = false;
+    for tag in tags {
+        let on_window = on_ground(tag, ground);
+        let plate = on_plate(tag, ink, |t| on_ground(t, ground));
+        if on_window == tag {
+            assert_eq!(plate, tag, "{tag:?} reads already");
+            continue;
+        }
+        moved_any = true;
+        assert!(contrast(plate, ground) >= 4.5, "{tag:?} → {plate:?}");
+        assert!(
+            contrast(plate, ground) > contrast(on_window, ground),
+            "{tag:?}: {plate:?} not past the window's {on_window:?}"
+        );
+    }
+    assert!(moved_any, "no default tag moves on a light panel");
+    // the skin's own panel, through the real rule
+    let p = Theme::default().palette();
+    assert_eq!(Role::Own.name_color(&p, &k), tags[0]);
+    assert_eq!(Role::Friend.name_color(&p, &k), tags[1]);
+    assert_eq!(Role::Linden.name_color(&p, &k), tags[2]);
+    assert_eq!(Role::Blocked.name_color(&p, &k), tags[3]);
+}
+
 #[test]
 fn metrics_keep_the_mockup_proportions() {
     let full = Metrics::of(Level::Full, 1.0);

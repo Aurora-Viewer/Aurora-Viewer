@@ -1493,6 +1493,10 @@ pub struct Settings {
     /// colours of the interface (`crate::interface_colors`), each the
     /// skin's by default.
     pub interface_colors: crate::interface_colors::InterfaceColors,
+    /// Preferences › Appearance › Skin: the system's light or dark mode and
+    /// accent colour (`crate::system_theme`), live, off by default. A
+    /// colour of `interface_colors` wins over the system's.
+    pub follow_system_theme: bool,
     /// Firestorm's camera and movement windows (floater_camera.xml,
     /// floater_moveview.xml) instead of `ui/controls.rs`.
     pub classic_controls: bool,
@@ -2705,6 +2709,7 @@ impl Default for Settings {
             high_contrast: false,
             disable_glass: false,
             interface_colors: Default::default(),
+            follow_system_theme: false,
             classic_controls: false,
             camera_shots: Vec::new(),
             camera_views: Default::default(),
