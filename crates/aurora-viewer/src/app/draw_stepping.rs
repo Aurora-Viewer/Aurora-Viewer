@@ -16,23 +16,17 @@ impl App {
         if !self.settings.draw_distance_stepping {
             return;
         }
-        let (steps, value) = draw_stepping::start(
-            self.settings.draw_stepping,
-            self.settings.draw_distance,
-            self.draw_stepping_interval(),
-            Instant::now(),
-        );
+        let (steps, value) = draw_stepping::start(self.settings.draw_stepping, self.settings.draw_distance, Instant::now());
         log::info!("draw distance stepping ({why}): {value} m, up to {} m", steps.user);
         self.settings.draw_stepping = Some(steps);
         self.settings.draw_distance = value;
     }
 
-    /// An arrival: the next step is a whole interval away
-    /// (gTeleportArrivalTimer.reset in process_agent_movement_complete).
+    /// An arrival: the gaps count from it (gTeleportArrivalTimer.reset in
+    /// process_agent_movement_complete).
     pub(super) fn draw_stepping_arrived(&mut self) {
-        let interval = self.draw_stepping_interval();
         if let Some(steps) = &mut self.settings.draw_stepping {
-            steps.next = Instant::now() + interval;
+            steps.changed = Instant::now();
         }
     }
 
@@ -46,12 +40,18 @@ impl App {
             self.settings.draw_distance,
             self.settings.draw_distance_stepping,
             self.world.teleporting,
+            self.draw_load(),
             self.draw_stepping_interval(),
             Instant::now(),
         ) {
             Tick::Wait => {}
+            Tick::Hold(next) => self.settings.draw_stepping = Some(next),
             Tick::Step(next, value) => {
-                log::info!("draw distance stepping: {value} m");
+                if value < steps.step {
+                    log::info!("draw distance stepping: back to {value} m, the frame is too heavy");
+                } else {
+                    log::info!("draw distance stepping: {value} m");
+                }
                 self.settings.draw_stepping = Some(next);
                 self.settings.draw_distance = value;
             }
@@ -60,6 +60,29 @@ impl App {
                 self.settings.draw_stepping = None;
                 self.settings.draw_distance = value;
             }
+        }
+    }
+
+    /// The arrival queue and the last finished frame. Absent GPU times stay
+    /// absent: a device without timestamps does not pretend the frame was
+    /// slow. A photo's frames are not the world's load: while one is taken,
+    /// only the queue counts.
+    fn draw_load(&self) -> draw_stepping::Load {
+        let photo = self.photo_busy();
+        let tex = &self.scene.textures.stats;
+        let waiting = tex
+            .fetching
+            .saturating_add(tex.decoding)
+            .saturating_add(tex.pending_upload)
+            .saturating_add(self.scene.stats.geom_pending);
+        draw_stepping::Load {
+            waiting: waiting.min(u32::MAX as usize) as u32,
+            gpu_ms: self.last_render.gpu_ms.filter(|_| !photo),
+            shadow_ms: self
+                .last_render
+                .gpu_elements
+                .filter(|_| !photo)
+                .map(|elements| elements[aurora_render::GpuElement::ShadowsDepth as usize]),
         }
     }
 }
