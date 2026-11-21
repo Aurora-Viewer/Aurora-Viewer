@@ -24,6 +24,8 @@ pub enum Action {
     Import(Uuid),
     Migrate,
     ReloadMigration,
+    FinishRecovery(inventory::Recovery),
+    ShowRecovery(Uuid),
     Reload,
     Preferences,
     MovementPreferences,
@@ -270,6 +272,8 @@ pub fn show(
                         }
                         if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), true) {
                             state.remove = Some(set.id);
+                            // the question left folded to its title bar opens again
+                            widgets::bring_floater_front(ui.ctx(), "ao_remove");
                         }
                     }
                 });
@@ -292,6 +296,32 @@ pub fn show(
                     egui::ScrollArea::vertical().max_height(85.0).show(ui, |ui| {
                         for warning in &state.warnings {
                             ui.label(warning);
+                        }
+                    });
+                });
+            }
+            for recovery in inventory::recoveries(inv) {
+                let name = inv
+                    .folders
+                    .get(&recovery.source)
+                    .map_or("Aurora AO".to_owned(), |f| f.info.name.clone());
+                widgets::surface(ui, p, |ui| {
+                    let notice = if recovery.duplicate {
+                        aurora_i18n::tr!("ao-duplicate-native", folder = name.as_str(), count = recovery.sets)
+                    } else {
+                        aurora_i18n::tr!("ao-unfinished-import", folder = name.as_str(), count = recovery.sets)
+                    };
+                    ui.label(RichText::new(notice).color(p.warn));
+                    ui.horizontal(|ui| {
+                        // Like the other AO buttons: an edit already running
+                        // would drop the click.
+                        ui.add_enabled_ui(!state.busy() && !catalog.loading, |ui| {
+                            if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-finish-import")).clicked() {
+                                out.push(Action::FinishRecovery(recovery));
+                            }
+                        });
+                        if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-show-in-inventory")).clicked() {
+                            out.push(Action::ShowRecovery(recovery.source));
                         }
                     });
                 });
@@ -478,7 +508,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
         )
         .show(ctx, p, &mut open, |ui| {
             ui.label(aurora_i18n::tr!("ao-picker-help"));
-            ui.text_edit_singleline(&mut state.filter);
+            crate::ui::widgets::search_text_edit(ui, p, &mut state.filter, |edit| edit);
             let key = (
                 inv.generation,
                 state.filter.clone(),

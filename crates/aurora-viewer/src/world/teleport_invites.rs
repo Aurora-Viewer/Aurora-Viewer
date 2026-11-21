@@ -12,6 +12,7 @@
 //! (`World::answer_teleport_invite`).
 
 use super::notifications::{Data, Kind, im};
+use super::rlva::legacy_strings::{Remote, remote};
 use super::{ChatKind, ChatLine, Origin, UiSound, World};
 use aurora_net::{InstantMessage, NetCommand};
 use glam::Vec3;
@@ -39,6 +40,18 @@ impl Place {
             self.pos.y as f64,
             self.pos.z,
         ))
+    }
+}
+
+/// Destination data stays on the invite for accepting it, while every
+/// presentation surface follows the current showloc restriction.
+pub fn destination_presentation(showloc: bool, place: Option<&Place>) -> (Option<String>, Option<String>) {
+    if showloc {
+        (Some(aurora_i18n::tr!("rlva-hidden-generic").into()), None)
+    } else {
+        let label = place.and_then(Place::label);
+        let url = place.and_then(|p| Some(crate::slurl::make(p.region.as_deref()?, p.pos)));
+        (label, url)
     }
 }
 
@@ -97,6 +110,9 @@ pub struct Invite {
     pub answer: Answer,
     /// Its entry in the notification centre (0 = none).
     pub notification: u64,
+    /// The `@showloc` state its entry's text and its card's search text
+    /// were last written for (None: not yet written).
+    pub presented: Option<bool>,
 }
 
 /// Invitations kept once answered, for the conversation cards.
@@ -110,6 +126,12 @@ pub struct TeleportInvites {
     out: Vec<NetCommand>,
     /// Grid cells whose region was asked from the map.
     asked: std::collections::HashSet<(u32, u32)>,
+    /// The residents whose teleport request we just accepted: the offer
+    /// that answers it goes through send_lures alone
+    /// (teleport_request_callback, llviewermessage.cpp), without the
+    /// @showloc rule of LLAvatarActions::canOfferTeleport
+    /// (`World::rlva_answers_teleport_request`).
+    pub(crate) request_answers: Vec<Uuid>,
 }
 
 impl TeleportInvites {
@@ -123,6 +145,7 @@ impl TeleportInvites {
             rating,
             answer: Answer::Pending,
             notification: 0,
+            presented: None,
         });
         if self.list.len() > MAX_INVITES
             && let Some(i) = self.list.iter().position(|v| v.answer != Answer::Pending)
@@ -177,6 +200,29 @@ pub fn rating_note(rating: Rating) -> Option<String> {
     }
 }
 
+/// An offer's text in the notification centre and its card's search text:
+/// where it leads once the region is known, the sender's message, then the
+/// rating's explanation. Under `@showloc` one hidden marker stands for the
+/// place and the message.
+fn offer_body(showloc: bool, place: Option<&Place>, message: &str, rating: Rating) -> String {
+    let mut body = if showloc {
+        aurora_i18n::tr!("rlva-hidden-generic").to_owned()
+    } else {
+        let label = place
+            .and_then(Place::label)
+            .map(|label| aurora_i18n::tr!("world-teleport-invites-place", place = label).to_string());
+        match label {
+            Some(label) if message.is_empty() => label,
+            Some(label) => format!("{label}\n{message}"),
+            None => message.to_owned(),
+        }
+    };
+    if let Some(note) = rating_note(rating) {
+        body = if body.is_empty() { note } else { format!("{body}\n\n{note}") };
+    }
+    body
+}
+
 /// `secondlife:///app/agent/<id>/completename`: the chat shows the name.
 pub(super) fn agent_link(id: Uuid) -> String {
     format!("secondlife:///app/agent/{id}/completename")
@@ -199,7 +245,7 @@ impl World {
     /// IM_LURE_DECLINED (send_simple_im, as Firestorm sends them).
     fn on_lure(&mut self, im: &InstantMessage, from: &str, godlike: bool) {
         if !godlike && !self.rlva_can_accept_teleport(im.from_agent_id, false) {
-            self.rlva_busy_reply(im.from_agent_id, Uuid::nil(), aurora_i18n::tr!("rlva-im-blocked-teleport-remote"));
+            self.rlva_busy_reply(im.from_agent_id, Uuid::nil(), remote(Remote::BlockedTeleport));
             self.rlva_teleport_dnd(im.from_agent_id);
             return;
         }
@@ -213,7 +259,12 @@ impl World {
             .as_ref()
             .and_then(|(.., access)| access.as_deref())
             .map_or(0, aurora_net::search::short_string_to_access);
-        let rating = rating_of(region, self.agent_access());
+        // a god's lures are never held back by the rating (process_improved_im)
+        let rating = if self.god_level > 0 {
+            Rating::Allowed
+        } else {
+            rating_of(region, self.agent_access())
+        };
         if godlike && rating == Rating::Allowed {
             // "you're about to be teleported": no box
             log::info!("teleport: god lure from {}, accepted", im.from_agent_id);
@@ -259,6 +310,9 @@ impl World {
         }
         self.set_invite_notification(invite, id);
         if rating == Rating::Allowed && self.rlva.auto_accept("accepttp", im.from_agent_id) {
+            // LLIMProcessing::processNewMessage: a lure accepted by
+            // @accepttp cannot be cancelled (setCanCancelTp(false))
+            self.tp_cancel.lock_for_rlva();
             self.rlva_teleport_dnd(im.from_agent_id);
             let commands = self.answer_teleport_invite(invite, true);
             self.teleport_invites.out.extend(commands);
@@ -272,6 +326,9 @@ impl World {
                 (0, aurora_i18n::tr!("world-teleport-invites-resident-cannot-visit").to_owned()),
                 (im::LURE_DECLINED, String::new()),
             ] {
+                // send_simple_im (llviewermessage.cpp) sends both raw: no
+                // @sendim replacement for an automatic answer
+                self.rlva_send_as_decided(to, dialog, &message);
                 self.teleport_invites.out.push(NetCommand::SendImDialog {
                     to,
                     dialog,
@@ -282,6 +339,11 @@ impl World {
             }
         }
         self.refresh_teleport_places();
+        // The offer's text goes to the transcript as the Legacy Viewer logs
+        // it (LLOfferHandler::processNotification, logToIMP2P): `message`
+        // was already censored on arrival under @showloc or @recvim
+        // (rlva_teleport_message), so nothing restricted reaches the file.
+        // The destination itself is never written there.
         let line = self.notice_line(aurora_i18n::tr!(
             "world-teleport-invites-offer-received",
             name = agent_link(im.from_agent_id),
@@ -295,7 +357,7 @@ impl World {
     /// the same sound and log as an offer.
     pub(super) fn on_teleport_request(&mut self, im: &InstantMessage, from: &str) {
         if !self.rlva_can_accept_teleport(im.from_agent_id, true) {
-            self.rlva_busy_reply(im.from_agent_id, Uuid::nil(), aurora_i18n::tr!("rlva-im-blocked-teleport-remote"));
+            self.rlva_busy_reply(im.from_agent_id, Uuid::nil(), remote(Remote::BlockedTeleport));
             self.rlva_teleport_dnd(im.from_agent_id);
             return;
         }
@@ -364,15 +426,9 @@ impl World {
     /// TeleportLureRequest, declined IM_LURE_DECLINED (lure_callback). A
     /// request accepted offers a teleport with no text, followed by our
     /// location (teleport_request_callback → send_lures); refused, nothing
-    /// is sent.
+    /// is sent. RLVa is not asked again here: neither callback asks it, the
+    /// invitation was checked when it came (LLIMProcessing::processNewMessage).
     pub fn answer_teleport_invite(&mut self, invite: u64, accept: bool) -> Vec<NetCommand> {
-        if accept && let Some(v) = self.teleport_invites.list.iter().find(|v| v.id == invite) {
-            let request = matches!(v.kind, InviteKind::Request);
-            let godlike = matches!(v.kind, InviteKind::Offer { godlike: true, .. });
-            if !godlike && !self.rlva_can_accept_teleport(v.from, request) {
-                return Vec::new();
-            }
-        }
         let Some(v) = self.teleport_invites.list.iter_mut().find(|v| v.id == invite) else {
             return Vec::new();
         };
@@ -406,7 +462,12 @@ impl World {
                 message: String::new(),
                 bucket: Vec::new(),
             }],
-            (InviteKind::Request, true) => vec![self.offer_teleport(vec![from], "")],
+            (InviteKind::Request, true) => {
+                if self.teleport_invites.request_answers.len() < 16 {
+                    self.teleport_invites.request_answers.push(from);
+                }
+                vec![self.offer_teleport(vec![from], "")]
+            }
             (InviteKind::Request, false) => Vec::new(),
         }
     }
@@ -415,49 +476,81 @@ impl World {
     /// unknown region is asked once (getSLURLfromPosGlobal). The card and
     /// the notification then say where the offer leads, above the message
     /// (the card keeps it once answered).
+    ///
+    /// Runs every frame: an offer's texts are written again only when its
+    /// region has just been found or `@showloc` changed since they were
+    /// written, so offers that pile up cost a comparison each. Under
+    /// `@showloc` the entry and the find bar's text say neither the place
+    /// nor the message; the `Invite` keeps both, for accepting it and for
+    /// when the restriction is lifted.
     pub fn refresh_teleport_places(&mut self) {
-        let unknown: Vec<(u64, (u32, u32))> = self
-            .teleport_invites
-            .list
-            .iter()
-            .filter_map(|v| match &v.kind {
-                InviteKind::Offer { place: Some(p), .. } if p.region.is_none() => Some((v.id, p.grid)),
-                _ => None,
-            })
-            .collect();
-        for (id, grid) in unknown {
-            let Some(region) = self.map.sim_at(grid.0, grid.1).map(|(_, sim)| sim.name.clone()) else {
-                if self.teleport_invites.asked.insert(grid) {
-                    let (x, y) = (grid.0 as u16, grid.1 as u16);
-                    self.map.push(NetCommand::MapBlockRequest {
-                        min_x: x,
-                        min_y: y,
-                        max_x: x,
-                        max_y: y,
-                        null_sims: true,
-                    });
+        let showloc = self.rlva.has("showloc");
+        let World {
+            teleport_invites,
+            map,
+            notifications,
+            social,
+            ..
+        } = self;
+        for v in &mut teleport_invites.list {
+            let InviteKind::Offer { place, .. } = &mut v.kind else {
+                continue;
+            };
+            let mut found = false;
+            if let Some(p) = place.as_mut()
+                && p.region.is_none()
+            {
+                match map.sim_at(p.grid.0, p.grid.1) {
+                    Some((_, sim)) => {
+                        p.region = Some(sim.name.clone());
+                        found = true;
+                    }
+                    None if teleport_invites.asked.insert(p.grid) => {
+                        let (x, y) = (p.grid.0 as u16, p.grid.1 as u16);
+                        map.push(NetCommand::MapBlockRequest {
+                            min_x: x,
+                            min_y: y,
+                            max_x: x,
+                            max_y: y,
+                            null_sims: true,
+                        });
+                    }
+                    None => {}
                 }
-                continue;
-            };
-            let Some(v) = self.teleport_invites.list.iter_mut().find(|v| v.id == id) else {
-                continue;
-            };
-            let InviteKind::Offer { place: Some(place), .. } = &mut v.kind else {
-                continue;
-            };
-            place.region = Some(region);
-            let label = place.label().unwrap_or_default();
-            let mut body = aurora_i18n::tr!("world-teleport-invites-place", place = label).to_string();
-            if !v.message.is_empty() {
-                body = format!("{body}\n{}", v.message);
             }
-            if let Some(note) = rating_note(v.rating) {
-                body = format!("{body}\n\n{note}");
+            if !found && v.presented == Some(showloc) {
+                continue;
             }
-            let notification = v.notification;
-            if let Some(n) = self.notifications.list.iter_mut().find(|n| n.id == notification) {
-                n.body = body;
+            v.presented = Some(showloc);
+            let body = offer_body(showloc, place.as_ref(), &v.message, v.rating);
+            if v.notification != 0 {
+                notifications.update_body(v.notification, body.clone());
             }
+            // the card draws itself from the Invite; its line's text is what
+            // the find bar searches and Copy gives
+            if let Some(s) = social.ims.iter_mut().find(|s| s.other == v.from)
+                && let Some(line) = s
+                    .lines
+                    .iter_mut()
+                    .rev()
+                    .find(|l| matches!(l.kind, ChatKind::Invite(id) if id == v.id))
+            {
+                let title = line.text.lines().next().unwrap_or_default().to_owned();
+                line.text = if body.is_empty() { title } else { format!("{title}\n{body}") };
+                s.clock.edited();
+            }
+        }
+    }
+
+    /// The text shown for an entry of the notification centre. A teleport
+    /// entry no invitation keeps up to date (one put back from the history)
+    /// may still name where an offer led: under `@showloc` it is hidden
+    /// when shown, its stored text kept for when the restriction is lifted.
+    pub fn notification_body<'a>(&self, n: &'a super::notifications::Notification) -> std::borrow::Cow<'a, str> {
+        if n.kind == Kind::Teleport && self.rlva.has("showloc") && !self.teleport_invites.list.iter().any(|v| v.notification == n.id) {
+            std::borrow::Cow::Owned(aurora_i18n::tr!("rlva-hidden-generic").to_owned())
+        } else {
+            std::borrow::Cow::Borrowed(&n.body)
         }
     }
 
@@ -480,6 +573,9 @@ impl World {
             kind,
             source: from,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         };
         self.conversation_card(from, line);
     }
@@ -498,6 +594,9 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         }
     }
 
@@ -527,6 +626,23 @@ mod tests {
     const ME: Uuid = Uuid::from_u128(1);
     const JANE: Uuid = Uuid::from_u128(2);
     const LURE: Uuid = Uuid::from_u128(0x10);
+
+    #[test]
+    fn showloc_hides_offer_destination_without_discarding_route_data() {
+        let place = Place {
+            grid: (1000, 1000),
+            pos: Vec3::new(12.0, 34.0, 56.0),
+            region: Some("Private Region".into()),
+        };
+        let (label, url) = destination_presentation(true, Some(&place));
+        assert_eq!(label.as_deref(), Some(aurora_i18n::tr!("rlva-hidden-generic")));
+        assert!(url.is_none());
+        let (label, url) = destination_presentation(false, Some(&place));
+        assert!(label.unwrap().contains("Private Region"));
+        let url = url.unwrap();
+        assert!(url.contains("Private%20Region") || url.contains("Private Region"));
+        assert_eq!(destination_presentation(false, None), (None, None));
+    }
 
     fn temp() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("aurora-tp-invites-{}", Uuid::new_v4()));
@@ -952,6 +1068,211 @@ mod tests {
                 ]
             ),
             "{sent:?}"
+        );
+        clean(&w, &root);
+    }
+    fn restrict(w: &mut World, commands: &str) {
+        w.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Privacy fixture".into(),
+            source_id: Uuid::from_u128(0x99),
+            owner_id: w.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: Vec3::ZERO,
+            message: format!("@{commands}"),
+        }));
+    }
+
+    /// A region the map knows, outside the regions the viewer has loaded.
+    fn map_knows(w: &mut World, grid: (u32, u32), name: &str) {
+        w.map.sims.insert(
+            grid,
+            super::super::worldmap::SimInfo {
+                name: name.into(),
+                access: 13,
+                flags: 0,
+                image: Uuid::nil(),
+                size_x: 256,
+                size_y: 256,
+            },
+        );
+    }
+
+    fn card_text(w: &World) -> String {
+        let s = w.social.ims.iter().find(|s| s.other == JANE).unwrap();
+        s.lines
+            .iter()
+            .rev()
+            .find(|l| matches!(l.kind, ChatKind::Invite(_)))
+            .unwrap()
+            .text
+            .clone()
+    }
+
+    #[test]
+    fn a_restored_teleport_card_hides_its_destination_once_showloc_applies() {
+        let root = temp();
+        let mut w = world(&root);
+        w.rlva.configure(true);
+        // an Adult region out of the account's reach: a notice (Data::None)
+        login(&mut w, "M", "M");
+        map_knows(&mut w, (1000, 1001), "Faraway Isle");
+        w.on_im(im(im::LURE_USER, "Come over", ADULT_REGION));
+        assert!(w.regions.is_empty(), "the destination is not a loaded region");
+        let (id, data) = only_notification(&w);
+        assert!(matches!(data, Data::None));
+        let entry = w.notifications.list[0].history_entry(super::super::notification_history::Outcome::Read);
+        assert!(entry.body.contains("Faraway Isle (128, 64, 22)"), "{}", entry.body);
+        // archived, then put back in To do while unrestricted
+        w.notifications.list.retain(|n| n.id != id);
+        let restored = w.notifications.restore(&entry);
+        let n = w.notifications.list.iter().find(|n| n.id == restored).unwrap().clone();
+        assert!(w.notification_body(&n).contains("Faraway Isle"));
+        // then @showloc: the card shows neither the region nor the position
+        restrict(&mut w, "showloc=n");
+        w.refresh_teleport_places();
+        let n = w.notifications.list.iter().find(|n| n.id == restored).unwrap().clone();
+        let shown = w.notification_body(&n);
+        assert!(!shown.contains("Faraway") && !shown.contains("128, 64"), "{shown}");
+        assert_eq!(shown, aurora_i18n::tr!("rlva-hidden-generic"));
+        // the stored text is kept for when the restriction is lifted
+        assert!(n.body.contains("Faraway Isle"));
+        restrict(&mut w, "clear");
+        assert!(w.notification_body(&n).contains("Faraway Isle"));
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn an_offer_card_is_found_and_copied_by_its_text_and_hidden_under_showloc() {
+        let root = temp();
+        let mut w = world(&root);
+        w.rlva.configure(true);
+        login(&mut w, "A", "A");
+        map_knows(&mut w, (1000, 1001), "Faraway Isle");
+        w.on_im(im(im::LURE_USER, "Pineapple appointment", b"256000|256256|128|64|22|0|1|0|M"));
+        w.refresh_teleport_places();
+        // unrestricted: the find bar and Copy read the message and the place
+        let text = card_text(&w);
+        assert!(text.contains("Pineapple appointment") && text.contains("Faraway Isle"), "{text}");
+        // (the find bar's view::matches looks in this text)
+        assert!(text.to_lowercase().contains("pineapple"));
+        let revision = w.social.ims[0].clock.revision;
+        // @showloc after the offer: neither is left to find or copy
+        restrict(&mut w, "showloc=n");
+        w.refresh_teleport_places();
+        let text = card_text(&w);
+        assert!(!text.contains("Pineapple") && !text.contains("Faraway"), "{text}");
+        assert!(text.contains(aurora_i18n::tr!("rlva-hidden-generic")), "{text}");
+        assert!(!text.to_lowercase().contains("pineapple"));
+        assert_ne!(w.social.ims[0].clock.revision, revision, "the views search again");
+        // lifted: back from the invitation
+        restrict(&mut w, "clear");
+        w.refresh_teleport_places();
+        assert!(card_text(&w).contains("Pineapple appointment"));
+        // a request carries no place: its message stays searchable
+        w.on_im(im(im::TELEPORT_REQUEST, "Can I come over?", b""));
+        assert!(card_text(&w).contains("Can I come over?"), "{}", card_text(&w));
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn an_offer_accepted_after_showloc_changes_keeps_its_lure() {
+        let root = temp();
+        let mut w = world(&root);
+        w.rlva.configure(true);
+        login(&mut w, "A", "A");
+        w.on_im(im(im::LURE_USER, "Join me", b"256000|256256|128|64|22|0|1|0|M"));
+        restrict(&mut w, "showloc=n");
+        w.refresh_teleport_places();
+        restrict(&mut w, "clear");
+        w.refresh_teleport_places();
+        let invite = w.teleport_invites.list[0].id;
+        let cmds = w.answer_teleport_invite(invite, true);
+        assert!(
+            matches!(
+                &cmds[..],
+                [NetCommand::AcceptLure {
+                    lure_id: LURE,
+                    godlike: false
+                }]
+            ),
+            "{cmds:?}"
+        );
+        let InviteKind::Offer { place: Some(place), .. } = &w.teleport_invites.list[0].kind else {
+            panic!("an offer with its place");
+        };
+        assert_eq!((place.grid, place.pos), ((1000, 1001), Vec3::new(128.0, 64.0, 22.0)));
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn offers_that_pile_up_are_not_written_again_every_frame() {
+        let root = temp();
+        let mut w = world(&root);
+        login(&mut w, "A", "A");
+        for _ in 0..300 {
+            w.on_im(im(im::LURE_USER, "Join me", b"256000|256256|128|64|22|0|1|0|M"));
+        }
+        let pending = w.teleport_invites.list.iter().filter(|v| v.answer == Answer::Pending).count();
+        assert!(pending > MAX_INVITES, "pending offers are never evicted: {pending}");
+        let revision = w.social.ims[0].clock.revision;
+        let bodies: Vec<String> = w.notifications.list.iter().map(|n| n.body.clone()).collect();
+        // nothing changed: nothing is written, the views are not disturbed
+        w.refresh_teleport_places();
+        assert_eq!(w.social.ims[0].clock.revision, revision);
+        // the region found: each offer is written once, with its place
+        map_knows(&mut w, (1000, 1001), "Faraway Isle");
+        w.refresh_teleport_places();
+        assert!(w.teleport_invites.list.iter().all(|v| v.presented == Some(false)));
+        assert!(w.notifications.list.iter().all(|n| n.body.contains("Faraway Isle")));
+        assert_ne!(bodies[0], w.notifications.list[0].body);
+        let revision = w.social.ims[0].clock.revision;
+        w.refresh_teleport_places();
+        assert_eq!(w.social.ims[0].clock.revision, revision);
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn an_offer_with_only_a_rating_note_starts_with_the_note() {
+        let root = temp();
+        let mut w = world(&root);
+        login(&mut w, "M", "M");
+        w.on_im(im(im::LURE_USER, "", ADULT_REGION));
+        let body = &w.notifications.list[0].body;
+        assert!(!body.starts_with('\n'), "{body:?}");
+        assert_eq!(body.as_str(), rating_note(w.teleport_invites.list[0].rating).unwrap());
+        clean(&w, &root);
+    }
+
+    /// send_simple_im (llviewermessage.cpp): the automatic answers to a
+    /// region out of reach leave as written, past @sendim.
+    #[test]
+    fn rlva_sendim_leaves_the_automatic_out_of_reach_answers_alone() {
+        let root = temp();
+        let mut w = world(&root);
+        login(&mut w, "M", "M");
+        w.rlva.configure(true);
+        w.rlva_console_input("@sendim=n");
+        w.on_im(im(im::LURE_USER, "Join me", ADULT_REGION));
+        let sent = w.teleport_invites.take_commands();
+        assert_eq!(sent.len(), 2, "{sent:?}");
+        for mut command in sent {
+            let before = format!("{command:?}");
+            assert_eq!(w.rlva_send_boundary(&mut command, Uuid::nil()), crate::world::rlva::Boundary::Send);
+            assert_eq!(format!("{command:?}"), before, "sent as written");
+        }
+        // and only once: the same text written by the user is replaced
+        let mut again = NetCommand::SendImDialog {
+            to: JANE,
+            dialog: 0,
+            id: LURE,
+            message: aurora_i18n::tr!("world-teleport-invites-resident-cannot-visit").to_owned(),
+            bucket: Vec::new(),
+        };
+        assert_eq!(w.rlva_send_boundary(&mut again, Uuid::nil()), crate::world::rlva::Boundary::Send);
+        assert!(
+            matches!(&again, NetCommand::SendImDialog { message, .. } if message != aurora_i18n::tr!("world-teleport-invites-resident-cannot-visit"))
         );
         clean(&w, &root);
     }

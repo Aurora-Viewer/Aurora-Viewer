@@ -641,25 +641,20 @@ fn confirm(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut W
                 tool.deed(world, group);
             }
         }
-        Confirm::Divide | Confirm::Join => {
+        Confirm::Divide => {
             if let Some((handle, west, south, east, north)) = tool.land.selection_local(world) {
-                tool.send(if c == Confirm::Divide {
-                    BuildCmd::ParcelDivide {
-                        handle,
-                        west,
-                        south,
-                        east,
-                        north,
-                    }
-                } else {
-                    BuildCmd::ParcelJoin {
-                        handle,
-                        west,
-                        south,
-                        east,
-                        north,
-                    }
+                tool.send(BuildCmd::ParcelDivide {
+                    handle,
+                    west,
+                    south,
+                    east,
+                    north,
                 });
+            }
+        }
+        Confirm::Join => {
+            if let Some(cmd) = tool.land.join_command(world) {
+                tool.send(cmd);
             }
         }
         Confirm::Release => {

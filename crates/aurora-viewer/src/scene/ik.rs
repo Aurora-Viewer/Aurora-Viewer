@@ -4,33 +4,26 @@
 //! by IK. Direct mode explicitly edits the selected joint's local transform.
 
 use super::{anim::Rig, hand_ik};
-pub use crate::world::hand_ik::ConstraintMode as Mode;
 use glam::{Quat, Vec3};
-use std::time::Instant;
-mod activation;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashSet, time::Instant};
 pub mod animations;
 mod body;
-pub mod graph;
 mod multiple;
 
-pub fn targets(world: &crate::world::World, avatar: usize, dz: f32, now: Instant) -> Vec<Goal> {
-    let Some(subject) = world.objects.get(avatar).map(|o| o.full_id) else {
-        return Vec::new();
-    };
-    let Some((p, r, _)) = super::Scene::object_transform_unshifted(world, avatar, now) else {
-        return Vec::new();
-    };
-    let height = Vec3::Z * (dz + world.appearance_hover(&subject));
-    let seated = world.objects.get(avatar).is_some_and(|o| o.parent_id != 0);
-    let p = p + if seated { r * height } else { height };
-    let model = glam::Mat4::from_rotation_translation(r, p) * glam::Mat4::from_translation(-world.avatar_lib.pelvis);
-    graph::runtime(world, subject, model, now)
+/// How a goal reaches its target: through its chain (`Ik`), or by setting
+/// the joint's own local transform (`Direct`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    #[default]
+    Ik,
+    Direct,
 }
 
 #[derive(Clone, Debug)]
 pub struct Goal {
-    pub follow: Option<graph::Follow>,
-    /// Authored strength, independent of the runtime arrival/release fade.
+    /// Authored strength.
     pub weight: f32,
     pub bone: usize,
     pub root: usize,
@@ -42,29 +35,14 @@ pub struct Goal {
     pub mode: Mode,
 }
 
-impl Goal {
-    fn same_binding(&self, other: &Self) -> bool {
-        self.bone == other.bone
-            && match (&self.follow, &other.follow) {
-                (Some(a), Some(b)) => a.same_binding(b),
-                (None, None) => true,
-                _ => false,
-            }
-    }
-}
-
 #[derive(Clone, Default)]
 pub struct EditRequest {
     pub active: bool,
     pub goals: Vec<Goal>,
     /// Authored local channels are applied before explicit target constraints.
     pub joints: Vec<JointEdit>,
-    /// Explicitly released bones suppress the corresponding live contacts.
-    pub released: Vec<usize>,
     pub animations: Vec<animations::Sample>,
     pub suppress_live: bool,
-    /// Locally hide script contacts while retaining their runtime state.
-    pub suppress_script_ik: bool,
 }
 
 #[derive(Clone)]
@@ -76,17 +54,28 @@ pub struct JointEdit {
     pub weight: f32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct LocalPose {
     pub rotations: Vec<Quat>,
     pub positions: Vec<Vec3>,
 }
 
+/// What an edit session poses on: the frozen or suppressed live pose with
+/// the editor's animation layers, before its joint edits and contacts.
+/// Positions are in the editor's convention (pelvis offset included, as
+/// `Rig::world_with` with a zero offset reads them back).
+#[derive(Clone, PartialEq)]
+pub struct EditBase {
+    pub pose: LocalPose,
+    /// The shape's rest positions under that pose.
+    pub rest: Vec<Vec3>,
+}
+
 #[derive(Default)]
 pub struct Pose {
-    pub targets: Vec<Goal>,
     pub edit: EditRequest,
-    held: Vec<activation::Held>,
+    /// The base of the active edit session, rebuilt only when it changes.
+    pub edit_base: Option<std::sync::Arc<EditBase>>,
     frozen: Option<LocalPose>,
     rest_positions: Vec<Vec3>,
     at: Option<Instant>,
@@ -95,34 +84,45 @@ pub struct Pose {
 }
 
 impl Pose {
-    pub fn has_external_targets(&self) -> bool {
-        self.targets
-            .iter()
-            .chain(self.edit.goals.iter())
-            .chain(self.held.iter().map(|held| &held.goal))
-            .any(|g| g.follow.as_ref().is_some_and(|f| f.context.external()))
-    }
-    pub fn refresh_external_targets(&mut self, world: &crate::world::World, now: Instant) {
-        let mut contexts = std::collections::HashMap::new();
-        for goal in self
-            .targets
-            .iter_mut()
-            .chain(self.edit.goals.iter_mut())
-            .chain(self.held.iter_mut().map(|held| &mut held.goal))
-        {
-            if let Some(follow) = &mut goal.follow
-                && follow.context.external()
-            {
-                follow.context = contexts
-                    .entry(std::sync::Arc::as_ptr(&follow.context) as usize)
-                    .or_insert_with(|| follow.context.refreshed(world, now))
-                    .clone();
-            }
-        }
-    }
     pub fn set_rest_positions(&mut self, positions: &[Vec3]) {
         self.rest_positions.clear();
         self.rest_positions.extend_from_slice(positions);
+    }
+    /// Publish the edit session's base for the editor, which records the
+    /// user's changes from it only. The frozen base rarely changes, so the
+    /// copy is made only when it does.
+    fn keep_edit_base(&mut self, rig: &Rig, base: &LocalPose, pelvis: Vec3) {
+        let parent_scale = rig.parent_scale.get(rig.pelvis).copied().unwrap_or(Vec3::ONE);
+        let offset = if parent_scale.abs().min_element() > 1e-5 {
+            pelvis / parent_scale
+        } else {
+            Vec3::ZERO
+        };
+        let position = |j: usize, p: Vec3| if j == rig.pelvis { p + offset } else { p };
+        let rest = if self.rest_positions.len() == rig.len() {
+            &self.rest_positions
+        } else {
+            &rig.local_pos
+        };
+        let unchanged = self.edit_base.as_ref().is_some_and(|b| {
+            b.rest == *rest
+                && b.pose.rotations == base.rotations
+                && b.pose.positions.len() == base.positions.len()
+                && b.pose
+                    .positions
+                    .iter()
+                    .zip(&base.positions)
+                    .enumerate()
+                    .all(|(j, (a, p))| *a == position(j, *p))
+        });
+        if unchanged {
+            return;
+        }
+        let pose = LocalPose {
+            rotations: base.rotations.clone(),
+            positions: base.positions.iter().enumerate().map(|(j, p)| position(j, *p)).collect(),
+        };
+        self.edit_base = Some(std::sync::Arc::new(EditBase { pose, rest: rest.clone() }));
     }
     #[allow(clippy::too_many_arguments)] // Same pose inputs as Controller::evaluate.
     pub fn apply(
@@ -146,96 +146,56 @@ impl Pose {
         self.body_continuity.begin_frame(self.edit.active, elapsed.min(0.1));
         if !self.edit.active {
             self.frozen = None;
+            self.edit_base = None;
             self.rest_positions.clear();
-        }
-        if self.targets.is_empty() && self.held.is_empty() && !self.edit.active {
             self.body_continuity.clear();
             return None;
         }
-        let mut result = LocalPose {
+        let live = LocalPose {
             rotations: rotations.to_vec(),
             positions: positions.to_vec(),
         };
-        if self.edit.active {
-            // Snapshot animation inputs, never already solved IK. Otherwise
-            // disabling a contact bakes its correction into the frozen base.
-            result = self.frozen.get_or_insert_with(|| result.clone()).clone();
-            if self.edit.suppress_live {
-                result.rotations.clone_from(&rig.local_rot);
-                result.positions.clone_from(if self.rest_positions.len() == rig.len() {
-                    &self.rest_positions
-                } else {
-                    &rig.local_pos
-                });
-                result.positions[rig.pelvis] -= pelvis;
-            }
-            if !self.edit.animations.is_empty() {
-                animations::apply(rig, &mut result, pelvis, &self.edit.animations);
-            }
-            for joint in &self.edit.joints {
-                if joint.bone >= rig.len() || !joint.weight.is_finite() || !(0.0..=1.0).contains(&joint.weight) {
-                    continue;
-                }
-                if let Some(q) = joint
-                    .rotation
-                    .filter(|q| q.is_finite() && (0.9..=1.1).contains(&q.length_squared()))
-                {
-                    result.rotations[joint.bone] = result.rotations[joint.bone].slerp(q.normalize(), joint.weight).normalize();
-                }
-                if let Some(p) = joint.translation.filter(|p| p.is_finite()) {
-                    result.positions[joint.bone] += p * joint.weight;
-                }
-            }
+        // Snapshot animation inputs, never already solved IK. Otherwise
+        // releasing a goal bakes its correction into the frozen base.
+        let mut result = self.frozen.get_or_insert(live).clone();
+        if self.edit.suppress_live {
+            result.rotations.clone_from(&rig.local_rot);
+            result.positions.clone_from(if self.rest_positions.len() == rig.len() {
+                &self.rest_positions
+            } else {
+                &rig.local_pos
+            });
+            result.positions[rig.pelvis] -= pelvis;
         }
-        let source = result.clone();
-        for goal in &self.targets {
-            if !self.held.iter().any(|held| held.goal.same_binding(goal)) {
-                self.held.push(activation::Held::new(goal));
+        if !self.edit.animations.is_empty() {
+            // A clip without a pelvis position key stands where a zero
+            // key would (`animations::apply`: the rig's pelvis plus the
+            // key), never on the shaped rest pelvis: a worn mesh's
+            // pelvis override can sit metres up, and the uploaded clip
+            // leaves the pelvis to the avatar's other animations anyway.
+            if self.edit.suppress_live && !animations::keys_position(rig.pelvis, &self.edit.animations) {
+                result.positions[rig.pelvis] = rig.local_pos[rig.pelvis] - pelvis;
             }
+            animations::apply(rig, &mut result, pelvis, &self.edit.animations);
         }
-        for held in &mut self.held {
-            let incoming = self.targets.iter().find(|g| g.same_binding(&held.goal));
-            if held.update(incoming, rig, &source, pelvis, scale, elapsed) {
-                self.body_continuity.clear();
+        self.keep_edit_base(rig, &result, pelvis);
+        for joint in &self.edit.joints {
+            if joint.bone >= rig.len() || !joint.weight.is_finite() || !(0.0..=1.0).contains(&joint.weight) {
+                continue;
+            }
+            if let Some(q) = joint
+                .rotation
+                .filter(|q| q.is_finite() && (0.9..=1.1).contains(&q.length_squared()))
+            {
+                result.rotations[joint.bone] = result.rotations[joint.bone].slerp(q.normalize(), joint.weight).normalize();
+            }
+            if let Some(p) = joint.translation.filter(|p| p.is_finite()) {
+                result.positions[joint.bone] += p * joint.weight;
             }
         }
-        self.held.retain(activation::Held::retained);
-        if self.held.is_empty() && !self.edit.active {
-            self.body_continuity.clear();
-            return None;
-        }
-        let edit = &self.edit;
-        let visible = |goal: &Goal| {
-            goal.weight > 0.0
-                && !(edit.active
-                    && (edit.suppress_script_ik || edit.released.contains(&goal.bone) || edit.goals.iter().any(|g| g.bone == goal.bone)))
-        };
-        let mut tasks: Vec<_> = self
-            .held
-            .iter()
-            .filter(|held| held.weight > 0.0 && visible(&held.goal))
-            .map(|held| (&held.goal, held.weight))
-            .collect();
-        if self.edit.active {
-            tasks.extend(self.edit.goals.iter().map(|g| (g, 1.0)));
-        }
-        let releasing: Vec<_> = self
-            .held
-            .iter()
-            .filter(|held| visible(&held.goal))
-            .filter_map(activation::Held::peer_release)
-            .filter(|(g, _)| tasks.iter().any(|(active, _)| active.bone == g.bone))
-            .collect();
-        tasks.extend(releasing);
-        activation::release(
-            rig,
-            &self.held.iter().filter(|held| visible(&held.goal)).collect::<Vec<_>>(),
-            &tasks,
-            &source,
-            &mut result,
-        );
+        let tasks: Vec<_> = self.edit.goals.iter().map(|g| (g, 1.0)).collect();
         let refs: Vec<_> = tasks.iter().map(|t| t.0).collect();
-        let order = graph::order(rig, &refs);
+        let order = order(rig, &refs);
         let collective = order
             .iter()
             .filter(|&&i| tasks[i].0.weight == 1.0 && tasks[i].1 == 1.0)
@@ -298,24 +258,53 @@ impl Pose {
         let tasks: Vec<_> = combined.iter().map(|(g, weight)| (g, *weight)).collect();
         let order: Vec<_> = (0..tasks.len()).collect();
         body::reconcile(rig, &mut result, pelvis, scale, &tasks, &order, &mut self.body_continuity);
-        if self.held.iter().any(activation::Held::waiting) {
-            // A parent's active pin can bring a child into range. Waiting
-            // contacts have not contributed any correction to this pose.
-            let matrices = rig.world_with(&result.rotations, pelvis, &result.positions, scale);
-            for held in &mut self.held {
-                if visible(&held.goal) && held.arrive_after_contacts(&matrices) {
-                    self.body_continuity.clear();
-                }
-            }
-        }
-        for held in &mut self.held {
-            // Temporary authoring channels never enter a script's release cache.
-            if !edit.active && visible(&held.goal) && applied.contains(&held.goal.bone) {
-                held.capture(rig, &source, &result);
-            }
-        }
         Some(result)
     }
+}
+
+fn ancestor(rig: &Rig, a: usize, mut b: usize) -> bool {
+    for _ in 0..rig.len() {
+        if a == b {
+            return true;
+        }
+        let Some(parent) = rig.parent.get(b).copied().flatten() else {
+            return false;
+        };
+        b = parent;
+    }
+    false
+}
+
+/// Stable dependency ordering: a goal whose chain starts below another goal's
+/// joint is solved after it. Cycles and everything depending on them are
+/// omitted; unrelated constraints continue to work.
+pub fn order(rig: &Rig, goals: &[&Goal]) -> Vec<usize> {
+    let mut dependencies = vec![HashSet::new(); goals.len()];
+    for (i, goal) in goals.iter().enumerate() {
+        for (j, parent) in goals.iter().enumerate() {
+            if i != j && parent.bone != goal.bone && parent.weight > 0.0 && ancestor(rig, parent.bone, goal.root) {
+                dependencies[i].insert(j);
+            }
+        }
+    }
+    // Peers are solved as one weighted joint target: all of their anchors
+    // must be ready before any peer.
+    let original = dependencies.clone();
+    for (i, goal) in goals.iter().enumerate() {
+        for (j, peer) in goals.iter().enumerate() {
+            if peer.bone == goal.bone {
+                dependencies[i].extend(&original[j]);
+            }
+        }
+    }
+    let mut result = Vec::new();
+    while let Some(next) = (0..goals.len())
+        .filter(|i| !result.contains(i) && dependencies[*i].iter().all(|j| result.contains(j)))
+        .min_by_key(|i| depth(rig, goals[*i].root))
+    {
+        result.push(next);
+    }
+    result
 }
 
 /// A child may use its requested ancestry only while it preserves already
@@ -334,11 +323,7 @@ fn protect_parent_contacts(rig: &Rig, goal: &mut Goal, solved: &[(Goal, f32)], a
             continue;
         }
         if let Some(index) = path.iter().position(|&bone| bone == parent.bone) {
-            let oriented = parent.rotation.is_some()
-                || parent
-                    .follow
-                    .as_ref()
-                    .is_some_and(|f| f.context.definition.bindings[f.index].orient);
+            let oriented = parent.rotation.is_some();
             root = root.max(index + usize::from(oriented || parent.contact.length_squared() > 0.0));
         }
     }
@@ -402,16 +387,6 @@ pub fn chain(rig: &Rig, bone: usize, root: usize) -> Option<Vec<usize>> {
 }
 
 pub fn apply_goal(rig: &Rig, pose: &mut LocalPose, pelvis: Vec3, scale: &[Vec3], goal: &Goal) -> bool {
-    let resolved;
-    let goal = if let Some(follow) = &goal.follow {
-        let Some(value) = follow.resolve(goal, rig, pose, pelvis, scale) else {
-            return false;
-        };
-        resolved = value;
-        &resolved
-    } else {
-        goal
-    };
     if !goal.weight.is_finite() || !(0.0..=1.0).contains(&goal.weight) {
         return false;
     }

@@ -47,8 +47,13 @@ const NAME_ABOVE: f32 = 0.3;
 
 /// The name over a target, in the format of DebugLookAtShowNames (1
 /// complete, 2 display, 3 legacy "Firstname Lastname", 4 username); none
-/// for 0 or a name not known yet.
-fn name(world: &World, id: &Uuid, format: u8) -> Option<String> {
+/// for 0 or a name not known yet. None at all under RLVa @shownames, ours
+/// and the excepted residents' included: LLHUDEffectLookAt::render draws
+/// no name then, where a stand-in would still tell targets apart.
+pub(crate) fn name(world: &World, id: &Uuid, format: u8) -> Option<String> {
+    if world.rlva.has("shownames") {
+        return None;
+    }
     let names = &world.social.avatar_names;
     let n = names.get(id)?;
     let o = &names.options;
@@ -91,7 +96,12 @@ fn toward(p: Vec3, eye: Vec3) -> Vec3 {
 
 /// Whose targets are drawn: ours unless hidden (DebugLookAtHideOwn) or
 /// private (PrivateLookAtTarget), and every other avatar's.
+/// Studio suppresses this overlay without changing gaze tracking or settings:
+/// targets can lie outside the isolated scene, even for a seated companion.
 pub fn sources(world: &World, s: &Settings) -> Vec<(Uuid, Target)> {
+    if world.avatar_studio {
+        return Vec::new();
+    }
     let me = world.agent_id;
     let mut out: Vec<(Uuid, Target)> = world
         .look_at
@@ -253,8 +263,48 @@ mod tests {
         assert!((toward(Vec3::new(9.9, 0.0, 0.0), eye).x - 9.95).abs() < 1e-5);
     }
 
+    /// LLHUDEffectLookAt::render: `show_names > 0 && !hasBehaviour(SHOWNAMES)`.
     #[test]
-    fn our_target_is_hidden_when_asked_or_private() {
+    fn rlva_shownames_draws_no_name_over_a_target_not_even_ours() {
+        use crate::scene::avatar::AvatarLibrary;
+        let mut world = World::new(std::sync::Arc::new(AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        let other = Uuid::from_u128(2);
+        let cached = |id, first: &str| aurora_net::AvatarNameData {
+            id,
+            username: first.to_lowercase(),
+            display_name: first.to_owned(),
+            legacy_first: first.to_owned(),
+            legacy_last: "Resident".into(),
+            ..Default::default()
+        };
+        world
+            .social
+            .avatar_names
+            .on_display_names(&[cached(world.agent_id, "Me"), cached(other, "Jane")], &[], None);
+        assert_eq!(name(&world, &other, 2).as_deref(), Some("Jane"));
+        assert_eq!(name(&world, &other, 0), None);
+        world.rlva_configure(true);
+        assert_eq!(name(&world, &other, 2).as_deref(), Some("Jane"), "RLVa alone hides nothing");
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Look-at fixture".into(),
+            source_id: Uuid::from_u128(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: Vec3::ZERO,
+            message: format!("@shownames=n,shownames:{other}=add"),
+        }));
+        world.refresh_rlva_privacy();
+        for format in 1..=4 {
+            assert_eq!(name(&world, &other, format), None, "an excepted resident's neither");
+            assert_eq!(name(&world, &world.agent_id, format), None);
+        }
+    }
+
+    #[test]
+    fn target_visibility_respects_privacy_and_studio_without_changing_tracking() {
         use crate::scene::avatar::AvatarLibrary;
         use std::sync::Arc;
         let mut world = World::new(Arc::new(AvatarLibrary::load()));
@@ -286,5 +336,20 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(ids(&private), vec![other]);
+        world.avatar_studio = true;
+        assert!(
+            sources(&world, &shown).is_empty(),
+            "studio hides both our target and other avatars' targets"
+        );
+        assert_eq!(world.look_at.remote.get(&other), Some(&focus));
+        assert_eq!(world.look_at.own.target, focus);
+        world.avatar_studio = false;
+        let mut restored: Vec<_> = sources(&world, &shown).into_iter().map(|(id, _)| id).collect();
+        restored.sort();
+        assert_eq!(
+            restored,
+            vec![world.agent_id, other],
+            "leaving studio restores the existing visibility setting"
+        );
     }
 }

@@ -48,7 +48,7 @@ impl Fixture {
         std::fs::write(path, crate::imports::demo::DAE).unwrap();
     }
     fn load(&self, prefs: &Preferences) -> Vec<Entry> {
-        load(&self.0, prefs, prefs.texture(), 30, 0, 0)
+        load(&self.0, prefs, prefs.texture(), 30)
     }
 }
 impl Drop for Fixture {

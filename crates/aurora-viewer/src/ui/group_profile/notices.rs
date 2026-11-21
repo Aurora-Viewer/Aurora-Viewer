@@ -14,9 +14,11 @@ use super::{GroupAction, GroupProfileUi};
 use crate::theme::Palette;
 use crate::ui::inventory::InvDrag;
 use crate::ui::place_details::Ctx;
+use crate::ui::places::drag::PlaceDrag;
 use crate::ui::widgets::{self, ActionKind};
 use crate::world::World;
 use crate::world::inventory::actions::{COPY, TRANSFER};
+use aurora_i18n::UiUpper;
 use aurora_net::groups::{NoticeSummary, powers};
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
@@ -69,6 +71,38 @@ pub fn attachable(world: &World, id: Uuid) -> Option<Uuid> {
     Some(item.id)
 }
 
+fn attachment_hover(response: &egui::Response) -> Option<Uuid> {
+    response
+        .dnd_hover_payload::<InvDrag>()
+        .map(|drag| drag.0)
+        .or_else(|| response.dnd_hover_payload::<PlaceDrag>().and_then(|drag| drag.target.item()))
+}
+
+/// Take whichever supported payload is being dropped. Check its type before
+/// calling `dnd_release_payload`: egui takes and downcasts the payload, so an
+/// attempt with the wrong type would consume a favorite before its owner sees it.
+fn attachment_release(response: &egui::Response) -> Option<Uuid> {
+    if response.dnd_hover_payload::<InvDrag>().is_some() {
+        response.dnd_release_payload::<InvDrag>().map(|drag| drag.0)
+    } else if response.dnd_hover_payload::<PlaceDrag>().is_some() {
+        response.dnd_release_payload::<PlaceDrag>().and_then(|drag| drag.target.item())
+    } else {
+        None
+    }
+}
+
+fn apply_attachment_release(draft: &mut Compose, world: &World, response: &egui::Response) {
+    if let Some(id) = attachment_release(response) {
+        match attachable(world, id) {
+            Some(item) => {
+                draft.item = Some(item);
+                draft.refused = false;
+            }
+            None => draft.refused = true,
+        }
+    }
+}
+
 /// The time of a notice: "10:42" today, "yesterday", or the day and month.
 pub fn short_date(timestamp: u32, now: i64) -> String {
     let day = |secs: i64| (secs - 8 * 3600).div_euclid(86_400);
@@ -94,6 +128,7 @@ pub fn sender(from: &str) -> &str {
 /// the attachment, the date. Shared with the Home tab.
 pub fn row(ui: &mut egui::Ui, p: &Palette, n: &NoticeSummary, unread: bool, selected: bool, icon: bool, now: i64) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::click());
+    widgets::reveal_search_selection(ui, &resp, selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
@@ -165,9 +200,18 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
         ui.max_rect().right_bottom() - Vec2::new(4.0, 0.0),
     );
     ui.allocate_rect(body, Sense::hover());
-    let list_w = LIST_W.min(body.width() * 0.45);
-    let left = Rect::from_min_max(body.min, Pos2::new(body.left() + list_w, body.bottom()));
-    let right = Rect::from_min_max(Pos2::new(left.right() + 12.0, body.top()), body.max);
+    // panel_group_notices.xml places the message below the list. Keep
+    // Aurora's two columns only when both panes have room for their actions.
+    let scale = crate::ui::fonts::scale(ui.ctx());
+    let (left, right) = if body.width() < 640.0 * scale {
+        let list_h = (body.height() * 0.4).min(220.0 * scale);
+        let left = Rect::from_min_size(body.min, Vec2::new(body.width(), list_h));
+        (left, Rect::from_min_max(Pos2::new(body.left(), left.bottom() + 12.0), body.max))
+    } else {
+        let list_w = LIST_W.min(body.width() * 0.45);
+        let left = Rect::from_min_max(body.min, Pos2::new(body.left() + list_w, body.bottom()));
+        (left, Rect::from_min_max(Pos2::new(left.right() + 12.0, body.top()), body.max))
+    };
     let mut l = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(left)
@@ -197,11 +241,22 @@ pub fn show(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, a
 /// The search, "New notice", "Refresh", then the notices.
 fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actions: &mut Vec<GroupAction>) {
     let p = c.p;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         let send = v.can(powers::NOTICES_SEND);
-        let w = ui.available_width() - if send { 150.0 } else { 40.0 };
-        widgets::search_field(ui, &mut st.notices.search, aurora_i18n::tr!("ui-group-notices-search"), w.max(80.0));
+        let new_width = if send {
+            widgets::action_button_fit(ui, "pencil-filled", aurora_i18n::tr!("ui-group-notices-new")) + 5.0
+        } else {
+            0.0
+        };
+        let w = ui.available_width() - new_width - 32.0;
+        widgets::search_field(
+            ui,
+            p,
+            &mut st.notices.search,
+            aurora_i18n::tr!("ui-group-notices-search"),
+            w.max(80.0),
+        );
         if send
             && widgets::action_button(
                 ui,
@@ -323,13 +378,9 @@ fn reading(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                 });
             });
             ui.add_space(8.0);
-            for line in n.message.lines() {
-                if line.trim().is_empty() {
-                    ui.add_space(6.0);
-                } else {
-                    crate::ui::chat::chat_text(ui, p, c.emoji, c.world, c.want_names, line, 13.0, p.ink, false);
-                }
-            }
+            crate::ui::chat::select::document(ui, p, n.id, &n.message, |ui, line| {
+                crate::ui::chat::chat_text(ui, p, c.emoji, c.world, c.want_names, line, 13.0, p.ink, false);
+            });
             if let Some((name, asset_type)) = &n.attachment {
                 ui.add_space(8.0);
                 egui::Frame::new()
@@ -338,29 +389,52 @@ fn reading(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                     .inner_margin(egui::Margin::symmetric(9, 7))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
+                        let font = FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+                        let title_width = ui.painter().layout_no_wrap(name.clone(), font.clone(), p.ink).size().x;
+                        let kind_width = ui
+                            .painter()
+                            .layout_no_wrap(asset_label(*asset_type).into(), FontId::proportional(11.5), p.muted)
+                            .size()
+                            .x;
+                        let info_width = (25.0 + title_width.max(kind_width)).min(ui.available_width());
+                        let (icon, label) = if n.saved {
+                            ("check", aurora_i18n::tr!("ui-group-notices-saved"))
+                        } else {
+                            ("download-filled", aurora_i18n::tr!("ui-group-notices-save"))
+                        };
+                        let button_label = if widgets::action_button_fit(ui, icon, label) > ui.available_width() && !n.saved {
+                            aurora_i18n::tr!("common-save")
+                        } else {
+                            label
+                        };
+                        // The attachment and its action are separate items of
+                        // a wrapping row: neither may paint over the other.
+                        ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing.x = 8.0;
-                            widgets::glyph(ui, attachment_icon(*asset_type), p.amber, 17.0);
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 1.0;
-                                ui.label(
-                                    egui::RichText::new(name)
-                                        .font(FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx())))
-                                        .color(p.ink),
-                                );
-                                ui.label(egui::RichText::new(asset_label(*asset_type)).size(11.5).color(p.muted));
-                            });
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let (icon, label) = if n.saved {
-                                    ("check", aurora_i18n::tr!("ui-group-notices-saved"))
-                                } else {
-                                    ("download-filled", aurora_i18n::tr!("ui-group-notices-save"))
-                                };
-                                if widgets::action_button_if(ui, p, icon, label, ActionKind::Flat, Vec2::new(0.0, 26.0), !n.saved).clicked()
-                                {
-                                    actions.push(GroupAction::SaveAttachment(v.id));
-                                }
-                            });
+                            ui.spacing_mut().item_spacing.y = 8.0;
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(info_width, 0.0),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    widgets::glyph(ui, attachment_icon(*asset_type), p.amber, 17.0);
+                                    ui.vertical(|ui| {
+                                        ui.set_width((info_width - 25.0).max(1.0));
+                                        ui.spacing_mut().item_spacing.y = 1.0;
+                                        ui.add(egui::Label::new(egui::RichText::new(name).font(font).color(p.ink)).wrap());
+                                        ui.add(
+                                            egui::Label::new(egui::RichText::new(asset_label(*asset_type)).size(11.5).color(p.muted))
+                                                .wrap(),
+                                        );
+                                    });
+                                },
+                            );
+                            let height = 26.0_f32.max(ui.text_style_height(&egui::TextStyle::Body) + 8.0);
+                            if widgets::action_button_if(ui, p, icon, button_label, ActionKind::Flat, Vec2::new(0.0, height), !n.saved)
+                                .on_hover_text(label)
+                                .clicked()
+                            {
+                                actions.push(GroupAction::SaveAttachment(v.id));
+                            }
                         });
                     });
             }
@@ -426,7 +500,7 @@ fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                 let mut format = crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 10.5, p.muted_dim);
                 format.extra_letter_spacing = 0.4;
                 let mut job = egui::text::LayoutJob::default();
-                job.append(&aurora_i18n::tr!("ui-group-notices-new").to_uppercase(), 0.0, format);
+                job.append(&aurora_i18n::tr!("ui-group-notices-new").ui_upper(), 0.0, format);
                 ui.label(job);
             });
             widgets::restricted_text_field(ui, true, &mut draft.subject, widgets::TextPolicy::Ascii, |b, _| {
@@ -445,7 +519,7 @@ fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
             crate::ui::spelling::field(ui, p, &mut message, &mut draft.message, false);
             // the attachment: dropped from the inventory
             let (zone, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::hover());
-            let hovered = resp.dnd_hover_payload::<InvDrag>().map(|d| d.0);
+            let hovered = attachment_hover(&resp);
             let ok = hovered.map(|id| attachable(c.world, id).is_some());
             let stroke = match ok {
                 Some(true) => p.violet_light,
@@ -458,15 +532,7 @@ fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                 egui::Stroke::new(1.5, stroke),
                 egui::StrokeKind::Inside,
             );
-            if let Some(d) = resp.dnd_release_payload::<InvDrag>() {
-                match attachable(c.world, d.0) {
-                    Some(item) => {
-                        draft.item = Some(item);
-                        draft.refused = false;
-                    }
-                    None => draft.refused = true,
-                }
-            }
+            apply_attachment_release(draft, c.world, &resp);
             let mut inner = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(zone.shrink2(Vec2::new(9.0, 4.0)))
@@ -524,5 +590,126 @@ fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
         });
     } else if cancel {
         st.notices.compose = None;
+    }
+}
+
+#[cfg(test)]
+mod attachment_drag_tests {
+    use super::*;
+    use crate::ui::places::drag::{PlaceDrag, Target};
+    use crate::world::inventory::actions::{COPY, TRANSFER};
+    use aurora_net::inventory::InvItem;
+    use egui::{Event, PointerButton, Pos2, RawInput, Rect, Sense, Vec2};
+    use std::sync::Arc;
+
+    fn drop_place_drag(world: &World, payload: PlaceDrag) -> Compose {
+        let ctx = egui::Context::default();
+        let mut center = Pos2::ZERO;
+        let mut draft = Compose::default();
+        let make_input = |events| RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(240.0, 160.0))),
+            events,
+            ..Default::default()
+        };
+        let draw = |ui: &mut egui::Ui, draft: &mut Compose, center: &mut Pos2| {
+            let (zone, response) = ui.allocate_exact_size(Vec2::new(120.0, 36.0), Sense::hover());
+            *center = zone.center();
+            apply_attachment_release(draft, world, &response);
+        };
+
+        // a fresh context's first frame uploads the font atlas: clear each
+        // frame's texture delta, or its drop asserts with debug assertions on
+        let mut output = ctx.run_ui(make_input(vec![]), |ui| draw(ui, &mut draft, &mut center));
+        output.textures_delta.clear();
+        let pos = center;
+        let mut output = ctx.run_ui(
+            make_input(vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ]),
+            |ui| draw(ui, &mut draft, &mut center),
+        );
+        output.textures_delta.clear();
+        egui::DragAndDrop::set_payload(&ctx, payload);
+        let mut output = ctx.run_ui(
+            make_input(vec![
+                Event::PointerMoved(pos),
+                Event::PointerButton {
+                    pos,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                },
+            ]),
+            |ui| draw(ui, &mut draft, &mut center),
+        );
+        output.textures_delta.clear();
+        assert!(
+            egui::DragAndDrop::payload::<PlaceDrag>(&ctx).is_none(),
+            "the favorite drag is consumed by the notice drop"
+        );
+        draft
+    }
+
+    fn landmark_world(transfer: bool) -> (World, Uuid, Uuid) {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let landmark = Uuid::from_u128(0x2556);
+        let link = Uuid::from_u128(0x2557);
+        world.inventory.add_items(vec![
+            InvItem {
+                id: landmark,
+                name: "Landmark attachment".into(),
+                asset_type: 3,
+                inv_type: 3,
+                owner_mask: COPY | if transfer { TRANSFER } else { 0 },
+                ..Default::default()
+            },
+            InvItem {
+                id: link,
+                name: "Favorite link".into(),
+                asset_id: landmark,
+                asset_type: 24,
+                inv_type: 3,
+                ..Default::default()
+            },
+        ]);
+        (world, landmark, link)
+    }
+
+    #[test]
+    fn dropping_a_favorites_landmark_link_adds_the_original_attachment() {
+        let (world, landmark, link) = landmark_world(true);
+        let draft = drop_place_drag(
+            &world,
+            PlaceDrag {
+                target: Target::Landmark(link),
+                favorite: Some(link),
+                name: "Favorite landmark".into(),
+                thumbnail: None,
+            },
+        );
+        assert_eq!(draft.item, Some(landmark));
+        assert!(!draft.refused);
+    }
+
+    #[test]
+    fn dropping_a_non_transferable_favorites_landmark_is_refused() {
+        let (world, _, link) = landmark_world(false);
+        let draft = drop_place_drag(
+            &world,
+            PlaceDrag {
+                target: Target::Landmark(link),
+                favorite: Some(link),
+                name: "Favorite landmark".into(),
+                thumbnail: None,
+            },
+        );
+        assert_eq!(draft.item, None);
+        assert!(draft.refused);
     }
 }

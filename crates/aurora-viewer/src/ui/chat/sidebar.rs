@@ -13,6 +13,8 @@ use super::{ChatUi, ConvAction, close_tip, presence};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::contact_sets::appearance::ICONS;
+use crate::world::names::NameScope;
+use aurora_i18n::UiUpper;
 use egui::{Color32, RichText};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -77,11 +79,14 @@ pub(super) fn section(world: &World, id: &Uuid) -> Section {
 }
 
 /// The sections from top to bottom: the sets shown apart (highest
-/// priority first), the private messages, the groups, the conferences.
+/// priority first), the private messages, the groups, the conferences; the
+/// kinds in the order of Preferences › Chat when the tabs are ordered by
+/// kind (`conversation_options::section_kinds`).
 fn sections(world: &World) -> impl Iterator<Item = Section> {
+    let kinds = super::conversation_options::section_kinds(&super::conversation_options::current());
     (0..world.contact_sets.chat_sections().len())
         .map(Section::Set)
-        .chain([Kind::Private, Kind::Group, Kind::Conference].map(Section::Kind))
+        .chain(kinds.map(Section::Kind))
 }
 
 /// The insignia of a group conversation's group: our membership's, else
@@ -99,7 +104,7 @@ pub(crate) fn group_insignia(world: &World, id: &Uuid) -> Option<Uuid> {
 /// A group's picture over the square `rect`: its insignia cropped square on
 /// the theme's radius, else the `users-group` glyph (of side `glyph`) on a
 /// raised square, as People › Groups draws it.
-pub(super) fn paint_group_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, insignia: Option<&egui::TextureHandle>, glyph: f32) {
+pub(crate) fn paint_group_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, insignia: Option<&egui::TextureHandle>, glyph: f32) {
     match insignia {
         Some(t) => crate::ui::widgets::square_picture(ui, rect, t),
         None => {
@@ -142,18 +147,18 @@ fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) {
             .max_rect(field)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    child.add(
-        egui::TextEdit::singleline(text)
-            .id(search_id())
+    let margin = crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(12.0));
+    crate::ui::widgets::search_text_edit_with_margin(&mut child, p, text, margin, |edit| {
+        edit.id(search_id())
             .hint_text(
                 RichText::new(aurora_i18n::tr!("ui-chat-search-or-start"))
                     .size(12.0)
                     .color(p.muted_dim),
             )
             .font(egui::FontId::proportional(12.0))
-            .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(12.0))))
-            .desired_width(field.width()),
-    );
+            .frame(egui::Frame::NONE)
+            .desired_width(field.width())
+    });
 }
 
 /// Height of the search field, and the side of the button beside it.
@@ -246,6 +251,10 @@ struct Entry<'a> {
     /// The conversation is in its own window (`popout.rs`): a mark where
     /// the unread count goes.
     popped: bool,
+    /// How far from its place in the list it is drawn: it slides there
+    /// while another is dragged, and glides in once dropped
+    /// (`reorder::State::slide`). Its place keeps the clicks.
+    offset: egui::Vec2,
 }
 
 struct Picked {
@@ -254,10 +263,12 @@ struct Picked {
 }
 
 /// What the Contacts entry's second line says: the friends online (the tab
-/// shows People's friends) or what the contact list holds.
+/// shows People's friends), our groups (its Groups pill) or what the
+/// contact list holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ContactsSub {
     Friends,
+    Groups,
     Lists,
 }
 
@@ -277,6 +288,8 @@ pub(super) fn show(
     contacts_sub: ContactsSub,
     docked: bool,
     rail: bool,
+    // the window is narrow enough for the rail (`rail`: what is drawn)
+    narrow: bool,
     // RAIL or WIDTH, or on its way from one to the other
     width: f32,
     height: f32,
@@ -306,26 +319,44 @@ pub(super) fn show(
     let ui = &mut child;
     ui.spacing_mut().item_spacing.y = 2.0;
     ui.add_space(8.0);
-    if !rail {
-        let row = egui::vec2(ui.available_width(), SEARCH_H);
+    let row = egui::vec2(ui.available_width(), SEARCH_H);
+    if rail {
+        // the rail's head: its button alone, over the pictures
+        let (row, _) = ui.allocate_exact_size(row, egui::Sense::hover());
+        column_toggle(
+            ui,
+            p,
+            st,
+            actions,
+            egui::Rect::from_center_size(row.center(), egui::Vec2::splat(SEARCH_H)),
+            narrow,
+        );
+    } else {
         ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            let (button, _) = ui.allocate_exact_size(egui::Vec2::splat(SEARCH_H), egui::Sense::hover());
+            column_toggle(ui, p, st, actions, button, narrow);
             let width = (ui.available_width() - SEARCH_H - 4.0).max(40.0);
             search_box(ui, p, &mut st.side_filter, width);
             new_conversation(ui, p, world, st, actions);
         });
-        ui.add_space(4.0);
     }
-    let filter = st.side_filter.trim().to_lowercase();
+    ui.add_space(4.0);
+    let filter = st.side_search().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
     let voice = voice_panel_wanted(world, st);
-    let list_h = (column.bottom() - ui.cursor().top() - if voice { voice_panel_h(rail) + VOICE_PANEL_GAP } else { 0.0 } - 6.0).max(ENTRY_H);
+    let room = column.bottom() - ui.cursor().top();
+    let list_h = (room - if voice { voice_panel_h(rail) + VOICE_PANEL_GAP } else { 0.0 } - LIST_FOOT).max(ENTRY_H);
+    // the list's top to the bottom of its second entry, as this frame lays
+    // it out (headings and spacing included); the scroll offset moves both
+    let mut two = TwoEntries::default();
     egui::ScrollArea::vertical()
         .id_salt("conversation_column")
         .max_height(list_h)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
+            two.top = ui.cursor().top();
             // Contacts and the nearby chat, pinned
             if show_contacts_tab && docked && matches(aurora_i18n::tr!("common-contacts")) {
                 let e = Entry {
@@ -337,6 +368,7 @@ pub(super) fn show(
                             "ui-chat-contacts-friends-sub",
                             online = world.social.friends.iter().filter(|f| f.online).count() as i64
                         ),
+                        ContactsSub::Groups => aurora_i18n::tr!("ui-chat-contacts-groups-sub", count = world.groups.groups.len() as i64),
                         ContactsSub::Lists => aurora_i18n::tr!("ui-chat-contacts-sub").to_owned(),
                     }),
                     sub_icon: None,
@@ -347,8 +379,11 @@ pub(super) fn show(
                     in_call: false,
                     flash: 0.0,
                     popped: false,
+                    offset: egui::Vec2::ZERO,
                 };
-                if entry(ui, p, &e, rail, entry_id(Pinned::Contacts)).resp.clicked() {
+                let picked = entry(ui, p, &e, rail, entry_id(Pinned::Contacts));
+                two.note(picked.resp.rect);
+                if picked.resp.clicked() {
                     contacts_clicked = true;
                     st.contacts = true;
                     st.show_profile = false;
@@ -370,8 +405,10 @@ pub(super) fn show(
                     in_call: false,
                     flash: 0.0,
                     popped: false,
+                    offset: egui::Vec2::ZERO,
                 };
                 let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
+                two.note(picked.resp.rect);
                 super::conv_menu::demo_mark(ui.ctx(), world, st, None, picked.resp.rect);
                 super::conv_menu::attach(&picked.resp, p, world, actions, None);
                 st.reorder.local_row(&picked.resp);
@@ -432,7 +469,7 @@ pub(super) fn show(
                     let e = Entry {
                         icon,
                         name_color: if kind == Kind::Private {
-                            world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color)
+                            world.rlva_contact_appearance(&id).ui_name.map(crate::ui::colors::set_color)
                         } else {
                             None
                         },
@@ -446,9 +483,19 @@ pub(super) fn show(
                         in_call: st.conversation_voice_indicator && (world.call_of(&id).is_some() || world.call_launched(&id).is_some()),
                         flash,
                         popped: false,
+                        offset: egui::Vec2::ZERO,
                     };
-                    st.reorder.space_before(ui, id);
-                    let picked = entry(ui, p, &e, rail, entry_id(Pinned::Conversation(id)));
+                    let e = Entry {
+                        offset: st.reorder.slide(ui, id),
+                        ..e
+                    };
+                    let eid = entry_id(Pinned::Conversation(id));
+                    let picked = st.reorder.draw(ui, p, id, e.offset, Some(p.bar), |ui| {
+                        let picked = entry(ui, p, &e, rail, eid);
+                        let place = picked.resp.rect;
+                        (picked, place)
+                    });
+                    two.note(picked.resp.rect);
                     if reveal == Some(id) {
                         picked.resp.scroll_to_me(None);
                         st.reveal = None;
@@ -456,7 +503,6 @@ pub(super) fn show(
                     super::conv_menu::demo_mark(ui.ctx(), world, st, Some(id), picked.resp.rect);
                     super::conv_menu::attach(&picked.resp, p, world, actions, Some(id));
                     st.reorder.row(world, id, &picked.resp);
-                    st.reorder.space_after(ui, id);
                     if st.reorder.dragging(Some(id)) {
                         ghost(ui.ctx(), p, st, e, rail, Pinned::Conversation(id));
                     }
@@ -479,7 +525,7 @@ pub(super) fn show(
                     .friends
                     .iter()
                     .filter(|f| !world.social.has_session(&f.id))
-                    .map(|f| (f.id, world.social.name_of(&f.id)))
+                    .map(|f| (f.id, world.social.name_in(NameScope::Roster, &f.id)))
                     .filter(|(_, n)| n.to_lowercase().contains(&filter))
                     .collect();
                 friends.sort_by_key(|(_, n)| crate::natural_order::key(n));
@@ -489,7 +535,7 @@ pub(super) fn show(
                         st.wanted_pics.insert(id);
                         let e = Entry {
                             icon: Icon::Avatar(pics.get(&id), presence::of(world, &id), false),
-                            name_color: world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color),
+                            name_color: world.rlva_contact_appearance(&id).ui_name.map(crate::ui::colors::set_color),
                             name: &name,
                             sub: Some(aurora_i18n::tr!("ui-chat-start-im").to_owned()),
                             sub_icon: Some(("message-circle-filled", p.muted_dim)),
@@ -500,8 +546,11 @@ pub(super) fn show(
                             in_call: false,
                             flash: 0.0,
                             popped: false,
+                            offset: egui::Vec2::ZERO,
                         };
-                        if entry(ui, p, &e, rail, egui::Id::unique(("conversation_start", id))).resp.clicked() {
+                        let picked = entry(ui, p, &e, rail, egui::Id::unique(("conversation_start", id)));
+                        two.note(picked.resp.rect);
+                        if picked.resp.clicked() {
                             st.side_filter.clear();
                             actions.push(ConvAction::OpenIm(id));
                         }
@@ -520,8 +569,11 @@ pub(super) fn show(
                     in_call: false,
                     flash: 0.0,
                     popped: false,
+                    offset: egui::Vec2::ZERO,
                 };
-                if entry(ui, p, &e, rail, egui::Id::unique("conversation_find")).resp.clicked() {
+                let picked = entry(ui, p, &e, rail, egui::Id::unique("conversation_find"));
+                two.note(picked.resp.rect);
+                if picked.resp.clicked() {
                     st.start_picker(super::Start::Im);
                 }
             }
@@ -529,7 +581,105 @@ pub(super) fn show(
     if voice {
         voice_panel(ui, p, world, st, actions, rail);
     }
+    // while a call is on, the window's least height keeps two whole entries
+    // above its panel, shown or not (the call's own conversation hides it),
+    // so that the window does not jump with the conversation picked; without
+    // a call it keeps its own (`ui/chat.rs`)
+    st.column_short = world.calls.active.is_some().then(|| {
+        let two = two.height().unwrap_or_else(|| {
+            // fewer than two entries: two of them and their spacing
+            let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
+            2.0 * (ENTRY_H + gap - LINE_GAP) + ui.spacing().item_spacing.y
+        });
+        least_column_short(room, two, voice_panel_h(rail))
+    });
     contacts_clicked
+}
+
+/// The margin under the list, above the window's bottom or the call panel.
+const LIST_FOOT: f32 = 6.0;
+
+/// How much taller the column must be for its list to hold two whole
+/// entries (`two`, as laid out) above a call's panel (`panel`, without its
+/// gap): negative, to spare. The list's height is `room` less the panel,
+/// its gap and the margin under the list, as `show` lays it out.
+pub(super) fn least_column_short(room: f32, two: f32, panel: f32) -> f32 {
+    two + panel + VOICE_PANEL_GAP + LIST_FOOT - room
+}
+
+/// Where the list's second entry ends below its top, noted as `show` lays
+/// the entries out: a counter on the stack, nothing kept between frames.
+#[derive(Clone, Copy, Debug, Default)]
+struct TwoEntries {
+    top: f32,
+    drawn: u32,
+    bottom: f32,
+}
+
+impl TwoEntries {
+    fn note(&mut self, rect: egui::Rect) {
+        if self.drawn < 2 {
+            self.drawn += 1;
+            self.bottom = rect.bottom();
+        }
+    }
+
+    fn height(self) -> Option<f32> {
+        (self.drawn >= 2).then_some(self.bottom - self.top)
+    }
+}
+
+/// The button that collapses and expands the column, in its head: first in
+/// the row of the search field and the "new conversation" button, alone at
+/// the top of the rail, so the list loses no height
+/// (`workspace::ColumnChoice`). An Aurora addition: the Legacy Viewer's
+/// window has tabs and no such list. The nearest is the unregistered
+/// LLFloaterIMContainer (indra/newview/llfloaterimcontainer.cpp):
+/// onExpandCollapseButtonClicked, ConversationsListPaneCollapsed.
+/// At the left of both heads, it stays under the pointer that used it. It
+/// looks like the "new conversation" button beside it: lit, as that one
+/// while its menu is open, while the column is what a click asked
+/// (`ColumnChoice::by_hand`), plain while it follows the window, greyed out
+/// in a window too narrow for the column (`workspace::OPEN_FROM`). The rail
+/// ignores a search and keeps its text for the column (`ChatUi::side_search`).
+fn column_toggle(ui: &mut egui::Ui, p: &Palette, st: &mut ChatUi, actions: &mut Vec<ConvAction>, rect: egui::Rect, narrow: bool) {
+    let rail = st.column.rail(narrow);
+    let fits = st.layout_width.is_some_and(|w| w >= super::workspace::OPEN_FROM);
+    let off = rail && !fits;
+    let (icon, tip) = if off {
+        ("layout-sidebar-left-expand-filled", aurora_i18n::tr!("ui-chat-column-no-room"))
+    } else if rail {
+        ("layout-sidebar-left-expand-filled", aurora_i18n::tr!("ui-chat-column-expand"))
+    } else {
+        ("layout-sidebar-left-collapse-filled", aurora_i18n::tr!("ui-chat-column-collapse"))
+    };
+    let sense = if off { egui::Sense::hover() } else { egui::Sense::click() };
+    let resp = ui.interact(rect, control_id("column-toggle"), sense);
+    let lit = !off && (resp.hovered() || st.column.by_hand());
+    ui.painter().rect_filled(
+        rect,
+        ui.visuals().widgets.inactive.corner_radius,
+        if lit { p.raised } else { p.field },
+    );
+    super::thread::paint_icon(
+        ui.painter(),
+        icon,
+        egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(15.0)),
+        if off {
+            p.muted_dim
+        } else if lit {
+            p.ink
+        } else {
+            p.muted
+        },
+    );
+    if resp.on_hover_text(tip).clicked() {
+        let was = st.column.collapsed;
+        st.column = st.column.toggled(narrow);
+        if st.column.collapsed != was {
+            actions.push(ConvAction::ColumnCollapsed(st.column.collapsed));
+        }
+    }
 }
 
 /// What the nearby chat's entry says: who can hear us, and its last line.
@@ -538,8 +688,9 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
         return t;
     }
     let near = aurora_i18n::tr!("ui-chat-in-earshot", n = st.nearby_count);
-    match world.chat.iter().rev().find(|l| !l.kind.is_notice()) {
-        Some(l) => format!("{near} · {}", preview(world, l, true)),
+    // (never a blocked resident's line)
+    match world.chat.iter().rev().find(|l| !l.kind.is_notice() && !l.blocked) {
+        Some(l) => format!("{near} · {}", preview(world, NameScope::World, l, true)),
         None => near,
     }
 }
@@ -547,11 +698,11 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
 /// The last message of a conversation in a few words: "Name: text", ours
 /// "You: text", an emote as it reads; its links by their labels, as in the
 /// conversation (#947), the entry eliding the result.
-fn preview(world: &World, line: &crate::world::ChatLine, named: bool) -> String {
+fn preview(world: &World, scope: NameScope, line: &crate::world::ChatLine, named: bool) -> String {
     let own = world.own_name();
     let name = super::sender_name(world, &own, line);
     let (text, _) = super::line_body(line, &name);
-    let text = super::resolved_text(world, &text);
+    let text = super::resolved_text_in(world, line.wording(scope), &text);
     let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     if emote || line.kind.is_notice() {
@@ -594,7 +745,9 @@ fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::
         .iter()
         .find(|s| s.other == id)
         .and_then(|s| s.lines.iter().rev().find(|l| !l.kind.is_card()));
-    let last = last.map(|l| preview(world, l, kind != Kind::Private)).unwrap_or_default();
+    let last = last
+        .map(|l| preview(world, NameScope::Roster, l, kind != Kind::Private))
+        .unwrap_or_default();
     if kind == Kind::Private && matches!(status, presence::Status::Away | presence::Status::Busy | presence::Status::Offline) {
         let label = status.label();
         return (
@@ -615,7 +768,7 @@ fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::
 
 /// The title of a section: small capitals in semi-bold.
 fn section_title(ui: &egui::Ui, p: &Palette, title: &str) -> RichText {
-    RichText::new(title.to_uppercase())
+    RichText::new(title.ui_upper())
         .font(egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
         .color(p.muted_dim)
 }
@@ -626,7 +779,7 @@ fn section_title(ui: &egui::Ui, p: &Palette, title: &str) -> RichText {
 /// them (None: the nearby chat): those the search leaves, the sets shown
 /// apart, the private messages, then the groups and the conferences.
 pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
-    let filter = st.side_filter.trim().to_lowercase();
+    let filter = st.side_search().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
     let sessions = st.reorder.sessions(world);
     let mut order: Vec<Option<Uuid>> = Vec::new();
@@ -645,10 +798,20 @@ pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
 }
 
 pub(super) fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
-    if kind == Kind::Private && world.social.avatar_names.get(id).is_some() {
-        return world.social.display_name_of(id);
+    let names = &world.social.avatar_names;
+    if kind == Kind::Private
+        && let Some(name) = names.get_in(NameScope::Roster, id)
+    {
+        // FSIMTabNameFormat (Preferences › Chat), the display name by default
+        let format = super::conversation_options::current().tab_names;
+        return super::conversation_options::tab_name(name, &names.options, format);
     }
     world.session_title(id)
+}
+
+/// The name on a conversation's tab or window: `entry_name` for its kind.
+pub(super) fn tab_title(world: &World, id: &Uuid) -> String {
+    entry_name(world, id, kind(world, id))
 }
 
 /// The head of a section (a conversation is started from the button beside
@@ -731,6 +894,7 @@ fn ghost(ctx: &egui::Context, p: &Palette, st: &ChatUi, e: Entry, rail: bool, pi
         close: None,
         flash: 0.0,
         popped: g.out,
+        offset: egui::Vec2::ZERO,
         ..e
     };
     crate::ui::widgets::drag_ghost(ctx, p, "conversation_drag_ghost", g.pos, |ui| {
@@ -747,7 +911,7 @@ fn ghost(ctx: &egui::Context, p: &Palette, st: &ChatUi, e: Entry, rail: bool, pi
 fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) -> Picked {
     let width = ui.available_width();
     let gap = crate::ui::widgets::two_lines_gap(ui, &egui::FontId::proportional(13.0), &egui::FontId::proportional(11.0), LINE_GAP);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H + gap - LINE_GAP), egui::Sense::hover());
+    let (place, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H + gap - LINE_GAP), egui::Sense::hover());
     // a conversation's entry drags, to its place or out of the window; the
     // nearby chat's, pinned, out of the window (#910)
     let sense = if e.close.is_some() || id == entry_id(Pinned::Local) {
@@ -755,8 +919,11 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
     } else {
         egui::Sense::click()
     };
-    let resp = ui.interact(rect, id, sense);
-    let over = resp.hovered() || (e.close.is_some() && ui.rect_contains_pointer(rect));
+    let resp = ui.interact(place, id, sense);
+    crate::ui::widgets::reveal_search_selection(ui, &resp, e.current);
+    let over = resp.hovered() || (e.close.is_some() && ui.rect_contains_pointer(place));
+    // drawn where its slide puts it; its place keeps the pointer
+    let rect = place.translate(e.offset);
     let radius = ui.visuals().window_corner_radius;
     // the entry's face, opaque: the status dot is cut in it, and a
     // translucent cut let the picture and the crescent's disc through (#744)

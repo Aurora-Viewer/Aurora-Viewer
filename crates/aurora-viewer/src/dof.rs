@@ -32,6 +32,9 @@ pub struct Settings {
     pub enabled: bool,
     /// RenderDepthOfFieldInEditMode (off).
     pub in_edit: bool,
+    /// FSFocusPointRender (off): a small crosshair on the focus point,
+    /// yellow when free and red when locked.
+    pub show_focus_point: bool,
     pub focus: FocusMode,
     /// CameraFNumber (9, 1..64).
     pub f_number: f32,
@@ -54,6 +57,7 @@ impl Default for Settings {
         Settings {
             enabled: false,
             in_edit: false,
+            show_focus_point: false,
             focus: FocusMode::Camera,
             f_number: 9.0,
             focal_length: 50.0,
@@ -158,6 +162,51 @@ impl PhotoDof {
     }
 }
 
+/// Half the length of the focus point's axes (m): FSFocusPointRender's
+/// `size` (LLPipeline::renderFocusPoint).
+pub const FOCUS_MARK_HALF: f32 = 0.02;
+
+/// What decides whether the focus point's mark shows and where.
+pub struct FocusMarkInput {
+    /// The setting (FSFocusPointRender).
+    pub show: bool,
+    /// The effect is on, outside the conditions that turn it off (edit
+    /// mode, the poser, not in the world).
+    pub lens_on: bool,
+    /// The lens is the Director's, the picture a 360° one, or the viewfinder
+    /// focuses by itself: no point of this lens to mark.
+    pub blocked: bool,
+    /// Manual focus: a distance, no point.
+    pub manual: bool,
+    pub focus: FocusMode,
+    /// The point the lens last focused (`Focus::point`).
+    pub point: Option<glam::Vec3>,
+    /// The camera's focus point, where a lens in Click or Locked mode that
+    /// has none focuses.
+    pub target: glam::Vec3,
+}
+
+/// The point to mark and its colour (RGBA bytes), None when nothing shows:
+/// yellow (1, 1, 0, 0.5) while the focus is free, red (1, 0, 0, 0.5) when it
+/// is locked (FSFocusPointLocked), as renderFocusPoint draws them. In Click
+/// mode before a click the lens focuses the camera's point, so that is the
+/// one marked.
+pub fn focus_mark(m: &FocusMarkInput) -> Option<(glam::Vec3, [u8; 4])> {
+    if !m.show || !m.lens_on || m.blocked || m.manual {
+        return None;
+    }
+    let point = match m.focus {
+        FocusMode::Click | FocusMode::Locked => m.point.unwrap_or(m.target),
+        FocusMode::Camera | FocusMode::Pointer => m.point?,
+    };
+    let color = if m.focus == FocusMode::Locked {
+        [255, 0, 0, 128]
+    } else {
+        [255, 255, 0, 128]
+    };
+    Some((point, color))
+}
+
 /// The lens's focal length (mm) at the vertical field of view `fov_y`
 /// (radians): renderDoF keeps the image's height of the reference lens
 /// (dv = 2 f tan(fov0 / 2)), so a wider view is a shorter lens.
@@ -254,15 +303,69 @@ pub fn distance_along(eye: glam::Vec3, at: glam::Vec3, point: glam::Vec3) -> f32
     at.normalize_or_zero().dot(point - eye)
 }
 
-/// The lens of a frame.
-pub fn lens(s: &Settings, focus: f32, fov_y: f32, height: u32, window_height: u32, debug: bool) -> aurora_render::DepthOfField {
-    let focal = focal_length_at(s, fov_y);
+/// The image a lens is worked out for: the window's frame, or a photo,
+/// which is the part of the window's view its proportions frame
+/// (`Camera::photo_proj`), drawn at its own size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct View {
+    /// The camera's vertical field of view (radians): its zoom, which the
+    /// focal length follows.
+    pub camera_fov_y: f32,
+    /// The angle the image spans from top to bottom (radians), as renderDoF
+    /// measures a pixel (the field of view over the height: the same angle
+    /// for every row), and its height (pixels).
+    pub fov_y: f32,
+    pub height: u32,
+    /// How many of the window's rows the image covers: what the largest
+    /// circle, set in window pixels, scales by.
+    pub window_rows: f32,
+}
+
+impl View {
+    /// The window's own frame, `height` pixels high.
+    pub fn window(camera_fov_y: f32, height: u32) -> View {
+        View {
+            camera_fov_y,
+            fov_y: camera_fov_y,
+            height,
+            window_rows: height.max(1) as f32,
+        }
+    }
+
+    /// A photo of `aspect`, `height` pixels high, taken from a `window`
+    /// (pixels): narrower than the window it keeps the window's height of
+    /// view, wider its width, so it covers fewer of its rows
+    /// (`Camera::photo_proj`, `snapshot::viewfinder_scale`). Its rows span
+    /// the window's angle per row: each of its pixels is the share of a
+    /// window pixel it covers, the blur the same in both.
+    pub fn photo(camera_fov_y: f32, window: (u32, u32), aspect: f32, height: u32) -> View {
+        let (ww, wh) = (window.0.max(1) as f32, window.1.max(1) as f32);
+        let (aspect, window_aspect) = (aspect.max(0.1), (ww / wh).max(0.1));
+        let crop = (window_aspect / aspect).min(1.0);
+        View {
+            camera_fov_y,
+            fov_y: camera_fov_y * crop,
+            height,
+            window_rows: wh * crop,
+        }
+    }
+}
+
+/// The lens of a frame. A photo cropped from the window keeps the
+/// window's lens: the focal length follows the camera's zoom, not the
+/// crop's narrower view (which read as a longer lens and blurred the photo
+/// more than the view it was framed in), and the blur is measured in the
+/// photo's own pixels.
+pub fn lens(s: &Settings, focus: f32, view: View, debug: bool) -> aurora_render::DepthOfField {
+    let focal = focal_length_at(s, view.camera_fov_y);
     aurora_render::DepthOfField {
-        coc_scale: coc_scale(focal, s.f_number, focus, fov_y, height),
+        coc_scale: coc_scale(focal, s.f_number, focus, view.fov_y, view.height),
         focus,
         focus_far: focus,
-        // FIRE-13989: the same blur in an image of any size
-        max_coc: s.max_coc * height as f32 / window_height.max(1) as f32,
+        // FIRE-13989: the same blur in an image of any size (the largest
+        // circle is in window pixels: as many times larger as the photo
+        // has pixels for each of the window's rows it covers)
+        max_coc: s.max_coc * view.height as f32 / view.window_rows.max(1.0),
         samples: s.samples(),
         debug,
         peaking: None,
@@ -331,9 +434,58 @@ mod tests {
     fn the_largest_circle_scales_with_the_image() {
         let s = Settings::default();
         let fov = 60f32.to_radians();
-        assert!((lens(&s, 5.0, fov, 1080, 1080, false).max_coc - 10.0).abs() < 1e-4);
-        assert!((lens(&s, 5.0, fov, 4320, 1080, false).max_coc - 40.0).abs() < 1e-4);
-        assert_eq!(lens(&s, 5.0, fov, 1080, 1080, false).samples, 61);
+        let window = View::window(fov, 1080);
+        assert!((lens(&s, 5.0, window, false).max_coc - 10.0).abs() < 1e-4);
+        let photo = View::photo(fov, (1920, 1080), 1920.0 / 1080.0, 4320);
+        assert!((lens(&s, 5.0, photo, false).max_coc - 40.0).abs() < 1e-4);
+        assert_eq!(lens(&s, 5.0, window, false).samples, 61);
+    }
+
+    /// The blur of a point, as a share of the image's height.
+    fn blur_share(s: &Settings, view: View, focus: f32, z: f32) -> f32 {
+        let l = lens(s, focus, view, false);
+        coc(l.coc_scale, focus, z, f32::MAX) / view.height as f32
+    }
+
+    #[test]
+    fn a_photo_wider_than_the_window_blurs_like_the_view_it_was_framed_in() {
+        // f/1.8 close up: the eyes at 0.78 m in focus, the nose 10 cm nearer
+        let s = Settings {
+            f_number: 1.8,
+            ..Settings::default()
+        };
+        let fov = 60f32.to_radians();
+        let (focus, nose) = (0.78, 0.68);
+        // a 16:10 window and a wider photo (3840 x 2054): the photo is the
+        // middle band of the window's view
+        let window = View::window(fov, 1200);
+        let photo = View::photo(fov, (1920, 1200), 3840.0 / 2054.0, 2054);
+        assert!(photo.fov_y < fov);
+        assert!((photo.window_rows - 1920.0 * 2054.0 / 3840.0).abs() < 1e-2);
+        // the nose's blur, in pixels of the window's view, is the same in the
+        // window and in the photo (each of the window's pixels is photo.height
+        // / window_rows of the photo's)
+        let live = blur_share(&s, window, focus, nose) * window.height as f32;
+        let shot = blur_share(&s, photo, focus, nose) * photo.window_rows;
+        assert!((shot / live - 1.0).abs() < 2e-3, "live {live} px, photo {shot} px");
+        // the same focal length as the window's, not a longer one
+        assert!((focal_length_at(&s, photo.camera_fov_y) - focal_length_at(&s, fov)).abs() < 1e-4);
+        // the largest circle grows with the photo's pixels per window row
+        let ratio = lens(&s, focus, photo, false).max_coc / lens(&s, focus, window, false).max_coc;
+        assert!((ratio - photo.height as f32 / photo.window_rows).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_photo_narrower_than_the_window_keeps_its_height_of_view() {
+        let fov = 60f32.to_radians();
+        let photo = View::photo(fov, (1920, 1080), 0.8, 2160);
+        assert_eq!(photo.fov_y, fov);
+        assert_eq!(photo.window_rows, 1080.0);
+        let s = Settings::default();
+        let window = View::window(fov, 1080);
+        // twice the pixels, twice the blur in pixels: the same share
+        let (a, b) = (blur_share(&s, window, 5.0, 2.0), blur_share(&s, photo, 5.0, 2.0));
+        assert!((a / b - 1.0).abs() < 1e-3);
     }
 
     #[test]
@@ -426,5 +578,66 @@ mod tests {
         };
         s.sanitize();
         assert_eq!((s.f_number, s.quality, s.transition), (1.0, 0.7, 10.0));
+    }
+
+    fn mark_input() -> FocusMarkInput {
+        FocusMarkInput {
+            show: true,
+            lens_on: true,
+            blocked: false,
+            manual: false,
+            focus: FocusMode::Pointer,
+            point: Some(glam::Vec3::new(1.0, 2.0, 3.0)),
+            target: glam::Vec3::new(9.0, 9.0, 9.0),
+        }
+    }
+
+    #[test]
+    fn the_focus_point_is_marked_yellow_when_free_and_red_when_locked() {
+        let (at, color) = focus_mark(&mark_input()).expect("shown");
+        assert_eq!((at, color), (glam::Vec3::new(1.0, 2.0, 3.0), [255, 255, 0, 128]));
+        let locked = FocusMarkInput {
+            focus: FocusMode::Locked,
+            ..mark_input()
+        };
+        assert_eq!(focus_mark(&locked).expect("shown").1, [255, 0, 0, 128]);
+    }
+
+    #[test]
+    fn the_focus_point_is_marked_only_where_the_lens_has_one() {
+        let off = |f: &dyn Fn(&mut FocusMarkInput)| {
+            let mut m = mark_input();
+            f(&mut m);
+            focus_mark(&m)
+        };
+        assert!(off(&|m| m.show = false).is_none(), "the setting");
+        assert!(
+            off(&|m| m.lens_on = false).is_none(),
+            "no effect: off, edit mode, posing, not in the world"
+        );
+        assert!(
+            off(&|m| m.blocked = true).is_none(),
+            "the Director's lens, a 360 picture, the viewfinder's AF"
+        );
+        assert!(off(&|m| m.manual = true).is_none(), "a distance has no point");
+        assert!(off(&|m| m.point = None).is_none(), "the pointer is over nothing yet");
+    }
+
+    #[test]
+    fn click_and_locked_focus_the_cameras_point_before_one_is_chosen() {
+        for focus in [FocusMode::Click, FocusMode::Locked] {
+            let m = FocusMarkInput {
+                focus,
+                point: None,
+                ..mark_input()
+            };
+            assert_eq!(focus_mark(&m).expect("shown").0, m.target, "{focus:?}");
+        }
+        // Camera mode's point is the camera's, kept in `Focus::point`
+        let m = FocusMarkInput {
+            focus: FocusMode::Camera,
+            ..mark_input()
+        };
+        assert_eq!(focus_mark(&m).expect("shown").0, glam::Vec3::new(1.0, 2.0, 3.0));
     }
 }

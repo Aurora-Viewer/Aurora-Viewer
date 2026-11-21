@@ -20,6 +20,9 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
+        speaker: Default::default(),
     }
 }
 
@@ -47,6 +50,10 @@ struct Harness {
     friends: crate::ui::people::FriendsSettings,
     /// The window is open (its cross or Ctrl+W closes it).
     open: bool,
+    /// `Settings::chat_column_collapsed`, given every frame as the app does.
+    column_setting: bool,
+    /// The viewer runs in demo mode (the button never writes the settings).
+    demo: bool,
 }
 
 impl Harness {
@@ -74,6 +81,8 @@ impl Harness {
             people: Default::default(),
             friends: Default::default(),
             open: true,
+            column_setting: false,
+            demo: false,
         }
     }
 
@@ -95,7 +104,12 @@ impl Harness {
             people,
             friends,
             open,
+            column_setting,
+            demo,
         } = self;
+        // as the app does every frame, and with what the button asked
+        st.follow_column_setting(*column_setting);
+        let asked = actions.len();
         let radar = crate::world::radar::Radar::default();
         let mut radar_settings = crate::ui::people::RadarSettings::default();
         let voice = HashMap::new();
@@ -104,10 +118,11 @@ impl Harness {
             settings: &mut radar_settings,
             voice: &voice,
             draw_distance: 64.0,
+            second_life: true,
             now: 0.0,
             pics: &pics,
         };
-        frames.run(events, |ui| {
+        let texts = frames.run(events, |ui| {
             // as the app does before any window
             crate::ui::close_key::begin(ui.ctx());
             actions.extend(show(
@@ -131,7 +146,13 @@ impl Harness {
                 }),
                 open,
             ));
-        })
+        });
+        for action in &actions[asked..] {
+            if let ConvAction::ColumnCollapsed(collapsed) = action {
+                st.column_collapsed_by_button(column_setting, *collapsed, *demo);
+            }
+        }
+        texts
     }
 
     fn settle(&mut self) -> Vec<crate::ui::widgets::elide_tests::Text> {
@@ -165,7 +186,8 @@ impl Harness {
         };
         self.frame(vec![egui::Event::PointerMoved(at)]);
         self.frame(vec![button(true)]);
-        for _ in 0..36 {
+        // past the hold that opens a sheet (`rows::SHEET_HOLD_SECONDS`)
+        for _ in 0..72 {
             self.frame(Vec::new());
         }
         self.frame(vec![button(false)]);
@@ -270,6 +292,66 @@ fn a_double_click_selects_one_word_of_a_line() {
     assert_eq!((start.seq, start.at, end.at), (end.seq, 6, 10), "\"from\" of \"hello from Jane\"");
 }
 
+#[test]
+fn clearing_the_message_filter_keeps_the_selected_text_and_its_message_in_view() {
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        for method in 0..3 {
+            let mut h = Harness::new(style);
+            for i in 0..150 {
+                let text = if i == 75 {
+                    "Needle".into()
+                } else {
+                    format!("Other message {i:03}")
+                };
+                h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &text));
+            }
+            h.st.selected = Some(JANE);
+            h.st.searches.entry(Some(JANE)).or_default().filter = Some("Needle".into());
+            let texts = h.settle();
+            let at = last(&texts, "Needle").center();
+            for _ in 0..2 {
+                h.click(at);
+            }
+            let bounds = h.st.selection.1.bounds().expect("the message's word is selected");
+            let field = super::super::find::filter_id(Some(JANE));
+            let at = h.rect(if method == 0 { field.with("clear") } else { field }).center();
+            h.click(at);
+            if method != 0 {
+                let modifiers = egui::Modifiers {
+                    ctrl: true,
+                    command: true,
+                    ..Default::default()
+                };
+                h.frame(vec![
+                    egui::Event::Key {
+                        key: egui::Key::A,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    },
+                    egui::Event::Key {
+                        key: if method == 1 { egui::Key::Delete } else { egui::Key::Backspace },
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            assert_eq!(h.st.searches[&Some(JANE)].filter.as_deref(), Some(""));
+            for _ in 0..3 {
+                h.settle();
+            }
+            assert_eq!(h.st.selection.1.bounds(), Some(bounds), "{style:?}, method={method}");
+            let texts = h.settle();
+            let rect = last(&texts, "Needle");
+            assert!(rect.top() > 0.0 && rect.bottom() < 900.0, "{style:?}, method={method}: {rect:?}");
+            assert!(h.frames.ctx.memory(|m| m.has_focus(field)));
+        }
+    }
+}
+
 /// A drag on the head (not the title bar) leaves the window in place.
 #[test]
 fn the_window_does_not_move_from_its_workspace() {
@@ -299,6 +381,46 @@ fn the_window_does_not_move_from_its_workspace() {
     assert_eq!(last(&texts, "hello from Jane"), before, "the window stayed in place");
 }
 
+/// On macOS Option+Left/Right stay in the composer for word movement;
+/// Option+Up/Down keep cycling as before.
+#[test]
+fn option_left_right_stay_in_the_composer_on_mac() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let mut h = Harness::new(ChatStyle::Legacy);
+    h.st.conv_focus_request = true;
+    h.st.draft_mut(None).push_str("Aurora Viewer");
+    h.settle();
+    let field = egui::Id::unique(("conv_input", None::<Uuid>));
+    let ctx = h.frames.ctx.clone();
+    let caret = move || {
+        egui::TextEdit::load_state(&ctx, field)
+            .and_then(|state| state.cursor.char_range())
+            .map(|range| (range.secondary.index.0, range.primary.index.0))
+    };
+    assert_eq!(caret(), Some((13, 13)), "the caret starts at the end");
+    h.frame(key(egui::Key::ArrowLeft, egui::Modifiers::ALT));
+    h.settle();
+    assert_eq!(caret(), Some((7, 7)), "Option+Left moves one word back");
+    h.frame(key(egui::Key::ArrowRight, egui::Modifiers::ALT));
+    h.settle();
+    assert_eq!(caret(), Some((13, 13)), "Option+Right moves one word on");
+    assert_eq!(h.st.selected, None, "Option+Left/Right do not cycle");
+    let order = super::super::keys::legacy_order(&h.world, &h.st);
+    let (first, last) = (order[1], order[2]);
+    h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
+    h.settle();
+    assert_eq!(h.st.selected, first, "Option+Down still cycles");
+    h.frame(key(egui::Key::ArrowUp, egui::Modifiers::ALT));
+    h.settle();
+    assert_eq!(h.st.selected, None, "Option+Up still cycles");
+    h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
+    h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
+    h.settle();
+    assert_eq!(h.st.selected, last, "Option+Down still goes round");
+}
+
 /// Narrow, the column is a rail of pictures: no search field, no names.
 #[test]
 fn a_narrow_window_has_a_rail() {
@@ -324,15 +446,16 @@ fn key(key: egui::Key, modifiers: egui::Modifiers) -> Vec<egui::Event> {
         .to_vec()
 }
 
-/// Alt + the arrows go round the conversations with the keyboard in the
-/// window, the field of the one shown taking it; Ctrl+W closes the one
-/// shown and shows the next, then on the nearby chat closes the window
+/// Ctrl+Tab and Ctrl+Shift+Tab go round the conversations with the keyboard
+/// in the window, the field of the one shown taking it; Ctrl+W closes the
+/// one shown and shows the next, then on the nearby chat closes the window
 /// (#651), in both styles of the list.
 #[test]
 fn the_keyboard_goes_round_the_conversations_and_closes_them() {
     for style in [ChatStyle::Legacy, ChatStyle::Aurora] {
         let mut h = Harness::new(style);
         h.st.conv_focus_request = true;
+        h.st.draft_mut(None).push_str("draft");
         h.settle();
         let order = if style.workspace() {
             super::super::sidebar::tab_order(&h.world, &h.st)
@@ -342,23 +465,25 @@ fn the_keyboard_goes_round_the_conversations_and_closes_them() {
         assert_eq!(order.len(), 3, "{style:?}: the nearby chat, Jane and Bob");
         let (first, last) = (order[1], order[2]);
         let field = |tab| egui::Id::unique(("conv_input", tab));
-        h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
+        let ctrl = egui::Modifiers::CTRL;
+        h.frame(key(egui::Key::Tab, ctrl));
         h.settle();
         assert_eq!(h.st.selected, first, "{style:?}");
+        assert_eq!(h.st.draft_mut(None), "draft", "{style:?}: Ctrl+Tab types no tab");
         assert!(
             h.frames.ctx.memory(|m| m.has_focus(field(first))),
             "{style:?}: its field has the keyboard"
         );
-        h.frame(key(egui::Key::ArrowUp, egui::Modifiers::ALT));
+        h.frame(key(egui::Key::Tab, ctrl | egui::Modifiers::SHIFT));
         h.settle();
         assert_eq!(h.st.selected, None, "{style:?}");
         // round the list
-        h.frame(key(egui::Key::ArrowLeft, egui::Modifiers::ALT));
+        h.frame(key(egui::Key::Tab, ctrl | egui::Modifiers::SHIFT));
         h.settle();
         assert_eq!(h.st.selected, last, "{style:?}");
         // the keyboard elsewhere: the camera's keys
         h.frames.ctx.memory_mut(|m| m.surrender_focus(field(last)));
-        h.frame(key(egui::Key::ArrowRight, egui::Modifiers::ALT));
+        h.frame(key(egui::Key::Tab, ctrl));
         h.settle();
         assert_eq!(h.st.selected, last, "{style:?}");
         // Ctrl+W: the conversation shown, the one above it shown next (it was the last)
@@ -712,36 +837,112 @@ fn a_drop_in_the_window_off_the_list_does_nothing() {
     );
 }
 
-/// While an entry is held over its new place, the entries move apart
-/// there; Escape closes the gap and moves nothing.
+/// A long name in the field's placeholder stays on one line and ends with
+/// "…", in the workspace's field and the Legacy style's (human report of
+/// 2026-11-15: "Write to Ødesså Drækåvik (OdessaDraekavik)" took two lines).
 #[test]
-fn the_entries_move_apart_where_the_dragged_one_lands() {
+fn a_long_name_in_the_placeholder_stays_on_one_line() {
+    let name = "Ødesså Drækåvik Ødesså Drækåvik (OdessaDraekavik.Resident)";
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(520.0, 420.0));
+        h.world.social.names.insert(JANE, name.into());
+        h.st.select_tab(Some(JANE));
+        let texts = h.settle();
+        let hint = if style.workspace() {
+            aurora_i18n::tr!("ui-chat-write-to", name = h.world.session_title(&JANE))
+        } else {
+            aurora_i18n::tr!("ui-chat-at", value0 = h.world.session_title(&JANE))
+        };
+        let long = painted(&texts, &hint);
+        assert!(long.cut && long.shown.ends_with('…'), "{style:?}: shown as {:?}", long.shown);
+        let long = long.rect;
+        // a short one is left whole, and the long one is as tall: one line
+        h.world.social.names.insert(JANE, "Jane".into());
+        let texts = h.settle();
+        let hint = if style.workspace() {
+            aurora_i18n::tr!("ui-chat-write-to", name = h.world.session_title(&JANE))
+        } else {
+            aurora_i18n::tr!("ui-chat-at", value0 = h.world.session_title(&JANE))
+        };
+        let short = painted(&texts, &hint);
+        assert!(!short.cut, "{style:?}");
+        assert!(
+            (long.height() - short.rect.height()).abs() < 0.5,
+            "{style:?}: {:?} vs {:?}",
+            long,
+            short.rect
+        );
+    }
+}
+
+/// While an entry is carried over its new place, the entries between slide
+/// out of its way (their places, which keep the pointer, stay); Escape
+/// slides them back and moves nothing. Let go, the entry glides from where
+/// it was dropped into its place, and the others from where they were
+/// drawn: nothing snaps (human report of 2026-11-15).
+#[test]
+fn the_entries_make_way_and_the_dropped_one_glides_into_place() {
     let mut h = Harness::new(ChatStyle::Aurora);
     crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(300.0, 40.0), egui::vec2(800.0, 560.0));
     h.settle();
     let jane = h.conversation_rect(JANE);
     let bob = h.conversation_rect(BOB);
+    let order = |h: &Harness| h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>();
     // Bob taken up above Jane, held there
-    h.drag_conversation(bob.center(), egui::pos2(jane.center().x, jane.top() + 6.0), Vec::new());
+    let to = egui::pos2(jane.center().x + 12.0, jane.top() + 6.0);
+    h.drag_conversation(bob.center(), to, Vec::new());
     for _ in 0..20 {
         h.frame(Vec::new());
     }
-    let moved = h.rect(entry_id(Pinned::Conversation(JANE)));
+    let slid = h.st.reorder.offset_of(JANE);
     assert!(
-        (moved.top() - bob.top()).abs() < 1.0,
-        "Jane moved down by a whole entry, to Bob's place: {moved:?} from {jane:?}"
+        (slid.y - (bob.top() - jane.top())).abs() < 1.0,
+        "Jane slid down by a whole entry, to Bob's place: {slid:?}"
     );
+    assert_eq!(h.rect(entry_id(Pinned::Conversation(JANE))), jane, "her place keeps the pointer");
     h.frame(key(egui::Key::Escape, egui::Modifiers::NONE));
+    // Bob, carried, glides home from his card instead of snapping there
+    let home = h.st.reorder.offset_of(BOB);
+    assert!(home.y.abs() > 4.0, "Bob starts where his card was: {home:?}");
+    h.frame(Vec::new());
+    assert!(h.st.reorder.offset_of(BOB).y.abs() < home.y.abs(), "and eases home");
     for _ in 0..20 {
         h.frame(Vec::new());
     }
-    assert_eq!(h.rect(entry_id(Pinned::Conversation(JANE))).top(), jane.top(), "the gap closed");
+    assert_eq!(h.st.reorder.offset_of(JANE), egui::Vec2::ZERO, "she slid back");
+    assert_eq!(h.st.reorder.offset_of(BOB), egui::Vec2::ZERO, "he is home");
     h.frame(Harness::drop_at(jane.center()));
     h.settle();
-    assert_eq!(
-        h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-        [JANE, BOB]
+    assert_eq!(order(&h), [JANE, BOB]);
+    // the same carry, let go this time
+    h.drag_conversation(bob.center(), to, Vec::new());
+    for _ in 0..20 {
+        h.frame(Vec::new());
+    }
+    h.frame(Harness::drop_at(to));
+    h.frame(Vec::new());
+    assert_eq!(order(&h), [BOB, JANE]);
+    // laid out in the new order, Bob still stands where his card was let go
+    let card = to - (bob.center() - bob.min);
+    // (his new place is Jane's old one)
+    let place = jane;
+    let first = h.st.reorder.offset_of(BOB);
+    assert!(
+        ((place.min + first) - card).length() < 1.5,
+        "Bob starts at his card: {:?} vs {card:?}",
+        place.min + first
     );
+    assert!(first.length() > 5.0, "a real glide, not a snap");
+    assert!(h.st.reorder.offset_of(JANE).length() < 1.0, "Jane was already at her new place");
+    let mut last = first.length();
+    for _ in 0..40 {
+        h.frame(Vec::new());
+        let now = h.st.reorder.offset_of(BOB).length();
+        assert!(now <= last + 0.01, "it only moves toward its place");
+        last = now;
+    }
+    assert_eq!(h.st.reorder.offset_of(BOB), egui::Vec2::ZERO, "landed");
 }
 
 /// The nearby chat drags out of the window into its own (#910); the chat
@@ -1120,8 +1321,11 @@ fn empty_sections_are_not_drawn() {
     let texts = h.settle();
     let head = |key: &'static str| aurora_i18n::text(key).to_uppercase();
     assert!(texts.iter().any(|t| t.source == head("ui-chat-section-private")), "the IMs' head");
+    // (the window's title may read the same: Japanese writes 会話 for both)
+    let title = aurora_i18n::tr!("common-conversations");
     for key in ["ui-chat-section-groups", "ui-chat-section-conferences"] {
-        assert!(texts.iter().all(|t| t.source != head(key)), "{key} drawn while empty");
+        let drawn = texts.iter().filter(|t| t.source == head(key)).count();
+        assert_eq!(drawn, usize::from(head(key) == title), "{key} drawn while empty");
     }
     let new = super::super::sidebar::control_id("new-conversation");
     assert!(h.frames.ctx.read_response(new).is_some(), "the new conversation button");
@@ -1132,12 +1336,12 @@ fn empty_sections_are_not_drawn() {
 /// its layout once each way (the human's report of 2026-10-16).
 #[test]
 fn layout_thresholds_have_a_margin() {
-    use super::{RAIL_BELOW, members_room_now, rail_now};
-    assert!(rail_now(None, RAIL_BELOW - 1.0));
-    assert!(!rail_now(None, RAIL_BELOW + 1.0));
-    assert!(rail_now(Some(true), RAIL_BELOW + 20.0), "a rail stays one past 600");
-    assert!(!rail_now(Some(true), RAIL_BELOW + 41.0));
-    assert!(!rail_now(Some(false), RAIL_BELOW + 1.0));
+    use super::{RAIL_BELOW, members_room_now, narrow_now};
+    assert!(narrow_now(None, RAIL_BELOW - 1.0));
+    assert!(!narrow_now(None, RAIL_BELOW + 1.0));
+    assert!(narrow_now(Some(true), RAIL_BELOW + 20.0), "a narrow window stays one past 600");
+    assert!(!narrow_now(Some(true), RAIL_BELOW + 41.0));
+    assert!(!narrow_now(Some(false), RAIL_BELOW + 1.0));
     let room = super::members::WIDTH + super::MESSAGES_MIN;
     assert!(members_room_now(None, room));
     assert!(!members_room_now(None, room - 1.0));
@@ -1162,6 +1366,422 @@ fn the_column_eases_to_the_rail() {
     let narrow = *widths.last().expect("frames");
     let between = widths.iter().filter(|w| **w < wide - 1.0 && **w > narrow + 1.0).count();
     assert!(narrow < wide && between >= 3, "{wide} → {widths:?}");
+}
+
+/// The window at `width`, then the frames of the column's easing.
+fn resize(h: &mut Harness, width: f32) {
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(width, 560.0));
+    for _ in 0..30 {
+        h.frame(Vec::new());
+    }
+}
+
+/// A click on the column's button, then the frames of the column's easing.
+fn toggle_column(h: &mut Harness) {
+    let button = h.rect(super::super::sidebar::control_id("column-toggle"));
+    h.click(button.center());
+    h.frame(vec![egui::Event::PointerGone]);
+    for _ in 0..30 {
+        h.frame(Vec::new());
+    }
+}
+
+fn shows_rail(h: &Harness) -> bool {
+    h.rect(entry_id(Pinned::Local)).width() <= super::super::sidebar::RAIL
+}
+
+fn collapsed_asked(h: &Harness) -> Vec<bool> {
+    h.actions
+        .iter()
+        .filter_map(|a| match a {
+            ConvAction::ColumnCollapsed(collapsed) => Some(*collapsed),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The rail has no search field: it ignores a search, whatever made it a
+/// rail (its button, a narrower window), and keeps the text for the column,
+/// where it filters again. Alt+arrows go through what the rail shows. A
+/// window narrowed for a moment loses nothing, as before the button.
+#[test]
+fn the_rail_ignores_a_search_and_keeps_it_for_the_column() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    let all = super::super::sidebar::tab_order(&h.world, &h.st).len();
+    h.st.side_filter = "nobody".into();
+    h.frame(Vec::new());
+    assert!(super::super::sidebar::tab_order(&h.world, &h.st).len() < all, "the column filters");
+    resize(&mut h, 460.0);
+    assert!(shows_rail(&h), "the rail shows its entries");
+    assert_eq!(
+        super::super::sidebar::tab_order(&h.world, &h.st).len(),
+        all,
+        "Alt+arrows: the whole rail"
+    );
+    assert_eq!(h.st.side_filter, "nobody", "the text is kept");
+    resize(&mut h, 700.0);
+    assert!(
+        super::super::sidebar::tab_order(&h.world, &h.st).len() < all,
+        "and filters the column again"
+    );
+
+    toggle_column(&mut h);
+    assert!(shows_rail(&h), "collapsed by the button: the same");
+    assert_eq!(h.st.side_filter, "nobody");
+}
+
+/// The button's choice goes through the settings the app gives back every
+/// frame (`ChatUi::follow_column_setting`): a collapse is kept on the next
+/// frames and after a relog, an expand is not undone by the setting, and the
+/// demo's own collapse ends with the button.
+#[test]
+fn the_buttons_choice_lives_in_the_settings() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    toggle_column(&mut h);
+    assert!(h.column_setting, "the setting keeps the collapse");
+    resize(&mut h, 700.0);
+    assert!(shows_rail(&h), "still collapsed on the frames after");
+
+    // a relog: the window state made again from the saved settings
+    let saved = crate::settings::Settings {
+        chat_column_collapsed: h.column_setting,
+        ..Default::default()
+    };
+    let mut relog = Harness::new(ChatStyle::Aurora);
+    relog.st = ChatUi::from_settings(&saved);
+    relog.column_setting = saved.chat_column_collapsed;
+    resize(&mut relog, 700.0);
+    assert!(shows_rail(&relog), "collapsed after a relog");
+    toggle_column(&mut relog);
+    assert!(!relog.column_setting && !shows_rail(&relog), "expanded");
+    resize(&mut relog, 700.0);
+    assert!(!shows_rail(&relog), "the setting does not collapse it again");
+
+    // demo mode (AURORA_DEMO_CONV=aurora:collapsed): the session's own
+    // state, never the settings, even when they say collapsed
+    let mut demo = Harness::new(ChatStyle::Aurora);
+    demo.demo = true;
+    demo.st.demo_column = Some(true);
+    resize(&mut demo, 700.0);
+    assert!(shows_rail(&demo) && !demo.column_setting);
+    toggle_column(&mut demo);
+    resize(&mut demo, 700.0);
+    assert!(!shows_rail(&demo), "the button expands it");
+    assert_eq!(demo.st.demo_column, Some(false));
+    assert!(!demo.column_setting, "the settings are untouched");
+    demo.column_setting = true;
+    resize(&mut demo, 700.0);
+    assert!(!shows_rail(&demo), "the session's state stands in for the settings");
+}
+
+/// At the window's least height, during a call, the list still shows its
+/// first two entries whole above the call panel, in the rail and in the
+/// full column (`ui/chat.rs`, the floater's least size).
+#[test]
+fn the_least_window_shows_two_entries_above_the_call() {
+    // with and without the Contacts tab (Contacts pinned over Nearby chat,
+    // or Nearby chat then a section's head)
+    for contacts in [false, true] {
+        let mut h = Harness::new(ChatStyle::Aurora);
+        h.show_contacts = contacts;
+        h.world.start_call(JANE);
+        h.settle();
+        // Nearby chat shown, as in AURORA_DEMO_CONV=aurora:call-away
+        h.st.selected = None;
+        for width in [460.0, 700.0] {
+            // asked smaller than the least: the floater keeps its least size
+            crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(width, 120.0));
+            for _ in 0..30 {
+                h.frame(Vec::new());
+            }
+            assert!(
+                h.frames
+                    .ctx
+                    .read_response(super::super::sidebar::control_id("panel-hang-up"))
+                    .is_some(),
+                "contacts={contacts} width {width}: the call panel is in the column"
+            );
+            let whole = [
+                Pinned::Contacts,
+                Pinned::Local,
+                Pinned::Conversation(BOB),
+                Pinned::Conversation(JANE),
+            ]
+            .into_iter()
+            .filter_map(|entry| h.frames.ctx.read_response(entry_id(entry)))
+            .filter(|entry| entry.interact_rect == entry.rect)
+            .count();
+            assert!(
+                whole >= 2,
+                "contacts={contacts} width {width}: {whole} whole entries above the call panel"
+            );
+        }
+    }
+}
+
+/// The window's least height. Without a call it is what it was before the
+/// button; during one it keeps two whole entries above the call's panel,
+/// whether the panel shows or not (the call's own conversation hides it),
+/// and it comes back down when the call ends. The column's button is in the
+/// head at every height.
+#[test]
+fn the_least_height_grows_only_during_a_call() {
+    use super::super::sidebar::least_column_short;
+    // two entries of 100 and a call panel of 80, with its gap (12) and the
+    // margin under the list (6): a 198 column fits them exactly
+    assert_eq!(least_column_short(198.0, 100.0, 80.0), 0.0);
+    assert_eq!(least_column_short(150.0, 100.0, 80.0), 48.0);
+    assert_eq!(least_column_short(250.0, 100.0, 80.0), -52.0);
+
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let toggle = super::super::sidebar::control_id("column-toggle");
+    // asked smaller than the least: the floater keeps its least size
+    let least = |h: &mut Harness| {
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(700.0, 120.0));
+        for _ in 0..30 {
+            h.frame(Vec::new());
+        }
+        assert!(h.frames.ctx.read_response(toggle).is_some(), "the button stays in the head");
+        h.frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("conversations")))
+            .expect("the window was drawn")
+            .height()
+    };
+    let without = least(&mut h);
+    assert!(without <= 240.5, "no call: the least height of before, {without}");
+    assert!(h.st.column_short.is_none(), "no call: the column asks nothing");
+
+    h.world.start_call(JANE);
+    h.settle();
+    h.st.open(BOB);
+    let during = least(&mut h);
+    assert!(during > without, "a call: two entries above its panel, {without} → {during}");
+    // the call's own conversation: no panel, the same least height
+    h.st.open(JANE);
+    assert!(
+        (least(&mut h) - during).abs() <= 0.5,
+        "the window does not jump with the conversation"
+    );
+
+    h.world.end_call();
+    assert!((least(&mut h) - without).abs() <= 0.5, "the call ended: back to before");
+}
+
+/// The column's least height is taken by the window each frame: once the
+/// column is no longer drawn (the Legacy style here), nothing it measured
+/// keeps the window tall.
+#[test]
+fn a_column_not_drawn_leaves_no_least_height() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.world.start_call(JANE);
+    h.settle();
+    h.st.open(BOB);
+    resize(&mut h, 700.0);
+    assert!(h.st.column_short.is_some(), "measured during the call");
+    h.st.style = ChatStyle::Legacy;
+    h.settle();
+    assert!(h.st.column_short.is_none(), "taken, and not measured again");
+}
+
+/// All false is the automatic layout; each click departs from it or comes
+/// back to it, whatever the width.
+#[test]
+fn the_column_choice_comes_back_to_automatic() {
+    use super::ColumnChoice;
+    let auto = ColumnChoice::default();
+    assert!(auto.rail(true) && !auto.rail(false), "automatic: the window decides");
+
+    let collapsed = auto.toggled(false);
+    assert_eq!(
+        collapsed,
+        ColumnChoice {
+            collapsed: true,
+            opened: false
+        }
+    );
+    assert!(collapsed.rail(false) && collapsed.rail(true), "a rail at any width");
+    assert_eq!(collapsed.toggled(false), auto, "expanded in a wide window: automatic");
+
+    let opened = auto.toggled(true);
+    assert_eq!(
+        opened,
+        ColumnChoice {
+            collapsed: false,
+            opened: true
+        }
+    );
+    assert!(!opened.rail(true), "the column in a narrow window");
+    assert_eq!(opened.toggled(true), auto, "closed again: nothing stays collapsed");
+
+    // collapsed in a wide window, then expanded in a narrow one: the last
+    // click is the wish, not the older collapse
+    assert_eq!(collapsed.toggled(true), opened);
+
+    assert!(!auto.by_hand(), "the button is plain while automatic");
+    assert!(collapsed.by_hand() && opened.by_hand(), "and lit by hand, in both directions");
+}
+
+/// In a wide window the button collapses the column for good: the window
+/// narrowed and widened again leaves it a rail, and the settings are told.
+#[test]
+fn the_button_collapses_the_column_at_any_width() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    assert!(!shows_rail(&h));
+    h.st.side_filter = "nobody".into();
+    h.frame(Vec::new());
+    toggle_column(&mut h);
+    assert!(h.st.column.collapsed);
+    assert!(shows_rail(&h), "collapsed in a wide window");
+    assert_eq!(h.st.side_filter, "nobody", "the rail ignores the search and keeps its text");
+    assert_eq!(collapsed_asked(&h), [true]);
+    // (the rest without it: back on the column it would hide every entry)
+    h.st.side_filter.clear();
+
+    resize(&mut h, 460.0);
+    resize(&mut h, 700.0);
+    assert!(shows_rail(&h), "still collapsed once wide again");
+
+    toggle_column(&mut h);
+    assert!(!h.st.column.collapsed);
+    assert!(!shows_rail(&h), "expanded");
+    assert_eq!(collapsed_asked(&h), [true, false]);
+
+    resize(&mut h, 460.0);
+    assert!(shows_rail(&h), "automatic again: narrow, a rail");
+    resize(&mut h, 700.0);
+    assert!(!shows_rail(&h), "automatic again: wide, the column");
+}
+
+/// In a narrow window the button opens the column until the window is wide
+/// enough to have it anyway: narrowed again, the rail comes back by itself.
+/// Nothing of it is saved.
+#[test]
+fn the_button_opens_the_column_in_a_narrow_window() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 580.0);
+    assert!(shows_rail(&h));
+    toggle_column(&mut h);
+    assert!(!shows_rail(&h), "opened");
+    assert!(h.rect(super::super::sidebar::search_id()).width() > 0.0, "with its search field");
+    toggle_column(&mut h);
+    assert!(shows_rail(&h), "closed");
+    toggle_column(&mut h);
+    assert!(!shows_rail(&h), "opened again");
+
+    resize(&mut h, 700.0);
+    assert!(!h.st.column.opened, "automatic once wide");
+    resize(&mut h, 580.0);
+    assert!(shows_rail(&h), "narrow again: the rail by itself");
+    assert_eq!(collapsed_asked(&h), [] as [bool; 0]);
+}
+
+/// Below `OPEN_FROM` the column does not fit: the button is greyed out, a
+/// click does nothing, and the column opened closes by itself, for good.
+#[test]
+fn the_button_is_greyed_out_when_the_column_does_not_fit() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    let button = super::super::sidebar::control_id("column-toggle");
+    resize(&mut h, 460.0);
+    assert!(!h.frames.ctx.read_response(button).expect("drawn").sense.senses_click());
+    toggle_column(&mut h);
+    assert!(shows_rail(&h) && !h.st.column.opened, "a click on it does nothing");
+
+    resize(&mut h, super::OPEN_FROM + 4.0);
+    assert!(h.frames.ctx.read_response(button).expect("drawn").sense.senses_click());
+    toggle_column(&mut h);
+    assert!(!shows_rail(&h), "opened from the threshold");
+
+    resize(&mut h, 460.0);
+    assert!(shows_rail(&h) && !h.st.column.opened, "no room left: closed");
+    resize(&mut h, super::OPEN_FROM + 4.0);
+    assert!(shows_rail(&h), "room again: still automatic");
+
+    // collapsed by hand it stays so, greyed out until the room is back
+    h.column_setting = true;
+    resize(&mut h, 460.0);
+    toggle_column(&mut h);
+    assert!(h.st.column.collapsed);
+    resize(&mut h, 700.0);
+    toggle_column(&mut h);
+    assert!(!h.st.column.collapsed && !shows_rail(&h));
+}
+
+/// The column's button sits in the column's head: first in the row of the
+/// search field and the "new conversation" button, their height, and alone
+/// at the top of the rail, above the entries. Each one stands under the
+/// other's centre, so the pointer that clicked stays on it.
+#[test]
+fn the_column_button_sits_in_the_head() {
+    use super::super::sidebar::control_id;
+    let mut h = Harness::new(ChatStyle::Aurora);
+    resize(&mut h, 700.0);
+    let button = h.rect(control_id("column-toggle"));
+    let search = h.rect(super::super::sidebar::search_id());
+    let new = h.rect(control_id("new-conversation"));
+    assert!(
+        button.right() < search.left() && search.right() < new.left(),
+        "{button:?} {search:?} {new:?}"
+    );
+    assert_eq!(button.size(), new.size(), "the head's buttons alike");
+    assert!((button.center().y - new.center().y).abs() <= 0.5);
+    assert!(button.bottom() < h.rect(entry_id(Pinned::Local)).top(), "above the list");
+
+    toggle_column(&mut h);
+    assert!(shows_rail(&h));
+    let rail_button = h.rect(control_id("column-toggle"));
+    let first = h.rect(entry_id(Pinned::Local));
+    assert_eq!(rail_button.size(), button.size());
+    assert!((rail_button.top() - button.top()).abs() <= 0.5, "the same row");
+    assert!(rail_button.bottom() < first.top(), "above the rail's pictures");
+    assert!(
+        rail_button.contains(button.center()) && button.contains(rail_button.center()),
+        "under the pointer both ways: {button:?} {rail_button:?}"
+    );
+}
+
+/// The button takes nothing from the list's foot: the call panel stands
+/// where it stood before the button, its gap above the window's bottom.
+#[test]
+fn the_call_panel_keeps_its_place() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.world.start_call(JANE);
+    h.settle();
+    h.st.open(BOB);
+    // the microphone's button, as the app gives it (its three buttons fill
+    // the panel's foot, stacked in the rail)
+    h.st.mic = Some(true);
+    for collapse in [false, true] {
+        if collapse {
+            toggle_column(&mut h);
+        } else {
+            resize(&mut h, 700.0);
+        }
+        let window = h
+            .frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("conversations")))
+            .expect("the window was drawn");
+        let hang_up = h.rect(super::super::sidebar::control_id("panel-hang-up"));
+        // the panel's 8 points of padding under its buttons, its 12 of gap
+        let gap = window.bottom() - hang_up.bottom();
+        assert!((gap - 20.0).abs() <= 1.0, "collapsed={collapse}: {gap} under the panel's buttons");
+    }
+}
+
+/// The column collapsed by hand leaves the members' panel its place: only
+/// a narrow window takes it away.
+#[test]
+fn a_collapsed_column_keeps_the_members_panel() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.column_setting = true;
+    resize(&mut h, 700.0);
+    assert!(h.st.layout_members_room == Some(true), "room in a wide window, rail or not");
+    resize(&mut h, 560.0);
+    assert!(h.st.layout_members_room == Some(false), "none in a narrow one");
 }
 
 /// Finding in a conversation opens the field in the head's row: no strip
@@ -1394,7 +2014,7 @@ fn contacts_navigation_details_button_opens_sheet() {
                             .collect()
                     });
                     buttons.sort_by(|a, b| a.top().total_cmp(&b.top()).then(a.left().total_cmp(&b.left())));
-                    assert_eq!(buttons.len(), if online { 5 } else { 4 }, "all quick actions remain visible");
+                    assert_eq!(buttons.len(), if online { 6 } else { 4 }, "all quick actions remain visible");
                     assert_eq!(row.rect.height(), 42.0, "contact rows keep their height at every window width");
                     assert!(buttons.iter().all(|button| button.center().y == row.rect.center().y));
                     let details = buttons[buttons.len() - 2].center();
@@ -1541,6 +2161,7 @@ fn the_contacts_tab_shows_peoples_friends() {
         settings: &mut radar_settings,
         voice: &voice,
         draw_distance: 64.0,
+        second_life: true,
         now: 0.0,
         pics: &pics,
     };
@@ -1591,6 +2212,203 @@ fn the_contacts_tab_shows_peoples_friends() {
     // the contact list's own tabs are not there
     let groups = aurora_i18n::tr!("ui-contacts-contact-sets");
     assert!(texts.iter().all(|t| t.source != groups), "no contact list tabs");
+}
+
+/// Two of our groups, for the Contacts tab's Groups pill.
+fn add_groups(world: &mut World) {
+    for (n, name) in ["Builders Guild", "Night Owls"].into_iter().enumerate() {
+        world.groups.groups.push(aurora_net::GroupMembership {
+            id: Uuid::from_u128(0x6000 + n as u128),
+            name: name.to_owned(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+    }
+}
+
+/// The frames of a click at `at` (a move, a press, a release).
+fn click_frames(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    vec![vec![egui::Event::PointerMoved(at)], vec![button(true)], vec![button(false)]]
+}
+
+/// Conversations with the Contacts tab in Aurora's look of People, a frame
+/// per `input` entry then three still ones; the texts of the last.
+fn contacts_pane_frames(
+    h: &mut Harness,
+    people: &mut crate::ui::people::PeopleUi,
+    input: Vec<Vec<egui::Event>>,
+) -> Vec<crate::ui::widgets::elide_tests::Text> {
+    let p = crate::theme::Theme::default().palette();
+    let radar = crate::world::radar::Radar::default();
+    let mut radar_settings = crate::ui::people::RadarSettings::default();
+    let (voice, pics) = (HashMap::new(), HashMap::new());
+    let data = crate::ui::people::RadarData {
+        radar: &radar,
+        settings: &mut radar_settings,
+        voice: &voice,
+        draw_distance: 64.0,
+        second_life: true,
+        now: 0.0,
+        pics: &pics,
+    };
+    let mut friends = crate::ui::people::FriendsSettings::default();
+    let mut texts = Vec::new();
+    for events in input.into_iter().chain([Vec::new(), Vec::new(), Vec::new()]) {
+        let mut open = true;
+        let Harness {
+            frames,
+            world,
+            st,
+            icons,
+            emoji,
+            contacts,
+            contacts_settings,
+            gestures,
+            actions,
+            ..
+        } = &mut *h;
+        texts = frames.run(events, |ui| {
+            actions.extend(show(
+                ui.ctx(),
+                &p,
+                icons,
+                emoji,
+                &pics,
+                &pics,
+                world,
+                gestures,
+                st,
+                contacts,
+                contacts_settings,
+                true,
+                Some(crate::ui::people::FriendsPane {
+                    st: &mut *people,
+                    data: &data,
+                    settings: &mut friends,
+                    images: &pics,
+                }),
+                &mut open,
+            ));
+        });
+    }
+    texts
+}
+
+/// The pane's pill named `label`, right of the column (which may name its
+/// groups section).
+fn pane_pill(texts: &[crate::ui::widgets::elide_tests::Text], label: &str) -> egui::Pos2 {
+    texts
+        .iter()
+        .filter(|t| t.source == label)
+        .max_by(|a, b| a.rect.min.x.total_cmp(&b.rect.min.x))
+        .unwrap_or_else(|| panic!("the {label} pill"))
+        .rect
+        .center()
+}
+
+/// The Contacts tab's Groups pill in Aurora's look of People: our groups'
+/// rows instead of the friends', and back to the friends with the other
+/// pill (the Legacy look's Contacts › Groups tab).
+#[test]
+fn the_contacts_tab_shows_our_groups_under_its_pill() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_friends(&mut h.world);
+    add_groups(&mut h.world);
+    h.st.contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 560.0));
+    let mut people = crate::ui::people::PeopleUi::default();
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    assert!(!people.pane_groups, "the friends first");
+    assert!(texts.iter().any(|t| t.source == "Friend 00"), "the friends' rows");
+    let pill = pane_pill(&texts, aurora_i18n::tr!("common-groups"));
+    let texts = contacts_pane_frames(&mut h, &mut people, click_frames(pill));
+    assert!(people.pane_groups, "the Groups pill opened");
+    assert!(texts.iter().any(|t| t.source == "Builders Guild"), "the groups' rows");
+    assert!(texts.iter().all(|t| t.source != "Friend 00"), "no friend left");
+    let sub = aurora_i18n::tr!("ui-chat-contacts-groups-sub", count = 2);
+    assert!(texts.iter().any(|t| t.source == sub), "the column says {sub:?}");
+    let pill = pane_pill(&texts, aurora_i18n::tr!("common-friends"));
+    let texts = contacts_pane_frames(&mut h, &mut people, click_frames(pill));
+    assert!(!people.pane_groups, "back to the friends");
+    assert!(texts.iter().any(|t| t.source == "Friend 00"), "the friends' rows again");
+}
+
+/// In a Contacts pane too narrow for the group's sheet beside the list, a
+/// double click on a group opens its chat: the first click only selects,
+/// the list stays under the pointer for the second (the sheet alone would
+/// take the pane, its buttons under the second click).
+#[test]
+fn a_double_click_on_a_group_in_a_narrow_contacts_pane_opens_its_chat() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_groups(&mut h.world);
+    h.st.contacts = true;
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(640.0, 560.0));
+    let mut people = crate::ui::people::PeopleUi::default();
+    people.pane_groups = true;
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    let row = texts
+        .iter()
+        .find(|t| t.source == "Night Owls")
+        .expect("the group's row")
+        .rect
+        .center();
+    // too narrow for the sheet beside the list: no "No group to display"
+    let empty = aurora_i18n::tr!("people-group-details-empty");
+    assert!(texts.iter().all(|t| t.source != empty), "the pane is narrow");
+    let mut input = click_frames(row);
+    input.extend(click_frames(row).into_iter().skip(1));
+    let texts = contacts_pane_frames(&mut h, &mut people, input);
+    let group = Uuid::from_u128(0x6001);
+    assert!(
+        h.actions
+            .iter()
+            .any(|a| matches!(a, ConvAction::People(crate::ui::people::PeopleAction::GroupChat(id)) if *id == group)),
+        "the group's chat opened"
+    );
+    assert!(texts.iter().any(|t| t.source == "Builders Guild"), "the list stayed");
+}
+
+/// A group shown beside the list in a wide Contacts pane comes back when the
+/// pane, made too narrow for the sheet, is widened again: the sheet is not
+/// left empty.
+#[test]
+fn a_group_sheet_comes_back_when_the_contacts_pane_widens_again() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    add_groups(&mut h.world);
+    h.st.contacts = true;
+    let wide = egui::vec2(960.0, 560.0);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), wide);
+    let mut people = crate::ui::people::PeopleUi::default();
+    people.pane_groups = true;
+    let empty = aurora_i18n::tr!("people-group-details-empty");
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    assert!(texts.iter().any(|t| t.source == empty), "the pane is wide, nothing shown yet");
+    let row = texts
+        .iter()
+        .find(|t| t.source == "Night Owls")
+        .expect("the group's row")
+        .rect
+        .center();
+    let texts = contacts_pane_frames(&mut h, &mut people, click_frames(row));
+    assert!(texts.iter().all(|t| t.source != empty), "the click shows the group");
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(640.0, 560.0));
+    contacts_pane_frames(&mut h, &mut people, Vec::new());
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), wide);
+    let texts = contacts_pane_frames(&mut h, &mut people, Vec::new());
+    assert!(texts.iter().any(|t| t.source == "Builders Guild"), "the list is back");
+    assert!(
+        texts.iter().all(|t| t.source != empty),
+        "the group's sheet is back, not an empty one"
+    );
 }
 
 /// Who types in the nearby chat shows above the field, their name in the
@@ -2052,47 +2870,180 @@ fn the_tabs_of_the_other_styles_open_the_menu() {
     }
 }
 
-/// Away from the end of a conversation, the button back to the latest
-/// messages shows and counts what came in; its click brings the end back,
-/// where the next line shows at once (#558), in both windows.
+/// Compare the whole painted text with the button disabled: any unwanted
+/// label is caught, whatever its wording or unread count.
+fn assert_no_latest_button(h: &mut Harness) {
+    let texts = |h: &mut Harness| {
+        // Scrolling and overscroll can still move the viewport after twelve
+        // frames. Compare steady frames, with no pointer tooltip appearing.
+        h.frame(vec![egui::Event::PointerGone]);
+        let mut previous = Vec::new();
+        let mut steady = 0;
+        for _ in 0..240 {
+            let current = h.frame(Vec::new()).into_iter().map(|t| t.source).collect::<Vec<_>>();
+            if current == previous {
+                steady += 1;
+                if steady >= 24 {
+                    return current;
+                }
+            } else {
+                steady = 0;
+                previous = current;
+            }
+        }
+        panic!("the conversation's painted text did not settle");
+    };
+    let shown = texts(h);
+    h.st.hide_latest = true;
+    let hidden = texts(h);
+    h.st.hide_latest = false;
+    assert_eq!(shown, hidden, "{:?}: no latest-message button should be painted", h.st.style);
+}
+
+/// Scrolling alone shows no button (#2364). New messages bring it up; its
+/// click reaches the end and clears the count, in every style and window.
 #[test]
 fn the_latest_button_brings_the_end_back() {
-    let jump = aurora_i18n::tr!("ui-chat-latest");
+    // Measure every row deterministically: a busy machine must not change
+    // which old lines are painted between the two visibility snapshots.
+    crate::ui::chat::view::measure_rows_per_frame(Some(usize::MAX));
     let two = aurora_i18n::tr!("ui-chat-latest-new", count = 2usize);
     let count = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().filter(|t| t.source == s).count();
-    let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| count(texts, s) > 0;
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        for detached in [false, true] {
+            let mut h = Harness::new(style);
+            for k in 0..60 {
+                h.world
+                    .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+            }
+            h.st.selected = Some(JANE);
+            if detached {
+                h.st.demo_pop_out(&h.frames.ctx, Some(JANE), egui::pos2(40.0, 40.0), egui::vec2(420.0, 500.0));
+            }
+            h.settle();
+            assert_no_latest_button(&mut h);
+            h.st.views.get_mut(&Some(JANE)).expect("the conversation was drawn").scroll_to(0);
+            assert_no_latest_button(&mut h);
+            assert!(
+                h.st.views[&Some(JANE)].below() > 300.0,
+                "{style:?}, detached={detached}: at the top"
+            );
+            // Our lines, notices and blocked messages do not count.
+            h.world
+                .conversation_line(JANE, line("You", h.world.agent_id, ChatKind::OWN, "our line"));
+            h.world
+                .conversation_line(JANE, line("System", uuid::Uuid::nil(), ChatKind::System, "notice"));
+            let mut blocked = line("Jane", JANE, ChatKind::Im, "blocked");
+            blocked.blocked = true;
+            h.world.conversation_line(JANE, blocked);
+            assert_no_latest_button(&mut h);
+            h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
+            h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
+            let texts = h.settle();
+            let away = count(&texts, "new 2");
+            h.click(painted(&texts, &two).rect.center());
+            let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+            assert_eq!(count(&texts, "new 2"), away + 1, "{style:?}, detached={detached}: the end in sight");
+            assert_no_latest_button(&mut h);
+            h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "after"));
+            assert_eq!(count(&h.settle(), "after"), away + 1, "{style:?}, detached={detached}");
+            // Returning to old messages must not resurrect the cleared count.
+            h.st.views.get_mut(&Some(JANE)).expect("the conversation was drawn").scroll_to(0);
+            assert_no_latest_button(&mut h);
+        }
+    }
+    crate::ui::chat::view::measure_rows_per_frame(None);
+}
+
+/// The Aurora box grows with its text up to thirty rows, its buttons level
+/// with the first line, while the messages keep their end in sight; past
+/// what the window has room for it scrolls, the messages keeping their
+/// least height (human request of 2026-11-15).
+#[test]
+fn the_box_grows_to_thirty_rows_and_the_messages_keep_their_end() {
+    let field = egui::Id::unique(("conv_input", Some(JANE)));
+    let mut h = Harness::new(ChatStyle::Aurora);
+    for k in 0..60 {
+        h.world
+            .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+    }
+    h.st.selected = Some(JANE);
+    for _ in 0..4 {
+        h.settle();
+    }
+    // one row: the button's height (nothing stored while it is the least)
+    let one = crate::ui::chat::input::height(&h.frames.ctx, field, 28.0);
+    let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().any(|t| t.source == s);
+    let field_text = |texts: &[crate::ui::widgets::elide_tests::Text]| {
+        texts
+            .iter()
+            .find(|t| t.source.starts_with("row 1\n"))
+            .map(|t| t.rect)
+            .expect("the field's text drawn")
+    };
+    *h.st.draft_mut(Some(JANE)) = (1..=12).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
+    let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+    let twelve = crate::ui::chat::input::height(&h.frames.ctx, field, 28.0);
+    let text = field_text(&texts);
+    // every row in sight: the field as tall as its text, past four rows
+    assert!(
+        twelve >= text.height() && twelve > one * 4.0,
+        "{one} -> {twelve}, text {}",
+        text.height()
+    );
+    assert!(has(&texts, "old 59"), "the last message still in sight");
+    assert!(h.st.views[&Some(JANE)].below() < 1.0, "still following the end");
+    // the emoji button level with the first row, not centred on the box
+    let emoji = h.rect(crate::ui::chat::sidebar::control_id("box-mood-smile-filled"));
+    assert!((emoji.center().y - text.top()).abs() < 16.0, "{emoji:?} {text:?}");
+    // far more than the window holds: it stops growing, the messages keep
+    // their least height and the last of them shows
+    *h.st.draft_mut(Some(JANE)) = (1..=80).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
+    let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+    let tall = crate::ui::chat::input::height(&h.frames.ctx, field, 28.0);
+    let rows = field_text(&texts).height() / 80.0;
+    assert!(tall <= rows * 30.0 + 12.0, "{tall} for rows of {rows}");
+    assert!(has(&texts, "old 59"), "the last message still in sight");
+    // a draft already long when the conversation opens: the same
+    let mut h = Harness::new(ChatStyle::Aurora);
+    for k in 0..60 {
+        h.world
+            .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
+    }
+    h.st.selected = Some(JANE);
+    *h.st.draft_mut(Some(JANE)) = (1..=12).map(|k| format!("row {k}")).collect::<Vec<_>>().join("\n");
+    let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
+    assert!(has(&texts, "old 59"), "opened with a long draft: the last message in sight");
+    assert!(h.st.views[&Some(JANE)].below() < 1.0, "opened with a long draft: following the end");
+}
+
+/// With the button turned off (Preferences › Chat › Conversations), a
+/// conversation scrolled away from its end shows none, even when lines come
+/// in, and the reader stays where they are, in both windows.
+#[test]
+fn the_latest_button_can_be_turned_off() {
+    let two = aurora_i18n::tr!("ui-chat-latest-new", count = 2usize);
+    let has = |texts: &[crate::ui::widgets::elide_tests::Text], s: &str| texts.iter().any(|t| t.source == s);
     for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
         let mut h = Harness::new(style);
+        h.st.hide_latest = true;
         for k in 0..60 {
             h.world
                 .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, &format!("old {k}")));
         }
         h.st.selected = Some(JANE);
-        // never, not even for the frame the conversation is first shown
-        for _ in 0..8 {
-            assert!(!has(&h.frame(Vec::new()), jump), "{style:?}: at the end, no button");
-        }
-        // to the top (the demo's way)
+        h.settle();
         h.st.demo_scroll = Some(JANE);
         h.settle();
         h.settle();
         assert!(h.st.demo_scrolled, "{style:?}");
         let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
-        assert!(has(&texts, jump), "{style:?}: far from the end");
-        // two lines come in, out of sight
+        assert!(has(&texts, "old 0"), "{style:?}: at the top");
         h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 1"));
         h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "new 2"));
-        // (the column's entry says the last one too)
-        let texts = h.settle();
-        let away = count(&texts, "new 2");
-        let at = painted(&texts, &two).rect.center();
-        h.click(at);
         let texts = (0..12).map(|_| h.frame(Vec::new())).last().unwrap_or_default();
-        assert_eq!(count(&texts, "new 2"), away + 1, "{style:?}: the end in sight");
-        assert!(!has(&texts, &two) && !has(&texts, jump), "{style:?}: the button gone");
-        // the lines follow the end again
-        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "after"));
-        assert_eq!(count(&h.settle(), "after"), away + 1, "{style:?}");
+        assert!(!has(&texts, &two), "{style:?}: no count either");
+        assert!(has(&texts, "old 0"), "{style:?}: the reader stays at the top");
     }
 }
 
@@ -2116,14 +3067,239 @@ fn the_column_previews_show_link_labels() {
         line("Jane", JANE, ChatKind::Im, &format!("ask secondlife:///app/agent/{lune}/about")),
     );
     let texts = h.settle();
-    // (a teleport link reads "Teleport to Pinede (1,2,3)", in the language)
+    // (a teleport link reads "Teleport to Pinede (1,2,3)", in the language's
+    // order: Japanese puts the place first)
     assert!(
-        texts
-            .iter()
-            .any(|t| t.source.contains(" · Nova : join Cercle des Brumes with Lune Étoilée at ") && t.source.ends_with(" Pinede (1,2,3)")),
+        texts.iter().any(|t| {
+            let (_, preview) = t
+                .source
+                .split_once(" · Nova : join Cercle des Brumes with Lune Étoilée at ")
+                .unwrap_or_default();
+            preview.contains("Pinede (1,2,3)")
+        }),
         "the nearby chat's entry: {:?}",
         texts.iter().map(|t| &t.source).collect::<Vec<_>>()
     );
     assert!(texts.iter().any(|t| t.source.ends_with("ask Lune Étoilée")), "Jane's entry");
     assert!(texts.iter().all(|t| !t.source.contains("secondlife:")), "no raw address anywhere");
+}
+
+/// Adding a resident to a conversation with one resident turns it into a
+/// conference, and the new conference's field takes the keyboard: FSFloaterIM::
+/// addP2PSessionParticipants → startConference → FSFloaterIM::show →
+/// setFocus(true) → focusFirstItem (indra/newview/fsfloaterim.cpp). The
+/// keyboard follows the conference to the server's session id.
+#[test]
+fn a_conference_made_from_a_p2p_chat_takes_the_keyboard() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.st.selected = Some(JANE);
+        h.st.conv_focus_request = true;
+        h.settle();
+        let field = |c: Uuid| egui::Id::unique(("conv_input", Some(c)));
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(field(JANE))),
+            "{style:?}: the P2P field starts with the keyboard"
+        );
+        h.world.convert_to_conference(JANE, vec![BOB]);
+        let temp = h.world.social.focus_im.expect("the new conference is shown");
+        assert!(h.world.social.focus_im_to_type, "{style:?}: ready to type in");
+        h.settle();
+        assert_eq!(h.st.selected, Some(temp));
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(field(temp))),
+            "{style:?}: the new conference takes the keyboard"
+        );
+        h.frame(vec![egui::Event::Text("hi".into())]);
+        assert_eq!(h.st.draft_mut(Some(temp)), "hi", "{style:?}");
+        // processSessionInitializedReply: the server's id replaces ours, and
+        // the conversation keeps the keyboard
+        let real = Uuid::from_u128(0xC0FFEE);
+        h.world.apply(aurora_net::NetEvent::SessionStarted {
+            temp_session: temp,
+            session: real,
+            success: true,
+            error: String::new(),
+            agents: Vec::new(),
+        });
+        h.settle();
+        assert_eq!(h.st.selected, Some(real));
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(field(real))),
+            "{style:?}: the server's id keeps the keyboard"
+        );
+        h.frame(vec![egui::Event::Text("!".into())]);
+        assert_eq!(
+            h.st.draft_mut(Some(real)),
+            "hi!",
+            "{style:?}: the draft and caret stay in the conference"
+        );
+        assert!(!h.st.drafts.contains_key(&Some(temp)), "the temporary editor is gone");
+        assert!(h.st.draft_mut(None).is_empty(), "{style:?}: not in the nearby chat");
+    }
+}
+
+/// The server may acknowledge a new conference after the user has started
+/// writing elsewhere. The server ID follows the draft, not the keyboard.
+#[test]
+fn a_voice_conference_takes_focus_once_and_keeps_its_draft_after_switching_chats() {
+    for detached in [false, true] {
+        let mut h = Harness::new(ChatStyle::Aurora);
+        h.st.own_windows = detached;
+        h.world.calls.voice_enabled = true;
+        h.world.start_conference(vec![JANE, BOB]);
+        let temp = h.world.social.focus_im.expect("outgoing voice conference");
+        h.settle();
+        let field = |c| egui::Id::unique(("conv_input", Some(c)));
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(temp))));
+        h.frame(vec![egui::Event::Text("conference draft".into())]);
+        h.world.focus_conversation(JANE, true);
+        h.settle();
+        h.frame(vec![egui::Event::Text("to Jane".into())]);
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(JANE))));
+        let real = Uuid::from_u128(0xC0FFEE);
+        h.world.apply(aurora_net::NetEvent::SessionStarted {
+            temp_session: temp,
+            session: real,
+            success: true,
+            error: String::new(),
+            agents: Vec::new(),
+        });
+        assert!(h.world.social.focus_im.is_none(), "the reply does not open a conversation");
+        h.settle();
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(JANE))));
+        h.frame(vec![egui::Event::Text("!".into())]);
+        assert_eq!(h.st.draft_mut(Some(JANE)), "to Jane!");
+        assert_eq!(h.st.draft_mut(Some(real)), "conference draft");
+        assert!(!h.st.popped.contains(Some(temp)));
+        assert_eq!(h.st.popped.contains(Some(real)), detached);
+        assert!(!h.st.drafts.contains_key(&Some(temp)));
+        assert!(h.st.draft_mut(None).is_empty());
+    }
+}
+
+#[test]
+fn conference_ack_keeps_the_picker_in_its_own_window() {
+    let ctx = egui::Context::default();
+    let unrelated = Uuid::from_u128(17);
+    for (before, after) in [
+        (None, None),
+        (Some(None), Some(None)),
+        (Some(Some(None)), Some(Some(None))),
+        (Some(Some(Some(unrelated))), Some(Some(Some(unrelated)))),
+        (Some(Some(Some(JANE))), Some(Some(Some(BOB)))),
+    ] {
+        let mut st = ChatUi {
+            picker_window: before,
+            ..Default::default()
+        };
+        st.rekey_conference(&ctx, JANE, BOB);
+        assert_eq!(st.picker_window, after);
+    }
+}
+
+#[test]
+fn conference_ack_keeps_the_active_search_or_filter_editor() {
+    use super::super::find;
+
+    let (temp, real) = (Some(JANE), Some(BOB));
+    for field in [find::field_id, find::filter_id] {
+        let ctx = egui::Context::default();
+        let mut st = ChatUi::default();
+        ctx.memory_mut(|m| m.request_focus(field(temp)));
+        st.rekey_conference(&ctx, JANE, BOB);
+        assert!(ctx.memory(|m| m.has_focus(field(real))));
+    }
+}
+
+#[test]
+fn enter_returns_to_the_last_editor_after_a_conference_ack_with_the_keyboard_in_world() {
+    let field = |id| egui::Id::unique(("conv_input", Some(id)));
+    for switch_first in [false, true] {
+        let mut h = Harness::new(ChatStyle::Aurora);
+        h.st.enter_last_field = true;
+        h.world.start_text_conference(vec![JANE, BOB]);
+        let temp = h.world.social.focus_im.expect("outgoing conference");
+        h.settle();
+        h.frame(vec![egui::Event::Text("a draft".into())]);
+        let last = if switch_first {
+            h.world.focus_conversation(JANE, true);
+            h.settle();
+            h.frame(vec![egui::Event::Text("private".into())]);
+            JANE
+        } else {
+            temp
+        };
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(last))));
+        h.frames.ctx.memory_mut(|m| m.surrender_focus(field(last)));
+        h.st.let_keyboard_go();
+        let real = Uuid::from_u128(0xC0FFEE);
+        h.world.apply(aurora_net::NetEvent::SessionStarted {
+            temp_session: temp,
+            session: real,
+            success: true,
+            error: String::new(),
+            agents: Vec::new(),
+        });
+        h.settle();
+        assert!(
+            h.frames.ctx.memory(|m| m.focused()).is_none(),
+            "the reply leaves the keyboard in the world"
+        );
+        let world = &h.world;
+        h.st.start_chat(&h.frames.ctx, h.open, |id| {
+            world.social.has_session(id) || world.groups.sessions.contains_key(id)
+        });
+        h.settle();
+        let expected = if switch_first { JANE } else { real };
+        assert!(h.frames.ctx.memory(|m| m.has_focus(field(expected))));
+        h.frame(vec![egui::Event::Text("!".into())]);
+        assert_eq!(h.st.draft_mut(Some(expected)), if switch_first { "private!" } else { "a draft!" });
+    }
+}
+
+/// Send IM and the column's "new conversation" ask for a conversation and
+/// its field takes the keyboard (LLAvatarActions::startIM → FSFloaterIM::show
+/// → setFocus).
+#[test]
+fn a_conversation_the_user_starts_takes_the_keyboard() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.world.start_text_conference(vec![BOB]);
+        h.settle();
+        assert_eq!(h.st.selected, Some(BOB));
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(egui::Id::unique(("conv_input", Some(BOB))))),
+            "{style:?}: Send IM takes the keyboard"
+        );
+    }
+}
+
+/// A new call opens the Conversations window (App::update_voice) but must
+/// not take the keyboard: its conversation is only shown, as a call opener
+/// leaves the caret where it was.
+#[test]
+fn an_outgoing_call_does_not_take_the_keyboard_when_it_opens_the_window() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.open = false;
+        // the call starts while the Conversations window is closed
+        h.world.focus_conversation(JANE, false);
+        h.frame(Vec::new());
+        // and the app opens the window for it
+        h.open = true;
+        h.settle();
+        assert_eq!(h.st.selected, Some(JANE), "{style:?}: the call's conversation is shown");
+        assert!(
+            h.frames.ctx.memory(|m| m.focused()).is_none(),
+            "{style:?}: a call must not focus its field"
+        );
+        // a conversation the user asks for, on the other hand, is ready to type
+        h.world.focus_conversation(BOB, true);
+        h.settle();
+        assert!(
+            h.frames.ctx.memory(|m| m.has_focus(egui::Id::unique(("conv_input", Some(BOB))))),
+            "{style:?}: a user request takes the keyboard"
+        );
+    }
 }

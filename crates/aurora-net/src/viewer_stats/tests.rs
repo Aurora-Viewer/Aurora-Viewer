@@ -313,22 +313,23 @@ fn the_vendor_short_name_comes_from_the_pci_id() {
 }
 
 #[test]
-fn dropped_packets_are_the_gaps_no_late_packet_filled() {
+fn dropped_packets_are_confirmed_losses_not_provisional_gaps() {
     let stats = NetStats::default();
     stats.seq_gaps.store(10, Ordering::Relaxed);
     stats.seq_late.store(7, Ordering::Relaxed);
+    stats.packets_lost.store(2, Ordering::Relaxed);
     stats.ping_avg_ms.store(120, Ordering::Relaxed);
     let n = NetCounters::read(&stats);
-    assert_eq!(n.dropped, 3);
+    assert_eq!(n.dropped, 2);
     assert_eq!(n.ping_ms, 120.0);
-    // a late packet counted before its gap never wraps the counter
+    // Recoveries from another period do not undo already confirmed losses.
     stats.seq_late.store(12, Ordering::Relaxed);
-    assert_eq!(NetCounters::read(&stats).dropped, 0);
+    assert_eq!(NetCounters::read(&stats).dropped, 2);
 }
 
 #[tokio::test]
 async fn a_post_that_fails_is_only_logged() {
-    let http = reqwest::Client::new();
+    let http = crate::test_http_client();
     let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
     // nothing listens on the discard port of localhost
     assert!(!post(&http, "http://127.0.0.1:9/cap", &report).await);
@@ -367,7 +368,7 @@ async fn any_2xx_answer_is_a_post_even_with_an_empty_body() {
             crate::test_http::finish(stream);
         }
     });
-    let http = reqwest::Client::new();
+    let http = crate::test_http_client();
     let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
     assert!(post(&http, &url, &report).await);
 }
@@ -397,7 +398,7 @@ fn post_counted(rt: &tokio::runtime::Runtime, posts: &std::sync::Arc<PostsInFlig
     let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
     posts.begin();
     rt.spawn(async move {
-        post(&reqwest::Client::new(), &url, &report).await;
+        post(&crate::test_http_client(), &url, &report).await;
         posts.end();
     });
 }

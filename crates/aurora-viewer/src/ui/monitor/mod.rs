@@ -1,12 +1,14 @@
 //! Resource monitor: the Performance window's full view, a task manager
 //! for power users. What the viewer consumes, over the last minute, in
-//! eight sections down a rail: an overview, the subsystems (what each part
+//! nine sections down a rail: an overview, the subsystems (what each part
 //! of the viewer costs in processor, frame time, GPU, memory, video memory,
 //! network and disk), the threads, the memory, the network, the disk, the
-//! costliest avatars and objects around, and the region's simulator. The
+//! costliest avatars and objects around, the region's simulator, and the
+//! target frame rate (Autotune, `autotune.rs`). The
 //! app gathers a snapshot every half second while the view is open
 //! (`app/monitor.rs`); the model attributes the costs (`model.rs`).
 
+pub mod autotune;
 mod disk;
 mod draw;
 mod fmt;
@@ -40,10 +42,11 @@ pub enum Tab {
     Disk,
     Scene,
     Region,
+    Autotune,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 8] = [
+    pub const ALL: [Tab; 9] = [
         Tab::Overview,
         Tab::Subsystems,
         Tab::Threads,
@@ -52,6 +55,7 @@ impl Tab {
         Tab::Disk,
         Tab::Scene,
         Tab::Region,
+        Tab::Autotune,
     ];
 
     fn icon(self) -> &'static str {
@@ -64,6 +68,7 @@ impl Tab {
             Tab::Disk => "database-filled",
             Tab::Scene => "cube",
             Tab::Region => "world-filled",
+            Tab::Autotune => "bolt-filled",
         }
     }
 
@@ -77,6 +82,7 @@ impl Tab {
             Tab::Disk => aurora_i18n::tr!("monitor-tab-disk"),
             Tab::Scene => aurora_i18n::tr!("monitor-tab-scene"),
             Tab::Region => aurora_i18n::tr!("monitor-tab-region"),
+            Tab::Autotune => aurora_i18n::tr!("monitor-tab-autotune"),
         }
     }
 
@@ -91,6 +97,7 @@ impl Tab {
             "disk" => Tab::Disk,
             "scene" => Tab::Scene,
             "region" => Tab::Region,
+            "autotune" => Tab::Autotune,
             _ => return None,
         })
     }
@@ -126,10 +133,25 @@ pub enum Action {
     /// avatar wears.
     Inspect(uuid::Uuid),
     InspectAvatar(uuid::Uuid),
+    /// Take off a worn object or HUD, by its root prim.
+    Detach(crate::world::objects::ObjKey),
     RegionWindow,
     TopScripts,
     OpenCacheFolder,
     ClearCache,
+    /// The target frame rate's Start, Stop, Keep and choices.
+    Autotune(autotune::Request),
+}
+
+/// What the scene section lists: the avatars or the objects around, or
+/// the agent's own worn objects and HUDs (the Legacy Viewer's
+/// Performance window has the last two as its own panels).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SceneView {
+    Avatars,
+    Objects,
+    Worn,
+    Huds,
 }
 
 /// The monitor's state: its history and what the user chose.
@@ -144,12 +166,16 @@ pub struct Monitor {
     open: HashSet<RowId>,
     selected: Selected,
     filter: String,
-    /// The scene's objects rather than its avatars.
-    scene_objects: bool,
+    /// What the scene section lists.
+    scene_view: SceneView,
     /// The scene's sort column (its index among the figures).
     scene_sort: usize,
     /// The last report written, for the status bar.
     pub exported: Option<String>,
+    /// The report being written by its save thread: its file name once done.
+    pub export: Option<std::sync::mpsc::Receiver<String>>,
+    /// Autotune's state, filled by the app each frame.
+    pub autotune: autotune::View,
 }
 
 impl Default for Monitor {
@@ -163,9 +189,11 @@ impl Default for Monitor {
             open: [RowId::Render, RowId::Textures].into_iter().collect(),
             selected: Selected::Row(RowId::Textures),
             filter: String::new(),
-            scene_objects: false,
+            scene_view: SceneView::Avatars,
             scene_sort: 1,
             exported: None,
+            export: None,
+            autotune: Default::default(),
         }
     }
 }
@@ -174,7 +202,15 @@ impl Monitor {
     /// The scene section on its objects (`AURORA_DEMO_PERF=monitor-scene-objects`).
     pub fn show_scene_objects(&mut self) {
         self.tab = Tab::Scene;
-        self.scene_objects = true;
+        self.scene_view = SceneView::Objects;
+    }
+
+    /// The scene section on what the agent wears (`AURORA_DEMO_PERF=monitor-scene-worn`
+    /// or `monitor-scene-huds`).
+    pub fn show_scene_worn(&mut self, huds: bool) {
+        self.tab = Tab::Scene;
+        self.scene_view = if huds { SceneView::Huds } else { SceneView::Worn };
+        self.scene_sort = 0;
     }
 
     /// The subsystems' table sorted by a column, a row selected (the
@@ -201,9 +237,21 @@ const STATUS_H: f32 = 24.0;
 pub fn body(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, device: &Device, out: &mut Vec<Action>) {
     let full = ui.available_rect_before_wrap();
     let radius = ui.visuals().window_corner_radius;
-    let rail = Rect::from_min_max(full.min, pos2(full.left() + RAIL_W, full.bottom() - STATUS_H));
-    let content = Rect::from_min_max(pos2(rail.right(), full.top()), pos2(full.right(), full.bottom() - STATUS_H));
-    let status = Rect::from_min_max(pos2(full.left(), full.bottom() - STATUS_H), full.max);
+    // the bar is as tall as its text, at least STATUS_H: a Japanese row at
+    // a larger text is taller than the bar
+    let row = ui
+        .painter()
+        .layout_no_wrap(
+            aurora_i18n::tr!("monitor-status-live").to_owned(),
+            egui::FontId::proportional(draw::SMALL),
+            p.muted_dim,
+        )
+        .size()
+        .y;
+    let status_h = STATUS_H.max(row.ceil() + 2.0);
+    let rail = Rect::from_min_max(full.min, pos2(full.left() + RAIL_W, full.bottom() - status_h));
+    let content = Rect::from_min_max(pos2(rail.right(), full.top()), pos2(full.right(), full.bottom() - status_h));
+    let status = Rect::from_min_max(pos2(full.left(), full.bottom() - status_h), full.max);
     let line = Stroke::new(1.0, p.raised);
     ui.painter().rect_filled(rail, 0.0, p.bar);
     ui.painter().vline(rail.right() - 0.5, rail.y_range(), line);
@@ -245,12 +293,17 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, device: &Device, ou
                 Tab::Disk => disk::show(ui, p, m, &s, out),
                 Tab::Scene => scene::show(ui, p, m, &s, out),
                 Tab::Region => region::show(ui, p, m, &s, out),
+                Tab::Autotune => autotune::show(ui, p, m, out),
             },
         }
     }
-    ui.scope_builder(egui::UiBuilder::new().max_rect(status.shrink2(vec2(12.0, 0.0))), |ui| {
+    // a child too: a row taller than the bar (the Japanese font's, at a
+    // larger text) is cut at its edges instead of growing the window
+    {
+        let ui = &mut ui.new_child(egui::UiBuilder::new().max_rect(status.shrink2(vec2(12.0, 0.0))));
+        ui.set_clip_rect(status.intersect(ui.clip_rect()));
         status_ui(ui, p, m, device);
-    });
+    }
     ui.advance_cursor_after_rect(full);
 }
 
@@ -310,11 +363,16 @@ fn rail_ui(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, out: &mut Vec<Action
             m.tab = tab;
         }
     }
-    // the frame rate at the foot, as the compact view shows it
-    let foot_h = 104.0;
+    // the frame rate at the foot, as the compact view shows it. Its height
+    // is the one it measured last (a larger text, the taller rows of a
+    // Japanese font): a guessed one made the window grow at every frame
+    // once the foot measured more (`widgets::above_footer` does the same).
+    let foot_id = ui.scope_id().with("rail_foot");
+    let foot_h = ui.ctx().data(|d| d.get_temp::<f32>(foot_id)).unwrap_or(104.0);
     let room = ui.available_height();
     if room > foot_h + 8.0 {
         ui.add_space(room - foot_h);
+        let foot_top = ui.cursor().top();
         ui.painter()
             .hline(ui.max_rect().x_range(), ui.cursor().top() - 1.0, Stroke::new(1.0, p.raised));
         ui.add_space(8.0);
@@ -351,6 +409,11 @@ fn rail_ui(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, out: &mut Vec<Action
                 }
             });
         });
+        let measured = ui.min_rect().bottom() - foot_top;
+        if (measured - foot_h).abs() > 0.5 {
+            ui.ctx().data_mut(|d| d.insert_temp(foot_id, measured));
+            ui.ctx().request_discard("monitor rail foot height");
+        }
     }
 }
 
@@ -397,6 +460,7 @@ fn rail_sub(tab: Tab, m: &Monitor, s: &Snapshot) -> String {
             avatars = s.scene.avatar_count as i64,
             objects = fmt::count(s.scene.object_count)
         ),
+        Tab::Autotune => autotune::status_text(m.autotune.status).to_owned(),
         Tab::Region => match s.region.as_ref().and_then(|r| r.dilation) {
             Some(d) => tr!("monitor-rail-region", dilation = aurora_i18n::number(f64::from(d), 2)),
             None => tr!("monitor-no-region-stats").to_owned(),

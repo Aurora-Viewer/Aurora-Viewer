@@ -605,6 +605,21 @@ impl Probes {
         }
     }
 
+    /// Sample `from`'s cubes in place of these: the second camera's
+    /// renderer (second_view.rs) captures none, the probes are in world
+    /// space and the window's renderer keeps them up to date. True when the
+    /// views changed (the frame groups bind them: make those again); false
+    /// when they are already shared or the slots differ (settings not yet
+    /// applied to this renderer).
+    pub(crate) fn share_cubes(&mut self, from: &Probes) -> bool {
+        if self.slots != from.slots || (self.array_view == from.array_view && self.irradiance_view == from.irradiance_view) {
+            return false;
+        }
+        self.array_view = from.array_view.clone();
+        self.irradiance_view = from.irradiance_view.clone();
+        true
+    }
+
     /// Render target of a captured face (mip 0 of the scratch cube).
     pub fn capture_target(&self, face: u32) -> &wgpu::TextureView {
         &self.capture_targets[(face % 6) as usize]
@@ -1037,7 +1052,7 @@ mod tests {
         let row = (res * 8).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: (row * res) as u64,
+            size: crate::readback::readback_size((row * res) as u64),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });

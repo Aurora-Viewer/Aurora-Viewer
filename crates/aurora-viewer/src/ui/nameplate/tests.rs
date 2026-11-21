@@ -17,6 +17,7 @@ fn content() -> Content {
         render_never: false,
         blocked: false,
         mark: None,
+        distance: None,
     }
 }
 
@@ -89,6 +90,47 @@ fn contact_visuals_invalidate_surface_cache_without_a_geometry_change() {
     assert_ne!(colours(before.1), colours(after.1));
 }
 
+#[test]
+fn animated_staff_plate_lead_width_is_constant() {
+    let ctx = egui::Context::default();
+    Theme::default().apply(&ctx, 1.0);
+    let p = Theme::default().palette();
+    let icons = crate::ui::icons::Icons::default();
+    for mark in [crate::world::staff::Mark::Linden, crate::world::staff::Mark::Aurora] {
+        let mut widths = Vec::new();
+        for step in 0..=2600 {
+            let t = step as f64 * 0.001;
+            let mut width = None;
+            let mut sections = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                    time: Some(t),
+                    ..Default::default()
+                },
+                |ui| {
+                    let painter = ui.painter();
+                    let env = paint::Env::new(painter, &p, &icons, t);
+                    let mut c = content();
+                    c.mark = Some(mark);
+                    let face = paint::face(&env, Level::Compact, &c, t as f32);
+                    let (label, ..) = face.staff.expect("staff label");
+                    width = Some(aurora::tag_width(label.size().x, Metrics::of(Level::Compact, SCALE).scale));
+                    sections = Some(label.job.sections.len());
+                },
+            );
+            output.textures_delta.clear();
+            assert_eq!(
+                sections,
+                Some(crate::ui::nameplate::mark::Look::new(mark).label().chars().count()),
+                "{mark:?} at {t}"
+            );
+            widths.push(width.expect("plate was laid out"));
+        }
+        assert!(widths.iter().all(|width| *width == widths[0]), "{mark:?}: {widths:?}");
+    }
+}
+
 fn tag(n: u128, distance: f32, content: Content) -> Tag<'static> {
     Tag {
         id: Uuid::from_u128(n),
@@ -115,7 +157,7 @@ fn frame(ctx: &egui::Context, plates: &mut Plates, tags: &[Tag<'_>], now: f64) -
         },
         |ui| {
             let painter = ui.ctx().layer_painter(egui::LayerId::background());
-            plates.paint(&painter, &p, &icons, tags, now, |id, rect, _| rects.push((id, rect)));
+            plates.paint(&painter, &p, &icons, tags, now, |id, rect, _, _| rects.push((id, rect)));
         },
     );
     output.textures_delta.clear();
@@ -926,7 +968,7 @@ fn a_plate_and_its_hit_rect_keep_the_world_anchor_through_pending_ui_zoom() {
                 };
                 let painter = crate::ui::hud::world_painter(ui.ctx());
                 let mut shown = false;
-                plates.paint(&painter, &p, &icons, &[current], 1.0, |_, rect, _| {
+                plates.paint(&painter, &p, &icons, &[current], 1.0, |_, rect, _, _| {
                     shown = true;
                     let anchor = rect.center_bottom() * ui.ctx().pixels_per_point();
                     // Only the plate's intentional whole-pixel alignment may
@@ -1369,4 +1411,78 @@ fn a_friend_s_plate_takes_the_friends_color_unless_a_set_colors_it() {
         );
     });
     output.textures_delta.clear();
+}
+
+#[test]
+fn the_distance_is_never_on_our_own_plate_and_is_rounded_to_its_figure() {
+    assert_eq!(Distance::of(12.0, true, true, true), None, "our own");
+    assert_eq!(Distance::of(12.0, false, false, false), None, "both options off");
+    assert_eq!(Distance::of(f32::NAN, false, true, false), None);
+    let d = Distance::of(12.3456, false, true, false).expect("shown");
+    assert_eq!(d.meters, 12.35);
+    assert!(d.shown && !d.color_name);
+    assert!(d.text().starts_with("12.35"));
+    // the names colored without the figure
+    let d = Distance::of(3.0, false, false, true).expect("colored");
+    assert!(!d.shown && d.color_name);
+}
+
+#[test]
+fn distance_bands_follow_the_chat_ranges() {
+    let p = Theme::default().palette();
+    let r = crate::world::radar::ChatRanges {
+        whisper: 10.0,
+        say: 20.0,
+        shout: 100.0,
+    };
+    let band = |d| crate::ui::colors::range_color_in(&p, d, r);
+    assert_eq!(band(Some(5.0)), p.success, "whisper");
+    assert_eq!(band(Some(20.0)), p.success, "chat");
+    assert_eq!(band(Some(20.5)), p.ink, "shout");
+    assert_eq!(band(Some(100.0)), p.ink);
+    assert_eq!(band(Some(150.0)), p.muted, "beyond");
+    assert_eq!(band(None), p.muted);
+}
+
+#[test]
+fn the_distance_follows_the_name_on_every_level_and_colors_it() {
+    let ctx = egui::Context::default();
+    Theme::default().apply(&ctx, 1.0);
+    let p = Theme::default().palette();
+    let near = |shown, color_name| Content {
+        distance: Distance::of(4.0, false, shown, color_name),
+        ..content()
+    };
+    for camera in [5.0, 25.0, 60.0] {
+        let width = |c: Content| {
+            let mut plates = Plates::default();
+            frame(&ctx, &mut plates, &[tag(1, camera, c)], 1.0).0[0].1.width()
+        };
+        assert!(width(near(true, false)) > width(content()), "wider at {camera} m");
+        assert_eq!(width(near(false, true)), width(content()), "the color alone takes no room");
+    }
+    let galley_colors = |c: Content| {
+        let mut plates = Plates::default();
+        let shapes = frame(&ctx, &mut plates, &[tag(1, 5.0, c)], 1.0).1;
+        let mut colors = Vec::new();
+        walk(&shapes, &mut |s| {
+            if let egui::Shape::Text(t) = s {
+                // (the plates lay each text out in one section)
+                colors.extend(t.galley.job.sections.iter().map(|s| s.format.color));
+            }
+        });
+        colors
+    };
+    assert!(!galley_colors(content()).contains(&p.success));
+    assert!(
+        galley_colors(near(false, true)).contains(&p.success),
+        "the name in the chat band's color"
+    );
+    // a contact set's name color wins
+    let mut set = near(false, true);
+    set.appearance = std::sync::Arc::new(crate::world::contact_sets::Appearance {
+        nameplate_name: Some([1.0, 0.0, 0.0, 1.0]),
+        ..Default::default()
+    });
+    assert!(!galley_colors(set).contains(&p.success));
 }

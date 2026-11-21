@@ -108,6 +108,8 @@ pub struct NameTag {
     /// rather than a sphere centred on its avatar's current position.
     pub at: Vec3,
     pub normal: Vec3,
+    /// Where the resident's contact-set marker lands on the plate.
+    pub marker_slot: Option<egui::Rect>,
 }
 
 impl NameTag {
@@ -117,6 +119,7 @@ impl NameTag {
             rect,
             at,
             normal: proj.view_proj.row(3).truncate().normalize_or_zero(),
+            marker_slot: None,
         }
     }
 
@@ -178,9 +181,15 @@ impl NameTagVisibility {
     }
 }
 
+/// LLVOAvatar::idleUpdateNameTag (indra/newview/llvoavatar.cpp) draws our own
+/// tag on `RenderNameShowSelf && AvatarNameTagMode`: Avatar Name Tags on Off
+/// hides every tag, ours included (#3855). Aurora's mode is Off when neither
+/// the friends' nor the other residents' tags show
+/// (`quick_prefs::NameTags::of`); the own tag's switch keeps its value and
+/// applies again once one of them is back on.
 fn name_tag_enabled(settings: &crate::settings::Settings, own: bool, friend: bool) -> bool {
     if own {
-        settings.show_own_name_tag
+        settings.show_own_name_tag && (settings.show_friend_name_tags || settings.show_other_name_tags)
     } else if friend {
         settings.show_friend_name_tags
     } else {
@@ -195,6 +204,35 @@ fn name_tag_enabled(settings: &crate::settings::Settings, own: bool, friend: boo
 /// it, so that the renderer draws it before the HUD attachments too.
 pub fn world_painter(ctx: &egui::Context) -> egui::Painter {
     ctx.layer_painter(egui::LayerId::background())
+}
+
+/// The floating text `object` shows for `raw` (llSetText), as
+/// LLHUDText::setString (indra/newview/llhudtext.cpp) sets it: nothing when
+/// RlvActions::canShowHoverText refuses it (@showhovertext*), else the
+/// places (RlvUtil::filterLocation) and the names (RlvUtil::filterNames,
+/// which ends with filterMentions) hidden when it came, kept until it
+/// changes or a restriction LLHUDText::refreshAllObjectText follows comes
+/// or goes (`HoverTexts`).
+pub fn hover_text(world: &World, object: uuid::Uuid, hud: bool, raw: &str) -> String {
+    if !world.rlva.enabled() {
+        return raw.to_owned();
+    }
+    if !world.rlva.hover_visible(object, hud) {
+        return String::new();
+    }
+    world.rlva.hover_texts.get(&world.rlva, object, raw, |raw| {
+        let names = world.rlva_hover_privacy.apply(raw);
+        world.rlva_freeze_mentions(&names).into_owned()
+    })
+}
+
+/// The first line of the floating text object `id` shows (`hover_text`),
+/// for a panel that names an object by it; None when it shows none.
+pub fn hover_text_title(world: &World, id: uuid::Uuid) -> Option<String> {
+    let index = world.objects.index_of_uuid(&id)?;
+    let o = world.objects.get(index)?;
+    let text = hover_text(world, o.full_id, world.hud_root(index).is_some(), &o.text);
+    Some(text.lines().next().unwrap_or("").to_owned()).filter(|line| !line.is_empty())
 }
 
 /// llSetText on our HUD attachments, without world-distance fading. Painted
@@ -232,8 +270,8 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
         }
         let c = o.text_color;
         let color = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
-        let text = world.rlva_hover_privacy.apply(&o.text).into_owned();
-        super::floating_text::paint(&painter, text, point, 12.0 * scale, color, view.zoom);
+        let text = hover_text(world, o.full_id, true, &o.text);
+        super::floating_text::paint(&painter, text, point, 12.0 * scale, color, view.zoom, None);
     }
 }
 
@@ -251,6 +289,63 @@ pub struct PlateFrame<'a> {
     pub own_typing: bool,
 }
 
+/// An object's floating text, as it will be painted.
+struct ObjectText {
+    distance: f32,
+    /// Where it stands in the world, for the scene to hide it.
+    at: Vec3,
+    screen: Pos2,
+    text: String,
+    color: Color32,
+    background: Option<Color32>,
+    highlighted: bool,
+}
+
+/// Whether the floating text of `idx` is the hovered linkset's (`root`):
+/// the root's, or every prim's when the root has none
+/// (LLViewerObject::setTextIsHighlighted).
+fn text_highlighted(world: &World, idx: usize, root: usize) -> bool {
+    idx == root || (world.objects.get(root).is_some_and(|r| r.text.is_empty()) && world.objects.linkset_root(idx) == root)
+}
+
+/// Worn: an attachment's text never has a background (LLHUDText::renderText:
+/// `getAttachmentState() == 0`).
+fn worn(world: &World, idx: usize) -> bool {
+    let objects = &world.objects;
+    let root = objects.linkset_root(idx);
+    objects
+        .get(root)
+        .and_then(|o| objects.parent_of(o))
+        .and_then(|p| objects.get(p))
+        .is_some_and(|p| p.is_avatar())
+}
+
+/// The background behind a floating text (FSHudTextShowBackground,
+/// LLHUDText::renderText): black, or white behind a dark text (luma 0.4 or
+/// less), at FSHudTextBackgroundOpacity times the text's fade. The
+/// highlighted text's is opaque, or at that opacity when only the hovered
+/// object has one.
+pub fn floating_text_background(settings: &crate::settings::Settings, highlighted: bool, fade: f32, text: [u8; 4]) -> Option<Color32> {
+    use crate::settings::FloatingTextBackground as Bg;
+    let mode = settings.floating_text_background;
+    let opacity = settings.floating_text_background_opacity;
+    let alpha = match (mode, highlighted) {
+        (Bg::Off, _) | (Bg::Hovered, false) => return None,
+        (Bg::Hovered, true) => opacity,
+        (Bg::All, true) => 1.0,
+        (Bg::All, false) => opacity * fade,
+    };
+    let [r, g, b, _] = text.map(|v| v as f32 / 255.0);
+    let a = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+    // the Legacy Viewer's contrast rule: white behind a dark script text,
+    // black behind a light one
+    if 0.299 * r + 0.587 * g + 0.114 * b <= 0.4 {
+        Some(Color32::from_white_alpha(a))
+    } else {
+        Some(Color32::from_black_alpha(a))
+    }
+}
+
 /// What a name plate says about the avatar `o`. The states are those of
 /// LLVOAvatar::idleUpdateNameTagText (away, do not disturb, typing, muted,
 /// friend); the names and the complexity are those of the classic tag.
@@ -263,8 +358,9 @@ fn plate_content(
     too_complex: bool,
     settings: &crate::settings::Settings,
     own_typing: bool,
+    agent_distance: f32,
 ) -> super::nameplate::Content {
-    use super::nameplate::{Content, Detail, Presence, Role};
+    use super::nameplate::{Content, Detail, Distance, Presence, Role};
     use super::presence::Status;
     let id = o.full_id;
     let own = id == world.agent_id;
@@ -289,7 +385,13 @@ fn plate_content(
         }
     };
     let blocked = !own && world.is_avatar_blocked(&id);
-    let friend = !own && world.social.is_friend(&id);
+    // RLVa @shownames: what tells who stands behind a hidden name goes with
+    // it, as in LLVOAvatar::idleUpdateNameTagText (no group title, never a
+    // friend) and LGGContactSets::colorize (no relation colour, no set).
+    // Aurora's own picture, staff mark and set appearance follow the rule;
+    // "Blocked" stays a status, as "(Muted)" does on the Legacy Viewer's tag.
+    let named = world.rlva_can_name(id);
+    let friend = !own && world.rlva_shown_friend(&id);
     // the same rule as the classic tag (FSTagShowARW and its two options)
     let detail = complexity.and_then(|tc| {
         let shown = (own && tc.own) || (!own && (!tc.only_too_complex || tc.too_complex.contains(&idx)));
@@ -311,12 +413,12 @@ fn plate_content(
         })
     });
     Content {
-        appearance: world.contact_sets.appearance(&id).clone(),
+        appearance: world.rlva_contact_appearance(&id).clone(),
         name,
         username,
-        title: o.group_title().filter(|_| world.group_titles.shows(own)),
+        title: o.group_title().filter(|_| named && world.group_titles.shows(own)),
         detail,
-        role: Role::of(own, blocked, super::colors::is_linden(&legacy), friend),
+        role: Role::of(own, named && blocked, named && super::colors::is_linden(&legacy), friend),
         presence,
         in_voice,
         // FSShowTypingStateInNameTag. Our own plate too, from our typing
@@ -330,7 +432,31 @@ fn plate_content(
         // distinguishes an explicit rendering choice from an automatic limit.
         render_never: !own && too_complex && settings.render_exception(&id) == 1,
         blocked,
-        mark: crate::world::staff::mark_named(&id, &legacy),
+        mark: crate::world::staff::mark_named(&id, &legacy).filter(|_| named),
+        distance: Distance::of(agent_distance, own, settings.tag_distance, settings.tag_distance_colors),
+    }
+}
+
+/// What the avatars' name tags show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AvatarTags {
+    /// As Preferences › Name tags say.
+    Shown,
+    /// World › Hide name tags: a resident's chat bubble still shows, under
+    /// their name, as with the name tags turned off in Preferences
+    /// (LLVOAvatar::idleUpdateNameTag: `visible_chat`).
+    Bubbles,
+    /// Immersive mode without name tags: no plate, no bubble.
+    Hidden,
+}
+
+/// What the name tags show: each mode keeps its own switch, the immersive
+/// one (#859) and World › Hide name tags (`show_name_tags`).
+pub fn avatar_tags(immersive: bool, immersive_name_tags: bool, show_name_tags: bool) -> AvatarTags {
+    match (immersive, immersive_name_tags, show_name_tags) {
+        (true, true, _) | (false, _, true) => AvatarTags::Shown,
+        (true, false, _) => AvatarTags::Hidden,
+        (false, _, false) => AvatarTags::Bubbles,
     }
 }
 
@@ -350,7 +476,7 @@ pub fn draw(
     proj: &Projector,
     eye: Vec3,
     show_own: bool,
-    avatar_tags: bool,
+    avatar_tags: AvatarTags,
     settings: &crate::settings::Settings,
     visibility: &mut NameTagVisibility,
     voice: &HashMap<uuid::Uuid, (f32, bool)>,
@@ -360,8 +486,15 @@ pub fn draw(
     loading: Option<&HashMap<uuid::Uuid, f32>>,
     plates: Option<PlateFrame<'_>>,
     bubbles: Option<super::chat_bubbles::Frame<'_>>,
+    hovered: Option<usize>,
 ) -> Vec<NameTag> {
     let painter = world_painter(ctx);
+    // FSHudTextUseHoverHighlight: the linkset under the pointer
+    // (LLToolPie::handleHover, LLViewerObject::setTextIsHighlighted)
+    let highlight_root = hovered
+        .filter(|_| settings.floating_text_hover_highlight)
+        .map(|idx| world.objects.linkset_root(idx));
+    let mut texts: Vec<ObjectText> = Vec::new();
     let now = Instant::now();
     let now_s = ctx.input(|i| i.time);
     visibility.begin(settings, world.agent_id);
@@ -390,7 +523,8 @@ pub fn draw(
     // only the avatars and the objects with a text: a shop has thousands of
     // objects for a few dozen of these
     for (idx, o) in world.objects.avatars().chain(world.objects.texted()) {
-        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) {
+        // the animation editor's mirror of us has no name tag
+        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) || world.is_mirror(&o.full_id) {
             continue;
         }
         if !o.is_avatar() && !world.rlva.hover_visible(o.full_id, scene.gpu.get(idx).is_some_and(|g| g.hud)) {
@@ -398,12 +532,12 @@ pub fn draw(
         }
         if o.is_avatar() {
             // immersive mode without name tags: no plate, no bubble under it
-            if !avatar_tags {
+            if avatar_tags == AvatarTags::Hidden {
                 continue;
             }
-            if world.rlva.has("shownearby") && o.full_id != world.agent_id {
-                continue;
-            }
+            // RLVa @shownearby empties the lists of who is around, never the
+            // tags: only @shownametags hides them (RlvActions::canShowNameTag
+            // in LLVOAvatar::idleUpdateNameTag), and @shownames their names
             let own = o.full_id == world.agent_id;
             if own && !show_own {
                 continue;
@@ -411,18 +545,27 @@ pub fn draw(
             let Some((pos, _, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
+            // the animation editor's couple partner, moved on screen: the
+            // tag goes with the body (`World::couple_shift`)
+            let pos = world
+                .avatar_models
+                .get(&o.full_id)
+                .and_then(|model| world.couple_shift(o.full_id, *model))
+                .map_or(pos, |shift| shift.transform_point3(pos));
             let d = pos.distance(eye);
-            if !world
-                .rlva
-                .nametag_visible(o.full_id, world.agent_id, pos.distance(world.agent.position))
-            {
-                continue;
-            }
+            // from us, not from the camera: the RLVa limits and the tags'
+            // distance (LLVOAvatar::idleUpdateNameTagText: gAgent's position)
+            let agent_distance = pos.distance(world.agent.position);
+            let rlva_tag = world.rlva.nametag_visible(o.full_id, world.agent_id, agent_distance);
             // a resident with a bubble shows it under their name whatever
-            // the name tags' settings, their distance and their timer
-            // (LLVOAvatar::idleUpdateNameTag: visible_chat)
+            // the name tags' settings, their distance, their timer and
+            // @shownametags (LLVOAvatar::idleUpdateNameTag, llvoavatar.cpp:
+            // render_name = visible_chat || visible_typing || (fRlvShowAvTag && ...))
             let chatting = bubbles.as_ref().is_some_and(|b| super::chat_bubbles::shows(world, b, o.full_id, d));
-            if !chatting && (!name_tag_enabled(settings, own, world.social.is_friend(&o.full_id)) || d > settings.name_tag_distance) {
+            // a hidden name's tag follows the other residents' switch: the
+            // friends' one would tell which strangers are friends
+            let names = avatar_tags == AvatarTags::Shown && name_tag_enabled(settings, own, world.rlva_shown_friend(&o.full_id));
+            if !chatting && (!rlva_tag || !names || d > settings.name_tag_distance) {
                 continue;
             }
             let head = scene.name_tag_anchor(&o.full_id, pos);
@@ -451,6 +594,9 @@ pub fn draw(
                 let too = too_complex.contains(&idx) || demo_too_complex == Some(id);
                 // a picture is asked for until the profile says there is none
                 let picture = match pictures.get(&id) {
+                    // a profile picture names its resident as well as the
+                    // name RLVa hides
+                    _ if !world.rlva_can_name(id) => Picture::None,
                     Some(texture) => Picture::Loaded(texture),
                     None if world.profiles.get(&id).is_some_and(|pr| pr.sl_image.is_nil()) => Picture::None,
                     None => Picture::Wanted,
@@ -476,6 +622,7 @@ pub fn draw(
                         too,
                         settings,
                         own_typing,
+                        agent_distance,
                     ),
                     voice: in_voice.filter(|_| audio.world_voice_visualizer(id == world.agent_id, world.calls.active.is_some(), false)),
                     loading: loading.and_then(|l| l.get(&id).copied()),
@@ -507,7 +654,12 @@ pub fn draw(
                     lines.push((format!("({})", status.join(", ")), p.muted, 11.0));
                 }
             }
-            if let Some(t) = o.group_title().filter(|_| world.group_titles.shows(o.full_id == world.agent_id)) {
+            // never the title of a resident whose name RLVa hides
+            // (`render_title && fRlvShowAvName` in idleUpdateNameTagText)
+            if let Some(t) = o
+                .group_title()
+                .filter(|_| world.rlva_can_name(o.full_id) && world.group_titles.shows(o.full_id == world.agent_id))
+            {
                 lines.push((t, p.muted, 11.0));
             }
             // LLVOAvatar::idleUpdateNameTagText: the display name, then the
@@ -517,7 +669,9 @@ pub fn draw(
             let (name, username, custom, legacy) = match names.get(&o.full_id) {
                 Some(n) => {
                     let (main, user) = n.tag_lines(&names.options);
-                    let custom = names.options.use_display_names && !n.is_default;
+                    // (by the name itself, not by the stand-in RLVa shows
+                    // for it: LLVOAvatar::getNameTagColor asks the cache)
+                    let custom = names.options.use_display_names && names.raw(&o.full_id).is_some_and(|n| !n.is_default);
                     (main, user, custom, n.user_name_for_display(&names.options))
                 }
                 None => {
@@ -525,7 +679,14 @@ pub fn draw(
                     (legacy.clone(), None, false, legacy)
                 }
             };
-            let col = super::colors::tag_color(world, &o.full_id, &legacy, custom);
+            let own = o.full_id == world.agent_id;
+            let distance = super::nameplate::Distance::of(agent_distance, own, settings.tag_distance, settings.tag_distance_colors);
+            let band = distance.map(|d| super::colors::range_color(p, Some(d.meters)));
+            let col = match band {
+                // FSTagShowDistanceColors, unless the name has its relation's color
+                Some(band) if settings.tag_distance_colors && !super::colors::relation_tag(world, &o.full_id, &legacy) => band,
+                _ => super::colors::tag_color(world, &o.full_id, &legacy, custom),
+            };
             lines.push((name, col, 13.0));
             if let Some(u) = username {
                 let dim = |v: u8| (v as f32 * 0.83) as u8;
@@ -534,6 +695,11 @@ pub fn draw(
                     Color32::from_rgba_unmultiplied(dim(col.r()), dim(col.g()), dim(col.b()), col.a()),
                     11.0,
                 ));
+            }
+            // FSTagShowDistance: its own small line under the names, in the
+            // color of its band, before the complexity
+            if let (Some(d), Some(band)) = (distance.filter(|d| d.shown), band) {
+                lines.push((d.text(), band, 11.0));
             }
             // complexity under the name (Firestorm FSTagShowARW): red as it
             // nears the limit, green fading past it; grey for ourselves or
@@ -592,14 +758,16 @@ pub fn draw(
             if hud {
                 continue;
             }
-            // LLHUDText: fade from 8 m over 4 m, anchored 0.6 x height above the
-            // object and pulled towards the camera by its radius
-            const FADE_DISTANCE: f32 = 8.0;
-            const FADE_RANGE: f32 = 4.0;
+            // LLHUDText: fade from FSHudTextFadeDistance over
+            // FSHudTextFadeRange (8 m and 4 m), anchored 0.6 x height above
+            // the object and pulled towards the camera by its radius; the
+            // highlighted text neither fades nor goes away with the distance
+            let (fade_distance, fade_range) = (settings.floating_text_fade_distance, settings.floating_text_fade_range);
             let c = o.text_color;
             if c[3] == 0 {
                 continue;
             }
+            let highlighted = highlight_root.is_some_and(|root| text_highlighted(world, idx, root));
             let top = pos + Vec3::new(0.0, 0.0, o.scale.z * 0.6);
             let radius = (o.scale * 0.5).length();
             let to = top - eye;
@@ -609,24 +777,45 @@ pub fn draw(
                 top
             };
             let d = anchor.distance(eye);
-            if d > FADE_DISTANCE + FADE_RANGE {
+            if !highlighted && d > fade_distance + fade_range {
                 continue;
             }
-            let fade = if d > FADE_DISTANCE {
-                (1.0 - (d - FADE_DISTANCE) / FADE_RANGE).max(0.0)
+            let fade = if !highlighted && d > fade_distance {
+                (1.0 - (d - fade_distance) / fade_range).max(0.0)
             } else {
                 1.0
             };
             let Some((sp, _)) = proj.project(anchor) else {
                 continue;
             };
-            let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], (c[3] as f32 * fade) as u8);
-            let text = world.rlva_hover_privacy.apply(&o.text);
-            let lines = vec![(text.into_owned(), col, 12.0)];
-            tags.push((d + 1000.0, sp, lines, None, None, None, anchor, 1.0, None));
+            // LLHUDText::renderText: the highlighted text at full opacity
+            let alpha = if highlighted { 255.0 } else { c[3] as f32 * fade };
+            let background = floating_text_background(settings, highlighted, fade, c).filter(|_| !worn(world, idx));
+            texts.push(ObjectText {
+                distance: d,
+                at: anchor,
+                screen: sp,
+                text: hover_text(world, o.full_id, false, &o.text),
+                color: Color32::from_rgba_unmultiplied(c[0], c[1], c[2], alpha as u8),
+                background,
+                highlighted,
+            });
         }
     }
     visibility.finish();
+    // the filtered texts of the objects gone are forgotten
+    let cached = world.rlva.hover_texts.count();
+    if cached > 256 && cached > 2 * world.objects.texted().count() {
+        world.rlva.hover_texts.retain(|id| world.objects.index_of_uuid(id).is_some());
+    }
+    // the floating texts under the name tags, far first; the highlighted
+    // one last, over everything (LLHUDObject's hud_object_further_away)
+    texts.sort_by(|a, b| b.distance.total_cmp(&a.distance));
+    let (highlighted, texts): (Vec<_>, Vec<_>) = texts.into_iter().partition(|t| t.highlighted);
+    for t in texts {
+        aurora_render::world_label_at(ctx, Some(t.at));
+        super::floating_text::paint(&painter, t.text, t.screen, 12.0, t.color, 1.0, t.background);
+    }
     // the classic tag is a small card of the theme
     let tag_radius = ctx.global_style().visuals.window_corner_radius;
     // far first so near tags draw on top
@@ -635,18 +824,7 @@ pub fn draw(
     for (d, sp, lines, in_voice, progress, avatar, at, alpha, bubble) in tags {
         // the scene hides what it has in front of this point
         aurora_render::world_label_at(ctx, Some(at));
-        let is_avatar = d < 1000.0;
-        if !is_avatar {
-            if let Some((text, color, size)) = lines.into_iter().next() {
-                super::floating_text::paint(&painter, text, sp, size, color, 1.0);
-            }
-            continue;
-        }
-        let fade = if is_avatar {
-            (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0) * alpha
-        } else {
-            1.0
-        };
+        let fade = (1.0 - (d - 40.0) / 24.0).clamp(0.35, 1.0) * alpha;
         let mut y = sp.y;
         // measure
         let galleys: Vec<_> = lines
@@ -657,62 +835,60 @@ pub fn draw(
         let max_w = galleys.iter().map(|g| g.size().x).fold(0.0, f32::max);
         y -= total_h;
         let visualizer = audio.world_voice_visualizer(avatar == Some(world.agent_id), world.calls.active.is_some(), false);
-        let no_voice = visualizer && is_avatar && in_voice.is_none();
+        let no_voice = visualizer && in_voice.is_none();
         let voice_w = if no_voice { super::voice_tag::ICON_WIDTH } else { 0.0 };
         let text_x = sp.x + voice_w * 0.5;
-        if is_avatar {
-            let w = max_w + 12.0 + super::voice_tag::TAG_EXTRA_WIDTH;
-            let r = egui::Rect::from_min_size(Pos2::new(sp.x - w * 0.5, y - 3.0), egui::vec2(w, total_h + 6.0));
-            if let Some(id) = avatar {
-                name_tags.push(NameTag::new(id, r, at, proj));
-            }
-            painter.rect_filled(
-                r,
-                tag_radius,
-                Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * fade) as u8),
+        let w = max_w + 12.0 + super::voice_tag::TAG_EXTRA_WIDTH;
+        let r = egui::Rect::from_min_size(Pos2::new(sp.x - w * 0.5, y - 3.0), egui::vec2(w, total_h + 6.0));
+        if let Some(id) = avatar {
+            name_tags.push(NameTag::new(id, r, at, proj));
+        }
+        painter.rect_filled(
+            r,
+            tag_radius,
+            Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), (190.0 * fade) as u8),
+        );
+        // still loading: thin progress bar along the bottom of the tag
+        // (violet -> turquoise, like the loading screens)
+        if let Some(f) = progress {
+            let track = egui::Rect::from_min_max(
+                Pos2::new(r.left() + 4.0, r.bottom() - 3.0),
+                Pos2::new(r.right() - 4.0, r.bottom() - 1.0),
             );
-            // still loading: thin progress bar along the bottom of the tag
-            // (violet -> turquoise, like the loading screens)
-            if let Some(f) = progress {
-                let track = egui::Rect::from_min_max(
-                    Pos2::new(r.left() + 4.0, r.bottom() - 3.0),
-                    Pos2::new(r.right() - 4.0, r.bottom() - 1.0),
-                );
-                painter.rect_filled(track, super::widgets::TRACK_RADIUS, p.field.gamma_multiply(fade));
-                let fill = egui::Rect::from_min_max(
-                    track.min,
-                    Pos2::new(track.left() + track.width() * f.clamp(0.02, 1.0), track.bottom()),
-                );
-                let (a, b) = (p.violet.gamma_multiply(fade), p.teal.gamma_multiply(fade));
-                let mut mesh = egui::Mesh::default();
-                mesh.colored_vertex(fill.left_top(), a);
-                mesh.colored_vertex(fill.right_top(), b);
-                mesh.colored_vertex(fill.right_bottom(), b);
-                mesh.colored_vertex(fill.left_bottom(), a);
-                mesh.add_triangle(0, 1, 2);
-                mesh.add_triangle(0, 2, 3);
-                painter.add(mesh);
+            painter.rect_filled(track, super::widgets::TRACK_RADIUS, p.field.gamma_multiply(fade));
+            let fill = egui::Rect::from_min_max(
+                track.min,
+                Pos2::new(track.left() + track.width() * f.clamp(0.02, 1.0), track.bottom()),
+            );
+            let (a, b) = (p.violet.gamma_multiply(fade), p.teal.gamma_multiply(fade));
+            let mut mesh = egui::Mesh::default();
+            mesh.colored_vertex(fill.left_top(), a);
+            mesh.colored_vertex(fill.right_top(), b);
+            mesh.colored_vertex(fill.right_bottom(), b);
+            mesh.colored_vertex(fill.left_bottom(), a);
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+            painter.add(mesh);
+        }
+        if let Some(id) = avatar.filter(|_| visualizer) {
+            voice_tags.paint(&painter, p, id, r, in_voice, now_s, fade);
+            if audio.voice_visualizer_dot && in_voice.is_some() {
+                painter.circle_filled(Pos2::new(r.left() + 12.0, r.center().y), 3.0, p.success.gamma_multiply(fade));
             }
-            if let Some(id) = avatar.filter(|_| visualizer) {
-                voice_tags.paint(&painter, p, id, r, in_voice, now_s, fade);
-                if audio.voice_visualizer_dot && in_voice.is_some() {
-                    painter.circle_filled(Pos2::new(r.left() + 12.0, r.center().y), 3.0, p.success.gamma_multiply(fade));
-                }
-            }
-            if no_voice && let Some(icon) = icons.get("microphone-off") {
-                let center = Pos2::new(r.left() + 6.0 + super::voice_tag::ICON_SIZE * 0.5, r.center().y);
-                let icon_rect = egui::Rect::from_center_size(center, egui::Vec2::splat(super::voice_tag::ICON_SIZE));
-                painter.image(
-                    icon.id(),
-                    icon_rect,
-                    egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    p.danger.gamma_multiply(fade),
-                );
-            }
-            if let Some(b) = &bubble {
-                let top = Pos2::new(sp.x, r.bottom() + super::chat_bubbles::GAP);
-                super::chat_bubbles::paint(&painter, p, b, top, fade, opacity, false, now_s);
-            }
+        }
+        if no_voice && let Some(icon) = icons.get("microphone-off") {
+            let center = Pos2::new(r.left() + 6.0 + super::voice_tag::ICON_SIZE * 0.5, r.center().y);
+            let icon_rect = egui::Rect::from_center_size(center, egui::Vec2::splat(super::voice_tag::ICON_SIZE));
+            painter.image(
+                icon.id(),
+                icon_rect,
+                egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                p.danger.gamma_multiply(fade),
+            );
+        }
+        if let Some(b) = &bubble {
+            let top = Pos2::new(sp.x, r.bottom() + super::chat_bubbles::GAP);
+            super::chat_bubbles::paint(&painter, p, b, top, fade, opacity, false, now_s);
         }
         for g in galleys {
             let h = g.size().y;
@@ -730,18 +906,26 @@ pub fn draw(
         } else {
             plate_tags.iter().map(|t| (t.id, t.fade)).collect()
         };
-        plates.paint(&painter, p, icons, &plate_tags, now_s, |id, rect, at| {
+        plates.paint(&painter, p, icons, &plate_tags, now_s, |id, rect, at, marker_slot| {
             // right after its plate, before the nearer ones
             if let Some(b) = plate_bubbles.get(&id) {
                 let top = Pos2::new(rect.center().x, rect.bottom() + super::chat_bubbles::GAP);
                 let fade = fades.get(&id).copied().unwrap_or(1.0);
                 super::chat_bubbles::paint(&painter, p, b, top, fade, opacity, true, now_s);
             }
-            name_tags.push(NameTag::new(id, rect, at, proj))
+            name_tags.push(NameTag {
+                marker_slot,
+                ..NameTag::new(id, rect, at, proj)
+            })
         });
     }
     // what else is painted for the world (the tracking beacon) stands nowhere
     aurora_render::world_label_at(ctx, None);
+    // the highlighted text, in front of the scene too (LLHUDText::render:
+    // no depth test while highlighted)
+    for t in highlighted {
+        super::floating_text::paint(&painter, t.text, t.screen, 12.0, t.color, 1.0, t.background);
+    }
     voice_tags.prune(now_s);
     name_tags
 }
@@ -749,6 +933,16 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Hide name tags keeps the chat bubbles, as the Legacy Viewer does with
+    /// its names off; immersive mode keeps its own switch, which hides both.
+    #[test]
+    fn each_mode_keeps_its_own_name_tag_switch() {
+        assert_eq!(avatar_tags(false, false, true), AvatarTags::Shown);
+        assert_eq!(avatar_tags(false, true, false), AvatarTags::Bubbles);
+        assert_eq!(avatar_tags(true, false, true), AvatarTags::Hidden);
+        assert_eq!(avatar_tags(true, true, false), AvatarTags::Shown);
+    }
 
     #[test]
     fn plate_render_badges_distinguish_manual_limits_and_follow_setting_changes() {
@@ -766,7 +960,7 @@ mod tests {
         for mode in [0, 1, 2, 1, 0] {
             settings.set_render_exception(avatar.full_id, mode);
             for silhouette in [false, true] {
-                let content = plate_content(&world, idx, avatar, false, None, silhouette, &settings, false);
+                let content = plate_content(&world, idx, avatar, false, None, silhouette, &settings, false, 5.0);
                 let expected = if mode == 1 { Badge::RenderNever } else { Badge::TooComplex };
                 for level in [Level::Full, Level::Compact] {
                     let shown: Vec<_> = badges(level, &content)
@@ -784,12 +978,86 @@ mod tests {
             .find(|(_, o)| o.full_id == world.agent_id)
             .expect("our demo avatar");
         settings.set_render_exception(avatar.full_id, 1);
-        let own = plate_content(&world, idx, avatar, false, None, true, &settings, false);
+        let own = plate_content(&world, idx, avatar, false, None, true, &settings, false, 0.0);
         assert!(!own.too_complex && !own.render_never, "our own avatar has no rendering-limit badge");
     }
 
+    /// RLVa @shownames: a plate tells nothing of who stands behind a hidden
+    /// name (LLVOAvatar::idleUpdateNameTagText: no title, never a friend).
     #[test]
-    fn name_tag_categories_are_independent_and_self_takes_priority() {
+    fn rlva_hidden_names_keep_title_friendship_and_contact_set_off_their_plate() {
+        use super::super::nameplate::Role;
+        use crate::world::contact_sets::{Appearance, Visuals};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::tags::events()) {
+            world.apply(event);
+        }
+        let (idx, id) = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id && o.group_title().is_some() && !world.is_avatar_blocked(&o.full_id))
+            .map(|(idx, o)| (idx, o.full_id))
+            .expect("a demo avatar with a group title");
+        if !world.social.is_friend(&id) {
+            world.social.friends.push(crate::world::social::Friend {
+                id,
+                online: true,
+                rights_given: 0,
+                rights_has: 0,
+            });
+        }
+        let sets = &mut world.contact_sets;
+        sets.add_set("Team");
+        sets.add_to_set(&[id], "Team", |_| true);
+        sets.set_color("Team", [0.6, 0.2, 0.8, 1.0]);
+        sets.set_visuals(
+            "Team",
+            Visuals {
+                border: true,
+                ..Default::default()
+            },
+        );
+        world.rlva_configure(true);
+        let settings = crate::settings::Settings::default();
+        let content = |world: &World| {
+            let avatar = world.objects.get(idx).expect("the demo avatar");
+            plate_content(world, idx, avatar, false, None, false, &settings, false, 5.0)
+        };
+        let shown = content(&world);
+        assert!(shown.friend && shown.title.is_some());
+        assert_ne!(*shown.appearance, Appearance::default());
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Plate fixture".into(),
+            source_id: uuid::Uuid::from_u128(4),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        let hidden = content(&world);
+        assert_ne!(hidden.name, shown.name);
+        assert_eq!(
+            (hidden.title, hidden.friend, hidden.role, hidden.mark),
+            (None, false, Role::Resident, None)
+        );
+        assert_eq!(*hidden.appearance, Appearance::default());
+        // ours is never hidden
+        let (idx, avatar) = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id == world.agent_id)
+            .expect("our demo avatar");
+        assert_eq!(
+            plate_content(&world, idx, avatar, false, None, false, &settings, false, 0.0).role,
+            Role::Own
+        );
+    }
+
+    #[test]
+    fn name_tag_categories_follow_their_switches_and_off_hides_our_own() {
         for own in [false, true] {
             for friends in [false, true] {
                 for others in [false, true] {
@@ -799,8 +1067,9 @@ mod tests {
                         show_other_name_tags: others,
                         ..Default::default()
                     };
-                    assert_eq!(name_tag_enabled(&settings, true, false), own);
-                    assert_eq!(name_tag_enabled(&settings, true, true), own);
+                    // ours: its switch, while the residents' tags are not all off
+                    assert_eq!(name_tag_enabled(&settings, true, false), own && (friends || others));
+                    assert_eq!(name_tag_enabled(&settings, true, true), own && (friends || others));
                     assert_eq!(name_tag_enabled(&settings, false, true), friends);
                     assert_eq!(name_tag_enabled(&settings, false, false), others);
                 }
@@ -900,7 +1169,7 @@ mod tests {
                             &proj,
                             Vec3::new(128.0, 128.0, 5.0),
                             true,
-                            true,
+                            AvatarTags::Shown,
                             settings,
                             &mut visibility,
                             &empty,
@@ -915,6 +1184,7 @@ mod tests {
                                 demo_too_complex: None,
                                 own_typing: false,
                             }),
+                            None,
                             None,
                         );
                     },
@@ -957,6 +1227,95 @@ mod tests {
                 "expired tags cannot receive clicks, classic={classic}"
             );
         }
+    }
+
+    /// RLVa: @shownearby leaves the name tags alone, @shownames sends a
+    /// friend's tag to the other residents' switch, @shownametags hides all
+    /// but ours (RlvActions::canShowNameTag in LLVOAvatar::idleUpdateNameTag).
+    #[test]
+    fn rlva_shownearby_keeps_name_tags_that_shownametags_hides() {
+        use std::collections::HashSet;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::tags::events()) {
+            world.apply(event);
+        }
+        let scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = super::super::icons::Icons::default();
+        let proj = Projector {
+            view_proj: Mat4::from_scale(Vec3::splat(1.0 / 512.0)),
+            width: 1600.0,
+            height: 900.0,
+            ppp: 1.0,
+        };
+        let empty = HashMap::new();
+        let frame = |world: &World, settings: &crate::settings::Settings| {
+            let mut hits = Vec::new();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                hits = draw(
+                    ui.ctx(),
+                    &p,
+                    &icons,
+                    world,
+                    &scene,
+                    &proj,
+                    Vec3::new(128.0, 128.0, 5.0),
+                    true,
+                    AvatarTags::Shown,
+                    settings,
+                    &mut NameTagVisibility::default(),
+                    &empty,
+                    &settings.audio,
+                    &mut super::super::voice_tag::VoiceTags::default(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            });
+            output.textures_delta.clear();
+            hits.into_iter().map(|tag| tag.id).collect::<HashSet<_>>()
+        };
+        let restrict = |world: &mut World, command: &str| {
+            assert!(world.rlva.receive(&aurora_net::ChatMessage {
+                from_name: "Tag fixture".into(),
+                source_id: uuid::Uuid::from_u128(4),
+                owner_id: world.agent_id,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: command.into(),
+            }));
+            world.refresh_rlva_privacy();
+        };
+        let mut settings = crate::settings::Settings {
+            name_tag_distance: 128.0,
+            ..Default::default()
+        };
+        let all = frame(&world, &settings);
+        let friends: HashSet<_> = all.iter().copied().filter(|id| world.social.is_friend(id)).collect();
+        assert!(all.contains(&world.agent_id) && !friends.is_empty() && all.len() > friends.len() + 1);
+        world.rlva_configure(true);
+        restrict(&mut world, "@shownearby=n");
+        assert!(world.rlva.has("shownearby"));
+        assert_eq!(frame(&world, &settings), all, "@shownearby hides no name tag");
+        settings.show_other_name_tags = false;
+        let mut kept = friends.clone();
+        kept.insert(world.agent_id);
+        assert_eq!(frame(&world, &settings), kept);
+        restrict(&mut world, "@shownames=n");
+        assert_eq!(
+            frame(&world, &settings),
+            HashSet::from([world.agent_id]),
+            "a hidden name is not shown as a friend's"
+        );
+        settings.show_other_name_tags = true;
+        assert_eq!(frame(&world, &settings), all);
+        restrict(&mut world, "@shownametags=n");
+        assert_eq!(frame(&world, &settings), HashSet::from([world.agent_id]));
     }
 
     /// LLVOAvatar::idleUpdateNameTag's `visible_chat`: a resident who
@@ -1010,7 +1369,7 @@ mod tests {
                             &proj,
                             eye,
                             true,
-                            true,
+                            AvatarTags::Shown,
                             settings,
                             &mut visibility,
                             &empty,
@@ -1032,6 +1391,7 @@ mod tests {
                                 opacity: 0.5,
                                 now,
                             }),
+                            None,
                         );
                     },
                 );
@@ -1191,4 +1551,35 @@ mod tests {
         let pulled = tag_point(up, eye);
         assert!((pulled - eye).normalize().distance((up - eye).normalize()) < 1e-5);
     }
+
+    #[test]
+    fn the_floating_text_background_follows_the_legacy_contrast_and_opacity() {
+        use crate::settings::{FloatingTextBackground as Bg, Settings};
+        let white = [255, 255, 255, 255];
+        let dark = [30, 30, 90, 255];
+        let mut s = Settings::default();
+        assert_eq!(floating_text_background(&s, true, 1.0, white), None, "off by default");
+        s.floating_text_background = Bg::Hovered;
+        assert_eq!(floating_text_background(&s, false, 1.0, white), None);
+        assert_eq!(floating_text_background(&s, true, 1.0, white), Some(Color32::from_black_alpha(191)));
+        s.floating_text_background = Bg::All;
+        assert_eq!(
+            floating_text_background(&s, false, 0.5, white),
+            Some(Color32::from_black_alpha(96)),
+            "faded with its text"
+        );
+        assert_eq!(
+            floating_text_background(&s, true, 0.5, white),
+            Some(Color32::from_black_alpha(255)),
+            "the highlighted one is opaque"
+        );
+        // luminance 0.4 or less: white behind
+        assert_eq!(floating_text_background(&s, false, 1.0, dark), Some(Color32::from_white_alpha(191)));
+        s.floating_text_background_opacity = 0.0;
+        assert_eq!(floating_text_background(&s, false, 1.0, white), Some(Color32::from_black_alpha(0)));
+    }
 }
+
+#[cfg(test)]
+#[path = "hud/privacy_tests.rs"]
+mod privacy_tests;

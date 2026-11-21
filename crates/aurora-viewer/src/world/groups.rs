@@ -43,6 +43,9 @@ pub struct SessionInfo {
     /// Group chat (session id = group id); else an ad-hoc conference.
     pub group: bool,
     pub participants: BTreeSet<Uuid>,
+    /// A local conference request named these residents; a partial initial
+    /// roster cannot establish that it is safe to send without checking them.
+    pub(super) unconfirmed_invitees: BTreeSet<Uuid>,
     /// Those who were in it and left (a conference's offline members).
     pub left: BTreeSet<Uuid>,
     pub moderators: HashSet<Uuid>,
@@ -53,6 +56,11 @@ pub struct SessionInfo {
     /// The server closed it (ForceCloseChatterBoxSession).
     pub closed: bool,
     history_fetched: bool,
+    /// Our conference failed before it ever received a valid network address.
+    pub(super) failed_conference_start: bool,
+    /// FSFloaterIM::mQueuedMsgsForInit: messages entered before a local
+    /// conference received its permanent address. Kept only for this login.
+    pub(super) pending_messages: Vec<String>,
     /// We opened it ourselves (IM_SESSION_GROUP_START), no message did.
     pub(super) started_by_us: bool,
 }
@@ -77,11 +85,17 @@ pub struct GroupChats {
     /// FSShowJoinedGroupInvitations: show the invitations to a group we are
     /// already in (from the settings).
     pub show_joined_invitations: bool,
+    /// FSGroupNoticesToIMLog / FSBetterGroupNoticesToIMLog (from the
+    /// settings): the line a group notice writes in its group's chat.
+    pub notices_in_chat: NoticesInChat,
     /// Group list asked (AgentDataUpdateRequest).
     requested: bool,
     /// Our active group (AgentDataUpdate; nil = none) and its title.
     pub active: Uuid,
     pub active_title: String,
+    /// The active group's name as AgentDataUpdate gave it
+    /// (LLAgent::mGroupName), cleared when that group is left.
+    pub active_name: String,
     /// The group list (AgentGroupDataUpdate) and the active group
     /// (AgentDataUpdate) arrived this session.
     pub list_received: bool,
@@ -93,6 +107,45 @@ pub struct GroupChats {
     /// the new group is listed under it until the list comes back.
     pub creating: Option<String>,
     pub out: Vec<NetCommand>,
+}
+
+/// Whether a group notice also writes a line in its group's chat, and what
+/// the line holds (LLHandlerUtil::logGroupNoticeToIMGroup,
+/// indra/newview/llnotificationhandlerutil.cpp, originally LGPL 2.1). Both
+/// on, as the Legacy Viewer's defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoticesInChat {
+    /// FSGroupNoticesToIMLog.
+    pub on: bool,
+    /// FSBetterGroupNoticesToIMLog: "Group Notice Sent by: <sender>" and
+    /// the subject before the text.
+    pub subjects: bool,
+}
+
+impl Default for NoticesInChat {
+    fn default() -> Self {
+        Self { on: true, subjects: true }
+    }
+}
+
+/// The text of a group notice's line in its group's chat: "Group Notice
+/// Sent by: <sender>", the subject and the text on three lines with
+/// `subjects`, else the text alone (the two formats of
+/// logGroupNoticeToIMGroup). An empty part leaves no empty line; None when
+/// nothing is left to write.
+pub fn notice_chat_text(sender: &str, subject: &str, body: &str, subjects: bool) -> Option<String> {
+    let body = body.trim_end();
+    if !subjects {
+        return (!body.trim().is_empty()).then(|| body.to_owned());
+    }
+    let mut text = aurora_i18n::tr!("world-groups-notice-in-chat", sender = sender.to_string());
+    for part in [subject.trim(), body] {
+        if !part.trim().is_empty() {
+            text.push('\n');
+            text.push_str(part);
+        }
+    }
+    Some(text)
 }
 
 impl GroupChats {
@@ -222,6 +275,50 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
         kind,
         source,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
+        speaker: Default::default(),
+    }
+}
+
+/// The presentation layout of a groups list given the member groups and a search filter.
+///
+/// Shared rule across Contacts › Groups, People › Groups (Legacy look),
+/// and People › Groups (Aurora look):
+/// - "None (no group tag)" stays visible while filtering whenever the resident
+///   has at least one group (`count > 0`, like LLGroupList::refresh), so they
+///   can always clear their active tag while searching (#2788).
+/// - If a filter matches no groups, the "none" row stays visible on top and
+///   the empty filter notice shows below it with the typed query.
+#[derive(Debug, PartialEq, Eq)]
+pub struct GroupListPlan<'a, T> {
+    /// Whether to display the "None (no group tag)" entry on top.
+    pub show_none: bool,
+    /// When a filter is set and matches no groups, contains the query string to display in the notice.
+    pub no_match: Option<String>,
+    /// The groups matching the filter.
+    pub items: Vec<&'a T>,
+}
+
+/// Compute the display plan for a groups list against an active filter query.
+pub fn plan_group_list<'a, T>(groups: &'a [T], filter: &str, name_of: impl Fn(&T) -> &str) -> GroupListPlan<'a, T> {
+    let trimmed = filter.trim();
+    let filter_lc = trimmed.to_lowercase();
+    let show_none = !groups.is_empty();
+    let items: Vec<&'a T> = if filter_lc.is_empty() {
+        groups.iter().collect()
+    } else {
+        groups.iter().filter(|g| name_of(g).to_lowercase().contains(&filter_lc)).collect()
+    };
+    let no_match = if !groups.is_empty() && !trimmed.is_empty() && items.is_empty() {
+        Some(trimmed.to_string())
+    } else {
+        None
+    };
+    GroupListPlan {
+        show_none,
+        no_match,
+        items,
     }
 }
 
@@ -248,12 +345,13 @@ impl World {
         self.groups.sessions.contains_key(session)
     }
 
-    /// Title of a conversation: group / conference name, else the avatar.
+    /// Title of a conversation: group / conference name, else the avatar,
+    /// named whatever RLVa's `@shownames` (FSFloaterIM has no test of it).
     pub fn session_title(&self, session: &Uuid) -> String {
         match self.groups.sessions.get(session) {
             Some(s) if !s.name.is_empty() => s.name.clone(),
             Some(_) => aurora_i18n::tr!("world-groups-conference").to_owned(),
-            None => self.social.name_of(session),
+            None => self.social.name_in(super::names::NameScope::Roster, session),
         }
     }
 
@@ -271,9 +369,11 @@ impl World {
     }
 
     /// A message in a group chat or conference: its sound follows the
-    /// group / conference IM mode (LLIMMgr::addMessage).
-    fn session_sound(&mut self, session: Uuid, new_session: bool) {
+    /// group / conference IM mode (LLIMMgr::addMessage), or the mention's
+    /// when `text` mentions us.
+    fn session_sound(&mut self, session: Uuid, new_session: bool, text: &str) {
         let group = self.groups.sessions.get(&session).is_some_and(|s| s.group) || self.groups.is_member(&session);
+        let mention = crate::ui::chat::mentions(text, &self.agent_id);
         self.im_messages.push(crate::ui_sound::ImMessage {
             kind: if group {
                 crate::ui_sound::ImKind::Group
@@ -282,6 +382,7 @@ impl World {
             },
             session,
             new_session,
+            mention,
         });
     }
 
@@ -295,6 +396,33 @@ impl World {
             line(String::new(), text.into(), ChatKind::System, Uuid::nil(), SystemTime::now()),
             false,
         );
+    }
+
+    /// A group notice also told in its group's chat
+    /// (LLHandlerUtil::logGroupNoticeToIMGroup, called by
+    /// LLGroupHandler::processNotification as the notice's toast shows):
+    /// only for one of our groups (gAgent.getGroupData), in the group's
+    /// session (its id is the group's) when one is open, without counting
+    /// as unread (logToIM restores the counters) and without opening one;
+    /// else only in the group's transcript. A blocked or snoozed group chat
+    /// has no open session: the line goes to the transcript, as there. A
+    /// system line here, where the Legacy Viewer writes it under the
+    /// sender's name: it is no message of theirs, and the subjects format
+    /// names them.
+    pub(super) fn group_notice_to_chat(&mut self, group: Uuid, sender: &str, subject: &str, body: &str) {
+        let cfg = self.groups.notices_in_chat;
+        if !cfg.on || !self.groups.is_member(&group) {
+            return;
+        }
+        let Some(text) = notice_chat_text(sender, subject, body, cfg.subjects) else {
+            return;
+        };
+        let l = line(String::new(), text, ChatKind::System, Uuid::nil(), SystemTime::now());
+        if self.social.has_session(&group) {
+            self.session_push(group, l, false);
+        } else {
+            self.transcript_only(group, &l);
+        }
     }
 
     pub(super) fn info_mut(&mut self, session: Uuid, name: &str) -> &mut SessionInfo {
@@ -311,7 +439,9 @@ impl World {
     }
 
     /// Open (or focus) the chat of one of our groups (LLGroupActions::startIM).
-    pub fn start_group_chat(&mut self, group: Uuid) {
+    /// `to_type`: the user opened it, so its field takes the keyboard
+    /// (FSFloaterIM::show → setFocus); a call starts the session without it.
+    pub fn start_group_chat(&mut self, group: Uuid, to_type: bool) {
         let Some(g) = self.groups.group(&group).cloned() else {
             return;
         };
@@ -325,7 +455,7 @@ impl World {
             self.set_group_chat_blocked(group, false);
         }
         self.groups.unsnooze(&group);
-        self.social.focus_im = Some(group);
+        self.focus_conversation(group, to_type);
         let known = self.groups.sessions.get(&group).is_some_and(|s| s.active && !s.closed);
         self.info_mut(group, &g.name);
         self.session_lines(group);
@@ -343,15 +473,46 @@ impl World {
         // Sending is an explicit request to open the displayed conversation,
         // just like its call button; do not send into an unjoined preview.
         if self.groups.restoring.contains(&session) {
-            self.start_group_chat(session);
+            self.start_group_chat(session, false);
             if self.groups.restoring.contains(&session) {
                 return;
             }
         }
-        let text = self.rlva_outgoing_im_text(session, true, text).into_owned();
+        if self.groups.sessions.get(&session).is_some_and(|s| s.failed_conference_start) {
+            self.session_system(session, aurora_i18n::tr!("world-groups-message-not-sent"));
+            return;
+        }
+        // A conference we started and whose start reply has not come yet has
+        // no speaker yet in the Legacy Viewer: LLIMModel::LLIMSession starts
+        // with an empty LLIMSpeakerMgr (llimview.cpp, llspeakers.cpp) that
+        // only sessionInitReplyReceived, agent list updates and arriving
+        // chatters fill. FSFloaterIM::sendMsg (fsfloaterim.cpp) checks
+        // @sendim against that list for an ad-hoc session, so a line queued
+        // before init finds no one to refuse and leaves unchanged.
+        let text = if self.calls.conferences.contains_key(&session) {
+            text.to_owned()
+        } else {
+            self.rlva_outgoing_im_text(session, true, text).into_owned()
+        };
+        self.send_session_text(session, text, false);
+    }
+
+    /// A line of a session, its RLVa text already chosen; `decided`: it was
+    /// queued before the conference started and leaves as it was decided
+    /// then (`rlva_send_as_decided`).
+    pub(super) fn send_session_text(&mut self, session: Uuid, text: String, decided: bool) {
+        if self.calls.conferences.contains_key(&session) {
+            if let Some(info) = self.groups.sessions.get_mut(&session) {
+                info.pending_messages.push(text);
+            }
+            return;
+        }
         let me = self.own_name();
         // longer than one IM: several in a row (aurora_net::message_split)
         for part in aurora_net::message_split::message_parts(&text) {
+            if decided {
+                self.rlva_send_as_decided(session, dialog::SESSION_SEND, part);
+            }
             self.groups.im(session, dialog::SESSION_SEND, session, part.to_owned());
         }
         let l = line(me, text, ChatKind::OWN, Uuid::nil(), SystemTime::now());
@@ -370,6 +531,7 @@ impl World {
     /// (LLIMModel::sendLeaveSession), a 1:1 conversation only leaves the list
     /// (nothing is sent; the next message from that resident opens it again).
     pub fn leave_session(&mut self, session: Uuid) {
+        self.calls.conferences.remove(&session);
         self.cancel_saved_im(session);
         self.groups.restoring.remove(&session);
         self.groups.deferred.retain(|id| *id != session);
@@ -500,6 +662,7 @@ impl World {
                 kind: crate::ui_sound::ImKind::Group,
                 session: group,
                 new_session: true,
+                mention: false,
             });
         }
     }
@@ -553,10 +716,24 @@ impl World {
             NetEvent::ActiveGroup { id, name, title } => {
                 log::info!("active group: {}", if id.is_nil() { "none" } else { &name });
                 self.groups.active = id;
-                self.groups.active_title = title;
+                self.groups.active_title = title.clone();
+                // LLAgent::processAgentDataUpdate: no name without a group
+                self.groups.active_name = if id.is_nil() { String::new() } else { name.clone() };
                 self.groups.active_received = true;
+                // A blank worn title leaves the name tag without a title.
+                // The Group titles window still lists that role (#3147).
+                let active_title = (!id.is_nil() && !title.is_empty()).then_some(title.as_str());
+                if let Some(i) = self.objects.index_of_uuid(&self.agent_id)
+                    && let Some(o) = self.objects.get_mut(i)
+                {
+                    o.set_group_title(active_title);
+                }
             }
             NetEvent::GroupDropped(id) => {
+                // LLAgent::processAgentDropGroup: the active group's name goes
+                if id == self.groups.active {
+                    self.groups.active_name.clear();
+                }
                 self.cancel_saved_im(id);
                 self.discard_restoring_group(id);
                 self.groups.groups.retain(|g| g.id != id);
@@ -575,7 +752,20 @@ impl World {
                 error,
                 agents,
             } => {
-                if !success {
+                if self.groups.sessions.get(&temp_session).is_some_and(|s| s.failed_conference_start) {
+                    return None;
+                }
+                // A new ad-hoc conversation must not replace an unrelated open
+                // conversation or route its pending messages into that conversation.
+                let starting_here = self.calls.conferences.contains_key(&temp_session);
+                let collides = starting_here
+                    && temp_session != session
+                    && (session.is_nil()
+                        || self.groups.is_member(&session)
+                        || self.groups.sessions.contains_key(&session)
+                        || self.social.has_session(&session));
+                if !success || collides {
+                    self.call_session_started(temp_session, if collides { temp_session } else { session }, false);
                     // LLIMMgr::showSessionStartError
                     let id = if self.groups.sessions.contains_key(&temp_session) {
                         temp_session
@@ -584,10 +774,15 @@ impl World {
                     };
                     self.session_system(
                         id,
-                        aurora_i18n::tr!("world-groups-could-not-join-the-session", value0 = reason(&error).to_string()),
+                        match session_error(&error) {
+                            Some(reason) => aurora_i18n::tr!("world-groups-could-not-join-the-session-reason", reason = reason),
+                            None => aurora_i18n::tr!("world-groups-could-not-join-the-session", value0 = "."),
+                        },
                     );
                     if let Some(s) = self.groups.sessions.get_mut(&id) {
                         s.closed = true;
+                        s.failed_conference_start = starting_here;
+                        s.pending_messages.clear();
                     }
                     self.groups.restoring.remove(&id);
                     return None;
@@ -600,6 +795,9 @@ impl World {
                     if let Some(s) = self.social.ims.iter_mut().find(|s| s.other == temp_session) {
                         s.other = session;
                     }
+                    // the conversation log's entry (and the poll's memory of the
+                    // open conversation) follows, or the conference is logged twice
+                    self.chat_log.conversations.rekey(temp_session, session);
                 }
                 self.groups.restoring.remove(&session);
                 let info = self.info_mut(session, "");
@@ -614,6 +812,7 @@ impl World {
                         session,
                     });
                 }
+                self.call_session_started(temp_session, session, true);
             }
             NetEvent::SessionAgents { session, agents } => {
                 if let Some(s) = self.groups.sessions.get_mut(&session) {
@@ -638,24 +837,30 @@ impl World {
                 }
             }
             NetEvent::SessionError { session, event, error } => {
-                // LLIMMgr::showSessionEventError
-                let what = if event == "message" {
-                    aurora_i18n::tr!("world-groups-message-not-sent")
-                } else {
-                    aurora_i18n::tr!("world-groups-action-denied")
-                };
-                self.session_system(session, format!("{what}{}", reason(&error)));
+                self.session_system(session, session_event_error(&event, &error));
+            }
+            // moderationActionCoro → showSessionEventError("mute", …): the
+            // notice shows the event alone, its reason is left out
+            NetEvent::SessionModerationFailed { session, forbidden } => {
+                log::warn!("session {session}: moderation refused (not a moderator: {forbidden})");
+                self.session_system(session, aurora_i18n::tr!("world-groups-error-while-moderating"));
             }
             NetEvent::SessionClosed { session, reason: r } => {
+                let was_starting = self.calls.conferences.remove(&session).is_some();
                 self.cancel_saved_im(session);
                 self.groups.restoring.remove(&session);
                 // LLIMMgr::showSessionForceClose
                 if let Some(s) = self.groups.sessions.get_mut(&session) {
                     s.closed = true;
                     s.active = false;
+                    s.failed_conference_start |= was_starting;
+                    s.pending_messages.clear();
                     self.session_system(
                         session,
-                        aurora_i18n::tr!("world-groups-the-session-was-closed", value0 = reason(&r).to_string()),
+                        match session_error(&r) {
+                            Some(reason) => aurora_i18n::tr!("world-groups-the-session-was-closed-reason", reason = reason),
+                            None => aurora_i18n::tr!("world-groups-the-session-was-closed", value0 = "."),
+                        },
                     );
                 }
             }
@@ -706,6 +911,10 @@ impl World {
         if inv.from == self.agent_id || session.is_nil() {
             return;
         }
+        // LLIMMgr::addMessage, IM_SESSION_INVITE
+        if !self.omnifilter_session_invite(&mut inv) {
+            return;
+        }
         let in_group = self.groups.is_member(&session);
         if in_group && !self.rlva_allows_im("recvim", session) {
             return;
@@ -753,26 +962,44 @@ impl World {
                 return;
             }
         }
+        let mut opener = None;
         if !self.mutes.text_muted(&inv.from, &inv.from_name) {
             let new = !self.groups.sessions.contains_key(&session);
             // an invitation opens the chat even when snoozed, as in the
             // Legacy Viewer (LLViewerChatterBoxInvitation does not look)
             self.groups.unsnooze(&session);
             self.info_mut(session, &inv.session_name).participants.insert(inv.from);
-            self.session_sound(session, new);
+            self.session_sound(session, new, &inv.message);
             if !inv.from_name.is_empty() {
                 self.social.names.entry(inv.from).or_insert_with(|| inv.from_name.clone());
             }
             let text = saved_prefix(inv.offline, inv.timestamp) + &inv.message;
-            let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, SystemTime::now());
+            // FSOpenIMContainerOnOfflineMessage (`Social::offline_ims`)
+            self.social.offline_ims |= inv.offline;
+            let now = SystemTime::now();
+            let l = line(inv.from_name.clone(), text, ChatKind::Im, inv.from, now);
             self.session_push(session, l, true);
+            // sessionAdded with has_offline_msg
+            if inv.offline && new {
+                self.log_conversation(session, true);
+            }
+            // where the server's history stops: the invitation's timestamp,
+            // else the server's own copy of this message
+            // (LLIMSession::addMessagesFromServerHistory never uses the
+            // local clock)
+            opener = Some(if inv.timestamp != 0 {
+                super::transcripts::Opener::At(inv.timestamp)
+            } else {
+                super::transcripts::Opener::Message(inv.from, inv.message.trim().to_owned())
+            });
         }
         self.groups.restoring.remove(&session);
         self.groups.out.push(NetCommand::ChatSession {
             method: SessionMethod::AcceptInvitation,
             session,
         });
-        // recent messages of a session we did not have yet (FetchGroupChatHistory)
+        // recent messages of a session we did not have yet (FetchGroupChatHistory),
+        // merged up to the message that opened it
         if let Some(s) = self.groups.sessions.get_mut(&session)
             && !s.history_fetched
         {
@@ -781,6 +1008,9 @@ impl World {
                 method: SessionMethod::FetchHistory,
                 session,
             });
+            if let Some(opener) = opener {
+                self.session_lines(session).log.opened_by(opener);
+            }
         }
     }
 
@@ -838,7 +1068,7 @@ impl World {
         );
         // a snoozed chat that opens again sounds as a new one
         // (UISndNewIncomingGroupIMSession in restoreSnoozedSession)
-        self.session_sound(session, reopened);
+        self.session_sound(session, reopened, &im.message);
         // on receipt, whether or not the chat is in front (FIRE-10178)
         let open = super::attention::Open::Conversation(session);
         self.keyword_alert(im.from_agent_id, &im.from_name, &im.message, false, open);
@@ -849,6 +1079,9 @@ impl World {
 
 fn apply_agents(s: &mut SessionInfo, agents: &[SessionAgent]) {
     for a in agents {
+        if a.present.is_some() {
+            s.unconfirmed_invitees.remove(&a.agent);
+        }
         match a.present {
             Some(true) => {
                 s.participants.insert(a.agent);
@@ -871,8 +1104,62 @@ fn apply_agents(s: &mut SessionInfo, agents: &[SessionAgent]) {
     }
 }
 
-fn reason(r: &str) -> String {
-    if r.is_empty() { ".".to_owned() } else { format!(" : {r}") }
+/// The sentence of an error code of the chat session server, never the bare
+/// code (#3720: "Message not sent : generic"). The Legacy Viewer looks the
+/// code up as a string name, with or without its `_error` ending
+/// (`LLTrans::getString(error_string)` in LLIMMgr::showSessionEventError,
+/// showSessionStartError and showSessionForceClose, indra/newview/llimview.cpp;
+/// the sentences are those of skins/default/xui/en/strings.xml). A code it
+/// does not know gets the catch-all advice, and goes to the log.
+fn session_error(code: &str) -> Option<String> {
+    let known = match code.strip_suffix("_error").unwrap_or(code) {
+        "" => return None,
+        "generic" | "generic_request" => aurora_i18n::tr!("world-groups-session-error-generic"),
+        "insufficient_perms" => aurora_i18n::tr!("world-groups-session-error-insufficient-perms"),
+        "session_does_not_exist" => aurora_i18n::tr!("world-groups-session-error-session-does-not-exist"),
+        "no_ability" => aurora_i18n::tr!("world-groups-session-error-no-ability"),
+        "not_a_mod" => aurora_i18n::tr!("world-groups-session-error-not-a-mod"),
+        "muted" => aurora_i18n::tr!("world-groups-session-error-muted"),
+        "removed" | "removed_from_group" => aurora_i18n::tr!("world-groups-session-error-removed"),
+        "close_on_no_ability" => aurora_i18n::tr!("world-groups-session-error-close-on-no-ability"),
+        _ => {
+            log::info!("chat session error code without a sentence: {code:?}");
+            aurora_i18n::tr!("world-groups-session-error-generic")
+        }
+    };
+    Some(known.to_string())
+}
+
+/// The catch-all codes: the server lost track of the session, not a refusal.
+fn session_error_is_generic(code: &str) -> bool {
+    !matches!(
+        code.strip_suffix("_error").unwrap_or(code),
+        "insufficient_perms"
+            | "session_does_not_exist"
+            | "no_ability"
+            | "not_a_mod"
+            | "muted"
+            | "removed"
+            | "removed_from_group"
+            | "close_on_no_ability"
+    )
+}
+
+/// LLIMMgr::showSessionEventError. A message the server only lost track of
+/// may still arrive: the Legacy Viewer's `message_session_event` sentence,
+/// with the advice of its `generic` one. A refusal (muted, removed, no
+/// ability) says so instead: that message was not sent.
+fn session_event_error(event: &str, code: &str) -> String {
+    let message = event == "message";
+    if message && session_error_is_generic(code) {
+        return aurora_i18n::tr!("world-groups-message-still-processed").to_string();
+    }
+    match (message, session_error(code)) {
+        (true, Some(reason)) => aurora_i18n::tr!("world-groups-message-not-sent-reason", reason = reason),
+        (false, Some(reason)) => aurora_i18n::tr!("world-groups-action-denied-reason", reason = reason),
+        // no code at all (a message without one is the catch-all above)
+        (_, None) => format!("{}.", aurora_i18n::tr!("world-groups-action-denied")),
+    }
 }
 
 /// "(Saved <date>) " of offline messages.
@@ -887,6 +1174,80 @@ fn saved_prefix(offline: bool, timestamp: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #3720: the server's code never reaches the conversation as it is.
+    #[test]
+    fn a_chat_session_error_code_reads_as_a_sentence() {
+        assert_eq!(session_error(""), None);
+        let generic = aurora_i18n::tr!("world-groups-session-error-generic").to_string();
+        for code in ["generic", "generic_request_error", "a_code_of_tomorrow"] {
+            assert_eq!(session_error(code).as_deref(), Some(generic.as_str()), "{code}");
+        }
+        let known = [
+            (
+                "insufficient_perms_error",
+                aurora_i18n::tr!("world-groups-session-error-insufficient-perms").to_string(),
+            ),
+            (
+                "session_does_not_exist_error",
+                aurora_i18n::tr!("world-groups-session-error-session-does-not-exist").to_string(),
+            ),
+            ("no_ability", aurora_i18n::tr!("world-groups-session-error-no-ability").to_string()),
+            (
+                "no_ability_error",
+                aurora_i18n::tr!("world-groups-session-error-no-ability").to_string(),
+            ),
+            (
+                "not_a_mod_error",
+                aurora_i18n::tr!("world-groups-session-error-not-a-mod").to_string(),
+            ),
+            ("muted", aurora_i18n::tr!("world-groups-session-error-muted").to_string()),
+            ("muted_error", aurora_i18n::tr!("world-groups-session-error-muted").to_string()),
+            ("removed", aurora_i18n::tr!("world-groups-session-error-removed").to_string()),
+            (
+                "removed_from_group",
+                aurora_i18n::tr!("world-groups-session-error-removed").to_string(),
+            ),
+            (
+                "close_on_no_ability",
+                aurora_i18n::tr!("world-groups-session-error-close-on-no-ability").to_string(),
+            ),
+        ];
+        for (code, sentence) in known {
+            let said = session_error(code).expect("a sentence");
+            assert_eq!(said, sentence, "{code}");
+            assert_ne!(said, generic, "{code}");
+            // a sentence, never the code: a code that is a word ("removed",
+            // "muted") may well be part of an English sentence
+            assert!(said != code && !said.contains('_'), "{code}: {said}");
+        }
+    }
+
+    #[test]
+    fn a_failed_group_message_says_what_to_do() {
+        let pending = aurora_i18n::tr!("world-groups-message-still-processed").to_string();
+        // lost by the server, whatever the catch-all code: it may still arrive
+        for code in ["generic", "", "a_code_of_tomorrow"] {
+            assert_eq!(session_event_error("message", code), pending, "{code:?}");
+        }
+        // refused: not sent, and why
+        let muted = session_event_error("message", "muted");
+        assert!(muted.contains(&aurora_i18n::tr!("world-groups-session-error-muted").to_string()));
+        assert!(muted.starts_with(&aurora_i18n::tr!("world-groups-message-not-sent").to_string()));
+        // another event of the session
+        let denied = session_event_error("mute", "not_a_mod_error");
+        assert!(denied.starts_with(&aurora_i18n::tr!("world-groups-action-denied").to_string()));
+        assert!(denied.contains(&aurora_i18n::tr!("world-groups-session-error-not-a-mod").to_string()));
+        for (event, code) in [
+            ("message", "generic"),
+            ("message", "muted"),
+            ("mute", "not_a_mod_error"),
+            ("mute", "generic"),
+        ] {
+            assert!(!session_event_error(event, code).contains(code), "{event} {code}");
+        }
+        assert!(session_event_error("mute", "").ends_with('.'));
+    }
 
     #[test]
     fn the_bell_changes_the_notices_and_sends_the_profile_listing_as_it_is() {
@@ -915,6 +1276,32 @@ mod tests {
                 list_in_profile: false,
             }] if group == Uuid::from_u128(2)
         ));
+    }
+
+    /// A group chat the user opens takes the keyboard (LLGroupActions::startIM
+    /// → FSFloaterIM::show → setFocus); a call only starts its session.
+    #[test]
+    fn a_group_chat_the_user_opens_takes_the_keyboard_a_call_does_not() {
+        let group = Uuid::from_u128(2);
+        let membership = || aurora_net::GroupMembership {
+            id: group,
+            name: "Group".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.groups.groups.push(membership());
+        w.start_group_chat(group, true);
+        assert_eq!(w.social.focus_im, Some(group));
+        assert!(w.social.focus_im_to_type, "the user opened it, ready to type");
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.groups.groups.push(membership());
+        w.start_group_chat(group, false);
+        assert_eq!(w.social.focus_im, Some(group));
+        assert!(!w.social.focus_im_to_type, "a call leaves the keyboard where it was");
     }
 
     /// Online status › Ad hoc conferences (LLIMMgr::addMessage, FSIgnoreAdHocSessions):
@@ -1172,5 +1559,58 @@ mod tests {
         assert!(w.on_group_event(reply(true)).is_none());
         assert_eq!(lines(&w), Some(2), "the session no longer exists");
         assert!(w.groups.sessions[&group].closed);
+    }
+
+    #[test]
+    fn group_list_plan_keeps_none_row_and_detects_empty_filters() {
+        let empty: [GroupMembership; 0] = [];
+        let plan = plan_group_list(&empty, "", |g| &g.name);
+        assert!(!plan.show_none);
+        assert_eq!(plan.no_match, None);
+        assert!(plan.items.is_empty());
+
+        let plan = plan_group_list(&empty, "foo", |g| &g.name);
+        assert!(!plan.show_none);
+        assert_eq!(plan.no_match, None);
+        assert!(plan.items.is_empty());
+
+        let g1 = GroupMembership {
+            id: Uuid::from_u128(1),
+            name: "Builders Club".to_string(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        let g2 = GroupMembership {
+            id: Uuid::from_u128(2),
+            name: "Marketplace Sellers".to_string(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        };
+        let list = [g1.clone(), g2.clone()];
+
+        // No filter: shows "None" and both groups
+        let plan = plan_group_list(&list, "", |g| &g.name);
+        assert!(plan.show_none);
+        assert_eq!(plan.no_match, None);
+        assert_eq!(plan.items.len(), 2);
+
+        // Matching filter: shows "None" and matching group
+        let plan = plan_group_list(&list, "market", |g| &g.name);
+        assert!(plan.show_none);
+        assert_eq!(plan.no_match, None);
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.items[0].name, "Marketplace Sellers");
+
+        // Non-matching filter: keeps "None" row and preserves raw case in no_match
+        let plan = plan_group_list(&list, "  ZzzzZ  ", |g| &g.name);
+        assert!(plan.show_none);
+        assert_eq!(plan.no_match.as_deref(), Some("ZzzzZ"));
+        assert!(plan.items.is_empty());
     }
 }

@@ -18,7 +18,6 @@ fn solve(
         Vec3::ZERO,
         scales,
         &Goal {
-            follow: None,
             weight: 1.0,
             bone,
             root,
