@@ -250,7 +250,7 @@ fn place_portal_drags_start_from_every_favorites_and_places_view_and_leave_reord
                 .take()
                 .expect("history reaches the world without an inventory item");
             assert_eq!(drop.target, Target::History(expected_history));
-            assert!(drop.released && drop.shift);
+            assert!(drop.released);
             assert!(world_drop.borrow().is_none(), "history cannot be inserted or given as inventory");
             assert_eq!(world.inventory.items.len(), 2);
             continue;

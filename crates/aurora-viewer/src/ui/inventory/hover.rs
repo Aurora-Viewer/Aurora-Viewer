@@ -103,30 +103,11 @@ fn asset(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     if !inv.can_preview(0) {
         return None;
     }
-    let thumbnail = thumbnail::image(inv, id);
-    if !thumbnail.is_nil() {
-        return Some(thumbnail);
-    }
-    let original = rules::original(inv, id)?;
-    let thumbnail = thumbnail::image(inv, original);
-    if !thumbnail.is_nil() {
-        return Some(thumbnail);
-    }
-    if let Some(item) = inv.items.get(&original) {
-        return (item.asset_type == 0 && !item.asset_id.is_nil()).then_some(item.asset_id);
-    }
-    let folder = inv.folders.get(&original)?;
-    if folder.info.type_default != 47 || folder.state != FetchState::Fetched {
-        return None;
-    }
-    // Legacy outfit pictures: exactly one direct texture, including links.
-    // Never walk or fetch a folder tree just because its row is hovered.
-    let mut textures = folder.items.iter().filter_map(|id| {
-        let item = inv.items.get(&rules::original(inv, *id)?)?;
-        (item.asset_type == 0).then_some(item.asset_id)
-    });
-    let texture = textures.next()?;
-    (!texture.is_nil() && textures.next().is_none()).then_some(texture)
+    // the entry's picture, else a texture shows itself
+    thumbnail::shown(inv, id).or_else(|| {
+        let item = inv.items.get(&rules::original(inv, id)?)?;
+        (item.asset_type == 0 && !item.asset_id.is_nil()).then_some(item.asset_id)
+    })
 }
 
 fn mode() -> Option<&'static str> {

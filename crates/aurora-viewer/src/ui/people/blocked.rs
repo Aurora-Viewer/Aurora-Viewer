@@ -246,7 +246,8 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, m: &Mute, all: &[Mute]
         }
         menu::separator(ui, p);
         if menu::item_if(ui, p, "user-filled", aurora_i18n::tr!("common-profile"), m.kind == MuteType::Agent) {
-            c.actions.push(PeopleAction::Profile(m.id));
+            // LLBlockList names its residents whatever `@shownames`
+            c.actions.push(PeopleAction::RosterProfile(m.id));
         }
     });
 }

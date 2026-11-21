@@ -15,6 +15,7 @@
 //! the arrow keys select among them and Enter clicks the selected one.
 
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
 
 /// Row height and paddings (LLMenuItemGL: 20 px rows with a check column;
@@ -84,13 +85,20 @@ fn frame_border(p: &Palette) -> Color32 {
     crate::ui::widgets::border_stroke(p, Stroke::new(1.0, p.raised)).color
 }
 
-/// The rectangle and corner radius of a stock pop-up frame in `shape`: the
-/// theme's window face inside its `border`. The panels drawn with
+/// The rectangle, corner radius and fade of a stock pop-up frame in
+/// `shape`: the theme's window face (`tint`) inside its `border`. A menu
+/// fading in (egui's `Area::fade_in`) has both at a part of their alpha:
+/// matched by colour, that part is the fade. The panels drawn with
 /// `widgets::overlay` have another border and bring their own glass.
-fn stock_frame(shape: &egui::Shape, faces: [Color32; 2], border: Color32) -> Option<(egui::Rect, f32)> {
+fn stock_frame(shape: &egui::Shape, tint: Color32, border: Color32) -> Option<(egui::Rect, f32, f32)> {
+    use crate::ui::surface_opacity::same_colour;
     match shape {
-        egui::Shape::Rect(r) if faces.contains(&r.fill) && r.stroke.color == border => Some((r.rect, f32::from(r.corner_radius.nw))),
-        egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| stock_frame(s, faces, border)),
+        egui::Shape::Rect(r) if same_colour(r.fill, tint) && same_colour(r.stroke.color, border) => {
+            let full = if r.fill.a() <= tint.a() { tint.a() } else { u8::MAX };
+            let fade = (f32::from(r.fill.a()) / f32::from(full)).min(1.0);
+            Some((r.rect, f32::from(r.corner_radius.nw), fade))
+        }
+        egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| stock_frame(s, tint, border)),
         _ => None,
     }
 }
@@ -108,16 +116,22 @@ pub fn glaze(ctx: &egui::Context, p: &Palette) {
         .filter(|(frame, _)| *frame == ctx.cumulative_frame_nr())
         .map(|(_, layers)| layers)
         .unwrap_or_default();
-    if p.panel_alpha == 255 && distinct.is_empty() {
+    // FSMenuBackgroundAlpha (LLMenuGL::draw), `ui::surface_opacity`
+    let opacity = crate::ui::surface_opacity::menus();
+    if p.panel_alpha == 255 && distinct.is_empty() && opacity >= 1.0 {
         return;
     }
     let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
-    let faces = [tint, p.panel];
     let layers: Vec<LayerId> = ctx
         .memory(|m| m.areas().visible_layer_ids())
         .into_iter()
         .filter(|layer| layer.order == egui::Order::Foreground)
         .collect();
+    let (blur, tint_alpha) = crate::ui::surface_opacity::glass(p.panel_alpha, opacity);
+    let faded_tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), tint_alpha);
+    for layer in &layers {
+        crate::ui::surface_opacity::fade_after(ctx, *layer, egui::layers::ShapeIdx(0), p, opacity);
+    }
     ctx.graphics_mut(|graphics| {
         for layer in layers {
             let Some(list) = graphics.get_mut(layer) else {
@@ -127,22 +141,36 @@ pub fn glaze(ctx: &egui::Context, p: &Palette) {
                 continue;
             }
             list.mutate_shape(egui::layers::ShapeIdx(0), |first| {
-                if let Some((rect, radius)) = stock_frame(&first.shape, faces, frame_border(p)) {
-                    let frame = std::mem::replace(&mut first.shape, egui::Shape::Noop);
+                if let Some((rect, radius, fade)) = stock_frame(&first.shape, tint, frame_border(p)) {
+                    let mut frame = std::mem::replace(&mut first.shape, egui::Shape::Noop);
+                    if opacity < 1.0 {
+                        crate::ui::surface_opacity::fade_shape(&mut frame, &[p.panel, p.bar], opacity);
+                    }
                     let mut shapes = vec![frame];
                     if p.panel_alpha < 255 {
+                        // (a menu over a surface of its colour stays dense)
                         let tint = if distinct.contains(&layer) {
-                            Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha.max(245))
+                            Color32::from_rgba_unmultiplied(
+                                p.bar.r(),
+                                p.bar.g(),
+                                p.bar.b(),
+                                crate::ui::surface_opacity::glass(p.panel_alpha.max(245), opacity).1,
+                            )
                         } else {
-                            tint
+                            faded_tint
                         };
-                        shapes.push(aurora_render::glass_panel(rect.shrink(1.0), radius, tint));
+                        shapes.push(aurora_render::glass_panel_faded(
+                            rect.shrink(1.0),
+                            radius,
+                            tint.gamma_multiply(fade),
+                            blur.unwrap_or(0.0) * fade,
+                        ));
                     }
                     if distinct.contains(&layer) {
                         shapes.push(egui::Shape::rect_stroke(
                             rect,
                             radius,
-                            Stroke::new(1.0, p.muted_dim),
+                            Stroke::new(1.0, p.muted_dim.gamma_multiply(fade)),
                             egui::StrokeKind::Inside,
                         ));
                     }
@@ -582,7 +610,10 @@ pub(crate) fn editable_row(
     } else {
         Sense::hover()
     };
-    row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, false, sense)
+    // a sub-menu heading stays lit while its sub-menu is open, as in
+    // [`submenu`]
+    let open = matches!(end, End::Caret) && sub_menu_open(ui);
+    row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, open, sense)
 }
 
 /// One absolute cell of an editable menu toolbar, including its empty cells.
@@ -776,11 +807,9 @@ pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
     if filtering() {
         return;
     }
-    let galley = ui.painter().layout_no_wrap(
-        title.to_uppercase(),
-        FontId::new(10.5, super::fonts::semibold(ui.ctx())),
-        p.muted_dim,
-    );
+    let galley = ui
+        .painter()
+        .layout_no_wrap(title.ui_upper(), FontId::new(10.5, super::fonts::semibold(ui.ctx())), p.muted_dim);
     let w = if ui.is_sizing_pass() {
         (galley.size().x + PAD * 2.0).max(MIN_W)
     } else {
@@ -920,13 +949,23 @@ pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enable
         FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.pop()));
         return hidden(ui);
     }
-    let id = ui.next_auto_id();
-    let open = enabled && Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(id));
+    let open = enabled && sub_menu_open(ui);
     let resp = row(ui, p, icon, label, enabled, End::Caret, open);
     if enabled {
         egui::containers::menu::SubMenu::new().show(ui, &resp, body);
     }
     resp
+}
+
+/// Whether the sub-menu of the row about to be allocated in `ui` is open:
+/// its row stays lit while it is, so the path taken through the menus shows
+/// (LLMenuItemBranchGL::draw, indra/llui/llmenugl.cpp, highlights a branch
+/// while its branch menu is visible). egui keeps that state in the menu's
+/// `MenuState::open_item`, not in the popup memory that `Popup::is_id_open`
+/// reads, which never saw a sub-menu open.
+fn sub_menu_open(ui: &Ui) -> bool {
+    let id = egui::containers::menu::SubMenu::id_from_widget_id(ui.next_auto_id());
+    egui::containers::menu::MenuState::from_ui(ui, |state, _| state.open_item == Some(id))
 }
 
 /// Entry whose icon is a color dot (the mini-map marks); true when clicked.
@@ -1151,7 +1190,7 @@ pub fn heading(ui: &mut Ui, p: &Palette, text: &str) {
 
 fn heading_line(ui: &mut Ui, p: &Palette, text: &str) {
     let font = FontId::new(10.5, super::fonts::semibold(ui.ctx()));
-    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, p.muted_dim);
+    let galley = ui.painter().layout_no_wrap(text.ui_upper(), font, p.muted_dim);
     let natural = (PAD + galley.size().x + PAD).max(MIN_W);
     let w = if ui.is_sizing_pass() {
         natural
@@ -1450,6 +1489,31 @@ mod tests {
     use super::*;
     use crate::ui::widgets::{Floater, elide_tests::Frames};
 
+    /// A menu fading in had its frame at a part of its colours: not found,
+    /// it was drawn without its glass and at the skin's full opacity.
+    #[test]
+    fn a_menu_frame_fading_in_is_found_with_its_fade() {
+        let p = crate::theme::Theme::default().palette();
+        let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::Vec2::splat(40.0));
+        let frame = |fade: f32| {
+            egui::Shape::Rect(egui::epaint::RectShape::new(
+                rect,
+                4.0,
+                tint.gamma_multiply(fade),
+                Stroke::new(1.0, frame_border(&p).gamma_multiply(fade)),
+                egui::StrokeKind::Inside,
+            ))
+        };
+        for fade in [1.0, 0.5, 0.2] {
+            let (found, _, seen) = stock_frame(&frame(fade), tint, frame_border(&p)).expect("a stock frame");
+            assert_eq!(found, rect);
+            assert!((seen - fade).abs() < 0.02, "{fade}: {seen}");
+        }
+        let other = egui::Shape::rect_filled(rect, 4.0, p.violet);
+        assert!(stock_frame(&other, tint, frame_border(&p)).is_none());
+    }
+
     fn words(q: &str) -> Vec<String> {
         query_words(q)
     }
@@ -1506,6 +1570,64 @@ mod tests {
         assert_eq!(above(&[], &mut shown, &mut headed), Above::Nothing);
     }
 
+    /// The row that opened a sub-menu stays lit while the pointer is inside
+    /// that sub-menu, as LLMenuItemBranchGL::draw does: the path taken
+    /// through the menus shows (feedback board, post 648).
+    #[test]
+    fn a_sub_menu_heading_stays_lit_while_its_sub_menu_is_open() {
+        let p = crate::theme::Theme::default().palette();
+        let wash = p.violet.gamma_multiply(0.35);
+        let mut frames = Frames::new();
+        let mut open = true;
+        // (heading lit, the heading's row, the sub-menu's entry if shown)
+        let mut frame = |frames: &mut Frames, events: Vec<egui::Event>| {
+            let mut heading = egui::Rect::NOTHING;
+            let mut child = None;
+            let shapes = frames.shapes(events, |ui| {
+                popup_at(ui.ctx(), Id::unique("path_menu"), egui::pos2(100.0, 100.0), &mut open, &p, |ui| {
+                    item(ui, &p, "copy", "Before");
+                    heading = submenu_heading(ui, &p, "copy", "Pathfinding", true, |ui| {
+                        item(ui, &p, "copy", "Region Objects");
+                        child = Some(ui.min_rect());
+                    })
+                    .rect;
+                    item(ui, &p, "copy", "After");
+                });
+            });
+            let lit = shapes
+                .iter()
+                .any(|s| matches!(s, egui::Shape::Rect(r) if r.rect == heading && r.fill == wash));
+            (lit, heading, child)
+        };
+        for _ in 0..4 {
+            frame(&mut frames, vec![]);
+        }
+        let (lit, heading, shown) = frame(&mut frames, vec![]);
+        assert!(!lit && shown.is_none(), "nothing lit before the pointer comes");
+
+        frame(&mut frames, vec![egui::Event::PointerMoved(heading.center())]);
+        let mut shown = None;
+        for _ in 0..4 {
+            shown = frame(&mut frames, vec![]).2;
+        }
+        let sub = shown.expect("hovering the heading opens its sub-menu");
+
+        // across the heading, into the sub-menu's entry
+        frame(
+            &mut frames,
+            vec![egui::Event::PointerMoved(heading.right_center() - egui::vec2(4.0, 0.0))],
+        );
+        frame(
+            &mut frames,
+            vec![egui::Event::PointerMoved(sub.left_top() + egui::vec2(20.0, 10.0))],
+        );
+        for _ in 0..4 {
+            let (lit, _, shown) = frame(&mut frames, vec![]);
+            assert!(shown.is_some(), "the sub-menu stays open under the pointer");
+            assert!(lit, "the heading stays lit while its sub-menu is open");
+        }
+    }
+
     struct Menus {
         frames: Frames,
         kind: u8,
@@ -1541,6 +1663,7 @@ mod tests {
                             egui::Frame::window(&ctx.global_style()),
                             egui::Rect::from_min_size(egui::pos2(600.0, 200.0), egui::vec2(400.0, 300.0)),
                             egui::vec2(220.0, 120.0),
+                            false,
                             false,
                             |_| {},
                         );

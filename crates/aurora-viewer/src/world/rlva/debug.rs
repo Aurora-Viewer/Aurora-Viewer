@@ -14,15 +14,18 @@ impl Rlva {
         if !self.enabled() || command.param != super::Param::Force || self.has_except("setdebug", actor) {
             return true;
         }
+        // RlvExtGetSet::onSetPseudoDebug keeps the text LLStringUtil::
+        // convertToBOOL accepted; onSetDebug writes the U32 setting
+        // convertToU32 read (rlvextensions.cpp). Anything else fails and
+        // changes nothing.
         match command.behaviour.as_str() {
-            "setdebug_avatarsex" => match command.option.as_str() {
-                "true" | "1" | "false" | "0" => self.pseudo_sex = Some(command.option.clone()),
-                _ => {}
-            },
+            "setdebug_avatarsex" => {
+                if super::numeric::convert_to_bool(&command.option).is_some() {
+                    self.pseudo_sex = Some(command.option.clone());
+                }
+            }
             _ => {
-                if command.option == "default" {
-                    self.resolution_divisor = None;
-                } else if let Ok(value) = command.option.parse::<u32>() {
+                if let Some(value) = super::numeric::convert_to_u32(&command.option) {
                     self.resolution_divisor = Some(value);
                 }
             }
@@ -64,14 +67,18 @@ mod tests {
             owner_id: Uuid::from_u128(2),
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: None,
             position: glam::Vec3::ZERO,
             message: "@setenv=n,setenv_daytime:0.5=force,getenv_daytime=123,getcommand:setenv;add=123".into(),
         };
         assert!(r.receive(&chat));
         assert!(!r.has("setenv"));
-        assert_eq!(r.pending.len(), 2, "environment forces and replies remain available");
-        assert!(
-            matches!(r.out.last(), Some(aurora_net::NetCommand::ChatReply { message, .. }) if message == "setenv"),
+        // (@getcommand waits behind them, so that the replies keep their order)
+        assert_eq!(r.pending.len(), 3, "environment forces and replies remain available");
+        assert_eq!(r.pending[2].1.behaviour, "getcommand");
+        assert_eq!(
+            super::super::command_list_with("setenv;add", &r.preferences),
+            "setenv",
             "discovery retains disabled commands, as the native dictionary does"
         );
         r.preferences.allow_environment_locks = true;

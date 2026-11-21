@@ -9,11 +9,19 @@
 //! the labels of these links wait for.
 
 use super::*;
-use crate::slapp::{AgentVerb, AppLink};
+use crate::slapp::{AgentVerb, AppLink, BlockStep};
 use crate::ui::context::CtxAction;
 use crate::world::notifications::{Data, Kind};
 use crate::world::search::{Key, Tab};
 use uuid::Uuid;
+
+/// An `unmute` (resident) or `unblock` (object, with the link's name) link
+/// waiting for the user's answer.
+#[derive(Debug, Clone)]
+pub(super) struct UnblockAsk {
+    id: Uuid,
+    object: Option<String>,
+}
 
 impl App {
     /// Reuse the real command dispatch for offline minimize/reopen captures.
@@ -123,22 +131,103 @@ impl App {
         }
     }
 
-    /// LLAgentHandler::handle, the verbs besides the profile.
+    /// LLAgentHandler::handle, the verbs besides the profile. An `unmute` or
+    /// `unblock` asks first (`BlockStep::AskUnblock`), whether the link was
+    /// clicked in a text or came from outside the viewer.
     fn run_agent_verb(&mut self, id: Uuid, verb: AgentVerb) {
-        let blocked = self.world.mutes.is_muted_id(&id);
+        match verb.block_step(self.world.object_block_entry(&id).is_some()) {
+            BlockStep::Nothing => return,
+            BlockStep::AskUnblock => {
+                let object = match verb {
+                    AgentVerb::Unblock(name) => Some(name),
+                    _ => None,
+                };
+                log::info!("app link: asking before unblocking");
+                self.unblock_link_ask = Some(UnblockAsk { id, object });
+                return;
+            }
+            BlockStep::Block | BlockStep::Other => {}
+        }
         let act = match verb {
             AgentVerb::Im => CtxAction::Im(id),
             AgentVerb::Pay => CtxAction::PayResident(id),
             AgentVerb::OfferTeleport => CtxAction::OfferTeleport(id),
             AgentVerb::RequestFriend => CtxAction::AddFriend(id),
             AgentVerb::RemoveFriend => CtxAction::RemoveFriend(id),
-            AgentVerb::Mute | AgentVerb::Unmute if blocked == matches!(verb, AgentVerb::Mute) => return,
             AgentVerb::Mute | AgentVerb::Unmute => CtxAction::ToggleBlock(id),
-            AgentVerb::Block(_) | AgentVerb::Unblock(_) if blocked == matches!(verb, AgentVerb::Block(_)) => return,
             AgentVerb::Block(name) | AgentVerb::Unblock(name) => CtxAction::ToggleBlockObject { id, name },
             AgentVerb::ReportAbuse => CtxAction::ReportAbuse(crate::report_abuse::ReportTarget::Avatar(id)),
         };
         self.on_ctx_action(act);
+    }
+
+    /// Each frame: the question of an `unmute` or `unblock` link. On
+    /// "Unblock", the block is lifted only if it is still there (it may have
+    /// been lifted by hand meanwhile: a toggle would block again).
+    pub(super) fn unblock_link_question(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        use crate::ui::widgets::{self, ActionKind};
+        let Some(ask) = &self.unblock_link_ask else {
+            return;
+        };
+        let text = match &ask.object {
+            None => {
+                let name = self
+                    .world
+                    .legacy_name(&ask.id)
+                    .unwrap_or_else(|| self.world.social.name_of(&ask.id));
+                aurora_i18n::tr!("ui-chat-applink-unblock-confirm", name = name)
+            }
+            Some(name) if name.is_empty() => aurora_i18n::tr!(
+                "ui-chat-applink-unblock-object-confirm",
+                name = aurora_i18n::tr!("common-object-2", value0 = ask.id.to_string()[..8].to_string())
+            ),
+            Some(name) => aurora_i18n::tr!("ui-chat-applink-unblock-object-confirm", name = name.clone()),
+        };
+        let mut done = None;
+        let modal = widgets::Modal::new(egui::Id::unique(("unblock_link_confirm", ask.id))).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(egui::RichText::new(&text).size(12.5).color(p.ink));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                let size = egui::Vec2::new(0.0, 26.0);
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "circle-check-filled",
+                    aurora_i18n::tr!("common-unblock"),
+                    ActionKind::Primary,
+                    size,
+                )
+                .clicked()
+                {
+                    done = Some(true);
+                }
+                if widgets::action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                    done = Some(false);
+                }
+            });
+        });
+        if modal.should_close() && done.is_none() {
+            done = Some(false);
+        }
+        let Some(yes) = done else {
+            return;
+        };
+        let Some(ask) = self.unblock_link_ask.take() else {
+            return;
+        };
+        if !yes {
+            log::info!("app link: unblocking cancelled");
+            return;
+        }
+        if self.world.object_block_entry(&ask.id).is_none() {
+            return;
+        }
+        log::info!("app link: unblocking confirmed");
+        self.on_ctx_action(match ask.object {
+            None => CtxAction::ToggleBlock(ask.id),
+            Some(name) => CtxAction::ToggleBlockObject { id: ask.id, name },
+        });
     }
 
     /// A classified or an event in Search, alone in its tab.

@@ -182,6 +182,52 @@ fn an_outfit_change_announces_each_new_complexity() {
 }
 
 #[test]
+fn a_complexity_moving_on_its_own_shows_once_per_pop_up_delay() {
+    // #3381: our complexity moved every refresh, a notice each time
+    let t0 = Instant::now();
+    let mut n = Notifier::new(t0);
+    assert_eq!(n.own_avatar(own(80_000, 7), t0, SHOWN), None);
+    assert!(n.own_avatar(own(120_000, 8), t0 + secs(2), SHOWN).is_some());
+    // the outfit forming: the notice still out takes the new values
+    assert!(n.own_avatar(own(125_000, 8), t0 + secs(8), SHOWN).is_some());
+    assert!(n.own_avatar(own(130_000, 8), t0 + secs(14), SHOWN).is_some());
+    // the notice gone (10 s): nothing more until the pop-up delay is over
+    let mut t = t0 + secs(26);
+    let mut complexity = 130_000;
+    while t < t0 + secs(2) + POP_UP_DELAY {
+        complexity += 1_000;
+        assert_eq!(n.own_avatar(own(complexity, 8), t, SHOWN), None, "{t:?}");
+        t += secs(2);
+    }
+    // then the complexity of then, once
+    let action = n.own_avatar(own(complexity, 8), t, SHOWN);
+    assert_eq!(
+        action,
+        Some(Action::Show(Notice {
+            complexity,
+            over_limit: None,
+            seconds: 10
+        }))
+    );
+    assert_eq!(n.own_avatar(own(complexity, 8), t + secs(2), SHOWN), None, "no change");
+}
+
+#[test]
+fn a_burst_ends_after_its_time_even_with_the_notice_out() {
+    let t0 = Instant::now();
+    let mut n = Notifier::new(t0);
+    assert_eq!(n.own_avatar(own(80_000, 7), t0, SHOWN), None);
+    let mut t = t0 + secs(2);
+    let mut complexity = 80_000;
+    while t < t0 + secs(2) + OWN_BURST {
+        complexity += 1_000;
+        assert!(n.own_avatar(own(complexity, 8), t, SHOWN).is_some(), "{t:?}");
+        t += secs(2);
+    }
+    assert_eq!(n.own_avatar(own(complexity + 1_000, 8), t, SHOWN), None);
+}
+
+#[test]
 fn a_drop_of_the_rezzed_status_is_an_outfit_change() {
     let t0 = Instant::now();
     let mut n = Notifier::new(t0);
