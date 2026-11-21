@@ -30,6 +30,12 @@ pub(crate) fn restrict_to_loopback(settings: SettingEngineBuilder) -> SettingEng
 struct ServerState {
     provision_bodies: Mutex<Vec<Llsd>>,
     logouts: Mutex<Vec<Llsd>>,
+    /// The logout is received and its answer held back while this is set.
+    hold_logout: std::sync::atomic::AtomicBool,
+    /// The candidates posted to the signaling capability, their answer held
+    /// back while `hold_ice` is set.
+    ice: Mutex<Vec<Llsd>>,
+    hold_ice: std::sync::atomic::AtomicBool,
     data_messages: Mutex<Vec<String>>,
     peers: Mutex<Vec<Arc<dyn PeerConnection>>>,
     /// Opus payloads received from the client, in arrival order.
@@ -196,6 +202,15 @@ fn start_fake_server(rt: tokio::runtime::Handle, state: Arc<ServerState>, other:
             let body = aurora_llsd::from_xml(&buf[head_end..]).unwrap_or_default();
             let reply = if body.has("logout") {
                 state.logouts.lock().push(body);
+                while state.hold_logout.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                "<llsd><undef /></llsd>".to_string()
+            } else if body.has("candidates") || body.has("candidate") {
+                state.ice.lock().push(body);
+                while state.hold_ice.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
                 "<llsd><undef /></llsd>".to_string()
             } else {
                 let offer = body.get("jsep").get("sdp").to_string_value();
@@ -362,6 +377,8 @@ fn loopback_webrtc_session() {
         credentials: "test-call-credentials".into(),
     });
     check_quit_without_logout();
+    check_quit_while_logging_out();
+    check_quit_while_signaling();
     LOOPBACK_ONLY.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -396,6 +413,98 @@ fn check_quit_without_logout() {
         "the session's thread did not end"
     );
     assert!(state.logouts.lock().is_empty(), "a logout was sent while quitting");
+    let peers: Vec<_> = state.peers.lock().drain(..).collect();
+    for pc in peers {
+        let _ = server_rt.block_on(pc.close());
+    }
+}
+
+/// A session left moments before the quit, its logout still on its way: the
+/// quit gives the logout up, and the session's thread ends within the
+/// viewer's wait (well under the logout's own 5 s).
+fn check_quit_while_logging_out() {
+    let server_rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let state = Arc::new(ServerState::default());
+    let url = start_fake_server(server_rt.handle().clone(), state.clone(), Uuid::from_u128(0x43));
+    let params = VoiceConnectParams {
+        provision_cap_url: url,
+        signaling_cap_url: None,
+        agent_id: Uuid::from_u128(0x42),
+        voice_server_type: "webrtc".into(),
+        channel: ChannelKind::Local { parcel_local_id: Some(5) },
+        grid: "agni".into(),
+        stun_servers: Some(vec![]),
+    };
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let (sink, _tap) = PcmSink::loopback(48_000);
+    let session = VoiceSession::connect(http, params, sink);
+    wait_for("connected", Duration::from_secs(30), || {
+        session.status() == crate::VoiceStatus::Connected
+    });
+
+    state.hold_logout.store(true, std::sync::atomic::Ordering::Relaxed);
+    let closing = session.disconnect();
+    wait_for("logout", Duration::from_secs(10), || !state.logouts.lock().is_empty());
+    assert!(!closing.is_finished(), "the session ended before its logout was answered");
+    let started = Instant::now();
+    assert!(
+        crate::ExitWait::default().with([closing]).wait(Duration::from_secs(3)),
+        "the thread of a session still logging out did not end"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the quit waited for the logout: {:?}",
+        started.elapsed()
+    );
+    state.hold_logout.store(false, std::sync::atomic::Ordering::Relaxed);
+    let peers: Vec<_> = state.peers.lock().drain(..).collect();
+    for pc in peers {
+        let _ = server_rt.block_on(pc.close());
+    }
+}
+
+/// A quit while the candidates are on their way to the signaling capability
+/// (its answer can take up to 30 s) gives them up, and the session's thread
+/// ends within the viewer's wait.
+fn check_quit_while_signaling() {
+    let server_rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let state = Arc::new(ServerState::default());
+    let url = start_fake_server(server_rt.handle().clone(), state.clone(), Uuid::from_u128(0x43));
+    let params = VoiceConnectParams {
+        provision_cap_url: url.clone(),
+        signaling_cap_url: Some(url),
+        agent_id: Uuid::from_u128(0x42),
+        voice_server_type: "webrtc".into(),
+        channel: ChannelKind::Local { parcel_local_id: Some(5) },
+        grid: "agni".into(),
+        stun_servers: Some(vec![]),
+    };
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let (sink, _tap) = PcmSink::loopback(48_000);
+    state.hold_ice.store(true, std::sync::atomic::Ordering::Relaxed);
+    let session = VoiceSession::connect(http, params, sink);
+    wait_for("candidates", Duration::from_secs(30), || !state.ice.lock().is_empty());
+
+    let started = Instant::now();
+    assert!(
+        session.close_for_exit().wait(Duration::from_secs(3)),
+        "the thread of a session still signaling did not end"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the quit waited for the signaling: {:?}",
+        started.elapsed()
+    );
+    assert!(state.logouts.lock().is_empty(), "a logout was sent while quitting");
+    state.hold_ice.store(false, std::sync::atomic::Ordering::Relaxed);
     let peers: Vec<_> = state.peers.lock().drain(..).collect();
     for pc in peers {
         let _ = server_rt.block_on(pc.close());

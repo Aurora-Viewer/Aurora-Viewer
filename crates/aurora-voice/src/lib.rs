@@ -90,27 +90,57 @@ pub struct VoiceSession {
     thread: Option<thread::JoinHandle<()>>,
 }
 
-/// A session closed for the viewer's exit, until its thread has ended
-/// ([`VoiceSession::close_for_exit`]).
-#[must_use = "the viewer waits for the session's thread before it exits"]
-pub struct ExitWait {
+/// A session left ([`VoiceSession::disconnect`]): its thread logs out in the
+/// background and ends on its own. Kept until [`Closing::is_finished`], so
+/// that a quit in the meantime waits for it too ([`ExitWait::with`]).
+#[must_use = "the viewer waits for a session still closing before it exits"]
+pub struct Closing {
+    shared: Arc<Shared>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
+impl Closing {
+    /// The session's thread has ended: nothing is left to wait for.
+    pub fn is_finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(|thread| thread.is_finished())
+    }
+}
+
+/// The sessions closed for the viewer's exit, until their threads have ended
+/// ([`VoiceSession::close_for_exit`], [`ExitWait::with`]).
+#[derive(Default)]
+#[must_use = "the viewer waits for the sessions' threads before it exits"]
+pub struct ExitWait {
+    threads: Vec<thread::JoinHandle<()>>,
+}
+
 impl ExitWait {
-    /// Waits up to `timeout` for the session's thread to end; false if it is
-    /// still running. Polled every 10 ms, like
-    /// LLWebRTCVoiceClient::drainConnections.
-    pub fn wait(self, timeout: Duration) -> bool {
-        let Some(thread) = self.thread else { return true };
-        let deadline = Instant::now() + timeout;
-        while !thread.is_finished() {
-            if Instant::now() >= deadline {
-                return false;
-            }
-            thread::sleep(Duration::from_millis(10));
+    /// Adds the sessions left earlier that are still closing: they give up
+    /// their logout as the current one does, and are waited for with it.
+    /// LLWebRTCVoiceClient::drainConnections shuts down and waits for every
+    /// session (`sessionState::for_each(predShutdownSession)`).
+    pub fn with(mut self, closing: impl IntoIterator<Item = Closing>) -> Self {
+        for mut session in closing {
+            session.shared.exiting.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.threads.extend(session.thread.take());
         }
-        let _ = thread.join();
+        self
+    }
+
+    /// Waits up to `timeout`, for all of them together, for the sessions'
+    /// threads to end; false if one is still running. Polled every 10 ms,
+    /// like LLWebRTCVoiceClient::drainConnections.
+    pub fn wait(self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        for thread in self.threads {
+            while !thread.is_finished() {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            let _ = thread.join();
+        }
         true
     }
 }
@@ -285,9 +315,14 @@ impl VoiceSession {
         let _ = self.cmd_tx.send(Cmd::Data(protocol::user_mute_message(id, mute)));
     }
 
-    /// Leaves the channel (logout + close happen in the background).
-    pub fn disconnect(self) {
-        drop(self);
+    /// Leaves the channel (logout + close happen in the background). The
+    /// viewer keeps what is returned while the session closes, to wait for
+    /// it if it quits meanwhile.
+    pub fn disconnect(mut self) -> Closing {
+        Closing {
+            shared: self.shared.clone(),
+            thread: self.thread.take(),
+        }
     }
 
     /// Leaves the channel because the viewer is quitting: the connection is
@@ -300,7 +335,7 @@ impl VoiceSession {
     pub fn close_for_exit(mut self) -> ExitWait {
         self.shared.exiting.store(true, std::sync::atomic::Ordering::Relaxed);
         ExitWait {
-            thread: self.thread.take(),
+            threads: self.thread.take().into_iter().collect(),
         }
     }
 }
@@ -350,7 +385,13 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
             assert!(s.participants().is_empty());
-            s.disconnect();
+            // left, the session's thread ends on its own
+            let closing = s.disconnect();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !closing.is_finished() {
+                assert!(Instant::now() < deadline, "the session's thread did not end");
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
     }
 

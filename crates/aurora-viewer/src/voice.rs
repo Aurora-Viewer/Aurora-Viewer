@@ -75,6 +75,9 @@ pub enum VoiceLight {
 pub struct Voice {
     pub light: VoiceLight,
     session: Option<(ChannelKey, VoiceSession)>,
+    /// The sessions left that are still logging out: a quit waits for them
+    /// too (`close_for_exit`).
+    closing: Vec<aurora_voice::Closing>,
     mic: Option<MicCapture>,
     mic_device: String,
     /// Whether the open microphone captures or is held closed.
@@ -99,7 +102,7 @@ pub struct Voice {
 impl Voice {
     /// Drop capture and the transport; update reconnects to the wanted channel.
     pub fn restart(&mut self) {
-        self.session = None;
+        self.leave();
         self.mic = None;
         self.muted.clear();
         self.volumes.clear();
@@ -108,13 +111,24 @@ impl Voice {
         self.own_level = 0.0;
         self.status.clear();
     }
-    /// The viewer quits: the session closes without its logout and the
-    /// microphone stops; the app waits on the returned handle before the
-    /// process exits (aurora_voice::VoiceSession::close_for_exit).
-    pub fn close_for_exit(&mut self) -> Option<aurora_voice::ExitWait> {
+    /// Leaves the current session, if any: its thread logs out in the
+    /// background (the drop detaches the microphone at once), and is kept
+    /// while it does, for a quit in the meantime.
+    fn leave(&mut self) -> bool {
+        self.closing.retain(|session| !session.is_finished());
+        let Some((_, session)) = self.session.take() else { return false };
+        self.closing.push(session.disconnect());
+        true
+    }
+    /// The viewer quits: the session closes without its logout, the ones
+    /// left moments ago give theirs up, and the microphone stops; the app
+    /// waits on the returned handle before the process exits
+    /// (aurora_voice::VoiceSession::close_for_exit, ExitWait::with).
+    pub fn close_for_exit(&mut self) -> aurora_voice::ExitWait {
         self.mic = None;
         self.connected = false;
-        self.session.take().map(|(_, session)| session.close_for_exit())
+        let current = self.session.take().map(|(_, session)| session.close_for_exit());
+        current.unwrap_or_default().with(self.closing.drain(..))
     }
     /// A channel to join, None to keep the current call, or why to leave.
     fn wanted(v: &VoiceInputs, current: Option<&ChannelKey>) -> Result<Option<(ChannelKey, ChannelKind, String, Option<String>)>, String> {
@@ -269,7 +283,7 @@ impl Voice {
                 if self.session.as_ref().map(|(k, _)| k) != Some(&key) {
                     // changing channel: leave the old one first (the drop
                     // detaches the microphone at once, then logs out)
-                    self.session = None;
+                    self.leave();
                     if let Some(engine) = v.engine {
                         match &key {
                             ChannelKey::Local { region, parcel } => log::info!("voice: joining region {region:x} parcel {parcel:?}"),
@@ -295,7 +309,7 @@ impl Voice {
             }
             Ok(None) => {}
             Err(why) => {
-                if self.session.take().is_some() {
+                if self.leave() {
                     log::info!("voice: leaving ({why})");
                 }
                 self.light = if v.enabled { VoiceLight::Down } else { VoiceLight::Off };

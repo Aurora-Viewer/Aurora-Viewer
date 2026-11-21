@@ -785,18 +785,25 @@ async fn negotiate_and_run(
 
         // Trickle our candidates through VoiceSignalingRequest, then mark
         // gathering complete (processIceUpdatesCoro). They are also in the
-        // offer SDP, so failures here are not fatal.
+        // offer SDP, so failures here are not fatal. A quit gives them up:
+        // the thread must have ended before the process exits.
         if let Some(url) = params.signaling_cap_url.as_deref().filter(|u| !u.is_empty()) {
             let list = std::mem::take(&mut *handler.candidates.lock());
-            if let Some(body) = protocol::build_ice_request(&list, false, &viewer_session)
-                && let Err(e) = post_llsd(http, url, &body, HTTP_TIMEOUT).await
-            {
-                log::debug!("voice: ICE trickle failed: {e:?}");
-            }
-            if let Some(body) = protocol::build_ice_request(&[], true, &viewer_session)
-                && let Err(e) = post_llsd(http, url, &body, HTTP_TIMEOUT).await
-            {
-                log::debug!("voice: ICE completion failed: {e:?}");
+            let trickle = async {
+                if let Some(body) = protocol::build_ice_request(&list, false, &viewer_session)
+                    && let Err(e) = post_llsd(http, url, &body, HTTP_TIMEOUT).await
+                {
+                    log::debug!("voice: ICE trickle failed: {e:?}");
+                }
+                if let Some(body) = protocol::build_ice_request(&[], true, &viewer_session)
+                    && let Err(e) = post_llsd(http, url, &body, HTTP_TIMEOUT).await
+                {
+                    log::debug!("voice: ICE completion failed: {e:?}");
+                }
+            };
+            tokio::select! {
+                _ = trickle => {}
+                _ = wait_exiting(shared) => {}
             }
         }
 
@@ -817,10 +824,24 @@ async fn negotiate_and_run(
     // viewer is quitting: LLVoiceWebRTCConnection::connectionStateMachine
     // (VOICE_STATE_DISCONNECT) skips this courtesy logout while shutting
     // down and only closes the connection.
+    // A quit that comes while the logout is on its way gives it up too (a
+    // session left moments before the quit, [`crate::ExitWait::with`]): its
+    // thread must have ended before the process exits.
     if !shared.exiting.load(Ordering::Relaxed) {
-        logout(http, &params.provision_cap_url, &viewer_session).await;
+        tokio::select! {
+            _ = logout(http, &params.provision_cap_url, &viewer_session) => {}
+            _ = wait_exiting(shared) => {}
+        }
     }
     outcome
+}
+
+/// Resolves once the viewer is quitting (`Shared::exiting`), looked at every
+/// 10 ms like LLWebRTCVoiceClient::drainConnections.
+async fn wait_exiting(shared: &Shared) {
+    while !shared.exiting.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 /// Resolves when a shutdown is requested (or the handle is gone).
