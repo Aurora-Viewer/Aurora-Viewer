@@ -33,6 +33,7 @@
 //!   contents-copy | contents-move | contents-move-plain | contents-ready:
 //!   take an item into inventory or show the move warning (ready stops).
 //!   contents-properties: open a task item in the shared properties panel.
+//!   contents-properties-multi: open three items at once, one window each.
 //!   contents-multi | contents-rename-ready: show task multi-selection or rename.
 //!   contents-move-many: drop every item into inventory at once (two no-copy
 //!   items share one move warning).
@@ -94,7 +95,8 @@ pub enum Step {
     CreationPreview(usize),
     Delete,
     Contents,
-    ContentsProperties,
+    /// Properties of the first n items, one window each.
+    ContentsProperties(usize),
     ContentsSelection(bool),
     /// "New notecard" then "New script" in the Contents tab.
     ContentsNew,
@@ -562,7 +564,8 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
             220 => object.into_iter().map(Step::Select).collect(),
             225 => vec![Step::Contents],
-            260 if parts[0] == "contents-properties" => vec![Step::ContentsProperties],
+            260 if parts[0] == "contents-properties" => vec![Step::ContentsProperties(1)],
+            260 if parts[0] == "contents-properties-multi" => vec![Step::ContentsProperties(3)],
             260 if matches!(parts[0], "contents-multi" | "contents-rename-ready") => {
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }

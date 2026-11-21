@@ -173,8 +173,10 @@ const RULES: &[Rule] = &[
         "@interact",
         "@interact=n",
         "@interact=y",
+        // (the Create tool asks it, LLToolPlacer::placeObject; the chat
+        // bar's platform does not, `int-G6-add-under-interact`)
         "creating an object refused",
-        |w, _| can(w, &probe_add(w)),
+        |w, _| w.rlva_can_rez(None),
     ),
     // LLViewerWindow::cursorIntersect: a HUD's pick is dropped like the
     // world's, so its click and its menu go too
@@ -337,8 +339,8 @@ const RULES: &[Rule] = &[
     rule(
         "A25",
         "@remattach on one point",
-        "@remattach:hind left foot=n",
-        "@remattach:hind left foot=y",
+        "@remattach:left hind foot=n",
+        "@remattach:left hind foot=y",
         "taking off what that point holds refused",
         |w, c| w.rlva_can_remove(c.item(It::A), Uuid::nil()),
     ),
@@ -490,7 +492,7 @@ fn rules() -> Vec<Case> {
         "A30",
         "point locks leave the other points",
         vec![
-            Step::Say(Who::Controller, "@addattach:tail tip=n,remattach:hind left foot=n"),
+            Step::Say(Who::Controller, "@addattach:tail tip=n,remattach:left hind foot=n"),
             Step::Expect(
                 "the locked points refuse",
                 holds(
@@ -668,7 +670,7 @@ fn replies() -> Vec<Case> {
             "B04",
             "@getattach counts the worn test objects",
             "@getattach={ch}",
-            "1 on Hind Left Foot and Hind Right Foot",
+            "1 on Left Hind Foot and Right Hind Foot",
             answers(|_, _, text| {
                 let at = |p: u8| text.as_bytes().get(usize::from(p)).copied();
                 text.len() == POINTS.len() && at(POINT_A) == Some(b'1') && at(POINT_CONTROLLER) == Some(b'1') && at(0) == Some(b'0')
@@ -711,7 +713,7 @@ fn replies() -> Vec<Case> {
                         names.contains(&point_name(w, POINT_A)) && names.contains(&point_name(w, POINT_CONTROLLER))
                     }),
                 ),
-                Step::Say(Who::Controller, "@remattach:hind left foot=n"),
+                Step::Say(Who::Controller, "@remattach:left hind foot=n"),
                 Step::Say(Who::Controller, "@getremattachnames={ch}"),
                 Step::Expect(
                     "the locked point left out, the other named",
@@ -766,12 +768,12 @@ fn replies() -> Vec<Case> {
             "the active group, or none",
             // (the reply is a group's name: a failure does not quote it)
             test(|w, c| {
-                let expected = w
-                    .groups
-                    .groups
-                    .iter()
-                    .find(|g| g.id == w.groups.active)
-                    .map_or("none", |g| g.name.as_str());
+                // gAgent.getGroupName(): the name AgentDataUpdate gave
+                let expected = if w.groups.active.is_nil() || w.groups.active_name.is_empty() {
+                    "none"
+                } else {
+                    w.groups.active_name.as_str()
+                };
                 if reply(c)? == expected {
                     Ok(())
                 } else {
@@ -856,7 +858,7 @@ fn round_trips() -> Vec<Case> {
             steps(vec![
                 wear(It::B, POINT_B).into(),
                 vec![
-                    Step::Say(Who::Controller, "@detach:hind left foot=n"),
+                    Step::Say(Who::Controller, "@detach:left hind foot=n"),
                     Step::Expect(
                         "the point is locked",
                         holds(|w, c| !w.rlva_can_remove(c.item(It::A), Uuid::nil()), "not locked"),
@@ -1126,5 +1128,12 @@ pub(super) fn phase1() -> Vec<Case> {
     cases.sort_by_key(|c| c.id);
     cases.extend(replies());
     cases.extend(round_trips());
+    cases.extend(super::cases_core::cases());
+    cases.extend(super::cases_chat::cases());
+    cases.extend(super::cases_privacy::phase1());
+    cases.extend(super::cases_move::phase1());
+    cases.extend(super::cases_int::cases());
+    cases.extend(super::cases_cam::cases());
+    cases.extend(super::cases_inv::phase1());
     cases
 }

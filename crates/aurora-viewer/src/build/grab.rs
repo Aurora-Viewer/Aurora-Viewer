@@ -77,6 +77,15 @@ impl BuildTool {
         if o.is_avatar() {
             return;
         }
+        // LLToolGrabBase::pickCallback (lltoolgrab.cpp): no drag starts on
+        // what RlvActions::canTouch refuses, nor on a pick @interact drops
+        // (LLViewerWindow::cursorIntersect)
+        if world.rlva.enabled() && (world.rlva_drops_picks() || !world.rlva_can_touch_at(o.key.region, o.key.local_id, Some(point))) {
+            if !mods.shift {
+                self.deselect_all(world);
+            }
+            return;
+        }
         if !mods.shift {
             self.deselect_all(world);
         }
@@ -260,5 +269,48 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(t.effective_grab_mode(both), GrabMode::Spin);
+    }
+
+    /// LLToolGrabBase::pickCallback (lltoolgrab.cpp): the grab tool starts
+    /// no drag on what RlvActions::canTouch refuses, and deselects.
+    #[test]
+    fn rlva_grab_starts_no_drag_where_touch_is_refused() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let (idx, point, issuer) = world
+            .objects
+            .iter()
+            .find(|(_, o)| !o.is_avatar() && o.parent_id == 0 && o.state == 0)
+            .map(|(i, o)| (i, o.position, o.full_id))
+            .expect("a prim on the ground");
+        world.rlva_configure(true);
+        let agent = world.agent_id;
+        let restrict = |world: &mut World, text: &str| {
+            assert!(world.rlva.receive(&aurora_net::ChatMessage {
+                from_name: "Controller".to_owned(),
+                source_id: issuer,
+                owner_id: agent,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: Vec3::ZERO,
+                message: text.to_owned(),
+            }));
+        };
+        let grabbed = |world: &mut World| {
+            let mut tool = BuildTool::default();
+            tool.grab_down(world, idx, point, TouchSurface::default(), (0.0, 0.0), Mods::default());
+            tool.grab.state.is_some() && tool.out.iter().any(|c| matches!(c, NetCommand::ObjectGrab { .. }))
+        };
+        assert!(grabbed(&mut world));
+        restrict(&mut world, "@touchworld=n");
+        assert!(!grabbed(&mut world), "@touchworld");
+        restrict(&mut world, "@touchworld=y,fartouch:0.5=n");
+        world.agent.position = point + Vec3::X * 5.0;
+        assert!(!grabbed(&mut world), "@fartouch");
+        restrict(&mut world, "@fartouch:0.5=y");
+        assert!(grabbed(&mut world));
     }
 }

@@ -120,6 +120,13 @@ fn parcel_font(ctx: &egui::Context) -> FontId {
     FontId::new(13.0, crate::ui::fonts::semibold(ctx))
 }
 
+/// The SLURL of the place menu may be copied: under @showloc too, which
+/// gives "(Hidden region)" (LLStatusBar::onContextMenuItemClicked "copy",
+/// llstatusbar.cpp, copies LLSLURL::getSLURLString with no RLVa test).
+pub(super) fn slurl_copy_enabled(st: &StatusInfo) -> bool {
+    !st.slurl.is_empty()
+}
+
 /// The parcel's name (the region's when the parcel has none), the region,
 /// the position.
 fn texts(st: &StatusInfo) -> (String, String, String) {
@@ -630,10 +637,9 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
                 copy,
                 crate::ui::widgets::ActionKind::Flat,
                 Vec2::new(button_w, 22.0),
-                !st.location_hidden,
+                slurl_copy_enabled(st),
             )
             .clicked()
-                && !st.location_hidden
             {
                 ui.ctx().copy_text(st.slurl.clone());
             }
@@ -647,9 +653,10 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     if super::demo::get().locations && ui.ctx().cumulative_frame_nr() == super::location_suggest::DEMO_FRAME {
         text = super::location_suggest::DEMO_TYPED.to_owned();
     }
-    // the landmarks and places the text names (hidden with the location)
+    // the landmarks and places the text names (kept under @showloc, as
+    // LLLocationInputCtrl::rebuildLocationHistory has no RLVa test)
     let mut picker = super::location_suggest::Picker::load(ui.ctx(), picker_key);
-    picker.refresh(&st.landmarks, st.tp_session.items, &text, !st.location_hidden);
+    picker.refresh(&st.landmarks, st.tp_session.items, &text, true);
     // the arrows and Enter go to the list before the field takes them
     let field_id = ui.ctx().data(|d| d.get_temp::<Id>(field_key));
     let (mut take, moved) = match field_id {
@@ -680,7 +687,7 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
             ui.ctx().data_mut(|d| d.insert_temp(focused_id, true));
         }
     }
-    picker.refresh(&st.landmarks, st.tp_session.items, dest, !st.location_hidden);
+    picker.refresh(&st.landmarks, st.tp_session.items, dest, true);
     // what the text names, under the field; Enter or a click takes a row
     if !picker.list().is_empty() {
         ui.add_space(4.0);
