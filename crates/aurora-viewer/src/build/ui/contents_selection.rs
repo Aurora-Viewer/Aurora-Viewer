@@ -196,12 +196,25 @@ pub(super) fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &World
             .contents_target(world)
             .and_then(|idx| world.objects.get(idx))
             .is_some_and(|o| o.full_id == object);
+    // Ctrl+1–5 follow the key position (LLKeyboardWin32 constructor,
+    // llkeyboardwin32.cpp; menu_viewer.xml control|1…5). AZERTY Digit4
+    // arrives as logical Quote. Ctrl+B stays the typed letter.
     if allowed
         && ctx.input(|i| {
-            i.events.iter().any(|event| {
-                matches!(event,
-        egui::Event::Key { key: Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::B, pressed: true, modifiers, .. }
-            if (modifiers.command || modifiers.ctrl) && !modifiers.shift && !modifiers.alt)
+            i.events.iter().any(|event| match event {
+                egui::Event::Key {
+                    key,
+                    physical_key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if (modifiers.command || modifiers.ctrl) && !modifiers.shift && !modifiers.alt => {
+                    matches!(
+                        super::keyboard::position_key(*key, *physical_key),
+                        Key::Num1 | Key::Num2 | Key::Num3 | Key::Num4 | Key::Num5 | Key::B
+                    )
+                }
+                _ => false,
             })
         })
     {
