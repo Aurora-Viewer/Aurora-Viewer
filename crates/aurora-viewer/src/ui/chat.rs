@@ -2939,10 +2939,10 @@ impl Copied<'_> {
     }
 }
 
-/// The selection of the lines (`select.rs`), as in Firestorm's transcript:
+/// The selection of the lines (`select.rs`), as in the Legacy Viewer's transcript:
 /// a drag selects across them (never moving the window), a double click
-/// selects a word, a click without a drag clears it; a press gives them the
-/// keyboard, then Ctrl+A selects the
+/// selects a word, a triple click selects a paragraph, a click without a drag
+/// clears it; a press gives them the keyboard, then Ctrl+A selects the
 /// whole conversation, Ctrl+C (Ctrl+Insert) copies the selection, Escape
 /// clears it, and what is typed goes to the conversation's field.
 fn select_lines(
@@ -2999,6 +2999,17 @@ fn select_lines(
         && let Some((seq, range, text)) = select::word_at(drawn, pos)
     {
         sel.select_in_row(seq, range, text);
+    }
+    // a triple click selects the paragraph under the pointer, as the
+    // triple-click block of LLTextBase::handleMouseDown
+    // (indra/llui/lltextbase.cpp) selects the logical line in the Legacy
+    // Viewer's transcript (FSChatHistory, an LLTextEditor); it is copied as a
+    // drag over it, the first paragraph with the "[time] Name: " prefix
+    if content.triple_clicked()
+        && let Some(pos) = content.interact_pointer_pos().filter(|p| area.contains(*p))
+        && let Some((seq, range, text)) = select::paragraph_at(drawn, pos)
+    {
+        sel.select_paragraph(seq, range, text);
     }
     // (no text cursor over the lines, though a drag selects them: the
     // arrow, the hand on links and names; the human's choice of 2026-10-16)
