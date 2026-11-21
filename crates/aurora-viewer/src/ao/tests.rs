@@ -65,16 +65,33 @@ fn movement_defaults_stay_running_on_region_except_for_special_pose_owners() {
         assert!(runtime::stop_region_signal(state, &ordinary), "{state:?}");
     }
 
+    // Each special hold decides for itself: the water and anchor holds own
+    // the whole pose, the run hold only the fall it bridges, and the native
+    // running hand-off nothing.
     let hold = signal(State::Walking, now);
-    let mut special = frame(&raw);
-    special.run_hold = Some(hold);
-    special.native_running = true;
-    special.swim_hold = Some((State::Walking, hold));
-    special.water_walk_hold = Some((State::Walking, hold));
-    special.swim_outro = true;
-    special.anchor_hold = Some(hold);
+    let mut swim = frame(&raw);
+    swim.swim_hold = Some((State::SwimmingForward, hold));
+    let mut water_walk = frame(&raw);
+    water_walk.water_walk_hold = Some((State::Walking, hold));
+    let mut outro = frame(&raw);
+    outro.swim_outro = true;
+    let mut anchor = frame(&raw);
+    anchor.anchor_hold = Some(hold);
+    for special in [&swim, &water_walk, &outro, &anchor] {
+        for state in movement {
+            assert!(runtime::stop_region_signal(state, special), "{state:?}");
+        }
+    }
+    let mut run = frame(&raw);
+    run.run_hold = Some(signal(State::Running, now));
+    run.native_running = true;
     for state in movement {
-        assert!(runtime::stop_region_signal(state, &special), "{state:?}");
+        assert_eq!(runtime::stop_region_signal(state, &run), state == State::Falling, "{state:?}");
+    }
+    let mut native = frame(&raw);
+    native.native_running = true;
+    for state in movement {
+        assert!(!runtime::stop_region_signal(state, &native), "{state:?}");
     }
 }
 
@@ -851,6 +868,65 @@ fn ordinary_walk_and_run_overrides_leave_region_movement_running() {
         }
         assert!(!stopped_default);
     }
+}
+
+#[test]
+fn ordinary_ground_run_with_the_run_hold_leaves_the_stock_run_on_the_region() {
+    // A normal run on supported ground: the movement enhancer's run hold and
+    // the native running hand-off are both set for the whole run.
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let run = signal(State::Running, now);
+    let mut runtime = Runtime::default();
+    let mut raw = vec![run];
+    let mut stopped_default = false;
+    for elapsed in [0, 100, 1_000, 3_000] {
+        let at = now + Duration::from_millis(elapsed);
+        let mut f = frame(&raw);
+        f.run_hold = Some(run);
+        f.native_running = true;
+        let (pose, commands) = runtime.update(Some(&set), f, at, |_| true, |_| 0);
+        assert_eq!(runtime.current, Some(State::Running));
+        assert!(pose.iter().any(|animation| animation.id == step(&set, State::Running, 0)));
+        assert!(!pose.iter().any(|animation| animation.id == run.id), "the local AO masks stock RUN");
+        stopped_default |= commands.contains(&(run.id, false));
+        echo_simulator_commands(&mut raw, &commands, State::Running, at);
+    }
+    assert!(!stopped_default, "a STOP of RUN resets OpenSimulator to STAND");
+    assert!(raw.contains(&run), "observers keep the region's run");
+}
+
+#[test]
+fn a_flickering_run_hold_never_starts_the_stock_fall_again() {
+    // Bumpy ground: the run hold comes and goes while the region reports a
+    // fall. The fall the hold stopped is forgotten without a START.
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let run = signal(State::Running, now);
+    let fall = signal(State::Falling, now + Duration::from_millis(50));
+    let mut runtime = Runtime::default();
+    let mut f = frame(std::slice::from_ref(&run));
+    f.run_hold = Some(run);
+    runtime.update(Some(&set), f, now, |_| true, |_| 0);
+    let mut raw = vec![fall];
+    let mut starts = 0;
+    let mut stops = 0;
+    for (i, hold) in [true, false, true, false, true].into_iter().enumerate() {
+        let at = now + Duration::from_millis(100 + 100 * i as u64);
+        let mut f = frame(&raw);
+        f.run_hold = hold.then_some(run);
+        let (_, commands) = runtime.update(Some(&set), f, at, |_| true, |_| 0);
+        starts += commands.iter().filter(|change| **change == (fall.id, true)).count();
+        stops += commands.iter().filter(|change| **change == (fall.id, false)).count();
+        // Second Life ends a stopped fall without a replacement default.
+        for (id, start) in &commands {
+            if !*start {
+                raw.retain(|animation| animation.id != *id);
+            }
+        }
+    }
+    assert_eq!(starts, 0, "no START of a stock motion");
+    assert_eq!(stops, 1, "one STOP, not a START / STOP pair per flicker");
 }
 
 fn echo_simulator_commands(raw: &mut Vec<PlayingAnimation>, commands: &[(Uuid, bool)], state: State, now: Instant) {

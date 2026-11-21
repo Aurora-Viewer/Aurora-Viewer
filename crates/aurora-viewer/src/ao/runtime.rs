@@ -68,12 +68,21 @@ pub struct Runtime {
     hold_since: Option<Instant>,
 }
 
-/// Whether a replaced signal should be stopped on the simulator. The Legacy
-/// Viewer keeps movement defaults running on the region while masking them
-/// locally (`LLVOAvatar::startMotion`, indra/newview/llvoavatar.cpp). These
-/// special pose owners retain their existing server suppression behavior.
+/// Whether a replaced stock signal is stopped on the simulator, decided for
+/// each special hold. The Legacy Viewer stops no default motion on the region
+/// while it plays an override (`LLVOAvatar::startMotion`,
+/// indra/newview/llvoavatar.cpp), except once at `AOEngine::enable`
+/// (aoengine.cpp). Aurora keeps that for ordinary movement, which also avoids
+/// OpenSimulator resetting a stopped movement default to STAND. Its own
+/// choices on top: a replaced stand or turn is stopped (the stock sit is not,
+/// see `steady` in `update`), and so is the movement a special hold owns:
+/// - swimming, water walking, a water recovery and the anchored ground sit
+///   own the whole pose, so their stock flight / walk is stopped;
+/// - the run hold bridges a brief loss of ground contact: only the stock fall
+///   it hides is stopped, its own run stays on the region;
+/// - the native running hand-off owns no stop at all.
 pub(super) fn stop_region_signal(state: State, frame: &Frame<'_>) -> bool {
-    !matches!(
+    let movement = matches!(
         state,
         State::Walking
             | State::Running
@@ -85,12 +94,13 @@ pub(super) fn stop_region_signal(state: State, frame: &Frame<'_>) -> bool {
             | State::Flying
             | State::FlyingSlow
             | State::Hovering
-    ) || frame.run_hold.is_some()
-        || frame.native_running
+    );
+    !movement
         || frame.swim_hold.is_some()
         || frame.water_walk_hold.is_some()
         || frame.swim_outro
         || frame.anchor_hold.is_some()
+        || (frame.run_hold.is_some() && state == State::Falling)
 }
 
 impl Default for Runtime {
@@ -758,10 +768,12 @@ impl Runtime {
             })
             .collect();
         pose.extend(loaded);
-        // Stop replaced non-locomotion clips on the region for observers too,
-        // rather than depending on upload priorities. Ordinary movement
-        // defaults stay active region-side, matching the Legacy Viewer. Keep
-        // jump/landing control motions intact (requestStopMotion finish flags).
+        // Stop a replaced stand or turn on the region for observers too (an
+        // Aurora choice: the Legacy Viewer leaves them running), rather than
+        // depending on upload priorities; ordinary movement defaults stay on
+        // the region unless a special hold owns them (`stop_region_signal`).
+        // Keep jump/landing control motions intact (requestStopMotion finish
+        // flags).
         // The stock sit stays to the simulator too, as with the Legacy AO:
         // LLVOAvatar::startMotion (indra/newview/llvoavatar.cpp) only starts
         // the override (AOEngine::override, aoengine.cpp), and the
@@ -804,11 +816,11 @@ impl Runtime {
                     });
                     suppressed.insert(signal.id, old);
                     self.restoring = None;
-                } else if self.suppressed.remove(&signal.id).is_some() {
-                    // A special pose may have stopped this signal earlier;
-                    // hand it back to the region without restoring it locally
-                    // over the active AO replacement.
-                    commands.push((signal.id, true));
+                } else {
+                    // Left out of `suppressed`: a signal a special hold stopped
+                    // earlier is forgotten without a START of the stock motion,
+                    // as AOEngine::enable (aoengine.cpp) only ever stops them.
+                    // A hold that flickers must not send START / STOP pairs.
                     self.restoring = None;
                 }
             } else if self.suppressed.contains_key(&signal.id) {
@@ -820,21 +832,16 @@ impl Runtime {
             if let Some(state) = State::from_motion(signal.id)
                 && overrides(state)
                 && !self.active.iter().any(|a| a.id == signal.id)
+                && stop_region_signal(state, &frame)
             {
-                if stop_region_signal(state, &frame) {
-                    if self
-                        .suppressed
-                        .get(&signal.id)
-                        .is_none_or(|old| old.sequence_start != signal.sequence_start)
-                    {
-                        commands.push((signal.id, false));
-                    }
-                    suppressed.insert(signal.id, *signal);
-                } else if self.suppressed.remove(&signal.id).is_some() {
-                    // Return stock movement to the region if an earlier
-                    // special pose stopped it; keep it masked locally.
-                    commands.push((signal.id, true));
+                if self
+                    .suppressed
+                    .get(&signal.id)
+                    .is_none_or(|old| old.sequence_start != signal.sequence_start)
+                {
+                    commands.push((signal.id, false));
                 }
+                suppressed.insert(signal.id, *signal);
             }
         }
         self.suppressed = suppressed;
