@@ -143,6 +143,11 @@ pub struct WeatherSettings {
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
     pub touched: bool,
+    /// The former switch "Let regions set the weather" (removed with the
+    /// region weather, #4280), read once by `upgrade_to_switches`: on, none
+    /// of these settings was drawn.
+    #[serde(rename = "region_weather", skip_serializing)]
+    pub(crate) former_region_weather: Option<bool>,
 }
 
 impl Default for WeatherSettings {
@@ -180,6 +185,7 @@ impl Default for WeatherSettings {
             aurora_colours: AuroraColours::Green,
             quality: WeatherQuality::High,
             touched: false,
+            former_region_weather: None,
         }
     }
 }
@@ -227,11 +233,15 @@ impl WeatherSettings {
 
     /// A file from before the switches (settings version 43): what it drew
     /// stays on. Nothing falling, no wind and no aurora was how it was off;
-    /// a fall at 0 then starts at full strength, as a new one does.
+    /// a fall at 0 then starts at full strength, as a new one does. With
+    /// "Let regions set the weather" on, none of it was drawn (the region's
+    /// weather, or a clear and calm sky where it set none): the main switch
+    /// stays off, the cards keep these settings for when it is turned on.
     pub fn upgrade_to_switches(&mut self) {
+        let regions_set_it = self.former_region_weather.take() == Some(true);
         self.precipitation_on = self.amount > 0.0;
         self.wind_on = self.wind_max > 0.0;
-        self.enabled = self.precipitation_on || self.wind_on || self.aurora;
+        self.enabled = !regions_set_it && (self.precipitation_on || self.wind_on || self.aurora);
         if self.amount <= 0.0 {
             self.amount = 1.0;
         }
@@ -877,6 +887,25 @@ mod tests {
         assert_eq!(night.amount, 1.0);
         let clear = read("{\"amount\": 0.0, \"wind_max\": 0.0, \"aurora\": false}");
         assert!(!clear.enabled && !clear.precipitation_on && !clear.wind_on);
+        // "Let regions set the weather" off: its own weather was drawn
+        let own = read("{\"amount\": 0.4, \"wind_max\": 0.3, \"aurora\": true, \"region_weather\": false}");
+        assert!(own.enabled && own.precipitation_on && own.wind_on);
+    }
+
+    #[test]
+    fn a_file_where_regions_set_the_weather_stays_off() {
+        // the region decided, and where it set none the sky was clear: none
+        // of these settings was drawn, so the main switch stays off and the
+        // cards keep them for when it is turned on
+        let mut w: WeatherSettings =
+            serde_json::from_str("{\"amount\": 0.6, \"wind_max\": 0.3, \"aurora\": true, \"region_weather\": true}").expect("parse");
+        w.upgrade_to_switches();
+        assert!(!w.enabled && w.precipitation_on && w.wind_on && w.aurora);
+        assert_eq!((w.amount, w.former_region_weather), (0.6, None));
+        assert_eq!(w.in_effect().fall(), 0.0);
+        // read once, never written again
+        let saved = serde_json::to_value(&w).expect("serialize");
+        assert!(saved.get("region_weather").is_none());
     }
 
     #[test]

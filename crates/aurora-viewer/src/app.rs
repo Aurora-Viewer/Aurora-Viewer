@@ -2490,8 +2490,12 @@ impl App {
             crate::world::rlva::Boundary::Send => {}
             crate::world::rlva::Boundary::Dropped => return,
             crate::world::rlva::Boundary::Refused => {
-                self.world
-                    .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+                let blocked = aurora_i18n::tr!("rlva-blocked");
+                self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                // answered at once, as the demo answers a change it applies
+                if let Some(reply) = crate::world::rlva::refused_reply(&cmd, blocked) {
+                    self.on_app_event(reply);
+                }
                 return;
             }
         }
