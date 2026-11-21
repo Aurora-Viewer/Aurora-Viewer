@@ -215,7 +215,7 @@ pub(crate) fn controls(
         });
         ui.vertical(|ui| {
             label(ui, p, aurora_i18n::tr!("content-perms-next-owner"));
-            if let Some(v) = check(ui, p, b.next_modify, false, aurora_i18n::tr!("common-edit"), true) {
+            if let Some(v) = check(ui, p, b.next_modify, false, aurora_i18n::tr!("common-modify"), true) {
                 b.next_modify = v;
             }
             if let Some(v) = check(ui, p, b.next_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
