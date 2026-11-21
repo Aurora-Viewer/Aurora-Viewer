@@ -40,6 +40,20 @@ pub fn task_agent_mask(item: &aurora_net::build::TaskItem, agent: Uuid) -> u32 {
     if owned { item.owner_mask } else { item.everyone_mask }
 }
 
+/// LLSidepanelItemInfo::updatePermissions (indra/newview/llsidepaneliteminfo.cpp):
+/// stored objects need these flags so their changed masks are applied on rez.
+/// The triples contain group, everyone and next-owner masks, in that order.
+pub fn object_permission_flags(flags: u32, before: [u32; 3], after: [u32; 3]) -> u32 {
+    let overrides = [0x040000, 0x080000, 0x100];
+    before
+        .into_iter()
+        .zip(after)
+        .zip(overrides)
+        .fold(flags, |flags, ((before, after), flag)| {
+            flags | if before != after { flag } else { 0 }
+        })
+}
+
 /// Whether an object of an object's contents may be rezzed from there, by a
 /// drag onto the land or onto another object: copy for the agent, transfer
 /// for its owner. LLToolDragAndDrop::dad3dRezFromObjectOnLand and
@@ -1151,4 +1165,111 @@ pub fn request_tree(inv: &mut Inventory, root: Uuid) -> bool {
         inv.request(id);
     }
     complete
+}
+
+/// Whether an animation of the inventory may be played on our own avatar in
+/// world, and its item (a link followed to its original): the Director's
+/// keyframes play one when the track passes them. The Legacy Viewer's "Play
+/// in world" (LLAnimationBridge::buildContextMenu, "Animation Play", and
+/// LLPreviewAnim::play, indra/newview/llinventorybridge.cpp and
+/// llpreviewanim.cpp) plays any animation of the agent's inventory or the
+/// Library whatever its permissions: playing reads none, so no mask is read
+/// here either (no copy, no modify, no transfer all play). Stricter: an item
+/// the agent does not own (group-owned, or someone else's outside the
+/// Library) and one in the trash are not played, and one without its asset
+/// (not fetched yet) waits.
+pub fn animation_playable(inv: &Inventory, id: Uuid) -> Option<&InvItem> {
+    let original = original(inv, id)?;
+    let item = inv.items.get(&original)?;
+    let owned = !item.group_owned && (item.owner == inv.owner || item.owner.is_nil() || inv.owner.is_nil());
+    let playable = item.asset_type == 20 && !item.asset_id.is_nil() && !in_type(inv, original, 14) && (owned || library(inv, original));
+    playable.then_some(item)
+}
+
+#[cfg(test)]
+mod animation_play_tests {
+    use super::*;
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::InvFolder;
+
+    #[test]
+    fn an_animation_plays_like_the_legacy_viewers_play_in_world() {
+        let agent = Uuid::from_u128(0xA);
+        let library_owner = Uuid::from_u128(0x11B);
+        let library_folder = Uuid::from_u128(0x1F);
+        let mut inv = Inventory {
+            owner: agent,
+            lib_owner: library_owner,
+            ..Default::default()
+        };
+        inv.folders.insert(
+            library_folder,
+            Folder {
+                info: InvFolder {
+                    id: library_folder,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: true,
+            },
+        );
+        let cases = [
+            // (case, owner, group owned, owner mask, everyone mask, in the Library, plays)
+            ("own, full", agent, false, FULL, 0, false, true),
+            ("own, no copy", agent, false, MODIFY | TRANSFER, 0, false, true),
+            ("own, no transfer", agent, false, MODIFY | COPY, 0, false, true),
+            ("own, no modify", agent, false, COPY | TRANSFER, 0, false, true),
+            ("group owned", Uuid::from_u128(0x6), true, FULL, FULL, false, false),
+            ("someone else's", Uuid::from_u128(0xB), false, FULL, FULL, false, false),
+            ("Library", library_owner, false, FULL, COPY, true, true),
+        ];
+        for (n, (case, owner, group_owned, owner_mask, everyone_mask, in_library, plays)) in cases.into_iter().enumerate() {
+            let id = Uuid::from_u128(n as u128 + 100);
+            inv.items.insert(
+                id,
+                InvItem {
+                    id,
+                    parent: if in_library { library_folder } else { Uuid::nil() },
+                    asset_type: 20,
+                    asset_id: Uuid::from_u128(n as u128 + 200),
+                    owner,
+                    group_owned,
+                    owner_mask,
+                    everyone_mask,
+                    ..Default::default()
+                },
+            );
+            assert_eq!(animation_playable(&inv, id).is_some(), plays, "{case}");
+        }
+        // not an animation, or its asset not known yet: nothing to play
+        let other = Uuid::from_u128(300);
+        let item = |asset_type, asset_id| InvItem {
+            id: other,
+            asset_type,
+            asset_id,
+            owner: agent,
+            owner_mask: FULL,
+            ..Default::default()
+        };
+        inv.items.insert(other, item(0, Uuid::from_u128(301)));
+        assert!(animation_playable(&inv, other).is_none());
+        inv.items.insert(other, item(20, Uuid::nil()));
+        assert!(animation_playable(&inv, other).is_none());
+        // a link plays its original
+        let link = Uuid::from_u128(302);
+        inv.items.insert(
+            link,
+            InvItem {
+                id: link,
+                asset_type: 24,
+                asset_id: Uuid::from_u128(100),
+                owner: agent,
+                ..Default::default()
+            },
+        );
+        assert_eq!(animation_playable(&inv, link).map(|it| it.id), Some(Uuid::from_u128(100)));
+        assert!(animation_playable(&inv, Uuid::from_u128(999)).is_none(), "missing");
+    }
 }

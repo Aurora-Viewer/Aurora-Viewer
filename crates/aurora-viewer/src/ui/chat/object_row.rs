@@ -235,6 +235,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
                 p,
                 env.emoji,
                 world,
+                line.wording(env.names),
                 env.want_names,
                 text,
                 size,
@@ -273,6 +274,7 @@ pub(super) mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         }
     }
 
@@ -339,6 +341,7 @@ pub(super) mod tests {
                     emoji: &mut emoji,
                     pics: &pics,
                     world: &world,
+                    names: crate::world::names::NameScope::World,
                     want_names: &mut names,
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",
@@ -474,6 +477,7 @@ pub(super) mod tests {
                                 emoji: &mut emoji,
                                 pics: &pics,
                                 world: &world,
+                                names: crate::world::names::NameScope::World,
                                 want_names: &mut names,
                                 wanted: &mut wanted,
                                 own_name: "Aurora Demo",

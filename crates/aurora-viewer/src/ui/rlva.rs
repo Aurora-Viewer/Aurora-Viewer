@@ -6,6 +6,7 @@ use crate::{
     world::{
         World,
         inventory::asset_ids::AssetIds,
+        names::NameScope,
         rlva::{
             diagnostics::Outcome,
             modifiers::{ModifierValue, hide_texture_ids},
@@ -36,12 +37,17 @@ pub struct Tools {
     filter: String,
     history: Vec<String>,
     browsing: Option<usize>,
+    /// The console tab was shown since the window opened: closing the window
+    /// then closes the console (RlvFloaterConsole::onClose).
+    console_shown: bool,
 }
 
 #[derive(Default)]
 pub struct Actions {
     pub input: Option<String>,
     pub closed: bool,
+    /// The window closed after showing its console, once.
+    pub console_closed: bool,
     pub clear_log: bool,
     /// Exception ids of no known name, which may be groups.
     pub want_groups: Vec<Uuid>,
@@ -62,18 +68,50 @@ impl Row {
     }
 }
 
+/// rlvGetItemNameFromObjID (indra/newview/rlvfloaters.cpp): the inventory
+/// item of the attachment the object belongs to, under its own name (the
+/// floater asks none of the text filters), then its attachment point and
+/// "child" for a prim that is not the attachment's root; the id of anything
+/// else.
 fn source_name(world: &World, source: Uuid) -> String {
-    world
+    let name = world
         .rlva_attachment_item(source)
-        .and_then(|item| world.inventory.items.get(&item).map(|item| item.name.as_str()))
-        .map(|name| world.rlva_filter_text(name).into_owned())
-        .unwrap_or_else(|| source.to_string())
+        .and_then(|item| world.inventory.items.get(&item))
+        .map_or_else(|| source.to_string(), |item| item.name.clone());
+    let objects = &world.objects;
+    let Some(index) = objects.index_of_uuid(&source) else {
+        return name;
+    };
+    let root = objects.linkset_root(index);
+    let worn = objects
+        .get(root)
+        .filter(|o| objects.parent_of(o).and_then(|i| objects.get(i)).is_some_and(|p| p.is_avatar()));
+    let Some(point) = worn.map(|o| o.attachment_point()) else {
+        return name;
+    };
+    let point = world
+        .avatar_lib
+        .attach_names
+        .get(&point)
+        .map_or(tr!("common-unknown"), |name| crate::ui::appearance::items::point_name(name));
+    if root == index {
+        format!("{name} ({point})")
+    } else {
+        format!("{name} ({point}, {})", tr!("rlva-tools-child"))
+    }
 }
 
 /// The Source column of an exception, resolved like RlvFloaterBehaviours::
-/// refreshAll: an attachment, then a resident, then a group, else the option
-/// as written while the name is asked. @shownames applies to the resident,
-/// which is stricter than the Legacy Viewer's floater.
+/// refreshAll (indra/newview/rlvfloaters.cpp): an attachment, then a
+/// resident, then a group, else the option as written while the name is
+/// asked.
+///
+/// That floater never asks RlvActions::canShowName: the resident an
+/// exception names is shown under @shownames too (`NameScope::Roster`, the
+/// scope of the windows without that test). The name is the complete one
+/// when their avatar is in the scene (rlvGetItemNameFromObjID:
+/// getCompleteName, else the avatar's own first and last name), and
+/// otherwise the account name, or the display name of a record without one.
 fn exception_source(world: &World, option: &str, want_groups: &mut Vec<Uuid>) -> String {
     let Ok(id) = Uuid::parse_str(option) else {
         return option.to_owned();
@@ -81,13 +119,30 @@ fn exception_source(world: &World, option: &str, want_groups: &mut Vec<Uuid>) ->
     if id.is_nil() {
         return option.to_owned();
     }
-    if let Some(item) = world.rlva_attachment_item(id).and_then(|item| world.inventory.items.get(&item)) {
-        return world.rlva_filter_text(&item.name).into_owned();
+    if world
+        .rlva_attachment_item(id)
+        .is_some_and(|item| world.inventory.items.contains_key(&item))
+    {
+        return source_name(world, id);
     }
-    if !world.rlva_can_name(id) {
-        return world.rlva_anonymous(id).display_name.clone();
-    }
-    if let Some(name) = world.social.avatar_names.complete(&id).or_else(|| world.avatar_name(&id)) {
+    let names = &world.social.avatar_names;
+    let cached = names.get_in(NameScope::Roster, &id);
+    let avatar = world
+        .objects
+        .index_of_uuid(&id)
+        .and_then(|index| world.objects.get(index))
+        .filter(|object| object.is_avatar());
+    let resident = match avatar {
+        Some(avatar) => cached.map(|name| name.complete(&names.options)).or_else(|| avatar.display_name()),
+        None => cached.map(|name| {
+            if name.username.is_empty() {
+                name.display(&names.options)
+            } else {
+                name.username.clone()
+            }
+        }),
+    };
+    if let Some(name) = resident {
         return name;
     }
     if let Some(group) = world.land.group_names.get(&id) {
@@ -213,6 +268,7 @@ fn status(outcome: Outcome) -> &'static str {
         Outcome::Unset => tr!("rlva-tools-unset"),
         Outcome::Rejected => tr!("rlva-tools-rejected"),
         Outcome::Reply => tr!("rlva-tools-reply"),
+        Outcome::Retained => tr!("rlva-tools-retained"),
     }
 }
 
@@ -245,6 +301,7 @@ impl Tools {
                 ui.label(RichText::new(tr!("rlva-tools-disabled")).color(p.muted));
             }
             if self.tab == Tab::Console {
+                self.console_shown = true;
                 ui.horizontal(|ui| {
                     ui.label(tr!("rlva-tools-local-replies"));
                     actions.clear_log = ui.button(tr!("rlva-tools-clear-log")).clicked();
@@ -381,6 +438,7 @@ impl Tools {
             }
         });
         actions.closed = !self.open;
+        actions.console_closed = !self.open && std::mem::take(&mut self.console_shown);
         actions
     }
 }
@@ -397,6 +455,60 @@ mod tests {
         world
     }
 
+    /// rlvGetItemNameFromObjID (indra/newview/rlvfloaters.cpp): an attachment
+    /// is named by its item as it is, @shownames or not, with its point; an
+    /// object that is not worn by its id.
+    #[test]
+    fn rlva_sources_are_named_by_their_item_and_attachment_point() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        world.rlva.configure(true);
+        let item = Uuid::from_u128(950);
+        world.inventory.items.insert(
+            item,
+            aurora_net::inventory::InvItem {
+                id: item,
+                asset_type: 6,
+                flags: 5,
+                name: "Collar of Jane Doe".into(),
+                ..Default::default()
+            },
+        );
+        let object = crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+            item_id: item,
+            owner_id: Uuid::nil(),
+            point: 5,
+            add: true,
+            flags: 5,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            name: String::new(),
+            desc: String::new(),
+        });
+        let region = world.main_region.expect("the demo region");
+        world.objects.upsert(region, object);
+        let worn = world
+            .worn_attachment(&item)
+            .and_then(|i| world.objects.get(i))
+            .expect("worn")
+            .full_id;
+        let point = crate::ui::appearance::items::point_name(&world.avatar_lib.attach_names[&5]).to_owned();
+        for restriction in ["@clear", "@shownames=n"] {
+            world.rlva_console_input(restriction);
+            assert_eq!(source_name(&world, worn), format!("Collar of Jane Doe ({point})"), "{restriction}");
+        }
+        let mut want_groups = Vec::new();
+        assert_eq!(
+            exception_source(&world, &worn.to_string(), &mut want_groups),
+            format!("Collar of Jane Doe ({point})")
+        );
+        let elsewhere = Uuid::from_u128(951);
+        assert_eq!(source_name(&world, elsewhere), elsewhere.to_string());
+    }
+
     #[test]
     fn rlva_lists_hide_a_camera_texture_id_the_rule_does_not_allow() {
         let texture = "00000000-0000-0000-0000-0000000000bb";
@@ -411,8 +523,12 @@ mod tests {
         assert!(behaviours[0].cells[0].starts_with("setcam_textures:hidden-"));
     }
 
+    /// RlvFloaterBehaviours::refreshAll (indra/newview/rlvfloaters.cpp) never
+    /// asks RlvActions::canShowName: the resident of an exception is named
+    /// under @shownames as without it, by the account name when their avatar
+    /// is not in the scene.
     #[test]
-    fn rlva_exception_rows_name_the_id_and_keep_shownames_private() {
+    fn rlva_exception_rows_name_the_resident_under_shownames_too() {
         let friend = Uuid::from_u128(0xa);
         let mut want_groups = Vec::new();
         let world = world_with(&format!("@recvim=n,recvim:{friend}=add,recvim:20;50=n"));
@@ -425,11 +541,20 @@ mod tests {
         assert_eq!(want_groups, [friend], "the id may be a group: its name is asked");
         assert!(rows.iter().find(|row| row.cells[1] == "20;50").expect("a distance").muted);
 
-        let mut want_groups = Vec::new();
-        let world = world_with(&format!("@shownames=n,recvim:{friend}=add"));
-        let rows = exception_rows(&world, &mut want_groups);
-        assert_eq!(rows[0].cells[1], crate::world::rlva::privacy::anonymous(friend).display_name);
-        assert!(want_groups.is_empty(), "nothing is asked for a name that stays hidden");
+        for restriction in ["", "shownames=n,"] {
+            let mut want_groups = Vec::new();
+            let mut world = world_with(&format!("@{restriction}recvim:{friend}=add"));
+            assert_eq!(world.rlva_can_name(friend), restriction.is_empty());
+            let rows = exception_rows(&world, &mut want_groups);
+            assert_eq!(rows[0].cells[1], friend.to_string(), "{restriction:?}: the id, name unknown");
+            assert_eq!(want_groups, [friend], "{restriction:?}");
+
+            world.social.avatar_names.on_legacy(friend, "Jane", "Doe");
+            let mut want_groups = Vec::new();
+            let rows = exception_rows(&world, &mut want_groups);
+            assert_eq!(rows[0].cells[1], "jane.doe", "{restriction:?}: the account name");
+            assert!(want_groups.is_empty(), "{restriction:?}: a resident is no group");
+        }
     }
 
     #[test]

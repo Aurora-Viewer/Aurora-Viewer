@@ -44,6 +44,10 @@ pub(crate) enum Capture {
     Full,
     /// The whole frame, drawn offscreen at the photo's size.
     Snapshot(crate::SnapshotSpec),
+    /// A film's frame, read back without waiting (film_readback.rs): the 3D
+    /// view of the window's frame, or (`Some`) the frame drawn offscreen at
+    /// the film's size, as a photo is.
+    Film(u64, Option<crate::SnapshotSpec>),
 }
 
 /// Which capture a frame carries: the scene alone wins over the whole
@@ -133,6 +137,11 @@ pub(crate) struct FramePacket {
     /// Count the luminance histogram of this frame shown at that exposure
     /// (the photo viewfinder; answered a few frames later).
     pub histogram: Option<f32>,
+    /// A small picture of this frame's 3D view, tagged (thumbnail.rs;
+    /// answered a few frames later, never waited for).
+    pub thumbnail: Option<u64>,
+    /// The second camera's view, drawn after this frame (second_view.rs).
+    pub second_view: Option<crate::second_view::SecondViewJob>,
     /// Start the motion history again (`Renderer::cut_motion_history`).
     pub motion_cut: bool,
     /// How far every position moved since the last frame (m, x and y): a
@@ -170,6 +179,10 @@ pub(crate) struct FrameResult {
     pub equirect: Option<crate::equirect::Answer>,
     /// The luminance histogram counted lately (`FramePacket::histogram`).
     pub histogram: Option<Box<[u32; crate::HISTOGRAM_BINS]>>,
+    /// The small pictures made since the last result (`FramePacket::thumbnail`).
+    pub thumbnails: Vec<crate::Thumbnail>,
+    /// The film frames read back since the last result, in their order.
+    pub films: Vec<crate::film_readback::FilmFrame>,
     pub spent: Spent,
 }
 

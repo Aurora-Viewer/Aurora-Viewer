@@ -1810,7 +1810,7 @@ fn sale(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &mut Wo
             aurora_i18n::tr!("common-everyone").to_owned()
         } else {
             world.social.want_name(parcel.auth_buyer);
-            world.social.name_of(&parcel.auth_buyer)
+            world.social.name_in(crate::world::names::NameScope::Roster, &parcel.auth_buyer)
         };
         t.push_str(&format!(" · {}", aurora_i18n::tr!("ui-land-manage-sold-to", who = to)));
         t.push_str(" · ");

@@ -203,6 +203,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(camera.click_avatar_keeps_camera),
                 );
                 cx.toggle(
+                    tr!("ui-options-camera-frame-while-posing"),
+                    tr!("ui-options-camera-frame-while-posing-tip"),
+                    &field!(camera.frame_while_posing),
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-still-while-posing"),
+                    tr!("ui-options-camera-still-while-posing-tip"),
+                    &field!(camera.still_while_posing),
+                );
+                cx.toggle(
                     tr!("ui-options-camera-follow-the-targeted-object"),
                     tr!("ui-options-camera-the-camera-follows-the-object-it-is-focused-on"),
                     &field!(camera.track_focus_object),

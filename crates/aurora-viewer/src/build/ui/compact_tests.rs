@@ -1801,6 +1801,7 @@ fn shifted_mesh_selection_edits_specular_values_across_different_maps() {
             ..Default::default()
         },
     );
+    inspector.tool.mouse_up(&mut inspector.world, &inspector.settings, None);
     assert_eq!(inspector.tool.selection.len(), 2, "Shift-click should select both mesh roots");
 
     for _ in 0..4 {

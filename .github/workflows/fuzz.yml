@@ -57,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [j2k, mesh, anim, llsd, material, packet, object, prim, volume, sculpt, terrain, sound, misc]
+        target: [j2k, mesh, anim, llsd, material, packet, object, prim, volume, sculpt, terrain, sound, misc, editor]
     env:
       SECONDS_PER_TARGET: ${{ inputs.seconds || '600' }}
     steps:

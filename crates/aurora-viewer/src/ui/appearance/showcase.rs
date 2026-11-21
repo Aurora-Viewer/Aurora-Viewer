@@ -19,6 +19,7 @@ use crate::{
     ui::{fonts, icons, menu, widgets},
     world::{World, outfit_folders::Entry},
 };
+use aurora_i18n::UiUpper;
 use aurora_net::outfits::categories::Update;
 use egui::{Rect, Sense, Vec2};
 use std::collections::{HashMap, HashSet};
@@ -307,7 +308,7 @@ fn rail_column(
             if !groups.is_empty() {
                 ui.add_space(12.0);
                 ui.label(
-                    egui::RichText::new(aurora_i18n::tr!("ui-appearance-showcase-folders").to_uppercase())
+                    egui::RichText::new(aurora_i18n::tr!("ui-appearance-showcase-folders").ui_upper())
                         .size(11.0)
                         .strong()
                         .color(p.muted),
@@ -864,6 +865,14 @@ fn preview_panel(
             }
         });
     }
+    // What an outfit holds is an Aurora addition to the gallery. The Legacy
+    // Viewer shows it in the "My Outfits" list alone, which @showinv
+    // disables (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>,
+    // indra/newview/rlvhandler.cpp): the items and their copied list follow
+    // it, the gallery keeps its outfits.
+    if world.rlva.has("showinv") {
+        return;
+    }
     ui.add_space(8.0);
     contents(ui, p, world, st, id, actions);
     ui.add_space(8.0);
@@ -934,7 +943,7 @@ fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(title.to_uppercase()).size(11.0).strong().color(p.muted));
+            ui.label(egui::RichText::new(title.ui_upper()).size(11.0).strong().color(p.muted));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(egui::RichText::new(rows.len().to_string()).size(11.0).color(p.muted));
             });

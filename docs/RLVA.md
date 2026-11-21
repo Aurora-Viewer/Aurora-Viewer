@@ -18,6 +18,12 @@ Legacy Viewer (originally LGPL 2.1, Kitty Barnett). The upstream
 [command documentation](https://docs.catznip.com/rlva/allinone/) is useful for
 script authors; the command lists below describe this branch specifically.
 
+The rule is the Legacy Viewer's behaviour, neither stricter nor looser, with
+three exceptions: RLVa can be turned off during a session (the human's
+decision), a control the Legacy Viewer does not have follows the restriction
+of its nearest neighbour, and an asset id is never shown where the creators'
+permission rule hides it.
+
 ## Current command families
 
 - OwnerSay parsing, comma-separated commands, n/y and add/rem, clear with a
@@ -197,6 +203,14 @@ script authors; the command lists below describe this branch specifically.
   reference's defaults; releasing the last FOV limit restores the user's value.
   Active FOV commands use the reference's physical bounds adjusted for window
   aspect; enabling RLVa without camera commands preserves the native view.
+  The distance limits hold the third-person and follow views only, never
+  mouselook nor the joystick flycam, which the FOV limits do not reach
+  either (LLAgentCamera::calcCameraPositionTargetGlobal,
+  LLViewerJoystick::moveFlycam). The avatar's limits are measured from its
+  head, the origin's from the place the avatar's own view gives the camera,
+  and one of the two holds the camera at a time: the avatar's when its two
+  ends are equal (`camdistmax:0` alone is such a lock), else the origin's
+  when there is one. Nothing forces mouselook.
 - Vision: per-object setsphere blend, fixed/variable blur, chromatic
   aberration and pixelation; avatar/camera origins, distance/value extension
   and tweened local modifiers. At most six sphere effects run in order on
@@ -214,12 +228,70 @@ script authors; the command lists below describe this branch specifically.
   HUD visibility. setcam_avdist/camavdist silhouettes use the reference's
   dark colour and take precedence over render exceptions.
 - Display: showinv, showminimap, showworldmap, shownametags and
-  showhovertext/all/hud/world.
+  showhovertext/all/hud/world. In Appearance, showinv disables the "My
+  Outfits" list alone, and leaves it and the outfit editor once, when it
+  starts (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>); the outfit gallery
+  stays, without the list of an outfit's items Aurora adds to it. Pay stays
+  enabled in a profile under pay: the pay window refuses to open. Back and
+  Forward toward a place showloc hid stay enabled, and ask for the zeroed
+  place the history keeps (LLTeleportHistory::goToItem).
 - Privacy: showloc, shownames (including strict UUID exceptions) and
   shownearby. Display names, rich chat, notifications, hover text, maps and
   radar use privacy projections while canonical identities and transcript
   filenames stay intact. Hidden-name avatar menus expose the reference's
-  limited actions. Application links and place details filter labels and
+  limited actions. The right-click menu of an avatar in the world (and of what
+  they wear) greys View profile, Become friends, Add to contact set, Send IM,
+  Give my calling card, Voice call, Invite to group, Ignore and Offer teleport
+  while `@shownames` hides that resident (`RLV.CanShowName`,
+  `Avatar.EnableAddFriend`, `Avatar.EnableCall` and `Object.EnableMute`,
+  menu_avatar_other.xml); Block voice follows Ignore and a name-plate click
+  that would run one of them does nothing (both stricter than the Legacy
+  Viewer, which has neither). A conversation (an IM, a group chat, its
+  members and header), the notices about them (an IM, a friendship offer),
+  the friends, group and search lists, the group profile, About Land and the
+  estate and region windows name their people whoever is around, and a click
+  on such a name opens the profile. The menu of a name greys View profile and
+  Zoom in while `@shownames` is set (FSCommon::checkIsActionEnabled) and keeps
+  the friendship offer, the history and the copies; the people lists offer no
+  friendship to a hidden resident (PeopleContextMenu). A name the
+  restriction hides in a chat (a speaker of the nearby chat, a rewritten
+  mention) opens no menu, as the Legacy Viewer writes it as plain text
+  (FSChatHistory). The owner and the creator of an item, in the inventory or
+  in an object's contents, follow LLSidepanelItemInfo field by field: the
+  owner is hidden unless excepted, the creator when they also own the item
+  or stand nearby, and a hidden one is a plain stand-in that opens no
+  profile. A bare link to a resident in chat keeps the
+  name it shows, as the Legacy Viewer does not test it (LLUrlEntryAgent); the
+  label of a labelled link is filtered like the text around it
+  (RlvUtil::filterNames and filterLocation). A `/mention` link is rewritten
+  where RlvUtil::filterMentions runs: on every line of the nearby chat and in
+  what an object or the system says, not in a script's prompt, where it reads
+  "@" and the name of its resident (LLUrlEntryAgentMention has no RLVa
+  test). `@shownames` and `@showloc` rewrite the names and the places in
+  what no resident typed: an object's chat and IMs, the system's messages,
+  the viewer's notices. What a resident typed, in the nearby chat or in an
+  IM session, ours included, is shown as typed
+  (LLFloaterIMNearbyChatHandler::processChat filters only when the source is
+  not an avatar). A script's prompt (its dialog or text box, its permission
+  question, its link prompt) is shown as the simulator sent it, the name of
+  the object's owner included (process_script_dialog and
+  process_script_question have no RLVa test); a click on that name opens no
+  profile while the restriction hides the resident. The giver of an
+  inventory offer, and who accepts or declines what we gave, is hidden only
+  while they stand around with neither a conversation nor their profile
+  open (inventory_offer_handler, RlvUIEnabler::hasOpenIM and
+  hasOpenProfile); it is decided once, when the notice arrives, and its
+  card, the notification history and the on-screen chat follow. A payment
+  names its resident. A hidden resident's radar mark stays on the name tag
+  and leaves the map dot (LLVOAvatar::getNameTagColor, LLNetMap::draw). The
+  build General tab, the object profile and Inspect hide the owner, and the
+  creator only when they also own the object or stand around
+  (LLPanelPermissions::refresh). The label of an application link found
+  from an id (a resident, a group, a parcel, an experience) is shown as
+  found; what a label takes from its address is rewritten like the text
+  around it. A line read back from a transcript keeps the name and the
+  text the file gives it (FSFloaterNearbyChat::loadHistory): what was
+  hidden when it was said is hidden in the file. Place details
   disallow copying a hidden location. New landmarks, picks and classifieds
   cannot reveal the current location; existing entries remain editable.
   Teleport offers retain only eligible recipients (permissive tplure
