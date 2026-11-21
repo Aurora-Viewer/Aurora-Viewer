@@ -164,11 +164,13 @@ pub struct LooksUi {
     /// zone, a drop takes it out).
     carrying: Option<usize>,
     over_zone: bool,
-    /// Where the cards and the catalogue were drawn last frame: what a
-    /// carried tile or card is dropped on.
+    /// Where the cards and the take-out zone were drawn last frame: what a
+    /// carried tile or card is dropped on. The zone is the dashed box only,
+    /// never the catalogue's row above it (feedback 2026-11-21: a card
+    /// touching the row's title was already taken out).
     cards_rect: Option<Rect>,
     drawn: Vec<Rect>,
-    catalogue_rect: Option<Rect>,
+    zone_rect: Option<Rect>,
     /// The catalogue list's corner, and the view it shows (its tiles'
     /// places are kept per view).
     grid_origin: egui::Pos2,
@@ -380,17 +382,16 @@ impl LooksUi {
         let unrolled = ui.ctx().animate_bool_with_time(self.id("catalogue_open"), !self.folded, UNROLL);
         self.cards(ui, p, s, room);
         let cards = ui.cursor().top() - cards_top;
-        let top = ui.cursor().top();
         widgets::divider(ui, p);
         // while a card is carried, the zone that takes it out stands in the
         // catalogue's place at its height (in its row's when it is folded):
         // nothing around it moves
         let spacing = ui.spacing().item_spacing.y;
-        match (self.carrying.is_some(), self.folded) {
-            (true, true) => self.remove_zone(ui, p, self.bar_height - spacing),
+        let zone = match (self.carrying.is_some(), self.folded) {
+            (true, true) => Some(self.remove_zone(ui, p, self.bar_height - spacing)),
             (true, false) => {
                 self.catalogue_bar(ui, p, s, &opts);
-                self.remove_zone(ui, p, self.catalogue_height - spacing);
+                Some(self.remove_zone(ui, p, self.catalogue_height - spacing))
             }
             (false, _) => {
                 let start = ui.cursor().top();
@@ -418,9 +419,10 @@ impl LooksUi {
                     }
                     ui.allocate_exact_size(Vec2::new(width, (measured * unrolled - spacing).max(0.0)), Sense::hover());
                 }
+                None
             }
-        }
-        self.catalogue_rect = Some(Rect::from_x_y_ranges(ui.min_rect().x_range(), top..=ui.cursor().top()));
+        };
+        self.zone_rect = zone;
         let rest = ui.cursor().top() - start - cards;
         if (rest - self.rest).abs() > 0.5 {
             self.rest = rest;
@@ -554,14 +556,14 @@ impl LooksUi {
                         ui.ctx().request_repaint();
                     }
                 }
-                // a card out of its list and touching the catalogue (the
-                // take-out zone) is taken out when let go; anywhere else it
-                // takes the place it was let go at
+                // a card out of its list and touching the take-out zone is
+                // taken out when let go; anywhere else it takes the place it
+                // was let go at
                 let over_catalogue = layout.out
                     && self
                         .carrying
                         .and_then(|i| self.drawn.get(i))
-                        .is_some_and(|card| self.catalogue_rect.is_some_and(|zone| zone.intersects(*card)));
+                        .is_some_and(|card| self.zone_rect.is_some_and(|zone| zone.intersects(*card)));
                 self.over_zone = over_catalogue;
                 match (released.then(|| self.carrying.take()).flatten(), layout.moved) {
                     (Some(from), _) if over_catalogue => edits.push(Edit::Remove(from)),
@@ -946,7 +948,15 @@ impl LooksUi {
     /// after.
     fn catalogue_bar(&mut self, ui: &mut egui::Ui, p: &Palette, s: &Stack<'_>, opts: &Options) {
         let n = s.looks.len();
-        ui.horizontal(|ui| {
+        // folded, the row is as tall as a closed card, and so is the zone
+        // that stands in its place while a card is carried (feedback
+        // 2026-11-21: the row's own height made a tiny target); it eases to
+        // the buttons' height as the catalogue unrolls
+        let unrolled = ui.ctx().animate_bool_with_time(self.id("catalogue_open"), !self.folded, UNROLL);
+        let row = egui::lerp(HEAD..=ui.spacing().interact_size.y, unrolled);
+        let width = ui.available_width();
+        ui.allocate_ui_with_layout(Vec2::new(width, row), Layout::left_to_right(Align::Center), |ui| {
+            ui.set_min_size(Vec2::new(width, row));
             let chevron = if self.folded { "chevron-right" } else { "chevron-down" };
             if widgets::icon_button(ui, p, chevron, aurora_i18n::tr!("photo-looks-catalogue-fold"), true) {
                 self.folded = !self.folded;
@@ -1006,8 +1016,8 @@ impl LooksUi {
         }
     }
 
-    /// While a card is carried, the catalogue takes it out.
-    fn remove_zone(&mut self, ui: &mut egui::Ui, p: &Palette, height: f32) {
+    /// While a card is carried, the catalogue takes it out: the zone drawn.
+    fn remove_zone(&mut self, ui: &mut egui::Ui, p: &Palette, height: f32) -> Rect {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height.max(24.0)), Sense::hover());
         let hot = self.over_zone;
         let radius = ui.visuals().widgets.inactive.corner_radius;
@@ -1038,6 +1048,7 @@ impl LooksUi {
         let size = if rect.height() >= 64.0 { 20.0 } else { 16.0 };
         crate::ui::sheet::icon_at(ui, "trash-filled", icon, size, p.danger);
         ui.painter().galley(words - text.size() / 2.0, text, p.danger);
+        rect
     }
 
     /// The tabs, the search, Aurora's sections and the tiles.
@@ -1826,6 +1837,52 @@ mod tests {
         frame(&mut frames, &mut ed, &mut s, Vec::new());
         assert!(ed.carrying.is_none(), "the panel comes back with its catalogue");
         assert_eq!(s.looks.len(), 2, "and nothing was taken out");
+    }
+
+    /// A card carried down onto the catalogue's row (its title, Replace)
+    /// stays in the stack when let go: only the dashed zone under the row
+    /// takes it out (feedback 2026-11-21).
+    #[test]
+    fn only_the_dashed_zone_takes_a_card_out_not_the_catalogues_row() {
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // carries the last card until its bottom edge sits `past` points
+        // below the zone's top, then lets it go
+        let drop_at = |past: f32| {
+            let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+            let mut ed = LooksUi::default();
+            let mut s = Settings {
+                looks: vec![looks::Layer::new("Sepia"), looks::Layer::new("aurora:vhs")],
+                ..Default::default()
+            };
+            frame(&mut frames, &mut ed, &mut s, Vec::new());
+            frame(&mut frames, &mut ed, &mut s, Vec::new());
+            let mut at = ed.drawn[1].left_center() + Vec2::new(60.0, 0.0);
+            frame(&mut frames, &mut ed, &mut s, vec![egui::Event::PointerMoved(at), button(at, true)]);
+            for _ in 0..3 {
+                at.y += 10.0;
+                frame(&mut frames, &mut ed, &mut s, vec![egui::Event::PointerMoved(at)]);
+            }
+            assert!(ed.carrying.is_some(), "the card is carried");
+            // the dashed box from its own height (the catalogue's, under
+            // the row), not from the area tested
+            let zone = ed.zone_rect.expect("the zone shows while a card is carried");
+            let spacing = egui::Style::default().spacing.item_spacing.y;
+            let box_top = zone.bottom() - (ed.catalogue_height - spacing).max(24.0);
+            for _ in 0..12 {
+                at.y += box_top + past - ed.drawn[1].bottom();
+                frame(&mut frames, &mut ed, &mut s, vec![egui::Event::PointerMoved(at)]);
+            }
+            frame(&mut frames, &mut ed, &mut s, vec![button(at, false)]);
+            frame(&mut frames, &mut ed, &mut s, Vec::new());
+            s.looks.len()
+        };
+        assert_eq!(drop_at(-4.0), 2, "over the catalogue's row only: kept");
+        assert_eq!(drop_at(6.0), 1, "into the dashed zone: taken out");
     }
 
     /// Replace stays on with no effect: the first click then adds.
