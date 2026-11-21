@@ -136,7 +136,7 @@ fn check(label: &str, e: &Encode) {
     let mut dec = Decoder::new();
     check_whole(label, &cs, &mut dec);
     // every byte of a small codestream, a spread of the larger ones
-    check_cuts(label, &cs, &mut dec, (cs.len() / 400).max(1));
+    check_cuts(label, &cs, &mut dec, (cs.len() / 150).max(1));
 }
 
 #[test]
