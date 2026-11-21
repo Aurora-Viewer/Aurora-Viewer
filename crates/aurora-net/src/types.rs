@@ -843,6 +843,10 @@ pub enum NetEvent {
     TeleportFailed {
         reason: String,
     },
+    /// The TeleportFailed that follows is a refusal for the destination's
+    /// content rating (teleport_access.rs): the viewer may offer to change
+    /// the preference instead of reporting the reason.
+    TeleportAccessBlocked(crate::teleport_access::AccessBlocked),
     Alert {
         message: String,
     },

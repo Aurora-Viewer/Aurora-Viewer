@@ -1,5 +1,6 @@
-//! LLGLTFLoader::buildOverrideMatrix, computeGltfToViewerSkeletonTransform
-//! and checkForXYrotation (indra/newview/gltf/llgltfloader.cpp, LGPL 2.1).
+//! LLGLTFLoader::buildOverrideMatrix, computeGltfToViewerSkeletonTransform,
+//! computeViewerBindMatrix and checkForXYrotation
+//! (indra/newview/gltf/llgltfloader.cpp, LGPL 2.1).
 //! Resolve hierarchy once, then translate authored rest/bind frames to the
 //! viewer skeleton. Joint-position imports never replace SL bone rotations.
 
@@ -152,22 +153,26 @@ pub(super) fn read(
         }
         support_rests[index] = if joint.support == "base" { rests[index] } else { support_rest };
     }
-    // The legacy conversion intentionally uses the ordinary Y/Z basis here;
-    // the detected XY correction is already present in the override rest.
+    // Without authored binds the legacy conversion uses the ordinary Y/Z
+    // basis; the detected XY correction is already present in the override rest.
     let ordinary_basis = Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2);
     let mut inverse_bind = Vec::new();
     let mut alternate_bind = Vec::new();
     for (i, &node) in indices.iter().enumerate() {
         let (matrix, translation) = if let Some((rest, translation)) = overrides.get(&node) {
-            let change = *rest * (ordinary_basis * globals[node]).inverse();
             let matrix = if let Some(inverse) = &inverse {
                 let authored = Mat4::from_cols_array(&inverse[i]);
                 if !authored.is_finite() || authored.determinant().abs() <= f32::MIN_POSITIVE {
                     return Err(AssetError::invalid("singular skin inverse bind"));
                 }
-                (change * ordinary_basis * authored.inverse()).inverse()
+                // LLGLTFLoader::computeViewerBindMatrix: the bind's turn from the
+                // joint's own rest, both in viewer axes, put on the viewer rest.
+                // A source bound in its own pose (an A-pose) depends on the
+                // turn being converted to viewer axes before it is applied.
+                let delta = (basis * authored.inverse()) * (basis * globals[node]).inverse();
+                (delta * *rest).inverse()
             } else {
-                change.inverse()
+                (*rest * (ordinary_basis * globals[node]).inverse()).inverse()
             };
             (matrix, *translation)
         } else {

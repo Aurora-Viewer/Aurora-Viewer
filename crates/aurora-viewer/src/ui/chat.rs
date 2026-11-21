@@ -57,6 +57,8 @@ mod chat_lines_tests;
 #[cfg(test)]
 mod contact_visual_tests;
 #[cfg(test)]
+mod earshot_tests;
+#[cfg(test)]
 mod volume_tests;
 
 use super::context::CtxAction;
@@ -350,6 +352,15 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// How far residents can hear the selected nearby chat volume.
+    pub(crate) fn earshot_range(&self, ranges: crate::world::radar::ChatRanges) -> f32 {
+        match self.volume {
+            compose::Volume::Whisper => ranges.whisper,
+            compose::Volume::Say => ranges.say,
+            compose::Volume::Shout => ranges.shout,
+        }
+    }
+
     /// The column's saved state, given every frame by the app
     /// (`Settings::chat_column_collapsed`), or the demo session's own.
     pub fn follow_column_setting(&mut self, saved: bool) {
@@ -875,6 +886,11 @@ impl ChatUi {
     pub fn stop_local_typing(&mut self) -> bool {
         self.local_typing.stop()
     }
+}
+
+/// Count residents whose known range is within the selected nearby chat range.
+pub(crate) fn earshot_count(entries: impl IntoIterator<Item = Option<f32>>, range: f32) -> usize {
+    entries.into_iter().filter(|distance| distance.is_some_and(|d| d <= range)).count()
 }
 
 pub struct OutgoingChat {
@@ -3250,8 +3266,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         super::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
     }
     line_menu::show(ui, menu, p, |ui, target| {
-        if let Some(avatar) = target.sender {
-            super::context::chat_sender_menu(ui, p, w, avatar, env.names, &target.line);
+        if let Some(sender) = target.sender {
+            sender_menu(ui, p, w, sender, env.names, &target.line);
         } else if let Rows::Thread(th) = &mut rows {
             thread::message_menu(ui, &env, th, target);
         }
@@ -3391,7 +3407,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                 ui.set_width(w - 8.0);
                 ui.horizontal(|ui| {
                     if object {
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                        let (rect, cube) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                        line_object_sender(cube, p, world, line, env.menu);
                         let (glyph, tint) = object_row::object_glyph(line, p, super::colors::sender_color(line));
                         if let Some(t) = env.icons.get(glyph) {
                             ui.painter().image(
@@ -3424,8 +3441,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                         (false, true) => world.agent_id,
                         _ => line.source,
                     };
-                    if object && !line.source.is_nil() {
-                        object_sender(&r.clone().on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
+                    if object {
+                        line_object_sender(r.clone(), p, world, line, env.menu);
                     } else if !avatar.is_nil() {
                         line_name_menu(&r, p, world, avatar, env.names, line, env.menu);
                     }
@@ -4991,44 +5008,82 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
         });
 }
 
+/// The object a line can be inspected or blocked by: what it said, and its
+/// IMs, which carry its id in their session id (IM_FROM_TASK).
+pub(super) fn line_object(line: &crate::world::ChatLine) -> Option<uuid::Uuid> {
+    (matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !line.source.is_nil()).then_some(line.source)
+}
+
+/// The inspector of a line's object: the line's own origin, its name alone
+/// when none was kept.
+fn object_inspect(world: &World, line: &crate::world::ChatLine) -> CtxAction {
+    CtxAction::AppLink(crate::slapp::AppLink::ObjectIm(world.chat_object(line).cloned().unwrap_or_else(
+        || crate::slapp::RemoteObject {
+            id: line.source,
+            name: line.from.clone(),
+            owner: uuid::Uuid::nil(),
+            group_owned: false,
+            owner_hidden: false,
+            slurl: String::new(),
+        },
+    )))
+}
+
+/// The rows of an object's menu: inspect, ignore (the Block of
+/// menu_object_icon.xml and menu_url_objectim.xml).
+fn object_menu(ui: &mut egui::Ui, p: &Palette, world: &World, line: &crate::world::ChatLine) {
+    let id = line.source;
+    if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
+        super::context::request(ui.ctx(), object_inspect(world, line));
+    }
+    let (icon, label) = if world.object_block_entry(&id).is_some() {
+        ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
+    } else {
+        ("ban", aurora_i18n::tr!("common-ignore"))
+    };
+    if super::menu::item(ui, p, icon, label) {
+        super::context::request(
+            ui.ctx(),
+            CtxAction::ToggleBlockObject {
+                id,
+                name: line.from.clone(),
+            },
+        );
+    }
+}
+
+/// The menu of a line's sender, a resident's or an object's.
+pub(super) fn sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, scope: NameScope, line: &crate::world::ChatLine) {
+    if line_object(line) == Some(id) {
+        object_menu(ui, p, world, line);
+    } else {
+        super::context::chat_sender_menu(ui, p, world, id, scope, line);
+    }
+}
+
 /// An object's name in a line: a click inspects it, a right click offers
 /// to inspect or to ignore it (the Legacy Viewer's objectim link of the name,
 /// LLViewerChat::getSenderSLURL).
 fn object_sender(resp: &egui::Response, p: &Palette, world: &World, line: &crate::world::ChatLine) {
-    let id = line.source;
-    let inspect = || {
-        CtxAction::AppLink(crate::slapp::AppLink::ObjectIm(world.chat_object(line).cloned().unwrap_or_else(
-            || crate::slapp::RemoteObject {
-                id,
-                name: line.from.clone(),
-                owner: uuid::Uuid::nil(),
-                group_owned: false,
-                owner_hidden: false,
-                slurl: String::new(),
-            },
-        )))
-    };
-    super::menu::context_menu(resp, p, |ui| {
-        if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
-            super::context::request(ui.ctx(), inspect());
-        }
-        let (icon, label) = if world.mutes.is_muted_id(&id) {
-            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("ban", aurora_i18n::tr!("common-ignore"))
-        };
-        if super::menu::item(ui, p, icon, label) {
-            super::context::request(
-                ui.ctx(),
-                CtxAction::ToggleBlockObject {
-                    id,
-                    name: line.from.clone(),
-                },
-            );
-        }
-    });
+    super::menu::context_menu(resp, p, |ui| object_menu(ui, p, world, line));
     if resp.clicked() {
-        super::context::request(&resp.ctx, inspect());
+        super::context::request(&resp.ctx, object_inspect(world, line));
+    }
+}
+
+/// The name or the cube of a full-size line from an object: `object_sender`,
+/// in the transcript's own menu where it has one.
+pub(super) fn line_object_sender(r: egui::Response, p: &Palette, world: &World, line: &crate::world::ChatLine, menu: Option<egui::Id>) {
+    let Some(id) = line_object(line) else { return };
+    line_menu::demo_mark_object(&r);
+    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if let Some(menu) = menu {
+        line_menu::sender(&r, menu, id, line);
+        if r.clicked() {
+            super::context::request(&r.ctx, object_inspect(world, line));
+        }
+    } else {
+        object_sender(&r, p, world, line);
     }
 }
 

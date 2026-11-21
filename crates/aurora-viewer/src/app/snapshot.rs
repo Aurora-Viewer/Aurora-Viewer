@@ -1944,11 +1944,7 @@ impl App {
                 }
             }
             Action::PersonalLighting => self.panels.personal_lighting = true,
-            Action::KeepLight => {
-                if self.world.eep.keep_photo() {
-                    self.snapshots.ui.light.env = Default::default();
-                }
-            }
+            Action::KeepLight => self.keep_photo_light(),
             Action::Controls => {
                 if !self.panels.camera_controls && !self.panels.movement_controls {
                     self.panels.camera_controls = true;
@@ -2758,7 +2754,7 @@ LUT_3D_SIZE {n}
             return;
         }
         if !self.panels.snapshot {
-            self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+            self.snapshots.ui.light = self.snapshots.ui.light.closed();
             // the outfit's auto portrait in its studio light
             if let Some(studio) = self.outfit_portrait_light() {
                 self.world.eep.set_photo(studio);
@@ -2776,6 +2772,15 @@ LUT_3D_SIZE {n}
         }
         self.world.eep.set_photo(light.env);
         self.scene.attached_lights = light.attached_lights;
+    }
+
+    /// "Keep this light" (the photo window's button and Phototools'
+    /// banner): the photo's environment becomes the user's own, and only it
+    /// (`EnvSelector::keep_photo`).
+    pub(super) fn keep_photo_light(&mut self) {
+        if self.world.eep.keep_photo() {
+            self.snapshots.ui.light.env = Default::default();
+        }
     }
 
     /// The lists of the Light section load like the environment window's.
@@ -2807,7 +2812,9 @@ LUT_3D_SIZE {n}
         self.snapshots.ui.light.exposure.unwrap_or(self.settings.exposure)
     }
 
-    /// The photo's light holds the clouds still.
+    /// The clouds are held still: a switch of the session (never saved)
+    /// shared by the photo window and Phototools, kept when the photo
+    /// window closes (`PhotoLight::closed`).
     pub(super) fn photo_clouds_paused(&self) -> bool {
         self.snapshots.ui.light.clouds_paused
     }
@@ -3342,7 +3349,7 @@ LUT_3D_SIZE {n}
 }
 
 /// The Light section's view of the environment beneath the photo's.
-fn env_view<'a>(
+pub(super) fn env_view<'a>(
     env_ui: &'a crate::ui::environment::EnvironmentUi,
     eep: &crate::world::eep_env::EnvSelector,
 ) -> crate::ui::snapshot::EnvView<'a> {

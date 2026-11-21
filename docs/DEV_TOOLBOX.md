@@ -152,7 +152,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | O2 | Detail levels (LOD) | toggle | The level of the objects near the pointer, with distance and radius |
 | O3 | Culling | toggle | Tested spheres, green drawn, red culled |
 | O4 | Freeze culling | toggle | Keeps the culling view to move around it |
-| O5 | Skeletons | toggle | Bones of the avatars within 32 m |
+| O5 | Skeletons | toggle | Bones of the avatars and animated objects within 32 m, each from its joint to its end, in green, like the Legacy Viewer's Render Metadata › Joints |
 | O6 | Complexity in name tags | toggle | |
 | O7 | Inspect objects | window | Inspect Objects on the target |
 | O8 | Avatar health | window | Stop animations, undeform, rebake, refresh attachments, reset skeleton |

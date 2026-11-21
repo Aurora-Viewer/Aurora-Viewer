@@ -112,6 +112,7 @@ pub mod staff;
 pub mod status;
 pub mod suitcase;
 pub mod system_messages;
+pub mod teleport_access;
 pub mod teleport_cancel;
 pub mod teleport_invites;
 pub mod temp_attachments;
@@ -586,6 +587,9 @@ pub struct World {
     /// Other avatars' shapes gliding to a new appearance (shape_tween.rs).
     pub shape_tweens: shape_tween::ShapeTweens,
     pub alerts: VecDeque<String>,
+    /// The last simulator alerts with a running number, which jobs waiting
+    /// for a refusal read (`alerts` is emptied by the interface).
+    pub recent_alerts: VecDeque<(u64, String)>,
     /// The announced restart of the agent's region (region_restart.rs).
     pub region_restart: region_restart::Tracker,
     pub movement_complete: bool,
@@ -839,6 +843,9 @@ pub struct World {
     /// The content rating chosen during the session and its sync with the
     /// server.
     pub maturity: maturity::MaturityPreference,
+    /// A teleport refused for its content rating: the request to restart
+    /// and the prompt (`teleport_access.rs`).
+    pub teleport_access: teleport_access::TeleportAccess,
     /// World › Set Home to Here waiting for the simulator's answer.
     pub set_home: home::SetHome,
     /// Preferences › Privacy's account settings kept by the grid.
@@ -874,6 +881,9 @@ pub struct World {
     /// not TeleportFinish): the camera may stay where it is
     /// (`Camera::on_teleport_arrival`).
     pub arrived_by_local_teleport: bool,
+    /// The last arrival was in another region than the one before (a
+    /// teleport away or a border crossing), not the login.
+    pub arrived_in_another_region: bool,
     /// Inventory folders asked again after a failed fetch since the agent
     /// last changed region (`InventoryFetchFailed`).
     inventory_retried: HashSet<Uuid>,
@@ -1119,6 +1129,7 @@ impl World {
             shape_preview_generation: 0,
             shape_tweens: Default::default(),
             alerts: VecDeque::new(),
+            recent_alerts: VecDeque::new(),
             region_restart: Default::default(),
             movement_complete: false,
             demo_outfit_region: false,
@@ -1219,6 +1230,7 @@ impl World {
             arrived_by_crossing: false,
             local_teleport: false,
             arrived_by_local_teleport: false,
+            arrived_in_another_region: false,
             inventory_retried: HashSet::new(),
             origin_shift: Vec3::ZERO,
             left_behind_since: None,
@@ -1238,6 +1250,7 @@ impl World {
             inventory_offers: inventory_offers::InventoryOffers::default(),
             payments: payments::Payments::default(),
             maturity: maturity::MaturityPreference::default(),
+            teleport_access: Default::default(),
             set_home: home::SetHome::default(),
             user_info: user_info::UserInfoState::default(),
             sim_console: sim_console::SimConsole::default(),
@@ -3364,6 +3377,10 @@ impl World {
                 self.hover_height.reply(request, region, success);
                 None
             }
+            NetEvent::TeleportAccessBlocked(blocked) => {
+                self.teleport_access.blocked(blocked);
+                None
+            }
             NetEvent::MaturityPreference(result) => {
                 self.on_maturity_answer(result);
                 None
@@ -3440,10 +3457,16 @@ impl World {
                 // to another region (MainRegionChanged comes first) only the
                 // arrival's list stays; the simulators still connected send
                 // theirs again.
-                if self.region_left.take().is_some_and(|left| left != handle) && !self.arrived_by_crossing {
+                self.arrived_in_another_region = self.region_left.take().is_some_and(|left| left != handle);
+                if self.arrived_in_another_region && !self.arrived_by_crossing {
                     self.coarse.retain(|h, _| *h == handle);
                 }
                 self.movement_complete = true;
+                // LLAgent::handleTeleportFinished, once the arrival is known
+                // (LLViewerParcelMgr's teleport finished callback)
+                if self.teleporting {
+                    self.teleport_access_ended(true);
+                }
                 if self.teleporting || !self.arrived_once {
                     let at = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -3940,10 +3963,15 @@ impl World {
                 self.tp_back_slurl = None;
                 self.teleporting = false;
                 self.tp_failed = true;
-                self.system_notice(
-                    aurora_i18n::tr!("world-mod-teleport-failed", reason = reason.to_string()),
-                    crate::world::notice_topics::Topic::Teleport,
-                );
+                self.teleport_access_ended(false);
+                // handle_teleport_access_blocked: a refusal for the rating
+                // gets its prompt instead of the reason
+                if !self.teleport_access_failed() {
+                    self.system_notice(
+                        aurora_i18n::tr!("world-mod-teleport-failed", reason = reason.to_string()),
+                        crate::world::notice_topics::Topic::Teleport,
+                    );
+                }
                 None
             }
             NetEvent::ScriptControlChange(blocks) => {
@@ -3970,6 +3998,11 @@ impl World {
                 // SystemMessageTip (process_alert_core)
                 let notice = self.notice_of(id, attention::Open::Notifications);
                 self.ask_attention(attention::Cause::Notice, notice);
+                let serial = self.recent_alerts.back().map_or(1, |(n, _)| n + 1);
+                if self.recent_alerts.len() >= 8 {
+                    self.recent_alerts.pop_front();
+                }
+                self.recent_alerts.push_back((serial, message.clone()));
                 self.alerts.push_back(message);
                 None
             }
@@ -5712,7 +5745,22 @@ impl World {
         } else {
             None
         };
-        self.ask_attention(attention::Cause::Message, notice);
+        // an offer is told as one; an alert, a notice or an answer as a notice
+        let cause = if matches!(
+            im.dialog,
+            d::LURE_USER
+                | d::GODLIKE_LURE_USER
+                | d::TELEPORT_REQUEST
+                | d::FRIENDSHIP_OFFERED
+                | d::INVENTORY_OFFERED
+                | d::TASK_INVENTORY_OFFERED
+                | d::GROUP_INVITATION
+        ) {
+            attention::Cause::Offer
+        } else {
+            attention::Cause::Message
+        };
+        self.ask_attention(cause, notice);
         true
     }
 
@@ -6073,6 +6121,13 @@ impl World {
             self.invite_card_answered(invite, answer);
             return (std::mem::take(&mut self.groups.out), None);
         }
+        // a teleport refused for its rating (teleport_access.rs)
+        if let Some(notifications::Data::MaturityChange { rating, prompt }) = data {
+            let accept = matches!(r, notifications::Response::Accept);
+            self.notifications.respond(id, r, |_| Uuid::nil(), Uuid::nil());
+            self.answer_teleport_access(rating, prompt, accept);
+            return (Vec::new(), None);
+        }
         // teleport offers and requests: answered through their invitation,
         // closing the notification declines (as Firestorm's toasts do)
         if let Some(notifications::Data::Lure { invite, .. } | notifications::Data::TeleportRequest { invite, .. }) =
@@ -6289,7 +6344,7 @@ impl World {
                     body: String::new(),
                     open: attention::Open::Conversation(id),
                 };
-                self.ask_attention(attention::Cause::Notice, Some(notice));
+                self.ask_attention(attention::Cause::Presence(online), Some(notice));
             }
             // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
             // asked for: the toast already says it
@@ -10137,7 +10192,7 @@ mod motion_tests {
             position: Vec3::new(255.0, 50.0, 30.0),
             look_at: Vec3::Y,
         });
-        assert!(world.arrived_by_crossing);
+        assert!(world.arrived_by_crossing && world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(256.5, 50.0, 30.0));
         assert_eq!(world.take_origin_shift(), Vec3::new(256.0, 0.0, 0.0));
     }
@@ -10155,7 +10210,7 @@ mod motion_tests {
             position: Vec3::new(200.0, 20.0, 40.0),
             look_at: Vec3::Y,
         });
-        assert!(!world.arrived_by_crossing);
+        assert!(!world.arrived_by_crossing && world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(200.0, 20.0, 40.0));
         assert_eq!(world.agent.velocity, Vec3::ZERO);
     }
@@ -10169,7 +10224,7 @@ mod motion_tests {
             position: Vec3::new(200.0, 50.0, 30.0),
             look_at: Vec3::Y,
         });
-        assert!(!world.arrived_by_crossing);
+        assert!(!world.arrived_by_crossing && !world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(200.0, 50.0, 30.0));
     }
 
