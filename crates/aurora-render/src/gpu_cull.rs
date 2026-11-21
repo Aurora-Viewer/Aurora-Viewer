@@ -104,8 +104,8 @@ pub const BIN_PROBE: usize = 9;
 /// Shadow casters of each cascade drawn with the alpha test of `fs_shadow`
 /// (masked faces, blended rigged faces).
 pub const BIN_SHADOW_ALPHA: usize = 10;
-/// Shadow casters of the projectors within the configured budget, drawn with the
-/// alpha test.
+/// Shadow casters of the projectors within the configured budget and of the
+/// point lights (`projector_shadows::SpotBins`), drawn with the alpha test.
 pub const BIN_SPOT: usize = 13;
 /// Projector shadow maps of a frame.
 pub const SPOT_SHADOWS: usize = crate::projector_shadows::MAX_PROJECTOR_SHADOWS;
@@ -387,7 +387,7 @@ pub struct CullFrame {
     /// The probe capture's origin and how far it draws objects
     /// (`ProbeCapture::reach`).
     pub probe_eye: [f32; 4],
-    /// Frustums of the projector shadow maps (`frame_flags::SPOT`).
+    /// Planes of the shadow bins (`frame_flags::SPOT`).
     pub spots: [[[f32; 4]; 6]; SPOT_SHADOWS],
     pub cascades: [[[f32; 4]; 4]; 3],
     /// Shadow map of the probe being captured (`frame_flags::PROBE_SHADOW`).
@@ -414,8 +414,8 @@ impl CullFrame {
     /// Frame parameters from the scene's view, the cascade matrices with
     /// their caster planes and the water reflection, mirror and probe face
     /// view-projections (`flags` says which are drawn); sizes are filled by
-    /// `GpuCull::prepare`. `spots`: view-projections of the projector shadow
-    /// maps that are drawn. `merge_size`: side of a cascade in texels when
+    /// `GpuCull::prepare`. `spots`: planes of the shadow bins that are drawn.
+    /// `merge_size`: side of a cascade in texels when
     /// the cascades are merged (`CullFrame::dist`), 0 otherwise.
     pub fn new(
         view: &GpuCullView,
@@ -423,7 +423,7 @@ impl CullFrame {
         shadow_planes: &[[[f32; 4]; SHADOW_PLANES]; 3],
         merge_size: f32,
         [water, mirror, probe]: [Mat4; 3],
-        spots: [Option<Mat4>; SPOT_SHADOWS],
+        spots: [Option<crate::projector_shadows::CullPlanes>; SPOT_SHADOWS],
         probe_shadow: Option<Mat4>,
         mut flags: u32,
     ) -> CullFrame {
@@ -451,7 +451,7 @@ impl CullFrame {
             probe_eye: [0.0; 4],
             // (a depth of 0 to 1: the fifth plane is the far one, and
             // nothing is left out for being before the near one)
-            spots: spots.map(|s| planes(s.unwrap_or(Mat4::IDENTITY))),
+            spots: spots.map(|s| s.unwrap_or_else(|| planes(Mat4::IDENTITY))),
             cascades: cascades.map(|m| m.to_cols_array_2d()),
             probe_shadow: probe_shadow.unwrap_or(Mat4::IDENTITY).to_cols_array_2d(),
             shadow_planes: *shadow_planes,

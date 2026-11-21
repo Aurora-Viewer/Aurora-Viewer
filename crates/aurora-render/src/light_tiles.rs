@@ -287,6 +287,7 @@ mod tests {
 
     fn light(position: Vec3, radius: f32) -> PointLight {
         PointLight {
+            extent: 0.0,
             position,
             radius,
             color: Vec3::ONE,
