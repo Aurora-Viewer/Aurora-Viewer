@@ -180,11 +180,22 @@ impl Drop for OutputThread {
     }
 }
 
-/// Main-mix-clock voice blocks waiting for the independent voice device.
-/// 250 ms is the hard latency ceiling; the voice callback adaptively follows
-/// the main device clock around a 60 ms target.
+/// Main-mix-clock voice frames (48 kHz) waiting for the independent voice
+/// device. The ring holds at most 250 ms; the voice callback plays them 60 ms
+/// behind the main mix and follows the main device's clock around that
+/// target, and a queue past 180 ms (a device that stopped consuming for a
+/// while) is cut back to the target at once.
 const VOICE_QUEUE_MAX_FRAMES: usize = 12_000;
 const VOICE_QUEUE_TARGET_FRAMES: usize = 2_880;
+const VOICE_QUEUE_LIMIT_FRAMES: usize = 3 * VOICE_QUEUE_TARGET_FRAMES;
+
+/// Largest correction of the voice device's read rate (±0.5 %): enough for
+/// the drift between two sound cards, inaudible as a pitch change.
+const VOICE_RATE_CORRECTION: f64 = 0.005;
+
+/// Output frames the voice adapter renders per pass. Its input buffer holds
+/// one pass of main-clock frames, so it is allocated once and never grows.
+const VOICE_PASS_FRAMES: usize = 1_024;
 
 #[derive(Clone)]
 struct VoicePcmRing {
@@ -194,27 +205,32 @@ struct VoicePcmRing {
 
 impl VoicePcmRing {
     fn new() -> Self {
-        let (producer, consumer) = RingBuffer::new(VOICE_QUEUE_MAX_FRAMES * 2);
+        let (producer, consumer) = RingBuffer::new(VOICE_QUEUE_MAX_FRAMES * ENGINE_CHANNELS);
         Self {
             producer: Arc::new(Mutex::new(producer)),
             consumer: Arc::new(Mutex::new(consumer)),
         }
     }
 
+    /// Queues whole stereo frames; what a full ring cannot take is dropped.
     fn push(&self, samples: &[f32]) {
-        let _ = self.producer.lock().push_partial_slice(samples);
+        let mut producer = self.producer.lock();
+        let room = producer.slots() / ENGINE_CHANNELS * ENGINE_CHANNELS;
+        let whole = samples.len() / ENGINE_CHANNELS * ENGINE_CHANNELS;
+        let _ = producer.push_partial_slice(&samples[..whole.min(room)]);
     }
 
     fn clear(&self) {
         let mut consumer = self.consumer.lock();
-        let mut discard = [0.0; 512];
-        while consumer.slots() > 0 {
-            let n = consumer.slots().min(discard.len());
-            let (popped, _) = consumer.pop_partial_slice(&mut discard[..n]);
-            if popped.is_empty() {
-                break;
-            }
-        }
+        let all = consumer.slots();
+        discard(&mut consumer, all);
+    }
+}
+
+/// Drops the oldest `samples` of the ring without copying them.
+fn discard(consumer: &mut Consumer<f32>, samples: usize) {
+    if let Ok(chunk) = consumer.read_chunk(samples.min(consumer.slots())) {
+        chunk.commit_all();
     }
 }
 
@@ -260,12 +276,10 @@ fn output_main(
     voice_separate: Arc<AtomicBool>,
 ) {
     let mut ready = Some(ready_tx);
-    let mut voice_wanted: Option<String> = None;
-    let mut voice_unavailable: Option<String> = None;
-    let mut retry_devices: Option<Vec<String>> = None;
+    let mut voice = VoiceRoute::new(voice_ring.clone(), voice_separate.clone());
     loop {
         let mut reopen_now = false;
-        voice_separate.store(false, Ordering::Relaxed);
+        voice.stop();
         match open_stream(&mixer, wanted.as_deref(), &reference, &voice_ring, &voice_separate) {
             Ok((stream, new_info, health, device)) => {
                 log::info!(
@@ -278,16 +292,7 @@ fn output_main(
                 if let Some(tx) = ready.take() {
                     let _ = tx.send(Ok(()));
                 }
-                let mut voice_stream: Option<(String, cpal::Stream, Arc<StreamHealth>)> = None;
-                configure_voice_stream(
-                    &new_info,
-                    voice_wanted.as_deref(),
-                    &voice_ring,
-                    &voice_separate,
-                    &mut voice_stream,
-                    &mut voice_unavailable,
-                    &mut retry_devices,
-                );
+                voice.configure(&new_info, Instant::now());
                 let watch = if wanted.is_none() {
                     devices::DefaultWatch::new(Direction::Output, &device)
                 } else {
@@ -311,71 +316,31 @@ fn output_main(
                             break;
                         }
                     }
+                    voice.check_stream(Instant::now());
                     if last_device_list.elapsed() >= devices::DefaultWatch::EVERY {
                         last_device_list = Instant::now();
-                        if voice_wanted.is_some() {
-                            let names = output_device_snapshot();
-                            if let Some((selected, _, _)) = &voice_stream {
-                                if !names.iter().any(|name| name == selected) {
-                                    let selected = selected.clone();
-                                    voice_separate.store(false, Ordering::Relaxed);
-                                    drop(voice_stream.take());
-                                    voice_ring.clear();
-                                    note_voice_unavailable(&selected, &mut voice_unavailable, &mut retry_devices, names);
-                                }
-                            } else if voice_unavailable.is_some() && retry_devices.as_ref() != Some(&names) {
-                                configure_voice_stream(
-                                    &new_info,
-                                    voice_wanted.as_deref(),
-                                    &voice_ring,
-                                    &voice_separate,
-                                    &mut voice_stream,
-                                    &mut voice_unavailable,
-                                    &mut retry_devices,
-                                );
-                            }
-                        }
-                    }
-                    if let Some((selected, _, voice_health)) = &voice_stream
-                        && voice_health.failed.load(Ordering::Relaxed)
-                    {
-                        voice_separate.store(false, Ordering::Relaxed);
-                        let selected = selected.clone();
-                        drop(voice_stream.take());
-                        voice_ring.clear();
-                        note_voice_unavailable(&selected, &mut voice_unavailable, &mut retry_devices, output_device_snapshot());
+                        voice.check_devices(&new_info, Instant::now());
                     }
                     match ctl.recv_timeout(Duration::from_millis(250)) {
                         Ok(OutputCmd::SetDevice(name)) => {
                             if name != wanted {
                                 wanted = name;
-                                voice_separate.store(false, Ordering::Relaxed);
-                                drop(voice_stream.take());
-                                voice_ring.clear();
+                                voice.stop();
                                 reopen_now = true;
                                 break;
                             }
                         }
                         Ok(OutputCmd::SetVoiceDevice(name)) => {
-                            if name != voice_wanted {
-                                voice_wanted = name;
-                                configure_voice_stream(
-                                    &new_info,
-                                    voice_wanted.as_deref(),
-                                    &voice_ring,
-                                    &voice_separate,
-                                    &mut voice_stream,
-                                    &mut voice_unavailable,
-                                    &mut retry_devices,
-                                );
+                            if name != voice.wanted {
+                                voice.wanted = name;
+                                voice.backoff = VoiceBackoff::default();
+                                voice.configure(&new_info, Instant::now());
                             }
                         }
                         Err(RecvTimeoutError::Timeout) => {
                             if health.failed.load(Ordering::Relaxed) {
                                 log::warn!("audio output lost; reopening the device");
-                                voice_separate.store(false, Ordering::Relaxed);
-                                drop(voice_stream.take());
-                                voice_ring.clear();
+                                voice.stop();
                                 break;
                             }
                         }
@@ -383,9 +348,7 @@ fn output_main(
                     }
                 }
                 // The callback stops before the new stream is built.
-                voice_separate.store(false, Ordering::Relaxed);
-                drop(voice_stream);
-                voice_ring.clear();
+                voice.stop();
                 drop(stream);
             }
             Err(e) => {
@@ -402,7 +365,10 @@ fn output_main(
         // Retry after a pause; selecting a device retries at once.
         match ctl.recv_timeout(Duration::from_secs(1)) {
             Ok(OutputCmd::SetDevice(name)) => wanted = name,
-            Ok(OutputCmd::SetVoiceDevice(name)) => voice_wanted = name,
+            Ok(OutputCmd::SetVoiceDevice(name)) => {
+                voice.wanted = name;
+                voice.backoff = VoiceBackoff::default();
+            }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
@@ -416,52 +382,182 @@ fn output_device_snapshot() -> Vec<String> {
     devices
 }
 
-fn note_voice_unavailable(name: &str, unavailable: &mut Option<String>, retry_devices: &mut Option<Vec<String>>, devices: Vec<String>) {
-    if unavailable.as_deref() != Some(name) {
-        log::warn!("voice output: {name} unavailable, using the audio output");
-        *unavailable = Some(name.to_owned());
-    }
-    *retry_devices = Some(devices);
+/// The separate voice stream playing on its own device.
+struct VoiceOut {
+    name: String,
+    _stream: cpal::Stream,
+    health: Arc<StreamHealth>,
+    opened: Instant,
 }
 
-fn configure_voice_stream(
-    main: &OutputInfo,
-    wanted: Option<&str>,
-    ring: &VoicePcmRing,
-    separate: &AtomicBool,
-    stream: &mut Option<(String, cpal::Stream, Arc<StreamHealth>)>,
-    unavailable: &mut Option<String>,
-    retry_devices: &mut Option<Vec<String>>,
-) {
-    match voice_stream_for(&main.device_name, wanted.unwrap_or_default()) {
-        VoiceStream::Same => {
-            separate.store(false, Ordering::Relaxed);
-            drop(stream.take());
-            ring.clear();
-            *unavailable = None;
-            *retry_devices = None;
+/// A voice device chosen but not playing: voice goes through the main output
+/// meanwhile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VoiceFallback {
+    name: String,
+    /// The output list when it failed.
+    devices: Vec<String>,
+    /// When to try the device again while it stays listed.
+    retry_at: Instant,
+}
+
+impl VoiceFallback {
+    /// Whether to open the device again, given the output list now: at once
+    /// when the list changed (the device came back, or another one with its
+    /// name), otherwise once the backoff has passed if the device is listed
+    /// (a stream invalidated by a format change, a device another program
+    /// held exclusively). A device still missing waits for the list to change.
+    fn retry_now(&self, devices: &[String], now: Instant) -> bool {
+        devices != self.devices.as_slice() || (now >= self.retry_at && devices.iter().any(|name| name == &self.name))
+    }
+}
+
+/// The wait before the voice device is tried again after a failure: 2 s,
+/// doubled at each failure in a row up to 30 s. A stream that played 30 s
+/// before failing starts the count again.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct VoiceBackoff {
+    failures: u32,
+}
+
+impl VoiceBackoff {
+    const FIRST: Duration = Duration::from_secs(2);
+    const MAX: Duration = Duration::from_secs(30);
+    const STABLE: Duration = Duration::from_secs(30);
+
+    /// The wait after a failure of a stream that played for `played` (zero
+    /// when it did not open).
+    fn after_failure(&mut self, played: Duration) -> Duration {
+        if played >= Self::STABLE {
+            self.failures = 0;
         }
-        VoiceStream::Separate(name) => {
-            if stream
-                .as_ref()
-                .is_some_and(|(current, _, health)| current == &name && !health.failed.load(Ordering::Relaxed))
-            {
-                return;
+        let delay = Self::FIRST.saturating_mul(1 << self.failures.min(4)).min(Self::MAX);
+        self.failures = self.failures.saturating_add(1);
+        delay
+    }
+}
+
+/// The voice-only output requested by the viewer, and its stream when it
+/// plays on a device other than the main output's.
+struct VoiceRoute {
+    /// The requested voice device (`None` = the main output).
+    wanted: Option<String>,
+    stream: Option<VoiceOut>,
+    fallback: Option<VoiceFallback>,
+    backoff: VoiceBackoff,
+    ring: VoicePcmRing,
+    /// Read by the main callback: the Voice bus goes to `ring`.
+    separate: Arc<AtomicBool>,
+}
+
+impl VoiceRoute {
+    fn new(ring: VoicePcmRing, separate: Arc<AtomicBool>) -> Self {
+        Self {
+            wanted: None,
+            stream: None,
+            fallback: None,
+            backoff: VoiceBackoff::default(),
+            ring,
+            separate,
+        }
+    }
+
+    /// Voice back to the main mix; the stream (if any) is closed.
+    fn stop(&mut self) {
+        self.separate.store(false, Ordering::Relaxed);
+        self.stream = None;
+        self.ring.clear();
+    }
+
+    /// Opens the voice stream that `wanted` asks for beside `main`, or
+    /// returns voice to the main mix.
+    fn configure(&mut self, main: &OutputInfo, now: Instant) {
+        match voice_stream_for(&main.device_name, self.wanted.as_deref().unwrap_or_default()) {
+            VoiceStream::Same => {
+                self.stop();
+                self.fallback = None;
             }
-            separate.store(false, Ordering::Relaxed);
-            drop(stream.take());
-            ring.clear();
-            match open_voice_stream(&name, ring) {
-                Ok((opened, health)) => {
-                    *stream = Some((name, opened, health));
-                    *unavailable = None;
-                    *retry_devices = None;
-                    separate.store(true, Ordering::Relaxed);
+            VoiceStream::Separate(name) => {
+                if self
+                    .stream
+                    .as_ref()
+                    .is_some_and(|out| out.name == name && !out.health.failed.load(Ordering::Relaxed))
+                {
+                    return;
                 }
-                Err(_error) => {
-                    note_voice_unavailable(&name, unavailable, retry_devices, output_device_snapshot());
+                self.stop();
+                match open_voice_stream(&name, &self.ring) {
+                    Ok((stream, health)) => {
+                        if self.fallback.take().is_some() {
+                            log::info!("voice output: {name} is back");
+                        }
+                        self.stream = Some(VoiceOut {
+                            name,
+                            _stream: stream,
+                            health,
+                            opened: now,
+                        });
+                        self.separate.store(true, Ordering::Relaxed);
+                    }
+                    Err(error) => {
+                        log::debug!("voice output: {name} cannot be opened ({error})");
+                        self.failed(name, output_device_snapshot(), Duration::ZERO, now);
+                    }
                 }
             }
+        }
+    }
+
+    /// Voice falls back to the main mix, and the device is tried again later.
+    fn failed(&mut self, name: String, devices: Vec<String>, played: Duration, now: Instant) {
+        self.stop();
+        let delay = self.backoff.after_failure(played);
+        if self.fallback.as_ref().is_none_or(|fallback| fallback.name != name) {
+            log::warn!("voice output: {name} unavailable, using the audio output");
+        }
+        log::debug!(
+            "voice output: next try of {name} in {} s or when the device list changes",
+            delay.as_secs()
+        );
+        self.fallback = Some(VoiceFallback {
+            name,
+            devices,
+            retry_at: now + delay,
+        });
+    }
+
+    /// Whether the output list is read for voice: only while a separate
+    /// voice stream plays or waits for its device.
+    fn lists_devices(&self) -> bool {
+        self.stream.is_some() || self.fallback.is_some()
+    }
+
+    /// A stream the device reported lost.
+    fn check_stream(&mut self, now: Instant) {
+        if let Some(out) = &self.stream
+            && out.health.failed.load(Ordering::Relaxed)
+        {
+            let (name, played) = (out.name.clone(), now.saturating_duration_since(out.opened));
+            self.failed(name, output_device_snapshot(), played, now);
+        }
+    }
+
+    /// The periodic look at the output list: a device that disappeared under
+    /// its stream, or one to try again. The list is read only while a
+    /// separate stream plays or waits for its device (enumeration probes the
+    /// ALSA devices), never while voice simply follows the main output.
+    fn check_devices(&mut self, main: &OutputInfo, now: Instant) {
+        if !self.lists_devices() {
+            return;
+        }
+        let devices = output_device_snapshot();
+        if let Some(out) = &self.stream {
+            if !devices.iter().any(|name| name == &out.name) {
+                let (name, played) = (out.name.clone(), now.saturating_duration_since(out.opened));
+                self.failed(name, devices, played, now);
+            }
+        } else if self.fallback.as_ref().is_some_and(|fallback| fallback.retry_now(&devices, now)) {
+            self.configure(main, now);
         }
     }
 }
@@ -644,105 +740,161 @@ where
 }
 
 /// Reads the main clock's 48 kHz voice queue at the independent device clock.
-/// A small bounded rate correction keeps queue depth near its 60 ms target.
+///
+/// The queue is the ring plus the frames already taken from it and not yet
+/// played (`input` past `pos`): the read rate follows that whole depth, so
+/// the voice stays [`VOICE_QUEUE_TARGET_FRAMES`] behind the main mix for the
+/// whole call whatever the two clocks do. Each pass takes from the ring only
+/// the frames it interpolates, into a buffer allocated once: the callback
+/// copies a period, never the backlog, and never allocates.
 struct VoiceOutputAdapter {
     channels: usize,
     base_step: f64,
+    /// Read position in `input` (frames); the frame before it is kept for
+    /// the interpolation.
     pos: f64,
-    input: Vec<f32>,
-    read: Vec<f32>,
-    output: Vec<f32>,
+    /// Main-clock stereo frames taken from the ring (capacity: one pass).
+    input: Box<[f32]>,
+    input_frames: usize,
+    /// Queue depth (frames), smoothed over the main callbacks' bursts.
+    depth: f64,
+    /// Playing. Off until the queue first reaches its target, and again
+    /// after it ran dry, so that playback starts with the full margin.
+    primed: bool,
 }
 
-fn voice_rate_step(base: f64, queued_frames: usize) -> f64 {
-    let error = (queued_frames as f64 - VOICE_QUEUE_TARGET_FRAMES as f64) / VOICE_QUEUE_TARGET_FRAMES as f64;
-    base * (1.0 + (error * 0.02).clamp(-0.005, 0.005))
+/// The read step that brings the queue back to its target: a proportional
+/// correction (2 % of the relative error), at most ±0.5 %.
+fn voice_rate_step(base: f64, queued_frames: f64) -> f64 {
+    let error = (queued_frames - VOICE_QUEUE_TARGET_FRAMES as f64) / VOICE_QUEUE_TARGET_FRAMES as f64;
+    base * (1.0 + (error * 0.02).clamp(-VOICE_RATE_CORRECTION, VOICE_RATE_CORRECTION))
 }
 
 impl VoiceOutputAdapter {
     fn new(device_rate: u32, channels: usize) -> Self {
-        Self {
+        let base_step = f64::from(ENGINE_SAMPLE_RATE) / f64::from(device_rate.max(1));
+        // A pass of n frames reads up to (n - 1) × step frames past `pos`
+        // (below 2 after a pass), and two more for the interpolation.
+        let capacity = (VOICE_PASS_FRAMES as f64 * base_step * (1.0 + VOICE_RATE_CORRECTION)).ceil() as usize + 6;
+        let mut adapter = Self {
             channels: channels.max(1),
-            base_step: f64::from(ENGINE_SAMPLE_RATE) / f64::from(device_rate.max(1)),
+            base_step,
             pos: 1.0,
-            input: Vec::with_capacity(8192),
-            read: Vec::with_capacity(8192),
-            output: Vec::with_capacity(8192),
-        }
+            input: vec![0.0; capacity * ENGINE_CHANNELS].into_boxed_slice(),
+            input_frames: 0,
+            depth: 0.0,
+            primed: false,
+        };
+        adapter.restart();
+        adapter
+    }
+
+    /// Back to waiting for the target.
+    fn restart(&mut self) {
+        self.primed = false;
+        self.input[..ENGINE_CHANNELS].fill(0.0);
+        self.input_frames = 1;
+        self.pos = 1.0;
+    }
+
+    /// Frames between the main mix and what this device plays next.
+    fn queued_frames(&self, ring_frames: usize) -> f64 {
+        ring_frames as f64 + (self.input_frames as f64 - self.pos).max(0.0)
     }
 
     fn fill<T: SizedSample + FromSample<f32>>(&mut self, ring: &VoicePcmRing, data: &mut [T]) {
         let frames = data.len() / self.channels;
-        self.output.clear();
         let mut consumer = ring.consumer.lock();
-        let mut queued_frames = consumer.slots() / ENGINE_CHANNELS;
+        let mut ring_frames = consumer.slots() / ENGINE_CHANNELS;
 
-        // Bound stale audio if a device stopped consuming for longer than the
-        // ring's 250 ms capacity. Keep the normal jitter target after repair.
-        if queued_frames >= VOICE_QUEUE_MAX_FRAMES {
-            let discard_frames = queued_frames.saturating_sub(VOICE_QUEUE_TARGET_FRAMES);
-            let mut discard = [0.0; 512];
-            let mut left = discard_frames * ENGINE_CHANNELS;
-            while left > 0 {
-                let n = left.min(discard.len());
-                let (popped, _) = consumer.pop_partial_slice(&mut discard[..n]);
-                if popped.is_empty() {
+        // A device that stopped consuming for a while comes back to the
+        // target at once instead of playing the stale voice late.
+        if self.queued_frames(ring_frames) > VOICE_QUEUE_LIMIT_FRAMES as f64 {
+            let excess = (self.queued_frames(ring_frames) - VOICE_QUEUE_TARGET_FRAMES as f64) as usize;
+            discard(&mut consumer, excess.min(ring_frames) * ENGINE_CHANNELS);
+            ring_frames = consumer.slots() / ENGINE_CHANNELS;
+            self.depth = self.queued_frames(ring_frames);
+        }
+
+        let queued = self.queued_frames(ring_frames);
+        if !self.primed {
+            if queued < VOICE_QUEUE_TARGET_FRAMES as f64 {
+                drop(consumer);
+                data.fill(T::from_sample(0.0));
+                return;
+            }
+            // The frame before the first one played is a copy of it, so
+            // that the voice starts without a step from silence.
+            if let Ok(chunk) = consumer.read_chunk(ENGINE_CHANNELS) {
+                let (first, rest) = chunk.as_slices();
+                for (slot, &sample) in self.input.iter_mut().zip(first.iter().chain(rest)) {
+                    *slot = sample;
+                }
+            }
+            self.primed = true;
+            self.depth = queued;
+        }
+        self.depth += (queued - self.depth) * 0.05;
+        let step = voice_rate_step(self.base_step, self.depth);
+        let capacity = self.input.len() / ENGINE_CHANNELS;
+
+        let mut played = 0;
+        while played < frames {
+            let n = (frames - played).min(VOICE_PASS_FRAMES);
+            // Take only the frames this pass interpolates.
+            let last = (self.pos + (n - 1) as f64 * step) as usize;
+            let need = (last + 3).min(capacity);
+            if need > self.input_frames {
+                let take = need - self.input_frames;
+                let start = self.input_frames * ENGINE_CHANNELS;
+                let (popped, _) = consumer.pop_partial_slice(&mut self.input[start..start + take * ENGINE_CHANNELS]);
+                self.input_frames += popped.len() / ENGINE_CHANNELS;
+            }
+            let mut dry = false;
+            for frame in data[played * self.channels..(played + n) * self.channels].chunks_exact_mut(self.channels) {
+                let i = self.pos as usize;
+                if i + 2 >= self.input_frames {
+                    dry = true;
                     break;
                 }
-                left -= popped.len();
+                let t = (self.pos - i as f64) as f32;
+                let at = |frame: usize, channel: usize| self.input[frame * ENGINE_CHANNELS + channel];
+                let left = hermite(at(i - 1, 0), at(i, 0), at(i + 1, 0), at(i + 2, 0), t);
+                let right = hermite(at(i - 1, 1), at(i, 1), at(i + 1, 1), at(i + 2, 1), t);
+                write_frame(frame, left, right);
+                self.pos += step;
+                played += 1;
             }
-            queued_frames = consumer.slots() / ENGINE_CHANNELS;
-        }
-
-        let step = voice_rate_step(self.base_step, queued_frames);
-        self.read.resize((frames * step.ceil() as usize + 8) * ENGINE_CHANNELS, 0.0);
-        let read = {
-            let (popped, _) = consumer.pop_partial_slice(&mut self.read);
-            popped.len()
-        };
-        self.input.extend_from_slice(&self.read[..read]);
-
-        let input_frames = self.input.len() / ENGINE_CHANNELS;
-        while self.output.len() / ENGINE_CHANNELS < frames {
-            let i = self.pos as usize;
-            if i + 2 >= input_frames {
-                break;
+            if dry {
+                // The queue ran dry: silence, then the full margin again.
+                drop(consumer);
+                data[played * self.channels..].fill(T::from_sample(0.0));
+                self.restart();
+                return;
             }
-            let t = (self.pos - i as f64) as f32;
-            for channel in 0..ENGINE_CHANNELS {
-                let xm1 = self.input[(i - 1) * ENGINE_CHANNELS + channel];
-                let x0 = self.input[i * ENGINE_CHANNELS + channel];
-                let x1 = self.input[(i + 1) * ENGINE_CHANNELS + channel];
-                let x2 = self.input[(i + 2) * ENGINE_CHANNELS + channel];
-                self.output.push(hermite(xm1, x0, x1, x2, t));
+            // Keep the frame before `pos` and what follows it.
+            let used = ((self.pos as usize).saturating_sub(1)).min(self.input_frames);
+            if used > 0 {
+                self.input
+                    .copy_within(used * ENGINE_CHANNELS..self.input_frames * ENGINE_CHANNELS, 0);
+                self.input_frames -= used;
+                self.pos -= used as f64;
             }
-            self.pos += step;
         }
+    }
+}
 
-        let drop_frames = ((self.pos as usize).saturating_sub(1)).min(input_frames.saturating_sub(1));
-        if drop_frames > 0 {
-            self.input.drain(..drop_frames * ENGINE_CHANNELS);
-            self.pos -= drop_frames as f64;
-        }
-        drop(consumer);
-
-        for sample in data.iter_mut() {
-            *sample = T::from_sample(0.0);
-        }
-        for (index, frame) in data.chunks_exact_mut(self.channels).enumerate() {
-            let left = self.output.get(index * 2).copied().unwrap_or(0.0);
-            let right = self.output.get(index * 2 + 1).copied().unwrap_or(0.0);
-            if self.channels == 1 {
-                frame[0] = T::from_sample((left + right) * 0.5);
-            } else {
-                for (channel, sample) in frame.iter_mut().enumerate() {
-                    *sample = T::from_sample(match channel {
-                        0 => left,
-                        1 => right,
-                        _ => 0.0,
-                    });
-                }
-            }
+/// Writes one stereo frame into a device frame of any channel count.
+fn write_frame<T: SizedSample + FromSample<f32>>(frame: &mut [T], left: f32, right: f32) {
+    if frame.len() == 1 {
+        frame[0] = T::from_sample((left + right) * 0.5);
+    } else {
+        for (channel, sample) in frame.iter_mut().enumerate() {
+            *sample = T::from_sample(match channel {
+                0 => left,
+                1 => right,
+                _ => 0.0,
+            });
         }
     }
 }
@@ -921,21 +1073,181 @@ mod tests {
     #[test]
     fn separate_voice_clock_correction_is_bounded_and_tracks_queue_drift() {
         let base = 48_000.0 / 44_100.0;
-        assert!(voice_rate_step(base, VOICE_QUEUE_TARGET_FRAMES + 100) > base);
-        assert!(voice_rate_step(base, VOICE_QUEUE_TARGET_FRAMES - 100) < base);
-        assert!((voice_rate_step(base, usize::MAX) / base - 1.0 - 0.005).abs() < 1e-10);
-        assert!((voice_rate_step(base, 0) / base - 1.0 + 0.005).abs() < 1e-10);
+        let target = VOICE_QUEUE_TARGET_FRAMES as f64;
+        assert!(voice_rate_step(base, target + 100.0) > base);
+        assert!(voice_rate_step(base, target - 100.0) < base);
+        assert!((voice_rate_step(base, f64::MAX) / base - 1.0 - VOICE_RATE_CORRECTION).abs() < 1e-10);
+        assert!((voice_rate_step(base, 0.0) / base - 1.0 + VOICE_RATE_CORRECTION).abs() < 1e-10);
     }
 
     #[test]
-    fn separate_voice_adapter_reads_bounded_main_clock_pcm() {
+    fn separate_voice_adapter_waits_for_its_target_then_plays() {
         let ring = VoicePcmRing::new();
-        ring.push(&vec![0.25f32; 4_000]);
         let mut adapter = VoiceOutputAdapter::new(48_000, 2);
-        let mut out = vec![0.0f32; 480 * 2];
+        let mut out = vec![1.0f32; 480 * 2];
+        ring.push(&vec![0.25f32; (VOICE_QUEUE_TARGET_FRAMES - 1) * 2]);
         adapter.fill(&ring, &mut out);
-        assert!(out[40..].iter().all(|sample| (*sample - 0.25).abs() < 1e-3));
-        assert!(ring.consumer.lock().slots() <= VOICE_QUEUE_MAX_FRAMES * 2);
+        assert!(out.iter().all(|sample| *sample == 0.0), "silent below the target");
+        assert_eq!(
+            ring.consumer.lock().slots(),
+            (VOICE_QUEUE_TARGET_FRAMES - 1) * 2,
+            "nothing taken yet"
+        );
+
+        ring.push(&[0.25f32; 2]);
+        adapter.fill(&ring, &mut out);
+        assert!(out.iter().all(|sample| (*sample - 0.25).abs() < 1e-3), "no step from silence");
+        // Only the frames played (and the interpolation's three) left the ring.
+        let taken = VOICE_QUEUE_TARGET_FRAMES - ring.consumer.lock().slots() / 2;
+        assert!((480..=484).contains(&taken), "{taken} frames taken for 480 played");
+    }
+
+    #[test]
+    fn separate_voice_adapter_cuts_a_stale_queue_back_to_its_target() {
+        let ring = VoicePcmRing::new();
+        let mut adapter = VoiceOutputAdapter::new(48_000, 1);
+        ring.push(&vec![0.25f32; VOICE_QUEUE_MAX_FRAMES * 2]);
+        let mut out = vec![0.0f32; 480];
+        adapter.fill(&ring, &mut out);
+        let left = adapter.queued_frames(ring.consumer.lock().slots() / 2);
+        assert!((left - (VOICE_QUEUE_TARGET_FRAMES - 480) as f64).abs() < 8.0, "{left} frames left");
+        assert!(out.iter().all(|sample| (*sample - 0.25).abs() < 1e-3), "mono takes both sides");
+    }
+
+    /// Runs the main clock (blocks of `block` frames at 48 kHz) against a
+    /// voice device of `rate` Hz whose clock runs `drift` faster (a ratio),
+    /// for `callbacks` callbacks of `period` frames. Returns the total queue
+    /// depth at each callback once settled, and the count of output
+    /// samples that were not the voice (gaps).
+    fn run_voice_clocks(rate: u32, drift: f64, block: usize, period: usize, callbacks: usize) -> (Vec<f64>, usize) {
+        let ring = VoicePcmRing::new();
+        let mut adapter = VoiceOutputAdapter::new(rate, 2);
+        let samples = vec![0.25f32; block * 2];
+        let mut out = vec![0.0f32; period * 2];
+        let main_period = block as f64 / 48_000.0;
+        let voice_period = period as f64 / (f64::from(rate) * drift);
+        let (mut next_main, mut next_voice) = (0.0, voice_period / 3.0);
+        let (mut depths, mut gaps, mut started) = (Vec::new(), 0, false);
+        for callback in 0..callbacks {
+            while next_main <= next_voice {
+                ring.push(&samples);
+                next_main += main_period;
+            }
+            next_voice += voice_period;
+            // The delay at the callback: what the main mix queued and this
+            // device has not played yet. Ten seconds to settle, then every
+            // callback counts.
+            if callback as f64 * voice_period > 10.0 {
+                depths.push(adapter.queued_frames(ring.consumer.lock().slots() / 2));
+            }
+            adapter.fill(&ring, &mut out);
+            started |= out.iter().any(|sample| *sample != 0.0);
+            if started {
+                gaps += out.iter().filter(|sample| (**sample - 0.25).abs() > 1e-3).count();
+            }
+        }
+        (depths, gaps)
+    }
+
+    #[test]
+    fn separate_voice_delay_stays_at_its_target_for_a_long_call() {
+        let target = VOICE_QUEUE_TARGET_FRAMES as f64;
+        // (device rate, its clock against the main one, main block, device period)
+        let cases = [
+            (48_000, 1.0, 480, 480),
+            (48_000, 1.0, 1_024, 441),
+            (48_000, 1.002, 480, 480),
+            (48_000, 0.998, 480, 480),
+            (44_100, 1.0, 480, 441),
+            (44_100, 1.001, 960, 441),
+            (44_100, 0.999, 512, 1_764),
+            (16_000, 1.0005, 480, 160),
+        ];
+        for (rate, drift, block, period) in cases {
+            // Ten minutes of the voice device's callbacks.
+            let callbacks = (600.0 * f64::from(rate) / period as f64) as usize;
+            let (depths, gaps) = run_voice_clocks(rate, drift, block, period, callbacks);
+            assert!(depths.len() > 1_000, "{rate} Hz: {} callbacks counted", depths.len());
+            let (low, high) = depths.iter().fold((f64::MAX, 0.0f64), |(lo, hi), &d| (lo.min(d), hi.max(d)));
+            // Within a main block and a device period of the target: the
+            // total delay neither grows nor shrinks over the call.
+            let margin = (block + period) as f64 * 48_000.0 / f64::from(rate) + 300.0;
+            assert!(
+                low > target - margin && high < target + margin,
+                "{rate} Hz × {drift}, block {block}, period {period}: depth {low:.0}..{high:.0} for {target} ± {margin:.0}"
+            );
+            let tail = &depths[depths.len() - depths.len() / 10..];
+            let end = tail.iter().sum::<f64>() / tail.len() as f64;
+            assert!(
+                (end - target).abs() < 400.0,
+                "{rate} Hz × {drift}: {end:.0} frames queued at the end"
+            );
+            assert_eq!(gaps, 0, "{rate} Hz × {drift}: the voice never ran dry nor skipped");
+        }
+    }
+
+    #[test]
+    fn a_failed_voice_device_still_listed_is_retried_after_a_backoff() {
+        let t0 = Instant::now();
+        let listed = vec!["Headset".to_owned(), "Speakers".to_owned()];
+        let mut backoff = VoiceBackoff::default();
+        let delay = backoff.after_failure(Duration::from_secs(1));
+        let fallback = VoiceFallback {
+            name: "Headset".into(),
+            devices: listed.clone(),
+            retry_at: t0 + delay,
+        };
+        // A stream invalidated while its device stays listed: the list does
+        // not change, the timer brings the device back.
+        assert!(!fallback.retry_now(&listed, t0), "not before the backoff");
+        assert!(fallback.retry_now(&listed, t0 + delay), "the timer retries an unchanged list");
+        // A device still missing waits for the list to change.
+        let gone = vec!["Speakers".to_owned()];
+        let missing = VoiceFallback {
+            devices: gone.clone(),
+            ..fallback.clone()
+        };
+        assert!(!missing.retry_now(&gone, t0 + Duration::from_secs(600)));
+        assert!(missing.retry_now(&listed, t0), "a changed list retries at once");
+    }
+
+    #[test]
+    fn voice_backoff_doubles_up_to_its_limit_and_restarts_after_a_stable_stream() {
+        let mut backoff = VoiceBackoff::default();
+        let delays: Vec<u64> = (0..7).map(|_| backoff.after_failure(Duration::ZERO).as_secs()).collect();
+        assert_eq!(delays, [2, 4, 8, 16, 30, 30, 30]);
+        assert_eq!(
+            backoff.after_failure(Duration::from_secs(5)).as_secs(),
+            30,
+            "a short play keeps the count"
+        );
+        assert_eq!(
+            backoff.after_failure(VoiceBackoff::STABLE).as_secs(),
+            2,
+            "a stream that played starts again"
+        );
+    }
+
+    #[test]
+    fn voice_lists_devices_only_for_a_separate_route_or_a_pending_fallback() {
+        let mut route = VoiceRoute::new(VoicePcmRing::new(), Arc::new(AtomicBool::new(false)));
+        assert!(!route.lists_devices(), "voice on the main output: no enumeration");
+        route.wanted = Some("Speakers".into());
+        let main = OutputInfo {
+            device_name: "Speakers".into(),
+            ..OutputInfo::default()
+        };
+        // The requested device is the main one: voice stays on the main mix.
+        route.configure(&main, Instant::now());
+        assert!(!route.lists_devices());
+        route.fallback = Some(VoiceFallback {
+            name: "Headset".into(),
+            devices: Vec::new(),
+            retry_at: Instant::now(),
+        });
+        assert!(route.lists_devices(), "a pending fallback watches the list");
+        route.configure(&main, Instant::now());
+        assert!(!route.lists_devices(), "back on the main output: the fallback is dropped");
     }
 
     #[test]

@@ -1073,9 +1073,10 @@ impl Mixer {
         }
 
         let len = out.len() & !1;
-        if separate_voice {
-            assert!(voice_out.len() >= len);
-        }
+        // A voice buffer shorter than the mix (a caller's mistake) keeps the
+        // voice in the main mix rather than stopping the audio thread.
+        debug_assert!(!separate_voice || voice_out.len() >= len, "voice buffer shorter than the mix");
+        let separate_voice = separate_voice && voice_out.len() >= len;
         for bus in &mut self.buses {
             bus.clear();
             bus.resize(len, 0.0);

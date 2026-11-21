@@ -171,7 +171,9 @@ impl AudioEngine {
     /// `None`, an empty name, or the main output's current device keeps voice
     /// on the main stream. The voice sink remains connected while the route
     /// changes. If the requested device is unavailable, voice falls back to
-    /// the main stream and the request is retried when output devices change.
+    /// the main stream and the request is retried when output devices change,
+    /// and on a timer with a backoff (2 s doubling to 30 s) while the device
+    /// stays listed.
     pub fn set_voice_output_device(&self, name: Option<String>) {
         self.inner.output.set_voice_device(name.filter(|name| !name.is_empty()));
     }
