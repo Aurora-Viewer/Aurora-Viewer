@@ -410,7 +410,7 @@ impl Factory {
                             // (the copies finish with the same request id)
                             out.push(Out::Send(NetCommand::FinishInventoryCopies {
                                 request: *request,
-                                reply: reply.clone(),
+                                reply: Box::new(reply.clone()),
                             }));
                         }
                     }

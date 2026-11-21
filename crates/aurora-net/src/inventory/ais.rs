@@ -364,6 +364,31 @@ async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, FetchError> {
     }
 }
 
+/// Each folder's own record (its parent and name), never its contents:
+/// whatever cannot be read is left out (the caller reads again).
+pub async fn read_folders(http: &reqwest::Client, cap: &str, ids: &[Uuid]) -> Vec<InvFolder> {
+    let mut out = Vec::new();
+    // four at a time, the Legacy Viewer's inventory connections
+    // (llappcorehttp.cpp, AP_INVENTORY)
+    for chunk in ids.chunks(4) {
+        let mut tasks = tokio::task::JoinSet::new();
+        for id in chunk.iter().copied() {
+            let http = http.clone();
+            let url = format!("{}/category/{id}", cap.trim_end_matches('/'));
+            tasks.spawn(async move {
+                let doc = get(&http, url).await.ok()?;
+                category(&doc).ok().filter(|f| f.id == id)
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            if let Ok(Some(folder)) = result {
+                out.push(folder);
+            }
+        }
+    }
+    out
+}
+
 /// Bounded parallel reads, outside the viewer thread. Never substitute a
 /// legacy listing: it may omit the favorites and thumbnails of siblings.
 pub async fn fetch_folders(http: &reqwest::Client, cap: &str, owner: Uuid, ids: &[Uuid]) -> Result<Vec<FolderContents>, FetchError> {

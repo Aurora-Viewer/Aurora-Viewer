@@ -347,14 +347,24 @@ impl App {
             self.inventory_pane(selection.window()).begin_delete(request, selection);
         }
         self.inventory_ui.pending_refresh.clone_from(&change.refresh);
+        // An Auto-sort batch is recognised by its moves and takes this request's
+        // id: its result is matched to it, and its new folders are neither
+        // shown nor renamed like a "New folder".
+        // (the dual panel's own Auto-sort window too)
+        let sorter_batch =
+            self.inventory_ui.claim_sorter_request(request, &change) || self.dual_inventory_ui.claim_sorter_request(request, &change);
         let pane = self.inventory_pane(editor);
-        pane.created_selection = change.operations.iter().find_map(|op| {
-            if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
-                Some(*id)
-            } else {
-                None
-            }
-        });
+        pane.created_selection = change
+            .operations
+            .iter()
+            .find_map(|op| {
+                if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .filter(|_| !sorter_batch);
         pane.message.clear();
         self.send(NetCommand::EditInventory { request, change });
     }
@@ -432,6 +442,7 @@ impl App {
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
+            InvAction::FetchSubtrees(folders) => self.world.fetch_inventory_subtrees(&folders),
             InvAction::Edit(change) => self.edit_inventory(change, false, editor),
             InvAction::Delete(deletion) => {
                 if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {
@@ -770,12 +781,40 @@ impl App {
                     pane.show_original(inv, *id);
                 }
                 self.inventory_ui.watch_copy(request, &reply);
-                self.send(NetCommand::FinishInventoryCopies { request, reply });
+                self.send(NetCommand::FinishInventoryCopies {
+                    request,
+                    reply: Box::new(reply),
+                });
                 return;
             }
             result => result,
         };
         self.inventory_ui.finish_bulk_permissions(result.as_ref().err().map(String::as_str));
+        // moves the server did not show at their place: the batch is
+        // answered as refused (its entries counted once seen there)
+        let unconfirmed = result
+            .as_ref()
+            .is_ok_and(|reply| !reply.unconfirmed.is_empty())
+            .then(|| aurora_i18n::tr!("inventory-operations-the-server-did-not-confirm-every-change-the-folders"));
+        // unconfirmed entries the server's answer carries no record of: their
+        // place is not known (the inventory shows them where they were only
+        // sent), so Auto-sort puts them back where they were until it knows
+        let unread: Vec<Uuid> = result.as_ref().map_or_else(
+            |_| Vec::new(),
+            |reply| {
+                reply
+                    .unconfirmed
+                    .iter()
+                    .copied()
+                    .filter(|id| !reply.moved_items.iter().any(|it| it.id == *id) && !reply.moved_folders.iter().any(|f| f.id == *id))
+                    .collect()
+            },
+        );
+        let error = result.as_ref().err().map(String::as_str).or(unconfirmed);
+        self.inventory_ui
+            .finish_sorter(request, error, result.is_ok().then_some(unread.as_slice()));
+        self.dual_inventory_ui
+            .finish_sorter(request, error, result.is_ok().then_some(unread.as_slice()));
         self.dual_inventory_ui
             .finish_bulk_permissions(result.as_ref().err().map(String::as_str));
         self.inventory_ui
@@ -796,6 +835,11 @@ impl App {
                 self.world.inventory.remove(&reply.removed);
                 self.world.inventory.apply(reply.contents);
                 self.world.inventory.created_folders(reply.folders);
+                // entries read back one by one (Auto-sort): placed as the
+                // server has them, no folder read again
+                if !reply.moved_folders.is_empty() || !reply.moved_items.is_empty() {
+                    self.world.inventory.server_updated(reply.moved_folders, reply.moved_items);
+                }
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| self.inventory_ui.pending_refresh.contains(&id)) {
                     let sync = crate::world::appearance::sync_plan_keeping(
                         &self.world.inventory,

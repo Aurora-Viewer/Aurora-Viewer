@@ -21,6 +21,9 @@ pub(super) enum Command {
     Batch(Vec<InvAction>),
     Properties(Uuid),
     BulkPermissions(Vec<Uuid>),
+    AutoSort(Uuid),
+    SortEntries(Vec<Uuid>),
+    CreatorHint(Uuid),
     Rename(Uuid),
     Image(Uuid),
     Protect(Vec<Uuid>),
@@ -739,6 +742,43 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 Command::BulkPermissions(ids.clone()),
             );
         }
+        // A folder's contents, or the chosen entries, open the window on
+        // their preview; nothing moves before Sort is pressed. Nothing in a
+        // hands-off place is offered (sorter::hands_off).
+        let (sort_enabled, sort_command) = if single && folder.is_some() {
+            (crate::world::inventory::sorter::source_allowed(inv, id), Command::AutoSort(id))
+        } else {
+            (
+                ids.iter()
+                    .all(|id| rules::relocatable(inv, *id, &prefs.protected) && !crate::world::inventory::sorter::hands_off(inv, *id)),
+                Command::SortEntries(ids.clone()),
+            )
+        };
+        c.add(
+            "auto-sort",
+            TEXT,
+            "wand",
+            if single && folder.is_some() {
+                aurora_i18n::tr!("inventory-sorter-menu")
+            } else {
+                aurora_i18n::tr!("inventory-sorter-menu-entries")
+            },
+            ready && !trash && sort_enabled,
+            sort_command,
+        );
+        // Auto-sort's creator hint: everything this entry's creator made
+        // goes to one store folder, whatever its name says. Only the
+        // creator's id (public, as in Properties) is kept.
+        if single {
+            c.add(
+                "auto-sort-creator",
+                TEXT,
+                "user-filled",
+                aurora_i18n::tr!("inventory-sorter-menu-creator"),
+                ready && !trash && crate::world::inventory::sorter::creator_of(inv, id).is_some(),
+                Command::CreatorHint(id),
+            );
+        }
         c.add(
             "rename",
             TEXT,
@@ -1259,6 +1299,15 @@ pub(super) fn execute(
             st.dialog = Some(EditDialog::Properties(id));
         }
         Command::BulkPermissions(ids) => st.open_bulk_permissions(ids),
+        Command::AutoSort(id) => st.open_sorter(id),
+        Command::SortEntries(ids) => st.sort_entries(ids),
+        Command::CreatorHint(id) => {
+            let creator = crate::world::inventory::sorter::creator_of(inv, id);
+            let name = creator.and_then(|c| facts.names.get(&c)).map(String::as_str).unwrap_or("");
+            if let Some(hint) = crate::world::inventory::sorter::creator_hint(inv, id, name) {
+                st.add_creator_hint(&mut prefs.sorter, hint);
+            }
+        }
         Command::Rename(id) => st.begin_rename(inv, id),
         Command::Image(id) => st.thumbnail.open(id),
         Command::Protect(ids) => {

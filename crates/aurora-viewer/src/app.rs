@@ -3633,6 +3633,9 @@ impl App {
         self.place_confirm = None;
         self.places_ui.forget_question();
         self.url_confirm = None;
+        // an Auto-sort run's confirmed moves are kept for Undo and Resume
+        self.inventory_ui.flush_sorter();
+        self.dual_inventory_ui.flush_sorter();
         self.inventory_ui = Default::default();
         self.dual_inventory_ui = ui::inventory::InventoryUi::dual_pane();
         self.inventory_mutation_editor = None;
@@ -7241,6 +7244,11 @@ impl App {
         self.imports.flush_local_registry();
         // a rule changed just before closing is kept, as at a logout
         self.world.omnifilter.save_before_exit();
+        // an Auto-sort run's confirmed moves and its run to resume, written
+        // before the viewer goes
+        self.inventory_ui.flush_sorter();
+        self.dual_inventory_ui.flush_sorter();
+        self.inventory_ui.wait_for_sorter_writes();
         self.record_inventory_logout();
         // revertBeaconsState when the editors close with the viewer
         self.env_beacons_release();
@@ -23445,6 +23453,33 @@ impl ApplicationHandler for App {
                     self.settings.inventory = ui::inventory::InventoryPreferences::default();
                     self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
                     self.inventory_ui.expand_all = Some(true);
+                }
+                if matches!(
+                    view.as_str(),
+                    "sorter" | "aurora-sorter" | "sorter-big" | "sorter-run" | "sorter-vocab"
+                ) {
+                    // a large messy inventory, Auto-sort open on its Objects folder
+                    let objects = crate::world::inventory::sorter::demo::OBJECTS;
+                    let scale = if view == "sorter-big" { 8 } else { 1 };
+                    crate::world::inventory::sorter::demo::seed(&mut self.world.inventory, self.world.agent_id, scale);
+                    self.panels.inventory = true;
+                    self.inventory_ui.show_original(&self.world.inventory, objects);
+                    if view == "sorter-vocab" {
+                        // the golden corpus against the vocabulary in use
+                        // (AURORA_SORTER_VOCAB in a development build)
+                        self.inventory_ui.open_sorter(objects);
+                        self.inventory_ui.demo_vocab_check();
+                    } else if view == "sorter-run" {
+                        self.inventory_ui.demo_run_sorter(objects);
+                    } else {
+                        self.inventory_ui.open_sorter(objects);
+                    }
+                    // AURORA_DEMO_SORTER_TAB: sample rules (the demo's own
+                    // settings) and the window on one tab or dialog
+                    if let Ok(tab) = std::env::var("AURORA_DEMO_SORTER_TAB") {
+                        crate::world::inventory::sorter::demo::seed_settings(&mut self.settings.inventory.sorter);
+                        self.inventory_ui.demo_sorter_view(tab.trim(), &mut self.settings.inventory.sorter);
+                    }
                 }
                 if matches!(view.as_str(), "outfit-menu" | "outfit-menu-loading") {
                     crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);

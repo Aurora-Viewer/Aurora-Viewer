@@ -16,6 +16,7 @@ mod lost;
 pub(crate) mod outgoing;
 mod parents;
 pub mod preview;
+pub mod sorter;
 mod system;
 pub mod wearable;
 
@@ -65,6 +66,10 @@ pub struct Inventory {
     /// limit (the Legacy Viewer's InventoryLimitReachedAIS). Their direct
     /// items cannot be read; search and refresh do not ask again in a loop.
     pub too_big: HashSet<Uuid>,
+    /// The background walk still has reads queued, on their way or waiting
+    /// to be tried again (set each frame it is pumped): what is not read
+    /// yet may still come.
+    pub walk_busy: bool,
     /// When each folder's last read failed (`shown_needs_fetch`).
     pub(crate) failed_at: HashMap<Uuid, std::time::Instant>,
     /// Failed item reads (network, server error), by attempt.
@@ -74,6 +79,10 @@ pub struct Inventory {
     /// The listing folders the Marketplace data holds in place, set by the
     /// listings every frame (`marketplace::Holds`).
     pub listing_holds: super::marketplace::Holds,
+    /// Default folders the user allowed Auto-sort into (Options; Lost and
+    /// Found's own switch), set from the preferences every frame like the
+    /// listing holds: the hands-off rule reads them (`sorter::folder_open`).
+    pub sorter_unlocked: HashSet<Uuid>,
     pub(crate) repaired_parents: HashMap<Uuid, Uuid>,
     pub(crate) pending_parent_repairs: HashSet<Uuid>,
     pub(crate) deferred_parents: HashMap<Uuid, parents::ItemSource>,
