@@ -142,6 +142,9 @@ Japanese, beyond the plural:
   容姿 (appearance), 初期設定 (Preferences), 設定 (Aurora's own settings),
   近くのチャット, テレポート, ランドマーク, スクリプト, テクスチャ, フォルダ,
   ごみ箱; look an existing one up in `ja.ftl` before choosing a new one.
+  The Me menu is 私, as in the official viewer and Alchemy (the Legacy
+  Viewer's Japanese interface says アバター there); a hint that names one of
+  its items writes 「私」＞「…」.
   Second Life, L$ and product names (Blender) stay in Latin letters. The
   viewers are Auroraビューア and レガシービューア: "Legacy" is レガシー, as in
   the option labels the Legacy Viewer's Japanese interface already
