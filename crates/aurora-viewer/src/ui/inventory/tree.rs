@@ -122,6 +122,7 @@ pub fn search_field(
                 ..centre
             }),
     );
+    crate::ui::widgets::select_on_focus(ui, &field, text);
     if !clear_shown {
         return (field, false);
     }
