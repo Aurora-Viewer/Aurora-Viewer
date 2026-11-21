@@ -226,6 +226,10 @@ pub struct Prefs {
     /// Where the photo reel's tray was moved: its top left in fractions of
     /// the screen (None: bottom left).
     pub reel_at: Option<[f32; 2]>,
+    /// Where the filters panel was moved: its top left in fractions of the
+    /// screen (None: left of the dock). Its top stays there: it grows and
+    /// shrinks from its bottom.
+    pub filters_at: Option<[f32; 2]>,
 }
 
 impl Default for Prefs {
@@ -241,6 +245,7 @@ impl Default for Prefs {
             timer: 0,
             dof_defaulted: false,
             reel_at: None,
+            filters_at: None,
         }
     }
 }

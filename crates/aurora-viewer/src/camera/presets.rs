@@ -14,7 +14,7 @@
 
 use super::CameraShot;
 use crate::dof::PhotoDof;
-use crate::snapshot::looks::{Layer, MAX_LAYERS};
+use crate::snapshot::looks::Layer;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -195,10 +195,7 @@ pub fn sanitize(list: &mut Vec<CameraShot>) {
             lens.tilt = if lens.tilt.is_finite() { lens.tilt.clamp(-max, max) } else { 0.0 };
         }
         if let Some(looks) = &mut shot.looks {
-            looks.layers.truncate(MAX_LAYERS);
-            for l in &mut looks.layers {
-                l.strength = l.strength.min(100);
-            }
+            crate::snapshot::looks::sanitize(&mut looks.layers);
         }
         if let Some(light) = &mut shot.light {
             light.time_of_day = light.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS);

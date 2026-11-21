@@ -3693,6 +3693,11 @@ impl Settings {
             toolbar.sanitize();
         }
         self.snapshot.sanitize();
+        // the world filters keep the photo stack's rules (8 looks at most,
+        // strengths up to 100): a longer or edited file would otherwise
+        // show "10 of 8", and a card opened would clamp its strength and
+        // switch the world filters on with no edit
+        crate::snapshot::looks::sanitize(&mut self.world_look.looks);
         self.dof.sanitize();
         self.game_control.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
@@ -4278,6 +4283,32 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    /// A settings file whose world filters break the stack's rules (more
+    /// than 8 looks, a strength past 100) is brought back to them on load,
+    /// as the photo stack is, and stays off.
+    #[test]
+    fn loaded_world_filters_keep_to_the_stacks_rules() {
+        use crate::snapshot::looks::{Layer, MAX_LAYERS, WorldLook};
+        let settings = super::Settings {
+            world_look: WorldLook {
+                on: false,
+                looks: (0..12)
+                    .map(|_| Layer {
+                        id: "Sepia".into(),
+                        strength: 250,
+                        on: true,
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .sanitized();
+        assert_eq!(settings.world_look.looks.len(), MAX_LAYERS);
+        assert!(settings.world_look.looks.iter().all(|l| l.strength == 100));
+        assert!(!settings.world_look.on);
+    }
+
     #[test]
     fn avatar_only_hover_tips_are_off_by_default_and_for_older_preferences() {
         use super::HoverTips;
