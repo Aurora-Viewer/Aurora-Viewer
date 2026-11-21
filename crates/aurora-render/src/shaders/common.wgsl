@@ -286,7 +286,7 @@ const PALETTE_STRIDE: u32 = 261u;
 // GTAO's screen-space indirect light (gtao.rs), when SCREEN_INDIRECT
 @group(0) @binding(14) var il_tex: texture_2d<f32>;
 // the point lights' tint maps (point_tint)
-@group(0) @binding(30) var point_tint_tex: texture_2d<f32>;
+@group(0) @binding(31) var point_tint_tex: texture_2d<f32>;
 
 // Reflection probes (probes.rs, reflectionProbeF.glsl).
 // The probes of the frame's list at most (probes::MAX_PROBES).
