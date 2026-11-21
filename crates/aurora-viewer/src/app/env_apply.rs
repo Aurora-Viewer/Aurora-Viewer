@@ -511,6 +511,10 @@ impl App {
     /// Open the day cycle editor on a parcel's or region's day, or on
     /// Firestorm's default day when there is none (onBtnEdit).
     fn open_day_editor_in(&mut self, context: DayContext, day: Option<DayDoc>, timing: (i32, i32)) {
+        // env_edit_extdaycycle is filtered under @setenv (rlvhandler.cpp)
+        if self.rlva_environment_windows_locked() {
+            return;
+        }
         self.day_editor.close();
         self.day_fetch = None;
         let extended = self.extended_environment();

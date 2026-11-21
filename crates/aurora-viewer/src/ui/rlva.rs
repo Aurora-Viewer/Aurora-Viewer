@@ -37,12 +37,17 @@ pub struct Tools {
     filter: String,
     history: Vec<String>,
     browsing: Option<usize>,
+    /// The console tab was shown since the window opened: closing the window
+    /// then closes the console (RlvFloaterConsole::onClose).
+    console_shown: bool,
 }
 
 #[derive(Default)]
 pub struct Actions {
     pub input: Option<String>,
     pub closed: bool,
+    /// The window closed after showing its console, once.
+    pub console_closed: bool,
     pub clear_log: bool,
     /// Exception ids of no known name, which may be groups.
     pub want_groups: Vec<Uuid>,
@@ -263,6 +268,7 @@ fn status(outcome: Outcome) -> &'static str {
         Outcome::Unset => tr!("rlva-tools-unset"),
         Outcome::Rejected => tr!("rlva-tools-rejected"),
         Outcome::Reply => tr!("rlva-tools-reply"),
+        Outcome::Retained => tr!("rlva-tools-retained"),
     }
 }
 
@@ -295,6 +301,7 @@ impl Tools {
                 ui.label(RichText::new(tr!("rlva-tools-disabled")).color(p.muted));
             }
             if self.tab == Tab::Console {
+                self.console_shown = true;
                 ui.horizontal(|ui| {
                     ui.label(tr!("rlva-tools-local-replies"));
                     actions.clear_log = ui.button(tr!("rlva-tools-clear-log")).clicked();
@@ -431,6 +438,7 @@ impl Tools {
             }
         });
         actions.closed = !self.open;
+        actions.console_closed = !self.open && std::mem::take(&mut self.console_shown);
         actions
     }
 }
