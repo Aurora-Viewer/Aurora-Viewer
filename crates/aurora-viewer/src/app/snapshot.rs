@@ -205,7 +205,7 @@ pub(super) struct Snapshots {
     luts: Option<LutLibrary>,
     /// A table being imported (its file chosen, read and copied on a
     /// worker; None: the dialog was closed).
-    lut_import: Option<crossbeam_channel::Receiver<Option<Vec<Imported>>>>,
+    pub(super) lut_import: Option<crossbeam_channel::Receiver<Option<Vec<Imported>>>>,
     /// The import was asked from the Director's Filters tab: its editor
     /// takes the first table (with its own Replace).
     lut_import_director: bool,
@@ -1360,6 +1360,8 @@ impl App {
             ),
         };
         let settings = settings.clone();
+        let edges = [frame.left(), frame.top(), frame.right(), frame.bottom()].map(|v| v.round().max(0.0) as u32);
+        self.snapshots.look_thumbs.source(edges);
         let now = self.egui_ctx.input(|i| i.time);
         let plan = self.snapshots.look_thumbs.plan(now, &shown, MAX_THUMBS, &settings);
         let (w, h) = (window.0.max(1) as f32, window.1.max(1) as f32);

@@ -343,6 +343,14 @@ impl LooksUi {
         }
     }
 
+    /// The pointer is over this editor's cards, and they are not under
+    /// another window there: with two editors open (the photo window and
+    /// the World filters window, say), a tile goes to the cards it is seen
+    /// dropped on, whichever editor is drawn first.
+    fn over_own_cards(&self, ctx: &egui::Context, layer: egui::LayerId, at: egui::Pos2) -> bool {
+        self.cards_rect.is_some_and(|r| r.contains(at)) && ctx.layer_id_at(at).is_none_or(|top| top == layer)
+    }
+
     /// One of this editor's ids.
     fn id(&self, source: impl egui::AsIdSalt) -> egui::Id {
         self.scope.unwrap_or(egui::Id::NULL).with(source)
@@ -422,7 +430,10 @@ impl LooksUi {
                 None
             }
         };
-        self.zone_rect = zone;
+        // only what shows of it: a zone taller than its window's view (the
+        // World filters window, the photo window's scrolled section) takes
+        // nothing out past the window's edge
+        self.zone_rect = zone.map(|z| z.intersect(ui.clip_rect())).filter(|z| z.is_positive());
         let rest = ui.cursor().top() - start - cards;
         if (rest - self.rest).abs() > 0.5 {
             self.rest = rest;
@@ -485,7 +496,7 @@ impl LooksUi {
         let n = keys.len();
         // a tile carried over the cards opens room where it would go
         let carried_tile = egui::DragAndDrop::payload::<Carried>(&ctx);
-        let over_cards = pointer.is_some_and(|at| self.cards_rect.is_some_and(|r| r.contains(at)));
+        let over_cards = pointer.is_some_and(|at| self.over_own_cards(&ctx, ui.layer_id(), at));
         let gap = (carried_tile.is_some() && over_cards && n < MAX_LAYERS)
             .then(|| pointer.map(|at| reorder::insert_place(at.y, &self.drawn)))
             .flatten();
@@ -574,10 +585,13 @@ impl LooksUi {
             });
         // where a tile may be dropped: what the list took of the page (its
         // `inner_rect` is the room it was allowed)
-        self.cards_rect = Some(Rect::from_x_y_ranges(
-            scroll.inner_rect.x_range(),
-            before..=ui.cursor().top() - ui.spacing().item_spacing.y,
-        ));
+        self.cards_rect = Some(
+            Rect::from_x_y_ranges(
+                scroll.inner_rect.x_range(),
+                before..=ui.cursor().top() - ui.spacing().item_spacing.y,
+            )
+            .intersect(ui.clip_rect()),
+        );
         // a tile let go over the cards takes the place it opened
         if released
             && let Some(tile) = carried_tile
@@ -1504,7 +1518,7 @@ impl LooksUi {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         let width = self.cards_rect.map_or(300.0, |r| r.width());
         let rect = Rect::from_min_size(at - Vec2::new(36.0, HEAD / 2.0), Vec2::new(width, HEAD));
-        let over = self.cards_rect.is_some_and(|r| r.contains(at)) && s.looks.len() < MAX_LAYERS;
+        let over = self.over_own_cards(ui.ctx(), ui.layer_id(), at) && s.looks.len() < MAX_LAYERS;
         let place = over.then(|| reorder::insert_place(at.y, &self.drawn) + 1);
         let name = looks::label(Some(&tile.0));
         let radius = ui.visuals().widgets.inactive.corner_radius;
@@ -1883,6 +1897,132 @@ mod tests {
         };
         assert_eq!(drop_at(-4.0), 2, "over the catalogue's row only: kept");
         assert_eq!(drop_at(6.0), 1, "into the dashed zone: taken out");
+    }
+
+    /// In a window that shows only part of the editor (the World filters
+    /// window, the photo window's scrolled section), the take-out zone ends
+    /// at the window's edge: a card let go below it, over the world, stays.
+    #[test]
+    fn a_card_let_go_past_the_windows_edge_stays() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let p = crate::theme::Theme::default().skin_palette();
+        let thumb = |_: &str| None;
+        let mut ed = LooksUi::default();
+        let mut s = Settings {
+            looks: vec![looks::Layer::new("Sepia"), looks::Layer::new("aurora:vhs")],
+            ..Default::default()
+        };
+        let edge = 260.0;
+        let mut frame = |frames: &mut crate::ui::widgets::elide_tests::Frames, ed: &mut LooksUi, events| {
+            frames.run(events, |ui| {
+                egui::ScrollArea::vertical().max_height(edge).show(ui, |ui| {
+                    let opts = Options {
+                        list_height: 200.0,
+                        height: None,
+                        compare: false,
+                        luts: &[],
+                        pano: false,
+                        thumb: &thumb,
+                    };
+                    ed.show(ui, &p, Stack::photo(&mut s), opts, &mut Vec::new());
+                });
+            });
+        };
+        frame(&mut frames, &mut ed, Vec::new());
+        frame(&mut frames, &mut ed, Vec::new());
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut at = ed.drawn[1].left_center() + Vec2::new(60.0, 0.0);
+        frame(&mut frames, &mut ed, vec![egui::Event::PointerMoved(at), button(at, true)]);
+        for _ in 0..3 {
+            at.y += 10.0;
+            frame(&mut frames, &mut ed, vec![egui::Event::PointerMoved(at)]);
+        }
+        assert!(ed.carrying.is_some(), "the card is carried");
+        // well below the window's edge, where the zone would go on unseen
+        for _ in 0..12 {
+            at.y += edge + 60.0 - ed.drawn[1].top();
+            frame(&mut frames, &mut ed, vec![egui::Event::PointerMoved(at)]);
+        }
+        assert!(ed.drawn[1].top() > edge + 30.0, "the card is past the edge");
+        frame(&mut frames, &mut ed, vec![button(at, false)]);
+        frame(&mut frames, &mut ed, Vec::new());
+        assert_eq!(s.looks.len(), 2, "nothing taken out");
+    }
+
+    /// Two editors in windows that overlap (the photo window and the World
+    /// filters window): a tile let go over both goes to the cards seen
+    /// there, the window on top, not to the editor drawn first.
+    #[test]
+    fn a_tile_goes_to_the_window_on_top() {
+        type Frames = crate::ui::widgets::elide_tests::Frames;
+        // the first window drawn is under the second
+        fn run(frames: &mut Frames, eds: [(&mut LooksUi, &mut Settings); 2], events: Vec<egui::Event>) {
+            let p = crate::theme::Theme::default().skin_palette();
+            let thumb = |_: &str| None;
+            let [(ed_under, s_under), (ed_over, s_over)] = eds;
+            frames.run(events, |ui| {
+                let ctx = ui.ctx().clone();
+                let windows = [
+                    ("under", 0.0, &mut *ed_under, &mut *s_under),
+                    ("over", 40.0, &mut *ed_over, &mut *s_over),
+                ];
+                for (name, x, ed, s) in windows {
+                    egui::Area::new(egui::Id::unique(name))
+                        .fixed_pos(egui::pos2(x, 0.0))
+                        .show(&ctx, |ui| {
+                            ui.set_width(360.0);
+                            let opts = Options {
+                                list_height: 200.0,
+                                height: Some(700.0),
+                                compare: false,
+                                luts: &[],
+                                pano: false,
+                                thumb: &thumb,
+                            };
+                            ed.show(ui, &p, Stack::photo(s), opts, &mut Vec::new());
+                        });
+                }
+            });
+        }
+        let mut frames = Frames::new();
+        let (mut under, mut over) = (LooksUi::default(), LooksUi::default());
+        let two = || Settings {
+            looks: vec![looks::Layer::new("Sepia"), looks::Layer::new("aurora:vhs")],
+            ..Default::default()
+        };
+        let (mut photo, mut world) = (two(), two());
+        macro_rules! frame {
+            ($events:expr) => {
+                run(&mut frames, [(&mut under, &mut photo), (&mut over, &mut world)], $events)
+            };
+        }
+        frame!(Vec::new());
+        frame!(Vec::new());
+        // over the first card of both editors
+        let at = egui::pos2(200.0, over.drawn[0].center().y);
+        assert!(under.cards_rect.is_some_and(|r| r.contains(at)), "the windows overlap there");
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // a tile taken (away from the cards, as from a catalogue), carried
+        // over them, let go
+        let start = egui::pos2(1000.0, 800.0);
+        frame!(vec![egui::Event::PointerMoved(start), button(start, true)]);
+        egui::DragAndDrop::set_payload(&frames.ctx, Carried("Negative".into()));
+        frame!(vec![egui::Event::PointerMoved(at)]);
+        frame!(vec![egui::Event::PointerMoved(at + Vec2::new(0.0, 2.0))]);
+        frame!(vec![button(at, false)]);
+        frame!(Vec::new());
+        assert_eq!(photo.looks.len(), 2, "the window underneath takes nothing");
+        assert_eq!(world.looks.len(), 3, "the window on top takes the tile");
     }
 
     /// Replace stays on with no effect: the first click then adds.
