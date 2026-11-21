@@ -18,6 +18,15 @@ pub enum Boundary {
     Refused,
 }
 
+/// Whether a refused command is told to the user ("This action is restricted
+/// by RLVa."): what they or a script asked for is. What the lock watchdog
+/// sends to put a lock back is the viewer's own work, as
+/// RlvAttachmentLockWatchdog's (indra/newview/rlvlocks.cpp), which never says
+/// anything of it to the user (#3633).
+pub fn refusal_shown(actor: Uuid) -> bool {
+    actor != super::watchdog::ACTOR
+}
+
 impl World {
     /// Reduces `command` to what the restrictions leave of it, then asks
     /// whether it may leave. `actor` is nil for the user.

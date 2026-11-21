@@ -2436,8 +2436,15 @@ impl App {
             crate::world::rlva::Boundary::Send => {}
             crate::world::rlva::Boundary::Dropped => return,
             crate::world::rlva::Boundary::Refused => {
-                self.world
-                    .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+                // (what a "restricted" notice stood for: the log names the
+                // command, never its content)
+                let text = format!("{cmd:?}");
+                let kind = text.split(['(', ' ', '{']).next().unwrap_or_default();
+                log::info!("rlva: {kind} refused at the send boundary (actor {actor})");
+                if crate::world::rlva::refusal_shown(actor) {
+                    self.world
+                        .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+                }
                 return;
             }
         }
