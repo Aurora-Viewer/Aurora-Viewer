@@ -215,7 +215,8 @@ impl super::super::World {
             .children_of(&agent.key)
             .iter()
             .filter_map(|i| {
-                let object = self.objects.get(*i)?;
+                // (not the copies drawn from the cache, world/avatar_cache)
+                let object = self.objects.get(*i).filter(|o| !o.is_client_preview())?;
                 let item = object.attachment_item_id().filter(|item| !item.is_nil()).unwrap_or(object.full_id);
                 let point = object.attachment_point();
                 (point != 0).then_some((
@@ -252,7 +253,11 @@ impl super::super::World {
             aurora_net::NetCommand::RezAttachments(items) if actor != ACTOR => {
                 let previous = self.rlva_attachment_snapshot();
                 for item in items.iter().take(256) {
-                    if self.rlva.watchdog.wears.len() >= 256 && !self.rlva.watchdog.wears.contains_key(&item.item_id) {
+                    // (the viewer's bridge is no wear to watch: fRlvForce
+                    // keeps it out of onWearAttachment)
+                    if (self.rlva.watchdog.wears.len() >= 256 && !self.rlva.watchdog.wears.contains_key(&item.item_id))
+                        || super::super::bridge::viewer_bridge(self, item.item_id, item.point)
+                    {
                         continue;
                     }
                     let allowed = self
@@ -313,6 +318,11 @@ impl super::super::World {
             _ => {
                 // the folder locks are resolved once for every attachment
                 let locks = super::inventory::FolderLocks::default();
+                // The viewer's own bridge is never put back nor taken off
+                // (RlvAttachmentLockWatchdog::onDetach asks
+                // FSLSLBridge::canDetach first, indra/newview/rlvlocks.cpp;
+                // its wear is not one onAttach knows).
+                let bridge = |item: &Uuid, point: u8| super::super::bridge::viewer_bridge(self, *item, point);
                 let locked = self
                     .rlva
                     .watchdog
@@ -322,18 +332,18 @@ impl super::super::World {
                     .filter_map(|(item, attachment)| {
                         // The snapshot already resolves each point. Do not
                         // rebuild the world's worn-item map per attachment.
-                        let allowed = self.rlva_attachment_remove_at(*item, attachment.point, Uuid::nil())
-                            && self
-                                .inventory
-                                .items
-                                .get(item)
-                                .is_none_or(|it| self.rlva_folder_allowed_in(&locks, it.parent, false, Uuid::nil()));
+                        let allowed = bridge(item, attachment.point)
+                            || (self.rlva_attachment_remove_at(*item, attachment.point, Uuid::nil())
+                                && self.rlva_item_folders_removable_in(&locks, *item, Uuid::nil()));
                         (!allowed).then_some(*item)
                     })
                     .collect();
                 let allowed = current
                     .iter()
-                    .map(|(item, attachment)| (*item, self.rlva_can_add_in(&locks, *item, attachment.point, Uuid::nil())))
+                    .map(|(item, attachment)| {
+                        let allowed = bridge(item, attachment.point) || self.rlva_can_add_in(&locks, *item, attachment.point, Uuid::nil());
+                        (*item, allowed)
+                    })
                     .collect();
                 Checked {
                     inputs,

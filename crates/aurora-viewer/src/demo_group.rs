@@ -65,6 +65,11 @@ pub fn profile_classic() -> bool {
     std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').skip(1).any(|p| p == "classic"))
 }
 
+/// A wide profile for comparing the notice's two-column layout.
+pub fn profile_wide() -> bool {
+    std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').skip(1).any(|p| p == "wide"))
+}
+
 pub fn identity_section() -> bool {
     std::env::var("AURORA_DEMO_GROUP_PROFILE").is_ok_and(|v| v.split(':').nth(1) == Some("identity"))
 }
@@ -102,6 +107,7 @@ fn group_experience() -> ExperienceDetails {
         owner: DEMO_LOUP,
         group: DEMO_GROUP1,
         slurl: "secondlife://Aurora%20D%C3%A9mo/64/200/24".into(),
+        ..Default::default()
     }
 }
 
@@ -173,6 +179,7 @@ pub fn simulator_features() -> Option<NetEvent> {
         currency_symbol: String::new(),
         export_supported: false,
         group_chat_post_links: !v.split(':').any(|part| part == "no-links"),
+        game_control: false,
     })
 }
 

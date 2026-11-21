@@ -337,7 +337,9 @@ fn menu_body(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
         super::folders::move_menu(ui, p, inv, st, &[id], actions);
     }
     menu::separator(ui, p);
-    let list = outfit_list(inv, id);
+    // the inventory's entry, which @showinv leaves out of reach
+    // (`showcase::preview_panel`)
+    let list = outfit_list(inv, id).filter(|_| !world.rlva.has("showinv"));
     if let Some(items) = &list {
         for item in items {
             world.social.avatar_names.want(&item.creator);
@@ -615,12 +617,21 @@ mod tests {
         model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
         let mut st = AppearanceUi::default();
         st.outfit_selection.single(Uuid::from_u128(702));
+        let label = world.inventory.folders[&Uuid::from_u128(703)].info.name.clone();
+        // Keep the clicked tile inside the viewport whatever order the
+        // language's names sort in.
+        st.search.clone_from(&label);
         for _ in 0..4 {
             frame(&ctx, &mut world, &mut st, vec![]);
         }
-        let label = world.inventory.folders[&Uuid::from_u128(703)].info.name.clone();
         let shapes = frame(&ctx, &mut world, &mut st, vec![]).1;
-        let pos = shapes.iter().find_map(|s| text_position(&s.shape, &label)).expect("outfit tile") + egui::vec2(10.0, -50.0);
+        // The search field shows the name too: the tile is the lowest one.
+        let pos = shapes
+            .iter()
+            .filter_map(|s| text_position(&s.shape, &label))
+            .max_by(|a, b| a.y.total_cmp(&b.y))
+            .expect("outfit tile")
+            + egui::vec2(10.0, -50.0);
         assert!(click(&ctx, &mut world, &mut st, pos, PointerButton::Secondary).is_empty());
         assert_eq!(st.outfit_selection.focus, Some(Uuid::from_u128(703)));
         let mut shapes = Vec::new();
@@ -631,7 +642,7 @@ mod tests {
             aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
             aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit"),
             aurora_i18n::tr!("ui-appearance-gallery-take-off"),
-            "Image…",
+            aurora_i18n::tr!("common-image-2"),
             aurora_i18n::tr!("common-add-to-favorites"),
             aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
             aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),
@@ -735,6 +746,16 @@ mod tests {
         assert_eq!(outfit_list(&inv, id).as_deref(), Some(expected));
 
         // The COF's saved-outfit folder link is metadata, not an item name.
+        // (Japanese names the outfit and its jacket alike: tell the jacket's
+        // original apart, links keep their names.)
+        let outfit = inv.folders[&Uuid::from_u128(705)].info.name.clone();
+        for item in inv
+            .items
+            .values_mut()
+            .filter(|i| i.name == outfit && !matches!(i.asset_type, 24 | 25))
+        {
+            item.name.push_str(" (original)");
+        }
         let cof = model::cof(&inv).expect("COF");
         let items = outfit_list(&inv, cof).expect("worn list");
         assert_eq!(items.len(), 12);
@@ -935,7 +956,7 @@ mod tests {
                 aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
                 aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit"),
                 aurora_i18n::tr!("ui-appearance-gallery-take-off"),
-                "Image…",
+                aurora_i18n::tr!("common-image-2"),
                 aurora_i18n::tr!("common-add-to-favorites"),
                 aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"),
                 aurora_i18n::tr!("ui-appearance-gallery-save-to-this-outfit"),

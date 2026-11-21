@@ -15,6 +15,10 @@ use uuid::Uuid;
 pub const FILE: &str = "hud_scales.json";
 pub const MIN: f32 = 0.1;
 pub const MAX: f32 = 8.0;
+/// The smallest HUD view zoom while RLVa locks a worn HUD, so that it stays
+/// readable (render_hud_attachments, indra/newview/llviewerdisplay.cpp:
+/// mHUDTargetZoom clamped to 0.85 instead of 0.1 with hasLockedHUD).
+pub const LOCKED_VIEW_MIN: f32 = 0.85;
 
 pub fn wheel_scale(scale: f32, steps: f32, fine: bool) -> f32 {
     if !steps.is_finite() || !scale.is_finite() {
@@ -64,6 +68,9 @@ struct Local {
     requested_item: Option<Instant>,
     requested_properties: Option<Instant>,
     needs_clamp: bool,
+    /// The least zoom shown, whatever the saved one: 1 for a HUD RLVa keeps
+    /// worn, which this zoom never shrinks; 0 otherwise.
+    floor: f32,
 }
 
 #[derive(Default)]
@@ -282,7 +289,7 @@ impl HudScales {
     }
 
     pub fn scale(&self, id: Uuid) -> f32 {
-        self.local.get(&id).map_or(1.0, |s| s.scale)
+        self.local.get(&id).map_or(1.0, |s| s.scale.max(s.floor))
     }
 
     pub fn offset(&self, id: Uuid) -> Vec3 {
@@ -468,6 +475,44 @@ impl World {
         None
     }
 
+    /// The lower bound of the HUD view zoom: `LOCKED_VIEW_MIN` while RLVa
+    /// locks a worn HUD.
+    pub fn hud_zoom_min(&self) -> f32 {
+        if self.rlva_has_locked_hud() { LOCKED_VIEW_MIN } else { MIN }
+    }
+
+    /// Run every frame: a HUD lock that arrives brings the view zoom back
+    /// above its bound, and the locked HUDs back to their full size. The
+    /// Legacy Viewer has the view zoom alone; Aurora's zoom of one HUD would
+    /// shrink a locked one just as well, so it only enlarges those. The saved
+    /// sizes are kept and come back with the release.
+    pub fn rlva_limit_hud_zoom(&mut self, locked_hud: bool) {
+        if locked_hud {
+            // `max` also replaces a non-finite zoom
+            self.hud_zoom = self.hud_zoom.max(LOCKED_VIEW_MIN);
+        }
+        if !locked_hud && self.hud_scales.local.values().all(|s| s.floor == 0.0) {
+            return;
+        }
+        let floors: Vec<(Uuid, f32)> = self
+            .hud_scales
+            .local
+            .keys()
+            .map(|id| {
+                let held = locked_hud && self.objects.index_of_uuid(id).is_some_and(|i| self.rlva_locked_attachment(i));
+                (*id, if held { 1.0 } else { 0.0 })
+            })
+            .collect();
+        for (id, floor) in floors {
+            if let Some(s) = self.hud_scales.local.get_mut(&id)
+                && s.floor != floor
+            {
+                s.floor = floor;
+                s.needs_clamp = true;
+            }
+        }
+    }
+
     pub fn hud_scale(&self, idx: usize) -> f32 {
         if self.hud_scales.local.is_empty() {
             return 1.0;
@@ -570,11 +615,21 @@ mod tests {
         prim.parent_id = 0;
         prim.state = 0;
         prim.scale = Vec3::ONE;
-        let idx = world.objects.upsert_at(1, prim.clone(), Some(now));
+        let idx = world.objects.upsert_at(1, prim.clone(), Some(now), now);
         world.objects.get_mut(idx).expect("prim").render.local_scale = Some(Vec3::splat(9.0));
         prim.scale = Vec3::splat(2.0);
-        world.objects.upsert_at(1, prim, Some(now));
+        world.objects.upsert_at(1, prim, Some(now), now);
         let half = now + Duration::from_millis(60);
+        world.objects.damp_drawables(
+            0.06,
+            |_| false,
+            |_| {
+                Some(crate::world::motion::DampingView {
+                    distance_squared: 4.0,
+                    visible: true,
+                })
+            },
+        );
         world.objects.expire_corrections(half);
         // The existing world helpers retain network dimensions, while the
         // renderer's object overlay keeps its previous preview behavior.

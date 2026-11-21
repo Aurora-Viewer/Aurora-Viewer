@@ -251,19 +251,19 @@ impl Manager {
         (words.join(" "), found)
     }
 
-    pub fn similar(&self, item: Uuid, definition: &Gesture) -> Vec<Uuid> {
-        self.active
-            .iter()
-            .copied()
-            .filter(|id| {
-                *id != item
-                    && self.entries.get(id).is_some_and(|entry| {
-                        let g = &entry.definition;
-                        (!g.trigger.is_empty() && g.trigger == definition.trigger)
-                            || (g.key != KEY_NONE && g.key == definition.key && g.mask == definition.mask)
-                    })
-            })
-            .collect()
+    /// LLGestureMgr::replaceGesture, after a save from the editor: the
+    /// gesture's playback stops and its new definition takes its place. The
+    /// other active gestures stay as they are, even with the same shortcut
+    /// or trigger (#4167): replaceGesture loads with mDeactivateSimilar off,
+    /// and the one caller that asks for it (activateGestures, an outfit's
+    /// gestures) has already marked each item active, so its
+    /// deactivateSimilarGestures never runs. Two gestures on one key both
+    /// stay, and a press plays one of them at random ([`Manager::key_trigger`]).
+    pub fn replace(&mut self, item: Uuid, entry: Entry) -> Vec<Effect> {
+        let effects = self.stop(item);
+        self.entries.insert(item, entry);
+        self.changed();
+        effects
     }
 
     /// Requested animations remain pending until a simulator signal confirms

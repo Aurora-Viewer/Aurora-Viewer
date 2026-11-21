@@ -50,13 +50,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
 }
 
 /// How much of the world shows through (`ui::surface_opacity`); the Legacy
-/// Viewer's Colors › Floater Opacity, and the bars. Greyed in high contrast,
-/// which keeps every surface opaque.
+/// Viewer's Colors › Floater Opacity, and the bars. Greyed in high contrast
+/// and when Disable glass is on, which keep every surface opaque.
 fn opacity(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-opacity"), |cx| {
         cx.note(tr!("ui-options-opacity-help"));
-        cx.greyed(crate::high_contrast::current());
+        cx.greyed(crate::high_contrast::current() || crate::disable_glass::current());
         cx.slider(
             tr!("ui-options-opacity-active"),
             tr!("ui-options-opacity-active-hint"),

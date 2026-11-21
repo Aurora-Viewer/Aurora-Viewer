@@ -368,3 +368,53 @@ fn the_row_after_a_deletion_is_the_next_one_that_stays() {
     assert!(delete::reconcile_selection(&inv, &mut st));
     assert_eq!(st.selected, Some(id(30)), "else after the lowest deleted row");
 }
+
+/// #3507: the trash of the Gestures window asked again at every gesture,
+/// whatever "Do not show again" said.
+#[test]
+fn a_delete_from_another_window_follows_do_not_show_again() {
+    let inv = received();
+    let ids = vec![id(31)];
+    // asked for: the confirmation, and nothing sent yet
+    let (mut st, mut actions) = (InventoryUi::default(), Vec::new());
+    let prefs = InventoryPreferences::default();
+    assert!(prefs.confirm_delete);
+    assert!(delete::request_from_window(
+        &inv,
+        &mut st,
+        &prefs,
+        HashSet::new(),
+        &mut actions,
+        ids.clone()
+    ));
+    assert!(matches!(&st.dialog, Some(EditDialog::Delete(d, false)) if *d == ids));
+    assert!(actions.is_empty());
+    // "Do not show again": straight to the Trash, the inventory stays closed
+    let (mut st, mut actions) = (InventoryUi::default(), Vec::new());
+    let prefs = InventoryPreferences {
+        confirm_delete: false,
+        ..Default::default()
+    };
+    assert!(!delete::request_from_window(
+        &inv,
+        &mut st,
+        &prefs,
+        HashSet::new(),
+        &mut actions,
+        ids.clone()
+    ));
+    assert!(st.dialog.is_none());
+    assert!(matches!(actions.as_slice(), [InvAction::Delete(_)]));
+    // a worn item cannot go without a word: the confirmation states why
+    let (mut st, mut actions) = (InventoryUi::default(), Vec::new());
+    assert!(delete::request_from_window(
+        &inv,
+        &mut st,
+        &prefs,
+        HashSet::from([id(31)]),
+        &mut actions,
+        ids.clone()
+    ));
+    assert!(matches!(&st.dialog, Some(EditDialog::Delete(d, false)) if *d == ids));
+    assert!(actions.is_empty());
+}

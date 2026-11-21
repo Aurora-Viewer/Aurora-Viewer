@@ -102,12 +102,12 @@ fn volumes(cx: &mut Cx) {
                 modified: move |s: &crate::settings::Settings, d: &crate::settings::Settings| {
                     s.audio.volume[i] != d.audio.volume[i]
                         || s.audio.muted[i] != d.audio.muted[i]
-                        || s.audio.enabled[i] != d.audio.enabled[i]
+                        || s.audio.channel_on(i) != d.audio.channel_on(i)
                 },
                 reset: move |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
                     s.audio.volume[i] = d.audio.volume[i];
                     s.audio.muted[i] = d.audio.muted[i];
-                    s.audio.enabled[i] = d.audio.enabled[i];
+                    *s.audio.channel_box(i) = d.audio.channel_on(i);
                 },
             };
             cx.wide().row(name, "", &t, |ui, s| {
@@ -148,9 +148,12 @@ fn volumes(cx: &mut Cx) {
                     ch = true;
                 }
                 if i > 0 {
-                    ch |= widgets::checkbox(ui, &p, &mut a.enabled[i], "")
-                        .on_hover_text(tr!("ui-options-enable-this-channel"))
-                        .changed();
+                    let tip = if i == crate::settings::VOICE_CHANNEL {
+                        tr!("ui-options-enable-voice")
+                    } else {
+                        tr!("ui-options-enable-this-channel")
+                    };
+                    ch |= widgets::checkbox(ui, &p, a.channel_box(i), "").on_hover_text(tip).changed();
                 } else {
                     // the master has no enable box: its room kept, so that
                     // its slider lines up with the channels' (the row is
@@ -243,6 +246,37 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-gesture-sounds"),
             tr!("ui-options-sounds-played-by-other-avatars-gestures"),
             &field!(audio.gesture_sounds),
+        );
+        // Legacy Viewer › Sound & Media › "Hear media and sounds from"
+        // (MediaSoundsEarLocation, panel_preferences_sound.xml)
+        cx.choice(
+            tr!("ui-options-media-sounds-ear"),
+            tr!("ui-options-media-sounds-ear-help"),
+            &field!(audio.media_sounds_ear),
+            &[
+                (crate::settings::VoiceEar::Camera, tr!("common-camera"), false),
+                (crate::settings::VoiceEar::Avatar, tr!("voice-ear-avatar"), false),
+            ],
+        );
+        // FSAutoUnmuteAmbient, FSAutoUnmuteSounds (panel_preferences_sound.xml)
+        cx.toggle(
+            tr!("ui-options-unmute-ambient-after-teleport"),
+            tr!("ui-options-unmute-after-teleport-help"),
+            &field!(audio.auto_unmute_ambient),
+        );
+        cx.toggle(
+            tr!("ui-options-unmute-sounds-after-teleport"),
+            tr!("ui-options-unmute-after-teleport-help"),
+            &field!(audio.auto_unmute_sounds),
+        );
+        // The Legacy Viewer's FMOD Doppler, fixed at 1 there
+        // (AUDIO_LEVEL_DOPPLER, llvieweraudio.cpp): a row here
+        cx.slider(
+            tr!("ui-options-sound-doppler"),
+            tr!("ui-options-sound-doppler-help"),
+            &field!(audio.doppler),
+            0.0..=2.0,
+            "",
         );
         // The immersive sound (occlusion, 3D sound, reverb): Aurora's own and
         // experimental, marked as such.
@@ -472,6 +506,14 @@ fn voice(cx: &mut Cx) {
             tr!("ui-options-toggle-click-once-to-enable-again-to-disable-hold"),
             &field!(audio.mic_hold),
             &[(false, tr!("ui-options-toggle"), false), (true, tr!("common-hold-to-talk"), false)],
+        );
+        // StopMicCaptureWhenMuted, the "bluetooth_behavior" radio group of
+        // the LL viewer 26.5's panel_preferences_sound.xml
+        cx.choice(
+            tr!("voice-bluetooth-only"),
+            tr!("voice-bluetooth-hint"),
+            &field!(audio.stop_mic_when_muted),
+            &[(false, tr!("voice-better-voice"), false), (true, tr!("voice-better-audio"), false)],
         );
         let push = crate::keybinds::Action::PushToTalk;
         let t = Custom {

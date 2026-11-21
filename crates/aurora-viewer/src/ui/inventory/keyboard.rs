@@ -81,6 +81,72 @@ pub(super) fn shown_order(st: &InventoryUi) -> &[Uuid] {
     }
 }
 
+/// LLInventoryPanel::handleKeyHere (indra/newview/llinventorypanel.cpp): Enter
+/// with no modifier opens the selected rows, `LLInventoryAction::doToSelected`
+/// with "open". An item follows its double-click (`LLItemBridge::openItem`:
+/// a wearable is put on or taken off, a texture previews, a landmark
+/// teleports); a folder folds or unfolds, as `LLFolderBridge::performAction`.
+pub(super) fn open_shortcut(
+    ui: &mut egui::Ui,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let pressed = ui.input_mut(|input| {
+        let mut pressed = false;
+        input.events.retain(|event| {
+            if matches!(event, egui::Event::Key { key: egui::Key::Enter, pressed: true, repeat: false, modifiers, .. } if modifiers.is_none())
+            {
+                pressed = true;
+                false
+            } else {
+                true
+            }
+        });
+        pressed
+    });
+    if pressed {
+        open_selected(inv, st, prefs, facts, actions);
+        // An opened item changes the rows (a worn tag, a new window): keep the
+        // list's keyboard so a second Enter reaches it again.
+        clipboard::request_focus(ui, st);
+    }
+}
+
+fn open_selected(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, facts: &Facts, actions: &mut Vec<InvAction>) {
+    let mut ids: Vec<_> = st.selection.iter().copied().collect();
+    ids.sort_unstable();
+    // The Legacy Viewer checks the whole selection for Marketplace wear before opening anything.
+    if ids.iter().any(|id| context::listing_wear(inv, *id, st)) {
+        return;
+    }
+    let mut opened = HashSet::new();
+    for &id in &ids {
+        if let Some(original) = rules::original(inv, id) {
+            // A selected item and its links all describe the same action. Prefer its own row.
+            if (id != original && ids.binary_search(&original).is_ok()) || !opened.insert(original) {
+                continue;
+            }
+        }
+        if inv.folders.contains_key(&id) {
+            // The explorer steps into a folder; anywhere else Enter folds it.
+            if st.aurora.is_some_and(|frame| frame.explorer) {
+                st.browse = id;
+                st.selection.clear();
+                st.selected = None;
+            } else if st.result_view() {
+                st.result_tree.toggle(id, st.tab);
+            } else {
+                st.plain.set_open(id, !st.plain.is_open(id));
+            }
+        } else {
+            context::double_click(inv, id, st, prefs, facts, actions);
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Arrow {
     Up,
@@ -308,5 +374,169 @@ mod tests {
         st.selection.clear();
         step(&inv, &mut st, false, true, true);
         assert!(st.selection.is_empty());
+    }
+
+    #[test]
+    fn enter_puts_on_or_takes_off_the_selected_wearable() {
+        use crate::world::appearance::Action as Wear;
+        let id = Uuid::from_u128;
+        let mut inv = Inventory::default();
+        inv.add_items(vec![aurora_net::inventory::InvItem {
+            id: id(100),
+            parent: id(1),
+            asset_type: 6,
+            ..Default::default()
+        }]);
+        let prefs = InventoryPreferences::default();
+        let mut facts = Facts::default();
+        let mut st = InventoryUi {
+            selected: Some(id(100)),
+            selection: HashSet::from([id(100)]),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        open_selected(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(
+            matches!(&actions[..], [InvAction::Appearance(Wear::WearItem { item, replace: true, point: 0 })] if *item == id(100)),
+            "not worn: put it on"
+        );
+        facts.worn.insert(id(100));
+        let mut actions = Vec::new();
+        open_selected(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(
+            matches!(&actions[..], [InvAction::Appearance(Wear::Remove(item))] if *item == id(100)),
+            "worn: take it off"
+        );
+    }
+
+    #[test]
+    fn enter_opens_each_link_target_once_and_reveals_a_linked_folder() {
+        use crate::world::appearance::Action as Wear;
+        use aurora_net::inventory::{InvFolder, InvItem};
+
+        let id = Uuid::from_u128;
+        let mut inv = Inventory::default();
+        inv.created_folders(vec![InvFolder {
+            id: id(30),
+            ..Default::default()
+        }]);
+        inv.add_items(vec![
+            InvItem {
+                id: id(20),
+                asset_type: 6,
+                ..Default::default()
+            },
+            InvItem {
+                id: id(10),
+                asset_type: 24,
+                asset_id: id(20),
+                ..Default::default()
+            },
+            InvItem {
+                id: id(40),
+                asset_type: 24,
+                asset_id: id(20),
+                ..Default::default()
+            },
+            InvItem {
+                id: id(50),
+                asset_type: 25,
+                asset_id: id(30),
+                ..Default::default()
+            },
+        ]);
+        let mut st = InventoryUi::default();
+        for rows in [vec![id(10), id(20), id(40)], vec![id(10), id(40)]] {
+            st.selection = rows.into_iter().collect();
+            let mut actions = Vec::new();
+            open_selected(&inv, &mut st, &Default::default(), &Default::default(), &mut actions);
+            assert!(matches!(&actions[..], [InvAction::Appearance(Wear::WearItem { item, .. })] if *item == id(20)));
+        }
+
+        st.selection = HashSet::from([id(50)]);
+        open_selected(&inv, &mut st, &Default::default(), &Default::default(), &mut Vec::new());
+        assert_eq!(st.reveal, Some(id(30)));
+        assert_eq!(st.selection, HashSet::from([id(30)]));
+    }
+
+    #[test]
+    fn enter_rejects_the_whole_selection_when_a_marketplace_link_cannot_be_worn() {
+        use aurora_net::inventory::{InvFolder, InvItem};
+        let id = Uuid::from_u128;
+        let mut inv = Inventory {
+            root: id(1),
+            ..Default::default()
+        };
+        inv.created_folders(vec![
+            InvFolder {
+                id: inv.root,
+                type_default: 8,
+                ..Default::default()
+            },
+            InvFolder {
+                id: id(30),
+                parent: inv.root,
+                type_default: crate::world::marketplace::LISTINGS,
+                ..Default::default()
+            },
+        ]);
+        inv.add_items(vec![
+            InvItem {
+                id: id(10),
+                parent: inv.root,
+                asset_type: 6,
+                ..Default::default()
+            },
+            InvItem {
+                id: id(20),
+                parent: id(30),
+                asset_type: 24,
+                asset_id: id(10),
+                ..Default::default()
+            },
+        ]);
+        let mut st = InventoryUi {
+            selection: HashSet::from([id(10), id(20)]),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        open_selected(&inv, &mut st, &Default::default(), &Default::default(), &mut actions);
+        assert!(actions.is_empty());
+        assert_eq!(st.message, aurora_i18n::tr!("marketplace-alert-cannot-wear"));
+    }
+
+    #[test]
+    fn enter_folds_a_folder_and_opens_every_selected_item() {
+        use crate::world::appearance::Action as Wear;
+        let id = Uuid::from_u128;
+        let mut inv = Inventory::default();
+        inv.created_folders(vec![aurora_net::inventory::InvFolder {
+            id: id(10),
+            parent: id(1),
+            ..Default::default()
+        }]);
+        inv.add_items(vec![aurora_net::inventory::InvItem {
+            id: id(100),
+            parent: id(10),
+            asset_type: 6,
+            ..Default::default()
+        }]);
+        let prefs = InventoryPreferences::default();
+        let facts = Facts::default();
+        let mut st = InventoryUi {
+            selected: Some(id(10)),
+            selection: HashSet::from([id(10), id(100)]),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        open_selected(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(st.plain.is_open(id(10)), "the folder folds open");
+        assert!(
+            matches!(&actions[..], [InvAction::Appearance(Wear::WearItem { item, .. })] if *item == id(100)),
+            "the item under it is put on"
+        );
+        let mut actions = Vec::new();
+        open_selected(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(!st.plain.is_open(id(10)), "a second Enter folds it closed");
     }
 }

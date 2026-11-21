@@ -1,4 +1,4 @@
-//! Shared numeric pose controls for the selected source and native clip editor.
+//! Shared numeric pose controls for the selected bone and the native clip editor.
 use super::*;
 impl Editor {
     /// A released constraint retains calibration, but its next manual edit
@@ -14,12 +14,6 @@ impl Editor {
     }
     pub(super) fn pose_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame) {
         let rig = &world.avatar_lib.rig;
-        if self.graph.selected.is_some()
-            && let Some(bone) = self.selected
-        {
-            self.select(bone, rig, frame);
-        }
-
         let names: Vec<_> = rig.canonical_names.iter().enumerate().map(|(i, n)| (i, n.as_str())).collect();
         if self.control == Control::Pole {
             ui.colored_label(palette.violet_light, aurora_i18n::tr!("ik-edit-pole-hint"));
@@ -57,8 +51,7 @@ impl Editor {
         if changed {
             self.commit_manipulation(rig, frame, rotate);
         }
-        let bound = self.graph.binding.and_then(|index| self.graph.binding_goal(index, rig));
-        self.goal_error_ui(ui, palette, frame, bone, bound.as_ref());
+        self.goal_error_ui(ui, palette, frame, bone);
     }
     fn pole_label<'a>(&self, rig: &Rig, bone: usize, name: &'a str) -> &'a str {
         limbs(rig)
@@ -67,9 +60,9 @@ impl Editor {
             .map_or(name, |l| aurora_i18n::text(l.pole_label))
     }
     /// How far the solved joint stays from its goal, when it cannot reach it.
-    fn goal_error_ui(&self, ui: &mut egui::Ui, palette: &Palette, frame: &Frame, bone: usize, bound: Option<&Goal>) {
+    fn goal_error_ui(&self, ui: &mut egui::Ui, palette: &Palette, frame: &Frame, bone: usize) {
         if self.enabled(bone)
-            && let Some(goal) = bound.or_else(|| self.goals.iter().find(|g| g.bone == bone))
+            && let Some(goal) = self.goals.iter().find(|g| g.bone == bone)
         {
             let actual = frame
                 .model
@@ -94,7 +87,28 @@ impl Editor {
         let name = rig.canonical_names.get(bone).map_or("", String::as_str);
         ui.add_space(ui.spacing().item_spacing.y);
         let pole = self.control == Control::Pole;
-        ui.strong(if pole { self.pole_label(rig, bone, name) } else { name });
+        let title = if pole { self.pole_label(rig, bone, name) } else { name };
+        widgets::section_header(ui, palette, "bone-filled", title);
+        // the joints selected with it (Shift or Ctrl + click), as in the pose editor
+        let followers = self.clip_followers();
+        if !followers.is_empty() {
+            let names = followers
+                .iter()
+                .filter_map(|b| rig.canonical_names.get(*b).map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(", ");
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(aurora_i18n::tr!("poser-together", count = followers.len())).color(palette.teal))
+                    .on_hover_text(names);
+                if ui
+                    .button(aurora_i18n::text("poser-together-clear"))
+                    .on_hover_text(aurora_i18n::text("poser-together-clear-tip"))
+                    .clicked()
+                {
+                    self.clip.together.clear();
+                }
+            });
+        }
         self.chain_mode_ui(ui, palette, rig, frame, bone);
         if self.control == Control::Pole {
             ui.colored_label(palette.violet_light, aurora_i18n::tr!("ik-edit-pole-hint"));
@@ -125,13 +139,47 @@ impl Editor {
                 self.commit_manipulation(rig, frame, rotated);
             }
         }
+        // how to pick several joints, switch the tool and go finer
+        ui.label(
+            egui::RichText::new(aurora_i18n::tr!("anim-edit-fine-hint"))
+                .small()
+                .color(palette.muted),
+        );
         ui.add_space(ui.spacing().item_spacing.y);
         self.clip_bone_track_ui(ui, palette, bone);
-        ui.horizontal(|ui| {
-            if ui.button(aurora_i18n::tr!("ik-edit-reset-bone")).clicked() {
-                self.reset_bone(bone, rig);
+        ui.add_space(ui.spacing().item_spacing.y);
+        let width = clip::equal_width(
+            ui,
+            2,
+            &[
+                ("restore", aurora_i18n::tr!("ik-edit-reset-bone")),
+                ("refresh", aurora_i18n::tr!("ik-edit-reset-all")),
+            ],
+        );
+        let size = egui::vec2(width, ui.spacing().interact_size.y);
+        ui.horizontal_wrapped(|ui| {
+            if widgets::action_button(
+                ui,
+                palette,
+                "restore",
+                aurora_i18n::tr!("ik-edit-reset-bone"),
+                widgets::ActionKind::Flat,
+                size,
+            )
+            .clicked()
+            {
+                self.reset_bone(bone);
             }
-            if ui.button(aurora_i18n::tr!("ik-edit-reset-all")).clicked() {
+            if widgets::action_button(
+                ui,
+                palette,
+                "refresh",
+                aurora_i18n::tr!("ik-edit-reset-all"),
+                widgets::ActionKind::FlatDanger,
+                size,
+            )
+            .clicked()
+            {
                 self.reset_pose();
             }
         });
@@ -143,7 +191,7 @@ impl Editor {
             false,
             |ui| self.clip_bone_advanced_ui(ui, palette, world, frame, bone),
         );
-        self.goal_error_ui(ui, palette, frame, bone, None);
+        self.goal_error_ui(ui, palette, frame, bone);
     }
     /// IK moves the selected bone with its parent chain, whose root follows;
     /// FK moves or rotates this bone alone. The skeleton root has no chain.
@@ -311,31 +359,13 @@ impl Editor {
             }
         });
     }
-    pub(super) fn reset_bone(&mut self, bone: usize, rig: &Rig) {
+    pub(super) fn reset_bone(&mut self, bone: usize) {
         let counterpart = self.symmetry.then(|| self.mirrors.counterpart(bone)).flatten();
         self.authoring.remove(bone);
         if let Some(other) = counterpart {
             self.authoring.remove(other);
         }
         self.goals.retain(|g| g.bone != bone && Some(g.bone) != counterpart);
-        if !self.clip.active {
-            self.bindings.retain(|b| b.bone != bone && Some(b.bone) != counterpart);
-            let removed: Vec<_> = self
-                .graph
-                .definition
-                .bindings
-                .iter()
-                .enumerate()
-                .filter_map(|(i, b)| {
-                    (self.graph.visible_binding(i) && rig.names.get(&b.bone).is_some_and(|j| *j == bone || Some(*j) == counterpart))
-                        .then_some(i)
-                })
-                .collect();
-            for index in removed.into_iter().rev() {
-                self.graph.definition.remove_binding(index);
-            }
-            self.graph.binding = None;
-        }
         self.disabled.push(bone);
         if let Some(bone) = counterpart {
             self.disabled.push(bone);
@@ -346,16 +376,6 @@ impl Editor {
         self.authoring = authoring::State::default();
         self.disabled.extend(self.goals.iter().map(|g| g.bone));
         self.goals.clear();
-        if !self.clip.active {
-            self.bindings.clear();
-            let removed: Vec<_> = (0..self.graph.definition.bindings.len())
-                .filter(|&i| self.graph.visible_binding(i))
-                .collect();
-            for index in removed.into_iter().rev() {
-                self.graph.definition.remove_binding(index);
-            }
-            self.graph.binding = None;
-        }
         self.refresh = true;
     }
     pub(super) fn manipulation_ui(&self, ui: &mut egui::Ui) {
@@ -412,21 +432,20 @@ impl Editor {
                 && name.to_ascii_lowercase().contains(&filter)
                 && widgets::search_list_item(ui, self.selected == Some(bone), name).clicked()
             {
-                if self.links.bone_pick {
-                    self.picked_bone(
-                        world,
-                        frame,
-                        crate::world::rig_graph::Target::Bone {
-                            avatar: Uuid::nil(),
-                            bone: name.clone(),
-                        },
-                    );
-                } else {
-                    self.select(bone, &world.avatar_lib.rig, frame);
-                }
+                self.select(bone, &world.avatar_lib.rig, frame);
             }
         }
     }
+}
+
+/// The selected bone's card: its name over the controls that edit it.
+pub(super) fn selected_bone_ui(ui: &mut egui::Ui, palette: &Palette, name: &str, body: impl FnOnce(&mut egui::Ui)) {
+    widgets::surface(ui, palette, |ui| {
+        ui.set_min_width(ui.available_width());
+        widgets::section_header(ui, palette, "bone-filled", &aurora_i18n::tr!("ik-edit-selected", bone = name));
+        body(ui);
+    });
+    ui.add_space(ui.spacing().item_spacing.y);
 }
 
 pub(super) fn coordinate_heading(ui: &mut egui::Ui, palette: &Palette, title: &str, frame: &str, hint: &str) {

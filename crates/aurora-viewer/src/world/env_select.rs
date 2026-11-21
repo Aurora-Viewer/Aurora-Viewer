@@ -122,7 +122,11 @@ impl SettingsCatalog {
     }
 
     pub fn name_of(&self, kind: SettingsKind, asset: Uuid) -> Option<&str> {
-        self.list(kind).iter().find(|c| c.asset == asset).map(|c| c.name.as_str())
+        self.choice_of(kind, asset).map(|c| c.name.as_str())
+    }
+
+    pub fn choice_of(&self, kind: SettingsKind, asset: Uuid) -> Option<&SettingsChoice> {
+        self.list(kind).iter().find(|c| c.asset == asset)
     }
 
     pub fn choices(&self, kinds: &[SettingsKind], rank: impl Fn(Uuid) -> usize) -> Vec<(SettingsKind, &SettingsChoice)> {
@@ -167,11 +171,7 @@ impl SettingsCatalog {
             })
             .collect();
         items.sort_by_key(|(item, library)| (*library, rank(item.id)));
-        // (without an Aurora Weather code: shown as the inventory shows it)
-        items
-            .into_iter()
-            .map(|(it, _)| (it.id, crate::weather::region::strip_code(&it.name).to_owned()))
-            .collect()
+        items.into_iter().map(|(it, _)| (it.id, it.name.clone())).collect()
     }
 
     /// FSSettingsCollector's filtering and asset deduplication, preserving
@@ -194,9 +194,7 @@ impl SettingsCatalog {
             };
             let choice = SettingsChoice {
                 item: it.id,
-                // the name as the inventory shows it: without its Aurora
-                // Weather code (searched and listed by what people read)
-                name: crate::weather::region::strip_code(&it.name).to_owned(),
+                name: it.name.clone(),
                 asset: it.asset_id,
             };
             match kind {
