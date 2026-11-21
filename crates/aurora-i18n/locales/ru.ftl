@@ -11213,7 +11213,6 @@ ui-options-plates-friend-tint-help = Слегка окрашивает фон в
 ui-options-plates-hover-expand = Разворачивать табличку при наведении
 ui-options-plates-hover-expand-help = Табличка показывается полностью, пока указатель находится над ней.
 ui-options-plate-click = Щелчок по табличке
-ui-options-plate-click-help = Действие левой кнопки по чужой табличке. Указатель принимает форму руки.
 ui-options-plate-shift-click = Shift + левая кнопка по табличке
 ui-options-plate-shift-click-help = Отдельное действие по чужой табличке с Shift. Alt и Ctrl+Shift сохраняют обычные действия.
 ui-options-plate-ctrl-click = Ctrl + левая кнопка по табличке

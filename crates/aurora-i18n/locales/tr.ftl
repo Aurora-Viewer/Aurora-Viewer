@@ -10899,7 +10899,6 @@ ui-options-plates-friend-tint-help = Arkadaş renginin (Ad Renkleri) hafif bir t
 ui-options-plates-hover-expand = Üzerine gelince plakayı genişlet
 ui-options-plates-hover-expand-help = Farenin altındaki plaka, fare üzerindeyken tam olur.
 ui-options-plate-click = Plakaya tıklama
-ui-options-plate-click-help = Birinin plakasına sol tıklamanın eylemi; imleç bir ele dönüşür.
 ui-options-plate-shift-click = Plakaya Shift + sol tıklama
 ui-options-plate-shift-click-help = Birinin plakasında Shift basılıyken ayrı bir eylem. Alt ve Ctrl + Shift olağan davranışlarını korur.
 ui-options-plate-ctrl-click = Plakaya Ctrl + sol tıklama

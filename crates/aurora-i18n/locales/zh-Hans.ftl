@@ -10871,7 +10871,6 @@ ui-options-plates-friend-tint-help = 用好友颜色（名称颜色）轻染，�
 ui-options-plates-hover-expand = 悬停时展开铭牌
 ui-options-plates-hover-expand-help = 鼠标所在处的铭牌在悬停时变为完整。
 ui-options-plate-click = 点击铭牌
-ui-options-plate-click-help = 左键点击他人铭牌的动作；光标会变为手形。
 ui-options-plate-shift-click = 在铭牌上 Shift + 左键点击
 ui-options-plate-shift-click-help = 按住 Shift 点击他人铭牌时的独立动作。Alt 与 Ctrl + Shift 保持原有行为。
 ui-options-plate-ctrl-click = 在铭牌上 Ctrl + 左键点击
