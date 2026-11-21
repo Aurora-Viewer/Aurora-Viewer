@@ -8,6 +8,7 @@
 //! llpanelenvironment.cpp and llinventory/llparcel.cpp (originally LGPL 2.1).
 
 use aurora_llsd::Llsd;
+use aurora_net::experience::ExperienceDetails;
 use aurora_net::land::{self, AccessEntry, FoundAvatar, LandCommand, LandEvent, ObjectOwner, ParcelUpdate};
 use aurora_net::{GroupMembership, NetCommand, ParcelInfo, RegionHandle, parcel_flags as pf};
 use glam::Vec3;
@@ -572,7 +573,9 @@ pub struct Land {
     pub seen_parcels: Vec<(RegionHandle, std::sync::Arc<ParcelInfo>)>,
     pub covenant: Option<Covenant>,
     covenant_asked: Option<(RegionHandle, Instant)>,
-    pub experience_names: HashMap<Uuid, String>,
+    /// The experiences named by the parcel's and the estate's lists, with
+    /// their name, creator and rating (LLExperienceCache's entries).
+    experience_details: HashMap<Uuid, ExperienceDetails>,
     experiences_asked: HashSet<Uuid>,
     pub group_names: HashMap<Uuid, String>,
     groups_asked: HashSet<Uuid>,
@@ -820,15 +823,24 @@ impl Land {
         }
     }
 
-    /// Experience name, asked once when unknown.
-    pub fn experience_name(&mut self, id: &Uuid) -> Option<String> {
-        if let Some(n) = self.experience_names.get(id) {
-            return Some(n.clone());
-        }
-        if self.experiences_asked.insert(*id) {
+    /// The details of an experience named by a parcel or estate list, asked
+    /// once when unknown (LLExperienceCache::get).
+    pub fn experience(&mut self, id: &Uuid) -> Option<&ExperienceDetails> {
+        if !self.experience_details.contains_key(id) && self.experiences_asked.insert(*id) {
             self.send(LandCommand::ExperienceInfo(vec![*id]));
         }
-        None
+        self.experience_details.get(id)
+    }
+
+    /// The details already read, without asking (a chat link labels an
+    /// experience whose name may already be known).
+    pub fn known_experience(&self, id: &Uuid) -> Option<&ExperienceDetails> {
+        self.experience_details.get(id)
+    }
+
+    /// Experience name, asked once when unknown.
+    pub fn experience_name(&mut self, id: &Uuid) -> Option<String> {
+        self.experience(id).map(|d| d.name.clone())
     }
 
     pub fn apply(&mut self, ev: LandEvent, ctx: &SelectionContext) {
@@ -932,7 +944,7 @@ impl Land {
                     sel.revision += 1;
                 }
             }
-            LandEvent::ExperienceInfo(list) => self.experience_names.extend(list),
+            LandEvent::ExperienceInfo(list) => self.experience_details.extend(list.into_iter().map(|d| (d.id, d))),
             LandEvent::GroupNames(list) => self.group_names.extend(list),
             LandEvent::ScriptSummary(r) => {
                 self.scripts.revision = self.scripts.revision.wrapping_add(1);
@@ -954,7 +966,21 @@ impl Land {
             }
             LandEvent::ExperienceSearch { query, results } => {
                 if let Some(list) = results.as_ref() {
-                    self.experience_names.extend(list.iter().map(|e| (e.id, e.name.clone())));
+                    // findExperienceByNameCoro inserts its rows in the cache:
+                    // the name and creator are known before the details arrive.
+                    for e in list.iter().filter(|e| !e.id.is_nil()) {
+                        self.experience_details.insert(
+                            e.id,
+                            ExperienceDetails {
+                                id: e.id,
+                                name: e.name.clone(),
+                                owner: e.owner,
+                                maturity: e.maturity,
+                                properties: e.properties,
+                                ..Default::default()
+                            },
+                        );
+                    }
                 }
                 if let Some((q, r)) = self.window_experience_search.as_mut()
                     && *q == query
@@ -1222,6 +1248,37 @@ mod tests {
             })
             .collect();
         assert_eq!(sent, vec![land::AL_ALLOW_EXPERIENCE]);
+    }
+
+    /// GetExperienceInfo keeps the creator, so two experiences with the same
+    /// name can be told apart in the lists.
+    #[test]
+    fn experience_details_keep_their_creator() {
+        let mut land = Land::default();
+        let id = Uuid::from_u128(0xE1);
+        let owner = Uuid::from_u128(0xA1);
+        assert!(land.experience(&id).is_none());
+        let sent = land.take_commands();
+        assert!(matches!(&sent[..], [NetCommand::Land(LandCommand::ExperienceInfo(ids))] if ids == &vec![id]));
+        // asked once, even while the answer is missing
+        assert!(land.experience(&id).is_none());
+        assert!(land.take_commands().is_empty());
+        land.apply(
+            LandEvent::ExperienceInfo(vec![ExperienceDetails {
+                id,
+                name: "Shared".into(),
+                owner,
+                ..Default::default()
+            }]),
+            &SelectionContext {
+                agent_region: None,
+                region_id: Uuid::nil(),
+            },
+        );
+        assert_eq!(land.experience_name(&id).as_deref(), Some("Shared"));
+        assert_eq!(land.known_experience(&id).map(|d| d.owner), Some(owner));
+        // known now: the same id asks for nothing more
+        assert!(land.take_commands().is_empty());
     }
 
     use super::*;

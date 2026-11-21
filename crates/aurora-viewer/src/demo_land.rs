@@ -16,6 +16,7 @@
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS, TEX_GRADIENT};
 use crate::world::land::powers;
 use aurora_llsd::Llsd;
+use aurora_net::experience::ExperienceDetails;
 use aurora_net::land::{AL_ACCESS, AL_ALLOW_EXPERIENCE, AL_BAN, AccessEntry, FoundAvatar, LandCommand, LandEvent, ObjectOwner};
 use aurora_net::{NetEvent, ParcelInfo, ParcelMedia, parcel_flags as pf};
 use glam::Vec3;
@@ -27,6 +28,9 @@ use uuid::Uuid;
 const COVENANT: Uuid = Uuid::from_u128(0xC0E0_0000_0000_0000_0000_0000_0000_0001);
 pub(super) const PARCEL_UUID: Uuid = Uuid::from_u128(0x1214_B5B2_7C42_D6C4_8741_B182_4390_8089);
 const XP_AURORA: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0001);
+/// The same name as XP_AURORA, by another resident: the duplicate the
+/// creator line tells apart (the human's request).
+const XP_AURORA_2: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0007);
 const XP_SITTER: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0002);
 const XP_INTERACT: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0003);
 const XP_BEACH: Uuid = Uuid::from_u128(0xE7E0_0000_0000_0000_0000_0000_0000_0004);
@@ -429,29 +433,48 @@ fn apply_day_inline(local_id: i32, cycle: &Llsd, day_length: i32, day_offset: i3
     }]
 }
 
-/// Experiences the picker finds: (id, name, rating, properties).
-fn found_experiences() -> Vec<aurora_net::land::FoundExperience> {
-    let e = |id: Uuid, name: &str, maturity: u8, properties: i32| aurora_net::land::FoundExperience {
-        id,
-        name: name.into(),
-        owner: DEMO_LOUP,
-        maturity,
-        properties,
-    };
-    vec![
-        e(XP_AURORA, aurora_i18n::tr!("demo-land-aurora-experience"), 13, 0),
-        e(XP_SITTER, "AVSitter", 13, 0),
-        e(XP_INTERACT, aurora_i18n::tr!("demo-land-interactions-general"), 21, 0),
-        e(XP_BEACH, aurora_i18n::tr!("demo-land-beach-games"), 13, 0),
-        e(XP_CLUB, aurora_i18n::tr!("demo-land-night-club"), 42, 0),
-        // grid-wide and privileged: in no parcel list
-        e(
-            XP_GRID,
-            "Linden Realms",
+/// A demo experience's name, creator, rating and properties. The first two
+/// share their name and differ in their creator, for the creator line.
+fn experience(id: Uuid) -> (String, Uuid, u8, i32) {
+    match id {
+        XP_AURORA => (aurora_i18n::tr!("demo-land-aurora-experience").to_owned(), DEMO_LOUP, 13, 0),
+        XP_AURORA_2 => (aurora_i18n::tr!("demo-land-aurora-experience").to_owned(), DEMO_NOVA, 13, 0),
+        XP_SITTER => ("AVSitter".to_owned(), DEMO_TESS, 13, 0),
+        XP_INTERACT => (aurora_i18n::tr!("demo-land-interactions-general").to_owned(), DEMO_TESS, 21, 0),
+        XP_BEACH => (aurora_i18n::tr!("demo-land-beach-games").to_owned(), DEMO_NOVA, 13, 0),
+        XP_CLUB => (aurora_i18n::tr!("demo-land-night-club").to_owned(), DEMO_LOUP, 42, 0),
+        XP_GRID => (
+            "Linden Realms".to_owned(),
+            DEMO_TESS,
             13,
             aurora_net::land::XP_PROPERTY_GRID | aurora_net::land::XP_PROPERTY_PRIVILEGED,
         ),
-    ]
+        id => (
+            super::region::experience_name(id)
+                .unwrap_or(aurora_i18n::tr!("demo-land-unknown-experience"))
+                .to_owned(),
+            DEMO_LOUP,
+            13,
+            0,
+        ),
+    }
+}
+
+/// Experiences the picker finds.
+fn found_experiences() -> Vec<aurora_net::land::FoundExperience> {
+    [XP_AURORA, XP_AURORA_2, XP_SITTER, XP_INTERACT, XP_BEACH, XP_CLUB, XP_GRID]
+        .into_iter()
+        .map(|id| {
+            let (name, owner, maturity, properties) = experience(id);
+            aurora_net::land::FoundExperience {
+                id,
+                name,
+                owner,
+                maturity,
+                properties,
+            }
+        })
+        .collect()
 }
 
 /// A new owner and group for the parcel (deed, release, reclaim), off sale.
@@ -517,7 +540,10 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
                 out.push(ev(LandEvent::AccessList {
                     local_id: 1,
                     flags: AL_ALLOW_EXPERIENCE,
-                    entries: [XP_AURORA, XP_SITTER, XP_INTERACT].into_iter().map(|id| e(id, 0)).collect(),
+                    entries: [XP_AURORA, XP_AURORA_2, XP_SITTER, XP_INTERACT]
+                        .into_iter()
+                        .map(|id| e(id, 0))
+                        .collect(),
                 }));
             }
             out
@@ -806,16 +832,15 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
         LandCommand::ExperienceInfo(ids) => vec![ev(LandEvent::ExperienceInfo(
             ids.iter()
                 .map(|id| {
-                    let name = match *id {
-                        XP_AURORA => aurora_i18n::tr!("demo-land-aurora-experience"),
-                        XP_SITTER => "AVSitter",
-                        XP_INTERACT => aurora_i18n::tr!("demo-land-interactions-general"),
-                        XP_BEACH => aurora_i18n::tr!("demo-land-beach-games"),
-                        XP_CLUB => aurora_i18n::tr!("demo-land-night-club"),
-                        XP_GRID => "Linden Realms",
-                        id => super::region::experience_name(id).unwrap_or(aurora_i18n::tr!("demo-land-unknown-experience")),
-                    };
-                    (*id, name.to_owned())
+                    let (name, owner, maturity, properties) = experience(*id);
+                    ExperienceDetails {
+                        id: *id,
+                        name,
+                        owner,
+                        maturity,
+                        properties,
+                        ..Default::default()
+                    }
                 })
                 .collect(),
         ))],

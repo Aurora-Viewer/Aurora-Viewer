@@ -686,7 +686,15 @@ fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, 
 
 /// A selectable row of a picker's list.
 pub(crate) fn pick_row(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selected: bool) -> egui::Response {
-    let (rect, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::click());
+    pick_row_note(ui, p, icon, label, None, selected)
+}
+
+/// The same row with a second, muted line. The experience picker shows its
+/// creator there, as LLPanelExperiencePicker fills its owner column from
+/// LLAvatarNameCache (indra/newview/llpanelexperiencepicker.cpp).
+pub(crate) fn pick_row_note(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, note: Option<&str>, selected: bool) -> egui::Response {
+    let height = if note.is_some() { 34.0 } else { 24.0 };
+    let (rect, r) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), egui::Sense::click());
     super::super::widgets::reveal_search_selection(ui, &r, selected);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {
@@ -702,13 +710,26 @@ pub(crate) fn pick_row(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, 
             p.muted,
         );
     }
-    ui.painter().text(
-        rect.left_center() + Vec2::new(28.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::proportional(12.5),
-        p.ink,
-    );
+    let text_left = rect.left() + 28.0;
+    let width = (rect.right() - text_left - 4.0).max(0.0);
+    match note {
+        Some(note) => {
+            let top = egui::FontId::proportional(12.5);
+            let bottom = egui::FontId::proportional(10.5);
+            let gap = crate::ui::widgets::two_lines_gap(ui, &top, &bottom, 13.0);
+            crate::ui::widgets::paint_elided(ui, label, rect.left_center() + Vec2::new(28.0, -gap / 2.0), width, top, p.ink);
+            crate::ui::widgets::paint_elided(ui, note, rect.left_center() + Vec2::new(28.0, gap / 2.0), width, bottom, p.muted);
+        }
+        None => {
+            ui.painter().text(
+                rect.left_center() + Vec2::new(28.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::proportional(12.5),
+                p.ink,
+            );
+        }
+    }
     r
 }
 
@@ -780,7 +801,8 @@ fn experience_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut 
                     } else {
                         e.name.clone()
                     };
-                    let r = pick_row(ui, p, "flask-filled", &label, f.selected == Some(e.id));
+                    let creator = super::creator_name(world, e.owner).map(|c| aurora_i18n::tr!("ui-experiences-by", creator = c));
+                    let r = pick_row_note(ui, p, "flask-filled", &label, creator.as_deref(), f.selected == Some(e.id));
                     if r.clicked() {
                         f.selected = Some(e.id);
                     }

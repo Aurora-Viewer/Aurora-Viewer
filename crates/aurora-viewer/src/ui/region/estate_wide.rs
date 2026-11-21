@@ -874,7 +874,16 @@ fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, wor
                                     } else {
                                         e.name.clone()
                                     };
-                                    let r = crate::ui::land::pick_row(ui, p, "flask-filled", &label, *selected == Some(e.id));
+                                    let creator = crate::ui::land::creator_name(world, e.owner)
+                                        .map(|c| aurora_i18n::tr!("ui-experiences-by", creator = c));
+                                    let r = crate::ui::land::pick_row_note(
+                                        ui,
+                                        p,
+                                        "flask-filled",
+                                        &label,
+                                        creator.as_deref(),
+                                        *selected == Some(e.id),
+                                    );
                                     if r.clicked() {
                                         *selected = Some(e.id);
                                     }

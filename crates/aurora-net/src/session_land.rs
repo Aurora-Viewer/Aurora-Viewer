@@ -648,22 +648,26 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            for (url, _) in crate::experience::info_urls(&base, &ids) {
-                match http.get(&url).header("Accept", "application/llsd+xml").send().await {
-                    Ok(r) if r.status().is_success() => {
-                        if let Some(v) = r.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok()) {
-                            let list = v["experience_keys"]
-                                .as_array()
-                                .iter()
-                                .map(|e| (e["public_id"].as_uuid(), e["name"].to_string_value()))
-                                .filter(|(id, _)| !id.is_nil())
-                                .collect();
-                            let _ = events.send(NetEvent::Land(LandEvent::ExperienceInfo(list)));
-                        }
+            for (url, batch) in crate::experience::info_urls(&base, &ids) {
+                let reply = match http.get(&url).header("Accept", "application/llsd+xml").send().await {
+                    Ok(r) if r.status().is_success() => r.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok()),
+                    Ok(r) => {
+                        log::warn!("GetExperienceInfo: HTTP {}", r.status().as_u16());
+                        None
                     }
-                    Ok(r) => log::warn!("GetExperienceInfo: HTTP {}", r.status().as_u16()),
-                    Err(e) => log::warn!("GetExperienceInfo failed: {}", e.without_url()),
-                }
+                    Err(e) => {
+                        log::warn!("GetExperienceInfo failed: {}", e.without_url());
+                        None
+                    }
+                };
+                let list = match reply {
+                    Some(v) => crate::experience::parse_info(&v, &batch),
+                    // LLExperienceCache::requestExperiencesCoro leaves a dummy
+                    // entry for a failed request, so its row does not wait for
+                    // ever.
+                    None => batch.iter().copied().map(crate::experience::ExperienceDetails::unknown).collect(),
+                };
+                let _ = events.send(NetEvent::Land(LandEvent::ExperienceInfo(list)));
             }
         });
     }

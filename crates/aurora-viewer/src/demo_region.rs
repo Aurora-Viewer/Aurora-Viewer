@@ -572,7 +572,11 @@ pub fn found_experiences() -> Vec<FoundExperience> {
         .map(|(id, properties)| FoundExperience {
             id,
             name: experience_name(id).unwrap_or_default().into(),
-            owner: DEMO_LOUP,
+            owner: match id {
+                XP_HUNT => DEMO_LOUP,
+                XP_TELEPORTERS => DEMO_NOVA,
+                _ => DEMO_TESS,
+            },
             maturity: 13,
             properties,
         })

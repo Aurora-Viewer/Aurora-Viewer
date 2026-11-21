@@ -31,7 +31,7 @@ mod scripts;
 mod sound;
 
 use aurora::Page;
-pub(crate) use dialogs::{pick_row, settings_flags};
+pub(crate) use dialogs::{pick_row, pick_row_note, settings_flags};
 pub(crate) use environment::day_hours;
 pub(crate) use overview::day;
 
@@ -979,6 +979,21 @@ fn group_link(ui: &mut egui::Ui, p: &Palette, id: Uuid, label: &str) {
     {
         super::group_profile::request_open(ui.ctx(), id);
     }
+}
+
+/// The name of an experience's creator, its lookup asked once when unknown
+/// ("…" meanwhile). None for a missing owner.
+///
+/// The experience's `agent_id` is the resident the grid names as its
+/// creator; the Legacy Viewer shows it as the picker's owner column
+/// (LLPanelExperiencePicker::filterContent / name_callback,
+/// indra/newview/llpanelexperiencepicker.cpp).
+pub(crate) fn creator_name(world: &mut World, owner: Uuid) -> Option<String> {
+    if owner.is_nil() {
+        return None;
+    }
+    world.social.want_name(owner);
+    Some(world.social.display_name_of(&owner))
 }
 
 /// A flat button, greyed when `enabled` is false.

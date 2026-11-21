@@ -11,6 +11,7 @@
 //! (llinventory/llnotecard.cpp), LLEnvironment::coroUpdateEnvironment /
 //! coroResetEnvironment (newview/llenvironment.cpp), originally LGPL 2.1.
 
+use crate::experience::ExperienceDetails;
 use crate::types::{ParcelInfo, RegionHandle};
 use aurora_llsd::Llsd;
 use glam::Vec3;
@@ -349,7 +350,7 @@ pub enum LandCommand {
     },
     /// LLExperienceCache::findExperienceByName (the experience picker).
     ExperienceSearch { query: String, page: i32 },
-    /// Names of experiences (GetExperienceInfo capability).
+    /// The details of these experiences (GetExperienceInfo capability).
     ExperienceInfo(Vec<Uuid>),
     /// Group names (UUIDGroupNameRequest, LLCacheName::getGroupName).
     GroupNames(Vec<Uuid>),
@@ -401,8 +402,9 @@ pub enum LandEvent {
     ParcelId { local_id: i32, id: Option<Uuid> },
     /// ExtEnvironment of a parcel (`environment` map), or why it failed.
     Environment { local_id: i32, result: Result<Llsd, String> },
-    /// GetExperienceInfo: (experience, name).
-    ExperienceInfo(Vec<(Uuid, String)>),
+    /// GetExperienceInfo: the details of the experiences asked for, those the
+    /// server does not know included (LLExperienceCache's invalid entries).
+    ExperienceInfo(Vec<ExperienceDetails>),
     /// UUIDGroupNameReply: (group, name).
     GroupNames(Vec<(Uuid, String)>),
     /// Avatar picker results for `query`, None when the search failed.

@@ -127,9 +127,8 @@ fn resolved(world: &World, want_names: &mut HashSet<Uuid>, link: &AppLink) -> Op
         AppLink::Experience(id) => {
             let name = world
                 .land
-                .experience_names
-                .get(id)
-                .cloned()
+                .known_experience(id)
+                .map(|d| d.name.clone())
                 .or_else(|| world.experiences.details.get(id).map(|d| d.name.clone()));
             match name {
                 Some(n) if n.trim().is_empty() => aurora_i18n::tr!("ui-chat-applink-experience-untitled").to_owned(),

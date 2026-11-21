@@ -2691,6 +2691,7 @@ ui-experience-profile-ignored-field = The field "{ $field }" was ignored.
 ui-experiences-title = Experiences
 ui-experiences-allowed = Allowed
 ui-experiences-blocked = Blocked
+ui-experiences-by = by { $creator }
 ui-experiences-admin = Admin
 ui-experiences-contributor = Contributor
 ui-experiences-owned = Owned

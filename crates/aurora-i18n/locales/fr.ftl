@@ -2694,6 +2694,7 @@ ui-experience-profile-ignored-field = Le champ « { $field } » a été ignoré.
 ui-experiences-title = Expériences
 ui-experiences-allowed = Autorisées
 ui-experiences-blocked = Bloquées
+ui-experiences-by = par { $creator }
 ui-experiences-admin = Administrées
 ui-experiences-contributor = Contribuées
 ui-experiences-owned = Possédées
