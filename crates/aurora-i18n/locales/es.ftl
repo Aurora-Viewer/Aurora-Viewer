@@ -10951,7 +10951,6 @@ ui-options-plates-friend-tint-help = Un tinte suave del color de los amigos («C
 ui-options-plates-hover-expand = Expandir una placa al pasar el ratón
 ui-options-plates-hover-expand-help = La placa bajo el ratón se muestra completa mientras el ratón está sobre ella.
 ui-options-plate-click = Clic en una placa
-ui-options-plate-click-help = Acción de un clic izquierdo en la placa de otra persona; el cursor se convierte en una mano.
 ui-options-plate-shift-click = Mayús + clic izquierdo en una placa
 ui-options-plate-shift-click-help = Acción independiente con Mayús pulsada en la placa de otra persona. Alt y Ctrl + Mayús conservan su comportamiento habitual.
 ui-options-plate-ctrl-click = Ctrl + clic izquierdo en una placa

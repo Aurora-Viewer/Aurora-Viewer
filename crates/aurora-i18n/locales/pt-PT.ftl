@@ -10939,7 +10939,6 @@ ui-options-plates-friend-tint-help = Um tom claro da cor dos amigos (Cores dos n
 ui-options-plates-hover-expand = Expandir uma placa ao passar o rato
 ui-options-plates-hover-expand-help = A placa sob o rato fica completa enquanto o rato estiver sobre ela.
 ui-options-plate-click = Clique numa placa
-ui-options-plate-click-help = Ação de um clique esquerdo na placa de alguém; o cursor transforma-se numa mão.
 ui-options-plate-shift-click = Shift + clique esquerdo numa placa
 ui-options-plate-shift-click-help = Ação independente com Shift premido na placa de alguém. Alt e Ctrl + Shift mantêm o comportamento habitual.
 ui-options-plate-ctrl-click = Ctrl + clique esquerdo numa placa

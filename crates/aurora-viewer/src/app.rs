@@ -1108,6 +1108,9 @@ pub struct App {
     beacon_hit: Option<ui::minimap::BeaconHit>,
     /// The avatar whose plate is under the pointer (app/plate_click.rs).
     plate_hover: Option<uuid::Uuid>,
+    /// A left press on our own plate whose action waits for the release
+    /// (app/plate_click.rs).
+    own_plate_click: Option<plate_click::OwnPlateClick>,
     /// Block list version applied to object sounds, and the objects whose
     /// sounds it silenced.
     sound_blocks: (u64, std::collections::HashSet<uuid::Uuid>),
@@ -2247,6 +2250,7 @@ impl App {
             name_tag_visibility: Default::default(),
             beacon_hit: None,
             plate_hover: None,
+            own_plate_click: None,
             sound_blocks: Default::default(),
             sound_changes: Vec::new(),
             devices_listed: false,
@@ -4856,6 +4860,9 @@ impl App {
         if self.hud_drag.is_some() {
             return;
         }
+        if let Some(click) = &mut self.own_plate_click {
+            click.motion(dx, dy, self.egui_ctx.pixels_per_point());
+        }
         let s = self.settings.mouse_sensitivity;
         if self.camera.mouselook() {
             // Alt held: the grab tool has the free cursor, the view stays
@@ -5646,6 +5653,7 @@ impl App {
     fn world_press(&mut self) {
         self.left_down = true;
         self.world_mouse_walk_pending = false;
+        self.own_plate_click = None;
         if self.hud_drag_requested()
             && self.huds_shown()
             && let Some(idx) = self.scene.hud_move_pick(&self.world, self.cursor_pos)
@@ -5708,7 +5716,9 @@ impl App {
         // (kept until the depth is in hand: the press is run again then)
         let double = std::mem::take(&mut self.double_press);
         let (ray, depth) = (picked.ray, picked.depth);
-        // another avatar's plate with a click action takes the click
+        // someone else's plate with a click action takes the press; on our
+        // own plate the press is our avatar's, its action waits for the
+        // release (own_plate_press, below)
         if self.plate_press(picked.tag) {
             return;
         }
@@ -5871,6 +5881,9 @@ impl App {
                 self.hold_focus_cursor();
             }
         } else if let (Some(p), Some(ray)) = (avatar_hit, ray) {
+            // a press on our own plate: its click action waits for a
+            // release without a drag (app/plate_click.rs)
+            self.own_plate_press(picked.tag);
             // ClickOnAvatarKeepsCamera (LLToolPie::handleLeftClickPick):
             // always LLToolCamera::pickCallback on the hit, then only when the
             // option is off call setFocusOnAvatar(true) (snap behind + steer).
@@ -8406,6 +8419,10 @@ impl App {
         }
         self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
         if pressed {
+            // a walk, not a click on our own plate
+            if let Some(click) = &mut self.own_plate_click {
+                click.other_button();
+            }
             self.right_gesture = RightGesture {
                 start: self.cursor_pos,
                 ..RightGesture::default()
@@ -8551,6 +8568,8 @@ impl App {
         } else if self.mouse_mode != MouseMode::None {
             self.end_mouse_drag();
         }
+        // a click on our own plate: its action, now that the press is over
+        self.own_plate_release();
     }
 
     /// RlvActions::canTeleport*: reject before UI and demo side effects.

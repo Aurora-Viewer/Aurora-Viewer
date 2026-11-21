@@ -10990,7 +10990,6 @@ ui-options-plates-friend-tint-help = Eine leichte Tönung der Farbe der Freunde 
 ui-options-plates-hover-expand = Schild beim Überfahren erweitern
 ui-options-plates-hover-expand-help = Das Schild unter der Maus wird vollständig, solange die Maus darauf ist.
 ui-options-plate-click = Klick auf ein Schild
-ui-options-plate-click-help = Aktion eines Linksklicks auf das Schild einer anderen Person; der Cursor wird zur Hand.
 ui-options-plate-shift-click = Umschalt + Linksklick auf ein Schild
 ui-options-plate-shift-click-help = Eigene Aktion bei gedrückter Umschalttaste auf dem Schild einer anderen Person. Alt und Strg + Umschalt behalten ihr gewohntes Verhalten.
 ui-options-plate-ctrl-click = Strg + Linksklick auf ein Schild
