@@ -9,6 +9,7 @@ This tests event ordering and emitted traffic, not simulator physics or Mono's
 compiled memory budget. No network connection is made by the test harness.
 """
 
+import base64
 import unittest
 from pathlib import Path
 
@@ -30,15 +31,17 @@ def private_channel(key):
 
 
 DISCOVERY = private_channel(ROOT)
+# query.lsl's consent dialog channel, and the stop channel residents type on
+# (aurora_net::bridge::query::POSE_STOP_CHANNEL).
+POSE_DIALOG = -0x40000000 - int(str(ROOT)[:7], 16)
+STOP_CHANNEL = 2525
 LEGACY_DISCOVERY = -184735219
-LEGACY_CONTROL = -190018106
-IK_CHANNEL = -190018107
 OBJECT_ROOT = 18
 REGION = 256
 REGION_START = 1024
 TELEPORT = 512
 PERMISSIONS = 4 | 32 | 1024
-SCRIPTS = ("bridge.lsl", "query.lsl", "ik.lsl")
+SCRIPTS = ("bridge.lsl", "query.lsl")
 
 
 class ResetScript(Exception):
@@ -55,6 +58,8 @@ class Simulator:
         self.messages = []
         self.responses = []
         self.broadcasts = []
+        self.dialogs = []
+        self.ims = []
         self.regionwide = []
         self.detaches = 0
         self.timer = 0.0
@@ -85,6 +90,8 @@ class Simulator:
             "llHTTPResponse": lambda *args: self.responses.append(args),
             "llRegionSay": self.region_say,
             "llRegionSayTo": lambda *args: self.broadcasts.append(args),
+            "llDialog": lambda *args: self.dialogs.append(args),
+            "llInstantMessage": lambda *args: self.ims.append(args),
             "llGetPos": lambda: lummao.Vector((128.0, 128.0, 25.0)),
             "llGetVel": lambda: lummao.Vector((0.0, 0.0, 0.0)),
             "llGetAgentInfo": lambda *args: 0,
@@ -99,12 +106,6 @@ class Simulator:
             "llResetScript": self.reset_request,
             "llSetLinkPrimitiveParamsFast": lambda link, rules: self.prim_updates.append((link, rules)),
             "llMoveToTarget": lambda target, tau: self.targets.append((target, tau)),
-            # Region water and terrain far below the pool tests' avatar (25 m).
-            "llWater": lambda offset: 20.0,
-            "llGround": lambda offset: 10.0,
-            "llCastRay": lambda *args: [0],
-            "llGetCameraRot": lambda: lummao.Quaternion((0.0, 0.0, 0.0, 1.0)),
-            "llGetRot": lambda: lummao.Quaternion((0.0, 0.0, 0.0, 1.0)),
         }
         for name in (
             "llReleaseURL", "llTakeControls", "llReleaseControls",
@@ -182,6 +183,14 @@ class Simulator:
     async def probe(self, owner=OWNER, channel=DISCOVERY, message=None):
         await self.event("listen", channel, "", owner, message or f"auroraHello|{ROOT}")
 
+    def listening(self, channel):
+        return any(arguments[0] == channel for arguments in self.listeners.values())
+
+    async def ask(self, nonce, target=OTHER, texts=None):
+        texts = texts or ("May I pose you?", "Yes", "No", "Type /2525 stop.", "Stop", "Stopped.")
+        encoded = ",".join(base64.b64encode(t.encode()).decode() for t in texts)
+        await self.event("http_request", OTHER, "POST", f"query|{self.script.gToken}|pose|ask,{nonce},{target},{encoded}")
+
 
 class BridgeScripts(unittest.IsolatedAsyncioTestCase):
     async def test_container_is_an_invisible_default_cube_on_start_and_reattachment(self):
@@ -243,7 +252,7 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sim.messages, [])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1)
-                self.assertIn("1.42|", sim.messages[0])
+                self.assertIn("1.44|", sim.messages[0])
                 await sim.probe()
                 self.assertEqual(len(sim.messages), 1, "duplicate probes must be throttled")
 
@@ -282,14 +291,10 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
                 await sim.grant()
                 await sim.probe()
                 for change in (REGION_START, REGION, REGION_START):
-                    previous_session = getattr(sim.script, "session", None)
                     sim.messages.clear()
                     await sim.event("changed", change)
                     await sim.grant()
                     self.assertEqual(len(sim.messages), 1, "the current Aurora login must be reconnected immediately")
-                    if filename == "ik.lsl":
-                        self.assertNotEqual(sim.script.session, previous_session)
-                        self.assertEqual(len(sim.listeners), 3, "retired listeners must not accumulate")
 
     async def test_discovery_still_works_after_unpaired_crossings(self):
         for filename in SCRIPTS:
@@ -401,7 +406,7 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         await sim.start()
         await sim.grant()
         await sim.probe()
-        await sim.event("http_request", OTHER, "POST", f"lock|{sim.script.gToken}|1|1|1|0|0|0|0|0||")
+        await sim.event("http_request", OTHER, "POST", f"lock|{sim.script.gToken}|1|1|1|0|0|0|0|0")
         self.assertEqual(sim.responses[-1][1], 200)
         self.assertEqual(sim.script.gEnabled, 1)
         self.assertEqual(sim.script.gLocked, 1)
@@ -418,75 +423,98 @@ class BridgeScripts(unittest.IsolatedAsyncioTestCase):
         await sim.start()
         await sim.grant()
         await sim.probe()
-        await sim.event("http_request", OTHER, "POST", f"query|{sim.script.gToken}|pose|request,{OTHER},{OTHER}")
+        await sim.ask(SEAT)
         self.assertEqual(sim.responses[-1][1], 200)
-        self.assertEqual(sim.broadcasts[-1][0], OTHER)
-
-        sim = Simulator("ik.lsl")
-        await sim.start()
-        await sim.probe()
-        control = private_channel(sim.script.session)
-        self.assertNotEqual(control, DISCOVERY)
-        await sim.event("listen", LEGACY_CONTROL, "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
-        self.assertEqual(sim.broadcasts, [], "commands on the old fixed channel are ignored")
-        await sim.event("listen", control, "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
-        # Only the seat in use and the wearer's own attachments are asked.
-        discover = f"auroraIKDiscover|{sim.script.session}"
-        self.assertEqual(sim.regionwide, [])
-        self.assertEqual(sorted(sim.broadcasts), sorted([(SEAT, IK_CHANNEL, discover), (OWNER, IK_CHANNEL, discover)]))
-        await sim.event("listen", IK_CHANNEL, "", OTHER, "auroraIKAvailable|test")
-        self.assertTrue(sim.messages[-1].startswith("<auroraIKRelay>"))
-        # A crossing draws a new session, and with it a new command channel.
-        await sim.event("changed", REGION)
-        self.assertNotEqual(private_channel(sim.script.session), control)
-
-    async def test_prim_water_fields_replace_the_region_water_for_one_command(self):
-        # 1.42 (#2008): fields 10 and 11 carry a prim volume's surface and
-        # floor; empty fields mean the region's water again.
-        sim = Simulator("bridge.lsl")
-        await sim.start()
-        await sim.grant()
-        await sim.probe()
-        token = sim.script.gToken
-        await sim.event("http_request", OTHER, "POST", f"lock|{token}|1|0|1|0|0|0|0|0|1002.40|1000.00")
-        self.assertEqual(sim.responses[-1][1], 200)
-        water = sim.script.gWater
-        self.assertAlmostEqual(water[0], 1002.4, places=3)
-        self.assertAlmostEqual(water[1], 1000.0, places=3)
-        self.assertEqual(water[2], 1.0)
-        await sim.event("http_request", OTHER, "POST", f"lock|{token}|2|0|1|0|0|0|0|0||")
-        self.assertEqual(sim.responses[-1][1], 200)
-        self.assertEqual(tuple(sim.script.gWater), (0.0, 0.0, 0.0))
-        # The surface motor floats at the pool's top, not toward the region
-        # water 5 m below (the grid report): 25.4 - 0.45 flotation depth.
-        sim.targets.clear()
-        sim.now = 1.0  # past the motor's 0.09 s tick
-        await sim.event("http_request", OTHER, "POST", f"lock|{token}|3|0|1|3|5.00|1.70|0.00|0|25.40|23.00")
-        self.assertEqual(sim.responses[-1][1], 200)
-        self.assertTrue(sim.targets)
-        self.assertAlmostEqual(sim.targets[-1][0][2], 24.95, places=3)
-        # the same command over region water still heads down to it
-        sim.targets.clear()
-        sim.now = 2.0
-        await sim.event("http_request", OTHER, "POST", f"lock|{token}|4|0|1|3|5.00|1.70|0.00|0||")
-        self.assertTrue(sim.targets)
-        self.assertLess(sim.targets[-1][0][2], 24.0)
-        # a 1.41 viewer's ten fields are refused rather than misread
-        await sim.event("http_request", OTHER, "POST", f"lock|{token}|5|0|1|0|0|0|0|0")
-        self.assertEqual(sim.responses[-1][1], 403)
+        self.assertEqual(sim.dialogs[-1][0], OTHER)
 
     async def test_unpaired_region_services_never_forward_peer_traffic(self):
         sim = Simulator("query.lsl")
         await sim.start()
-        await sim.event("listen", -184735221, "", OTHER, "portal2|test")
-        await sim.event("listen", -184735220, "", OTHER, f"pose1|{OTHER}|request|{OWNER}")
+        await sim.event("listen", POSE_DIALOG, "", OTHER, "Yes")
+        await sim.event("listen", STOP_CHANNEL, "", OTHER, "stop")
         self.assertEqual(sim.messages, [])
-        sim = Simulator("ik.lsl")
+
+    async def test_the_query_script_relays_no_portal(self):
+        # 1.43: portals are the viewer's own; nothing listens on or speaks
+        # over the old portal channel.
+        sim = Simulator("query.lsl")
         await sim.start()
-        await sim.event("listen", private_channel(sim.script.session), "", OWNER, f"auroraIKRelay|{sim.script.session}|discover")
-        await sim.event("listen", IK_CHANNEL, "", OTHER, "auroraIKAvailable|test")
+        await sim.grant()
+        await sim.probe()
+        sim.messages.clear()
+        self.assertNotIn(-184735221, [arguments[0] for arguments in sim.listeners.values()])
+        await sim.event("listen", -184735221, "", OTHER, "portal2|test")
         self.assertEqual(sim.messages, [])
+        token = sim.script.gToken
+        await sim.event("http_request", OTHER, "POST", f"query|{token}|portal|{NULL},e30=")
+        self.assertEqual(sim.responses[-1][1], 400)
         self.assertEqual(sim.broadcasts, [])
+
+    async def test_pose_consent_is_a_dialog_the_resident_answers(self):
+        sim = Simulator("query.lsl")
+        await sim.start()
+        await sim.grant()
+        await sim.probe()
+        first = lummao.Key("00000000-0000-0000-0000-0000000000a1")
+        await sim.ask(first, texts=("Puis-je ?", "Oui", "Non", "/2525 stop", "Arrêter", "Pose arrêtée."))
+        self.assertEqual(sim.responses[-1][1], 200)
+        # a standard dialog to the resident, in the poser's language, and
+        # nothing said to any other viewer
+        self.assertEqual(sim.dialogs, [(OTHER, "Puis-je ?", ["Oui", "Non"], POSE_DIALOG)])
+        self.assertEqual(sim.broadcasts, [])
+        self.assertTrue(sim.listening(POSE_DIALOG))
+        self.assertFalse(sim.listening(STOP_CHANNEL), "no stop listener before anyone accepts")
+        # someone else's answer, or another word, is not theirs
+        count = len(sim.messages)
+        await sim.event("listen", POSE_DIALOG, "", SEAT, "Oui")
+        await sim.event("listen", POSE_DIALOG, "", OTHER, "Peut-être")
+        self.assertEqual(len(sim.messages), count)
+        await sim.event("listen", POSE_DIALOG, "", OTHER, "Oui")
+        self.assertEqual(sim.messages[-1], f"<auroraPose>{first}|accept|{OTHER}</auroraPose>")
+        # how to stop, with a Stop button for when chat is out of range
+        self.assertEqual(sim.dialogs[-1], (OTHER, "/2525 stop", ["Arrêter"], POSE_DIALOG))
+        # and the same in an IM, which stays in their history
+        self.assertEqual(sim.ims, [(OTHER, "/2525 stop")])
+        self.assertTrue(sim.listening(STOP_CHANNEL))
+        await sim.event("listen", STOP_CHANNEL, "", SEAT, "stop")
+        self.assertNotIn("withdraw", sim.messages[-1])
+        await sim.event("listen", STOP_CHANNEL, "", OTHER, "  STOP ")
+        self.assertEqual(sim.messages[-1], f"<auroraPose>{first}|withdraw|{OTHER}</auroraPose>")
+        self.assertEqual(sim.broadcasts[-1], (OTHER, 0, "Pose arrêtée."))
+        self.assertFalse(sim.listening(STOP_CHANNEL) or sim.listening(POSE_DIALOG), "nobody left to hear")
+        # the Stop button ends it too
+        second = lummao.Key("00000000-0000-0000-0000-0000000000a2")
+        await sim.ask(second)
+        await sim.event("listen", POSE_DIALOG, "", OTHER, "Yes")
+        await sim.event("listen", POSE_DIALOG, "", OTHER, "Stop")
+        self.assertEqual(sim.messages[-1], f"<auroraPose>{second}|withdraw|{OTHER}</auroraPose>")
+        # No is a refusal
+        third = lummao.Key("00000000-0000-0000-0000-0000000000a3")
+        await sim.ask(third)
+        await sim.event("listen", POSE_DIALOG, "", OTHER, "No")
+        self.assertEqual(sim.messages[-1], f"<auroraPose>{third}|refuse|{OTHER}</auroraPose>")
+        self.assertEqual(len(sim.ims), 2, "an IM only for each Yes")
+        # forgotten by the viewer (timed out, cancelled): a late Yes is ignored
+        fourth = lummao.Key("00000000-0000-0000-0000-0000000000a4")
+        await sim.ask(fourth)
+        await sim.event("http_request", OTHER, "POST", f"query|{sim.script.gToken}|pose|forget,{fourth},{OTHER}")
+        self.assertEqual(sim.responses[-1][1], 200)
+        count = len(sim.messages)
+        await sim.event("listen", POSE_DIALOG, "", OTHER, "Yes")
+        self.assertEqual(len(sim.messages), count)
+        # a region change ends every consent
+        fifth = lummao.Key("00000000-0000-0000-0000-0000000000a5")
+        await sim.ask(fifth)
+        await sim.event("listen", POSE_DIALOG, "", OTHER, "Yes")
+        await sim.event("changed", REGION)
+        count = len(sim.messages)
+        await sim.event("listen", STOP_CHANNEL, "", OTHER, "stop")
+        self.assertEqual(len(sim.messages), count)
+        # malformed: a missing text, our own avatar
+        await sim.event("http_request", OTHER, "POST", f"query|{sim.script.gToken}|pose|ask,{fifth},{OTHER},YQ==")
+        self.assertEqual(sim.responses[-1][1], 400)
+        await sim.ask(fifth, target=OWNER)
+        self.assertEqual(sim.responses[-1][1], 400)
 
     async def test_revoking_pairing_suppresses_the_final_motor_report(self):
         sim = Simulator("bridge.lsl")

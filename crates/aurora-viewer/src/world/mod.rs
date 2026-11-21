@@ -15,6 +15,7 @@ pub mod object_motion_trace;
 pub mod shape_tween;
 
 mod arrival_wait;
+pub mod avatar_cache;
 pub mod beacons;
 pub mod beams;
 pub mod bridge;
@@ -49,7 +50,6 @@ pub mod group_ban_all;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
-pub mod hand_ik;
 pub mod home;
 pub mod hover_height;
 pub mod hud_lock;
@@ -100,8 +100,6 @@ pub mod region_messages;
 pub mod region_restart;
 pub mod region_titles;
 pub mod region_tracker;
-pub mod rig_graph;
-pub mod rig_targets;
 pub mod rlva;
 pub mod rlva_selftest;
 pub mod script_debug;
@@ -495,9 +493,6 @@ pub struct World {
     pub regions: HashMap<RegionHandle, Region>,
     pub main_region: Option<RegionHandle>,
     pub objects: ObjectStore,
-    /// Session-only local contacts from our own seated vehicle.
-    pub hand_contacts: hand_ik::Contacts,
-    pub ik_targets: rig_targets::Targets,
     pub(crate) scripted_camera: crate::camera::follow::Sources,
     /// When the clocks of the regions were last advanced (`advance_motion`).
     motion_tick: Instant,
@@ -575,7 +570,8 @@ pub struct World {
     /// The worn objects each avatar's last AvatarAppearance listed, kept
     /// even when the message itself is dropped (stale, no parameters): the
     /// Legacy Viewer fills mSimAttachments in parseAppearanceMessage, before
-    /// those checks. Read by the Dev Toolbox's J2 only (world/worn_listed.rs).
+    /// those checks. Read by the Dev Toolbox's J2 (world/worn_listed.rs) and
+    /// the worn objects cache (world/avatar_cache).
     listed_worn: HashMap<Uuid, Vec<(Uuid, u8)>>,
     appearance_counter: u64,
     /// Bakes the scene swapped in, by avatar (`refresh_bakes`).
@@ -590,6 +586,9 @@ pub struct World {
     /// Other avatars' shapes gliding to a new appearance (shape_tween.rs).
     pub shape_tweens: shape_tween::ShapeTweens,
     pub alerts: VecDeque<String>,
+    /// The last simulator alerts with a running number, which jobs waiting
+    /// for a refusal read (`alerts` is emptied by the interface).
+    pub recent_alerts: VecDeque<(u64, String)>,
     /// The announced restart of the agent's region (region_restart.rs).
     pub region_restart: region_restart::Tracker,
     pub movement_complete: bool,
@@ -645,6 +644,8 @@ pub struct World {
     pub tp_cancel: teleport_cancel::TeleportCancel,
     /// Outfit restore at login (Current Outfit folder).
     pub outfit: outfit::OutfitRestore,
+    /// Worn objects drawn from the cache while the region sends them.
+    pub avatar_cache: avatar_cache::AvatarCache,
     /// Objects already reported by a diagnostic (logged once).
     diag_reported: HashSet<Uuid>,
     pub events_this_frame: usize,
@@ -662,6 +663,8 @@ pub struct World {
     pub land_credit: i32,
     pub upload_cost: Option<i32>,
     pub local_assets: HashMap<Uuid, (String, bool)>,
+    /// Insertion order in the persisted local library, independent of GPU upload completion.
+    pub local_asset_order: HashMap<Uuid, usize>,
     /// The texture picker's Local tab buttons (drained by the app's importer).
     pub local_asset_requests: Vec<LocalAssetRequest>,
     /// ExtEnvironment answers of the frame (parcel local id, error), for the
@@ -913,8 +916,6 @@ pub struct World {
     offline_im_requested: bool,
     /// Which group titles the name tags show (from the settings).
     pub group_titles: names::GroupTitles,
-    /// Whose shared portals are shown (from the settings, `portals::Sources`).
-    pub portal_sources: portals::Sources,
     /// Script count and simulator version alerts (region_alerts.rs).
     pub region_alerts: region_alerts::RegionAlerts,
     /// Bumps, pushes and hits (collisions.rs).
@@ -1121,6 +1122,7 @@ impl World {
             shape_preview_generation: 0,
             shape_tweens: Default::default(),
             alerts: VecDeque::new(),
+            recent_alerts: VecDeque::new(),
             region_restart: Default::default(),
             movement_complete: false,
             demo_outfit_region: false,
@@ -1133,6 +1135,7 @@ impl World {
             tp_cancel: Default::default(),
             own_animations_awaited: None,
             outfit: Default::default(),
+            avatar_cache: Default::default(),
             diag_reported: HashSet::new(),
             events_this_frame: 0,
             motd: String::new(),
@@ -1142,6 +1145,7 @@ impl World {
             land_credit: 0,
             upload_cost: None,
             local_assets: HashMap::new(),
+            local_asset_order: HashMap::new(),
             local_asset_requests: Vec::new(),
             environment_answers: Vec::new(),
             health: 100.0,
@@ -1163,8 +1167,6 @@ impl World {
             poser_consent: poser_consent::State::default(),
             portals: portals::State::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
-            hand_contacts: hand_ik::Contacts::default(),
-            ik_targets: rig_targets::Targets::default(),
             rlva: rlva::Rlva::default(),
             rlva_privacy: Default::default(),
             rlva_name_privacy: Default::default(),
@@ -1250,7 +1252,6 @@ impl World {
             arrival_wait_since: None,
             offline_im_requested: false,
             group_titles: Default::default(),
-            portal_sources: Default::default(),
             region_alerts: Default::default(),
             collisions: Default::default(),
             fly_after_teleport: false,
@@ -1284,8 +1285,11 @@ impl World {
         let fly_override = self.fly_override;
         // the rules are the computer's, not the session's
         let omnifilter = std::mem::take(&mut self.omnifilter);
+        // the avatar cache's store, which the next login reads
+        let avatar_cache = self.avatar_cache.next_login();
         *self = World::new(lib);
         self.omnifilter = omnifilter;
+        self.avatar_cache = avatar_cache;
         self.chat_log = chat_log;
         self.chat_service = chat_service;
         self.cache_dir = cache_dir;
@@ -2816,7 +2820,32 @@ impl World {
         if let Some(values) = self.shape_tweens.shown(avatar) {
             return Some(values);
         }
-        self.appearances.get(avatar).map(|(a, _)| a.visual_params.as_slice())
+        self.shown_appearance(avatar).map(|(a, _)| a.visual_params.as_slice())
+    }
+
+    /// The avatar's last appearance from the region or, until one comes,
+    /// the look the avatar cache kept for it (world/avatar_cache): what is
+    /// drawn. What reads the region's own (the outfit's COF checks, the
+    /// list of worn objects, the appearance editor) reads `appearances`.
+    fn shown_appearance(&self, avatar: &Uuid) -> Option<&(AvatarAppearance, u64)> {
+        self.appearances.get(avatar).or_else(|| self.avatar_cache.kept_look(avatar))
+    }
+
+    /// Redraw the avatar's skin and what it wears with bakes on mesh.
+    fn mark_avatar_materials_dirty(&mut self, avatar: &Uuid) {
+        let Some(idx) = self.objects.index_of_uuid(avatar) else {
+            return;
+        };
+        if let Some(o) = self.objects.get(idx) {
+            let key = o.key;
+            let kids: Vec<usize> = self.objects.children_of(&key).to_vec();
+            for k in kids {
+                self.mark_tree_material_dirty(k);
+            }
+        }
+        if let Some(o) = self.objects.get_mut(idx) {
+            o.material_dirty = true;
+        }
     }
 
     /// Whether `avatar` stands within `range` of the agent (a seated one:
@@ -2860,8 +2889,7 @@ impl World {
                 0.0
             };
         }
-        self.appearances
-            .get(avatar)
+        self.shown_appearance(avatar)
             .map(|(a, _)| a.hover_height)
             .filter(|h| h.is_finite())
             .unwrap_or(0.0)
@@ -2924,7 +2952,7 @@ impl World {
         self.objects
             .children_of(&me.key)
             .iter()
-            .filter(|i| self.objects.get(**i).is_some_and(|o| o.is_attachment()))
+            .filter(|i| self.objects.get(**i).is_some_and(|o| o.is_attachment() && !o.is_client_preview()))
             .count()
     }
 
@@ -3061,7 +3089,7 @@ impl World {
 
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
         let avatar = &self.appearance_of(avatar);
-        self.appearances.get(avatar).map(|(_, g)| *g).unwrap_or(0)
+        self.shown_appearance(avatar).map(|(_, g)| *g).unwrap_or(0)
             + self.bake_refreshes.get(avatar).copied().unwrap_or(0)
             + self.shape_tweens.generation(avatar)
             + if *avatar == self.agent_id {
@@ -3127,7 +3155,7 @@ impl World {
         if self.is_mirror(&o.full_id) {
             return self.server_bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
         }
-        if let Some((a, _)) = self.appearances.get(&o.full_id)
+        if let Some((a, _)) = self.shown_appearance(&o.full_id)
             && let Some(te) = &a.texture_entry
         {
             return te.faces.get(te_index).map(|f| f.texture);
@@ -3541,7 +3569,6 @@ impl World {
                     }
                 }
                 self.move_rekeyed();
-                self.retry_ik_declarations(Instant::now());
                 if land_changed {
                     self.land.objects_changed(handle, Instant::now());
                 }
@@ -3743,16 +3770,20 @@ impl World {
                         return None;
                     }
                 }
+                // the look the avatar cache drew in its place goes
+                let kept = self.avatar_cache.appearance_came(&id);
                 // LLVOAvatar::processAvatarAppearance: another avatar's
                 // shape glides to its new values (setAnimationTarget), its
                 // first appearance lands at once; from what it shows now
                 // when a glide is under way. Within shape_tween::RANGE only.
+                // (Aurora's own: from the kept look too, which was drawn)
                 if !own {
                     let from = self
                         .shape_tweens
                         .shown(&id)
                         .map(<[u8]>::to_vec)
-                        .or_else(|| self.appearances.get(&id).map(|(old, _)| old.visual_params.clone()));
+                        .or_else(|| self.appearances.get(&id).map(|(old, _)| old.visual_params.clone()))
+                        .or_else(|| kept.map(|k| k.visual_params));
                     match from {
                         Some(from) if self.near_agent(&id, shape_tween::RANGE) => {
                             self.shape_tweens.start(id, from, a.visual_params.clone(), Instant::now());
@@ -3771,18 +3802,7 @@ impl World {
                 }
                 self.appearances.insert(id, (a, self.appearance_counter));
                 // Attachments using bakes-on-mesh must refresh too.
-                if let Some(idx) = self.objects.index_of_uuid(&id) {
-                    if let Some(o) = self.objects.get(idx) {
-                        let key = o.key;
-                        let kids: Vec<usize> = self.objects.children_of(&key).to_vec();
-                        for k in kids {
-                            self.mark_tree_material_dirty(k);
-                        }
-                    }
-                    if let Some(o) = self.objects.get_mut(idx) {
-                        o.material_dirty = true;
-                    }
-                }
+                self.mark_avatar_materials_dirty(&id);
                 None
             }
             NetEvent::Sun(s) => {
@@ -3954,6 +3974,11 @@ impl World {
                 // SystemMessageTip (process_alert_core)
                 let notice = self.notice_of(id, attention::Open::Notifications);
                 self.ask_attention(attention::Cause::Notice, notice);
+                let serial = self.recent_alerts.back().map_or(1, |(n, _)| n + 1);
+                if self.recent_alerts.len() >= 8 {
+                    self.recent_alerts.pop_front();
+                }
+                self.recent_alerts.push_back((serial, message.clone()));
                 self.alerts.push_back(message);
                 None
             }
@@ -4291,6 +4316,16 @@ impl World {
                         }
                     }
                 }
+                // the animations of our worn objects played from the cache
+                // (world/avatar_cache): those the region lists now go on
+                // as they are, without a restart; the others stay
+                let cached: Vec<PlayingAnimation> = if avatar == self.agent_id {
+                    let cached = self.avatar_cache.played_motions().copied().collect();
+                    self.avatar_cache.region_signals(anims.iter().map(|a| a.0));
+                    cached
+                } else {
+                    Vec::new()
+                };
                 let prev = self.animations.remove(&avatar).unwrap_or_default();
                 // ANIM_AGENT_TYPE starting: the typing sound at the avatar
                 const ANIM_AGENT_TYPE: Uuid = Uuid::from_u128(0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9);
@@ -4299,8 +4334,24 @@ impl World {
                 }
                 let mut list: Vec<_> = anims
                     .into_iter()
-                    .map(|(id, seq)| PlayingAnimation::from_signal(id, seq, now, prev.iter().find(|p| p.id == id)))
+                    .map(|(id, seq)| {
+                        let previous = prev.iter().find(|p| p.id == id).map(|p| {
+                            if cached.iter().any(|c| c.id == id) {
+                                PlayingAnimation { sequence: seq, ..*p }
+                            } else {
+                                *p
+                            }
+                        });
+                        PlayingAnimation::from_signal(id, seq, now, previous.as_ref())
+                    })
                     .collect();
+                if avatar == self.agent_id {
+                    for motion in self.avatar_cache.played_motions() {
+                        if !list.iter().any(|a| a.id == motion.id) {
+                            list.push(*motion);
+                        }
+                    }
+                }
                 if avatar == self.agent_id
                     && let Some(preview) = self.local_preview
                 {
@@ -5068,9 +5119,6 @@ impl World {
             return;
         }
         if self.object_chat_filtered(&c) {
-            return;
-        }
-        if self.receive_hand_contacts(&c, Instant::now()) {
             return;
         }
         // process_chat_from_simulator: before the debug channel takes its

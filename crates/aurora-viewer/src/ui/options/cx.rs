@@ -13,6 +13,7 @@
 use super::{OptionsResult, OptionsUi, Page};
 use crate::settings::Settings;
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::{Rect, Sense, Shape, Vec2, pos2, vec2};
 
 /// What the rows do in this pass.
@@ -169,8 +170,8 @@ pub(super) fn words(query: &str) -> Vec<String> {
 }
 
 /// Whether every word of the search starts a word of `text`, as a name is
-/// typed ("ombre" finds "Ombres", not "Nombre"). Japanese writes without
-/// spaces, so a word with kana or kanji is found anywhere in the text, as
+/// typed ("ombre" finds "Ombres", not "Nombre"). A query with kana, Han
+/// or Hangul is found anywhere in the text, including inside compounds, as
 /// the Legacy Viewer finds every search (ll::prefs::SearchableItem::
 /// hightlightAndHide, llsearchableui.cpp): 区画 finds 常に表示する区画.
 pub(super) fn found(text: &str, words: &[String]) -> bool {
@@ -184,13 +185,15 @@ pub(super) fn found(text: &str, words: &[String]) -> bool {
     })
 }
 
-/// A search word found inside a word: one with kana or kanji.
+/// Scripts for which a search term may start inside a word.
 fn anywhere(word: &str) -> bool {
     word.chars().any(|c| {
         matches!(c,
             '\u{3040}'..='\u{30FF}' // hiragana, katakana
             | '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' // kanji
-            | '\u{FF66}'..='\u{FF9F}') // half-width katakana
+            | '\u{FF66}'..='\u{FF9F}' // half-width katakana
+            | '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' // Hangul jamo
+            | '\u{A960}'..='\u{A97F}' | '\u{AC00}'..='\u{D7FF}') // Hangul syllables and extended jamo
     })
 }
 
@@ -874,7 +877,7 @@ impl<'a> Cx<'a> {
     fn group_title(&mut self, title: &str) {
         let p = self.p;
         let font = egui::FontId::new(11.0, crate::ui::fonts::semibold(self.ui.ctx()));
-        let galley = self.ui.painter().layout_no_wrap(title.to_uppercase(), font, p.muted);
+        let galley = self.ui.painter().layout_no_wrap(title.ui_upper(), font, p.muted);
         let (rect, _) = self.ui.allocate_exact_size(vec2(self.ui.available_width(), 26.0), Sense::hover());
         let text_left = rect.left() + 4.0;
         crate::ui::widgets::paint_row_text(self.ui.painter(), galley.clone(), text_left, rect.center().y, p.muted);
@@ -1234,6 +1237,16 @@ mod tests {
         assert!(!found("Nombre", &words("ombre")));
         assert_eq!(found_in("Nombre", &words("ombre")), None);
         assert_eq!(found_in("Les ombres", &words("ombre")), Some((4, 9)));
+    }
+
+    #[test]
+    fn chinese_and_korean_search_match_and_highlight_inside_compounds() {
+        for (label, query) in [("图形设置", "设置"), ("圖形設定", "設定"), ("그래픽설정", "설정")] {
+            let terms = words(query);
+            assert!(found(label, &terms));
+            let (start, end) = found_in(label, &terms).expect("highlight");
+            assert_eq!(&label[start..end], query);
+        }
     }
 
     #[test]

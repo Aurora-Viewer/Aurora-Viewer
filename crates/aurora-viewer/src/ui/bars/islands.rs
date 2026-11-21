@@ -1076,6 +1076,13 @@ fn tip_body(
     );
     ui.painter()
         .galley(Pos2::new(rect.left() + 22.0, rect.top() + TIP_ROW), music, p.muted);
+    // the station's failed certificate, in red as on the radio button
+    if let Some(issue) = media.music_status.certificate() {
+        ui.scope(|ui| {
+            ui.set_max_width(w);
+            crate::ui::audio::warning_line(ui, p, icons, &crate::ui::audio::certificate_warning(issue), 11.5);
+        });
+    }
 
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 11.0), Sense::hover());
     ui.painter()

@@ -944,8 +944,68 @@ pub(crate) fn checksum_in_folder(it: &InvItem, folder: Uuid) -> u32 {
 }
 
 pub async fn preview(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid) -> Result<Vec<u8>, String> {
+    preview_attempt(http, cap, kind, asset).await.map_err(|failure| failure.message)
+}
+
+/// [`preview`] with the retries of the Legacy Viewer's asset requests
+/// (LLViewerAssetStorage over llcorehttp: HttpPolicy::stageAfterCompletion
+/// retries an HttpStatus::isRetryable failure 5 times, 1 s doubling
+/// backoff). A gesture loaded at login gave up at its first timeout or 503
+/// and stayed inactive for the session (#4178).
+pub async fn preview_retried(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid) -> Result<Vec<u8>, String> {
+    preview_with_retries(http, cap, kind, asset, crate::fetch::RetryPolicy::FIRESTORM).await
+}
+
+async fn preview_with_retries(
+    http: &reqwest::Client,
+    cap: &str,
+    kind: &str,
+    asset: Uuid,
+    policy: crate::fetch::RetryPolicy,
+) -> Result<Vec<u8>, String> {
+    let mut retry = 0;
+    loop {
+        match preview_attempt(http, cap, kind, asset).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(failure) if failure.retryable && retry < policy.retries => {
+                log::debug!(
+                    "asset {asset} ({kind}): {}, retry {} of {}",
+                    failure.message,
+                    retry + 1,
+                    policy.retries
+                );
+                tokio::time::sleep(policy.delay(retry, failure.retry_after)).await;
+                retry += 1;
+            }
+            Err(failure) => return Err(failure.message),
+        }
+    }
+}
+
+/// A failed attempt of [`preview`], and whether llcorehttp would try it
+/// again (HttpStatus::isRetryable).
+struct PreviewFailure {
+    message: String,
+    retryable: bool,
+    retry_after: Option<u64>,
+}
+
+impl PreviewFailure {
+    fn new(message: impl Into<String>, retryable: bool) -> Self {
+        Self {
+            message: message.into(),
+            retryable,
+            retry_after: None,
+        }
+    }
+}
+
+async fn preview_attempt(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid) -> Result<Vec<u8>, PreviewFailure> {
     if kind.is_empty() || asset.is_nil() {
-        return Err(aurora_i18n::tr!("inventory-operations-this-item-has-no-viewable-contents").into());
+        return Err(PreviewFailure::new(
+            aurora_i18n::tr!("inventory-operations-this-item-has-no-viewable-contents"),
+            false,
+        ));
     }
     let url = format!("{cap}{}{kind}={asset}", if cap.contains('?') { "&" } else { "?" });
     let mut response = http
@@ -953,21 +1013,36 @@ pub async fn preview(http: &reqwest::Client, cap: &str, kind: &str, asset: Uuid)
         .timeout(std::time::Duration::from_secs(30))
         .send()
         .await
-        .map_err(|_| aurora_i18n::tr!("inventory-operations-could-not-load-contents").to_owned())?;
+        .map_err(|e| {
+            PreviewFailure::new(
+                aurora_i18n::tr!("inventory-operations-could-not-load-contents"),
+                crate::fetch::transport_retryable(&e),
+            )
+        })?;
+    let status = response.status().as_u16();
     if !response.status().is_success() {
-        return Err(aurora_i18n::tr!(
-            "inventory-operations-contents-unavailable-http",
-            value0 = format!("{}", response.status().as_u16())
-        ));
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse().ok());
+        return Err(PreviewFailure {
+            message: aurora_i18n::tr!("inventory-operations-contents-unavailable-http", value0 = format!("{status}")),
+            retryable: crate::fetch::status_retryable(status),
+            retry_after,
+        });
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| aurora_i18n::tr!("inventory-operations-read-interrupted").to_owned())?
+        .map_err(|_| PreviewFailure::new(aurora_i18n::tr!("inventory-operations-read-interrupted"), true))?
     {
         if bytes.len() + chunk.len() > 4 * 1024 * 1024 {
-            return Err(aurora_i18n::tr!("inventory-operations-the-contents-exceed-the-maximum-preview-size").into());
+            return Err(PreviewFailure::new(
+                aurora_i18n::tr!("inventory-operations-the-contents-exceed-the-maximum-preview-size"),
+                false,
+            ));
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -2260,6 +2335,72 @@ mod tests {
         };
         assert!(mutate(&crate::test_http_client(), &url, &url, id(2), change).await.is_err());
         assert_eq!(task.await.expect("requests").len(), 1);
+    }
+
+    /// Answers each connection with the next status and its body, and counts
+    /// the requests it received.
+    async fn status_server(replies: Vec<(&'static str, &'static [u8])>) -> (String, tokio::task::JoinHandle<usize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("local server");
+        let url = format!("http://{}/asset", listener.local_addr().expect("address"));
+        let task = tokio::spawn(async move {
+            let mut count = 0;
+            for (status, body) in replies {
+                // (the last replies are never asked for when the client stops)
+                let accepted = tokio::time::timeout(std::time::Duration::from_secs(1), listener.accept()).await;
+                let Ok(Ok((mut socket, _))) = accepted else {
+                    break;
+                };
+                let mut request = Vec::new();
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let mut buffer = [0u8; 1024];
+                    let n = socket.read(&mut buffer).await.expect("read");
+                    assert!(n > 0, "complete request");
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                count += 1;
+                let head = format!("HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n", body.len());
+                socket.write_all(head.as_bytes()).await.expect("write");
+                socket.write_all(body).await.expect("write");
+                crate::test_http::finish(socket);
+            }
+            count
+        });
+        (url, task)
+    }
+
+    const FAST: crate::fetch::RetryPolicy = crate::fetch::RetryPolicy {
+        retries: 5,
+        backoff_min: std::time::Duration::from_millis(1),
+        backoff_max: std::time::Duration::from_millis(5),
+    };
+
+    /// #4178: a gesture asset that answers 503 or 500 at first loads once
+    /// the server answers, as llcorehttp retries it; a 404 is not retried,
+    /// and a server still failing after the 5 retries gives up.
+    #[tokio::test]
+    async fn asset_previews_retry_like_the_legacy_viewer() {
+        let http = crate::test_http_client();
+        let (url, task) = status_server(vec![
+            ("503 Service Unavailable", b""),
+            ("500 Internal Server Error", b""),
+            ("200 OK", b"gesture"),
+        ])
+        .await;
+        assert_eq!(
+            preview_with_retries(&http, &url, "gesture_id", id(1), FAST).await.as_deref(),
+            Ok(&b"gesture"[..])
+        );
+        assert_eq!(task.await.expect("server"), 3);
+
+        let (url, task) = status_server(vec![("404 Not Found", b""), ("200 OK", b"gesture")]).await;
+        assert!(preview_with_retries(&http, &url, "gesture_id", id(1), FAST).await.is_err());
+        drop(http);
+        let http = crate::test_http_client();
+        let (more, more_task) = status_server(vec![("503 Service Unavailable", b""); 7]).await;
+        assert!(preview_with_retries(&http, &more, "gesture_id", id(1), FAST).await.is_err());
+        assert_eq!(more_task.await.expect("server"), 6, "the first attempt and 5 retries");
+        assert_eq!(task.await.expect("server"), 1, "a missing asset is asked once");
     }
 }
 
