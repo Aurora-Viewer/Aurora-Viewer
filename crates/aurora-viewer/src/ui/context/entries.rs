@@ -549,9 +549,10 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         f.object.detach,
         CtxAction::Detach(key),
     );
-    // Inventory's Detach and Delete, offered on the worn object too: it asks
-    // the same confirmation there, which re-checks body parts, RLVa and the
-    // Trash move before anything comes off.
+    // An Aurora addition, in no Legacy menu: the confirmation that Delete
+    // of a worn item asks in Inventory ("DeleteWornItems"), offered on the
+    // worn object. It re-checks body parts, RLVa and the Trash move before
+    // anything comes off.
     ui.item_if(
         "trash-x-filled",
         aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
@@ -1841,7 +1842,7 @@ mod tests {
             "common-edit",
             "ui-context-edit-pbr-material",
             "common-detach",
-            // ours: Inventory's Detach and Delete, on the worn object too
+            // ours: Detach and Delete, in no Legacy menu
             "ui-inventory-dialogs-detach-and-delete",
             "common-save-as>",
             "-",

@@ -503,8 +503,13 @@ impl App {
                 }
             }
             InvAction::Appearance(action) => {
+                let asked = removed_items(&action);
                 self.inventory_ui.message.clear();
                 self.apply_appearance_action(action);
+                if !asked.is_empty() && !self.inventory_ui.message.is_empty() {
+                    let reason = self.inventory_ui.message.clone();
+                    self.inventory_ui.detach_refused(&asked, &reason);
+                }
             }
             InvAction::Animation { asset, local, start } => {
                 if start {
@@ -1038,13 +1043,17 @@ impl App {
             .appearance_ui
             .pending
             .is_none_or(|(request, _)| self.world.attachment_inventory.owns(request));
+        let asked = removed_items(&action);
         let (detach, action) = self.world.recover_attachment_removal(action, allow_recovery);
         let recovered = !detach.is_empty();
         for command in detach {
             self.send_from(command, actor);
         }
         if recovered {
-            self.inventory_ui.take_off_sent();
+            // what the outfit update still has to take off was not detached here
+            let left = action.as_ref().map(removed_items).unwrap_or_default();
+            let detached: Vec<_> = asked.into_iter().filter(|id| !left.contains(id)).collect();
+            self.inventory_ui.take_off_sent(&detached);
         }
         let Some(action) = action else {
             if recovered {
@@ -1194,6 +1203,17 @@ impl App {
         for action in actions {
             self.apply_inventory_action(action);
         }
+    }
+}
+
+/// The items an outfit action takes off.
+fn removed_items(action: &crate::world::appearance::Action) -> Vec<Uuid> {
+    match action {
+        crate::world::appearance::Action::Remove(item) => vec![*item],
+        crate::world::appearance::Action::RemoveItems(items) | crate::world::appearance::Action::Force { remove: items, .. } => {
+            items.clone()
+        }
+        _ => Vec::new(),
     }
 }
 

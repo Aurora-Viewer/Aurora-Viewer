@@ -9,10 +9,23 @@ pub(super) fn allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreference
     if ids.is_empty() {
         return false;
     }
-    let holds_worn = rules::worn_ancestors(inv, &worn_or_active(facts));
+    // A purge from the Trash keeps the plain worn rule: an active gesture
+    // already there is purged as before, not taken off first.
+    let worn = if ids.iter().all(|id| rules::in_type(inv, *id, TRASH)) {
+        facts.worn.clone()
+    } else {
+        worn_or_active(facts)
+    };
+    let holds_worn = rules::worn_ancestors(inv, &worn);
     ids.iter()
         .all(|id| rules::removable(inv, *id, &prefs.protected) && !holds_worn.contains(id))
 }
+
+/// Asset and folder types the Delete rules name (llassettype.h).
+const CLOTHING: i32 = 5;
+const OBJECT: i32 = 6;
+const TRASH: i32 = 14;
+const GESTURE: i32 = 21;
 
 /// What Delete counts as worn: the worn items and the active gestures
 /// (get_is_item_worn, llinventoryfunctions.cpp, LGPL 2.1, counts an active
@@ -46,24 +59,28 @@ pub(super) fn detach_allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPre
     let worn = worn_in(inv, ids, facts);
     if worn.is_empty()
         || !worn.iter().all(|id| match inv.items.get(id).map(|it| it.asset_type) {
-            Some(21) => facts.active_gestures.contains(id),
-            Some(5 | 6) => facts.rlva.can_remove(*id),
+            Some(GESTURE) => facts.active_gestures.contains(id),
+            Some(CLOTHING | OBJECT) => facts.rlva.can_remove(*id),
+            // a body part (13) stays on: "CantDeleteRequiredClothing"
             _ => false,
         })
     {
         return false;
     }
     let left: HashSet<_> = facts.worn.iter().copied().filter(|id| !worn.contains(id)).collect();
-    rules::system(inv, 14).is_some_and(|to| rules::move_selection(inv, ids, to, &prefs.protected, &left).is_ok())
+    rules::system(inv, TRASH).is_some_and(|to| rules::move_selection(inv, ids, to, &prefs.protected, &left).is_ok())
 }
 
 /// How long a Detach and Delete waits for the items to come off.
 const DETACH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// A confirmed Detach and Delete: the worn items were asked off, the Trash
-/// move follows once none is worn (LLInventoryAction::onItemsRemovalConfirmation
-/// moves them in removeItemsFromAvatar's callback).
+/// A confirmed Detach and Delete: the rest of the selection went to the
+/// Trash at once, the worn items were asked off, and their Trash move
+/// follows once none is worn (LLInventoryAction::onItemsRemovalConfirmation:
+/// removeSelectedItems trashes what is not worn, removeItemsFromAvatar's
+/// callback the worn items and the folders holding them).
 pub(crate) struct DetachDelete {
+    /// What waits for the take-off: the worn items and the folders holding one.
     ids: Vec<Uuid>,
     worn: Vec<Uuid>,
     started: std::time::Instant,
@@ -77,11 +94,24 @@ pub(crate) struct DetachDelete {
     /// leaves the items worn with nothing under way.
     seen_busy: bool,
     idle_frames: u8,
+    /// Why the take-off was refused, as the app reported it
+    /// (`InventoryUi::detach_refused`): a secondary window's message is
+    /// not the one the app writes.
+    refusal: Option<String>,
 }
 
 impl DetachDelete {
+    /// Whether this wait asked any of `items` off.
+    pub(super) fn takes_off(&self, items: &[Uuid]) -> bool {
+        self.worn.iter().any(|id| items.contains(id))
+    }
+
     pub(super) fn take_off_sent(&mut self) {
         self.seen_busy = true;
+    }
+
+    pub(super) fn refused(&mut self, reason: &str) {
+        self.refusal = Some(reason.to_owned());
     }
 }
 
@@ -118,6 +148,25 @@ pub(super) fn start_detach(
     // The worn object's menu deletes something this window did not select.
     selection.advance = !from_world;
     st.message.clear();
+    // removeSelectedItems: what is not worn, nor inside a selected folder
+    // holding a worn item, goes to the Trash now; the rest waits.
+    let holds_worn = rules::worn_ancestors(inv, &worn_or_active(facts));
+    let waits: HashSet<Uuid> = ids.iter().copied().filter(|id| holds_worn.contains(id)).collect();
+    let (later, now): (Vec<Uuid>, Vec<Uuid>) = ids.iter().partition(|id| rules::ancestors(inv, **id).any(|a| waits.contains(&a)));
+    if !now.is_empty() {
+        match plan(inv, &now, false, prefs, facts) {
+            Ok(change) => {
+                // the window's selection moves once, with the last part
+                let mut first = selection.clone();
+                first.advance = false;
+                actions.push(InvAction::Delete(Box::new(DeleteRequest::with_selection(inv, first, change))));
+            }
+            Err(reason) => {
+                detach_failed(st, actions, from_world, reason);
+                return;
+            }
+        }
+    }
     let (gestures, items): (Vec<_>, Vec<_>) = worn.iter().partition(|id| facts.active_gestures.contains(id));
     if !items.is_empty() {
         actions.push(InvAction::Appearance(crate::world::appearance::Action::RemoveItems(items)));
@@ -126,13 +175,14 @@ pub(super) fn start_detach(
         actions.push(InvAction::Gesture(crate::ui::gestures::Action::Active(gestures, false)));
     }
     st.detach_delete = Some(DetachDelete {
-        ids,
+        ids: later,
         worn,
         started: std::time::Instant::now(),
         selection,
         from_world,
         seen_busy: false,
         idle_frames: 0,
+        refusal: None,
     });
 }
 
@@ -162,9 +212,12 @@ pub(super) fn finish_detach(
         let refused = !pending.seen_busy && pending.idle_frames > 2;
         if refused || pending.started.elapsed() > DETACH_TIMEOUT {
             let from_world = pending.from_world;
+            let refusal = pending.refusal.take();
             st.detach_delete = None;
             let reason = if !refused {
                 aurora_i18n::tr!("ui-inventory-delete-detach-timeout").into()
+            } else if let Some(reason) = refusal {
+                reason
             } else if st.message.is_empty() {
                 aurora_i18n::tr!("ui-inventory-delete-detach-cannot").into()
             } else {
@@ -212,7 +265,7 @@ pub(super) fn plan(inv: &Inventory, ids: &[Uuid], purge: bool, prefs: &Inventory
         let holds_worn = rules::worn_ancestors(inv, &facts.worn);
         if ids
             .iter()
-            .all(|id| rules::removable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, 14) && !holds_worn.contains(id))
+            .all(|id| rules::removable(inv, *id, &prefs.protected) && rules::in_type(inv, *id, TRASH) && !holds_worn.contains(id))
         {
             Ok(Mutation {
                 operations,
@@ -224,7 +277,7 @@ pub(super) fn plan(inv: &Inventory, ids: &[Uuid], purge: bool, prefs: &Inventory
             Err(aurora_i18n::tr!("ui-inventory-dialogs-the-selection-can-no-longer-be-purged").into())
         }
     } else {
-        rules::system(inv, 14)
+        rules::system(inv, TRASH)
             .ok_or_else(|| aurora_i18n::tr!("common-trash-folder-not-found").to_owned())
             .and_then(|to| rules::move_selection(inv, ids, to, &prefs.protected, &facts.worn))
     }
@@ -255,7 +308,7 @@ pub(super) fn confirm_or_run(
     }
     // A selection spanning trash and another folder first moves to trash.
     // Permanent deletion is offered only when every selected entry is there.
-    let purge = ids.iter().all(|id| rules::in_type(inv, *id, 14));
+    let purge = ids.iter().all(|id| rules::in_type(inv, *id, TRASH));
     if purge || prefs.confirm_delete {
         st.dialog = Some(EditDialog::Delete(ids, purge));
         return;
@@ -287,8 +340,10 @@ pub(crate) fn request_from_window(
             },
         );
         confirm_or_run(inv, st, prefs, &facts, actions, ids.clone());
-        // "Detach and Delete" waits on the inventory window's frames
-        // (`finish_detach`): from another window, the plain confirmation
+        // The Gestures window sends gestures, which no worn item holds, so
+        // "Detach and Delete" is not expected here. Were a worn item sent,
+        // its wait runs on the inventory window's frames (`finish_detach`),
+        // which may be closed: the plain confirmation says why instead.
         if matches!(st.dialog, Some(EditDialog::DetachDelete(_))) {
             st.dialog = None;
         }
@@ -683,7 +738,7 @@ mod tests {
         let mut actions = Vec::new();
         start_detach(&inv, &mut st, &prefs, &facts, &mut actions, vec![id(10)]);
         actions.clear();
-        st.take_off_sent();
+        st.take_off_sent(&[id(10)]);
         for _ in 0..10 {
             finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
         }
@@ -865,6 +920,296 @@ mod tests {
         request(&inv, &mut st, &prefs, &facts, &mut actions);
         assert!(matches!(st.dialog, Some(EditDialog::DetachDelete(_))));
         assert!(!st.detach_from_world);
+    }
+
+    /// Puts an entry in `parent`: a folder when `kind` is None, else an item
+    /// of that asset type.
+    fn add(inv: &mut Inventory, entry: u128, parent: u128, kind: Option<i32>) {
+        let folder = inv.folders.get_mut(&id(parent)).expect("the parent folder");
+        match kind {
+            None => folder.children.push(id(entry)),
+            Some(_) => folder.items.push(id(entry)),
+        }
+        match kind {
+            None => {
+                inv.folders.insert(
+                    id(entry),
+                    crate::world::inventory::Folder {
+                        info: aurora_net::inventory::InvFolder {
+                            id: id(entry),
+                            parent: id(parent),
+                            type_default: -1,
+                            name: format!("{entry}"),
+                            ..Default::default()
+                        },
+                        children: Vec::new(),
+                        items: Vec::new(),
+                        state: crate::world::inventory::FetchState::Fetched,
+                        library: false,
+                    },
+                );
+            }
+            Some(kind) => {
+                inv.items.insert(
+                    id(entry),
+                    aurora_net::inventory::InvItem {
+                        id: id(entry),
+                        parent: id(parent),
+                        name: format!("{entry}"),
+                        asset_type: kind,
+                        owner_mask: 0x7fff_ffff,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
+
+    /// RLVa keeps the shirt on: no "Detach and Delete", and the worn
+    /// object's menu says so.
+    #[test]
+    fn a_worn_item_rlva_keeps_on_is_not_offered() {
+        let inv = worn_inventory();
+        let prefs = InventoryPreferences::default();
+        let facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            rlva: std::sync::Arc::new(crate::world::rlva::WearLocks::keeping_on([id(10)])),
+            ..Default::default()
+        };
+        assert!(!allowed(&inv, &[id(10)], &prefs, &facts));
+        assert!(!detach_allowed(&inv, &[id(10)], &prefs, &facts));
+        let mut st = InventoryUi {
+            selection: HashSet::from([id(10)]),
+            selected: Some(id(10)),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        request(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(st.dialog.is_none() && actions.is_empty());
+        assert!(st.ask_detach_delete(&inv, &prefs, &facts, id(10)).is_err());
+    }
+
+    /// A worn shirt inside a selected folder: the folder waits for it to
+    /// come off, then goes to the Trash with it.
+    #[test]
+    fn a_selected_folder_holding_a_worn_item_waits_for_it() {
+        let mut inv = worn_inventory();
+        add(&mut inv, 20, 1, None);
+        add(&mut inv, 21, 20, Some(5));
+        let prefs = InventoryPreferences::default();
+        let mut facts = Facts {
+            worn: HashSet::from([id(21), id(11)]),
+            ..Default::default()
+        };
+        assert!(!allowed(&inv, &[id(20)], &prefs, &facts));
+        assert!(detach_allowed(&inv, &[id(20)], &prefs, &facts));
+        let mut st = InventoryUi::default();
+        let mut actions = Vec::new();
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, vec![id(20)]);
+        assert!(
+            matches!(actions.as_slice(), [InvAction::Appearance(crate::world::appearance::Action::RemoveItems(worn))] if *worn == [id(21)]),
+            "only the take-off: the folder waits"
+        );
+        actions.clear();
+        facts.worn.remove(&id(21));
+        finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        let [InvAction::Delete(request)] = actions.as_slice() else {
+            panic!("the folder follows the take-off");
+        };
+        assert!(request.change.move_only());
+        assert!(request.selection.moves.iter().any(|(entry, _)| *entry == id(20)));
+    }
+
+    /// A link to a worn item is not worn (only originals are): plain Delete.
+    #[test]
+    fn a_link_to_a_worn_item_gets_plain_delete() {
+        let mut inv = worn_inventory();
+        add(&mut inv, 30, 1, Some(24));
+        if let Some(link) = inv.items.get_mut(&id(30)) {
+            link.asset_id = id(10);
+        }
+        let prefs = InventoryPreferences::default();
+        let facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            ..Default::default()
+        };
+        assert!(allowed(&inv, &[id(30)], &prefs, &facts));
+        assert!(!detach_allowed(&inv, &[id(30)], &prefs, &facts));
+        let mut st = InventoryUi {
+            selection: HashSet::from([id(30)]),
+            selected: Some(id(30)),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        request(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(!matches!(st.dialog, Some(EditDialog::DetachDelete(_))));
+        assert!(matches!(st.dialog, Some(EditDialog::Delete(..))) || !actions.is_empty());
+    }
+
+    /// An outfit change under way: nothing is offered, and the worn
+    /// object's menu says why instead of doing nothing.
+    #[test]
+    fn an_outfit_change_under_way_refuses_detach_and_delete() {
+        let inv = worn_inventory();
+        let prefs = InventoryPreferences::default();
+        let facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            appearance_busy: true,
+            ..Default::default()
+        };
+        assert!(!detach_allowed(&inv, &[id(10)], &prefs, &facts));
+        let mut st = InventoryUi::default();
+        assert!(st.ask_detach_delete(&inv, &prefs, &facts, id(10)).is_err());
+        assert!(st.dialog.is_none());
+        // a confirmation already open: the menu says so too
+        let idle = Facts {
+            worn: facts.worn.clone(),
+            ..Default::default()
+        };
+        st.ask_detach_delete(&inv, &prefs, &idle, id(10)).unwrap();
+        assert!(st.ask_detach_delete(&inv, &prefs, &idle, id(10)).is_err());
+    }
+
+    /// A worn shirt and an unworn item together: the unworn one goes to
+    /// the Trash at once, the shirt once it is off (removeSelectedItems).
+    #[test]
+    fn a_mixed_selection_trashes_the_unworn_items_at_once() {
+        let mut inv = worn_inventory();
+        add(&mut inv, 15, 1, Some(7));
+        let prefs = InventoryPreferences::default();
+        let mut facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            ..Default::default()
+        };
+        let mut st = InventoryUi {
+            selection: HashSet::from([id(10), id(15)]),
+            selected: Some(id(10)),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, vec![id(10), id(15)]);
+        let [
+            InvAction::Delete(now),
+            InvAction::Appearance(crate::world::appearance::Action::RemoveItems(worn)),
+        ] = actions.as_slice()
+        else {
+            panic!("the Trash move of the unworn item, then the take-off");
+        };
+        assert_eq!(*worn, [id(10)]);
+        assert_eq!(now.selection.moves.iter().map(|(entry, _)| *entry).collect::<Vec<_>>(), [id(15)]);
+        assert!(!now.selection.advance, "the selection moves with the last part");
+        actions.clear();
+
+        // the shirt is refused: the unworn item is gone all the same
+        facts.worn.insert(id(10));
+        st.message = "RLVa keeps it on".into();
+        for _ in 0..3 {
+            finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        }
+        assert!(st.detach_delete.is_none() && actions.is_empty());
+
+        // the shirt comes off: only it moves now, with the saved selection
+        let mut st = InventoryUi::default();
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, vec![id(10), id(15)]);
+        actions.clear();
+        facts.worn.remove(&id(10));
+        finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+        let [InvAction::Delete(later)] = actions.as_slice() else {
+            panic!("the shirt follows the take-off");
+        };
+        assert_eq!(later.selection.moves.iter().map(|(entry, _)| *entry).collect::<Vec<_>>(), [id(10)]);
+        assert!(later.selection.advance);
+    }
+
+    /// A refusal the app wrote in the main window's message reaches the
+    /// secondary window whose wait asked the item off.
+    #[test]
+    fn a_secondary_window_says_why_its_take_off_was_refused() {
+        let inv = worn_inventory();
+        let prefs = InventoryPreferences::default();
+        let facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            ..Default::default()
+        };
+        let mut st = InventoryUi::default();
+        st.windows.push(crate::ui::inventory::InventoryWindow {
+            id: id(500),
+            root: Uuid::nil(),
+            additional: true,
+            state: Box::default(),
+            open: true,
+        });
+        let mut actions = Vec::new();
+        start_detach(&inv, &mut st.windows[0].state, &prefs, &facts, &mut actions, vec![id(10)]);
+        actions.clear();
+        // the app's outfit planner refuses it, in the main window's message
+        st.message = "RLVa keeps it on".into();
+        st.detach_refused(&[id(10)], "RLVa keeps it on");
+        assert!(st.message.is_empty(), "not the main window's wait");
+        let w = &mut st.windows[0].state;
+        for _ in 0..3 {
+            finish_detach(&inv, w, &prefs, &facts, &mut actions);
+        }
+        assert!(w.detach_delete.is_none());
+        assert_eq!(w.message, "RLVa keeps it on");
+    }
+
+    /// The app detaching one window's items does not tell another window's
+    /// wait its own items are coming off.
+    #[test]
+    fn a_detach_for_one_wait_leaves_the_others_alone() {
+        let mut inv = worn_inventory();
+        add(&mut inv, 16, 1, Some(6));
+        let prefs = InventoryPreferences::default();
+        let facts = Facts {
+            worn: HashSet::from([id(10), id(11), id(16)]),
+            ..Default::default()
+        };
+        let mut st = InventoryUi::default();
+        st.windows.push(crate::ui::inventory::InventoryWindow {
+            id: id(500),
+            root: Uuid::nil(),
+            additional: true,
+            state: Box::default(),
+            open: true,
+        });
+        let mut actions = Vec::new();
+        start_detach(&inv, &mut st, &prefs, &facts, &mut actions, vec![id(10)]);
+        start_detach(&inv, &mut st.windows[0].state, &prefs, &facts, &mut actions, vec![id(16)]);
+        actions.clear();
+        st.take_off_sent(&[id(16)]);
+        for _ in 0..3 {
+            finish_detach(&inv, &mut st, &prefs, &facts, &mut actions);
+            finish_detach(&inv, &mut st.windows[0].state, &prefs, &facts, &mut actions);
+        }
+        assert!(st.detach_delete.is_none(), "nothing ran for the main window's shirt: refused");
+        assert!(st.windows[0].state.detach_delete.is_some(), "the detached object is waited for");
+    }
+
+    /// An active gesture already in the Trash is purged as before, not
+    /// taken off first.
+    #[test]
+    fn an_active_gesture_in_the_trash_is_purged() {
+        let mut inv = worn_inventory();
+        add(&mut inv, 12, 14, Some(21));
+        let prefs = InventoryPreferences::default();
+        let facts = Facts {
+            worn: HashSet::from([id(10), id(11)]),
+            active_gestures: [id(12)].into(),
+            ..Default::default()
+        };
+        assert!(allowed(&inv, &[id(12)], &prefs, &facts));
+        let mut st = InventoryUi {
+            selection: HashSet::from([id(12)]),
+            selected: Some(id(12)),
+            ..Default::default()
+        };
+        let mut actions = Vec::new();
+        request(&inv, &mut st, &prefs, &facts, &mut actions);
+        assert!(
+            matches!(st.dialog, Some(EditDialog::Delete(_, true))),
+            "Purge, not Detach and Delete"
+        );
     }
 }
 

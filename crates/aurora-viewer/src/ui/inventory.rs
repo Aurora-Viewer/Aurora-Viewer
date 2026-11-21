@@ -900,23 +900,47 @@ impl InventoryUi {
     /// error says why it cannot be done, for chat.
     pub fn ask_detach_delete(&mut self, inv: &Inventory, prefs: &InventoryPreferences, facts: &Facts, id: Uuid) -> Result<(), String> {
         if self.dialog.is_some() || self.pending.is_some() || self.pending_delete.is_some() || self.detach_delete.is_some() {
-            return Ok(());
+            return Err(aurora_i18n::tr!("ui-inventory-delete-detach-busy").into());
         }
         if id.is_nil() || !delete::detach_allowed(inv, &[id], prefs, facts) {
-            return Err(aurora_i18n::tr!("ui-inventory-delete-detach-cannot").into());
+            return Err(aurora_i18n::tr!("ui-inventory-delete-detach-refused").into());
         }
         self.detach_from_world = true;
         self.dialog = Some(EditDialog::DetachDelete(vec![id]));
         Ok(())
     }
 
-    /// The app detached a Detach and Delete's objects itself (an incomplete
-    /// outfit or a temporary attachment, `World::recover_attachment_removal`):
-    /// no outfit update runs, so the wait must not read that as refused.
-    pub fn take_off_sent(&mut self) {
+    /// Every window's waiting Detach and Delete that asked any of `items` off.
+    fn detach_waits<'a>(&'a mut self, items: &'a [Uuid]) -> impl Iterator<Item = &'a mut delete::DetachDelete> + 'a {
         let windows = self.windows.iter_mut().map(|w| &mut w.state.detach_delete);
-        for pending in std::iter::once(&mut self.detach_delete).chain(windows).flatten() {
+        std::iter::once(&mut self.detach_delete)
+            .chain(windows)
+            .flatten()
+            .filter(|pending| pending.takes_off(items))
+    }
+
+    /// The app detached `items` itself (an incomplete outfit or a temporary
+    /// attachment, `World::recover_attachment_removal`): no outfit update
+    /// runs, so the wait that asked them off must not read that as refused.
+    pub fn take_off_sent(&mut self, items: &[Uuid]) {
+        for pending in self.detach_waits(items) {
             pending.take_off_sent();
+        }
+    }
+
+    /// The take-off of `items` was refused for `reason`, which the app wrote
+    /// in this window's message: the wait that asked them off keeps it, so a
+    /// secondary window says it too, and this window's message is cleared
+    /// when the wait is not its own.
+    pub fn detach_refused(&mut self, items: &[Uuid], reason: &str) {
+        let own = self.detach_delete.as_ref().is_some_and(|pending| pending.takes_off(items));
+        let mut claimed = false;
+        for pending in self.detach_waits(items) {
+            pending.refused(reason);
+            claimed = true;
+        }
+        if claimed && !own {
+            self.message.clear();
         }
     }
 

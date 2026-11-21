@@ -14,7 +14,6 @@ pub(super) enum Command {
     Empty(Uuid),
     DefaultFolder(Vec<Uuid>),
     Delete(Vec<Uuid>, bool),
-    DetachDelete(Vec<Uuid>),
     Share(Vec<Uuid>),
     Open(Uuid),
     OpenMany(Vec<Uuid>),
@@ -992,19 +991,11 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         );
     }
     if !trash || all {
-        // A worn selection's Delete asks to take it off first ("DeleteWornItems").
+        // LLInvFVBridge::canMenuDelete (isItemRemovable(false)): Delete
+        // stays enabled on a worn selection, and asks to take it off first
+        // ("DeleteWornItems", `confirm_or_run`). No row of its own, as in
+        // the Legacy Viewer.
         let detach = ready && super::delete::detach_allowed(inv, &ids, prefs, facts);
-        if all || !super::delete::worn_in(inv, &ids, facts).is_empty() {
-            c.add(
-                "detach-delete",
-                "bottom",
-                "trash-x-filled",
-                aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
-                detach,
-                Command::DetachDelete(ids.clone()),
-            );
-            c.slot("detach-delete", 6);
-        }
         c.add(
             "delete",
             "bottom",
@@ -1228,17 +1219,6 @@ pub(super) fn execute(
                 st.dialog = Some(EditDialog::Delete(ids, true));
             } else {
                 super::delete::confirm_or_run(inv, st, prefs, facts, actions, ids);
-            }
-        }
-        Command::DetachDelete(ids) => {
-            if st.pending.is_none()
-                && st.pending_delete.is_none()
-                && st.detach_delete.is_none()
-                && st.dialog.is_none()
-                && super::delete::detach_allowed(inv, &ids, prefs, facts)
-            {
-                st.detach_from_world = false;
-                st.dialog = Some(EditDialog::DetachDelete(ids));
             }
         }
         Command::Share(ids) => {

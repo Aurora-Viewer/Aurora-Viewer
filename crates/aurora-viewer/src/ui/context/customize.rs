@@ -166,8 +166,8 @@ impl Catalog {
                     layout::Kind::Action(index)
                 }
             };
-            // Detach and Delete sits in the bottom icon bar, beside the lock,
-            // where Inventory's menu puts it (slot 6).
+            // Detach and Delete (ours, no Legacy menu has it) sits in the
+            // bottom icon bar, beside the lock (slot 6).
             let (zone, slot) = match &entry.kind {
                 entries::Kind::Action(CtxAction::DetachDelete(_)) if parent.is_empty() => ("bottom", Some(6)),
                 _ => (zone, None),
@@ -528,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn our_attachments_detach_and_delete_sits_in_the_bottom_icon_bar_like_inventorys() {
+    fn our_attachments_detach_and_delete_sits_in_the_bottom_icon_bar_beside_the_lock() {
         let target = Target::Attachment {
             key: crate::world::objects::ObjKey { region: 1, local_id: 3 },
         };
@@ -548,7 +548,7 @@ mod tests {
         let layout = layout::Layout::default();
         let resolved = layout.resolve(&catalog.entries);
         let slots = layout.icon_slots("bottom", &resolved["bottom"]);
-        assert_eq!(slots[6].as_ref(), Some(&entry.id), "beside the lock, in Inventory's place");
+        assert_eq!(slots[6].as_ref(), Some(&entry.id), "beside the lock");
         assert_eq!(slots[7].as_deref(), Some(layout::LOCK));
         assert!(resolved[layout::TEXT].iter().all(|e| e.id != entry.id), "not also a text row");
     }
