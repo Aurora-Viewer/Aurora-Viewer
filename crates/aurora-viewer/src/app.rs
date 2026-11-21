@@ -7846,7 +7846,9 @@ impl App {
                 } else {
                     format!("secondlife:///app/agent/{id}/about {text}")
                 };
-                self.world.system_message(line);
+                // a radar's line (CHAT_TYPE_RADAR), which the chat leaves out
+                // of the system messages' brackets
+                self.world.system_notice(line, crate::world::notice_topics::Topic::Radar);
             }
         }
     }
