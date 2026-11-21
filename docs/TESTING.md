@@ -4715,6 +4715,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_RT_SWITCH=<frame>[:<frame>]` | Ray tracing turned on at these frames, as Preferences would: no long frame |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_STAINED_GLASS=sun\|lamp` | Red, green and blue panes over a white slab: the traced light they let through is coloured |
+| `AURORA_DEMO_LIGHT_PANEL=1` | A ceiling light panel with a cube hung beside it: the cube casts the panel's traced shadow |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
@@ -5013,6 +5014,13 @@ both open states and the selection count. Capture at frame 620.
   white. `lamp` adds a white lamp 1.4 m over the middle pane: at night
   (`AURORA_DEMO_TOD=4`) the slab under the panes takes their colours from
   the lamp too, and the lamp's own sphere tints nothing.
+- **`AURORA_DEMO_LIGHT_PANEL=1`**: a ceiling light panel, 2.4 m square,
+  2.6 m over a white slab ahead of the start position, its light at its
+  middle, and a red cube hung 1.2 m under one of its sides. At night
+  (`AURORA_DEMO_TOD=4`) with the lamps' shadows traced, the cube casts a
+  soft shadow on the slab and the panel itself casts none. With
+  `AURORA_RT_EMITTER=sphere` the rays stop at the sphere that holds the
+  panel, which the cube is inside: the cube casts nothing.
 - **`AURORA_DEMO_PBR_OVERRIDE=1`**: two PBR slabs, one of them with a
   GLTF material override (4 × 4 repeats, tint). Their normal map,
   also carried by the "Normal + specular" panel of the ordinary
@@ -13110,7 +13118,7 @@ What the inventory must show with these scenarios:
   and `back` at those met from their front, to compare (the lamps' rays
   too). The
   three others trace the scene the sun's shadows build, so they do nothing
-  without them: the point lights' and the projectors' shadows (every projector of the list, at any distance, in its shadow map's place on the faces the view's prepass draws; the blended faces and the reflections keep the maps), the indirect light (in the
+  without them: the point lights' and the projectors' shadows (every projector of the list, at any distance, in its shadow map's place on the faces the view's prepass draws, its map no longer drawn: the blended faces and the reflections take it unshadowed, as the Legacy Viewer's blended faces), the indirect light (in the
   screen-space one's place, at the Indirect light intensity) and the
   reflections (in the screen-space ones' place, which must be on). The
   GPU device has its ray queries from the start on a card that has them,
