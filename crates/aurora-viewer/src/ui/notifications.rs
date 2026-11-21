@@ -1022,6 +1022,16 @@ fn shown_toasts(list: &Notifications, nui: &NotifUi, dnd: bool) -> (Vec<u64>, us
     (keep, behind)
 }
 
+/// Close the To do panel once its final notification has been answered.
+/// Responses are applied by the caller after this UI frame.
+pub(super) fn last_notification_answered(list: &Notifications, answers: &[(u64, Response)]) -> bool {
+    let mut listed = list.listed();
+    let Some(last) = listed.next() else {
+        return false;
+    };
+    listed.next().is_none() && answers.iter().any(|(id, _)| *id == last.id)
+}
+
 /// List under the bell and toasts; returns the answers to apply.
 pub fn show(
     ctx: &egui::Context,
@@ -1137,6 +1147,11 @@ pub fn show(
                     }
                 });
             });
+        if nui.center.tab == super::notification_center::Tab::ToDo
+            && last_notification_answered(list, &answers)
+        {
+            nui.open = false;
+        }
         // click outside closes the list (not on the bell: it toggles itself)
         let clicked_out = ctx.input(|i| i.pointer.any_pressed())
             && ctx.pointer_interact_pos().is_some_and(|pos| {
