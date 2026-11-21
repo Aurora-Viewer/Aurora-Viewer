@@ -443,7 +443,8 @@ fn build_mode(
         "top",
         "cut",
         aurora_i18n::tr!("common-cut"),
-        ready && movable,
+        // LLInvFVBridge::canMenuCut: removable too, RLVa's folder locks included
+        ready && movable && ids.iter().all(|id| facts.rlva.removable(inv, *id)),
         Command::Copy(ids.clone(), true),
     );
     let paste = ready && single && to.is_some_and(|to| clipboard::paste_allowed(inv, st, to, prefs, facts));
@@ -1039,12 +1040,17 @@ fn build_mode(
         );
     }
     if !trash || all {
+        // LLInvFVBridge::canMenuDelete (isItemRemovable(false)): Delete
+        // stays enabled on a worn selection, and asks to take it off first
+        // ("DeleteWornItems", `confirm_or_run`). No row of its own, as in
+        // the Legacy Viewer.
+        let detach = ready && super::delete::detach_allowed(inv, &ids, prefs, facts);
         c.add(
             "delete",
             "bottom",
             "trash-filled",
             aurora_i18n::tr!("common-delete"),
-            ready && super::delete::allowed(inv, &ids, prefs, facts),
+            ready && (super::delete::allowed(inv, &ids, prefs, facts) || detach),
             Command::Delete(ids, false),
         );
         c.slot("delete", 7);

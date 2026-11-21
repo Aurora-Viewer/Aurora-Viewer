@@ -4,6 +4,65 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
+/// A block of the Aurora build window that can live in a window of its
+/// own: a section, or the Position / Size / Rotation block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Block {
+    General,
+    Shape,
+    Features,
+    Materials,
+    Contents,
+    Transform,
+}
+
+impl Block {
+    pub const ALL: [Block; 6] = [
+        Block::General,
+        Block::Shape,
+        Block::Features,
+        Block::Materials,
+        Block::Contents,
+        Block::Transform,
+    ];
+
+    /// The section's rail item; None for the transform block.
+    pub fn item(self) -> Option<Item> {
+        match self {
+            Block::General => Some(Item::General),
+            Block::Shape => Some(Item::Shape),
+            Block::Features => Some(Item::Features),
+            Block::Materials => Some(Item::Materials),
+            Block::Contents => Some(Item::Contents),
+            Block::Transform => None,
+        }
+    }
+
+    pub fn of_item(item: Item) -> Option<Block> {
+        Block::ALL.into_iter().find(|block| block.item() == Some(item))
+    }
+
+    /// The build tool's tab of the section (`BuildTool::tab`).
+    pub fn tab(self) -> Option<usize> {
+        match self {
+            Block::General => Some(6),
+            Block::Shape => Some(5),
+            Block::Features => Some(2),
+            Block::Materials => Some(3),
+            Block::Contents => Some(4),
+            Block::Transform => None,
+        }
+    }
+
+    pub fn of_tab(tab: usize) -> Option<Block> {
+        match tab {
+            0 | 1 | 6 => Some(Block::General),
+            _ => Block::ALL.into_iter().find(|block| block.tab() == Some(tab)),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Item {
     #[serde(rename = "manipulators")]
@@ -78,9 +137,9 @@ pub const ITEMS: [Item; 29] = [
     Item::RotateMode,
     Item::Snap,
     Item::StretchMode,
-    Item::Highlight,
-    Item::Face,
     Item::RootAxis,
+    Item::Face,
+    Item::Highlight,
     Item::AlignMode,
     Item::Probes,
     Item::Linked,
@@ -109,7 +168,18 @@ pub enum Panel {
     Footer,
     Settings,
     Hidden,
+    /// The bar above the editor (the sections, by default).
     Navigation,
+    /// The bar at the bottom of the window (the tools, by default). Either
+    /// bar takes any of the section and tool buttons, as many as wanted.
+    Tools,
+}
+
+impl Panel {
+    /// One of the two button bars.
+    pub fn bar(self) -> bool {
+        matches!(self, Self::Navigation | Self::Tools)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,16 +211,22 @@ impl Item {
     pub fn footer_column_item(self) -> bool {
         !self.navigation() && !matches!(self, Self::Manipulators | Self::Actions)
     }
+    /// A tool's button (Camera, Grab, Edit, Create, Land), not a section's.
+    pub fn tool(self) -> bool {
+        self >= Self::Camera
+    }
     pub fn accepts(self, panel: Panel) -> bool {
         panel == Panel::Hidden
             || if self.navigation() {
-                panel == Panel::Navigation
+                panel.bar()
             } else {
                 matches!(panel, Panel::Footer | Panel::Settings)
             }
     }
     pub fn default_panel(self) -> Panel {
-        if self.navigation() {
+        if self.tool() {
+            Panel::Tools
+        } else if self.navigation() {
             Panel::Navigation
         } else if matches!(
             self,
@@ -161,6 +237,16 @@ impl Item {
             Panel::Footer
         }
     }
+}
+
+/// How a bar button shows: its icon, its label, or both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ButtonDisplay {
+    #[default]
+    Icon,
+    Label,
+    Both,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -174,6 +260,17 @@ pub struct Layout {
     /// Upgrade the former default section order once, retaining custom orders.
     #[serde(default, rename = "sectionOrderVersion")]
     section_order_version: u8,
+    /// Move a saved layout that is still the former default to the new
+    /// default option order (root axis above the highlight), once.
+    #[serde(default, rename = "footerOrderVersion")]
+    footer_order_version: u8,
+    /// Layouts from before the two bars took any button kept the tool
+    /// buttons in the navigation panel: they go to the bottom bar, once.
+    #[serde(default, rename = "barsVersion")]
+    bars_version: u8,
+    /// The bar buttons shown otherwise than by their icon alone.
+    #[serde(default, rename = "buttonDisplay", skip_serializing_if = "BTreeMap::is_empty")]
+    pub button_display: BTreeMap<Item, ButtonDisplay>,
 }
 
 impl Default for Layout {
@@ -191,13 +288,16 @@ impl Default for Layout {
                 (Item::ScaleBoth, FooterColumn::Right),
                 (Item::StretchTextures, FooterColumn::Right),
                 (Item::Snap, FooterColumn::Right),
-                (Item::Highlight, FooterColumn::Right),
                 (Item::RootAxis, FooterColumn::Right),
+                (Item::Highlight, FooterColumn::Right),
                 (Item::Probes, FooterColumn::Right),
             ]
             .into_iter()
             .collect(),
             section_order_version: 1,
+            footer_order_version: 1,
+            bars_version: 1,
+            button_display: BTreeMap::new(),
         };
         layout.normalize();
         layout
@@ -222,6 +322,16 @@ impl Layout {
                     position += 1;
                 }
             }
+        }
+        self.button_display
+            .retain(|item, display| item.navigation() && *display != ButtonDisplay::Icon);
+        if self.bars_version == 0 {
+            for (item, panel) in self.locations.iter_mut() {
+                if item.tool() && *panel == Panel::Navigation {
+                    *panel = Panel::Tools;
+                }
+            }
+            self.bars_version = 1;
         }
         let mut seen = HashSet::new();
         self.order.retain(|item| seen.insert(*item));
@@ -289,7 +399,44 @@ impl Layout {
                 column = FooterColumn::Left;
             }
         }
+        if self.footer_order_version == 0 {
+            // Only a layout nobody arranged: the former default exactly.
+            let mut former = Self::default();
+            former.swap_order(Item::RootAxis, Item::Highlight);
+            if self.order == former.order && self.locations == former.locations && self.footer_columns == former.footer_columns {
+                self.swap_order(Item::Highlight, Item::RootAxis);
+            }
+            self.footer_order_version = 1;
+        }
     }
+
+    fn swap_order(&mut self, a: Item, b: Item) {
+        if let Some(i) = self.order.iter().position(|item| *item == a)
+            && let Some(j) = self.order.iter().position(|item| *item == b)
+        {
+            self.order.swap(i, j);
+        }
+    }
+    /// How the bar button `item` shows.
+    pub fn display(&self, item: Item) -> ButtonDisplay {
+        self.button_display.get(&item).copied().unwrap_or_default()
+    }
+
+    pub fn set_display(&mut self, item: Item, display: ButtonDisplay) {
+        if display == ButtonDisplay::Icon || !item.navigation() {
+            self.button_display.remove(&item);
+        } else {
+            self.button_display.insert(item, display);
+        }
+    }
+
+    /// The buttons of both bars, the top one first.
+    pub fn in_bars(&self) -> Vec<Item> {
+        let mut items = self.in_panel(Panel::Navigation);
+        items.extend(self.in_panel(Panel::Tools));
+        items
+    }
+
     pub fn in_panel(&self, panel: Panel) -> Vec<Item> {
         self.order
             .iter()
@@ -677,6 +824,92 @@ mod tests {
     }
 
     #[test]
+    fn tool_buttons_of_an_older_layout_move_to_the_bottom_bar_once() {
+        let mut old = Layout::default();
+        for item in ITEMS.into_iter().filter(|item| item.tool()) {
+            old.locations.insert(item, Panel::Navigation);
+        }
+        old.locations.insert(Item::Land, Panel::Hidden);
+        old.bars_version = 0;
+        old.normalize();
+        assert!(old.in_panel(Panel::Navigation).iter().all(|item| !item.tool()));
+        assert_eq!(old.in_panel(Panel::Tools), [Item::Camera, Item::Grab, Item::Edit, Item::Create]);
+        assert_eq!(old.locations[&Item::Land], Panel::Hidden);
+        // once moved, a tool put back in the top bar stays there
+        assert!(old.place(Item::Grab, Panel::Navigation, Some(Item::General), false));
+        old.normalize();
+        assert_eq!(old.in_panel(Panel::Navigation)[0], Item::Grab);
+    }
+
+    #[test]
+    fn either_bar_takes_any_button_and_any_number_of_them() {
+        let mut layout = Layout::default();
+        for item in layout.in_bars() {
+            assert!(layout.place(item, Panel::Tools, None, false), "{item:?}");
+        }
+        assert!(layout.in_panel(Panel::Navigation).is_empty());
+        assert_eq!(layout.in_panel(Panel::Tools).len(), 10);
+        assert!(layout.place(Item::Contents, Panel::Navigation, None, false));
+        assert_eq!(layout.in_panel(Panel::Navigation), [Item::Contents]);
+        assert_eq!(layout.in_bars().len(), 10);
+        // options never go to a bar, buttons never to the options
+        assert!(!layout.place(Item::Snap, Panel::Tools, None, false));
+        assert!(!layout.place(Item::Edit, Panel::Footer, None, false));
+    }
+
+    #[test]
+    fn bar_buttons_keep_their_display_and_icons_are_not_stored() {
+        let mut layout = Layout::default();
+        layout.set_display(Item::General, ButtonDisplay::Both);
+        layout.set_display(Item::Land, ButtonDisplay::Label);
+        layout.set_display(Item::Shape, ButtonDisplay::Icon);
+        // only the bar buttons have a display
+        layout.set_display(Item::Snap, ButtonDisplay::Label);
+        let restored: Layout = serde_json::from_str(&serde_json::to_string(&layout).unwrap()).unwrap();
+        assert_eq!(restored.display(Item::General), ButtonDisplay::Both);
+        assert_eq!(restored.display(Item::Land), ButtonDisplay::Label);
+        assert_eq!(restored.display(Item::Shape), ButtonDisplay::Icon);
+        assert_eq!(restored.button_display.len(), 2);
+        layout.set_display(Item::General, ButtonDisplay::Icon);
+        layout.set_display(Item::Land, ButtonDisplay::Icon);
+        assert_eq!(layout, Layout::default());
+        assert!(!serde_json::to_string(&layout).unwrap().contains("buttonDisplay"));
+    }
+
+    #[test]
+    fn detachable_blocks_match_their_sections() {
+        for block in Block::ALL {
+            match block.item() {
+                Some(item) => {
+                    assert_eq!(Block::of_item(item), Some(block));
+                    assert_eq!(block.tab().and_then(Block::of_tab), Some(block));
+                }
+                None => assert_eq!(block, Block::Transform),
+            }
+        }
+        assert_eq!(Block::of_tab(0), Some(Block::General));
+        assert_eq!(Block::of_tab(1), Some(Block::General));
+        assert_eq!(Block::of_item(Item::Edit), None);
+    }
+
+    #[test]
+    fn former_default_layout_moves_root_axis_above_highlight_once() {
+        let mut former = Layout::default();
+        former.swap_order(Item::RootAxis, Item::Highlight);
+        former.footer_order_version = 0;
+        let mut migrated = former.clone();
+        migrated.normalize();
+        assert_eq!(migrated, Layout::default());
+        // an arranged layout keeps its order
+        let mut arranged = former.clone();
+        arranged.swap_order(Item::Snap, Item::Probes);
+        let expected = arranged.order.clone();
+        arranged.normalize();
+        assert_eq!(arranged.order, expected);
+        assert_eq!(arranged.footer_order_version, 1);
+    }
+
+    #[test]
     fn default_footer_uses_the_customized_two_column_profile() {
         let layout = Layout::default();
         assert_eq!(
@@ -685,8 +918,8 @@ mod tests {
                 FooterRow::Cells([Some(Item::MoveMode), Some(Item::ScaleBoth)]),
                 FooterRow::Cells([Some(Item::RotateMode), Some(Item::StretchTextures)]),
                 FooterRow::Cells([Some(Item::StretchMode), Some(Item::Snap)]),
-                FooterRow::Cells([Some(Item::Face), Some(Item::Highlight)]),
-                FooterRow::Cells([Some(Item::AlignMode), Some(Item::RootAxis)]),
+                FooterRow::Cells([Some(Item::Face), Some(Item::RootAxis)]),
+                FooterRow::Cells([Some(Item::AlignMode), Some(Item::Highlight)]),
                 FooterRow::Cells([Some(Item::Linked), Some(Item::Probes)]),
                 FooterRow::Full(Item::Actions),
             ]

@@ -73,6 +73,7 @@ fn ao_choices_survive_settings_restart_reordering_groups_tracks_and_inactive_sta
         Account {
             enabled: true,
             selected: set.id,
+            mini_open: true,
             animations: runtime.take_choices(Some(&set)).expect("new selection"),
         },
     );
@@ -86,6 +87,7 @@ fn ao_choices_survive_settings_restart_reordering_groups_tracks_and_inactive_sta
     assert_eq!(account.animations[&standing_folder], group);
     assert_eq!(account.animations[&track_id], track_link);
     assert_eq!(account.animations[&walking_folder], walk);
+    assert!(account.mini_open, "the mini window preference survives a restart");
     let standing = set.states.get_mut(&State::Standing).expect("standing");
     standing.steps.swap(0, 1);
     standing.tracks[0].members.swap(0, 1);
