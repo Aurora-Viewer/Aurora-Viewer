@@ -218,11 +218,11 @@ fn main() {
                         let reference = full.get(usize::from(reduce)).and_then(|f| f.as_ref());
                         if let (Some(reference), Some(a), Ok(b)) = (reference, &a, &b) {
                             let b = oracle::planes_of(b);
-                            if let (Some(da), Some(db)) = (distance(a, reference), distance(&b, reference)) {
-                                if db > da {
-                                    bump(&cut.kept_more_worse);
-                                    note(format!("CUT {} at {at} reduce {reduce}: kept more, yet further from the whole file ({db} against {da})", name(path)));
-                                }
+                            if let (Some(da), Some(db)) = (distance(a, reference), distance(&b, reference))
+                                && db > da
+                            {
+                                bump(&cut.kept_more_worse);
+                                note(format!("CUT {} at {at} reduce {reduce}: kept more, yet further from the whole file ({db} against {da})", name(path)));
                             }
                         }
                     }

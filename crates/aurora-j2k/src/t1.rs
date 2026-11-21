@@ -37,7 +37,7 @@
 //! has at most 4096 samples (the header refuses more) and its flags at most
 //! 3078 entries, so the mask never changes an index of a valid block.
 
-use crate::t1_luts::{LUT_CTXNO_SC, LUT_CTXNO_ZC, LUT_SPB, MQC_STATES};
+use crate::t1_luts::{LUT_CTXNO_SC, LUT_CTXNO_ZC, LUT_SPB, MQC_WORDS};
 use crate::tile::{Chunk, Segment};
 
 const CBLK_LAZY: u32 = 0x01;
@@ -110,8 +110,11 @@ struct Mq {
     bp: usize,
 }
 
-/// The 19 contexts' state indices (into `MQC_STATES`), padded to 32.
-type Contexts = [u8; 32];
+/// The 19 contexts, each holding its state's word of `MQC_WORDS` (the
+/// state's probability estimate, its MPS and its two next states), padded
+/// to 32: a decision reads its context once, and the table only when the
+/// state changes.
+type Contexts = [u32; 32];
 
 /// `opj_mqc_bytein_macro`. The sentinel (0xFF 0xFF after the segment) stops
 /// `bp` at the segment's end, so `bp + 1` stays inside the buffer.
@@ -160,37 +163,27 @@ fn mq_renorm(mq: &mut Mq, buf: &[u8]) {
 #[inline(always)]
 fn mq_decode(mq: &mut Mq, ctxs: &mut Contexts, buf: &[u8], cx: usize) -> u32 {
     let cx = cx & 31;
-    let idx = usize::from(ctxs[cx]) & 127;
-    let st = MQC_STATES[idx];
-    let qeval = st & 0xffff;
-    let mps = (idx & 1) as u32;
-    let (nmps, nlps) = ((st >> 16) as u8, (st >> 24) as u8);
+    let w = ctxs[cx];
+    let qeval = w & 0xffff;
+    let mps = (w >> 16) & 1;
     mq.a = mq.a.wrapping_sub(qeval);
     if (mq.c >> 16) < qeval {
         // opj_mqc_lpsexchange_macro
-        let d = if mq.a < qeval {
-            ctxs[cx] = nmps;
-            mps
-        } else {
-            ctxs[cx] = nlps;
-            mps ^ 1
-        };
+        let lps = mq.a >= qeval;
+        let next = if lps { w >> 24 } else { (w >> 17) & 0x7f };
+        ctxs[cx] = MQC_WORDS[(next & 127) as usize];
         mq.a = qeval;
         mq_renorm(mq, buf);
-        d
+        mps ^ u32::from(lps)
     } else {
         mq.c = mq.c.wrapping_sub(qeval << 16);
         if mq.a & 0x8000 == 0 {
             // opj_mqc_mpsexchange_macro
-            let d = if mq.a < qeval {
-                ctxs[cx] = nlps;
-                mps ^ 1
-            } else {
-                ctxs[cx] = nmps;
-                mps
-            };
+            let lps = mq.a < qeval;
+            let next = if lps { w >> 24 } else { (w >> 17) & 0x7f };
+            ctxs[cx] = MQC_WORDS[(next & 127) as usize];
             mq_renorm(mq, buf);
-            d
+            mps ^ u32::from(lps)
         } else {
             mps
         }
@@ -226,24 +219,24 @@ fn raw_decode(mq: &mut Mq, buf: &[u8]) -> u32 {
 /// `opj_mqc_resetstates` and the three `opj_mqc_setstate` that follow it
 /// everywhere: UNI at state 46, AGG at 3, the first ZC context at 4.
 fn reset_contexts(ctxs: &mut Contexts) {
-    *ctxs = [0; 32];
-    ctxs[T1_CTXNO_UNI] = 46 << 1;
-    ctxs[T1_CTXNO_AGG] = 3 << 1;
-    ctxs[T1_CTXNO_ZC] = 4 << 1;
+    *ctxs = [MQC_WORDS[0]; 32];
+    ctxs[T1_CTXNO_UNI] = MQC_WORDS[46 << 1];
+    ctxs[T1_CTXNO_AGG] = MQC_WORDS[3 << 1];
+    ctxs[T1_CTXNO_ZC] = MQC_WORDS[4 << 1];
 }
 
-/// `opj_t1_getctxtno_sc_or_spb_index`
+/// `opj_t1_getctxtno_sc_or_spb_index`, for the row `CI` of a stripe.
 #[inline(always)]
-fn sc_or_spb_index(fx: u32, pfx: u32, nfx: u32, ci: u32) -> usize {
-    let mut lu = (fx >> (ci * 3)) & (T1_SIGMA_1 | T1_SIGMA_3 | T1_SIGMA_5 | T1_SIGMA_7);
-    lu |= (pfx >> (T1_CHI_THIS_I + ci * 3)) & (1 << 0);
-    lu |= (nfx >> (T1_CHI_THIS_I - 2 + ci * 3)) & (1 << 2);
-    if ci == 0 {
+fn sc_or_spb_index<const CI: u32>(fx: u32, pfx: u32, nfx: u32) -> usize {
+    let mut lu = (fx >> (CI * 3)) & (T1_SIGMA_1 | T1_SIGMA_3 | T1_SIGMA_5 | T1_SIGMA_7);
+    lu |= (pfx >> (T1_CHI_THIS_I + CI * 3)) & (1 << 0);
+    lu |= (nfx >> (T1_CHI_THIS_I - 2 + CI * 3)) & (1 << 2);
+    if CI == 0 {
         lu |= (fx >> (T1_CHI_0_I - 4)) & (1 << 4);
     } else {
-        lu |= (fx >> (T1_CHI_1_I - 4 + (ci - 1) * 3)) & (1 << 4);
+        lu |= (fx >> (T1_CHI_1_I - 4 + CI.saturating_sub(1) * 3)) & (1 << 4);
     }
-    lu |= (fx >> (T1_CHI_2_I - 6 + ci * 3)) & (1 << 6);
+    lu |= (fx >> (T1_CHI_2_I - 6 + CI * 3)) & (1 << 6);
     (lu & 255) as usize
 }
 
@@ -259,17 +252,40 @@ fn ctxno_mag(f: u32) -> usize {
     }
 }
 
+/// A code-block's coefficients, flags and contexts, in one piece: the
+/// passes then address all three from one register.
+struct Work {
+    /// `(h + 3) / 4 + 2` rows of `w + 2`.
+    flags: [u32; BUF],
+    /// `w` x `h` coefficients of the current code-block, row-major.
+    data: [i32; BUF],
+    ctxs: Contexts,
+}
+
 /// What the passes of a code-block work on.
 struct Coder<'a> {
-    flags: &'a mut [u32; BUF],
-    data: &'a mut [i32; BUF],
-    ctxs: &'a mut Contexts,
+    work: &'a mut Work,
     /// The code-block's bytes, the current segment ended by the sentinel.
     buf: &'a [u8],
     /// `orient << 9`: the band's part of `LUT_CTXNO_ZC`.
     zc: usize,
 }
 
+/// A step of a pass on the row `$ci` (0 to 3, known only when the pass
+/// runs) of a stripe: the step compiled for that row.
+macro_rules! step {
+    ($ci:expr, $self:ident . $f:ident ( $($a:expr),* )) => {
+        match $ci {
+            0 => $self.$f::<0>($($a),*),
+            1 => $self.$f::<1>($($a),*),
+            2 => $self.$f::<2>($($a),*),
+            _ => $self.$f::<3>($($a),*),
+        }
+    };
+}
+
+// Each step is compiled once for each of the four rows of a stripe (`CI`),
+// as OpenJPEG's macros expand: the row's shifts are constants.
 impl Coder<'_> {
     /// `opj_t1_getctxno_zc`
     #[inline(always)]
@@ -277,79 +293,105 @@ impl Coder<'_> {
         usize::from(LUT_CTXNO_ZC[(self.zc | (f & T1_SIGMA_NEIGHBOURS) as usize) & 2047])
     }
 
-    /// `opj_t1_update_flags_macro`: the sample at `fp`, row `ci` of its
+    /// `opj_t1_update_flags_macro`: the sample at `fp`, row `CI` of its
     /// stripe, becomes significant with sign `s`; `flags` is the column's
     /// own entry, held by the caller.
     #[inline(always)]
-    fn update_flags(&mut self, flags: &mut u32, fp: usize, ci: u32, s: u32, stride: usize, vsc: bool) {
+    fn update_flags<const CI: u32>(&mut self, flags: &mut u32, fp: usize, s: u32, stride: usize, vsc: bool) {
         // east
-        self.flags[(fp - 1) & MASK] |= T1_SIGMA_5 << (3 * ci);
+        self.work.flags[(fp - 1) & MASK] |= T1_SIGMA_5 << (3 * CI);
         // mark target as significant
-        *flags |= ((s << T1_CHI_1_I) | T1_SIGMA_4) << (3 * ci);
+        *flags |= ((s << T1_CHI_1_I) | T1_SIGMA_4) << (3 * CI);
         // west
-        self.flags[(fp + 1) & MASK] |= T1_SIGMA_3 << (3 * ci);
+        self.work.flags[(fp + 1) & MASK] |= T1_SIGMA_3 << (3 * CI);
         // north-west, north, north-east
-        if ci == 0 && !vsc {
+        if CI == 0 && !vsc {
             let north = fp - stride;
-            self.flags[north & MASK] |= (s << T1_CHI_5_I) | T1_SIGMA_16;
-            self.flags[(north - 1) & MASK] |= T1_SIGMA_17;
-            self.flags[(north + 1) & MASK] |= T1_SIGMA_15;
+            self.work.flags[north & MASK] |= (s << T1_CHI_5_I) | T1_SIGMA_16;
+            self.work.flags[(north - 1) & MASK] |= T1_SIGMA_17;
+            self.work.flags[(north + 1) & MASK] |= T1_SIGMA_15;
         }
         // south-west, south, south-east
-        if ci == 3 {
+        if CI == 3 {
             let south = fp + stride;
-            self.flags[south & MASK] |= (s << T1_CHI_0_I) | T1_SIGMA_1;
-            self.flags[(south - 1) & MASK] |= T1_SIGMA_2;
-            self.flags[(south + 1) & MASK] |= T1_SIGMA_0;
+            self.work.flags[south & MASK] |= (s << T1_CHI_0_I) | T1_SIGMA_1;
+            self.work.flags[(south - 1) & MASK] |= T1_SIGMA_2;
+            self.work.flags[(south + 1) & MASK] |= T1_SIGMA_0;
         }
+    }
+
+    /// The sign of a sample that became significant, and its flags
+    /// (`opj_t1_dec_sigpass_step_mqc_macro`'s and
+    /// `opj_t1_dec_clnpass_step_macro`'s second half).
+    #[inline(always)]
+    fn sign<const CI: u32>(&mut self, mq: &mut Mq, flags: &mut u32, fp: usize, stride: usize, di: usize, oneplushalf: i32, vsc: bool) {
+        let lu = sc_or_spb_index::<CI>(*flags, self.work.flags[(fp - 1) & MASK], self.work.flags[(fp + 1) & MASK]);
+        let v = mq_decode(mq, &mut self.work.ctxs, self.buf, usize::from(LUT_CTXNO_SC[lu])) ^ u32::from(LUT_SPB[lu]);
+        self.work.data[di & MASK] = if v != 0 { -oneplushalf } else { oneplushalf };
+        self.update_flags::<CI>(flags, fp, v, stride, vsc);
     }
 
     /// `opj_t1_dec_sigpass_step_mqc_macro`
     #[inline(always)]
-    fn sig_step_mqc(&mut self, mq: &mut Mq, flags: &mut u32, fp: usize, stride: usize, di: usize, ci: u32, oneplushalf: i32, vsc: bool) {
-        if (*flags & ((T1_SIGMA_THIS | T1_PI_THIS) << (ci * 3))) == 0 && (*flags & (T1_SIGMA_NEIGHBOURS << (ci * 3))) != 0 {
-            let ctxt1 = self.ctxno_zc(*flags >> (ci * 3));
-            if mq_decode(mq, self.ctxs, self.buf, ctxt1) != 0 {
-                let lu = sc_or_spb_index(*flags, self.flags[(fp - 1) & MASK], self.flags[(fp + 1) & MASK], ci);
-                let v = mq_decode(mq, self.ctxs, self.buf, usize::from(LUT_CTXNO_SC[lu])) ^ u32::from(LUT_SPB[lu]);
-                self.data[di & MASK] = if v != 0 { -oneplushalf } else { oneplushalf };
-                self.update_flags(flags, fp, ci, v, stride, vsc);
+    fn sig_step_mqc<const CI: u32>(
+        &mut self,
+        mq: &mut Mq,
+        flags: &mut u32,
+        fp: usize,
+        stride: usize,
+        di: usize,
+        oneplushalf: i32,
+        vsc: bool,
+    ) {
+        if (*flags & ((T1_SIGMA_THIS | T1_PI_THIS) << (CI * 3))) == 0 && (*flags & (T1_SIGMA_NEIGHBOURS << (CI * 3))) != 0 {
+            let ctxt1 = self.ctxno_zc(*flags >> (CI * 3));
+            if mq_decode(mq, &mut self.work.ctxs, self.buf, ctxt1) != 0 {
+                self.sign::<CI>(mq, flags, fp, stride, di, oneplushalf, vsc);
             }
-            *flags |= T1_PI_THIS << (ci * 3);
+            *flags |= T1_PI_THIS << (CI * 3);
         }
     }
 
     /// `opj_t1_dec_sigpass_step_raw`
     #[inline(always)]
-    fn sig_step_raw(&mut self, mq: &mut Mq, flags: &mut u32, fp: usize, stride: usize, di: usize, ci: u32, oneplushalf: i32, vsc: bool) {
-        if (*flags & ((T1_SIGMA_THIS | T1_PI_THIS) << (ci * 3))) == 0 && (*flags & (T1_SIGMA_NEIGHBOURS << (ci * 3))) != 0 {
+    fn sig_step_raw<const CI: u32>(
+        &mut self,
+        mq: &mut Mq,
+        flags: &mut u32,
+        fp: usize,
+        stride: usize,
+        di: usize,
+        oneplushalf: i32,
+        vsc: bool,
+    ) {
+        if (*flags & ((T1_SIGMA_THIS | T1_PI_THIS) << (CI * 3))) == 0 && (*flags & (T1_SIGMA_NEIGHBOURS << (CI * 3))) != 0 {
             if raw_decode(mq, self.buf) != 0 {
                 let v = raw_decode(mq, self.buf);
-                self.data[di & MASK] = if v != 0 { -oneplushalf } else { oneplushalf };
-                self.update_flags(flags, fp, ci, v, stride, vsc);
+                self.work.data[di & MASK] = if v != 0 { -oneplushalf } else { oneplushalf };
+                self.update_flags::<CI>(flags, fp, v, stride, vsc);
             }
-            *flags |= T1_PI_THIS << (ci * 3);
+            *flags |= T1_PI_THIS << (CI * 3);
         }
     }
 
     /// `opj_t1_dec_refpass_step_mqc_macro` and `opj_t1_dec_refpass_step_raw`
     #[inline(always)]
-    fn ref_step(&mut self, mq: &mut Mq, flags: &mut u32, di: usize, ci: u32, poshalf: i32, raw: bool) {
-        if (*flags & ((T1_SIGMA_THIS | T1_PI_THIS) << (ci * 3))) == (T1_SIGMA_THIS << (ci * 3)) {
+    fn ref_step<const CI: u32>(&mut self, mq: &mut Mq, flags: &mut u32, di: usize, poshalf: i32, raw: bool) {
+        if (*flags & ((T1_SIGMA_THIS | T1_PI_THIS) << (CI * 3))) == (T1_SIGMA_THIS << (CI * 3)) {
             let v = if raw {
                 raw_decode(mq, self.buf)
             } else {
-                mq_decode(mq, self.ctxs, self.buf, ctxno_mag(*flags >> (ci * 3)))
+                mq_decode(mq, &mut self.work.ctxs, self.buf, ctxno_mag(*flags >> (CI * 3)))
             };
-            let d = &mut self.data[di & MASK];
+            let d = &mut self.work.data[di & MASK];
             *d = d.wrapping_add(if (v ^ u32::from(*d < 0)) != 0 { poshalf } else { -poshalf });
-            *flags |= T1_MU_THIS << (ci * 3);
+            *flags |= T1_MU_THIS << (CI * 3);
         }
     }
 
     /// `opj_t1_dec_clnpass_step_macro`
     #[inline(always)]
-    fn cln_step(
+    fn cln_step<const CI: u32>(
         &mut self,
         mq: &mut Mq,
         check_flags: bool,
@@ -358,21 +400,17 @@ impl Coder<'_> {
         fp: usize,
         stride: usize,
         di: usize,
-        ci: u32,
         oneplushalf: i32,
         vsc: bool,
     ) {
-        if !check_flags || (*flags & ((T1_SIGMA_THIS | T1_PI_THIS) << (ci * 3))) == 0 {
+        if !check_flags || (*flags & ((T1_SIGMA_THIS | T1_PI_THIS) << (CI * 3))) == 0 {
             if !partial {
-                let ctxt1 = self.ctxno_zc(*flags >> (ci * 3));
-                if mq_decode(mq, self.ctxs, self.buf, ctxt1) == 0 {
+                let ctxt1 = self.ctxno_zc(*flags >> (CI * 3));
+                if mq_decode(mq, &mut self.work.ctxs, self.buf, ctxt1) == 0 {
                     return;
                 }
             }
-            let lu = sc_or_spb_index(*flags, self.flags[(fp - 1) & MASK], self.flags[(fp + 1) & MASK], ci);
-            let v = mq_decode(mq, self.ctxs, self.buf, usize::from(LUT_CTXNO_SC[lu])) ^ u32::from(LUT_SPB[lu]);
-            self.data[di & MASK] = if v != 0 { -oneplushalf } else { oneplushalf };
-            self.update_flags(flags, fp, ci, v, stride, vsc);
+            self.sign::<CI>(mq, flags, fp, stride, di, oneplushalf, vsc);
         }
     }
 
@@ -388,16 +426,20 @@ impl Coder<'_> {
         let mut k = 0;
         while k < (h & !3) {
             for _ in 0..w {
-                let mut flags = self.flags[fp & MASK];
+                let mut flags = self.work.flags[fp & MASK];
                 if flags != 0 {
-                    for ci in 0..4 {
-                        if raw {
-                            self.sig_step_raw(&mut mq, &mut flags, fp, stride, dp + ci as usize * w, ci, oneplushalf, vsc);
-                        } else {
-                            self.sig_step_mqc(&mut mq, &mut flags, fp, stride, dp + ci as usize * w, ci, oneplushalf, vsc);
-                        }
+                    if raw {
+                        self.sig_step_raw::<0>(&mut mq, &mut flags, fp, stride, dp, oneplushalf, vsc);
+                        self.sig_step_raw::<1>(&mut mq, &mut flags, fp, stride, dp + w, oneplushalf, vsc);
+                        self.sig_step_raw::<2>(&mut mq, &mut flags, fp, stride, dp + 2 * w, oneplushalf, vsc);
+                        self.sig_step_raw::<3>(&mut mq, &mut flags, fp, stride, dp + 3 * w, oneplushalf, vsc);
+                    } else {
+                        self.sig_step_mqc::<0>(&mut mq, &mut flags, fp, stride, dp, oneplushalf, vsc);
+                        self.sig_step_mqc::<1>(&mut mq, &mut flags, fp, stride, dp + w, oneplushalf, vsc);
+                        self.sig_step_mqc::<2>(&mut mq, &mut flags, fp, stride, dp + 2 * w, oneplushalf, vsc);
+                        self.sig_step_mqc::<3>(&mut mq, &mut flags, fp, stride, dp + 3 * w, oneplushalf, vsc);
                     }
-                    self.flags[fp & MASK] = flags;
+                    self.work.flags[fp & MASK] = flags;
                 }
                 dp += 1;
                 fp += 1;
@@ -408,15 +450,15 @@ impl Coder<'_> {
         }
         if k < h {
             for _ in 0..w {
-                let mut flags = self.flags[fp & MASK];
+                let mut flags = self.work.flags[fp & MASK];
                 for j in 0..h - k {
                     if raw {
-                        self.sig_step_raw(&mut mq, &mut flags, fp, stride, dp + j * w, j as u32, oneplushalf, vsc);
+                        step!(j, self.sig_step_raw(&mut mq, &mut flags, fp, stride, dp + j * w, oneplushalf, vsc));
                     } else {
-                        self.sig_step_mqc(&mut mq, &mut flags, fp, stride, dp + j * w, j as u32, oneplushalf, vsc);
+                        step!(j, self.sig_step_mqc(&mut mq, &mut flags, fp, stride, dp + j * w, oneplushalf, vsc));
                     }
                 }
-                self.flags[fp & MASK] = flags;
+                self.work.flags[fp & MASK] = flags;
                 dp += 1;
                 fp += 1;
             }
@@ -436,12 +478,13 @@ impl Coder<'_> {
         let mut k = 0;
         while k < (h & !3) {
             for _ in 0..w {
-                let mut flags = self.flags[fp & MASK];
+                let mut flags = self.work.flags[fp & MASK];
                 if flags != 0 {
-                    for ci in 0..4 {
-                        self.ref_step(&mut mq, &mut flags, dp + ci as usize * w, ci, poshalf, raw);
-                    }
-                    self.flags[fp & MASK] = flags;
+                    self.ref_step::<0>(&mut mq, &mut flags, dp, poshalf, raw);
+                    self.ref_step::<1>(&mut mq, &mut flags, dp + w, poshalf, raw);
+                    self.ref_step::<2>(&mut mq, &mut flags, dp + 2 * w, poshalf, raw);
+                    self.ref_step::<3>(&mut mq, &mut flags, dp + 3 * w, poshalf, raw);
+                    self.work.flags[fp & MASK] = flags;
                 }
                 dp += 1;
                 fp += 1;
@@ -452,11 +495,11 @@ impl Coder<'_> {
         }
         if k < h {
             for _ in 0..w {
-                let mut flags = self.flags[fp & MASK];
+                let mut flags = self.work.flags[fp & MASK];
                 for j in 0..h - k {
-                    self.ref_step(&mut mq, &mut flags, dp + j * w, j as u32, poshalf, raw);
+                    step!(j, self.ref_step(&mut mq, &mut flags, dp + j * w, poshalf, raw));
                 }
-                self.flags[fp & MASK] = flags;
+                self.work.flags[fp & MASK] = flags;
                 dp += 1;
                 fp += 1;
             }
@@ -475,47 +518,33 @@ impl Coder<'_> {
         let mut k = 0;
         while k < (h & !3) {
             for _ in 0..w {
-                let mut flags = self.flags[fp & MASK];
+                let mut flags = self.work.flags[fp & MASK];
                 if flags == 0 {
                     // a column with nothing significant around it: the run-length mode
-                    if mq_decode(&mut mq, self.ctxs, self.buf, T1_CTXNO_AGG) != 0 {
-                        let hi = mq_decode(&mut mq, self.ctxs, self.buf, T1_CTXNO_UNI);
-                        let lo = mq_decode(&mut mq, self.ctxs, self.buf, T1_CTXNO_UNI);
+                    if mq_decode(&mut mq, &mut self.work.ctxs, self.buf, T1_CTXNO_AGG) != 0 {
+                        let hi = mq_decode(&mut mq, &mut self.work.ctxs, self.buf, T1_CTXNO_UNI);
+                        let lo = mq_decode(&mut mq, &mut self.work.ctxs, self.buf, T1_CTXNO_UNI);
+                        // the first significant row of the column, known
+                        // without its decision; the rows after it as usual
                         let runlen = (hi << 1) | lo;
-                        let mut partial = true;
-                        for ci in runlen..4 {
-                            self.cln_step(
-                                &mut mq,
-                                false,
-                                partial,
-                                &mut flags,
-                                fp,
-                                stride,
-                                dp + ci as usize * w,
-                                ci,
-                                oneplushalf,
-                                vsc,
-                            );
-                            partial = false;
+                        if runlen == 0 {
+                            self.cln_step::<0>(&mut mq, false, true, &mut flags, fp, stride, dp, oneplushalf, vsc);
                         }
-                        self.flags[fp & MASK] = flags & !T1_PI_ALL;
+                        if runlen <= 1 {
+                            self.cln_step::<1>(&mut mq, false, runlen == 1, &mut flags, fp, stride, dp + w, oneplushalf, vsc);
+                        }
+                        if runlen <= 2 {
+                            self.cln_step::<2>(&mut mq, false, runlen == 2, &mut flags, fp, stride, dp + 2 * w, oneplushalf, vsc);
+                        }
+                        self.cln_step::<3>(&mut mq, false, runlen == 3, &mut flags, fp, stride, dp + 3 * w, oneplushalf, vsc);
+                        self.work.flags[fp & MASK] = flags & !T1_PI_ALL;
                     }
                 } else {
-                    for ci in 0..4 {
-                        self.cln_step(
-                            &mut mq,
-                            true,
-                            false,
-                            &mut flags,
-                            fp,
-                            stride,
-                            dp + ci as usize * w,
-                            ci,
-                            oneplushalf,
-                            vsc,
-                        );
-                    }
-                    self.flags[fp & MASK] = flags & !T1_PI_ALL;
+                    self.cln_step::<0>(&mut mq, true, false, &mut flags, fp, stride, dp, oneplushalf, vsc);
+                    self.cln_step::<1>(&mut mq, true, false, &mut flags, fp, stride, dp + w, oneplushalf, vsc);
+                    self.cln_step::<2>(&mut mq, true, false, &mut flags, fp, stride, dp + 2 * w, oneplushalf, vsc);
+                    self.cln_step::<3>(&mut mq, true, false, &mut flags, fp, stride, dp + 3 * w, oneplushalf, vsc);
+                    self.work.flags[fp & MASK] = flags & !T1_PI_ALL;
                 }
                 dp += 1;
                 fp += 1;
@@ -526,11 +555,14 @@ impl Coder<'_> {
         }
         if k < h {
             for _ in 0..w {
-                let mut flags = self.flags[fp & MASK];
+                let mut flags = self.work.flags[fp & MASK];
                 for j in 0..h - k {
-                    self.cln_step(&mut mq, true, false, &mut flags, fp, stride, dp + j * w, j as u32, oneplushalf, vsc);
+                    step!(
+                        j,
+                        self.cln_step(&mut mq, true, false, &mut flags, fp, stride, dp + j * w, oneplushalf, vsc)
+                    );
                 }
-                self.flags[fp & MASK] = flags & !T1_PI_ALL;
+                self.work.flags[fp & MASK] = flags & !T1_PI_ALL;
                 dp += 1;
                 fp += 1;
             }
@@ -542,7 +574,7 @@ impl Coder<'_> {
     /// decisions, read and not checked, as in OpenJPEG.
     fn segsym(&mut self, mq: &mut Mq) {
         for _ in 0..4 {
-            mq_decode(mq, self.ctxs, self.buf, T1_CTXNO_UNI);
+            mq_decode(mq, &mut self.work.ctxs, self.buf, T1_CTXNO_UNI);
         }
     }
 }
@@ -581,10 +613,7 @@ fn clnpass_generic(cd: &mut Coder<'_>, mq: &mut Mq, bpno: u32, vsc: bool, w: usi
 
 /// A decoder's Tier-1 scratch, kept between code-blocks and decodes.
 pub(crate) struct T1 {
-    /// `w` x `h` coefficients of the current code-block, row-major.
-    data: Box<[i32; BUF]>,
-    /// `(h + 3) / 4 + 2` rows of `w + 2`.
-    flags: Box<[u32; BUF]>,
+    work: Box<Work>,
     /// The code-block's bytes and 2 bytes of padding.
     cblkdata: Vec<u8>,
     w: usize,
@@ -594,8 +623,11 @@ pub(crate) struct T1 {
 impl Default for T1 {
     fn default() -> Self {
         T1 {
-            data: Box::new([0; BUF]),
-            flags: Box::new([0; BUF]),
+            work: Box::new(Work {
+                flags: [0; BUF],
+                data: [0; BUF],
+                ctxs: [0; 32],
+            }),
             cblkdata: Vec::new(),
             w: 0,
             h: 0,
@@ -613,30 +645,30 @@ pub(crate) fn empty_cblk_ok(b: &T1Block<'_>) -> bool {
 impl T1 {
     /// The decoded coefficients, `w` x `h` of the last code-block.
     pub fn data(&self) -> &[i32] {
-        &self.data[..(self.w * self.h).min(BUF)]
+        &self.work.data[..(self.w * self.h).min(BUF)]
     }
 
     /// `opj_t1_allocate_buffers`, on the decoder's fixed buffers: the
     /// coefficients cleared, the flags cleared with OpenJPEG's guard rows
     /// and the partial last stripe marked.
     fn allocate_buffers(&mut self, w: usize, h: usize) {
-        self.data[..(w * h).min(BUF)].fill(0);
+        self.work.data[..(w * h).min(BUF)].fill(0);
         let flags_stride = w + 2;
         let flags_height = h.div_ceil(4);
         let flagssize = ((flags_height + 2) * flags_stride).min(BUF);
-        self.flags[..flagssize].fill(0);
+        self.work.flags[..flagssize].fill(0);
         for x in 0..flags_stride {
-            self.flags[x & MASK] = T1_PI_ALL;
-            self.flags[((flags_height + 1) * flags_stride + x) & MASK] = T1_PI_ALL;
+            self.work.flags[x & MASK] = T1_PI_ALL;
+            self.work.flags[((flags_height + 1) * flags_stride + x) & MASK] = T1_PI_ALL;
         }
-        if h % 4 != 0 {
+        if !h.is_multiple_of(4) {
             let v = match h % 4 {
                 1 => T1_PI_1 | T1_PI_2 | T1_PI_3,
                 2 => T1_PI_2 | T1_PI_3,
                 _ => T1_PI_3,
             };
             for x in 0..flags_stride {
-                self.flags[(flags_height * flags_stride + x) & MASK] = v;
+                self.work.flags[(flags_height * flags_stride + x) & MASK] = v;
             }
         }
         self.w = w;
@@ -659,8 +691,7 @@ impl T1 {
         }
         let mut bpno_plus_one = b.roishift.wrapping_add(b.numbps) as i32;
         let mut passtype = 2u32;
-        let mut ctxs: Contexts = [0; 32];
-        reset_contexts(&mut ctxs);
+        reset_contexts(&mut self.work.ctxs);
         if b.chunks.is_empty() {
             return true;
         }
@@ -714,9 +745,7 @@ impl T1 {
 
             {
                 let mut cd = Coder {
-                    flags: &mut self.flags,
-                    data: &mut self.data,
-                    ctxs: &mut ctxs,
+                    work: &mut self.work,
                     buf: &self.cblkdata,
                     zc: (b.orient as usize & 3) << 9,
                 };
@@ -750,7 +779,7 @@ impl T1 {
                         }
                     }
                     if b.cblksty & CBLK_RESET != 0 && !raw {
-                        reset_contexts(cd.ctxs);
+                        reset_contexts(&mut cd.work.ctxs);
                     }
                     passtype += 1;
                     if passtype == 3 {
@@ -775,7 +804,7 @@ impl T1 {
             return;
         }
         let n = (self.w * self.h).min(BUF);
-        let data = &mut self.data[..n];
+        let data = &mut self.work.data[..n];
         if roishift >= 31 {
             data.fill(0);
             return;
@@ -831,6 +860,7 @@ mod tests {
     #[test]
     fn mq_states_follow_table_c2() {
         // row 0: Qe 0x5601, NMPS 1, NLPS 1, switch 1
+        use crate::t1_luts::MQC_STATES;
         assert_eq!(MQC_STATES[0] & 0xffff, 0x5601);
         assert_eq!((MQC_STATES[0] >> 16) & 0xff, 2);
         assert_eq!(MQC_STATES[0] >> 24, 3);
@@ -839,9 +869,15 @@ mod tests {
         assert_eq!(MQC_STATES[92] & 0xffff, 0x5601);
         assert_eq!((MQC_STATES[92] >> 16) & 0xff, 92);
         assert_eq!(MQC_STATES[92] >> 24, 92);
-        // every next state is a state
+        // every next state is a state, and a context's word says what its state does
         for (i, st) in MQC_STATES.iter().enumerate().take(94) {
             assert!((st >> 16) & 0xff < 94 && st >> 24 < 94, "state {i}");
+            let w = MQC_WORDS[i];
+            assert_eq!(
+                (w & 0xffff, (w >> 16) & 1, (w >> 17) & 0x7f, w >> 24),
+                (st & 0xffff, i as u32 & 1, (st >> 16) & 0xff, st >> 24),
+                "state {i}"
+            );
         }
     }
 
@@ -882,7 +918,7 @@ mod tests {
     fn roi_unshift() {
         let mut t1 = T1::default();
         t1.allocate_buffers(2, 2);
-        t1.data[..4].copy_from_slice(&[40, -40, 3, i32::MIN]);
+        t1.work.data[..4].copy_from_slice(&[40, -40, 3, i32::MIN]);
         t1.unshift_roi(3);
         assert_eq!(t1.data(), &[5, -5, 3, i32::MIN]);
     }

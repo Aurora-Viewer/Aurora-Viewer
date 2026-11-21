@@ -27,7 +27,7 @@
 /// A state's index is twice its row in ISO 15444-1 Table C.2 plus its MPS,
 /// so `index & 1` is the MPS. Padded to 128 entries: an index masked to 7
 /// bits needs no bounds check.
-pub(crate) static MQC_STATES: [u32; 128] = [
+pub(crate) const MQC_STATES: [u32; 128] = [
     0x03025601, 0x02035601, 0x0c043401, 0x0d053401, 0x12061801, 0x13071801, 0x18080ac1, 0x19090ac1, 0x3a0a0521, 0x3b0b0521, 0x424c0221,
     0x434d0221, 0x0d0e5601, 0x0c0f5601, 0x1c105401, 0x1d115401, 0x1c124801, 0x1d134801, 0x1c143801, 0x1d153801, 0x22163001, 0x23173001,
     0x24182401, 0x25192401, 0x281a1c01, 0x291b1c01, 0x2a3a1601, 0x2b3b1601, 0x1d1e5601, 0x1c1f5601, 0x1c205401, 0x1d215401, 0x1e225101,
@@ -41,6 +41,20 @@ pub(crate) static MQC_STATES: [u32; 128] = [
     0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
     0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
 ];
+
+/// What a context holds: its state's word, `qeval | mps << 16 | nmps << 17 |
+/// nlps << 24`, so that a decision reads the estimate and the MPS of its
+/// context at once, and this table only when the state changes.
+pub(crate) static MQC_WORDS: [u32; 128] = {
+    let mut words = [0u32; 128];
+    let mut i = 0;
+    while i < 128 {
+        let st = MQC_STATES[i];
+        words[i] = (st & 0xffff) | ((i as u32 & 1) << 16) | (((st >> 16) & 0x7f) << 17) | ((st >> 24) << 24);
+        i += 1;
+    }
+    words
+};
 
 /// Zero-coding contexts: `orient << 9 | neighbour significance bits`.
 pub(crate) static LUT_CTXNO_ZC: [u8; 2048] = [

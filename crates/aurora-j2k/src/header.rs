@@ -434,7 +434,7 @@ fn read_sqcd(p: &[u8]) -> Result<Quantization, Error> {
         out.steps[0] = be16(&p[1..]);
     } else if out.qntsty == QNT_NONE || out.qntsty == QNT_EXPOUNDED {
         let width = if out.qntsty == QNT_NONE { 1 } else { 2 };
-        if rest % width != 0 {
+        if !rest.is_multiple_of(width) {
             return Err(Error::Header("Error reading QCD or QCC marker"));
         }
         // more sub-bands than OPJ_J2K_MAXBANDS: the rest is skipped, as OpenJPEG does
@@ -485,7 +485,7 @@ fn read_poc(numcomps: u32, p: &[u8], existing: usize, list: &mut Vec<PocEntry>) 
     let room = component_room(numcomps);
     let chunk = 5 + 2 * room;
     let count = p.len() / chunk;
-    if count == 0 || p.len() % chunk != 0 {
+    if count == 0 || !p.len().is_multiple_of(chunk) {
         return Err(Error::Header("Error reading POC marker"));
     }
     if existing + count >= MAX_POCS {
@@ -547,7 +547,7 @@ fn read_tlm(tlm: &mut Tlm, tile_count: u32, p: &[u8]) -> Result<(), Error> {
     let psize = (sp + 1) * 2;
     let entry = psize + st;
     let body = &p[2..];
-    if body.len() % entry != 0 {
+    if !body.len().is_multiple_of(entry) {
         tlm.invalid = true;
         return Ok(());
     }
@@ -584,7 +584,7 @@ struct Siz {
 /// SIZ: the image, the tile grid and the components.
 fn read_siz(limits: &Limits, p: &[u8]) -> Result<Siz, Error> {
     let n = p.len();
-    if n < 36 || (n - 36) % 3 != 0 {
+    if n < 36 || !(n - 36).is_multiple_of(3) {
         return Err(Error::Header("Error with SIZ marker size"));
     }
     let (x1, y1, x0, y0) = (be32(&p[2..]), be32(&p[6..]), be32(&p[10..]), be32(&p[14..]));
@@ -609,7 +609,7 @@ fn read_siz(limits: &Limits, p: &[u8]) -> Result<Siz, Error> {
         return Err(Error::Header("SIZ marker: illegal tile offset"));
     }
     let mut comps = Vec::with_capacity(csiz as usize);
-    for c in p[36..].chunks_exact(3) {
+    for c in p[36..].as_chunks::<3>().0 {
         let (prec, dx, dy) = ((c[0] & 0x7F) + 1, c[1], c[2]);
         if dx < 1 || dy < 1 {
             return Err(Error::Header("SIZ marker: invalid component sub-sampling"));

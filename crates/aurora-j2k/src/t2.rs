@@ -338,10 +338,10 @@ fn pi_position_precinct(layout: &PiLayout, comp: &PiComp, resno: u32, x: u32, y:
         return None;
     }
     // ISO 15444-1 B.12.1.3 to B.12.1.5
-    if !(u64::from(y) % (dy << rpy) == 0 || (y == layout.ty0 && (u64::from(try0) << levelno) % (1u64 << rpy) != 0)) {
+    if !(u64::from(y).is_multiple_of(dy << rpy) || (y == layout.ty0 && !(u64::from(try0) << levelno).is_multiple_of(1u64 << rpy))) {
         return None;
     }
-    if !(u64::from(x) % (dx << rpx) == 0 || (x == layout.tx0 && (u64::from(trx0) << levelno) % (1u64 << rpx) != 0)) {
+    if !(u64::from(x).is_multiple_of(dx << rpx) || (x == layout.tx0 && !(u64::from(trx0) << levelno).is_multiple_of(1u64 << rpx))) {
         return None;
     }
     if res.pw == 0 || res.ph == 0 {

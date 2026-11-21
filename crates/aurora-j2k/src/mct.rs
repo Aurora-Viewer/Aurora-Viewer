@@ -124,24 +124,56 @@ fn shift_97(bits: i32, f: &Finish) -> i32 {
     if v >= 2_147_483_648.0 {
         return f.hi;
     }
-    if !(v >= -2_147_483_648.0) {
-        return f.lo; // below INT_MIN, or NaN
+    // below INT_MIN, or NaN
+    if v.is_nan() || v < -2_147_483_648.0 {
+        return f.lo;
     }
     let r = rint(v) as i64 + i64::from(f.shift);
     r.clamp(i64::from(f.lo), i64::from(f.hi)) as i32
 }
 
+/// What the fast form of the 9/7 DC shift needs of a component: its bounds
+/// less its shift, as floats.
+#[derive(Clone, Copy)]
+struct FastShift {
+    lo: f32,
+    hi: f32,
+    shift: i32,
+}
+
+/// The fast form's bounds, for a 9/7 component whose bounds less its shift
+/// lie within 22 bits (every component of up to 22 bits).
+fn fast_shift(f: &Finish) -> Option<FastShift> {
+    let (lo, hi) = (i64::from(f.lo) - i64::from(f.shift), i64::from(f.hi) - i64::from(f.shift));
+    (!f.reversible && lo >= -(1 << 22) && hi < (1 << 22)).then_some(FastShift {
+        lo: lo as f32,
+        hi: hi as f32,
+        shift: f.shift,
+    })
+}
+
+/// `shift_97` without a branch, a call or a float to integer conversion,
+/// for the compiler to vectorise. The sample is clamped first, which gives
+/// the same integer as clamping after the rounding (the bounds are
+/// integers, and rounding keeps the order); the comparisons are written so
+/// that NaN gives the minimum. Adding 1.5 x 2^23 then moves it where floats
+/// are the integers: the sum is rounded to nearest, ties to even, as
+/// `lrintf` rounds, and its mantissa is the integer, 2^22 added.
+#[inline(always)]
+fn shift_97_fast(v: f32, s: &FastShift) -> i32 {
+    let c = if v > s.lo { v } else { s.lo };
+    let c = if c < s.hi { c } else { s.hi };
+    ((c + 12_582_912.0).to_bits() as i32)
+        .wrapping_sub(0x4B40_0000)
+        .wrapping_add(s.shift)
+}
+
 /// The 9/7 DC shift of a row.
 #[inline(always)]
 fn shift_97_row(p: &mut [i32], f: &Finish) {
-    // Bounds that floats hold exactly (every component of up to 24 bits):
-    // the clamp is taken on the rounded float, which the compiler
-    // vectorises. `max` then `min` give the minimum for NaN, as shift_97.
-    let (lo, hi) = (i64::from(f.lo) - i64::from(f.shift), i64::from(f.hi) - i64::from(f.shift));
-    if lo.abs() <= 1 << 24 && hi.abs() <= 1 << 24 {
-        let (lo, hi) = (lo as f32, hi as f32);
+    if let Some(s) = fast_shift(f) {
         for p in p {
-            *p = (rint(fb(*p)).max(lo).min(hi) as i32).wrapping_add(f.shift);
+            *p = shift_97_fast(fb(*p), &s);
         }
     } else {
         for p in p {
@@ -163,6 +195,32 @@ pub(crate) struct Region<'a> {
     pub f: Finish,
 }
 
+/// A block of the three components of an ICT finished in one pass: the
+/// transform (`ict_rows`) and each component's DC shift (`shift_97_fast`),
+/// every value in registers from its load to its store.
+#[inline(always)]
+fn ict_shift_block(src: [&[i32]; 3], dst: [&mut [i32]; 3], s: &[FastShift; 3]) {
+    let [s0, s1, s2] = src;
+    let [d0, d1, d2] = dst;
+    for (((((d0, d1), d2), &y), &u), &v) in d0.iter_mut().zip(d1.iter_mut()).zip(d2.iter_mut()).zip(s0).zip(s1).zip(s2) {
+        let (y, u, v) = (fb(y), fb(u), fb(v));
+        let r = y + (v * 1.402);
+        let g = y - (u * 0.34413) - (v * 0.71414);
+        let b = y + (u * 1.772);
+        *d0 = shift_97_fast(r, &s[0]);
+        *d1 = shift_97_fast(g, &s[1]);
+        *d2 = shift_97_fast(b, &s[2]);
+    }
+}
+
+/// A block of one 9/7 component's DC shift, read from the tile.
+#[inline(always)]
+fn shift_block(src: &[i32], dst: &mut [i32], s: &FastShift) {
+    for (d, &v) in dst.iter_mut().zip(src) {
+        *d = shift_97_fast(fb(v), s);
+    }
+}
+
 /// Finishes `k` (1 to 4) regions of the same size, the colour transformed
 /// three first when `mct` is set, a block of a row at a time, and hands each
 /// finished block to `store(row, first sample, samples)`: `samples[c]` holds
@@ -170,24 +228,50 @@ pub(crate) struct Region<'a> {
 #[inline(always)]
 fn finish_regions(regions: &[Region<'_>], mct: Mct, w: usize, h: usize, mut store: impl FnMut(usize, usize, &[[i32; BLOCK]; 4], usize)) {
     let k = regions.len().min(4);
+    let mct = if k >= 3 { mct } else { Mct::None };
+    // the lossy texture: an ICT whose three components take the fast shift
+    let fast: [Option<FastShift>; 4] = std::array::from_fn(|c| regions.get(c).and_then(|r| fast_shift(&r.f)));
+    let ict = match (mct, fast) {
+        (Mct::Ict, [Some(a), Some(b), Some(c), _]) => Some([a, b, c]),
+        _ => None,
+    };
     let mut buf = [[0i32; BLOCK]; 4];
     for j in 0..h {
         let mut at = 0;
         while at < w {
             let n = BLOCK.min(w - at);
-            for (b, r) in buf.iter_mut().zip(regions) {
-                let from = j * r.stride + at;
-                b[..n].copy_from_slice(&r.src[from..from + n]);
-            }
-            if k >= 3 && mct != Mct::None {
+            let row = |c: usize| -> &[i32] {
+                let from = j * regions[c].stride + at;
+                &regions[c].src[from..from + n]
+            };
+            let first = if let Some(s) = &ict {
+                let [b0, b1, b2, _] = &mut buf;
+                ict_shift_block([row(0), row(1), row(2)], [&mut b0[..n], &mut b1[..n], &mut b2[..n]], s);
+                3
+            } else if mct != Mct::None {
+                for (c, b) in buf.iter_mut().enumerate().take(3) {
+                    b[..n].copy_from_slice(row(c));
+                }
                 let [c0, c1, c2, _] = &mut buf;
                 match mct {
                     Mct::Rct => rct_rows(&mut c0[..n], &mut c1[..n], &mut c2[..n]),
                     _ => ict_rows(&mut c0[..n], &mut c1[..n], &mut c2[..n]),
                 }
-            }
-            for (b, r) in buf.iter_mut().zip(regions) {
-                shift_row(&mut b[..n], &r.f);
+                for (b, r) in buf.iter_mut().zip(regions).take(3) {
+                    shift_row(&mut b[..n], &r.f);
+                }
+                3
+            } else {
+                0
+            };
+            for c in first..k {
+                match &fast[c] {
+                    Some(s) => shift_block(row(c), &mut buf[c][..n], s),
+                    None => {
+                        buf[c][..n].copy_from_slice(row(c));
+                        shift_row(&mut buf[c][..n], &regions[c].f);
+                    }
+                }
             }
             store(j, at, &buf, n);
             at += n;
@@ -209,30 +293,37 @@ pub(crate) fn write_packed_u8(regions: &[Region<'_>], mct: Mct, w: usize, h: usi
                 }
             }
             2 => {
-                for ((o, &a), &b) in out.chunks_exact_mut(2).zip(&buf[0][..n]).zip(&buf[1][..n]) {
+                for ((o, &a), &b) in out.as_chunks_mut::<2>().0.iter_mut().zip(&buf[0][..n]).zip(&buf[1][..n]) {
                     o[0] = a as u8;
                     o[1] = b as u8;
                 }
             }
             3 => {
-                for (((o, &a), &b), &c) in out.chunks_exact_mut(3).zip(&buf[0][..n]).zip(&buf[1][..n]).zip(&buf[2][..n]) {
-                    o[0] = a as u8;
-                    o[1] = b as u8;
-                    o[2] = c as u8;
+                for (((o, &a), &b), &c) in out
+                    .as_chunks_mut::<3>()
+                    .0
+                    .iter_mut()
+                    .zip(&buf[0][..n])
+                    .zip(&buf[1][..n])
+                    .zip(&buf[2][..n])
+                {
+                    let px = (a as u8 as u32) | (b as u8 as u32) << 8 | (c as u8 as u32) << 16;
+                    let [r, g, b, _] = px.to_le_bytes();
+                    *o = [r, g, b];
                 }
             }
             _ => {
                 for ((((o, &a), &b), &c), &d) in out
-                    .chunks_exact_mut(4)
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
                     .zip(&buf[0][..n])
                     .zip(&buf[1][..n])
                     .zip(&buf[2][..n])
                     .zip(&buf[3][..n])
                 {
                     // one 32-bit store a pixel
-                    o.copy_from_slice(
-                        &((a as u8 as u32) | (b as u8 as u32) << 8 | (c as u8 as u32) << 16 | (d as u8 as u32) << 24).to_le_bytes(),
-                    );
+                    *o = ((a as u8 as u32) | (b as u8 as u32) << 8 | (c as u8 as u32) << 16 | (d as u8 as u32) << 24).to_le_bytes();
                 }
             }
         }
@@ -338,6 +429,99 @@ mod tests {
         assert_eq!(shift_97(bf(0.5), &U8), 128);
         assert_eq!(shift_97(bf(1.5), &U8), 130);
         assert_eq!(shift_97(bf(300.0), &U8), 255);
+    }
+
+    #[test]
+    fn the_fast_97_shift_is_the_sample_form() {
+        let signed = Finish {
+            shift: 0,
+            lo: -2048,
+            hi: 2047,
+            reversible: false,
+        };
+        let wide = Finish {
+            shift: 1 << 21,
+            lo: 0,
+            hi: (1 << 22) - 1,
+            reversible: false,
+        };
+        let mut state = 0x0123_4567_89AB_CDEFu64;
+        let mut values = vec![
+            0.0f32,
+            -0.0,
+            0.5,
+            -0.5,
+            1.5,
+            2.5,
+            -1.5,
+            -2.5,
+            127.5,
+            -128.5,
+            254.5,
+            255.5,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            3e9,
+            -3e9,
+            4_194_303.5,
+        ];
+        for i in 0..200_000 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let bits = (state >> 32) as u32;
+            // every kind of float, then values around the range of a texture
+            values.push(if i % 2 == 0 {
+                f32::from_bits(bits)
+            } else {
+                (bits as i32 >> 12) as f32 / 512.0
+            });
+        }
+        for f in [U8, signed, wide] {
+            let s = fast_shift(&f).expect("within 22 bits");
+            for &v in &values {
+                assert_eq!(shift_97_fast(v, &s), shift_97(bf(v), &f), "{v} ({:#x}) with {f:?}", v.to_bits());
+            }
+        }
+        assert!(
+            fast_shift(&Finish {
+                shift: 1 << 30,
+                lo: 0,
+                hi: i32::MAX,
+                reversible: false
+            })
+            .is_none()
+        );
+        assert!(fast_shift(&Finish { reversible: true, ..U8 }).is_none());
+    }
+
+    #[test]
+    fn the_fused_ict_is_the_transform_then_the_shift() {
+        let mut state = 99u64;
+        let mut next = || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            bf(((state >> 40) as i32 - (1 << 23)) as f32 / 30000.0)
+        };
+        let planes: Vec<Vec<i32>> = (0..4).map(|_| (0..700).map(|_| next()).collect()).collect();
+        let regions: Vec<Region<'_>> = planes
+            .iter()
+            .map(|p| Region {
+                src: p,
+                stride: 350,
+                f: U8,
+            })
+            .collect();
+        let mut packed = vec![0u8; 700 * 4];
+        write_packed_u8(&regions, Mct::Ict, 350, 2, &mut packed, 350 * 4);
+        // the unfused way
+        let mut c = planes.clone();
+        let (a, rest) = c.split_at_mut(1);
+        let (b, rest) = rest.split_at_mut(1);
+        ict_rows(&mut a[0], &mut b[0], &mut rest[0]);
+        for (ci, plane) in c.iter().enumerate() {
+            for (i, &v) in plane.iter().enumerate() {
+                assert_eq!(i32::from(packed[i * 4 + ci]), shift_97(v, &U8), "component {ci}, sample {i}");
+            }
+        }
     }
 
     #[test]

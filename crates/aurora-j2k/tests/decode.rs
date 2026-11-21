@@ -18,7 +18,7 @@ fn picture(x: u32, y: u32, c: u32) -> i32 {
     h ^= h >> 12;
     let noise = (h & 0x1F) as i32;
     let gradient = (x * 3 + y * 2 + c * 40) as i32;
-    let edge = if (x / 7 + y / 5) % 2 == 0 { 60 } else { 0 };
+    let edge = if (x / 7 + y / 5).is_multiple_of(2) { 60 } else { 0 };
     (gradient + edge + noise) & 0xFF
 }
 

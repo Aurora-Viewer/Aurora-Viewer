@@ -317,7 +317,7 @@ fn interleave(row: &mut [i32], sn: usize, cas: usize, tmp: &mut [i32]) {
     let (lo, hi) = tmp.split_at(sn);
     let (even, odd) = if cas == 0 { (lo, hi) } else { (hi, lo) };
     let pairs = even.len().min(odd.len());
-    for ((pair, &e), &o) in row.chunks_exact_mut(2).zip(even).zip(odd) {
+    for ((pair, &e), &o) in row.as_chunks_mut::<2>().0.iter_mut().zip(even).zip(odd) {
         pair[0] = e;
         pair[1] = o;
     }
@@ -715,7 +715,7 @@ mod tests {
         let mut quad = vec![0i32; stride * h.max(1)];
         let mut rows = quad.clone();
         let layout = RowLayout::new(rects);
-        let mut sample = |rng: &mut Rng| {
+        let sample = |rng: &mut Rng| {
             let v = (rng.next() % 2001) as i32 - 1000;
             if reversible { v } else { bf(v as f32 * 0.37) }
         };

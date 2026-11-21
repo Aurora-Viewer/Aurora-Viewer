@@ -666,9 +666,8 @@ impl Walk<'_, '_> {
         if self.limits.max_memory != 0 && total > self.limits.max_memory {
             return Err(Error::Limit("the tile's samples need more memory than the decoder's limit"));
         }
-        for c in 0..decoded {
+        for (c, plane) in scratch.planes.iter_mut().enumerate().take(decoded) {
             let n = self.tile.samples(c);
-            let plane = &mut scratch.planes[c];
             // (Tier-1 writes every sample of a component: nothing to clear)
             if plane.len() < n {
                 plane.try_reserve_exact(n - plane.len()).map_err(|_| Error::Memory)?;
