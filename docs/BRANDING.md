@@ -365,6 +365,15 @@ shortcuts), because Tabler has none. It is tinted like the other script
 icons (`teal`): only the shape tells an SLua script from an LSL one. It is
 the one hand-drawn icon allowed next to Tabler (decision on PR #2802).
 
+**The controller pictograms are text, not icons.** Preferences › Controls ›
+Game Controls draws each controller input (face buttons, D-pad, sticks,
+shoulders, triggers) with its pictogram from PromptFont, the font the LL
+viewer 26.5's `SecondLife-game-control` is based on, before the input's
+name, as the LL viewer does. Tabler has no controller set. The font has an
+egui family of its own (`ui::fonts::game_control`), never a fallback of the
+text (its glyphs sit on real arrow codepoints), and it takes the text
+colour of the widget that shows it. Use it only for controller inputs.
+
 Do not force a filled icon that does not express the function. Two icons
 that go as a pair (link / unlink, plus / minus) stay in the same style.
 A function keeps the same icon everywhere (script = `code`, object = `box`,

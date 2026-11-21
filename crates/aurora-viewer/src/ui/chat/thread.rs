@@ -22,6 +22,7 @@ use crate::theme::Palette;
 use crate::ui::fonts::chat_size;
 use crate::world::chat_log::format::Slt;
 use crate::world::{ChatKind, ChatLine, Origin};
+use aurora_i18n::UiUpper;
 use aurora_net::ChatType;
 use egui::{Color32, RichText};
 use std::collections::HashSet;
@@ -204,7 +205,9 @@ impl Who {
     fn of(env: &LineEnv, line: &ChatLine) -> Who {
         let logged = line.origin != Origin::Live;
         let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-        let avatar = if object {
+        // (nor the speaker `@shownames` hid when the line arrived: no
+        // picture, mark nor menu, FSChatHistoryHeader)
+        let avatar = if object || line.anonymous() {
             uuid::Uuid::nil()
         } else if line.kind.is_own() {
             env.world.agent_id
@@ -246,6 +249,8 @@ fn name_color(env: &LineEnv, th: &Thread, line: &ChatLine, who: &Who) -> Color32
 
 /// The text of a message and how it reads: an emote is the name in violet
 /// italics, a whisper in grey italics; the user's chat colours otherwise.
+/// The lines drawn pass `shown_name` ("(You)" with the option); a quote
+/// passes the real name, since it is pasted for others to read.
 fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     let text = if emote {
@@ -286,7 +291,7 @@ pub(super) fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: C
     // beside the names: at the chat's text size
     let k = chat_size(ui.ctx(), 1.0);
     let font = egui::FontId::new(k * if fill.is_some() { 9.5 } else { 10.0 }, crate::ui::fonts::semibold(ui.ctx()));
-    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, color);
+    let galley = ui.painter().layout_no_wrap(text.ui_upper(), font, color);
     let pad = if fill.is_some() { 5.0 } else { 0.0 };
     let size = egui::vec2(galley.size().x + 2.0 * pad, 15.0 * k);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -299,9 +304,14 @@ pub(super) fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: C
 /// The name of a head or a compact row: clickable to the profile, with the
 /// author's menu on a right click.
 fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, color: Color32, who: &Who, max: f32) {
-    let text = RichText::new(name)
+    // "(You)" with the option; a moderator's name style adds its italics
+    // (the names are semi-bold already)
+    let mut text = RichText::new(super::shown_name(line, name))
         .font(egui::FontId::new(chat_size(ui.ctx(), 13.5), crate::ui::fonts::semibold(ui.ctx())))
         .color(color);
+    if super::moderator_look(env, line).is_some_and(|(n, _)| n.italics) {
+        text = text.italics();
+    }
     let r = ui.add(crate::ui::widgets::elided_label(ui, text, max).sense(egui::Sense::click()));
     if who.object && !line.source.is_nil() {
         super::object_sender(&r.on_hover_cursor(egui::CursorIcon::PointingHand), env.p, env.world, line);
@@ -310,12 +320,12 @@ fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, col
     if who.avatar.is_nil() {
         return;
     }
-    line_name_menu(&r, env.p, env.world, who.avatar, line, env.menu);
+    line_name_menu(&r, env.p, env.world, who.avatar, env.names, line, env.menu);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
         .clicked()
     {
-        crate::ui::profile::request_open(ui.ctx(), who.avatar);
+        crate::ui::profile::request_open_in(ui.ctx(), env.names, who.avatar);
     }
 }
 
@@ -377,7 +387,8 @@ fn roomy_row(
                     }
                 });
             }
-            let (text, color, italics) = body(env, line, name);
+            let (text, color, italics) = body(env, line, super::shown_name(line, name));
+            let emphasis = super::line_emphasis(env, line, italics);
             let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width());
             if !visible.is_empty() {
                 let size = env.emoji.message_size(&visible, chat_size(ui.ctx(), TEXT));
@@ -386,11 +397,12 @@ fn roomy_row(
                     p,
                     env.emoji,
                     env.world,
+                    line.wording(env.names),
                     env.want_names,
                     &visible,
                     size,
                     color,
-                    super::message_emphasis(line.kind, italics),
+                    emphasis,
                     mark,
                 );
             }
@@ -439,7 +451,8 @@ fn compact_row(
                 tags(ui, p, th, line, who);
             });
         }
-        let (text, color, italics) = body(env, line, name);
+        let (text, color, italics) = body(env, line, super::shown_name(line, name));
+        let emphasis = super::line_emphasis(env, line, italics);
         let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width() - RIGHT);
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
@@ -451,11 +464,12 @@ fn compact_row(
                     p,
                     env.emoji,
                     env.world,
+                    line.wording(env.names),
                     env.want_names,
                     &visible,
                     size,
                     color,
-                    super::message_emphasis(line.kind, italics),
+                    emphasis,
                     mark,
                 );
             }
@@ -489,9 +503,9 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
         ui.scope_id().with(("thread_pic", line.time, line.source)),
         egui::Sense::click(),
     );
-    line_name_menu(&r, p, env.world, who.avatar, line, env.menu);
+    line_name_menu(&r, p, env.world, who.avatar, env.names, line, env.menu);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(name).clicked() {
-        crate::ui::profile::request_open(ui.ctx(), who.avatar);
+        crate::ui::profile::request_open_in(ui.ctx(), env.names, who.avatar);
     }
 }
 
@@ -566,8 +580,9 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
                 p,
                 env.emoji,
                 env.world,
+                line.wording(env.names),
                 env.want_names,
-                &line.text,
+                &super::system_text(&line.text),
                 chat_size(ui.ctx(), 12.0),
                 tone,
                 false,
@@ -606,7 +621,7 @@ fn new_separator(ui: &mut egui::Ui, p: &Palette) {
     let k = chat_size(ui.ctx(), 1.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 14.0 * k), egui::Sense::hover());
     let galley = ui.painter().layout_no_wrap(
-        aurora_i18n::tr!("ui-chat-new-messages").to_uppercase(),
+        aurora_i18n::tr!("ui-chat-new-messages").ui_upper(),
         egui::FontId::proportional(10.0 * k),
         p.danger,
     );
@@ -636,7 +651,7 @@ pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, ta
         // selected text takes priority over the message under the menu.
         let text = target.selected_text.clone().unwrap_or_else(|| {
             let prefix = super::copy_prefix(line, &name);
-            format!("{prefix}{}", super::shown_text(env.world, line, &name))
+            format!("{prefix}{}", super::shown_text(env.world, env.names, line, &name))
         });
         ui.ctx().copy_text(text);
     }
@@ -648,7 +663,7 @@ pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, ta
     }
     if !who.avatar.is_nil() {
         crate::ui::menu::separator(ui, p);
-        crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, line);
+        crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, env.names, line);
     }
 }
 

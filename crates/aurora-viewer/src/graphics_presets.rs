@@ -303,6 +303,7 @@ impl Preset {
             ..self.values()
         }
         .write(s);
+        crate::settings::autotune::Hold::chosen(s);
         s.graphics_saved_active = None;
         // the weather's quality follows the level, but is not one of its
         // values: choosing it in the Weather section keeps the level shown
@@ -755,9 +756,44 @@ fn all_lights() -> u32 {
 
 /// `Settings::blend_order`: the exact order at its finest precision.
 pub(crate) const BLEND_ORDER_FULL: u8 = 4;
+/// `Settings::blend_order`: the stochastic transparency (aurora-render
+/// oit_stochastic.rs), an estimate of the exact order that is also drawn
+/// under MSAA.
+pub(crate) const BLEND_ORDER_STOCHASTIC: u8 = 5;
 
 fn blend_order_full() -> u8 {
     BLEND_ORDER_FULL
+}
+
+/// The method behind a `Settings::blend_order`, as the preferences show it:
+/// one choice for the exact order, whose precision (1 fast to 4 full) is
+/// set beside it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum BlendMethod {
+    Standard,
+    Exact,
+    Stochastic,
+}
+
+impl BlendMethod {
+    pub(crate) fn of(order: u8) -> Self {
+        match order {
+            0 => Self::Standard,
+            BLEND_ORDER_STOCHASTIC => Self::Stochastic,
+            _ => Self::Exact,
+        }
+    }
+
+    /// `Settings::blend_order` for this method; `precision`: the exact
+    /// order's (the full one when it is none of them).
+    pub(crate) fn order(self, precision: u8) -> u8 {
+        match self {
+            Self::Standard => 0,
+            Self::Exact if (1..=BLEND_ORDER_FULL).contains(&precision) => precision,
+            Self::Exact => BLEND_ORDER_FULL,
+            Self::Stochastic => BLEND_ORDER_STOCHASTIC,
+        }
+    }
 }
 
 fn default_projector_shadow_limit() -> u8 {
@@ -829,11 +865,18 @@ impl Values {
     }
 
     pub(crate) fn read(s: &Settings) -> Values {
+        // while Autotune holds them, the user's draw distance and avatars:
+        // the level shown, a profile saved and the photo quality's own
+        // hold are the user's, not the tuned values (settings/autotune.rs)
+        let tuned = s
+            .autotune_hold
+            .as_ref()
+            .map_or_else(|| crate::settings::autotune::Tuned::read(s), |h| h.shown(s));
         Values {
-            draw_distance: s.draw_distance,
+            draw_distance: tuned.draw_distance,
             lod_factor: s.lod_factor,
             tree_lod_factor: s.tree_lod_factor,
-            max_avatars: s.max_avatars,
+            max_avatars: tuned.max_avatars,
             max_complexity: s.max_complexity,
             max_particles: s.max_particles,
             shadow_quality: s.shadow_quality,
@@ -926,6 +969,22 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_exact_order_is_one_choice_that_keeps_its_precision() {
+        // every saved value comes back from its method and its own precision
+        for order in 0..=BLEND_ORDER_STOCHASTIC {
+            assert_eq!(BlendMethod::of(order).order(order), order);
+        }
+        assert_eq!(BlendMethod::of(2), BlendMethod::Exact);
+        // chosen again after another method: the precision it was left at
+        assert_eq!(BlendMethod::Exact.order(2), 2);
+        // or the full one, the default, when none was
+        assert_eq!(BlendMethod::Exact.order(0), BLEND_ORDER_FULL);
+        assert_eq!(BlendMethod::Exact.order(BLEND_ORDER_STOCHASTIC), BLEND_ORDER_FULL);
+        assert_eq!(BlendMethod::Standard.order(3), 0);
+        assert_eq!(BlendMethod::Stochastic.order(3), BLEND_ORDER_STOCHASTIC);
+    }
 
     #[test]
     fn levels_set_the_weather_quality_and_choosing_it_keeps_the_level() {

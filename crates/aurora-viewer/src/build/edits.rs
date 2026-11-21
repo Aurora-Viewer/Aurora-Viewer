@@ -44,6 +44,8 @@ pub enum CapPurpose {
     GltfMaterials,
     /// RenderMaterials PUT (normal / specular maps).
     LegacyMaterials,
+    /// CreateTaskInventoryItem for the contents of this object.
+    CreateTaskItem(Uuid),
 }
 
 /// One extra parameter block, with its new value (`None`: not in use).
@@ -181,6 +183,50 @@ impl BuildTool {
             }
         }
         out
+    }
+
+    /// "Select faces with this texture": every face of the selected
+    /// linksets whose `id_of` is `id`, in face selection. Port of
+    /// LLPanelFace::onClickBtnSelectSameTexture (indra/newview/llpanelface.cpp,
+    /// originally LGPL 2.1). A prim with no such face leaves the selection,
+    /// where the Legacy Viewer keeps it selected with no face: here an empty
+    /// face list means all faces. Nothing matches: the selection stays as it
+    /// is.
+    pub fn select_same_faces(
+        &mut self,
+        world: &World,
+        id: uuid::Uuid,
+        mut id_of: impl FnMut(&mut Self, &World, usize, u8) -> Option<uuid::Uuid>,
+    ) {
+        if self.replacement_active() {
+            return;
+        }
+        let mut roots: Vec<usize> = Vec::new();
+        for root in self.sel_prims(world).into_iter().map(|i| super::root_of(world, i)) {
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+        let mut found = Vec::new();
+        for idx in roots.into_iter().flat_map(|root| family(world, root)) {
+            let Some(unit) = Self::unit_of(world, idx, true) else { continue };
+            let n = self.num_faces(world, idx) as u8;
+            let faces: Vec<u8> = (0..n).filter(|&f| id_of(self, world, idx, f) == Some(id)).collect();
+            if !faces.is_empty() {
+                found.push((unit, faces));
+            }
+        }
+        if found.is_empty() {
+            return;
+        }
+        self.deselect_all(world);
+        self.faces.clear();
+        self.selection_linked = true;
+        // `add` puts each unit first: reversed, the first linkset's root stays primary
+        for (unit, faces) in found.into_iter().rev() {
+            self.add(world, unit);
+            self.faces.insert(unit, faces);
+        }
     }
 
     /// LLViewerObject::permModify (indra/newview/llviewerobject.cpp): the

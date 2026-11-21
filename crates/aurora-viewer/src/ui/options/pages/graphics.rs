@@ -4,17 +4,15 @@
 //! depth of field), smoothness and parcel visibility.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
-use super::super::{COMBO_W, preset_choice, stepped, toggle};
+use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
 use egui::RichText;
 
 pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => quality(cx),
         1 => light(cx),
-        2 => {
-            environment(cx);
-            weather(cx);
-        }
+        // the weather's settings are all in the Aurora Weather window
+        2 => environment(cx),
         3 => reflections_and_water(cx),
         4 => image(cx),
         5 => {
@@ -97,101 +95,6 @@ fn environment(cx: &mut Cx) {
             tr!("ui-options-confirm-no-transfer-settings-help"),
             &field!(confirm_no_transfer_settings),
         );
-    });
-}
-
-/// Graphics › Sky and environment › Weather: what the weather costs
-/// and what it lets regions do (the weather itself, what falls and how hard,
-/// is the Aurora Weather window's).
-fn weather(cx: &mut Cx) {
-    use crate::weather::{PUDDLE_DISTANCE, WeatherQuality};
-    use aurora_i18n::tr;
-    cx.group(tr!("ui-weather"), |cx| {
-        cx.choice(
-            tr!("ui-weather-quality"),
-            tr!("ui-weather-quality-tip"),
-            &field!(weather.quality),
-            &[
-                (WeatherQuality::Low, tr!("ui-weather-quality-low"), false),
-                (WeatherQuality::Medium, tr!("ui-weather-quality-medium"), false),
-                (WeatherQuality::High, tr!("ui-weather-quality-high"), false),
-            ],
-        );
-        // the puddles, and behind their cog how far the wet ground goes
-        cx.toggle(tr!("ui-weather-puddles"), tr!("ui-weather-puddles-tip"), &field!(weather.puddles));
-        let no_puddles = !cx.s.weather.puddles;
-        cx.subs(no_puddles, |cx| {
-            cx.slider_whole(
-                tr!("ui-weather-distance"),
-                tr!("ui-weather-distance-tip"),
-                &field!(weather.puddle_distance),
-                PUDDLE_DISTANCE,
-                " m",
-            );
-            cx.toggle(tr!("ui-weather-ice"), tr!("ui-weather-ice-tip"), &field!(weather.ice));
-        });
-        // the snow lying, and behind its cog how far it is drawn
-        cx.toggle(
-            tr!("ui-weather-snow-settles"),
-            tr!("ui-weather-snow-settles-tip"),
-            &field!(weather.snow_settles),
-        );
-        let no_snow = !cx.s.weather.snow_settles;
-        cx.subs(no_snow, |cx| {
-            cx.slider_whole(
-                tr!("ui-weather-snow-distance"),
-                tr!("ui-weather-snow-distance-tip"),
-                &field!(weather.snow_distance),
-                crate::weather::SNOW_DISTANCE,
-                " m",
-            );
-            cx.toggle(
-                tr!("ui-weather-footprints"),
-                tr!("ui-weather-footprints-tip"),
-                &field!(weather.snow_footprints),
-            );
-            // parallax through the snow: costly, still being tuned
-            cx.experimental().toggle(
-                tr!("ui-weather-deep-snow"),
-                tr!("ui-weather-deep-snow-tip"),
-                &field!(weather.snow_deep),
-            );
-        });
-        cx.toggle(
-            tr!("ui-weather-avatar-snow"),
-            tr!("ui-weather-avatar-snow-tip"),
-            &field!(weather.snow_on_avatars),
-        );
-        cx.toggle(
-            tr!("ui-weather-region"),
-            tr!("ui-weather-region-tip"),
-            &field!(weather.region_weather),
-        );
-        // the region's wind, and behind its cog the direction used instead
-        cx.toggle(
-            tr!("ui-weather-wind-follow-region"),
-            tr!("ui-weather-wind-follow-region-tip"),
-            &field!(weather.wind_follow_region),
-        );
-        let follow = cx.s.weather.wind_follow_region;
-        cx.subs(follow, |cx| {
-            cx.row(
-                tr!("ui-weather-wind-from"),
-                tr!("ui-weather-wind-from-tip"),
-                &field!(weather.wind_from),
-                |ui, s| {
-                    ui.spacing_mut().slider_width = super::super::SLIDER_W;
-                    ui.add(
-                        egui::Slider::new(&mut s.weather.wind_from, 0.0..=355.0)
-                            .step_by(5.0)
-                            .custom_formatter(|v, _| format!("{v:.0}° {}", crate::ui::environment::compass_point(v as f32)))
-                            .custom_parser(|t| t.trim().trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok())
-                            .trailing_fill(true),
-                    )
-                    .changed()
-                },
-            );
-        });
     });
 }
 
@@ -390,6 +293,11 @@ fn frames_per_second(cx: &mut Cx) {
             tr!("ui-options-gpu-recovery"),
             tr!("ui-options-gpu-recovery-tip"),
             &field!(gpu_recovery),
+        );
+        cx.unfolded().toggle(
+            tr!("ui-options-gaming-mode-leave-on-focus"),
+            tr!("ui-options-gaming-mode-leave-on-focus-tip"),
+            &field!(gaming_mode_leave_on_focus),
         );
     });
 }
@@ -663,6 +571,11 @@ fn quality(cx: &mut Cx) {
             tr!("ui-options-particle-cloud-until-the-avatar-and-its-attachments-load"),
             &field!(loading_avatars),
             &[tr!("ui-options-cloud-bar"), tr!("ui-options-bar-only"), tr!("common-nothing")],
+        );
+        cx.toggle(
+            tr!("ui-options-avatar-cache"),
+            tr!("ui-options-avatar-cache-help"),
+            &field!(avatar_cache),
         );
         cx.stepped(
             tr!("ui-options-limit-applied"),
@@ -1012,17 +925,20 @@ fn image(cx: &mut Cx) {
     // the order of the blended faces (scene/blend_order.rs), beyond the
     // Legacy Viewer's sort
     cx.group(tr!("ui-options-transparency"), |cx| {
-        cx.combo(
+        let p = cx.p;
+        // the search finds the row by its methods and the exact order's
+        // precisions
+        let mut words = vec![
+            tr!("ui-options-blend-order-standard"),
+            tr!("ui-options-blend-order-exact"),
+            tr!("ui-options-blend-order-stochastic"),
+        ];
+        words.extend(blend_precisions().map(|(_, label)| label));
+        cx.wide().keywords(&words.join(" ")).row(
             tr!("ui-options-blend-order"),
             tr!("ui-options-blend-order-help"),
             &field!(blend_order),
-            &[
-                (0, tr!("ui-options-blend-order-standard")),
-                (1, tr!("ui-options-blend-order-fast")),
-                (2, tr!("ui-options-blend-order-balanced")),
-                (3, tr!("ui-options-blend-order-high")),
-                (4, tr!("ui-options-blend-order-full")),
-            ],
+            |ui, s| blend_order_choice(ui, &p, &mut s.blend_order),
         );
     });
     // FSR's own settings (aurora_render fsr.rs), greyed under another
@@ -1127,7 +1043,43 @@ fn image(cx: &mut Cx) {
             },
         );
     });
+    world_look(cx);
     depth_of_field(cx);
+}
+
+/// The world's own filters (`snapshot::looks::WorldLook`): switched on here,
+/// chosen in their window (`ui/world_look.rs`). Aurora's own.
+fn world_look(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-world-look"), |cx| {
+        cx.keywords("LUT look filter colour grading").toggle(
+            tr!("ui-options-world-look-on"),
+            tr!("ui-options-world-look-on-help"),
+            &field!(world_look.on),
+        );
+        let p = cx.p;
+        cx.row_with(
+            tr!("ui-options-world-look-choose"),
+            tr!("ui-options-world-look-choose-help"),
+            &Nothing,
+            |ui, _, _, r| {
+                use crate::ui::widgets::{ActionKind, action_button};
+                if action_button(
+                    ui,
+                    &p,
+                    "color-filter",
+                    tr!("ui-options-world-look-open"),
+                    ActionKind::Flat,
+                    egui::Vec2::new(0.0, 24.0),
+                )
+                .clicked()
+                {
+                    r.open_world_look = true;
+                }
+                false
+            },
+        );
+    });
 }
 
 /// Depth of field (panel_preferences_graphics1.xml, "DOF panel":

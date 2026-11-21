@@ -310,6 +310,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::AnswerTeleport { .. } => "AnswerTeleport",
         CtxAction::AnswerInventoryOffer { .. } => "AnswerInventoryOffer",
         CtxAction::Profile(..) => "Profile",
+        CtxAction::RosterProfile(..) => "RosterProfile",
         CtxAction::SetRender(..) => "SetRender",
         CtxAction::ResetSkeleton { .. } => "ResetSkeleton",
         CtxAction::StopAnimations => "StopAnimations",
@@ -394,6 +395,10 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::GroupChatBlocked(..) => "GroupChatBlocked",
         CtxAction::ContactSet(..) => "ContactSet",
         CtxAction::NewContactSet(..) => "NewContactSet",
+        CtxAction::MarkAvatars(..) => "MarkAvatars",
+        CtxAction::MarkCustom { .. } => "MarkCustom",
+        CtxAction::ClearMarks(..) => "ClearMarks",
+        CtxAction::ClearAllMarks => "ClearAllMarks",
     };
     match action {
         CtxAction::TakeOffClothing(kind) | CtxAction::DetachAt(kind) => format!("{base}:{kind}"),

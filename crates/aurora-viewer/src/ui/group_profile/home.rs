@@ -10,6 +10,7 @@ use super::{Env, GroupAction, GroupProfileUi, Tab};
 use crate::theme::Palette;
 use crate::ui::place_details::Ctx;
 use crate::ui::widgets;
+use crate::world::names::NameScope;
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 
 /// Notices shown on the tab, and members online at most.
@@ -164,7 +165,7 @@ fn online(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v:
             let world = c.world;
             let mut list: Vec<_> = d
                 .online()
-                .map(|m| (m, members::chip_of(v, m), world.social.display_name_of(&m.id)))
+                .map(|m| (m, members::chip_of(v, m), world.social.display_name_in(NameScope::Roster, &m.id)))
                 .collect();
             if list.is_empty() {
                 ui.label(
@@ -186,7 +187,7 @@ fn online(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v:
                     st.want_pic(m.id, env.now);
                 }
                 widgets::avatar_disc(ui, p, pic, pics, &name, false);
-                let status = match crate::ui::presence::of(world, &m.id) {
+                let status = match crate::ui::presence::of_in(world, NameScope::Roster, &m.id) {
                     crate::ui::presence::Status::Away => crate::ui::presence::Status::Away,
                     crate::ui::presence::Status::Busy => crate::ui::presence::Status::Busy,
                     _ => crate::ui::presence::Status::Online,
@@ -218,10 +219,10 @@ fn online(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v:
                     p.ink,
                 );
                 if resp.double_clicked() {
-                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::Profile(m.id));
+                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::RosterProfile(m.id));
                 }
                 crate::ui::menu::context_menu(&resp, p, |ui| {
-                    crate::ui::context::avatar_list_menu(ui, p, world, m.id, crate::ui::context::AvatarList::Name);
+                    crate::ui::context::avatar_roster_menu(ui, p, world, m.id, crate::ui::context::AvatarList::Name);
                 });
             }
         },
@@ -358,8 +359,10 @@ mod tests {
             notice_date(at(2026, 10, 13), now),
             aurora_i18n::tr!("ui-chat-yesterday").to_lowercase()
         );
-        let oct = crate::ui::land::months()[9];
-        assert_eq!(notice_date(at(2026, 10, 3), now), format!("3 {oct}"));
-        assert_eq!(notice_date(at(2025, 10, 3), now), format!("3 {oct} 2025"));
+        // the day and month in the language's order, the year only when
+        // it is not this one
+        let date = crate::ui::land::day_month;
+        assert_eq!(notice_date(at(2026, 10, 3), now), date(None, 10, 3));
+        assert_eq!(notice_date(at(2025, 10, 3), now), date(Some(2025), 10, 3));
     }
 }

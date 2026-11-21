@@ -27,7 +27,7 @@ use super::env_select::{SettingsKind, Shown as ListShown};
 use aurora_llsd::Llsd;
 use aurora_net::RegionHandle;
 use glam::{Quat, Vec3};
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -130,9 +130,6 @@ pub struct LocalEnv {
     pub length: f64,
     pub offset: f64,
     generation: u64,
-    /// The Aurora Weather of the sky or day applied (its name's code,
-    /// weather/region.rs): mine while it stays, whatever the regions set.
-    pub weather: Option<crate::weather::region::RegionDay>,
 }
 
 impl LocalEnv {
@@ -144,7 +141,6 @@ impl LocalEnv {
             length: eep::DEFAULT_DAY_LENGTH,
             offset: eep::DEFAULT_DAY_OFFSET,
             generation,
-            weather: None,
         }
     }
 
@@ -241,8 +237,6 @@ struct Slot {
     /// The day's settings map as received (None for Firestorm's default
     /// day, whose asset the settings streamer keeps).
     settings: Option<Arc<Llsd>>,
-    /// The names it was applied with (`DayNames`).
-    names: crate::weather::region::DayNames,
     length: f64,
     offset: f64,
     /// Bumped on every change: a new slot crossfades even with the same source.
@@ -361,15 +355,13 @@ pub struct EnvSelector {
     /// The preset was dropped by another local change: the panels follow.
     preset_dropped: bool,
     pending: VecDeque<Pending>,
-    /// Aurora Weather by settings asset (`note_asset_weather`).
-    asset_weather: HashMap<Uuid, crate::weather::region::RegionDay>,
-    /// The same from the names of the inventory items picked
-    /// (`note_item_name`), for an asset whose own name carries none.
-    item_weather: HashMap<Uuid, crate::weather::region::RegionDay>,
     /// Assets that could not be loaded, for the FailedToFindSettings message.
     failed_local: Vec<Uuid>,
     /// The local environment changed since the last save.
     local_dirty: bool,
+    /// The user chose a local environment, or went back to the shared one,
+    /// since `take_local_choice`: a sky RLVa forced without a lock gives way.
+    local_choice: bool,
     /// FSEnvironmentManualTransitionTime (s): crossfade of manual changes.
     manual_transition: f32,
     /// Next local change without crossfade (TRANSITION_INSTANT).
@@ -518,7 +510,6 @@ impl EnvSelector {
             handle,
             day,
             settings,
-            names: Default::default(),
             length,
             offset,
             generation: self.generation,
@@ -543,7 +534,6 @@ impl EnvSelector {
         self.next_fade = if ctx.teleporting { TRANSITION_FAST } else { TRANSITION_DEFAULT };
         let altitudes = answer.altitudes;
         let settings = answer.day_settings.clone();
-        let names = answer.names.clone();
         let day = answer.valid_day();
         if parcel_id == eep::REGION_PARCEL_ID {
             // a valid region day leaves the parcel's in place (RegionInfo
@@ -553,9 +543,7 @@ impl EnvSelector {
                     self.altitudes = altitudes;
                     self.default_pending = None;
                     let (length, offset) = (d.length, d.offset);
-                    let mut slot = self.slot(handle, Arc::new(d), settings, length, offset);
-                    slot.names = names.clone();
-                    self.region = Some(slot);
+                    self.region = Some(self.slot(handle, Arc::new(d), settings, length, offset));
                     AnswerOutcome::RegionDay
                 }
                 None => {
@@ -576,9 +564,7 @@ impl EnvSelector {
             match day {
                 Some(d) => {
                     let (length, offset) = (d.length, d.offset);
-                    let mut slot = self.slot(handle, Arc::new(d), settings, length, offset);
-                    slot.names = names.clone();
-                    self.parcel = Some(slot);
+                    self.parcel = Some(self.slot(handle, Arc::new(d), settings, length, offset));
                     AnswerOutcome::ParcelDay
                 }
                 None => {
@@ -696,17 +682,6 @@ impl EnvSelector {
         }
     }
 
-    /// The names the environment in effect was applied with (the parcel's,
-    /// else the region's), as [`EnvSelector::day_settings`] picks it.
-    pub fn day_names(&self, parcel: bool) -> crate::weather::region::DayNames {
-        let slot = if parcel {
-            self.parcel.as_ref().or(self.region.as_ref())
-        } else {
-            self.region.as_ref()
-        };
-        slot.map(|s| s.names.clone()).unwrap_or_default()
-    }
-
     /// Length and offset (s) of the region's day (LLPanelRegionEnvironment's
     /// mCurrentEnvironment), when it has one.
     pub fn region_timing(&self) -> Option<(f64, f64)> {
@@ -761,6 +736,22 @@ impl EnvSelector {
         std::mem::take(&mut self.preset_dropped).then_some(self.local_preset)
     }
 
+    /// Each frame: the panels' time of day and the selector's follow each
+    /// other. While RLVa holds the environment the panels' choice is put
+    /// back to the preset shown, never kept for later: a choice made under
+    /// @setenv (a menu still open, a shortcut) is dropped, and nothing
+    /// changes when the restriction lifts, as in the Legacy Viewer, whose
+    /// greyed entries (menu_viewer.xml, RLV.EnableIfNot setenv) set nothing.
+    pub fn sync_time_of_day(&mut self, time_of_day: &mut u8) {
+        if let Some(p) = self.take_preset_change() {
+            *time_of_day = p;
+        }
+        if self.rlva_locked {
+            *time_of_day = self.local_preset;
+        }
+        self.set_time_of_day(*time_of_day);
+    }
+
     /// FSEnvironmentManualTransitionTime (s, 0 = instant).
     pub fn set_manual_transition(&mut self, seconds: f32) {
         self.manual_transition = if seconds.is_finite() { seconds.clamp(0.0, 60.0) } else { 0.0 };
@@ -801,49 +792,12 @@ impl EnvSelector {
         }
         self.pending.clear();
         if self.local.take().is_some() {
-            self.local_dirty = true;
+            self.note_local_choice();
         }
+        // a choice even with no local environment to drop: the shared one
+        // replaces a sky RLVa forced without a lock
+        self.local_choice = true;
         self.drop_preset();
-    }
-
-    /// The applied sky's or day's Aurora Weather, kept with the local
-    /// environment (an editor's "Apply only to myself").
-    pub fn set_local_weather(&mut self, weather: Option<crate::weather::region::RegionDay>) {
-        if let Some(l) = &mut self.local {
-            l.weather = weather;
-        }
-    }
-
-    /// The Aurora Weather of the local environment in place.
-    pub fn local_weather(&self) -> Option<&crate::weather::region::RegionDay> {
-        self.local.as_ref().and_then(|l| l.weather.as_ref())
-    }
-
-    /// An inventory item picked for myself, its asset `asset`: the weather
-    /// its name's code gives (a code typed into an item's name by hand is
-    /// not in its asset, whose name is read first).
-    pub fn note_item_name(&mut self, asset: Uuid, name: &str) {
-        match crate::weather::region::SkyWeather::from_name(name) {
-            Some(w) => {
-                self.item_weather.insert(asset, crate::weather::region::RegionDay::fixed(w));
-            }
-            None => {
-                self.item_weather.remove(&asset);
-            }
-        }
-    }
-
-    /// The Aurora Weather of settings assets, read from their names as they
-    /// load (scene/mod.rs): an item applied to myself carries it.
-    pub fn note_asset_weather(&mut self, asset: Uuid, weather: Option<crate::weather::region::RegionDay>) {
-        match weather {
-            Some(w) => {
-                self.asset_weather.insert(asset, w);
-            }
-            None => {
-                self.asset_weather.remove(&asset);
-            }
-        }
     }
 
     pub fn has_local(&self) -> bool {
@@ -871,19 +825,7 @@ impl EnvSelector {
                 return;
             };
             match p.state {
-                PendingState::Ready(s, origin) => {
-                    self.apply_settings(p.asset, &s, origin, p.timing);
-                    // a sky or a day sets the weather (or clears it); a water
-                    // has none and leaves the sky's
-                    if !matches!(*s, super::eep::Settings::Water(_)) {
-                        let weather = self
-                            .asset_weather
-                            .get(&p.asset)
-                            .or_else(|| self.item_weather.get(&p.asset))
-                            .cloned();
-                        self.set_local_weather(weather);
-                    }
-                }
+                PendingState::Ready(s, origin) => self.apply_settings(p.asset, &s, origin, p.timing),
                 PendingState::Failed if p.preset != 0 => {
                     log::warn!(
                         "library sky {} of time of day preset {} could not be loaded: built-in sky with the preset's sun",
@@ -919,7 +861,7 @@ impl EnvSelector {
                 log::info!("local environment: day cycle {asset}");
                 self.local = Some(l);
                 self.drop_preset();
-                self.local_dirty = true;
+                self.note_local_choice();
             }
             Settings::Sky(s) => self.apply_sky(origin, *s),
             Settings::Water(w) => self.apply_water(origin, *w),
@@ -954,10 +896,7 @@ impl EnvSelector {
 
     fn apply_sky(&mut self, origin: LocalOrigin, sky: SkyFrame) {
         log::info!("local environment: sky {origin:?}");
-        // another sky: its weather, if any, is set after (set_local_weather)
-        let l = self.local_mut();
-        l.sky = Some((origin, sky));
-        l.weather = None;
+        self.local_mut().sky = Some((origin, sky));
         match origin {
             // the preset's own sky: the panels keep showing it
             LocalOrigin::Preset(n) => {
@@ -966,13 +905,13 @@ impl EnvSelector {
             }
             _ => self.drop_preset(),
         }
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     fn apply_water(&mut self, origin: LocalOrigin, water: WaterFrame) {
         log::info!("local environment: water {origin:?}");
         self.local_mut().water = Some((origin, water));
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     /// "Personal lighting" opens (LLFloaterEnvironmentAdjust::
@@ -1001,7 +940,7 @@ impl EnvSelector {
         self.local = Some(l);
         self.instant_next = true;
         self.drop_preset();
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     /// The local sky "Personal lighting" edits (nothing without a local
@@ -1029,7 +968,7 @@ impl EnvSelector {
         *sky = s;
         *origin = LocalOrigin::Personal(origin.rights());
         self.drop_preset();
-        self.local_dirty = true;
+        self.note_local_choice();
         true
     }
 
@@ -1041,6 +980,18 @@ impl EnvSelector {
     /// The local environment changed since the last call (to save it).
     pub fn take_local_dirty(&mut self) -> bool {
         std::mem::take(&mut self.local_dirty)
+    }
+
+    /// A choice changed the local environment: to save, and to tell RLVa.
+    fn note_local_choice(&mut self) {
+        self.local_dirty = true;
+        self.local_choice = true;
+    }
+
+    /// The user chose an environment since the last call, the shared one
+    /// included (`World::rlva_yield_environment`).
+    pub fn take_local_choice(&mut self) -> bool {
+        std::mem::take(&mut self.local_choice)
     }
 
     /// The local environment to keep for the next session
@@ -1206,7 +1157,7 @@ impl EnvSelector {
             self.preset_dropped = true;
         }
         self.pending.clear();
-        self.local_dirty = true;
+        self.note_local_choice();
         // the same light, now the user's: no crossfade
         self.instant_next = true;
         self.photo.set(PhotoChoice::default());
@@ -1224,7 +1175,7 @@ impl EnvSelector {
         self.drop_photo();
         self.clear_local();
         self.restore_local(data);
-        self.local_dirty = true;
+        self.note_local_choice();
     }
 
     /// Restore the last session's local environment (loadFromSettings): the
@@ -1271,8 +1222,9 @@ impl EnvSelector {
             }
         }
         self.drain_pending();
-        // restoring is not a change to save again
+        // restoring is not a change to save again, nor a choice
         self.local_dirty = false;
+        self.local_choice = false;
     }
 
     /// The selected shared slot (getSelectedEnvironmentInstance below ENV_LOCAL).
@@ -1507,10 +1459,7 @@ impl super::World {
             now: self.env_clock.elapsed().as_secs_f64(),
             altitude: self.agent.position.z,
         };
-        if let Some(p) = self.eep.take_preset_change() {
-            *time_of_day = p;
-        }
-        self.eep.set_time_of_day(*time_of_day);
+        self.eep.sync_time_of_day(time_of_day);
         let (sky, water) = self.eep.frame(&input);
         self.rlva_environment_frames((sky, water))
     }
@@ -1596,6 +1545,29 @@ mod tests {
         sel.clear_experience(experience, 1.0);
         gamma(&mut sel, 4.0);
         assert!((gamma(&mut sel, 5.1) - 0.7).abs() < 1e-6);
+        assert!(matches!(sel.shown_source(), Some(Source::Region(_))));
+    }
+
+    #[test]
+    fn experience_scene_switching_stays_above_refreshed_region_lighting() {
+        let mut sel = EnvSelector::default();
+        sel.on_answer(REGION, -1, answer(-1, Some(0.7)), ctx(None));
+        gamma(&mut sel, 0.0);
+        let experience = Uuid::from_u128(9);
+        let scene = |value| {
+            llsd_map! {
+                "action" => "PushPartialEnvironment",
+                "action_data" => llsd_map! { "settings" => llsd_map! { "sky" => llsd_map! { "gamma" => value } } },
+            }
+        };
+        sel.push_experience(experience, &scene(3.0));
+        assert_eq!(gamma(&mut sel, 1.0), 3.0);
+        sel.on_answer(REGION, -1, answer(-1, Some(1.2)), ctx(None));
+        assert_eq!(gamma(&mut sel, 2.0), 3.0, "a region refresh must not pin the viewer to its sky");
+        sel.push_experience(experience, &scene(2.0));
+        assert_eq!(gamma(&mut sel, 3.0), 2.0);
+        sel.clear_experience(experience, 0.0);
+        assert!((gamma(&mut sel, 4.0) - 1.2).abs() < 1e-6);
         assert!(matches!(sel.shown_source(), Some(Source::Region(_))));
     }
 
@@ -1883,28 +1855,6 @@ mod tests {
         assert!((gamma(&mut sel, 10.0) - 1.9).abs() < 1e-6);
         assert!((gamma(&mut sel, 12.5) - 1.1).abs() < 1e-5, "halfway through 5 s");
         assert!((gamma(&mut sel, 15.0) - 0.3).abs() < 1e-6);
-    }
-
-    #[test]
-    fn a_water_applied_over_a_coded_sky_keeps_its_weather() {
-        use crate::weather::region::{RegionDay, SkyWeather};
-        let mut sel = region_selector();
-        sel.note_asset_weather(SKY, Some(RegionDay::fixed(SkyWeather::CLEAR)));
-        sel.request_local(SKY, SettingsKind::Sky);
-        sel.on_settings(SKY, Some(sky_asset(1.9)));
-        sel.frame(&input(1.0));
-        assert!(sel.local_weather().is_some(), "the coded sky's weather");
-        // a water has no weather: the sky's stays (review of #2410)
-        sel.request_local(WATER, SettingsKind::Water);
-        sel.on_settings(WATER, Some(water_asset(9.0)));
-        sel.frame(&input(2.0));
-        assert!(sel.local_weather().is_some(), "kept under a new water");
-        // another sky without a code clears it
-        let plain = Uuid::from_u128(0x54);
-        sel.request_local(plain, SettingsKind::Sky);
-        sel.on_settings(plain, Some(sky_asset(1.2)));
-        sel.frame(&input(3.0));
-        assert!(sel.local_weather().is_none());
     }
 
     #[test]
@@ -2462,5 +2412,38 @@ mod tests {
         sel.apply_local_day(DayCycle::fixed(SkyFrame::default(), WaterFrame::default()));
         sel.frame(&input(4.0));
         assert_eq!(sel.current_rights(SettingsKind::Water), SourceRights::Unknown);
+    }
+
+    #[test]
+    fn a_time_of_day_chosen_while_rlva_holds_the_environment_is_dropped() {
+        let mut sel = region_selector();
+        // a preset chosen freely follows the panels
+        let mut panels = 2;
+        sel.sync_time_of_day(&mut panels);
+        library_sky_arrives(&mut sel, 2);
+        sel.frame(&input(1.0));
+        assert_eq!((panels, sel.local_view().sky), (2, ListShown::Preset(2)));
+        // @setenv: another preset, then the shared environment, are refused
+        // and the panels go back to what is shown
+        sel.rlva_locked = true;
+        for chosen in [4, 0] {
+            panels = chosen;
+            sel.sync_time_of_day(&mut panels);
+            assert_eq!(panels, 2, "choice {chosen}");
+            assert!(sel.wanted_settings().is_empty());
+        }
+        // the restriction lifts: nothing was kept to apply now
+        sel.rlva_locked = false;
+        sel.sync_time_of_day(&mut panels);
+        sel.frame(&input(2.0));
+        assert_eq!((panels, sel.local_view().sky), (2, ListShown::Preset(2)));
+        assert!(sel.wanted_settings().is_empty());
+        // and a choice made from then on applies again
+        panels = 4;
+        sel.sync_time_of_day(&mut panels);
+        assert_eq!(
+            sel.wanted_settings(),
+            vec![super::super::env::time_of_day_sky(4).expect("a preset")]
+        );
     }
 }

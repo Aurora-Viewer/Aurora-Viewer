@@ -38,7 +38,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => {
             cx.group(tr!("ui-options-name-tags"), |cx| {
-                cx.toggle(tr!("ui-options-show-own-tag"), "", &field!(show_own_name_tag));
+                cx.toggle(
+                    tr!("ui-options-show-own-tag"),
+                    tr!("ui-options-show-own-tag-help"),
+                    &field!(show_own_name_tag),
+                );
                 cx.toggle(tr!("ui-options-show-friend-tags"), "", &field!(show_friend_name_tags));
                 cx.toggle(tr!("ui-options-show-other-tags"), "", &field!(show_other_name_tags));
                 cx.toggle(
@@ -99,6 +103,17 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(tag_complexity_own),
                     );
                 });
+                // FSTagShowDistance, FSTagShowDistanceColors (panel_preferences_colors.xml)
+                cx.toggle(
+                    tr!("ui-options-distance-in-name-tags"),
+                    tr!("ui-options-distance-in-name-tags-help"),
+                    &field!(tag_distance),
+                );
+                cx.toggle(
+                    tr!("ui-options-names-by-distance"),
+                    tr!("ui-options-names-by-distance-help"),
+                    &field!(tag_distance_colors),
+                );
             });
             // the plates' settings mean nothing to the classic name tags
             cx.group(tr!("ui-options-aurora-avatar-plates"), |cx| {
