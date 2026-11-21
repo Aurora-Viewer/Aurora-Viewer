@@ -31,6 +31,7 @@
 //! direction of its texture coordinates (the binormal of a touch) when
 //! they lie on the same face.
 
+use crate::curvature::Curvature;
 use crate::pick::PickPixel;
 use glam::{Mat4, Vec2, Vec3};
 use std::sync::Arc;
@@ -246,7 +247,7 @@ impl DrawnPick {
 
     /// The request this frame draws for, if any and if a readback is free:
     /// its pixel. One a frame; the others wait for the next.
-    pub fn begin(&mut self, size: (u32, u32), inv_view_proj: Mat4) -> Option<(u32, u32, DrawnMode)> {
+    pub fn begin(&mut self, size: (u32, u32), inv_view_proj: Mat4, curvature: Curvature) -> Option<(u32, u32, DrawnMode)> {
         while let Some(&(ticket, x, y, mode)) = self.queue.first() {
             if x >= size.0 || y >= size.1 {
                 self.queue.remove(0);
@@ -263,6 +264,7 @@ impl DrawnPick {
                     width: size.0,
                     height: size.1,
                     inv_view_proj,
+                    curvature,
                 },
             ));
             self.encoded = Some(i);
@@ -389,6 +391,7 @@ mod tests {
                     width: w,
                     height: h,
                     inv_view_proj: vp.inverse(),
+                    curvature: Curvature::FLAT,
                 };
                 let p = px.world(0.02).expect("a point in front of the camera");
                 let screen = pixel(vp * p.extend(1.0), w as f32, h as f32);
@@ -439,6 +442,7 @@ mod tests {
             width: 800,
             height: 600,
             inv_view_proj: vp.inverse(),
+            curvature: Curvature::FLAT,
         };
         // a wall facing the camera (-y), textured with s along x, t along z
         let bytes = target(41, px, vp, 2.0, |p| Vec2::new(p.x * 0.5, p.z * 0.25));

@@ -37,6 +37,7 @@ fn receive(w: &mut World, session: Uuid, from: Uuid, text: &str, kind: ImKind, i
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         },
         true,
     );
@@ -44,6 +45,7 @@ fn receive(w: &mut World, session: Uuid, from: Uuid, text: &str, kind: ImKind, i
         kind,
         session,
         new_session: false,
+        mention: false,
     };
     w.notify_message(&m, in_sight);
 }
@@ -78,6 +80,7 @@ fn nearby_chat_does_not_raise_the_conversations_button_count() {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     });
     // the conversation list still counts it on its nearby chat row
     assert_eq!(w.chat_unread, 1);
@@ -101,6 +104,7 @@ fn nearby_chat_alone_lights_neither_the_outline_nor_the_pill() {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     });
     assert!(w.chat_unread > 0);
     assert_eq!(w.conversations_badge(), 0);
@@ -415,4 +419,56 @@ fn a_contact_set_with_notifications_brings_its_members_notices() {
     w.social.set_online(&[JANE], true);
     w.flush_online_notices();
     assert_eq!(shown(&w, JANE), (false, false));
+}
+
+#[test]
+fn a_friend_online_or_offline_is_told_to_the_system_as_presence() {
+    let mut w = world();
+    w.social.form_friendship(JANE);
+    w.social.set_online(&[JANE], true);
+    w.flush_online_notices();
+    w.social.set_online(&[JANE], false);
+    w.flush_online_notices();
+    let causes: Vec<_> = w.attention.iter().filter(|a| a.notice.is_some()).map(|a| a.cause).collect();
+    assert_eq!(causes, [attention::Cause::Presence(true), attention::Cause::Presence(false)]);
+}
+
+#[test]
+fn an_offer_is_told_to_the_system_as_one_and_an_alert_notice_or_answer_as_a_notice() {
+    use super::notifications::im as d;
+    use attention::Cause::{Message, Offer};
+    let cases = [
+        (d::LURE_USER, Offer),
+        (d::GODLIKE_LURE_USER, Offer),
+        (d::TELEPORT_REQUEST, Offer),
+        (d::FRIENDSHIP_OFFERED, Offer),
+        (d::INVENTORY_OFFERED, Offer),
+        (d::TASK_INVENTORY_OFFERED, Offer),
+        (d::GROUP_INVITATION, Offer),
+        (d::FRIENDSHIP_ACCEPTED, Message),
+        (d::INVENTORY_ACCEPTED, Message),
+        (d::INVENTORY_DECLINED, Message),
+        (d::GROUP_NOTICE, Message),
+        (d::MESSAGEBOX, Message),
+        (d::FROM_TASK_AS_ALERT, Message),
+        (d::GOTO_URL, Message),
+    ];
+    for (dialog, cause) in cases {
+        let mut w = world();
+        let group = matches!(dialog, d::GROUP_NOTICE | d::GROUP_INVITATION);
+        w.apply(NetEvent::InstantMessage(InstantMessage {
+            from_agent_id: if group { GROUP } else { JANE },
+            from_name: "Jane Doe".into(),
+            to_agent_id: ME,
+            dialog,
+            session_id: Uuid::from_u128(0x7A20),
+            message: "Subject|Text".into(),
+            offline: false,
+            from_group: group,
+            binary_bucket: vec![7],
+            timestamp: 0,
+        }));
+        let causes: Vec<_> = w.attention.iter().map(|a| a.cause).collect();
+        assert_eq!(causes, [cause], "dialog {dialog}");
+    }
 }

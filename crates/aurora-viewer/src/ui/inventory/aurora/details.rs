@@ -212,25 +212,34 @@ fn more(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, id: Uuid) {
     }
 }
 
-/// The name of a resident, or "You".
-fn resident(facts: &Facts, id: Uuid) -> String {
+/// A resident and the field that shows them (`resident_scopes`).
+type Resident = (Uuid, crate::world::names::NameScope);
+
+/// The name of a resident, or "You": the stand-in where RLVa's `@shownames`
+/// hides them in that field.
+fn resident_name(facts: &Facts, resident: Resident) -> String {
+    let (id, _) = resident;
     if id == facts.agent && !id.is_nil() {
         aurora_i18n::tr!("inventory-owner-you").to_owned()
     } else if id.is_nil() {
         aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple").to_owned()
     } else {
         facts
-            .names
-            .get(&id)
+            .hidden_names
+            .get(&resident)
+            .or_else(|| facts.names.get(&id))
             .cloned()
             .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned())
     }
 }
 
 /// A resident as a link to their profile.
-fn resident_link(ui: &mut egui::Ui, p: &Palette, facts: &Facts, id: Uuid, size: f32, actions: &mut Vec<InvAction>) {
-    let name = resident(facts, id);
-    if id.is_nil() {
+fn resident_link(ui: &mut egui::Ui, p: &Palette, facts: &Facts, resident: Resident, size: f32, actions: &mut Vec<InvAction>) {
+    let name = resident_name(facts, resident);
+    let (id, _) = resident;
+    // no resident, or one RLVa's `@shownames` hides: the stand-in opens no
+    // profile (LLSidepanelItemInfo::onClickCreator / onClickOwner)
+    if id.is_nil() || facts.hidden_names.contains_key(&resident) {
         ui.label(egui::RichText::new(name).size(size).color(p.muted));
         return;
     }
@@ -363,7 +372,7 @@ pub(super) fn strip(
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(egui::RichText::new(rows::kind_name(inv, id)).size(12.0).color(p.muted));
         ui.label(egui::RichText::new("·").size(12.0).color(p.muted_dim));
-        resident_link(ui, p, facts, original.creator, 12.0, actions);
+        resident_link(ui, p, facts, crate::ui::inventory::resident_scopes(original)[1], 12.0, actions);
     });
     if let Some(permissions) = Permissions::inventory(inv, id) {
         body.horizontal(|ui| {
@@ -661,11 +670,12 @@ pub(super) fn pane(
     });
     widgets::divider(ui, p);
     // The facts.
+    let [owner, creator] = crate::ui::inventory::resident_scopes(original);
     fact(ui, p, aurora_i18n::tr!("inventory-details-creator"), |ui| {
-        resident_link(ui, p, facts, original.creator, 12.5, actions);
+        resident_link(ui, p, facts, creator, 12.5, actions);
     });
     fact(ui, p, aurora_i18n::tr!("inventory-details-owner"), |ui| {
-        let owner = resident(facts, original.owner);
+        let owner = resident_name(facts, owner);
         ui.label(egui::RichText::new(owner).size(12.5).color(p.ink));
     });
     fact(ui, p, aurora_i18n::tr!("inventory-details-acquired"), |ui| {

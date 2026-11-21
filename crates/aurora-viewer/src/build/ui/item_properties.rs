@@ -6,6 +6,7 @@ use crate::build::BuildTool;
 use crate::theme::Palette;
 use crate::ui::inventory::PropertyEdit;
 use crate::ui::inventory::properties::{self, PropertyPanel};
+use crate::ui::widgets::CascadeGroup;
 use crate::world::World;
 use aurora_net::build::{BuildCmd, TaskItem, perm};
 use std::collections::HashMap;
@@ -31,7 +32,7 @@ fn editable(tool: &BuildTool, world: &World, object: Uuid, item: &TaskItem) -> b
     world
         .objects
         .index_of_uuid(&object)
-        .is_some_and(|idx| tool.contents_editable(world, idx))
+        .is_some_and(|idx| tool.contents_modifiable(world, idx))
         // allowOperation(PERM_MODIFY, …, GOD_LIKE): a god edits any item
         && (world.god_level > 0
             || (!item.group_owned && item.owner_id == world.agent_id)
@@ -39,67 +40,113 @@ fn editable(tool: &BuildTool, world: &World, object: Uuid, item: &TaskItem) -> b
         && !matches!(item.asset_type, 2 | 24 | 25)
 }
 
+/// One window per open item. The Legacy Viewer opens one per item too
+/// (LLInventoryAction::doToSelected, indra/newview/llinventoryfunctions.cpp),
+/// hosted as tabs of one LLMultiItemProperties window; Aurora has no tab host
+/// for them and cascades separate windows, as the inventory's PropertiesMany does.
 pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, images: &HashMap<Uuid, egui::TextureHandle>) {
-    let Some(mut state) = tool.ui.item_properties.take() else { return };
+    let windows = std::mem::take(&mut tool.ui.item_properties);
+    let mut kept = Vec::with_capacity(windows.len());
+    for state in windows {
+        if let Some(state) = show_one(ctx, p, tool, world, images, state) {
+            kept.push(state);
+        }
+    }
+    // A window opened while these were drawn stays after them.
+    kept.append(&mut tool.ui.item_properties);
+    tool.ui.item_properties = kept;
+}
+
+fn show_one(
+    ctx: &egui::Context,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    images: &HashMap<Uuid, egui::TextureHandle>,
+    mut state: TaskProperties,
+) -> Option<TaskProperties> {
     let item = tool
         .contents
         .objects
         .get(&state.object)
         .and_then(|inv| inv.items.iter().find(|it| it.item_id == state.item));
-    let Some(item) = item.cloned().filter(|it| !it.is_folder) else {
-        return;
-    };
-    let Some(inv_item) = item.to_inv_item() else { return };
+    let item = item.cloned().filter(|it| !it.is_folder)?;
+    let inv_item = item.to_inv_item()?;
     let can_edit = editable(tool, world, state.object, &item);
+    // The owner and the creator as the inventory's properties name them:
+    // LLSidepanelItemInfo::refreshFromItem is the same panel for an item of
+    // an object's contents (indra/newview/llsidepaneliteminfo.cpp).
     let names = [item.owner_id, item.creator_id]
         .into_iter()
         .map(|id| {
             world.social.want_name(id);
-            (id, world.social.name_of(&id))
+            (id, world.social.name_in(crate::world::names::NameScope::Roster, &id))
         })
         .collect::<HashMap<_, _>>();
+    let mut hidden = crate::ui::inventory::HiddenNames::new();
+    crate::ui::inventory::hide_residents(world, &inv_item, &mut hidden);
     let mut open = true;
-    properties::window(ctx, "task_item_props").show(ctx, p, &mut open, |ui| {
-        let response = properties::panel(
-            ui,
-            p,
-            None,
-            PropertyPanel {
-                inventory: None,
-                item: &inv_item,
-                edit: &mut state.edit,
-                can_edit,
-                can_next_owner: can_edit && item.owner_mask & perm::TRANSFER != 0,
-                can_describe: can_edit && item.owner_mask & perm::MODIFY != 0,
-                // TaskInventory has no thumbnail field or agent-thumbnail capability.
-                can_thumbnail: false,
-                names: &names,
-                images,
-                wanted_images: &mut tool.ui.wanted_images,
-            },
-        );
-        if let Some(id) = response.profile {
-            tool.ui.requests.push(super::Request::Profile(id));
-        }
-        if let Some(edit) = response.edit {
-            tool.save_item_properties(
-                world,
-                &TaskProperties {
-                    object: state.object,
-                    item: state.item,
-                    edit,
+    let window_id = format!("task_item_props_{}_{}", state.object, state.item);
+    properties::window(ctx, &window_id)
+        .cascade(CascadeGroup::TaskProperties)
+        .show(ctx, p, &mut open, |ui| {
+            let response = properties::panel(
+                ui,
+                p,
+                None,
+                PropertyPanel {
+                    inventory: None,
+                    item: &inv_item,
+                    edit: &mut state.edit,
+                    can_edit,
+                    can_next_owner: can_edit && item.owner_mask & perm::TRANSFER != 0,
+                    can_describe: can_edit && item.owner_mask & perm::MODIFY != 0,
+                    // TaskInventory has no thumbnail field or agent-thumbnail capability.
+                    can_thumbnail: false,
+                    names: &names,
+                    hidden: &hidden,
+                    images,
+                    wanted_images: &mut tool.ui.wanted_images,
                 },
             );
-        }
-    });
-    if open {
-        tool.ui.item_properties = Some(state);
-    }
+            // only a name the panel shows is a link: the profile opens as from
+            // the inventory's properties (LLSidepanelItemInfo::onClickCreator)
+            if let Some(id) = response.profile {
+                crate::ui::profile::request_open_in(ctx, crate::world::names::NameScope::Roster, id);
+            }
+            if let Some(edit) = response.edit {
+                tool.save_item_properties(
+                    world,
+                    &TaskProperties {
+                        object: state.object,
+                        item: state.item,
+                        edit,
+                    },
+                );
+            }
+        });
+    open.then_some(state)
 }
 
 impl BuildTool {
+    /// Opens the item's window unless it is already open: one window per item.
     pub(crate) fn open_task_item_properties(&mut self, object: Uuid, item: &TaskItem) {
-        self.ui.item_properties = TaskProperties::new(object, item);
+        if self
+            .ui
+            .item_properties
+            .iter()
+            .any(|open| open.object == object && open.item == item.item_id)
+        {
+            return;
+        }
+        self.ui.item_properties.extend(TaskProperties::new(object, item));
+    }
+
+    /// Opens a window for each item of a selection; a folder has none.
+    pub(crate) fn open_task_items_properties(&mut self, object: Uuid, items: &[TaskItem]) {
+        for item in items.iter().filter(|it| !it.is_folder) {
+            self.open_task_item_properties(object, item);
+        }
     }
 
     /// Re-read the source object and item at commit time, independently of the

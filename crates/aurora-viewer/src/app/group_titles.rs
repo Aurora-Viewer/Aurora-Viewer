@@ -58,7 +58,7 @@ impl App {
                 if !group.is_nil() {
                     self.send(NetCommand::GroupTitleUpdate { group, role });
                 }
-                if self.world.groups.active != group {
+                if self.world.groups.active != group && self.world.rlva_can_change_group() {
                     self.send(NetCommand::ActivateGroup(group));
                 }
             }

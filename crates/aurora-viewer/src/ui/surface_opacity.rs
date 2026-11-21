@@ -23,8 +23,9 @@
 //! palette's surface colours, so what they draw needs no change. Hovered and
 //! selected faces have colours of their own and stay readable.
 //!
-//! The choice is process-wide (`set`). High contrast ignores it: there the
-//! world never shows through (`crate::high_contrast`).
+//! The choice is process-wide (`set`). High contrast and Disable glass
+//! ignore it: there the world never shows through (`crate::high_contrast`,
+//! `crate::disable_glass`).
 
 use crate::theme::Palette;
 use egui::Color32;
@@ -111,7 +112,7 @@ fn parse(raw: &str, mut out: Opacity) -> Opacity {
 }
 
 fn current() -> Opacity {
-    if crate::high_contrast::current() {
+    if crate::high_contrast::current() || crate::disable_glass::current() {
         return Opacity::FULL;
     }
     CURRENT.read().map_or(Opacity::FULL, |c| *c)

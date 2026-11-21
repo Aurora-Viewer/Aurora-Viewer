@@ -161,6 +161,9 @@ pub struct MediaImpl {
     texture: MediaTexture,
     pub interest: f32,
     pub distance: f32,
+    /// Distance to the ear, camera or avatar (mProximityCamera,
+    /// MediaSoundsEarLocation): the volume's rolloff.
+    pub ear_distance: f32,
     pub priority: Priority,
     /// Own volume (media controls), 0..1.
     pub volume: f32,
@@ -214,6 +217,7 @@ impl MediaImpl {
             },
             interest: 0.0,
             distance: 0.0,
+            ear_distance: 0.0,
             priority: Priority::Unloaded,
             volume: 1.0,
             muted: false,
@@ -431,6 +435,9 @@ struct ObjMedia {
 pub struct MediaFrame<'a> {
     pub view: &'a CullView,
     pub camera: Vec3,
+    /// Where media are heard from: the camera or the avatar
+    /// (`scene::sounds::ear_position`).
+    pub ear: Vec3,
     pub settings: &'a MediaSettings,
     /// ParcelMediaAutoPlayEnable (and isAutoPlayable for prim media).
     pub autoplay: bool,
@@ -438,6 +445,8 @@ pub struct MediaFrame<'a> {
     pub channel_volume: f32,
     pub agent_speed: f32,
     pub window_focused: bool,
+    /// Gaming mode (app/gaming_mode.rs): no media draws.
+    pub gaming_mode: bool,
     pub net: Option<(&'a tokio::runtime::Handle, reqwest::Client)>,
     pub cache_dir: &'a std::path::Path,
     pub language: &'a str,

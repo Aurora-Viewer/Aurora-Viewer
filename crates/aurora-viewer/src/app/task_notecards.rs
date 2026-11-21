@@ -93,6 +93,7 @@ impl App {
 
     pub(super) fn open_task_notecard(&mut self, object: Uuid, item: Uuid) {
         if self.world.rlva.has("viewnote") {
+            self.rlva_view_blocked(7);
             return;
         }
         if self.task_notecards.get(&(object, item)).is_some_and(|d| d.state.preview.is_some()) {
@@ -110,6 +111,7 @@ impl App {
                 .index_of_uuid(&object)
                 .is_some_and(|i| self.world.rlva_locked_attachment(i))
         {
+            self.rlva_view_blocked(7);
             return;
         }
         // a preview: the rule of the contents' Open entries, on the raw item
@@ -203,9 +205,8 @@ impl App {
     }
 
     pub(super) fn show_task_notecards(&mut self, ctx: &egui::Context, p: &Palette) {
-        if self.world.rlva.has("viewnote") {
-            return;
-        }
+        // (`open_task_notecard` refuses @viewnote; what is open stays open,
+        // RlvUIEnabler::filterFloaterViewXXX in rlvui.cpp)
         if let Some((object, item)) = self.build.ui.open_notecard.take() {
             self.open_task_notecard(object, item);
         }
@@ -232,7 +233,7 @@ impl App {
             if d.state.preview_source.is_some() {
                 d.state.preview_can_edit = allowed;
             }
-            // RLVa's @viewtexture closes a texture's preview here as well
+            // RLVa's @viewtexture refuses the textures it embeds as well
             d.inventory.rlva_preview_mask = self.world.inventory.rlva_preview_mask;
             if metadata.is_none() {
                 d.state.preview_message = aurora_i18n::tr!("notecard-task-unavailable").into();

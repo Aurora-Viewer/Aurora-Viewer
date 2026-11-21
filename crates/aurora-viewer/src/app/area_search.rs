@@ -21,8 +21,9 @@ const TOUCH_SPACING: Duration = Duration::from_millis(200);
 /// fsareasearch.cpp). Nothing with RLVa off, everything under @interact or
 /// for a row whose object is gone; otherwise each word is refused as soon
 /// as one row's object refuses it, with the checks the actions themselves
-/// meet when sent: a touch and a sit without a picked point, a teleport to
-/// where the object is.
+/// meet when sent: a touch and a sit without a picked point. The teleport
+/// is asked as a local one whatever the distance
+/// (`rlva_can_teleport_local`).
 fn menu_locks(world: &World, ids: &[Uuid], now: Instant) -> MenuLocks {
     if !world.rlva.enabled() {
         return MenuLocks::default();
@@ -41,7 +42,7 @@ fn menu_locks(world: &World, ids: &[Uuid], now: Instant) -> MenuLocks {
         };
         locks.touch |= !world.rlva_can_touch(o.key.region, o.key.local_id);
         locks.edit |= !world.rlva_can_edit(idx);
-        locks.delete |= !world.rlva_can_delete_or_return(idx);
+        locks.delete |= !world.rlva_can_delete_or_return_object(idx);
         locks.sit |= !world.rlva_allows_command(
             &NetCommand::RequestSit {
                 handle: o.key.region,
@@ -52,7 +53,7 @@ fn menu_locks(world: &World, ids: &[Uuid], now: Instant) -> MenuLocks {
         );
         locks.teleport |= !Scene::object_transform(world, idx, now, 0).is_some_and(|xf| {
             let (x, y) = crate::ui::minimap::to_global(world, xf.0);
-            world.rlva_can_teleport_global(glam::DVec3::new(x, y, f64::from(xf.0.z)))
+            world.rlva_can_teleport_local(glam::DVec3::new(x, y, f64::from(xf.0.z)))
         });
         if locks == MenuLocks::ALL {
             break;
@@ -418,11 +419,16 @@ impl App {
                     self.area_search_feed.touches.push_back((start + TOUCH_SPACING * n as u32, id));
                 }
             }
-            // sitOnObject: AgentRequestSit with no offset
-            Action::Sit(id) => self.on_ctx_action(CtxAction::Sit {
-                target: id,
-                offset: Vec3::ZERO,
-            }),
+            // sitOnObject: AgentRequestSit with no offset, and no @standtp
+            // origin (it does not call RlvHandler::setSitSource)
+            Action::Sit(id) => {
+                self.world.rlva.sitting.no_sit_source = true;
+                self.on_ctx_action(CtxAction::Sit {
+                    target: id,
+                    offset: Vec3::ZERO,
+                });
+                self.world.rlva.sitting.no_sit_source = false;
+            }
             // gAgent.teleportViaLocation(getPositionGlobal())
             Action::Teleport(id) => {
                 if let Some(pos) = position(self, &id) {
@@ -458,8 +464,18 @@ impl App {
             }
             Action::Buy(id) => self.on_ctx_action(CtxAction::Buy(id)),
             // setFindOwnerText(gAgentUsername), then the search
+            // (under RLVa's `@shownames` the owner column shows the stand-in
+            // of our own name too, which is then what finds our objects)
             Action::FilterMine => {
-                let name = self.world.social.name_of(&self.world.agent_id);
+                let name = self
+                    .world
+                    .social
+                    .name_in(crate::world::names::NameScope::Roster, &self.world.agent_id);
+                let name = if self.world.rlva.has("shownames") {
+                    crate::world::rlva::privacy::anonymous_named(&name).display_name.clone()
+                } else {
+                    name
+                };
                 self.area_search_ui.table.filters.owner = name;
                 self.area_search_ui.reveal_search();
             }
@@ -611,9 +627,11 @@ impl App {
                 .into_iter()
                 .filter(|id| !id.is_nil() && *id != r.group_id)
             {
+                // the names as a list of people shows them: the columns
+                // hide them by their own rule, below
                 names.entry(id).or_insert_with(|| {
                     self.world.social.want_name(id);
-                    self.world.social.name_of(&id)
+                    self.world.social.name_in(crate::world::names::NameScope::Roster, &id)
                 });
             }
             if !r.group_id.is_nil() {
@@ -625,17 +643,31 @@ impl App {
                 });
             }
         }
+        // RLVa `@shownames`: RLVa_hideNameIfRestricted
+        // (indra/newview/fsareasearch.cpp) replaces what the owner and the
+        // last owner columns show by RlvStrings::getAnonym of that text,
+        // whoever it names (oneself, an `@shownames:<uuid>` exception, a
+        // group); the creator column is left as it is.
+        let names_hidden = self.world.rlva.has("shownames");
+        let hide = move |name: String| {
+            if names_hidden && !name.is_empty() {
+                crate::world::rlva::privacy::anonymous_named(&name).display_name.clone()
+            } else {
+                name
+            }
+        };
         let rows = rows
             .into_par_iter()
             .map(|(mut r, _)| {
-                r.owner = if r.owner_id == r.group_id && !r.group_id.is_nil() {
+                r.owner = hide(if r.owner_id == r.group_id && !r.group_id.is_nil() {
                     group_names.get(&r.group_id).cloned().unwrap_or_default()
                 } else {
                     names.get(&r.owner_id).cloned().unwrap_or_default()
-                };
+                });
                 r.creator = names.get(&r.creator_id).cloned().unwrap_or_default();
-                r.last_owner = names.get(&r.last_owner_id).cloned().unwrap_or_default();
+                r.last_owner = hide(names.get(&r.last_owner_id).cloned().unwrap_or_default());
                 r.group = group_names.get(&r.group_id).cloned().unwrap_or_default();
+                r.names_hidden = names_hidden;
                 r
             })
             .collect();

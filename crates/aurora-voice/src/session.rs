@@ -39,6 +39,7 @@ use webrtc::peer_connection::{
 
 use crate::link_stats::{self, ArrivalLag, LinkStats, RtcpView, STATS_PERIOD};
 use crate::protocol::{self, AUDIO_TRACK_ID, DATA_CHANNEL_LABEL, LocalCandidate, STREAM_ID};
+use crate::receive_gain::{GainRamp, ReceiveGain};
 use crate::state::{LocalPrefs, ParticipantTable, SpatialState};
 use crate::transmit::{FRAME_DURATION, OPUS_SILENCE, Payload, Transmitter, TxControl};
 use crate::{VoiceConnectParams, VoiceStatus};
@@ -79,6 +80,11 @@ pub(crate) struct Shared {
     pub spatial: Mutex<SpatialState>,
     pub prefs: Mutex<LocalPrefs>,
     pub tx: TxControl,
+    /// The viewer's own gain on the received voice (private calls).
+    pub rx_gain: ReceiveGain,
+    /// The viewer is quitting: the channel is left without its logout
+    /// ([`crate::VoiceSession::close_for_exit`]).
+    pub exiting: AtomicBool,
 }
 
 impl Shared {
@@ -89,6 +95,8 @@ impl Shared {
             spatial: Mutex::new(SpatialState::default()),
             prefs: Mutex::new(LocalPrefs::default()),
             tx: TxControl::new(),
+            rx_gain: ReceiveGain::default(),
+            exiting: AtomicBool::new(false),
         }
     }
 
@@ -310,6 +318,7 @@ struct Handler {
     /// (webrtc 0.17 bound it there and kept it bound until the close).
     connected: Arc<AtomicBool>,
     sink: Arc<Mutex<VoiceSink>>,
+    shared: Arc<Shared>,
     stats: Arc<LinkStats>,
     stop: watch::Receiver<bool>,
 }
@@ -339,7 +348,13 @@ impl PeerConnectionEventHandler for Handler {
     }
 
     async fn on_track(&self, track: Arc<dyn TrackRemote>) {
-        tokio::spawn(receive_audio(track, self.sink.clone(), self.stats.clone(), self.stop.clone()));
+        tokio::spawn(receive_audio(
+            track,
+            self.sink.clone(),
+            self.shared.clone(),
+            self.stats.clone(),
+            self.stop.clone(),
+        ));
     }
 }
 
@@ -430,10 +445,12 @@ struct Playout {
     pcm: Vec<f32>,
     last_seq: Option<u16>,
     lag: ArrivalLag,
+    ramp: GainRamp,
 }
 
 impl Playout {
-    fn packet(&mut self, packet: &rtc::rtp::Packet, sink: &Mutex<VoiceSink>, stats: &LinkStats) {
+    /// `gain` is [`Shared::rx_gain`], read once per packet.
+    fn packet(&mut self, packet: &rtc::rtp::Packet, gain: f32, sink: &Mutex<VoiceSink>, stats: &LinkStats) {
         let seq = packet.header.sequence_number;
         if let Some(prev) = self.last_seq {
             let gap = seq.wrapping_sub(prev).wrapping_sub(1);
@@ -445,7 +462,7 @@ impl Playout {
             let concealed = gap.min(5);
             for _ in 0..concealed {
                 if let Ok(n) = self.decoder.decode(&[], PLC_FRAME, &mut self.pcm) {
-                    sink.lock().push(&self.pcm[..(n * 2).min(self.pcm.len())], 2);
+                    self.play(n, gain, sink);
                 }
             }
             if gap > 0 {
@@ -458,18 +475,29 @@ impl Playout {
             return;
         }
         match self.decoder.decode(&packet.payload, MAX_OPUS_FRAME, &mut self.pcm) {
-            Ok(n) => {
-                sink.lock().push(&self.pcm[..(n * 2).min(self.pcm.len())], 2);
-            }
+            Ok(n) => self.play(n, gain, sink),
             Err(e) => log::debug!("voice: undecodable Opus packet: {e:?}"),
         }
+    }
+
+    /// Plays the `n` stereo frames just decoded, at the gain.
+    fn play(&mut self, n: usize, gain: f32, sink: &Mutex<VoiceSink>) {
+        let len = (n * 2).min(self.pcm.len());
+        self.ramp.apply(gain, &mut self.pcm[..len], 2);
+        sink.lock().push(&self.pcm[..len], 2);
     }
 }
 
 /// Decodes the incoming Opus track into the Voice channel. Each wake takes
 /// every event already queued; how many there were is the depth of
 /// webrtc's track queue at that moment ([`LinkStats::rx_wake`]).
-async fn receive_audio(track: Arc<dyn TrackRemote>, sink: Arc<Mutex<VoiceSink>>, stats: Arc<LinkStats>, mut stop: watch::Receiver<bool>) {
+async fn receive_audio(
+    track: Arc<dyn TrackRemote>,
+    sink: Arc<Mutex<VoiceSink>>,
+    shared: Arc<Shared>,
+    stats: Arc<LinkStats>,
+    mut stop: watch::Receiver<bool>,
+) {
     let decoder = match rusty_opus::OpusDecoder::new(48_000, 2) {
         Ok(d) => d,
         Err(e) => {
@@ -482,6 +510,7 @@ async fn receive_audio(track: Arc<dyn TrackRemote>, sink: Arc<Mutex<VoiceSink>>,
         pcm: vec![0.0f32; MAX_OPUS_FRAME * 2],
         last_seq: None,
         lag: ArrivalLag::default(),
+        ramp: GainRamp::default(),
     };
     'run: loop {
         // webrtc 0.21 keeps a closed connection's track queues open, so the
@@ -493,7 +522,7 @@ async fn receive_audio(track: Arc<dyn TrackRemote>, sink: Arc<Mutex<VoiceSink>>,
         let mut queued = 0u32;
         loop {
             match &event {
-                Some(TrackRemoteEvent::OnRtpPacket(packet)) => playout.packet(packet, &sink, &stats),
+                Some(TrackRemoteEvent::OnRtpPacket(packet)) => playout.packet(packet, shared.rx_gain.get(), &sink, &stats),
                 None | Some(TrackRemoteEvent::OnEnded) => break 'run,
                 Some(_) => {}
             }
@@ -615,6 +644,7 @@ async fn connect_once(
         gathered: Notify::new(),
         connected: Arc::new(AtomicBool::new(false)),
         sink: sink.clone(),
+        shared: shared.clone(),
         stats: Arc::new(LinkStats::default()),
         stop: stop_rx.clone(),
     });
@@ -755,18 +785,25 @@ async fn negotiate_and_run(
 
         // Trickle our candidates through VoiceSignalingRequest, then mark
         // gathering complete (processIceUpdatesCoro). They are also in the
-        // offer SDP, so failures here are not fatal.
+        // offer SDP, so failures here are not fatal. A quit gives them up:
+        // the thread must have ended before the process exits.
         if let Some(url) = params.signaling_cap_url.as_deref().filter(|u| !u.is_empty()) {
             let list = std::mem::take(&mut *handler.candidates.lock());
-            if let Some(body) = protocol::build_ice_request(&list, false, &viewer_session)
-                && let Err(e) = post_llsd(http, url, &body, HTTP_TIMEOUT).await
-            {
-                log::debug!("voice: ICE trickle failed: {e:?}");
-            }
-            if let Some(body) = protocol::build_ice_request(&[], true, &viewer_session)
-                && let Err(e) = post_llsd(http, url, &body, HTTP_TIMEOUT).await
-            {
-                log::debug!("voice: ICE completion failed: {e:?}");
+            let trickle = async {
+                if let Some(body) = protocol::build_ice_request(&list, false, &viewer_session)
+                    && let Err(e) = post_llsd(http, url, &body, HTTP_TIMEOUT).await
+                {
+                    log::debug!("voice: ICE trickle failed: {e:?}");
+                }
+                if let Some(body) = protocol::build_ice_request(&[], true, &viewer_session)
+                    && let Err(e) = post_llsd(http, url, &body, HTTP_TIMEOUT).await
+                {
+                    log::debug!("voice: ICE completion failed: {e:?}");
+                }
+            };
+            tokio::select! {
+                _ = trickle => {}
+                _ = wait_exiting(shared) => {}
             }
         }
 
@@ -783,9 +820,28 @@ async fn negotiate_and_run(
     }
     .await;
 
-    // breakVoiceConnectionCoro: tell the server we are leaving.
-    logout(http, &params.provision_cap_url, &viewer_session).await;
+    // breakVoiceConnectionCoro: tell the server we are leaving, unless the
+    // viewer is quitting: LLVoiceWebRTCConnection::connectionStateMachine
+    // (VOICE_STATE_DISCONNECT) skips this courtesy logout while shutting
+    // down and only closes the connection.
+    // A quit that comes while the logout is on its way gives it up too (a
+    // session left moments before the quit, [`crate::ExitWait::with`]): its
+    // thread must have ended before the process exits.
+    if !shared.exiting.load(Ordering::Relaxed) {
+        tokio::select! {
+            _ = logout(http, &params.provision_cap_url, &viewer_session) => {}
+            _ = wait_exiting(shared) => {}
+        }
+    }
     outcome
+}
+
+/// Resolves once the viewer is quitting (`Shared::exiting`), looked at every
+/// 10 ms like LLWebRTCVoiceClient::drainConnections.
+async fn wait_exiting(shared: &Shared) {
+    while !shared.exiting.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 /// Resolves when a shutdown is requested (or the handle is gone).

@@ -235,11 +235,7 @@ fn balance(
             if descendant.is_none() {
                 continue;
             }
-            let resolved = goal.follow.as_ref().and_then(|f| f.resolve(goal, rig, pose, pelvis, scale));
-            if goal.follow.is_some() && resolved.is_none() {
-                continue;
-            }
-            let g = resolved.as_ref().unwrap_or(goal);
+            let g = goal;
             let contact = matrices[g.bone].transform_point3(g.contact);
             let mut v = contact - pivot;
             let mut normal = None;
@@ -376,11 +372,6 @@ pub(super) fn reconcile(
         let contact_error = pins
             .iter()
             .map(|g| {
-                let resolved = g.follow.as_ref().and_then(|f| f.resolve(g, rig, pose, pelvis, scale));
-                if g.follow.is_some() && resolved.is_none() {
-                    return 0.0;
-                }
-                let g = resolved.as_ref().unwrap_or(g);
                 let (_, q, _) = matrices[g.bone].to_scale_rotation_translation();
                 matrices[g.bone].transform_point3(g.contact).distance_squared(g.position)
                     + g.rotation.map_or(0.0, |target| 0.02 * (1.0 - q.dot(target).abs().min(1.0)).powi(2))
