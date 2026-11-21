@@ -111,7 +111,8 @@ mod tests {
                 teleports: 2,
                 derender: 1,
                 media: 2,
-                contact_sets: 1,
+                // the set and its member
+                contact_sets: 2,
             }
         );
         seed(&root, "Demo Resident", Mode::Unreadable, None).unwrap();

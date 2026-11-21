@@ -10,14 +10,16 @@ pub const EMPTY_MAP: &str = "empty contact sets map";
 pub struct ImportData(ContactSets);
 
 impl ImportData {
-    /// What the file holds: sets, and residents kept outside the friends or
-    /// with a nickname, which can be all it has.
-    pub fn entries(&self) -> usize {
-        self.0.sets.len() + self.0.extra.len() + self.0.pseudonyms.len()
+    /// What the file holds, counted as [`Self::adds`] counts: what it would
+    /// add to an account without contact sets. The import window shows it,
+    /// so a first import says the same number when it is done.
+    pub fn count(&self) -> usize {
+        self.adds(&ContactSets::default())
     }
 
     /// What a merge into `sets` would add: sets, members, residents kept
     /// outside the friends and nicknames (none: the file is already in).
+    /// The one count of an import, before ([`Self::count`]) and after.
     pub fn adds(&self, sets: &ContactSets) -> usize {
         let members = self.0.sets.iter().map(|(name, set)| match sets.sets.get(name) {
             Some(ours) => set.friends.difference(&ours.friends).count(),
