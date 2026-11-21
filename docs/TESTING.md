@@ -2027,7 +2027,9 @@ when unfocused") is ignored during a screenshot.
   switched while the viewer runs, on every system, and the log says `the
   active layout changed`; the other values fix the layout and follow none.
   On Wayland or XWayland with several layouts (`us,fr`), the first layout
-  stands in until the window gets the focus; when the reported one differs,
+  stands in until the window gets the focus (on XWayland up to a second
+  more, when the read at the focus still gives the first layout: the watch
+  waits for the compositor's group); when the reported one differs,
   the log also says `the default shortcuts move to the reported layout` (a
   new profile, or a file older than settings version 45, once). Switching
   the layout while the viewer runs changes the labels, never the bindings.
