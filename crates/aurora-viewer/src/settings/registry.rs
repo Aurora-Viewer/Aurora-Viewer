@@ -91,6 +91,12 @@ impl Entry {
     pub fn changed(&self) -> bool {
         self.value != self.default
     }
+
+    /// Whether `value` has this setting's type (a share code's value,
+    /// `share.rs`); its bounds are the settings' own (`set_many`).
+    pub fn accepts(&self, value: &Value) -> bool {
+        Kind::of(value).is_some_and(|kind| self.kind.accepts(kind))
+    }
 }
 
 /// What RLVa forbids changing at the moment; the same rule for Preferences
@@ -126,7 +132,7 @@ fn hidden(key: &str) -> bool {
 }
 
 /// A UUID anywhere in `text`: 8-4-4-4-12 hexadecimal digits.
-fn holds_uuid(text: &str) -> bool {
+pub(super) fn holds_uuid(text: &str) -> bool {
     const GROUPS: [usize; 5] = [8, 4, 4, 4, 12];
     let bytes = text.as_bytes();
     (0..bytes.len().saturating_sub(35)).any(|start| {
@@ -226,6 +232,29 @@ pub fn set(settings: &mut Settings, key: &str, value: Value) -> Result<(), Strin
     next.keep_session(settings);
     *settings = next.sanitized();
     Ok(())
+}
+
+/// Sets several settings at once (a share code, `share.rs`), as `set` does
+/// one: a value the settings' types do not understand changes nothing of
+/// the others. How many settings were set.
+pub fn set_many(settings: &mut Settings, values: &[(&str, Value)]) -> usize {
+    let values: Vec<&(&str, Value)> = values.iter().filter(|(key, value)| !hidden(key) && !shows_an_id(value)).collect();
+    let mut doc = document(settings);
+    let patched = values.iter().all(|(key, value)| patch(&mut doc, key, value.clone()).is_ok());
+    if patched && let Ok(mut next) = serde_json::from_value::<Settings>(doc) {
+        next.keep_session(settings);
+        *settings = next.sanitized();
+        return values.len();
+    }
+    // one of them is refused: the others still go in, one by one
+    values
+        .iter()
+        .filter(|(key, value)| {
+            set(settings, key, value.clone())
+                .inspect_err(|e| log::warn!("settings: {key} not set ({e})"))
+                .is_ok()
+        })
+        .count()
 }
 
 impl Settings {

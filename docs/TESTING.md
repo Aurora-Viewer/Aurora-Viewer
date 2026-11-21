@@ -200,6 +200,20 @@ Check live silhouette changes, filtering, Ctrl/Shift selection, changing full
 detail, removing exceptions and adding residents from the shared picker.
 `empty` starts with no exceptions. Both scenarios use only demo settings.
 
+**Share codes.** `AURORA_DEMO_OPTIONS=system:share` opens Preferences ›
+Language and updates with the Share window: change a few graphics or
+appearance settings first and check that only those pages and settings are
+in the code, never a Privacy, Protections, RLVa, Network or Language and
+updates setting; Looks only, Everything changed and None tick the pages;
+Copy the code puts it on the clipboard. `system:share-import` opens the
+Import window with a sample code of a friend (draw distance, vsync, a chat
+colour with its swatch, the camera's field of view): every change shows its
+page, its label, the current value and the new one; unticking a page leaves
+it out of Apply; "Also put the other settings of these pages back to their
+defaults" adds those resets, marked "(default)"; a text without the header
+says it is not a code. After Apply, "Undo the last import" puts back only
+the settings it changed.
+
 **Saved graphics profiles (#1218).** `AURORA_DEMO_BARS=profiles` installs three
 demo profiles, including two with identical quality; add `AURORA_DEMO_OPTIONS=graphics` to inspect
 their editor. Use `graphics:profiles-list` to open its dropdown with one bin per
@@ -6378,7 +6392,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_ANTI_SPAM=1\|off\|global\|text\|burst` | Synthetic offer, script prompt and sound floods with Protections controls; `burst` many sources at once, one grouped notice |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > RLVa |
 | `AURORA_DEMO_RLVA=selftest` | Runs the RLVa self-test (Dev Toolbox T1), both phases, against the demo's simulated region |
-| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
+| `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, a graphics profile dialog/list, or the share code windows |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |

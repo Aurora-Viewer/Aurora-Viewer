@@ -326,6 +326,8 @@ pub(super) struct Cx<'a> {
     pub collected: Vec<(Page, &'static str)>,
     /// `Mode::Collect`: each setting a row edits, with its label and hint.
     pub described: Vec<(&'static str, String, String)>,
+    /// `Mode::Collect`: the group each setting's row is in.
+    pub grouped: Vec<(&'static str, String)>,
     /// A setting changed (the app saves and applies them).
     pub changed: bool,
 }
@@ -397,6 +399,7 @@ impl<'a> Cx<'a> {
             pick: None,
             collected: Vec::new(),
             described: Vec::new(),
+            grouped: Vec::new(),
             changed: false,
         }
     }
@@ -644,6 +647,7 @@ impl<'a> Cx<'a> {
                 t.paths(&mut paths);
                 self.described
                     .extend(paths.iter().map(|path| (*path, label.to_owned(), hint.to_owned())));
+                self.grouped.extend(paths.iter().map(|path| (*path, self.group.clone())));
                 self.collected.extend(paths.into_iter().map(|p| (self.page, p)));
                 return false;
             }
