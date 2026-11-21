@@ -11161,7 +11161,7 @@ In `showcase-hd`, the selected outfit has a 1024 px striped portrait loaded from
 texture disk cache, as after login. Reopen the showcase or select the outfit again:
 the card keeps its thumbnail and the large pane shows the striped portrait.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|showcase-hd|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|portrait-hd|portrait-hd-poor|photo-mode-hd|batch|batch-run|batch-hd|batch-hd-poor|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial|xml|xml-unavailable`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|showcase-hd|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|portrait-hd|portrait-hd-poor|photo-mode-hd|batch|batch-run|batch-hd|batch-hd-poor|batch-folder|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial|xml|xml-unavailable`**
 — opens Appearance with four synthetic outfits:
 
 - `xml`: opens Appearance’s gear menu at frame 650, showing Export my
@@ -11280,6 +11280,14 @@ gallery's double-click continues to open the outfit's contents.
   L$ 10 each, the outfit's previous HD picture goes to the Trash); the
   window counts "HD pictures saved: n (L$ …)", those still being sent and
   those not sent. The log says `outfit HD picture: …` for each.
+- `batch-folder`: the batch window over the demo's "Beach" folder only (its
+  "Night" subfolder's outfit included), as the banner opens it with the
+  showcase filtered to a folder: the headline "Outfits to photograph in
+  Beach", one outfit unticked. The bar above the rows: "All outfits" with a
+  dash, "1 of 2", Without picture. A click on All ticks both ("2 of 2",
+  Start (2)), a second unticks both (Start greyed), Without picture ticks
+  those without a picture again and greys itself. Locked and empty outfits
+  are never ticked.
 - `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
   cards. Fit shows the whole image; Fill uses a centred crop without stretching.
   The discs stay round, the images stay inside their frames and the names and
