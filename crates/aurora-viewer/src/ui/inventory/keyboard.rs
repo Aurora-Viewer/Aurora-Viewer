@@ -4,6 +4,7 @@
 //! Right opens the current folder; Left closes it, or from an item or a
 //! closed folder selects the parent row (a second Left then closes it).
 
+use super::shortcuts;
 use super::*;
 
 /// Run after rebuilding the displayed order and before laying out its viewport,
@@ -23,6 +24,7 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
     if !clipboard::list_has_focus(ui, st) || st.rename.is_some() {
         return selected_after_delete;
     }
+    let selected_by_key = select_keys::handle(ui, inv, st, explorer);
     let mut keys = Vec::new();
     ui.input_mut(|input| {
         input.events.retain(|event| {
@@ -51,13 +53,120 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
         });
     });
     let navigated = !keys.is_empty();
+    if navigated {
+        select_keys::adopt_focus(st);
+    }
     for (arrow, shift) in keys {
         match arrow {
             Arrow::Up | Arrow::Down => step(inv, st, filtered, arrow == Arrow::Down, shift),
             Arrow::Left | Arrow::Right => fold(inv, st, filtered, arrow == Arrow::Right),
         }
     }
-    navigated || selected_after_delete
+    navigated || selected_after_delete || selected_by_key
+}
+
+/// The list's file-manager commands that act on the selection: a new
+/// folder (Ctrl+Shift+N, then its name typed as `created_selection` does
+/// for the New menu), its properties (Alt+Enter) and Shift+Delete.
+///
+/// Shift+Delete purges (PurgeSelectedItems, with its confirmation that has
+/// no "don't ask again") only what is already in the Trash: Second Life
+/// only purges from there (LLInvFVBridge::isItemRemovable /
+/// "Purge Item"), so anywhere else it moves to the Trash as Delete does.
+/// Windows Explorer's Shift+Delete deletes anywhere; the Second Life rule
+/// wins.
+pub(super) fn commands(
+    ui: &mut egui::Ui,
+    inv: &Inventory,
+    root: Uuid,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let wanted = |c: shortcuts::Command| {
+        matches!(
+            c,
+            shortcuts::Command::NewFolder
+                | shortcuts::Command::Properties
+                | shortcuts::Command::Purge
+                | shortcuts::Command::ContextMenu
+                | shortcuts::Command::Refresh
+        )
+    };
+    for command in shortcuts::take(ui, wanted) {
+        match command {
+            shortcuts::Command::NewFolder => {
+                let explorer = st.aurora.is_some_and(|frame| frame.layout != aurora::Layout::Compact) && st.tab == 0;
+                let to = if explorer {
+                    root
+                } else {
+                    st.selected
+                        .filter(|id| inv.folders.contains_key(id))
+                        .or_else(|| st.selected.and_then(|id| rules::parent(inv, id)))
+                        .unwrap_or(root)
+                };
+                if st.pending.is_some() || !rules::destination(inv, to) {
+                    continue;
+                }
+                match rules::create_folder(to, crate::text_validation::default_name("common-new-folder")) {
+                    Ok(plan) => actions.push(InvAction::Edit(plan)),
+                    Err(reason) => st.message = reason,
+                }
+            }
+            // Explorer's Alt+Enter: the item's properties in a window of
+            // its own, as many as asked for, the list free behind them
+            shortcuts::Command::Properties => {
+                if let Some(id) = st.selected.filter(|id| st.selection.contains(id)) {
+                    context_catalog::properties_windows(st, vec![id]);
+                }
+            }
+            // Shift+F10: the selection's menu at its row, else the menu of
+            // the explorer's empty space (Windows' keyboard menu)
+            shortcuts::Command::ContextMenu if st.aurora.is_some() => {
+                let explorer = st.aurora.is_some_and(|frame| frame.layout != aurora::Layout::Compact);
+                match st.selected.filter(|id| st.selection.contains(id)) {
+                    Some(id) => {
+                        let at = st.selected_rect.map_or_else(|| ui.max_rect().center(), |rect| rect.left_bottom());
+                        st.row_menu = Some((id, at));
+                        st.background_menu = false;
+                    }
+                    None if explorer && st.tab == 0 => {
+                        st.row_menu = Some((root, ui.max_rect().center()));
+                        st.background_menu = true;
+                    }
+                    None => {}
+                }
+            }
+            // F5 in the tree and the Legacy-style window: "Reload folder" of
+            // the selected folder (the explorer's own F5 reloads the folder
+            // shown, `aurora::history`)
+            shortcuts::Command::Refresh => {
+                let folder = st.selected.filter(|id| inv.folders.contains_key(id)).unwrap_or(root);
+                if folder != inv.root && folder != inv.lib_root && inv.folders.contains_key(&folder) {
+                    st.message.clear();
+                    actions.push(InvAction::Preview(folder, Some(clipboard::focus_id(st))));
+                }
+            }
+            shortcuts::Command::Purge => purge(inv, st, prefs, facts, actions),
+            _ => {}
+        }
+    }
+}
+
+/// Shift+Delete: what is in the Trash is purged after its confirmation,
+/// anything else goes to the Trash as Delete does (see `commands`).
+pub(super) fn purge(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPreferences, facts: &Facts, actions: &mut Vec<InvAction>) {
+    let ids: Vec<Uuid> = st.selection.iter().copied().collect();
+    if ids.is_empty() || st.pending.is_some() || st.pending_delete.is_some() {
+        return;
+    }
+    let in_trash = ids.iter().all(|id| rules::in_type(inv, *id, 14));
+    if in_trash && delete::allowed(inv, &ids, prefs, facts) {
+        st.dialog = Some(EditDialog::Delete(ids, true));
+    } else {
+        delete::request(inv, st, prefs, facts, actions);
+    }
 }
 
 /// The rows the list drew last: the plain tree, Aurora's explorer folder or

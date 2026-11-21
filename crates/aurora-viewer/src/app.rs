@@ -1448,6 +1448,11 @@ fn shortcut_claims_focus(
     if mods.ctrl && !shift && !alt && letter("s") && ui::inventory::document_save_focused(ctx) {
         return false;
     }
+    // a focused inventory list keeps its file manager's chords (Ctrl+Shift+A
+    // inverts there, not People; Ctrl+Shift+N makes a folder, not the sunset)
+    if ui::inventory::list_keeps_chord(ctx, &Input::key(code), mods.ctrl, shift, alt) {
+        return false;
+    }
     true
 }
 
@@ -7964,6 +7969,17 @@ impl App {
                 );
                 return;
             }
+            // the inventory lists' keys: one the list could never see, or
+            // keeps fixed, is refused the same way (`inventory_accepts`)
+            if crate::keybinds::is_inventory(action) && !crate::keybinds::inventory_accepts(action, &b) {
+                self.world.notifications.push(
+                    crate::world::notifications::Kind::Info,
+                    aurora_i18n::tr!("common-inventory").to_owned(),
+                    aurora_i18n::tr!("keybinds-inventory-refused", keys = b.label()),
+                    crate::world::notifications::Data::None,
+                );
+                return;
+            }
             self.settings.keybinds.set(action, slot, Some(b));
             if action == Action::HudDrag {
                 self.down.clear();
@@ -13267,6 +13283,7 @@ impl App {
             ui::close_key::begin(ui.ctx());
             // the chat fields' shortcuts, as Preferences › Shortcuts set them
             ui::chat::shortcuts::publish(ui.ctx(), &self.settings.keybinds);
+            ui::inventory::publish_shortcuts(ui.ctx(), &self.settings.keybinds);
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             // A discarded pass (`request_discard`) is followed by one that
@@ -23559,6 +23576,9 @@ impl ApplicationHandler for App {
                         | "aurora-columns"
                         | "aurora-columns-hidden"
                         | "aurora-gallery"
+                        | "aurora-gallery-system-folders"
+                        | "aurora-system-folders"
+                        | "aurora-filtered"
                         | "aurora-gallery-medium"
                         | "aurora-gallery-large"
                         | "aurora-combination"
@@ -23592,6 +23612,10 @@ impl ApplicationHandler for App {
                         | "aurora-folder-colors"
                         | "aurora-folder-colors-behind"
                         | "aurora-folder-colors-follow"
+                        | "aurora-explorer"
+                        | "aurora-explorer-path"
+                        | "aurora-explorer-menu"
+                        | "aurora-explorer-medium"
                 );
                 if configured_view {
                     crate::world::inventory::demo::seed_view(
@@ -23687,6 +23711,27 @@ impl ApplicationHandler for App {
                             } else {
                                 ui::inventory::view::ExplorerView::Gallery
                             };
+                        }
+                        if view.ends_with("system-folders") {
+                            // every system folder's icon, at the root, and
+                            // the open icon of the sidebar's selected one
+                            crate::world::inventory::demo::seed_system_folders(&mut self.world.inventory);
+                            self.inventory_ui.demo_browse_root(&self.world.inventory);
+                            self.panels.camera_controls = false;
+                        }
+                        if view == "aurora-filtered" {
+                            // the type filters' symbols in the list and on
+                            // the chip naming them
+                            self.inventory_ui.demo_type_filters((1 << 0) | (1 << 6) | (1 << 19));
+                            self.panels.camera_controls = false;
+                        }
+                        if view.starts_with("aurora-explorer") {
+                            // Back, Up, the breadcrumb's chevrons and two
+                            // folders pinned to Quick access
+                            self.inventory_ui.demo_explorer(&view);
+                            // the column lists a pin once its folder is there
+                            self.settings.inventory.pinned = vec![uuid::Uuid::from_u128(8000), uuid::Uuid::from_u128(8001)];
+                            self.panels.camera_controls = false;
                         }
                         if view.starts_with("aurora-folder-window") {
                             // the right-click tests in a window of their own
@@ -25235,12 +25280,17 @@ impl ApplicationHandler for App {
                         && !self.alt
                         && matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("s"))
                         && ui::inventory::document_save_focused(&self.egui_ctx);
+                    // the focused inventory list's chord is the list's only
+                    // (shortcut_claims_focus gave it to egui)
+                    let inventory_chord =
+                        pressed && ui::inventory::list_keeps_chord(&self.egui_ctx, &Input::key(code), mods.ctrl, self.shift, self.alt);
                     if pressed
                         && ((!resp.consumed && !typing) || shortcut || chat_pass)
                         && !ke.repeat
                         && !find_taken
                         && !script_command
                         && !document_save
+                        && !inventory_chord
                         && !ui_shortcut
                     {
                         self.on_input(Input::key(code), pressed);

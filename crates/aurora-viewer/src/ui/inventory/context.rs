@@ -332,7 +332,40 @@ pub(super) fn show(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
-    let mut catalog = super::context_catalog::build(inv, id, st, prefs, facts);
+    let catalog = super::context_catalog::build(inv, id, st, prefs, facts);
+    show_catalog(ui, p, inv, id, catalog, st, prefs, facts, actions);
+}
+
+/// The menu of the explorer's empty space, for the folder it shows
+/// (`context_catalog::build_background`), arranged with the same
+/// customizable layout as the others.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn show_background(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    folder: Uuid,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
+    let catalog = super::context_catalog::build_background(inv, folder, st, prefs, facts);
+    show_catalog(ui, p, inv, folder, catalog, st, prefs, facts, actions);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn show_catalog(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    id: Uuid,
+    mut catalog: super::context_catalog::Catalog,
+    st: &mut InventoryUi,
+    prefs: &mut InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
     let scope = super::context_catalog::scope(inv, id);
     prefs.context_menus.unify();
     st.menu_editor
