@@ -8075,9 +8075,14 @@ impl App {
                 && self.build.material_uploads.contains(request)
             {
                 let defaults = self.settings.inventory.creation_permissions.materials.permissions();
-                upload.permissions.next_owner &= defaults.next_owner;
-                upload.permissions.group &= defaults.group;
-                upload.permissions.everyone &= defaults.everyone;
+                upload.permissions = crate::build::texture_copy::material_save_masks(upload.permissions, defaults);
+                // findUserDefinedCategoryUUIDForType(FT_MATERIAL): the chosen
+                // material upload folder, else Materials
+                upload.folder = crate::imports::Imports::default_folder(
+                    &self.world,
+                    &self.settings.inventory,
+                    aurora_net::inventory::upload::Kind::Material,
+                );
             }
             if let NetCommand::Build(
                 aurora_net::build::BuildCmd::UpdateTaskInventory { item, .. } | aurora_net::build::BuildCmd::RezScript { item, .. },

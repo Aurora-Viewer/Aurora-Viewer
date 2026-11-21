@@ -553,6 +553,43 @@ fn tint_strip(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// "Save material as" (LLPanelFace's PBR save, LLMaterialEditor::
+/// saveObjectsMaterialAs), a cell of the map grid in both window styles:
+/// greyed when `save` is None, otherwise it asks the name.
+pub(super) fn save_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    material: &aurora_assets::material::PbrMaterial,
+    save: Option<crate::build::texture_copy::MaterialSave>,
+    size: f32,
+) {
+    ui.allocate_ui_with_layout(egui::vec2(size, size), egui::Layout::top_down(egui::Align::Center), |ui| {
+        ui.set_min_width(size);
+        ui.add_space((size - 34.0) / 2.0);
+        let tip = aurora_i18n::tr!("build-material-save-as");
+        let response = super::compact::icon_button_large(ui, p, "device-floppy-filled", tip, save.is_some())
+            .on_disabled_hover_text(aurora_i18n::tr!("build-material-save-not-allowed"));
+        if response.clicked()
+            && let Some(rights) = save
+        {
+            match material.encode_asset() {
+                Ok(data) => {
+                    tool.ui.material_save = Some(super::MaterialSaveDraft {
+                        name: aurora_i18n::tr!("build-material-new-material").to_owned(),
+                        data,
+                        rights,
+                    });
+                }
+                Err(reason) => {
+                    log::warn!("material not saved: {reason}");
+                    tool.status = reason.to_string();
+                }
+            }
+        }
+    });
+}
+
 fn material_asset(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -850,7 +887,9 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     // A local material is the user's file: the Legacy Viewer reopens it in
     // the material editor instead; not offered here yet.
     let local = asset.is_some_and(|asset| world.local_assets.contains_key(&asset));
-    let save = if has_all && loaded && !asset_mixed && !local {
+    // LLMaterialEditor::capabilitiesAvailable: the region takes materials
+    let caps = world.main_has_cap("UpdateMaterialAgentInventory") && world.main_has_cap("UpdateMaterialTaskInventory");
+    let save = if has_all && loaded && !asset_mixed && !local && caps {
         tool.material_save_allowed(world, &faces)
     } else {
         None
@@ -868,7 +907,21 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         )
     });
     if super::legacy::active(ui) {
-        legacy_texture::pbr_surface(ui, p, tool, world, env, sel, &mat, asset, asset_mixed, maps_mixed, model, editable);
+        legacy_texture::pbr_surface(
+            ui,
+            p,
+            tool,
+            world,
+            env,
+            sel,
+            &mat,
+            asset,
+            asset_mixed,
+            maps_mixed,
+            model,
+            editable,
+            (&save_mat, save),
+        );
     } else {
         let size = 56.0;
         let base = [mat.base_color_factor[0], mat.base_color_factor[1], mat.base_color_factor[2]].map(super::common::linear_to_srgb);
@@ -972,30 +1025,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                         size,
                     );
                     // Save to inventory, in the free cell under Emissive.
-                    ui.allocate_ui_with_layout(egui::vec2(size, size), egui::Layout::top_down(egui::Align::Center), |ui| {
-                        ui.set_min_width(size);
-                        ui.add_space((size - 34.0) / 2.0);
-                        let tip = aurora_i18n::tr!("build-material-save-as");
-                        let response = super::compact::icon_button_large(ui, p, "device-floppy-filled", tip, save.is_some())
-                            .on_disabled_hover_text(aurora_i18n::tr!("build-material-save-not-allowed"));
-                        if response.clicked()
-                            && let Some(rights) = save
-                        {
-                            match save_mat.encode_asset() {
-                                Ok(data) => {
-                                    tool.ui.material_save = Some(super::MaterialSaveDraft {
-                                        name: aurora_i18n::tr!("build-material-new-material").to_owned(),
-                                        data,
-                                        rights,
-                                    });
-                                }
-                                Err(reason) => {
-                                    log::warn!("material not saved: {reason}");
-                                    tool.status = reason.to_string();
-                                }
-                            }
-                        }
-                    });
+                    save_button(ui, p, tool, &save_mat, save, size);
                 });
             });
             pbr_factors(ui, p, tool, world, sel, &mat, editable);

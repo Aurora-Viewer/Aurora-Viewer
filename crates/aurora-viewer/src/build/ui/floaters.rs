@@ -702,8 +702,9 @@ fn contents_filters(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool) {
 
 /// "Save material as" (the SaveMaterialAs notification of
 /// LLMaterialEditor::saveObjectsMaterialAs): the name, then the material goes
-/// to the Materials folder (LLMaterialEditor::createInventoryItem), with the
-/// creation defaults for materials applied when it is sent.
+/// to the material upload folder (LLMaterialEditor::createInventoryItem), with
+/// the creation defaults for materials applied when it is sent (both in
+/// `App::flush_build`).
 fn save_material(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &World) {
     let Some(draft) = tool.ui.material_save.as_mut() else { return };
     let mut answer = None;
