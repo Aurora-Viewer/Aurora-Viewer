@@ -23,6 +23,8 @@ use aurora_render::water_effects::{LAND_DEPTH, SEA_GRID};
 /// finds the same neighbours wherever the grid is centred: a cell keeps
 /// its value as the grid follows the camera (no waves popping).
 const MARGIN: usize = 24;
+/// How much of a mesh's box (across) calms the water round it.
+const MESH_CORE: f32 = 0.6;
 /// How far under the still water a prim must reach to cross it (m).
 const PIERCE: f32 = 0.3;
 /// Undersides higher than this above the water leave the waves alone (m).
@@ -41,6 +43,10 @@ pub struct ShelterBox {
     pub rotation: Quat,
     /// Half its scale.
     pub half: Vec3,
+    /// A mesh or a sculpt: its box is a poor stand-in for its shape (a reef
+    /// rock's box covers far more water than the rock), so it calms only
+    /// round its core and caps no clearance (decks and floors are boxes).
+    pub mesh: bool,
 }
 
 impl ShelterBox {
@@ -102,6 +108,17 @@ pub fn bake(origin: Vec2, extent: f32, size: usize, levels: &[f32], boxes: &[She
         if !(b.center.is_finite() && b.rotation.is_finite() && b.half.is_finite()) {
             continue;
         }
+        // a mesh shelters round the core of its box only
+        let core;
+        let b = if b.mesh {
+            core = ShelterBox {
+                half: Vec3::new(b.half.x * MESH_CORE, b.half.y * MESH_CORE, b.half.z),
+                ..*b
+            };
+            &core
+        } else {
+            b
+        };
         let (lo, hi, bottom, top) = b.bounds();
         let Some(home) = index(b.center.truncate()) else {
             continue;
@@ -112,12 +129,18 @@ pub fn bake(origin: Vec2, extent: f32, size: usize, levels: &[f32], boxes: &[She
         }
         // a box thinner than a cell (a piling) still marks the cell it
         // stands in
+        let mesh = b.mesh;
         let reach = |water: f32, (enter, leave): (f32, f32), i: usize, grid: &mut Vec<[f32; 2]>, crossed: &mut Vec<bool>| {
             if leave < water - PIERCE {
                 return;
             }
             if enter <= water {
                 crossed[i] = true;
+                // (a mesh's box is not its shape: a reef rock's would hold
+                // the sea flat over all the water it spans)
+                if mesh {
+                    return;
+                }
                 // what crosses the water holds it under its top too: a floor
                 // laid at the water keeps the sea from showing through it
                 // (a piling or a wall stands higher than any crest)
@@ -524,11 +547,34 @@ mod tests {
     }
 
     #[test]
+    fn a_mesh_rock_does_not_hold_the_sea_over_its_whole_box() {
+        // a rock's box 20 m across through the water, its top 0.3 m above it
+        let rock = |mesh: bool| ShelterBox {
+            center: Vec3::new(64.0, 64.0, 19.0),
+            rotation: Quat::IDENTITY,
+            half: Vec3::new(10.0, 10.0, 1.3),
+            mesh,
+        };
+        let levels = vec![20.0; 128 * 128];
+        let at = |grid: &[[f32; 2]], x: f32| grid[64 * 128 + x as usize];
+        let as_box = bake(Vec2::ZERO, 128.0, 128, &levels, &[rock(false)], Vec2::ZERO);
+        let as_mesh = bake(Vec2::ZERO, 128.0, 128, &levels, &[rock(true)], Vec2::ZERO);
+        // a box prim crossing the water caps it under its top (a floor at
+        // the water); a mesh's box does not
+        assert!(at(&as_box, 58.0)[1] < 0.5);
+        assert_eq!(at(&as_mesh, 58.0)[1], OPEN_CLEARANCE);
+        // near the edge of its box (8 m off its centre) the mesh's water is
+        // calmer than open water no more than it is round its core
+        assert!(at(&as_mesh, 56.0)[0] > at(&as_box, 56.0)[0]);
+    }
+
+    #[test]
     fn a_piling_calms_around_it_and_further_downwind() {
         let piling = ShelterBox {
             center: Vec3::new(64.5, 64.5, 19.0),
             rotation: Quat::IDENTITY,
             half: Vec3::new(0.15, 0.15, 3.0),
+            mesh: false,
         };
         let grid = bake_one(piling, Vec2::X);
         assert!((at(&grid, 64.5, 64.5)[0] - CALMEST).abs() < 1e-5, "{:?}", at(&grid, 64.5, 64.5));
@@ -543,6 +589,7 @@ mod tests {
             center: Vec3::new(64.0, 64.0, 20.9),
             rotation: Quat::IDENTITY,
             half: Vec3::new(6.0, 2.0, 0.1),
+            mesh: false,
         };
         let grid = bake_one(deck, Vec2::ZERO);
         let [calm, clearance] = at(&grid, 61.0, 64.5);
@@ -557,6 +604,7 @@ mod tests {
             center: Vec3::new(64.0, 64.0, 20.0),
             rotation: Quat::IDENTITY,
             half: Vec3::new(5.0, 5.0, 0.1),
+            mesh: false,
         };
         let grid = bake_one(floor, Vec2::ZERO);
         let [_, clearance] = at(&grid, 64.5, 64.5);
@@ -570,6 +618,7 @@ mod tests {
                 center: Vec3::new(64.0, 64.0, z),
                 rotation: Quat::IDENTITY,
                 half: Vec3::splat(2.0),
+                mesh: false,
             };
             assert!(bake_one(b, Vec2::X).iter().all(|c| *c == [1.0, OPEN_CLEARANCE]), "{z}");
         }
@@ -655,6 +704,7 @@ mod tests {
             center: Vec3::new(64.0, 64.0, 20.0),
             rotation: Quat::from_rotation_y(0.1),
             half: Vec3::new(10.0, 1.0, 0.05),
+            mesh: false,
         };
         let grid = bake_one(ramp, Vec2::ZERO);
         assert!(at(&grid, 59.0, 64.5)[1] > 0.2, "raised end: {:?}", at(&grid, 59.0, 64.5));

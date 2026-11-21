@@ -421,11 +421,13 @@ mod tests {
             center: Vec3::new(32.0, 32.0, 18.5),
             rotation: glam::Quat::IDENTITY,
             half: Vec3::new(1.2, 1.2, 2.5),
+            mesh: false,
         };
         let floor = |underside: f32| ShelterBox {
             center: Vec3::new(32.0, 32.0, underside + 0.125),
             rotation: glam::Quat::IDENTITY,
             half: Vec3::new(4.0, 4.0, 0.125),
+            mesh: false,
         };
         let crashes = |boxes: &[ShelterBox]| {
             let mut c = Crashes::default();
@@ -459,6 +461,7 @@ mod tests {
             center: Vec3::new(32.0, 32.0, 20.0),
             rotation: glam::Quat::IDENTITY,
             half: Vec3::new(0.5, 6.0, 3.0),
+            mesh: false,
         };
         let mut bursts = |depth: f32| {
             let g = ground(depth);
@@ -490,6 +493,7 @@ mod tests {
             center: Vec3::new(32.0, 32.0, 20.0),
             rotation: glam::Quat::IDENTITY,
             half: Vec3::new(4.0, 2.0, 3.0),
+            mesh: false,
         };
         let stone = |_: usize, origin: Vec3, dir: Vec3| {
             let face_x = 31.0;
@@ -532,6 +536,7 @@ mod tests {
             center: Vec3::new(32.0, 32.0, 20.0),
             rotation: glam::Quat::from_rotation_z(yaw),
             half: Vec3::new(0.5, 6.0, 3.0),
+            mesh: false,
         };
         // the swell going east: the wall's west face takes it
         let mut found = Vec::new();

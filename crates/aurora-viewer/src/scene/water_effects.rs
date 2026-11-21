@@ -78,6 +78,9 @@ struct SeaBaking {
 
 /// How long a new sea grid takes to replace the previous one (s).
 const SEA_FADE: f32 = 6.0;
+/// How far past the next grid step (m) the camera goes before the sea grid
+/// follows it.
+const GRID_HOLD: f32 = 24.0;
 
 impl SeaGrid {
     /// How far the fade has gone at `time` (0 the previous grid, 1 this).
@@ -149,7 +152,9 @@ fn shelter_boxes(scene: &Scene, world: &World, origin: Vec2, extent: f32) -> Vec
     // (through frame_par: a plain rayon loop held the frame for a pool
     // worker on a busy region, #4121)
     crate::frame_par::filter_map_indexed(&scene.gpu, SCAN_GRAIN, |i, g| {
-        if g.hud || g.is_avatar || g.owner_avatar.is_some() || g.faces.is_empty() {
+        // (whether its shape is loaded or not: turning the camera loads and
+        // drops shapes, and the grid was baked again each time)
+        if g.hud || g.is_avatar || g.owner_avatar.is_some() {
             return None;
         }
         let c = g.center.truncate();
@@ -186,7 +191,16 @@ fn shelter_boxes(scene: &Scene, world: &World, origin: Vec2, extent: f32) -> Vec
         if world.ground_height(p).is_some_and(|g| g > level + 2.0) {
             return None;
         }
-        Some((i, super::water_shelter::ShelterBox { center: p, rotation, half }))
+        let mesh = o.volume.is_mesh() || o.volume.is_sculpt();
+        Some((
+            i,
+            super::water_shelter::ShelterBox {
+                center: p,
+                rotation,
+                half,
+                mesh,
+            },
+        ))
     })
 }
 
@@ -396,7 +410,16 @@ impl Effects {
             // the water: 20,000 heights and the shelter's prims)
             let (sea_grid, sea_prev, sea_origin) = if settings.waves {
                 let step = 64.0;
-                let sea_origin = (eye.truncate() / step).floor() * step + Vec2::splat(step * 0.5 - SEA_EXTENT * 0.5);
+                // (it stays where it is until the camera is well past the
+                // next step: a camera orbiting across the line moved it back
+                // and forth, baking and fading in a grid each time)
+                let ideal = (eye.truncate() / step).floor() * step + Vec2::splat(step * 0.5 - SEA_EXTENT * 0.5);
+                let sea_origin = self
+                    .sea_grid
+                    .as_ref()
+                    .map(|g| g.origin)
+                    .filter(|o| (*o + Vec2::splat(SEA_EXTENT * 0.5) - eye.truncate()).abs().max_element() < step * 0.5 + GRID_HOLD)
+                    .unwrap_or(ideal);
                 let due = self
                     .sea_grid
                     .as_ref()
@@ -454,7 +477,8 @@ impl Effects {
                                 for i in 0..64 {
                                     let xy =
                                         sea_origin + (Vec2::new((i % 8) as f32, (i / 8) as f32) + Vec2::splat(0.5)) * (SEA_EXTENT / 8.0);
-                                    ground_water(xy).map(f32::to_bits).hash(h);
+                                    // (to 25 cm: the ground streaming in is no change)
+                                    ground_water(xy).map(|v| (v * 4.0).round() as i32).hash(h);
                                 }
                             }),
                         ]
