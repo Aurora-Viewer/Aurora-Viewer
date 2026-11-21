@@ -88,6 +88,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         }
     }
 

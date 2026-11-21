@@ -19,7 +19,8 @@ impl App {
         for effect in self.world.inventory.poll_offers(session) {
             match effect {
                 Effect::Sent { recipient, name, folder } => {
-                    self.world.inventory_offer_sent(recipient, &name, folder);
+                    let in_session = self.inventory_ui.offers_in_session.contains(&recipient);
+                    self.world.inventory_offer_sent(recipient, &name, folder, in_session);
                     self.fire_beam(recipient, glam::DVec3::ZERO);
                 }
                 Effect::Feedback(reason) => self.offer_feedback(reason),
@@ -283,12 +284,15 @@ impl App {
             0 => {
                 if texture_preview {
                     st.attachment_preview = Some(item);
+                } else {
+                    self.rlva_view_blocked(0);
                 }
             }
             2 => {
                 let avatar = item.desc.parse::<Uuid>().ok().filter(|id| !id.is_nil()).unwrap_or(item.creator);
                 if !avatar.is_nil() {
-                    self.profile_ui.open(&mut self.world, avatar);
+                    self.profile_ui
+                        .open_in(&mut self.world, crate::world::names::NameScope::Roster, avatar);
                 }
             }
             1 => {
@@ -497,13 +501,8 @@ impl App {
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id, owner) => {
-                if self
-                    .world
-                    .inventory
-                    .items
-                    .get(&id)
-                    .is_some_and(|it| !self.world.inventory.can_preview(it.asset_type))
-                {
+                let kind = self.world.inventory.items.get(&id).map(|it| it.asset_type);
+                if kind.is_some_and(|kind| self.rlva_preview_refused(kind)) {
                     return;
                 }
                 if crate::ui::texture_library::catalogue::resource(&self.world.inventory, id).is_some() {
@@ -621,9 +620,9 @@ impl App {
             } => {
                 self.open_notecard_attachment(editor, notecard, marker, copy, Uuid::nil());
             }
-            InvAction::Environment(asset, flags, item) => {
+            InvAction::Environment(asset, flags) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
-                    self.pick_local_settings(asset, kind, Some(item));
+                    self.world.eep.request_local_item(asset, kind);
                 }
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
@@ -668,6 +667,16 @@ impl App {
                 }
             }
             InvAction::Share { items, residents } => {
+                // dropped on the conversation of its one resident, or given
+                // another way (`InventoryUi::share_in_session`)
+                let in_session = self.inventory_ui.share_in_session.take();
+                for resident in &residents {
+                    if in_session == Some(*resident) && residents.len() == 1 {
+                        self.inventory_ui.offers_in_session.insert(*resident);
+                    } else {
+                        self.inventory_ui.offers_in_session.remove(resident);
+                    }
+                }
                 let worn = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();
                 let roots = rules::roots(&self.world.inventory, &items);
                 let mut blocked = false;
@@ -705,7 +714,9 @@ impl App {
                         .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
                 }
             }
-            InvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
+            // asked from a name the inventory shows (`ui::inventory::resident_scopes`:
+            // a hidden owner or creator is no link), or from a calling card
+            InvAction::Profile(id) => self.profile_ui.open_in(&mut self.world, crate::world::names::NameScope::Roster, id),
             InvAction::AboutLandmark(item, asset) => self.show_place_profile(crate::world::place_details::Source::Landmark { item, asset }),
             InvAction::CopyLandmarkSlurl(asset) => {
                 self.world
@@ -1101,7 +1112,21 @@ impl App {
                 | crate::world::appearance::Action::SaveIn(..)
                 | crate::world::appearance::Action::ImportJson { .. }
         );
-        let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
+        // RLVa: a link is worn by its own folder's locks (rlva_note_wear_entry)
+        self.world.rlva_note_wear_request(&action);
+        let mut attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
+        // RLVa: rez_attachment takes the point the names give while a point
+        // is locked (Wear, Add, a drop on the avatar; not an outfit)
+        if matches!(
+            action,
+            crate::world::appearance::Action::WearItem { .. }
+                | crate::world::appearance::Action::WearItems { .. }
+                | crate::world::appearance::Action::Add(_)
+        ) {
+            for attachment in &mut attachments {
+                attachment.point = self.world.rlva_rez_point(attachment.item_id, attachment.point);
+            }
+        }
         match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();

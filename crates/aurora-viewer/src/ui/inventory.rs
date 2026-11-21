@@ -41,6 +41,7 @@ mod document;
 pub use embedded::save_focused as document_save_focused;
 pub(crate) mod drag;
 mod embedded;
+mod find;
 mod folder_colors;
 pub use folder_colors::{demo as folder_colors_demo, demo_frame as folder_colors_demo_frame};
 mod hover;
@@ -195,8 +196,7 @@ pub enum InvAction {
         text: String,
         close: bool,
     },
-    /// A sky, water or day for myself: its asset, flags and item.
-    Environment(Uuid, u32, Uuid),
+    Environment(Uuid, u32),
     EnvironmentParcel(Uuid),
     ExportTextures {
         items: Vec<Uuid>,
@@ -265,6 +265,9 @@ pub struct Facts {
     /// Worn objects that handle touches (enable_attachment_touch).
     pub touchable: HashSet<Uuid>,
     pub names: std::collections::HashMap<Uuid, String>,
+    /// The stand-in of each owner or creator RLVa's `@shownames` hides, by
+    /// the field that shows them (`resident_scopes`): it opens no profile.
+    pub hidden_names: HiddenNames,
     /// The profile picture of the residents the dialogs show.
     pub pictures: std::collections::HashMap<Uuid, egui::TextureHandle>,
     pub online: HashSet<Uuid>,
@@ -318,6 +321,7 @@ impl Facts {
             appearance_busy,
             touchable: world.touchable_attachment_items(),
             names: Default::default(),
+            hidden_names: Default::default(),
             pictures: Default::default(),
             online: world
                 .social
@@ -343,7 +347,8 @@ impl Facts {
                     )
                 }),
             rlva: world.rlva_wear_locks(),
-            landmark_blocked: !world.rlva_can_teleport_landmark(),
+            // (LLLandmarksPanel::isActionEnabled: @tplm only)
+            landmark_blocked: !world.rlva_landmark_button_enabled(),
             opensim: world.home_grid.is_some(),
         }
     }
@@ -358,7 +363,8 @@ impl Facts {
         if self.worn.contains(&item) {
             return self.rlva.can_remove(item);
         }
-        let wear = self.rlva.wear(inv, item, 0);
+        // the row itself: a link is worn by its own folder's locks
+        let wear = self.rlva.wear(inv, id, 0);
         if add { wear.add } else { wear.replace }
     }
 
@@ -412,7 +418,7 @@ pub struct PropertyEdit {
 impl From<&aurora_net::inventory::InvItem> for PropertyEdit {
     fn from(it: &aurora_net::inventory::InvItem) -> Self {
         Self {
-            name: shown_name(it).to_owned(),
+            name: it.name.clone(),
             desc: it.desc.clone(),
             next: it.next_owner_mask,
             group: it.group_mask,
@@ -646,6 +652,12 @@ pub struct InventoryUi {
     hover: hover::State,
     pub share_picker: super::avatar_picker::AvatarPicker,
     pub share_items: Vec<Uuid>,
+    /// The resident on whose conversation the items of the Share dialog
+    /// were dropped, and those whose offer made that way is on its way:
+    /// LLGiveInventory::logInventoryOffer writes such a gift in the
+    /// conversation whatever RLVa hides (`World::inventory_offer_sent`).
+    pub share_in_session: Option<Uuid>,
+    pub offers_in_session: std::collections::HashSet<Uuid>,
     pub property_edit: Option<(Uuid, PropertyEdit)>,
     pub preview: Option<Uuid>,
     pub preview_text: Option<Result<String, String>>,
@@ -656,6 +668,8 @@ pub struct InventoryUi {
     /// Seeded from the shared preference on first display, then kept per window.
     pub notecard_view: Option<NotecardView>,
     notecard_markdown: markdown::Cache,
+    /// The find bar of the notecard (Ctrl+F), with its last text.
+    notecard_find: find::Find,
     pub attachment_preview: Option<aurora_net::inventory::InvItem>,
     pub preview_original: String,
     preview_description: Option<document::Description>,
@@ -841,13 +855,7 @@ impl InventoryUi {
         self.selection.clear();
         self.selection.insert(id);
         self.reveal = Some(id);
-        // a coded settings item: its name without the Aurora Weather code,
-        // which the rename keeps (`finish_rename`)
-        let name = inv
-            .items
-            .get(&id)
-            .and_then(weather_coded_name)
-            .map_or_else(|| rules::name(inv, id), str::to_owned);
+        let name = rules::name(inv, id);
         self.rename = Some(InlineRename { id, name, focus: true });
         self.message.clear();
     }
@@ -1083,6 +1091,36 @@ impl InventoryUi {
 
 use tree::folder_icon;
 
+/// The owner and the creator of an item with the place each is named in
+/// under RLVa's `@shownames`, as LLSidepanelItemInfo::refreshFromItem and
+/// LLFloaterProperties do (indra/newview/llsidepaneliteminfo.cpp,
+/// llfloaterproperties.cpp): the owner is hidden unless excepted
+/// (canShowName(SNC_DEFAULT, owner)), the creator only when they also own
+/// the item or stand in a region around (RlvUtil::isNearbyAgent). The owner
+/// first, then the creator; a nil id (no creator sent, a group's item)
+/// names no one.
+pub(crate) fn resident_scopes(it: &aurora_net::inventory::InvItem) -> [(Uuid, crate::world::names::NameScope); 2] {
+    use crate::world::names::NameScope;
+    let owner = if it.group_owned { Uuid::nil() } else { it.owner };
+    [(it.owner, NameScope::Owner), (it.creator, NameScope::Creator { owner })]
+}
+
+/// The stand-ins of the owners and creators `@shownames` hides, each by the
+/// field that shows it: the Legacy Viewer answers for each field, so a
+/// resident hidden as the owner of an item is still named as the creator of
+/// another one that they neither own nor stand near.
+pub(crate) type HiddenNames = std::collections::HashMap<(Uuid, crate::world::names::NameScope), String>;
+
+/// Notes in `hidden` the stand-in of the owner and of the creator of `it`
+/// where `@shownames` hides them.
+pub(crate) fn hide_residents(world: &World, it: &aurora_net::inventory::InvItem, hidden: &mut HiddenNames) {
+    for (resident, scope) in resident_scopes(it) {
+        if !resident.is_nil() && !world.rlva_shows_name(scope, resident) {
+            hidden.insert((resident, scope), world.social.name_in(scope, &resident));
+        }
+    }
+}
+
 /// II_FLAGS_OBJECT_HAS_MULTIPLE_ITEMS / LLInventoryIcon::getIconName
 /// (Firestorm indra/{llinventory,newview}, originally LGPL 2.1).
 pub const OBJECT_HAS_MULTIPLE_ITEMS: u32 = 0x200000;
@@ -1194,36 +1232,6 @@ fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette) {
     tree::icon(ui, icons, name, p, None);
 }
 
-/// A settings item's name without its Aurora Weather code (weather/region.rs),
-/// when it has one: shown with [`weather_tag`] instead.
-pub(crate) fn weather_coded_name(it: &aurora_net::inventory::InvItem) -> Option<&str> {
-    if it.asset_type != 56 {
-        return None;
-    }
-    crate::weather::region::coded_name(&it.name)
-}
-
-/// The name an item's fields show: a coded settings item's without its
-/// code, which a rename keeps (`weather::region::keep_code`).
-pub(crate) fn shown_name(it: &aurora_net::inventory::InvItem) -> &str {
-    weather_coded_name(it).unwrap_or(&it.name)
-}
-
-/// " [Aurora Weather]" after a coded settings item's name, "Aurora" in the
-/// aurora gradient (as the Environment window's section), the rest muted.
-pub(crate) fn weather_tag(p: &Palette, job: &mut egui::text::LayoutJob, font: egui::FontId) {
-    job.append(" [", 0.0, egui::TextFormat::simple(font.clone(), p.muted));
-    let tag = crate::ui::options::aurora_word(p, aurora_i18n::tr!("ui-weather-aurora"), font.clone(), p.muted);
-    let start = job.text.len();
-    job.text.push_str(&tag.text);
-    for mut section in tag.sections {
-        section.byte_range = section.byte_range.start + start..section.byte_range.end + start;
-        section.leading_space = 0.0;
-        job.sections.push(section);
-    }
-    job.append("]", 0.0, egui::TextFormat::simple(font, p.muted));
-}
-
 fn item_row(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -1254,16 +1262,12 @@ fn item_row(
         }
         let worn = facts.worn_label(inv, *id);
         let font_id = egui::FontId::proportional(13.0);
-        let coded = weather_coded_name(it);
-        let shown = coded.unwrap_or(&it.name);
+        let shown = it.name.as_str();
         let mut label = super::widgets::name_with_suffix(shown, "", font_id.clone(), p.ink);
         if worn.is_some()
             && let Some(section) = label.sections.first_mut()
         {
             super::widgets::embolden(ui, &mut section.format);
-        }
-        if coded.is_some() {
-            weather_tag(p, &mut label, font_id.clone());
         }
         let name = worn
             .filter(|_| super::widgets::faux_bold_offset(ui).is_some())
@@ -1890,9 +1894,9 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
         && st.selected == Some(id)
         && st.selection.len() == 1
         && st.pending.is_none()
-        && !ui.ctx().text_edit_focused()
-        && ui.input(|i| i.key_pressed(egui::Key::F2))
+        && clipboard::list_has_focus(ui, st)
         && rules::renameable(inv, id)
+        && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F2))
     {
         st.begin_rename(inv, id);
     }
@@ -1920,6 +1924,8 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
         st.reveal = None;
         st.reveal_path.clear();
     }
+    // egui releases the editor on Enter/Escape before returning its response.
+    let keyboard_owner = r.has_focus() || (r.lost_focus() && ui.memory(|m| m.focused().is_none()));
     if edit.focus {
         r.request_focus();
         if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), r.id) {
@@ -1930,12 +1936,19 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
             state.store(ui.ctx(), r.id);
         }
         edit.focus = false;
-    } else if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-        ui.memory_mut(|m| m.surrender_focus(r.id));
+    } else if keyboard_owner && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        clipboard::request_focus(ui, st);
         return true;
     } else if !r.has_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        // LLFolderView::handleKeyHere / onRenamerLost (indra/llui/llfolderview.cpp):
+        // completing a rename keeps navigation in this list. A click or Tab
+        // that moved focus elsewhere must keep its new destination instead.
+        let submitted = keyboard_owner && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
         st.rename = Some(edit);
         finish_rename(inv, st, actions);
+        if submitted && st.rename.is_none() {
+            clipboard::request_focus(ui, st);
+        }
         return true;
     }
     st.rename = Some(edit);
@@ -1949,11 +1962,7 @@ fn finish_rename(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAct
     if !rules::renameable(inv, edit.id) {
         return;
     }
-    // a coded settings item keeps its weather code (`begin_rename`)
-    let typed = rules::clean_name(&edit.name).map(|name| match inv.items.get(&edit.id).filter(|it| weather_coded_name(it).is_some()) {
-        Some(it) => crate::weather::region::keep_code(&it.name, &name),
-        None => name,
-    });
+    let typed = rules::clean_name(&edit.name);
     match typed {
         Ok(name) if name == rules::name(inv, edit.id) => return,
         Ok(name) if st.pending.is_none() => match rules::patch(inv, edit.id, aurora_llsd::llsd_map! { "name" => name }) {
@@ -2365,28 +2374,30 @@ pub fn show(
     } else {
         Facts::default()
     };
-    fn property_names(st: &InventoryUi, world: &World, names: &mut std::collections::HashMap<Uuid, String>) {
+    fn property_names(st: &InventoryUi, world: &World, facts: &mut Facts) {
         if let Some(EditDialog::Properties(id)) = st.dialog
             && let Some(it) = world.inventory.items.get(&id)
         {
+            // the real names, for the fields that show them
             for resident in [it.owner, it.creator].into_iter().filter(|id| !id.is_nil()) {
-                names.insert(
+                facts.names.insert(
                     resident,
                     world
                         .social
                         .avatar_names
-                        .complete(&resident)
+                        .complete_in(crate::world::names::NameScope::Roster, &resident)
                         .unwrap_or_else(|| aurora_i18n::tr!("common-loading-2").into()),
                 );
             }
+            hide_residents(world, it, &mut facts.hidden_names);
         }
         for window in &st.windows {
-            property_names(&window.state, world, names);
+            property_names(&window.state, world, facts);
         }
     }
-    property_names(st, world, &mut facts.names);
+    property_names(st, world, &mut facts);
     if let Some(dual) = dual.as_deref() {
-        property_names(dual, world, &mut facts.names);
+        property_names(dual, world, &mut facts);
     }
     // the give confirmation names its resident and shows their picture,
     // asked of the app (issue #1197)
@@ -2398,7 +2409,9 @@ pub fn show(
         if let Some(EditDialog::Share(_, residents)) = &state.dialog {
             for resident in residents {
                 world.social.want_name(*resident);
-                facts.names.insert(*resident, world.social.name_of(resident));
+                facts
+                    .names
+                    .insert(*resident, world.social.name_in(crate::world::names::NameScope::Roster, resident));
             }
             // Only the first resident's portrait is shown.
             if let Some(first) = residents.first() {
@@ -2413,14 +2426,19 @@ pub fn show(
     // Aurora's details of the selection name its creator and owner.
     if !classic && *open {
         for state in std::iter::once(&*st).chain(dual.as_deref()) {
-            let residents = state
+            let original = state
                 .selected
                 .and_then(|id| rules::original(&world.inventory, id))
                 .and_then(|id| world.inventory.items.get(&id))
-                .map(|it| [it.owner, it.creator]);
-            for resident in residents.into_iter().flatten().filter(|id| !id.is_nil()) {
-                world.social.want_name(resident);
-                facts.names.insert(resident, world.social.name_of(&resident));
+                .cloned();
+            if let Some(it) = original {
+                for resident in [it.owner, it.creator].into_iter().filter(|id| !id.is_nil()) {
+                    world.social.want_name(resident);
+                    facts
+                        .names
+                        .insert(resident, world.social.name_in(crate::world::names::NameScope::Roster, &resident));
+                }
+                hide_residents(world, &it, &mut facts.hidden_names);
             }
         }
     }
@@ -2446,9 +2464,13 @@ pub fn show(
                 .collect();
             st.creator_generation = Some(world.inventory.generation);
         }
+        // the search reads the creators' names and shows none of them
+        // (LLInventoryFilter has no `@shownames` test)
         for id in &st.creators {
             world.social.want_name(*id);
-            facts.names.insert(*id, world.social.name_of(id));
+            facts
+                .names
+                .insert(*id, world.social.name_in(crate::world::names::NameScope::Roster, id));
         }
     }
     let inv = &mut world.inventory;
@@ -2888,6 +2910,77 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RLVa `@shownames` answers for each field, as
+    /// LLSidepanelItemInfo::refreshFromItem does: the owner is hidden unless
+    /// excepted, the creator only when they also own the item or stand in a
+    /// region around, and a resident hidden in one field stays named in
+    /// another.
+    #[test]
+    fn shownames_hides_the_owner_and_the_creator_field_by_field() {
+        use crate::world::names::NameScope;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let me = world.agent_id;
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != me)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        let (far, maker) = (Uuid::from_u128(0xfa5), Uuid::from_u128(0xc4ea));
+        let item = |owner, creator, group_owned| aurora_net::inventory::InvItem {
+            owner,
+            creator,
+            group_owned,
+            ..Default::default()
+        };
+        let hidden = |world: &World, it: &aurora_net::inventory::InvItem| {
+            let mut hidden = HiddenNames::new();
+            hide_residents(world, it, &mut hidden);
+            let mut fields: Vec<_> = hidden.into_keys().collect();
+            fields.sort_by_key(|(_, scope)| *scope != NameScope::Owner);
+            fields
+        };
+        assert!(hidden(&world, &item(far, near, false)).is_empty(), "no restriction");
+        world.rlva.configure(true);
+        let restrict = |world: &mut World, command: String| {
+            world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: "Names fixture".into(),
+                source_id: Uuid::from_u128(1),
+                owner_id: me,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: command,
+            }));
+            world.refresh_rlva_privacy();
+        };
+        restrict(&mut world, "@shownames=n".into());
+        // someone else's item, made by a resident who is away: the owner alone
+        assert_eq!(hidden(&world, &item(far, maker, false)), [(far, NameScope::Owner)]);
+        // my own item: its creator is hidden only when they stand around
+        assert!(hidden(&world, &item(me, far, false)).is_empty());
+        assert_eq!(hidden(&world, &item(me, near, false)), [(near, NameScope::Creator { owner: me })]);
+        // a creator who owns the item is hidden in both fields...
+        assert_eq!(
+            hidden(&world, &item(far, far, false)),
+            [(far, NameScope::Owner), (far, NameScope::Creator { owner: far })]
+        );
+        // ...and stays named as the creator of my item shown at the same time
+        let mut both = HiddenNames::new();
+        hide_residents(&world, &item(far, far, false), &mut both);
+        hide_residents(&world, &item(me, far, false), &mut both);
+        assert!(!both.contains_key(&(far, NameScope::Creator { owner: me })));
+        // a group's item names no owner, and its creator owns nothing
+        assert!(hidden(&world, &item(Uuid::nil(), far, true)).is_empty());
+        // an exception names the resident in every field
+        restrict(&mut world, format!("@shownames:{near}=add"));
+        assert!(hidden(&world, &item(near, near, false)).is_empty());
+    }
 
     #[test]
     fn inventory_tab_filters_keep_independent_defaults_and_live_edits() {
@@ -5582,6 +5675,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
+                clipboard::list_focus(ui, state, 24.0);
                 item_row(
                     ui,
                     &crate::theme::Theme::default().palette(),

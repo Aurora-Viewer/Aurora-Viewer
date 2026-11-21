@@ -149,7 +149,10 @@ fn question(c: &Confirm, parcel: &ParcelInfo, world: &mut World) -> String {
             let contribution = if parcel.flags & pf::CONTRIBUTE_WITH_DEED != 0 {
                 aurora_i18n::tr!(
                     "ui-land-dialogs-it-will-include-a-simultaneous-group-contribution-from",
-                    value0 = world.social.name_of(&parcel.owner_id).to_string()
+                    value0 = world
+                        .social
+                        .name_in(crate::world::names::NameScope::Roster, &parcel.owner_id)
+                        .to_string()
                 )
             } else {
                 String::new()
@@ -173,7 +176,10 @@ fn question(c: &Confirm, parcel: &ParcelInfo, world: &mut World) -> String {
         ),
         Confirm::ReturnOwner => aurora_i18n::tr!(
             "ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-5",
-            value0 = world.social.name_of(&parcel.owner_id).to_string(),
+            value0 = world
+                .social
+                .name_in(crate::world::names::NameScope::Roster, &parcel.owner_id)
+                .to_string(),
             value1 = format!("{}", parcel.owner_prims)
         ),
         Confirm::ReturnGroup => aurora_i18n::tr!(
@@ -192,7 +198,10 @@ fn question(c: &Confirm, parcel: &ParcelInfo, world: &mut World) -> String {
         ),
         Confirm::ReturnOther => aurora_i18n::tr!(
             "ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-4",
-            value0 = world.social.name_of(&parcel.owner_id).to_string(),
+            value0 = world
+                .social
+                .name_in(crate::world::names::NameScope::Roster, &parcel.owner_id)
+                .to_string(),
             value1 = format!("{}", parcel.other_prims)
         ),
         Confirm::ReturnList(o) if o.is_group => aurora_i18n::tr!(
@@ -202,7 +211,7 @@ fn question(c: &Confirm, parcel: &ParcelInfo, world: &mut World) -> String {
         ),
         Confirm::ReturnList(o) => aurora_i18n::tr!(
             "ui-land-dialogs-are-you-sure-you-want-to-return-all-objects-5",
-            value0 = world.social.name_of(&o.id).to_string(),
+            value0 = world.social.name_in(crate::world::names::NameScope::Roster, &o.id).to_string(),
             value1 = format!("{}", o.count)
         ),
         Confirm::ReturnOwners(owners) => aurora_i18n::tr!(
@@ -248,7 +257,10 @@ fn accept(c: Confirm, parcel: &ParcelInfo, world: &mut World) {
             } else {
                 aurora_i18n::tr!(
                     "ui-land-dialogs-objects-on-the-selected-parcel-owned-by-have-been",
-                    value0 = world.social.name_of(&parcel.owner_id).to_string()
+                    value0 = world
+                        .social
+                        .name_in(crate::world::names::NameScope::Roster, &parcel.owner_id)
+                        .to_string()
                 )
             };
             info(world, body);
@@ -278,7 +290,7 @@ fn accept(c: Confirm, parcel: &ParcelInfo, world: &mut World) {
             } else {
                 aurora_i18n::tr!(
                     "ui-land-dialogs-objects-on-the-selected-parcel-owned-by-resident-have",
-                    value0 = world.social.name_of(&o.id).to_string()
+                    value0 = world.social.name_in(crate::world::names::NameScope::Roster, &o.id).to_string()
                 )
             };
             info(world, body);
@@ -528,7 +540,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
 /// LLFloaterSellLandUI: price, buyer, objects, then the confirmation.
 fn sell_form(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, world: &mut World, parcel: &ParcelInfo, f: &mut SellForm, close: &mut bool) {
     let price: i32 = f.price.trim().parse().unwrap_or(-1);
-    let buyer_name = f.buyer.map(|id| world.social.name_of(&id));
+    let buyer_name = f.buyer.map(|id| world.social.name_in(crate::world::names::NameScope::Roster, &id));
     if f.confirming {
         let name = if f.to == 1 {
             aurora_i18n::tr!("common-everyone").to_owned()
@@ -798,10 +810,14 @@ fn experience_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut 
 fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut EnvironmentPicker, close: &mut bool) {
     // the settings folders load as the environment selector's do
     let loading = env_select::scan_step(&mut world.inventory) > 0;
-    let order = crate::ui::inventory::view::picker_order(ui.ctx(), &world.inventory);
-    let catalog = SettingsCatalog::build(&world.inventory, |id| order.rank(id));
-    crate::ui::widgets::search_text_edit(ui, p, &mut f.filter, |edit| {
-        edit.hint_text(aurora_i18n::tr!("common-search")).desired_width(f32::INFINITY)
+    let ranks = crate::ui::environment::list_ranks(ui.ctx(), &world.inventory);
+    let catalog = SettingsCatalog::build(&world.inventory, |id| ranks.rank(id));
+    ui.horizontal(|ui| {
+        let width = ui.available_width() - 20.0 - ui.spacing().item_spacing.x;
+        crate::ui::widgets::search_text_edit(ui, p, &mut f.filter, |edit| {
+            edit.hint_text(aurora_i18n::tr!("common-search")).desired_width(width)
+        });
+        crate::ui::environment::order_toggle(ui, p);
     });
     ui.add_space(4.0);
     let needle = f.filter.trim().to_lowercase();
@@ -813,7 +829,7 @@ fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let mut any = false;
-            for (kind, c) in catalog.choices(settings_kinds(f.track), |id| order.rank(id)) {
+            for (kind, c) in catalog.choices(settings_kinds(f.track), |id| ranks.rank(id)) {
                 let icon = match kind {
                     SettingsKind::Day => "sunrise-filled",
                     SettingsKind::Sky => "sun-filled",

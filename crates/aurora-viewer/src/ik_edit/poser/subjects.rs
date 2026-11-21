@@ -429,10 +429,6 @@ impl Editor {
                 self.poser.requests.push(Request::RepairBridge);
             }
         }
-        menu::separator(ui, p);
-        if menu::item(ui, p, "lock-filled", aurora_i18n::text("poser-privacy")) {
-            self.poser.requests.push(Request::OpenPrivacy);
-        }
         if let Some(id) = pick {
             self.pick_subject(world, id);
             ui.close();

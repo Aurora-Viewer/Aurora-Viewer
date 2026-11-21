@@ -1,5 +1,5 @@
 use super::*;
-use crate::{demo, scene::avatar::AvatarLibrary, world::rig_graph::Target};
+use crate::{demo, scene::avatar::AvatarLibrary};
 use aurora_net::NetEvent;
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ fn fixture() -> (World, Editor, ik::Pose) {
     world.main_region = Some(1);
     world.apply(NetEvent::ObjectUpdates {
         handle: 1,
-        objects: demo::hand_ik::objects(0.0, true),
+        objects: vec![demo::action_avatar(false)],
     });
     let mut editor = Editor::default();
     editor.toggle();
@@ -100,7 +100,7 @@ fn shoulders_upper_arms_neck_and_toes_rotate_locally_without_moving_ancestors() 
                 assert_eq!(stable.rotations, local.rotations, "{parent}: no frame accumulation");
             }
         }
-        editor.reset_bone(bone, rig);
+        editor.reset_bone(bone);
         let local = evaluate(&mut world, &editor, &mut state);
         assert!(local.rotations[bone].dot(rig.local_rot[bone]).abs() > 0.99999);
         assert!(local.rotations[child].dot(child_rotation).abs() > 0.99999);
@@ -146,35 +146,6 @@ fn an_unbound_ik_move_becomes_local_pose_and_follows_later_parent_rotations() {
     assert_eq!(editor.request().goals.len(), 1, "only an explicit activation creates a pin");
     editor.enable_limb(wrist, false, rig, &Frame::new(&world).unwrap());
     assert!(editor.request().goals.is_empty());
-}
-
-#[test]
-fn a_bound_joint_keeps_target_offsets_and_rotations_instead_of_becoming_fk() {
-    let (mut world, mut editor, mut state) = fixture();
-    let lib = world.avatar_lib.clone();
-    let rig = &lib.rig;
-    let bone = rig.names["mHead"];
-    rotate(&world, &mut editor, "mHead", Quat::from_rotation_y(0.3));
-    evaluate(&mut world, &editor, &mut state);
-    let frame = Frame::new(&world).unwrap();
-    assert!(editor.bind_target(
-        &world,
-        &frame,
-        bone,
-        Target::Prim {
-            id: demo::action_id(demo::hand_ik::LEFT),
-            name: "Left".into()
-        }
-    ));
-    assert!(!editor.authoring.owns(bone));
-    editor.update_graph(&world, &frame);
-    let before = editor.graph.definition.bindings[0].offset;
-    editor.set_rotation(Quat::from_rotation_z(0.2) * editor.rotation());
-    editor.commit_manipulation(rig, &frame, true);
-    editor.update_graph(&world, &frame);
-    assert_eq!(editor.request().goals.len(), 1);
-    assert!(editor.request().joints.is_empty());
-    assert!(!editor.graph.definition.bindings[0].offset.q().abs_diff_eq(before.q(), 1e-4));
 }
 
 #[test]

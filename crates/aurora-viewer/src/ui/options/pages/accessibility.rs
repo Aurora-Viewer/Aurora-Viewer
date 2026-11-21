@@ -1,10 +1,10 @@
 //! Preferences › Accessibility (Aurora's own page; the Legacy Viewer has
 //! no colour blindness option): the high contrast palette
-//! (`crate::high_contrast`, #906), the colour vision the interface adapts
-//! to (`crate::colorblind`, #418) with a preview of the status dots, the
-//! reduced motion, and the settings of other pages that help to see, read
-//! and hear, gathered here (`Cx::borrow`: their own rows, so the same
-//! settings).
+//! (`crate::high_contrast`, #906), disable glass (`crate::disable_glass`),
+//! the colour vision the interface adapts to (`crate::colorblind`, #418)
+//! with a preview of the status dots, the reduced motion, and the settings
+//! of other pages that help to see, read and hear, gathered here
+//! (`Cx::borrow`: their own rows, so the same settings).
 
 use super::super::Page;
 use super::super::cx::{Cx, Nothing, field};
@@ -23,6 +23,11 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-high-contrast"),
             tr!("ui-options-high-contrast-help"),
             &field!(high_contrast),
+        );
+        cx.toggle(
+            tr!("ui-options-disable-glass"),
+            tr!("ui-options-disable-glass-help"),
+            &field!(disable_glass),
         );
         cx.borrow(Page::Avatars, 0, &["name_tag_distance"]);
     });

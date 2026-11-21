@@ -14,6 +14,7 @@ use crate::ui::context::{self, AvatarList, CtxAction};
 use crate::ui::{menu, presence, widgets};
 use crate::world::World;
 use crate::world::radar::{ChatRanges, chat_ranges};
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
 
@@ -659,7 +660,7 @@ fn band_header(ui: &mut egui::Ui, p: &Palette, band: Band) {
 pub(super) fn section_header(ui: &mut egui::Ui, p: &Palette, title: &str) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), BAND_H), Sense::hover());
     let galley = ui.painter().layout_no_wrap(
-        title.to_uppercase(),
+        title.ui_upper(),
         FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())),
         p.muted_dim,
     );
@@ -973,7 +974,7 @@ fn paint_rich(
     let mut name = semibold(ui, 13.0, name_color);
     name.italics = row.muted;
     let mut job = egui::text::LayoutJob::single_section(row.name.clone(), name);
-    let mark = crate::world::staff::mark(world, &row.id);
+    let mark = crate::world::staff::mark(world, &row.id).filter(|_| !row.anonymous);
     let staff = staff_room(ui, p, mark, 13.0, width);
     job.wrap = egui::text::TextWrapping::truncate_at_width(width - staff);
     let name_g = ui.painter().layout_job(job);
@@ -1072,7 +1073,7 @@ fn paint_compact(
     let mut format = egui::TextFormat::simple(FontId::proportional(12.0), name_color);
     format.italics = row.muted;
     let mut job = egui::text::LayoutJob::single_section(row.name.clone(), format);
-    let mark = crate::world::staff::mark(world, &row.id);
+    let mark = crate::world::staff::mark(world, &row.id).filter(|_| !row.anonymous);
     let staff = staff_room(ui, p, mark, 12.0, width);
     job.wrap = egui::text::TextWrapping::truncate_at_width(width - staff);
     let g = ui.painter().layout_job(job);

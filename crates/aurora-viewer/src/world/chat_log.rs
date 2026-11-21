@@ -24,12 +24,15 @@
 //! - `import`: a Legacy Viewer's transcripts brought into the account's
 //!   folder, adding only;
 //! - `conversations`: the conversation log (`conversation.log` in the same
-//!   folder), who we talked with and when.
+//!   folder), who we talked with and when;
+//! - `service`: the Chat Service's direct-IM history (the LL viewer 26.5
+//!   archive per resident) stitched with the transcript and the live rows.
 
 pub mod conversations;
 pub mod format;
 pub mod import;
 pub mod names;
+pub mod service;
 pub mod store;
 pub mod transcript;
 
@@ -350,6 +353,24 @@ impl ChatLog {
         self.worker.as_ref()
     }
 
+    /// Run a job on the transcript thread, in turn with the lines queued
+    /// before it (the Chat Service's storage). False when it was refused:
+    /// it will not run.
+    pub fn run_job(&mut self, job: impl FnOnce() + Send + 'static) -> bool {
+        self.worker().is_some_and(|w| w.run(job))
+    }
+
+    /// The legacy-transcript inputs of a direct conversation's stitched
+    /// read: the folder and the cleaned stem whose family is read
+    /// (LLLogChat::getTranscriptFamily). None while logged out.
+    pub fn family_of(&self, stem: &str) -> Option<(PathBuf, String)> {
+        let clean = names::clean_file_name(stem.trim());
+        if clean.is_empty() {
+            return None;
+        }
+        Some((self.dir()?.to_path_buf(), clean))
+    }
+
     /// Append a line to a conversation's file (LLLogChat::saveHistory). An
     /// empty `from` is a system line. Nothing happens while logged out.
     pub fn append(&mut self, stem: &str, time: SystemTime, from: &str, text: &str) {
@@ -357,7 +378,11 @@ impl ChatLog {
             return;
         };
         let from = if from.trim().is_empty() { format::SYSTEM_FROM } else { from };
-        let line = format::format_line(Some(&format::stamp(time, true)), from, text);
+        // stamped with the grid's time, as LLLogChat::saveHistory stamps
+        // time_corrected(): a computer behind the grid writes the minute
+        // the Chat Service rows have too (#4233)
+        let stamp = format::stamp(crate::ui::bars::clock::grid_time(time), true);
+        let line = format::format_line(Some(&stamp), from, text);
         let mut text = if store::EOL == "\n" { line } else { line.replace('\n', store::EOL) };
         text.push_str(store::EOL);
         if let Some(w) = self.worker() {

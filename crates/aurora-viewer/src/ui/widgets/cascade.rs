@@ -17,6 +17,9 @@ pub(crate) enum Group {
     Gesture,
     /// A conversation in its own window (floater_fs_im_session.xml).
     Conversation,
+    /// Properties of an object's contents item: the Legacy Viewer's
+    /// per-item "properties" instances stack in one group.
+    TaskProperties,
     Inventory(i32),
 }
 

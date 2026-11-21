@@ -445,7 +445,7 @@ pub fn command_line() -> i32 {
     attach_console();
     let settings = crate::settings::Settings::load();
     // the saved language, unless the command line chose one
-    aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
+    crate::language_file::select(&settings.language, settings.custom_language);
     let mut system = system::for_run();
     let current = Login {
         grid: settings.login_uri(),

@@ -1,6 +1,6 @@
 //! Real-joint selection and manipulation. No project, binding or virtual-node pass.
 use super::*;
-use crate::ik_edit::segments::{self, Source};
+use crate::ik_edit::segments;
 
 impl Editor {
     pub(in crate::ik_edit) fn select_pose_bone(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
@@ -90,6 +90,11 @@ impl Editor {
             && !self.gizmo.dragging()
         {
             self.sync_pose_bone(bone, &frame);
+        }
+        // the poser opened: frame the whole avatar, once (a tab, a side or a
+        // drag only changes the selection and never asks)
+        if std::mem::take(&mut self.poser.open_frame_pending) {
+            self.request_poser_framing(rig.pelvis, crate::camera::PoserFraming::Open);
         }
         // Process tabs first: hidden groups must lose their handles this frame.
         self.poser_ui(ctx, p, world, &frame);
@@ -321,7 +326,7 @@ impl Editor {
         let Some(segment) = segments::pick(&segments, pointer) else {
             return;
         };
-        let Source::Bone(bone) = segment.source else { return };
+        let bone = segment.bone;
         // From the geometry: the shaft's area only exists once hovered.
         self.poser.pointer_owned = true;
         self.poser.marker_hover = true;

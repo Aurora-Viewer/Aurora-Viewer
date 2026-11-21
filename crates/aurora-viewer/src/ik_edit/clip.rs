@@ -927,7 +927,6 @@ impl Editor {
             self.poser.active = false;
             self.leave_clip();
             self.open = false;
-            self.cancel_link_pick();
         }
         prepared
     }
@@ -1123,9 +1122,6 @@ impl Editor {
         }
         self.goals.retain(|g| !self.disabled.contains(&g.bone));
         self.disabled.clear();
-        self.graph.selected = None;
-        self.graph.pause();
-        self.cancel_link_pick();
         self.drag = None;
         self.gizmo.cancel();
         self.weight = 1.0;
