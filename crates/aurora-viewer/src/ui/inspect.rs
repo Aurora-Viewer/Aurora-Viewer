@@ -116,6 +116,11 @@ pub struct Row {
     /// object owned by a group.
     pub owner: Option<Uuid>,
     pub creator: Option<Uuid>,
+    /// RLVa's `@shownames` hides the creator in the world while this row
+    /// names them (they neither own the object nor stand around): their
+    /// profile opens from here, as LLFloaterInspect::onClickCreatorProfile
+    /// (indra/newview/llfloaterinspect.cpp) opens it.
+    pub creator_named_here_alone: bool,
     /// Seconds since the epoch.
     pub created: u64,
     pub faces: u32,
@@ -159,7 +164,7 @@ fn sorted(rows: &[Row], sort: Option<(Column, bool)>) -> Vec<&Row> {
     let Some((column, descending)) = sort else {
         return list;
     };
-    let text = |a: &str, b: &str| a.to_lowercase().cmp(&b.to_lowercase());
+    let text = |a: &str, b: &str| crate::natural_order::cmp(a, b);
     list.sort_by(|a, b| {
         let order = match column {
             Column::Name => text(&a.name, &b.name),
@@ -390,21 +395,27 @@ impl InspectUi {
                 ui.horizontal(|ui| {
                     ui.set_height(BUTTONS);
                     let size = Vec2::new(0.0, 26.0);
-                    for (label, tip, who) in [
+                    for (label, tip, who, named_here_alone) in [
                         (
                             aurora_i18n::tr!("inspect-owner-profile"),
                             aurora_i18n::tr!("inspect-owner-profile-tip"),
                             current.and_then(|r| r.owner),
+                            false,
                         ),
                         (
                             aurora_i18n::tr!("inspect-creator-profile"),
                             aurora_i18n::tr!("inspect-creator-profile-tip"),
                             current.and_then(|r| r.creator),
+                            current.is_some_and(|r| r.creator_named_here_alone),
                         ),
                     ] {
                         let button = widgets::action_button_if(ui, p, "user-filled", label, ActionKind::Flat, size, who.is_some());
                         if button.on_hover_text(tip).clicked() {
-                            profile = who;
+                            let (as_the_world, as_named_here) = profile_route(who, named_here_alone);
+                            profile = as_the_world;
+                            if let Some(id) = as_named_here {
+                                crate::ui::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, id);
+                            }
                         }
                     }
                     // menu_fs_inspect_options.xml: the name stays
@@ -424,6 +435,14 @@ impl InspectUi {
         }
         profile
     }
+}
+
+/// How a profile button opens `who`: handed back to the app, which opens it
+/// as the world names people, or asked as a place that names its people asks
+/// (`profile::request_open_in`) for the creator this window names while the
+/// world hides them, whom the first way would refuse.
+fn profile_route(who: Option<Uuid>, named_here_alone: bool) -> (Option<Uuid>, Option<Uuid>) {
+    if named_here_alone { (None, who) } else { (who, None) }
 }
 
 fn stats(ui: &mut egui::Ui, p: &Palette, t: &Totals) {
@@ -481,6 +500,18 @@ mod tests {
                 ui.show(ctx, p, &rows, &Totals::default(), &mut u32::MAX.clone());
             },
         );
+    }
+
+    #[test]
+    fn the_creator_the_window_alone_names_opens_as_a_named_resident() {
+        let id = Uuid::from_u128(7);
+        // the owner, or a creator the world names: handed back to the app
+        assert_eq!(profile_route(Some(id), false), (Some(id), None));
+        // a creator `@shownames` hides in the world and this window names
+        assert_eq!(profile_route(Some(id), true), (None, Some(id)));
+        // a disabled button opens nothing either way
+        assert_eq!(profile_route(None, false), (None, None));
+        assert_eq!(profile_route(None, true), (None, None));
     }
 
     fn row(n: u128, name: &str, triangles: u32) -> Row {

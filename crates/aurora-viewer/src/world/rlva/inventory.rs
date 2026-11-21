@@ -11,20 +11,42 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 use uuid::Uuid;
 
-type LockedFolders = HashMap<(Uuid, String), Vec<Uuid>>;
+/// The folders of every "…this" lock, and the folders of the links under
+/// #RLV, by the item they point to.
+#[derive(Default)]
+pub(crate) struct LockedFolders {
+    rules: HashMap<(Uuid, String), Vec<Uuid>>,
+    links: HashMap<Uuid, Vec<Uuid>>,
+}
 
 /// The folders of every "…this" lock, shared by the checks of one pass (the
-/// watchdog's attachments, a folder tree). Resolving them walks the whole
-/// inventory, so the result is kept across passes while what it reads stays
+/// watchdog's attachments, a folder tree). Resolving them walks the shared
+/// folder, so the result is kept across passes while what it reads stays
 /// the same ([`LockInputs`]), as RlvFolderLocks keeps its lookups until
 /// onNeedsLookupRefresh marks them dirty (rlvlocks.cpp).
 #[derive(Default)]
 pub(crate) struct FolderLocks(std::cell::OnceCell<Arc<LockedFolders>>);
 
 impl FolderLocks {
+    fn resolved(&self, world: &World) -> &LockedFolders {
+        self.0.get_or_init(|| world.rlva_locked_folders())
+    }
+
     fn folders(&self, world: &World, source: Uuid, option: &str) -> &[Uuid] {
-        let all = self.0.get_or_init(|| world.rlva_locked_folders());
-        all.get(&(source, option.to_owned())).map_or(&[], Vec::as_slice)
+        self.resolved(world)
+            .rules
+            .get(&(source, option.to_owned()))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// The (folded) folders of the links to `item` under #RLV.
+    fn link_folders(&self, world: &World, item: Uuid) -> &[Uuid] {
+        self.resolved(world).links.get(&item).map_or(&[], Vec::as_slice)
+    }
+
+    /// Every folder a "…this" lock or exception names.
+    pub(super) fn roots(&self, world: &World) -> Vec<Uuid> {
+        self.resolved(world).rules.values().flatten().copied().collect()
     }
 }
 
@@ -65,8 +87,8 @@ impl World {
         {
             return folders.clone();
         }
-        let folders = Arc::new(
-            self.rlva_context_folders_of(
+        let folders = Arc::new(LockedFolders {
+            rules: self.rlva_context_folders_of(
                 self.rlva
                     .rules
                     .iter()
@@ -74,11 +96,74 @@ impl World {
                     .filter(|(_, r)| r.behaviour.contains("this"))
                     .map(|(source, r)| (source, r.option.as_str())),
             ),
-        );
+            links: self.rlva_shared_link_folders(),
+        });
         *cache.lock().unwrap_or_else(PoisonError::into_inner) = Some((inputs, folders.clone()));
         folders
     }
+
+    /// Every link under #RLV, by the item it points to: the folded folders
+    /// holding a link to it. The walk of RlvFolderLocks::getLockedItems
+    /// (collectDescendentsIf from the shared root, LLLinkedItemIDMatches),
+    /// done once for every item.
+    fn rlva_shared_link_folders(&self) -> HashMap<Uuid, Vec<Uuid>> {
+        let mut links = HashMap::<Uuid, Vec<Uuid>>::new();
+        let Some(root) = shared_root(&self.inventory) else {
+            return links;
+        };
+        let legacy = self.rlva.preferences.legacy_naming;
+        let mut stack = vec![root];
+        let mut seen = HashSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(f) = self.inventory.folders.get(&id) else { continue };
+            stack.extend(f.children.iter().copied());
+            for it in f.items.iter().filter_map(|id| self.inventory.items.get(id)) {
+                if it.asset_type == 24 && it.asset_id != it.id {
+                    links
+                        .entry(it.asset_id)
+                        .or_default()
+                        .push(folded_parent(&self.inventory, it.parent, legacy));
+                }
+            }
+        }
+        for folders in links.values_mut() {
+            folders.sort_unstable();
+            folders.dedup();
+        }
+        links
+    }
+
+    /// The folder remove locks of a worn item, `except` one issuer's:
+    /// RlvFolderLocks::getLockedItems (rlvlocks.cpp) locks a worn item when
+    /// the folder of the item itself is locked, or the folder of any of its
+    /// links under #RLV. An item worn from a link in a locked folder stays on.
+    /// Every check of a worn item asks here (taking it off, the watchdog,
+    /// the locked HUDs, Release Keys, the presence queries), so that none
+    /// forgets the links.
+    ///
+    /// Deliberately stricter than the Legacy Viewer: an item whose own
+    /// record is not loaded yet is still held by its links under #RLV. The
+    /// reference only walks the worn items its inventory holds, and would
+    /// let such an item go until its folder arrives.
+    pub(super) fn rlva_item_folders_removable_in(&self, locks: &FolderLocks, item: Uuid, except: Uuid) -> bool {
+        if !self.rlva_has_folder_rule() {
+            return true;
+        }
+        let own = self.inventory.items.get(&item).map(|it| it.parent);
+        own.iter()
+            .chain(locks.link_folders(self, item))
+            .all(|folder| self.rlva_folder_signature_in(locks, *folder, false, except).is_empty())
+    }
 }
+
+/// How long a wear stands for the entry it was asked from (`rlva_note_wear_entry`).
+const WEAR_ENTRY_TIME: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The forced batches queued at most (`rlva_inventory_force`).
+const FORCE_QUEUE_LIMIT: usize = 4096;
 
 pub const LAYERS: &[&str] = &[
     "shape",
@@ -104,15 +189,17 @@ pub const LAYERS: &[&str] = &[
 const OUTFIT_ORDER: &[usize] = &[9, 8, 5, 4, 6, 12, 7, 11, 10, 1, 3, 2, 0, 13, 14, 15, 16];
 const GROUPS: &[&str] = &["arms", "head", "legs", "torso", "hud"];
 
-/// rlvAttachGroupFromIndex; body groups in avatar_lad.xml are zero-based.
-/// Deliberate correction: HUDs use the native HUD flag below. The reference's
-/// pre-Bento group 8 is now ordinary Bento points; actual HUDs use group 9.
+/// rlvAttachGroupFromIndex (rlvhelper.cpp), on the group of avatar_lad.xml:
+/// its "hud" is group 8, which avatar_lad.xml gives the Bento points (tail,
+/// wings, ring fingers, hind feet…); the HUD points (group 9) are in no
+/// group, as in the reference.
 fn group_name(group: u8) -> Option<&'static str> {
     Some(match group {
         0 | 1 | 3 | 4 => "arms",
         2 => "head",
         5 | 7 => "legs",
         6 => "torso",
+        8 => "hud",
         _ => return None,
     })
 }
@@ -171,8 +258,8 @@ pub const POINTS: &[&str] = &[
     "alt right eye",
     "tongue",
     "groin",
-    "hind left foot",
-    "hind right foot",
+    "left hind foot",
+    "right hind foot",
 ];
 
 pub fn point(name: &str) -> Option<u8> {
@@ -191,13 +278,18 @@ pub fn layer(name: &str) -> Option<u8> {
 pub(super) fn shared_root(inv: &Inventory) -> Option<Uuid> {
     // RlvInventory::getSharedRootID prefers the first populated #RLV root,
     // otherwise the last empty one, in native inventory child order.
-    let candidates = inv.folders.get(&inv.root).map(|f| f.children.clone()).unwrap_or_else(|| {
-        let mut ids: Vec<_> = inv.folders.keys().copied().collect();
-        ids.sort();
-        ids
-    });
+    let sorted;
+    let candidates = match inv.folders.get(&inv.root) {
+        Some(f) => f.children.as_slice(),
+        None => {
+            let mut ids: Vec<_> = inv.folders.keys().copied().collect();
+            ids.sort();
+            sorted = ids;
+            sorted.as_slice()
+        }
+    };
     let mut empty = None;
-    for id in candidates {
+    for id in candidates.iter().copied() {
         if let Some(f) = inv
             .folders
             .get(&id)
@@ -220,11 +312,22 @@ fn folded(name: &str, legacy: bool) -> bool {
     super::naming::folded(name, legacy)
 }
 
+/// The locks that go by where a folder is (under #RLV or not), whatever the
+/// folder: they reach the whole inventory.
+fn placement_rule(name: &str) -> bool {
+    matches!(name, "sharedwear" | "sharedunwear" | "unsharedwear" | "unsharedunwear")
+}
+
+/// The rules that lock the inventory root (ST_ROOTFOLDER in RlvFolderLocks,
+/// rlvlocks.cpp), with #RLV as their exception.
+fn root_lock(name: &str) -> bool {
+    matches!(name, "unsharedwear" | "unsharedunwear")
+}
+
 /// The rules `rlva_folder_signature_in` can match: the global shared and
 /// unshared wear locks, and the `attach…this` / `detach…this` folder locks.
 fn folder_rule(name: &str) -> bool {
-    matches!(name, "sharedwear" | "sharedunwear" | "unsharedwear" | "unsharedunwear")
-        || ((name.starts_with("attach") || name.starts_with("detach")) && name.contains("this"))
+    placement_rule(name) || ((name.starts_with("attach") || name.starts_with("detach")) && name.contains("this"))
 }
 
 fn folded_parent(inv: &Inventory, mut id: Uuid, legacy: bool) -> Uuid {
@@ -294,38 +397,41 @@ fn resolve(inv: &Inventory, name: &str) -> Option<Uuid> {
                 f.children.iter().find(|child| {
                     inv.folders
                         .get(child)
-                        .is_some_and(|f| visible(&f.info.name) && f.info.name.to_lowercase().contains(&component.to_lowercase()))
+                        // boost::icontains (RlvInventory::getSharedFolder):
+                        // the ASCII letters only (see `findfolder` below)
+                        .is_some_and(|f| {
+                            visible(&f.info.name) && f.info.name.to_ascii_lowercase().contains(&component.to_ascii_lowercase())
+                        })
                 })
             })?;
     }
     Some(id)
 }
 
+/// A path names a folder under #RLV (RlvInventory::getSharedFolder).
+pub(crate) fn shared_folder_exists(inv: &Inventory, path: &str) -> bool {
+    resolve(inv, path).is_some()
+}
+
 impl World {
-    fn rlva_collect(&mut self, base: Uuid, all: bool, attach: bool, replace: bool) -> Option<Vec<super::collection::Entry>> {
+    /// The entries of a folder force, with what is loaded: RlvForceWear::
+    /// forceFolder collects from gInventory at once (rlvhelper.cpp). What is
+    /// missing is fetched for the next command, as RlvInventory::
+    /// fetchSharedInventory and fetchSharedLinks do at login.
+    fn rlva_collect(&mut self, base: Uuid, all: bool, attach: bool, replace: bool) -> Vec<super::collection::Entry> {
         let collection = super::collection::collect(&self.inventory, base, all, attach, replace, &self.rlva.preferences);
-        let mut ready = true;
         for id in collection.missing {
             if self.inventory.folders.contains_key(&id) {
                 self.inventory.request(id);
-                ready = false;
-            } else {
-                if self.rlva_inventory_fetch_waiting(id) {
-                    ready = false;
-                }
-                if self.rlva_inventory_fetch_due(id) {
-                    self.rlva.out.push(aurora_net::NetCommand::FetchInventory {
-                        folders: vec![id],
-                        owner: self.agent_id,
-                        library: false,
-                    });
-                }
+            } else if self.rlva_inventory_fetch_due(id) {
+                self.rlva.out.push(aurora_net::NetCommand::FetchInventory {
+                    folders: vec![id],
+                    owner: self.agent_id,
+                    library: false,
+                });
             }
         }
         for id in collection.missing_items {
-            if self.rlva_inventory_fetch_waiting(id) {
-                ready = false;
-            }
             if self.rlva_inventory_fetch_due(id) {
                 self.rlva.out.push(aurora_net::NetCommand::FetchItems {
                     items: vec![id],
@@ -333,14 +439,7 @@ impl World {
                 });
             }
         }
-        ready.then_some(collection.items)
-    }
-
-    fn rlva_inventory_fetch_waiting(&self, id: Uuid) -> bool {
-        self.rlva
-            .inventory_fetches
-            .get(&id)
-            .is_none_or(|(at, tries)| *tries < 3 || at.elapsed().as_secs() < 10)
+        collection.items
     }
 
     pub(super) fn rlva_inventory_fetch_due(&mut self, id: Uuid) -> bool {
@@ -355,79 +454,47 @@ impl World {
     }
 
     fn rlva_attachment_group(&self, point: u8) -> Option<&'static str> {
-        let point = self.avatar_lib.attach_points.get(&point)?;
-        if point.hud { Some("hud") } else { group_name(point.group) }
+        group_name(self.avatar_lib.attach_points.get(&point)?.group)
     }
-    /// The folders of the "…this" locks of `keys` (issuer, option), sorted.
-    /// An option naming items (none: the issuer's own; a point, a layer, an
-    /// object) locks the folders of those items: shared originals can live
-    /// elsewhere, so every shared link counts, and attachment-point folders
-    /// fold into their parent. Finding the links walks the whole inventory:
-    /// one walk for all the keys.
+    /// The folders of the "…this" locks of `keys` (issuer, option), sorted:
+    /// RlvFolderLocks::getLockedFolders (rlvlocks.cpp). No option
+    /// (ST_ATTACHMENT): the folder of the issuer's own item, when it is a
+    /// shared folder other than #RLV, as it is (a folded folder's lock then
+    /// reaches nothing, isLockedFolder folding the folder it is asked about).
+    /// A point or a layer: RlvInventory::getPath of the items it names, one
+    /// folded folder up. A path: the shared folder it names now.
     fn rlva_context_folders_of<'a>(&self, keys: impl IntoIterator<Item = (Uuid, &'a str)>) -> HashMap<(Uuid, String), Vec<Uuid>> {
-        let worn = self.rlva_worn_attachment_points();
-        let mut cof = None;
+        let root = shared_root(&self.inventory);
         let mut out = HashMap::new();
-        // item → the keys locking its folders
-        let mut wanted = HashMap::<Uuid, Vec<(Uuid, String)>>::new();
         for (source, option) in keys {
             let key = (source, option.to_owned());
             if out.contains_key(&key) {
                 continue;
             }
-            let items: Vec<_> = if option.is_empty() {
-                self.rlva_attachment_item(source).into_iter().collect()
-            } else if let Some(p) = point(option) {
-                worn.iter().filter(|(_, at)| **at == p).map(|(id, _)| *id).collect()
-            } else if let Some(kind) = layer(option) {
-                cof.get_or_insert_with(|| {
-                    appearance::cof(&self.inventory)
-                        .map(|id| appearance::folder_links(&self.inventory, id))
-                        .unwrap_or_default()
-                })
-                .iter()
-                .filter_map(|l| self.inventory.items.get(&l.target))
-                .filter(|it| matches!(it.asset_type, 5 | 13) && it.flags & 0xff == u32::from(kind))
-                .map(|it| it.id)
-                .collect()
-            } else if let Ok(id) = Uuid::parse_str(option) {
-                self.rlva_attachment_item(id).into_iter().collect()
-            } else {
-                out.insert(key, resolve(&self.inventory, option).into_iter().collect());
-                continue;
-            };
-            for item in items {
-                wanted.entry(item).or_default().push(key.clone());
-            }
-            out.insert(key, Vec::new());
-        }
-        if !wanted.is_empty() {
-            // a few items among the whole inventory: a sorted list tells most
-            // of them apart faster than hashing every id
-            let mut targets: Vec<_> = wanted.keys().copied().collect();
-            targets.sort_unstable();
-            for it in self.inventory.items.values() {
-                let mut add = |item: &Uuid| {
-                    if targets.binary_search(item).is_err() {
-                        return;
-                    }
-                    let Some(keys) = wanted.get(item) else { return };
-                    let folder = folded_parent(&self.inventory, it.parent, self.rlva.preferences.legacy_naming);
-                    if path(&self.inventory, folder).is_some() {
-                        for key in keys {
-                            out.entry(key.clone()).or_default().push(folder);
-                        }
-                    }
+            let mut folders: Vec<Uuid> = if option.is_empty() {
+                // gObjectList.findObject(issuer)->getAttachmentItemID():
+                // a child prim holds no item of its own (only the root gets
+                // AttachItemID, LLVOAvatar::addChild), so its lock names no
+                // folder. An issuer not loaded yet keeps its last known item.
+                let item = match self.objects.index_of_uuid(&source).and_then(|i| self.objects.get(i)) {
+                    Some(object) => object.attachment_item_id().filter(|id| !id.is_nil()),
+                    None => self.rlva_attachment_item(source),
                 };
-                add(&it.id);
-                if it.asset_type == 24 && it.asset_id != it.id {
-                    add(&it.asset_id);
-                }
-            }
-        }
-        for folders in out.values_mut() {
+                item.and_then(|item| self.inventory.items.get(&item))
+                    .map(|it| it.parent)
+                    .filter(|parent| root.is_some_and(|root| *parent != root && actions::under(&self.inventory, *parent, root)))
+                    .into_iter()
+                    .collect()
+            } else if point(option).is_some() || layer(option).is_some() {
+                self.rlva_path_folders(source, option)
+            } else if super::numeric::uuid_set(option).is_some() {
+                Vec::new()
+            } else {
+                resolve(&self.inventory, option).into_iter().collect()
+            };
             folders.sort();
             folders.dedup();
+            out.insert(key, folders);
         }
         out
     }
@@ -441,8 +508,15 @@ impl World {
             .map(|id| appearance::folder_links(&self.inventory, id))
             .unwrap_or_default();
         let items = if let Some(point) = point(option) {
+            // RlvFindAttachmentsOnPoint (rlvinventory.cpp): an object worn
+            // on the point, or one whose name or folder names it
+            let legacy = self.rlva.preferences.legacy_naming;
             cof.iter()
-                .filter(|link| worn.get(&link.target) == Some(&point))
+                .filter(|link| {
+                    worn.get(&link.target) == Some(&point)
+                        || (self.inventory.items.get(&link.target).is_some_and(|it| it.asset_type == 6)
+                            && super::collection::attachment_point(&self.inventory, link.target, legacy) == Some(point))
+                })
                 .map(|link| link.target)
                 .collect::<Vec<_>>()
         } else if let Some(layer) = layer(option) {
@@ -455,11 +529,11 @@ impl World {
                 })
                 .map(|link| link.target)
                 .collect()
-        } else if option.is_empty() || Uuid::parse_str(option).is_ok() {
+        } else if option.is_empty() || super::numeric::uuid_set(option).is_some() {
             let object = if option.is_empty() {
                 source
             } else {
-                Uuid::parse_str(option).unwrap_or_default()
+                super::numeric::uuid_set(option).unwrap_or_default()
             };
             self.rlva_own_attachment_root(object)
                 .and_then(|root| self.rlva_attachment_item(root))
@@ -487,12 +561,26 @@ impl World {
             .collect()
     }
 
+    /// One folder check alone; the item checks go through
+    /// `rlva_item_folders_removable_in`, which counts the item's links too.
+    #[cfg(test)]
     pub(super) fn rlva_folder_allowed(&self, folder: Uuid, add: bool, actor: Uuid) -> bool {
         self.rlva_folder_allowed_in(&FolderLocks::default(), folder, add, actor)
     }
 
     pub(super) fn rlva_folder_allowed_in(&self, locks: &FolderLocks, folder: Uuid, add: bool, _actor: Uuid) -> bool {
         self.rlva_folder_signature_in(locks, folder, add, Uuid::nil()).is_empty()
+    }
+
+    /// RlvFolderLocks::isLockedFolder(folder, RLV_LOCK_ANY, ST_MASK_ANY &
+    /// ~ST_ROOTFOLDER) (rlvlocks.cpp): a lock reaches the folder, other than
+    /// the inventory root's (@unsharedwear, @unsharedunwear).
+    pub(super) fn rlva_folder_locked_below_root(&self, locks: &FolderLocks, folder: Uuid) -> bool {
+        [false, true].into_iter().any(|add| {
+            self.rlva_folder_signature_in(locks, folder, add, Uuid::nil())
+                .iter()
+                .any(|(_, name, _)| !root_lock(name))
+        })
     }
 
     fn rlva_folder_signature(&self, folder: Uuid, add: bool, _actor: Uuid) -> std::collections::BTreeSet<(Uuid, String, String)> {
@@ -532,14 +620,22 @@ impl World {
         // Under #RLV exactly when `path` would name it, without building the
         // path: the walk above reaches the shared root, or stops before it.
         let shared = shared_root(&self.inventory).is_some_and(|root| ancestors.contains(&root));
-        // The nearest rule of each issuer wins; an exception granted by one
-        // issuer cannot release another issuer's subtree lock.
+        // RlvFolderLocks::isLockedFolder (rlvlocks.cpp) walks up from the
+        // folder: the nearest rule of each issuer wins, and among the rules
+        // of one folder the one issued first (m_FolderLocks keeps the order):
+        // an exception skips that issuer's later rules, a lock found first
+        // holds. An exception granted by one issuer cannot release another
+        // issuer's subtree lock.
         let mut nearest = std::collections::BTreeMap::<Uuid, (usize, bool, Vec<(String, String)>)>::new();
         for (source, rules) in &self.rlva.rules {
             if *source == except {
                 continue;
             }
-            for rule in rules {
+            let ordered: Vec<&super::Rule> = match self.rlva.issued.get(source) {
+                Some(issued) if issued.len() == rules.len() => issued.iter().collect(),
+                _ => rules.iter().collect(),
+            };
+            for rule in ordered {
                 let name = rule.behaviour.as_str();
                 let global = name
                     == match (shared, add) {
@@ -572,14 +668,23 @@ impl World {
                         .min()
                 };
                 if let Some(distance) = distance {
-                    let entry = nearest.entry(*source).or_insert((usize::MAX, true, Vec::new()));
-                    if distance < entry.0 {
-                        *entry = (distance, allow, Vec::new());
-                    } else if distance == entry.0 {
-                        entry.1 &= allow;
-                    }
-                    if distance == entry.0 && !allow {
-                        entry.2.push((rule.behaviour.clone(), rule.option.clone()));
+                    let denied = if allow {
+                        Vec::new()
+                    } else {
+                        vec![(rule.behaviour.clone(), rule.option.clone())]
+                    };
+                    match nearest.entry(*source) {
+                        std::collections::btree_map::Entry::Vacant(slot) => {
+                            slot.insert((distance, allow, denied));
+                        }
+                        std::collections::btree_map::Entry::Occupied(mut slot) => {
+                            let entry = slot.get_mut();
+                            if distance < entry.0 {
+                                *entry = (distance, allow, denied);
+                            } else if distance == entry.0 && !entry.1 {
+                                entry.2.extend(denied);
+                            }
+                        }
                     }
                 }
             }
@@ -606,10 +711,14 @@ impl World {
         };
         let folder = self.inventory.folders.contains_key(&item);
         let locks = FolderLocks::default();
+        // RlvFolderLocks::canMoveItem (rlvlocks.h) compares every lock of
+        // the two folders but the inventory root's (ST_ROOTFOLDER, set by
+        // @unsharedwear / @unsharedunwear): @sharedwear and @sharedunwear
+        // keep an item in #RLV or out of it. canMoveFolder counts them all.
         let signature = |id, add| {
             self.rlva_folder_signature_in(&locks, id, add, Uuid::nil())
                 .into_iter()
-                .filter(|(_, name, _)| folder || name.contains("this"))
+                .filter(|(_, name, _)| folder || !root_lock(name))
                 .collect::<std::collections::BTreeSet<_>>()
         };
         [false, true]
@@ -658,11 +767,14 @@ impl World {
             let Some(f) = self.inventory.folders.get(&id) else {
                 return false;
             };
+            // RlvFolderLocks::canRemoveFolder (rlvlocks.h) counts every lock
+            // but the inventory root's (ST_ROOTFOLDER): @sharedwear and
+            // @sharedunwear, held on #RLV, keep it and its folders as well.
             if !appearance::loaded(&self.inventory, id)
                 || [false, true].into_iter().any(|add| {
                     self.rlva_folder_signature_in(&locks, id, add, Uuid::nil())
                         .iter()
-                        .any(|(_, name, _)| name.contains("this"))
+                        .any(|(_, name, _)| name.contains("this") || matches!(name.as_str(), "sharedwear" | "sharedunwear"))
                 })
             {
                 return false;
@@ -679,10 +791,25 @@ impl World {
     }
 
     pub fn rlva_inventory_mutation_allowed(&self, change: &aurora_net::inventory::operations::Mutation, actor: Uuid) -> bool {
+        self.rlva_inventory_change_allowed(change, actor, false)
+    }
+
+    /// The inventory's Delete: a move to the Trash is a removal, which
+    /// LLFolderBridge::removeItem and LLItemBridge::removeItem
+    /// (llinventorybridge.cpp) allow by isItemRemovable alone, that is
+    /// RlvFolderLocks::canRemoveFolder and canRemoveItem (rlvlocks.h), never
+    /// by the move rule a drop on the Trash follows (canMoveFolder): under
+    /// @unsharedwear a folder of #RLV is deleted, not dropped on the Trash.
+    pub fn rlva_inventory_delete_allowed(&self, change: &aurora_net::inventory::operations::Mutation, actor: Uuid) -> bool {
+        self.rlva_inventory_change_allowed(change, actor, true)
+    }
+
+    fn rlva_inventory_change_allowed(&self, change: &aurora_net::inventory::operations::Mutation, actor: Uuid, delete: bool) -> bool {
         use aurora_net::inventory::operations::Operation;
         if !self.rlva.enabled() || !self.rlva.inventory_locked() {
             return true;
         }
+        let removal_locks = delete.then(|| self.rlva_wear_locks());
         change
             .copies
             .iter()
@@ -691,20 +818,38 @@ impl World {
                 Operation::Patch { id, folder, body } => {
                     let moved = body.as_map().is_some_and(|m| m.contains_key("parent_id"));
                     let renamed = body.as_map().is_some_and(|m| m.contains_key("name"));
-                    (!moved || self.rlva_inventory_move_allowed(*id, body["parent_id"].as_uuid(), actor))
-                        && (!renamed || !*folder || !self.rlva_explicit_folder_descendant(&FolderLocks::default(), *id, actor))
+                    let to = body["parent_id"].as_uuid();
+                    let removal = removal_locks.as_ref().filter(|_| self.inventory.in_folder_type(to, 14));
+                    // RlvFolderLocks::canRenameFolder (rlvlocks.h): #RLV
+                    // carries the shared path lock of the four placement
+                    // rules (their deny, or the exception of the unshared
+                    // twins), so it keeps its name while one is set.
+                    (!moved
+                        || removal.map_or_else(
+                            || self.rlva_inventory_move_allowed(*id, to, actor),
+                            |locks| locks.removable(&self.inventory, *id),
+                        ))
+                        && (!renamed
+                            || !*folder
+                            || (!self.rlva_explicit_folder_descendant(&FolderLocks::default(), *id, actor)
+                                && !(Some(*id) == shared_root(&self.inventory) && self.rlva_has_placement_rule())))
                 }
+                // LLInventoryModel::emptyFolderType does not apply RLVa locks.
+                // The Trash dialog still refuses to purge worn items.
+                Operation::Purge(id) if self.inventory.folders.get(id).is_some_and(|folder| folder.info.type_default == 14) => true,
                 Operation::Delete { id, folder: true } | Operation::Purge(id) => self.rlva_inventory_tree_unlocked(*id, actor),
                 Operation::Delete { id, folder: false } => {
                     let target = super::super::inventory::actions::original(&self.inventory, *id).unwrap_or(*id);
                     let worn = self.worn_attachment_items().contains(&target)
                         || appearance::cof(&self.inventory)
                             .is_some_and(|id| appearance::folder_links(&self.inventory, id).iter().any(|l| l.target == target));
+                    // RlvFolderLocks::canRemoveItem (rlvlocks.h): any lock
+                    // of the item's folder but the inventory root's.
                     self.inventory.items.get(id).is_some_and(|it| {
                         [false, true].into_iter().all(|add| {
                             self.rlva_folder_signature(it.parent, add, actor)
                                 .iter()
-                                .all(|(_, name, _)| !name.contains("this"))
+                                .all(|(_, name, _)| root_lock(name))
                         })
                     }) && (!worn || self.rlva_can_remove(target, actor))
                 }
@@ -717,17 +862,21 @@ impl World {
             })
     }
 
-    fn rlva_shared_ready(&mut self) -> bool {
+    /// Asks for what is not loaded yet under #RLV, the folders and the
+    /// originals of their links, as RlvInventory::fetchSharedInventory and
+    /// fetchSharedLinks do once logged in (rlvinventory.cpp). Nothing waits
+    /// for it: RlvHandler runs every command at once once the login is
+    /// complete (processCommand, onLoginComplete; rlvhandler.cpp), with what
+    /// the inventory holds.
+    fn rlva_shared_fetch(&mut self) {
         let Some(root) = shared_root(&self.inventory) else {
-            let loaded = appearance::loaded(&self.inventory, self.inventory.root);
-            if !loaded {
+            if !appearance::loaded(&self.inventory, self.inventory.root) {
                 self.inventory.request(self.inventory.root);
             }
-            return loaded;
+            return;
         };
         let mut stack = vec![root];
         let mut seen = HashSet::new();
-        let mut ready = true;
         let mut missing = HashSet::new();
         while let Some(id) = stack.pop() {
             if !seen.insert(id) {
@@ -735,7 +884,6 @@ impl World {
             }
             if !appearance::loaded(&self.inventory, id) {
                 self.inventory.request(id);
-                ready = false;
             }
             if let Some(f) = self.inventory.folders.get(&id) {
                 stack.extend(f.children.iter().copied());
@@ -749,27 +897,18 @@ impl World {
                 }
             }
         }
-        if !missing.is_empty() {
-            let mut request = Vec::new();
-            for id in missing {
-                if self.rlva_inventory_fetch_waiting(id) {
-                    ready = false;
-                }
-                if self.rlva_inventory_fetch_due(id) {
-                    request.push(id);
-                }
-            }
-            if !request.is_empty() {
-                self.rlva.out.push(aurora_net::NetCommand::FetchItems {
-                    items: request,
-                    owner: self.agent_id,
-                });
-            }
+        let request: Vec<Uuid> = missing.into_iter().filter(|id| self.rlva_inventory_fetch_due(*id)).collect();
+        if !request.is_empty() {
+            self.rlva.out.push(aurora_net::NetCommand::FetchItems {
+                items: request,
+                owner: self.agent_id,
+            });
         }
-        ready
     }
     /// Resolve forced wear through the same COF planner as the native UI.
-    /// Requests remain queued while folders or originals are still loading.
+    /// A request waits only for the outfit (COF) to be known, which the
+    /// reference has once logged in; a folder force runs at once with what
+    /// is loaded under #RLV.
     /// The removals and wears join the source's open `Action::Force` batch
     /// (`force_wear`), applied as one COF update.
     pub fn rlva_inventory_force(&mut self, source: Uuid, c: &Command) -> bool {
@@ -779,10 +918,15 @@ impl World {
             self.rlva.relative.wait(source, c.clone(), std::time::Instant::now());
             return true;
         }
-        if !context && c.option.is_empty() && matches!(name, "attach" | "attachover" | "attachall" | "attachallover" | "detachall") {
+        // RlvForceHandler<RLV_BHVR_DETACHME> fails on any option.
+        if name == "detachme" && !c.option.is_empty() {
             return true;
         }
-        if self.rlva.appearance.len() >= 128 {
+        // Not a limit of the reference, which runs each force at once: the
+        // queue waits for the outfit, and a hostile object alternating with
+        // another one must not grow it without end. Far above any real
+        // batch (one per object and command run).
+        if self.rlva.appearance.len() >= FORCE_QUEUE_LIMIT {
             return true;
         }
         if appearance::cof(&self.inventory).is_none_or(|cof| !appearance::complete(&self.inventory, cof)) {
@@ -791,131 +935,109 @@ impl World {
             return false;
         }
         let worn = self.rlva_worn_attachment_points();
-        let group = GROUPS.contains(&c.option.as_str()) && resolve(&self.inventory, &c.option).is_none();
+        // RlvCommandOptionHelper::parseOption<RlvCommandOptionGeneric>
+        // (rlvhelper.cpp) reads a wearable type, then a point, then a UUID,
+        // then a shared folder, then a point group: a folder only counts
+        // when the option is none of the first three.
+        let folder_option = !c.option.is_empty()
+            && layer(&c.option).is_none()
+            && point(&c.option).is_none()
+            && super::numeric::uuid_set(&c.option).is_none();
+        if !context && folder_option {
+            self.rlva_shared_fetch();
+        }
+        let folder = if folder_option { resolve(&self.inventory, &c.option) } else { None };
+        let group = folder.is_none() && GROUPS.contains(&c.option.as_str());
         let removal = if name == "detachme" {
-            self.rlva_attachment_item(source).map(|item| {
-                self.rlva.self_detach = Some((source, item));
-                vec![item]
-            })
-        } else if !context
-            && matches!(name, "detach" | "remattach")
-            && (c.option.is_empty() || point(&c.option).is_some() || Uuid::parse_str(&c.option).is_ok() || group)
-        {
-            let target = Uuid::parse_str(&c.option).ok().and_then(|id| self.rlva_attachment_item(id));
+            // LLVOAvatarSelf::detachAttachmentIntoInventory
+            // (llvoavatarself.cpp) needs the inventory item: a temporary
+            // attachment has none and stays on.
+            self.rlva_attachment_item(source)
+                .filter(|item| self.inventory.items.contains_key(item))
+                .map(|item| {
+                    self.rlva.self_detach = Some((source, item));
+                    vec![item]
+                })
+        } else if !context && matches!(name, "detach" | "remattach") && folder.is_none() {
+            // RlvForceRemAttachHandler: a point, a group or nothing, a UUID
+            let target = super::numeric::uuid_set(&c.option)
+                .filter(|id| !id.is_nil())
+                .and_then(|id| self.rlva_attachment_item(id));
+            let known = c.option.is_empty() || point(&c.option).is_some() || group || target.is_some();
             let ids = worn
                 .iter()
                 .filter(|(id, at)| {
-                    c.option.is_empty()
-                        || point(&c.option) == Some(**at)
-                        || target == Some(**id)
-                        || (group && self.rlva_attachment_group(**at) == Some(c.option.as_str()))
+                    known
+                        && (c.option.is_empty()
+                            || point(&c.option) == Some(**at)
+                            || target == Some(**id)
+                            || (group && self.rlva_attachment_group(**at) == Some(c.option.as_str())))
                 })
+                // RlvForceWear::isForceDetachable: a script never takes
+                // the viewer's own bridge off.
+                .filter(|(id, at)| !crate::world::bridge::viewer_bridge(self, **id, **at))
                 .map(|(id, _)| *id)
                 .filter(|id| self.rlva_can_remove(*id, source))
                 .collect();
             Some(ids)
-        } else if name == "remoutfit" && (c.option.is_empty() || layer(&c.option).is_some()) {
-            let ids = appearance::cof(&self.inventory)
-                .map(|cof| appearance::folder_links(&self.inventory, cof))
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|l| self.inventory.items.get(&l.target))
-                .filter(|it| it.asset_type == 5 && (c.option.is_empty() || layer(&c.option) == Some((it.flags & 0xff) as u8)))
-                .filter(|it| self.rlva_can_remove(it.id, source))
-                .map(|it| it.id)
-                .collect();
+        } else if !context && name == "remoutfit" && folder.is_none() {
+            // RlvForceHandler<RLV_BHVR_REMOUTFIT>: a layer or nothing
+            let kind = layer(&c.option);
+            let ids = if c.option.is_empty() || kind.is_some() {
+                appearance::cof(&self.inventory)
+                    .map(|cof| appearance::folder_links(&self.inventory, cof))
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|l| self.inventory.items.get(&l.target))
+                    .filter(|it| it.asset_type == 5 && (kind.is_none() || kind == Some((it.flags & 0xff) as u8)))
+                    .filter(|it| self.rlva_can_remove(it.id, source))
+                    .map(|it| it.id)
+                    .collect()
+            } else {
+                Vec::new()
+            };
             Some(ids)
         } else {
-            if !self.rlva_shared_ready() {
-                return false;
-            }
+            self.rlva_shared_fetch();
             let bases = if context {
                 self.rlva_path_folders(source, &c.option)
             } else {
-                resolve(&self.inventory, &c.option)
-                    .filter(|id| Some(*id) != shared_root(&self.inventory))
-                    .into_iter()
-                    .collect()
+                // RLV_CMD_FORCEWEAR with FORCEWEAR_CONTEXT_NONE:
+                // VERIFY_OPTION(isSharedFolder())
+                folder.filter(|id| Some(*id) != shared_root(&self.inventory)).into_iter().collect()
             };
             let attach = !matches!(name, "detach" | "detachall" | "remattach" | "remoutfit");
             let all = matches!(name, "attachall" | "attachallover" | "detachall");
             let replace = !matches!(name, "attachover" | "attachallover");
-            let mut ids = Vec::new();
-            let mut points = std::collections::HashMap::new();
-            let mut modes = std::collections::HashMap::new();
             let shared = shared_root(&self.inventory);
+            let mut collected = Vec::new();
             for base in bases {
                 if Some(base) == shared {
                     continue;
                 }
-                let Some(entries) = self.rlva_collect(base, all, attach, replace) else {
-                    return false;
-                };
-                for entry in entries {
-                    ids.push(entry.item);
-                    points.insert(entry.item, entry.point);
-                    modes.insert(entry.item, entry.replace);
-                }
+                collected.push(self.rlva_collect(base, all, attach, replace));
             }
-            ids.sort();
-            ids.dedup();
-            if matches!(name, "detach" | "detachall" | "remattach" | "remoutfit") {
-                ids.retain(|id| self.inventory.items.get(id).is_some_and(|it| it.asset_type != 13) && self.rlva_can_remove(*id, source));
+            if !attach {
+                // RlvForceWear::forceFolder, ACTION_DETACH: the worn clothing
+                // and attachments that can be forced off (isForceRemovable,
+                // isForceDetachable), and the gestures
+                let mut ids: Vec<Uuid> = Vec::new();
+                for entry in collected.into_iter().flatten() {
+                    let Some(it) = self.inventory.items.get(&entry.item) else {
+                        continue;
+                    };
+                    let bridge = it.asset_type == 6
+                        && worn
+                            .get(&entry.item)
+                            .is_some_and(|at| crate::world::bridge::viewer_bridge(self, entry.item, *at));
+                    if it.asset_type != 13 && !bridge && !ids.contains(&entry.item) && self.rlva_can_remove(entry.item, source) {
+                        ids.push(entry.item);
+                    }
+                }
                 Some(ids)
             } else {
-                ids.sort_by(|a, b| {
-                    modes
-                        .get(b)
-                        .cmp(&modes.get(a))
-                        .then_with(|| {
-                            self.inventory.items[a]
-                                .name
-                                .to_lowercase()
-                                .cmp(&self.inventory.items[b].name.to_lowercase())
-                        })
-                        .then_with(|| a.cmp(b))
-                });
-                let mut replaced = HashSet::new();
-                let current = appearance::cof(&self.inventory)
-                    .map(|id| appearance::folder_links(&self.inventory, id))
-                    .unwrap_or_default();
-                for item in ids.into_iter().take(128) {
-                    let it = &self.inventory.items[&item];
-                    let point = points.get(&item).copied().unwrap_or(0);
-                    let key = (it.asset_type, if it.asset_type == 6 { point as u32 } else { it.flags & 0xff });
-                    let replace_item = it.asset_type != 21
-                        && (modes.get(&item).copied().unwrap_or(replace) || it.asset_type == 13)
-                        && !replaced.contains(&key);
-                    if !self.rlva_can_add(item, point, source) {
-                        continue;
-                    }
-                    if replace_item
-                        && (it.asset_type != 6 || !self.rlva.preferences.replace_unlocked)
-                        && current
-                            .iter()
-                            .filter(|l| l.target != item)
-                            .filter_map(|l| self.inventory.items.get(&l.target))
-                            .any(|old| {
-                                let same_slot = old.asset_type == it.asset_type
-                                    && if it.asset_type == 6 {
-                                        point != 0 && worn.get(&old.id).copied().unwrap_or((old.flags & 0xff) as u8) == point
-                                    } else {
-                                        old.flags & 0xff == it.flags & 0xff
-                                    };
-                                same_slot && !self.rlva_can_remove(old.id, source)
-                            })
-                    {
-                        continue;
-                    }
-                    replaced.insert(key);
-                    self.rlva_force_wear(
-                        source,
-                        appearance::WearRequest {
-                            item,
-                            replace: replace_item,
-                            point,
-                        },
-                    );
+                for entries in collected {
+                    self.rlva_force_folder(source, entries);
                 }
                 None
             }
@@ -924,6 +1046,145 @@ impl World {
             self.rlva_force_remove(source, items);
         }
         true
+    }
+
+    /// RlvForceWear::forceFolder for a wear (rlvhelper.cpp): the entries in
+    /// the collector's order, each with its folder's action. The first
+    /// clothing of a type takes that action, the next ones of the type add
+    /// (fSeenWType). What a lock leaves of an entry (`rlva_force_wear_mask`)
+    /// decides whether it is worn at all.
+    fn rlva_force_folder(&mut self, source: Uuid, entries: Vec<super::collection::Entry>) {
+        let mut seen_types = HashSet::new();
+        let current = appearance::cof(&self.inventory)
+            .map(|id| appearance::folder_links(&self.inventory, id))
+            .unwrap_or_default();
+        for entry in entries {
+            let Some(it) = self.inventory.items.get(&entry.item) else {
+                continue;
+            };
+            let (kind, layer) = (it.asset_type, (it.flags & 0xff) as u8);
+            let mut replace = entry.replace;
+            match kind {
+                5 | 13 => {
+                    if seen_types.contains(&layer) {
+                        replace = false;
+                    }
+                    let mask = self.rlva_force_wear_mask(&entry);
+                    if (replace && mask.replace) || (!replace && mask.add) {
+                        if !self.rlva_force_pending(source, entry.item) {
+                            // RlvForceWear::addWearable: a worn item replaces nothing
+                            let worn = current.iter().any(|l| l.target == entry.item);
+                            self.rlva_note_wear_entry(entry.item, entry.entry);
+                            self.rlva_force_wear(
+                                source,
+                                appearance::WearRequest {
+                                    item: entry.item,
+                                    replace: replace && !worn,
+                                    point: 0,
+                                },
+                            );
+                        }
+                        seen_types.insert(layer);
+                    }
+                }
+                6 => {
+                    let mask = self.rlva_force_wear_mask(&entry);
+                    if ((replace && mask.replace) || (!replace && mask.add)) && !self.rlva_force_pending(source, entry.item) {
+                        self.rlva_note_wear_entry(entry.item, entry.entry);
+                        self.rlva_force_wear(
+                            source,
+                            appearance::WearRequest {
+                                item: entry.item,
+                                replace,
+                                point: entry.point.unwrap_or(0),
+                            },
+                        );
+                    }
+                }
+                21 if !self.rlva_force_pending(source, entry.item) => {
+                    self.rlva_force_wear(
+                        source,
+                        appearance::WearRequest {
+                            item: entry.item,
+                            replace: false,
+                            point: 0,
+                        },
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The ERlvWearMask RlvForceWear::forceFolder reads for an entry:
+    /// RlvAttachmentLocks::canAttach and RlvWearableLocks::canWear
+    /// (rlvlocks.h) on the inventory entry itself, so that a link counts by
+    /// its own folder. A worn item that is locked holds its point or type
+    /// (add only); nostrip does not, it only keeps the item on.
+    fn rlva_force_wear_mask(&self, entry: &super::collection::Entry) -> super::wear_locks::Wear {
+        use super::wear_locks::Wear;
+        let locked = Wear {
+            add: false,
+            replace: false,
+        };
+        let all = Wear { add: true, replace: true };
+        let nil = Uuid::nil();
+        if !self.rlva.inventory_locked() {
+            return all;
+        }
+        let Some(it) = self.inventory.items.get(&entry.item) else {
+            return locked;
+        };
+        let folder = self.inventory.items.get(&entry.entry).map_or(it.parent, |e| e.parent);
+        if !self.rlva_folder_allowed_in(&FolderLocks::default(), folder, true, nil) {
+            return locked;
+        }
+        let worn = self.rlva_worn_attachment_points();
+        match it.asset_type {
+            6 => {
+                if self.rlva.rules_for("addattach", nil).any(|(_, option)| option.is_empty()) {
+                    return locked;
+                }
+                let Some(at) = entry.point else { return all };
+                if !self.rlva_point_addable(at) {
+                    return locked;
+                }
+                Wear {
+                    add: true,
+                    replace: worn
+                        .iter()
+                        .filter(|(_, p)| **p == at)
+                        .all(|(old, _)| self.rlva_can_remove(*old, nil)),
+                }
+            }
+            5 | 13 => {
+                let layer = (it.flags & 0xff) as u8;
+                if self.rlva_layer_locked("addoutfit", layer, nil) {
+                    return locked;
+                }
+                let held = appearance::cof(&self.inventory)
+                    .map(|cof| appearance::folder_links(&self.inventory, cof))
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|l| self.inventory.items.get(&l.target))
+                    .any(|old| matches!(old.asset_type, 5 | 13) && (old.flags & 0xff) as u8 == layer && !self.rlva_can_remove(old.id, nil));
+                if !held {
+                    all
+                } else if it.asset_type == 5 {
+                    // gAgentWearables.canAddWearable: clothing layers stack
+                    Wear { add: true, replace: false }
+                } else {
+                    locked
+                }
+            }
+            _ => all,
+        }
+    }
+
+    /// RlvForceWear::isAddAttachment / isAddWearable / the gesture list: the
+    /// item is already in the source's open batch.
+    fn rlva_force_pending(&self, source: Uuid, item: Uuid) -> bool {
+        matches!(self.rlva.appearance.last(), Some((s, appearance::Action::Force { wear, .. })) if *s == source && wear.iter().any(|w| w.item == item))
     }
 
     pub fn rlva_can_remove(&self, item: Uuid, actor: Uuid) -> bool {
@@ -935,7 +1196,9 @@ impl World {
             return true;
         }
         let Some(it) = self.inventory.items.get(&item) else {
-            return self.rlva_temporary_removable(item, actor) || self.rlva_unloaded_attachment_removable(item, actor);
+            // no record of its own: its links under #RLV still hold it
+            return (self.rlva_temporary_removable(item, actor) || self.rlva_unloaded_attachment_removable(item, actor))
+                && self.rlva_item_folders_removable_in(&FolderLocks::default(), item, Uuid::nil());
         };
         // Nostrip is the user's override of scripted undressing. It does not
         // prevent the user manually removing an item.
@@ -958,7 +1221,7 @@ impl World {
         } else if matches!(it.asset_type, 5 | 13) && self.rlva_layer_locked("remoutfit", (it.flags & 0xff) as u8, actor) {
             return false;
         }
-        self.rlva_folder_allowed(it.parent, false, actor)
+        self.rlva_item_folders_removable_in(&FolderLocks::default(), item, Uuid::nil())
     }
 
     pub fn rlva_can_add(&self, item: Uuid, at: u8, actor: Uuid) -> bool {
@@ -980,7 +1243,16 @@ impl World {
             return self.rlva_temporary_addable(item, at, actor);
         };
         if it.asset_type == 6 {
-            let at = if at == 0 { (it.flags & 0xff) as u8 } else { at };
+            // RlvAttachmentLocks::canAttach(const LLInventoryItem*)
+            // (rlvlocks.h): with no point asked, the one the names give
+            // (RlvAttachPtLookup::getAttachPoint), else RLV_WEAR; a point
+            // saved on the item does not count (point 0: only an @addattach
+            // with no point refuses it)
+            let at = if at == 0 {
+                super::collection::attachment_point(&self.inventory, item, self.rlva.preferences.legacy_naming).unwrap_or(0)
+            } else {
+                at
+            };
             if !self.rlva_point_addable(at) {
                 return false;
             }
@@ -988,7 +1260,72 @@ impl World {
         if matches!(it.asset_type, 5 | 13) && self.rlva_layer_locked("addoutfit", (it.flags & 0xff) as u8, actor) {
             return false;
         }
-        self.rlva_folder_allowed_in(locks, it.parent, true, actor)
+        self.rlva_folder_allowed_in(locks, self.rlva_wear_folder(item).unwrap_or(it.parent), true, actor)
+    }
+
+    /// The point a Wear or an Add from the inventory asks for
+    /// (rez_attachment, llinventorybridge.cpp): with RLVa on, no point chosen
+    /// and a point locked in any way (RlvAttachmentLocks::
+    /// hasLockedAttachmentPoint(RLV_LOCK_ANY), rlvlocks.h), the point the
+    /// item or its folder names (RlvAttachPtLookup::getAttachPoint), else
+    /// the default point. RLVaDebugDeprecateExplicitPoint skips the lookup.
+    pub fn rlva_rez_point(&self, item: Uuid, point: u8) -> u8 {
+        if point != 0 || !self.rlva.enabled() || self.rlva.preferences.debug_deprecate_explicit_point {
+            return point;
+        }
+        let any_lock = self.rlva_has_locked_attachment() || self.rlva.rules_for("addattach", Uuid::nil()).next().is_some();
+        if !any_lock {
+            return point;
+        }
+        super::collection::attachment_point(&self.inventory, item, self.rlva.preferences.legacy_naming).unwrap_or(0)
+    }
+
+    /// The folder of the entry an item was last asked to be worn from, while
+    /// that request stands (`WEAR_ENTRY_TIME`).
+    fn rlva_wear_folder(&self, item: Uuid) -> Option<Uuid> {
+        self.rlva
+            .wear_entries
+            .get(&item)
+            .filter(|(_, at)| at.elapsed() < WEAR_ENTRY_TIME)
+            .map(|(folder, _)| *folder)
+    }
+
+    /// RlvAttachmentLocks::canAttach and RlvWearableLocks::canWear
+    /// (rlvlocks.h) check the add lock of the folder holding the inventory
+    /// entry that is worn: a link is worn by its own folder, not by its
+    /// original's. The entry `entry` (a link or `item` itself) is asked to be
+    /// worn for `item`: until the wear is done, every check of it (the outfit
+    /// write, the rez, the watchdog) reads that folder.
+    pub(crate) fn rlva_note_wear_entry(&mut self, item: Uuid, entry: Uuid) {
+        self.rlva.wear_entries.retain(|_, (_, at)| at.elapsed() < WEAR_ENTRY_TIME);
+        match self.inventory.items.get(&entry) {
+            Some(it) if entry != item => {
+                self.rlva.wear_entries.insert(item, (it.parent, std::time::Instant::now()));
+            }
+            _ => {
+                self.rlva.wear_entries.remove(&item);
+            }
+        }
+    }
+
+    /// The entries of a wear asked through the interface (`Action::WearItem`,
+    /// `WearItems`, `Add`): items or links.
+    pub fn rlva_note_wear_request(&mut self, action: &appearance::Action) {
+        let entries: Vec<Uuid> = match action {
+            appearance::Action::WearItem { item, .. } | appearance::Action::Add(item) => vec![*item],
+            appearance::Action::WearItems { items, .. } => items.clone(),
+            _ => return,
+        };
+        for entry in entries {
+            if let Some(item) = actions::original(&self.inventory, entry) {
+                self.rlva_note_wear_entry(item, entry);
+            }
+        }
+    }
+
+    /// The avatar's `#RLV` folder (RlvInventory::getSharedRootID), if it has one.
+    pub fn rlva_shared_root(&self) -> Option<Uuid> {
+        shared_root(&self.inventory)
     }
 
     pub fn rlva_attachment_item(&self, object: Uuid) -> Option<Uuid> {
@@ -1041,6 +1378,13 @@ impl World {
             .rules
             .values()
             .any(|rules| rules.iter().any(|r| folder_rule(&r.behaviour)))
+    }
+    /// A lock on every shared or every unshared folder (`placement_rule`) is set.
+    pub(super) fn rlva_has_placement_rule(&self) -> bool {
+        self.rlva
+            .rules
+            .values()
+            .any(|rules| rules.iter().any(|r| placement_rule(&r.behaviour)))
     }
 
     /// LLAppearanceMgr::updateCOF and removeItemsFromAvatar with RLVa
@@ -1155,10 +1499,10 @@ impl World {
         {
             return false;
         }
-        self.inventory
-            .items
-            .get(&item)
-            .is_none_or(|it| self.rlva_folder_signature_except(it.parent, false, except).is_empty())
+        // isLockedAttachmentExcept and isLockedWearableExcept (rlvlocks.cpp)
+        // leave the folder locks out once an issuer is exempted, which the
+        // queries always do (they pass the asking object).
+        !except.is_nil() || self.rlva_item_folders_removable_in(&FolderLocks::default(), item, except)
     }
 
     pub fn rlva_inventory_query(&mut self, c: &Command, source: Uuid) -> Option<String> {
@@ -1174,15 +1518,31 @@ impl World {
                     .is_some_and(|it| matches!(it.asset_type, 5 | 13) && it.flags & 0xff == kind as u32)
             })
         };
+        // LLWearableData::canAddWearable (indra/llappearance/llwearabledata.cpp):
+        // a body part or the physics layer only when none is worn, other
+        // clothing below MAX_CLOTHING_LAYERS in all.
+        let clothing = cof
+            .iter()
+            .filter_map(|l| self.inventory.items.get(&l.target))
+            .filter(|it| it.asset_type == 5)
+            .count();
+        let can_add_wearable = |kind: usize| if kind < 4 || kind == 15 { !worn(kind) } else { clothing < 60 };
         let list_layers = |mode: &str| {
             LAYERS
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| match mode {
                     "getoutfitnames" => worn(*i),
+                    // RlvWearableLocks::canWear(LLWearableType::EType)
+                    // (rlvlocks.h): an add-locked type is closed; a type
+                    // that holds a locked wearable (type or folder lock)
+                    // only takes one more when
+                    // LLWearableData::canAddWearable allows it.
                     "getaddoutfitnames" => {
-                        !self.rlva_layer_locked("addoutfit", *i as u8, Uuid::nil())
-                            && !(*i < 4 && worn(*i) && self.rlva_layer_locked("remoutfit", *i as u8, Uuid::nil()))
+                        let held = cof.iter().filter_map(|l| self.inventory.items.get(&l.target)).any(|it| {
+                            matches!(it.asset_type, 5 | 13) && it.flags & 0xff == *i as u32 && !self.rlva_can_remove(it.id, Uuid::nil())
+                        });
+                        !self.rlva_layer_locked("addoutfit", *i as u8, Uuid::nil()) && (!held || can_add_wearable(*i))
                     }
                     _ => cof
                         .iter()
@@ -1203,9 +1563,15 @@ impl World {
                         })
                     }))
         };
+        // RlvHandler::onGetAttach and onGetAttachNames leave the viewer's
+        // own bridge out of the Center 2 count, and it is never force
+        // detachable (RlvForceWear::isForceDetachable).
+        let counted = |item: &Uuid, at: u8| !crate::world::bridge::viewer_bridge(self, *item, at);
         let visible_point = |point: u8| {
             worn_points.iter().any(|(item, at)| {
-                *at == point && (!self.rlva.preferences.hide_locked_attachments || self.rlva_query_removable(*item, source, &worn_points))
+                *at == point
+                    && counted(item, *at)
+                    && (!self.rlva.preferences.hide_locked_attachments || self.rlva_query_removable(*item, source, &worn_points))
             })
         };
         match c.behaviour.as_str() {
@@ -1243,11 +1609,11 @@ impl World {
                             !GROUPS.contains(&c.option.as_str()) || group == Some(c.option.as_str())
                         })
                         .filter(|(i, _)| match c.behaviour.as_str() {
-                            "getattachnames" => worn_points.values().any(|p| *p == *i as u8),
+                            "getattachnames" => worn_points.iter().any(|(id, p)| *p == *i as u8 && counted(id, *p)),
                             "getaddattachnames" => self.rlva_point_addable(*i as u8),
                             _ => worn_points
                                 .iter()
-                                .any(|(id, at)| *at == *i as u8 && self.rlva_can_remove(*id, source)),
+                                .any(|(id, at)| *at == *i as u8 && counted(id, *at) && self.rlva_can_remove(*id, source)),
                         })
                         .map(|(i, name)| self.avatar_lib.attach_names.get(&(i as u8)).map_or(*name, String::as_str))
                         .collect::<Vec<_>>()
@@ -1255,9 +1621,7 @@ impl World {
                 );
             }
             "getpath" | "getpathnew" => {
-                if !self.rlva_shared_ready() {
-                    return None;
-                }
+                self.rlva_shared_fetch();
                 let paths: Vec<_> = self
                     .rlva_path_folders(source, &c.option)
                     .into_iter()
@@ -1271,40 +1635,19 @@ impl World {
             }
             _ => {}
         }
-        if !self.rlva_shared_ready() {
-            return None;
-        }
+        // The shared-tree queries answer at once with what is loaded
+        // (RlvHandler::onGetInv, onGetInvWorn, onFindFolder): what is not
+        // loaded yet is asked for, under #RLV only.
+        self.rlva_shared_fetch();
         let Some(root) = shared_root(&self.inventory) else {
-            let loaded = appearance::loaded(&self.inventory, self.inventory.root);
-            self.inventory.request(self.inventory.root);
-            return loaded.then(String::new);
+            return Some(String::new());
         };
-        // A shared-tree query cannot treat unloaded descendants as empty.
-        // Request only #RLV, never unrelated inventory or the Library.
-        let mut stack = vec![root];
-        let mut seen = HashSet::new();
-        let mut ready = true;
-        while let Some(id) = stack.pop() {
-            if !seen.insert(id) {
-                continue;
-            }
-            if !appearance::loaded(&self.inventory, id) {
-                self.inventory.request(id);
-                ready = false;
-            }
-            if let Some(f) = self.inventory.folders.get(&id) {
-                stack.extend(f.children.iter().copied());
-            }
-        }
-        if !ready {
-            return None;
-        }
         if matches!(c.behaviour.as_str(), "findfolder" | "findfolders") {
             let terms: Vec<_> = c
                 .option
                 .split("&&")
                 .filter(|term| !term.is_empty())
-                .map(str::to_lowercase)
+                .map(str::to_ascii_lowercase)
                 .collect();
             if terms.is_empty() {
                 return Some(String::new());
@@ -1326,7 +1669,12 @@ impl World {
                     continue;
                 };
                 stack.extend(folder.children.iter().rev().copied());
-                let name = folder.info.name.to_lowercase();
+                // RlvCriteriaCategoryCollector (rlvinventory.h) lowers the
+                // name with LLStringUtil::toLower, byte by byte: the ASCII
+                // letters only on a UTF-8 locale. A Windows code page would
+                // also change bytes of a multi-byte character, which breaks
+                // the UTF-8: never copied.
+                let name = folder.info.name.to_ascii_lowercase();
                 if visible(&name)
                     && !name.starts_with('~')
                     && terms.iter().all(|term| name.contains(term))
@@ -1354,12 +1702,8 @@ impl World {
         let Some(folder) = resolve(&self.inventory, &c.option) else {
             return Some(String::new());
         };
-        if !appearance::loaded(&self.inventory, folder) {
-            self.inventory.request(folder);
-            return None;
-        }
         let collected = if c.behaviour == "getinvworn" {
-            self.rlva_collect(folder, true, true, true)?
+            self.rlva_collect(folder, true, true, true)
         } else {
             Vec::new()
         };

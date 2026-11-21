@@ -15,6 +15,174 @@ pub(super) const OLD_FOLDER: &str = "AO";
 const STAGING: &str = "Aurora AO (Legacy Viewer import)";
 // Existing interrupted imports must still prevent an automatic second copy.
 const OLD_STAGING: &str = "AO (Firestorm import)";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Recovery {
+    pub source: Uuid,
+    pub root: Option<Uuid>,
+    pub sets: usize,
+    pub duplicate: bool,
+}
+
+/// Incomplete migration folders are surfaced only once the brand folder, the
+/// leftover folder and the target `Aurora AO` folder are all fetched, so the
+/// AO window offers an explicit, reviewable recovery whose name clashes are
+/// known. A failed fetch is not asked again here: like `fetch`, no retry loop.
+pub fn recoveries(inv: &mut Inventory) -> Vec<Recovery> {
+    let Some(brand) = child(inv, inv.root, "#Aurora") else {
+        return Vec::new();
+    };
+    let Some(folder) = inv.folders.get(&brand) else { return Vec::new() };
+    let roots: Vec<_> = folder
+        .children
+        .iter()
+        .filter_map(|id| {
+            inv.folders
+                .get(id)
+                .filter(|f| !f.library && f.info.parent == brand && f.info.name == FOLDER)
+                .map(|_| *id)
+        })
+        .collect();
+    let root = native_root(inv, brand);
+    let mut out = Vec::new();
+    let mut sources: Vec<_> = folder
+        .children
+        .iter()
+        .copied()
+        .filter(|id| {
+            inv.folders
+                .get(id)
+                .is_some_and(|f| !f.library && [STAGING, OLD_STAGING].contains(&f.info.name.as_str()))
+        })
+        .collect();
+    if roots.len() > 1 {
+        sources.extend(roots.into_iter().filter(|id| Some(*id) != root));
+    }
+    // Request a folder never read; a failed one waits for the user's reload.
+    let ready = |inv: &mut Inventory, id: Uuid| match inv.folders.get(&id).map(|f| f.state) {
+        Some(FetchState::Fetched) => true,
+        Some(FetchState::Unknown) => {
+            inv.request(id);
+            false
+        }
+        _ => false,
+    };
+    if sources.is_empty() || root.is_some_and(|root| !ready(inv, root)) {
+        return out;
+    }
+    for id in sources {
+        if !ready(inv, id) {
+            continue;
+        }
+        let sets = inv.folders.get(&id).map_or(0, |f| f.children.len());
+        let duplicate = inv.folders.get(&id).is_some_and(|f| f.info.name == FOLDER);
+        out.push(Recovery {
+            source: id,
+            root,
+            sets,
+            duplicate,
+        });
+    }
+    out
+}
+
+/// The set a folder name describes (`Walk:SO:**`), without its states.
+fn set_header(id: Uuid, folder_name: &str) -> Option<Set> {
+    let params: Vec<_> = folder_name.split(':').collect();
+    let name = params.first().filter(|name| !name.is_empty())?;
+    Some(Set {
+        id,
+        name: (*name).into(),
+        sits: params.contains(&"SO"),
+        smart: params.contains(&"SM"),
+        mouselook: params.contains(&"DM"),
+        default: params.contains(&"**"),
+        states: HashMap::new(),
+    })
+}
+
+/// Merge staged set folders into the selected native root, preserving every
+/// existing set. Clashes are found on the parsed set names, as the Legacy
+/// Viewer refuses a second set of the same name (AOEngine::getSetByName,
+/// indra/newview/aoengine.cpp); the renamed set keeps its options, and only
+/// one set stays the default. The source is moved to Trash after its children.
+pub fn finish_recovery(inv: &Inventory, recovery: Recovery) -> Result<Mutation, String> {
+    let source = inv
+        .folders
+        .get(&recovery.source)
+        .filter(|f| f.state == FetchState::Fetched)
+        .ok_or(aurora_i18n::tr!("ao-name-or-loading"))?;
+    let Some(root) = recovery.root else {
+        return actions::patch(inv, recovery.source, llsd_map! { "name" => FOLDER });
+    };
+    let target = inv
+        .folders
+        .get(&root)
+        .filter(|f| f.state == FetchState::Fetched)
+        .ok_or(aurora_i18n::tr!("ao-name-or-loading"))?;
+    let existing: Vec<_> = target
+        .children
+        .iter()
+        .filter_map(|id| inv.folders.get(id).filter(|f| f.info.parent == root && !f.library))
+        .filter_map(|f| set_header(f.info.id, &f.info.name))
+        .collect();
+    let mut reserved: HashSet<String> = existing.iter().map(|set| set.name.clone()).collect();
+    let mut has_default = existing.iter().any(|set| set.default);
+    let mut change = Mutation::default();
+    for id in &source.children {
+        let Some(folder) = inv.folders.get(id) else { continue };
+        if let Some(original) = set_header(*id, &folder.info.name) {
+            let mut set = original.clone();
+            if reserved.contains(&set.name) {
+                let suffix = " (imported)";
+                let base = set.name.strip_suffix(suffix).unwrap_or(&set.name).to_owned();
+                set.name = renamed(&original, &base, suffix);
+                let mut ordinal = 2;
+                while reserved.contains(&set.name) {
+                    set.name = renamed(&original, &base, &format!(" {ordinal}{suffix}"));
+                    ordinal += 1;
+                }
+            }
+            if set.default && has_default {
+                set.default = false;
+            }
+            has_default |= set.default;
+            let name = set.folder_name();
+            if name != folder.info.name {
+                change.operations.push(Operation::Patch {
+                    id: *id,
+                    folder: true,
+                    body: llsd_map! { "name" => name },
+                });
+            }
+            reserved.insert(set.name);
+        }
+        change.operations.push(Operation::Patch {
+            id: *id,
+            folder: true,
+            body: llsd_map! { "parent_id" => root },
+        });
+    }
+    let trash = actions::system(inv, 14).ok_or(aurora_i18n::tr!("ao-no-trash"))?;
+    let trash_move = actions::move_selection(inv, &[recovery.source], trash, &HashSet::new(), &HashSet::new())?;
+    change.operations.extend(trash_move.operations);
+    change.refresh.extend(trash_move.refresh);
+    change.refresh.extend([root, source.info.parent]);
+    Ok(finish(change))
+}
+
+/// `base` + `extra` as a set name, cut so that the set's folder name with its
+/// options still fits the AIS limit.
+fn renamed(set: &Set, base: &str, extra: &str) -> String {
+    let options = Set {
+        name: String::new(),
+        ..set.clone()
+    }
+    .folder_name();
+    let full = encoded_name(base, &format!("{extra}{options}"));
+    full[..full.len() - options.len()].to_owned()
+}
+
 /// ROOT_AO_FOLDER (Alchemy indra/newview/aoengine.h): the same set format as
 /// the Legacy Viewer, directly under the inventory root.
 pub const ALCHEMY_FOLDER: &str = "Animation Overrides";
@@ -74,8 +242,31 @@ pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
 }
 
 fn native_root(inv: &Inventory, brand: Uuid) -> Option<Uuid> {
-    // Prefer the requested name when both exist; never merge or discard data.
-    child(inv, brand, FOLDER).or_else(|| child(inv, brand, OLD_FOLDER))
+    let mut roots: Vec<_> = inv
+        .folders
+        .get(&brand)
+        .into_iter()
+        .flat_map(|f| f.children.iter())
+        .filter_map(|id| {
+            inv.folders
+                .get(id)
+                .filter(|f| !f.library && f.info.parent == brand && f.info.name == FOLDER)
+                .map(|f| (f.children.len(), *id))
+        })
+        .collect();
+    roots.sort_by_key(|(children, id)| (std::cmp::Reverse(*children), *id));
+    roots.first().map(|(_, id)| *id).or_else(|| child(inv, brand, OLD_FOLDER))
+}
+
+/// Inventory names include Aurora's ordering and option suffixes in the same
+/// 63-byte limit enforced by AIS. Trim only the base, on a UTF-8 boundary.
+pub(super) fn encoded_name(base: &str, suffix: &str) -> String {
+    let max_base = 63usize.saturating_sub(suffix.len());
+    let mut end = base.len().min(max_base);
+    while !base.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{suffix}", &base[..end])
 }
 
 fn fetch(inv: &mut Inventory, id: Uuid, waiting: &mut Vec<(Uuid, FetchState)>, failed: &mut bool) -> bool {
@@ -184,6 +375,23 @@ impl Catalog {
                 return;
             };
             self.loading |= !fetch(inv, fs, &mut self.waiting, &mut self.failed);
+            if source == Source::Native {
+                let roots: Vec<_> = inv
+                    .folders
+                    .get(&fs)
+                    .into_iter()
+                    .flat_map(|f| f.children.iter())
+                    .copied()
+                    .filter(|id| {
+                        inv.folders
+                            .get(id)
+                            .is_some_and(|f| !f.library && f.info.parent == fs && f.info.name == FOLDER)
+                    })
+                    .collect();
+                for id in roots {
+                    self.loading |= !fetch(inv, id, &mut self.waiting, &mut self.failed);
+                }
+            }
         }
         self.root = source.root(inv);
         let Some(root) = self.root else {
@@ -197,18 +405,8 @@ impl Catalog {
             let Some(folder) = inv.folders.get(&id).filter(|f| f.info.parent == root && !f.library) else {
                 continue;
             };
-            let params: Vec<_> = folder.info.name.split(':').collect();
-            let Some(name) = params.first().filter(|name| !name.is_empty()) else {
+            let Some(mut set) = set_header(id, &folder.info.name) else {
                 continue;
-            };
-            let mut set = Set {
-                id,
-                name: (*name).into(),
-                sits: params.contains(&"SO"),
-                smart: params.contains(&"SM"),
-                mouselook: params.contains(&"DM"),
-                default: params.contains(&"**"),
-                states: HashMap::new(),
             };
             let mut complete = fetch(inv, id, &mut self.waiting, &mut self.failed);
             let states = inv.folders.get(&id).map(|f| f.children.clone()).unwrap_or_default();
@@ -295,7 +493,8 @@ impl Catalog {
                 }
             }
         }
-        self.sets.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        self.sets
+            .sort_by(|a, b| crate::natural_order::cmp(&a.name, &b.name).then_with(|| a.id.cmp(&b.id)));
         self.missing.sort();
         self.missing.dedup();
     }
@@ -445,7 +644,7 @@ fn append_set(change: &mut Mutation, root: Uuid, set: &Set) -> Result<Uuid, Stri
         let parent = folder(change, id, format!("{}{}", state.name(), config.cycle.suffix()));
         for (order, step) in config.steps.iter().enumerate() {
             if step.group {
-                let group = folder(change, parent, format!("{}:OR{order}", valid_name(&step.name)?));
+                let group = folder(change, parent, encoded_name(&valid_name(&step.name)?, &format!(":OR{order}")));
                 links(change, group, &step.members);
             } else if let Some(a) = step.members.first() {
                 change.operations.push(Operation::Links {
@@ -464,7 +663,7 @@ fn append_set(change: &mut Mutation, root: Uuid, set: &Set) -> Result<Uuid, Stri
             let parent = folder(
                 change,
                 parent,
-                format!("{}:TR:OR{order}{}", valid_name(&track.name)?, track.cycle.suffix()),
+                encoded_name(&valid_name(&track.name)?, &format!(":TR:OR{order}{}", track.cycle.suffix())),
             );
             links(change, parent, &track.members);
         }
@@ -479,8 +678,15 @@ fn append_set(change: &mut Mutation, root: Uuid, set: &Set) -> Result<Uuid, Stri
 /// import stays separate and is never blindly replayed over user AO data.
 pub(super) fn reconstruct(inv: &Inventory, source: &Catalog, selected: Uuid) -> Result<(Mutation, Option<Uuid>), String> {
     let brand = child(inv, inv.root, "#Aurora").ok_or(aurora_i18n::tr!("ao-name-or-loading"))?;
-    if native_root(inv, brand).is_some() || [STAGING, OLD_STAGING].iter().any(|name| child(inv, brand, name).is_some()) {
-        return Err(aurora_i18n::tr!("ao-bootstrap-interrupted").into());
+    if let Some(name) = [STAGING, OLD_STAGING]
+        .iter()
+        .find(|name| child(inv, brand, name).is_some())
+        .copied()
+    {
+        return Err(aurora_i18n::tr!("ao-import-unfinished-retry", folder = name));
+    }
+    if native_root(inv, brand).is_some() {
+        return Err(aurora_i18n::tr!("ao-native-already-exists").into());
     }
     let mut change = Mutation::default();
     let root = folder(&mut change, brand, STAGING.into());
@@ -520,7 +726,36 @@ pub fn save_cycle(inv: &Inventory, state: State, config: &StateConfig) -> Result
 }
 
 pub fn add(inv: &Inventory, set: &Set, state: State, item: Uuid, container: Option<Uuid>) -> Result<Mutation, String> {
-    let a = animation(inv, item).ok_or(aurora_i18n::tr!("ao-not-animation"))?;
+    add_many(inv, set, state, &[item], container)
+}
+
+/// A drop of several inventory entries (FloaterAO::handleDragAndDrop accepts
+/// animations with ACCEPT_YES_MULTI, indra/newview/ao.cpp). As
+/// LLToolDragAndDrop::dragOrDrop does, the whole batch is refused when one
+/// entry is not an animation (a folder, a notecard…). The Legacy Viewer adds
+/// them in its selection order; Aurora's selection keeps none, so they come
+/// in name order, as the inventory lists them. One request links them all,
+/// numbered after the entries already there, and creates a missing state
+/// folder once (AOEngine::addAnimation queues the drops for that).
+pub fn add_many(inv: &Inventory, set: &Set, state: State, items: &[Uuid], container: Option<Uuid>) -> Result<Mutation, String> {
+    let mut added = Vec::with_capacity(items.len());
+    for &item in items {
+        let a = animation(inv, item).ok_or(aurora_i18n::tr!("ao-not-animation"))?;
+        // The same entry named twice is linked once.
+        if !added.iter().any(|b: &Animation| b.link == a.link) {
+            added.push(a);
+        }
+    }
+    if added.is_empty() {
+        return Err(aurora_i18n::tr!("ao-not-animation").into());
+    }
+    added.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.link.cmp(&b.link))
+    });
     let mut change = Mutation::default();
     let config = set.states.get(&state);
     let parent = config
@@ -547,22 +782,35 @@ pub fn add(inv: &Inventory, set: &Set, state: State, item: Uuid, container: Opti
     };
     change.operations.push(Operation::Links {
         parent,
-        links: vec![OutfitLink {
-            target: a.original,
-            name: a.name,
-            desc: count.to_string(),
-            folder: false,
-            inv_type: 19,
-        }],
+        links: added
+            .into_iter()
+            .enumerate()
+            .map(|(offset, a)| OutfitLink {
+                target: a.original,
+                name: a.name,
+                desc: (count + offset).to_string(),
+                folder: false,
+                inv_type: 19,
+            })
+            .collect(),
     });
     change.refresh.push(parent);
     Ok(finish(change))
 }
 
+/// AOEngine::updateSortOrder: only an entry whose stored order differs from
+/// its position is rewritten, so a plain add is a single request.
+fn in_place(stored: i32, index: usize) -> bool {
+    usize::try_from(stored).ok() == Some(index)
+}
+
 fn normalize_steps(inv: &Inventory, change: &mut Mutation, steps: &[Step]) -> Result<(), String> {
     for (order, step) in steps.iter().enumerate() {
+        if in_place(step.order, order) {
+            continue;
+        }
         let body = if step.group {
-            llsd_map! { "name" => format!("{}:OR{order}", step.name) }
+            llsd_map! { "name" => encoded_name(&step.name, &format!(":OR{order}")) }
         } else {
             llsd_map! { "desc" => order.to_string() }
         };
@@ -575,6 +823,9 @@ fn normalize_steps(inv: &Inventory, change: &mut Mutation, steps: &[Step]) -> Re
 
 fn normalize_members(inv: &Inventory, change: &mut Mutation, members: &[Animation]) -> Result<(), String> {
     for (order, a) in members.iter().enumerate() {
+        if in_place(a.order, order) {
+            continue;
+        }
         let patch = actions::patch(inv, a.link, llsd_map! { "desc" => order.to_string() })?;
         change.operations.extend(patch.operations);
         change.refresh.extend(patch.refresh);
@@ -599,7 +850,7 @@ pub fn consolidate_swimming(inv: &Inventory, set: &Set) -> Result<Mutation, Stri
             let part = actions::patch(
                 inv,
                 track.id,
-                llsd_map! { "name" => format!("{}:TR:OR{order}{}", track.name, track.cycle.suffix()) },
+                llsd_map! { "name" => encoded_name(&track.name, &format!(":TR:OR{order}{}", track.cycle.suffix())) },
             )?;
             change.operations.extend(part.operations);
             change.refresh.extend(part.refresh);
@@ -612,7 +863,7 @@ pub fn consolidate_swimming(inv: &Inventory, set: &Set) -> Result<Mutation, Stri
                 continue;
             }
             let body = if step.group {
-                llsd_map! { "parent_id" => parent, "name" => format!("{}:OR{step_order}", step.name) }
+                llsd_map! { "parent_id" => parent, "name" => encoded_name(&step.name, &format!(":OR{step_order}")) }
             } else {
                 llsd_map! { "parent_id" => parent, "desc" => step_order.to_string() }
             };
@@ -630,7 +881,7 @@ pub fn consolidate_swimming(inv: &Inventory, set: &Set) -> Result<Mutation, Stri
                 track.id,
                 llsd_map! {
                     "parent_id" => parent,
-                    "name" => format!("{}:TR:OR{track_order}{}", track.name, track.cycle.suffix())
+                    "name" => encoded_name(&track.name, &format!(":TR:OR{track_order}{}", track.cycle.suffix()))
                 },
             )?;
             change.operations.extend(part.operations);
@@ -756,4 +1007,269 @@ pub fn import(inv: &Inventory, item: Uuid, text: &str) -> Result<(Set, Vec<Strin
         }
     }
     Ok((set, warnings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::inventory::Folder;
+    use aurora_net::inventory::InvFolder;
+
+    fn add_folder(inv: &mut Inventory, parent: Uuid, id: u128, name: &str) -> Uuid {
+        let id = Uuid::from_u128(id);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: -1,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        inv.folders.get_mut(&parent).expect("parent").children.push(id);
+        id
+    }
+
+    /// Apply a mutation's folder renames and moves, as the server would.
+    fn apply_patches(inv: &mut Inventory, change: &Mutation) {
+        for op in &change.operations {
+            let Operation::Patch { id, body, .. } = op else { continue };
+            let map = body.as_map().expect("patch body");
+            if let Some(name) = map.get("name") {
+                inv.folders.get_mut(id).expect("patched folder").info.name = name.as_str().to_owned();
+            }
+            if let Some(parent) = map.get("parent_id").map(|value| value.as_uuid()) {
+                let old = inv.folders[id].info.parent;
+                inv.folders.get_mut(&old).expect("old parent").children.retain(|child| child != id);
+                inv.folders.get_mut(&parent).expect("new parent").children.push(*id);
+                inv.folders.get_mut(id).expect("moved folder").info.parent = parent;
+            }
+        }
+        inv.generation = inv.generation.wrapping_add(1);
+    }
+
+    #[test]
+    fn generated_ao_folder_names_respect_the_ais_byte_limit() {
+        let mut inv = Inventory::default();
+        let selected = super::super::demo::seed(&mut inv, Uuid::from_u128(1));
+        let mut catalog = Catalog::default();
+        catalog.refresh(&mut inv);
+        let mut set = catalog.selected(selected).expect("demo set").clone();
+        set.name = "S".repeat(63);
+        set.sits = true;
+        set.smart = true;
+        set.mouselook = true;
+        set.default = true;
+        let config = set.states.get_mut(&State::Standing).expect("standing");
+        let mut group = config.steps[0].clone();
+        group.name = "G".repeat(62);
+        group.group = true;
+        config.steps.resize_with(13, || group.clone());
+        let (change, _) = create(&inv, &catalog, &set).expect("bounded inventory names");
+        let names = change.operations.iter().filter_map(|op| match op {
+            Operation::Folder { name, .. } => Some(name.as_str()),
+            Operation::Patch { body, .. } => Some(body.as_map()?.get("name")?.as_str()),
+            _ => None,
+        });
+        for name in names {
+            assert!(name.len() <= 63, "{name:?} is {} bytes", name.len());
+        }
+        assert!(set.folder_name().len() <= 63);
+        assert_eq!(encoded_name(&"é".repeat(40), ":OR12").len(), 63);
+    }
+
+    #[test]
+    fn recovery_renames_staging_when_native_root_is_absent() {
+        let mut inv = Inventory::default();
+        let root = Uuid::from_u128(9);
+        inv.root = root;
+        inv.folders.insert(
+            root,
+            Folder {
+                info: InvFolder {
+                    id: root,
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        let brand = Uuid::from_u128(10);
+        inv.folders.insert(
+            brand,
+            Folder {
+                info: InvFolder {
+                    id: brand,
+                    parent: root,
+                    name: "#Aurora".into(),
+                    ..Default::default()
+                },
+                children: vec![],
+                items: vec![],
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        inv.folders.get_mut(&root).expect("root").children.push(brand);
+        let source = Uuid::from_u128(11);
+        inv.folders.insert(
+            source,
+            Folder {
+                info: InvFolder {
+                    id: source,
+                    parent: brand,
+                    name: STAGING.into(),
+                    ..Default::default()
+                },
+                children: vec![],
+                items: vec![],
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        inv.folders.get_mut(&brand).expect("brand").children.push(source);
+        let recovery = recoveries(&mut inv).pop().expect("staging recovery");
+        let change = finish_recovery(&inv, recovery).expect("rename staging");
+        assert!(
+            matches!(change.operations.as_slice(), [Operation::Patch { id, body, .. }] if *id == source && body.as_map().and_then(|m| m.get("name")).map(|v| v.as_str()) == Some(FOLDER))
+        );
+        let refusal = reconstruct(&inv, &Catalog::default(), Uuid::nil()).expect_err("an unfinished import prevents another migration");
+        assert!(refusal.contains(STAGING), "{refusal}");
+    }
+
+    #[test]
+    fn recovery_merges_sets_renames_clashes_and_moves_staging_to_trash() {
+        let mut inv = Inventory::default();
+        let owner = Uuid::from_u128(1);
+        super::super::demo::seed(&mut inv, owner);
+        let brand = child(&inv, inv.root, "#Aurora").expect("brand");
+        let root = child(&inv, brand, FOLDER).expect("native AO");
+        let staging = add_folder(&mut inv, brand, 100, STAGING);
+        let clash = add_folder(&mut inv, staging, 101, "Recover me");
+        let unique = add_folder(&mut inv, staging, 102, "A unique import");
+        add_folder(&mut inv, root, 103, "Recover me");
+        let trash = actions::system(&inv, 14).expect("Trash");
+        let recovery = recoveries(&mut inv)
+            .into_iter()
+            .find(|r| r.source == staging)
+            .expect("staging recovery");
+        let change = finish_recovery(&inv, recovery).expect("merge recovery");
+        assert!(change.operations.iter().any(|op| matches!(op, Operation::Patch { id, body, .. } if *id == clash && body.as_map().and_then(|m| m.get("name")).is_some_and(|v| v.as_str() == "Recover me (imported)"))));
+        assert!(change.operations.iter().any(|op| matches!(op, Operation::Patch { id, body, .. } if *id == clash && body.as_map().and_then(|m| m.get("parent_id")).is_some_and(|v| v.as_uuid() == root))));
+        assert!(change.operations.iter().any(|op| matches!(op, Operation::Patch { id, body, .. } if *id == unique && body.as_map().and_then(|m| m.get("parent_id")).is_some_and(|v| v.as_uuid() == root))));
+        assert!(change.operations.iter().any(|op| matches!(op, Operation::Patch { id, body, .. } if *id == staging && body.as_map().and_then(|m| m.get("parent_id")).is_some_and(|v| v.as_uuid() == trash))));
+        let names = change.operations.iter().filter_map(|op| match op {
+            Operation::Patch { body, .. } => body.as_map()?.get("name").map(|v| v.as_str()),
+            _ => None,
+        });
+        assert!(names.into_iter().all(|name| name.len() <= 63));
+        apply_patches(&mut inv, &change);
+        let mut catalog = Catalog::default();
+        catalog.refresh(&mut inv);
+        assert!(catalog.sets.iter().any(|set| set.name == "Recover me (imported)"));
+        assert!(catalog.sets.iter().any(|set| set.name == "A unique import"));
+        assert!(inv.folders[&trash].children.contains(&staging));
+    }
+
+    #[test]
+    fn duplicate_native_roots_prefer_the_one_with_sets_and_offer_the_other_for_merge() {
+        let mut inv = Inventory::default();
+        super::super::demo::seed(&mut inv, Uuid::from_u128(1));
+        let brand = child(&inv, inv.root, "#Aurora").expect("brand");
+        let chosen = native_root(&inv, brand).expect("seeded root");
+        let duplicate = add_folder(&mut inv, brand, 201, FOLDER);
+        let _set = add_folder(&mut inv, duplicate, 202, "Duplicate set");
+        // Make the original root empty so the duplicate has more set folders.
+        inv.folders.get_mut(&chosen).expect("root").children.clear();
+        assert_eq!(native_root(&inv, brand), Some(duplicate));
+        assert!(recoveries(&mut inv).iter().any(|r| r.source == chosen && r.root == Some(duplicate)));
+    }
+
+    #[test]
+    fn recovery_compares_set_names_keeps_options_and_a_single_default() {
+        let mut inv = Inventory::default();
+        super::super::demo::seed(&mut inv, Uuid::from_u128(1));
+        let brand = child(&inv, inv.root, "#Aurora").expect("brand");
+        let root = child(&inv, brand, FOLDER).expect("native AO");
+        // Only the sets of this test in the target folder.
+        inv.folders.get_mut(&root).expect("root").children.clear();
+        add_folder(&mut inv, root, 300, "Walk:**");
+        add_folder(&mut inv, root, 301, "Sit:SO");
+        let staging = add_folder(&mut inv, brand, 310, STAGING);
+        // Same set name as the target's default, other options.
+        let walk = add_folder(&mut inv, staging, 311, "Walk:SO");
+        // Same name and options, and a second default.
+        let sit = add_folder(&mut inv, staging, 312, "Sit:SO:**");
+        // No clash, but the target already has its default.
+        let run = add_folder(&mut inv, staging, 313, "Run:SM:**");
+        let long = add_folder(&mut inv, staging, 314, &format!("{}:SO:DM", "L".repeat(57)));
+        add_folder(&mut inv, root, 302, &"L".repeat(57));
+        let recovery = recoveries(&mut inv)
+            .into_iter()
+            .find(|r| r.source == staging)
+            .expect("staging recovery");
+        let change = finish_recovery(&inv, recovery).expect("merge recovery");
+        apply_patches(&mut inv, &change);
+        assert_eq!(inv.folders[&walk].info.name, "Walk (imported):SO");
+        assert_eq!(inv.folders[&sit].info.name, "Sit (imported):SO");
+        assert_eq!(inv.folders[&run].info.name, "Run:SM");
+        let long_name = &inv.folders[&long].info.name;
+        assert!(long_name.len() <= 63 && long_name.ends_with(" (imported):SO:DM"), "{long_name:?}");
+        let mut catalog = Catalog::default();
+        catalog.refresh(&mut inv);
+        let names: Vec<_> = catalog.sets.iter().map(|set| set.name.as_str()).collect();
+        let unique: HashSet<_> = names.iter().collect();
+        assert_eq!(unique.len(), names.len(), "{names:?}");
+        assert_eq!(catalog.sets.iter().filter(|set| set.default).count(), 1, "{names:?}");
+        assert!(catalog.sets.iter().any(|set| set.name == "Walk" && set.default));
+        let imported = catalog.sets.iter().find(|set| set.id == walk).expect("moved Walk");
+        assert_eq!(imported.name, "Walk (imported)");
+        assert!(imported.sits && !imported.default);
+        assert!(catalog.sets.iter().any(|set| set.id == run && set.smart && !set.default));
+    }
+
+    #[test]
+    fn recovery_waits_for_the_target_folder_and_does_not_retry_a_failed_fetch() {
+        let mut inv = Inventory::default();
+        super::super::demo::seed(&mut inv, Uuid::from_u128(1));
+        let brand = child(&inv, inv.root, "#Aurora").expect("brand");
+        let root = child(&inv, brand, FOLDER).expect("native AO");
+        let staging = add_folder(&mut inv, brand, 400, STAGING);
+        add_folder(&mut inv, staging, 401, "Walk");
+        inv.queue.clear();
+
+        // The target's clash names are unknown until it is fetched.
+        inv.folders.get_mut(&root).expect("root").state = FetchState::Fetching;
+        assert!(recoveries(&mut inv).is_empty());
+        let early = Recovery {
+            source: staging,
+            root: Some(root),
+            sets: 1,
+            duplicate: false,
+        };
+        assert!(finish_recovery(&inv, early).is_err());
+        inv.folders.get_mut(&root).expect("root").state = FetchState::Fetched;
+
+        // A failed staging fetch is shown as is, not asked again each frame.
+        inv.folders.get_mut(&staging).expect("staging").state = FetchState::Failed;
+        for _ in 0..3 {
+            assert!(recoveries(&mut inv).is_empty());
+        }
+        assert_eq!(inv.folders[&staging].state, FetchState::Failed);
+        assert!(inv.queue.iter().all(|(id, _)| *id != staging));
+
+        // A folder never read is asked once.
+        inv.folders.get_mut(&staging).expect("staging").state = FetchState::Unknown;
+        assert!(recoveries(&mut inv).is_empty());
+        assert_eq!(inv.queue.iter().filter(|(id, _)| *id == staging).count(), 1);
+    }
 }

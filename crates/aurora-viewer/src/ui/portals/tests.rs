@@ -1,8 +1,9 @@
 use super::*;
 use crate::scene::avatar::AvatarLibrary;
 use std::sync::Arc;
+use uuid::Uuid;
 
-fn frame(ctx: &egui::Context, panel: &mut PortalUi, world: &World, ready: bool, events: Vec<egui::Event>) -> Actions {
+fn frame(ctx: &egui::Context, panel: &mut PortalUi, world: &World, events: Vec<egui::Event>) -> Actions {
     let mut actions = Actions::default();
     let mut output = ctx.run_ui(
         egui::RawInput {
@@ -12,87 +13,74 @@ fn frame(ctx: &egui::Context, panel: &mut PortalUi, world: &World, ready: bool, 
         },
         |ui| {
             super::super::close_key::begin(ui.ctx());
-            actions = panel.show(ui.ctx(), &crate::theme::Theme::default().palette(), world, ready);
+            actions = panel.show(ui.ctx(), &crate::theme::Theme::default().palette(), world);
         },
     );
     output.textures_delta.clear();
     actions
 }
-fn click(ctx: &egui::Context, panel: &mut PortalUi, world: &World, ready: bool, at: egui::Pos2) -> Actions {
+fn click(ctx: &egui::Context, panel: &mut PortalUi, world: &World, at: egui::Pos2) -> Actions {
     let button = |pressed| egui::Event::PointerButton {
         pos: at,
         button: egui::PointerButton::Primary,
         pressed,
         modifiers: egui::Modifiers::NONE,
     };
-    frame(ctx, panel, world, ready, vec![egui::Event::PointerMoved(at)]);
-    frame(ctx, panel, world, ready, vec![button(true)]);
-    frame(ctx, panel, world, ready, vec![button(false)])
+    frame(ctx, panel, world, vec![egui::Event::PointerMoved(at)]);
+    frame(ctx, panel, world, vec![button(true)]);
+    frame(ctx, panel, world, vec![button(false)])
 }
+
+/// No bridge is needed any more: a portal is drawn by this viewer only.
 #[test]
-fn portal_creator_requires_ready_bridge_and_destination_and_selects_an_actual_member_group() {
+fn portal_creator_needs_only_a_place_of_this_grid() {
     let ctx = egui::Context::default();
     let mut world = World::new(Arc::new(AvatarLibrary::load()));
-    let group = Uuid::from_u128(7);
-    world.groups.groups.push(aurora_net::GroupMembership {
-        id: group,
-        name: "Demo group".into(),
-        insignia: Uuid::nil(),
-        powers: 0,
-        accept_notices: true,
-        list_in_profile: true,
-        contribution: 0,
-    });
     let mut panel = PortalUi {
         open: true,
         destination: "Demo destination/128/128/25".into(),
         ..Default::default()
     };
     for _ in 0..4 {
-        frame(&ctx, &mut panel, &world, false, Vec::new());
+        frame(&ctx, &mut panel, &world, Vec::new());
     }
-    let create = panel.rects[1].unwrap().center();
-    assert!(!click(&ctx, &mut panel, &world, false, create).create);
-    let radio = panel.rects[0].unwrap().center();
-    click(&ctx, &mut panel, &world, true, radio);
-    assert_eq!(panel.access, Access::Group(group));
-    for _ in 0..3 {
-        frame(&ctx, &mut panel, &world, true, Vec::new());
-    }
-    let create = panel.rects[1].unwrap().center();
-    assert!(click(&ctx, &mut panel, &world, true, create).create);
+    let create = panel.create_rect.unwrap().center();
+    assert!(click(&ctx, &mut panel, &world, create).create);
+    world.teleporting = true;
+    assert!(!click(&ctx, &mut panel, &world, create).create, "not while teleporting");
+    world.teleporting = false;
     panel.destination.clear();
-    frame(&ctx, &mut panel, &world, true, Vec::new());
-    let create = panel.rects[1].unwrap().center();
-    assert!(!click(&ctx, &mut panel, &world, true, create).create);
+    frame(&ctx, &mut panel, &world, Vec::new());
+    let create = panel.create_rect.unwrap().center();
+    assert!(!click(&ctx, &mut panel, &world, create).create);
 }
 
 #[test]
-fn private_portal_labels_hide_even_cached_destinations_after_friendship_is_revoked() {
-    use aurora_net::bridge::portal::{LIFETIME, Portal};
+fn portal_labels_show_the_destination_its_time_left_and_whether_to_step_away() {
+    use portals::{LIFETIME, Portal};
     let mut world = World::new(Arc::new(AvatarLibrary::load()));
     world.agent_id = Uuid::from_u128(1);
     world.main_region = Some(256);
-    let owner = world.agent_id;
-    let destination = "Demo private destination";
+    world.agent.position = Vec3::new(10.0, 10.0, 25.0);
     let mut state = portals::State::default();
     let unix = portals::unix_time();
-    state.sync(&world, None, unix);
-    state.create(
+    state.sync(&world, unix);
+    let created = state.create(
         Portal {
             id: Uuid::from_u128(3),
             region: 256,
             center: [10.0, 10.0, 25.0],
             yaw: 0.0,
-            destination: destination.into(),
+            destination: "Demo destination".into(),
             position: [987.0, 654.0, 321.0],
-            access: Access::Friends,
             expires: unix + LIFETIME,
         },
+        crate::world::land::BuildRight::Allowed,
         world.agent.position,
         std::time::Instant::now(),
         unix,
     );
+    assert!(created.is_ok());
     let entry = state.own().unwrap();
     for remaining in [LIFETIME, 1, 0] {
         let at = unix + LIFETIME - remaining;
@@ -101,52 +89,7 @@ fn private_portal_labels_hide_even_cached_destinations_after_friendship_is_revok
     }
     let expired = aurora_i18n::tr!("portal-expires", seconds = "0".to_string());
     assert!(label_text(&world, entry, unix + LIFETIME + 1).contains(expired.as_str()));
-    assert!(label_text(&world, entry, unix).contains(destination));
-    world.agent_id = Uuid::from_u128(2);
-    let hidden = label_text(&world, entry, unix);
-    assert!(!hidden.contains(destination) && !hidden.contains("987") && !hidden.contains("654"));
-    assert!(hidden.contains(aurora_i18n::tr!("portal-private")));
-    assert!(!hidden.contains(aurora_i18n::tr!("poser-resident")));
-    assert!(!hidden.contains(aurora_i18n::tr!("portal-friends")));
-    world.social.form_friendship(owner);
-    assert!(label_text(&world, entry, unix).contains(destination));
-    world.social.end_friendship(&owner);
-    assert!(!label_text(&world, entry, unix).contains(destination));
-}
-
-#[test]
-fn crossing_question_names_the_relay_and_the_destination() {
-    use aurora_net::bridge::portal::{LIFETIME, Message, Portal};
-    let mut world = World::new(Arc::new(AvatarLibrary::load()));
-    world.agent_id = Uuid::from_u128(1);
-    world.main_region = Some(256);
-    world.portal_sources = portals::Sources::Everyone;
-    let unix = portals::unix_time();
-    let portal = Portal {
-        id: Uuid::from_u128(3),
-        region: 256,
-        center: [10.0, 10.0, 25.0],
-        yaw: 0.0,
-        destination: "Demo destination".into(),
-        position: [128.0, 64.0, 25.0],
-        access: Access::Everyone,
-        expires: unix + LIFETIME,
-    };
-    let mut state = portals::State::default();
-    state.sync(&world, None, unix);
-    let relay = Uuid::from_u128(2);
-    let mut announcement = portal.announcement();
-    announcement.creator = Some(Uuid::from_u128(20));
-    let wire = Message::Open(announcement).encode().unwrap();
-    state.receive(
-        &world,
-        &format!("<auroraPortal>{relay}|{wire}</auroraPortal>"),
-        std::time::Instant::now(),
-        unix,
-    );
-    let entry = state.entries.first().expect("kept");
-    assert_eq!(entry.label_owner(), relay, "a claimed creator is not named");
-    let text = CrossingAsk::new(&world, entry, portal).text();
-    assert!(text.contains("Demo destination (128, 64, 25)"), "{text}");
-    assert!(text.contains(aurora_i18n::tr!("poser-resident")), "{text}");
+    let text = label_text(&world, entry, unix);
+    assert!(text.contains("Demo destination (987, 654, 321)"), "{text}");
+    assert!(text.contains(aurora_i18n::tr!("portal-step-away")), "opened on us: {text}");
 }

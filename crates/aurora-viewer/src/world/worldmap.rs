@@ -137,10 +137,13 @@ impl super::World {
     /// Loaded or coarse avatar position in render space. Remote friends
     /// require FindAgent instead; map rights alone cannot enable a camera zoom.
     pub fn avatar_map_position(&self, id: Uuid) -> Option<glam::Vec3> {
+        // a seated avatar's position is relative to its seat: resolve the
+        // chain, as LLVOAvatar::getPositionGlobal does, or a radar Teleport
+        // To lands near the region's corner, or in the tile next to it
         if let Some(o) = self.objects.index_of_uuid(&id).and_then(|i| self.objects.get(i))
-            && let Some(off) = self.region_offset(o.key.region)
+            && let Some(position) = super::radar::native_position(self, o)
         {
-            return Some(off + o.position);
+            return Some(position);
         }
         self.coarse
             .iter()
@@ -157,7 +160,9 @@ impl super::World {
     pub fn locate_avatar(&mut self, id: Uuid, teleport: bool) -> bool {
         let can_map = self.social.can_map_friend(id);
         if can_map && !teleport {
-            let name = self.social.name_of(&id);
+            // LLAvatarActions::showOnMap (indra/newview/llavataractions.cpp)
+            // tracks under the name of the cache, with no RLVa test
+            let name = self.social.name_in(super::names::NameScope::Roster, &id);
             self.map.track_avatar(id, &name);
             self.map.focus_track = true;
         } else if let Some(p) = self.avatar_map_position(id) {
@@ -168,12 +173,49 @@ impl super::World {
                 self.map.friend_teleport = Some(id);
             }
         } else if can_map {
-            let name = self.social.name_of(&id);
+            // LLAvatarActions::showOnMap (indra/newview/llavataractions.cpp)
+            // tracks under the name of the cache, with no RLVa test
+            let name = self.social.name_in(super::names::NameScope::Roster, &id);
             self.map.teleport_to_avatar(id, &name);
         } else {
             return false;
         }
         true
+    }
+
+    /// LLAgent::teleportViaLocation (indra/newview/llagent.cpp): a point
+    /// inside our current region uses its real handle and full local XY.
+    /// Only remote destinations keep the map's 256-metre tile addressing.
+    pub(crate) fn normalize_map_teleport(&self, command: &mut NetCommand) {
+        let NetCommand::TeleportTo { handle, position, look_at } = command else {
+            return;
+        };
+        let Some(main) = self.main_region else {
+            return;
+        };
+        let Some(region) = self.regions.get(&main) else {
+            return;
+        };
+        let (x, y) = aurora_net::handle_to_origin(*handle);
+        let (ox, oy) = aurora_net::handle_to_origin(main);
+        let local_x = f64::from(x) + f64::from(position.x) - f64::from(ox);
+        let local_y = f64::from(y) + f64::from(position.y) - f64::from(oy);
+        if !position.is_finite()
+            || !look_at.is_finite()
+            || local_x < 0.0
+            || local_y < 0.0
+            || local_x >= f64::from(region.heightmap.size_x)
+            || local_y >= f64::from(region.heightmap.size_y)
+        {
+            return;
+        }
+        let offset = glam::Vec3::new((f64::from(x) - f64::from(ox)) as f32, (f64::from(y) - f64::from(oy)) as f32, 0.0);
+        *handle = main;
+        position.x = local_x as f32;
+        position.y = local_y as f32;
+        // Map teleports use position + X as the native look field: move it
+        // into the same region frame without changing height or direction.
+        *look_at += offset;
     }
 
     /// Recheck rights/presence before sending a delayed lookup or teleport:
@@ -237,6 +279,7 @@ pub struct WorldMap {
     /// MAP_ITEM_AGENT_LOCATIONS by region: (global x, y, count).
     pub agents: HashMap<(u32, u32), Vec<(u32, u32, i32)>>,
     agents_asked: HashMap<(u32, u32), Instant>,
+    named_region_asked: HashMap<String, Instant>,
     pub track: Option<Track>,
     /// The friend `track` follows, if any.
     pub avatar: Option<AvatarTrack>,
@@ -249,6 +292,11 @@ pub struct WorldMap {
     /// Centre the open map on `track` once its region is known
     /// (llMapDestination's BEACON_FOCUS_MAP, LLFloaterWorldMap autofocus).
     pub focus_track: bool,
+    /// RLVa `@showloc`, set by the app each frame: a spot tracked from now on
+    /// is labelled "(Hidden)" (LLFloaterWorldMap::trackLocation,
+    /// indra/newview/llfloaterworldmap.cpp: Hidden::Generic). The label is
+    /// taken when the spot is tracked, as LLTracker keeps it.
+    pub hide_location_labels: bool,
     /// Region name search in progress (lowercase) and when it was sent.
     pub search: Option<(String, Instant)>,
     /// Place link waiting for its region by name (lowercase name, position in
@@ -507,7 +555,11 @@ impl WorldMap {
                 t.pending = false;
                 t.invalid = s.is_down();
                 if t.label.is_empty() {
-                    t.label = location_label(&s.name, t.x - sx as f64 * 256.0, t.y - sy as f64 * 256.0, t.z);
+                    t.label = if self.hide_location_labels {
+                        aurora_i18n::tr!("rlva-hidden-generic").to_owned()
+                    } else {
+                        location_label(&s.name, t.x - sx as f64 * 256.0, t.y - sy as f64 * 256.0, t.z)
+                    };
                 }
                 if t.teleport && !t.invalid {
                     teleport = Some((t.x, t.y, t.z));
@@ -617,10 +669,30 @@ impl WorldMap {
         });
     }
 
+    /// Ask for a tracked region by name no more than once a minute.
+    pub fn want_named_region(&mut self, name: &str) {
+        let lower = name.trim().to_lowercase();
+        if lower.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .named_region_asked
+            .get(&lower)
+            .is_some_and(|t| now.duration_since(*t) < AGENTS_UPDATE)
+        {
+            return;
+        }
+        self.named_region_asked.insert(lower.clone(), now);
+        self.out.push(NetCommand::MapNameRequest { name: lower });
+    }
+
     /// LLFloaterWorldMap::trackAvatar: follow a friend who lets us see them
     /// on the map; the track points at them once the grid answers, and the
     /// open map centres on it.
     pub fn track_avatar(&mut self, id: Uuid, name: &str) {
+        // a place link still asked by name gives way to the friend
+        self.wanted_place = None;
         self.friend_teleport = None;
         self.friend_join = None;
         self.friend_join_flight = None;
@@ -813,14 +885,58 @@ impl WorldMap {
     /// followed any more.
     pub fn set_track(&mut self, t: Track) {
         self.stop_avatar();
+        self.wanted_place = None;
         self.track = Some(t);
     }
 
     /// LLFloaterWorldMap::trackLocation: point at a global position; an
-    /// unknown region is asked first (MAP_SIM_RETURN_NULL_SIMS).
+    /// unknown region is asked first (MAP_SIM_RETURN_NULL_SIMS). A place
+    /// link still asked by name is dropped: its late answer must not replace
+    /// this newer track.
     pub fn track_location(&mut self, x: f64, y: f64, z: f32, teleport: bool) {
         self.stop_avatar();
+        self.wanted_place = None;
         self.place_track(x, y, z, teleport);
+    }
+
+    /// Show a place on the map: tracked, and the map centred on it as soon
+    /// as its region is known. The map's opening puts it back on the agent
+    /// (LLFloaterWorldMap::onOpen), so this is what shows the place, on every
+    /// path of `trackLocation` then `showInstance("world_map", "center")`:
+    /// LLPanelPlaces::onShowOnMapButtonClicked (indra/newview/llpanelplaces.cpp),
+    /// LLLandmarksPanel::doShowOnMap, the favorites bar, search, picks, group
+    /// land, My Land (LLFloaterLandHoldings::buttonCore,
+    /// indra/newview/llfloaterlandholdings.cpp) and the inventory landmark.
+    /// Visible difference: the Legacy Viewer jumps straight to the place
+    /// (`onOpen("center")`, `centerOnTarget(false)`); Aurora opens on the
+    /// agent and slides there (`PAN_TAU_CENTER`), which shows where the
+    /// place is from here.
+    pub fn show_location(&mut self, x: f64, y: f64, z: f32) {
+        self.track_location(x, y, z, false);
+        self.focus_track = true;
+    }
+
+    /// Show a place given by region name (a place link, a SLurl, a
+    /// `secondlife:///app/worldmap` link): LLWorldMapHandler::handle
+    /// (indra/newview/llfloaterworldmap.cpp), `trackURL` then
+    /// `showInstance("world_map", "center")`. The map centres on this place
+    /// once its region answers, never on the previous track kept meanwhile
+    /// (`focus_target`); the Legacy Viewer centres at once on whatever is
+    /// tracked, the previous place included.
+    pub fn show_region(&mut self, name: &str, pos: glam::Vec3) {
+        self.track_region(name, pos);
+        self.focus_track = true;
+    }
+
+    /// Where the open map centres now, if it has to (`focus_track`): the
+    /// tracked spot once its region is known (LLFloaterWorldMap::centerOnTarget
+    /// and its `mWaitingForTracker`). Not while a place link's region is
+    /// still asked by name: `track` is then the previous place.
+    pub fn focus_target(&self) -> Option<(f64, f64)> {
+        if !self.focus_track || self.wanted_place.is_some() {
+            return None;
+        }
+        self.track.as_ref().filter(|t| !t.pending).map(|t| (t.x, t.y))
     }
 
     fn place_track(&mut self, x: f64, y: f64, z: f32, teleport: bool) {
@@ -838,7 +954,11 @@ impl WorldMap {
         match self.sim_at(gx, gy).map(|(k, s)| (k, s.clone())) {
             Some(((sx, sy), s)) => {
                 t.invalid = s.is_down();
-                t.label = location_label(&s.name, x - sx as f64 * 256.0, y - sy as f64 * 256.0, z);
+                t.label = if self.hide_location_labels {
+                    aurora_i18n::tr!("rlva-hidden-generic").to_owned()
+                } else {
+                    location_label(&s.name, x - sx as f64 * 256.0, y - sy as f64 * 256.0, z)
+                };
                 if teleport && !t.invalid {
                     self.out.push(teleport_command(x, y, z));
                 }
@@ -926,7 +1046,7 @@ impl WorldMap {
             .filter(|(_, i)| i.name.to_lowercase().contains(s.as_str()))
             .map(|(k, i)| (*k, i))
             .collect();
-        v.sort_by_key(|a| a.1.name.to_lowercase());
+        v.sort_by_key(|a| crate::natural_order::key(&a.1.name));
         v
     }
 
@@ -958,8 +1078,10 @@ pub fn location_label(region: &str, x: f64, y: f64, z: f32) -> String {
     format!("{region} ({}, {}, {})", x.round() as i64, y.round() as i64, z.round() as i64)
 }
 
-/// LLAgent::teleportViaLocation: handle of the 256 m slot, position inside it
-/// (the simulator of a variable region accepts its own slots).
+/// Remote form of LLAgent::teleportViaLocation: handle of the 256 m slot,
+/// position inside it. Map commands use this frame until friend intents are
+/// resolved; normalize_map_teleport restores current-region coordinates
+/// before the app's teleport preflight and send.
 pub fn teleport_command(x: f64, y: f64, z: f32) -> NetCommand {
     let (gx, gy) = ((x / 256.0).floor().max(0.0) as u32, (y / 256.0).floor().max(0.0) as u32);
     let lx = (x - gx as f64 * 256.0) as f32;
@@ -975,6 +1097,14 @@ pub fn teleport_command(x: f64, y: f64, z: f32) -> NetCommand {
 mod tests {
     use super::*;
 
+    #[test]
+    fn named_region_tracker_refresh_is_limited_to_once_per_minute() {
+        let mut map = WorldMap::default();
+        map.want_named_region(" Ahern ");
+        map.want_named_region("ahern");
+        assert!(matches!(map.take_commands().as_slice(), [NetCommand::MapNameRequest { name }] if name == "ahern"));
+    }
+
     fn remote_friend() -> (super::super::World, Uuid) {
         let mut w = super::super::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         w.agent_id = Uuid::from_u128(1);
@@ -987,6 +1117,135 @@ mod tests {
         });
         w.social.names.insert(id, "Remote friend".into());
         (w, id)
+    }
+
+    #[test]
+    fn radar_map_teleport_preserves_full_current_region_coordinates() {
+        for (width, height) in [(256, 256), (512, 256), (256, 1024), (1024, 512)] {
+            for loaded in [false, true] {
+                for delayed_map in [false, true] {
+                    let (mut w, id) = remote_friend();
+                    let mut block = yiff();
+                    block.name = "Test region".into();
+                    block.size_x = width;
+                    block.size_y = height;
+                    let main = aurora_net::origin_to_handle(u32::from(block.x) * 256, u32::from(block.y) * 256);
+                    w.main_region = Some(main);
+                    w.ensure_region(main, (u32::from(width), u32::from(height)));
+                    let position = glam::Vec3::new(f32::from(width) - 5.5, f32::from(height) - 7.25, 40.0);
+                    if loaded {
+                        let mut avatar = crate::demo::action_avatar(false);
+                        avatar.full_id = id;
+                        avatar.position = position;
+                        w.objects.upsert_at(main, avatar, Some(Instant::now()), Instant::now());
+                    } else {
+                        w.coarse.insert(main, vec![(id, position)]);
+                    }
+                    if !delayed_map {
+                        w.map.apply_blocks(vec![block.clone()]);
+                    }
+                    assert_eq!(w.avatar_map_position(id), Some(position));
+                    assert!(w.locate_avatar(id, true));
+                    if delayed_map {
+                        assert!(w.map.track.as_ref().unwrap().pending);
+                        w.map.apply_blocks(vec![block]);
+                    }
+                    let mut commands = w.take_map_commands();
+                    let command = commands.iter_mut().find(|c| matches!(c, NetCommand::TeleportTo { .. })).unwrap();
+                    // The app identifies the friend before changing frames,
+                    // preserving arrival-flight and unknown-height handling.
+                    assert_eq!(w.friend_teleport_avatar(command), Some(id));
+                    assert!(w.prepare_friend_join(command).is_none());
+                    w.normalize_map_teleport(command);
+                    assert!(matches!(command, NetCommand::TeleportTo { handle, position: at, look_at }
+                        if *handle == main && *at == position && *look_at == position + glam::Vec3::X));
+                    w.normalize_map_teleport(command);
+                    assert!(
+                        matches!(command, NetCommand::TeleportTo { handle, position: at, look_at }
+                        if *handle == main && *at == position && *look_at == position + glam::Vec3::X),
+                        "idempotent"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A friend sitting 30 m away: the avatar's position is relative to its
+    /// seat. Resolved through the seat (LLVOAvatar::getPositionGlobal), the
+    /// radar teleport stays in our region; read as a region position it went
+    /// to the tile west of the region's corner, in another region.
+    #[test]
+    fn radar_teleport_to_a_seated_friend_goes_to_the_seat_not_the_corner() {
+        let (mut w, id) = remote_friend();
+        let mut block = yiff();
+        block.size_x = 1024;
+        block.size_y = 1024;
+        let main = aurora_net::origin_to_handle(u32::from(block.x) * 256, u32::from(block.y) * 256);
+        w.main_region = Some(main);
+        w.ensure_region(main, (1024, 1024));
+        w.map.apply_blocks(vec![block]);
+        let mut seat = crate::demo::action_avatar(false);
+        seat.local_id = 970;
+        seat.full_id = Uuid::from_u128(970);
+        seat.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        seat.position = glam::Vec3::new(650.0, 400.0, 30.0);
+        seat.rotation = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        w.objects.upsert_at(main, seat.clone(), Some(Instant::now()), Instant::now());
+        let mut avatar = crate::demo::action_avatar(true);
+        avatar.full_id = id;
+        avatar.position = glam::Vec3::new(-0.4, 0.2, 1.2);
+        w.objects.upsert_at(main, avatar.clone(), Some(Instant::now()), Instant::now());
+        let expected = seat.position + seat.rotation * avatar.position;
+        let found = w.avatar_map_position(id).expect("seated friend");
+        assert!(found.distance(expected) < 1e-3, "{found:?} != {expected:?}");
+        assert!(w.locate_avatar(id, true));
+        let mut commands = w.take_map_commands();
+        let command = commands
+            .iter_mut()
+            .find(|c| matches!(c, NetCommand::TeleportTo { .. }))
+            .expect("teleport");
+        w.normalize_map_teleport(command);
+        let NetCommand::TeleportTo { handle, position, .. } = command else {
+            unreachable!();
+        };
+        assert_eq!(*handle, main, "our own region, not the one west of its corner");
+        assert!(position.distance(expected) < 1e-2, "{position:?} != {expected:?}");
+    }
+
+    #[test]
+    fn radar_map_teleport_keeps_remote_tiles_and_region_edges() {
+        let (mut w, _) = remote_friend();
+        let (ox, oy) = (256_000, 256_256);
+        let main = aurora_net::origin_to_handle(ox, oy);
+        w.main_region = Some(main);
+        w.ensure_region(main, (1024, 512));
+        for (x, y) in [(-0.5, 100.0), (100.0, -0.5), (1024.0, 100.0), (100.0, 512.0), (2048.0, 1536.0)] {
+            let mut command = teleport_command(f64::from(ox) + x, f64::from(oy) + y, 25.0);
+            let NetCommand::TeleportTo { handle, position, look_at } = command else {
+                unreachable!();
+            };
+            w.normalize_map_teleport(&mut command);
+            assert!(
+                matches!(command, NetCommand::TeleportTo { handle: h, position: p, look_at: l }
+                if h == handle && p == position && l == look_at),
+                "outside ({x}, {y}) stays remote"
+            );
+        }
+    }
+
+    #[test]
+    fn radar_map_teleport_does_not_guess_an_unknown_current_region_size() {
+        let (mut w, _) = remote_friend();
+        let mut command = teleport_command(256_800.0, 256_600.0, 40.0);
+        let NetCommand::TeleportTo { handle, position, look_at } = command else {
+            unreachable!();
+        };
+        for main in [None, Some(aurora_net::origin_to_handle(256_000, 256_256))] {
+            w.main_region = main;
+            w.normalize_map_teleport(&mut command);
+            assert!(matches!(command, NetCommand::TeleportTo { handle: h, position: p, look_at: l }
+                if h == handle && p == position && l == look_at));
+        }
     }
 
     #[test]
@@ -1091,7 +1350,7 @@ mod tests {
         let mut avatar = crate::demo::action_avatar(false);
         avatar.full_id = id;
         avatar.position = glam::Vec3::new(12.0, 10.0, 2048.0);
-        w.objects.upsert_at(handle, avatar, Some(Instant::now()));
+        w.objects.upsert_at(handle, avatar, Some(Instant::now()), Instant::now());
         w.apply(aurora_net::NetEvent::CoarseLocations {
             handle,
             positions: vec![(id, glam::Vec3::new(12.0, 10.0, 1020.0))],
@@ -1277,6 +1536,56 @@ mod tests {
             assert!(w.map.avatar.is_none());
             assert!(w.take_map_commands().iter().all(|c| !matches!(c, NetCommand::FindAgent(_))));
         }
+    }
+
+    #[test]
+    fn showing_a_place_centres_the_map_and_tracking_alone_does_not() {
+        let mut m = WorldMap::default();
+        m.track_location(256_010.0, 256_266.0, 25.0, false);
+        assert!(!m.focus_track, "a beacon set from the minimap leaves the map where it is");
+        m.show_location(256_010.0, 256_266.0, 25.0);
+        assert!(m.focus_track);
+        assert!(m.track.as_ref().is_some_and(|t| t.pending), "its region is still unknown");
+        assert!(
+            m.out.iter().all(|c| !matches!(c, NetCommand::TeleportTo { .. })),
+            "showing a place never teleports"
+        );
+        m.apply_blocks(vec![yiff()]);
+        assert!(m.focus_track, "still to centre, now that the region is known");
+        assert!(m.track.as_ref().is_some_and(|t| !t.pending));
+    }
+
+    #[test]
+    fn a_place_link_waits_for_its_region_before_centring() {
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![yiff()]);
+        m.show_location(256_010.0, 256_266.0, 25.0);
+        assert_eq!(m.focus_target(), Some((256_010.0, 256_266.0)));
+        // trackURL of a region not known yet: the previous place stays
+        // tracked meanwhile, the map must not centre on it
+        m.show_region("Elsewhere", glam::Vec3::new(10.0, 20.0, 30.0));
+        assert!(m.track.as_ref().is_some_and(|t| (t.x, t.y) == (256_010.0, 256_266.0)));
+        assert_eq!(m.focus_target(), None);
+        let mut elsewhere = yiff();
+        elsewhere.x += 1;
+        elsewhere.name = "Elsewhere".into();
+        m.apply_blocks(vec![elsewhere]);
+        assert_eq!(m.focus_target(), Some((256_266.0, 256_276.0)));
+    }
+
+    #[test]
+    fn a_newer_track_drops_a_place_link_still_asked_by_name() {
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![yiff()]);
+        m.show_region("Elsewhere", glam::Vec3::new(10.0, 20.0, 30.0));
+        m.show_location(256_010.0, 256_266.0, 25.0);
+        assert_eq!(m.focus_target(), Some((256_010.0, 256_266.0)));
+        // the late answer to the link does not replace the newer place
+        let mut elsewhere = yiff();
+        elsewhere.x += 1;
+        elsewhere.name = "Elsewhere".into();
+        m.apply_blocks(vec![elsewhere]);
+        assert!(m.track.as_ref().is_some_and(|t| (t.x, t.y) == (256_010.0, 256_266.0)));
     }
 
     #[test]
@@ -1630,5 +1939,54 @@ mod overlay_tests {
         map.apply_overlay(1, (256, 256), 4, &[9; 1024]);
         map.apply_overlay(1, (256, 256), -1, &[7; 1024]);
         assert!(map.overlays[&1].2[1024..].iter().all(|cell| *cell == 0));
+    }
+
+    /// LLFloaterWorldMap::trackLocation (indra/newview/llfloaterworldmap.cpp):
+    /// under RLVa `@showloc` the tracked spot is labelled "(Hidden)", on a
+    /// known region and on one that answers later; the label stays as taken.
+    #[test]
+    fn showloc_labels_a_tracked_spot_hidden() {
+        let block = MapBlock {
+            x: 1000,
+            y: 1001,
+            name: "Track Test".into(),
+            access: 21,
+            region_flags: 0,
+            water_height: 20,
+            agents: 0,
+            map_image_id: uuid::Uuid::nil(),
+            size_x: 256,
+            size_y: 256,
+        };
+        let mut m = WorldMap {
+            hide_location_labels: true,
+            ..Default::default()
+        };
+        m.apply_blocks(vec![block.clone()]);
+        m.track_location(1000.0 * 256.0 + 10.0, 1001.0 * 256.0 + 20.0, 30.0, false);
+        assert_eq!(
+            m.track.as_ref().map(|t| t.label.as_str()),
+            Some(aurora_i18n::tr!("rlva-hidden-generic"))
+        );
+        let mut m = WorldMap {
+            hide_location_labels: true,
+            ..Default::default()
+        };
+        m.track_location(1000.0 * 256.0 + 10.0, 1001.0 * 256.0 + 20.0, 30.0, false);
+        m.apply_blocks(vec![block.clone()]);
+        assert_eq!(
+            m.track.as_ref().map(|t| t.label.as_str()),
+            Some(aurora_i18n::tr!("rlva-hidden-generic"))
+        );
+        m.hide_location_labels = false;
+        m.apply_blocks(vec![block.clone()]);
+        assert_eq!(
+            m.track.as_ref().map(|t| t.label.as_str()),
+            Some(aurora_i18n::tr!("rlva-hidden-generic"))
+        );
+        let mut m = WorldMap::default();
+        m.apply_blocks(vec![block]);
+        m.track_location(1000.0 * 256.0 + 10.0, 1001.0 * 256.0 + 20.0, 30.0, false);
+        assert_eq!(m.track.as_ref().map(|t| t.label.as_str()), Some("Track Test (10, 20, 30)"));
     }
 }

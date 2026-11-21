@@ -20,6 +20,10 @@
 //! texture texels only for the camera). Nothing is drawn nor allocated
 //! per frame when nobody asks: the cost is one pass over the visible
 //! geometry, vertex work only, in the frame of a click.
+//! Left interactions also put Mask cutout geometry into the second answer,
+//! retaining the visible opaque surface behind it for attachment priorities.
+//! Only world and worn objects enter it; system avatar alpha layers keep
+//! their displayed cutouts.
 //! The red/blue transparency overlays also enter the second pass with
 //! their full triangles, as displayed, even for camera picks.
 //!
@@ -27,6 +31,7 @@
 //! direction of its texture coordinates (the binormal of a touch) when
 //! they lie on the same face.
 
+use crate::curvature::Curvature;
 use crate::pick::PickPixel;
 use glam::{Mat4, Vec2, Vec3};
 use std::sync::Arc;
@@ -67,17 +72,18 @@ pub struct DrawnFace {
 pub struct Drawn {
     /// The nearest opaque or alpha-masked face.
     pub opaque: Option<DrawnFace>,
-    /// The nearest alpha-blended face in front of it.
+    /// The nearest alpha-blended face, or Mask cutout for a left interaction,
+    /// in front of the visible opaque surface.
     pub blend: Option<DrawnFace>,
 }
 
 /// Button-specific alpha rules. Interaction/Visible retain the menu and
-/// worn-object behavior; left variants skip only alpha-zero world Blend texels.
+/// worn-object behavior; left variants skip world Blend texels with alpha <= 32/255.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DrawnMode {
     Interaction,
     Visible,
-    /// Left button: exact alpha-zero holes on world Blend objects only.
+    /// Left button: legacy alpha > 32/255 threshold on world Blend objects only.
     Left,
     LeftVisible,
 }
@@ -215,7 +221,7 @@ impl DrawnPick {
             .map(|_| Slot {
                 buffer: device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("drawn pick readback"),
-                    size: TARGET_BYTES * 2,
+                    size: crate::readback::readback_size(TARGET_BYTES * 2),
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 }),
@@ -241,7 +247,7 @@ impl DrawnPick {
 
     /// The request this frame draws for, if any and if a readback is free:
     /// its pixel. One a frame; the others wait for the next.
-    pub fn begin(&mut self, size: (u32, u32), inv_view_proj: Mat4) -> Option<(u32, u32, DrawnMode)> {
+    pub fn begin(&mut self, size: (u32, u32), inv_view_proj: Mat4, curvature: Curvature) -> Option<(u32, u32, DrawnMode)> {
         while let Some(&(ticket, x, y, mode)) = self.queue.first() {
             if x >= size.0 || y >= size.1 {
                 self.queue.remove(0);
@@ -258,6 +264,7 @@ impl DrawnPick {
                     width: size.0,
                     height: size.1,
                     inv_view_proj,
+                    curvature,
                 },
             ));
             self.encoded = Some(i);
@@ -384,6 +391,7 @@ mod tests {
                     width: w,
                     height: h,
                     inv_view_proj: vp.inverse(),
+                    curvature: Curvature::FLAT,
                 };
                 let p = px.world(0.02).expect("a point in front of the camera");
                 let screen = pixel(vp * p.extend(1.0), w as f32, h as f32);
@@ -434,6 +442,7 @@ mod tests {
             width: 800,
             height: 600,
             inv_view_proj: vp.inverse(),
+            curvature: Curvature::FLAT,
         };
         // a wall facing the camera (-y), textured with s along x, t along z
         let bytes = target(41, px, vp, 2.0, |p| Vec2::new(p.x * 0.5, p.z * 0.25));

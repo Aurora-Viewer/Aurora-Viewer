@@ -1,6 +1,7 @@
 //! Per-region object cache (the viewer side of `ObjectUpdateCached`, like
 //! LLVOCache): compressed object updates keyed by local id with their CRC,
-//! persisted to `<dir>/<region id>.objc`. Assets referenced by the objects
+//! persisted to `<dir>/<name>.objc` (the region id, or the name the viewer
+//! derives from it: [`name_with`]). Assets referenced by the objects
 //! (textures, meshes...) are cached separately, once, by asset id.
 //!
 //! The GLTF material overrides of the objects are kept with them (LL's
@@ -30,11 +31,26 @@ const MAGIC: &[u8; 4] = b"AOC2";
 
 /// The key the files are sealed with (`aurora_assets::sealed`), the one of
 /// the viewer's disk cache: set by the viewer before any session. Without
-/// it (this crate's tests) the files are written as they are.
+/// it (this crate's tests) the files are written and read as they are; with
+/// it, a file not in the store format is a miss (`Key::open`).
 static SEAL: std::sync::OnceLock<aurora_assets::sealed::Key> = std::sync::OnceLock::new();
 
 pub fn seal_with(key: aurora_assets::sealed::Key) {
     let _ = SEAL.set(key);
+}
+
+/// The names of the viewer's store files (`aurora_assets::sealed::Names`):
+/// set by the viewer before any session, outside its demo. Without them the
+/// file of a region is named by its id.
+static NAMES: std::sync::OnceLock<aurora_assets::sealed::Names> = std::sync::OnceLock::new();
+
+pub fn name_with(names: aurora_assets::sealed::Names) {
+    let _ = NAMES.set(names);
+}
+
+fn file_of(dir: &Path, region_id: Uuid) -> PathBuf {
+    let name = NAMES.get().map_or_else(|| region_id.to_string(), |n| n.name(&region_id));
+    dir.join(format!("{name}.objc"))
 }
 
 fn open_file(file: Vec<u8>) -> std::io::Result<Vec<u8>> {
@@ -81,7 +97,7 @@ impl RegionObjectCache {
     /// region.
     pub fn empty(dir: &Path, region_id: Uuid) -> RegionObjectCache {
         RegionObjectCache {
-            path: dir.join(format!("{region_id}.objc")),
+            path: file_of(dir, region_id),
             entries: HashMap::new(),
             overrides: HashMap::new(),
             dirty: false,
@@ -91,7 +107,7 @@ impl RegionObjectCache {
 
     /// Reads the file of a region. Blocking: not for the session loop.
     pub fn load(dir: &Path, region_id: Uuid) -> RegionObjectCache {
-        let path = dir.join(format!("{region_id}.objc"));
+        let path = file_of(dir, region_id);
         let (entries, overrides) = std::fs::read(&path)
             .ok()
             .and_then(|d| {

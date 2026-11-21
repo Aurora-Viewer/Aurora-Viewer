@@ -89,10 +89,11 @@ pub struct Settings {
 /// Where our head looks while the cursor moves (`cursor_look`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Aim {
-    /// The very point under the cursor (LOOKAT_TARGET_HOVER), Aurora's own.
-    #[default]
+    /// The very point under the cursor (LOOKAT_TARGET_HOVER), Aurora's own:
+    /// everyone nearby sees what the cursor is over. A choice, not the default.
     Point,
-    /// Firestorm: only toward the cursor's side (FREELOOK).
+    /// The Legacy Viewer's: only toward the cursor's side (FREELOOK).
+    #[default]
     Direction,
 }
 
@@ -122,7 +123,7 @@ impl Default for Settings {
             head_pitch: 90.0,
             static_eyes: false,
             style: Style::Aurora,
-            aim: Aim::Point,
+            aim: Aim::Direction,
         }
     }
 }
@@ -243,8 +244,9 @@ pub fn cursor_direction(forward: Vec3, x: f32, y: f32, yaw: f32, pitch: f32) -> 
 /// What the head looks at while the cursor moves (third person). Firestorm
 /// only turns the head toward the cursor's direction (FREELOOK,
 /// `cursor_direction`): the crosshair stands 1 m from the head, never on
-/// what the cursor points at, and LOOKAT_TARGET_HOVER has no caller. Aurora
-/// looks at the very point under the cursor when there is one (the hover
+/// what the cursor points at, and LOOKAT_TARGET_HOVER has no caller: the
+/// default. With `Aim::Point`, chosen in Preferences, Aurora looks at the
+/// very point under the cursor when there is one (the hover
 /// pick of the cursor icon): an object with the point in its frame, or a
 /// point of the ground (`hover`); over the sky, a window or ourselves, the
 /// direction of Firestorm. Its priority and its 1 s timeout are those of
@@ -390,6 +392,38 @@ pub struct LookAts {
     /// Our avatar looks straight ahead, head and eyes: no target at all
     /// (PrivateLocalLookAtTarget), set by the app each frame (`gaze`).
     pub own_ahead: bool,
+    /// The photo window's look at the camera, drawn on our viewer only
+    /// (`PhotoLook`), set by the app each frame.
+    pub photo: PhotoLook,
+}
+
+/// The avatars our viewer turns to the camera for a photo ("Look at
+/// camera", "Others look at camera"), whatever they send: their head and
+/// eyes take the camera over every animation (an AO stand), within a
+/// natural reach (`scene::anim::Controller::look_over_animations`). Only
+/// our viewer draws it so; nothing is sent for the others, and what is
+/// sent for us still follows the privacy settings (`own`, `outgoing`).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct PhotoLook {
+    /// The camera, a global point; None: nobody looks.
+    pub camera: Option<DVec3>,
+    /// Our own avatar looks, even with "no look-at target, even for me":
+    /// the switch is a choice made for the photo.
+    pub own: bool,
+    /// The other avatars that look: those whose owners allowed posing.
+    pub others: std::collections::HashSet<Uuid>,
+    /// How much of the turn is left to the eyes (0 the head faces the
+    /// camera, 1 a side glance): 1 − the photo window's "Look intensity".
+    pub glance: f32,
+}
+
+impl PhotoLook {
+    /// The point `avatar` looks at for the photo, if it does (`me`: our
+    /// own avatar).
+    pub fn at(&self, avatar: Uuid, me: Uuid) -> Option<DVec3> {
+        let looks = if avatar == me { self.own } else { self.others.contains(&avatar) };
+        self.camera.filter(|_| looks)
+    }
 }
 
 impl Default for LookAts {
@@ -400,6 +434,7 @@ impl Default for LookAts {
             requests: Vec::new(),
             last_chatter: None,
             own_ahead: false,
+            photo: PhotoLook::default(),
         }
     }
 }
@@ -435,6 +470,25 @@ pub fn gaze(target: Option<Target>, ahead: bool) -> Gaze {
 }
 
 impl LookAts {
+    /// An avatar's target on our viewer and whether it looks ahead
+    /// (`gaze`; `me`: our own avatar): the photo's camera first
+    /// (`PhotoLook`), even over "no look-at target, even for me"; otherwise
+    /// ours as we send it, or the one its owner sent (None: none yet).
+    pub fn gaze_of(&self, avatar: Uuid, me: Uuid) -> (Option<Target>, bool) {
+        match self.photo.at(avatar, me) {
+            Some(at) => (
+                Some(Target {
+                    kind: FOCUS,
+                    object: None,
+                    offset: at,
+                }),
+                false,
+            ),
+            None if avatar == me => (Some(self.own.target), self.own_ahead),
+            None => (self.remote.get(&avatar).copied(), false),
+        }
+    }
+
     /// A look-at received from the simulator (LLHUDEffectLookAt::unpackData).
     pub fn receive(&mut self, effect: Uuid, source: Uuid, target: Uuid, offset: [f64; 3], kind: u8) {
         if effect == self.own.effect {
@@ -497,6 +551,50 @@ mod tests {
         assert_eq!(eyes.request(false), Some(false));
         eyes.on_arrival();
         assert_eq!(eyes.request(false), None);
+    }
+
+    /// The photo's camera turns our head even with "no look-at target, even
+    /// for me", and the heads of those who allowed posing, on our viewer
+    /// only: what is sent stays "none", and nobody else turns.
+    #[test]
+    fn the_photo_camera_wins_on_our_viewer_only() {
+        let t0 = Instant::now();
+        let me = Uuid::from_u128(1);
+        let (friend, stranger) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        let mut l = LookAts {
+            own_ahead: true,
+            ..Default::default()
+        };
+        assert!(l.own.set(NONE, Some(me), DVec3::ZERO, t0));
+        let sent = Target {
+            kind: FREELOOK,
+            object: Some(friend),
+            offset: DVec3::X,
+        };
+        l.remote.insert(friend, sent);
+        let (target, ahead) = l.gaze_of(me, me);
+        assert_eq!(gaze(target, ahead), Gaze::Ahead);
+        let camera = DVec3::new(130.0, 120.0, 25.0);
+        let at_camera =
+            |(t, ahead): (Option<Target>, bool)| !ahead && t.is_some_and(|t| (t.kind, t.object, t.offset) == (FOCUS, None, camera));
+        // a camera alone turns nobody
+        l.photo.camera = Some(camera);
+        assert_eq!(l.gaze_of(friend, me), (Some(sent), false));
+        // ours, even with "no look-at target, even for me"
+        l.photo.own = true;
+        assert!(at_camera(l.gaze_of(me, me)));
+        // those who allowed posing, and nobody else
+        l.photo.others.insert(friend);
+        assert!(at_camera(l.gaze_of(friend, me)));
+        assert_eq!(l.gaze_of(stranger, me), (None, false));
+        // the others still get nothing of ours
+        assert_eq!(outgoing(l.own.target, me, true, true), None);
+        assert_eq!(outgoing(l.own.target, me, false, true).map(|t| t.kind), Some(NONE));
+        // no camera: everyone takes back their own
+        l.photo.camera = None;
+        assert_eq!(l.gaze_of(friend, me), (Some(sent), false));
+        let (target, ahead) = l.gaze_of(me, me);
+        assert_eq!((target.map(|t| t.kind), ahead), (Some(NONE), true));
     }
 
     #[test]
@@ -682,10 +780,13 @@ mod tests {
         for hover in [Some(on), Some((None, DVec3::new(30.0, 40.0, 21.5))), None] {
             assert_eq!(cursor_look(Aim::Direction, hover, me, free), (FREELOOK, Some(me), free.as_dvec3()));
         }
-        // Aurora's point by default, also in a file saved before the setting
-        assert_eq!(Settings::default().aim, Aim::Point);
+        // the Legacy Viewer's direction by default, also in a file saved
+        // before the setting; the point stays a choice that is kept
+        assert_eq!(Settings::default().aim, Aim::Direction);
         let old: Settings = serde_json::from_str(r#"{"show_targets":true}"#).expect("former look-at settings");
-        assert_eq!(old.aim, Aim::Point);
+        assert_eq!(old.aim, Aim::Direction);
+        let chosen: Settings = serde_json::from_str(r#"{"aim":"Point"}"#).expect("look-at settings");
+        assert_eq!(chosen.aim, Aim::Point);
     }
 
     #[test]

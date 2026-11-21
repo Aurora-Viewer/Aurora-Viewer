@@ -36,6 +36,10 @@ impl Target {
         })
     }
 
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     pub fn receive<'a>(
         &self,
         ctx: &egui::Context,
@@ -68,7 +72,8 @@ impl Target {
                 }),
             _ => None,
         };
-        let allowed = self.enabled && resource.as_ref().is_some_and(|r| accepts(r.item));
+        // Asked on a disabled target too: the caller says why it refuses.
+        let allowed = resource.as_ref().is_some_and(|r| accepts(r.item)) && self.enabled;
         super::inventory::drag::feedback(
             ctx,
             if allowed {

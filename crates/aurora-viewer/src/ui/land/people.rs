@@ -126,7 +126,7 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
         ui.spacing_mut().item_spacing.x = 6.0;
         let filter = if ban { &mut s.ban_filter } else { &mut s.access_filter };
         let width = ui.available_width() - 2.0 * 26.0 - 12.0;
-        widgets::search_box(ui, p, filter, aurora_i18n::tr!("common-search"), width);
+        widgets::clearable_search_box(ui, p, filter, aurora_i18n::tr!("common-search"), width);
         if widgets::icon_button(
             ui,
             p,
@@ -144,7 +144,7 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
             can && !list.is_empty(),
         ) {
             let file = if ban { "land_banned_list.csv" } else { "land_access_list.csv" };
-            let csv = super::access::export_csv(&list, |id| world.social.name_of(id));
+            let csv = super::access::export_csv(&list, |id| world.social.name_in(crate::world::names::NameScope::Roster, id));
             s.file_job = Some(super::files::save(file, csv));
         }
     });
@@ -158,7 +158,7 @@ fn list_card(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, world: &m
         })
         .filter(|(_, name, user)| matches(&filter, name, user.as_deref()))
         .collect();
-    rows.sort_by_key(|r| r.1.to_lowercase());
+    rows.sort_by_key(|r| crate::natural_order::key(&r.1));
     let selected = if ban { &mut s.ban_sel } else { &mut s.access_sel };
     selected.retain(|id| list.iter().any(|e| e.id == *id));
     let width = widgets::scrolled_width(ui);
@@ -282,7 +282,7 @@ pub(super) fn sort_owners(rows: &mut [(ObjectOwner, String)], sort: (usize, bool
     let (col, asc) = sort;
     rows.sort_by(|a, b| {
         let o = match col {
-            1 => a.1.to_lowercase().cmp(&b.1.to_lowercase()),
+            1 => crate::natural_order::cmp(&a.1, &b.1),
             2 => a.0.count.cmp(&b.0.count),
             3 => a.0.most_recent.cmp(&b.0.most_recent),
             _ => a.0.is_group.cmp(&b.0.is_group),
@@ -531,7 +531,7 @@ fn owner_row(
                 if o.is_group {
                     crate::ui::group_profile::request_open(ui.ctx(), o.id);
                 } else {
-                    crate::ui::profile::request_open(ui.ctx(), o.id);
+                    crate::ui::profile::request_open_in(ui.ctx(), crate::world::names::NameScope::Roster, o.id);
                 }
             }
             let tag = if o.id == v.agent {

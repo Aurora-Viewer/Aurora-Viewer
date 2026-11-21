@@ -733,9 +733,13 @@ fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, wor
                     answer = Some(false);
                 }
                 let loading = crate::world::env_select::scan_step(&mut world.inventory) > 0;
-                let order = crate::ui::inventory::view::picker_order(ui.ctx(), &world.inventory);
-                let catalog = SettingsCatalog::build(&world.inventory, |id| order.rank(id));
-                ui.horizontal(|ui| widgets::search_box(ui, p, filter, aurora_i18n::tr!("common-search"), ui.available_width()));
+                let ranks = crate::ui::environment::list_ranks(ui.ctx(), &world.inventory);
+                let catalog = SettingsCatalog::build(&world.inventory, |id| ranks.rank(id));
+                ui.horizontal(|ui| {
+                    let width = ui.available_width() - 20.0 - ui.spacing().item_spacing.x;
+                    widgets::clearable_search_box(ui, p, filter, aurora_i18n::tr!("common-search"), width);
+                    crate::ui::environment::order_toggle(ui, p);
+                });
                 ui.add_space(4.0);
                 let needle = filter.trim().to_lowercase();
                 let mut double = false;
@@ -746,7 +750,7 @@ fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, wor
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let mut any = false;
-                        for (kind, c) in catalog.choices(settings_kinds(*track), |id| order.rank(id)) {
+                        for (kind, c) in catalog.choices(settings_kinds(*track), |id| ranks.rank(id)) {
                             let icon = match kind {
                                 SettingsKind::Day => "sunrise-filled",
                                 SettingsKind::Sky => "sun-filled",
@@ -811,7 +815,7 @@ fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, wor
                 let mut search = false;
                 ui.horizontal(|ui| {
                     let w = ui.available_width() - 90.0;
-                    let r = widgets::search_box(ui, p, query, aurora_i18n::tr!("ui-land-picker-experience-hint"), w);
+                    let r = widgets::clearable_search_box(ui, p, query, aurora_i18n::tr!("ui-land-picker-experience-hint"), w);
                     search = r.lost_focus() && widgets::enter_pressed(ui);
                     if widgets::flat_button(ui, p, aurora_i18n::tr!("common-search")).clicked() {
                         search = true;
@@ -935,7 +939,7 @@ fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, wor
                 if super::interventions::head(ui, p, "file-text-filled", aurora_i18n::tr!("region-cov-choose-title"), false) {
                     answer = Some(false);
                 }
-                ui.horizontal(|ui| widgets::search_box(ui, p, filter, aurora_i18n::tr!("common-search"), ui.available_width()));
+                ui.horizontal(|ui| widgets::clearable_search_box(ui, p, filter, aurora_i18n::tr!("common-search"), ui.available_width()));
                 ui.add_space(4.0);
                 let needle = filter.trim().to_lowercase();
                 let mut cards: Vec<(Uuid, String)> = world
@@ -1034,7 +1038,7 @@ fn apply_settings(world: &mut World, track: Option<i32>, asset: Uuid, name: Stri
         .items
         .values()
         .find(|i| i.asset_id == asset)
-        .map_or(u32::MAX, |i| i.owner_mask);
+        .map_or(u32::MAX, |i| crate::world::inventory::actions::held(&world.inventory, i));
     let (day_length, day_offset) = world
         .estate
         .environment
