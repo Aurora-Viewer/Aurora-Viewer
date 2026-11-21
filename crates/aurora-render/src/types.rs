@@ -1762,6 +1762,9 @@ pub struct FrameParams {
     /// Volumetric clouds in the place of the Legacy Viewer's flat layer
     /// (clouds.rs); None: the Legacy layer, with nothing else running.
     pub clouds: Option<CloudsFrame>,
+    /// Planet curvature (curvature.rs, Aurora's own): the planet's radius
+    /// in metres; None: the flat regions, as the Legacy Viewer draws them.
+    pub curvature: Option<f32>,
 }
 
 /// The volumetric clouds' inputs that are not in the sky: where the camera

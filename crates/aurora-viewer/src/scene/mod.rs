@@ -942,6 +942,9 @@ pub struct Scene {
     /// The kinds of objects not drawn (Advanced › Rendering types), set by
     /// the app at each frame, and those the objects were last flagged for.
     pub hidden_types: render_types::Hidden,
+    /// Planet curvature's radius (m), None for the flat regions: the void
+    /// water reaches the horizon and is drawn finely enough to bend.
+    pub planet_radius: Option<f32>,
     hidden_types_applied: render_types::Hidden,
     /// The instant a photo drawn in several frames shows
     /// (`snapshot::Hold`): the sync places and moves what it visits at it,
@@ -1748,6 +1751,7 @@ impl Scene {
             studio_floor_offset: 0.0,
             studio_hover_height: 0.0,
             hidden_types: Default::default(),
+            planet_radius: None,
             hidden_types_applied: Default::default(),
             held_at: None,
             photo_marks: Default::default(),
@@ -3157,7 +3161,7 @@ impl Scene {
 
         step(&mut slow, "origin");
         self.sync_terrain(renderer, world, view.eye);
-        self.water.sync(renderer, world);
+        self.water.sync(renderer, world, view.eye, self.planet_radius);
         step(&mut slow, "terrain");
 
         if self.gpu.len() < world.objects.slots.len() {
@@ -5071,7 +5075,9 @@ impl Scene {
         }
         // (a hidden water draws neither itself nor its reflection pass)
         if !self.hidden_types.water {
-            self.lists.water.extend(self.water.draws(view, self.water_effects.geometry));
+            self.lists
+                .water
+                .extend(self.water.draws(view, self.water_effects.geometry, self.planet_radius));
         }
 
         // nearest avatars in full (own avatar always), the others as
