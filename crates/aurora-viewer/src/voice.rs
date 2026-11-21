@@ -9,6 +9,7 @@ use aurora_net::parcel_flags;
 use aurora_voice::{ChannelKind, VoiceConnectParams, VoiceSession, VoiceStatus};
 use glam::{DVec3, Quat};
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// Channel the session is joined to.
@@ -49,6 +50,8 @@ pub struct VoiceInputs<'a> {
     pub processing: aurora_audio::MicProcessing,
     pub ear: crate::settings::VoiceEar,
     pub transmit: bool,
+    /// Close the microphone while muted (StopMicCaptureWhenMuted; [`MicGate`]).
+    pub stop_mic_when_muted: bool,
     /// Global positions (metres) and rotations of the avatar and the camera.
     pub avatar: (DVec3, Quat),
     pub listener: (DVec3, Quat),
@@ -74,6 +77,8 @@ pub struct Voice {
     session: Option<(ChannelKey, VoiceSession)>,
     mic: Option<MicCapture>,
     mic_device: String,
+    /// Whether the open microphone captures or is held closed.
+    mic_gate: MicGate,
     /// Status line for the UI.
     pub status: String,
     pub connected: bool,
@@ -86,6 +91,9 @@ pub struct Voice {
     muted: HashSet<Uuid>,
     /// Volumes sent to the current session, per resident.
     volumes: HashMap<Uuid, f32>,
+    /// The viewer's own volume on the received voice given to the current
+    /// session; `None` = never set (0.5, heard as sent).
+    receive_volume: Option<f32>,
 }
 
 impl Voice {
@@ -95,14 +103,24 @@ impl Voice {
         self.mic = None;
         self.muted.clear();
         self.volumes.clear();
+        self.receive_volume = None;
         self.connected = false;
         self.own_level = 0.0;
         self.status.clear();
     }
-    /// The channel wanted now, its kind for the server, or why there is none.
-    fn wanted(v: &VoiceInputs) -> Result<(ChannelKey, ChannelKind, String, Option<String>), String> {
+    /// A channel to join, None to keep the current call, or why to leave.
+    fn wanted(v: &VoiceInputs, current: Option<&ChannelKey>) -> Result<Option<(ChannelKey, ChannelKind, String, Option<String>)>, String> {
         if !v.enabled {
             return Err(aurora_i18n::tr!("common-voice-disabled").into());
+        }
+        // Voice (WebRTC) cannot go through the proxy of Preferences › Network
+        // › Proxy and shows the real address to the voice servers and the
+        // other speakers: off while a proxy is on, unless the user allowed
+        // direct voice after its warning. Stricter than the Legacy Viewer,
+        // whose voice always connects directly (llvoicewebrtc.cpp has no
+        // proxy).
+        if !aurora_proxy::rule().voice_allowed() {
+            return Err(aurora_i18n::tr!("voice-off-proxy").into());
         }
         if !v.in_world {
             return Err(String::new());
@@ -112,6 +130,23 @@ impl Voice {
         }
         if v.engine.is_none() {
             return Err(aurora_i18n::tr!("voice-no-audio-output").into());
+        }
+        Self::connection(v, current)
+    }
+
+    /// Region data is needed to join, not to maintain a non-spatial call.
+    fn connection(
+        v: &VoiceInputs,
+        current: Option<&ChannelKey>,
+    ) -> Result<Option<(ChannelKey, ChannelKind, String, Option<String>)>, String> {
+        // LLWebRTCVoiceClient::voiceConnectionCoro (indra/newview/llvoicewebrtc.cpp)
+        // changes regional channels only in spatial voice. During a teleport,
+        // region/caps/backend can disappear before the destination is ready;
+        // leaving here logs out of the independent call on both ends.
+        if let Some(ChannelKey::Call(id)) = current
+            && v.call.is_some_and(|call| call.id == *id)
+        {
+            return Ok(None);
         }
         let region = v.region.ok_or_else(String::new)?;
         let caps = v.caps.ok_or_else(|| aurora_i18n::tr!("voice-waiting-for-region").to_owned())?;
@@ -127,7 +162,7 @@ impl Voice {
         }
         let signaling = caps.get("VoiceSignalingRequest").cloned();
         let (key, channel) = Self::channel(region, v.region_flags, v.parcel, v.call)?;
-        Ok((key, channel, provision, signaling))
+        Ok(Some((key, channel, provision, signaling)))
     }
 
     /// LLWebRTCVoiceClient::voiceConnectionCoro (indra/newview/llvoicewebrtc.cpp):
@@ -164,13 +199,26 @@ impl Voice {
         if let Some((_, session)) = &self.session {
             session.set_transmit(transmit && self.mic.is_some());
         }
+        // a paused microphone reopens now, not at the next frame ([`MicGate`])
+        if transmit
+            && self.connected
+            && let Some(m) = &self.mic
+        {
+            m.set_paused(false);
+        }
     }
 
     pub fn update(&mut self, v: VoiceInputs) {
         // microphone: open while voice is on in world, or for the settings meter
         let want_mic = v.enabled && (v.in_world || v.tuning);
+        // with "Better in-world audio", the device itself is closed while
+        // muted; this frame's connection state is last frame's
+        let capturing = self.mic_gate.update(
+            Instant::now(),
+            capture_wanted(v.stop_mic_when_muted, v.tuning, v.transmit, self.connected || v.offline),
+        );
         if want_mic && self.mic.is_none() {
-            match MicCapture::open(non_empty(v.input_device)) {
+            match MicCapture::open_with(non_empty(v.input_device), !capturing) {
                 Ok(m) => {
                     self.mic_device = v.input_device.to_owned();
                     self.mic = Some(m);
@@ -186,11 +234,13 @@ impl Voice {
         } else if !want_mic && self.mic.is_some() {
             // closing it removes Windows' "microphone in use" indicator
             self.mic = None;
+            self.mic_gate = MicGate::default();
             if let Some((_, s)) = &self.session {
                 s.set_mic(None);
             }
         }
         if let Some(m) = &self.mic {
+            m.set_paused(!capturing);
             if self.mic_device != v.input_device {
                 m.set_device(non_empty(v.input_device));
                 self.mic_device = v.input_device.to_owned();
@@ -206,10 +256,11 @@ impl Voice {
         }
 
         // session for the current channel
-        match Self::wanted(&v) {
-            Ok((key, channel, provision, signaling)) => {
+        match Self::wanted(&v, self.session.as_ref().map(|(key, _)| key)) {
+            Ok(Some((key, channel, provision, signaling))) => {
                 if self.session.as_ref().map(|(k, _)| k) != Some(&key) {
-                    // changing channel: leave the old one first (drop logs out)
+                    // changing channel: leave the old one first (the drop
+                    // detaches the microphone at once, then logs out)
                     self.session = None;
                     if let Some(engine) = v.engine {
                         match &key {
@@ -230,9 +281,11 @@ impl Voice {
                         self.session = Some((key, s));
                         self.muted.clear();
                         self.volumes.clear();
+                        self.receive_volume = None;
                     }
                 }
             }
+            Ok(None) => {}
             Err(why) => {
                 if self.session.take().is_some() {
                     log::info!("voice: leaving ({why})");
@@ -309,10 +362,22 @@ impl Voice {
     /// Each resident's volume (0..1, 0.5 as sent) for the participants of
     /// the session (LLSpeakerVolumeStorage, setUserVolume); only changes are
     /// sent, a resident without a saved volume is heard at 0.5.
-    pub fn apply_volumes(&mut self, saved: &std::collections::BTreeMap<Uuid, f32>) {
-        let Some((_, s)) = &self.session else {
+    ///
+    /// `p2p_peer` is the other resident of the private call in progress. The
+    /// server ignores `setUserVolume` on a private call's channel, in the
+    /// Legacy Viewer too (issue #2874), so the viewer also scales what it
+    /// receives there, which is that resident's voice alone: better than the
+    /// Legacy Viewer, where the slider does nothing. The request is still
+    /// sent as the Legacy Viewer sends it.
+    pub fn apply_volumes(&mut self, saved: &std::collections::BTreeMap<Uuid, f32>, p2p_peer: Option<Uuid>) {
+        let Some((key, s)) = &self.session else {
             return;
         };
+        let receive = receive_volume(key, p2p_peer, saved);
+        if (receive - self.receive_volume.unwrap_or(0.5)).abs() > f32::EPSILON {
+            s.set_receive_volume(receive);
+            self.receive_volume = Some(receive);
+        }
         if !self.connected {
             return;
         }
@@ -360,6 +425,16 @@ impl Voice {
     }
 }
 
+/// The viewer's own volume on what `key`'s channel sends: the private
+/// call's other resident's saved volume on that call's channel, 0.5 (as
+/// sent) on a channel that mixes several voices (nearby, conferences).
+fn receive_volume(key: &ChannelKey, p2p_peer: Option<Uuid>, saved: &std::collections::BTreeMap<Uuid, f32>) -> f32 {
+    match (key, p2p_peer) {
+        (ChannelKey::Call(_), Some(peer)) => saved.get(&peer).copied().unwrap_or(0.5),
+        _ => 0.5,
+    }
+}
+
 /// Why the region or the parcel forbids nearby voice, `None` when it allows
 /// it or is not known yet (LLViewerParcelMgr::allowAgentVoice,
 /// indra/newview/llviewerparcelmgr.cpp, originally LGPL 2.1).
@@ -388,6 +463,50 @@ fn listening_positions(mut avatar: (DVec3, Quat), camera: (DVec3, Quat), ear: cr
     (avatar, listener)
 }
 
+/// `MUTE_FADE_DELAY_MS` (indra/newview/llvoicewebrtc.cpp): with
+/// StopMicCaptureWhenMuted, the delay between muting and the end of the
+/// capture, so that the 20 ms fade and the silence after it are sent first.
+const MIC_STOP_DELAY: Duration = Duration::from_millis(500);
+
+/// Whether the microphone should capture this frame. With
+/// `stop_when_muted` (StopMicCaptureWhenMuted, the LL viewer 26.5's
+/// "Bluetooth only: Better in-world audio", on), only while unmuted with the
+/// voice audio up, or for the meter of the preferences (tuning); without
+/// it, the whole time voice is on, as before 26.5. Port of
+/// LLWebRTCImpl::workerStartRecording and intSetMute
+/// (indra/llwebrtc/llwebrtc.cpp, originally LGPL 2.1).
+fn capture_wanted(stop_when_muted: bool, tuning: bool, transmit: bool, audio_up: bool) -> bool {
+    !stop_when_muted || tuning || (transmit && audio_up)
+}
+
+/// Turns [`capture_wanted`] into the microphone's state: it starts at once
+/// and stops [`MIC_STOP_DELAY`] after it stopped being wanted. Unmuting
+/// within that delay keeps it open: the LL viewer's `mute_sequence` cancels
+/// the delayed stop the same way (LLWebRTCImpl::intSetMute). Closed until
+/// first wanted, as the LL viewer holds capture off before the first unmute.
+#[derive(Debug, Default)]
+struct MicGate {
+    active: bool,
+    idle_since: Option<Instant>,
+}
+
+impl MicGate {
+    /// Whether the microphone captures at `now`.
+    fn update(&mut self, now: Instant, wanted: bool) -> bool {
+        if wanted {
+            self.active = true;
+            self.idle_since = None;
+        } else if self.active {
+            let since = *self.idle_since.get_or_insert(now);
+            if now.duration_since(since) >= MIC_STOP_DELAY {
+                self.active = false;
+                self.idle_since = None;
+            }
+        }
+        self.active
+    }
+}
+
 fn non_empty(s: &str) -> Option<String> {
     (!s.is_empty()).then(|| s.to_owned())
 }
@@ -408,6 +527,223 @@ pub(crate) fn listener_rotation(view: glam::Mat4) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_private_call_takes_its_peer_volume() {
+        let (peer, other) = (Uuid::from_u128(2), Uuid::from_u128(3));
+        let saved = std::collections::BTreeMap::from([(peer, 0.1), (other, 0.9)]);
+        let call = ChannelKey::Call("call".into());
+        let nearby = ChannelKey::Local { region: 7, parcel: None };
+        assert_eq!(receive_volume(&call, Some(peer), &saved), 0.1);
+        // no saved volume: heard as sent
+        assert_eq!(receive_volume(&call, Some(Uuid::from_u128(4)), &saved), 0.5);
+        // a conference mixes several voices: the server's gain only
+        assert_eq!(receive_volume(&call, None, &saved), 0.5);
+        // still on nearby voice while the call connects
+        assert_eq!(receive_volume(&nearby, Some(peer), &saved), 0.5);
+    }
+
+    #[test]
+    fn the_microphone_captures_while_unmuted_with_better_in_world_audio() {
+        // (stop when muted, tuning, transmit, audio up)
+        assert!(capture_wanted(true, false, true, true));
+        assert!(!capture_wanted(true, false, false, true), "muted");
+        assert!(!capture_wanted(true, false, true, false), "voice audio not up yet");
+        assert!(capture_wanted(true, true, false, false), "the preferences' meter");
+        // "Better voice": open the whole time voice is on
+        assert!(capture_wanted(false, false, false, false));
+        assert!(capture_wanted(false, false, true, true));
+    }
+
+    #[test]
+    fn the_microphone_stops_half_a_second_after_muting_and_starts_at_once() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut gate = MicGate::default();
+        assert!(!gate.update(t0, false), "closed until first wanted");
+        assert!(gate.update(ms(10), true), "unmuting opens it at once");
+        assert!(gate.update(ms(20), false), "muted: still open for the fade");
+        assert!(gate.update(ms(519), false));
+        assert!(!gate.update(ms(520), false), "closed 500 ms after muting");
+        assert!(!gate.update(ms(2000), false));
+        assert!(gate.update(ms(2001), true));
+    }
+
+    #[test]
+    fn unmuting_within_the_delay_cancels_the_stop() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut gate = MicGate::default();
+        gate.update(t0, true);
+        gate.update(ms(100), false);
+        assert!(gate.update(ms(400), true), "unmuted before the stop");
+        // the next mute waits its own 500 ms, not what was left of the first
+        assert!(gate.update(ms(500), false));
+        assert!(gate.update(ms(999), false));
+        assert!(!gate.update(ms(1000), false));
+    }
+
+    fn inputs(http: &reqwest::Client) -> VoiceInputs<'_> {
+        VoiceInputs {
+            enabled: true,
+            in_world: true,
+            offline: false,
+            tuning: false,
+            engine: None,
+            http,
+            agent_id: Uuid::from_u128(1),
+            grid: "test",
+            region: Some(7),
+            region_flags: Some(aurora_net::region_flags::ALLOW_VOICE),
+            caps: None,
+            voice_server: "webrtc",
+            parcel: None,
+            input_device: "",
+            mic_gain: 1.0,
+            processing: Default::default(),
+            ear: crate::settings::VoiceEar::Avatar,
+            transmit: true,
+            stop_mic_when_muted: true,
+            avatar: (DVec3::ZERO, Quat::IDENTITY),
+            listener: (DVec3::ZERO, Quat::IDENTITY),
+            call: None,
+        }
+    }
+
+    #[test]
+    fn the_current_call_survives_teleport_region_data_gaps() {
+        let http = reqwest::Client::new();
+        let call = CallChannel {
+            id: "test-call".into(),
+            credentials: "test-credentials".into(),
+        };
+        let current = ChannelKey::Call(call.id.clone());
+        let caps = HashMap::from([("ProvisionVoiceAccountRequest".into(), "https://voice.invalid/provision".into())]);
+        let empty_caps = HashMap::new();
+        let forbidden_parcel = aurora_net::ParcelInfo::default();
+        let mut v = inputs(&http);
+        v.call = Some(&call);
+
+        // Departure, no main region, arrival before seed caps and simulator
+        // features, and a destination with no spatial voice. None means keep
+        // the exact transport, rather than leave and provision the call again.
+        for (region, caps, backend) in [
+            (Some(7), Some(&caps), "webrtc"),
+            (None, None, ""),
+            (Some(8), None, ""),
+            (Some(8), Some(&empty_caps), ""),
+            (Some(8), Some(&empty_caps), "webrtc"),
+            (Some(8), Some(&caps), ""),
+            (Some(8), Some(&caps), "vivox"),
+            (Some(8), Some(&caps), "webrtc"),
+        ] {
+            v.region = region;
+            v.caps = caps;
+            v.voice_server = backend;
+            v.region_flags = Some(0);
+            v.parcel = Some(&forbidden_parcel);
+            assert!(
+                Voice::connection(&v, Some(&current))
+                    .expect("the call is independent of the destination")
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn call_hangup_and_channel_changes_still_require_the_destination() {
+        let http = reqwest::Client::new();
+        let call = CallChannel {
+            id: "test-call".into(),
+            credentials: "test-credentials".into(),
+        };
+        let current = ChannelKey::Call(call.id.clone());
+        let other_call = ChannelKey::Call("other-call".into());
+        let local = ChannelKey::Local {
+            region: 7,
+            parcel: Some(42),
+        };
+        let caps = HashMap::from([("ProvisionVoiceAccountRequest".into(), "https://voice.invalid/provision".into())]);
+        let parcel = aurora_net::ParcelInfo {
+            local_id: 42,
+            flags: parcel_flags::ALLOW_VOICE_CHAT,
+            ..Default::default()
+        };
+        let mut v = inputs(&http);
+        v.call = Some(&call);
+        for current in [None, Some(&other_call), Some(&local)] {
+            assert!(Voice::connection(&v, current).is_err(), "a new call still needs provisioning");
+        }
+        v.caps = Some(&caps);
+        let (key, kind, _, _) = Voice::connection(&v, Some(&other_call))
+            .expect("the new call can join")
+            .expect("join, not keep");
+        assert_eq!(key, current);
+        assert_eq!(
+            kind,
+            ChannelKind::Multiagent {
+                channel_id: call.id.clone(),
+                credentials: call.credentials.clone()
+            }
+        );
+
+        v.call = None;
+        assert!(
+            Voice::connection(&v, Some(&current)).is_err(),
+            "hangup waits for the destination parcel"
+        );
+        v.parcel = Some(&parcel);
+        v.region = Some(8);
+        let (key, kind, _, _) = Voice::connection(&v, Some(&current))
+            .expect("nearby voice is ready")
+            .expect("leave the call");
+        assert_eq!(
+            key,
+            ChannelKey::Local {
+                region: 8,
+                parcel: Some(42)
+            }
+        );
+        assert_eq!(kind, ChannelKind::Local { parcel_local_id: Some(42) });
+        v.region_flags = Some(0);
+        assert!(Voice::connection(&v, Some(&current)).is_err(), "hangup respects land restrictions");
+        v.region = None;
+        assert!(
+            Voice::connection(&v, Some(&local)).is_err(),
+            "spatial voice must not stay in the old region"
+        );
+    }
+
+    #[test]
+    fn keeping_a_call_never_bypasses_voice_disabled_logout_or_missing_audio() {
+        let http = reqwest::Client::new();
+        let call = CallChannel {
+            id: "test-call".into(),
+            credentials: String::new(),
+        };
+        let current = ChannelKey::Call(call.id.clone());
+        let mut v = inputs(&http);
+        v.call = Some(&call);
+        v.enabled = false;
+        assert_eq!(
+            Voice::wanted(&v, Some(&current)).unwrap_err(),
+            aurora_i18n::tr!("common-voice-disabled")
+        );
+        v.enabled = true;
+        v.in_world = false;
+        assert_eq!(Voice::wanted(&v, Some(&current)).unwrap_err(), "");
+        v.in_world = true;
+        v.offline = true;
+        assert_eq!(
+            Voice::wanted(&v, Some(&current)).unwrap_err(),
+            aurora_i18n::tr!("voice-demo-mode-no-voice-server-the-microphone-drives-the")
+        );
+        v.offline = false;
+        assert_eq!(
+            Voice::wanted(&v, Some(&current)).unwrap_err(),
+            aurora_i18n::tr!("voice-no-audio-output")
+        );
+    }
 
     #[test]
     fn nearby_voice_requires_both_region_and_parcel_permission() {
@@ -528,6 +864,7 @@ mod tests {
         use crate::settings::{AudioSettings, VoiceEar};
         let mut a: AudioSettings = serde_json::from_str("{\"mic_gain\":0.75}").expect("old preferences");
         assert_eq!(a.voice_ear, VoiceEar::Camera);
+        assert_eq!(a.media_sounds_ear, VoiceEar::Camera, "MediaSoundsEarLocation 0");
         assert_eq!(a.mic_processing(), aurora_audio::MicProcessing::default());
         assert!(
             a.lip_sync
@@ -538,6 +875,7 @@ mod tests {
                 && a.conversation_voice_indicator
         );
         a.voice_ear = VoiceEar::Avatar;
+        a.media_sounds_ear = VoiceEar::Avatar;
         a.voice_noise_suppression = 2;
         a.voice_echo_cancellation = false;
         a.lip_sync = false;

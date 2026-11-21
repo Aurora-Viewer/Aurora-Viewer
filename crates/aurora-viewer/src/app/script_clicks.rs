@@ -105,7 +105,7 @@ impl App {
         if self.clicks.replaying() || !self.huds_shown() {
             return false;
         }
-        let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, self.cursor_pos, false) else {
+        let Some((idx, point, hud_ray)) = self.scene.hud_click_pick(&self.world, self.cursor_pos) else {
             return false;
         };
         self.left_down = true;
@@ -124,6 +124,8 @@ impl App {
         self.left_down = true;
         let ray = picked.ray;
         let far = self.settings.draw_distance;
+        // (the modifiers of the press, which a click run again has restored)
+        self.scene.rigged_clicks = self.rigged_clicks();
         let depth = self.scene.touch_depth(&self.world, &picked.drawn, ray, picked.depth, far);
         let hit = self.scene.action_point(&self.world, ray, depth, false, far);
         let shown = self.designate(crate::scene::drawn::Gesture::Touch, &picked, hit);
@@ -147,21 +149,7 @@ impl App {
 
     /// Whether `idx` is a prim worn by our avatar (or a child of one).
     pub(super) fn own_attachment(&self, idx: usize) -> bool {
-        let mut current = idx;
-        for _ in 0..64 {
-            let Some(o) = self.world.objects.get(current) else {
-                return false;
-            };
-            let Some(parent) = self.world.objects.parent_of(o) else {
-                return false;
-            };
-            match self.world.objects.get(parent) {
-                Some(p) if p.is_avatar() => return p.full_id == self.world.agent_id,
-                Some(_) => current = parent,
-                None => return false,
-            }
-        }
-        false
+        crate::interaction::own_attachment(&self.world, idx)
     }
 }
 

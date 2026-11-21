@@ -19,7 +19,8 @@ name: Media plugins
 # the viewer then pins per system (aurora-updater media_pack.rs). Publish
 # from main: GitHub refuses this workflow's token a tag on a commit that
 # changes workflow files, as a branch that edits this file does (pack 2 was
-# built on such a branch and its artifacts published by hand).
+# built on such a branch and its artifacts published by hand; no viewer uses
+# it from the next release on).
 on:
   workflow_dispatch:
     inputs:

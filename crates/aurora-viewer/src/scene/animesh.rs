@@ -200,7 +200,7 @@ fn demo_hair_cards(head: Vec3, joint: usize, n: u32, layered: bool, outer_first:
                     if let Some(s) = &mut face.skin {
                         s.push(aurora_render::SkinVertex {
                             joints: [joint as u8, 0, 0, 0],
-                            weights: [255, 0, 0, 0],
+                            weights: [u16::MAX, 0, 0, 0],
                         });
                     }
                 }
@@ -257,6 +257,32 @@ impl super::Scene {
                     g.faces.len(),
                     g.rigged,
                     self.debug_alpha
+                );
+            }
+        }
+        // AURORA_DEMO_ANIMESH=far: the fixups of the animesh (ground: an
+        // offset of about 4.3 m back west; worn: none) and how far from its
+        // point the worn root is drawn (3.5 m, sent at 5 m)
+        if crate::demo::animesh_far() {
+            for (local, root) in [(9200, false), (9203, true)] {
+                let Some((i, o)) = world.objects.iter().find(|(_, o)| o.key.local_id == local) else {
+                    continue;
+                };
+                let fixup = world.animesh_fixups.get(&o.full_id).copied().unwrap_or_default();
+                let reach = (root && o.attachment_point() != 0)
+                    .then(|| {
+                        let wearer = world.objects.parent_of(o)?;
+                        let now = Instant::now();
+                        let (wp, wr, _) = Self::object_transform(world, wearer, now, 0)?;
+                        let (p, _, _) = Self::object_transform(world, i, now, 0)?;
+                        let f = super::anchors::attach_frame(world, world.objects.get(wearer)?, o.attachment_point());
+                        Some(p.distance(wp + wr * f.pos))
+                    })
+                    .flatten();
+                log::info!(
+                    "demo animesh far {local}: fixup offset {:.3?} scale {:.3}, drawn from its point {reach:.3?} m",
+                    fixup.offset,
+                    fixup.scale
                 );
             }
         }
@@ -333,7 +359,7 @@ impl super::Scene {
                             if let Some(s) = &mut face.skin {
                                 s.push(SkinVertex {
                                     joints: [j as u8, 0, 0, 0],
-                                    weights: [255, 0, 0, 0],
+                                    weights: [u16::MAX, 0, 0, 0],
                                 });
                             }
                         }
@@ -388,7 +414,7 @@ impl super::Scene {
                     if let Some(s) = &mut face.skin {
                         s.push(SkinVertex {
                             joints: [j as u8, 0, 0, 0],
-                            weights: [255, 0, 0, 0],
+                            weights: [u16::MAX, 0, 0, 0],
                         });
                     }
                 }
@@ -409,7 +435,7 @@ impl super::Scene {
                     skin: Some(vec![
                         SkinVertex {
                             joints: [j as u8, 0, 0, 0],
-                            weights: [255, 0, 0, 0],
+                            weights: [u16::MAX, 0, 0, 0],
                         };
                         (SIDE + 1) * (SIDE + 1)
                     ]),
@@ -491,7 +517,7 @@ impl super::Scene {
                     if let Some(s) = &mut face.skin {
                         s.push(SkinVertex {
                             joints: [j as u8, 0, 0, 0],
-                            weights: [255, 0, 0, 0],
+                            weights: [u16::MAX, 0, 0, 0],
                         });
                     }
                 }
@@ -624,7 +650,7 @@ impl super::Scene {
                 let skin = vec![
                     SkinVertex {
                         joints: [j as u8, 0, 0, 0],
-                        weights: [255, 0, 0, 0],
+                        weights: [u16::MAX, 0, 0, 0],
                     };
                     vertices.len()
                 ];
@@ -699,7 +725,7 @@ impl super::Scene {
             face.skin = Some(vec![
                 SkinVertex {
                     joints: [0, 0, 0, 0],
-                    weights: [255, 0, 0, 0],
+                    weights: [u16::MAX, 0, 0, 0],
                 };
                 face.vertices.len()
             ]);
@@ -756,7 +782,7 @@ impl super::Scene {
                 v.pos = p.to_array();
                 skin.push(SkinVertex {
                     joints: [joint, 0, 0, 0],
-                    weights: [255, 0, 0, 0],
+                    weights: [u16::MAX, 0, 0, 0],
                 });
             }
             face.skin = Some(skin);
@@ -811,6 +837,12 @@ impl super::Scene {
             crate::demo::ANIMESH_ANIM,
             std::sync::Arc::new(super::anim::BoundAnim::bind(crate::demo::animesh_animation(), &rig)),
         );
+        if crate::demo::animesh_far() {
+            self.anims.insert(
+                crate::demo::ANIMESH_FAR_ANIM,
+                std::sync::Arc::new(super::anim::BoundAnim::bind(crate::demo::far_animation(), &rig)),
+            );
+        }
         self.textures
             .acquire(renderer, crate::demo::ANIMESH_TEXTURE, super::textures::TexSource::Asset);
         let mut rgba = Vec::new();

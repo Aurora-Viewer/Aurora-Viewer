@@ -35,6 +35,9 @@ fn receive(w: &mut World, session: Uuid, from: Uuid, text: &str, kind: ImKind, i
             kind: ChatKind::Im,
             source: from,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         },
         true,
     );
@@ -42,8 +45,16 @@ fn receive(w: &mut World, session: Uuid, from: Uuid, text: &str, kind: ImKind, i
         kind,
         session,
         new_session: false,
+        mention: false,
     };
     w.notify_message(&m, in_sight);
+}
+
+/// A friend's online / offline line in the nearby chat: their name is a link
+/// to them.
+fn nearby_line_of(w: &World, who: Uuid) -> bool {
+    let link = format!("secondlife:///app/agent/{who}/about");
+    w.chat.iter().any(|l| l.kind == ChatKind::System && l.text.starts_with(&link))
 }
 
 fn messages(w: &World) -> Vec<(Uuid, usize, String)> {
@@ -67,6 +78,9 @@ fn nearby_chat_does_not_raise_the_conversations_button_count() {
         kind: ChatKind::Local(aurora_net::ChatType::Normal),
         source: TOM,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
+        speaker: Default::default(),
     });
     // the conversation list still counts it on its nearby chat row
     assert_eq!(w.chat_unread, 1);
@@ -88,6 +102,9 @@ fn nearby_chat_alone_lights_neither_the_outline_nor_the_pill() {
         kind: ChatKind::Local(aurora_net::ChatType::Normal),
         source: TOM,
         origin: Origin::Live,
+        blocked: false,
+        beyond_range: false,
+        speaker: Default::default(),
     });
     assert!(w.chat_unread > 0);
     assert_eq!(w.conversations_badge(), 0);
@@ -116,6 +133,7 @@ fn a_friend_online_is_a_toast_that_never_enters_the_bell() {
     w.notifications.mark_all_read();
     assert_eq!(w.notifications.listed().count(), 0);
     // and no line of nearby chat by default (OnlineOfflinetoNearbyChat off)
+    assert!(!nearby_line_of(&w, JANE));
     assert!(!w.chat.iter().any(|l| l.kind == ChatKind::System && l.text.contains("Jane Doe")));
     // going offline: a toast that opens nothing
     w.social.set_online(&[JANE], false);
@@ -168,7 +186,7 @@ fn friends_announced_during_login_get_no_toast_but_keep_their_line() {
     w.social.set_online(&[JANE], true);
     w.flush_online_notices();
     assert!(!w.notifications.list.iter().any(|n| n.kind == Kind::Presence));
-    assert!(w.chat.iter().any(|l| l.kind == ChatKind::System && l.text.contains("Jane Doe")));
+    assert!(nearby_line_of(&w, JANE));
     // once the world is shown, a friend logging in gets their toast
     w.notifications.started = true;
     w.social.set_online(&[TOM], true);
@@ -191,7 +209,7 @@ fn the_nearby_chat_line_of_a_friend_follows_its_own_preference() {
         w.social.form_friendship(JANE);
         w.social.set_online(&[JANE], true);
         w.flush_online_notices();
-        let line = w.chat.iter().any(|l| l.kind == ChatKind::System && l.text.contains("Jane Doe"));
+        let line = nearby_line_of(&w, JANE);
         let toast_shown = w.notifications.list.iter().any(|n| n.kind == Kind::Presence);
         assert_eq!((toast_shown, line), (toast, in_chat), "toast {toast}, in chat {in_chat}");
     }
@@ -342,6 +360,7 @@ fn clicking_a_message_card_reads_its_conversation_and_focuses_its_tab() {
         // acknowledged: gone from the bell, the conversation read, its tab asked
         assert!(!w.notifications.list.iter().any(|n| n.id == id));
         assert_eq!(w.social.ims.iter().find(|s| s.other == session).unwrap().unread, 0);
+        assert!(w.social.focus_im_to_type, "the click leaves it ready to type in");
         assert_eq!(w.social.focus_im.take(), Some(session));
     }
     assert_eq!(w.notifications.unread(), 0);
@@ -354,7 +373,50 @@ fn clicking_a_friend_online_starts_an_im_and_offline_opens_nothing() {
     let off = w.notifications.push_presence(TOM, "Tom Smith is offline.", false);
     assert_eq!(w.open_from_notification(on), Some(JANE));
     assert!(w.social.has_session(&JANE));
+    assert!(w.social.focus_im_to_type);
     assert_eq!(w.social.focus_im.take(), Some(JANE));
     assert_eq!(w.open_from_notification(off), None);
     assert!(w.social.focus_im.is_none());
+}
+
+/// A contact set with "Show notifications" brings its members' notices
+/// when the global choices are off, as its own two choices say
+/// (FSContactSetsNotificationToast off, ...NearbyChat on by default).
+#[test]
+fn a_contact_set_with_notifications_brings_its_members_notices() {
+    let shown = |w: &World, who: Uuid| {
+        (
+            w.notifications.list.iter().any(|n| n.kind == Kind::Presence),
+            nearby_line_of(w, who),
+        )
+    };
+    for (toast, in_chat) in [(false, true), (true, true), (true, false), (false, false)] {
+        let mut w = world();
+        w.notifications.toasts.presence = false;
+        w.notifications.toasts.presence_in_chat = false;
+        w.social.form_friendship(JANE);
+        w.social.form_friendship(TOM);
+        w.contact_sets.add_set("Close");
+        w.contact_sets.add_to_set(&[JANE], "Close", |_| true);
+        w.contact_sets.set_notify("Close", true);
+        w.contact_sets.set_notices_toast(toast);
+        w.contact_sets.set_notices_chat(in_chat);
+        // Tom is in no set: nothing
+        w.social.set_online(&[TOM], true);
+        w.flush_online_notices();
+        assert_eq!(shown(&w, TOM), (false, false));
+        w.social.set_online(&[JANE], true);
+        w.flush_online_notices();
+        assert_eq!(shown(&w, JANE), (toast, in_chat), "toast {toast}, in chat {in_chat}");
+    }
+    // a set without "Show notifications" brings nothing
+    let mut w = world();
+    w.notifications.toasts.presence = false;
+    w.social.form_friendship(JANE);
+    w.contact_sets.add_set("Quiet");
+    w.contact_sets.add_to_set(&[JANE], "Quiet", |_| true);
+    w.contact_sets.set_notices_toast(true);
+    w.social.set_online(&[JANE], true);
+    w.flush_online_notices();
+    assert_eq!(shown(&w, JANE), (false, false));
 }

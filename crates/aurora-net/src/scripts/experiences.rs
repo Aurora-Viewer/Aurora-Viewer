@@ -227,7 +227,7 @@ mod tests {
                 object: Uuid::from_u128(20),
                 item: Uuid::from_u128(21),
             };
-            let http = reqwest::Client::new();
+            let http = crate::test_http_client();
             let result = load(
                 &http,
                 target,
@@ -247,7 +247,7 @@ mod tests {
                 assert!(choices.iter().any(|e| e.id == associated_id && !e.selectable));
             }
             let options = super::super::ScriptOptions {
-                mono: true,
+                compile: super::super::CompileTarget::Mono,
                 running: true,
                 experience: associated_id,
             };
