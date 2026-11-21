@@ -4844,7 +4844,9 @@ both open states and the selection count. Capture at frame 620.
   1180. Lines `parcel environment demo` in the log give the state at frames
   380, 540, 680 and 840, then 880, 1020, 1160 and 1320 for `update`. Add
   `AURORA_DEMO_ENV_SELECT=1` for the window's lit pin button and
-  `AURORA_DEMO_OPTIONS=graphics/6` for the list in Graphics > Parcels.
+  `AURORA_DEMO_OPTIONS=graphics/6` for the list in Graphics > Parcels. The
+  parcels are known by the demo region's UUID and their local ids, with no
+  request; the demo keeps its saves in memory, never in a file.
 
 - **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner|same-group|group-owned-current|always-visible|lists|crossings`**:
   four parcels split the plaza at x/y 128 m. The northern parcels share an owner;

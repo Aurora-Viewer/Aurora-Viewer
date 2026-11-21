@@ -4374,6 +4374,16 @@ impl App {
                 } else {
                     crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
                 };
+                // the environments saved for parcels, on the grid of the
+                // login; the demo keeps them in memory
+                self.world.parcel_env.saves = if self.demo {
+                    Default::default()
+                } else {
+                    let grid = crate::world::chat_log::grid_name(&self.settings.grid, &self.settings.custom_login_uri, false);
+                    crate::world::parcel_env::Saves::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::parcel_env::file_name(&grid)),
+                    )
+                };
                 // the saved smart searches of the inventory; the demo keeps
                 // them in memory
                 if !self.demo {
@@ -17620,6 +17630,7 @@ impl App {
         self.options_ui.friends_only = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only());
         self.options_ui.friends_only_keep = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only.keep_after_teleport);
         let time_of_day = self.settings.time_of_day;
+        self.options_ui.parcel_environments = self.world.parcel_env.saves.rows();
         if self.options_ui.anti_spam_version != self.world.anti_spam.version {
             self.options_ui.anti_spam_version = self.world.anti_spam.version;
             self.options_ui.anti_spam_blocks = self
@@ -17704,6 +17715,12 @@ impl App {
         }
         if let Some((queue, source)) = res.unblock_anti_spam {
             self.world.anti_spam.unblock(queue, source);
+        }
+        if let Some((region, local_id)) = res.forget_parcel_environment {
+            self.world.parcel_env.saves.forget(region, local_id);
+        }
+        if res.forget_all_parcel_environments {
+            self.world.parcel_env.saves.clear();
         }
         self.world.anti_spam.configure(self.settings.anti_spam);
         self.update_rlva();

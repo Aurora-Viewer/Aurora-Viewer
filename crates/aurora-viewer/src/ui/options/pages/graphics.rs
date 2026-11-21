@@ -1182,36 +1182,34 @@ fn depth_of_field(cx: &mut Cx) {
 }
 
 /// The environments saved for parcels (`world/parcel_env.rs`), set from the
-/// Environment window and the inventory: this list only removes them.
+/// Environment window and the inventory: this list only removes them. They
+/// are the account's on this grid, in its own file, not settings: the app
+/// lists them in `OptionsUi::parcel_environments` and removes them.
 fn parcel_environments(cx: &mut Cx) {
     use aurora_i18n::tr;
     let p = cx.p;
-    let field = field!(parcel_environments);
     cx.section_body().row_with(
         tr!("parcel-environment-title"),
         tr!("parcel-environment-help"),
-        &field,
-        |ui, s, _, _| {
-            let entries = &mut s.parcel_environments;
-            let mut changed = false;
+        &Nothing,
+        |ui, _, st, r| {
             ui.vertical(|ui| {
+                let entries = &st.parcel_environments;
                 if entries.is_empty() {
                     ui.label(RichText::new(tr!("parcel-environment-empty")).color(p.muted));
                     return;
                 }
                 let remove = parcel_rows(ui, &p, "parcel_environments", entries, |e| {
-                    ((&e.grid, e.parcel), &e.name, &e.region_name)
+                    ((e.region, e.local_id), &e.name, &e.region_name)
                 });
-                if let Some(i) = remove {
-                    entries.remove(i);
-                    changed = true;
+                if let Some(e) = remove.and_then(|i| entries.get(i)) {
+                    r.forget_parcel_environment = Some((e.region, e.local_id));
                 }
                 if ui.button(tr!("parcel-environment-remove-all")).clicked() {
-                    entries.clear();
-                    changed = true;
+                    st.confirm_remove_parcel_environments = true;
                 }
             });
-            changed
+            false
         },
     );
 }

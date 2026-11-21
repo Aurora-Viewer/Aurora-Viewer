@@ -2695,6 +2695,52 @@ pub(super) mod tests {
         assert_eq!(sel.current_rights(SettingsKind::Water), SourceRights::Unknown);
     }
 
+    /// A sky kept for a parcel (`world/parcel_env.rs`) and put back from the
+    /// account's file, in LLSD notation as it is written there.
+    fn kept_for_a_parcel_and_back(sel: &mut EnvSelector) -> EnvSelector {
+        let (saved, _) = sel.capture_parcel().expect("something to save");
+        let text = aurora_llsd::to_notation(&saved.expect("a sky"));
+        let read = aurora_llsd::from_notation(text.as_bytes()).expect("notation");
+        let mut next = region_selector();
+        next.hold_parcel(Some(&read), 0);
+        next
+    }
+
+    #[test]
+    fn a_no_copy_or_no_modify_sky_kept_for_a_parcel_comes_back_with_its_rights() {
+        use crate::world::env_edit::{FLAG_NOCOPY, FLAG_NOMOD};
+        for flags in [FLAG_NOCOPY, FLAG_NOMOD, FLAG_NOCOPY | FLAG_NOMOD] {
+            let mut sel = EnvSelector::default();
+            sel.on_answer(REGION, -1, flagged_answer(0, flags), ctx(None));
+            sel.frame(&input(0.0));
+            sel.capture_personal();
+            sel.frame(&input(1.0));
+            assert_eq!(sel.current_rights(SettingsKind::Sky), SourceRights::Flags(flags));
+            let mut next = kept_for_a_parcel_and_back(&mut sel);
+            next.frame(&input(1.0));
+            assert_eq!(
+                next.current_rights(SettingsKind::Sky),
+                SourceRights::Flags(flags),
+                "flags {flags:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_item_kept_for_a_parcel_comes_back_as_that_item() {
+        let mut sel = region_selector();
+        sel.request_local(SKY, SettingsKind::Sky);
+        sel.on_settings(SKY, Some(sky_asset(1.3)));
+        sel.frame(&input(1.0));
+        assert_eq!(sel.current_rights(SettingsKind::Sky), SourceRights::Asset(SKY));
+        let mut next = kept_for_a_parcel_and_back(&mut sel);
+        // the item's own permissions are read again from the inventory
+        assert!(next.wanted_settings().contains(&SKY));
+        next.on_settings(SKY, Some(sky_asset(1.3)));
+        next.frame(&input(2.0));
+        assert_eq!(next.current_rights(SettingsKind::Sky), SourceRights::Asset(SKY));
+    }
+
     #[test]
     fn a_time_of_day_chosen_while_rlva_holds_the_environment_is_dropped() {
         let mut sel = region_selector();

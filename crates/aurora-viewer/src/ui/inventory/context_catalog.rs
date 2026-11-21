@@ -617,7 +617,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                         TEXT,
                         "map-pin-filled",
                         aurora_i18n::tr!("parcel-environment-apply-save"),
-                        single && !it.asset_id.is_nil() && !facts.environment_locked,
+                        single && crate::world::inventory::actions::environment_applies_locally(it) && !facts.environment_locked,
                         InvAction::EnvironmentSaveParcel(it.asset_id, it.flags),
                     );
                 }
@@ -1397,6 +1397,24 @@ mod tests {
             ..facts()
         };
         assert!(!enabled(&locked));
+    }
+
+    #[test]
+    fn the_parcel_save_row_takes_a_no_copy_or_no_modify_environment() {
+        use crate::world::inventory::actions::{COPY, MODIFY, TRANSFER};
+        let item = Uuid::from_u128(8103);
+        for mask in [MODIFY | TRANSFER, COPY | TRANSFER, 0] {
+            let mut inv = inventory();
+            let settings = inv.items.get_mut(&item).expect("demo item");
+            settings.asset_type = 56;
+            settings.inv_type = 56;
+            settings.asset_id = Uuid::from_u128(4243);
+            settings.base_mask = mask;
+            settings.owner_mask = mask;
+            let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), &facts());
+            let row = c.entries.iter().find(|e| e.id == "apply-save-parcel").expect("parcel save row");
+            assert!(row.enabled, "mask {mask:#x}");
+        }
     }
 
     #[test]

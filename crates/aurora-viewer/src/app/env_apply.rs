@@ -229,39 +229,23 @@ impl App {
                 }
                 EnvAction::Preset(n) => self.panels.time_of_day = n,
                 EnvAction::SaveParcel => self.world.save_parcel_environment(),
-                EnvAction::ForgetParcel => {
-                    let grid = self.parcel_grid();
-                    if let Some(id) = self.world.parcel_env.saved_here(&self.settings.parcel_environments, &grid) {
-                        crate::world::parcel_env::forget(&mut self.settings.parcel_environments, &grid, id);
-                        self.settings.save();
-                    }
-                }
+                EnvAction::ForgetParcel => self.world.parcel_env.forget_here(),
             }
         }
-    }
-
-    /// The grid the environments saved for parcels are kept under.
-    fn parcel_grid(&self) -> String {
-        crate::world::chat_log::grid_name(&self.settings.grid, &self.settings.custom_login_uri, self.demo)
     }
 
     /// The environments saved for parcels, each frame.
     pub(super) fn parcel_environment_frame(&mut self) {
         use crate::ui::environment::ParcelChoice;
         use crate::world::parcel_env::Outcome;
-        let grid = self.parcel_grid();
-        let (outcome, ask) = self
-            .world
-            .parcel_environment_frame(&self.settings.parcel_environments, &grid, std::time::Instant::now());
-        if let Some(ask) = ask {
-            self.send(ask);
-        }
-        match outcome {
+        match self.world.parcel_environment_frame() {
             Outcome::Nothing => {}
             Outcome::Saved(entry) => {
-                log::info!("environment saved for parcel {}", entry.parcel);
-                crate::world::parcel_env::store(&mut self.settings.parcel_environments, entry);
-                self.settings.save();
+                log::info!(
+                    "environment saved for parcel {} of region {}",
+                    entry.place.local_id,
+                    entry.place.region
+                );
             }
             Outcome::NotSaved => self.env_alert(
                 aurora_i18n::tr!("common-environment"),
@@ -269,11 +253,7 @@ impl App {
             ),
             Outcome::Left => self.env_alert(aurora_i18n::tr!("common-environment"), aurora_i18n::tr!("parcel-environment-left")),
         }
-        let saved_here = self
-            .world
-            .parcel_env
-            .saved_here(&self.settings.parcel_environments, &grid)
-            .is_some();
+        let saved_here = self.world.parcel_env.saved_here();
         let savable = self.world.parcel.is_some() && (self.world.eep.has_local() || self.panels.time_of_day != 0);
         self.env_ui.parcel_choice = if saved_here && !(savable && self.world.parcel_environment_changed()) {
             ParcelChoice::Saved

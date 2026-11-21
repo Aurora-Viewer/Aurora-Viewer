@@ -1,15 +1,9 @@
 //! `AURORA_DEMO_PARCEL_ENV`: an environment saved for a parcel of the four of
 //! `demo_parcel_visibility.rs`, then walking off it and back.
 use crate::world::World;
-use uuid::Uuid;
 
 pub fn mode() -> Option<String> {
     std::env::var("AURORA_DEMO_PARCEL_ENV").ok()
-}
-
-/// One id per demo parcel (RemoteParcelRequest).
-pub fn parcel_uuid(local_id: i32) -> Uuid {
-    Uuid::from_u128(0xA0_0000 + local_id as u128)
 }
 
 fn walk(world: &mut World, x: f32, y: f32) {
