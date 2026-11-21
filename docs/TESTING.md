@@ -4210,14 +4210,19 @@ That ignored test creates and removes its own isolated profile.
   you wear but not your HUDs, stands 1 m in front of you facing you as Person
   B, with no name tag, and goes when couple mode ends. The scripted modes turn
   the view to the side once B is there. Capture from frame 1400.
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
+- **`AURORA_DEMO_POSER=self|frame|connected|camera|scale|hands|face|together|misc|physics|library|settings|close|square-head|shape-change|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-reply|bridge-starting|bridge-silent|bridge-failed|bridge-off|compact|compact-invite|compact-accept|compact-long|compact-crowd|compact-wings|compact-tail|compact-sliders|compact-options|compact-save|compact-face|compact-together|compact-body`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar.
   The additional `connected` mode restores a T-pose at 450 and moves the
   left wrist down/inwards at 480; capture 620 shows the bent elbow and
   connected wrist, with the position inspector in avatar coordinates.
   `camera` views the same head rotation from a quarter-turn camera orbit;
-  compare the trackball axes with `self`. `together` selects the left
+  compare the trackball axes with `self`. `frame` is `self` with Preferences ›
+  Camera › "Frame the avatar while posing" on for this launch only (the
+  saved settings untouched), its window on the left: a click selects the
+  left wrist at 540 and the camera frames it at the centre of the view, no
+  farther than 2.8 m; capture 620 and compare with `self`, where the camera
+  stays at the demo's view. `together` selects the left
   eye, adds the right eye with Shift + click and turns the left eye at 450:
   capture 620 shows both eyes looking the same way (not mirrored), both
   markers ringed, and "+ 1 joint moves with it" under the joint's name.
