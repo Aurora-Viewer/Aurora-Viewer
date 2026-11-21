@@ -13,7 +13,7 @@ use crate::{
     Cancel, Failure, Progress,
     feed::Source,
     install::validate_tree,
-    package::{Fetch, failure, parse_sha256, unpack},
+    package::{Fetch, failure, parse_sha256, unpack_zip},
 };
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
@@ -259,7 +259,7 @@ pub async fn install(
         verify_file(&archive, pack.size, &pack.sha256)?;
         let prepare = || -> Result<PathBuf> {
             let prepared = stage.0.join("prepared");
-            unpack(&archive, &prepared, &folder, &cancel)?;
+            unpack_zip(&archive, &prepared, &folder, &cancel)?;
             fs::write(prepared.join(ORIGIN), pack.hex)?;
             ensure!(pack.complete(&prepared), "incomplete ffmpeg pack");
             let dir = root.join(pack.version.to_string());

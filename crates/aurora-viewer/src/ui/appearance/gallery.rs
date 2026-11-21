@@ -337,7 +337,9 @@ fn menu_body(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceU
         super::folders::move_menu(ui, p, inv, st, &[id], actions);
     }
     menu::separator(ui, p);
-    let list = outfit_list(inv, id);
+    // the inventory's entry, which @showinv leaves out of reach
+    // (`showcase::preview_panel`)
+    let list = outfit_list(inv, id).filter(|_| !world.rlva.has("showinv"));
     if let Some(items) = &list {
         for item in items {
             world.social.avatar_names.want(&item.creator);

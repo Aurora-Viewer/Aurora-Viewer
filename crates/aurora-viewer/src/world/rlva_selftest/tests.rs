@@ -205,10 +205,10 @@ impl Host {
             self.send(command, crate::world::rlva::watchdog::ACTOR);
         }
         self.world.rlva.collect(now, |id| self.world.objects.index_of_uuid(&id).is_some());
-        self.world.rlva_update_stand();
         for (actor, command) in self.world.rlva_sitting_tick() {
             self.send(command, actor);
         }
+        self.world.rlva_movement_tick();
         let commands = self.world.rlva_pending();
         for (_, c) in std::mem::take(&mut self.world.rlva.viewer) {
             if let Param::Reply(channel) = c.param
@@ -815,4 +815,37 @@ fn selftest_logout_ends_the_run_at_once() {
     let report = host.run();
     assert_eq!(host.sent.len(), before, "nothing is sent once the session is gone");
     assert!(report.notes.iter().any(|n| n.contains("logged out")), "{}", report.text());
+}
+
+#[test]
+fn selftest_movement_cases_run_and_pass_on_the_demo_world() {
+    let mut host = Host::new();
+    host.start(Mode::Simulated, false);
+    let report = host.run();
+    for id in [
+        "move-G1-tplocal-own-value",
+        "move-G9-place-buttons",
+        "move-G12-region-by-name",
+        "move-G16-godlike-lure",
+    ] {
+        assert_eq!(verdict_of(&report, id), &Verdict::Pass, "{id}: {}", report.text());
+    }
+}
+
+/// The shared inventory and wear cases (`cases_inv.rs`) run and pass on the
+/// simulated world, none skipped.
+#[test]
+fn selftest_inventory_parity_cases_pass_on_the_demo_world() {
+    let mut host = Host::new();
+    host.start(Mode::Simulated, false);
+    let report = host.run();
+    for id in [
+        "inv-G4-hind-foot-names",
+        "inv-G11-hud-group",
+        "inv-G14-folder-lock-options",
+        "inv-G1-shared-lock-keeps-items",
+        "inv-G2-rlv-keeps-its-name",
+    ] {
+        assert_eq!(verdict_of(&report, id), &Verdict::Pass, "{id}\n{}", report.text());
+    }
 }

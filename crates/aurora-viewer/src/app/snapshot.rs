@@ -209,6 +209,8 @@ pub(super) struct Snapshots {
     /// The focus distance of the depth of field last frame, for the depth
     /// looks (None: off, the middle of the photo then).
     pub look_focus: Option<f32>,
+    /// The World filters window's state (`ui/world_look.rs`).
+    pub world_ui: crate::ui::world_look::WorldLookUi,
     /// The window was closed when the photo was asked (Ctrl+`).
     quiet: bool,
     /// A photo to disk asked while the renderer draws the frame (the
@@ -278,6 +280,9 @@ pub(super) struct Snapshots {
     /// levelled meanwhile, the next opening takes it back (feedback 585:
     /// leaving the photo mode to change a setting lost the angle).
     pub(super) roll_kept: f32,
+    /// The viewfinder's view while it shows, then when it last closed: the
+    /// next opening takes it back with the tilt (`app::viewfinder`).
+    pub(super) view_kept: Option<crate::snapshot::viewfinder::KeptView>,
     /// The session's photos (`app::photo_reel`).
     pub(super) reel: super::photo_reel::ReelState,
     /// Choosing for the isolation (`app::photo_isolate`): the points asked
@@ -459,6 +464,7 @@ impl Default for Snapshots {
             luts: None,
             lut_import: None,
             look_focus: None,
+            world_ui: Default::default(),
             quiet: false,
             to_disk: false,
             confirm: None,
@@ -489,6 +495,7 @@ impl Default for Snapshots {
             fov_before: None,
             quality_drawn: None,
             roll_kept: 0.0,
+            view_kept: None,
             reel: Default::default(),
             isolate_picks: Vec::new(),
             isolate_point: None,
@@ -1311,7 +1318,9 @@ impl App {
             .map_or(0, aurora_render::dof_tile_reach);
         let scale = snapshot::viewfinder_scale(size, renderer.size(), self.settings.render_scale_percent);
         let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
+        let soft = aurora_render::soft_shadow_tile_reach(self.settings.soft_shadows);
         let guard = snapshot::TILE_GUARD
+            .max(soft)
             .max(aurora_render::bloom_tile_reach(bloom))
             .max(dof)
             .max(contact);
@@ -1524,12 +1533,7 @@ impl App {
     /// place (LLSnapshotLivePreview::saveTexture).
     fn photo_upload(&mut self, data: Vec<u8>, cost: i32, pano: bool) {
         let w = &self.world;
-        let maturity = w
-            .main()
-            .and_then(|r| r.info.as_ref())
-            .map(|i| crate::ui::bars::maturity_name(i.sim_access))
-            .unwrap_or("");
-        let place = inventory::location(&w.parcel_name, &w.region_name(), w.agent.position, maturity);
+        let place = photo_place(w);
         // LLAgentUI::buildFullname: the legacy name
         let who = w
             .login
@@ -1680,6 +1684,7 @@ impl App {
             self.photo_take(renderer, None);
         }
         self.photo_demo(renderer);
+        self.world_look_demo();
         self.photo_reel_demo(renderer);
         self.photo_luts_update();
         self.photo_quality(renderer);
@@ -1936,11 +1941,7 @@ impl App {
                 }
             }
             Action::PersonalLighting => self.panels.personal_lighting = true,
-            Action::KeepLight => {
-                if self.world.eep.keep_photo() {
-                    self.snapshots.ui.light.env = Default::default();
-                }
-            }
+            Action::KeepLight => self.keep_photo_light(),
             Action::Controls => {
                 if !self.panels.camera_controls && !self.panels.movement_controls {
                     self.panels.camera_controls = true;
@@ -2038,6 +2039,7 @@ impl App {
                 }
                 let id = format!("{}{name}", looks::LUT);
                 self.settings.snapshot.looks.retain(|l| l.id != id);
+                self.settings.world_look.looks.retain(|l| l.id != id);
                 self.settings.save();
             }
             Action::OpenLutFolder => {
@@ -2052,7 +2054,8 @@ impl App {
     /// The tables' list for the interface, and an import that came back:
     /// the table chosen and said.
     fn photo_luts_update(&mut self) {
-        if !self.panels.snapshot && !self.panels.director {
+        // (the world's filters read a table of the library too)
+        if !(self.panels.snapshot || self.panels.director || self.panels.world_look || self.settings.world_look.on) {
             return;
         }
         self.photo_luts().poll();
@@ -2068,6 +2071,7 @@ impl App {
         let Some(rx) = &self.snapshots.lut_import else { return };
         let Ok(result) = rx.try_recv() else { return };
         self.snapshots.lut_import = None;
+        let to_world = std::mem::take(&mut self.snapshots.world_ui.importing);
         let Some(results) = result else { return };
         // the tables kept, the first one chosen; the failures said together
         let mut first = None;
@@ -2093,7 +2097,19 @@ impl App {
                 aurora_i18n::tr!("photo-lut-imported-many", count = count)
             };
             let id = format!("{}{name}", looks::LUT);
-            self.snapshots.ui.looks.pick(&mut self.settings.snapshot, &id);
+            if to_world {
+                let world = &mut self.settings.world_look;
+                self.snapshots
+                    .world_ui
+                    .looks
+                    .pick(&mut crate::ui::looks_editor::Stack::world(world), &id);
+                world.on = true;
+            } else {
+                self.snapshots
+                    .ui
+                    .looks
+                    .pick(&mut crate::ui::looks_editor::Stack::photo(&mut self.settings.snapshot), &id);
+            }
             self.settings.save();
             self.snapshots.message = Some((text.clone(), false));
             let now = self.egui_ctx.input(|i| i.time);
@@ -2395,8 +2411,10 @@ LUT_3D_SIZE {n}
                 ambient_occlusion: self.settings.ssao,
                 quality_boost: self.settings.photo_held.is_some(),
                 hdr: self.settings.hdr_emissive,
+                shadows: self.photo_shadow_view(),
                 env: env_view(&env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
+                free_refused: self.world.rlva.camera_view_held(),
                 quality_reduced,
                 pano: self.capture_360.shown().map(|shown| crate::ui::snapshot::PanoShown {
                     image: shown.image.clone(),
@@ -2482,8 +2500,10 @@ LUT_3D_SIZE {n}
                 ambient_occlusion: self.settings.ssao,
                 quality_boost: self.settings.photo_held.is_some(),
                 hdr: self.settings.hdr_emissive,
+                shadows: self.photo_shadow_view(),
                 env: env_view(&self.env_ui, &self.world.eep),
                 back_key: self.settings.keybinds.get(crate::keybinds::Action::ResetCamera)[0].clone(),
+                free_refused: self.world.rlva.camera_view_held(),
                 quality_reduced,
                 pano: self.capture_360.shown().map(|shown| crate::ui::snapshot::PanoShown {
                     image: shown.image.clone(),
@@ -2627,6 +2647,12 @@ LUT_3D_SIZE {n}
             // the next opening of the window starts on the avatar
             self.snapshots.ui.free.on = false;
         }
+        // RLVa holds the view: the free camera ends and does not start
+        // (`Rlva::camera_view_held`)
+        if self.world.rlva.camera_view_held() {
+            self.snapshots.ui.free.on = false;
+            self.director.free = false;
+        }
         // (the Director's window has the same switch, `director.free`)
         let want = ((self.panels.snapshot && self.snapshots.ui.free.on) || self.director.free) && self.in_world();
         if want && !flying {
@@ -2735,7 +2761,7 @@ LUT_3D_SIZE {n}
             return;
         }
         if !self.panels.snapshot {
-            self.snapshots.ui.light = snapshot::light::PhotoLight::default();
+            self.snapshots.ui.light = self.snapshots.ui.light.closed();
             // the outfit's auto portrait in its studio light
             if let Some(studio) = self.outfit_portrait_light() {
                 self.world.eep.set_photo(studio);
@@ -2753,6 +2779,15 @@ LUT_3D_SIZE {n}
         }
         self.world.eep.set_photo(light.env);
         self.scene.attached_lights = light.attached_lights;
+    }
+
+    /// "Keep this light" (the photo window's button and Phototools'
+    /// banner): the photo's environment becomes the user's own, and only it
+    /// (`EnvSelector::keep_photo`).
+    pub(super) fn keep_photo_light(&mut self) {
+        if self.world.eep.keep_photo() {
+            self.snapshots.ui.light.env = Default::default();
+        }
     }
 
     /// The lists of the Light section load like the environment window's.
@@ -2784,7 +2819,25 @@ LUT_3D_SIZE {n}
         self.snapshots.ui.light.exposure.unwrap_or(self.settings.exposure)
     }
 
-    /// The photo's light holds the clouds still.
+    /// The sun's shadows the frame is drawn with (softness, intensity): the
+    /// photo's while its window is open, else Preferences'.
+    pub(super) fn photo_shadows(&self) -> (f32, f32) {
+        snapshot::light::drawn_shadows(&self.settings, &self.snapshots.ui.light, self.panels.snapshot)
+    }
+
+    /// Preferences' shadow values and the soft shadows' state, for the
+    /// Light section's rows.
+    fn photo_shadow_view(&self) -> crate::ui::snapshot::ShadowView {
+        crate::ui::snapshot::ShadowView {
+            softness: self.settings.shadow_softness,
+            intensity: self.settings.shadow_intensity,
+            soft: self.settings.soft_shadows,
+        }
+    }
+
+    /// The clouds are held still: a switch of the session (never saved)
+    /// shared by the photo window and Phototools, kept when the photo
+    /// window closes (`PhotoLight::closed`).
     pub(super) fn photo_clouds_paused(&self) -> bool {
         self.snapshots.ui.light.clouds_paused
     }
@@ -3318,8 +3371,34 @@ LUT_3D_SIZE {n}
     }
 }
 
+/// LLAgentUI::buildLocationString(LOCATION_FORMAT_FULL), the place a photo
+/// is named after (LLSnapshotLivePreview::saveTexture): under RLVa
+/// `@showloc` "(Hidden parcel), (Hidden region) - Maturity", no position
+/// (the restriction turns FULL into LOCATION_FORMAT_NO_COORDS,
+/// indra/newview/llagentui.cpp).
+pub(crate) fn photo_place(w: &crate::world::World) -> String {
+    let maturity = w
+        .main()
+        .and_then(|r| r.info.as_ref())
+        .map(|i| crate::ui::bars::maturity_name(i.sim_access))
+        .unwrap_or("");
+    if w.rlva.has("showloc") {
+        let mut s = format!(
+            "{}, {}",
+            aurora_i18n::tr!("rlva-hidden-parcel"),
+            aurora_i18n::tr!("rlva-hidden-region")
+        );
+        if !maturity.is_empty() {
+            s.push_str(" - ");
+            s.push_str(maturity);
+        }
+        return s;
+    }
+    inventory::location(&w.parcel_name, &w.region_name(), w.agent.position, maturity)
+}
+
 /// The Light section's view of the environment beneath the photo's.
-fn env_view<'a>(
+pub(super) fn env_view<'a>(
     env_ui: &'a crate::ui::environment::EnvironmentUi,
     eep: &crate::world::eep_env::EnvSelector,
 ) -> crate::ui::snapshot::EnvView<'a> {

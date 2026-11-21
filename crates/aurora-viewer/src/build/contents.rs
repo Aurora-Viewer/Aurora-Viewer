@@ -149,6 +149,9 @@ impl BuildTool {
             if let Some(job) = self.replacement.job.as_ref().filter(|job| !job.stage.terminal()) {
                 keep.extend(job.inventory_ids());
             }
+            if let Some(job) = self.ui.bulk.deep.as_ref() {
+                keep.extend(job.objects());
+            }
             self.contents.objects.retain(|k, _| keep.contains(k));
         }
     }
@@ -172,9 +175,24 @@ impl BuildTool {
     /// A god may, whatever the object (isGodlike() first); nobody may in a
     /// locked attachment or the restraining seat (`rlva_contents_locked`).
     pub fn contents_editable(&self, world: &World, idx: usize) -> bool {
-        if world.rlva_contents_locked(idx) {
-            return false;
-        }
+        !world.rlva_contents_locked(idx) && self.contents_modifiable(world, idx)
+    }
+
+    /// An item already inside may be renamed, and its script run or
+    /// stopped: refused in an attachment that cannot be taken off, not in
+    /// the seat held by @unsit or @sittp
+    /// (LLTaskInvFVBridge::isItemRenameable and renameItem,
+    /// llpanelobjectinventory.cpp; LLLiveLSLEditor's Running box,
+    /// llpreviewscript.cpp, and handle_selected_script_action,
+    /// llviewermenu.cpp, test isLockedAttachment alone).
+    pub fn contents_items_editable(&self, world: &World, idx: usize) -> bool {
+        !world.rlva_locked_attachment(idx) && self.contents_modifiable(world, idx)
+    }
+
+    /// The same without RLVa's locks: the properties of an item inside are
+    /// changed whatever holds the object (LLSidepanelItemInfo has no lock
+    /// test, llsidepaneliteminfo.cpp).
+    pub fn contents_modifiable(&self, world: &World, idx: usize) -> bool {
         if world.god_level > 0 {
             return world.objects.get(idx).is_some();
         }

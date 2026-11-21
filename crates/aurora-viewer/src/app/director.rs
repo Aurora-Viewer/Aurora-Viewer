@@ -520,10 +520,11 @@ impl App {
         self.director.d.key_color.filter(|_| self.panels.director).map(director::linear)
     }
 
-    /// The track may not take the view: RLVa restricts the camera, or the
-    /// view is a headset's.
+    /// The track may not take the view: RLVa holds it (`camera_view_held`;
+    /// under its other camera rules the track is bounded like the avatar's
+    /// view), or the view is a headset's.
     pub(super) fn director_restricted(&self) -> bool {
-        self.world.rlva.camera_restricted() || self.vr_camera.is_some()
+        self.world.rlva.camera_view_held() || self.vr_camera.is_some()
     }
 
     /// The current view, as a keyframe keeps it.
@@ -704,7 +705,9 @@ impl App {
             roll: self.camera.roll,
             free: self.camera.free().is_some(),
             free_speed: self.snapshots.ui.free.speed,
-            lens_locked: self.world.rlva.camera_owner().is_some(),
+            // (the lens is the user's under @setcam too, bounded by the fov
+            // limits: LLZoomer, LLViewerCamera::setDefaultFOV)
+            lens_locked: false,
             restricted: self.director_restricted(),
             focus: self.camera.focus_object_id().is_some(),
             target: self.director.aim,
@@ -988,9 +991,7 @@ impl App {
     /// it), within the window's limits and RLVa's; the user's own comes back
     /// when the Director closes.
     fn director_lens(&mut self, fov: f32) {
-        if self.world.rlva.camera_owner().is_some() {
-            return;
-        }
+        self.world.rlva.user_chose_fov();
         let aspect = self.camera_aspect();
         let limits = self.world.rlva.camera_fov_limits(aspect);
         self.settings.camera.fov = crate::camera::zoom_lens(fov, Some(1.0), aspect, limits);

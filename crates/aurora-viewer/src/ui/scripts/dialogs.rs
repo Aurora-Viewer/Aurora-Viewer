@@ -281,21 +281,12 @@ impl Search {
             self.status = aurora_i18n::tr!("script-search-not-found").into();
             return;
         }
-        let boundaries: Vec<_> = source.char_indices().map(|(i, _)| i).chain([source.len()]).collect();
-        let removed: usize = ranges.iter().map(|r| boundaries[r.end] - boundaries[r.start]).sum();
-        if source.len() - removed + count.saturating_mul(self.replacement.len()) > aurora_net::scripts::MAX_SOURCE {
+        let output = editing::replaced_all(source, &ranges, &self.replacement);
+        if output.len() > aurora_net::scripts::MAX_SOURCE {
             self.status = aurora_i18n::tr!("script-source-too-large").into();
             return;
         }
-        let mut output = String::new();
-        let mut previous = 0;
-        for range in ranges {
-            output.push_str(&source[previous..boundaries[range.start]]);
-            output.push_str(&self.replacement);
-            previous = boundaries[range.end];
-        }
-        output.push_str(&source[previous..]);
-        editing::replace(ctx, id, source, 0..boundaries.len() - 1, &output);
+        editing::replace_text(ctx, id, source, 0..source.chars().count(), &output);
         self.status = aurora_i18n::tr!("script-search-replaced", count = count as i64);
     }
 }

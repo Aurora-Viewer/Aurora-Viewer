@@ -29,6 +29,7 @@ const HIDDEN: &[&str] = &[
     "settings_version",
     "cache_location",
     "chat_log_location",
+    "custom_language_file",
     "window_fullscreen",
     "new_profile",
 ];
@@ -337,6 +338,7 @@ mod tests {
             "window_x",
             "cache_location",
             "chat_log_location",
+            "custom_language_file",
             "settings_version",
             "gifs.giphy_key",
             "gifs.klipy_key",

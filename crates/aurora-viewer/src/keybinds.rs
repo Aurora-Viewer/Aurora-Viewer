@@ -432,6 +432,11 @@ pub enum Action {
     PushToTalk,
     ToggleMic,
     Conversations,
+    /// Communicate › Contacts (menu_viewer.xml, "Contacts",
+    /// shortcut="control|alt|shift|F", Floater.Toggle imcontacts): the
+    /// Contacts tab of Conversations, or its torn-off window
+    /// (FSFloaterContacts::onOpen).
+    Contacts,
     /// Communicate › Nearby Chat (menu_viewer.xml, `shortcut="control|H"`,
     /// `use_mac_ctrl="true"`, Floater.ToggleOrBringToFront `fs_nearby_chat`).
     NearbyChat,
@@ -528,6 +533,9 @@ pub enum Action {
     /// "Snapshot to Disk" (Firestorm Ctrl+`): a photo with the settings of
     /// the photo window, without it.
     PhotoToDisk,
+    /// The Phototools window (menu_viewer.xml `phototools_item_call`,
+    /// shortcut="alt|P").
+    Phototools,
     /// World › Environment's fixed times of day and Use Shared Environment
     /// (menu_viewer.xml: `World.EnvSettings` sunrise / noon / sunset /
     /// midnight / region, Ctrl+Shift+U / Y / N / X / J).
@@ -711,6 +719,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::NearbyChat, aurora_i18n::tr!("common-nearby-chat")),
                     (Action::Conversations, aurora_i18n::tr!("common-conversations")),
+                    (Action::Contacts, aurora_i18n::tr!("common-contacts")),
                     (Action::People, aurora_i18n::tr!("common-people")),
                     (Action::Friends, aurora_i18n::tr!("common-friends")),
                     (Action::Groups, aurora_i18n::tr!("common-groups")),
@@ -769,6 +778,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::PhotoWindow, aurora_i18n::tr!("keybinds-photo-window")),
                     (Action::PhotoToDisk, aurora_i18n::tr!("keybinds-photo-to-disk")),
+                    (Action::Phototools, aurora_i18n::tr!("toolbar-command-phototools")),
                 ],
             ),
             (
@@ -948,6 +958,8 @@ impl KeyBindings {
             (Action::PushToTalk, [Some(Binding::plain(Input::Mouse("Middle".into()))), None]),
             (Action::ToggleMic, [None, None]),
             (Action::Conversations, [kmod(K::KeyT, true, false), None]),
+            // menu_viewer.xml: Contacts, shortcut="control|alt|shift|F"
+            (Action::Contacts, [kalt(K::KeyF, true, true), None]),
             (Action::People, [kmod(K::KeyA, true, true), None]),
             // menu_viewer.xml: Friends, Groups, Contact Sets
             (Action::Friends, [kmod(K::KeyF, true, true), None]),
@@ -1103,6 +1115,7 @@ impl KeyBindings {
             (Action::RefreshAttachments, [kalt(K::KeyR, false, true), None]),
             (Action::PhotoWindow, [kmod(K::KeyS, true, true), None]),
             (Action::PhotoToDisk, [kmod(K::Backquote, true, false), None]),
+            (Action::Phototools, [kalt(K::KeyP, false, false), None]),
             // menu_viewer.xml: World › Environment
             (Action::EnvSunrise, [kmod(K::KeyU, true, true), None]),
             (Action::EnvMidday, [kmod(K::KeyY, true, true), None]),
@@ -2095,6 +2108,7 @@ mod tests {
             (KeyCode::KeyQ, m(true, false, false), Action::Quit),
             (KeyCode::KeyO, m(true, false, false), Action::Appearance),
             (KeyCode::KeyF, m(true, true, false), Action::Friends),
+            (KeyCode::KeyF, m(true, true, true), Action::Contacts),
             (KeyCode::KeyG, m(true, true, false), Action::Groups),
             (KeyCode::KeyC, m(true, true, true), Action::ContactSets),
             (KeyCode::KeyI, m(true, true, false), Action::NewInventoryWindow),
@@ -2734,6 +2748,7 @@ mod tests {
             (Action::ResyncAnimations, (true, false, false), [K::KeyS; 4]),
             (Action::RefreshAttachments, (false, true, true), [K::KeyR; 4]),
             (Action::PhotoWindow, (true, true, false), [K::KeyS; 4]),
+            (Action::Phototools, (false, false, true), [K::KeyP; 4]),
             (Action::SitGround, (false, true, true), [K::KeyS; 4]),
             (Action::EnvSunrise, (true, true, false), [K::KeyU; 4]),
             (Action::EnvMidday, (true, true, false), [K::KeyY, K::KeyY, K::KeyY, K::KeyZ]),
@@ -2859,6 +2874,28 @@ mod tests {
         assert_eq!(
             kb.get(Action::ResyncAnimations),
             KeyBindings::default().get(Action::ResyncAnimations)
+        );
+    }
+
+    #[test]
+    fn alt_p_opens_phototools_and_leaves_move_lock_and_preferences_alone() {
+        let kb = KeyBindings::default();
+        let p = Input::key(letter(KeyCode::KeyP));
+        let alt = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        assert_eq!(kb.triggered(&p, alt), Some(Action::Phototools));
+        assert_eq!(kb.triggered(&p, Mods { ctrl: true, ..alt }), Some(Action::MoveLock));
+        assert_eq!(
+            kb.triggered(
+                &p,
+                Mods {
+                    ctrl: true,
+                    ..Default::default()
+                }
+            ),
+            Some(Action::Preferences)
         );
     }
 

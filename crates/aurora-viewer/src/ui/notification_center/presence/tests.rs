@@ -167,6 +167,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         fps: 60.0,
         flying: false,
         seated: false,
+        clouds_paused: false,
         ping_ms: 38,
         balance: Some(1000),
         show_balance: true,

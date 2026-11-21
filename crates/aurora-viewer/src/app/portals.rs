@@ -1,12 +1,10 @@
 use super::*;
-use crate::world::portals::unix_time;
-use aurora_net::bridge::portal::{Access, LIFETIME, Portal};
+use crate::world::portals::{LIFETIME, Portal, unix_time};
 pub(super) mod demo;
 pub(super) mod landmark;
 const RETURN_DISTANCE: f32 = 4.0;
 
 pub(super) struct Journey {
-    creator: uuid::Uuid,
     agent: uuid::Uuid,
     portal: Portal,
     source: Portal,
@@ -29,10 +27,9 @@ impl Journey {
         self
     }
 
-    fn new(world: &World, creator: uuid::Uuid, source: &Portal, now: Instant) -> Self {
+    fn new(world: &World, source: &Portal, now: Instant) -> Self {
         let normal = Vec3::new(source.yaw.cos(), source.yaw.sin(), 0.0);
         Self {
-            creator,
             agent: world.agent_id,
             portal: Portal {
                 // Paired endpoint IDs alternate on every crossing. Travelers
@@ -45,7 +42,6 @@ impl Journey {
                 yaw: (-normal.y).atan2(-normal.x),
                 destination: world.region_name(),
                 position: (Vec3::from(source.center) - normal * RETURN_DISTANCE).to_array(),
-                access: source.access,
                 expires: source.expires,
             },
             source: source.clone(),
@@ -60,9 +56,8 @@ impl App {
     pub(super) fn tick_portals(&mut self) {
         let now = Instant::now();
         let unix = unix_time();
-        let endpoint = self.bridge_runtime.query_endpoint();
         let mut state = std::mem::take(&mut self.world.portals);
-        state.sync(&self.world, endpoint.as_ref().map(|endpoint| endpoint.token), unix);
+        state.sync(&self.world, unix);
         if self
             .portal_journey
             .as_ref()
@@ -78,13 +73,11 @@ impl App {
             && let Some(region) = self.world.main_region
         {
             journey.portal.region = region;
-            // announced only where we may build; elsewhere it is ours alone
+            // Within one region, the portal we came through is our way back.
             if journey.source.region == region {
-                let build = self.build_right_at(Vec3::from(journey.source.center));
-                state.share_return(journey.source, journey.creator, build, self.world.agent.position, now, unix);
+                state.add_return(journey.source, self.world.agent.position, now, unix);
             }
             // Landing points can redirect a request within the same region.
-            // The first shared aperture wins when other travelers arrive.
             if Vec3::from(journey.portal.center).distance(self.world.agent.position) > 10.0 {
                 let normal = Vec3::new(journey.portal.yaw.cos(), journey.portal.yaw.sin(), 0.0);
                 journey.portal.center = (self.world.agent.position + normal * RETURN_DISTANCE).to_array();
@@ -92,28 +85,10 @@ impl App {
             if self.world.main().is_some_and(|r| {
                 crate::world::portals::fits_region(Vec3::from(journey.portal.center), [r.heightmap.size_x, r.heightmap.size_y])
             }) {
-                let build = self.build_right_at(Vec3::from(journey.portal.center));
-                state.share_return(journey.portal, journey.creator, build, self.world.agent.position, now, unix);
+                // Ours alone, wherever it stands: nothing is placed in the
+                // world, so no land right is needed for the way back.
+                state.add_return(journey.portal, self.world.agent.position, now, unix);
             }
-        }
-        // a return kept ours while its land was unknown: asked again until known
-        for (creator, id, center) in state.awaiting_land() {
-            let build = self.build_right_at(center);
-            state.land_known(creator, id, build, unix);
-        }
-        if let Some(group) = state.take_group_refresh() {
-            self.world.group_data.request_members(group);
-        }
-        if let Some(id) = state.take_profile_want() {
-            self.world.want_profile(id);
-        }
-        if self
-            .portal_ask
-            .as_ref()
-            .is_some_and(|ask| state.crossable(&self.world, ask.owner, ask.portal.id).is_none())
-        {
-            // Closed, expired, muted or left out meanwhile: nothing to answer.
-            self.portal_ask = None;
         }
         let mut input = self.input;
         if self.camera.free().is_none() && !self.joystick.active {
@@ -135,28 +110,11 @@ impl App {
             Vec3::ZERO
         };
         let crossed = state.update(&self.world, intent, now);
-        let command = state.command(endpoint.as_ref(), now);
         self.world.portals = state;
-        if std::mem::take(&mut self.world.portals.failed) {
-            let message = aurora_i18n::tr!("portal-share-failed");
-            self.portal_ui.notice = Some(message.into());
-            self.world.system_message(message);
-        }
-        if let Some(command) = command {
-            self.send(command);
-        }
-        if let Some((creator, portal)) = crossed {
-            if !self.world.portals.ask_before_crossing(&self.world, creator, portal.id) {
-                self.cross_portal(creator, portal, now);
-            } else if self.portal_ask.is_none()
-                && let Some(entry) = self.world.portals.crossable(&self.world, creator, portal.id)
-            {
-                // One question per portal; the walk through is consumed.
-                self.portal_ask = Some(ui::portals::CrossingAsk::new(&self.world, entry, portal));
-            }
+        if let Some(portal) = crossed {
+            self.cross_portal(portal, now);
         }
         self.update_place_portal();
-        self.exchange_portal_demo();
         if self.seed_portal_drop_demo() {
             return;
         }
@@ -198,11 +156,6 @@ impl App {
                 }
                 .into(),
                 position: [128.0, 128.0, 25.0],
-                access: if mode == "friends" || mode == "return-private" || mode.starts_with("private-") {
-                    Access::Friends
-                } else {
-                    Access::Everyone
-                },
                 expires: unix + LIFETIME,
             };
             if mode.ends_with("no-build") {
@@ -211,7 +164,6 @@ impl App {
             let build = self.build_right_at(center);
             let mut state = std::mem::take(&mut self.world.portals);
             if mode.starts_with("return") {
-                let creator = uuid::Uuid::from_u128(0xA770);
                 self.portal_ui.open = false;
                 self.panels.chat = false;
                 let tangent = Vec3::new(-ahead.y, ahead.x, 0.0);
@@ -221,65 +173,24 @@ impl App {
                     &mut self.world.agent,
                     &self.settings.camera,
                 );
-                state.share_return(portal.clone(), creator, build, position, now, unix);
-                let mut announcement = portal.announcement();
-                announcement.creator = Some(creator);
-                for peer in [0xA771, 0xA772] {
-                    let peer = uuid::Uuid::from_u128(peer);
-                    if let Some(wire) = aurora_net::bridge::portal::Message::Open(announcement.clone()).encode() {
-                        state.receive(&self.world, &format!("<auroraPortal>{peer}|{wire}</auroraPortal>"), now, unix);
-                    }
+                state.add_return(portal, position, now, unix);
+            } else {
+                if mode.starts_with("walk") {
+                    // `portal_demo_input` walks through it from frame 600.
+                    self.portal_ui.open = false;
                 }
-            } else if mode == "friends" || mode.starts_with("private-") {
-                self.portal_ui.open = false;
-                self.portal_ui.destination.clear();
-                let owner = uuid::Uuid::from_u128(0xA770);
-                if mode.starts_with("private-") {
-                    self.seed_portal_peer_demo(&mode, portal.clone(), owner);
+                if let Err(refusal) = state.create(portal, build, position, now, unix) {
+                    self.portal_ui.notice = Some(refusal.message().into());
                 }
-                if let Some(wire) = aurora_net::bridge::portal::Message::Open(portal.announcement()).encode() {
-                    state.receive(&self.world, &format!("<auroraPortal>{owner}|{wire}</auroraPortal>"), now, unix);
-                }
-            } else if mode.starts_with("stranger") {
-                // A public portal from a resident who is not our friend; the
-                // walk of `portal_demo_input` crosses it from frame 600.
-                self.portal_ui.open = false;
-                self.portal_ui.destination.clear();
-                let owner = uuid::Uuid::from_u128(0xA770);
-                if mode == "stranger-groups" {
-                    let group = uuid::Uuid::from_u128(0xA770_6000);
-                    self.world.groups.groups.push(aurora_net::GroupMembership {
-                        id: group,
-                        name: "Demo group".into(),
-                        insignia: uuid::Uuid::nil(),
-                        powers: 0,
-                        accept_notices: true,
-                        list_in_profile: true,
-                        contribution: 0,
-                    });
-                    self.world.profiles.merge_groups(
-                        owner,
-                        vec![aurora_net::profile::ProfileGroup {
-                            id: group,
-                            name: "Demo group".into(),
-                            insignia: uuid::Uuid::nil(),
-                        }],
-                    );
-                }
-                if let Some(wire) = aurora_net::bridge::portal::Message::Open(portal.announcement()).encode() {
-                    state.receive(&self.world, &format!("<auroraPortal>{owner}|{wire}</auroraPortal>"), now, unix);
-                }
-            } else if let Err(refusal) = state.create(portal, build, position, now, unix) {
-                self.portal_ui.notice = Some(refusal.message().into());
             }
             self.world.portals = state;
         }
     }
 
-    fn cross_portal(&mut self, creator: uuid::Uuid, portal: Portal, now: Instant) {
+    fn cross_portal(&mut self, portal: Portal, now: Instant) {
         // Ordinary location teleports retain RLVa, maturity, map lookup,
         // cancellation and simulator access checks (LLAgent::teleportViaLocation).
-        let journey = Journey::new(&self.world, creator, &portal, now);
+        let journey = Journey::new(&self.world, &portal, now);
         let look_at = Vec3::new(portal.yaw.cos(), portal.yaw.sin(), 0.0);
         self.teleport_to_location_looking(portal.destination, Vec3::from(portal.position), look_at);
         if self.world.teleporting {
@@ -287,41 +198,6 @@ impl App {
         } else if let Some(ask) = self.suitcase_ask.as_mut() {
             // held for the Hypergrid question: the journey goes with it
             ask.portal = Some(journey);
-        }
-    }
-
-    /// The question before a non-friend's portal is first crossed. Go checks
-    /// again that it can still be crossed, then travels like a crossing.
-    pub(super) fn portal_crossing_question(&mut self, ctx: &egui::Context, p: &Palette) {
-        let Some(ask) = &self.portal_ask else { return };
-        let Some(go) = ui::portals::crossing_confirm(ctx, p, ask) else {
-            return;
-        };
-        let Some(ask) = self.portal_ask.take() else { return };
-        if !go
-            || self.world.teleporting
-            || !ask.portal.live(unix_time())
-            || self.world.portals.crossable(&self.world, ask.owner, ask.portal.id).is_none()
-        {
-            return;
-        }
-        self.world.portals.confirm(ask.owner, ask.portal.id);
-        self.cross_portal(ask.owner, ask.portal, Instant::now());
-    }
-
-    /// The setting, or the one an `AURORA_DEMO_PORTALS` scenario tests (never
-    /// saved). The earlier scenarios show a non-friend's portal.
-    pub(super) fn portal_sources(&self) -> crate::world::portals::Sources {
-        use crate::world::portals::Sources;
-        if !self.demo {
-            return self.settings.portal_sources;
-        }
-        match std::env::var("AURORA_DEMO_PORTALS").as_deref() {
-            Ok("stranger") => Sources::Everyone,
-            Ok("stranger-groups") => Sources::FriendsAndGroups,
-            Ok("stranger-hidden") => Sources::Friends,
-            Ok(mode) if mode == "friends" || mode.starts_with("private-") || mode.starts_with("return") => Sources::Everyone,
-            _ => self.settings.portal_sources,
         }
     }
 
@@ -423,11 +299,10 @@ impl App {
     }
 
     pub(super) fn portals_window(&mut self, ctx: &egui::Context, palette: &Palette) {
-        let ready = self.demo || self.bridge_runtime.query_endpoint().is_some();
-        let actions = self.portal_ui.show(ctx, palette, &self.world, ready);
+        let actions = self.portal_ui.show(ctx, palette, &self.world);
         if actions.close {
             self.portal_drop = None;
-            self.world.portals.close(unix_time());
+            self.world.portals.close();
         }
         if !actions.create {
             return;
@@ -437,11 +312,6 @@ impl App {
         let Some(location) = crate::slurl::parse(&self.portal_ui.destination).filter(|location| location.grid.is_none()) else {
             return;
         };
-        if let Access::Group(id) = self.portal_ui.access
-            && !self.world.groups.groups.iter().any(|group| group.id == id)
-        {
-            return;
-        }
         let Some(region) = self.world.main_region else { return };
         let yaw = self.world.agent.yaw;
         let mut center = self.world.agent.position + Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 4.0;
@@ -465,7 +335,6 @@ impl App {
             yaw,
             destination: location.region,
             position: location.pos.to_array(),
-            access: self.portal_ui.access,
             expires: unix_time() + LIFETIME,
         };
         if let Err(refusal) = self
@@ -477,7 +346,7 @@ impl App {
         }
     }
 
-    pub(super) fn create_portal_at(&mut self, destination: String, position: Vec3, access: Access, center: Vec3, yaw: f32) {
+    pub(super) fn create_portal_at(&mut self, destination: String, position: Vec3, center: Vec3, yaw: f32) {
         let Some(region) = self.world.main_region else { return };
         let valid = self
             .world
@@ -496,7 +365,6 @@ impl App {
             yaw,
             destination,
             position: position.to_array(),
-            access,
             expires: unix_time() + LIFETIME,
         };
         let created = if valid {
@@ -510,7 +378,6 @@ impl App {
             self.portal_notice(refusal.message());
         } else {
             self.portal_ui.destination = destination_text;
-            self.portal_ui.access = access;
             self.portal_ui.notice = None;
         }
     }
@@ -541,11 +408,10 @@ mod tests {
             yaw: 0.0,
             destination: "Demo destination".into(),
             position: [128.0, 128.0, 25.0],
-            access: Access::Friends,
             expires: 1120,
         };
         let now = Instant::now();
-        let mut outward = Journey::new(&world, world.agent_id, &source, now);
+        let mut outward = Journey::new(&world, &source, now);
         // Supply the region name normally provided by the region handshake.
         outward.portal.destination = "Demo source".into();
         assert!(!outward.arrived, "a teleport request is not an arrival");
@@ -556,8 +422,7 @@ mod tests {
             "the return is behind the arrival"
         );
         assert_eq!(outward.portal.expires, source.expires);
-        assert_eq!(outward.portal.access, source.access);
-        let back = Journey::new(&world, world.agent_id, &outward.portal, now);
+        let back = Journey::new(&world, &outward.portal, now);
         assert_eq!(back.portal.id, source.id);
         assert!(Vec3::from(back.portal.center).distance(Vec3::from(source.center)) < 1e-5);
         assert_eq!(back.portal.position, source.position);
