@@ -4723,6 +4723,26 @@ pub fn complex_face_selection_events() -> Vec<NetEvent> {
     events
 }
 
+/// Two independent mesh roots for the offline multi-object material editor test.
+pub fn multi_mesh_materials_events() -> Vec<NetEvent> {
+    let mut events = complex_face_selection_events();
+    for event in &mut events {
+        if let NetEvent::ObjectUpdates { objects, .. } = event {
+            for object in objects.iter_mut().filter(|object| matches!(object.local_id, 99620 | 99622)) {
+                object.volume = aurora_prim::VolumeParams {
+                    sculpt: Some(SculptParams {
+                        texture: FACE_SELECTION_MESH,
+                        sculpt_type: LL_SCULPT_TYPE_MESH,
+                    }),
+                    ..Default::default()
+                };
+                object.rotation = Quat::IDENTITY;
+            }
+        }
+    }
+    events
+}
+
 /// `AURORA_DEMO_BUILD=faces-mapping`: the three surfaces of
 /// `face_selection_events`, each textured with its own mapping, for the
 /// face-select pattern (#2505): A with the tiles repeated 3 x 2, offset
