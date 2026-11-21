@@ -104,15 +104,15 @@ pub fn page(cx: &mut Cx) {
         cx.borrow(Page::Chat, 0, &["link_previews.subtitles"]);
     });
     cx.group(tr!("ui-options-pointer"), |cx| {
-        cx.row(
+        cx.greyed(cx.s.pointer.look == crate::cursors::PointerLook::System);
+        cx.slider(
             tr!("ui-options-pointer-size"),
             tr!("ui-options-pointer-size-help"),
             &field!(pointer.size),
-            |ui, settings| {
-                ui.add(egui::Slider::new(&mut settings.pointer.size, 16..=64).suffix(" px"))
-                    .changed()
-            },
+            16..=64,
+            " px",
         );
+        cx.greyed(false);
         cx.combo(
             tr!("ui-options-pointer-look"),
             tr!("ui-options-pointer-look-help"),
@@ -124,20 +124,17 @@ pub fn page(cx: &mut Cx) {
                 (crate::cursors::PointerLook::Ring, tr!("ui-options-pointer-ring")),
                 (crate::cursors::PointerLook::Heart, tr!("ui-options-pointer-heart")),
                 (crate::cursors::PointerLook::Sparkle, tr!("ui-options-pointer-sparkle")),
-                (crate::cursors::PointerLook::Bow, tr!("ui-options-pointer-bow")),
                 (crate::cursors::PointerLook::System, tr!("ui-options-pointer-system")),
             ],
         );
     });
     cx.group(tr!("ui-options-touch-cursor"), |cx| {
-        cx.row(
+        cx.slider(
             tr!("ui-options-touch-size"),
             tr!("ui-options-touch-size-help"),
             &field!(pointer.touch_size),
-            |ui, settings| {
-                ui.add(egui::Slider::new(&mut settings.pointer.touch_size, 16..=64).suffix(" px"))
-                    .changed()
-            },
+            16..=64,
+            " px",
         );
         cx.combo(
             tr!("ui-options-touch-look"),

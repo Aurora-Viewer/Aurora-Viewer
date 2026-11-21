@@ -13,11 +13,11 @@ pub enum PointerLook {
     Ring,
     Heart,
     Sparkle,
-    Bow,
-    /// The classic white pointer, rendered at the selected size.
+    /// The larger Tabler arrow in the active theme.
     Original,
     /// Defer to the operating system's native pointer and its size setting.
     #[default]
+    #[serde(alias = "Bow")]
     System,
 }
 
@@ -216,22 +216,27 @@ fn draw_icon(pixmap: &mut resvg::tiny_skia::Pixmap, svg: &[u8], palette: &crate:
     Some(())
 }
 
-/// Draw the small arrow of the badge cursors (Tabler's filled pointer), its
-/// tip at (1, 1).
-fn draw_arrow(pixmap: &mut resvg::tiny_skia::Pixmap, palette: &crate::theme::Palette) -> Option<()> {
+/// Draw Tabler's filled pointer and return the pixel at its tip.
+fn draw_arrow(pixmap: &mut resvg::tiny_skia::Pixmap, palette: &crate::theme::Palette, scale: f32) -> Option<[u16; 2]> {
     let svg = std::str::from_utf8(include_bytes!("../assets/icons/tabler/filled/pointer.svg")).ok()?;
     let options = resvg::usvg::Options::default();
-    let transform = resvg::tiny_skia::Transform::from_scale(0.62, 0.62).post_translate(-1.2, -1.2);
+    let transform = resvg::tiny_skia::Transform::from_scale(0.62 * scale, 0.62 * scale).post_translate(-1.2 * scale, -1.2 * scale);
     let bar = hex(palette.bar);
-    let outline = format!("fill=\"{bar}\" stroke=\"{bar}\" stroke-width=\"3.2\" stroke-linejoin=\"round\"");
+    let outline = format!(
+        "fill=\"{bar}\" stroke=\"{bar}\" stroke-width=\"{}\" stroke-linejoin=\"round\"",
+        3.2 * scale
+    );
     let ink = format!("fill=\"{}\"", hex(palette.ink));
     for fill in [outline, ink] {
         let source = svg.replace("fill=\"currentColor\"", &fill);
         let tree = resvg::usvg::Tree::from_data(source.as_bytes(), &options).ok()?;
         resvg::render(&tree, transform, &mut pixmap.as_mut());
     }
-    Some(())
+    Some([(scale.round() as u16).max(1); 2])
 }
+
+/// The theme arrow takes up more of the bitmap than the compact arrow.
+const THEME_ARROW_SCALE: f32 = 1.45;
 
 fn finish(pixmap: &resvg::tiny_skia::Pixmap, hotspot: [u16; 2]) -> egui::CustomCursorImage {
     // resvg pixels are premultiplied; native cursor pixels are straight RGBA.
@@ -258,17 +263,12 @@ fn finish(pixmap: &resvg::tiny_skia::Pixmap, hotspot: [u16; 2]) -> egui::CustomC
     }
 }
 
-const POINTER_RING: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>"#;
-
 fn pointer_image(palette: &crate::theme::Palette, preferences: &Preferences) -> Option<egui::CustomCursorImage> {
     let size = preferences.size();
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)?;
+    let scale = size as f32 / 32.0;
     let hotspot = match preferences.look {
-        PointerLook::Arrow => {
-            draw_pointer_arrow(&mut pixmap, palette)?;
-            let point = ((size as f32 / 32.0).round() as u16).max(1);
-            [point, point]
-        }
+        PointerLook::Arrow => draw_arrow(&mut pixmap, palette, scale)?,
         PointerLook::Crosshair => {
             draw_icon(
                 &mut pixmap,
@@ -280,49 +280,30 @@ fn pointer_image(palette: &crate::theme::Palette, preferences: &Preferences) -> 
             [(size / 2) as u16; 2]
         }
         PointerLook::Ring => {
-            draw_icon(&mut pixmap, POINTER_RING, palette, size as f32 / 24.0, 0.0)?;
+            draw_icon(
+                &mut pixmap,
+                include_bytes!("../assets/icons/tabler/outline/circle-dot.svg"),
+                palette,
+                size as f32 / 24.0,
+                0.0,
+            )?;
             [(size / 2) as u16; 2]
         }
         PointerLook::Heart => {
-            draw_pointer_arrow(&mut pixmap, palette)?;
+            let hotspot = draw_arrow(&mut pixmap, palette, scale)?;
             draw_pointer_badge(&mut pixmap, include_bytes!("../assets/icons/tabler/filled/heart.svg"), palette)?;
-            [1, 1]
+            hotspot
         }
         PointerLook::Sparkle => {
-            draw_pointer_arrow(&mut pixmap, palette)?;
+            let hotspot = draw_arrow(&mut pixmap, palette, scale)?;
             draw_pointer_badge(&mut pixmap, include_bytes!("../assets/icons/tabler/filled/sparkles.svg"), palette)?;
-            [1, 1]
+            hotspot
         }
-        PointerLook::Bow => {
-            draw_pointer_arrow(&mut pixmap, palette)?;
-            draw_pointer_badge(&mut pixmap, POINTER_BOW, palette)?;
-            [1, 1]
-        }
-        PointerLook::Original => {
-            draw_classic_pointer(&mut pixmap, palette)?;
-            [((size * 4) / 32) as u16, ((size * 2) / 32) as u16]
-        }
+        PointerLook::Original => draw_arrow(&mut pixmap, palette, scale * THEME_ARROW_SCALE)?,
         PointerLook::System => return None,
     };
     Some(finish(&pixmap, hotspot))
 }
-
-fn draw_classic_pointer(pixmap: &mut resvg::tiny_skia::Pixmap, palette: &crate::theme::Palette) -> Option<()> {
-    // A contrasting classic pointer silhouette, using the active palette so it
-    // remains visible with custom themes and high contrast.
-    let fill = hex(palette.ink);
-    let outline = hex(palette.bar);
-    let svg = format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path d=\"M4 2v23l6-6 5 10 4-2-5-10h9L4 2z\" fill=\"{fill}\" stroke=\"{outline}\" stroke-width=\"2.5\" stroke-linejoin=\"round\"/><path d=\"M5.2 4.2v17.9l4.2-4.2 5.1 10.1 1.6-.8-5.2-10.5h7.6L5.2 4.2z\" fill=\"{fill}\" stroke=\"{fill}\" stroke-width=\".6\" stroke-linejoin=\"round\"/></svg>"
-    );
-    let tree = resvg::usvg::Tree::from_data(svg.as_bytes(), &resvg::usvg::Options::default()).ok()?;
-    let scale = pixmap.width() as f32 / 32.0;
-    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
-    resvg::render(&tree, transform, &mut pixmap.as_mut());
-    Some(())
-}
-
-const POINTER_BOW: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 11C9 7 4 6 3 7c-1 2 1 6 8 6M12 11c3-4 8-5 9-4 1 2-1 6-8 6M12 11l-3 9 3-2 3 2-3-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="11" r="2" fill="currentColor"/></svg>"#;
 
 fn touch_image(palette: &crate::theme::Palette, preferences: &Preferences) -> Option<egui::CustomCursorImage> {
     use TouchLook::*;
@@ -330,8 +311,7 @@ fn touch_image(palette: &crate::theme::Palette, preferences: &Preferences) -> Op
     let size = preferences.touch_size.clamp(16, 64).into();
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)?;
     if preferences.touch_look == NormalPointer {
-        draw_classic_pointer(&mut pixmap, palette)?;
-        let hotspot = [((4 * size) / 32) as u16, ((2 * size) / 32) as u16];
+        let hotspot = draw_arrow(&mut pixmap, palette, size as f32 / 32.0 * THEME_ARROW_SCALE)?;
         return Some(finish(&pixmap, hotspot));
     }
     let hand: &[u8] = match preferences.touch_look {
@@ -359,25 +339,6 @@ fn draw_pointer_badge(pixmap: &mut resvg::tiny_skia::Pixmap, svg: &[u8], palette
     draw_icon(pixmap, svg, palette, 0.48 * scale, 14.0 * scale)
 }
 
-fn draw_pointer_arrow(pixmap: &mut resvg::tiny_skia::Pixmap, palette: &crate::theme::Palette) -> Option<()> {
-    let svg = std::str::from_utf8(include_bytes!("../assets/icons/tabler/filled/pointer.svg")).ok()?;
-    let options = resvg::usvg::Options::default();
-    let scale = pixmap.width() as f32 / 32.0;
-    let transform = resvg::tiny_skia::Transform::from_scale(0.62 * scale, 0.62 * scale).post_translate(-1.2 * scale, -1.2 * scale);
-    let bar = hex(palette.bar);
-    let outline = format!(
-        "fill=\"{bar}\" stroke=\"{bar}\" stroke-width=\"{}\" stroke-linejoin=\"round\"",
-        3.2 * scale
-    );
-    let ink = format!("fill=\"{}\"", hex(palette.ink));
-    for fill in [outline, ink] {
-        let source = svg.replace("fill=\"currentColor\"", &fill);
-        let tree = resvg::usvg::Tree::from_data(source.as_bytes(), &options).ok()?;
-        resvg::render(&tree, transform, &mut pixmap.as_mut());
-    }
-    Some(())
-}
-
 /// A Tabler outline icon alone as a 32 px cursor.
 fn tabler_image(svg: &[u8], palette: &crate::theme::Palette, hotspot: [u16; 2]) -> Option<egui::CustomCursorImage> {
     let mut pixmap = resvg::tiny_skia::Pixmap::new(32, 32)?;
@@ -390,8 +351,8 @@ fn tabler_image(svg: &[u8], palette: &crate::theme::Palette, hotspot: [u16; 2]) 
 fn badge_image(svg: &[u8], palette: &crate::theme::Palette) -> Option<egui::CustomCursorImage> {
     let mut pixmap = resvg::tiny_skia::Pixmap::new(32, 32)?;
     draw_icon(&mut pixmap, svg, palette, 0.86, 11.0)?;
-    draw_arrow(&mut pixmap, palette)?;
-    Some(finish(&pixmap, [1, 1]))
+    let hotspot = draw_arrow(&mut pixmap, palette, 1.0)?;
+    Some(finish(&pixmap, hotspot))
 }
 
 #[cfg(test)]
@@ -439,7 +400,6 @@ mod tests {
                 PointerLook::Ring,
                 PointerLook::Heart,
                 PointerLook::Sparkle,
-                PointerLook::Bow,
                 PointerLook::Original,
             ] {
                 let image = pointer_image(
@@ -504,21 +464,11 @@ mod tests {
             },
         )
         .unwrap();
-        let bow = pointer_image(
-            &palette,
-            &Preferences {
-                size: 32,
-                look: PointerLook::Bow,
-                ..Default::default()
-            },
-        )
-        .unwrap();
         assert_ne!(arrow.rgba, crosshair.rgba);
         assert_ne!(crosshair.rgba, ring.rgba);
         assert_ne!(arrow.rgba, heart.rgba);
         assert_ne!(heart.rgba, sparkle.rgba);
-        assert_ne!(sparkle.rgba, bow.rgba);
-        let classic = pointer_image(
+        let theme_arrow = pointer_image(
             &palette,
             &Preferences {
                 size: 32,
@@ -527,13 +477,24 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(classic.size, [32, 32]);
-        assert_ne!(classic.rgba, arrow.rgba);
-        let fill = classic.rgba.as_chunks::<4>().0[10 * 32 + 7];
-        assert!(
-            u16::from(fill[0]) + u16::from(fill[1]) + u16::from(fill[2]) > 450,
-            "classic arrow fill should be light"
-        );
+        assert_eq!(theme_arrow.size, [32, 32]);
+        assert_ne!(theme_arrow.rgba, arrow.rgba);
+        let light = crate::theme::Palette {
+            ink: palette.bar,
+            bar: palette.ink,
+            ..palette
+        };
+        let light_arrow = pointer_image(
+            &light,
+            &Preferences {
+                look: PointerLook::Original,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_ne!(light_arrow.rgba, theme_arrow.rgba);
+        assert_eq!(light_arrow.hotspot, theme_arrow.hotspot);
+        assert_eq!(serde_json::from_str::<PointerLook>(r#""Bow""#).unwrap(), PointerLook::System);
         assert!(
             pointer_image(
                 &palette,
@@ -605,7 +566,7 @@ mod tests {
             },
         )
         .unwrap();
-        let classic = pointer_image(
+        let theme_arrow = pointer_image(
             &palette,
             &Preferences {
                 look: PointerLook::Original,
@@ -613,8 +574,8 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(mouse.rgba, classic.rgba, "touch mouse pointer uses the same classic arrow art");
-        assert_eq!(mouse.hotspot, classic.hotspot);
+        assert_eq!(mouse.rgba, theme_arrow.rgba, "the touch pointer uses the same theme arrow");
+        assert_eq!(mouse.hotspot, theme_arrow.hotspot);
     }
 
     #[test]
