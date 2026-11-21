@@ -776,14 +776,33 @@ thread_local! {
 /// Decode a codestream with `aurora-j2k`: the first four components, as
 /// [`convert_image`] keeps them of an OpenJPEG decode.
 fn decode_native(cs: &[u8], reduce: u8) -> Result<DecodedImage, aurora_j2k::Error> {
-    let options = aurora_j2k::Options { reduce, components: 4, limits: NATIVE_LIMITS };
+    let options = aurora_j2k::Options {
+        reduce,
+        components: 4,
+        limits: NATIVE_LIMITS,
+    };
     let image = NATIVE.with_borrow_mut(|decoder| decoder.decode(cs, &options))?;
     match image.samples {
         // 8-bit components of one size: the pixels as the viewer wants them
-        aurora_j2k::Samples::Packed(data) => Ok(DecodedImage { width: image.width, height: image.height, components: image.components.min(4) as u8, data, discard: reduce }),
+        aurora_j2k::Samples::Packed(data) => Ok(DecodedImage {
+            width: image.width,
+            height: image.height,
+            components: image.components.min(4) as u8,
+            data,
+            discard: reduce,
+        }),
         aurora_j2k::Samples::Planes(planes) => {
-            let views: Vec<PlaneView<'_>> =
-                planes.iter().take(4).map(|p| PlaneView { w: p.width, h: p.height, prec: u32::from(p.precision), signed: p.signed, data: &p.data }).collect();
+            let views: Vec<PlaneView<'_>> = planes
+                .iter()
+                .take(4)
+                .map(|p| PlaneView {
+                    w: p.width,
+                    h: p.height,
+                    prec: u32::from(p.precision),
+                    signed: p.signed,
+                    data: &p.data,
+                })
+                .collect();
             planes_to_image(&views, reduce).map_err(|_| aurora_j2k::Error::Data("decoded components"))
         }
     }
@@ -805,7 +824,15 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
     let siz = check_decode_memory(cs, reduce)?;
     if !openjpeg_forced() {
         match decode_native(cs, reduce) {
-            Ok(out) => return Ok((out, DecodeTimings { codec: start.elapsed(), convert: Duration::ZERO })),
+            Ok(out) => {
+                return Ok((
+                    out,
+                    DecodeTimings {
+                        codec: start.elapsed(),
+                        convert: Duration::ZERO,
+                    },
+                ));
+            }
             // what the Rust decoder does not take is OpenJPEG's, as everything was before it
             Err(e) => log::debug!(target: "aurora_assets::j2k", "aurora-j2k: {e}; decoding with OpenJPEG"),
         }
@@ -945,7 +972,13 @@ fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<Decode
             // factor); `w` and `h` were checked above against the SIZ, so the
             // slice never spans more than the header's own component size.
             let data = unsafe { std::slice::from_raw_parts(c.data as *const i32, c.w as usize * c.h as usize) };
-            PlaneView { w: c.w, h: c.h, prec: c.prec, signed: c.sgnd != 0, data }
+            PlaneView {
+                w: c.w,
+                h: c.h,
+                prec: c.prec,
+                signed: c.sgnd != 0,
+                data,
+            }
         })
         .collect();
     planes_to_image(&views, comps[0].factor.min(255) as u8)
@@ -967,7 +1000,11 @@ struct PlaneView<'a> {
 fn planes_to_image(planes: &[PlaneView<'_>], discard: u8) -> Result<DecodedImage, AssetError> {
     let width = planes.iter().map(|c| c.w).max().unwrap_or(0);
     let height = planes.iter().map(|c| c.h).max().unwrap_or(0);
-    if planes.is_empty() || planes.iter().any(|c| c.w == 0 || c.h == 0 || c.data.len() < c.w as usize * c.h as usize) {
+    if planes.is_empty()
+        || planes
+            .iter()
+            .any(|c| c.w == 0 || c.h == 0 || c.data.len() < c.w as usize * c.h as usize)
+    {
         return Err(AssetError::J2k("decoded component has no data"));
     }
     if width > MAX_DIMENSION || height > MAX_DIMENSION {
@@ -1011,7 +1048,13 @@ fn planes_to_image(planes: &[PlaneView<'_>], discard: u8) -> Result<DecodedImage
         }
     }
 
-    Ok(DecodedImage { width, height, components: n as u8, data: out, discard })
+    Ok(DecodedImage {
+        width,
+        height,
+        components: n as u8,
+        data: out,
+        discard,
+    })
 }
 
 #[cfg(test)]

@@ -215,7 +215,11 @@ pub struct Decoder {
 
 impl Default for Decoder {
     fn default() -> Self {
-        Decoder { tile: tile::Tile::default(), scratch: Scratch::default(), retained: 8 << 20 }
+        Decoder {
+            tile: tile::Tile::default(),
+            scratch: Scratch::default(),
+            retained: 8 << 20,
+        }
     }
 }
 
