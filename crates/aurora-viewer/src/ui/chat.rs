@@ -1159,15 +1159,17 @@ fn message_emphasis(kind: ChatKind, italics: bool) -> super::fonts::TextEmphasis
 }
 
 /// The same message tone in the conversation thread and its nearby-chat card.
+fn message_color_override(tone: Option<Color32>, keyword: Option<Color32>, emote: bool, emote_color: Color32) -> Option<Color32> {
+    tone.or(keyword).or_else(|| emote.then_some(emote_color))
+}
+
 fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> Color32 {
     if let Some(color) = super::colors::contact_chat_color(line, world) {
         return color;
     }
     let tone = history_tone(p, line.origin);
-    if line.text.starts_with("/me ") || line.text.starts_with("/me'") {
-        return tone.unwrap_or(p.violet_pale);
-    }
-    tone.or_else(|| super::colors::keyword_color(line))
+    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
+    message_color_override(tone, super::colors::keyword_color(line), emote, p.violet_pale)
         .unwrap_or_else(|| match line.kind.volume() {
             Some(ChatType::Whisper) => p.muted,
             Some(ChatType::Shout) => p.ink,
@@ -5381,6 +5383,19 @@ pub(crate) fn bar_input(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn emote_keyword_color_overrides_default_emote_color() {
+        let emote = egui::Color32::from_rgb(170, 150, 220);
+        let keyword = egui::Color32::from_rgb(255, 153, 0);
+        let history = egui::Color32::GRAY;
+
+        assert_eq!(super::message_color_override(None, Some(keyword), true, emote), Some(keyword));
+        assert_eq!(super::message_color_override(None, None, true, emote), Some(emote));
+        assert_eq!(super::message_color_override(None, Some(keyword), false, emote), Some(keyword));
+        assert_eq!(super::message_color_override(None, None, false, emote), None);
+        assert_eq!(super::message_color_override(Some(history), Some(keyword), true, emote), Some(history));
+    }
+
     #[test]
     fn alt_enter_alone_sends_ooc_before_the_channel_is_read() {
         let send_with = |keys: &super::shortcuts::ChatKeys, modifiers: egui::Modifiers| {
