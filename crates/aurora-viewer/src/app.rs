@@ -24641,6 +24641,8 @@ impl ApplicationHandler for App {
         #[cfg(windows)]
         crate::slurl_handoff::release();
         self.gfx = None;
+        #[cfg(target_os = "linux")]
+        crate::crash::renderer_dropped();
         // The voice threads end before the process does, the current
         // session's and those of the sessions left moments ago: still
         // running at the exit, an HTTPS logout found the TLS library's
