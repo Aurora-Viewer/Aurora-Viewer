@@ -11,7 +11,7 @@ pub(super) fn allowed(inv: &Inventory, ids: &[Uuid], prefs: &InventoryPreference
     }
     let holds_worn = rules::worn_ancestors(inv, &facts.worn);
     ids.iter()
-        .all(|id| rules::removable(inv, *id, &prefs.protected) && !holds_worn.contains(id))
+        .all(|id| rules::removable(inv, *id, &prefs.protected) && !holds_worn.contains(id) && facts.rlva.removable(inv, *id))
 }
 
 /// Build the mutation for a confirmed Delete: Trash move, or permanent purge

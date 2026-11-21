@@ -131,6 +131,9 @@ pub struct BuildSettings {
     /// Personal compact inspector arrangement, independent of edited objects.
     pub layout: layout::Layout,
     pub transform_expanded: bool,
+    /// Blocks taken out of the Aurora build window, and whether their own
+    /// window is shown (it comes back with the build window).
+    pub detached: std::collections::BTreeMap<layout::Block, bool>,
     /// Firestorm's ApplyColorImmediately and 32 saved color palette slots.
     pub color_picker: crate::ui::color_picker::Preferences,
     /// GridResolution (m).
@@ -730,6 +733,7 @@ impl Default for BuildSettings {
             legacy_window: false,
             layout: layout::Layout::default(),
             transform_expanded: true,
+            detached: Default::default(),
             color_picker: crate::ui::color_picker::Preferences::default(),
             grid_resolution: 0.5,
             grid_draw_size: 12.0,
@@ -964,6 +968,8 @@ pub struct BuildTool {
     pub cam: Cam,
     /// Commands to send (drained by the app).
     pub out: Vec<NetCommand>,
+    /// Materials saved from the PBR panel, waiting for their upload's answer.
+    pub material_uploads: std::collections::HashSet<uuid::Uuid>,
     /// Client-only picker bindings, drained into the local preview registry.
     pub local_appearance_changes: Vec<(Uuid, Option<u8>, Option<LocalAppearance>)>,
     /// Latest color updates kept local until the pointer is released.
@@ -1035,6 +1041,7 @@ impl Default for BuildTool {
             props: HashMap::new(),
             cam: Cam::default(),
             out: Vec::new(),
+            material_uploads: Default::default(),
             local_appearance_changes: Vec::new(),
             color_preview: Vec::new(),
             manip: manip::Manip::default(),

@@ -4189,12 +4189,28 @@ fn rlva_locked_attachment_and_restrained_seat_keep_their_contents_place_and_link
     assert!(world.rlva_locked_attachment(worn) && world.rlva_contents_locked(worn));
     assert!(none(&world, contents(&world, worn)) && none(&world, scripts(&world, worn)) && none(&world, open(&world, worn)));
     assert!(all(&world, transform(&world, worn)), "a locked attachment is still adjusted");
+    // LLTaskInvFVBridge::buildContextMenu greys "Open" out: its notecards
+    // and scripts, not its textures
+    let blocked = |world: &World, i: usize| [7, 10, 0, 1].map(|t| world.rlva_task_open_blocked(i, t));
+    assert_eq!(blocked(&world, worn), [true, true, false, false]);
+    assert_eq!(blocked(&world, other), [false; 4]);
     for i in [seat, other] {
         assert!(!world.rlva_contents_locked(i));
         assert!(all(&world, contents(&world, i)) && all(&world, scripts(&world, i)) && all(&world, open(&world, i)));
     }
     command(&mut world.rlva, A, "@remattach:chest=y");
     assert!(all(&world, contents(&world, worn)) && all(&world, scripts(&world, worn)) && all(&world, open(&world, worn)));
+    // and on any object under @viewnote, @viewscript and @viewtexture
+    for (view, expected) in [
+        ("viewnote", [true, false, false, false]),
+        ("viewscript", [false, true, false, false]),
+        ("viewtexture", [false, false, true, false]),
+    ] {
+        command(&mut world.rlva, A, &format!("@{view}=n"));
+        assert_eq!(blocked(&world, other), expected, "{view}");
+        command(&mut world.rlva, A, &format!("@{view}=y"));
+    }
+    assert_eq!(blocked(&world, worn), [false; 4]);
     // the seat under @sittp: contents and place, not the links (RlvActions::canStand)
     command(&mut world.rlva, A, "@sittp=n");
     assert!(world.rlva_restrained_seat(seat) && world.rlva_contents_locked(seat) && !world.rlva_contents_locked(other));

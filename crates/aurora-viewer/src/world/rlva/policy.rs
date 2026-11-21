@@ -289,6 +289,8 @@ impl World {
             NetCommand::EditInventory { request, change } => {
                 if actor == super::offers::ACTOR {
                     r.offers.permits(*request, change)
+                } else if r.deletes.contains(request) {
+                    self.rlva_inventory_delete_allowed(change, actor)
                 } else {
                     self.rlva_inventory_mutation_allowed(change, actor)
                 }

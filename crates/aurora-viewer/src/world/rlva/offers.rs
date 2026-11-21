@@ -488,10 +488,17 @@ impl crate::world::World {
                 .observe(im, notification, self.rlva.preferences.allow_shared_offers)
     }
 
-    /// isGiveToRLVOffer: retain consent even when shared filing is disabled
-    /// or its bounded queue is full.
+    /// RlvInventory::isGiveToRLVOffer (rlvinventory.cpp), which keeps an
+    /// offer out of the automatic acceptance (inventory_offer_handler,
+    /// llimprocessing.cpp): a "#RLV/~" folder, while giving to #RLV is
+    /// allowed (RestrainedLoveForbidGiveToRLV off) and #RLV exists. Otherwise
+    /// it is an ordinary offer. A full queue still asks.
     pub(crate) fn rlva_inventory_offer_needs_confirmation(&self, im: &InstantMessage) -> bool {
-        self.rlva.enabled() && im.binary_bucket.first().copied() == Some(8) && name(im, im.dialog == im::TASK_INVENTORY_OFFERED).is_some()
+        self.rlva.enabled()
+            && self.rlva.preferences.allow_shared_offers
+            && super::inventory::shared_root(&self.inventory).is_some()
+            && im.binary_bucket.first().copied() == Some(8)
+            && name(im, im.dialog == im::TASK_INVENTORY_OFFERED).is_some()
     }
 
     pub(crate) fn rlva_shared_offer_answer(&mut self, notification: u64, commands: &mut [NetCommand]) {

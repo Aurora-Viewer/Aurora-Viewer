@@ -1798,6 +1798,7 @@ impl App {
         let mut media = crate::media::MediaManager::default();
         media.set_pack_dir(plugin_pack.dir());
         let out_device = (!settings.audio.output_device.is_empty()).then(|| settings.audio.output_device.clone());
+        let voice_output = aurora_audio::voice_stream_for(&settings.audio.output_device, &settings.audio.voice_output_device);
         let lib = Arc::new(AvatarLibrary::load());
         // the asset cache store: its key first (the credential store, read
         // here rather than by the first streamer thread), then the folders
@@ -2264,6 +2265,10 @@ impl App {
                 Ok(e) => {
                     let o = e.output_info();
                     log::info!("audio: {} ({} Hz, {} canaux)", o.device_name, o.sample_rate, o.channels);
+                    match voice_output {
+                        aurora_audio::VoiceStream::Same => e.set_voice_output_device(None),
+                        aurora_audio::VoiceStream::Separate(name) => e.set_voice_output_device(Some(name)),
+                    }
                     Some(e)
                 }
                 Err(e) => {
@@ -2490,8 +2495,12 @@ impl App {
             crate::world::rlva::Boundary::Send => {}
             crate::world::rlva::Boundary::Dropped => return,
             crate::world::rlva::Boundary::Refused => {
-                self.world
-                    .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+                let blocked = aurora_i18n::tr!("rlva-blocked");
+                self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                // answered at once, as the demo answers a change it applies
+                if let Some(reply) = crate::world::rlva::refused_reply(&cmd, blocked) {
+                    self.on_app_event(reply);
+                }
                 return;
             }
         }
@@ -3912,6 +3921,21 @@ impl App {
             }
             if self.outfit_hd_owns(request) {
                 self.outfit_hd_uploaded(result);
+                return;
+            }
+            if self.build.material_uploads.remove(&request) {
+                match result {
+                    Ok(receipt) => {
+                        let id = receipt.item.id;
+                        self.build.status = aurora_i18n::tr!("build-material-saved", name = receipt.item.name.clone());
+                        self.world.inventory.add_items(vec![receipt.item]);
+                        self.inventory_ui.show_original(&self.world.inventory, id);
+                    }
+                    Err(reason) => {
+                        log::warn!("material save failed: {reason:?}");
+                        self.build.status = aurora_i18n::tr!("build-material-save-failed").into();
+                    }
+                }
                 return;
             }
             let material_map = self.imports.uploading_entry(request);
@@ -7058,6 +7082,16 @@ impl App {
             {
                 engine.set_output_device((!a.output_device.is_empty()).then(|| a.output_device.clone()));
             }
+            if self
+                .applied_audio
+                .as_ref()
+                .is_none_or(|p| p.output_device != a.output_device || p.voice_output_device != a.voice_output_device)
+            {
+                match aurora_audio::voice_stream_for(&a.output_device, &a.voice_output_device) {
+                    aurora_audio::VoiceStream::Same => engine.set_voice_output_device(None),
+                    aurora_audio::VoiceStream::Separate(name) => engine.set_voice_output_device(Some(name)),
+                }
+            }
             // same order as AUDIO_CHANNELS
             for (i, ch) in aurora_audio::Channel::ALL.iter().enumerate() {
                 let fade = if *ch == aurora_audio::Channel::Music { gain } else { 1.0 };
@@ -8048,7 +8082,23 @@ impl App {
 
     /// Send what the build tools queued.
     fn flush_build(&mut self) {
-        for c in std::mem::take(&mut self.build.out) {
+        for mut c in std::mem::take(&mut self.build.out) {
+            // A material saved from the PBR panel: its item's rights narrowed
+            // by the creation defaults for materials (LLFloaterPerms "Materials",
+            // permissions_out.accumulate in can_use_objects_material).
+            if let NetCommand::UploadAsset { request, upload } = &mut c
+                && self.build.material_uploads.contains(request)
+            {
+                let defaults = self.settings.inventory.creation_permissions.materials.permissions();
+                upload.permissions = crate::build::texture_copy::material_save_masks(upload.permissions, defaults);
+                // findUserDefinedCategoryUUIDForType(FT_MATERIAL): the chosen
+                // material upload folder, else Materials
+                upload.folder = crate::imports::Imports::default_folder(
+                    &self.world,
+                    &self.settings.inventory,
+                    aurora_net::inventory::upload::Kind::Material,
+                );
+            }
             if let NetCommand::Build(
                 aurora_net::build::BuildCmd::UpdateTaskInventory { item, .. } | aurora_net::build::BuildCmd::RezScript { item, .. },
             ) = &c
@@ -18876,6 +18926,7 @@ impl App {
                     ear: self.settings.audio.voice_ear,
                     noise_suppression: self.settings.audio.voice_noise_suppression,
                     output_device: self.settings.audio.output_device.clone(),
+                    voice_output_device: self.settings.audio.voice_output_device.clone(),
                     input_devices: &self.options_ui.input_devices,
                     output_devices: &self.options_ui.output_devices,
                     devices_listing: self.options_ui.devices_listing,
@@ -19163,13 +19214,14 @@ impl App {
                 }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
-                if mic.mode_changed || mic.devices_changed || mic.processing_changed {
+                if mic.mode_changed || mic.devices_changed || mic.voice_output_changed || mic.processing_changed {
                     // the audio engine and the voice follow the settings
                     self.settings.audio.mic_hold = mic.hold;
                     self.settings.audio.voice_ear = mic.ear;
                     self.settings.audio.voice_noise_suppression = mic.noise_suppression;
                     self.settings.audio.input_device = std::mem::take(&mut mic.input_device);
                     self.settings.audio.output_device = std::mem::take(&mut mic.output_device);
+                    self.settings.audio.voice_output_device = std::mem::take(&mut mic.voice_output_device);
                     self.settings.save();
                 }
                 let (open_prefs, list_devices, open_processing) = (mic.open_prefs, mic.list_devices, mic.open_processing);
