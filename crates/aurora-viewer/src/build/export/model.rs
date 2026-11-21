@@ -6,8 +6,10 @@
 //! format it.
 
 use super::Settings;
+use aurora_assets::mesh::SkinInfo;
 use aurora_prim::te::{TRANSPARENT_TEXTURE, TextureFace};
 use glam::{Mat4, Quat, Vec2, Vec3};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// One face of a prim as its volume or mesh gives it: unit-scale positions
@@ -19,6 +21,10 @@ pub struct SourceFace {
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
     pub te: TextureFace,
+    /// A rigged mesh's per-vertex joints (into its skin's joint names) and
+    /// weights; empty otherwise.
+    pub joints: Vec<[u8; 4]>,
+    pub weights: Vec<[f32; 4]>,
 }
 
 /// A prim to write.
@@ -30,6 +36,8 @@ pub struct SourcePrim {
     pub rotation: Quat,
     pub scale: Vec3,
     pub faces: Vec<SourceFace>,
+    /// A rigged mesh's skin (LLMeshSkinInfo).
+    pub skin: Option<Arc<SkinInfo>>,
 }
 
 /// One material of the file (MaterialInfo): a face's texture and colour.
@@ -61,6 +69,17 @@ pub struct Prim {
     pub normals: Vec<[f32; 3]>,
     pub uvs: Vec<[f32; 2]>,
     pub groups: Vec<Group>,
+    /// A rigged prim: its skin, and each vertex's joints and weights. The
+    /// formats that cannot carry rigging leave them out.
+    pub skin: Option<Arc<SkinInfo>>,
+    pub joints: Vec<[u8; 4]>,
+    pub weights: Vec<[f32; 4]>,
+}
+
+/// A skin usable for a file: one inverse bind matrix per joint name.
+pub fn usable_skin(skin: &Option<Arc<SkinInfo>>) -> Option<&Arc<SkinInfo>> {
+    skin.as_ref()
+        .filter(|s| !s.joint_names.is_empty() && s.inverse_bind.len() == s.joint_names.len())
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -93,7 +112,11 @@ pub fn build(prims: &[SourcePrim], settings: &Settings) -> Model {
             normals: Vec::new(),
             uvs: Vec::new(),
             groups: Vec::new(),
+            skin: usable_skin(&prim.skin).cloned(),
+            joints: Vec::new(),
+            weights: Vec::new(),
         };
+        let rigged = out.skin.is_some();
         // (face's material, its indices into the prim's lists)
         let mut faces: Vec<(usize, Vec<u32>)> = Vec::new();
         for face in &prim.faces {
@@ -113,6 +136,12 @@ pub fn build(prims: &[SourcePrim], settings: &Settings) -> Model {
                 }));
             } else {
                 out.uvs.extend((0..count).map(uv));
+            }
+            if rigged {
+                // a vertex without weights follows the first joint whole
+                out.joints.extend((0..count).map(|i| face.joints.get(i).copied().unwrap_or([0; 4])));
+                out.weights
+                    .extend((0..count).map(|i| face.weights.get(i).copied().unwrap_or([1.0, 0.0, 0.0, 0.0])));
             }
             let indices = face
                 .indices
@@ -196,6 +225,7 @@ mod tests {
             uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
             indices: vec![0, 1, 2, 0, 2, 3],
             te,
+            ..Default::default()
         }
     }
 
@@ -205,6 +235,7 @@ mod tests {
             rotation: Quat::IDENTITY,
             scale: Vec3::new(2.0, 1.0, 1.0),
             faces,
+            skin: None,
         }
     }
 
@@ -286,6 +317,42 @@ mod tests {
         face.indices = vec![0, 1, 2, 0, 9, 3, 1];
         let model = build(&[prim(Vec3::ZERO, vec![face])], &Settings::default());
         assert_eq!(model.prims[0].groups[0].indices, vec![0, 1, 2, 0, 3, 1]);
+    }
+
+    #[test]
+    fn a_rigged_prim_keeps_its_skin_and_each_vertex_weights() {
+        let skin = Arc::new(SkinInfo {
+            joint_names: vec!["mPelvis".into(), "mChest".into()],
+            inverse_bind: vec![Mat4::IDENTITY; 2],
+            ..Default::default()
+        });
+        let mut weighted = quad(tex(1, [1.0; 4]));
+        weighted.joints = vec![[1, 0, 0, 0]; 4];
+        weighted.weights = vec![[0.75, 0.25, 0.0, 0.0]; 4];
+        let mut rigged = prim(Vec3::ZERO, vec![weighted, quad(tex(1, [1.0; 4]))]);
+        rigged.skin = Some(skin.clone());
+        let model = build(&[rigged.clone()], &Settings::default());
+        let p = &model.prims[0];
+        assert_eq!(p.skin.as_ref(), Some(&skin));
+        assert_eq!(p.joints.len(), 8);
+        assert_eq!(p.weights[0], [0.75, 0.25, 0.0, 0.0]);
+        assert_eq!(
+            (p.joints[4], p.weights[4]),
+            ([0; 4], [1.0, 0.0, 0.0, 0.0]),
+            "no weights: the first joint"
+        );
+        // a skin whose matrices do not match its joints is left out
+        rigged.skin = Some(Arc::new(SkinInfo {
+            joint_names: vec!["mPelvis".into()],
+            ..Default::default()
+        }));
+        let model = build(&[rigged], &Settings::default());
+        assert!(model.prims[0].skin.is_none() && model.prims[0].joints.is_empty());
+        assert!(
+            build(&[prim(Vec3::ZERO, vec![quad(tex(1, [1.0; 4]))])], &Settings::default()).prims[0]
+                .skin
+                .is_none()
+        );
     }
 
     #[test]
