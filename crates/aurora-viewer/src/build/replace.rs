@@ -225,6 +225,7 @@ impl BuildTool {
         };
         self.manip.cancel();
         self.rect = None;
+        self.press = None;
         self.replacement.job = None;
         self.replacement.message.clear();
         self.replacement.draft = Some(Draft {
@@ -324,6 +325,7 @@ impl BuildTool {
 
     pub fn replacement_task_inventory_error(&mut self, object: Uuid, reason: String) {
         self.bulk_inventory_error(object);
+        self.deep_inventory_error(object);
         if let Some(inv) = self.contents.objects.get_mut(&object) {
             inv.loading = false;
         }

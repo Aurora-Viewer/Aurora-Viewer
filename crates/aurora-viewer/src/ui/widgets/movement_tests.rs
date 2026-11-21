@@ -74,6 +74,7 @@ impl Fixture {
                         egui::Rect::from_min_size(pos, size),
                         size,
                         matches!(self.kind, Kind::LockedBare),
+                        false,
                         body,
                     );
                 } else {

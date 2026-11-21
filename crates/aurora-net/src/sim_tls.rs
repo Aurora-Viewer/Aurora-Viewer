@@ -423,6 +423,10 @@ mod tests {
         let config = client_config().unwrap();
         assert_eq!(config.alpn_protocols, vec![b"http/1.1".to_vec()]);
         // an unknown preconfigured backend would fail here
-        reqwest::Client::builder().tls_backend_preconfigured(config).build().unwrap();
+        reqwest::Client::builder()
+            .no_proxy()
+            .tls_backend_preconfigured(config)
+            .build()
+            .unwrap();
     }
 }

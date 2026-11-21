@@ -143,7 +143,6 @@ fn what(id: &str) -> &'static str {
         "J3" => tr!("dev-toolbox-what-j3"),
         "J4" => tr!("dev-toolbox-what-j4"),
         "J5" => tr!("dev-toolbox-what-j5"),
-        "J8" => tr!("dev-toolbox-what-j8"),
         "J9" => tr!("dev-toolbox-what-j9"),
         "L1" => tr!("dev-toolbox-what-l1"),
         "L2" => tr!("dev-toolbox-what-l2"),
@@ -579,7 +578,7 @@ fn add_tile(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, layout: &Layo
             .unwrap_or_default();
         let removed = layout.removed();
         egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-            for tool in tools::TOOLS.iter().filter(|t| !here.contains(&t.id)) {
+            for tool in tools::all().filter(|t| !here.contains(&t.id)) {
                 let label = format!("{} · {}", tool.id, tools::label(tool.id));
                 let detail = if removed.contains(&tool.id) {
                     tr!("dev-toolbox-removed")

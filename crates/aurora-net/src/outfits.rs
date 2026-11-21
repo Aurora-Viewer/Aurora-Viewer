@@ -29,21 +29,66 @@ pub struct OutfitMutation {
     pub cof: Option<(Uuid, Vec<OutfitLink>)>,
 }
 
+/// The links of AISAPI::CreateInventory, as link_inventory_array builds them
+/// (indra/newview/llviewerinventory.cpp): with the original's inventory type.
 pub fn links_body(links: &[OutfitLink]) -> Llsd {
     Llsd::Array(
         links
             .iter()
             .map(|l| {
-                llsd_map! {
-                    "linked_id" => l.target,
-                    "name" => l.name.clone(),
-                    "desc" => l.desc.clone(),
-                    "type" => if l.folder { 25 } else { 24 },
-                    "inv_type" => l.inv_type,
+                let mut link = slam_link(l);
+                if let Llsd::Map(fields) = &mut link {
+                    fields.insert("inv_type".into(), Llsd::from(l.inv_type));
                 }
+                link
             })
             .collect(),
     )
+}
+
+/// The contents of AISAPI::SlamFolder, as LLAppearanceMgr::updateCOF and
+/// linkAll build them (indra/newview/llappearancemgr.cpp): name, desc,
+/// linked_id and type, no inventory type.
+pub fn slam_body(links: &[OutfitLink]) -> Llsd {
+    Llsd::Array(links.iter().map(slam_link).collect())
+}
+
+fn slam_link(l: &OutfitLink) -> Llsd {
+    llsd_map! {
+        "linked_id" => l.target,
+        "name" => link_name(&l.name),
+        "desc" => link_desc(&l.desc),
+        "type" => if l.folder { 25 } else { 24 },
+    }
+}
+
+/// A link's name as the Legacy Viewer holds it: LLInventoryItem::fromLLSD
+/// (indra/llinventory/llinventory.cpp) turns every byte outside printable
+/// ASCII (replaceNonstandardASCII, which reads the bytes as signed) and every
+/// `|` into a space, so the names it sends back in links are plain ASCII.
+/// Kept within DB_INV_ITEM_NAME_STR_LEN (lldbstrings.h), as
+/// correctInventoryName does.
+pub fn link_name(name: &str) -> String {
+    ascii_field(name, true, 63)
+}
+
+/// A link's description, the same way (fromLLSD keeps a `|` in a
+/// description), within DB_INV_ITEM_DESC_STR_LEN.
+pub fn link_desc(desc: &str) -> String {
+    ascii_field(desc, false, 127)
+}
+
+fn ascii_field(text: &str, no_pipe: bool, max: usize) -> String {
+    text.bytes()
+        .map(|b| {
+            if ((b as i8) < 32 && b != b'\n') || (no_pipe && b == b'|') {
+                ' '
+            } else {
+                char::from(b)
+            }
+        })
+        .take(max)
+        .collect()
 }
 
 /// Errors expose only operation/status, never a capability URL or response body.
@@ -77,10 +122,10 @@ pub async fn mutate(
         }
     }
     let url = format!("{cap}/category/{}/links?tid={}", change.folder, Uuid::new_v4());
-    request(http, &url, &links_body(&change.links), true).await?;
+    request(http, &url, &slam_body(&change.links), true).await?;
     if let Some((cof, links)) = &change.cof {
         let url = format!("{cap}/category/{cof}/links?tid={}", Uuid::new_v4());
-        request(http, &url, &links_body(links), true).await?;
+        request(http, &url, &slam_body(links), true).await?;
         refresh.push(*cof);
     }
     let body = crate::inventory::fetch_request_body(&refresh, owner);
@@ -269,9 +314,22 @@ fn is_link(asset_type: i32) -> bool {
     matches!(asset_type, 24 | 25)
 }
 
+/// A refusal goes to the log with the reply's error fields, as the inventory
+/// operations do (`operations::ais`): the user sees only the status, and a
+/// refused outfit change was otherwise not in the log at all.
 async fn request(http: &reqwest::Client, url: &str, body: &Llsd, put: bool) -> Result<Llsd, String> {
     let req = if put { http.put(url) } else { http.post(url) };
-    send(req, body).await
+    send_detailed(req, body).await.map_err(|refusal| {
+        log::warn!(
+            "outfit {} ({} entries) failed: HTTP {}, error_code={:?}, error_description={:?}",
+            if put { "folder slam" } else { "folder creation" },
+            body.as_array().len(),
+            refusal.status.map_or_else(|| "no reply".into(), |s| s.to_string()),
+            refusal.code,
+            refusal.description,
+        );
+        refusal.message
+    })
 }
 
 /// AISAPI::UpdateItem and favorite_send (llinventoryfunctions.cpp).
@@ -369,12 +427,18 @@ async fn refusal_reply(mut response: reqwest::Response) -> Option<Llsd> {
     aurora_llsd::from_xml(&bytes).ok()
 }
 
+/// AISAPI::HTTP_TIMEOUT (indra/newview/llaisapi.cpp): every AIS command
+/// waits up to three minutes for its reply. A write the server is still
+/// carrying out when the viewer gives up is done anyway, and the viewer then
+/// reads a folder the server is busy with.
+const AIS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
 pub(crate) async fn send_detailed(req: reqwest::RequestBuilder, body: &Llsd) -> Result<Llsd, Refusal> {
     let response = req
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
         .body(aurora_llsd::to_xml(body))
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(AIS_TIMEOUT)
         .send()
         .await
         .map_err(|_| Refusal::new(aurora_i18n::tr!("outfits-the-inventory-server-is-not-responding-refresh-before-trying").into()))?;
@@ -567,7 +631,7 @@ pub(crate) mod tests {
         .await;
         let (edits, send) = recorder();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             None,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -615,7 +679,7 @@ pub(crate) mod tests {
         };
         let announced = order.clone();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             Some(&format!("{url}/create")),
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -650,7 +714,7 @@ pub(crate) mod tests {
         let (url, task) = server(vec![(200, folder_reply(parent, &[], &[])); 7]).await;
         let (edits, send) = recorder();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             None,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -958,15 +1022,27 @@ pub(crate) mod tests {
                 ],
             )),
         };
-        let result = mutate(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::from_u128(5), change)
-            .await
-            .expect("saved outfit");
+        let result = mutate(
+            &crate::test_http_client(),
+            &url,
+            &format!("{url}/fetch"),
+            Uuid::from_u128(5),
+            change,
+        )
+        .await
+        .expect("saved outfit");
         assert_eq!(result[0].folder_id, parent, "parent must be applied before its new child");
         let requests = task.await.expect("server");
         assert!(requests[0].0.starts_with(&format!("POST /category/{parent}?tid=")));
         assert!(requests[1].0.starts_with(&format!("PUT /category/{assigned}/links?tid=")));
         assert!(matches!(requests[1].1, Llsd::Array(_)), "AIS SlamFolder accepts a plain array");
         assert_eq!(requests[2].1.at(1)["linked_id"].as_uuid(), assigned);
+        assert!(
+            requests[1..3]
+                .iter()
+                .all(|(_, body)| body.as_array().iter().all(|l| l["inv_type"] == Llsd::Undef)),
+            "SlamFolder carries no inventory type (LLAppearanceMgr::updateCOF)"
+        );
         assert!(requests[3].0.starts_with("POST /fetch "));
     }
 
@@ -979,7 +1055,7 @@ pub(crate) mod tests {
             links: Vec::new(),
             cof: None,
         };
-        let error = mutate(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::nil(), change)
+        let error = mutate(&crate::test_http_client(), &url, &format!("{url}/fetch"), Uuid::nil(), change)
             .await
             .expect_err("refused");
         assert!(error.contains("403"));
@@ -1011,6 +1087,54 @@ pub(crate) mod tests {
         assert_eq!(body.at(0)["desc"].as_str(), "@1201");
         assert_eq!(body.at(0)["type"].as_i32(), 24);
         assert_eq!(body.at(1)["type"].as_i32(), 25);
+        assert_eq!(
+            body.at(0)["inv_type"].as_i32(),
+            18,
+            "link_inventory_array sends the original's type"
+        );
+        let slam = slam_body(&links);
+        assert_eq!(slam.at(0)["linked_id"].as_uuid(), links[0].target);
+        assert_eq!(slam.at(0)["desc"].as_str(), "@1201");
+        assert_eq!(slam.at(1)["type"].as_i32(), 25);
+        for link in slam.as_array() {
+            let keys: Vec<_> = link.as_map().into_iter().flat_map(|m| m.keys().map(String::as_str)).collect();
+            assert_eq!(keys, ["desc", "linked_id", "name", "type"], "updateCOF's four fields only");
+        }
+    }
+
+    /// #4225: wearing rewrites the whole Current Outfit, so one link the
+    /// server refuses stops every wear. The Legacy Viewer's links carry the
+    /// names its inventory holds, plain ASCII (LLInventoryItem::fromLLSD).
+    #[test]
+    fn link_names_and_descriptions_are_plain_ascii_like_the_legacy_viewer() {
+        // é is two bytes, ✨ three: each byte becomes a space, as
+        // replaceNonstandardASCII reads them signed
+        assert_eq!(link_name("Café ✨ | Top"), format!("Caf{}Top", " ".repeat(9)));
+        assert_eq!(link_name("Tab\there\nline"), "Tab here\nline");
+        assert_eq!(link_name(&"a".repeat(80)).len(), 63);
+        assert_eq!(link_name(&"é".repeat(40)), " ".repeat(63));
+        assert_eq!(link_name(""), "");
+        assert_eq!(link_desc("@1201"), "@1201");
+        assert_eq!(
+            link_desc("RLV|locked ♥"),
+            format!("RLV|locked{}", " ".repeat(4)),
+            "fromLLSD keeps a pipe in a description"
+        );
+        assert_eq!(link_desc(&"d".repeat(200)).len(), 127);
+        let link = OutfitLink {
+            target: Uuid::from_u128(7),
+            name: "Robe « été »".into(),
+            desc: "♥".into(),
+            folder: false,
+            inv_type: 18,
+        };
+        for body in [links_body(std::slice::from_ref(&link)), slam_body(std::slice::from_ref(&link))] {
+            let name = body.at(0)["name"].to_string_value();
+            let desc = body.at(0)["desc"].to_string_value();
+            assert!(name.is_ascii() && desc.is_ascii(), "{name:?} {desc:?}");
+            assert_eq!(name.len(), link.name.len(), "one space per byte, as the Legacy Viewer");
+            assert_eq!(body.at(0)["linked_id"].as_uuid(), link.target);
+        }
     }
 
     #[tokio::test]
@@ -1030,7 +1154,7 @@ pub(crate) mod tests {
                 ),
             ])
             .await;
-            let it = set_favorite(&reqwest::Client::new(), &url, &format!("{url}/fetch"), Uuid::nil(), id, favorite)
+            let it = set_favorite(&crate::test_http_client(), &url, &format!("{url}/fetch"), Uuid::nil(), id, favorite)
                 .await
                 .expect("favorite");
             assert_eq!(it.favorite, favorite);

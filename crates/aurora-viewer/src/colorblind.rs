@@ -336,6 +336,7 @@ pub fn palette(mut p: Palette, v: Vision) -> Palette {
                 &mut p.rose,
                 &mut p.danger_dim,
                 &mut p.indigo_light,
+                &mut p.axis_z,
                 &mut p.on_accent,
             ] {
                 let grey = [luminance(linear(*c)); 3];

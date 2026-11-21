@@ -9,6 +9,7 @@ use crate::dev_toolbox::anonymize::{self, Resident};
 use crate::dev_toolbox::tools::{self, Kind, Layout};
 use crate::dev_toolbox::{self, Target};
 use crate::ui::dev_toolbox::{Action, Health};
+use crate::world::inventory::asset_ids::AssetIds;
 use aurora_i18n::tr;
 use aurora_render::Renderer;
 use std::collections::HashMap;
@@ -347,6 +348,7 @@ impl App {
                 crate::ui::perf::set_full(&ctx, true);
                 crate::ui::widgets::open_floater(&ctx, "perf", &mut self.panels.perf);
             }
+            super::rlva_selftest::TOOL => self.request_rlva_selftest(),
             _ => {}
         }
     }
@@ -424,16 +426,9 @@ impl App {
                     None
                 }
             }
-            "J3" => Some(warnings_text(50)),
+            "J3" => Some(warnings_text(50, &AssetIds::diagnostics(&self.world))),
             "J4" => Some(self.system_text(renderer)),
-            "J5" => Some(tool_output_text()),
-            "J8" => {
-                let edit = self.ik_editor.request();
-                Some(
-                    self.world
-                        .describe_ik(edit.active, edit.suppress_script_ik, edit.goals.len(), Instant::now()),
-                )
-            }
+            "J5" => Some(tool_output_text(&AssetIds::diagnostics(&self.world))),
             // #1492: the control skeleton of each animesh the target wears
             "J9" => Some(match self.target_avatar() {
                 Some(avatar) => crate::scene::animesh_report::text(
@@ -443,9 +438,10 @@ impl App {
                 None => tr!("dev-toolbox-no-target").to_string(),
             }),
             "N2" => Some(self.region_text()),
+            "J10" => Some(self.contacts_text()),
             "L1" => Some(self.cursor_text(renderer)),
             "L2" => Some(self.worn_text()),
-            "L3" => Some(warnings_text(20)),
+            "L3" => Some(warnings_text(20, &AssetIds::diagnostics(&self.world))),
             "N3" => Some(self.loads_text(renderer)),
             _ => None,
         };
@@ -513,7 +509,7 @@ impl App {
     }
 
     /// The residents a copy may name: the avatars in the scene and us.
-    fn residents(&self) -> Vec<Resident> {
+    pub(super) fn residents(&self) -> Vec<Resident> {
         let mut out = Vec::new();
         for (_, o) in self.world.objects.avatars() {
             let mut names = Vec::new();
@@ -535,7 +531,7 @@ impl App {
 
     /// The window's live values, the target line and the last warnings.
     fn refresh_toolbox_view(&mut self, renderer: &Renderer) {
-        let ids: Vec<&'static str> = tools::TOOLS.iter().filter(|t| t.kind == Kind::Toggle).map(|t| t.id).collect();
+        let ids: Vec<&'static str> = tools::all().filter(|t| t.kind == Kind::Toggle).map(|t| t.id).collect();
         let on = ids.into_iter().filter(|id| self.toggle_on(id)).collect();
         let mut live: HashMap<&'static str, String> = HashMap::new();
         let warnings = crate::logging::recent_warnings(200);
@@ -716,6 +712,28 @@ impl App {
         out
     }
 
+    /// J10: the gates that hide the Contacts tab of Conversations, for a
+    /// report where the friends list does not show.
+    fn contacts_text(&self) -> String {
+        let style = self.chat_ui.demo_style.unwrap_or(self.chat_ui.style);
+        let torn_off = self.settings.contacts.torn_off;
+        tools::ContactsReport {
+            shown: self.settings.show_contacts_tab,
+            torn_off,
+            window_open: if torn_off { self.panels.contacts } else { self.panels.chat },
+            pane: if torn_off { self.panels.contacts } else { self.chat_ui.contacts },
+            workspace: style.workspace(),
+            column_collapsed: self.chat_ui.column.collapsed,
+            tab: self.settings.contacts.tab,
+            filter: self.chat_ui.column_filter(),
+            friends: self.world.social.friends.len(),
+            friends_online: self.world.social.friends.iter().filter(|f| f.online).count(),
+            groups: self.world.groups.groups.len(),
+            sets: self.world.contact_sets.set_names().len(),
+        }
+        .text()
+    }
+
     /// N2: the region's state, without its name nor any address.
     fn region_text(&self) -> String {
         use aurora_net::estate::sim_stat;
@@ -857,8 +875,9 @@ fn short(id: &Uuid) -> String {
     format!("{}…{}", &s[..4], &s[s.len() - 4..])
 }
 
-/// J3 / L3: the last warnings and errors.
-fn warnings_text(n: usize) -> String {
+/// J3 / L3: the last warnings and errors, their ids through the rule of
+/// the Dev Toolbox's texts (`AssetIds::hide_in`).
+fn warnings_text(n: usize, ids: &AssetIds) -> String {
     let warnings = crate::logging::recent_warnings(n);
     if warnings.is_empty() {
         return tr!("dev-toolbox-no-warning").to_string();
@@ -866,20 +885,21 @@ fn warnings_text(n: usize) -> String {
     let mut out = String::new();
     for w in warnings {
         let level = if w.level == log::Level::Error { "ERROR" } else { "WARN" };
-        let _ = writeln!(out, "{} {level} {}", w.clock, w.text);
+        let _ = writeln!(out, "{} {level} {}", w.clock, ids.hide_in(&w.text));
     }
     out
 }
 
-/// J5: what the diagnostics turned on wrote in the last minute.
-fn tool_output_text() -> String {
+/// J5: what the diagnostics turned on wrote in the last minute, their ids
+/// as in `warnings_text`.
+fn tool_output_text(ids: &AssetIds) -> String {
     let lines = crate::logging::tool_lines(TOOL_OUTPUT_FOR);
     if lines.is_empty() {
         return tr!("dev-toolbox-no-tool-output").to_string();
     }
     let mut out = String::new();
     for (tool, line) in lines {
-        let _ = writeln!(out, "{} [{tool}] {}", line.clock, line.text);
+        let _ = writeln!(out, "{} [{tool}] {}", line.clock, ids.hide_in(&line.text));
     }
     out
 }

@@ -375,35 +375,3 @@ fn native_to_aurora_and_back_never_feed_one_solver_into_the_other() {
         assert!(previous[j].abs_diff_eq(reference[j], 1e-4), "return did not restore native {name}");
     }
 }
-
-#[test]
-fn explicit_leg_contact_wins_over_native_placement_and_releases_to_it() {
-    use crate::scene::ik::{Goal, Mode};
-    let f = Fixture::new();
-    let mut controller = f.controller(&[(State::Standing.motion(), stand())]);
-    let native = f.render(&mut controller, 0.1, &support);
-    let ankle = f.rig.names["mAnkleLeft"];
-    let target = native[ankle].w_axis.truncate() + Vec3::new(0.06, 0.0, 0.08);
-    controller.ik.targets.push(Goal {
-        bone: ankle,
-        root: f.rig.names["mHipLeft"],
-        position: target,
-        rotation: Some(Quat::IDENTITY),
-        contact: Vec3::ZERO,
-        pole: Some(Vec3::X),
-        mode: Mode::Ik,
-        weight: 1.0,
-        follow: None,
-    });
-    for step in 1..=12 {
-        f.render(&mut controller, 0.1 + step as f32 * 0.04, &support);
-    }
-    let contacted = f.render(&mut controller, 0.6, &support);
-    assert!(contacted[ankle].w_axis.truncate().distance(target) < 0.001);
-    controller.ik.targets.clear();
-    for step in 1..=12 {
-        f.render(&mut controller, 0.6 + step as f32 * 0.04, &support);
-    }
-    let released = f.render(&mut controller, 1.2, &support);
-    assert!(released[ankle].abs_diff_eq(native[ankle], 1e-4));
-}

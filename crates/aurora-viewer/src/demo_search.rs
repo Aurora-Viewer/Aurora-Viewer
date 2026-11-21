@@ -25,6 +25,21 @@ const GROUP: u128 = 0x5EA2_6E00_0000_0000_0000_0000_0000_0000;
 const EVENT: u32 = 5001;
 const EVENT_TIME: u32 = 1_791_475_200;
 
+/// When the demo events start: `EVENT_TIME`, or with
+/// `AURORA_DEMO_EVENT_TIMES=1` the next whole hour, so that they fall today
+/// and tomorrow and cross midnight in SLT and in local time (#1754: a click
+/// on the clock switches every event time between the two).
+fn event_base() -> u32 {
+    static BASE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *BASE.get_or_init(|| {
+        if std::env::var_os("AURORA_DEMO_EVENT_TIMES").is_none() {
+            return EVENT_TIME;
+        }
+        let now = crate::ui::bars::clock::now_unix();
+        u32::try_from((now.div_euclid(3600) + 1) * 3600).unwrap_or(EVENT_TIME)
+    })
+}
+
 fn id(base: u128, n: usize) -> Uuid {
     Uuid::from_u128(base | n as u128)
 }
@@ -127,7 +142,7 @@ fn events() -> Vec<EventRow> {
         .iter()
         .enumerate()
         .map(|(i, (name, hours, flags))| {
-            let unix = EVENT_TIME + hours * 3600;
+            let unix = event_base() + hours * 3600;
             EventRow {
                 owner: if i % 2 == 0 { DEMO_LOUP } else { DEMO_NOVA },
                 name: (*name).to_owned(),
@@ -233,7 +248,7 @@ pub fn reply(cmd: &NetCommand) -> Option<Vec<NetEvent>> {
         NetCommand::EventInfoRequest(event) => {
             let i = event.checked_sub(EVENT).map(|i| i as usize).filter(|i| *i < EVENTS.len())?;
             let (name, hours, flags) = EVENTS[i];
-            let unix = EVENT_TIME + hours * 3600;
+            let unix = event_base() + hours * 3600;
             vec![NetEvent::EventInfo(Box::new(EventInfo {
                 id: *event,
                 creator: if i % 2 == 0 { DEMO_LOUP } else { DEMO_NOVA },

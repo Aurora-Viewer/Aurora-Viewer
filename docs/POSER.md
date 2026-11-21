@@ -7,9 +7,8 @@ The human validated the local demo on 2026-10-23 and authorized main integration
 
 The poser edits joint rotations and scales directly and moves joints through
 their articulated ancestor chains. It reuses the shaped Bento
-skeleton and transform tools from the IK editor; it does not evaluate IK
-projects or create bone-to-prim/bone bindings. Its selection, overlays and
-pose history are independent of the binding editor and virtual controls.
+skeleton and transform tools from the IK editor. Its selection, overlays and
+pose history are independent of IK Edit's.
 
 ## Posing
 
@@ -22,9 +21,13 @@ status, "Visible to you only" with the full notice as tooltip, Start / Stop),
 the tabs, the joints column on the left and the selected joint on the right,
 then the file footer. The subject button opens a menu with yourself and your
 owned animesh roots, then every nearby avatar with its consent action (see
-Consent); Privacy › "Who can ask to pose my avatar" is its last entry. Other subjects must be within 50 m, in the same region and unmuted.
+Consent). Other subjects must be within 50 m, in the same region and unmuted.
 Several subjects can retain independent poses at once. Eligibility is
 checked every frame; losing it removes the corresponding local pose.
+An active pose follows shape and worn-mesh rest changes: joint positions and
+scales are rebased while authored rotations, locks and undo history are kept.
+This extends the Legacy Viewer behavior, which does not rebase an open pose
+after a shape change.
 
 ### Compact window
 
@@ -73,11 +76,26 @@ the accent, with "Ctrl + click: Hands" by the cursor, and Ctrl + click
 selects its nearest joint and opens its group. Without Ctrl nothing shows
 and the click stays the world's (in the photo mode, a plain click on the
 face still sets the focus, and a Ctrl + click on a part stays the
-poser's instead of passing to the world). The body is one part, drawn
-without the head (the face's oval shows it, and a Ctrl over the head does
-not offer the body), a hand reaches its
-wrist, the face is an oval that follows the head, and the wings and the
-tail are offered only when a worn rigged mesh uses them.
+poser's instead of passing to the world). The wings and the tail are
+offered only when a worn rigged mesh uses them.
+
+**Drawn and picked from the meshes** (an avatar: you, or a resident who
+accepted): the part lights on the avatar's own meshes as they are drawn,
+its body, a Bento head, mesh hands, rigged clothing, with a tint that fades
+where the skin passes to the next part (a knuckle, the neck) and a soft
+halo on the outer outline only. The part under the cursor is the one the
+mesh shows there: the part carrying the most combined skinning weight at
+the pixel under the pointer, read on the GPU (a frame or two later). A
+Ctrl + click selects that part's nearest joint. Visible accessories in
+front of the avatar hide what is behind them, including blended ones;
+the invisible back of a one-sided face does not capture the hover.
+The face takes the whole head and a hand its
+palm (the wrist), and the body stops at the neck and the wrists. A part
+the meshes do not weight (the system head is weighted to the head alone,
+its hands to the wrists) lights through the bone it hangs from. An animesh,
+and the first frames before the GPU answers, use the outline built from
+the bones: the body without the head, the hand reaching its wrist, the face
+an oval that follows the head.
 
 The subject menu (both windows) uses the People list's rows: the picture,
 the name over the account name, and the distance at the right in Near
@@ -234,32 +252,34 @@ confirmation still require the human's action; saving never uploads.
 ## Consent
 
 The subject menu lists every nearby avatar without probing their viewer or
-bridge. Ask needs the worn bridge (the request travels through its query
+bridge. Ask needs the worn bridge (the dialog is shown by its query
 service): until that service answers the button is disabled and the menu says
 why: the bridge is starting, it was taken off, it failed, or it is worn but
 its query script stays silent for 10 seconds. The last two offer **Repair
-Aurora bridge**, the Movelock window's Repair. Ask sends one explicit request, with Cancel while
-pending. The target sees the requester, distance, the local-only photo use,
-the session lifetime, Refuse, Accept and a permanent-request-block checkbox.
-Accepted targets keep a reminder with Withdraw even when Poser is closed.
+Aurora bridge**, the Movelock window's Repair. Ask sends one explicit request,
+with Cancel while pending. The Poser and the IK Poser (couple mode) share the
+same consent.
 
-Privacy > Who can ask to pose my avatar defaults to **Friends**; Everyone
-and Nobody are also available. Friendship permits a request, never posing
-without acceptance. Muted or blocked requesters do not get a modal. No
-answer after 60 seconds expires the request; refusal and timeout impose a
-10-minute cooldown. Responses require the matching request ID and peer.
-Withdrawal, disappearance, region changes, teleport and logout invalidate
-the relevant access. The requester immediately drops an invalid pose and
-receives a notice.
+The consent is asked the way any posing HUD asks it, whatever viewer the
+resident uses: our bridge shows them a standard script dialog (`llDialog`),
+in our language, with **Yes** and **No**. It says the pose is on our screen
+only and how to stop. Once they accept, a second dialog explains how to stop
+at any time, and the same text comes to them in an IM, which stays in their
+history: the dialog's **Stop** button, or `/2525 stop` in nearby chat (the stop
+channel, `POSE_STOP_CHANNEL`; not 99, which many HUDs use). Chat is heard
+within 20 m, hence the button. Stopping says a short line to them alone
+(`llRegionSayTo`) and ends our pose at once, with a notice.
 
-The bridge is version **1.34**, which triggers the existing reprovisioning
-flow. The new service lives in `query.lsl`, separately from the movement
-controller. HTTPS commands use the existing validated query endpoint and
-token. Attachment-to-attachment traffic uses `llRegionSayTo`, request IDs
-and action/target fields only. The receiving script authenticates the sender
-with `llGetOwnerKey` and `OBJECT_ATTACHED_POINT`; the viewer additionally
-checks the worn bridge root, owner and region before consuming the private
-owner-say tag. There are no IMs, software advertisements or capability probes.
+Nothing goes from our viewer to theirs: no message between viewers, no
+probe (Second Life's shared experience policy; AGENTS.md, "No data of our
+own in shared places"). The answers come from the resident's own avatar key
+(dialog buttons and chat), which no object can speak as; the viewer checks
+the worn bridge root, owner and region before reading the private owner-say
+tag, and needs the matching request ID and peer. No answer after 60 seconds
+expires the request; refusal and timeout impose a 10-minute cooldown. Muted
+residents cannot be asked. Their Stop, our Cancel, either leaving the region,
+a teleport or a logout end the consent; the bridge forgets every consent on
+a region change too.
 
 ## Settings and validation
 
@@ -286,7 +306,7 @@ Defaults were checked against the local Legacy Viewer source: stop on close,
 joint markers and natural alignment on; DoF in edit, additional BVH, pelvis
 unlock and overwrite confirmation off; trackball sensitivity 0.5. DoF while
 posing permits the normal configured DoF effect, without enabling it globally.
-Settings and privacy are saved through Aurora's existing settings store.
+Settings are saved through Aurora's existing settings store.
 
 Main integration validation on 2026-10-24: the script parser, formatting and Clippy
 pass; the complete workspace has 4,860 passing tests, zero failures and 29
@@ -294,24 +314,24 @@ ignored tests. The suite used one test thread on the shared PC. Twenty-three pos
 regressions cover actual pointer actions for both hands, visible scroll
 clips, scaled text and window stability, pose/BVH/native files, eligibility,
 history and authenticated consent lifetime. Rotation and articulated movement drags create one undo
-step; idle controls preserve exact values, and stale IK bindings/virtual
-controls cannot affect the poser. Camera orbit/roll is checked against
+step; idle controls preserve exact values, and stale IK Edit goals cannot
+affect the poser. Camera orbit/roll is checked against
 projected axes; pointer tests cover axis/uniform scale drags and tab-exclusive
-marker sets. Seventeen native poser scenarios and a
-separate IK bindings regression were inspected, with zero runtime errors.
+marker sets. Seventeen native poser scenarios were inspected, with zero
+runtime errors.
 This does not validate real two-client LSL delivery.
 
 Offline demos use `AURORA_DEMO=1` and `AURORA_DEMO_POSER=` with `self`,
 `connected`, `camera`, `scale`, `hands`, `face`, `misc`, `physics`, `library`, `settings`, `animesh`,
-`consent-accept`, `consent-refuse`, `consent-timeout`, `consent-withdraw`,
-`consent-request` or `consent-reminder`. Capture frame 620. The synthetic
-request/answer events exercise the real consent state machine; they are
-not a substitute for two-client LSL transport validation.
+`consent-accept`, `consent-refuse`, `consent-timeout` or `consent-withdraw`.
+Capture frame 620. The synthetic answers exercise the real consent state
+machine; they are not a substitute for the real dialog between two
+residents.
 
 Human checks: edit each tab and channel, use presets and undo, save/reload
 each load mode, enable BVH and inspect its import, confirm overwrite, prepare
 an animation import, switch subjects, and test both close behaviours. On a
-grid, use two accounts running this build to verify bridge reprovisioning,
-request/accept/refuse/withdraw, mute/privacy, timeout, region departure and
-logout. Also validate owned and unowned ground/worn animesh and mesh/shape
+grid, use two accounts (the posed one on any viewer) to verify bridge
+reprovisioning, the dialog's Yes / No, Stop and `/2525 stop`, mute, timeout,
+region departure and logout. Also validate owned and unowned ground/worn animesh and mesh/shape
 overrides. The agent never logs into a grid or performs an upload.
