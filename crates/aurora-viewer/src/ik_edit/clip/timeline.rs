@@ -32,6 +32,14 @@ const LABEL_SPACING: f32 = 60.0;
 /// Frames between labelled ruler ticks, from the closest zoom out.
 const TICK_STEPS: [u32; 8] = [1, 5, 10, 30, 60, 150, 300, 600];
 const RULER_FONT: f32 = 11.0;
+/// The side of the chevron that opens a bone's channel rows
+/// (`widgets::icon_button`).
+const CHEVRON: f32 = 20.0;
+/// Where a bone's name starts in its row, past the chevron and the switch:
+/// the rows of the person set aside and the channel rows line up on it.
+fn name_x(ui: &egui::Ui) -> f32 {
+    26.0 + CHEVRON + ui.spacing().item_spacing.x
+}
 pub(super) const MAX_TIMELINE_ZOOM: f32 = 64.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -674,7 +682,17 @@ impl Editor {
         let keys: BTreeSet<KeyPick> = tracks
             .iter()
             .filter(|track| track.authored || track.keys.len() > 1 || selected == Some(track.bone))
-            .flat_map(|track| track.keys.iter().map(|key| (track.bone, Channel::Both, *key)))
+            .flat_map(|track| {
+                // the rows an expanded bone shows are picked with it
+                let channels: &[Channel] = if self.clip.expanded.contains(&track.bone) {
+                    &[Channel::Both, Channel::Rotation, Channel::Location]
+                } else {
+                    &[Channel::Both]
+                };
+                channels
+                    .iter()
+                    .flat_map(move |&channel| track.keys_of(channel).iter().map(move |key| (track.bone, channel, *key)))
+            })
             .collect();
         if keys.is_empty() {
             return false;
@@ -1564,7 +1582,7 @@ impl Editor {
         };
         // kept to the name column: it never runs into the lanes
         ui.painter().with_clip_rect(names.intersect(ui.clip_rect())).text(
-            egui::pos2(names.left() + 50.0, names.center().y),
+            egui::pos2(names.left() + name_x(ui) + 8.0, names.center().y),
             egui::Align2::LEFT_CENTER,
             label,
             egui::FontId::proportional(12.0),
@@ -1795,7 +1813,7 @@ impl Editor {
             egui::Sense::click_and_drag(),
         );
         ui.painter().text(
-            egui::pos2(names.left() + 26.0, names.center().y),
+            egui::pos2(names.left() + name_x(ui), names.center().y),
             egui::Align2::LEFT_CENTER,
             &track.name,
             egui::FontId::proportional(13.0),

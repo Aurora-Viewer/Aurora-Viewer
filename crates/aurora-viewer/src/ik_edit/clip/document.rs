@@ -63,6 +63,22 @@ impl Channel {
     }
 }
 
+/// Mark `track` as the user's once a key of the named channels is set,
+/// moved or pasted on it. A draft's hidden rest track then drops its rest
+/// keys of the other channel: they would be exported with it and hold that
+/// channel at rest where only one channel was meant.
+fn author(track: &mut Track, rotation: bool, location: bool) {
+    if !track.authored {
+        if !rotation {
+            track.motion.rot_keys.clear();
+        }
+        if !location {
+            track.motion.pos_keys.clear();
+        }
+    }
+    track.authored = true;
+}
+
 /// A picked key on the timeline: its bone, its row's channel, its frame.
 pub type KeyPick = (usize, Channel, u32);
 
@@ -739,12 +755,15 @@ impl Document {
         self.timing();
     }
     pub fn record(&mut self, rig: &Rig, frame: &Frame, at: u32, bones: &[usize], translations: &[usize]) -> Result<(), &'static str> {
-        self.record_keying(rig, frame, at, bones, translations, Keying::Auto)
+        self.record_keying(rig, frame, at, bones, translations, Keying::Auto, &[])
     }
-    /// `record` with the channels `keying` names. A key of one channel on
-    /// a draft's hidden rest track drops that track's rest keys of the other
-    /// channel: they would otherwise be exported with it and hold the joint
-    /// at rest where only one channel was meant.
+    /// `record` with the channels `keying` names. Location keying keys the
+    /// location of the `explicit` joints (the ones the Key button keys and
+    /// the ones edited) even unmoved, and of the others only where Auto would: a Key pose would
+    /// otherwise pin every joint of the user's shape for whoever plays the
+    /// animation. A key of one channel on a draft's hidden rest track drops
+    /// that track's rest keys of the other channel (`author`).
+    #[allow(clippy::too_many_arguments)]
     pub fn record_keying(
         &mut self,
         rig: &Rig,
@@ -753,6 +772,7 @@ impl Document {
         bones: &[usize],
         translations: &[usize],
         keying: Keying,
+        explicit: &[usize],
     ) -> Result<(), &'static str> {
         if at > self.max_frame() {
             return Err("anim-edit-invalid");
@@ -784,16 +804,18 @@ impl Document {
                 p
             };
             let previous = self.tracks.iter().find(|t| t.bone == bone);
+            let auto = bone == rig.pelvis
+                || previous.is_some_and(|t| !t.motion.pos_keys.is_empty())
+                || (translations.contains(&bone) && previous.is_none_or(|t| t.base_position.distance_squared(local) > 0.0001 * 0.0001));
             let position = match keying {
-                Keying::Auto => {
-                    bone == rig.pelvis
-                        || previous.is_some_and(|t| !t.motion.pos_keys.is_empty())
-                        || (translations.contains(&bone)
-                            && previous.is_none_or(|t| t.base_position.distance_squared(local) > 0.0001 * 0.0001))
-                }
-                Keying::LocationRotation | Keying::Location => true,
+                Keying::Auto => auto,
+                Keying::LocationRotation | Keying::Location => auto || explicit.contains(&bone),
                 Keying::Rotation => false,
             };
+            // nothing of this joint to key (Location, unmoved, not picked)
+            if !position && !keying.rotation() {
+                continue;
+            }
             if !q.is_finite() || !local.is_finite() || (position && local.abs().max_element() > 5.0) {
                 return Err("anim-edit-pelvis-bound");
             }
@@ -823,15 +845,7 @@ impl Document {
             let Some(track) = self.tracks.iter_mut().find(|t| t.bone == bone) else {
                 continue;
             };
-            if !track.authored {
-                if !keying.rotation() {
-                    track.motion.rot_keys.clear();
-                }
-                if keying == Keying::Rotation {
-                    track.motion.pos_keys.clear();
-                }
-            }
-            track.authored = true;
+            author(track, keying.rotation(), position);
             if keying.rotation() {
                 upsert_key(&mut track.motion.rot_keys, at, self.fps, RotKey { time, rotation: q });
             }
@@ -897,15 +911,17 @@ impl Document {
         }
         let fps = self.fps;
         if let Some(track) = self.tracks.iter_mut().find(|track| track.bone == bone) {
-            let has_source = (channel.rotation() && has_key_on(&track.motion.rot_keys, source, fps))
-                || (channel.location() && has_key_on(&track.motion.pos_keys, source, fps));
+            let rotation = channel.rotation() && has_key_on(&track.motion.rot_keys, source, fps);
+            let location = channel.location() && has_key_on(&track.motion.pos_keys, source, fps);
+            if rotation || location {
+                author(track, rotation, location);
+            }
             if channel.rotation() {
                 move_key(&mut track.motion.rot_keys, source, destination, fps);
             }
             if channel.location() {
                 move_key(&mut track.motion.pos_keys, source, destination, fps);
             }
-            track.authored |= has_source;
         }
         if to < self.start || to > self.end {
             self.range(self.start.min(to), self.end.max(to));
@@ -950,9 +966,13 @@ impl Document {
             if rotation.is_empty() && location.is_empty() {
                 continue;
             }
-            let moved = shift_keys(&mut track.motion.rot_keys, &rotation, delta, fps)
-                | shift_keys(&mut track.motion.pos_keys, &location, delta, fps);
-            track.authored |= moved;
+            let rotation_moves = rotation.iter().any(|frame| has_key_on(&track.motion.rot_keys, *frame, fps));
+            let location_moves = location.iter().any(|frame| has_key_on(&track.motion.pos_keys, *frame, fps));
+            if rotation_moves || location_moves {
+                author(track, rotation_moves, location_moves);
+            }
+            shift_keys(&mut track.motion.rot_keys, &rotation, delta, fps);
+            shift_keys(&mut track.motion.pos_keys, &location, delta, fps);
             for frame in rotation.into_iter().chain(location) {
                 let to = (i64::from(frame) + delta) as u32;
                 (first, last) = (first.min(to), last.max(to));
@@ -1012,13 +1032,13 @@ impl Document {
                 continue;
             };
             let time = frame_time(frame, fps);
+            author(track, key.rotation.is_some(), key.position.is_some());
             if let Some(rotation) = key.rotation {
                 upsert_key(&mut track.motion.rot_keys, frame, fps, RotKey { time, rotation });
             }
             if let Some(position) = key.position {
                 upsert_key(&mut track.motion.pos_keys, frame, fps, PosKey { time, position });
             }
-            track.authored = true;
             pasted.insert((key.bone, key.channel, frame));
         }
         if let (Some(first), Some(last)) = (
