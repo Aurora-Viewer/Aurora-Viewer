@@ -807,9 +807,11 @@ fn fs_depth_mask_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) ->
     return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(rec));
 }
 
-// Alpha from which fs_depth_contact writes depth: half covered; 1/255 for
-// the rigged fringes of `RiggedBlendDepth::Layers` (#1300), the Legacy
-// Viewer's MINIMUM_ALPHA.
+// Alpha from which fs_depth_contact writes depth: half covered; into the
+// depth the occlusion and the contact shadows read, 0.95 for the solid
+// texels, then 0.88 for those opaque to the eye (SCREEN_SOLID_ALPHA,
+// SCREEN_BLEND_ALPHA); 1/255 for the rigged fringes of
+// `RiggedBlendDepth::Layers` (#1300), the Legacy Viewer's MINIMUM_ALPHA.
 override DEPTH_CONTACT_ALPHA: f32 = 0.5;
 
 // The blended faces' side of the water (waterClip, deferredUtil.glsl): 1
@@ -835,36 +837,89 @@ fn water_clip(world_pos: vec3<f32>) {
     }
 }
 
-// Depth of the blended faces opaque enough to cast contact shadows (half
-// covered, as the impostor pictures keep them), drawn over a copy of the
-// prepass (contact_shadows.rs).
-fn depth_contact(record: u32, uv: vec2<f32>, world_pos: vec3<f32>) {
+// Depth of the blended faces from an opacity of DEPTH_CONTACT_ALPHA: those
+// opaque to the eye, drawn over a copy of the prepass for the occlusion
+// and the contact shadows (contact_shadows.rs); the half covered ones of
+// the rigged faces and of the faces under the water.
+// (returns the texel's alpha)
+fn depth_contact(record: u32, uv: vec2<f32>, world_pos: vec3<f32>) -> f32 {
     let rec = records[record];
     if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         // Its solid core occludes through the same opening; the decorative
         // quad corners/corona must never add a rectangular occluder.
         if (length((uv * 2.0 - vec2<f32>(1.0)) * PORTAL_SURFACE_SCALE) > 1.0) { discard; }
-        return;
+        return 1.0;
     }
     portal_clip(rec, world_pos);
     water_clip(world_pos);
-    if (sample_tex(rec.tex.x, uv).a * rec.base_color.a < DEPTH_CONTACT_ALPHA) {
+    let alpha = sample_tex(rec.tex.x, uv).a * rec.base_color.a;
+    if (alpha < DEPTH_CONTACT_ALPHA) {
         discard;
     }
+    return alpha;
 }
 
 @fragment
 fn fs_depth_contact(in: VsOut, @builtin(front_facing) front: bool) {
     if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
-    depth_contact(in.record, in.uv, in.world_pos);
+    _ = depth_contact(in.record, in.uv, in.world_pos);
 }
 
-// fs_depth_contact with the normal, into the occlusion's depth.
+// fs_depth_contact with the normal and the motion (FSR's blended faces).
 @fragment
 fn fs_depth_contact_normal(in: DepthMaskOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
-    depth_contact(in.record, in.uv, in.world_pos);
+    _ = depth_contact(in.record, in.uv, in.world_pos);
     return depth_normal(in.normal, front, in.motion_cur, in.motion_prev, normal_composition(records[in.record]));
+}
+
+// Within how far of the solid surface behind it a fading blended texel
+// rises out of that surface in the occlusion's depth (m); not at all from
+// twice that.
+const OCCLUSION_RISE: f32 = 0.008;
+
+// The depth a blended texel of `alpha` writes into the occlusion's depth
+// once the solid ones are in it, from its own (`clip`, the fragment's
+// position) and that of the solid surface behind it (`solid`, the solid
+// depth of its pixel; reversed, 0 for the sky); 0, the sky's, where it
+// writes none. Opaque to the eye (SCREEN_BLEND_ALPHA), its own. Fainter,
+// none: the occlusion of what stands behind a pane of glass stays its own.
+// Unless it lies just over that surface: a layer that fades out over a
+// skin (a tattoo, a blush, a second skin, some millimetres over the body)
+// rises out of the skin's depth from one half (DEPTH_CONTACT_ALPHA) to its
+// own where it is opaque to the eye, a slope instead of a ledge along the
+// line where it enters that depth, which the occlusion and the contact
+// shadows drew as a line around it.
+// (The main view's projection has no far plane: its depth is the near
+// plane over the distance along the view.)
+fn risen_depth(clip: vec4<f32>, solid: f32, alpha: f32) -> f32 {
+    if (alpha >= SCREEN_BLEND_ALPHA) {
+        return clip.z;
+    }
+    let along = 1.0 / clip.w;
+    // from the texel to the surface behind it, along the view (m)
+    let gap = along * (clip.z / max(solid, 1e-9) - 1.0);
+    let over = 1.0 - smoothstep(OCCLUSION_RISE, 2.0 * OCCLUSION_RISE, gap);
+    let risen = over * smoothstep(DEPTH_CONTACT_ALPHA, SCREEN_BLEND_ALPHA, alpha);
+    if (gap < 0.0 || risen <= 0.0) {
+        return 0.0;
+    }
+    return clip.z * along / (along + gap * (1.0 - risen));
+}
+
+// The blended texels not yet solid into the occlusion's depth and the
+// contact shadows' (risen_depth), after the solid ones
+// (fs_depth_contact). Depth alone: a texel rising out of a surface leaves
+// that surface its normal (those opaque to the eye have theirs from
+// fs_depth_contact_normal). The depth only ever moves away: what the depth
+// test rules out before the shader stays ruled out.
+@fragment
+@early_depth_test(less_equal)
+fn fs_depth_occlusion(in: VsOut, @builtin(front_facing) front: bool) -> @builtin(frag_depth) f32 {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    let alpha = depth_contact(in.record, in.uv, in.world_pos);
+    // (common.wgsl `solid_depth`, of the size of the depth written here)
+    return risen_depth(in.clip, textureLoad(solid_depth, vec2<i32>(in.clip.xy), 0), alpha);
 }
 
 // Depth of the rigged blended faces nearly opaque, before any of their
@@ -1592,14 +1647,35 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     legacy_glare = 0.0;
     legacy_nan = false;
     surface_occlusion = m.occlusion;
-    // a blended face opaque enough (fs_depth_contact) is in the occlusion's
-    // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
-    // lies behind it
-    screen_surface = (rec.flags.x & FLAG_ALPHA_BLEND) == 0u || ((frame.light_mode.z & BLEND_SCREEN_DEPTH) != 0u && m.color.a >= 0.5);
-    // a blended face is in the depth the contact shadows read when it is
-    // opaque enough (fs_depth_contact); a more transparent one would get
-    // what lies behind it
-    contact_surface = (rec.flags.x & FLAG_ALPHA_BLEND) == 0u || (frame.contact.y > 0.5 && m.color.a >= 0.5);
+    // A blended face opaque to the eye (fs_depth_occlusion, from an
+    // opacity of 0.88) is in the occlusion's depth when BLEND_SCREEN_DEPTH,
+    // and in the depth the contact shadows read. It takes the screen-space
+    // terms by its opacity from there, whole from 0.95
+    // (blend_screen_share): a more transparent one would get what lies
+    // behind it, and a step drew a ragged line along the texels of a glass
+    // whose opacity crosses that limit.
+    // A blended face not yet solid also takes them where it lies on a
+    // solid surface (common.wgsl `on_occlusion_surface`): a layer fading
+    // out over a skin takes the skin's occlusion and contact shadow.
+    // Without that it lit the skin back up, as far as the line where its
+    // opacity crosses the limit: a hard edge in every crease. The Legacy
+    // Viewer has neither on its alpha pass (alphaF.glsl, materialF.glsl),
+    // where a layer lights the skin back up in the same way but evenly: no
+    // line.
+    screen_share = 1.0;
+    contact_share = 1.0;
+    if ((rec.flags.x & FLAG_ALPHA_BLEND) != 0u) {
+        let in_depth = (frame.light_mode.z & BLEND_SCREEN_DEPTH) != 0u;
+        let share = blend_screen_share(m.color.a);
+        let screen = frame.misc.x > 0.5;
+        let contact = frame.contact.x > 0.5 && frame.contact.y > 0.5;
+        var on = 0.0;
+        if (in_depth && share < 1.0 && (screen || contact) && !in_reflection_pass()) {
+            on = on_occlusion_surface(in.clip.xy, in.world_pos);
+        }
+        screen_share = select(0.0, max(share, on), in_depth);
+        contact_share = max(select(0.0, share, frame.contact.y > 0.5), select(0.0, on, contact));
+    }
     // Share this calculation across both lighting branches: duplicating its
     // wave/shadow code crashes Apple's Metal pipeline compiler.
     var caustic_light = vec3<f32>(0.0);
@@ -1853,9 +1929,8 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     // the water's depth)
     water_clip(in.world_pos);
     // RiggedBlendDepth::Split: the texels at least half covered, then the
-    // fainter ones, by the alpha of fs_depth_contact (the occlusion's depth
-    // holds the same ones); tested before the material, which the other
-    // pass's texels then never evaluate
+    // fainter ones, by the alpha of fs_depth_contact; tested before the
+    // material, which the other pass's texels then never evaluate
     if (BLEND_SPLIT != 0u) {
         let rec = records[in.record];
         let half = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a >= 0.5;

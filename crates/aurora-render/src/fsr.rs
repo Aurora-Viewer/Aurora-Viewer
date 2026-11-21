@@ -113,13 +113,12 @@ fn parse_sharpness(v: Option<&str>) -> Option<f32> {
     }
 }
 
-/// FSR's constant buffer (cbFSR3Upscaler, with the camera matrices of the
-/// motion where the prepass drew none); `shaders/fsr/common.wgsl` FsrParams.
+/// FSR's constant buffer (cbFSR3Upscaler, with camera reprojection
+/// where the prepass drew no motion); `shaders/fsr/common.wgsl` FsrParams.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct FsrU {
-    inv_view_proj: [[f32; 4]; 4],
-    prev_view_proj: [[f32; 4]; 4],
+    motion_reproj: [[f32; 4]; 4],
     render_size: [i32; 2],
     prev_render_size: [i32; 2],
     upscale_size: [i32; 2],
@@ -147,10 +146,7 @@ struct FsrU {
 
 /// What the frame gives FSR.
 pub(crate) struct FrameInputs {
-    /// This frame's jittered view projection.
-    pub view_proj: Mat4,
-    /// Last frame's unjittered one.
-    pub prev_view_proj: Mat4,
+    pub motion_reproj: [[f32; 4]; 4],
     pub proj: Mat4,
     /// In pixels, y down: where the jitter moved the image.
     pub jitter: Vec2,
@@ -781,8 +777,7 @@ impl Fsr {
         let sharpness = sharpness_override().unwrap_or(f.sharpness);
         let [dx, dy] = device_to_view(f.proj);
         let u = FsrU {
-            inv_view_proj: f.view_proj.inverse().to_cols_array_2d(),
-            prev_view_proj: f.prev_view_proj.to_cols_array_2d(),
+            motion_reproj: f.motion_reproj,
             render_size: size,
             prev_render_size: size,
             upscale_size: display,
@@ -1015,6 +1010,105 @@ mod tests {
     }
 
     #[test]
+    fn camera_motion_at_ground_and_skybox_heights() {
+        use glam::{Vec3, Vec4};
+        use wgpu::util::DeviceExt;
+
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("FSR test device");
+        let source = concat!(
+            include_str!("shaders/fsr/common.wgsl"),
+            "\n",
+            include_str!("shaders/fsr/prepare_inputs.wgsl"),
+            r#"
+struct Sample { reproj: mat4x4<f32>, pixel: vec4<f32>, jitter: vec2<f32>, result: vec2<f32> };
+@group(0) @binding(6) var<storage, read_write> samples: array<Sample>;
+@compute @workgroup_size(1)
+fn check(@builtin(global_invocation_id) id: vec3<u32>) {
+    let s = samples[id.x];
+    samples[id.x].result = camera_motion(s.reproj, s.pixel.xy, s.pixel.z, s.jitter);
+}"#
+        );
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: wgpu::ShaderSource::Wgsl(source.into()),
+        });
+        let pipeline = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+            label: None,
+            layout: None,
+            module: &module,
+            entry_point: Some("check"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 16.0 / 9.0, 0.1);
+        let to_uv = |p: Vec4| Vec2::new(p.x, -p.y) / p.w * 0.5 + Vec2::splat(0.5);
+        #[repr(C)]
+        #[derive(Clone, Copy, Pod, Zeroable)]
+        struct Sample {
+            reproj: [[f32; 4]; 4],
+            pixel: [f32; 4],
+            jitter: [f32; 2],
+            result: [f32; 2],
+        }
+        let mut samples = Vec::new();
+        let mut expected = Vec::new();
+        for altitude in [25.0, 3000.0] {
+            let eye = Vec3::new(128.0, 128.0, altitude);
+            let view = |eye| glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::Y, Vec3::Z);
+            let vp = proj * view(eye);
+            let point = Vec3::new(0.0625, 0.5, 0.09375);
+            let relative_vp = proj * view(Vec3::ZERO);
+            let clip = relative_vp * point.extend(1.0);
+            for pan in [Vec3::ZERO, Vec3::new(0.125, 0.125, 0.0)] {
+                let prev = proj * view(eye + pan);
+                let reproj = (prev.as_dmat4() * vp.as_dmat4().inverse()).as_mat4();
+                for jitter in [Vec2::new(-0.4, 0.3), Vec2::new(0.2, -0.45)] {
+                    let jitter_uv = jitter / Vec2::new(1280.0, 720.0);
+                    let uv = to_uv(clip) + jitter_uv;
+                    samples.push(Sample {
+                        reproj: reproj.to_cols_array_2d(),
+                        pixel: [uv.x, uv.y, clip.z / clip.w, 0.0],
+                        jitter: jitter_uv.to_array(),
+                        result: [0.0; 2],
+                    });
+                    expected.push(to_uv(relative_vp * (point - pan).extend(1.0)) - to_uv(clip));
+                }
+            }
+        }
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&samples),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        });
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[entry_buf(6, &buffer)],
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.dispatch_workgroups(samples.len() as u32, 1, 1);
+        }
+        queue.submit([encoder.finish()]);
+        let (send, recv) = std::sync::mpsc::channel();
+        wgpu::util::DownloadBuffer::read_buffer(&device, &queue, &buffer.slice(..), move |r| send.send(r).unwrap());
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("FSR readback");
+        let data = recv.recv().unwrap().expect("FSR motion samples");
+        for (sample, expected) in bytemuck::cast_slice::<u8, Sample>(&data).iter().zip(expected) {
+            let error = (Vec2::from_array(sample.result) - expected) * Vec2::new(1920.0, 1080.0);
+            assert!(error.length() < 0.01, "camera motion error in display pixels: {error:?}");
+        }
+    }
+
+    #[test]
     fn fsr_shaders_are_valid() {
         let common = include_str!("shaders/fsr/common.wgsl");
         for pass in [
@@ -1057,7 +1151,7 @@ mod tests {
 
     #[test]
     fn params_match_the_shader_layout() {
-        // FsrParams in shaders/fsr/common.wgsl: 272 bytes
-        assert_eq!(std::mem::size_of::<FsrU>(), 272);
+        // FsrParams in shaders/fsr/common.wgsl: 208 bytes
+        assert_eq!(std::mem::size_of::<FsrU>(), 208);
     }
 }

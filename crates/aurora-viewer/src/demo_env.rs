@@ -58,6 +58,63 @@ pub fn estate_manager() -> bool {
     editor().is_some_and(|s| s.starts_with("region"))
 }
 
+/// `AURORA_DEMO_WEATHER_WINDOW=rain|snow|night`: the Aurora Weather window
+/// opens at the start on a weather of its own: a thunderstorm with
+/// puddles, a snowfall that settles, or a clear night with the northern
+/// lights.
+pub fn weather_window() -> Option<&'static str> {
+    static S: OnceLock<String> = OnceLock::new();
+    let s = S.get_or_init(|| std::env::var("AURORA_DEMO_WEATHER_WINDOW").unwrap_or_default().trim().to_owned());
+    (!s.is_empty() && s != "0").then_some(s.as_str())
+}
+
+/// The weather `AURORA_DEMO_WEATHER_WINDOW` opens its window on, set as
+/// the window sets it (the variables of the weather no longer apply).
+pub fn weather_scene(mode: &str, w: &mut crate::weather::WeatherSettings) {
+    use crate::weather::{AuroraColours, Precipitation};
+    w.touched = true;
+    // its switches on: the night's sky is clear
+    w.enabled = true;
+    w.precipitation_on = mode != "night";
+    w.wind_on = true;
+    match mode {
+        "snow" => {
+            w.precipitation = Precipitation::Snow;
+            w.amount = 0.6;
+            w.wind_min = 0.1;
+            w.wind_max = 0.35;
+            w.wind_follow_region = false;
+            w.wind_from = 315.0;
+            w.snow_settles = true;
+            w.snow_footprints = true;
+            w.aurora = false;
+        }
+        "night" => {
+            w.amount = 0.0;
+            w.wind_min = 0.05;
+            w.wind_max = 0.2;
+            w.aurora = true;
+            w.aurora_intensity = 0.8;
+            w.aurora_heading = 20.0;
+            w.aurora_height = 0.3;
+            w.aurora_colours = AuroraColours::Green;
+        }
+        // "rain", "1" and anything else: a thunderstorm
+        _ => {
+            w.precipitation = Precipitation::Rain;
+            w.amount = 0.85;
+            w.wind_min = 0.25;
+            w.wind_max = 0.65;
+            w.wind_follow_region = false;
+            w.wind_from = 270.0;
+            w.thunder = true;
+            w.puddles = true;
+            w.aurora = true;
+            w.aurora_colours = AuroraColours::Violet;
+        }
+    }
+}
+
 /// The library and the user's Settings folder: for the selector's and the
 /// editors' scenarios, and for About Land's (its environment picker).
 pub fn enabled() -> bool {
@@ -218,7 +275,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         LIB_ENVIRONMENTS => vec![sub(LIB_SKIES, "Skies"), sub(LIB_WATER, "Water"), sub(LIB_DAYS, "Day Cycles")],
         _ => Vec::new(),
     };
-    let items = items()
+    let mut items: Vec<InvItem> = items()
         .iter()
         .filter(|(f, ..)| *f == n)
         .map(|(_, name, kind, a)| InvItem {
@@ -254,6 +311,18 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
             sale_price: 0,
         })
         .collect();
+    // Distinct assets, too: the selector deduplicates inventory copies.
+    if scenario() == "photo-list"
+        && n == LIB_SKIES
+        && let Some(sky) = items.first().cloned()
+    {
+        items.extend((0..40).map(|i| InvItem {
+            id: u(0x6000 + i),
+            asset_id: u(0x7000 + i),
+            name: format!("{} {:02}", aurora_i18n::tr!("demo-env-midday"), i + 1),
+            ..sky.clone()
+        }));
+    }
     Some(FolderContents {
         folder_id,
         owner_id: owner,
@@ -389,7 +458,7 @@ fn defs() -> Vec<(u128, Llsd)> {
     // keys the editors do not show, kept when the item is saved
     purple.insert("name", aurora_i18n::tr!("demo-env-my-purple-sky"));
     purple.insert("rayleigh_config", Llsd::Array(vec![llsd_map! {"exp_term" => 1.0, "width" => 0.0}]));
-    vec![
+    let mut settings = vec![
         (0x201, midnight()),
         (
             0x202,
@@ -447,7 +516,11 @@ fn defs() -> Vec<(u128, Llsd)> {
                 water([0.05, 0.45, 0.45], 1.5),
             ),
         ),
-    ]
+    ];
+    if scenario() == "photo-list" {
+        settings.extend((0..40).map(|i| (0x7000 + i, noon())));
+    }
+    settings
 }
 
 /// A scripted step of the scenario.
@@ -465,6 +538,8 @@ pub enum Step {
     EditLighting,
     /// Drop the list down.
     OpenList(SettingsKind),
+    /// The photo's own environment list, with enough entries to scroll.
+    PhotoList,
     /// Type into the open list's search field.
     Search(SettingsKind, &'static str),
 }
@@ -476,6 +551,9 @@ pub fn step(frame: u64) -> Option<Step> {
         return None;
     }
     let lighting = scenario() == "lighting";
+    if scenario() == "photo-list" {
+        return (frame == 900).then_some(Step::PhotoList);
+    }
     let s = match frame {
         30 => Step::Open { lighting },
         2500 if matches!(scenario(), "list" | "search" | "search-none" | "search-back") => Step::OpenList(SettingsKind::Sky),

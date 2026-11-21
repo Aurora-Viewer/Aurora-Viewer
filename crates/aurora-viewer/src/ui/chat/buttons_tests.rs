@@ -66,6 +66,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     }
 }
 
@@ -686,6 +687,98 @@ fn the_head_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::OpenPeople(0))),
             "{style:?}: nearby people"
         );
+    }
+}
+
+/// Clicking a group chat's name or picture at the top of the conversation opens
+/// its group profile in every chat style (docked or detached), while
+/// conferences, nearby chat, and 1:1 IMs keep their own behavior.
+#[test]
+fn group_head_opens_group_profile_in_every_style() {
+    for style in ALL {
+        for detached in [false, true] {
+            let mut h = H::new(style);
+            let session = h.world.groups.sessions.entry(GROUP).or_default();
+            session.group = true;
+            session.name = "Builders".to_owned();
+            if detached {
+                crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(620.0, 520.0));
+                h.st.pop_out(Some(GROUP));
+                crate::ui::widgets::place_floater(
+                    &h.frames.ctx,
+                    &super::popout::floater_id(Some(GROUP)),
+                    egui::pos2(680.0, 40.0),
+                    egui::vec2(480.0, 460.0),
+                );
+                h.settle();
+            } else {
+                h.open(Some(GROUP));
+            }
+            let what = format!("{style:?}, detached={detached}");
+            let pic_id = match (style.workspace(), detached) {
+                (true, false) => control_id("head-pic"),
+                (false, false) => classic_id("head-pic"),
+                (true, true) => egui::Id::unique(("conv_control", "head-pic", Some(Some(GROUP)))),
+                (false, true) => egui::Id::unique(("conv_classic", "head-pic", Some(Some(GROUP)))),
+            };
+            // Clicking the group name opens the group profile and shows a link cursor.
+            let name_pos = h.text_rect("Builders").center();
+            let out = h.frame_out(vec![egui::Event::PointerMoved(name_pos)]);
+            assert_eq!(out.cursor_icon, egui::CursorIcon::PointingHand, "{what}: group name cursor");
+            h.at(name_pos);
+            assert_eq!(
+                crate::ui::group_profile::take_open_request(&h.frames.ctx),
+                Some(GROUP),
+                "{what}: clicking group name opens group profile"
+            );
+            // Clicking the group picture / insignia opens the group profile as well.
+            let pic_pos = h.shown(pic_id).expect("head pic shown").center();
+            let out = h.frame_out(vec![egui::Event::PointerMoved(pic_pos)]);
+            assert_eq!(out.cursor_icon, egui::CursorIcon::PointingHand, "{what}: group pic cursor");
+            h.at(pic_pos);
+            assert_eq!(
+                crate::ui::group_profile::take_open_request(&h.frames.ctx),
+                Some(GROUP),
+                "{what}: clicking group pic opens group profile"
+            );
+            if !detached {
+                // Conferences and nearby chat have no group profile.
+                for (conv, label) in [(Some(MEETING), "Meeting"), (None, aurora_i18n::tr!("common-nearby-chat"))] {
+                    h.open(conv);
+                    let pos = h.text_rect(label).center();
+                    let out = h.frame_out(vec![egui::Event::PointerMoved(pos)]);
+                    assert_ne!(out.cursor_icon, egui::CursorIcon::PointingHand, "{style:?}: {label} name cursor");
+                    h.at(pos);
+                    assert_eq!(
+                        crate::ui::group_profile::take_open_request(&h.frames.ctx),
+                        None,
+                        "{style:?}: clicking {label} opens no group profile"
+                    );
+                    if style.workspace() {
+                        assert!(h.shown(pic_id).is_none(), "{style:?}: {label} pic has no click target");
+                    } else {
+                        let pic_pos = h.shown(pic_id).expect("classic head pic shown").center();
+                        let out = h.frame_out(vec![egui::Event::PointerMoved(pic_pos)]);
+                        assert_ne!(out.cursor_icon, egui::CursorIcon::PointingHand, "{style:?}: {label} pic cursor");
+                        h.at(pic_pos);
+                        assert_eq!(
+                            crate::ui::group_profile::take_open_request(&h.frames.ctx),
+                            None,
+                            "{style:?}: clicking {label} pic opens no group profile"
+                        );
+                    }
+                }
+                // A 1:1 IM still opens the resident profile on click, not a group profile.
+                h.open(Some(BOB));
+                let pos = h.text_rect("Bob Doe").center();
+                h.at(pos);
+                assert!(
+                    has(&h.take(), |a| matches!(a, ConvAction::Profile(id) if *id == BOB)),
+                    "{style:?}: 1:1 IM opens resident profile"
+                );
+                assert_eq!(crate::ui::group_profile::take_open_request(&h.frames.ctx), None);
+            }
+        }
     }
 }
 
@@ -2138,6 +2231,53 @@ fn inventory_drops_give_to_the_resident_in_every_conversation_style() {
                 assert!(!egui::DragAndDrop::has_any_payload(&h.frames.ctx));
                 assert_eq!(h.st.drafts[&Some(JANE)], draft);
             }
+        }
+    }
+}
+
+/// A landmark dragged from Places (or a favorite) is the inventory item of
+/// that landmark: dropped on a resident's conversation it is given, as in the
+/// Legacy Viewer (#4241). A place with no item (history, parcel) is not.
+#[test]
+fn a_landmark_dragged_from_places_gives_to_the_resident() {
+    use crate::ui::places::drag::{PlaceDrag, Target};
+    const ITEM: Uuid = Uuid::from_u128(0x1A4);
+    let place = |target| PlaceDrag {
+        target,
+        favorite: None,
+        name: "A place".into(),
+        thumbnail: None,
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for style in ALL {
+        let mut h = H::new(style);
+        h.open(Some(JANE));
+        let over = h.text_rect("hello from Jane").center();
+        let away = egui::pos2(4.0, 4.0);
+        for (target, gives) in [(Target::Landmark(ITEM), true), (Target::Parcel(ITEM), false)] {
+            h.take();
+            h.frame(vec![egui::Event::PointerMoved(away), button(away, true)]);
+            egui::DragAndDrop::set_payload(&h.frames.ctx, place(target));
+            assert_eq!(crate::ui::inventory::drag::give_count(&h.frames.ctx), gives.then_some(1));
+            assert_eq!(crate::ui::inventory::drag::carried_count(&h.frames.ctx), None);
+            h.frame(vec![egui::Event::PointerMoved(over)]);
+            h.frame(vec![button(over, false)]);
+            h.settle();
+            let actions = h.take();
+            assert_eq!(
+                has(
+                    &actions,
+                    |a| matches!(a, ConvAction::GiveItems { to, items } if *to == JANE && *items == [ITEM])
+                ),
+                gives,
+                "{style:?}: {target:?}"
+            );
+            egui::DragAndDrop::clear_payload(&h.frames.ctx);
         }
     }
 }

@@ -196,7 +196,7 @@ fn frame(
 }
 
 #[test]
-fn inventory_bulk_apply_keeps_selection_and_options_and_ok_outlives_the_window() {
+fn inventory_bulk_apply_keeps_selection_and_close_never_starts_another_update() {
     let (mut inv, _, agent) = fixture();
     let ctx = egui::Context::default();
     let mut st = InventoryUi::default();
@@ -205,7 +205,7 @@ fn inventory_bulk_apply_keeps_selection_and_options_and_ok_outlives_the_window()
     for _ in 0..4 {
         frame(&ctx, &mut inv, &mut st, agent, vec![]);
     }
-    for (label, closes) in [(aurora_i18n::tr!("common-apply"), false), (aurora_i18n::tr!("common-ok"), true)] {
+    for (label, closes) in [(aurora_i18n::tr!("common-apply"), false), (aurora_i18n::tr!("common-close"), true)] {
         let (labels, _) = frame(&ctx, &mut inv, &mut st, agent, vec![]);
         let point = labels.iter().find(|(text, _)| text == label).unwrap().1.center();
         frame(&ctx, &mut inv, &mut st, agent, vec![egui::Event::PointerMoved(point)]);
@@ -224,6 +224,13 @@ fn inventory_bulk_apply_keeps_selection_and_options_and_ok_outlives_the_window()
             );
         }
         assert_eq!(st.bulk_permissions.open, !closes);
+        if closes {
+            assert!(st.bulk_permissions.job.is_none());
+            assert!(!st.bulk_permissions.submitted);
+            let (_, actions) = frame(&ctx, &mut inv, &mut st, agent, vec![]);
+            assert!(actions.is_empty(), "Close sends no inventory mutation");
+            break;
+        }
         assert!(st.bulk_permissions.job.is_some());
         st.bulk_permissions.options.types.fill(false);
         let (_, actions) = frame(&ctx, &mut inv, &mut st, agent, vec![]);
@@ -284,7 +291,7 @@ fn inventory_bulk_window_keeps_its_footer_inside_at_larger_text_sizes() {
     crate::ui::widgets::steady_tests::assert_window_steady(
         "inventory_bulk_permissions_00000000-0000-0000-0000-000000000000",
         &[Vec2::new(360.0, 354.0)],
-        aurora_i18n::tr!("common-cancel"),
+        aurora_i18n::tr!("common-close"),
         || {
             let (inv, _, agent) = fixture();
             let mut st = InventoryUi::default();

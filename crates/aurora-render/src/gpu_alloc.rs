@@ -12,8 +12,10 @@
 //! instead: on failure they keep the buffer they had, say so once, and try
 //! again later ([`Backoff`]) or smaller.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// A buffer, or why it could not be made (the device is out of memory, or
@@ -122,11 +124,15 @@ pub fn scoped<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, bool) {
 }
 
 /// [`scoped`], with the two signs of a refusal apart: (made, the memory
-/// said so, an object came back invalid).
+/// said so, an object came back invalid). What worker threads `make`
+/// starts catch in their own scopes counts too ([`on_worker`]).
 pub fn scoped_apart<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, bool, bool) {
     let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let workers = Arc::new(WorkerRefusals::default());
+    let outer = ENCLOSING.with(|e| e.replace(Some(workers.clone())));
     let made = make();
+    ENCLOSING.with(|e| *e.borrow_mut() = outer);
     let invalid = pollster::block_on(invalid.pop());
     let oom = pollster::block_on(oom.pop());
     let is_invalid = memory_refused(None, invalid.as_ref().map(ToString::to_string).as_deref());
@@ -134,7 +140,39 @@ pub fn scoped_apart<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> (T, b
     for e in oom.iter().chain(&invalid) {
         say(e);
     }
-    (made, oom.is_some(), is_invalid)
+    (
+        made,
+        oom.is_some() || workers.oom.load(Ordering::Relaxed),
+        is_invalid || workers.invalid.load(Ordering::Relaxed),
+    )
+}
+
+/// What the scopes of worker threads caught for the [`scoped_apart`] whose
+/// work started them: wgpu's error scopes belong to one thread, and what a
+/// worker makes would otherwise reach only the device's handler.
+#[derive(Default)]
+pub struct WorkerRefusals {
+    oom: AtomicBool,
+    invalid: AtomicBool,
+}
+
+thread_local! {
+    static ENCLOSING: RefCell<Option<Arc<WorkerRefusals>>> = const { RefCell::new(None) };
+}
+
+/// The [`scoped_apart`] this thread is inside, for the workers it starts.
+pub fn enclosing() -> Option<Arc<WorkerRefusals>> {
+    ENCLOSING.with(|e| e.borrow().clone())
+}
+
+/// On a worker thread: `work` in scopes of its own when `parent` is a
+/// making thread's [`scoped_apart`], what they catch reported to it.
+pub fn on_worker<T>(device: &wgpu::Device, parent: Option<&WorkerRefusals>, work: impl FnOnce() -> T) -> T {
+    let Some(parent) = parent else { return work() };
+    let (made, oom, invalid) = scoped_apart(device, work);
+    parent.oom.fetch_or(oom, Ordering::Relaxed);
+    parent.invalid.fetch_or(invalid, Ordering::Relaxed);
+    made
 }
 
 /// An error a scope caught, written as the device's handler writes the
@@ -272,6 +310,44 @@ pub fn first_use_refused() -> bool {
             .map(|seconds| Instant::now() + Duration::from_secs(seconds))
     });
     until.is_some_and(|t| Instant::now() < t)
+}
+
+/// Whether the device refuses even a small buffer mapped at its creation,
+/// as egui-wgpu's `Renderer::new` makes its own through wgpu's
+/// `create_buffer_init`, which panics on one refused (#3867). Asked in
+/// scopes of its own, before the renderer's first allocation. `None`: it
+/// came through. Refused by the video memory: `VideoMemoryFull`; refused for
+/// another reason: `Device`, so that the box gives the driver advice and
+/// not the programs to close. `AURORA_GPU_OOM_UI=1` refuses it as a full
+/// memory (testing).
+pub fn mapped_buffer_refused(device: &wgpu::Device) -> Option<crate::RenderError> {
+    if std::env::var_os("AURORA_GPU_OOM_UI").is_some_and(|v| v == "1") {
+        log::warn!("egui buffers: refused by AURORA_GPU_OOM_UI");
+        return Some(crate::RenderError::VideoMemoryFull);
+    }
+    let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let probe = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("egui buffer probe"),
+        size: 256,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: true,
+    });
+    let invalid = pollster::block_on(invalid.pop());
+    let oom = pollster::block_on(oom.pop());
+    for e in oom.iter().chain(&invalid) {
+        say(e);
+    }
+    if oom.is_some() {
+        log::warn!("egui buffers: the video memory refused a small mapped buffer");
+        return Some(crate::RenderError::VideoMemoryFull);
+    }
+    if let Some(e) = invalid {
+        log::warn!("egui buffers: a small mapped buffer was refused, not for memory");
+        return Some(crate::RenderError::Device(e.to_string()));
+    }
+    probe.unmap();
+    None
 }
 
 /// `AURORA_GPU_OOM_START=<seconds>`: for that long after the renderer is

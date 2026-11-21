@@ -22,6 +22,7 @@ pub const FILE: &str = "favorites_order.json";
 /// FT_FAVORITE.
 pub const FOLDER_FAVORITES: i32 = 23;
 /// LLAssetType::AT_LANDMARK.
+#[cfg(test)]
 const ASSET_LANDMARK: i32 = 3;
 
 /// The account's file, read and written by a thread of its own.
@@ -187,11 +188,7 @@ fn landmarks(inv: &Inventory) -> Vec<Uuid> {
     let mut depth = 0;
     while let Some(folder) = stack.pop() {
         let Some(f) = inv.folders.get(&folder) else { continue };
-        out.extend(
-            f.items
-                .iter()
-                .filter(|id| inv.items.get(*id).is_some_and(|it| it.asset_type == ASSET_LANDMARK)),
-        );
+        out.extend(f.items.iter().filter(|id| super::landmarks::inventory_item(inv, **id).is_some()));
         // a malformed cycle of folders stops here
         depth += 1;
         if depth < 4096 {
@@ -211,7 +208,11 @@ fn sort(items: &mut [Uuid], inv: &Inventory, order: &HashMap<Uuid, i32>) {
         }
         let (a, b) = (inv.items.get(a), inv.items.get(b));
         let created = |i: Option<&aurora_net::inventory::InvItem>| i.map_or(0, |i| i.created_at);
-        let name = |i: Option<&aurora_net::inventory::InvItem>| i.map(|i| i.name.to_lowercase()).unwrap_or_default();
+        let name = |i: Option<&aurora_net::inventory::InvItem>| {
+            i.and_then(|i| super::landmarks::inventory_item(inv, i.id))
+                .map(|i| i.name.to_lowercase())
+                .unwrap_or_default()
+        };
         created(b).cmp(&created(a)).then_with(|| name(a).cmp(&name(b)))
     });
 }
@@ -273,6 +274,57 @@ mod tests {
         inv.folders.insert(id(2), folder(2, 1, -1, vec![], vec![]));
         inv.generation = 1;
         inv
+    }
+
+    #[test]
+    fn landmark_links_keep_their_own_membership_order_and_follow_target_updates() {
+        let mut inv = inventory(&[(10, "Target", 100)]);
+        inv.folders.get_mut(&id(1)).expect("favorites").items.clear();
+        inv.items.get_mut(&id(10)).expect("target").parent = id(99);
+        for (link, target, kind) in [
+            (20, 10, 24),
+            (21, 10, 24),
+            (22, 999, 24),
+            (23, 900, 24),
+            (24, 25, 24),
+            (25, 24, 24),
+            (26, 1, 25),
+        ] {
+            inv.items.insert(
+                id(link),
+                InvItem {
+                    id: id(link),
+                    parent: id(2),
+                    asset_type: kind,
+                    asset_id: id(target),
+                    ..Default::default()
+                },
+            );
+            inv.folders.get_mut(&id(2)).expect("subfolder").items.push(id(link));
+        }
+        let mut fav = Favorites::default();
+        assert_eq!(fav.list(&inv), [id(20), id(21)]);
+        fav.rearrange(&inv, id(21), 0);
+        assert_eq!(fav.list(&inv), [id(21), id(20)]);
+        inv.items.remove(&id(10));
+        inv.generation += 1;
+        assert!(fav.list(&inv).is_empty());
+        inv.items.insert(
+            id(10),
+            InvItem {
+                id: id(10),
+                name: "Fetched landmark".into(),
+                asset_type: 3,
+                asset_id: id(1000),
+                ..Default::default()
+            },
+        );
+        inv.generation += 1;
+        assert_eq!(
+            fav.list(&inv),
+            [id(21), id(20)],
+            "late target arrival restores the saved link order"
+        );
     }
 
     #[test]

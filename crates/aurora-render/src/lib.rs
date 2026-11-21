@@ -29,6 +29,7 @@ mod dof;
 mod drawn_pick;
 mod equirect;
 mod exposure;
+mod film_readback;
 pub mod frame_priority;
 mod fsr;
 pub mod gpu_alloc;
@@ -62,6 +63,7 @@ mod readback;
 mod render_thread;
 mod renderer;
 mod rlva;
+pub mod second_view;
 mod selection;
 pub mod shadow_cull;
 mod shadow_merge;
@@ -78,6 +80,7 @@ mod test_gpu;
 pub mod tex_anim;
 pub mod textures;
 pub mod thread_cpu;
+pub mod thumbnail;
 pub mod types;
 mod ui_blur;
 mod ui_frame;
@@ -91,6 +94,7 @@ pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
+pub use thumbnail::{THUMBNAIL_MAX, Thumbnail};
 pub use vr_control::{HeadPose, VrState};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
 /// restart that brings VR when the headset came after startup; not probed
@@ -123,6 +127,7 @@ pub use contact_shadows::tile_reach as contact_tile_reach;
 pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
 pub use equirect::{Answer as EquirectAnswer, CAPTURE_CAMERAS, CaptureCamera, EquirectJob, pixel_direction};
+pub use film_readback::{FilmFrame, FilmRequest, overlay_rect};
 pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
@@ -131,7 +136,7 @@ pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use renderer::{CASCADES, RenderError};
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
-pub use ui_blur::blurred_backdrop;
+pub use ui_blur::{blurred_backdrop, set_ui_blur};
 pub use ui_frame::{EguiFrame, EguiHandOver, vr_hint_marker};
 pub use ui_glass::{glass_diamond, glass_panel, glass_panel_faded, glass_region};
 pub use ui_world::end_world_labels;
@@ -180,17 +185,21 @@ pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
     water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER)
 }
 
-/// object.wgsl as the device takes it: without the attribute of the early
-/// depth test (`fs_blend_once`) where the device does not know it, as on
-/// Metal. naga refuses a whole module for one entry point it cannot read,
-/// so every module made from object.wgsl (the scene, the stochastic
-/// transparency, the impostors) takes it from here (#3751).
+/// object.wgsl as the device takes it: without the attributes of the early
+/// depth test (`fs_blend_once`; `fs_depth_occlusion`, which then runs for
+/// the texels the depth would have ruled out, and writes the same) where
+/// the device does not know them, as on Metal. naga refuses a whole module
+/// for one entry point it cannot read, so every module made from
+/// object.wgsl (the scene, the stochastic transparency, the impostors)
+/// takes it from here (#3751).
 pub(crate) fn object_shader_source(features: wgpu::Features) -> String {
     let source = water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"));
     if features.contains(blend_exact::EARLY_TEST) {
         source.into_owned()
     } else {
-        source.replace("@early_depth_test(force)", "")
+        source
+            .replace("@early_depth_test(force)", "")
+            .replace("@early_depth_test(less_equal)", "")
     }
 }
 

@@ -494,7 +494,8 @@ pub fn draw(
     // only the avatars and the objects with a text: a shop has thousands of
     // objects for a few dozen of these
     for (idx, o) in world.objects.avatars().chain(world.objects.texted()) {
-        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) {
+        // the animation editor's mirror of us has no name tag
+        if !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx) || world.is_mirror(&o.full_id) {
             continue;
         }
         if !o.is_avatar() && !world.rlva.hover_visible(o.full_id, scene.gpu.get(idx).is_some_and(|g| g.hud)) {
@@ -515,6 +516,13 @@ pub fn draw(
             let Some((pos, _, _)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
             };
+            // the animation editor's couple partner, moved on screen: the
+            // tag goes with the body (`World::couple_shift`)
+            let pos = world
+                .avatar_models
+                .get(&o.full_id)
+                .and_then(|model| world.couple_shift(o.full_id, *model))
+                .map_or(pos, |shift| shift.transform_point3(pos));
             let d = pos.distance(eye);
             // from us, not from the camera: the RLVa limits and the tags'
             // distance (LLVOAvatar::idleUpdateNameTagText: gAgent's position)
@@ -633,7 +641,9 @@ pub fn draw(
             let (name, username, custom, legacy) = match names.get(&o.full_id) {
                 Some(n) => {
                     let (main, user) = n.tag_lines(&names.options);
-                    let custom = names.options.use_display_names && !n.is_default;
+                    // (by the name itself, not by the stand-in RLVa shows
+                    // for it: LLVOAvatar::getNameTagColor asks the cache)
+                    let custom = names.options.use_display_names && names.raw(&o.full_id).is_some_and(|n| !n.is_default);
                     (main, user, custom, n.user_name_for_display(&names.options))
                 }
                 None => {

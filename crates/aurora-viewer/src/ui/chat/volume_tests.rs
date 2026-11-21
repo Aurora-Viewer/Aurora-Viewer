@@ -45,6 +45,7 @@ fn volume_emphasis_reaches_conversations_toasts_links_emoji_and_search() {
                         origin: Origin::Live,
                         blocked: false,
                         beyond_range: false,
+                        speaker: Default::default(),
                     };
                     world.chat.clear();
                     world.chat.push_back(line.clone());
@@ -74,6 +75,7 @@ fn volume_emphasis_reaches_conversations_toasts_links_emoji_and_search() {
                             emoji: &mut emoji,
                             pics: &pics,
                             world: &world,
+                            names: crate::world::names::NameScope::World,
                             want_names: &mut names,
                             wanted: &mut wanted,
                             own_name: "Speaker",
@@ -160,6 +162,7 @@ fn object_volume_changes_start_a_new_console_card() {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     };
     let lines = [line(ChatType::Normal), line(ChatType::Whisper), line(ChatType::Shout)];
     assert_eq!(console::groups(&lines.iter().collect::<Vec<_>>()).len(), 3);

@@ -17,6 +17,7 @@ pub(crate) mod follow;
 pub mod free;
 mod mouselook_zoom;
 pub mod presets;
+pub mod second;
 mod settings;
 pub mod track;
 pub mod vr;
@@ -213,6 +214,9 @@ pub struct FrameInput {
     pub eye_offset: Option<Vec3>,
     /// Selected skeleton joint's displacement from rest, after pose evaluation.
     pub follow_joint_offset: Option<Vec3>,
+    /// The head joint as last posed, relative to the rendered avatar root:
+    /// where RLVa measures the camera's distance to the avatar from.
+    pub head_offset: Option<Vec3>,
     pub draw_distance: f32,
     /// The main region's width (LLWorld::mWidth, which follows the region).
     pub region_width: f32,
@@ -439,6 +443,10 @@ pub struct Camera {
     rlva_at_min: bool,
     rlva_at_max: bool,
     rlva_origin: Vec3,
+    /// What RLVa's two distance limits are measured from, as of the last
+    /// frame of a third-person or follow view under RLVa: our head, and the
+    /// place the avatar's own view gives the camera.
+    rlva_references: (Vec3, Vec3),
     /// The direction in which `third_person_camera` placed the camera behind
     /// the avatar this frame: the line the zoom of the avatar's own view
     /// moves it along.
@@ -561,6 +569,7 @@ impl Default for Camera {
             rlva_at_min: false,
             rlva_at_max: false,
             rlva_origin: Vec3::ZERO,
+            rlva_references: (Vec3::ZERO, Vec3::ZERO),
             boom_direction: None,
             rlva_boom: None,
             rlva: Default::default(),
@@ -1633,8 +1642,10 @@ impl Camera {
         let f = fraction.clamp(0.0, 1.0);
         if self.focus_on_avatar && self.third_person() {
             let new = MAX_ZOOM_FRACTION + (MIN_ZOOM_FRACTION - MAX_ZOOM_FRACTION) * f;
-            // at an RLVa distance limit, no further past it (#3356)
-            if !(self.rlva_at_max && new > self.zoom_fraction || self.rlva_at_min && new < self.zoom_fraction) {
+            // at an RLVa distance limit that holds the zoom, no further
+            // past it (#3356)
+            let held = self.rlva_boom.is_some();
+            if !(held && (self.rlva_at_max && new > self.zoom_fraction || self.rlva_at_min && new < self.zoom_fraction)) {
                 self.zoom_fraction = new;
             }
         } else {
@@ -2255,7 +2266,11 @@ impl Camera {
         self.rlva_at_max = false;
         self.rlva_boom = None;
         self.boom_direction = None;
-        if !world.rlva.enabled() {
+        if !world.rlva.enabled() || self.flycam.is_some() {
+            // The joystick flycam places the view and its lens itself, past
+            // LLAgentCamera and LLViewerCamera::setDefaultFOV where RLVa's
+            // limits are (LLViewerJoystick::moveFlycam,
+            // indra/newview/llviewerjoystick.cpp): none of them reaches it.
             self.update_unrestricted(world, s, f);
             return;
         }
@@ -2270,47 +2285,95 @@ impl Camera {
             self.set_focus_on_avatar(true, false, false, &mut world.agent, &settings);
         }
         self.update_unrestricted(world, &settings, f);
-        for (origin, low, high) in [
-            (world.agent.position, "setcam_avdistmin", "setcam_avdistmax"),
-            (self.target, "setcam_origindistmin", "setcam_origindistmax"),
-        ] {
-            let min = world.rlva.camera_limit(low, 0.0, true);
-            let max = world.rlva.camera_limit(high, f32::INFINITY, false).max(min);
-            let offset = self.position - origin;
-            let distance = offset.length();
-            if distance < min || distance > max {
-                let direction = offset.try_normalize().unwrap_or(-Vec3::X);
-                self.position = origin + direction * distance.clamp(min, max);
-                // The flags belong to the origin they were measured from:
-                // when both limits clamp, the last one holds the camera.
-                self.rlva_at_min = distance < min;
-                self.rlva_at_max = distance > max;
-                self.rlva_origin = origin;
-                // The avatar's own view: where the line the zoom moves the
-                // camera along leaves the limit, measured back from where
-                // the camera was found on it.
-                self.rlva_boom = self
-                    .boom_direction
-                    .filter(|_| self.focus_on_avatar && self.anim.is_none())
-                    .and_then(|along| {
-                        let start = offset - along * self.current_distance;
-                        let nearest = -start.dot(along);
-                        let limit = distance.clamp(min, max);
-                        let boom = nearest + (nearest * nearest - start.length_squared() + limit * limit).sqrt();
-                        (boom.is_finite() && boom > 0.0).then(|| boom.max(MIN_CAMERA_DISTANCE))
-                    });
-            }
+        if self.mode != CameraMode::Mouselook {
+            self.limit_rlva_distance(world, &settings, f);
         }
         if let Some((min, max)) = world.rlva.camera_fov_limits(f.aspect) {
             self.fov_y = self.fov_y.clamp(min, max);
         }
-        if let Some(flycam) = self.flycam.as_mut() {
-            // Keep the integrated pose and AgentUpdate frame at the view
-            // allowed by RLVa, including when the flight is toggled off.
-            flycam.position = self.position;
-            flycam.fov = self.fov_y;
-            self.target = self.position + flycam.forward();
+    }
+
+    /// The RLVa block of LLAgentCamera::calcCameraPositionTargetGlobal
+    /// (indra/newview/llagentcamera.cpp, originally LGPL 2.1), for the
+    /// third-person and follow views only: mouselook keeps its eyes (#3982).
+    /// `@setcam_avdistmin` / `max` are measured from the avatar's head,
+    /// `@setcam_origindistmin` / `max` from the place the avatar's own view
+    /// gives the camera. One of the two holds the camera, never both: the
+    /// avatar's when its two limits are equal (`@camdistmax:0`), else the
+    /// origin's when there is one.
+    fn limit_rlva_distance(&mut self, world: &World, s: &CameraSettings, f: &FrameInput) {
+        let avatar = world.rlva.camera_distance_limits("setcam_avdistmin", "setcam_avdistmax");
+        let origin = world.rlva.camera_distance_limits("setcam_origindistmin", "setcam_origindistmax");
+        let avatar_locked = avatar.is_some_and(|(min, max)| min == max);
+        let (head, view) = (self.posed_head(f), self.view_base(s, f) + self.view_offset(&world.agent, s));
+        self.rlva_references = (head, view);
+        if let Some((min, max)) = origin.filter(|_| !avatar_locked) {
+            self.clamp_rlva_distance(view, min, max, false);
         }
+        if let Some((min, max)) = avatar.filter(|_| avatar_locked || origin.is_none()) {
+            self.clamp_rlva_distance(head, min, max, true);
+        }
+    }
+
+    /// The camera's distance to our head and to its origin, as RLVa's
+    /// `@setcam_avdist…` and `@setcam_origindist…` limits measure them (the
+    /// demo scenarios' log).
+    pub fn rlva_distances(&self) -> (f32, f32) {
+        let (head, origin) = self.rlva_references;
+        (self.position.distance(head), self.position.distance(origin))
+    }
+
+    /// LLAgentCamera::clampCameraPosition: the camera brought back within
+    /// `min` and `max` of `origin`, the maximum first. `holds_zoom`: the
+    /// origin stays where it is when the avatar view zooms, so the zoom is
+    /// held at the limit too (`zoom_distance`).
+    fn clamp_rlva_distance(&mut self, origin: Vec3, min: f32, max: f32, holds_zoom: bool) {
+        let offset = self.position - origin;
+        let distance = offset.length();
+        let limit = if distance > max {
+            max
+        } else if distance < min {
+            min
+        } else {
+            return;
+        };
+        let direction = offset.try_normalize().unwrap_or(-Vec3::X);
+        self.position = origin + direction * limit;
+        self.rlva_at_max = distance > max;
+        self.rlva_at_min = !self.rlva_at_max;
+        self.rlva_origin = origin;
+        // The avatar's own view: where the line the zoom moves the camera
+        // along leaves the limit, measured back from where the camera was
+        // found on it.
+        self.rlva_boom = self
+            .boom_direction
+            .filter(|_| holds_zoom && self.focus_on_avatar && self.anim.is_none())
+            .and_then(|along| {
+                let start = offset - along * self.current_distance;
+                let nearest = -start.dot(along);
+                let boom = nearest + (nearest * nearest - start.length_squared() + limit * limit).sqrt();
+                (boom.is_finite() && boom > 0.0).then(|| boom.max(MIN_CAMERA_DISTANCE))
+            });
+    }
+
+    /// Our head joint as last posed (LLVOAvatar's mHeadp), or where the rest
+    /// pose has it.
+    fn posed_head(&self, f: &FrameInput) -> Vec3 {
+        let head = f.head_offset.filter(|p| p.is_finite()).unwrap_or(Vec3::Z * 0.65);
+        self.avatar.render_root + self.avatar.render_rotation * head
+    }
+
+    /// What the avatar's own view is measured from: the avatar's root and
+    /// mThirdPersonHeadOffset (none when seated).
+    fn view_base(&self, s: &CameraSettings, f: &FrameInput) -> Vec3 {
+        let head_offset = if self.avatar.seat.is_some() { Vec3::ZERO } else { Vec3::Z };
+        self.avatar.root + head_offset + self.third_person_joint_delta(s, f.follow_joint_offset)
+    }
+
+    /// From there to the camera of the avatar's own view, before the
+    /// simulator's plane, the zoom's easing and the flight lag.
+    fn view_offset(&self, agent: &AgentState, s: &CameraSettings) -> Vec3 {
+        self.frame_rotation(agent) * (self.offset_initial(s) * self.zoom_fraction * self.offset_scale(s))
     }
 
     fn update_unrestricted(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
@@ -2664,10 +2727,8 @@ impl Camera {
     fn third_person_camera(&mut self, agent: &AgentState, s: &CameraSettings, f: &FrameInput) -> Vec3 {
         let dt = self.dt;
         let frame = self.frame_rotation(agent);
-        // mThirdPersonHeadOffset: none when seated
-        let head_offset = if self.avatar.seat.is_some() { Vec3::ZERO } else { Vec3::Z };
-        let base = self.avatar.root + head_offset + self.third_person_joint_delta(s, f.follow_joint_offset);
-        let offset = frame * (self.offset_initial(s) * self.zoom_fraction * self.offset_scale(s));
+        let base = self.view_base(s, f);
+        let offset = self.view_offset(agent, s);
         let dir = offset.normalize_or_zero();
         let mut distance = offset.length();
         if !s.disable_constraints && self.collide_plane != Vec4::ZERO && self.avatar.seat.is_none() {
@@ -3204,7 +3265,7 @@ impl Camera {
         self.target = pivot + translation;
         if world.rlva.enabled() {
             for (origin, low, high) in [
-                (world.agent.position, "setcam_avdistmin", "setcam_avdistmax"),
+                (self.posed_head(frame), "setcam_avdistmin", "setcam_avdistmax"),
                 (native_target, "setcam_origindistmin", "setcam_origindistmax"),
             ] {
                 let min = world.rlva.camera_limit(low, 0.0, true);
@@ -4390,6 +4451,7 @@ mod tests {
             edit_tracking: None,
             eye_offset: None,
             follow_joint_offset: None,
+            head_offset: None,
             draw_distance: 128.0,
             region_width: REGION_WIDTH,
             aspect: 1.0,
@@ -4838,7 +4900,7 @@ mod tests {
     }
 
     #[test]
-    fn joystick_flycam_keeps_rlva_camera_limits() {
+    fn joystick_flycam_is_outside_rlva_camera_limits() {
         let s = CameraSettings::default();
         let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
         let mut cam = Camera::default();
@@ -4864,10 +4926,11 @@ mod tests {
         let f = frame(1.0 / 60.0);
         cam.update(&mut w, &s, &f);
         assert_eq!(w.agent.position, avatar);
-        assert!(cam.position.distance(avatar) <= 2.001);
-        let (min, max) = w.rlva.camera_fov_limits(f.aspect).expect("camera lens limits");
-        assert!((min..=max).contains(&cam.fov_y));
-        let pose = cam.flycam.expect("flycam stays active within the limits");
+        // as LLViewerJoystick::moveFlycam, which no RLVa limit reaches
+        assert!(cam.position.distance(avatar + Vec3::X * 50.0) < 1e-3);
+        let (min, _) = w.rlva.camera_fov_limits(f.aspect).expect("camera lens limits");
+        assert!(cam.fov_y < min && (cam.fov_y - 0.5).abs() < 1e-4);
+        let pose = cam.flycam.expect("flycam stays active");
         assert_eq!(pose.position, cam.position);
         assert_eq!(pose.fov, cam.fov_y);
         let update = w.agent.controls(&crate::agent::MoveInput::default(), &cam, 128.0);
@@ -4890,36 +4953,108 @@ mod tests {
         }));
     }
 
+    /// The head RLVa measures the avatar's distance from, and the place the
+    /// avatar's own view gives the camera (the "origin" of the other limit).
+    fn rlva_head(cam: &Camera) -> Vec3 {
+        cam.posed_head(&frame(0.0))
+    }
+    #[test]
+    fn rlva_distances_are_those_of_the_head_and_the_origin() {
+        let (cam, w, s) = rlva_avatar_camera("@camdistmax:50=n");
+        let (head, origin) = cam.rlva_distances();
+        assert!((head - cam.position.distance(rlva_head(&cam))).abs() < 1e-4);
+        assert!((origin - cam.position.distance(rlva_view_origin(&cam, &w, &s))).abs() < 1e-4);
+    }
+    fn rlva_view_origin(cam: &Camera, w: &World, s: &CameraSettings) -> Vec3 {
+        cam.view_base(s, &frame(0.0)) + cam.view_offset(&w.agent, s)
+    }
+
     /// Alt camera on a point `distance` m ahead, then the RLVa `command`.
-    fn rlva_alt_camera(distance: f32, command: &str) -> (Camera, World, CameraSettings, Vec3) {
+    /// Returns the focus point and the camera's origin.
+    fn rlva_alt_camera(distance: f32, command: &str) -> (Camera, World, CameraSettings, Vec3, Vec3) {
         let s = CameraSettings::default();
         let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
         let mut cam = Camera::default();
         settle(&mut cam, &mut w, &s);
+        let origin = rlva_view_origin(&cam, &w, &s);
+        assert!(cam.position.distance(origin) < 0.01, "the avatar's own view sits at its origin");
         let focus = cam.position + cam.forward() * distance;
         cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &s);
         settle(&mut cam, &mut w, &s);
         rlva_command(&mut w, command);
         settle(&mut cam, &mut w, &s);
-        (cam, w, s, focus)
+        (cam, w, s, focus, origin)
     }
 
     #[test]
-    fn rlva_focus_distance_max_does_not_store_zoom_past_it() {
+    fn rlva_origin_distance_max_does_not_store_zoom_past_it() {
         // #3353: the wheel past @setcam_origindistmax was kept in the zoom,
-        // so the first clicks back in did not move the camera.
-        let (mut cam, mut w, mut s, focus) = rlva_alt_camera(4.0, "@setcam_origindistmax:5=n");
-        assert!((cam.position.distance(focus) - 4.0).abs() < 0.01);
-        for _ in 0..10 {
+        // so the first clicks back in did not move the camera. The limit is
+        // measured from where the avatar's own view puts the camera
+        // (posFocusCam, LLAgentCamera::calcCameraPositionTargetGlobal), not
+        // from the point looked at.
+        let (mut cam, mut w, mut s, focus, origin) = rlva_alt_camera(4.0, "@setcam_origindistmax:5=n");
+        assert!(cam.position.distance(origin) < 0.01);
+        for _ in 0..12 {
             cam.scroll(1.0, false, false, &mut w.agent, &mut s);
             settle(&mut cam, &mut w, &s);
         }
-        let at_limit = cam.position.distance(focus);
+        let at_limit = cam.position.distance(origin);
         assert!((at_limit - 5.0).abs() < 0.01, "held at the limit: {at_limit}");
+        assert!((cam.position.distance(focus) - 9.0).abs() < 0.02, "5 m behind where it started");
         cam.scroll(-1.0, false, false, &mut w.agent, &mut s);
         settle(&mut cam, &mut w, &s);
-        let closer = cam.position.distance(focus);
+        let closer = cam.position.distance(origin);
         assert!(closer < at_limit - 0.02, "one click in moves closer at once: {closer}");
+    }
+
+    #[test]
+    fn rlva_origin_distance_leaves_the_zoom_of_the_avatar_view() {
+        // The origin follows the zoom of the avatar's own view: the limit
+        // holds an Alt camera, never that view.
+        let (mut cam, mut w, mut s) = rlva_avatar_camera("@setcam_origindistmax:1=n");
+        let start = cam.position.distance(rlva_head(&cam));
+        for _ in 0..6 {
+            cam.scroll(1.0, false, false, &mut w.agent, &mut s);
+            settle(&mut cam, &mut w, &s);
+        }
+        let out = cam.position.distance(rlva_head(&cam));
+        assert!(out > start + 3.0, "zoomed out past 1 m: {start} to {out}");
+        assert!(cam.position.distance(rlva_view_origin(&cam, &w, &s)) < 0.01);
+        cam.set_zoom_fraction(1.0);
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.position.distance(rlva_head(&cam)) < out - 3.0, "the slider zooms back in");
+    }
+
+    #[test]
+    fn rlva_distance_limits_leave_mouselook_at_the_eyes() {
+        // #3982: a collar that "forces mouselook" limits the camera to 0 m
+        // from the avatar. The Legacy Viewer applies the limit in the
+        // third-person and follow views, from the head; mouselook keeps the
+        // eyes. Aurora measured from the avatar's centre in every view.
+        for command in ["@camdistmax:0=n", "@setcam_avdistmax:0=n"] {
+            let (mut cam, mut w, s) = rlva_avatar_camera("@clear");
+            cam.change_to_mouselook(&mut w.agent, &s, false);
+            settle(&mut cam, &mut w, &s);
+            assert!(cam.mouselook());
+            let eyes = cam.position;
+            rlva_command(&mut w, command);
+            settle(&mut cam, &mut w, &s);
+            assert!(cam.mouselook(), "{command}: mouselook stays");
+            assert!(cam.position.distance(eyes) < 1e-4, "{command}: at the eyes");
+            cam.change_to_default(&mut w.agent, &s);
+            settle(&mut cam, &mut w, &s);
+            assert!(!cam.mouselook());
+            let head = rlva_head(&cam);
+            assert!(cam.position.distance(head) < 1e-3, "{command}: third person sits at the head");
+            assert!(head.z - w.agent.position.z > 0.5, "the head, not the hips");
+            cam.change_to_mouselook(&mut w.agent, &s, false);
+            settle(&mut cam, &mut w, &s);
+            assert!(
+                cam.mouselook() && cam.position.distance(eyes) < 1e-4,
+                "{command}: and back to the eyes"
+            );
+        }
     }
 
     /// The avatar's own view, at rest, under `command`.
@@ -4937,17 +5072,13 @@ mod tests {
     fn rlva_distance_max_stores_no_zoom_of_the_avatar_view_past_it() {
         // #3356: on the avatar's own view the wheel past @camdistmax was
         // kept in the zoom fraction, so the first clicks back in did not
-        // move the camera. The focus limit holds that view the same way.
-        for (command, from_focus) in [
-            ("@camdistmax:5=n", false),
-            ("@setcam_avdistmax:5=n", false),
-            ("@setcam_origindistmax:5=n", true),
-        ] {
+        // move the camera.
+        for command in ["@camdistmax:5=n", "@setcam_avdistmax:5=n"] {
             // the camera at rest between two clicks, or one frame only (a
             // spun wheel)
             for frames in [300, 1] {
                 let (mut cam, mut w, mut s) = rlva_avatar_camera(command);
-                let measure = |cam: &Camera, w: &World| cam.position.distance(if from_focus { cam.target } else { w.agent.position });
+                let measure = |cam: &Camera, _: &World| cam.position.distance(rlva_head(cam));
                 let start = measure(&cam, &w);
                 assert!(start < 4.5, "{command}: inside the limit at first: {start}");
                 for _ in 0..10 {
@@ -4989,17 +5120,17 @@ mod tests {
                 cam.scroll(-1.0, false, false, &mut w.agent, &mut s);
                 for _ in 0..frames {
                     cam.update(&mut w, &s, &frame(1.0 / 60.0));
-                    let distance = cam.position.distance(w.agent.position);
+                    let distance = cam.position.distance(rlva_head(&cam));
                     assert!(distance > 1.999, "{frames}: outside the limit: {distance}");
                 }
             }
             settle(&mut cam, &mut w, &s);
             assert!(!cam.mouselook());
-            let at_limit = cam.position.distance(w.agent.position);
+            let at_limit = cam.position.distance(rlva_head(&cam));
             assert!((at_limit - 2.0).abs() < 0.01, "{frames}: held at the limit: {at_limit}");
             cam.scroll(1.0, false, false, &mut w.agent, &mut s);
             settle(&mut cam, &mut w, &s);
-            let farther = cam.position.distance(w.agent.position);
+            let farther = cam.position.distance(rlva_head(&cam));
             assert!(farther > at_limit + 0.15, "{frames}: one click out moves away at once: {farther}");
         }
     }
@@ -5014,24 +5145,24 @@ mod tests {
             cam.scroll(1.0, false, false, &mut w.agent, &mut s);
             settle(&mut cam, &mut w, &s);
         }
-        let own = cam.position.distance(w.agent.position);
+        let own = cam.position.distance(rlva_head(&cam));
         assert!(own > 7.0, "zoomed out: {own}");
         rlva_command(&mut w, "@camdistmax:5=n");
         settle(&mut cam, &mut w, &s);
-        assert!((cam.position.distance(w.agent.position) - 5.0).abs() < 0.01);
+        assert!((cam.position.distance(rlva_head(&cam)) - 5.0).abs() < 0.01);
         // a click further out, and the Focus slider's way out, are refused
         cam.scroll(1.0, false, false, &mut w.agent, &mut s);
         cam.set_zoom_fraction(0.0);
         settle(&mut cam, &mut w, &s);
         rlva_command(&mut w, "@camdistmax:5=y");
         settle(&mut cam, &mut w, &s);
-        let back = cam.position.distance(w.agent.position);
+        let back = cam.position.distance(rlva_head(&cam));
         assert!((back - own).abs() < 0.01, "the user's zoom again: {back}");
         rlva_command(&mut w, "@camdistmax:5=n");
         settle(&mut cam, &mut w, &s);
         cam.scroll(-1.0, false, false, &mut w.agent, &mut s);
         settle(&mut cam, &mut w, &s);
-        let closer = cam.position.distance(w.agent.position);
+        let closer = cam.position.distance(rlva_head(&cam));
         assert!(closer < 4.6, "one click in moves closer at once: {closer}");
         let keys = CameraKeys {
             zoom_out: 1.0,
@@ -5043,62 +5174,79 @@ mod tests {
         }
         cam.scroll(-1.0, false, false, &mut w.agent, &mut s);
         settle(&mut cam, &mut w, &s);
-        let closer = cam.position.distance(w.agent.position);
+        let closer = cam.position.distance(rlva_head(&cam));
         assert!(closer < 4.6, "the keys store nothing past the limit either: {closer}");
         rlva_command(&mut w, "@camdistmax:5=y");
         settle(&mut cam, &mut w, &s);
-        let after = cam.position.distance(w.agent.position);
+        let after = cam.position.distance(rlva_head(&cam));
         assert!((after - closer).abs() < 0.01, "the camera stays where the user left it: {after}");
     }
 
     #[test]
-    fn rlva_avatar_and_focus_limits_together_leave_one_way_out() {
-        // The avatar limit pulls the camera in, the focus limit pushes it
-        // back out: the zoom away from the focus point must stay allowed.
+    fn rlva_one_distance_limit_holds_the_camera_at_a_time() {
+        // calcCameraPositionTargetGlobal's table: with both an avatar and
+        // an origin limit the origin's alone holds the camera, unless the
+        // avatar's two limits are equal, which then holds it alone.
         let s = CameraSettings::default();
         let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
         let mut cam = Camera::default();
         settle(&mut cam, &mut w, &s);
+        let origin = rlva_view_origin(&cam, &w, &s);
         let focus = cam.position + cam.forward() * 10.0;
         cam.alt_focus(focus, None, (cam.position, cam.forward()), &mut w.agent, &s);
         let mut s = s;
         settle(&mut cam, &mut w, &s);
-        let to_avatar = cam.position.distance(w.agent.position);
-        assert!(to_avatar > 2.0, "the avatar is ahead of the camera: {to_avatar}");
-        rlva_command(
-            &mut w,
-            &format!("@setcam_avdistmax:{:.2}=n,setcam_origindistmin:10=n", to_avatar - 1.0),
-        );
+        let to_head = cam.position.distance(rlva_head(&cam));
+        assert!(to_head > 2.0, "the avatar is ahead of the camera: {to_head}");
+        rlva_command(&mut w, "@setcam_avdistmax:1=n,setcam_origindistmax:3=n");
+        for _ in 0..12 {
+            cam.scroll(1.0, false, false, &mut w.agent, &mut s);
+            settle(&mut cam, &mut w, &s);
+        }
+        assert!((cam.position.distance(origin) - 3.0).abs() < 0.01, "held by the origin limit");
+        assert!(cam.position.distance(rlva_head(&cam)) > to_head, "the avatar limit is left out");
+        assert!(cam.rlva_at_max && !cam.rlva_at_min);
+        // the avatar's limits made equal: they alone hold the camera
+        rlva_command(&mut w, "@setcam_avdistmin:1=n");
         settle(&mut cam, &mut w, &s);
-        assert!(cam.rlva_at_min && !cam.rlva_at_max, "held by the focus limit alone");
-        let before = cam.focus_offset_target.length();
-        cam.scroll(1.0, false, false, &mut w.agent, &mut s);
-        assert!(cam.focus_offset_target.length() > before, "zooming out is still allowed");
+        assert!(
+            (cam.position.distance(rlva_head(&cam)) - 1.0).abs() < 0.01,
+            "slammed to the avatar's distance"
+        );
     }
 
     #[test]
-    fn rlva_focus_distance_min_does_not_store_zoom_past_it() {
-        // #3354: the wheel past @setcam_origindistmin was kept in the zoom,
-        // the hidden camera close to the focus point while the clamp held
-        // the visible one 1 m out.
-        let (mut cam, mut w, mut s, focus) = rlva_alt_camera(4.0, "@setcam_origindistmin:1=n");
-        let mut held = None;
-        for _ in 0..30 {
+    fn rlva_distance_max_wins_over_a_larger_min() {
+        // LLAgentCamera::clampCameraPosition tests the maximum first
+        let (cam, ..) = rlva_avatar_camera("@setcam_avdistmin:6=n,setcam_avdistmax:2=n");
+        let distance = cam.position.distance(rlva_head(&cam));
+        assert!((distance - 2.0).abs() < 0.01, "{distance}");
+    }
+
+    #[test]
+    fn rlva_origin_distance_min_keeps_the_camera_off_its_origin() {
+        // #3354: the camera is held 1 m from its origin, and a zoom back
+        // toward the origin stores nothing behind the limit.
+        let (mut cam, mut w, mut s, _, origin) = rlva_alt_camera(4.0, "@setcam_origindistmin:1=n");
+        assert!((cam.position.distance(origin) - 1.0).abs() < 0.01, "pushed off the origin");
+        for _ in 0..6 {
             cam.scroll(-1.0, false, false, &mut w.agent, &mut s);
             settle(&mut cam, &mut w, &s);
-            let distance = cam.position.distance(focus);
-            assert!(distance >= 0.999, "outside the limit: {distance}");
-            if distance < 1.01 {
-                let position = *held.get_or_insert(cam.position);
-                assert!(cam.position.distance(position) < 0.01, "the camera holds still at the limit");
-            }
         }
-        let at_limit = cam.position.distance(focus);
-        assert!(held.is_some(), "the camera reached the limit: {at_limit}");
-        cam.scroll(1.0, false, false, &mut w.agent, &mut s);
+        let ahead = cam.position.distance(origin);
+        assert!(ahead > 1.5, "zooming in moves away from the origin: {ahead}");
+        for _ in 0..30 {
+            cam.scroll(1.0, false, false, &mut w.agent, &mut s);
+            settle(&mut cam, &mut w, &s);
+            let distance = cam.position.distance(origin);
+            assert!(distance >= 0.999, "outside the limit: {distance}");
+        }
+        let at_limit = cam.position.distance(origin);
+        assert!((at_limit - 1.0).abs() < 0.01, "back at the limit: {at_limit}");
+        cam.scroll(-1.0, false, false, &mut w.agent, &mut s);
         settle(&mut cam, &mut w, &s);
-        let farther = cam.position.distance(focus);
-        assert!(farther > at_limit + 0.02, "one click out moves away at once: {farther}");
+        let farther = cam.position.distance(origin);
+        assert!(farther > at_limit + 0.02, "one click in moves away at once: {farther}");
     }
 
     #[test]

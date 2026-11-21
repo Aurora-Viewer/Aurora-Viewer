@@ -54,7 +54,7 @@ impl Viewfinder {
                         pano: panel.pano,
                     };
                     let mut state = std::mem::take(&mut panel.looks);
-                    state.show(ui, p, s, opts, &mut actions);
+                    state.show(ui, p, crate::ui::looks_editor::Stack::photo(s), opts, &mut actions);
                     panel.looks = state;
                     out.extend(actions.into_iter().map(Out::Panel));
                 });

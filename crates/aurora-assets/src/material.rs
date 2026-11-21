@@ -173,6 +173,53 @@ impl PbrOverride {
         }
         o
     }
+
+    /// The inverse of [`PbrOverride::from_llsd`], for the viewer's own copy
+    /// of an object (the worn-object cache): reads back as the same value.
+    pub fn to_llsd(&self) -> Llsd {
+        let reals = |v: &[f32]| Llsd::Array(v.iter().map(|&f| Llsd::Real(f64::from(f))).collect());
+        let mut m = Map::new();
+        m.insert("tex".into(), Llsd::Array(self.textures.iter().map(|&id| Llsd::Uuid(id)).collect()));
+        if let Some(bc) = self.base_color_factor {
+            m.insert("bc".into(), reals(&bc));
+        }
+        if let Some(ec) = self.emissive_factor {
+            m.insert("ec".into(), reals(&ec));
+        }
+        if let Some(mf) = self.metallic_factor {
+            m.insert("mf".into(), Llsd::Real(f64::from(mf)));
+        }
+        if let Some(rf) = self.roughness_factor {
+            m.insert("rf".into(), Llsd::Real(f64::from(rf)));
+        }
+        if let Some(am) = self.alpha_mode {
+            let am = match am {
+                AlphaMode::Opaque => 0,
+                AlphaMode::Blend => 1,
+                AlphaMode::Mask => 2,
+            };
+            m.insert("am".into(), Llsd::Integer(am));
+        }
+        if let Some(ac) = self.alpha_cutoff {
+            m.insert("ac".into(), Llsd::Real(f64::from(ac)));
+        }
+        if let Some(ds) = self.double_sided {
+            m.insert("ds".into(), Llsd::Boolean(ds));
+        }
+        let transforms = self
+            .transforms
+            .iter()
+            .map(|t| {
+                let mut tm = Map::new();
+                tm.insert("o".into(), reals(&t.offset));
+                tm.insert("s".into(), reals(&t.scale));
+                tm.insert("r".into(), Llsd::Real(f64::from(t.rotation)));
+                Llsd::Map(tm)
+            })
+            .collect();
+        m.insert("ti".into(), Llsd::Array(transforms));
+        Llsd::Map(m)
+    }
 }
 
 impl PbrOverride {
@@ -751,6 +798,18 @@ mod tests {
         let bad = llsd_map! { "version" => "1.1", "type" => "GLTF 2.0", "data" => "{not json" };
         assert!(parse_material_asset(&aurora_llsd::to_binary(&bad)).is_err());
         assert!(parse_material_asset(b"{'version':'1.1'").is_err());
+    }
+
+    #[test]
+    fn an_override_written_back_reads_the_same() {
+        let od = aurora_llsd::from_notation(
+            b"{'bc':[r1,r0.5,r0.5,r1],'ec':[r0.1,r0.2,r0.3],'tex':[!,u00000000-0000-0000-0000-000000000005,!,uffffffff-ffff-ffff-ffff-ffffffffffff],\
+              'ti':[{'s':[r8,r4]},{'s':[r8,r4],'o':[r0.25,r0],'r':r1.5}],'mf':r0,'rf':r0.25,'am':i1,'ac':r0.5,'ds':0}",
+        )
+        .unwrap();
+        let o = PbrOverride::from_llsd(&od);
+        assert_eq!(PbrOverride::from_llsd(&o.to_llsd()), o);
+        assert_eq!(PbrOverride::from_llsd(&PbrOverride::default().to_llsd()), PbrOverride::default());
     }
 
     #[test]
