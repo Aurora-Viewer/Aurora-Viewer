@@ -86,6 +86,12 @@ pub struct MuteList {
     /// Bumped on every change (cheap "did it change" checks).
     pub version: u64,
     agent: Uuid,
+    /// The list came from the server: its file, its "use your cache" or
+    /// its "empty" (MLS_SERVER, MLS_SERVER_CACHE, MLS_SERVER_EMPTY). Not
+    /// the cached copy of a timeout (MLS_FALLBACK_CACHE), nor a list that
+    /// is only loaded because the user changed it first (updateAdd keeps
+    /// MLS_NONE).
+    from_server: bool,
 }
 
 impl Default for MuteList {
@@ -96,6 +102,7 @@ impl Default for MuteList {
             state: LoadState::Initial,
             version: 0,
             agent: Uuid::nil(),
+            from_server: false,
         }
     }
 }
@@ -147,6 +154,13 @@ impl MuteList {
         matches!(self.state, LoadState::Loaded | LoadState::Degraded)
     }
 
+    /// The list is the server's, not a fallback: what lets the grid's
+    /// direct-IM history be fetched (LLMuteList::isLoadedFromServer,
+    /// indra/newview/llmutelist.h, LL viewer 26.5).
+    pub fn is_loaded_from_server(&self) -> bool {
+        self.is_loaded() && self.from_server
+    }
+
     /// `<cache>/<agent>.cached_mute` (LLMuteList::getCacheFilename).
     pub fn cache_file(cache_dir: &Path, agent: &Uuid) -> PathBuf {
         cache_dir.join(format!("{agent}.cached_mute"))
@@ -175,6 +189,7 @@ impl MuteList {
         let text = cache_dir.and_then(|d| std::fs::read_to_string(Self::cache_file(d, &self.agent)).ok());
         self.load_text(text.as_deref().unwrap_or(""));
         self.state = LoadState::Degraded;
+        self.from_server = false;
         true
     }
 
@@ -201,6 +216,7 @@ impl MuteList {
             self.mutes.entry(m.id).or_insert(m);
         }
         self.state = LoadState::Loaded;
+        self.from_server = true;
         log::info!("mute list: {} entries, {} by name", self.mutes.len(), self.legacy.len());
         self.save(cache_dir);
     }
@@ -220,6 +236,7 @@ impl MuteList {
         }
         self.version += 1;
         self.state = LoadState::Loaded;
+        self.from_server = true;
         log::info!(
             "mute list: empty on the server, {} entries kept",
             self.mutes.len() + self.legacy.len()
@@ -451,6 +468,51 @@ mod tests {
         let mut m = MuteList::default();
         m.reset(Uuid::from_u128(99));
         m
+    }
+
+    /// LLMuteList::isLoadedFromServer: the server's file, its "use your
+    /// cache" and its "empty" count; the timeout's cached copy and a list
+    /// only the user's own change made loaded do not.
+    #[test]
+    fn only_the_servers_answer_makes_the_list_server_loaded() {
+        for src in [
+            aurora_net::MuteListSource::File(String::new()),
+            aurora_net::MuteListSource::UseCache,
+            aurora_net::MuteListSource::ServerEmpty,
+        ] {
+            let mut m = list();
+            assert!(!m.is_loaded_from_server());
+            m.request(None);
+            assert!(!m.is_loaded_from_server());
+            m.on_server(src, None);
+            assert!(m.is_loaded_from_server());
+        }
+        // the timeout's fallback: loaded, not from the server
+        let mut m = list();
+        m.request(None);
+        m.state = LoadState::Requested(Instant::now() - std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS + 1));
+        assert!(m.check_timeout(None));
+        assert!(m.is_loaded() && !m.is_loaded_from_server());
+        // the server answering late still makes it the server's
+        m.on_server(aurora_net::MuteListSource::UseCache, None);
+        assert!(m.is_loaded_from_server());
+        // a block added before any list came (updateAdd): loaded only
+        let mut m = list();
+        let added = m.add(
+            Mute {
+                id: Uuid::from_u128(5),
+                name: "Jane".into(),
+                kind: MuteType::Agent,
+                flags: 0,
+            },
+            0,
+        );
+        assert!(added.is_ok());
+        assert!(m.is_loaded() && !m.is_loaded_from_server());
+        // a new login forgets it
+        m.on_server(aurora_net::MuteListSource::ServerEmpty, None);
+        m.reset(Uuid::from_u128(99));
+        assert!(!m.is_loaded_from_server());
     }
 
     #[test]

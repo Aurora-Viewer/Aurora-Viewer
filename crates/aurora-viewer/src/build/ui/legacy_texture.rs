@@ -117,7 +117,7 @@ fn bp_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         .map(|x| {
             let mut material = tool.face_legacy(env, world, x.idx, x.face, &x.te);
             if let Some(appearance) = world.objects.get(x.idx).and_then(|object| object.local_appearance(x.face as usize)) {
-                appearance.apply_legacy(material.get_or_insert_with(|| default_legacy(env, &x.te)));
+                appearance.apply_legacy(material.get_or_insert_with(|| default_legacy_for_face(env, world, x)));
             }
             material
         })
@@ -403,6 +403,7 @@ pub(super) fn pbr_surface(
     mat: &aurora_assets::material::PbrMaterial,
     asset: Option<Uuid>,
     mixed: bool,
+    maps_mixed: [bool; 4],
     model: Option<std::sync::Arc<aurora_render::preview::Model>>,
     editable: bool,
 ) {
@@ -433,7 +434,7 @@ pub(super) fn pbr_surface(
             world,
             env,
             id.filter(|_| editable),
-            false,
+            editable && maps_mixed[channel],
             caption,
             PickTarget::PbrMap(channel),
             editable,

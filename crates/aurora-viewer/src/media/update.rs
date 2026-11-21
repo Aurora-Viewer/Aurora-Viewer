@@ -538,8 +538,8 @@ impl MediaManager {
         }
     }
 
-    /// Interest (pixels on screen, LLViewerMediaImpl::calculateInterest) and
-    /// distance to the camera.
+    /// Interest (pixels on screen, LLViewerMediaImpl::calculateInterest),
+    /// distance to the camera and to the ear.
     fn compute_interest(&mut self, world: &World, scene: &Scene, f: &MediaFrame) {
         self.parcel_bounds.clear();
         for &idx in self.parcel_objects.as_slice() {
@@ -556,6 +556,7 @@ impl MediaManager {
                 MediaKey::Parcel => {
                     m.interest = parcel_interest;
                     m.distance = 0.0;
+                    m.ear_distance = 0.0;
                 }
                 MediaKey::Prim { object, .. } => {
                     let Some(om) = self.objects.get(&object) else {
@@ -565,11 +566,13 @@ impl MediaManager {
                     if om.hud {
                         m.interest = 512.0 * 512.0;
                         m.distance = 0.0;
+                        m.ear_distance = 0.0;
                         continue;
                     }
                     match scene.gpu.get(om.idx).filter(|g| g.radius > 0.0) {
                         Some(g) => {
                             m.distance = g.center.distance(f.camera);
+                            m.ear_distance = g.center.distance(f.ear);
                             m.interest = if f.view.sphere_visible(g.center, g.radius) {
                                 let px = f.view.pixel_size(g.center, g.radius);
                                 px * px
@@ -636,6 +639,11 @@ impl MediaManager {
                 // lost window focus: at most low priority
                 if !f.window_focused && p > Priority::Low {
                     p = Priority::Low;
+                }
+                // gaming mode: loaded but not drawn, the sound going on
+                // (app/gaming_mode.rs; not in the Legacy Viewer)
+                if f.gaming_mode && p > Priority::Hidden {
+                    p = Priority::Hidden;
                 }
             }
             m.priority = p;
@@ -1100,11 +1108,12 @@ impl MediaImpl {
             return 0.0;
         }
         let mut volume = channel_volume * self.volume;
+        // measured from the ear, camera or avatar (mProximityCamera)
         if matches!(self.key, MediaKey::Prim { .. }) {
-            if self.distance > ROLLOFF_MAX {
+            if self.ear_distance > ROLLOFF_MAX {
                 volume = 0.0;
-            } else if self.distance > ROLLOFF_MIN {
-                let attenuation = 1.0 + ROLLOFF_RATE * (self.distance - ROLLOFF_MIN);
+            } else if self.ear_distance > ROLLOFF_MIN {
+                let attenuation = 1.0 + ROLLOFF_RATE * (self.ear_distance - ROLLOFF_MIN);
                 volume *= (1.0 / (attenuation * attenuation)).min(1.0);
             }
         }
@@ -1189,7 +1198,7 @@ mod tests {
         ] {
             let mut media = MediaImpl::new(key, String::new(), "text/html".into());
             media.volume = 0.6;
-            media.distance = 60.0;
+            media.ear_distance = 60.0;
             let before = media.output_volume(0.5);
             assert!(before > 0.0);
             assert_eq!(media.output_volume(0.0), 0.0);
@@ -1198,7 +1207,7 @@ mod tests {
                 assert_eq!(before, 0.3);
             } else {
                 assert!(before < 0.3);
-                media.distance = ROLLOFF_MAX + 1.0;
+                media.ear_distance = ROLLOFF_MAX + 1.0;
                 assert_eq!(media.output_volume(0.5), 0.0);
             }
             media.muted = true;
@@ -1232,11 +1241,13 @@ mod tests {
             &MediaFrame {
                 view: &view,
                 camera: Vec3::ZERO,
+                ear: Vec3::ZERO,
                 settings: &settings,
                 autoplay: true,
                 channel_volume: 1.0,
                 agent_speed: 0.0,
                 window_focused: true,
+                gaming_mode: false,
                 net: None,
                 cache_dir: std::path::Path::new(""),
                 language: "en",

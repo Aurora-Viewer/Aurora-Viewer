@@ -324,6 +324,26 @@ fn outfit_link(it: &aurora_net::inventory::InvItem) -> OutfitLink {
     }
 }
 
+/// Links per AIS CreateInventory request. The Legacy Viewer links each
+/// dropped favorite by its own request (onItemDAD → link_inventory_object);
+/// one request for a whole import of a thousand links outlasted the server's
+/// reply time, while a hundred keep each reply to seconds, in a few requests.
+pub const LINKS_PER_REQUEST: usize = 100;
+
+/// The CreateInventory requests that link `links` into `parent`, in order,
+/// `LINKS_PER_REQUEST` at most each.
+fn link_operations(parent: Uuid, links: Vec<OutfitLink>) -> Vec<Operation> {
+    let mut links = links.into_iter().peekable();
+    let mut out = Vec::new();
+    while links.peek().is_some() {
+        out.push(Operation::Links {
+            parent,
+            links: links.by_ref().take(LINKS_PER_REQUEST).collect(),
+        });
+    }
+    out
+}
+
 /// link_inventory_object for each original, into `to`.
 pub fn link(inv: &Inventory, targets: &[Uuid], to: Uuid) -> Option<Mutation> {
     let links: Vec<OutfitLink> = targets.iter().filter_map(|id| inv.items.get(id)).map(outfit_link).collect();
@@ -331,7 +351,7 @@ pub fn link(inv: &Inventory, targets: &[Uuid], to: Uuid) -> Option<Mutation> {
         return None;
     }
     Some(Mutation {
-        operations: vec![Operation::Links { parent: to, links }],
+        operations: link_operations(to, links),
         refresh: vec![to],
         ..Default::default()
     })
@@ -400,7 +420,7 @@ fn import_folder(inv: &Inventory, from: Uuid, to: Uuid, existing: bool, plan: &m
     if !links.is_empty() {
         plan.links += links.len();
         plan.change.refresh.push(to);
-        plan.change.operations.push(Operation::Links { parent: to, links });
+        plan.change.operations.extend(link_operations(to, links));
     }
     let mut subfolders: Vec<_> = f
         .children

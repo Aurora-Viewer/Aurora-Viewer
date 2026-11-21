@@ -12,6 +12,7 @@ fn fixture() -> (World, RemoteObject) {
         owner: Uuid::from_u128(3),
         name: "A talking object".into(),
         group_owned: false,
+        owner_hidden: false,
         slurl: "Demo/14/40/22".into(),
     };
     world.social.names.insert(object.owner, "Demo Owner".into());

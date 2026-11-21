@@ -4,7 +4,6 @@
 use std::{fmt, sync::OnceLock, time::Duration};
 use uuid::Uuid;
 
-pub mod portal;
 pub mod query;
 
 #[derive(Clone)]
@@ -341,13 +340,13 @@ fn http() -> Result<&'static reqwest::Client, String> {
             // or a public one valid for this host or another Linden name.
             // A public certificate of any other domain is refused.
             let tls = crate::simulator_tls().map_err(|_| ())?;
-            reqwest::Client::builder()
-                .user_agent(aurora_version::user_agent())
-                .redirect(reqwest::redirect::Policy::none())
-                .tls_backend_preconfigured(tls)
-                .timeout(Duration::from_secs(8))
-                .build()
-                .map_err(|_| ())
+            aurora_proxy::http_client(|b| {
+                b.user_agent(aurora_version::user_agent())
+                    .redirect(reqwest::redirect::Policy::none())
+                    .tls_backend_preconfigured(tls)
+                    .timeout(Duration::from_secs(8))
+            })
+            .map_err(|_| ())
         })
         .as_ref()
         .map_err(|_| aurora_i18n::tr!("bridge-request-failed").to_owned())?;

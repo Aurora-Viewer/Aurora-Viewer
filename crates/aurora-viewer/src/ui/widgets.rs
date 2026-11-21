@@ -18,6 +18,8 @@ mod field_centering_tests;
 #[cfg(test)]
 mod movement_tests;
 pub(crate) use cascade::Group as CascadeGroup;
+#[cfg(test)]
+mod auto_height_tests;
 pub mod color;
 mod copy_on_click;
 pub mod demo;
@@ -33,6 +35,8 @@ mod resize;
 mod restricted_text;
 #[cfg(test)]
 mod restricted_text_tests;
+#[cfg(test)]
+mod solid_background_tests;
 pub use crate::text_validation::Policy as TextPolicy;
 pub use restricted_text::field as restricted_text_field;
 pub use restricted_text::number as restricted_number;
@@ -61,21 +65,65 @@ pub use tracks::{
 };
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
+pub(crate) use workspace::{
+    INVENTORY_LABEL_PADDING, finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
+    organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
+    organization_typography, overlay, overlay_frame, paint_world_label,
+};
 pub use workspace::{
     Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
     navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
-};
-pub(crate) use workspace::{
-    finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
-    organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
-    organization_typography, overlay, overlay_frame, paint_world_label,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize
 /// grips consume the press outside their window too, as LLResizeHandle and
 /// LLResizeBar::handleMouseDown do, and egui retains the subsequent drag.
 pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
-    ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos)
+    ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos) || solid_background_at(ctx, pos)
+}
+
+/// The background areas that are panels of their own, by layer id.
+/// The body of a window of automatic height (`Floater::auto_height`) that
+/// scrolls once it is taller than `room`: then exactly `room` tall. Without
+/// the floor, a body taller than the room took the height egui's window
+/// had last frame, so a window squeezed once (the viewer's window made tiny,
+/// a tester's report of 2026-11-17) kept its small height for good.
+pub(crate) fn auto_height_body(room: f32) -> egui::ScrollArea {
+    egui::ScrollArea::vertical()
+        .max_height(room)
+        .min_scrolled_height(room)
+        .auto_shrink([false, true])
+}
+
+#[derive(Clone, Default)]
+struct SolidAreas(std::collections::HashSet<egui::Id>);
+
+fn solid_areas_id() -> egui::Id {
+    egui::Id::unique("aurora_solid_background_areas")
+}
+
+/// The background area `id` (`Order::Background`, kept under the windows) is
+/// a panel of its own, the Director's timeline or a keyframe of it in the
+/// world: a press on it is its own, never the world's. egui leaves a press
+/// on such an area to the world (`is_pointer_over_egui` only counts a
+/// background area outside the root's free room), and the world reads the
+/// press before egui's pass has seen it (`egui_wants_pointer_input` comes
+/// too late): without this, a click on the strip between its buttons walked
+/// the avatar there or stood it up.
+pub(crate) fn solid_background(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<SolidAreas>(solid_areas_id()).0.insert(id);
+    });
+}
+
+/// The topmost area at `pos` (shown last frame, interactable, a window above
+/// it first) is a solid background area (`solid_background`).
+fn solid_background_at(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    let Some(layer) = ctx.memory(|m| m.layer_id_at(pos)) else {
+        return false;
+    };
+    layer.order == egui::Order::Background
+        && ctx.data_mut(|d| d.get_temp_mut_or_default::<SolidAreas>(solid_areas_id()).0.contains(&layer.id))
 }
 
 /// Any floater/bare window is moving or resizing, independently of drawing
@@ -339,12 +387,14 @@ impl WheelSteps {
 /// winit reports that roll as a positive delta.y. Each whole notch is scaled
 /// like onUpBtn. While the pointer stays on an enabled field the smoothed
 /// scroll is eaten, including the frames after the notch, so the build panel
-/// does not creep. A disabled field leaves the wheel to the panel. `apply`
+/// does not creep. A disabled field leaves the wheel to the panel, and so
+/// does a field that does not `take` it (the build window's fields that are
+/// not being typed in, unless its "wheel on hover" option is on). `apply`
 /// is false while a typed draft or a drag owns the value: the wheel is still
 /// eaten, and it does not change the number.
-pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, apply: bool) -> WheelSteps {
+pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, take: bool, apply: bool) -> WheelSteps {
     let key = id.with("spinner_wheel_remainder");
-    let hovered = ui.is_enabled() && ui.rect_contains_pointer(rect);
+    let hovered = take && ui.is_enabled() && ui.rect_contains_pointer(rect);
     if !hovered {
         ui.data_mut(|d| d.remove::<WheelRemainder>(key));
         return WheelSteps::none();
@@ -1913,6 +1963,18 @@ pub const PICTURE_TINT: Color32 = Color32::WHITE;
 /// Tint of a picture whose control is disabled.
 pub const PICTURE_TINT_DISABLED: Color32 = Color32::from_gray(120);
 
+/// A state written over a picture ("Multiple"), on a backing of its own:
+/// the picture under it may be as light as the text.
+pub(crate) fn picture_label(ui: &egui::Ui, p: &Palette, rect: egui::Rect, text: &str, size: f32) {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(size), p.ink);
+    let at = egui::Rect::from_center_size(rect.center(), galley.size());
+    let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
+    painter.rect_filled(at.expand2(egui::vec2(5.0, 2.0)), inner_radius(ui.visuals()), p.bar);
+    painter.galley(at.min, galley, p.ink);
+}
+
 /// Corners of a small mark inside a control or a line (the knob of a switch,
 /// a key cap, a status square, a letter badge): one pixel tighter than the
 /// windows', so that a mark of a few pixels stays a square.
@@ -2472,6 +2534,17 @@ pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enable
 /// when clicked.
 pub fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
     small_icon_button(ui, p, icon, tip, true, on)
+}
+
+/// The A–Z switch of a list drawn from the inventory: lit while `by_name`,
+/// off for the list's own order, `tip` saying which and what a click does;
+/// flips `by_name` and returns true when clicked.
+pub fn sort_by_name_toggle(ui: &mut egui::Ui, p: &Palette, by_name: &mut bool, tip: &str) -> bool {
+    let clicked = icon_toggle(ui, p, "sort-ascending-letters", tip, *by_name);
+    if clicked {
+        *by_name = !*by_name;
+    }
+    clicked
 }
 
 /// Flat icon toggle with a larger glyph and hit target, in logical points.

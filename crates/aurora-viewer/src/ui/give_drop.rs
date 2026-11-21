@@ -18,7 +18,7 @@ const ICON: f32 = 28.0;
 /// while inventory is dragged and the surface gives (`gives`), back to 0
 /// once the drag is over.
 pub(crate) fn fade(ctx: &egui::Context, id: egui::Id, gives: bool) -> f32 {
-    let carried = super::inventory::drag::carried_count(ctx).filter(|_| gives);
+    let carried = super::inventory::drag::give_count(ctx).filter(|_| gives);
     if let Some(n) = carried {
         // kept for the fade back, once the drag is over
         ctx.data_mut(|d| d.insert_temp(id.with("count"), n));

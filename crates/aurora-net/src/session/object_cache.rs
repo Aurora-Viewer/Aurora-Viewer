@@ -330,7 +330,7 @@ mod tests {
         let (object_cache, mut files) = ObjectCaches::new(Some(dir.clone()));
         let mut session = Session {
             sh: &sh,
-            sock,
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock)),
             login,
             sims: addrs.map(|addr| (addr, Sim::new(addr, 10))).into(),
             main: Some(addrs[0]),

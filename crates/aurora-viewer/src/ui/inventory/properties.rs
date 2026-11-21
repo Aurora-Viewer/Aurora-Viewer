@@ -47,6 +47,7 @@ pub(super) fn show(
             can_describe: can_edit && rules::held(inv, it) & rules::MODIFY != 0,
             can_thumbnail: can_edit,
             names: &facts.names,
+            hidden: &facts.hidden_names,
             images,
             wanted_images: &mut st.wanted_images,
         },
@@ -58,14 +59,10 @@ pub(super) fn show(
         actions.push(InvAction::Profile(resident));
     }
     if let Some(edit) = response.edit {
-        // (a coded settings item's field shows its name without the code,
-        // which the rename keeps)
-        let name = if edit.name == super::shown_name(it) {
+        let name = if edit.name == it.name {
             it.name.clone()
         } else {
-            rules::clean_name(&edit.name)
-                .map(|name| crate::weather::region::keep_code(&it.name, &name))
-                .unwrap_or_else(|_| it.name.clone())
+            rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone())
         };
         let body = llsd_map! { "name" => name, "desc" => edit.desc.clone(),
         "permissions" => llsd_map! { "next_owner_mask" => edit.next as i32, "group_mask" => edit.group as i32, "everyone_mask" => edit.everyone as i32 },
@@ -90,6 +87,9 @@ enum Role {
 enum ResidentLabel<'a> {
     /// A resident's name opening their profile.
     Link(&'a str),
+    /// The stand-in of a resident RLVa's `@shownames` hides: no profile
+    /// (LLSidepanelItemInfo::onClickCreator / onClickOwner return).
+    Hidden(&'a str),
     /// No resident to open, with the reason on hover.
     Plain(&'static str, Option<&'static str>),
 }
@@ -99,7 +99,7 @@ enum ResidentLabel<'a> {
 /// (LLPermissions::accumulate keeps a creator only when all parts share it),
 /// which is common on no-modify objects: the Legacy Viewer shows
 /// "(unknown / multiple)" without a link then (LLSidepanelItemInfo::refreshFromItem).
-fn resident_label<'a>(role: Role, id: Uuid, names: &'a HashMap<Uuid, String>) -> ResidentLabel<'a> {
+fn resident_label<'a>(role: Role, id: Uuid, names: &'a HashMap<Uuid, String>, stand_in: Option<&'a str>) -> ResidentLabel<'a> {
     if id.is_nil() {
         return match role {
             Role::Creator => ResidentLabel::Plain(
@@ -109,7 +109,10 @@ fn resident_label<'a>(role: Role, id: Uuid, names: &'a HashMap<Uuid, String>) ->
             Role::Owner => ResidentLabel::Plain(aurora_i18n::tr!("common-unknown"), None),
         };
     }
-    ResidentLabel::Link(names.get(&id).map(String::as_str).unwrap_or(aurora_i18n::tr!("common-unknown")))
+    match stand_in {
+        Some(name) => ResidentLabel::Hidden(name),
+        None => ResidentLabel::Link(names.get(&id).map(String::as_str).unwrap_or(aurora_i18n::tr!("common-unknown"))),
+    }
 }
 
 /// One properties layout for agent inventory and object contents. The caller
@@ -123,6 +126,9 @@ pub(crate) struct PropertyPanel<'a> {
     pub can_describe: bool,
     pub can_thumbnail: bool,
     pub names: &'a HashMap<Uuid, String>,
+    /// The stand-ins of the owner and the creator RLVa's `@shownames` hides
+    /// (`hide_residents`).
+    pub hidden: &'a HiddenNames,
     pub images: &'a HashMap<Uuid, egui::TextureHandle>,
     pub wanted_images: &'a mut HashSet<Uuid>,
 }
@@ -146,6 +152,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         can_describe,
         can_thumbnail,
         names,
+        hidden,
         images,
         wanted_images,
     } = data;
@@ -197,7 +204,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             edit.commit_name |= name.lost_focus();
             if can_describe && edit.commit_name && !ui.input(|input| input.pointer.any_down()) {
                 edit.commit_name = false;
-                if edit.name != super::shown_name(it)
+                if edit.name != it.name
                     && let Ok(name) = rules::clean_name(&edit.name)
                 {
                     edit.name = name.clone();
@@ -209,12 +216,14 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
         ui.horizontal_top(|ui| {
             thumbnail::picture(ui, p, it.thumbnail, 128.0, images, wanted_images);
             ui.vertical(|ui| {
-                for (label, resident, role) in [
-                    (aurora_i18n::tr!("common-owner-2"), it.owner, Role::Owner),
-                    (aurora_i18n::tr!("common-creator-2"), it.creator, Role::Creator),
+                let [owner, creator] = resident_scopes(it);
+                for (label, (resident, scope), role) in [
+                    (aurora_i18n::tr!("common-owner-2"), owner, Role::Owner),
+                    (aurora_i18n::tr!("common-creator-2"), creator, Role::Creator),
                 ] {
                     ui.label(RichText::new(label).size(12.0).color(p.muted));
-                    match resident_label(role, resident, names) {
+                    let stand_in = hidden.get(&(resident, scope)).map(String::as_str);
+                    match resident_label(role, resident, names, stand_in) {
                         ResidentLabel::Link(name) => {
                             if ui
                                 .link(RichText::new(name).size(12.0).color(p.violet_light))
@@ -223,6 +232,9 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
                             {
                                 response.profile = Some(resident);
                             }
+                        }
+                        ResidentLabel::Hidden(name) => {
+                            ui.label(RichText::new(name).size(12.0).color(p.muted));
                         }
                         ResidentLabel::Plain(text, hint) => {
                             let label = ui.label(RichText::new(text).size(12.0).color(p.muted));
@@ -760,14 +772,14 @@ mod tests {
     fn an_object_without_creator_shows_unknown_multiple_without_a_link() {
         let names = HashMap::new();
         assert_eq!(
-            resident_label(Role::Creator, Uuid::nil(), &names),
+            resident_label(Role::Creator, Uuid::nil(), &names, None),
             ResidentLabel::Plain(
                 aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple"),
                 Some(aurora_i18n::tr!("ui-inventory-properties-creator-unknown-multiple-hint"))
             )
         );
         assert_eq!(
-            resident_label(Role::Owner, Uuid::nil(), &names),
+            resident_label(Role::Owner, Uuid::nil(), &names, None),
             ResidentLabel::Plain(aurora_i18n::tr!("common-unknown"), None)
         );
     }
@@ -776,13 +788,30 @@ mod tests {
     fn a_known_creator_is_a_link_whatever_the_permissions() {
         let creator = Uuid::from_u128(7);
         let names = HashMap::from([(creator, "Nova Exemple".to_owned())]);
-        assert_eq!(resident_label(Role::Creator, creator, &names), ResidentLabel::Link("Nova Exemple"));
+        assert_eq!(
+            resident_label(Role::Creator, creator, &names, None),
+            ResidentLabel::Link("Nova Exemple")
+        );
         // a name still loading keeps the link
         let other = Uuid::from_u128(8);
         assert_eq!(
-            resident_label(Role::Creator, other, &names),
+            resident_label(Role::Creator, other, &names, None),
             ResidentLabel::Link(aurora_i18n::tr!("common-unknown"))
         );
+    }
+
+    /// RLVa `@shownames`: a hidden owner or creator shows the stand-in and
+    /// opens no profile (LLSidepanelItemInfo::onClickCreator / onClickOwner).
+    #[test]
+    fn a_hidden_resident_is_a_plain_stand_in_without_a_link() {
+        let resident = Uuid::from_u128(7);
+        let names = HashMap::from([(resident, "Nova Exemple".to_owned())]);
+        for role in [Role::Owner, Role::Creator] {
+            assert_eq!(
+                resident_label(role, resident, &names, Some("A resident")),
+                ResidentLabel::Hidden("A resident")
+            );
+        }
     }
 
     #[test]

@@ -641,6 +641,7 @@ mod tests {
                         origin: crate::world::Origin::Live,
                         blocked: false,
                         beyond_range: false,
+                        speaker: Default::default(),
                     },
                 );
             }
@@ -768,6 +769,7 @@ mod tests {
                         origin: crate::world::Origin::Live,
                         blocked: false,
                         beyond_range: false,
+                        speaker: Default::default(),
                     },
                 );
                 kit.st.popped.pop_out(Some(id), false, false, false);
@@ -1055,6 +1057,7 @@ mod tests {
                             origin: crate::world::Origin::Live,
                             blocked: false,
                             beyond_range: false,
+                            speaker: Default::default(),
                         },
                     );
                     kit.world.social.focus_im = Some(JANE);
@@ -1168,6 +1171,7 @@ mod tests {
                     origin: crate::world::Origin::Live,
                     blocked: false,
                     beyond_range: false,
+                    speaker: Default::default(),
                 },
             );
             kit.main_open = true;
@@ -1283,6 +1287,13 @@ mod tests {
         assert!(popped.raise(None, true));
         assert!(popped.shown(None) && popped.windows[0].view.conv_focus_request);
         assert_eq!(in_sight(&ctx, &popped).collect::<Vec<_>>(), [None]);
+        ctx.data_mut(|data| {
+            data.insert_persisted(egui::Id::unique((floater_id(None), "minimized")), true);
+        });
+        assert!(
+            in_sight(&ctx, &popped).all(|conversation| conversation.is_some()),
+            "a collapsed nearby-chat floater is not in sight"
+        );
         popped.set_hidden(None, true);
         popped.pop_out(None, false, false, false);
         assert!(popped.shown(None));

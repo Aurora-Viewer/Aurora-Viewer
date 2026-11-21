@@ -53,6 +53,35 @@ pub(crate) fn set_grid_time(seconds_since_epoch: &str) {
     log::info!("clock: the grid's time is {correction:+} s from the computer's clock");
 }
 
+/// A reading of the computer's clock as the grid's time: the Legacy
+/// Viewer's `time_corrected` (indra/llcommon/lltimer.cpp), which stamps the
+/// transcripts (LLLogChat::saveHistory) and the live messages the Chat
+/// Service history compares with its own rows (LLChatServiceHistory::
+/// captureLiveMessage, LL viewer 26.5). A computer a few minutes behind
+/// the grid would otherwise see every message twice (#4233).
+pub(crate) fn grid_time(computer: std::time::SystemTime) -> std::time::SystemTime {
+    corrected(computer, GRID_CORRECTION.load(Ordering::Relaxed))
+}
+
+/// `computer` moved by `correction` seconds, unchanged where it would leave
+/// the clock's range or does not fit in an `i32` (the Legacy Viewer's
+/// `S32 gUTCOffset`, as `grid_correction` gives it). The range of a
+/// `SystemTime` is the system's: Windows' stops at 1601, while macOS and
+/// Linux reach far enough back that only the `i32` bound refuses an absurd
+/// correction there.
+fn corrected(computer: std::time::SystemTime, correction: i64) -> std::time::SystemTime {
+    if i32::try_from(correction).is_err() {
+        return computer;
+    }
+    let by = std::time::Duration::from_secs(correction.unsigned_abs());
+    let moved = if correction >= 0 {
+        computer.checked_add(by)
+    } else {
+        computer.checked_sub(by)
+    };
+    moved.unwrap_or(computer)
+}
+
 /// The grid's time minus `now`, when `seconds_since_epoch` gives one that
 /// fits in an `i32`, like the Legacy Viewer's `S32 gUTCOffset`.
 fn grid_correction(seconds_since_epoch: &str, now: i64) -> Option<i64> {
@@ -547,6 +576,26 @@ mod tests {
         assert_eq!(local_from(None, None), (0, "UTC".to_owned()));
         // SLT stays US Pacific: UTC−8 after the first Sunday of November
         assert_eq!(offset(ClockZone::Slt, unix), -8 * 3600);
+    }
+
+    /// A computer clock reading becomes the grid's time, either way, and
+    /// stays put where the correction would leave the clock's range
+    /// (time_corrected; #4233: a computer 133 s behind the grid).
+    #[test]
+    fn a_computer_reading_takes_the_grids_time() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let computer = UNIX_EPOCH + Duration::from_secs(1_794_350_036);
+        assert_eq!(corrected(computer, 133), computer + Duration::from_secs(133));
+        assert_eq!(corrected(computer, -3600), computer - Duration::from_secs(3600));
+        assert_eq!(corrected(computer, 0), computer);
+        // the bounds of an i32 still move it
+        let bound = Duration::from_secs(i32::MAX.unsigned_abs().into());
+        assert_eq!(corrected(computer, i32::MAX.into()), computer + bound);
+        // beyond an i32, on every system (macOS and Linux reach i64::MIN s)
+        assert_eq!(corrected(computer, i64::from(i32::MAX) + 1), computer);
+        assert_eq!(corrected(computer, i64::from(i32::MIN) - 1), computer);
+        assert_eq!(corrected(computer, i64::MIN), computer);
+        assert_eq!(corrected(computer, i64::MAX), computer);
     }
 
     /// SLT follows the grid's clock, not a computer clock set by hand

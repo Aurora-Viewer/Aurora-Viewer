@@ -274,6 +274,7 @@ fn line(from: String, text: String, kind: ChatKind, source: Uuid, time: SystemTi
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     }
 }
 
@@ -341,12 +342,13 @@ impl World {
         self.groups.sessions.contains_key(session)
     }
 
-    /// Title of a conversation: group / conference name, else the avatar.
+    /// Title of a conversation: group / conference name, else the avatar,
+    /// named whatever RLVa's `@shownames` (FSFloaterIM has no test of it).
     pub fn session_title(&self, session: &Uuid) -> String {
         match self.groups.sessions.get(session) {
             Some(s) if !s.name.is_empty() => s.name.clone(),
             Some(_) => aurora_i18n::tr!("world-groups-conference").to_owned(),
-            None => self.social.name_of(session),
+            None => self.social.name_in(super::names::NameScope::Roster, session),
         }
     }
 
@@ -364,9 +366,11 @@ impl World {
     }
 
     /// A message in a group chat or conference: its sound follows the
-    /// group / conference IM mode (LLIMMgr::addMessage).
-    fn session_sound(&mut self, session: Uuid, new_session: bool) {
+    /// group / conference IM mode (LLIMMgr::addMessage), or the mention's
+    /// when `text` mentions us.
+    fn session_sound(&mut self, session: Uuid, new_session: bool, text: &str) {
         let group = self.groups.sessions.get(&session).is_some_and(|s| s.group) || self.groups.is_member(&session);
+        let mention = crate::ui::chat::mentions(text, &self.agent_id);
         self.im_messages.push(crate::ui_sound::ImMessage {
             kind: if group {
                 crate::ui_sound::ImKind::Group
@@ -375,6 +379,7 @@ impl World {
             },
             session,
             new_session,
+            mention,
         });
     }
 
@@ -633,6 +638,7 @@ impl World {
                 kind: crate::ui_sound::ImKind::Group,
                 session: group,
                 new_session: true,
+                mention: false,
             });
         }
     }
@@ -932,7 +938,7 @@ impl World {
             // Legacy Viewer (LLViewerChatterBoxInvitation does not look)
             self.groups.unsnooze(&session);
             self.info_mut(session, &inv.session_name).participants.insert(inv.from);
-            self.session_sound(session, new);
+            self.session_sound(session, new, &inv.message);
             if !inv.from_name.is_empty() {
                 self.social.names.entry(inv.from).or_insert_with(|| inv.from_name.clone());
             }
@@ -1017,7 +1023,7 @@ impl World {
         );
         // a snoozed chat that opens again sounds as a new one
         // (UISndNewIncomingGroupIMSession in restoreSnoozedSession)
-        self.session_sound(session, reopened);
+        self.session_sound(session, reopened, &im.message);
         // on receipt, whether or not the chat is in front (FIRE-10178)
         let open = super::attention::Open::Conversation(session);
         self.keyword_alert(im.from_agent_id, &im.from_name, &im.message, false, open);

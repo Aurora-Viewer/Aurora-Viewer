@@ -78,6 +78,7 @@ fn legacy_build_tabs_reuse_native_panels_and_ignore_hidden_aurora_sections() {
     for label in [
         aurora_i18n::tr!("rez-under-land-group"),
         aurora_i18n::tr!("build-ui-tools-follow-edit-object"),
+        aurora_i18n::tr!("build-wheel-on-hover"),
     ] {
         assert!(
             texts.iter().any(|(text, _)| text == label),

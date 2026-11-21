@@ -37,6 +37,7 @@ pub const COMMANDS: &[Command] = commands![
     "people", "Command_People_Icon", "common-people", true;
     "friends", "Command_People_Icon", "common-friends", true;
     "inventory", "Command_Inventory_Icon", "common-inventory", true;
+    "inventory_dual", "columns-2-filled", "inventory-dual-panel", true;
     "texture_library", "stack-2-filled", "texture-library-title", true;
     "gestures", "Command_Gestures_Icon", "gesture-title", true;
     "appearance", "Command_Appearance_Icon", "common-appearance", true;
@@ -84,6 +85,10 @@ pub const COMMANDS: &[Command] = commands![
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
     // Aurora's own: the Director, a camera track to film with
     "director", "movie", "toolbar-command-director", true;
+    // Aurora's own: our avatar seen by a camera of its own
+    "second_camera", "device-cctv-filled", "second-camera-title", true;
+    // Aurora's own: the viewer steps back for a game (app/gaming_mode.rs)
+    "gaming_mode", "device-gamepad-2-filled", "toolbar-command-gaming-mode", true;
     // Firestorm's, not in Aurora yet
     "avatar", "user-circle", "toolbar-command-avatar", true;
     "destinations", "map-2", "toolbar-command-destinations", true;
@@ -102,7 +107,7 @@ pub const COMMANDS: &[Command] = commands![
     "statistics", "statistics", "toolbar-command-statistics", true;
     "soundexplorer", "music", "toolbar-command-sound-explorer", true;
     "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", true;
-    "phototools", "camera-cog", "toolbar-command-phototools", false;
+    "phototools", "camera-cog", "toolbar-command-phototools", true;
     "phototools_view", "video-filled", "toolbar-command-phototools-camera", false;
     "pose_stand", "man-filled", "toolbar-command-pose-stand", true;
     "conversation_log", "file-text-filled", "toolbar-command-conversation-log", true;

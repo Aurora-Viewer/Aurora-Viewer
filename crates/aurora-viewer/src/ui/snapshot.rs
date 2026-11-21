@@ -199,6 +199,13 @@ pub struct View<'a> {
     pub email: Option<EmailView>,
     /// Preferences' exposure, under the photo's own.
     pub exposure: f32,
+    /// Preferences' shadow quality and ambient occlusion, under the
+    /// photo's own (`snapshot::light`).
+    pub shadow_quality: u8,
+    pub ambient_occlusion: u8,
+    /// The photo quality's boost is on: its levels are the most the photo
+    /// can choose (`snapshot::light::photo_level`).
+    pub quality_boost: bool,
     /// HDR and Emissive is on: without it no exposure applies, the row is
     /// greyed.
     pub hdr: bool,
@@ -230,6 +237,8 @@ pub enum Action {
     OpenPhoto(PathBuf),
     /// Freeze frame switched (on: take it now).
     Freeze(bool),
+    /// "Turn to camera": the body turns once to face the camera.
+    TurnToCamera,
     /// A setting that changes the photo changed: the preview follows.
     Changed,
     /// The settings changed (saved, the preview unchanged).
@@ -390,7 +399,7 @@ impl SnapshotUi {
     pub fn light_only(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = self.light;
-        light_rows(ui, p, &mut self.light, view.exposure, view.hdr, &view.env, out);
+        light_rows(ui, p, &mut self.light, (view.exposure, view.hdr), &view.env, Some(view), out);
         if self.light != before && !out.contains(&Action::Changed) {
             out.push(Action::Changed);
         }
@@ -867,6 +876,49 @@ impl SnapshotUi {
         {
             out.push(Action::Controls);
         }
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("photo-look-at-camera"),
+            Some(aurora_i18n::tr!("photo-look-at-camera-hint")),
+            |ui| {
+                widgets::switch(ui, p, &mut s.look_at_camera);
+            },
+        );
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("photo-look-others"),
+            Some(aurora_i18n::tr!("photo-look-others-hint")),
+            |ui| {
+                widgets::switch(ui, p, &mut s.look_at_camera_others);
+            },
+        );
+        ui.add_enabled_ui(s.look_at_camera || s.look_at_camera_others, |ui| {
+            row(
+                ui,
+                p,
+                aurora_i18n::tr!("photo-look-intensity"),
+                Some(aurora_i18n::tr!("photo-look-intensity-hint")),
+                |ui| {
+                    ui.spacing_mut().slider_width = 130.0;
+                    ui.add(egui::Slider::new(&mut s.look_intensity, 0..=100).suffix(" %"));
+                },
+            );
+        });
+        if widgets::action_button(
+            ui,
+            p,
+            "camera-selfie",
+            aurora_i18n::tr!("photo-turn-to-camera"),
+            ActionKind::Flat,
+            Vec2::new(0.0, 26.0),
+        )
+        .on_hover_text(aurora_i18n::tr!("photo-turn-to-camera-tip"))
+        .clicked()
+        {
+            out.push(Action::TurnToCamera);
+        }
 
         section(ui, p, "focus-centered", aurora_i18n::tr!("photo-section-dof"));
         ui.add_enabled_ui(!self.pano, |ui| dof_rows(ui, p, &mut s.dof));
@@ -880,7 +932,7 @@ impl SnapshotUi {
             luts: &self.lut_names,
             pano: self.pano,
         };
-        self.looks.show(ui, p, s, opts, out);
+        self.looks.show(ui, p, super::looks_editor::Stack::photo(s), opts, out);
         if std::mem::take(&mut self.looks.reveal) {
             ui.scroll_to_rect(filter.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
         }
@@ -1242,24 +1294,68 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
     });
 }
 
-/// The photo's quick light (Phototools' Quick Environments, the sky, water
-/// and day cycle lists of its Env tab, Pause Clouds, Attached Lights and
-/// Exposure, and the sun of "Personal lighting"), for the photo only: closing
-/// the photo mode gives the user's own back, unless "Keep this
-/// light".
+/// A level of the photo's (shadows, occlusion) on Preferences' stepped
+/// slider: Preferences' `current` until one is chosen; under the photo
+/// quality's boost, never past it.
+fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, current: u8, boost: bool, labels: &[&str]) {
+    use crate::snapshot::light::photo_level;
+    ui.horizontal(|ui| {
+        let mut level = photo_level(true, *value, current, boost);
+        if super::options::stepped(ui, p, &mut level, labels) {
+            *value = Some(photo_level(true, Some(level), current, boost));
+        }
+    });
+}
+
+/// The photo's quick light (the time of day, the sky, water and day cycle
+/// lists, Pause Clouds, Attached Lights, Exposure, and the sun of
+/// "Personal lighting"). Closing the photo mode gives the user's own back,
+/// unless "Keep this light", except Pause Clouds, a switch of the session
+/// that Phototools shares.
 fn light_rows(
     ui: &mut egui::Ui,
     p: &Palette,
     l: &mut crate::snapshot::light::PhotoLight,
-    exposure: f32,
-    hdr: bool,
+    (exposure, hdr): (f32, bool),
     env: &EnvView,
+    quality: Option<&View>,
     out: &mut Vec<Action>,
 ) {
     use crate::snapshot::light::EXPOSURE;
     ui.add_enabled_ui(!env.locked, |ui| env_rows(ui, p, l, env))
         .response
         .on_disabled_hover_text(aurora_i18n::tr!("rlva-blocked"));
+    if let Some(view) = quality {
+        use aurora_i18n::tr;
+        ui.add_enabled_ui(view.busy.is_none(), |ui| {
+            row(ui, p, tr!("ui-options-shadow-quality"), None, |ui| {
+                quality_slider(
+                    ui,
+                    p,
+                    &mut l.shadow_quality,
+                    view.shadow_quality,
+                    view.quality_boost,
+                    &[
+                        tr!("ui-options-disabled-2"),
+                        tr!("ui-options-low"),
+                        tr!("common-medium"),
+                        tr!("ui-options-high"),
+                        tr!("ui-options-ultra"),
+                    ],
+                );
+            });
+            row(ui, p, tr!("ui-options-ambient-occlusion"), None, |ui| {
+                quality_slider(
+                    ui,
+                    p,
+                    &mut l.ambient_occlusion,
+                    view.ambient_occlusion,
+                    view.quality_boost,
+                    &[tr!("ui-options-disabled"), tr!("ui-options-low"), tr!("ui-options-high")],
+                );
+            });
+        });
+    }
     row(ui, p, aurora_i18n::tr!("photo-light-exposure"), None, |ui| {
         // (no exposure without HDR: LLPipeline::gammaCorrect)
         ui.add_enabled_ui(hdr, |ui| {
@@ -1927,6 +2023,9 @@ mod tests {
             profile_posted: false,
             email: None,
             exposure: 0.0,
+            shadow_quality: 0,
+            ambient_occlusion: 0,
+            quality_boost: false,
             hdr: true,
             env: EnvView {
                 catalog,
@@ -2061,7 +2160,7 @@ mod tests {
         };
         for _ in 0..2 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                light_rows(ui, &p, &mut light, 1.234, true, &env, &mut Vec::new())
+                light_rows(ui, &p, &mut light, (1.234, true), &env, None, &mut Vec::new())
             });
             output.textures_delta.clear();
         }
