@@ -12,6 +12,7 @@
 //! taken until the next one, for every look drawn on it in between.
 
 use crate::looks::{LookDepth, Looks, PhotoLook};
+use crate::pipeline_cache::CachedPipelines;
 
 /// The pictures' size (4:3, the catalogue's tiles).
 pub const THUMB_SIZE: (u32, u32) = (192, 144);
@@ -101,7 +102,7 @@ impl LookThumbs {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("look thumbnails still"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
