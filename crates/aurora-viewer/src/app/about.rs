@@ -300,6 +300,7 @@ pub(super) fn aa_name(antialiasing: u8, dlss: Option<aurora_render::DlssDrawing>
     match (antialiasing, dlss) {
         (7, Some(aurora_render::DlssDrawing::Dlss)) => "NVIDIA DLSS",
         (7, Some(aurora_render::DlssDrawing::Dlaa)) => "NVIDIA DLAA",
+        (7, Some(aurora_render::DlssDrawing::Rr)) => "NVIDIA DLSS Ray Reconstruction",
         _ => ["none", "FXAA", "MSAA 2x", "MSAA 4x", "MSAA 8x", "TAA", "SMAA", "FSR 3.1"]
             .get(antialiasing as usize)
             .copied()

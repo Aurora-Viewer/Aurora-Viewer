@@ -467,7 +467,7 @@ pub(crate) struct Clouds {
     prev_camera_km: [f64; 2],
     frame: u32,
     layout: wgpu::BindGroupLayout,
-    composite: Vec<((u32, Option<wgpu::TextureFormat>), wgpu::RenderPipeline)>,
+    composite: Vec<((u32, Option<wgpu::TextureFormat>, bool), wgpu::RenderPipeline)>,
     composite_group: Option<wgpu::BindGroup>,
 }
 
@@ -953,18 +953,19 @@ impl Clouds {
         }
     }
 
-    /// Makes the composite pipeline for the scene pass's sample count and
-    /// G-buffer (`gbuf`: its format), if not made yet: before the pass
-    /// begins.
+    /// Makes the composite pipeline for the scene pass's sample count,
+    /// G-buffer (`gbuf`: its format) and base colour (Ray Reconstruction's),
+    /// if not made yet: before the pass begins.
     pub fn prepare(
         &mut self,
         device: &wgpu::Device,
         samples: u32,
         gbuf: Option<wgpu::TextureFormat>,
+        albedo: bool,
         color: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
     ) {
-        if self.composite.iter().any(|(k, _)| *k == (samples, gbuf)) {
+        if self.composite.iter().any(|(k, _)| *k == (samples, gbuf, albedo)) {
             return;
         }
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -993,6 +994,13 @@ impl Clouds {
                 blend: None,
                 write_mask: wgpu::ColorWrites::empty(),
             }));
+            if albedo {
+                targets.push(Some(wgpu::ColorTargetState {
+                    format: crate::renderer::ALBEDO_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::empty(),
+                }));
+            }
         }
         let pipeline = device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
             label: Some("clouds composite"),
@@ -1025,13 +1033,14 @@ impl Clouds {
             multiview_mask: None,
             cache: None,
         });
-        self.composite.push(((samples, gbuf), pipeline));
+        self.composite.push(((samples, gbuf, albedo), pipeline));
     }
 
     /// Draws the clouds over the sky in scene pass A, if [`Self::encode`]
     /// made them this frame. `prepare` has been called for these `samples`.
-    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, gbuf: Option<wgpu::TextureFormat>) {
-        let (Some(group), Some((_, pipeline))) = (&self.composite_group, self.composite.iter().find(|(k, _)| *k == (samples, gbuf))) else {
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, gbuf: Option<wgpu::TextureFormat>, albedo: bool) {
+        let key = (samples, gbuf, albedo);
+        let (Some(group), Some((_, pipeline))) = (&self.composite_group, self.composite.iter().find(|(k, _)| *k == key)) else {
             return;
         };
         pass.set_pipeline(pipeline);

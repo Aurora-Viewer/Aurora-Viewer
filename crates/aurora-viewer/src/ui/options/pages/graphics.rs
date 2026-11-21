@@ -1316,6 +1316,95 @@ fn image(cx: &mut Cx) {
                 ],
             );
         });
+        // Ray Reconstruction (dlss.rs), experimental and off by default.
+        // Greyed only while off and not available; on, it can always be
+        // turned off, and why it does not draw is said below it
+        cx.conditional(dlss, |cx| {
+            let p = cx.p;
+            let on = cx.s.dlss_rr;
+            // Streamline offered it, then refused it: a retry may help (video
+            // memory freed); not when Streamline said it is not available here
+            let refused = aurora_render::dlss_rr_refused();
+            // refused for a photo or film frame alone: the window keeps
+            // it, the captures draw super resolution until a retry
+            let capture_refused = aurora_render::dlss_rr_snapshot_refused();
+            let blocked = (!aurora_render::dlss_rr_ready()).then(|| {
+                if refused {
+                    tr!("ui-options-dlss-rr-refused")
+                } else {
+                    tr!("ui-options-dlss-rr-unavailable")
+                }
+            });
+            let greyed = blocked.filter(|_| !on);
+            cx.experimental().row(
+                tr!("ui-options-dlss-rr"),
+                tr!("ui-options-dlss-rr-help"),
+                &field!(dlss_rr),
+                |ui, s| {
+                    let r = ui.add_enabled_ui(greyed.is_none(), |ui| toggle(ui, &p, &mut s.dlss_rr));
+                    if let Some(why) = &greyed {
+                        r.response.on_disabled_hover_text(*why);
+                    }
+                    r.inner
+                },
+            );
+            if let Some(why) = blocked.filter(|_| on) {
+                cx.note(why);
+            } else if on && blocked.is_none() && aurora_render::dlss_rr_untraced() {
+                // chosen and ready, but nothing traced to clean up (not
+                // said while it waits for anything else: a resize, the
+                // guides compiling, a snapshot, a DLSS failure); before a
+                // refusal for the captures, whose note says the view draws
+                // it, which it does not then
+                cx.note(tr!("ui-options-dlss-rr-idle"));
+            } else if on && capture_refused {
+                cx.note(tr!("ui-options-dlss-rr-snapshot-refused"));
+            }
+            // Try again whenever Streamline refused it for the window, chosen or
+            // not: off, the switch is greyed until a retry. Refused for the
+            // captures alone, only while it is chosen, as the note above
+            // is: off, nothing draws it, and switched on the row comes
+            // back (DLSS's own button, above, when DLSS itself failed)
+            if (refused || (capture_refused && on)) && cx.st.dlss != aurora_render::DlssSupport::Failed {
+                let p = cx.p;
+                cx.row_with(
+                    tr!("ui-options-dlss-retry"),
+                    tr!("ui-options-dlss-retry-help"),
+                    &Nothing,
+                    |ui, _, _, _| {
+                        use crate::ui::widgets::{ActionKind, action_button};
+                        if action_button(
+                            ui,
+                            &p,
+                            "refresh",
+                            tr!("ui-options-dlss-retry-button"),
+                            ActionKind::Flat,
+                            egui::Vec2::new(0.0, 24.0),
+                        )
+                        .clicked()
+                        {
+                            aurora_render::dlss_retry();
+                        }
+                        false
+                    },
+                );
+            }
+        });
+        // Ray Reconstruction's model, while it is chosen: picking another
+        // after Streamline refused one asks Streamline again with it
+        cx.conditional(dlss && cx.s.dlss_rr, |cx| {
+            cx.combo(
+                tr!("ui-options-dlss-rr-model"),
+                tr!("ui-options-dlss-rr-model-help"),
+                &field!(dlss_rr_model),
+                &[
+                    (0, tr!("ui-options-dlss-model-auto")),
+                    (1, tr!("ui-options-dlss-rr-model-d")),
+                    (2, tr!("ui-options-dlss-rr-model-e")),
+                    (3, tr!("ui-options-dlss-rr-model-f")),
+                ],
+            );
+        });
         // FSR's sharpening, hidden under DLSS, which the CAS below
         // sharpens instead
         cx.conditional(!dlss, |cx| {

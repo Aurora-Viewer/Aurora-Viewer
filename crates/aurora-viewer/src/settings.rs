@@ -1804,6 +1804,14 @@ pub struct Settings {
     /// The model DLSS draws with: 0 NVIDIA's choice per mode, 1 K, 2 L,
     /// 3 M (`aurora_render::DlssModel`). Like `dlss`, this computer's.
     pub dlss_model: u8,
+    /// With DLSS, its Ray Reconstruction denoises the ray-traced light in
+    /// Aurora's place (experimental, off by default; `AURORA_DLSS_RR`
+    /// overrides it for a run). Like `dlss`, this computer's.
+    pub dlss_rr: bool,
+    /// The model Ray Reconstruction draws with: 0 NVIDIA's choice, 1 D,
+    /// 2 E, 3 F (`aurora_render::DlssRrModel`). Like `dlss`, this
+    /// computer's.
+    pub dlss_rr_model: u8,
     /// World resolution as a percentage of the window; HUDs and UI stay native.
     pub render_scale_percent: u32,
     /// "Match the display": the world follows the display's logical
@@ -2978,6 +2986,8 @@ impl Default for Settings {
             fsr_sharpness: 80,
             dlss: false,
             dlss_model: 0,
+            dlss_rr: false,
+            dlss_rr_model: 0,
             render_scale_percent: 100,
             render_scale_auto: cfg!(target_os = "macos"),
             specular_aa: true,
@@ -4002,6 +4012,9 @@ impl Settings {
         if self.dlss_model > 3 {
             self.dlss_model = 0;
         }
+        if self.dlss_rr_model > 3 {
+            self.dlss_rr_model = 0;
+        }
         self.render_scale_percent = self.render_scale_percent.clamp(50, 100);
         self.reflection_probes = self.reflection_probes.min(3);
         self.probe_count = self.probe_count.clamp(8, 256);
@@ -4363,11 +4376,18 @@ impl Settings {
             },
             fsr_sharpness: (self.fsr_sharpness > 0).then(|| self.fsr_sharpness.min(100) as f32 / 100.0),
             dlss: self.dlss,
+            dlss_rr: self.dlss_rr,
             dlss_model: match self.dlss_model {
                 1 => aurora_render::DlssModel::K,
                 2 => aurora_render::DlssModel::L,
                 3 => aurora_render::DlssModel::M,
                 _ => aurora_render::DlssModel::Default,
+            },
+            dlss_rr_model: match self.dlss_rr_model {
+                1 => aurora_render::DlssRrModel::D,
+                2 => aurora_render::DlssRrModel::E,
+                3 => aurora_render::DlssRrModel::F,
+                _ => aurora_render::DlssRrModel::Default,
             },
             tonemapper: if self.tonemapper == 1 {
                 Tonemapper::Aces

@@ -28,7 +28,9 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) uv:vec2<f32>,
     @location(1) @interpolate(flat) record:u32}};
 struct Material {{color:vec4<f32>}};
 struct Shaded {{color:vec4<f32>}};
-struct GOut {{@location(0) color:vec4<f32>,@location(1) gbuf:vec4<f32>}};
+// (object.wgsl's third output, the base colour, has no target here: dropped)
+struct GOut {{@location(0) color:vec4<f32>,@location(1) gbuf:vec4<f32>,@location(2) albedo:vec4<f32>}};
+var<private> g_albedo:vec3<f32>=vec3<f32>(0.0);
 fn eval_material(v:VsOut,front:bool)->Material {{
     let r=records[v.record];
     let a=mix(r.params.x,r.params.y,clamp(v.uv.x,0.0,1.0));
@@ -49,14 +51,14 @@ fn vertex(i:u32,inst:u32)->VsOut {{
 @fragment fn foreground(v:VsOut,@builtin(front_facing) front:bool)->GOut {{
     if (REFERENCE) {{
         let s=shade(v,front);
-        return GOut(mask_color(records[v.record],s.color),select(vec4<f32>(0.5),gbuffer(s),GBUFFER));
+        return GOut(mask_color(records[v.record],s.color),select(vec4<f32>(0.5),gbuffer(s),GBUFFER),vec4<f32>(0.0));
     }}
     if (GBUFFER) {{return fs_mask_g(v,front);}}
-    return GOut(fs_mask(v,front),vec4<f32>(0.5));
+    return GOut(fs_mask(v,front),vec4<f32>(0.5),vec4<f32>(0.0));
 }}
 // Drawn behind the tested face: different per-sample depth writes become
 // visible in the resolved colour, including partial alpha-to-coverage.
-@fragment fn background(v:VsOut)->GOut {{return GOut(vec4<f32>(0.05,0.8,0.1,1.0),vec4<f32>(0.0,1.0,0.0,1.0));}}
+@fragment fn background(v:VsOut)->GOut {{return GOut(vec4<f32>(0.05,0.8,0.1,1.0),vec4<f32>(0.0,1.0,0.0,1.0),vec4<f32>(0.0));}}
 "#
     );
     let _gpu = crate::test_gpu::lock();

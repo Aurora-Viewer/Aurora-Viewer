@@ -1436,6 +1436,34 @@ impl DlssModel {
     }
 }
 
+/// The model DLSS Ray Reconstruction draws with (`RenderSettings::dlss_rr`;
+/// NVIDIA's `NVSDK_NGX_RayReconstruction_Hint_Render_Preset`
+/// in `nvsdk_ngx_defs_dlssd.h`): NVIDIA's own choice by default, F (RR 2)
+/// with driver 310.9.0 (DLSS's on-screen indicator); D
+/// and E are the first transformer models, E the one for a depth-of-field
+/// guide, which Aurora does not give it (its depth of field comes after the
+/// upscale). A, B and C were removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DlssRrModel {
+    #[default]
+    Default,
+    D,
+    E,
+    F,
+}
+
+impl DlssRrModel {
+    /// Its `NVSDK_NGX_RayReconstruction_Hint_Render_Preset` value.
+    pub fn preset(self) -> u32 {
+        match self {
+            DlssRrModel::Default => 0,
+            DlssRrModel::D => 4,
+            DlssRrModel::E => 5,
+            DlssRrModel::F => 6,
+        }
+    }
+}
+
 /// Whether DLSS can draw: what Preferences › Graphics › FSR shows of it.
 /// DLSS is in builds with the `dlss` feature only, from files the user
 /// adds (`dlss.rs`).
@@ -1481,6 +1509,9 @@ pub enum DlssDrawing {
     Dlss,
     /// DLAA: DLSS at the display size (render scale 100 %).
     Dlaa,
+    /// DLSS Ray Reconstruction, at any render size: it also denoises the
+    /// traced lighting.
+    Rr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1498,8 +1529,14 @@ pub struct RenderSettings {
     /// With FSR: NVIDIA DLSS draws the upscaled frame in FSR's place, when
     /// the device was opened for it (`DlssSupport::Ready`).
     pub dlss: bool,
+    /// With DLSS: its Ray Reconstruction denoises the ray-traced light in
+    /// the renderer's place, from guides the scene pass draws
+    /// ([`Self::rr_guides`]).
+    pub dlss_rr: bool,
     /// The model DLSS draws with.
     pub dlss_model: DlssModel,
+    /// The model Ray Reconstruction draws with, when it draws.
+    pub dlss_rr_model: DlssRrModel,
     pub tonemapper: Tonemapper,
     /// "HDR and Emissive" (RenderDisableVintageMode, which drives
     /// RenderHDREnabled and RenderEnableEmissiveBuffer). Off, the Legacy
@@ -1564,9 +1601,24 @@ pub struct RenderSettings {
 }
 
 impl RenderSettings {
-    /// The frame draws the G-buffer (normal, roughness, metallic).
+    /// The frame draws the G-buffer (normal, roughness, metallic) for SSR
+    /// or the rain; the renderer draws it for Ray Reconstruction's guides
+    /// too (renderer.rs, `rr_wanted`).
     pub fn gbuffer(&self) -> bool {
         self.ssr || self.rain_surfaces
+    }
+
+    /// DLSS Ray Reconstruction is asked for (`dlss_rr`, unless
+    /// `AURORA_DLSS_RR` says otherwise): DLSS draws the FSR frames on a
+    /// device opened with Ray Reconstruction's extensions. The renderer
+    /// draws its guides, the G-buffer with a base colour beside it, when Streamline
+    /// has not refused it and something is traced (renderer.rs,
+    /// `rr_wanted`); super resolution draws otherwise.
+    pub fn rr_guides(&self) -> bool {
+        matches!(self.aa, AntiAliasing::Fsr(_))
+            && crate::dlss::wanted(self.dlss)
+            && crate::dlss::rr_wanted(self.dlss_rr)
+            && crate::dlss::rr_device()
     }
 }
 
@@ -1583,7 +1635,9 @@ impl Default for RenderSettings {
             aa: AntiAliasing::Msaa(4),
             fsr_sharpness: Some(0.8),
             dlss: false,
+            dlss_rr: false,
             dlss_model: DlssModel::Default,
+            dlss_rr_model: DlssRrModel::Default,
             tonemapper: Tonemapper::KhronosNeutral,
             hdr: true,
             shadow_resolution: 2048,
@@ -2031,6 +2085,11 @@ pub struct FrameParams {
     pub photo_scale: f32,
     /// The whole photo's depth around the tiles (`PhotoContext`).
     pub photo_context: PhotoContext,
+    /// A photo is being drawn in parts (the viewer's photo job, from its
+    /// first part asked to its last taken), the frames between its parts
+    /// included: the renderer keeps the pipelines and the captures'
+    /// Ray Reconstruction state it began with until it is over.
+    pub photo_job: bool,
     pub camera_pos: Vec3,
     pub near: f32,
     pub far: f32,

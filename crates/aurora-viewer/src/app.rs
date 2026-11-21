@@ -11787,6 +11787,7 @@ impl App {
         let photo_tile = photo.as_ref().map_or(glam::Mat4::IDENTITY, |f| f.tile);
         let photo_scale = photo.as_ref().map_or(1.0, |f| f.scale);
         let photo_context = photo.as_ref().map_or(aurora_render::PhotoContext::None, |f| f.context);
+        let photo_job = self.photo_job_open();
         let lod_height = photo.as_ref().map_or(h, |f| f.height);
         let frame_proj = |camera: &crate::camera::Camera| match &photo {
             // (a 360° snapshot's face: 90° high and wide, whatever the window)
@@ -13446,6 +13447,7 @@ impl App {
             photo_tile,
             photo_scale,
             photo_context,
+            photo_job,
             camera_pos: render_eye,
             near: if studio_view.is_some() {
                 crate::avatar_studio::NEAR
