@@ -575,6 +575,9 @@ fn the_head_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
             "{style:?}: close"
         );
+        // the harness keeps the closed conversation; the next one is shown (#4373)
+        h.st.selected = Some(BOB);
+        h.settle();
         h.press(control_id("head-search-filled"));
         assert!(h.st.searches.get(&Some(BOB)).is_some_and(|s| s.find.is_some()), "{style:?}: find");
         h.press(control_id("head-search-filled"));
@@ -2615,6 +2618,9 @@ fn the_window_of_tabs_still_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
             "{style:?}: close"
         );
+        // the harness keeps the closed conversation; the next one is shown (#4373)
+        h.st.selected = Some(BOB);
+        h.settle();
         h.press(classic_id("phone-filled"));
         assert!(
             has(&h.take(), |a| matches!(a, ConvAction::Call(id) if *id == BOB)),

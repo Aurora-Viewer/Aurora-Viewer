@@ -240,6 +240,33 @@ fn the_column_shows_and_closes_conversations() {
     assert_eq!(h.st.selected, None, "without showing it");
 }
 
+/// The conversation shown closed from its × in the column: the one below
+/// it shows next, the one above at the end of the list, as with Ctrl+W
+/// (LLTabContainer::removeTabPanel), not the nearby chat at the top (#4373).
+#[test]
+fn closing_the_conversation_shown_shows_its_neighbour() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.settle();
+    let order = super::super::sidebar::tab_order(&h.world, &h.st);
+    assert_eq!(order.len(), 3, "the nearby chat, then two conversations");
+    let (first, last) = (order[1].expect("a conversation"), order[2].expect("a conversation"));
+    let close_shown = |h: &mut Harness, id: Uuid| {
+        h.st.selected = Some(id);
+        h.settle();
+        h.actions.clear();
+        let entry = h.rect(entry_id(Pinned::Conversation(id)));
+        h.frame(vec![egui::Event::PointerMoved(entry.center())]);
+        h.frame(Vec::new());
+        let close = h.rect(entry_id(Pinned::Conversation(id)).with("close"));
+        h.click(close.center());
+        assert!(h.actions.iter().any(|a| matches!(a, ConvAction::Close(c) if *c == id)));
+    };
+    close_shown(&mut h, first);
+    assert_eq!(h.st.selected, Some(last), "the one below");
+    close_shown(&mut h, last);
+    assert_eq!(h.st.selected, Some(first), "the last one: the one above");
+}
+
 /// The right-click menu of a message: Quote puts "> text" in the field,
 /// which takes the keyboard.
 #[test]
