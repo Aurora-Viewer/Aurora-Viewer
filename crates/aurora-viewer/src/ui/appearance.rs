@@ -1942,7 +1942,11 @@ pub fn show(
                     },
                 );
             });
-            let worn = aurora_i18n::tr!("ui-appearance-worn-38-attachments", count = format!("{}", count));
+            let worn = aurora_i18n::tr!(
+                "ui-appearance-worn-attachments",
+                count = format!("{}", count),
+                limit = world.attachment_limit()
+            );
             widgets::tabs(
                 ui,
                 p,

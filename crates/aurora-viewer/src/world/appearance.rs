@@ -13,6 +13,19 @@ pub const FT_OUTFIT: i32 = 47;
 pub const FT_MY_OUTFITS: i32 = 48;
 /// The Clothing system folder (LLFolderType::FT_CLOTHING).
 pub const FT_CLOTHING: i32 = 5;
+/// LLAgentBenefits::getAttachmentLimit when neither the login nor the
+/// region names one (Second Life's ordinary account, and OpenSim until
+/// MaxAgentAttachments arrives).
+pub const DEFAULT_ATTACHMENT_LIMIT: usize = 38;
+
+/// LLAgentBenefits::getAttachmentLimit: the login benefit, else the region's
+/// MaxAgentAttachments (OpenSim), else 38.
+pub fn attachment_limit_from(benefit: i32, feature: Option<u32>) -> usize {
+    if benefit > 0 {
+        return benefit as usize;
+    }
+    feature.filter(|n| *n > 0).map_or(DEFAULT_ATTACHMENT_LIMIT, |n| n as usize)
+}
 pub fn wearables() -> &'static Vec<&'static str> {
     static TABLE: aurora_i18n::Localized<Vec<&'static str>> = aurora_i18n::Localized::new();
     TABLE.get(|| {
@@ -642,7 +655,18 @@ fn wear_link(
 }
 
 /// Produces one acknowledged AIS operation. No optimistic inventory mutation.
+/// Callers that do not know the account's limit keep the ordinary 38.
 pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result<(OutfitMutation, bool), String> {
+    plan_limited(inv, action, worn, DEFAULT_ATTACHMENT_LIMIT)
+}
+
+/// [`plan`] with the account's attachment limit (`World::attachment_limit`).
+pub fn plan_limited(
+    inv: &Inventory,
+    action: Action,
+    worn: &HashMap<Uuid, u8>,
+    limit: usize,
+) -> Result<(OutfitMutation, bool), String> {
     // DeleteFromOutfit removes the saved links, never the originals or the worn items.
     if let Action::DeleteFromOutfit { folder, items } = action {
         if !inv
@@ -1130,8 +1154,8 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         .iter()
         .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type == 6))
         .count();
-    if sync && count > 38 {
-        return Err(aurora_i18n::tr!("world-appearance-the-outfit-exceeds-the-38-attachment-limit").into());
+    if sync && count > limit {
+        return Err(aurora_i18n::tr!("world-appearance-outfit-exceeds-attachment-limit", limit = limit).into());
     }
     for kind in 4..=16 {
         if sync
@@ -2314,6 +2338,39 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// Issue #3738: a lifetime account's benefit is above 38, so an outfit
+    /// the ordinary limit refuses is worn when the account allows it.
+    #[test]
+    fn an_outfit_over_38_follows_the_account_limit() {
+        let mut inv = fixture();
+        let template = inv.items[&Uuid::from_u128(723)].clone();
+        let objects: Vec<_> = (8000..8045)
+            .map(|id| InvItem {
+                id: Uuid::from_u128(id),
+                ..template.clone()
+            })
+            .collect();
+        inv.add_items(objects.clone());
+        demo_replace(
+            &mut inv,
+            Uuid::from_u128(1),
+            Uuid::from_u128(703),
+            &objects.iter().map(item_link).collect::<Vec<_>>(),
+        );
+        let id = Uuid::from_u128(703);
+        assert!(plan_limited(&inv, Action::Wear(id, false), &HashMap::new(), 50).is_ok());
+        assert!(plan_limited(&inv, Action::Wear(id, false), &HashMap::new(), 38).is_err());
+    }
+
+    #[test]
+    fn attachment_limit_falls_back_from_the_benefit_to_the_region_then_38() {
+        assert_eq!(attachment_limit_from(64, Some(50)), 64);
+        assert_eq!(attachment_limit_from(0, Some(50)), 50);
+        assert_eq!(attachment_limit_from(0, Some(0)), 38);
+        assert_eq!(attachment_limit_from(0, None), 38);
+        assert_eq!(attachment_limit_from(-1, None), 38);
     }
 
     #[test]

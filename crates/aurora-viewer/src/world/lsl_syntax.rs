@@ -89,6 +89,7 @@ mod tests {
             export_supported: false,
             group_chat_post_links: false,
             game_control: false,
+            max_agent_attachments: None,
         });
         w
     }

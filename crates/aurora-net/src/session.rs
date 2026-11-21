@@ -1108,6 +1108,9 @@ impl Session<'_> {
                     let lua_scripts = v["LuaScriptsEnabled"].as_bool();
                     let group_chat_post_links = v["GroupChatPostLinksEnabled"].as_bool();
                     let game_control = v["GameControlEnabled"].as_bool();
+                    // OpenSim names MaxAgentAttachments at the top level
+                    // (LLAgentBenefits::getAttachmentLimit); Second Life does not.
+                    let max_agent_attachments = crate::types::max_agent_attachments(&v);
                     // an OpenSim grid's status feed and page
                     // (LFSimFeatureHandler::setSupportedFeatures)
                     let extras = &v["OpenSimExtras"];
@@ -1135,6 +1138,7 @@ impl Session<'_> {
                         export_supported,
                         group_chat_post_links,
                         game_control,
+                        max_agent_attachments,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),

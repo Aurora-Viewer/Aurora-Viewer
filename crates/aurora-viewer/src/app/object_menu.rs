@@ -19,8 +19,6 @@ use uuid::Uuid;
 const ATTACHMENT_ADD: u8 = 0x80;
 /// LL_PCODE_VOLUME: only prims are worn (object_selected_and_point_valid).
 const PCODE_VOLUME: u8 = 9;
-/// The attachment limit when the account benefits do not give one.
-const DEFAULT_ATTACHMENT_LIMIT: usize = 38;
 
 /// What the object menus wait for between frames.
 #[derive(Default)]
@@ -272,7 +270,7 @@ impl App {
             && r & flags::AFFECTS_NAVMESH == 0
             && !seated_on
             && !f.stand
-            && w.worn_attachment_points().len() < self.attachment_limit()
+            && w.worn_attachment_points().len() < w.attachment_limit()
             // attaching takes the object from the world (@rez); the locks on
             // the points grey their entries (`rlva_can_attach_object`)
             && !w.rlva.has("rez")
@@ -294,16 +292,6 @@ impl App {
             .then(|| crate::scene::animesh::owner(&w.objects, idx))
             .flatten()
             .map(|(id, _)| id);
-    }
-
-    /// LLAgentBenefits::getAttachmentLimit, from the login's account benefits.
-    fn attachment_limit(&self) -> usize {
-        self.world
-            .login
-            .as_ref()
-            .map(|l| l.raw["account_level_benefits"]["attachment_limit"].as_i32())
-            .filter(|n| *n > 0)
-            .map_or(DEFAULT_ATTACHMENT_LIMIT, |n| n as usize)
     }
 
     /// allowAgentBuild on the parcel we stand on.
