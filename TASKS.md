@@ -2911,7 +2911,7 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Interface
 
-- 🟡 Inventory gallery fixes from a tester's report ([#4465](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4465); task `inventory-gallery-4465`, 2026-11-21):
+- 🟡 Inventory gallery fixes from a tester's report ([#4465](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4465); [PR #4505](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4505); task `inventory-gallery-4465`, 2026-11-21):
   - Compact view: once Aurora's inventory window is wider than the tree, its title bar's button is "Compact view" (the Places window's same button and icon), which puts the tree back at the default width, as tall as the window is; before, only "Widen the window" existed and the way back was dragging an edge. The main window, the folder windows and the additional window. Test: `compact_view_goes_back_to_the_tree_at_the_same_height`.
   - Folder pictures: a record's thumbnail is read as the Legacy Viewer reads it (LLInventoryCategory::fromLLSD, LLInventoryItem::fromLLSD): the `thumbnail` map's asset, else the flat `thumbnail_id`, and for an item also the `metadata` wrapper (thumbnail and favorite). The map alone was read, so a record with another form left the folder with no picture in the gallery while the Legacy Viewer showed it. Tests: `a_folder_thumbnail_reads_as_a_map_or_a_flat_id`, `an_item_thumbnail_and_favorite_read_from_every_form`.
   - The View menu's List / Gallery / Combination, reported as not working, works in demo: with no folder picture the three views looked alike, which the folder pictures above should settle. The details pane the report asks to hide already has its button (after Filters).
