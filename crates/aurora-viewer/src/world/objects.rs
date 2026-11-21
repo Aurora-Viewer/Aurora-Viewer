@@ -817,10 +817,9 @@ impl ObjectStore {
         self.set_blinn_phong_faces(idx, ALL_TES, preview);
     }
 
-    /// Show or hide the given faces (one bit per face, `ALL_TES` for the
-    /// whole prim) in Blinn-Phong for the material inspector. The other
-    /// faces keep their own choice: the tab acts on the selected faces alone
-    /// (#4467).
+    /// Show or hide the given faces (one bit per face) in Blinn-Phong for
+    /// the material inspector. The other faces keep their own choice: the
+    /// tab acts on the selected faces alone (#4467).
     pub fn set_blinn_phong_faces(&mut self, idx: usize, faces: u64, preview: bool) {
         let Some(o) = self.get(idx) else { return };
         let next = if preview {
