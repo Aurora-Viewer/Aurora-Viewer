@@ -149,7 +149,10 @@ fn shared_wear_locks_keep_shared_folders() {
     // (Clothes holds the body, whose link in #RLV @sharedunwear keeps on)
     let root = l.world.inventory.root;
     let outside = folder(&mut l.world, 0xF0F0, root, "Boxes", -1);
+    // Delete in the inventory moves to the Trash (LLFolderBridge::removeItem)
+    let trash = folder(&mut l.world, 0xF0F1, root, "Trash", 14);
     let nil = Uuid::nil();
+    let binned = |w: &World, id| w.rlva_inventory_move_allowed(id, trash, nil);
     let gone = |w: &World, id| {
         w.rlva_inventory_mutation_allowed(
             &Mutation {
@@ -160,11 +163,14 @@ fn shared_wear_locks_keep_shared_folders() {
         )
     };
     assert!(gone(&l.world, spare) && gone(&l.world, rlv), "nothing set");
+    assert!(binned(&l.world, spare) && binned(&l.world, rlv), "nothing set: to the Trash");
     for lock in ["@sharedunwear", "@sharedwear"] {
         say(&mut l.world, issuer, &format!("{lock}=n"));
         assert!(!gone(&l.world, spare), "{lock}: a shared folder");
         assert!(!gone(&l.world, rlv), "{lock}: #RLV");
         assert!(gone(&l.world, outside), "{lock}: outside #RLV");
+        assert!(!binned(&l.world, spare) && !binned(&l.world, rlv), "{lock}: to the Trash");
+        assert!(binned(&l.world, outside), "{lock}: outside #RLV to the Trash");
         say(&mut l.world, issuer, &format!("{lock}=y"));
     }
     for lock in ["@unsharedunwear", "@unsharedwear"] {

@@ -103,7 +103,7 @@
   - 🔧 Five points of the second pass left, each read again in both codes (human request, 2026-11-21; task `rlva-parity-remaining`):
     - "Open" in an object's contents is greyed out for a notecard under `@viewnote`, a script under `@viewscript` and a texture under `@viewtexture`, not only in a locked attachment, in the build tools' Contents tab and in the object's contents list (LLTaskInvFVBridge::buildContextMenu; `World::rlva_task_open_blocked`).
     - A payment from a resident whose IMs `@recvim` holds back shows no message, on its card and in the transcript (FIRE-21803 in process_money_balance_reply).
-    - `@sharedwear` and `@sharedunwear` keep #RLV and its folders from being deleted (RlvFolderLocks::canRemoveFolder through get_is_category_removable).
+    - `@sharedwear` and `@sharedunwear` keep #RLV and its folders from a direct delete too (RlvFolderLocks::canRemoveFolder through get_is_category_removable); Delete in the inventory, a move to the Trash, already refused them through the move rule (canMoveFolder).
     - A "#RLV/~" folder offer is kept out of the automatic acceptance only while giving to #RLV is allowed and #RLV exists; otherwise it is accepted like any other (RlvInventory::isGiveToRLVOffer).
     - `@setoverlay_touch` takes any option, which it never reads (RlvBehaviourHandler<RLV_BHVR_SETOVERLAY_TOUCH>::onCommand).
   - ⬜ Later, the human's choice (2026-11-21): #RLV and #Firestorm moved out of the inventory root can still be moved, where the Legacy Viewer holds them wherever they are (LLFolderBridge::isItemMovable, FIRE-28977; `world::inventory::actions::pinned`).
