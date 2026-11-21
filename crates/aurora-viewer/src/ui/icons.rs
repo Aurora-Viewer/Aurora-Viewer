@@ -54,12 +54,15 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "chart-line",
     "check",
     "chevron-down",
+    "chevron-up",
     "chevron-left",
     "chevron-right",
     "chevrons-down",
     "chevrons-right",
     "chevrons-up",
     "circle-minus",
+    "cloud-rain",
+    "cloud-storm",
     "code",
     "code-asterisk",
     "code-off",
@@ -81,6 +84,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "diaper",
     "door-enter",
     "door-exit",
+    "eraser",
     "external-link",
     "eye-closed",
     "eye-off",
@@ -89,6 +93,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "focus-2",
     "focus-centered",
     "fingerprint",
+    "flip-horizontal",
     "gavel",
     "gif",
     "grid-3x3",
@@ -103,6 +108,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "heart-rate-monitor",
     "history",
     "home-check",
+    "ice-skating",
     "id-off",
     "inbox",
     "indent-decrease",
@@ -128,6 +134,8 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "message-off",
     "microphone-off",
     "minimize",
+    "mouse",
+    "mouse-2",
     "movie",
     "music",
     "network",
@@ -145,11 +153,15 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "question-mark",
     "radio",
     "refresh",
+    "refresh-dot",
     "refresh-off",
     "reload",
     "repeat",
     "restore",
     "rotate-2",
+    "resize",
+    "ripple",
+    "rotate-3d",
     "rotate-360",
     "rotate-clockwise",
     "rotate-clockwise-2",
@@ -182,6 +194,8 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "swimming",
     "terminal-2",
     "text-size",
+    "timeline",
+    "tree",
     "typography",
     "unlink",
     "upload",
@@ -199,6 +213,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "user-x",
     "users",
     "users-group",
+    "users-minus",
     "users-plus",
     "vector",
     "volume",
@@ -209,6 +224,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "wand",
     "wave-sine",
     "wifi-off",
+    "wind",
     "world-search",
     "x",
 );
@@ -269,12 +285,14 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "circle-plus",
     "circle-x",
     "click",
+    "clipboard-data",
     "clipboard-text",
     "clock",
     "cloud",
     "cloud-data-connection",
     "code-circle",
     "coin",
+    "columns-2",
     "compass",
     "confetti",
     "copy",
@@ -282,9 +300,11 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "current-location",
     "dashboard",
     "database",
+    "device-cctv",
     "device-desktop",
     "device-floppy",
     "device-gamepad",
+    "device-gamepad-2",
     "device-vision-pro",
     "credit-card",
     "device-speaker",
@@ -320,11 +340,13 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "heart",
     "help-circle",
     "home",
+    "home-2",
     "hourglass",
     "id",
     "info-circle",
     "key",
     "keyboard",
+    "keyframe",
     "label",
     "layout",
     "layout-align-bottom",
@@ -333,8 +355,11 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "layout-align-middle",
     "layout-align-right",
     "layout-align-top",
+    "layout-board-split",
     "layout-bottombar",
     "layout-dashboard",
+    "layout-sidebar-left-collapse",
+    "layout-sidebar-left-expand",
     "layout-sidebar-right",
     "layout-grid",
     "layout-navbar-collapse",
@@ -360,8 +385,12 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "microphone",
     "mood-smile",
     "moon",
+    // Aurora-drawn Luau mark for SLua scripts, after the Legacy Viewer's
+    // Inv_Script_Luau: Tabler has no such icon (decision on PR #2802, docs/BRANDING.md)
+    "luau",
     "mountain",
     "mouse",
+    "navigation",
     "paint",
     "palette",
     "panorama-horizontal",
@@ -378,7 +407,12 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "player-eject",
     "player-pause",
     "player-play",
+    "player-record",
+    "player-skip-back",
+    "player-skip-forward",
     "player-stop",
+    "player-track-next",
+    "player-track-prev",
     "playlist",
     "point",
     "pointer",
@@ -388,6 +422,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "replace",
     "rosette-discount-check",
     "search",
+    "seedling",
     "send",
     "settings",
     "shield",
@@ -448,9 +483,11 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "square-number-7",
     "square-number-8",
     "square-number-9",
+    "square-rounded-minus",
     "square-rounded-chevron-right",
     "square-rounded-chevrons-down",
     "square-rounded-chevrons-up",
+    "square-rounded-plus",
     "stack",
     "star",
     "stack-2",
@@ -464,6 +501,8 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "ticket",
     "toggle-right",
     "trash",
+    "trash-x",
+    "umbrella",
     "user",
     "video",
     "world",
@@ -497,7 +536,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("Command_Preferences_Icon", "settings-filled"),
     ("Command_Build_Icon", "box"),
     ("Command_Gestures_Icon", "hand-move"),
-    ("Command_HowTo_Icon", "help-circle-filled"),
     ("Command_Environments_Icon", "sunset-2-filled"),
     ("Command_Places_Icon", "map-pin-filled"),
     ("groundsit", "armchair"),
@@ -533,6 +571,7 @@ const ALIASES: &[(&str, &str)] = &[
     ("Inv_Physics", "wave-sine"),
     ("Inv_Universal", "layers-union"),
     ("Inv_Script", "code"),
+    ("Inv_Script_Luau", "luau-filled"),
     ("Inv_Sound", "file-music-filled"),
     ("Inv_Animation", "run"),
     ("Inv_Gesture", "hand-move"),
@@ -657,6 +696,10 @@ const INVENTORY_LINKS: &[(&str, &[u8])] = &[
         include_bytes!("../../../../assets/tabler-icons/outline/code-link.svg"),
     ),
     (
+        "Inv_Script_Luau_Link",
+        include_bytes!("../../../../assets/tabler-icons/filled/luau-link.svg"),
+    ),
+    (
         "Inv_Sound_Link",
         include_bytes!("../../../../assets/tabler-icons/filled/file-music-link.svg"),
     ),
@@ -730,6 +773,7 @@ pub(crate) fn inventory_link_name(base: &str) -> &'static str {
         "Inv_Physics" => "Inv_Physics_Link",
         "Inv_Universal" => "Inv_Universal_Link",
         "Inv_Script" => "Inv_Script_Link",
+        "Inv_Script_Luau" => "Inv_Script_Luau_Link",
         "Inv_Sound" => "Inv_Sound_Link",
         "Inv_Animation" => "Inv_Animation_Link",
         "Inv_Gesture" => "Inv_Gesture_Link",
@@ -934,6 +978,14 @@ mod tests {
     }
 
     #[test]
+    fn the_rendering_types_menu_icons_are_embedded() {
+        let names: Vec<&str> = OUTLINE.iter().chain(FILLED).map(|(name, _)| *name).collect();
+        for icon in crate::ui::bars::RENDER_TYPE_ICONS {
+            assert!(names.contains(&icon), "{icon} is not embedded");
+        }
+    }
+
+    #[test]
     fn aliases_point_to_embedded_icons() {
         let names: Vec<&str> = OUTLINE.iter().chain(FILLED).map(|(name, _)| *name).collect();
         for (alias, target) in ALIASES {
@@ -955,5 +1007,8 @@ mod tests {
         assert_eq!(crate::ui::inventory::item_icon(5, 18, 255), "Inv_Clothing");
         assert_eq!(crate::ui::inventory::item_icon(13, 18, 255), "Inv_BodyShape");
         assert_eq!(crate::ui::inventory::item_icon(24, 24, 14), "Inv_LinkItem");
+        assert_eq!(crate::ui::inventory::item_icon(10, 10, 0), "Inv_Script");
+        assert_eq!(crate::ui::inventory::item_icon(10, 10, 1), "Inv_Script_Luau");
+        assert_eq!(inventory_link_name("Inv_Script_Luau"), "Inv_Script_Luau_Link");
     }
 }

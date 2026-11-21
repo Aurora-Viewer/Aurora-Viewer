@@ -12,6 +12,10 @@
 
 /// Ranks within the urgent lane.
 pub mod urgent {
+    /// LLGestureMgr::playGesture requests assets with is_priority=true.
+    /// A gesture the user just played must not wait behind a crowd's motions
+    /// or bakes. It still shares the existing connection and retry limits.
+    pub const GESTURE: f32 = 6.0;
     /// The sky and water settings, and a landmark a window waits on.
     pub const SKY: f32 = 5.0;
     pub const WINDOW: f32 = 5.0;

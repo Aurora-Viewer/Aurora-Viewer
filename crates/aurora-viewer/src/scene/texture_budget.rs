@@ -695,6 +695,13 @@ mod tests {
         let mut f = Background::default();
         assert!(!f.update(t0, true, true, false));
         assert!(f.update(t0 + s(2), true, true, false));
+        // gaming mode counts as minimised, in front (Textures::set_stepped_back):
+        // a second, then back once it ends
+        let mut g = Background::default();
+        assert!(!g.update(t0, true, true, false));
+        assert!(g.update(t0 + MINIMIZED_AFTER, true, true, false));
+        assert!(g.update(t0 + s(30), true, true, false), "they stay gone while it lasts");
+        assert!(!g.update(t0 + s(31), true, false, false), "it ended: textures load again");
     }
 
     #[test]

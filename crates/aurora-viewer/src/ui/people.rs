@@ -17,6 +17,7 @@ use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use crate::world::World;
 use crate::world::mutes::{MuteType, flag};
+use crate::world::names::NameScope;
 use crate::world::social::Friend;
 use egui::{RichText, Vec2};
 use glam::Vec3;
@@ -33,6 +34,7 @@ mod recent;
 mod rows;
 mod sets;
 mod sheet;
+pub(crate) mod type_ahead;
 pub use radar::{RadarData, RadarSettings, age_days, radar_name};
 
 /// The tabs (`Panels::people_tab`), in Aurora's order: Near you, Friends,
@@ -49,12 +51,13 @@ const AURORA_TABS: [u8; 6] = [TAB_NEARBY, TAB_FRIENDS, TAB_GROUPS, TAB_SETS, TAB
 /// Search every name with a trimmed, lowercase filter, independently of the
 /// row's display preferences. Unlike
 /// LLAvatarList::getNameForDisplay (indra/newview/llavatarlist.cpp), People
-/// deliberately also finds hidden username/legacy forms (#1003). `get` keeps
-/// contact aliases and RLVa anonymity; never search the unfiltered cache.
-pub(super) fn matches_name(world: &World, id: &Uuid, shown: &str, filter: &str) -> bool {
+/// deliberately also finds hidden username/legacy forms (#1003). `get_in`
+/// keeps contact aliases and RLVa anonymity as the list's `scope` shows
+/// them; never search the unfiltered cache.
+pub(super) fn matches_name(world: &World, scope: NameScope, id: &Uuid, shown: &str, filter: &str) -> bool {
     filter.is_empty()
         || shown.to_lowercase().contains(filter)
-        || world.social.avatar_names.get(id).is_some_and(|name| {
+        || world.social.avatar_names.get_in(scope, id).is_some_and(|name| {
             name.display_name.to_lowercase().contains(filter)
                 || name.username.to_lowercase().contains(filter)
                 || name
@@ -70,10 +73,23 @@ pub(super) fn matches_name(world: &World, id: &Uuid, shown: &str, filter: &str) 
 /// Id of the window.
 pub(crate) const WINDOW: &str = "people";
 
+/// Why a double click on the radar does not move the camera.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ZoomRefusal {
+    /// Not drawn, and farther than the draw distance (metres).
+    BeyondDrawDistance { range: f32, draw_distance: f32 },
+    /// Not drawn, and its coarse location has no height: there is no point
+    /// to look at.
+    Unplaced,
+}
+
 pub enum PeopleAction {
     OpenIm(Uuid),
     /// "View profile" (menu_people_nearby.xml / friends, Avatar.Profile).
     Profile(Uuid),
+    /// "View profile" from the friends list: it opens under RLVa's
+    /// `@shownames` too, as the list names its friends (`NameScope::Roster`).
+    RosterProfile(Uuid),
     OfferTeleport(Uuid),
     /// Open the chat of one of our groups.
     GroupChat(Uuid),
@@ -89,12 +105,18 @@ pub enum PeopleAction {
         flag: u32,
         on: bool,
     },
-    /// Double click on an avatar of the radar that is not drawn
-    /// (ZoomToAvatarNotPossible).
-    TooFarToZoom,
+    /// Double click on an avatar of the radar the camera cannot go to
+    /// (FSRadar::zoomAvatar's camera_no_focus): the chat says why.
+    ZoomRefused {
+        name: String,
+        why: ZoomRefusal,
+    },
     /// "+" of the friends tab: choose a resident to offer friendship to
     /// (People.AddFriendWizard).
     PickFriend,
+    /// "View Conversation Log…" of the friends tab's view menu
+    /// (Floater.Toggle conversation).
+    ConversationLog,
     /// The bell of a group: receive its notices or not.
     GroupNotices(Uuid, bool),
     /// The switch of the right to modify our objects in a sheet: asked
@@ -172,9 +194,29 @@ fn split(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, sa
     }
 }
 
-/// The sheet of a person, from any tab but Near you.
+/// The sheet of a person, from any tab but Near you and Friends.
 fn person_sheet(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, id: Uuid) -> bool {
-    sheet::show(ui, c.p, c.world, data, st, id, false, !c.contact_sheet_on_click, c.actions)
+    sheet::show(
+        ui,
+        c.p,
+        c.world,
+        data,
+        st,
+        id,
+        NameScope::Roster,
+        false,
+        !c.contact_sheet_on_click,
+        c.actions,
+    )
+}
+
+/// A friend's username, for the sort of the friends list.
+fn friend_username(world: &World, id: &Uuid) -> String {
+    let names = &world.social.avatar_names;
+    names
+        .get_in(NameScope::Roster, id)
+        .map(|n| n.user_name_for_display(&names.options))
+        .unwrap_or_else(|| world.social.name_in(NameScope::Roster, id))
 }
 
 /// The row whose quick actions' menu is open keeps them shown.
@@ -282,6 +324,10 @@ pub struct PeopleUi {
     anchor: Option<Uuid>,
     /// The contact set the friends tab shows alone.
     friend_set: Option<String>,
+    /// Contact sets: only the members online, and the narrow window's
+    /// list of sets unfolded.
+    sets_online_only: bool,
+    sets_picker_open: bool,
     /// The nickname being typed in the sheet, and whose.
     nick: Option<(Uuid, String)>,
     /// What the sheets ask of the contact list's dialogs.
@@ -290,6 +336,9 @@ pub struct PeopleUi {
     pub wanted_images: HashSet<Uuid>,
     /// The tab shown last frame: another one starts afresh.
     shown_tab: Option<u8>,
+    /// The last refused zoom (resident, ui time): double clicks on the
+    /// same row say it once.
+    zoom_refused: Option<(Uuid, f64)>,
 }
 
 impl PeopleUi {
@@ -396,7 +445,9 @@ pub fn people_window(
     aurora: bool,
 ) -> Vec<PeopleAction> {
     let mut actions = Vec::new();
-    if world.rlva.has("shownearby") && panels.people_tab == TAB_NEARBY {
+    // (the sheet of a row names it: none either while @shownames makes the
+    // list anonymous)
+    if (radar::nearby_hidden(world) || radar::names_hidden(world)) && panels.people_tab == TAB_NEARBY {
         nearby::close_sheet(st);
     }
     let mut open = panels.people;
@@ -415,7 +466,12 @@ pub fn people_window(
         st.tab_shown(panels.people_tab);
     }
     nearby::fit_window(ctx, st);
-    let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("common-people"), pos, size).help(help);
+    // Hold the body in the floater's exact rect so the Legacy radar table
+    // (and Aurora nearby) cannot ratchet the window wider while an edge is
+    // dragged, then refuse to shrink (#3033). Same pattern as Imports.
+    let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("common-people"), pos, size)
+        .help(help)
+        .steady_size();
     if aurora {
         // the mock-up's tabs right under the title
         floater = floater.compact_header();
@@ -469,9 +525,9 @@ pub fn people_window(
                     panels.people_tab = TAB_BLOCKED;
                 }
             }
-            1 => friends_tab(ui, p, world, st, radar.pics, friends, &mut actions),
+            1 => friends_tab(ui, p, world, st, radar.pics, friends, panels.conversation_log, &mut actions),
             _ => {
-                widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+                widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
                 ui.add_space(4.0);
                 let filter = st.filter.trim().to_lowercase();
                 if panels.people_tab == 2 {
@@ -657,9 +713,9 @@ fn tabs_shown(widths: &[f32], open: usize, room: f32, more: f32) -> std::ops::Ra
     run
 }
 
-/// View and sort options of the friends (menu_people_friends_view.xml,
-/// without the conversation log, which has its own window).
-fn friends_view_menu(ui: &mut egui::Ui, p: &Palette, s: &mut FriendsSettings) {
+/// View and sort options of the friends (menu_people_friends_view.xml);
+/// `log_open`: the conversation log's window is open (its check).
+fn friends_view_menu(ui: &mut egui::Ui, p: &Palette, s: &mut FriendsSettings, log_open: bool, actions: &mut Vec<PeopleAction>) {
     for (sort, label) in [
         (SORT_NAME, aurora_i18n::tr!("people-friends-sort-name")),
         (SORT_USERNAME, aurora_i18n::tr!("people-friends-sort-username")),
@@ -684,6 +740,17 @@ fn friends_view_menu(ui: &mut egui::Ui, p: &Palette, s: &mut FriendsSettings) {
         aurora_i18n::tr!("people-friends-view-permissions"),
         &mut s.permissions,
     );
+    menu::separator(ui, p);
+    if menu::check(
+        ui,
+        p,
+        "file-text-filled",
+        aurora_i18n::tr!("people-friends-view-conversation-log"),
+        log_open,
+        true,
+    ) {
+        actions.push(PeopleAction::ConversationLog);
+    }
 }
 
 /// Friends (the friends tab of LLPanelPeople, panel_people.xml): the filter
@@ -698,6 +765,7 @@ fn friends_tab(
     st: &mut PeopleUi,
     pics: &HashMap<Uuid, egui::TextureHandle>,
     settings: &mut FriendsSettings,
+    log_open: bool,
     actions: &mut Vec<PeopleAction>,
 ) {
     // laid out from the right, the filter takes what the buttons leave
@@ -711,9 +779,9 @@ fn friends_tab(
             actions.push(PeopleAction::PickFriend);
         }
         radar::tool_menu(ui, p, "arrows-sort", aurora_i18n::tr!("people-view-sort-options"), true, |ui| {
-            friends_view_menu(ui, p, settings);
+            friends_view_menu(ui, p, settings, log_open, actions);
         });
-        widgets::search_field(ui, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
+        widgets::search_field(ui, p, &mut st.filter, aurora_i18n::tr!("ui-people-filter"), ui.available_width());
     });
     ui.add_space(4.0);
     let filter = st.filter.trim().to_lowercase();
@@ -721,8 +789,8 @@ fn friends_tab(
     sort_friends(
         &mut friends,
         settings.sort,
-        |id| world.social.name_of(id),
-        |id| radar_name(world, id, 1),
+        |id| world.social.name_in(NameScope::Roster, id),
+        |id| friend_username(world, id),
     );
     let online = friends.iter().filter(|f| f.online).count();
     let l1 = aurora_i18n::tr!("ui-people-online", online = format!("{}", online));
@@ -734,8 +802,8 @@ fn friends_tab(
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let mut shown = 0;
         for f in friends.iter().filter(|f| all || f.online) {
-            let name = world.social.name_of(&f.id);
-            if !matches_name(world, &f.id, &name, &filter) {
+            let name = world.social.name_in(NameScope::Roster, &f.id);
+            if !matches_name(world, NameScope::Roster, &f.id, &name, &filter) {
                 continue;
             }
             shown += 1;
@@ -769,7 +837,7 @@ fn friends_tab(
                         actions.push(PeopleAction::OpenIm(f.id));
                     }
                     // menu_fs_contacts_friends.xml
-                    menu::context_menu(&r, p, |ui| context::avatar_list_menu(ui, p, world, f.id, AvatarList::Friend));
+                    menu::context_menu(&r, p, |ui| context::avatar_roster_menu(ui, p, world, f.id, AvatarList::Friend));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         // the icons these actions have in the avatar menus
@@ -789,7 +857,7 @@ fn friends_tab(
                             actions.push(PeopleAction::OpenIm(f.id));
                         }
                         if widgets::icon_button(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile"), true) {
-                            actions.push(PeopleAction::Profile(f.id));
+                            actions.push(PeopleAction::RosterProfile(f.id));
                         }
                         if !settings.permissions {
                             return;

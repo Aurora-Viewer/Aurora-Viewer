@@ -39,6 +39,7 @@ use webrtc::peer_connection::{
 
 use crate::link_stats::{self, ArrivalLag, LinkStats, RtcpView, STATS_PERIOD};
 use crate::protocol::{self, AUDIO_TRACK_ID, DATA_CHANNEL_LABEL, LocalCandidate, STREAM_ID};
+use crate::receive_gain::{GainRamp, ReceiveGain};
 use crate::state::{LocalPrefs, ParticipantTable, SpatialState};
 use crate::transmit::{FRAME_DURATION, OPUS_SILENCE, Payload, Transmitter, TxControl};
 use crate::{VoiceConnectParams, VoiceStatus};
@@ -53,6 +54,15 @@ const DISCONNECT_RENEGOTIATE_DELAY: Duration = Duration::from_secs(10);
 const GATHER_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the peer connection may take to come up after the answer.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Delay between two connectivity checks of one candidate pair (the
+/// webrtc-rs default).
+const ICE_CHECK_INTERVAL: Duration = Duration::from_millis(200);
+/// Connectivity checks sent on one candidate pair before giving it up: enough
+/// to cover [`CONNECT_TIMEOUT`], as libwebrtc keeps pinging. The webrtc-rs
+/// default (7 checks, 1.4 s) gave up before some voice hosts answered, and a
+/// failed pair is never checked again (issue #3364).
+const ICE_MAX_CHECKS: u16 = 150;
+const _: () = assert!(ICE_CHECK_INTERVAL.as_millis() * ICE_MAX_CHECKS as u128 >= CONNECT_TIMEOUT.as_millis());
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Largest provisioning answer read: an SDP and a few keys take a few KB.
 const MAX_REPLY_BYTES: usize = 1 << 20;
@@ -70,6 +80,8 @@ pub(crate) struct Shared {
     pub spatial: Mutex<SpatialState>,
     pub prefs: Mutex<LocalPrefs>,
     pub tx: TxControl,
+    /// The viewer's own gain on the received voice (private calls).
+    pub rx_gain: ReceiveGain,
 }
 
 impl Shared {
@@ -80,6 +92,7 @@ impl Shared {
             spatial: Mutex::new(SpatialState::default()),
             prefs: Mutex::new(LocalPrefs::default()),
             tx: TxControl::new(),
+            rx_gain: ReceiveGain::default(),
         }
     }
 
@@ -191,6 +204,8 @@ fn free_udp_port() -> Option<u16> {
     let start = (clock_nanos() % u32::from(span)) as u16;
     (0..span)
         .map(|i| UDP_PORT_MIN + (start + i) % span)
+        // proxy-guard: a local bind probe, nothing sent; voice itself waits for
+        // aurora_proxy::Rule::voice_allowed (the viewer's voice.rs)
         .find(|&port| UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port)).is_ok())
 }
 
@@ -267,7 +282,9 @@ async fn build_peer_connection(
         )
         .map_err(|e| e.to_string())?;
     let registry = register_default_interceptors(Registry::new(), &mut media).map_err(|e| e.to_string())?;
-    let settings = SettingEngineBuilder::new().with_multicast_dns_mode(mdns);
+    let settings = SettingEngineBuilder::new()
+        .with_multicast_dns_mode(mdns)
+        .with_ice_connection_attempts(Some(ICE_CHECK_INTERVAL), Some(ICE_MAX_CHECKS));
     #[cfg(test)]
     let settings = if tests::LOOPBACK_ONLY.load(Ordering::Relaxed) {
         tests::restrict_to_loopback(settings)
@@ -297,6 +314,7 @@ struct Handler {
     /// (webrtc 0.17 bound it there and kept it bound until the close).
     connected: Arc<AtomicBool>,
     sink: Arc<Mutex<VoiceSink>>,
+    shared: Arc<Shared>,
     stats: Arc<LinkStats>,
     stop: watch::Receiver<bool>,
 }
@@ -326,7 +344,13 @@ impl PeerConnectionEventHandler for Handler {
     }
 
     async fn on_track(&self, track: Arc<dyn TrackRemote>) {
-        tokio::spawn(receive_audio(track, self.sink.clone(), self.stats.clone(), self.stop.clone()));
+        tokio::spawn(receive_audio(
+            track,
+            self.sink.clone(),
+            self.shared.clone(),
+            self.stats.clone(),
+            self.stop.clone(),
+        ));
     }
 }
 
@@ -417,10 +441,12 @@ struct Playout {
     pcm: Vec<f32>,
     last_seq: Option<u16>,
     lag: ArrivalLag,
+    ramp: GainRamp,
 }
 
 impl Playout {
-    fn packet(&mut self, packet: &rtc::rtp::Packet, sink: &Mutex<VoiceSink>, stats: &LinkStats) {
+    /// `gain` is [`Shared::rx_gain`], read once per packet.
+    fn packet(&mut self, packet: &rtc::rtp::Packet, gain: f32, sink: &Mutex<VoiceSink>, stats: &LinkStats) {
         let seq = packet.header.sequence_number;
         if let Some(prev) = self.last_seq {
             let gap = seq.wrapping_sub(prev).wrapping_sub(1);
@@ -432,7 +458,7 @@ impl Playout {
             let concealed = gap.min(5);
             for _ in 0..concealed {
                 if let Ok(n) = self.decoder.decode(&[], PLC_FRAME, &mut self.pcm) {
-                    sink.lock().push(&self.pcm[..(n * 2).min(self.pcm.len())], 2);
+                    self.play(n, gain, sink);
                 }
             }
             if gap > 0 {
@@ -445,18 +471,29 @@ impl Playout {
             return;
         }
         match self.decoder.decode(&packet.payload, MAX_OPUS_FRAME, &mut self.pcm) {
-            Ok(n) => {
-                sink.lock().push(&self.pcm[..(n * 2).min(self.pcm.len())], 2);
-            }
+            Ok(n) => self.play(n, gain, sink),
             Err(e) => log::debug!("voice: undecodable Opus packet: {e:?}"),
         }
+    }
+
+    /// Plays the `n` stereo frames just decoded, at the gain.
+    fn play(&mut self, n: usize, gain: f32, sink: &Mutex<VoiceSink>) {
+        let len = (n * 2).min(self.pcm.len());
+        self.ramp.apply(gain, &mut self.pcm[..len], 2);
+        sink.lock().push(&self.pcm[..len], 2);
     }
 }
 
 /// Decodes the incoming Opus track into the Voice channel. Each wake takes
 /// every event already queued; how many there were is the depth of
 /// webrtc's track queue at that moment ([`LinkStats::rx_wake`]).
-async fn receive_audio(track: Arc<dyn TrackRemote>, sink: Arc<Mutex<VoiceSink>>, stats: Arc<LinkStats>, mut stop: watch::Receiver<bool>) {
+async fn receive_audio(
+    track: Arc<dyn TrackRemote>,
+    sink: Arc<Mutex<VoiceSink>>,
+    shared: Arc<Shared>,
+    stats: Arc<LinkStats>,
+    mut stop: watch::Receiver<bool>,
+) {
     let decoder = match rusty_opus::OpusDecoder::new(48_000, 2) {
         Ok(d) => d,
         Err(e) => {
@@ -469,6 +506,7 @@ async fn receive_audio(track: Arc<dyn TrackRemote>, sink: Arc<Mutex<VoiceSink>>,
         pcm: vec![0.0f32; MAX_OPUS_FRAME * 2],
         last_seq: None,
         lag: ArrivalLag::default(),
+        ramp: GainRamp::default(),
     };
     'run: loop {
         // webrtc 0.21 keeps a closed connection's track queues open, so the
@@ -480,7 +518,7 @@ async fn receive_audio(track: Arc<dyn TrackRemote>, sink: Arc<Mutex<VoiceSink>>,
         let mut queued = 0u32;
         loop {
             match &event {
-                Some(TrackRemoteEvent::OnRtpPacket(packet)) => playout.packet(packet, &sink, &stats),
+                Some(TrackRemoteEvent::OnRtpPacket(packet)) => playout.packet(packet, shared.rx_gain.get(), &sink, &stats),
                 None | Some(TrackRemoteEvent::OnEnded) => break 'run,
                 Some(_) => {}
             }
@@ -602,6 +640,7 @@ async fn connect_once(
         gathered: Notify::new(),
         connected: Arc::new(AtomicBool::new(false)),
         sink: sink.clone(),
+        shared: shared.clone(),
         stats: Arc::new(LinkStats::default()),
         stop: stop_rx.clone(),
     });
@@ -719,6 +758,8 @@ async fn negotiate_and_run(
         }
     };
     let viewer_session = answer.viewer_session.clone();
+    log::debug!("voice: answer ICE: {}", protocol::answer_ice_summary(&answer.sdp));
+    log::trace!("voice: answer SDP:\n{}", answer.sdp);
 
     let outcome = async {
         let remote = match RTCSessionDescription::answer(answer.sdp) {

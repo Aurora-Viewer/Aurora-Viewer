@@ -31,7 +31,10 @@ pub mod sealed;
 pub mod skeleton;
 pub mod wearable;
 
-pub use anim::{Animation, JointMotion, parse_animation, parse_animation_upload, prepare_animation_upload};
+pub use anim::{
+    Animation, JointMotion, native_joint_priorities, parse_animation, parse_animation_upload, prepare_animation_upload,
+    rewrite_animation_upload,
+};
 pub use j2k::{DecodeTimings, DecodedImage, J2kInfo, bytes_for_discard, decode_j2k, decode_j2k_timed, j2k_info};
 pub use llm::{LlmMesh, LlmMorph, parse_llm};
 pub use material::{AlphaMode, PbrMaterial, TextureTransform, parse_material_asset};
@@ -53,6 +56,9 @@ pub enum AssetError {
     /// The input declares (or decompresses to) a size beyond our safety limits.
     #[error("asset exceeds size limit: {0}")]
     TooLarge(&'static str),
+    /// TinyGLTF's per-file limit for an external glTF buffer or image.
+    #[error("external glTF resource is {bytes} bytes; maximum is {limit} bytes")]
+    GltfResourceSize { bytes: u64, limit: u64 },
     /// zlib inflate failed.
     #[error("decompression failed: {0}")]
     Decompress(String),

@@ -13,7 +13,7 @@ mod os_events;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
 // mod report;
-mod software;
+pub(crate) mod software;
 mod summary;
 mod threads;
 mod watchdog;
@@ -124,6 +124,9 @@ pub fn helper() -> anyhow::Result<bool> {
         return Ok(false);
     };
     let id = args.get(index + 1).ok_or_else(|| anyhow::anyhow!("missing crash session"))?;
+    // a report it sends follows the viewer's proxy rule (Preferences ›
+    // Network › Proxy): this process reads it for itself
+    crate::proxy::install(&crate::settings::Settings::load().proxy);
     let dir = session_dir(&root(), id)?;
     let record = load(&dir)?;
     if args[index] == "--crash-watch" {
@@ -202,7 +205,7 @@ fn start_inner() -> anyhow::Result<()> {
     std::fs::create_dir_all(root())?;
     recover();
     let settings = crate::settings::Settings::load();
-    aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
+    crate::language_file::select(&settings.language, settings.custom_language);
     let dir = root().join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir(&dir)?;
     let record = Record {

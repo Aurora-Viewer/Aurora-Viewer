@@ -443,16 +443,19 @@ impl Emoji {
         let edit = egui::TextEdit::multiline(text).desired_rows(1).return_key(None);
         let out = build(edit.layouter(&mut layouter)).show(ui);
         let painter = ui.painter().with_clip_rect(out.text_clip_rect);
+        // A glyph's `chr` is the first character of its shaped cluster: the
+        // variation selector of ❤️ (U+2764 U+FE0F) is a glyph of its own
+        // that also says ❤, and had a second picture. egui keeps one glyph
+        // per character, so the text tells which character each glyph is.
+        let mut chars = out.galley.text().chars();
         for placed in &out.galley.rows {
             let mid_y = out.galley_pos.y + placed.pos.y + placed.row.size.y / 2.0;
-            if mid_y + picture_side < out.text_clip_rect.top() || mid_y - picture_side > out.text_clip_rect.bottom() {
-                continue;
-            }
-            for g in &placed.row.glyphs {
-                if !self.has(g.chr) {
+            let visible = mid_y + picture_side >= out.text_clip_rect.top() && mid_y - picture_side <= out.text_clip_rect.bottom();
+            for (g, c) in placed.row.glyphs.iter().zip(&mut chars) {
+                if !visible || !self.has(c) {
                     continue;
                 }
-                if let Some(t) = self.texture(ui.ctx(), g.chr) {
+                if let Some(t) = self.texture(ui.ctx(), c) {
                     let mid_x = out.galley_pos.x + placed.pos.x + g.pos.x + g.advance_width / 2.0;
                     let size = t.size_vec2() * (picture_side / t.size_vec2().max_elem());
                     painter.image(
@@ -463,6 +466,9 @@ impl Emoji {
                     );
                 }
             }
+            if placed.ends_with_newline {
+                chars.next(); // egui omits a hard newline from the row's glyphs
+            }
         }
         out
     }
@@ -470,8 +476,9 @@ impl Emoji {
     /// A clickable emoji in the rect of `resp`, the picker's and the recent
     /// row's: the pill under the pointer, the picture, a small star on a
     /// `favorite`, its shortcode. Also whether its right-click menu asked to
-    /// add it to the favourites or remove it.
-    fn cell(&mut self, ui: &egui::Ui, p: &Palette, c: char, favorite: bool, resp: egui::Response) -> (egui::Response, bool) {
+    /// add it to the favourites or remove it; `None` while favourites are
+    /// turned off: no star and no menu.
+    fn cell(&mut self, ui: &egui::Ui, p: &Palette, c: char, favorite: Option<bool>, resp: egui::Response) -> (egui::Response, bool) {
         let rect = resp.rect;
         if resp.hovered() {
             ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
@@ -489,7 +496,9 @@ impl Emoji {
                 crate::ui::widgets::PICTURE_TINT,
             );
         }
-        if favorite && let Some(t) = super::icons::global("star-filled") {
+        if favorite == Some(true)
+            && let Some(t) = super::icons::global("star-filled")
+        {
             let star = egui::Rect::from_min_size(rect.right_bottom() - egui::Vec2::splat(10.0), egui::Vec2::splat(9.0));
             ui.painter().image(
                 t.id(),
@@ -499,9 +508,11 @@ impl Emoji {
             );
         }
         let mut toggle = false;
-        super::menu::context_menu(&resp, p, |ui| {
-            toggle = super::menu::check(ui, p, "star-filled", aurora_i18n::tr!("ui-emoji-favorite"), favorite, true);
-        });
+        if let Some(favorite) = favorite {
+            super::menu::context_menu(&resp, p, |ui| {
+                toggle = super::menu::check(ui, p, "star-filled", aurora_i18n::tr!("ui-emoji-favorite"), favorite, true);
+            });
+        }
         // tooltip: shortcode to type it in chat
         let s = c.to_string();
         let info = emojis::get(&s).or_else(|| emojis::get(&format!("{s}\u{FE0F}")));
@@ -519,7 +530,8 @@ impl Emoji {
     /// filters at once) and keeps it while nothing else has it; Escape is
     /// taken here, before the search field or anything after the picker sees
     /// it, and returned for the caller to close the picker.
-    pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, favorites: &[char]) -> Picked {
+    /// `favorites` is `None` while they are turned off: no star tab, no menu.
+    pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, favorites: Option<&[char]>) -> Picked {
         let pass = ui.ctx().cumulative_pass_nr();
         let opened = self.shown_pass.is_none_or(|last| last + 1 < pass);
         self.shown_pass = Some(pass);
@@ -538,9 +550,12 @@ impl Emoji {
         }
         let mut chosen = None;
         let mut favorite = None;
+        if favorites.is_none() && self.tab == FAVORITES_TAB {
+            self.tab = 0;
+        }
         ui.horizontal(|ui| {
-            let favorites_tab = (aurora_i18n::tr!("ui-emoji-favorites"), "star-filled");
-            let tabs = categories().iter().map(|(label, icon, _)| (*label, *icon)).chain([favorites_tab]);
+            let favorites_tab = favorites.map(|_| (aurora_i18n::tr!("ui-emoji-favorites"), "star-filled"));
+            let tabs = categories().iter().map(|(label, icon, _)| (*label, *icon)).chain(favorites_tab);
             for (i, (label, icon)) in tabs.enumerate() {
                 let sel = self.tab == i;
                 let (rect, resp) = ui.allocate_exact_size(egui::vec2(26.0, 24.0), egui::Sense::click());
@@ -564,12 +579,11 @@ impl Emoji {
                 }
             }
         });
-        let search = ui.add(
-            egui::TextEdit::singleline(&mut self.query)
-                .id(egui::Id::unique(SEARCH_ID))
+        let search = crate::ui::widgets::search_text_edit(ui, p, &mut self.query, |edit| {
+            edit.id(egui::Id::unique(SEARCH_ID))
                 .hint_text(aurora_i18n::tr!("ui-emoji-search-emoji-name-or-code"))
-                .desired_width(f32::INFINITY),
-        );
+                .desired_width(f32::INFINITY)
+        });
         // (a click on a tab or a picture leaves the keyboard nowhere: back
         // to the search, so typing still filters)
         if opened || ui.ctx().memory(|m| m.focused().is_none()) {
@@ -579,7 +593,7 @@ impl Emoji {
         let q = self.query.trim().trim_matches(':').to_lowercase();
         let on_favorites = q.is_empty() && self.tab == FAVORITES_TAB;
         let list: Vec<char> = if on_favorites {
-            favorites.iter().copied().filter(|c| self.in_font(*c)).collect()
+            favorites.unwrap_or_default().iter().copied().filter(|c| self.in_font(*c)).collect()
         } else if q.is_empty() {
             self.lists.get(self.tab).cloned().unwrap_or_default()
         } else {
@@ -613,7 +627,7 @@ impl Emoji {
                         ui.spacing_mut().item_spacing.x = 2.0;
                         for c in list.iter().skip(r * cols).take(cols) {
                             let (_, resp) = ui.allocate_exact_size(egui::vec2(cell, cell), egui::Sense::click());
-                            let (resp, toggle) = self.cell(ui, p, *c, favorites.contains(c), resp);
+                            let (resp, toggle) = self.cell(ui, p, *c, favorites.map(|f| f.contains(c)), resp);
                             if resp.clicked() {
                                 chosen = Some(*c);
                             }
@@ -674,6 +688,50 @@ mod tests {
         }
     }
 
+    /// The emoji pictures `text_field` paints for `text`, and the characters
+    /// of its laid-out glyphs.
+    fn field_pictures(text: &str) -> (usize, Vec<char>) {
+        let ctx = egui::Context::default();
+        let mut emoji = Emoji::load();
+        let mut text = text.to_owned();
+        let mut glyphs = Vec::new();
+        let mut pictures = 0;
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let out = emoji.text_field(ui, &mut text, |edit| edit.desired_width(400.0));
+                    glyphs = out.galley.rows.iter().flat_map(|r| r.row.glyphs.iter().map(|g| g.chr)).collect();
+                },
+            );
+            pictures = output
+                .shapes
+                .iter()
+                .filter(|s| matches!(&s.shape, egui::epaint::Shape::Mesh(m) if m.texture_id != egui::TextureId::default()))
+                .count();
+            output.textures_delta.clear();
+        }
+        (pictures, glyphs)
+    }
+
+    /// ❤️ is U+2764 and its variation selector: one picture, as 😀.
+    #[test]
+    fn the_field_draws_one_picture_per_emoji() {
+        for (text, expected) in [
+            ("a 😀 :b", 1),
+            ("a\n✌️ b ❤️", 2),
+            ("a \u{2764}\u{FE0F} :b", 1),
+            ("\u{2764}\u{FE0F}\u{2764}\u{FE0F}", 2),
+            ("\u{2764} x", 1),
+        ] {
+            let (pictures, glyphs) = field_pictures(text);
+            assert_eq!(pictures, expected, "{text:?}: glyphs {glyphs:?}");
+        }
+    }
+
     /// Opened, the picker's search has the keyboard and what is typed
     /// filters; Escape is the picker's alone (nothing drawn after it sees
     /// the key) and the search keeps its text; opened again, the search takes
@@ -692,7 +750,7 @@ mod tests {
             frames.run(events, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(field));
                 if open {
-                    picked = emoji.picker(ui, &p, &icons, &[]);
+                    picked = emoji.picker(ui, &p, &icons, None);
                 }
                 seen_after = ui.input(|i| i.key_pressed(egui::Key::Escape));
             });

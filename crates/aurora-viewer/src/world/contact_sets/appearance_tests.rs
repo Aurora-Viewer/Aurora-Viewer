@@ -77,6 +77,9 @@ fn contact_visuals_round_trip_and_old_files_inherit() {
         icon: Some(3),
         replace_friend: true,
         size: PlateSize::Reduced,
+        marker: MarkerScope::Off,
+        marker_shape: MarkerShape::Circle,
+        marker_fade: None,
     };
     sets.set_visuals("Example", v.clone());
     sets.set_stack_icons(true);
@@ -108,4 +111,134 @@ fn contact_visuals_picker_assets_and_labels_exist() {
         let key = appearance::ICON_LABELS[i];
         assert_ne!(aurora_i18n::text(key), key);
     }
+}
+
+#[test]
+fn contact_markers_cascade_by_priority_and_round_trip() {
+    let mut sets = ContactSets::default();
+    let id = Uuid::from_u128(1);
+    for name in ["Staff", "Friends", "Plain"] {
+        sets.add_set(name);
+        sets.add_to_set(&[id], name, |_| false);
+    }
+    sets.set_color("Staff", [1.0, 0.0, 0.0, 1.0]);
+    sets.set_color("Friends", [0.0, 0.0, 1.0, 1.0]);
+    assert_eq!(sets.appearance(&id).marker, None, "off by default");
+    assert!(!sets.has_markers(), "nobody to look for");
+    sets.set_visuals(
+        "Friends",
+        Visuals {
+            marker: MarkerScope::Region,
+            marker_shape: MarkerShape::Diamond,
+            marker_fade: Some(9000),
+            icon: Some(2),
+            ..Default::default()
+        },
+    );
+    let friends = sets.appearance(&id).marker.expect("marker");
+    assert!(sets.has_markers());
+    assert_eq!(
+        friends,
+        Marker {
+            scope: MarkerScope::Region,
+            shape: MarkerShape::Diamond,
+            color: [0.0, 0.0, 1.0, 1.0],
+            border: None,
+            background: None,
+            icon: Some(2),
+            fade: Some(*appearance::MARKER_FADE_RANGE.end()),
+        }
+    );
+    // the set on top wins as a whole, its lack of a symbol included
+    sets.set_visuals(
+        "Staff",
+        Visuals {
+            marker: MarkerScope::Parcel,
+            ..Default::default()
+        },
+    );
+    sets.move_priority("Staff", true);
+    sets.move_priority("Staff", true);
+    let staff = sets.appearance(&id).marker.expect("marker");
+    assert_eq!(
+        (staff.scope, staff.color, staff.icon, staff.fade),
+        (MarkerScope::Parcel, [1.0, 0.0, 0.0, 1.0], None, None)
+    );
+
+    let visuals = sets.set("Friends").unwrap().visuals.clone();
+    assert_eq!(Visuals::read(&visuals.write()), visuals);
+    let visuals = sets.set("Staff").unwrap().visuals.clone();
+    assert_eq!(Visuals::read(&visuals.write()), visuals);
+    assert_eq!(staff.shape, MarkerShape::Circle, "the set's own shape, not the other's");
+    // the border is the plate's, even from a set that gives no marker
+    assert_eq!(staff.border, None);
+    sets.set_color("Plain", [0.0, 1.0, 0.0, 1.0]);
+    sets.set_visuals(
+        "Plain",
+        Visuals {
+            border: true,
+            background: true,
+            ..Default::default()
+        },
+    );
+    let plate = sets.appearance(&id).marker.expect("marker");
+    assert_eq!(plate.border, Some([0.0, 1.0, 0.0, 1.0]));
+    assert_eq!(plate.background, Some([0.0, 1.0, 0.0, 1.0]));
+    assert_eq!(Visuals::read(&Llsd::new_map()).marker, MarkerScope::Off, "older files");
+    assert_eq!(Visuals::read(&Llsd::new_map()).marker_shape, MarkerShape::Circle);
+    for name in ["Staff", "Friends"] {
+        let mut visuals = sets.set(name).unwrap().visuals.clone();
+        visuals.marker = MarkerScope::Off;
+        sets.set_visuals(name, visuals);
+    }
+    assert!(!sets.has_markers(), "every marker off again");
+}
+
+#[test]
+fn a_set_dragged_to_a_place_keeps_the_others_in_order() {
+    let mut sets = ContactSets::default();
+    for name in ["A", "B", "C", "D"] {
+        sets.add_set(name);
+    }
+    // new sets tie: the order falls back to the names
+    assert_eq!(sets.ordered_set_names(), ["A", "B", "C", "D"]);
+    sets.move_priority_to("D", 0);
+    assert_eq!(sets.ordered_set_names(), ["D", "A", "B", "C"]);
+    sets.move_priority_to("D", 2);
+    assert_eq!(sets.ordered_set_names(), ["A", "B", "D", "C"]);
+    // past the end: last
+    sets.move_priority_to("A", 99);
+    assert_eq!(sets.ordered_set_names(), ["B", "D", "C", "A"]);
+    assert_eq!(sets.priority_rank("C"), Some((2, 4)));
+    assert_eq!(sets.priority_rank("nope"), None);
+    // a set that is not there changes nothing
+    let generation = sets.generation;
+    sets.move_priority_to("nope", 0);
+    assert_eq!(sets.generation, generation);
+    // the same place changes nothing either, once the priorities are written
+    sets.move_priority_to("B", 0);
+    assert_eq!(sets.generation, generation);
+}
+
+#[test]
+fn moving_a_set_one_step_matches_dragging_it_there() {
+    let mut stepped = ContactSets::default();
+    let mut dragged = ContactSets::default();
+    for name in ["A", "B", "C"] {
+        stepped.add_set(name);
+        dragged.add_set(name);
+    }
+    stepped.move_priority("C", true);
+    dragged.move_priority_to("C", 1);
+    assert_eq!(stepped.ordered_set_names(), dragged.ordered_set_names());
+    stepped.move_priority("A", false);
+    dragged.move_priority_to("A", 1);
+    assert_eq!(stepped.ordered_set_names(), dragged.ordered_set_names());
+    // the top one cannot go higher, the last one lower
+    let top = stepped.ordered_set_names()[0].clone();
+    let generation = stepped.generation;
+    stepped.move_priority(&top, true);
+    let last = stepped.ordered_set_names()[2].clone();
+    stepped.move_priority(&last, false);
+    assert_eq!(stepped.generation, generation);
 }

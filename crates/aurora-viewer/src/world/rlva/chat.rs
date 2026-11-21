@@ -127,6 +127,19 @@ impl Rlva {
         }
     }
 
+    /// The volume our chat animation follows for a line on channel 0, or
+    /// none when RLVa keeps it still: FSNearbyChat::sendChatFromViewer
+    /// (fsnearbychathub.cpp) takes the volume of checkChatVolume and plays
+    /// nothing while any @redirchat (@rediremote for an emote) is set,
+    /// whether or not this line is redirected.
+    pub fn chat_animation_volume(&self, message: &str, kind: ChatType) -> Option<ChatType> {
+        if !self.enabled {
+            return Some(kind);
+        }
+        let redirect = if is_emote(message) { "rediremote" } else { "redirchat" };
+        (!self.has_options(redirect)).then(|| self.chat_volume(kind))
+    }
+
     /// RlvActions::checkChatVolume (rlvactions.cpp): one step, never a drop.
     /// `@chatnormal` turns shout and normal into a whisper, whatever else is
     /// set; otherwise `@chatshout` and `@chatwhisper` fall back to normal.
@@ -218,6 +231,7 @@ impl crate::world::World {
                 owner_id: Uuid::nil(),
                 source_type,
                 chat_type,
+                region: None,
                 position: glam::Vec3::ZERO,
                 message: text.into(),
             }));
@@ -245,6 +259,7 @@ mod tests {
             owner_id: Uuid::from_u128(2),
             source_type: ChatSourceType::Agent,
             chat_type: ChatType::Normal,
+            region: None,
             position: glam::Vec3::ZERO,
             message: message.into(),
         }
@@ -369,6 +384,28 @@ mod tests {
                 "{restrictions}"
             );
         }
+    }
+
+    /// FSNearbyChat::sendChatFromViewer: the chat animation follows the
+    /// volume RLVa sends, and any @redirchat (@rediremote for an emote)
+    /// keeps the avatar still, even for a line it lets through (OOC).
+    #[test]
+    fn rlva_chat_animation_follows_the_sent_volume_and_stops_under_redirection() {
+        use ChatType::{Normal, Shout, Whisper};
+        let r = Rlva::default();
+        assert_eq!(r.chat_animation_volume("hello", Shout), Some(Shout), "RLVa off");
+        let r = restricted("@chatnormal=n");
+        assert_eq!(r.chat_animation_volume("hello", Shout), Some(Whisper));
+        assert_eq!(r.chat_animation_volume("hello", Normal), Some(Whisper));
+        let r = restricted("@chatshout=n");
+        assert_eq!(r.chat_animation_volume("hello", Shout), Some(Normal));
+        let r = restricted("@redirchat:123=n");
+        assert_eq!(r.chat_animation_volume("hello", Normal), None);
+        assert_eq!(r.chat_animation_volume("((OOC))", Normal), None);
+        assert_eq!(r.chat_animation_volume("/me waves", Normal), Some(Normal));
+        let r = restricted("@rediremote:123=n");
+        assert_eq!(r.chat_animation_volume("hello", Whisper), Some(Whisper));
+        assert_eq!(r.chat_animation_volume("/me waves", Normal), None);
     }
 
     #[test]

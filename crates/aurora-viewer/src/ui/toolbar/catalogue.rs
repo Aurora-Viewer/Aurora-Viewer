@@ -1,5 +1,5 @@
 //! The commands of the "Toolbar buttons" window: Firestorm's toybox
-//! (indra/newview/app_settings/commands.xml, the 67 commands with
+//! (indra/newview/app_settings/commands.xml, the commands with
 //! `available_in_toybox`, originally LGPL 2.1) and Aurora's own (friends,
 //! home, favourites, immersive mode). Aurora keeps its command names where it had one
 //! (`conversations` for Firestorm's `chat`, `worldmap` for `map`…), so that
@@ -37,9 +37,11 @@ pub const COMMANDS: &[Command] = commands![
     "people", "Command_People_Icon", "common-people", true;
     "friends", "Command_People_Icon", "common-friends", true;
     "inventory", "Command_Inventory_Icon", "common-inventory", true;
+    "inventory_dual", "columns-2-filled", "inventory-dual-panel", true;
     "texture_library", "stack-2-filled", "texture-library-title", true;
     "gestures", "Command_Gestures_Icon", "gesture-title", true;
     "appearance", "Command_Appearance_Icon", "common-appearance", true;
+    "avatar_studio", "man-filled", "avatar-studio-title", true;
     "search", "Command_Search_Icon", "search-title", true;
     "places", "Command_Places_Icon", "common-places", true;
     "snapshot", "Command_Snapshot_Icon", "photo-title", true;
@@ -69,14 +71,27 @@ pub const COMMANDS: &[Command] = commands![
     "stop_animations", "player-stop-filled", "ui-context-stop-animations", true;
     "snapshot_to_disk", "device-floppy-filled", "toolbar-command-snapshot-to-disk", true;
     "beacons", "bulb-filled", "toolbar-command-beacons", true;
+    // the Legacy Viewer's Compass and its Face nearest avatar (FSAvatarAlignBase)
+    "avatar_align", "user-scan", "toolbar-command-avatar-align", true;
+    "face_nearest_avatar", "user-search", "toolbar-command-face-nearest", true;
     // Aurora's own: the interface hidden but the chat (#859)
     "immersive", "maximize", "ui-bars-immersive", true;
+    "name_tags", "label-filled", "ui-bars-immersive-hide-tags", true;
+    // Aurora's own: Show User Interface and Show HUDs as buttons (the Legacy
+    // Viewer has them in its menus only)
+    "hide_interface", "eye-off", "ui-bars-hide-interface", true;
+    "huds", "device-desktop-filled", "ui-bars-immersive-hide-huds", true;
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
+    // Aurora's own: the Director, a camera track to film with
+    "director", "movie", "toolbar-command-director", true;
+    // Aurora's own: our avatar seen by a camera of its own
+    "second_camera", "device-cctv-filled", "second-camera-title", true;
+    // Aurora's own: the viewer steps back for a game (app/gaming_mode.rs)
+    "gaming_mode", "device-gamepad-2-filled", "toolbar-command-gaming-mode", true;
     // Firestorm's, not in Aurora yet
-    "avatar", "user-circle", "toolbar-command-avatar", false;
-    "destinations", "map-2", "toolbar-command-destinations", false;
-    "howto", "Command_HowTo_Icon", "toolbar-command-howto", false;
+    "avatar", "user-circle", "toolbar-command-avatar", true;
+    "destinations", "map-2", "toolbar-command-destinations", true;
     "picks", "heart-filled", "toolbar-command-picks", true;
     "poser", "wand", "toolbar-command-poser", true;
     "flickr", "brand-flickr", "toolbar-command-flickr", false;
@@ -94,19 +109,17 @@ pub const COMMANDS: &[Command] = commands![
     "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", true;
     "phototools", "camera-cog", "toolbar-command-phototools", false;
     "phototools_view", "video-filled", "toolbar-command-phototools-camera", false;
-    "pose_stand", "man-filled", "toolbar-command-pose-stand", false;
-    "conversation_log", "file-text-filled", "toolbar-command-conversation-log", false;
+    "pose_stand", "man-filled", "toolbar-command-pose-stand", true;
+    "conversation_log", "file-text-filled", "toolbar-command-conversation-log", true;
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", true;
     "regiontracker", "location-filled", "toolbar-command-region-tracker", true;
     "group_titles", "tags-filled", "toolbar-command-group-titles", true;
-    "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
+    "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", true;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
-    "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", false;
-    "omnifilter", "filter-filled", "toolbar-command-omnifilter", false;
-    "avatar_align", "user-scan", "toolbar-command-avatar-align", false;
-    "face_nearest_avatar", "user-search", "toolbar-command-face-nearest", false;
+    "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", true;
+    "omnifilter", "filter-filled", "toolbar-command-omnifilter", true;
 ];
 
 impl Command {
@@ -117,6 +130,16 @@ impl Command {
     pub fn label_in(&self, language: &str) -> &'static str {
         aurora_i18n::text_in(language, self.key)
     }
+}
+
+/// Commands the Legacy Viewer dropped: only stale entries of its skins'
+/// toolbars.xml name them, and it skips them. A saved layout (older Aurora,
+/// imported) that still has one drops it, with no empty button.
+const RETIRED: &[&str] = &["howto"];
+
+/// Whether `id` names a command that no longer exists.
+pub fn retired(id: &str) -> bool {
+    RETIRED.contains(&id)
 }
 
 /// The catalogue's entry of a command.

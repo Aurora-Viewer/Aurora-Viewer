@@ -103,7 +103,24 @@ impl Writer {
                         Err(_) => break,
                     }
                 }
-                write(&path, &stored);
+                // a refused write is tried again, waiting longer each time
+                // (save_retry), at once with a newer state, and once more
+                // when the log goes (the logout, the exit)
+                let mut backoff = crate::save_retry::Backoff::default();
+                while let Err(error) = write(&path, &stored) {
+                    let wait = backoff.failed(Instant::now());
+                    log::warn!("Cannot save the experience log ({error}); tried again in {} s", wait.as_secs());
+                    match changes.recv_timeout(wait) {
+                        Ok(newer) => stored = changes.try_iter().last().unwrap_or(newer),
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            if let Err(error) = write(&path, &stored) {
+                                log::warn!("Cannot save the experience log at exit: {error}");
+                            }
+                            return;
+                        }
+                    }
+                }
             }
         });
         match worker {
@@ -289,17 +306,12 @@ fn read(path: &Path) -> Stored {
     }
 }
 
-fn write(path: &Path, stored: &Stored) {
-    let save = || -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let bytes = serde_json::to_vec(stored).map_err(std::io::Error::other)?;
-        crate::atomic_file::write(path, &bytes)
-    };
-    if let Err(error) = save() {
-        log::warn!("Cannot save the experience log: {error}");
+fn write(path: &Path, stored: &Stored) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
     }
+    let bytes = serde_json::to_vec(stored).map_err(std::io::Error::other)?;
+    crate::atomic_file::write(path, &bytes)
 }
 
 /// "YYYY-MM-DD" and "HH:MM:SS" of now, local time.

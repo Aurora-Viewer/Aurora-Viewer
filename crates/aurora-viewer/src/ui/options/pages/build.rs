@@ -2,7 +2,8 @@
 //! after the Legacy Viewer's Build preferences (panel_preferences_firestorm.xml,
 //! the "Build 1" tab: size, phantom, physical, temporary, material, color,
 //! alpha, glow, full bright, shininess). The look and flags are given when
-//! the prim arrives (`build::new_defaults`).
+//! the prim arrives (`build::new_defaults`). Editing holds how the build
+//! tools behave on a selection (the Texture tab's automatic choice).
 
 use super::super::cx::{Cx, field};
 
@@ -71,5 +72,24 @@ pub fn page(cx: &mut Cx) {
         ];
         cx.keywords("FSBuildPrefs_Shiny")
             .combo(tr!("build-ui-texture-shininess"), "", &field!(build.new_prim_shiny), &shines);
+    });
+    cx.group(tr!("ui-options-build-editing"), |cx| {
+        // LLPanelFace::updateUI's tab choice (build/material_preview.rs)
+        cx.keywords("PBR Blinn-Phong texture material").toggle(
+            tr!("ui-options-build-auto-material-tab"),
+            tr!("ui-options-build-auto-material-tab-hint"),
+            &field!(build.auto_material_tab),
+        );
+        // ShowSelectionBeam (on); EffectColor of Preferences › Colors
+        cx.keywords("ShowSelectionBeam beam").toggle(
+            tr!("ui-options-build-show-beams"),
+            tr!("ui-options-build-show-beams-hint"),
+            &field!(beams.show),
+        );
+        cx.keywords("EffectColor beam").color(
+            tr!("ui-options-build-beam-color"),
+            tr!("ui-options-build-beam-color-hint"),
+            &field!(beams.color),
+        );
     });
 }

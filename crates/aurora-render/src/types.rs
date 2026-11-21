@@ -212,6 +212,9 @@ pub mod flags {
     /// object.wgsl).
     pub const LAYER_RANK_SHIFT: u32 = 24;
     pub const LAYER_RANK_MAX: u32 = 7;
+    /// Bit of flags[3], above packed texture animation: local studio scenery
+    /// is excluded from the avatar's temporary white reveal.
+    pub const STUDIO_STAGE: u32 = 1 << 29;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -275,6 +278,17 @@ pub const SKELETON_ANCHOR: u32 = 208;
 /// First matrix of the weights of a skeleton's live morphs, after its 48
 /// anchors: column `k` is `palettes[base + LIVE_MORPH_WEIGHTS + k / 16][k / 4 % 4][k % 4]`.
 pub const LIVE_MORPH_WEIGHTS: u32 = 256;
+/// The palette entry after a skeleton's live morph weights (four matrices)
+/// holding how much snow is on the avatar (Aurora Weather).
+pub const AVATAR_SNOW: u32 = 260;
+/// What the snow entry holds in its last element (w of its last column)
+/// when the viewer wrote it: anything else there (the identity a palette
+/// starts with, a joint's matrix, nothing written yet) is no snow. Read
+/// as snow, the identity's 1.0 whitened rigged meshes and animesh (cars)
+/// whose entry had not reached the GPU, whatever the weather.
+pub const AVATAR_SNOW_MARK: f32 = -2.0;
+/// Palette entries per skeleton (the viewer's `anim::PALETTE_JOINTS`).
+pub const PALETTE_STRIDE: u32 = 261;
 
 /// Per-face GPU record (must match `DrawRecord` in common.wgsl).
 #[repr(C)]
@@ -315,6 +329,31 @@ pub struct DrawRecord {
     /// Finite portal cut: center.xyz and encoded horizontal entry direction.
     /// Only active with PORTAL_CLIP; zero is also a valid opening at the origin.
     pub portal_clip: [f32; 4],
+    /// x: the face's identity for the order-independent transparency
+    /// ([`oit_tie`]: the object's full id and the face's index hashed, the
+    /// same on every launch; the stochastic masks are seeded by it and the
+    /// triangle, oit_stochastic.rs). y, z, w: spare.
+    pub identity: [u32; 4],
+}
+
+/// The identity of a face for the order-independent transparency
+/// (`DrawRecord::identity[0]`): a hash of the object's full id (its UUID,
+/// not the region's local id) and of the face's index, the same on every
+/// frame and every launch, whatever the order the objects were loaded in or
+/// where their geometry sits (the stochastic masks are seeded by it; the
+/// shader keeps the low 24 bits).
+pub fn oit_tie(id: [u8; 16], face: u32) -> u32 {
+    // FNV-1a over the id and the face, then a final mix so that every byte
+    // reaches the low 24 bits
+    let mut h: u32 = 0x811c_9dc5;
+    for b in id.into_iter().chain(face.to_le_bytes()) {
+        h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
+    }
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7feb_352d);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846c_a68b);
+    h ^ (h >> 16)
 }
 
 /// Modes of `DrawRecord::rez` (`rez_apply` in object.wgsl).
@@ -353,6 +392,7 @@ impl Default for DrawRecord {
             spec_uv: [1.0, 1.0, 0.0, 0.0],
             legacy: [0.0; 4],
             spec_color: [1.0, 1.0, 1.0, 0.0],
+            identity: [0; 4],
             anim: [0; 4],
             anim_xf: [0.0; 4],
             rez: [0; 4],
@@ -476,6 +516,39 @@ pub struct ShadowCaster {
     pub alpha: bool,
 }
 
+/// How faint a blended fragment `RiggedBlendDepth::Exact` still composes in
+/// its exact place. A fainter one is of the haze of its pixel
+/// (blend_exact.rs): mixed with the other faint ones between the nearest and
+/// the farthest of them, at a fraction of the cost. What the haze gets wrong
+/// is the alpha of one of its fragments times another alpha, so the finer
+/// levels show no difference and the coarser ones a slight one where many
+/// soft layers lie on one another (hair, foliage, veils).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BlendPrecision {
+    /// From 8/255 of alpha (3 %).
+    #[default]
+    Full,
+    /// From 16/255 (6 %).
+    High,
+    /// From 32/255 (13 %).
+    Balanced,
+    /// From 64/255 (25 %).
+    Fast,
+}
+
+impl BlendPrecision {
+    /// The alpha, in 255ths, up to which a fragment takes no slot
+    /// (`BlendOrderInfo::faint` of object.wgsl).
+    pub fn faint(self) -> u32 {
+        match self {
+            BlendPrecision::Full => 8,
+            BlendPrecision::High => 16,
+            BlendPrecision::Balanced => 32,
+            BlendPrecision::Fast => 64,
+        }
+    }
+}
+
 /// How the blended faces of rigged meshes (`DrawLists::blend_depth`) write
 /// depth.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -539,6 +612,19 @@ pub enum RiggedBlendDepth {
     /// half covered only, for the glass, water and particles drawn after
     /// them (no halo, #556).
     Layers,
+    /// Every blended face of the view, rigged or not, composed in the true
+    /// order of its fragments at each pixel, whatever order the faces are
+    /// drawn in (blend_exact.rs): a pass files where each fragment lies and
+    /// its alpha in the front of its pixel, a second one adds each
+    /// fragment's colour scaled by what the fragments in front of it let
+    /// through. What is in front is in front, whatever the kind of object:
+    /// no shards (#935), no layer over another (#935), no halo (#556), and
+    /// faces that cross or fold over themselves are right too. Every layer
+    /// shows through the ones in front of it as far as their alpha lets it,
+    /// a body add-on under a sheer dress included (#1300). The scene depth
+    /// still takes the rigged faces where half covered, for the particles
+    /// drawn after them.
+    Exact,
 }
 
 /// Visible draws for a frame, built by the world.
@@ -574,6 +660,8 @@ pub struct DrawLists {
     pub water_events: Vec<crate::WaterEvent>,
     pub water_contacts: Vec<crate::WaterEvent>,
     pub water_ground: crate::WaterGround,
+    /// Rain prototype: the terrain's heights around the camera.
+    pub rain_ground: crate::RainGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
     pub blend: Vec<DrawCmd>,
     /// The blended faces under the water while the camera is above it, back
@@ -589,11 +677,18 @@ pub struct DrawLists {
     pub blend_depth: usize,
     /// How those rigged faces write their depth.
     pub blend_depth_mode: RiggedBlendDepth,
+    /// `RiggedBlendDepth::Exact`: from which alpha a fragment is composed
+    /// in its exact place.
+    pub blend_precision: BlendPrecision,
     /// `RiggedBlendDepth::Runs` (one attachment point), `Split` (one object
     /// per point) and `Layers` (one object): where each run of faces ends
     /// in the first `blend_depth` entries of `blend` (increasing, the last
     /// one `blend_depth`).
     pub blend_depth_runs: Vec<u32>,
+    /// `RiggedBlendDepth::Layers`: the ends, among `blend_depth_runs`, of the
+    /// runs drawn writing their depth on the copy only where nearly opaque
+    /// (eyelashes and brows drawn before the hair, #2121; increasing).
+    pub blend_depth_quiet: Vec<u32>,
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
@@ -602,6 +697,11 @@ pub struct DrawLists {
     /// Per `blend_under_water` entry: the same sidedness rule before water.
     pub blend_under_double_sided: Vec<bool>,
     pub shadow_casters: Vec<ShadowCaster>,
+    /// Aurora Weather, CPU lists only: what the rain's shelter map takes in
+    /// its square around the camera, shadows or not: what stands still
+    /// (no avatar, worn, rigged or physical object), blended faces too (a
+    /// glass roof), as the GPU culling's shelter bin (cull.wgsl).
+    pub shelter_casters: Vec<ShadowCaster>,
     /// Terrain chunks casting shadows: drawn depth only like the opaque
     /// casters, else with the terrain's own alpha test (`fs_shadow_terrain`),
     /// never through `fs_shadow`.
@@ -610,6 +710,13 @@ pub struct DrawLists {
     /// (water and mirror); drawn without face culling, alpha tested.
     /// With their bounds: each reflection pass culls them to its own frustum.
     pub reflection: Vec<ShadowCaster>,
+    /// Blended faces for the mirror, in view or not, with their bounds
+    /// (`DrawCmd::bounds`): the first `reflection_blend_rigged` are rigged
+    /// faces in the Legacy Viewer's order (drawn first, writing depth, as
+    /// `blend_depth`), the others in any order (the mirror sorts them back
+    /// to front from its own camera).
+    pub reflection_blend: Vec<DrawCmd>,
+    pub reflection_blend_rigged: usize,
     /// `reflection` without avatars, their attachments and animesh: what a
     /// static reflection probe captures (LLViewerWindow::cubeSnapshot).
     pub probe: Vec<ShadowCaster>,
@@ -647,6 +754,14 @@ pub struct DrawLists {
     /// Selected texture faces (LLPipeline::renderSelectedFaces).
     pub select_faces: Vec<DrawCmd>,
     pub hud_select_faces: Vec<DrawCmd>,
+    /// The faces of `select_faces` / `hud_select_faces` picked with the
+    /// build tool's Select face mode: they also get the face-select
+    /// pattern laid along their texture mapping (LLFace::renderSelected).
+    pub select_pattern: Vec<DrawCmd>,
+    pub hud_select_pattern: Vec<DrawCmd>,
+    /// The poser subject's skinned faces, while a part is hovered: the part
+    /// is kept on them by its joints (`FrameParams::part_joints`).
+    pub part_faces: Vec<DrawCmd>,
     /// Impostor pictures to take this frame (at most `IMPOSTOR_CAPTURES`).
     pub impostor_captures: Vec<ImpostorCapture>,
     /// Impostor cards to draw.
@@ -719,6 +834,9 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.select_pattern.clear();
+        self.hud_select_pattern.clear();
+        self.part_faces.clear();
     }
     /// Make `self` a copy of `src`, keeping the memory `self` already has:
     /// the lists of a frame packet, filled again every frame.
@@ -747,10 +865,15 @@ impl DrawLists {
         self.blend_under_double_sided.clone_from(&src.blend_under_double_sided);
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
+        self.blend_precision = src.blend_precision;
         self.blend_depth_runs.clone_from(&src.blend_depth_runs);
+        self.blend_depth_quiet.clone_from(&src.blend_depth_quiet);
         self.shadow_casters.clone_from(&src.shadow_casters);
+        self.shelter_casters.clone_from(&src.shelter_casters);
         self.terrain_shadow_casters.clone_from(&src.terrain_shadow_casters);
         self.reflection.clone_from(&src.reflection);
+        self.reflection_blend.clone_from(&src.reflection_blend);
+        self.reflection_blend_rigged = src.reflection_blend_rigged;
         self.probe.clone_from(&src.probe);
         self.reflection_terrain.clone_from(&src.reflection_terrain);
         self.reflection_terrain_pbr.clone_from(&src.reflection_terrain_pbr);
@@ -758,6 +881,7 @@ impl DrawLists {
         self.water_events.clone_from(&src.water_events);
         self.water_contacts.clone_from(&src.water_contacts);
         self.water_ground.clone_from(&src.water_ground);
+        self.rain_ground.clone_from(&src.rain_ground);
         self.glow.clone_from(&src.glow);
         self.glow_alpha.clone_from(&src.glow_alpha);
         self.debug_red.clone_from(&src.debug_red);
@@ -769,6 +893,9 @@ impl DrawLists {
         self.select_child.clone_from(&src.select_child);
         self.select_faces.clone_from(&src.select_faces);
         self.hud_select_faces.clone_from(&src.hud_select_faces);
+        self.select_pattern.clone_from(&src.select_pattern);
+        self.hud_select_pattern.clone_from(&src.hud_select_pattern);
+        self.part_faces.clone_from(&src.part_faces);
         self.impostor_captures.clone_from(&src.impostor_captures);
         self.impostor_sprites.clone_from(&src.impostor_sprites);
         self.gpu = src.gpu;
@@ -796,10 +923,15 @@ impl DrawLists {
         self.blend_under_water.clear();
         self.blend_depth = 0;
         self.blend_depth_mode = RiggedBlendDepth::default();
+        self.blend_precision = BlendPrecision::default();
         self.blend_depth_runs.clear();
+        self.blend_depth_quiet.clear();
         self.shadow_casters.clear();
+        self.shelter_casters.clear();
         self.terrain_shadow_casters.clear();
         self.reflection.clear();
+        self.reflection_blend.clear();
+        self.reflection_blend_rigged = 0;
         self.probe.clear();
         self.reflection_terrain.clear();
         self.reflection_terrain_pbr.clear();
@@ -807,6 +939,7 @@ impl DrawLists {
         self.water_events.clear();
         self.water_contacts.clear();
         self.water_ground = Default::default();
+        self.rain_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();
         self.blend_double_sided.clear();
@@ -821,6 +954,9 @@ impl DrawLists {
         self.select_child.clear();
         self.select_faces.clear();
         self.hud_select_faces.clear();
+        self.select_pattern.clear();
+        self.hud_select_pattern.clear();
+        self.part_faces.clear();
         self.impostor_captures.clear();
         self.impostor_sprites.clear();
         self.gpu = None;
@@ -873,6 +1009,10 @@ pub mod particle_flags {
     pub const AXIS: u32 = 4;
     /// Velocity-oriented billboard: project its axis onto the viewing plane.
     pub const FOLLOW_VELOCITY: u32 = 8;
+    /// A segment of a line of light (the weather's lightning): with `AXIS`,
+    /// soft across its width only, so that segments end to end make one
+    /// unbroken line instead of a string of beads.
+    pub const LINE: u32 = 16;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1033,6 +1173,11 @@ pub struct SnapshotSpec {
     /// tiles of different sizes, at full and half resolution side by
     /// side, would differ along their border.
     pub photo: (u32, u32),
+    /// A face of a 360° capture: the capture camera's step
+    /// (`CAPTURE_CAMERAS`). The frame is copied into the capture's cube on
+    /// the GPU and answers nothing; the main thread does not wait for it, and
+    /// the faces share one set of render targets (equirect.rs).
+    pub cube: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1055,6 +1200,10 @@ pub enum AoMethod {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
+    /// Requested per-eye XR size, bounded by runtime limits.
+    pub vr_resolution: Option<[u32; 2]>,
+    pub vr_gamma: f32,
+    pub vr_vibrancy: f32,
     /// Percentage of the window resolution used by the world; UI stays native.
     pub render_scale_percent: u32,
     pub water_effects: crate::WaterEffects,
@@ -1094,6 +1243,10 @@ pub struct RenderSettings {
     pub mirror_scale: f32,
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
+    /// Rain prototype: the G-buffer of the screen-space reflections is drawn
+    /// while it rains, even with them off, for the wet surfaces' smooth
+    /// facings and materials (the reflections themselves only with `ssr`).
+    pub rain_surfaces: bool,
     /// Anisotropic texture filtering (1 = off, 2, 4, 8, 16).
     pub anisotropy: u16,
     /// Reflection probe cube slots, the default probe included
@@ -1101,11 +1254,28 @@ pub struct RenderSettings {
     pub probe_slots: u32,
     /// GPU occlusion culling (UseOcclusion).
     pub occlusion: bool,
+    /// The stochastic transparency (oit_stochastic.rs), the "Stochastic"
+    /// choice of the order of transparent surfaces: the blended faces drawn
+    /// with depth-based stochastic transparency rather than in the per-face
+    /// sorted order (`scene/blend_order.rs`, #3060) or the exact one
+    /// (blend_exact.rs), in every anti-aliasing mode. Off (the default),
+    /// nothing of the method is made, or kept.
+    pub oit: bool,
+}
+
+impl RenderSettings {
+    /// The frame draws the G-buffer (normal, roughness, metallic).
+    pub fn gbuffer(&self) -> bool {
+        self.ssr || self.rain_surfaces
+    }
 }
 
 impl Default for RenderSettings {
     fn default() -> Self {
         RenderSettings {
+            vr_resolution: None,
+            vr_gamma: 1.0,
+            vr_vibrancy: 1.0,
             render_scale_percent: 100,
             water_effects: crate::WaterEffects::default(),
             // the state `Renderer::new` builds its pipelines and targets
@@ -1125,9 +1295,11 @@ impl Default for RenderSettings {
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
+            rain_surfaces: false,
             anisotropy: 8,
             probe_slots: 32,
             occlusion: true,
+            oit: false,
         }
     }
 }
@@ -1201,6 +1373,9 @@ pub struct SkyParams {
     pub halo_texture: u32,
     /// Night sky: which stars and how they are turned (stars.rs).
     pub stars: crate::stars::StarFrame,
+    /// Session-local studio sky, zero outside Avatar Studio. sRGB navy /
+    /// teal / violet / indigo; w values: enabled / yaw / time / white reveal.
+    pub studio_aurora: [[f32; 4]; 4],
 }
 
 impl Default for SkyParams {
@@ -1249,6 +1424,7 @@ impl Default for SkyParams {
             rainbow_texture: 0,
             halo_texture: 0,
             stars: crate::stars::StarFrame::default(),
+            studio_aurora: [[0.0; 4]; 4],
         }
     }
 }
@@ -1305,6 +1481,117 @@ pub struct OverlayEffect {
     pub texture: [u32; 4],
 }
 
+/// Rain prototype: the weather settings the wet ground follows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RainLook {
+    /// Puddles gather on level ground; in snow, the snow settles.
+    pub puddles: bool,
+    /// How far the wet ground and its puddles are drawn (m); in snow, the
+    /// snow lying.
+    pub distance: f32,
+    /// The wind now (m/s): the drops' slant.
+    pub wind: [f32; 2],
+    /// How far the wind has carried the drops so far (m).
+    pub drift: [f32; 2],
+    /// How much of the weather is drawn: 0 low, 1 medium, 2 high (the
+    /// drops and splashes, the distant rain's layers, the puddles' ring
+    /// layers and their reflections).
+    pub quality: u32,
+    /// What falls is snow, with the flakes' size scale (0.5 to 2; 0: rain):
+    /// flakes instead of drops, nothing wets.
+    pub snow: f32,
+    /// The lying snow's detail texture (normal and height): its bindless
+    /// slot, 0 for none.
+    pub snow_detail: u32,
+    /// How far the weather lying on the ground is drawn at most (m): the
+    /// farther of the puddles' and the snow's distances. The wetness
+    /// memory's square covers it (128, 256 or 512 m).
+    pub memory_reach: f32,
+    /// How far the snow lying on the ground is drawn (m), whatever falls
+    /// now: while it snows and while it melts after (it was twice the
+    /// puddles' distance then, past what the memory covers: the snow
+    /// stopped in a line). `memory_reach` covers it while it settles.
+    pub snow_distance: f32,
+    /// Deep snow's reach around my avatar at High weather quality (m, 10 to
+    /// 40); Low and Medium keep their share of it (two thirds, 13/15).
+    pub deep_reach: f32,
+    /// How deep snow lies in the open at least (0..1): `AURORA_SNOW_LYING`'s
+    /// floor for demo captures, else 0.
+    pub snow_lying: f32,
+    /// Snow lying on the ground is drawn ("Snow settles"), whatever falls
+    /// now: off, none at once, nor while what lay melts after the weather
+    /// turned to rain or cleared (the memory keeps it, unseen).
+    pub snow_settles: bool,
+    /// Footprints are kept in the lying snow.
+    pub footprints: bool,
+    /// Their map: how wide (m, 32 to 64: the wider, the coarser) and where
+    /// its centre is (my avatar: a camera zoomed out keeps them).
+    pub trail_extent: f32,
+    pub trail_centre: [f32; 2],
+    /// Puddles freeze while it snows or snow lies (they neither drain nor
+    /// dry while frozen).
+    pub ice: bool,
+    /// Deep snow (experimental): the lying snow's surface traced with
+    /// parallax, its lumps and footprints standing up from what it lies on.
+    pub deep_snow: bool,
+    /// The lightning lighting the sky from where it struck: x, y the way to
+    /// it (unit), z the sine of the glow's height in the sky, w how bright
+    /// (0: none).
+    pub lightning: [f32; 4],
+    /// The aurora in the night sky (env.wgsl `aurora_sky`): x how bright
+    /// (0: none, 1 a strong display), y the way it stands (rad, clockwise
+    /// from north), z the height of its foot (0 on the horizon, 1 overhead),
+    /// w its colours (0 green, 1 green under violet, 2 green under red).
+    pub aurora: [f32; 4],
+    /// Feet set down this frame: x, y (m), the foot's heading (rad), its half
+    /// length (m); the first `snow_stamp_count`.
+    pub snow_stamps: [[f32; 4]; SNOW_STAMPS],
+    pub snow_stamp_count: u32,
+    /// The soles' heights (m), the stamps' order: a foot presses only
+    /// where it stands on the snow (a flying avatar's feet press nothing).
+    pub snow_stamp_z: [f32; SNOW_STAMPS],
+    /// This frame starts the weather's memory again: no snow lying, the
+    /// ground dry, no puddles (the Weather window's clean-up button).
+    pub clean: bool,
+    /// This frame starts it again full of snow: lying everywhere as deep as
+    /// a long snowfall leaves it (the snow-fill button).
+    pub fill: bool,
+}
+
+/// The most feet set down in the snow in one frame.
+pub const SNOW_STAMPS: usize = 16;
+
+impl Default for RainLook {
+    fn default() -> Self {
+        Self {
+            puddles: true,
+            distance: 38.0,
+            wind: [0.0; 2],
+            drift: [0.0; 2],
+            quality: 2,
+            snow: 0.0,
+            snow_detail: 0,
+            memory_reach: 60.0,
+            snow_distance: 60.0,
+            deep_reach: 15.0,
+            snow_lying: 0.0,
+            snow_settles: true,
+            footprints: false,
+            trail_extent: 32.0,
+            trail_centre: [0.0; 2],
+            ice: false,
+            deep_snow: false,
+            lightning: [0.0; 4],
+            aurora: [0.0; 4],
+            snow_stamps: [[0.0; 4]; SNOW_STAMPS],
+            snow_stamp_count: 0,
+            snow_stamp_z: [0.0; SNOW_STAMPS],
+            clean: false,
+            fill: false,
+        }
+    }
+}
+
 /// A photo drawn in tiles reads GTAO's depth of the whole photo beyond
 /// each tile: a tile drawn alone has no scene past its guard band, and near
 /// the camera GTAO's radius (0.73 m) spans thousands of pixels, so its
@@ -1341,7 +1628,28 @@ pub struct FrameParams {
     pub selection_pulse: f32,
     /// Logical halo width scaled to display pixels.
     pub selection_scale: f32,
+    /// Texture slot of the face-select pattern (the grid asset
+    /// IMG_FACE_SELECT) once it is loaded; 0 while it loads and offline,
+    /// where the shader draws its procedural stand-in.
+    pub face_select_texture: u32,
+    /// The poser's hovered part (Aurora's own): bit j for the skeleton's
+    /// palette joint j, drawn on `part_faces` in `part_color` (linear RGBA)
+    /// as a selection's halo with a light tint inside.
+    pub part_joints: [u32; 8],
+    pub part_color: [f32; 4],
+    /// Palette-joint part classes (0 occluder, 1 body, 2 face, 3/4 hands,
+    /// 5 wings, 6 tail), eight four-bit classes per word. The shader sums
+    /// each part's weights and interpolates them before picking a part.
+    pub part_classes: [u32; 32],
+    /// The pixel whose visible part of `part_faces` to read back
+    /// (part_pick.rs): the cursor while Ctrl hovers the subject.
+    pub part_pick: Option<[u32; 2]>,
     pub view: Mat4,
+    /// VR pivot policy; ignored by the desktop renderer.
+    pub vr_rig: crate::stereo_view::RigMode,
+    /// Region-local coordinate identity for feedback consumed by locomotion.
+    pub vr_origin: Option<u64>,
+    pub vr_revision: u64,
     pub proj: Mat4,
     /// A photo drawn in tiles: the part of it this frame draws, `proj`
     /// being this times the whole photo's projection (the viewer's
@@ -1423,9 +1731,52 @@ pub struct FrameParams {
     /// what is drawn keeps its coverage, in the snapshot's alpha or over a
     /// checkerboard on the live view.
     pub cutout: bool,
+    /// The flat color (linear RGB) the live view of a cut-out frame shows
+    /// where nothing is drawn, instead of the checkerboard: a key color to
+    /// film against (the Director's green screen). A snapshot keeps its
+    /// alpha whatever this says.
+    pub cutout_key: Option<[f32; 3]>,
+    /// The live view of a cut-out frame keeps its coverage in its alpha, as
+    /// a snapshot does (straight color over black on the screen): a film
+    /// recorded from it has a transparent background.
+    pub cutout_alpha: bool,
+    /// Rain prototype: how hard it rains, 0 (none) to 1 (a downpour).
+    pub rain: f32,
+    /// Aurora Weather: the footprints kept in the region, each x, y (m),
+    /// heading (rad), half length (m), the sole's height (m), the snow
+    /// fallen when it was pressed (`snow_fallen`'s count), 0, 0; and their
+    /// generation (uploaded again when it changes).
+    pub snow_prints: Option<std::sync::Arc<Vec<[f32; 8]>>>,
+    pub snow_prints_gen: u64,
+    /// How much snow has fallen so far (seconds of falling, times how hard):
+    /// a print fills in as it grows.
+    pub snow_fallen: f32,
+    /// Rain prototype: the puddles and how far the wet ground is drawn.
+    pub rain_look: RainLook,
+    /// The sky's rendering type is hidden (the viewer's Advanced ›
+    /// Rendering types): the view starts from `clear_color` instead.
+    pub hide_sky: bool,
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
+    /// Volumetric clouds in the place of the Legacy Viewer's flat layer
+    /// (clouds.rs); None: the Legacy layer, with nothing else running.
+    pub clouds: Option<CloudsFrame>,
+}
+
+/// The volumetric clouds' inputs that are not in the sky: where the camera
+/// is on the grid, which the pattern is anchored to.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CloudsFrame {
+    /// The south-west corner of the region the camera's position is relative
+    /// to (metres on the grid): positions stay continuous across regions.
+    pub region_origin: [f64; 2],
+    /// Size of the cloud texture as loaded so far (it grows while it loads;
+    /// the weather map is drawn again for it).
+    pub texture_size: (u32, u32),
+    /// Revision of the cloud texture's texels (`Textures::revision_of`):
+    /// a reload of the same size changes it, and the weather map follows.
+    pub texture_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1581,6 +1932,9 @@ pub struct RenderStats {
     /// the previous ones while the pipelines for new ones compile (#1746).
     /// None until the backend has answered a frame.
     pub settings: Option<RenderSettings>,
+    /// Aurora Weather: snow lies on the ground (local or the region's), as
+    /// the footprints' map and the snow cover read it.
+    pub snow_lying: bool,
     pub draws: u32,
     pub shadow_draws: u32,
     pub shadow: ShadowStats,
@@ -1643,6 +1997,9 @@ pub struct RenderStats {
     /// GPU time of the contact shadows alone (ms), part of
     /// [`GpuElement::Effects`].
     pub gpu_contact: Option<f32>,
+    /// GPU time of the volumetric clouds' compute passes and weather map
+    /// (ms), part of [`GpuElement::TerrainSky`]; None while off.
+    pub gpu_clouds: Option<f32>,
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,
@@ -1651,6 +2008,10 @@ pub struct RenderStats {
     /// the scene copy (with the cut-out pass and the submerged water
     /// particles), the SSR.
     pub gpu_effects: Option<[f32; 4]>,
+    /// GPU time of [`GpuElement::Weather`] in parts (ms): the shelter map,
+    /// the wetness and footprints memories, the wet ground (with the snow
+    /// lying), the drops and flakes with the distant layers.
+    pub gpu_weather: Option<[f32; 4]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those
@@ -1739,19 +2100,23 @@ pub enum GpuElement {
     Water,
     /// Blended faces and particles.
     Transparent,
+    /// Aurora Weather: the shelter map, the memories, the wet ground and
+    /// the snow lying, the drops and flakes (`RenderStats::gpu_weather`).
+    Weather,
     /// Glow, TAA, tone mapping, SMAA.
     Post,
 }
 
 impl GpuElement {
     /// In frame order.
-    pub const ALL: [GpuElement; 7] = [
+    pub const ALL: [GpuElement; 8] = [
         GpuElement::ShadowsDepth,
         GpuElement::Effects,
         GpuElement::TerrainSky,
         GpuElement::Objects,
         GpuElement::Water,
         GpuElement::Transparent,
+        GpuElement::Weather,
         GpuElement::Post,
     ];
 
@@ -1764,6 +2129,7 @@ impl GpuElement {
             GpuElement::Objects => "objects",
             GpuElement::Water => "water",
             GpuElement::Transparent => "transparent",
+            GpuElement::Weather => "weather",
             GpuElement::Post => "post",
         }
     }
@@ -1927,6 +2293,8 @@ mod tests {
         scene.select_root.push(cmd(5));
         scene.select_faces.push(cmd(6));
         scene.hud_select_faces.push(cmd(22));
+        scene.select_pattern.push(cmd(30));
+        scene.hud_select_pattern.push(cmd(31));
         scene.particles.push(ParticleInstance::default());
         scene.impostor_sprites.push(ImpostorSprite {
             center: [1.0, 2.0, 3.0],
@@ -1979,6 +2347,8 @@ mod tests {
         assert_eq!(packet.terrain_pbr[0].record, 28);
         assert_eq!(packet.select_faces[0].record, 6);
         assert_eq!(packet.hud_select_faces[0].record, 22);
+        assert_eq!(packet.select_pattern[0].record, 30);
+        assert_eq!(packet.hud_select_pattern[0].record, 31);
         assert_eq!((packet.particles.len(), packet.impostor_sprites.len()), (1, 1));
         assert_eq!(packet.impostor_captures[0].blend[0].record, 12);
         assert_eq!(packet.gpu.map(|g| g.draw_distance), Some(128.0));
@@ -2001,6 +2371,8 @@ mod tests {
         assert!(scene.hud_debug_blue.is_empty());
         assert!(scene.select_faces.is_empty());
         assert!(scene.hud_select_faces.is_empty());
+        assert!(scene.select_pattern.is_empty());
+        assert!(scene.hud_select_pattern.is_empty());
         assert!(packet.hud_view.is_some());
         assert_eq!(packet.hud_opaque[0].record, 20);
         assert!(packet.gpu.is_some());
@@ -2019,11 +2391,12 @@ mod tests {
     /// matrix, then one 16-byte vector per field).
     #[test]
     fn draw_record_layout_matches_wgsl() {
-        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 14 * 16);
+        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 15 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim), 64 + 10 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim_xf), 64 + 11 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, rez), 64 + 12 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, portal_clip), 64 + 13 * 16);
+        assert_eq!(std::mem::offset_of!(DrawRecord, identity), 64 + 14 * 16);
         let wgsl = include_str!("shaders/common.wgsl");
         let start = wgsl.find("struct DrawRecord {").expect("DrawRecord in common.wgsl");
         let body = &wgsl[start..start + wgsl[start..].find("};").expect("end of DrawRecord")];
@@ -2050,9 +2423,28 @@ mod tests {
                 "anim",
                 "anim_xf",
                 "rez",
-                "portal_clip"
+                "portal_clip",
+                "identity"
             ]
         );
+    }
+
+    /// The OIT tie-break depends on the object's id and the face's index
+    /// only: the same value whenever they are the same, another one when
+    /// either differs, nothing else in it (no slot, no offset, no order).
+    #[test]
+    fn oit_tie_depends_on_the_id_and_the_face_only() {
+        let a = [0x11; 16];
+        let b = [0x22; 16];
+        assert_eq!(oit_tie(a, 3), oit_tie(a, 3));
+        assert_ne!(oit_tie(a, 3), oit_tie(a, 4));
+        assert_ne!(oit_tie(a, 3), oit_tie(b, 3));
+        // the shader keeps 24 bits: distinct there too for these
+        let low = |v: u32| v & 0xff_ffff;
+        assert_ne!(low(oit_tie(a, 3)), low(oit_tie(a, 4)));
+        assert_ne!(low(oit_tie(a, 3)), low(oit_tie(b, 3)));
+        // a face of a system avatar part: its own namespace of indices
+        assert_ne!(low(oit_tie(a, 0)), low(oit_tie(a, 0x8000)));
     }
 
     #[test]
@@ -2070,6 +2462,25 @@ mod tests {
         assert!(destination.portal_clipping);
         destination.clear();
         assert!(!destination.portal_clipping);
+    }
+
+    /// The order of the blended faces and its precision reach the frame
+    /// that draws them; a cleared list is back to the defaults.
+    #[test]
+    fn the_order_of_the_blended_faces_survives_frame_handoff() {
+        let source = DrawLists {
+            blend_depth_mode: RiggedBlendDepth::Exact,
+            blend_precision: BlendPrecision::Balanced,
+            ..Default::default()
+        };
+        let mut destination = DrawLists::default();
+        destination.copy_from(&source);
+        assert_eq!(destination.blend_depth_mode, RiggedBlendDepth::Exact);
+        assert_eq!(destination.blend_precision, BlendPrecision::Balanced);
+        assert_eq!(destination.blend_precision.faint(), 32);
+        destination.clear();
+        assert_eq!(destination.blend_depth_mode, RiggedBlendDepth::default());
+        assert_eq!(destination.blend_precision, BlendPrecision::Full);
     }
 
     #[test]
@@ -2217,5 +2628,13 @@ mod tests {
         for src in [object, include_str!("shaders/env.wgsl")] {
             assert!(!src.contains("out.clip = frame.eye_view_proj * ep;"));
         }
+    }
+
+    #[test]
+    fn draw_record_control_flags_do_not_overlap() {
+        assert_eq!(flags::STUDIO_STAGE & flags::OBJECT_MASK_PICK, 0);
+        assert_eq!(flags::STUDIO_STAGE & flags::WORLD_BLEND_PICK, 0);
+        assert_eq!(flags::OBJECT_MASK_PICK & flags::WORLD_BLEND_PICK, 0);
+        assert_eq!(flags::STUDIO_STAGE & (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT), 0);
     }
 }
