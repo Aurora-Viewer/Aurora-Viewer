@@ -14,6 +14,7 @@ use crate::theme::Palette;
 use crate::world::World;
 use crate::world::contact_sets::appearance::ICONS;
 use crate::world::names::NameScope;
+use aurora_i18n::UiUpper;
 use egui::{Color32, RichText};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -696,9 +697,9 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
 /// conversation (#947), the entry eliding the result.
 fn preview(world: &World, scope: NameScope, line: &crate::world::ChatLine, named: bool) -> String {
     let own = world.own_name();
-    let name = super::sender_name(world, scope, &own, line);
+    let name = super::sender_name(world, &own, line);
     let (text, _) = super::line_body(line, &name);
-    let text = super::resolved_text_in(world, scope, &text);
+    let text = super::resolved_text_in(world, line.wording(scope), &text);
     let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     if emote || line.kind.is_notice() {
@@ -764,7 +765,7 @@ fn sub_line(p: &Palette, world: &World, id: Uuid, kind: Kind, status: presence::
 
 /// The title of a section: small capitals in semi-bold.
 fn section_title(ui: &egui::Ui, p: &Palette, title: &str) -> RichText {
-    RichText::new(title.to_uppercase())
+    RichText::new(title.ui_upper())
         .font(egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
         .color(p.muted_dim)
 }

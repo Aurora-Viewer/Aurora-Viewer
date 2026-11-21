@@ -146,7 +146,6 @@ impl Mirrors {
         let from = self.rest[goal.bone];
         let to = self.rest[bone];
         Some(Goal {
-            follow: None,
             weight: goal.weight,
             bone,
             root: self.counterpart(goal.root).unwrap_or(goal.root),

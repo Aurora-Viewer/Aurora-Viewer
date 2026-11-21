@@ -65,14 +65,14 @@ pub use tracks::{
 };
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
+pub(crate) use workspace::{
+    INVENTORY_LABEL_PADDING, finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
+    organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
+    organization_typography, overlay, overlay_frame, paint_world_label,
+};
 pub use workspace::{
     Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
     navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
-};
-pub(crate) use workspace::{
-    finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
-    organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
-    organization_typography, overlay, overlay_frame, paint_world_label,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize
@@ -2534,6 +2534,17 @@ pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enable
 /// when clicked.
 pub fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
     small_icon_button(ui, p, icon, tip, true, on)
+}
+
+/// The A–Z switch of a list drawn from the inventory: lit while `by_name`,
+/// off for the list's own order, `tip` saying which and what a click does;
+/// flips `by_name` and returns true when clicked.
+pub fn sort_by_name_toggle(ui: &mut egui::Ui, p: &Palette, by_name: &mut bool, tip: &str) -> bool {
+    let clicked = icon_toggle(ui, p, "sort-ascending-letters", tip, *by_name);
+    if clicked {
+        *by_name = !*by_name;
+    }
+    clicked
 }
 
 /// Flat icon toggle with a larger glyph and hit target, in logical points.

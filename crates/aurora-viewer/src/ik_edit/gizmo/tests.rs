@@ -375,3 +375,101 @@ fn a_window_over_the_bone_gizmo_owns_the_click_and_the_paint_order() {
     }
     assert!(clicked);
 }
+
+#[test]
+fn shift_during_a_handle_drag_moves_and_turns_ten_times_finer_without_a_jump() {
+    let g = geometry(Tool::Move, Quat::IDENTITY, 1.0, false);
+    let pose = Pose {
+        position: g.pivot,
+        rotation: Quat::IDENTITY,
+    };
+    let on_axis = |d: f32| g.cam.project(g.pivot + g.axis(0) * (g.length * 0.85 + d)).unwrap();
+    let mut drag = Drag::new(g, Part::Axis(0), on_axis(0.0), pose, DEFAULT_SENSITIVITY).unwrap();
+    let coarse = drag.update_fine(on_axis(0.1), false).unwrap();
+    assert!((coarse.position - pose.position).distance(g.axis(0) * 0.1) < 0.001);
+    // Shift pressed: the handle does not jump, then follows a tenth as far
+    let held = drag.update_fine(on_axis(0.1), true).unwrap();
+    assert!(held.position.distance(coarse.position) < 0.0005);
+    let fine = drag.update_fine(on_axis(0.3), true).unwrap();
+    assert!(
+        (fine.position - coarse.position).distance(g.axis(0) * 0.02) < 0.001,
+        "{}",
+        fine.position
+    );
+    // Shift released: back to one to one from there
+    let released = drag.update_fine(on_axis(0.3), false).unwrap();
+    assert!(released.position.distance(fine.position) < 0.0005);
+
+    let g = geometry(Tool::Rotate, Quat::IDENTITY, 1.0, false);
+    let pose = Pose {
+        position: g.pivot,
+        rotation: Quat::IDENTITY,
+    };
+    let ring = |a: f32| g.cam.project(g.ring(2, a)).unwrap();
+    let mut drag = Drag::new(g, Part::Ring(2), ring(0.3), pose, DEFAULT_SENSITIVITY).unwrap();
+    drag.update_fine(ring(0.3), true).unwrap();
+    let turned = drag.update_fine(ring(0.7), true).unwrap();
+    assert!(turned.rotation.dot(Quat::from_rotation_z(0.04)).abs() > 0.99999);
+}
+
+#[test]
+fn shift_makes_a_handle_drag_finer_only_where_the_editor_asks_for_it() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let p = theme.palette();
+    let g = geometry(Tool::Move, Quat::IDENTITY, 1.0, false);
+    let pose = Pose {
+        position: g.pivot,
+        rotation: Quat::IDENTITY,
+    };
+    let on_axis = |d: f32| g.cam.project(g.pivot + g.axis(0) * (g.length * 0.85 + d)).unwrap();
+    let modifiers = egui::Modifiers::SHIFT;
+    let mut time = 0.0;
+    // IK Edit and the virtual bones: one to one; the Poser and the animation
+    // editor: a tenth, with Shift held for the whole drag
+    for (shift_fine, expected) in [(false, 0.2), (true, 0.02)] {
+        let mut gizmo = Gizmo {
+            shift_fine,
+            ..Default::default()
+        };
+        let mut last = None;
+        let steps = [
+            (on_axis(0.0), None),
+            (on_axis(0.0), Some(true)),
+            (on_axis(0.2), None),
+            (on_axis(0.2), Some(false)),
+        ];
+        for (at, button) in steps {
+            let mut events = vec![egui::Event::ModifiersChanged(modifiers), egui::Event::PointerMoved(at)];
+            if let Some(pressed) = button {
+                events.push(egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers,
+                });
+            }
+            time += 1.0 / 60.0;
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    if let (_, Some((pose, _))) = gizmo.show(ui.ctx(), &p, g, pose, true, DEFAULT_SENSITIVITY) {
+                        last = Some(pose);
+                    }
+                },
+            );
+            out.textures_delta.clear();
+        }
+        let moved = last.expect("the drag moved the handle").position - pose.position;
+        assert!(
+            moved.distance(g.axis(0) * expected) < 0.002,
+            "shift_fine {shift_fine}: moved {moved}"
+        );
+    }
+}

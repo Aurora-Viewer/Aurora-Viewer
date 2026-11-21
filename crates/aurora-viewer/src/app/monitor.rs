@@ -127,7 +127,8 @@ impl App {
                 aurora_i18n::tr!("toolbar-command-destinations"),
             ),
         ];
-        for (pid, label) in pages {
+        let signup = self.signup_ui.web_process_ids().map(|pid| (pid, aurora_i18n::tr!("signup-title")));
+        for (pid, label) in pages.into_iter().chain(signup) {
             if let Some(pid) = pid {
                 out.push(MediaProcess {
                     pid,
@@ -603,7 +604,8 @@ impl App {
         let bridge = self.bridge_runtime.item();
         let (mut worn, mut huds) = (Vec::new(), Vec::new());
         for &att in world.objects.children_of(&me.key) {
-            let Some(root) = world.objects.get(att) else {
+            // (not the copies drawn from the cache, world/avatar_cache)
+            let Some(root) = world.objects.get(att).filter(|o| !o.is_client_preview()) else {
                 continue;
             };
             let item = root.attachment_item_id();

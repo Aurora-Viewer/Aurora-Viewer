@@ -10,7 +10,6 @@ fn symmetry_is_an_involution_in_rest_frames_for_every_paired_bone_and_contact() 
     let rotation = Quat::from_euler(glam::EulerRot::ZYX, 0.7, -0.5, 0.25);
     for bone in 0..rig.len() {
         let goal = Goal {
-            follow: None,
             weight: 1.0,
             bone,
             root: crate::scene::ik::default_root(rig, bone),

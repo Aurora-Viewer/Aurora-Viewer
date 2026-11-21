@@ -137,7 +137,10 @@ fn an_object_ims_line_belongs_to_the_object_and_names_its_owner() {
 }
 
 /// RLVa @shownames: the inspector of an object's name shows a resident
-/// owner anonymous, with no profile link; a group owner stays named.
+/// owner anonymous, with no profile link, when the line said so as it
+/// arrived (`rlv_shownames` in its link, LLInspectRemoteObject); a group
+/// owner stays named, and so does the owner of a line that came before the
+/// restriction.
 #[test]
 fn an_objects_owner_is_anonymous_in_its_inspector_under_shownames() {
     let mut w = world(false);
@@ -147,6 +150,7 @@ fn an_objects_owner_is_anonymous_in_its_inspector_under_shownames() {
         name: "Plaza Vendor".into(),
         owner: VENDOR,
         group_owned: false,
+        owner_hidden: false,
         slurl: String::new(),
     };
     assert_eq!(crate::ui::remote_object::hidden_owner(&w, &o), None);
@@ -161,6 +165,8 @@ fn an_objects_owner_is_anonymous_in_its_inspector_under_shownames() {
         message: "@shownames=n".into(),
     };
     assert!(w.rlva.receive(&restriction));
+    assert_eq!(crate::ui::remote_object::hidden_owner(&w, &o), None);
+    o.owner_hidden = true;
     assert_eq!(
         crate::ui::remote_object::hidden_owner(&w, &o).as_deref(),
         Some(w.rlva_anonymous(VENDOR).display_name.as_str())

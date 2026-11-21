@@ -573,7 +573,16 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
         .map(|(i, (_, name, _, _, created))| {
             let (id, own) = landmark_ids(i);
             // a favourite of a landmark is its copy: the same asset
-            let asset = if n == FAVORITES_FOLDER {
+            let original = (n == FAVORITES_FOLDER)
+                .then(|| landmarks().iter().position(|l| l.0 != FAVORITES_FOLDER && l.1 == *name))
+                .flatten();
+            let link = original.filter(|_| {
+                std::env::var("AURORA_DEMO_PLACES")
+                    .is_ok_and(|v| v.split_once(':').is_some_and(|(_, flags)| flags.split(',').any(|f| f == "links")))
+            });
+            let asset = if let Some(original) = link {
+                landmark_ids(original).0
+            } else if n == FAVORITES_FOLDER {
                 landmarks()
                     .iter()
                     .position(|l| l.0 != FAVORITES_FOLDER && l.1 == *name)
@@ -590,7 +599,7 @@ pub fn folder_contents(folder_id: Uuid, owner: Uuid) -> Option<FolderContents> {
                 } else {
                     String::new()
                 },
-                asset_type: 3,
+                asset_type: if link.is_some() { 24 } else { 3 },
                 inv_type: 3,
                 asset_id: asset,
                 flags: 0,

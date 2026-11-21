@@ -255,6 +255,27 @@ pub fn merge(list: &mut Vec<Conversation>, incoming: Vec<Conversation>, offline:
     changed
 }
 
+/// Add or advance the entry of a direct conversation the Chat Service
+/// knows (LLConversationLog::addServiceConversation, LL viewer 26.5): a new
+/// session is added; a listed one only takes a later time, and keeps its
+/// name, file and offline mark. True when the list changed. An entry
+/// older than `LIFETIME_DAYS` is still added, and the next login drops it
+/// as it drops any other: Aurora keeps its lifetime rule for every entry
+/// (a deliberate difference, the LL viewer has none).
+pub fn advance_service(list: &mut Vec<Conversation>, c: Conversation) -> bool {
+    match list.iter_mut().find(|e| e.session == c.session) {
+        Some(e) if c.time > e.time => {
+            e.time = c.time;
+            true
+        }
+        Some(_) => false,
+        None => {
+            list.push(c);
+            true
+        }
+    }
+}
+
 /// Seconds since 1970 now (time_corrected).
 pub fn now() -> i64 {
     std::time::SystemTime::now()
@@ -460,6 +481,18 @@ impl Log {
         }
     }
 
+    /// The Chat Service knows a direct conversation
+    /// ([`advance_service`]): only while logging is on.
+    pub fn log_service(&mut self, c: Conversation) {
+        if !self.logging {
+            return;
+        }
+        if advance_service(self.entries(), c) {
+            self.dirty = true;
+            self.revision += 1;
+        }
+    }
+
     /// A conference's session id changed (the server's replaces the one we
     /// made, processSessionInitializedReply): its entry, also one still
     /// buffered while the file is read, and the open conversations' memory
@@ -658,6 +691,27 @@ mod tests {
             participant: Uuid::from_u128(session + 1000),
             offline: false,
         }
+    }
+
+    #[test]
+    fn a_service_conversation_is_added_or_advanced_never_renamed() {
+        let mut list = vec![entry(100, Kind::Private, "Known Name", 1)];
+        // an older time changes nothing
+        assert!(!advance_service(&mut list, entry(50, Kind::Private, "Other", 1)));
+        assert_eq!(list[0].time, 100);
+        // a later one advances the time and keeps the name and file
+        assert!(advance_service(&mut list, entry(200, Kind::Private, "Other", 1)));
+        assert_eq!(
+            (list[0].time, list[0].name.as_str(), list[0].history_file.as_str()),
+            (200, "Known Name", "Known Name")
+        );
+        // a new session is added
+        assert!(advance_service(&mut list, entry(10, Kind::Private, "New", 2)));
+        assert_eq!(list.len(), 2);
+
+        let mut log = Log::default();
+        log.log_service(entry(1, Kind::Private, "Off", 3));
+        assert!(log.list.is_empty(), "nothing is logged while logging is off");
     }
 
     /// `shown` with the names the entries carry.

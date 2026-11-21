@@ -1028,7 +1028,7 @@ mod tests {
 
     #[test]
     fn preview_uses_the_selected_prepared_lod_geometry() {
-        let mut draft = crate::imports::tests::mesh_fixture();
+        let mut draft = crate::imports::tests::reducible_mesh_fixture();
         draft.prepared = Some(Arc::new(super::super::mesh::prepare(&draft).expect("LODs")));
         let avatars = crate::scene::avatar::AvatarLibrary::load();
         let mut counts = Vec::new();

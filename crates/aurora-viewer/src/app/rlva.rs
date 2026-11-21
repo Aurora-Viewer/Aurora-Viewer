@@ -214,15 +214,21 @@ impl App {
         if self.world.agent.flying && self.world.rlva.has("fly") {
             self.world.agent.flying = false;
         }
+        // LLSelectMgr::deselectAllIfTooFar: what RLVa keeps from edits
+        // leaves the selection, the temporary one of a menu excepted
+        let menu = self.build.menu_selection;
         let invalid: Vec<_> = self
             .build
             .selection
             .iter()
             .filter(|key| {
-                self.world
-                    .objects
-                    .index_of(key)
-                    .is_none_or(|i| !crate::build::rlva_selectable(&self.world, i))
+                self.world.objects.index_of(key).is_none_or(|i| {
+                    if menu {
+                        !crate::build::rlva_keeps_menu_selection(&self.world, i)
+                    } else {
+                        !crate::build::rlva_selectable(&self.world, i)
+                    }
+                })
             })
             .copied()
             .collect();
@@ -315,13 +321,18 @@ impl App {
                     crate::demo::DEMO_LOUP
                 )
             } else if let Some(limit) = scenario.strip_prefix("camera-zoom-") {
-                // the camera starts 7.6 m from the focus point
+                // the camera starts 7.6 m from the focus point, which is
+                // over the avatar: about 6 m from where the avatar's own
+                // view would put it (the origin) and 7 m from the head
                 self.panels.settings = false;
                 match limit {
                     "max" => "@setcam_origindistmax:8=n".to_owned(),
-                    // 8.0 m from the avatar: both limits clamp every frame
-                    "both" => "@setcam_avdistmax:7=n,setcam_origindistmin:7.2=n".to_owned(),
-                    _ => "@setcam_origindistmin:6=n".to_owned(),
+                    // the origin limit alone holds the camera: the
+                    // avatar's is left out unless its two ends are equal
+                    "both" => "@setcam_avdistmax:5=n,setcam_origindistmax:8=n".to_owned(),
+                    // the avatar's limits made equal hold it alone
+                    "locked" => "@setcam_avdistmin:5=n,setcam_avdistmax:5=n,setcam_origindistmax:8=n".to_owned(),
+                    _ => "@setcam_origindistmin:5=n".to_owned(),
                 }
             } else if matches!(scenario, "offset-zoom" | "no-mouselook" | "avatar-zoom") {
                 // the avatar's own view, with nothing over it
@@ -535,12 +546,10 @@ impl App {
             );
         }
         if let Some(limit) = mode.strip_suffix("-released").unwrap_or(&mode).strip_prefix("camera-zoom-") {
-            // five wheel clicks past the distance limit, then one back; with
-            // both limits held, one click away from the focus and one back
+            // five wheel clicks past the distance limit, then one back
             let out = if limit == "min" { -1.0 } else { 1.0 };
             let clicks = match self.frame_count {
-                760 if limit == "both" => out,
-                n @ 740..=788 if n % 12 == 8 && limit != "both" => out,
+                n @ 740..=788 if n % 12 == 8 => out,
                 810 => -out,
                 _ => 0.0,
             };
@@ -548,13 +557,12 @@ impl App {
                 self.camera
                     .scroll(clicks, false, false, &mut self.world.agent, &mut self.settings.camera);
             }
-            if matches!(self.frame_count, 750 | 800 | 840) {
+            if matches!(self.frame_count, 730 | 800 | 840) {
+                let (head, origin) = self.camera.rlva_distances();
                 log::info!(
-                    "RLVa demo: {mode}, frame {}, camera to focus {:.3} m, to avatar {:.3} m, zoom {:.4}",
+                    "RLVa demo: {mode}, frame {}, camera to its origin {origin:.3} m, to the head {head:.3} m, to focus {:.3} m",
                     self.frame_count,
                     self.camera.position.distance(self.camera.target),
-                    self.camera.position.distance(self.world.agent.position),
-                    self.camera.zoom_fraction()
                 );
             }
         }
@@ -586,10 +594,10 @@ impl App {
         }
         if matches!(mode.as_str(), "offset-zoom" | "no-mouselook" | "avatar-zoom") && matches!(self.frame_count, 730 | 741 | 790 | 880) {
             log::info!(
-                "RLVa demo: {mode}, frame {}, camera to focus {:.3} m, to avatar {:.3} m, mouselook={}, cursor held={}",
+                "RLVa demo: {mode}, frame {}, camera to focus {:.3} m, to the head {:.3} m, mouselook={}, cursor held={}",
                 self.frame_count,
                 self.camera.position.distance(self.camera.target),
-                self.camera.position.distance(self.world.agent.position),
+                self.camera.rlva_distances().0,
                 self.camera.mouselook(),
                 self.cursor_hold.held()
             );
@@ -1036,7 +1044,7 @@ impl App {
                     match c.option.as_str() {
                         // (refused by the camera where RLVa forbids mouselook)
                         "mouselook" => self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, true),
-                        "thirdperson" | "thirdview" => self.camera.change_to_default(&mut self.world.agent, &self.settings.camera),
+                        "thirdperson" => self.camera.change_to_default(&mut self.world.agent, &self.settings.camera),
                         "reset" | "" => self
                             .camera
                             .reset_view(&mut self.world.agent, &self.settings.camera, true, true, false, false),

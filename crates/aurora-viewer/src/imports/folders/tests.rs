@@ -31,7 +31,7 @@ pub(super) fn fixture() -> (Imports, crate::world::World, crate::ui::inventory::
 }
 
 #[test]
-fn import_folder_discovery_mirrors_nested_sources_filters_formats_and_reports_limits() {
+fn import_folder_discovery_mirrors_nested_sources_and_filters_formats() {
     let root = std::env::temp_dir().join(format!("aurora-folder-discovery-{}", Uuid::new_v4()));
     std::fs::create_dir_all(root.join("Coat/Empty")).unwrap();
     std::fs::create_dir_all(root.join("Hat")).unwrap();
@@ -51,16 +51,12 @@ fn import_folder_discovery_mirrors_nested_sources_filters_formats_and_reports_li
     }
     #[cfg(windows)]
     let link = std::os::windows::fs::symlink_dir(&root, root.join("Hat/loop")).is_ok();
-    let files = discover(&root, 10).unwrap();
+    let files = discover(&root).unwrap();
     assert_eq!(files.len(), 7);
     let coat = files.iter().find(|(p, _)| p.ends_with("Coat/a.PNG")).unwrap();
     assert_eq!(
         coat.1,
         vec![root.file_name().unwrap().to_string_lossy().into_owned(), "Coat".into()]
-    );
-    assert!(
-        discover(&root, 6).is_err(),
-        "a large selection is reported, never silently truncated"
     );
     #[cfg(windows)]
     if link {
@@ -87,7 +83,7 @@ fn import_folder_discovery_uses_case_insensitive_natural_path_order() {
         std::fs::write(root.join(name), []).unwrap();
     }
 
-    let files = discover(&root, 10).unwrap();
+    let files = discover(&root).unwrap();
     let ordered: Vec<_> = files
         .iter()
         .map(|(path, _)| path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/"))

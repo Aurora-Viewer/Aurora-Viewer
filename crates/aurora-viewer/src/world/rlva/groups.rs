@@ -66,6 +66,21 @@ impl World {
         found
     }
 
+    /// RlvActions::canChangeActiveGroup (indra/newview/rlvactions.cpp): not
+    /// while @setgroup holds it. LLGroupActions::activate then returns
+    /// without a word, and LLGroupList greys "Activate".
+    pub fn rlva_can_change_group(&self) -> bool {
+        !self.rlva.enabled() || !self.rlva.has("setgroup")
+    }
+
+    /// LLGroupActions::leave (indra/newview/llgroupactions.cpp): the active
+    /// group is not left while @setgroup holds it. It returns before its
+    /// question; LLGroupList and the conversations' menu grey "Leave", the
+    /// other buttons stay and do nothing.
+    pub fn rlva_can_leave_group(&self, group: Uuid) -> bool {
+        group != self.groups.active || self.rlva_can_change_group()
+    }
+
     pub(super) fn rlva_group_force(&mut self, source: Uuid, c: &Command, now: Instant) -> Vec<(Uuid, NetCommand)> {
         if !self.rlva.enabled() || self.rlva.has_except("setgroup", source) {
             return Vec::new();

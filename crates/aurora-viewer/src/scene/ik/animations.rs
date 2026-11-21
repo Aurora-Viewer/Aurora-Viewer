@@ -26,6 +26,19 @@ pub fn last_frame(duration: f32) -> u32 {
 /// LLJointStateBlender's per-joint priorities, with explicit list order in
 /// place of motion start time. Earlier rows win ties; rotation and translation
 /// remain independent channels. No asset, controller or simulator is changed.
+/// Whether any of `samples` keys a position on `bone`.
+pub fn keys_position(bone: usize, samples: &[Sample]) -> bool {
+    samples.iter().any(|sample| {
+        sample
+            .animation
+            .anim
+            .joints
+            .iter()
+            .zip(&sample.animation.joints)
+            .any(|(track, joint)| *joint == Some(bone) && !track.pos_keys.is_empty())
+    })
+}
+
 pub fn apply(rig: &Rig, pose: &mut LocalPose, pelvis: Vec3, samples: &[Sample]) {
     let mut rotations: Vec<Option<(i32, Quat)>> = vec![None; rig.len()];
     let mut positions: Vec<Option<(i32, Vec3)>> = vec![None; rig.len()];
@@ -202,6 +215,21 @@ mod tests {
             world[rig.pelvis].w_axis.truncate().distance(shaped[rig.pelvis]) < 1e-5,
             "neutral removes animated pelvis offset, preserving shape"
         );
+        // a clip that keys no pelvis position stands like a zero key, not
+        // on the shaped rest pelvis (a mesh override can sit metres up)
+        let mut lifted = shaped.clone();
+        lifted[rig.pelvis] += Vec3::Z * 10.0;
+        pose.set_rest_positions(&lifted);
+        pose.edit.animations = vec![sample(rig, 2, -1, Quat::from_rotation_z(1.0), 0)];
+        assert!(!keys_position(rig.pelvis, &pose.edit.animations));
+        let clip = pose.apply(rig, &real, &animated, pelvis, &rig.scale, now, true).unwrap();
+        let world = rig.world_with(&clip.rotations, pelvis, &clip.positions, &rig.scale);
+        assert!(
+            world[rig.pelvis].w_axis.truncate().distance(rig.local_pos[rig.pelvis]) < 1e-5,
+            "an unkeyed pelvis stays at the rig's height"
+        );
+        pose.edit.animations.clear();
+        pose.set_rest_positions(&shaped);
         pose.edit.suppress_live = false;
         let restored = pose.apply(rig, &real, &animated, pelvis, &rig.scale, now, true).unwrap();
         assert_eq!(restored.rotations, real);
@@ -210,7 +238,6 @@ mod tests {
         let target = Vec3::new(0.2, 0.1, 1.6);
         let rotation = Quat::from_rotation_x(0.7);
         pose.edit.goals.push(Goal {
-            follow: None,
             bone: head,
             root: head,
             position: target,

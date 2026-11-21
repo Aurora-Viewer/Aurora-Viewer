@@ -2,6 +2,7 @@
 //! (indra/newview/llwearableitemslist.cpp / llviewerattachmenu.cpp, LGPL 2.1).
 
 use super::{Action, AppearanceUi, model};
+use crate::world::names::NameScope;
 use crate::{
     theme::Palette,
     ui::{menu, widgets},
@@ -463,22 +464,28 @@ pub(super) fn profile(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
             ui.add(egui::Label::new(&item.desc).wrap());
         }
         ui.add_space(8.0);
-        for (label, id) in [
-            (aurora_i18n::tr!("common-creator"), item.creator),
-            (aurora_i18n::tr!("common-owner"), item.owner),
+        // RLVa `@shownames`, as LLSidepanelItemInfo::refreshFromItem
+        // (indra/newview/llsidepaneliteminfo.cpp): the owner is hidden unless
+        // excepted, the creator only when they also own the item or stand in
+        // a region around; a hidden name opens no profile.
+        let [owner, creator] = crate::ui::inventory::resident_scopes(item);
+        for (label, (id, scope)) in [
+            (aurora_i18n::tr!("common-creator"), creator),
+            (aurora_i18n::tr!("common-owner"), owner),
         ] {
             ui.horizontal(|ui| {
                 ui.label(label);
-                if !id.is_nil()
-                    && ui
-                        .link(
-                            world
-                                .person_name(&id)
-                                .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-items-show-profile").into()),
-                        )
-                        .clicked()
-                {
-                    crate::ui::profile::request_open(ctx, id);
+                if id.is_nil() {
+                    return;
+                }
+                let name = world
+                    .person_name_in(scope, &id)
+                    .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-items-show-profile").into());
+                if !world.rlva_shows_name(scope, id) {
+                    ui.label(RichText::new(name).color(p.muted));
+                } else if ui.link(name).clicked() {
+                    // the name is shown here whoever stands around
+                    crate::ui::profile::request_open_in(ctx, NameScope::Roster, id);
                 }
             });
         }

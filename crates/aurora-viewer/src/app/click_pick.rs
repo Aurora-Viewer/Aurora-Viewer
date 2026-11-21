@@ -767,6 +767,9 @@ impl App {
             }
         }
         self.clicks.held.clear();
+        self.build.drop_press();
+        // nor does a click on our own plate run its action
+        self.own_plate_click = None;
     }
 
     /// The build tools' release of a demo script, behind its press.

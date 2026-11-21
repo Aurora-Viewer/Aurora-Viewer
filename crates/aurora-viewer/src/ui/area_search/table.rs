@@ -77,6 +77,10 @@ pub(crate) struct Row {
     pub child: bool,
     pub mine: bool,
     pub loaded: bool,
+    /// RLVa `@shownames`: a resident is found by the name the columns show
+    /// and nothing else (`name_matches` of FSAreaSearch::matchObject stops
+    /// at the shown string under the restriction), so not by their id.
+    pub names_hidden: bool,
     keys: [String; 11],
 }
 impl Row {
@@ -101,6 +105,7 @@ impl Row {
         }
     }
     fn normalize(&mut self) {
+        let resident = |id: Uuid| if self.names_hidden { String::new() } else { id.to_string() };
         self.keys = [
             self.name.to_lowercase(),
             self.description.to_lowercase(),
@@ -108,11 +113,11 @@ impl Row {
             self.creator.to_lowercase(),
             self.group.to_lowercase(),
             self.id.to_string(),
-            self.owner_id.to_string(),
-            self.creator_id.to_string(),
+            resident(self.owner_id),
+            resident(self.creator_id),
             self.group_id.to_string(),
             self.last_owner.to_lowercase(),
-            self.last_owner_id.to_string(),
+            resident(self.last_owner_id),
         ];
     }
     fn matches(&self, f: &Filters, patterns: &[Option<fancy_regex::Regex>], limit: &AtomicBool) -> bool {
