@@ -5103,7 +5103,7 @@ impl World {
             self.rlva_bind_controller(c.source_id);
             self.rlva_prepare_version(c.source_id, &c.message);
         }
-        if controller_allowed && self.rlva.receive(&c) {
+        if controller_allowed && self.rlva_receive(&c) {
             self.rlva_resolve_sources();
             self.eep.rlva_locked = self.rlva.has("setenv");
             let environment_owner = self.rlva.rules_for("setenv", Uuid::nil()).next().map(|(id, _)| id);

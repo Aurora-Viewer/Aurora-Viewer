@@ -142,6 +142,9 @@ permission rule hides it.
   Node/subtree attachthis/detachthis locks and same-issuer exceptions follow
   shared links and folded folders; inventory mutation checks prevent moves,
   copies, renames or deletion from invalidating folder locks.
+  A folder lock whose option names nothing (no such shared folder, or a
+  point or a type for an `_except` form) is refused and never listed, `=y`
+  included, against the folders the inventory holds when the command arrives.
 - Forced wear: attach/over/all/allover, detach/all/me, remattach, remoutfit,
   through the native COF planner. Shared-folder queries: getinv, getinvworn,
   findfolder/s, getpath/new; attachment and outfit presence/name queries.

@@ -368,7 +368,7 @@ pub(super) fn path(inv: &Inventory, mut id: Uuid) -> Option<String> {
     Some(names.join("/"))
 }
 
-fn resolve(inv: &Inventory, name: &str) -> Option<Uuid> {
+pub(super) fn resolve(inv: &Inventory, name: &str) -> Option<Uuid> {
     let mut id = shared_root(inv)?;
     if name.is_empty() {
         return Some(id);

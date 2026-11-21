@@ -486,6 +486,38 @@ fn valid_option(c: &Command) -> bool {
     }
 }
 
+/// RlvHandler::onAddRemFolderLock and onAddRemFolderLockException
+/// (rlvhandler.cpp): the option of `@attachthis`, `@attachallthis`,
+/// `@detachthis` and `@detachallthis` is empty (the object's own folder), a
+/// shared folder path, an attachment point or a wearable type; the four
+/// `_except` forms take a shared folder path only. Anything else fails with
+/// RLV_RET_FAILED_OPTION, `=y` included, and no rule is stored. The option is
+/// read as RlvCommandOptionHelper::parseOption<RlvCommandOptionGeneric> does
+/// (rlvhelper.cpp): a wearable type, an attachment point or a UUID is taken
+/// as that before a folder is looked for. `shared` tells whether a path names
+/// a folder under #RLV among the folders the inventory holds right now
+/// (RlvInventory::getSharedFolder, which the Legacy Viewer asks the same way:
+/// no shared root, or a folder not loaded, is no folder).
+fn folder_option_refused(c: &Command, shared: &dyn Fn(&str) -> bool) -> bool {
+    let except = match canonical(&c.behaviour) {
+        "attachthis" | "attachallthis" | "detachthis" | "detachallthis" => false,
+        "attachthis_except" | "attachallthis_except" | "detachthis_except" | "detachallthis_except" => true,
+        _ => return false,
+    };
+    if !matches!(c.param, Param::Add | Param::Remove) {
+        return false;
+    }
+    if !valid_option(c) {
+        return true;
+    }
+    let option = c.option.as_str();
+    if option.is_empty() || inventory::layer(option).is_some() || inventory::point(option).is_some() {
+        return except;
+    }
+    // LLUUID::validate reads the 36-character form only.
+    (option.len() == 36 && Uuid::parse_str(option).is_ok()) || !shared(option)
+}
+
 #[derive(Default)]
 pub struct Rlva {
     enabled: bool,
@@ -746,9 +778,17 @@ impl Rlva {
             .fold(f32::INFINITY, f32::min)
     }
 
+    /// `receive_in` with every shared folder present, for the tests that
+    /// are about something else than the folders.
+    #[cfg(test)]
+    pub fn receive(&mut self, chat: &ChatMessage) -> bool {
+        self.receive_in(chat, &|_| true)
+    }
+
     /// Returns true for an RLVa OwnerSay, including unsupported commands:
     /// protocol traffic never becomes user chat when RLVa is enabled.
-    pub fn receive(&mut self, chat: &ChatMessage) -> bool {
+    /// `shared` tells whether a shared folder path exists (`folder_option_refused`).
+    fn receive_in(&mut self, chat: &ChatMessage, shared: &dyn Fn(&str) -> bool) -> bool {
         if !self.enabled
             || chat.source_type != ChatSourceType::Object
             || chat.chat_type != ChatType::OwnerSay
@@ -769,7 +809,8 @@ impl Rlva {
         for text in message.split(',').take(256) {
             if let Some(command) = Command::parse(text) {
                 let notice = self.notice(chat.source_id, &command, text);
-                let outcome = self.process(chat.source_id, command);
+                let refused = folder_option_refused(&command, shared);
+                let outcome = self.process_with(chat.source_id, command, refused);
                 self.trace(chat.source_id, text, outcome);
                 if let Some((subject, suffix)) = notice {
                     self.notify_command(&subject, suffix);
@@ -838,7 +879,13 @@ impl Rlva {
         }
     }
 
+    /// `process_with` for a command whose folder option is not in question.
+    #[cfg(test)]
     fn process(&mut self, source: Uuid, c: Command) -> diagnostics::Outcome {
+        self.process_with(source, c, false)
+    }
+
+    fn process_with(&mut self, source: Uuid, c: Command, folder_refused: bool) -> diagnostics::Outcome {
         use diagnostics::Outcome;
         if self.refused(source, &c)
             || (!self.preferences.command_available(&c.behaviour) && !matches!(c.param, Param::Remove | Param::Clear))
@@ -883,7 +930,11 @@ impl Rlva {
                 {
                     return Outcome::Rejected;
                 }
-                if !RESTRICTIONS.contains(&c.behaviour.as_str()) || (c.strict && !supports_strict(&c.behaviour)) || !valid_option(&c) {
+                if !RESTRICTIONS.contains(&c.behaviour.as_str())
+                    || (c.strict && !supports_strict(&c.behaviour))
+                    || !valid_option(&c)
+                    || folder_refused
+                {
                     return Outcome::Rejected;
                 }
                 let rule = Rule::from(&c);
@@ -1239,6 +1290,9 @@ pub fn is_emote(text: &str) -> bool {
 #[cfg(test)]
 #[path = "rlva/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod folder_option_tests;
 
 #[cfg(test)]
 #[path = "rlva/link_lock_tests.rs"]

@@ -42,6 +42,15 @@ impl Rlva {
 }
 
 impl World {
+    /// An OwnerSay command of an object, run against the shared folders the
+    /// inventory holds: a folder lock that names nothing is refused
+    /// (`folder_option_refused`). Returns what `Rlva::receive_in` does.
+    pub(crate) fn rlva_receive(&mut self, chat: &aurora_net::ChatMessage) -> bool {
+        let inventory = &self.inventory;
+        self.rlva
+            .receive_in(chat, &|path| super::inventory::resolve(inventory, path).is_some())
+    }
+
     /// After an OwnerSay stored rules: whether their issuers are known
     /// objects (`Rlva::resolve_sources`).
     pub(crate) fn rlva_resolve_sources(&mut self) {
