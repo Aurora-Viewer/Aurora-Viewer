@@ -15832,3 +15832,17 @@ phototools-render-options = 描画オプション
 
 ui-bars-clouds-paused = 雲を停止中
 ui-bars-clouds-paused-tip = このセッションでは雲を止めています。クリックで再開します。
+phototools-tab-dof-glow = 被写界深度とグロー
+phototools-lights-shadows = ライトと影の設定
+phototools-ambient-occlusion = アンビエントオクルージョンの設定
+phototools-dof = 被写界深度の設定
+phototools-tone-mapping = HDRトーンマッピングの設定
+phototools-glow = グローの設定
+phototools-photo-banner = フォトウィンドウを開いています。フォトウィンドウにもある行は写真に反映されます。被写界深度は次の写真にも保持され、ライト、露出、影、アンビエントオクルージョン、装着ライトはフォトウィンドウを閉じるまで有効です。
+phototools-photo-boost = フォト品質が引き上げられています。グラフィックの行には引き上げた値が表示され、そこでの変更はあなた自身の設定として保持されます。
+phototools-photo-focus-help = クリック: ワールドで最後にクリックした点。ポインター: ポインターの下の点。手動: 指定した距離。
+phototools-photo-distance-help = 手動フォーカス時にレンズがピントを合わせる距離です。
+phototools-director-lens = ディレクターのウィンドウが開いている間は、下の設定よりもディレクターのレンズが表示されます。
+phototools-view-angle-viewfinder = 視野角はファインダーが管理しています。ファインダーを閉じると元の値に戻ります。
+ui-options-dof-show-focus-point = フォーカス点を表示
+ui-options-dof-show-focus-point-help = レンズがピントを合わせている点に小さな十字を表示します。自由なときは黄色、ロック中は赤です。

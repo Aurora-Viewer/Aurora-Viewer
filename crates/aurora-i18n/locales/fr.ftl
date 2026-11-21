@@ -15971,3 +15971,17 @@ phototools-render-options = Options de rendu
 
 ui-bars-clouds-paused = Nuages figés
 ui-bars-clouds-paused-tip = Les nuages sont figés pour cette session. Cliquez pour les relâcher.
+phototools-tab-dof-glow = Flou et lueur
+phototools-lights-shadows = Paramètres des lumières et des ombres
+phototools-ambient-occlusion = Paramètres de l'occlusion ambiante
+phototools-dof = Paramètres de la profondeur de champ
+phototools-tone-mapping = Paramètres du mappage tonal HDR
+phototools-glow = Paramètres de la lueur
+phototools-photo-banner = Fenêtre photo ouverte : les réglages que la fenêtre photo possède aussi changent la photo. La profondeur de champ est conservée pour vos prochaines photos ; la lumière, l'exposition, les ombres, l'occlusion ambiante et les lumières portées durent jusqu'à la fermeture de la fenêtre photo.
+phototools-photo-boost = La qualité photo est relevée : les lignes graphiques montrent les valeurs relevées, et un changement que vous y faites est conservé comme le vôtre.
+phototools-photo-focus-help = Clic : le dernier point cliqué dans le monde. Pointeur : le point sous le pointeur. Manuel : une distance que vous réglez.
+phototools-photo-distance-help = La distance de mise au point de l'objectif en mise au point manuelle.
+phototools-director-lens = L'objectif du Réalisateur est affiché tant que sa fenêtre est ouverte, par-dessus les réglages ci-dessous.
+phototools-view-angle-viewfinder = Le viseur gère l'angle de vue : le vôtre revient à sa fermeture.
+ui-options-dof-show-focus-point = Afficher le point de mise au point
+ui-options-dof-show-focus-point-help = Une petite croix sur le point où l'objectif fait la mise au point : jaune quand il est libre, rouge quand il est verrouillé.
