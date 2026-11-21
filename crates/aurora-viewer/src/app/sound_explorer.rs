@@ -248,8 +248,7 @@ fn sound_owner_name(world: &World, owner: Uuid) -> String {
     if owner.is_nil() {
         return aurora_i18n::tr!("sound-explorer-unknown").to_owned();
     }
-    if !world.rlva_can_name(owner) {
-        return crate::world::rlva::privacy::anonymous(owner).display_name.clone();
-    }
-    world.social.name_of(&owner)
+    // NACLFloaterExploreSounds::requestNameCallback tests the behaviour
+    // alone: our own sounds and an exception's are anonymous too
+    world.rlva_name_unless_hidden(owner)
 }

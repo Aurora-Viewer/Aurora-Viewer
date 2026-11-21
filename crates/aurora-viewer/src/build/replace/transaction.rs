@@ -1064,7 +1064,9 @@ impl Job {
                         };
                         self.inventory_request = None;
                         match result {
-                            Ok(reply) => world.inventory.apply(reply.contents),
+                            Ok(reply) => {
+                                world.inventory.apply(reply.contents);
+                            }
                             Err(_) => self.message = aurora_i18n::tr!("replace-backup-kept").into(),
                         }
                     }

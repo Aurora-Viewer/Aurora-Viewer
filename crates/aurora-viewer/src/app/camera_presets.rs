@@ -55,6 +55,7 @@ impl App {
                 fov: self.settings.camera.fov,
                 dof: self.settings.snapshot.dof.clone(),
                 exposure: self.snapshots.ui.light.exposure,
+                tilt: self.camera.roll.to_degrees(),
             });
         }
         if include.looks {
@@ -186,6 +187,11 @@ impl App {
             Some(anchor) => self.apply_preset_anchor(&shot, anchor),
             None => Ok(()),
         };
+        // the tilt after the anchor: placing the camera on the avatar levels it
+        if let Some(lens) = &shot.lens {
+            let max = crate::snapshot::viewfinder::ROLL_MAX;
+            self.camera.roll = lens.tilt.clamp(-max, max).to_radians();
+        }
         self.snapshots.preview_wanted = true;
         self.settings.save();
         placed

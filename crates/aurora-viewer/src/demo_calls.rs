@@ -8,6 +8,7 @@
 //! - `group`: a call in the group Aurora Builders (Nova, Tess, Orion);
 //! - `conference`: a voice conference with Tess and Nova ("start
 //!   conference", then the call once the session has its id);
+//! - `conference-focus`: start a conference by hand; its real id arrives 20 s later.
 //! - `incoming`: Tess calls us (the card with Accept / Decline / Reply by
 //!   text);
 //! - `incoming-group`: Nova starts a call in Aurora Builders;
@@ -23,6 +24,7 @@ use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS};
 use crate::world::World;
 use crate::world::calls::{CallKind, CallMember, ChannelStatus};
 use aurora_net::{CallMethod, NetEvent, VoiceInvite};
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -34,6 +36,7 @@ pub enum Mode {
     Conference,
     ConferenceLegacy,
     ConferenceInvite,
+    ConferenceFocus,
     Incoming,
     IncomingGroup,
 }
@@ -55,6 +58,7 @@ pub fn mode() -> Option<Mode> {
         "hangup" => Some(Mode::Hangup),
         "group" => Some(Mode::Group),
         "conference" => Some(Mode::Conference),
+        "conference-focus" => Some(Mode::ConferenceFocus),
         "conference-legacy" => Some(Mode::ConferenceLegacy),
         "conference-invite" => Some(Mode::ConferenceInvite),
         "incoming" => Some(Mode::Incoming),
@@ -70,6 +74,7 @@ const ANSWER: Duration = Duration::from_secs(3);
 const HANGUP: Duration = Duration::from_secs(12);
 /// When the scenario starts, once in world.
 const SCENARIO_DELAY: Duration = Duration::from_secs(3);
+const CONFERENCE_FOCUS_DELAY: Duration = Duration::from_secs(20);
 
 /// The simulated channel of the call in progress.
 #[derive(Default)]
@@ -81,6 +86,7 @@ pub struct CallDemo {
     started: bool,
     /// `conference-invite`: Orion was added.
     invited: bool,
+    pending_conferences: VecDeque<(Instant, NetEvent)>,
 }
 
 fn present(agent: Uuid) -> aurora_net::SessionAgent {
@@ -202,9 +208,28 @@ fn invite(group: bool) -> VoiceInvite {
 }
 
 impl CallDemo {
+    /// Let a human edit a draft or switch conversations before the event queue
+    /// assigns the real session ID. The capability receipt still arrives immediately.
+    pub fn delay_conference_start(&mut self, events: &mut Vec<NetEvent>, now: Instant) {
+        for started in events.extract_if(.., |e| matches!(e, NetEvent::SessionStarted { .. })) {
+            self.pending_conferences.push_back((now + CONFERENCE_FOCUS_DELAY, started));
+        }
+    }
+
+    fn due_conference_start(&mut self, now: Instant) -> Option<NetEvent> {
+        self.pending_conferences
+            .pop_front_if(|(due, _)| *due <= now)
+            .map(|(_, event)| event)
+    }
+
     /// Starts the scenario of AURORA_DEMO_CALL once in world: a call made
     /// in `world`, or invitation events to apply.
     pub fn scenario(&mut self, world: &mut World, in_world: bool) -> Vec<NetEvent> {
+        if !self.pending_conferences.is_empty()
+            && let Some(started) = self.due_conference_start(Instant::now())
+        {
+            return vec![started];
+        }
         // `conference-invite`: Orion added once the conference is connected
         if self.started && !self.invited && mode() == Some(Mode::ConferenceInvite) {
             if let Some(c) = world
@@ -235,6 +260,7 @@ impl CallDemo {
             Mode::P2p | Mode::Hangup => world.start_call(DEMO_NOVA),
             Mode::Group => world.start_call(DEMO_GROUP1),
             Mode::Conference | Mode::ConferenceLegacy | Mode::ConferenceInvite => world.start_conference(vec![DEMO_NOVA, DEMO_TESS]),
+            Mode::ConferenceFocus => {}
             Mode::Incoming => return vec![NetEvent::VoiceInvite(invite(false))],
             Mode::IncomingGroup => return vec![NetEvent::VoiceInvite(invite(true))],
         }
@@ -309,6 +335,47 @@ impl CallDemo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conference_focus_waits_for_the_manual_calls_individual_deadline() {
+        let mut demo = CallDemo::default();
+        let now = Instant::now();
+        let ids = [Uuid::from_u128(71), Uuid::from_u128(72)];
+        for (i, temp) in ids.into_iter().enumerate() {
+            let mut events = reply(
+                CallMethod::StartConference {
+                    agents: vec![DEMO_NOVA, DEMO_TESS],
+                },
+                temp,
+            );
+            demo.delay_conference_start(&mut events, now + Duration::from_secs(i as u64));
+            assert!(matches!(&events[..], [NetEvent::CallReply { session, result: Ok(_), .. }] if *session == temp));
+        }
+        assert!(
+            demo.due_conference_start(now + CONFERENCE_FOCUS_DELAY - Duration::from_millis(1))
+                .is_none()
+        );
+        for (i, temp) in ids.into_iter().enumerate() {
+            let at = now + CONFERENCE_FOCUS_DELAY + Duration::from_secs(i as u64);
+            let Some(NetEvent::SessionStarted {
+                temp_session,
+                session,
+                success: true,
+                agents,
+                ..
+            }) = demo.due_conference_start(at)
+            else {
+                panic!("each conference receives its own start");
+            };
+            assert_eq!(temp_session, temp);
+            assert_ne!(session, temp);
+            assert_eq!(
+                agents.iter().map(|member| member.agent).collect::<Vec<_>>(),
+                [DEMO_AGENT, DEMO_NOVA, DEMO_TESS]
+            );
+            assert!(demo.due_conference_start(at).is_none());
+        }
+    }
 
     #[test]
     fn every_call_gets_a_channel() {

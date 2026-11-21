@@ -5,3 +5,7 @@
 
 # Raw grayscale terrain texels must keep their exact bytes.
 *.r8 binary
+
+# Shell scripts always get Unix line endings: bash stops on a carriage return
+# (the agents' hook of .claude/hooks runs in Git Bash on Windows).
+*.sh text eol=lf

@@ -22,6 +22,7 @@ mod inventory_updates;
 mod inventory_upload;
 mod object_actions;
 mod object_cache;
+mod proxy;
 mod render_info_net;
 mod scripts;
 mod sim_requests;
@@ -51,6 +52,9 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
+
+use crate::circuit_socket::CircuitSocket;
+use proxy::login_failed;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
@@ -66,6 +70,10 @@ mod land_net;
 /// Instant messages kept while offline and the answers to offline offers.
 #[path = "session_offline.rs"]
 mod offline_net;
+
+/// The transport of the grid's direct IM history requests.
+#[path = "session_chat_service.rs"]
+mod chat_service_net;
 
 /// Directory search: queries, replies, event and group details (search.rs).
 #[path = "session_search.rs"]
@@ -88,6 +96,8 @@ const LOGIN_ARRIVAL_TIMEOUT: Duration = Duration::from_secs(240);
 /// DEFAULT_FIELD_OF_VIEW (60°): the camera's angle until the viewer gives its own.
 const DEFAULT_FOV: f32 = std::f32::consts::FRAC_PI_3;
 const PING_INTERVAL: Duration = Duration::from_secs(5);
+/// LL_SIM_STAT_FPS (llviewerstats.h): the SimStats stat of the frame rate.
+const SIM_STAT_FPS: u32 = 1;
 
 /// The largest region side a grid can announce (Constants.MaximumRegionSize,
 /// OpenSim). The viewer sizes the region's land and parcel grids from it: a
@@ -169,6 +179,13 @@ struct Sim {
     link_up: bool,
     /// When the seed capability was last asked for (timelines).
     caps_asked_at: Option<Instant>,
+    /// The interest list mode this region was last told
+    /// (LLViewerRegion::mInterestListMode): the same one is not posted again.
+    interest_list: InterestListMode,
+    /// The queue of this region's InterestList posts: one task sends them
+    /// in order, so a slow `360` can never land after the `default` that
+    /// followed it.
+    interest_tx: Option<mpsc::UnboundedSender<(String, InterestListMode)>>,
 }
 
 impl Sim {
@@ -200,6 +217,8 @@ impl Sim {
             decode_failures: 0,
             link_up: false,
             caps_asked_at: None,
+            interest_list: InterestListMode::Default,
+            interest_tx: None,
         }
     }
 }
@@ -290,7 +309,7 @@ async fn post_appearance_request(http: &reqwest::Client, request: appearance_que
 
 struct Session<'a> {
     sh: &'a Shared,
-    sock: Arc<UdpSocket>,
+    sock: Arc<CircuitSocket>,
     login: Arc<LoginResponse>,
     sims: HashMap<SocketAddr, Sim>,
     main: Option<SocketAddr>,
@@ -325,6 +344,8 @@ struct Session<'a> {
     refuse_neighbours: bool,
     /// The camera's vertical viewing angle, last told to the simulator.
     fov: f32,
+    /// The interest list mode asked of the regions (LLAgent::mInterestListMode).
+    interest_list: InterestListMode,
     logout_started: Option<Instant>,
     finished: bool,
     agent_moved: bool,
@@ -442,6 +463,15 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             fraction: 0.1,
         },
     );
+    // The proxy first (LLStartUp::startLLProxy, before the login): a proxy
+    // that cannot be used stops here, before any request leaves.
+    let mut association = match proxy::start(sh).await {
+        Ok(association) => association,
+        Err(error) => {
+            emit(sh, login_failed(error));
+            return;
+        }
+    };
     let login = match login::login(&sh.login_http, &req).await {
         Ok(l) => Arc::new(l),
         Err(e) => {
@@ -486,10 +516,16 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         },
     );
 
-    let sock = match UdpSocket::bind("0.0.0.0:0").await {
+    // the relay's family: an IPv6 proxy needs an IPv6 socket
+    let ipv6 = association.as_ref().is_some_and(|a| a.relay().is_ipv6());
+    let sock = match crate::circuit_socket::bind(ipv6).await {
         Ok(s) => {
             size_socket_buffers(&s);
-            Arc::new(s)
+            let s = Arc::new(s);
+            Arc::new(match association.as_ref() {
+                Some(a) => CircuitSocket::relayed(s, a.relay(), a.announced()),
+                None => CircuitSocket::direct(s),
+            })
         }
         Err(e) => {
             emit(
@@ -533,6 +569,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         far: FarStep::new(Instant::now()),
         refuse_neighbours: false,
         fov: DEFAULT_FOV,
+        interest_list: InterestListMode::Default,
         logout_started: None,
         finished: false,
         agent_moved: false,
@@ -594,7 +631,8 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             r = sock.recv_from(&mut buf) => {
                 woke = Instant::now();
                 match r {
-                    Ok((n, from)) => s.on_datagram(&buf[..n], from),
+                    Ok(Some((range, from))) => s.on_datagram(&buf[range], from),
+                    Ok(None) => {}
                     Err(e) => {
                         // Windows reports ICMP port unreachable as recv errors.
                         log::debug!("udp recv error: {e}");
@@ -604,6 +642,20 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
             _ = tick.tick() => {
                 woke = Instant::now();
                 s.tick();
+            }
+            _ = proxy::closed(&mut association) => {
+                // the proxy ended the relay: the circuits are gone with it,
+                // and nothing may go direct instead
+                woke = Instant::now();
+                log::warn!("SOCKS 5 control channel closed: session ended");
+                emit(
+                    s.sh,
+                    NetEvent::Disconnected {
+                        reason: aurora_i18n::tr!("proxy-socks-lost").into(),
+                        lost: true,
+                    },
+                );
+                s.finished = true;
             }
             c = cmd_rx.recv() => {
                 woke = Instant::now();
@@ -1021,6 +1073,11 @@ impl Session<'_> {
             self.update_agent_language();
             // LLEnvironment::onRegionChange -> requestRegion once caps arrive
             self.request_environment(None);
+            // LLAgent::capabilityReceivedCallback: the 360° snapshot's mode
+            // again for the agent's region
+            if self.interest_list != InterestListMode::Default {
+                self.post_interest_list(addr);
+            }
             if self.inventory_merchant_pending {
                 self.inventory_merchant_pending = false;
                 self.on_command(NetCommand::RequestInventoryMerchant);
@@ -1047,6 +1104,9 @@ impl Session<'_> {
                     let materials_max = (!max.is_undef()).then(|| max.as_u32());
                     let avatar_hover_height = v["AvatarHoverHeightEnabled"].as_bool();
                     let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
+                    let lua_scripts = v["LuaScriptsEnabled"].as_bool();
+                    let group_chat_post_links = v["GroupChatPostLinksEnabled"].as_bool();
+                    let game_control = v["GameControlEnabled"].as_bool();
                     // an OpenSim grid's status feed and page
                     // (LFSimFeatureHandler::setSupportedFeatures)
                     let extras = &v["OpenSimExtras"];
@@ -1065,12 +1125,15 @@ impl Session<'_> {
                         materials_rate,
                         materials_max,
                         lsl_syntax_id,
+                        lua_scripts,
                         grid_status_feed,
                         grid_status_page,
                         currency_base_uri,
                         opensim,
                         currency_symbol,
                         export_supported,
+                        group_chat_post_links,
+                        game_control,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
@@ -1596,6 +1659,29 @@ impl Session<'_> {
 
     /// Controls handed over by the viewer because they changed enough to
     /// leave now (`NetCommand::AgentControls`).
+    /// sendGameControlData (llappviewer.cpp): to the agent's region,
+    /// unreliable, before the AgentUpdate of the same frame (the viewer sends
+    /// this command first).
+    fn send_game_control(&mut self, p: crate::types::GameControlPacket) {
+        if self.logout_started.is_some() {
+            return;
+        }
+        let mut m = GameControlData::default();
+        m.agent_data.agent_id = self.agent_id();
+        m.agent_data.session_id = self.session_id();
+        m.agent_data.packet = p.packet;
+        m.agent_data.action_mode = p.action_mode;
+        m.axes = p.axes.into_iter().map(|value| game_control_data::Axes { value }).collect();
+        m.buttons = p.buttons.map(|flags| game_control_data::Buttons { flags }).into_iter().collect();
+        m.mode_axes = p.mode_axes.into_iter().map(|value| game_control_data::ModeAxes { value }).collect();
+        m.mode_buttons = p
+            .mode_buttons
+            .map(|flags| game_control_data::ModeButtons { flags })
+            .into_iter()
+            .collect();
+        self.send_main(&m, false);
+    }
+
     fn on_agent_controls(&mut self, c: AgentControls) {
         self.control_flags = c.control_flags;
         if self.agent_moved && self.logout_started.is_none() {
@@ -1635,6 +1721,7 @@ impl Session<'_> {
         if self.on_object_action_command(&c)
             || self.on_social_command(&c)
             || self.on_offline_command(&c)
+            || self.on_chat_service_command(&c)
             || self.on_search_command(&c)
             || self.on_groups_command(&c)
         {
@@ -1796,6 +1883,37 @@ impl Session<'_> {
                     }
                 }
             }
+            // LLAgent::changeInterestListMode: every region alive with its
+            // capabilities, the ones already in that mode unaffected
+            NetCommand::SetInterestListMode(mode) => {
+                if mode != self.interest_list {
+                    self.interest_list = mode;
+                    let addrs: Vec<SocketAddr> = self.sims.keys().copied().collect();
+                    for addr in addrs {
+                        self.post_interest_list(addr);
+                    }
+                }
+            }
+            NetCommand::OfferInventory {
+                session,
+                to,
+                id,
+                message,
+                bucket,
+                receipt,
+            } => {
+                if session == self.session_id() && !self.finished && self.logout_started.is_none() {
+                    let offer = self.im_dialog(to, crate::offer_hosts::INVENTORY_OFFERED, id, &message, bucket);
+                    if let Some(sim) = self.main.and_then(|addr| self.sims.get_mut(&addr)) {
+                        sim.circuit.send_offer(&self.sock, &self.sh.stats, &offer, receipt);
+                    }
+                }
+            }
+            NetCommand::CheckInventoryOffer { session, items, reply } => {
+                if session == self.session_id() && !self.finished && self.logout_started.is_none() {
+                    self.fetch_items(items, self.agent_id(), false, Some(reply));
+                }
+            }
             NetCommand::SendImDialog {
                 to,
                 dialog,
@@ -1803,16 +1921,7 @@ impl Session<'_> {
                 message,
                 bucket,
             } => {
-                let mut m = ImprovedInstantMessage::default();
-                m.agent_data.agent_id = self.agent_id();
-                m.agent_data.session_id = self.session_id();
-                let b = &mut m.message_block;
-                b.to_agent_id = to;
-                b.dialog = dialog;
-                b.id = id;
-                b.from_agent_name = str_field(&format!("{} {}", self.login.first_name, self.login.last_name));
-                b.message = str_field(&message);
-                b.binary_bucket = if bucket.is_empty() { vec![0] } else { bucket };
+                let m = self.im_dialog(to, dialog, id, &message, bucket);
                 // an offer's answer goes to the simulator that holds it, a
                 // neighbour's included; anything else through the agent's region
                 match self.offer_hosts.answer_to(dialog, id, |host| self.sims.contains_key(&host)) {
@@ -1904,6 +2013,8 @@ impl Session<'_> {
             NetCommand::GroupExperiences(group) => self.request_group_experiences(group),
             NetCommand::MyExperiences => self.request_my_experiences(),
             NetCommand::ExperiencePermission { experience, change } => self.experience_permission(experience, change),
+            NetCommand::ExperienceAdmin(experience) => self.experience_admin(experience),
+            NetCommand::UpdateExperience { experience, body } => self.update_experience(experience, body),
             NetCommand::Touch { local_id } => {
                 // a click is a grab immediately followed by a release (LLToolGrab)
                 let mut g = ObjectGrab::default();
@@ -2241,6 +2352,20 @@ impl Session<'_> {
                 m.effect.push(reset_skeleton_effect(self.agent_id(), effect, target, animations));
                 self.send_main(&m, false);
             }
+            NetCommand::Beam {
+                effect,
+                target,
+                position,
+                color,
+                duration,
+            } => {
+                let mut m = ViewerEffect::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.effect
+                    .push(beam_effect(self.agent_id(), effect, target, position, color, duration));
+                self.send_main(&m, false);
+            }
             NetCommand::SetAlwaysRun(run) => {
                 let Some(region) = self.main else { return };
                 if !self.sims.contains_key(&region) || self.last_run_sent == Some((region, run)) {
@@ -2364,8 +2489,8 @@ impl Session<'_> {
                 owner,
                 library,
             } => self.fetch_inventory_tree(request, parent, children, depth, owner, library),
-            NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false),
-            NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true),
+            NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner, false, None),
+            NetCommand::FetchAttachmentItems { items } => self.fetch_items(items, self.agent_id(), true, None),
             NetCommand::FetchInventoryOrphans { request } => {
                 let ais = self.main_cap("InventoryAPIv3");
                 let legacy = self.main_cap("FetchInventoryDescendents2");
@@ -3069,6 +3194,13 @@ impl Session<'_> {
             }
             NetCommand::OneShotControl(f) => self.one_shot |= f,
             NetCommand::AgentControls(c) => self.on_agent_controls(c),
+            NetCommand::GameControlData(p) => self.send_game_control(p),
+            NetCommand::ForceAgentUpdate => {
+                self.agent_update.force();
+                if self.agent_moved && self.logout_started.is_none() {
+                    self.maybe_send_agent_update(Instant::now());
+                }
+            }
             NetCommand::ClearObjectCache => self.object_cache.clear(),
             NetCommand::Build(b) => self.on_build(b),
             // handled by on_social_command
@@ -3100,6 +3232,8 @@ impl Session<'_> {
             | NetCommand::RequestOfflineMessagesLegacy
             | NetCommand::AnswerOfflineFriendship { .. }
             | NetCommand::AnswerOfflineGroupInvite { .. } => {}
+            // handled by on_chat_service_command
+            NetCommand::ChatServiceRequest { .. } => {}
             // handled by on_groups_command
             NetCommand::GroupMembersRequest { .. }
             | NetCommand::GroupRoleDataRequest { .. }
@@ -3233,7 +3367,7 @@ impl Session<'_> {
                 .post(&url)
                 .header("Content-Type", "application/llsd+xml")
                 .header("Accept", "application/llsd+xml")
-                .header("Accept-Language", aurora_i18n::language())
+                .header("Accept-Language", aurora_i18n::grid_language())
                 .body(aurora_llsd::to_xml(&body))
                 .send()
                 .await;
@@ -3339,6 +3473,20 @@ impl Session<'_> {
         self.send_main(&m, true);
     }
 
+    fn im_dialog(&self, to: uuid::Uuid, dialog: u8, id: uuid::Uuid, message: &str, bucket: Vec<u8>) -> ImprovedInstantMessage {
+        let mut m = ImprovedInstantMessage::default();
+        m.agent_data.agent_id = self.agent_id();
+        m.agent_data.session_id = self.session_id();
+        let b = &mut m.message_block;
+        b.to_agent_id = to;
+        b.dialog = dialog;
+        b.id = id;
+        b.from_agent_name = str_field(&format!("{} {}", self.login.first_name, self.login.last_name));
+        b.message = str_field(message);
+        b.binary_bucket = if bucket.is_empty() { vec![0] } else { bucket };
+        m
+    }
+
     fn send_im(&mut self, to: uuid::Uuid, text: &str, dialog: u8) {
         let mut m = ImprovedInstantMessage::default();
         m.agent_data.agent_id = self.agent_id();
@@ -3368,9 +3516,35 @@ impl Session<'_> {
                         Ok(contents) => {
                             let _ = events.send(NetEvent::InventoryContents(contents));
                         }
+                        // One refused folder fails the whole batch: read each
+                        // one alone, so that only the folder the server
+                        // refuses by itself is over the limit
+                        // (BGFolderHttpHandler::processFailure splits a 403).
+                        Err(error) if error.kind == crate::inventory::ais::FetchFailure::TooBig && chunk.len() > 1 => {
+                            for id in chunk {
+                                match crate::inventory::ais::fetch_folders(&http, &cap, owner, std::slice::from_ref(id)).await {
+                                    Ok(contents) => {
+                                        let _ = events.send(NetEvent::InventoryContents(contents));
+                                    }
+                                    Err(error) => {
+                                        log::warn!("inventory fetch of {id} failed: {error}");
+                                        let _ = events.send(NetEvent::InventoryFetchFailed {
+                                            folders: vec![*id],
+                                            too_big: error.kind == crate::inventory::ais::FetchFailure::TooBig,
+                                            status: error.status,
+                                        });
+                                    }
+                                }
+                            }
+                        }
                         Err(error) => {
                             log::warn!("inventory fetch failed: {error}");
-                            let _ = events.send(NetEvent::InventoryFetchFailed { folders: chunk.to_vec() });
+                            let too_big = error.kind == crate::inventory::ais::FetchFailure::TooBig;
+                            let _ = events.send(NetEvent::InventoryFetchFailed {
+                                folders: chunk.to_vec(),
+                                too_big,
+                                status: error.status,
+                            });
                         }
                     }
                 }
@@ -3387,22 +3561,46 @@ impl Session<'_> {
             .and_then(|a| self.sims.get(&a))
             .and_then(|s| s.caps.get(cap_name).cloned());
         let Some(url) = url else {
-            emit(self.sh, NetEvent::InventoryFetchFailed { folders });
+            emit(
+                self.sh,
+                NetEvent::InventoryFetchFailed {
+                    folders,
+                    too_big: false,
+                    status: None,
+                },
+            );
             return;
         };
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            for chunk in folders.chunks(16) {
-                let body = crate::inventory::fetch_request_body(chunk, owner);
+            // BGFolderHttpHandler::processFailure: a batch refused with 403 is
+            // too large and split; only a folder refused alone is over the
+            // limit (InventoryLimitReachedAIS).
+            let mut batches: Vec<Vec<uuid::Uuid>> = folders.chunks(16).rev().map(<[uuid::Uuid]>::to_vec).collect();
+            while let Some(chunk) = batches.pop() {
+                let body = crate::inventory::fetch_request_body(&chunk, owner);
                 match caps::post_llsd_as(&http, &url, &body, crate::probe::HttpKind::Inventory).await {
                     Ok(v) => {
                         let contents = crate::inventory::parse_fetch_response(&v);
                         let _ = events.send(NetEvent::InventoryContents(contents));
                     }
+                    Err(caps::CapsError::Status(403)) if chunk.len() > 1 => {
+                        let (first, second) = chunk.split_at(chunk.len() / 2);
+                        batches.push(second.to_vec());
+                        batches.push(first.to_vec());
+                    }
                     Err(e) => {
                         log::warn!("inventory fetch failed: {e}");
-                        let _ = events.send(NetEvent::InventoryFetchFailed { folders: chunk.to_vec() });
+                        let status = match &e {
+                            caps::CapsError::Status(status) => Some(*status),
+                            _ => None,
+                        };
+                        let _ = events.send(NetEvent::InventoryFetchFailed {
+                            too_big: status == Some(403),
+                            folders: chunk,
+                            status,
+                        });
                     }
                 }
             }
@@ -3430,6 +3628,7 @@ impl Session<'_> {
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
+            let count = if children.is_empty() { 1 } else { children.len() };
             let result = if let Some(cap) = ais {
                 crate::inventory::ais::fetch_tree(&http, &cap, owner, parent, &children, depth).await
             } else if let Some(url) = legacy {
@@ -3438,17 +3637,17 @@ impl Session<'_> {
                 caps::post_llsd_as(&http, &url, &body, crate::probe::HttpKind::Inventory)
                     .await
                     .map(|v| crate::inventory::parse_fetch_response(&v))
-                    .map_err(|_| "inventory read failed")
+                    .map_err(crate::inventory::ais::FetchError::from)
             } else {
-                Err("no inventory capability")
+                Err(crate::inventory::ais::FetchError::new(
+                    crate::inventory::ais::FetchFailure::Fatal,
+                    None,
+                ))
             };
             if let Err(error) = result {
-                log::debug!("background inventory fetch of {parent} failed: {error}");
+                log::warn!("background inventory fetch of {parent} failed ({count} folders, depth {depth}): {error}");
             }
-            let _ = events.send(NetEvent::InventoryTreeFetched {
-                request,
-                result: result.map_err(str::to_owned),
-            });
+            let _ = events.send(NetEvent::InventoryTreeFetched { request, result });
         });
     }
 
@@ -3497,6 +3696,39 @@ impl Session<'_> {
             crate::viewer_stats::post(&http, &url, &body).await;
             posts.end();
         });
+    }
+
+    /// LLViewerRegion::setInterestListMode: the mode posted to one region's
+    /// InterestList capability, `{"mode": "360" | "default"}` (nothing
+    /// without the capability, nothing to a region already in that mode);
+    /// the reply only logged.
+    fn post_interest_list(&mut self, addr: SocketAddr) {
+        let mode = self.interest_list;
+        let Some(sim) = self.sims.get_mut(&addr) else { return };
+        // (a region whose capabilities have not come is left for their
+        // arrival, as LLAgent::changeInterestListMode skips it)
+        let Some(url) = sim.caps.get("InterestList").cloned() else { return };
+        if sim.interest_list == mode {
+            return;
+        }
+        sim.interest_list = mode;
+        let handle = sim.handle;
+        let http = self.sh.caps_http.clone();
+        let tx = sim.interest_tx.get_or_insert_with(|| {
+            let (tx, rx) = mpsc::unbounded_channel();
+            tokio::spawn(interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |url, mode| {
+                let http = http.clone();
+                async move {
+                    let body = caps::interest_list_body(mode);
+                    match caps::post_llsd(&http, &url, &body).await {
+                        Ok(_) => log::info!("InterestList mode {} posted to region {handle}", mode.as_str()),
+                        Err(e) => log::warn!("InterestList mode {} not posted to region {handle}: {e}", mode.as_str()),
+                    }
+                }
+            }));
+            tx
+        });
+        let _ = tx.send((url, mode));
     }
 
     /// The capability of the agent's region (cloned for a request task).
@@ -3590,6 +3822,33 @@ impl Session<'_> {
         });
     }
 
+    /// LLFloaterExperienceProfile::experienceIsAdmin: an administrator may
+    /// edit only where the region has UpdateExperience.
+    fn experience_admin(&self, experience: Uuid) {
+        let update = self.main_cap("UpdateExperience").is_some();
+        let cap = self.main_cap("IsExperienceAdmin");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let admin = update && crate::experience::is_admin(&http, cap.as_deref(), experience).await;
+            let _ = events.send(NetEvent::ExperienceAdmin { experience, admin });
+        });
+    }
+
+    /// LLExperienceCache::updateExperience, on a task.
+    fn update_experience(&self, experience: Uuid, body: aurora_llsd::Llsd) {
+        let cap = self.main_cap("UpdateExperience");
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let result = crate::experience::update(&http, cap.as_deref(), experience, &body).await;
+            if let Err(e) = &result {
+                log::warn!("experience {experience} update: {e}");
+            }
+            let _ = events.send(NetEvent::ExperienceUpdated { experience, result });
+        });
+    }
+
     /// LLVOAvatarSelf::sendHoverHeight. A delayed command must never write
     /// to a different region after teleporting; never log a capability URL.
     fn set_hover_height(&self, region: RegionHandle, request: u64, value: f32) {
@@ -3645,40 +3904,66 @@ impl Session<'_> {
         }
     }
 
-    fn fetch_items(&mut self, items: Vec<uuid::Uuid>, owner: uuid::Uuid, attachment: bool) {
-        if owner == self.agent_id()
-            && let Some(cap) = self.main_cap("InventoryAPIv3")
-        {
-            let http = self.sh.caps_http.clone();
-            let events = self.sh.events.clone();
-            tokio::spawn(async move {
-                for chunk in items.chunks(16) {
-                    let reads = crate::inventory::ais::read_items(&http, &cap, owner, chunk).await;
-                    send_item_reads(&events, reads, attachment);
-                }
-            });
-            return;
-        }
-        let Some(url) = self.main_cap("FetchInventory2") else {
-            emit(self.sh, NetEvent::InventoryItemsFailed { items });
-            return;
-        };
+    fn fetch_items(
+        &self,
+        items: Vec<uuid::Uuid>,
+        owner: uuid::Uuid,
+        attachment: bool,
+        offer_reply: Option<crossbeam_channel::Sender<crate::inventory::ais::ItemReads>>,
+    ) {
+        use crate::inventory::ais::ItemReads;
+        let ais = (owner == self.agent_id()).then(|| self.main_cap("InventoryAPIv3")).flatten();
+        let legacy = self.main_cap("FetchInventory2");
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
-        tokio::spawn(async move {
-            for chunk in items.chunks(50) {
-                let body = crate::inventory::fetch_items_body(chunk, owner);
-                let reads = match caps::post_llsd(&http, &url, &body).await {
-                    Ok(v) => crate::inventory::item_reads(&v, chunk),
-                    Err(e) => {
-                        log::warn!("item fetch failed: {e}");
-                        crate::inventory::ais::ItemReads {
-                            failed: chunk.to_vec(),
-                            ..Default::default()
+        let private = offer_reply.is_some();
+        let read = async move {
+            let mut all = ItemReads::default();
+            let mut receive = |mut reads: ItemReads| {
+                if private {
+                    all.items.append(&mut reads.items);
+                    all.missing.append(&mut reads.missing);
+                    all.failed.append(&mut reads.failed);
+                } else {
+                    send_item_reads(&events, reads, attachment);
+                }
+            };
+            if let Some(cap) = ais {
+                for chunk in items.chunks(16) {
+                    receive(crate::inventory::ais::read_items(&http, &cap, owner, chunk).await);
+                }
+            } else if let Some(url) = legacy {
+                for chunk in items.chunks(50) {
+                    let body = crate::inventory::fetch_items_body(chunk, owner);
+                    let reads = match caps::post_llsd(&http, &url, &body).await {
+                        Ok(doc) => crate::inventory::item_reads(&doc, chunk),
+                        Err(e) => {
+                            log::warn!("item fetch failed: {e}");
+                            ItemReads {
+                                failed: chunk.to_vec(),
+                                ..Default::default()
+                            }
                         }
-                    }
-                };
-                send_item_reads(&events, reads, attachment);
+                    };
+                    receive(reads);
+                }
+            } else {
+                receive(ItemReads {
+                    failed: items,
+                    ..Default::default()
+                });
+            }
+            all
+        };
+        tokio::spawn(async move {
+            if let Some(reply) = offer_reply {
+                // A stalled inventory server must release the private check.
+                // Dropping its sender leaves the original reserved for a manual recheck.
+                if let Ok(reads) = tokio::time::timeout(crate::inventory::ais::REQUEST_TIMEOUT, read).await {
+                    let _ = reply.try_send(reads);
+                }
+            } else {
+                read.await;
             }
         });
     }
@@ -3885,6 +4170,13 @@ impl Session<'_> {
                             max_children,
                         },
                     );
+                    emit(
+                        self.sh,
+                        NetEvent::OpenRegionSettings {
+                            handle: sim.handle,
+                            settings: Box::new(crate::open_region::OpenRegionSettings::from_llsd(b)),
+                        },
+                    );
                 }
             }
             "EnableSimulator" => {
@@ -3987,6 +4279,12 @@ impl Session<'_> {
                     &format!("failed (TeleportFailed: {reason})"),
                     &self.sh.stats,
                 );
+                // handle_teleport_access_blocked: a refusal for the rating
+                let alert = &b["AlertInfo"][0];
+                let extra = crate::teleport_access::extra_bytes(&alert["ExtraParams"]);
+                if let Some(blocked) = crate::teleport_access::from_alert_info(alert["Message"].as_str(), &extra) {
+                    emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
+                }
                 emit(self.sh, NetEvent::TeleportFailed { reason });
             }
             "DisableSimulator" => {
@@ -4432,6 +4730,8 @@ impl Session<'_> {
                 NetEvent::LoadUrl {
                     object_name: field_str(&d.object_name),
                     object_id: d.object_id,
+                    owner_id: d.owner_id,
+                    owner_is_group: d.owner_is_group,
                     message: field_str(&d.message),
                     url: field_str(&d.url),
                 },
@@ -4672,6 +4972,11 @@ impl Session<'_> {
             // process_sim_stats: the region flags ride along (an estate manager
             // turning off fly, voice, push... shows without a new handshake)
             let m: SimStats = pkt.decode()?;
+            // LL_SIM_STAT_FPS paces GameControlData, from whichever region
+            // sends it (process_sim_stats)
+            if let Some(fps) = m.stat.iter().find(|s| s.stat_id == SIM_STAT_FPS) {
+                emit(self.sh, NetEvent::SimFrameRate(fps.stat_value));
+            }
             if let Some(handle) = self.sims.get(&from).map(|s| s.handle) {
                 // the flags we use are all in the low 32 bits
                 let flags = m
@@ -4784,6 +5089,7 @@ impl Session<'_> {
                             _ => ChatSourceType::Object,
                         },
                         chat_type: ChatType::from_u8(c.chat_type),
+                        region: self.sims.get(&from).map(|sim| sim.handle),
                         position: c.position,
                         message: field_str(&c.message),
                     }),
@@ -5327,6 +5633,14 @@ impl Session<'_> {
                 &format!("failed (TeleportFailed: {})", field_str(&m.info.reason)),
                 &self.sh.stats,
             );
+            // handle_teleport_access_blocked: a refusal for the rating
+            if let Some(blocked) = m
+                .alert_info
+                .first()
+                .and_then(|info| crate::teleport_access::from_alert_info(&field_str(&info.message), &info.extra_params))
+            {
+                emit(self.sh, NetEvent::TeleportAccessBlocked(blocked));
+            }
             emit(
                 self.sh,
                 NetEvent::TeleportFailed {
@@ -5394,6 +5708,18 @@ impl Session<'_> {
                             source: e.agent_id,
                             target,
                             animations,
+                        },
+                    );
+                } else if let Some((source, target, position, color)) = parse_beam(e) {
+                    emit(
+                        self.sh,
+                        NetEvent::Beam {
+                            effect: e.id,
+                            source,
+                            target,
+                            position,
+                            color,
+                            duration: e.duration,
                         },
                     );
                 }
@@ -5619,6 +5945,33 @@ fn coarse_position(x: u8, y: u8, z: u8, size: (u32, u32)) -> Vec3 {
         f32::from(y) * size.1 as f32 / 256.0,
         f32::from(z) * 4.0,
     )
+}
+
+/// How long one InterestList post may take: the caps client only bounds
+/// the connection, and a region that takes the request and never answers
+/// must not hold the next mode (the closing `default`) for good.
+const INTEREST_LIST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// One region's InterestList posts, in the order asked and one at a time
+/// (the Legacy Viewer's posts are independent coroutines; a slow reply
+/// must not reorder the modes here). Modes queued while one is being
+/// posted are folded into the last, which is the one the region must end on.
+/// A post with no reply after `timeout` ([`INTEREST_LIST_TIMEOUT`]) is
+/// given up.
+async fn interest_list_worker<F, Fut>(mut rx: mpsc::UnboundedReceiver<(String, InterestListMode)>, timeout: Duration, post: F)
+where
+    F: Fn(String, InterestListMode) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    while let Some(mut latest) = rx.recv().await {
+        while let Ok(next) = rx.try_recv() {
+            latest = next;
+        }
+        let mode = latest.1;
+        if tokio::time::timeout(timeout, post(latest.0, mode)).await.is_err() {
+            log::warn!("InterestList mode {} had no reply in {timeout:?}: given up", mode.as_str());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -5867,6 +6220,105 @@ fn parse_reset_skeleton(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, 
     let target = uuid::Uuid::from_slice(&e.type_data[0..16]).ok()?;
     let target = if target.is_nil() { e.agent_id } else { target };
     Some((target, e.type_data[16] & 1 != 0))
+}
+
+/// LLHUDObject::LL_HUD_EFFECT_BEAM: the selection and give beams.
+const HUD_EFFECT_BEAM: u8 = 7;
+/// LLHUDEffectSpiral type data: source object (16), target object (16),
+/// target global position (3 x F64; zero when the target is an object).
+const BEAM_PKT_SIZE: usize = 56;
+
+/// What a beam effect carries: its source, target object (nil for none),
+/// global position and RGBA colour.
+type BeamData = (uuid::Uuid, uuid::Uuid, [f64; 3], [u8; 4]);
+
+/// LLHUDEffectSpiral::packData, with LLHUDEffect::packData's header: our
+/// avatar as the source, the target object or else the global position.
+fn beam_effect(
+    agent: uuid::Uuid,
+    effect: uuid::Uuid,
+    target: uuid::Uuid,
+    position: [f64; 3],
+    color: [u8; 4],
+    duration: f32,
+) -> msgs::viewer_effect::Effect {
+    let mut d = Vec::with_capacity(BEAM_PKT_SIZE);
+    d.extend_from_slice(agent.as_bytes());
+    d.extend_from_slice(target.as_bytes());
+    for v in position {
+        d.extend_from_slice(&v.to_le_bytes());
+    }
+    msgs::viewer_effect::Effect {
+        id: effect,
+        agent_id: agent,
+        type_: HUD_EFFECT_BEAM,
+        duration,
+        color: color.to_vec(),
+        type_data: d,
+    }
+}
+
+/// LLHUDEffectSpiral::unpackData: a packet of another size, or a position
+/// that is not finite, is dropped ("Spiral effect with bad size").
+fn parse_beam(e: &msgs::viewer_effect::Effect) -> Option<BeamData> {
+    if e.type_ != HUD_EFFECT_BEAM || e.type_data.len() != BEAM_PKT_SIZE {
+        return None;
+    }
+    let d = &e.type_data;
+    let source = uuid::Uuid::from_slice(&d[0..16]).ok()?;
+    let target = uuid::Uuid::from_slice(&d[16..32]).ok()?;
+    let mut position = [0.0f64; 3];
+    for (i, v) in position.iter_mut().enumerate() {
+        let b: [u8; 8] = d[32 + i * 8..40 + i * 8].try_into().ok()?;
+        *v = f64::from_le_bytes(b);
+        if !v.is_finite() {
+            return None;
+        }
+    }
+    // LLHUDEffect::unpackData reads four bytes; a short field keeps the
+    // effect's white default
+    let mut color = [255u8; 4];
+    for (c, b) in color.iter_mut().zip(&e.color) {
+        *c = *b;
+    }
+    Some((source, target, position, color))
+}
+
+#[cfg(test)]
+mod beam_tests {
+    use super::*;
+
+    #[test]
+    fn a_beam_roundtrips_the_legacy_packet_and_bad_data_is_dropped() {
+        let agent = uuid::Uuid::new_v4();
+        let target = uuid::Uuid::new_v4();
+        let effect = uuid::Uuid::new_v4();
+        let mut packet = ViewerEffect::default();
+        packet
+            .effect
+            .push(beam_effect(agent, effect, target, [256.5, -3.25, 4096.0], [10, 20, 30, 200], 0.7));
+        let mut data = aurora_msg::Writer::new();
+        packet.encode_body(&mut data);
+        let decoded = ViewerEffect::decode(&data.buf).expect("decode effect");
+        let e = &decoded.effect[0];
+        assert_eq!(e.type_, 7);
+        assert_eq!(e.type_data.len(), 56);
+        assert_eq!((e.id, e.agent_id, e.duration), (effect, agent, 0.7));
+        assert_eq!(parse_beam(e), Some((agent, target, [256.5, -3.25, 4096.0], [10, 20, 30, 200])));
+        // the look-at's parser does not take it, nor this one a look-at
+        assert!(parse_lookat(e).is_none());
+        let look = lookat_effect(agent, effect, target, [0.0; 3], 1, 1.0);
+        assert!(parse_beam(&look).is_none());
+        let mut short = e.clone();
+        short.type_data.pop();
+        assert!(parse_beam(&short).is_none());
+        let mut nan = e.clone();
+        nan.type_data[40..48].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(parse_beam(&nan).is_none());
+        let mut no_color = e.clone();
+        no_color.color.clear();
+        assert_eq!(parse_beam(&no_color).map(|b| b.3), Some([255; 4]));
+    }
 }
 
 /// AgentFOV as LLViewerCamera::setView fills it: the generation counter
@@ -6311,6 +6763,139 @@ mod event_queue_tests {
         assert_eq!(packets() - before, 1, "arrival resynchronizes unchanged run preference");
     }
 
+    /// ChatFromSimulator.Position is region-local (message_template.msg).
+    /// Keep the circuit's handle with the queued event: the agent can cross
+    /// into another region before the viewer consumes the message.
+    #[tokio::test]
+    async fn nearby_chat_keeps_its_sending_circuit_and_region_local_position() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main: SocketAddr = "127.0.0.1:13001".parse().unwrap();
+        let neighbour: SocketAddr = "127.0.0.1:13002".parse().unwrap();
+        let unknown: SocketAddr = "127.0.0.1:13003".parse().unwrap();
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, neighbour);
+        session.sims.get_mut(&main).unwrap().handle = 0;
+        let mut message = ChatFromSimulator::default();
+        message.chat_data.source_id = Uuid::from_u128(2009);
+        message.chat_data.owner_id = Uuid::from_u128(2010);
+        message.chat_data.source_type = 2;
+        message.chat_data.audible = 1;
+        message.chat_data.position = Vec3::new(14.0, 40.0, 22.0);
+        message.chat_data.message = str_field("hello");
+        for chat_type in [ChatType::Whisper, ChatType::Normal, ChatType::Shout] {
+            message.chat_data.chat_type = chat_type.to_u8();
+            let mut bytes = Vec::new();
+            aurora_msg::build_packet(&message, 1, true, false, &[], &mut bytes);
+            let packet = parse_packet(&bytes).expect("chat packet");
+            for source in [main, neighbour, unknown] {
+                session.dispatch(source, &packet).expect("dispatch");
+            }
+        }
+        session.main = Some(neighbour);
+        let chats: Vec<_> = received
+            .try_iter()
+            .filter_map(|(_, event)| match event {
+                NetEvent::Chat(chat) => Some(chat),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(chats.len(), 9);
+        for (group, chat_type) in chats
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip([ChatType::Whisper, ChatType::Normal, ChatType::Shout])
+        {
+            for (chat, region) in group.iter().zip([Some(0), Some(20), None]) {
+                assert_eq!(chat.region, region);
+                assert_eq!(chat.chat_type, chat_type);
+                assert_eq!(chat.position, message.chat_data.position);
+                assert_eq!(chat.source_id, message.chat_data.source_id);
+                assert_eq!(chat.owner_id, message.chat_data.owner_id);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn inventory_offer_keeps_its_wire_dialog_and_an_old_login_cannot_send_or_read() {
+        use crate::InventoryOfferStatus::{Acknowledged, Transmitted};
+        use crossbeam_channel::{TryRecvError, unbounded};
+
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        sock.writable().await.unwrap();
+        let simulator = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let main = simulator.local_addr().unwrap();
+        let neighbour = "127.0.0.1:13002".parse().unwrap();
+        let (events, received) = unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, neighbour);
+        let current = session.session_id();
+        let previous = Uuid::from_u128(94);
+        let id = Uuid::from_u128(10);
+        let to = Uuid::from_u128(11);
+        let mut bucket = vec![6];
+        bucket.extend_from_slice(Uuid::from_u128(12).as_bytes());
+        let offer = |login, receipt| NetCommand::OfferInventory {
+            session: login,
+            to,
+            id,
+            message: "Fixture".into(),
+            bucket: bucket.clone(),
+            receipt,
+        };
+        let (send, stale) = unbounded();
+        session.on_command(offer(previous, send));
+        assert_eq!(stale.try_recv(), Err(TryRecvError::Disconnected));
+        let (send, stale) = unbounded();
+        session.on_command(NetCommand::CheckInventoryOffer {
+            session: previous,
+            items: vec![id],
+            reply: send,
+        });
+        assert_eq!(stale.try_recv(), Err(TryRecvError::Disconnected));
+
+        let (send, receipt) = unbounded();
+        session.on_command(offer(current, send));
+        assert_eq!(receipt.try_recv(), Ok(Transmitted));
+        let mut bytes = [0; 1500];
+        let (len, _) = tokio::time::timeout(Duration::from_secs(2), simulator.recv_from(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        let packet = parse_packet(&bytes[..len]).unwrap();
+        let wire: ImprovedInstantMessage = packet.decode().unwrap();
+        assert_eq!(wire.message_block.dialog, 4);
+        assert_eq!(wire.message_block.to_agent_id, to);
+        assert_eq!(wire.message_block.id, id);
+        assert_eq!(wire.message_block.message, str_field("Fixture"));
+        assert_eq!(wire.message_block.binary_bucket, bucket);
+        session.main = Some(neighbour);
+        session.sims.get_mut(&main).unwrap().circuit.ack_received([packet.sequence]);
+        assert_eq!(receipt.try_recv(), Ok(Acknowledged));
+        assert_eq!(receipt.try_recv(), Err(TryRecvError::Disconnected));
+
+        // Absence of a read capability is inconclusive. Only the requester
+        // receives the result, even when it arrives from a different region.
+        let (send, reply) = unbounded();
+        session.on_command(NetCommand::CheckInventoryOffer {
+            session: current,
+            items: vec![id],
+            reply: send,
+        });
+        let reads = tokio::task::spawn_blocking(move || reply.recv_timeout(Duration::from_secs(2)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reads.failed, [id]);
+        assert!(reads.items.is_empty() && reads.missing.is_empty());
+        assert!(received.try_recv().is_err());
+        session.logout_started = Some(Instant::now());
+        let (send, closing) = unbounded();
+        session.on_command(offer(current, send));
+        assert_eq!(closing.try_recv(), Err(TryRecvError::Disconnected));
+    }
+
     /// #3347: an object in a neighbouring region (camera shopping) offers
     /// through that region's circuit; its answer goes back there, as
     /// LLOfferInfo::mHost, not to the agent's region, which would not know
@@ -6441,9 +7026,9 @@ mod event_queue_tests {
 
     pub(super) fn shared(events: crate::EventSender) -> Shared {
         Shared {
-            http: reqwest::Client::new(),
-            login_http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events,
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
@@ -6486,7 +7071,7 @@ mod event_queue_tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         Session {
             sh,
-            sock,
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock)),
             login,
             sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
             main: Some(main_addr),
@@ -6508,6 +7093,7 @@ mod event_queue_tests {
             far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,
@@ -6788,9 +7374,9 @@ mod script_dialog_tests {
 
     pub(in crate::session) fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
         Shared {
-            http: reqwest::Client::new(),
-            login_http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
@@ -6840,7 +7426,7 @@ mod script_dialog_tests {
         let (inventory_udp_tx, _) = mpsc::unbounded_channel();
         Session {
             sh,
-            sock,
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock)),
             login: test_login(main.port()),
             sims,
             main: Some(main),
@@ -6862,6 +7448,7 @@ mod script_dialog_tests {
             far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,
@@ -7407,5 +7994,80 @@ mod script_dialog_tests {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod interest_list_tests {
+    use super::*;
+
+    /// A slow `360` post finishes before the `default` asked after it is
+    /// sent, and the region ends on the latest mode.
+    #[tokio::test]
+    async fn interest_list_posts_are_ordered_and_end_on_the_latest() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        let worker = tokio::spawn(interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |_url, mode| {
+            let seen = seen.clone();
+            async move {
+                if mode == InterestListMode::Capture360 {
+                    tokio::time::sleep(Duration::from_millis(60)).await;
+                }
+                seen.lock().push(mode);
+            }
+        }));
+        tx.send(("u".into(), InterestListMode::Capture360)).expect("queue");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        tx.send(("u".into(), InterestListMode::Default)).expect("queue");
+        drop(tx);
+        worker.await.expect("worker");
+        assert_eq!(*log.lock(), vec![InterestListMode::Capture360, InterestListMode::Default]);
+    }
+
+    /// A post that never answers is given up, and the mode asked after it
+    /// (the closing `default`) is still sent.
+    #[tokio::test]
+    async fn a_post_with_no_reply_does_not_hold_the_next_mode() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        let worker = tokio::spawn(interest_list_worker(rx, Duration::from_millis(50), move |_url, mode| {
+            let seen = seen.clone();
+            async move {
+                if mode == InterestListMode::Capture360 {
+                    std::future::pending::<()>().await;
+                }
+                seen.lock().push(mode);
+            }
+        }));
+        tx.send(("u".into(), InterestListMode::Capture360)).expect("queue");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        tx.send(("u".into(), InterestListMode::Default)).expect("queue");
+        drop(tx);
+        worker.await.expect("worker");
+        assert_eq!(*log.lock(), vec![InterestListMode::Default]);
+    }
+
+    /// Modes queued behind a post in flight fold into the last one.
+    #[tokio::test]
+    async fn queued_modes_fold_into_the_last() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        for mode in [
+            InterestListMode::Capture360,
+            InterestListMode::Default,
+            InterestListMode::Capture360,
+        ] {
+            tx.send(("u".into(), mode)).expect("queue");
+        }
+        drop(tx);
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        interest_list_worker(rx, INTEREST_LIST_TIMEOUT, move |_url, mode| {
+            let seen = seen.clone();
+            async move { seen.lock().push(mode) }
+        })
+        .await;
+        assert_eq!(*log.lock(), vec![InterestListMode::Capture360]);
     }
 }

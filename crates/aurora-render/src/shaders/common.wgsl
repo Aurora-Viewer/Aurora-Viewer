@@ -109,8 +109,8 @@ struct Frame {
     spot_vp: array<mat4x4<f32>, 16>,
     spot_lights: array<vec4<i32>, 4>,
     spot_fade: array<vec4<f32>, 4>,
-    contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque enough cast it
-    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes)
+    contact: vec4<f32>,         // x: 1 = the contact shadows' mask is read (main view), y: 1 = blended faces opaque to the eye cast it
+    features: vec4<u32>,        // x: FEATURE_* bits, in every pass (main view, reflections, probes); y: the rain's shelter map + 1 (0: none); z: FEATURE_FACE_SELECT_SLOT; w: 1 where the volumetric clouds replace the Legacy layer (main view)
     // Motion vectors (main view; zero in the other passes), without the TAA
     // jitter: this frame's view-projection for positions relative to `eye`,
     // the last frame's for the same positions, and this frame's clip space
@@ -118,8 +118,21 @@ struct Frame {
     motion_vp: mat4x4<f32>,
     motion_prev_vp: mat4x4<f32>,
     motion_reproj: mat4x4<f32>,
+    rain: vec4<f32>,            // rain prototype: x how hard it rains (0..1)
+    rain_wet: vec4<f32>,        // wetness memory: corner xy, size z (0: none), w the rain that wetted
+    rain_wet_step: vec4<f32>,   // last corner xy, z time since (s, < 0: none), w soak of a new place
+    rain_look: vec4<f32>,       // x puddles (0/1), y how far the wet ground is drawn (m), z quality (0 low, 1 medium, 2 high), w snow (0/1)
+    rain_wind: vec4<f32>,       // xy how far the wind carried the drops (m), zw the wind now (m/s)
+    snow_cover: vec4<f32>,      // x how hard it snows, y the snow's depth on a new place, z flags (1 rain melts it, 2 the puddles may freeze, 4 deep snow, 8 lying snow hidden), w the detail texture's slot (0: none)
+    snow_trail: vec4<f32>,      // footprints: corner xy, size z (0: none), w how many stamps
+    snow_trail_step: vec4<f32>, // xy my avatar (the footprints' and deep snow's centre), zw unused
+    snow_stamps: array<vec4<f32>, 16>, // feet set down: x, y, heading (rad), half length (m)
+    lightning: vec4<f32>,       // the lightning's glow: xy the way to it, z its height (sine), w how bright
+    aurora: vec4<f32>,          // the aurora: x how bright (0: none), y its heading (rad, clockwise from north), z its foot's height (0..1), w colours (0 green, 1 violet, 2 red)
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
+    snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
+    snow_far: vec4<f32>,        // x how far the snow lying is drawn (m), whatever falls (while it snows and while it melts); yzw unused
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -127,6 +140,10 @@ struct Frame {
 // faces it draws deferred (opaque, alpha-masked, terrain) lose their
 // emissive; blended and HUD faces keep it (pbralphaF, pbropaqueF IS_HUD)
 const FEATURE_NO_EMISSIVE: u32 = 1u;
+
+// frame.features.z: the slot of the face-select pattern's texture (0: the
+// procedural stand-in), see FEATURE_FACE_SELECT_SLOT in renderer.rs
+const FEATURE_FACE_SELECT_SLOT: u32 = 2u;
 
 fn deferred_emissive_off() -> bool {
     return (frame.features.x & FEATURE_NO_EMISSIVE) != 0u;
@@ -148,6 +165,7 @@ struct DrawRecord {
     anim_xf: vec4<f32>,       // texture animation: texture entry parts it leaves alone (tex_anim.rs)
     rez: vec4<u32>,           // rez effect: x start (anim clock ms), y mode | line's length (ms) << 8 | own look << 20, z bottom, w height (f32 bits)
     portal_clip: vec4<f32>,   // finite opening: center.xyz, diamond-coded entry normal
+    identity: vec4<u32>,      // x the OIT tie-break of the face (types.rs `oit_tie`: the object's id and face index hashed, the same on every launch); y, z, w spare
 };
 
 const FLAG_FULLBRIGHT: u32 = 1u;
@@ -187,6 +205,13 @@ const FLAG_LIP_SYNC: u32 = 8192u;
 const SKELETON_ANCHOR: u32 = 208u;
 // the weights of a skeleton's live morphs, after its anchors (object.wgsl)
 const LIVE_MORPH_WEIGHTS: u32 = 256u;
+// the snow on an avatar (x of its first column), and the entries per
+// skeleton (types.rs AVATAR_SNOW, PALETTE_STRIDE)
+const AVATAR_SNOW: u32 = 260u;
+// written by the viewer with this as its last element (types.rs
+// AVATAR_SNOW_MARK): anything else in the entry is no snow
+const AVATAR_SNOW_MARK: f32 = -2.0;
+const PALETTE_STRIDE: u32 = 261u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 // atlas of 2x2 tiles, cascade i in tile (i % 2, i / 2)
@@ -198,6 +223,13 @@ const LIVE_MORPH_WEIGHTS: u32 = 256u;
 @group(0) @binding(6) var mirror_tex: texture_2d<f32>;
 @group(0) @binding(7) var scene_tex: texture_2d<f32>;
 @group(0) @binding(8) var depth_tex: texture_depth_2d;
+// The solid surfaces of the depth the occlusion and the contact shadows
+// were made from (renderer.rs, "solid depth"): the prepass and the blended
+// texels solid to the eye, without those that are in that depth while
+// their opacity still rises (blend_screen_share), which would find
+// themselves here. Bound where the blended faces are drawn
+// (`on_occlusion_surface`); a dummy elsewhere.
+@group(0) @binding(29) var solid_depth: texture_depth_2d;
 @group(0) @binding(20) var water_interface: texture_depth_2d;
 @group(0) @binding(21) var water_air_color: texture_2d<f32>;
 @group(0) @binding(22) var water_air_depth: texture_depth_2d;
@@ -943,7 +975,14 @@ fn atmos_eval(dir: vec3<f32>, for_clouds: bool) -> Atmos {
     combined_haze = exp(-combined_haze * density_dist);
 
     a.light_dot = dot(rel_norm, lightnorm);
-    var haze_glow = max(1.0 - a.light_dot, 0.001);
+    // The glow's angle is taken from the view direction, not from rel_norm:
+    // skyF.glsl / cloudsF.glsl measure it from the dome point raised by 50 m,
+    // which on the low dome (about 600-850 m away overhead) puts the hotspot
+    // some 3 degrees under the sun or moon. The Legacy Viewer as it renders
+    // shows the glow centred on the body (compared on Agni, #2782): a
+    // deliberate difference from its source, kept to the glow alone (the
+    // haze colour, rainbow and halo still use rel_norm).
+    var haze_glow = max(1.0 - dot(d, lightnorm), 0.001);
     haze_glow *= glow.x;
     haze_glow = pow(haze_glow, glow.z);
     if (for_clouds) {
@@ -1232,10 +1271,32 @@ fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
     return mix(col, frame.fog.rgb, clamp(f, 0.0, 1.0));
 }
 
+// Whether a surface takes the water's fog in its own shading (apply_fog):
+// everything seen from below the water, and from above what lies under it.
+// The Legacy Viewer hazes the opaque scene by its own depth before the
+// blended faces under the water (LLPipeline::renderGeomPostDeferred, "do
+// water haze just before pre water alpha"; doWaterHaze,
+// indra/newview/pipeline.cpp), and those faces fog themselves
+// (applySkyAndWaterFog, class2/deferred/alphaF.glsl): each layer by its own
+// depth, and the surface adds none (class3/environment/waterF.glsl). Aurora's
+// surface used to fog its whole copy of the scene by the first depth under
+// it: where a faint blended face lay just under the surface, the bed behind
+// it lost its fog, and a sheet crossing the water plane showed its triangles.
+fn water_fogs_source(world_pos: vec3<f32>) -> bool {
+    return camera_underwater() || world_pos.z < camera_water_level();
+}
+
+// Density of that fog: the under-water one from below (and for the enhanced
+// absorption, which is tuned on it), the plain one from above, as
+// LLSettingsVOWater::getModifiedWaterFogDensity(underwater).
+fn water_source_density() -> f32 {
+    return select(frame.water_fog.w, frame.water_normal.w, camera_underwater() || water_fx_on(256u));
+}
+
 fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
-    if(camera_underwater() || (water_fx_on(256u) && world_pos.z<camera_water_level())) {
+    if (water_fogs_source(world_pos)) {
         if(!camera_underwater() && water_excluded(world_pos)){return apply_air_fog(col,world_pos);}
-        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,frame.water_normal.w);
+        let wf=water_fog_view(world_pos-frame.camera_pos.xyz,water_source_density());
         return col*wf.transmission+wf.color;
     }
     return apply_air_fog(col,world_pos);
@@ -1271,9 +1332,10 @@ const SHADOW_BIAS_LEGACY: u32 = 0x2000u;
 // indirect light of what lies behind them, as before (AURORA_BLEND_AO=old;
 // screen_ao)
 const BLEND_SCREEN_TERMS: u32 = 0x4000u;
-// frame.light_mode.z: the occlusion's depth holds the blended faces at least
-// half covered (renderer.rs, "occlusion depth"), which then take the
-// screen-space terms (screen_surface; AURORA_BLEND_AO)
+// frame.light_mode.z: the occlusion's depth holds the blended faces opaque
+// to the eye (renderer.rs, "occlusion depth"), which then take the
+// screen-space terms, as the fainter ones lying on a solid surface do
+// (screen_share; AURORA_BLEND_AO)
 const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
 
 // frame.light_mode.z: geometric specular anti-aliasing of the objects
@@ -1459,15 +1521,19 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
     return w * (0.12 + 0.88 * sun_shadow(world_pos, n, vertex_depth, frag));
 }
 
-// Whether the fragment being shaded is the surface of the depth prepass,
-// whose contact shadows the mask holds: not a blended face.
-var<private> contact_surface: bool = true;
+// How much of the contact shadows' mask the fragment being shaded takes: 1
+// on the surface of the depth the mask was made from (the prepass, and the
+// blended faces opaque to the eye drawn over it: blend_screen_share), 0 on
+// a more transparent blended face, unless it lies on a solid surface: as
+// `screen_share`, and for the same reason (the skin under a fading layer
+// is in the shadow).
+var<private> contact_share: f32 = 1.0;
 
 // The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
 // what the shadow map is too coarse to show, taken as the darker of the
 // two (sun_shadow). 1 elsewhere: other views, blended faces, off.
 fn contact_shadow(frag: vec2<f32>) -> f32 {
-    if (frame.contact.x < 0.5 || !contact_surface || in_reflection_pass()) {
+    if (frame.contact.x < 0.5 || contact_share <= 0.0 || in_reflection_pass()) {
         return 1.0;
     }
     let p = vec2<i32>(frag);
@@ -1475,7 +1541,7 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     if (any(p < vec2<i32>(0)) || any(p >= size)) {
         return 1.0;
     }
-    return 1.0 - textureLoad(contact_tex, p, 0).r;
+    return 1.0 - contact_share * textureLoad(contact_tex, p, 0).r;
 }
 
 // The sun's shadow of an opaque surface of the main view: the shadow map,
@@ -1501,9 +1567,17 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
     // the camera read a far cascade, and no caster could be left out of a
     // far cascade for being near (shadow_cull.rs). splits.w == 0 keeps that
     // distance, to compare (AURORA_SHADOW_LEGACY).
+    // A planar reflection (the mirror) reads the main view's cascades, fitted
+    // around the real camera: the pixel's distance to that camera, its own
+    // camera mirrored back through the clip plane, picks the cascade
     var view_depth = vertex_depth;
-    if (splits.w > 0.5) {
-        view_depth = distance(world_pos, frame.camera_pos.xyz);
+    let planar = in_reflection_pass() && dot(frame.clip_plane.xyz, frame.clip_plane.xyz) > 0.5;
+    if (splits.w > 0.5 || planar) {
+        var eye = frame.camera_pos.xyz;
+        if (planar) {
+            eye -= 2.0 * (dot(frame.clip_plane.xyz, eye) + frame.clip_plane.w) * frame.clip_plane.xyz;
+        }
+        view_depth = distance(world_pos, eye);
     }
     var cascade = 0u;
     if (view_depth > splits.x) { cascade = 1u; }
@@ -1526,6 +1600,13 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
             } else if (next >= 0.0) {
                 s = mix(s, next, t);
             }
+        }
+    }
+    // the mirror also sees behind the main camera, where the near cascades
+    // do not reach: a coarser one that does
+    if (planar) {
+        for (var k = cascade + 1u; k < 3u && s < 0.0; k++) {
+            s = cascade_shadow(world_pos, n, k);
         }
     }
     if (s < 0.0) {
@@ -1574,22 +1655,85 @@ var<private> surface_occlusion: f32 = 0.0;
 // a face they are those of what lies behind it, around a closer object a
 // dark halo (#556). The Legacy Viewer's alpha pass applies neither
 // (materialF.glsl, alphaF.glsl: no adjustIrradiance outside softenLightF).
-// A blended face at least half covered is in that depth (BLEND_SCREEN_DEPTH)
+// A blended face opaque to the eye is in that depth (BLEND_SCREEN_DEPTH)
 // and takes them like an opaque one: a head whose halves differ in alpha
-// mode no longer shows a line down the middle (#882).
-var<private> screen_surface: bool = true;
+// mode no longer shows a line down the middle (#882). 1 on an opaque
+// surface, 0 on a translucent face, blend_screen_share between; and on a
+// blended face not yet solid, how much it lies on a solid surface
+// (`on_occlusion_surface`) where that is more. A soft layer worn on a body
+// (a tattoo, a blush, a second skin) fades out over the skin: taking none,
+// over a skin that takes them, it lit the skin back up as far as the line
+// where it enters that depth and stopped there, a hard edge in every
+// crease with the occlusion on.
+var<private> screen_share: f32 = 1.0;
 
-// Whether the fragment being shaded takes the screen-space terms (see
-// screen_surface).
-fn screen_terms() -> bool {
-    return screen_surface || (frame.light_mode.z & BLEND_SCREEN_TERMS) != 0u;
+// How far a faint blended fragment may be from the surface in the
+// occlusion's depth and still take its screen-space terms whole (m), the
+// larger of this and a hundredth of its distance from the camera; none from
+// twice as far.
+const SCREEN_LAYER_REACH: f32 = 0.03;
+
+// How much a fragment `here` from the camera lies on the surface seen
+// `there` in its pixel (m): 1 within the reach, falling smoothly to 0 at
+// twice it, so that a layer leaving its surface shows no line either. A
+// pane in front of a room is far from the wall behind it and takes none of
+// the wall's occlusion, as before (#556).
+fn layer_on_surface(here: f32, there: f32) -> f32 {
+    let reach = max(SCREEN_LAYER_REACH, 0.01 * here);
+    return 1.0 - smoothstep(reach, 2.0 * reach, abs(there - here));
+}
+
+// `layer_on_surface` of the fragment at `world_pos`, against the solid
+// surface in its pixel (`solid_depth`).
+fn on_occlusion_surface(frag: vec2<f32>, world_pos: vec3<f32>) -> f32 {
+    let uv = screen_uv(frag);
+    let size = vec2<i32>(textureDimensions(solid_depth));
+    let px = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - vec2<i32>(1));
+    let depth = textureLoad(solid_depth, px, 0);
+    // (reversed depth: 0 is the sky)
+    if (depth <= 0.0) {
+        return 0.0;
+    }
+    // from the camera, by the view's rotation alone: region coordinates
+    // lose their millimetres far from the region's origin
+    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let seen = frame.inv_view_proj_rot * vec4<f32>(ndc, depth, 1.0);
+    return layer_on_surface(distance(world_pos, frame.camera_pos.xyz), length(seen.xyz / seen.w));
+}
+
+// The opacities from which a blended texel is opaque to the eye, and
+// solid (the constants of these names in renderer.rs).
+const SCREEN_BLEND_ALPHA: f32 = 0.88;
+const SCREEN_SOLID_ALPHA: f32 = 0.95;
+
+// How much of the screen-space terms (ambient occlusion, indirect light,
+// contact shadows) a blended fragment of opacity `alpha` takes. They are
+// made from a depth that holds a blended texel from an opacity of 0.88
+// (SCREEN_BLEND_ALPHA), where the Legacy Viewer's shadows stop treating a
+// face as semi-transparent (shadowAlphaMaskF.glsl): none under it, where
+// they are those of what lies behind the face, all from 0.95
+// (SCREEN_SOLID_ALPHA), and a ramp between. A step drew a ragged line along the texels of
+// a glass texture whose opacity crosses it.
+fn blend_screen_share(alpha: f32) -> f32 {
+    return smoothstep(SCREEN_BLEND_ALPHA, SCREEN_SOLID_ALPHA, alpha);
+}
+
+// The share of the screen-space terms the fragment being shaded takes (see
+// screen_share).
+fn screen_terms() -> f32 {
+    if ((frame.light_mode.z & BLEND_SCREEN_TERMS) != 0u) {
+        return 1.0;
+    }
+    return screen_share;
 }
 
 fn screen_ao(frag: vec2<f32>) -> f32 {
-    if (frame.misc.x < 0.5 || in_reflection_pass() || !screen_terms()) {
+    let share = screen_terms();
+    if (frame.misc.x < 0.5 || in_reflection_pass() || share <= 0.0) {
         return 1.0;
     }
-    return max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
+    let ao = max(textureSampleLevel(ao_tex, lin_clamp, screen_uv(frag), 0.0).r - surface_occlusion, 0.0);
+    return mix(1.0, ao, share);
 }
 
 // The light the surfaces around bounce onto the fragment at `frag`
@@ -1602,10 +1746,11 @@ fn screen_ao(frag: vec2<f32>) -> f32 {
 // as is, it lit the creases and contacts back up and the occlusion seemed
 // gone.
 fn screen_indirect(frag: vec2<f32>) -> vec3<f32> {
-    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass() || !screen_terms()) {
+    let share = screen_terms();
+    if ((frame.light_mode.z & SCREEN_INDIRECT) == 0u || in_reflection_pass() || share <= 0.0) {
         return vec3<f32>(0.0);
     }
-    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * screen_ao(frag);
+    return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * (share * screen_ao(frag));
 }
 
 // The solid angle two spherical caps share, divided by 2 pi: caps of
@@ -2566,7 +2711,13 @@ fn water_atlas_uv(uv:vec2<f32>)->vec2<f32> {
     return clamped*vec2<f32>(1.0,0.5);
 }
 fn water_wake_sample(p:vec2<f32>,level:f32)->vec4<f32> {
-    if(!water_fx_on(16u) || abs(level-water_fx_bed(p).y)>0.2){return vec4<f32>(0.0);}
+    if(!water_fx_on(16u)){return vec4<f32>(0.0);}
+    return water_wake_at(p,level,water_fx_bed(p).y);
+}
+// The same, for a caller that already read the water's own level at `p`
+// (water_fx_bed(p).y).
+fn water_wake_at(p:vec2<f32>,level:f32,native_level:f32)->vec4<f32> {
+    if(!water_fx_on(16u) || abs(level-native_level)>0.2){return vec4<f32>(0.0);}
     let origin=water_fx.clock.zw;
     let uv=(p-origin)/32.0;
     if(any(uv<vec2<f32>(0.0)) || any(uv>vec2<f32>(1.0))){return vec4<f32>(0.0);}
@@ -2605,11 +2756,14 @@ fn water_fx_wave(p: vec2<f32>, level: f32) -> vec3<f32> {
     offset.z+=clamp(water_wake_sample(p+offset.xy,level).z,-0.16,0.16);
     return offset;
 }
-fn water_fx_normal(p:vec2<f32>,level:f32,wake:vec2<f32>)->vec3<f32> {
+// `swell` and `ground` are the caller's: the gradient of water_swell at `p`
+// and the terrain under it (water_fx_bed(p).x), which the surface reads once
+// for its normal, its wake and its foam.
+fn water_fx_normal(p:vec2<f32>,level:f32,wake:vec2<f32>,swell:vec2<f32>,ground:f32)->vec3<f32> {
     var gradient=vec2<f32>(0.0);
     if(water_fx_on(1u)) {
-        gradient=water_swell(p,frame.camera_pos.w,water_fx.counts.w).gradient;
-        gradient*=smoothstep(0.08,2.4,level-water_fx_bed(p).x);
+        gradient=swell;
+        gradient*=smoothstep(0.08,2.4,level-ground);
     }
     if(water_fx_on(16u)) {
         let texel=water_fx.area.z/f32(textureDimensions(water_field).x);
@@ -2634,7 +2788,10 @@ fn water_fx_hash(p: vec2<f32>) -> vec2<f32> {
 // A global constant avoids Naga re-emitting a local splat when specializing
 // masked/blended pipelines. The alpha specialization regression covers this.
 const WATER_CAUSTIC_FILTER:vec2<f32>=vec2<f32>(0.4/256.0,0.4/256.0);
-fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
+// The light the water focuses on a submerged point, before the sun's shadow.
+// A surface that already looked its shadow up multiplies by it (the terrain);
+// water_caustics looks it up for the others.
+fn water_caustic_light(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(!water_fx_on(32u) || frame.misc.w>0.5){return vec3<f32>(0.0);}
     if(!camera_underwater() && water_excluded(pos)){return vec3<f32>(0.0);}
     let bed=water_fx_bed(pos.xy);let depth=bed.y-pos.z;
@@ -2653,8 +2810,14 @@ fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(depth>2.5){intensity=mix(focus.g,focus.b,smoothstep(2.5,7.0,depth));}
     let energy=max(intensity-0.9,0.0)*0.42;
     let extinction=exp(-depth*(0.13+frame.water_fog.w*0.025));
-    let shadow=shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz));
-    return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*shadow*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
+    return frame.sun_color.rgb*energy*extinction*max(dot(normal,light),0.0)*frame.sun_dir.w*smoothstep(0.03,0.3,depth);
+}
+fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
+    let focused=water_caustic_light(pos,normal);
+    // no focused light here, or a face turned away from the sun: nothing for
+    // the shadow to dim, it is not looked up
+    if(max(focused.r,max(focused.g,focused.b))<=0.0){return vec3<f32>(0.0);}
+    return focused*shadow_factor(pos,normal,distance(pos,frame.camera_pos.xyz));
 }
 
 fn water_fx_noise(p: vec2<f32>) -> f32 {
@@ -2664,8 +2827,10 @@ fn water_fx_noise(p: vec2<f32>) -> f32 {
 }
 
 // Continuous torn coverage and filtered fine grain, without a lattice of holes.
-fn water_foam_coverage(p:vec2<f32>,amount:f32,footprint:f32)->f32 {
-    if(amount<0.08){return 0.0;}
+// The pattern at a point (x the torn structure, y the grain) does not depend
+// on how much foam there is: the surface works it out once for the foam of
+// its field and the foam of its wakes, and only where one of them shows.
+fn water_foam_pattern(p:vec2<f32>,footprint:f32)->vec2<f32> {
     let drift=p-vec2<f32>(frame.camera_pos.w*0.09,frame.camera_pos.w*0.035);
     let warp=vec2<f32>(water_fx_noise(drift*1.3),water_fx_noise(drift*1.3+7.4));
     let q=drift+(warp-0.5)*0.7;
@@ -2673,7 +2838,10 @@ fn water_foam_coverage(p:vec2<f32>,amount:f32,footprint:f32)->f32 {
     let medium=mix(water_fx_noise(rotated*3.7),0.5,smoothstep(0.04,0.18,footprint));
     let fine=mix(water_fx_noise(q*11.3),0.5,smoothstep(0.012,0.07,footprint));
     let structure=water_fx_noise(q*0.9)*0.55+medium*0.3+fine*0.15;
-    let coverage=smoothstep(0.08,0.75,amount)*smoothstep(0.28,0.72,structure);
     let grain=mix(0.84,0.5+0.5*water_fx_noise(rotated*38.0),1.0-smoothstep(0.004,0.025,footprint));
-    return coverage*grain;
+    return vec2<f32>(smoothstep(0.28,0.72,structure),grain);
+}
+fn water_foam_coverage(amount:f32,pattern:vec2<f32>)->f32 {
+    if(amount<0.08){return 0.0;}
+    return smoothstep(0.08,0.75,amount)*pattern.x*pattern.y;
 }

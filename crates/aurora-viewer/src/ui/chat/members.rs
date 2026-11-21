@@ -16,6 +16,7 @@
 use super::{ChatUi, ConvAction, presence};
 use crate::theme::Palette;
 use crate::world::World;
+use aurora_i18n::UiUpper;
 use egui::RichText;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -69,7 +70,7 @@ pub(super) fn show(
         let in_call = call.and_then(|c| c.members.iter().find(|m| m.id == *id));
         Member {
             id: *id,
-            name: world.social.display_name_of(id),
+            name: world.social.display_name_in(crate::world::names::NameScope::Roster, id),
             status: if *id == world.agent_id {
                 presence::Status::Online
             } else {
@@ -153,7 +154,7 @@ pub(super) fn show(
                 }
                 ui.add_space(10.0);
                 ui.label(
-                    RichText::new(format!("{} — {}", title.to_uppercase(), list.len()))
+                    RichText::new(format!("{} — {}", title.ui_upper(), list.len()))
                         .font(egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx())))
                         .color(p.muted_dim),
                 );
