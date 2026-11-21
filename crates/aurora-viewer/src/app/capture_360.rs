@@ -245,6 +245,7 @@ impl Capture360 {
     pub fn photo_frame(&self, window: (u32, u32), render_scale_percent: u32) -> Option<PhotoFrame> {
         let size = self.face_frame?;
         Some(PhotoFrame {
+            lens_flare: None,
             aspect: 1.0,
             tile: glam::Mat4::IDENTITY,
             height: size,

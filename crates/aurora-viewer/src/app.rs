@@ -1207,6 +1207,7 @@ pub struct App {
     group_profile_ui: ui::group_profile::GroupProfileUi,
     /// Environment selector and "Personal lighting".
     env_ui: ui::environment::EnvironmentUi,
+    lens_flare_ui: ui::lens_flare::Ui,
     /// The selector's folder fetches started (the selector was opened).
     env_scan: bool,
     /// "Personal lighting" was open last frame (captures on opening).
@@ -2355,6 +2356,7 @@ impl App {
             region_ui: Default::default(),
             group_profile_ui: Default::default(),
             env_ui: Default::default(),
+            lens_flare_ui: Default::default(),
             env_scan: false,
             lighting_was_open: false,
             night_sky_unsaved: false,
@@ -11360,6 +11362,11 @@ impl App {
                 self.camera.target = target;
                 self.interface.set_hidden(&self.egui_ctx, true);
             }
+            if self.demo
+                && let Some(scene) = crate::demo::lens_flare::scenario()
+            {
+                (self.camera.position, self.camera.target) = scene.camera(self.frame_count);
+            }
             let at = self
                 .studio_photo_session
                 .as_ref()
@@ -12776,6 +12783,14 @@ impl App {
             photo_tile,
             photo_scale,
             photo_context,
+            lens_flare: if in_world && studio_view.is_none() && !gfx.renderer.vr_engaged() {
+                match &photo {
+                    Some(frame) => frame.lens_flare,
+                    None => self.settings.lens_flare.frame(None),
+                }
+            } else {
+                None
+            },
             camera_pos: render_eye,
             near: if studio_view.is_some() {
                 crate::avatar_studio::NEAR
@@ -16568,6 +16583,7 @@ impl App {
             BarAction::ResumeClouds => self.snapshots.ui.light.clouds_paused = false,
             BarAction::AuroraWeather => self.env_ui.weather_open = !self.rlva_environment_windows_locked(),
             BarAction::NewEnvironment(kind) => self.open_new_environment(kind),
+            BarAction::LensFlare => self.lens_flare_ui.open(&self.egui_ctx),
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
@@ -17765,6 +17781,12 @@ impl App {
         !matches!(self.settings.grid, crate::settings::GridChoice::Custom) && !(self.demo && crate::demo::home::opensim())
     }
 
+    fn draw_lens_flare(&mut self, ctx: &egui::Context, p: &Palette) {
+        if self.lens_flare_ui.show(ctx, p, &mut self.settings) && !self.demo {
+            self.settings.save();
+        }
+    }
+
     /// The preferences window, in the world and over the login screen. Every
     /// setting is the viewer's own (settings.rs), so all of them can change
     /// before login; only the transcripts folder belongs to an account, and
@@ -18346,6 +18368,7 @@ impl App {
                         self.flush_build();
                     }
                     self.photo_ui(&ctx, &p, projector, renderer);
+                    self.draw_lens_flare(&ctx, &p);
                     // the poser stays over it (#1389): pose, then shoot
                     if self.ik_editor.open && self.ik_editor.posing() {
                         // no bars here: its room is the whole window, as
@@ -20608,6 +20631,7 @@ impl App {
                 }
                 ui::remote_object::show(&ctx, &p, &self.world, &mut self.remote_object);
                 self.photo_ui(&ctx, &p, projector, renderer);
+                self.draw_lens_flare(&ctx, &p);
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
                 self.follow_window(&ctx, &p);
@@ -22004,6 +22028,23 @@ impl ApplicationHandler for App {
             }
             if let Some(t) = std::env::var("AURORA_DEMO_TOD").ok().and_then(|v| v.parse::<u8>().ok()) {
                 self.panels.time_of_day = t.min(crate::world::env::TIME_OF_DAY_PRESETS);
+            }
+            if let Some(scene) = crate::demo::lens_flare::scenario() {
+                use crate::settings::lens_flare::Selection;
+                self.settings.lens_flare.select(Selection::BuiltIn(scene.preset));
+                let flare = &mut self.settings.lens_flare.current;
+                flare.quality = scene.quality;
+                flare.threshold = scene.threshold.unwrap_or(flare.threshold);
+                flare.blur = scene.blur.unwrap_or(flare.blur);
+                flare.streak_taper = scene.taper.unwrap_or(flare.streak_taper);
+                *flare = flare.sanitized();
+                self.settings.lens_flare.enabled = scene.enabled;
+                self.panels.time_of_day = 4;
+                if scene.advanced {
+                    self.lens_flare_ui.open_advanced(&self.egui_ctx);
+                } else if scene.panel {
+                    self.lens_flare_ui.open(&self.egui_ctx);
+                }
             }
             // AURORA_DEMO_DEBUG="bounds,culling,..." turns debug overlays on (captures)
             if let Ok(v) = std::env::var("AURORA_DEMO_DEBUG") {

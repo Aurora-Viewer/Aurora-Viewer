@@ -365,12 +365,16 @@ fn every_tile_of_a_photo_shows_the_instant_of_its_first() {
 #[test]
 fn only_a_tiled_photo_with_occlusion_draws_its_context_first() {
     // a quarter of each side, rounded up
-    assert_eq!(ContextPass::plan((7680, 4320), 6, true), ContextPass::Pending((1920, 1080)));
-    assert_eq!(ContextPass::plan((3003, 1801), 4, true), ContextPass::Pending((751, 451)));
-    assert_eq!(ContextPass::plan((7680, 4320), 1, true), ContextPass::None, "one pass");
-    assert_eq!(ContextPass::plan((7680, 4320), 6, false), ContextPass::None, "no occlusion");
+    assert_eq!(ContextPass::plan((7680, 4320), 6, true, false), ContextPass::Pending((1920, 1080)));
+    assert_eq!(ContextPass::plan((3003, 1801), 4, false, true), ContextPass::Pending((751, 451)));
+    assert_eq!(ContextPass::plan((7680, 4320), 1, true, true), ContextPass::None, "one pass");
+    assert_eq!(
+        ContextPass::plan((7680, 4320), 6, false, false),
+        ContextPass::None,
+        "no full-frame effects"
+    );
     // never a target smaller than a few texels
-    assert_eq!(ContextPass::plan((40, 20), 2, true), ContextPass::Pending((16, 16)));
+    assert_eq!(ContextPass::plan((40, 20), 2, true, false), ContextPass::Pending((16, 16)));
 }
 
 #[test]

@@ -4,7 +4,7 @@
 //! depth of field), smoothness and parcel visibility.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
-use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
+use super::super::{COMBO_W, blend_order_choice, blend_precisions, bloom_strength_slider, preset_choice, stepped, toggle};
 use egui::RichText;
 
 pub fn page(cx: &mut Cx, tab: usize) {
@@ -846,15 +846,7 @@ fn light(cx: &mut Cx) {
                 tr!("ui-options-bloom-strength"),
                 tr!("ui-options-bloom-strength-help"),
                 &field!(bloom_strength),
-                |ui, s| {
-                    ui.add(
-                        egui::Slider::new(&mut s.bloom_strength, 0.05..=1.0)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .step_by(0.05)
-                            .trailing_fill(true),
-                    )
-                    .changed()
-                },
+                |ui, s| ui.add(bloom_strength_slider(&mut s.bloom_strength)).changed(),
             );
         });
     });

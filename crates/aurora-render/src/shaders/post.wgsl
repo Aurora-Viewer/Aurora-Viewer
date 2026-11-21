@@ -30,19 +30,21 @@ struct PostParams {
     // 2: the live view, over a checkerboard, 3: the live view, over the
     // key color
     cutout: f32,
-    _pad: f32,
+    flare: f32,
     // the part of the photo this frame draws, in fractions of the photo
     // (left, top, width, height; 0, 0, 1, 1 outside a tiled photo): the
     // glow's 512 x 512 texels are the whole photo's, as in one pass
     photo_part: vec4<f32>,
     // the key color of a cut-out live view (FrameParams::cutout_key), linear
     cutout_key: vec4<f32>,
+    flare_extract: vec4<f32>, // exposed threshold, knee width, source footprint in UV
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
 @group(0) @binding(3) var glow_tex: texture_2d<f32>;
 // The bloom levels added up (half resolution, scene units), see bloom.wgsl.
 @group(1) @binding(0) var bloom_tex: texture_2d<f32>;
+@group(2) @binding(0) var flare_tex: texture_2d<f32>;
 
 struct Out {
     @builtin(position) clip: vec4<f32>,
@@ -174,6 +176,10 @@ fn scene(uv: vec2<f32>) -> vec3<f32> {
         let spread = textureSampleLevel(bloom_tex, hdr_sampler, uv, 0.0).rgb * post.bloom_norm;
         lit = c + post.bloom * (spread - bloom_extract(c));
     }
+    if (post.flare > 0.0) {
+        let full_uv = post.photo_part.xy + uv * post.photo_part.zw;
+        lit += textureSampleLevel(flare_tex, hdr_sampler, full_uv, 0.0).rgb;
+    }
     if (post.cutout > 0.5) {
         // drawn over black: premultiplied by the coverage, tone mapped as
         // the surface's own color
@@ -287,6 +293,29 @@ fn bloom_box(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, d: vec3<f32>) -> vec4<f32
     // bright pixel (a specular on a moving mesh) does not flicker
     let w = 1.0 / (1.0 + dot(m, vec3<f32>(0.2126, 0.7152, 0.0722)) * exposure());
     return vec4<f32>(m * w, w);
+}
+
+@fragment
+fn fs_flare_extract(in: Out) -> @location(0) vec4<f32> {
+    let gain = max(exposure(), 1e-4);
+    let threshold = post.flare_extract.x;
+    let knee = post.flare_extract.y;
+    var sum = vec3<f32>(0.0);
+    // Filter the source footprint before applying the knee. This keeps an
+    // isolated specular pixel from switching the entire flare on and off.
+    let footprint = post.flare_extract.zw;
+    for (var i = 0u; i < 16u; i++) {
+        let o = (vec2<f32>(f32(i & 3u), f32(i >> 2u)) - 1.5) * 0.25 * footprint;
+        let raw = textureSampleLevel(hdr, hdr_sampler, in.uv + o, 0.0).rgb;
+        let c = select(vec3<f32>(0.0), clamp(raw, vec3<f32>(0.0), vec3<f32>(65504.0)), raw == raw);
+        let peak = max(c.r, max(c.g, c.b)) * gain;
+        sum += c * min(1.0, 32.0 / max(peak, 1e-4));
+    }
+    let c = sum * (1.0 / 16.0);
+    let peak = max(c.r, max(c.g, c.b)) * gain;
+    let x = clamp(peak - threshold + knee, 0.0, 2.0 * knee);
+    let excess = max(peak - threshold, x * x / max(4.0 * knee, 1e-4));
+    return vec4<f32>(c * (excess / max(peak, 1e-4)), 0.0);
 }
 
 // First bloom level (half resolution): the light over the threshold,

@@ -9,6 +9,7 @@ pub mod autotune;
 pub mod backup;
 pub mod draw_stepping;
 mod hover_height;
+pub mod lens_flare;
 pub mod registry;
 pub mod stream_list;
 
@@ -806,6 +807,7 @@ pub struct Settings {
     pub planet_curvature: bool,
     /// The planet's radius (km), the Earth's by default.
     pub planet_radius_km: f32,
+    pub lens_flare: lens_flare::Settings,
     /// GPU occlusion culling: objects hidden behind others are not drawn
     /// (Firestorm UseOcclusion, on by default). Renamed from `gpu_occlusion`
     /// (off while it cost more than it saved) so that saved settings take
@@ -2499,6 +2501,7 @@ impl Default for Settings {
             bloom_strength: BLOOM_STRENGTH,
             planet_curvature: false,
             planet_radius_km: PLANET_RADIUS_KM,
+            lens_flare: Default::default(),
             occlusion_culling: true,
             lod_factor: 2.0,
             tree_lod_factor: 0.5,
@@ -3298,6 +3301,7 @@ impl Settings {
     }
 
     pub(crate) fn sanitized(mut self) -> Settings {
+        self.lens_flare.sanitize();
         if self.settings_version <= SETTINGS_VERSION {
             self.gamepad.migrate_gamepad_layout();
         }
@@ -3895,6 +3899,10 @@ impl Settings {
             newer_file: old.newer_file,
             // Named profiles are user content, like separate preset files.
             graphics_saved: old.graphics_saved,
+            lens_flare: lens_flare::Settings {
+                named: old.lens_flare.named,
+                ..Default::default()
+            },
             // Reset this avatar's hover options while keeping other accounts.
             hover_height_accounts: old.hover_height_accounts,
             hover_height_account: old.hover_height_account,
