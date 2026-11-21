@@ -11054,6 +11054,7 @@ impl Backend {
                 sky_zenith: fu_sky[0],
                 sky_horizon: fu_sky[1],
                 ground_color: fu_sky[2],
+                pbr_occlusion: pbr_occlusion_now(),
             };
             for n in 0..rounds {
                 let round = if rt_still {
@@ -11884,6 +11885,7 @@ impl Backend {
                         sky_zenith: fu_sky[0],
                         sky_horizon: fu_sky[1],
                         ground_color: fu_sky[2],
+                        pbr_occlusion: pbr_occlusion_now(),
                     };
                     rt.encode_reflections(
                         &self.device,

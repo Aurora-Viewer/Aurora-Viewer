@@ -5017,9 +5017,14 @@ both open states and the selection count. Capture at frame 620.
   polished metal cube whose packed map (occlusion, roughness, metal) has
   an occlusion of 0 but for a disc on each face: the cube is dark and only
   reflects the sky in the discs, as in the Legacy Viewer
-  (`AURORA_PBR_OCCLUSION=alt` shows it plain one second in three). Left
-  of the cube, an inside corner (floor, back and side) of the
-  half-polished metal: with GTAO its reflections fade into the corner
+  (`AURORA_PBR_OCCLUSION=alt` shows it plain one second in three). With
+  `AURORA_RT_REFLECTIONS=1`, the polished sphere mirrors the cube's sides
+  the view does not see as dark as the cube is seen
+  (`AURORA_DEMO_POS="133.0,132.6"`, close to the sphere), and as a polished
+  mirror with `AURORA_PBR_OCCLUSION=0`: the traced reflections read the
+  packed map too. Left of the cube, an inside corner (floor, back and
+  side) of the half-polished metal: with GTAO its reflections fade into
+  the corner
   (`AURORA_GTAO_SPECULAR=alt`; seen best with `AURORA_DEMO_POS="131.5,131"`).
 - **`AURORA_DEMO_SHIMMER=1`**: ahead of the start position, a 16 × 6 m
   glossy plate (legacy material, specular exponent 245) whose bump normal
@@ -13089,7 +13094,8 @@ What the inventory must show with these scenarios:
   leaves the occlusion out, as before; `alt` leaves it out one second in
   three, without `AURORA_PROFILE`, to see the difference
   (`AURORA_DEMO_PBR_METAL=1`: the cube left of the spheres turns from dark
-  with bright discs to an even mirror).
+  with bright discs to an even mirror). The traced reflections follow it
+  for the faces they shade themselves (`AURORA_RT_REFLECTIONS`).
 - **`AURORA_AO=legacy|gtao|alt[:<0-3>]`**: the ambient occlusion method of
   Preferences › Graphics for this launch, without changing the saved
   setting: `legacy` the Legacy Viewer's screen-space occlusion

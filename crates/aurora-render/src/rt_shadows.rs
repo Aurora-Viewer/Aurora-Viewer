@@ -2276,6 +2276,9 @@ pub(crate) struct TraceLight {
     pub sky_zenith: [f32; 4],
     pub sky_horizon: [f32; 4],
     pub ground_color: [f32; 4],
+    /// Whether a PBR face's occlusion counts this frame (the frame
+    /// uniform's `sky_ll.z`, AURORA_PBR_OCCLUSION).
+    pub pbr_occlusion: bool,
 }
 
 impl TraceLight {
@@ -5258,7 +5261,12 @@ impl RtShadows {
                 (r.frame % (1 << 20)) as f32,
                 gi_history_frames(r.frame_seconds),
             ],
-            gloss: [if valid { 1.0 } else { 0.0 }, rays as f32, 0.0, 0.0],
+            gloss: [
+                if valid { 1.0 } else { 0.0 },
+                rays as f32,
+                if light.pbr_occlusion { 1.0 } else { 0.0 },
+                0.0,
+            ],
             changed: [[0.0; 4]; crate::rt_light_changes::MAX_CHANGES],
             changes: [0.0; 4],
         };
@@ -5576,6 +5584,34 @@ mod tests {
         match naga::front::wgsl::parse_str(src) {
             Ok(m) => m,
             Err(e) => panic!("{name}: {}", e.emit_to_string(src)),
+        }
+    }
+
+    // The traced shaders read a draw record as plain vec4s, each part by its
+    // place: a field added to it or moved would shift them all unseen.
+    #[test]
+    fn the_traced_shaders_read_a_draw_record_at_its_fields() {
+        let src = source(&[include_str!("shaders/rt_reflect.wgsl")]);
+        let place = |name: &str| -> usize {
+            let declared = format!("const {name}: u32 = ");
+            src.lines()
+                .find_map(|line| line.strip_prefix(&declared)?.strip_suffix("u;")?.parse().ok())
+                .unwrap_or_else(|| panic!("{name} is not declared"))
+        };
+        let vec4 = std::mem::size_of::<[f32; 4]>();
+        assert_eq!(place("RECORD_VEC4S") * vec4, std::mem::size_of::<DrawRecord>());
+        for (name, offset) in [
+            ("RECORD_BASE_COLOR", std::mem::offset_of!(DrawRecord, base_color)),
+            ("RECORD_EMISSIVE", std::mem::offset_of!(DrawRecord, emissive)),
+            ("RECORD_UV_ST", std::mem::offset_of!(DrawRecord, uv_st)),
+            ("RECORD_PARAMS", std::mem::offset_of!(DrawRecord, params)),
+            ("RECORD_TEX", std::mem::offset_of!(DrawRecord, tex)),
+            ("RECORD_FLAGS", std::mem::offset_of!(DrawRecord, flags)),
+            ("RECORD_SPEC_UV", std::mem::offset_of!(DrawRecord, spec_uv)),
+            ("RECORD_LEGACY", std::mem::offset_of!(DrawRecord, legacy)),
+            ("RECORD_SPEC_COLOR", std::mem::offset_of!(DrawRecord, spec_color)),
+        ] {
+            assert_eq!(place(name) * vec4, offset, "{name}");
         }
     }
 
