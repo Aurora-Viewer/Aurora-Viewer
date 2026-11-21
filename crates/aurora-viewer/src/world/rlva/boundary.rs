@@ -3,7 +3,7 @@
 //! RLVa self-test). `App::send_from` and the self-test's offline host call
 //! the same two functions, so that what is tested is what is shipped.
 use super::super::World;
-use aurora_net::NetCommand;
+use aurora_net::{NetCommand, NetEvent};
 use uuid::Uuid;
 
 /// What the boundary decided for one command.
@@ -16,6 +16,22 @@ pub enum Boundary {
     Dropped,
     /// A restriction refuses it: the caller shows `rlva-blocked`.
     Refused,
+}
+
+/// The answer the caller gives back for a refused command that someone
+/// waits on. A refused inventory change fails as one the server turned down
+/// would, so that whoever holds its request lets it go: the inventory takes
+/// one change at a time, and a change it still waits for ignores every later
+/// one (a move to the Trash refused under @sharedwear blocked the inventory
+/// until the next login).
+pub fn refused_reply(command: &NetCommand, reason: &str) -> Option<NetEvent> {
+    match command {
+        NetCommand::EditInventory { request, .. } => Some(NetEvent::InventoryEdited {
+            request: *request,
+            result: Err(reason.to_owned()),
+        }),
+        _ => None,
+    }
 }
 
 impl World {

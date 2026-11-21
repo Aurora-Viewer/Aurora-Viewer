@@ -572,6 +572,17 @@ impl World {
         self.rlva_folder_signature_in(locks, folder, add, Uuid::nil()).is_empty()
     }
 
+    /// RlvFolderLocks::isLockedFolder(folder, RLV_LOCK_ANY, ST_MASK_ANY &
+    /// ~ST_ROOTFOLDER) (rlvlocks.cpp): a lock reaches the folder, other than
+    /// the inventory root's (@unsharedwear, @unsharedunwear).
+    pub(super) fn rlva_folder_locked_below_root(&self, locks: &FolderLocks, folder: Uuid) -> bool {
+        [false, true].into_iter().any(|add| {
+            self.rlva_folder_signature_in(locks, folder, add, Uuid::nil())
+                .iter()
+                .any(|(_, name, _)| !root_lock(name))
+        })
+    }
+
     fn rlva_folder_signature(&self, folder: Uuid, add: bool, _actor: Uuid) -> std::collections::BTreeSet<(Uuid, String, String)> {
         self.rlva_folder_signature_except(folder, add, Uuid::nil())
     }

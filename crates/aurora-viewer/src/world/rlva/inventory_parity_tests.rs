@@ -180,6 +180,83 @@ fn shared_wear_locks_keep_shared_folders() {
     }
 }
 
+/// The inventory greys Delete, Purge and Cut as get_is_item_removable and
+/// get_is_category_removable (llinventoryfunctions.cpp) do, through
+/// RlvFolderLocks::canRemoveItem and canRemoveFolder (rlvlocks.h): the
+/// folders a lock reaches and their items, the inventory root's lock left
+/// out, and every folder holding one a "…this" lock names.
+#[test]
+fn locked_folders_grey_delete_and_cut() {
+    let mut l = linked();
+    let (spare, mesh, collar, issuer) = (l.spare, l.mesh, l.collar, l.issuer);
+    let rlv = shared(&l);
+    let root = l.world.inventory.root;
+    let outside = folder(&mut l.world, 0xF0F0, root, "Boxes", -1);
+    l.world.inventory.add_items(vec![object(0xC0F0, outside)]);
+    let boxed = Uuid::from_u128(0xC0F0);
+    let removable = |w: &World, id| w.rlva_wear_locks().removable(&w.inventory, id);
+    for id in [rlv, spare, collar, outside, boxed] {
+        assert!(removable(&l.world, id), "nothing set: {id}");
+    }
+    for lock in ["@sharedunwear", "@sharedwear"] {
+        say(&mut l.world, issuer, &format!("{lock}=n"));
+        assert!(!removable(&l.world, rlv), "{lock}: #RLV");
+        assert!(!removable(&l.world, spare), "{lock}: a shared folder");
+        assert!(!removable(&l.world, collar), "{lock}: an item of #RLV");
+        assert!(removable(&l.world, outside) && removable(&l.world, boxed), "{lock}: outside #RLV");
+        say(&mut l.world, issuer, &format!("{lock}=y"));
+    }
+    for lock in ["@unsharedunwear", "@unsharedwear"] {
+        say(&mut l.world, issuer, &format!("{lock}=n"));
+        assert!(
+            removable(&l.world, spare) && removable(&l.world, collar),
+            "{lock}: the root lock leaves #RLV"
+        );
+        assert!(removable(&l.world, outside) && removable(&l.world, boxed), "{lock}: the root lock");
+        say(&mut l.world, issuer, &format!("{lock}=y"));
+    }
+    let body = l.world.inventory.folders[&mesh].info.parent;
+    say_checked(&mut l.world, issuer, "@detachallthis:Body/Mesh=n");
+    assert!(!removable(&l.world, mesh), "the folder the lock names");
+    assert!(!removable(&l.world, l.link), "an item of it");
+    assert!(!removable(&l.world, body) && !removable(&l.world, rlv), "the folders that hold it");
+    assert!(removable(&l.world, spare) && removable(&l.world, collar), "its siblings");
+    assert!(removable(&l.world, outside), "outside #RLV");
+    say(&mut l.world, issuer, "@clear");
+    assert!(removable(&l.world, mesh) && removable(&l.world, rlv), "cleared");
+}
+
+/// A refused inventory change is answered as a failed one, with its own
+/// request: the inventory, which takes one change at a time, lets it go
+/// instead of ignoring every later change until the next login.
+#[test]
+fn a_refused_inventory_change_is_answered_as_failed() {
+    let mut l = linked();
+    let (spare, issuer) = (l.spare, l.issuer);
+    let root = l.world.inventory.root;
+    let trash = folder(&mut l.world, 0xF0F1, root, "Trash", 14);
+    say(&mut l.world, issuer, "@sharedwear=n");
+    let request = Uuid::from_u128(0xE0E0);
+    let mut command = aurora_net::NetCommand::EditInventory {
+        request,
+        change: Mutation {
+            operations: vec![Operation::Patch {
+                id: spare,
+                folder: true,
+                body: llsd_map! { "parent_id" => trash },
+            }],
+            ..Default::default()
+        },
+    };
+    assert_eq!(l.world.rlva_send_boundary(&mut command, Uuid::nil()), super::Boundary::Refused);
+    let reply = super::refused_reply(&command, "blocked");
+    assert!(
+        matches!(&reply, Some(aurora_net::NetEvent::InventoryEdited { request: r, result: Err(why) }) if *r == request && why == "blocked"),
+        "{reply:?}"
+    );
+    assert!(super::refused_reply(&aurora_net::NetCommand::TeleportHome, "blocked").is_none());
+}
+
 /// RlvFolderLocks::canRenameFolder (rlvlocks.h): #RLV holds the shared path
 /// lock of the four placement rules, so it keeps its name under any of them.
 #[test]
