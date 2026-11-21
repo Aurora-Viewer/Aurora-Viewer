@@ -229,7 +229,7 @@ fn inventory_held_over_a_tab_opens_it_after_a_short_delay_and_only_there() {
             });
         }
         let mut opened = false;
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0))),
                 time: Some(time),
@@ -243,6 +243,8 @@ fn inventory_held_over_a_tab_opens_it_after_a_short_delay_and_only_there() {
                 opened = drag::navigation::tab_held_over(ui, tab, tab_id);
             },
         );
+        // no renderer takes the font atlas here (debug builds assert it)
+        output.textures_delta.clear();
         opened
     };
     let on = tab.center();
