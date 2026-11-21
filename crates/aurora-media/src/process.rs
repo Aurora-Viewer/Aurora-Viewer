@@ -156,8 +156,11 @@ impl PluginProcess {
         self.stream = None;
         self.listener = None;
         if let Some(mut c) = self.child.take() {
+            // Killing returns at once; waiting for the end does not when the
+            // process is stuck in a driver (160 s in #3464), so the wait runs
+            // on a thread of its own, as on a normal close.
             let _ = c.kill();
-            let _ = c.wait();
+            end_in_background(c, None, Duration::ZERO);
         }
     }
 
@@ -485,22 +488,32 @@ impl Drop for PluginProcess {
             self.shutdown();
         }
         // give the plugin time to shut CEF down cleanly, then make sure it is gone
-        if let Some(mut child) = self.child.take() {
-            let stream = self.stream.take();
-            let _ = std::thread::Builder::new().name("media plugin exit".into()).spawn(move || {
-                let deadline = Instant::now() + EXIT_TIMEOUT;
-                while Instant::now() < deadline {
-                    if let Ok(Some(_)) = child.try_wait() {
-                        return;
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-                drop(stream);
-                let _ = child.kill();
-                let _ = child.wait();
-            });
+        if let Some(child) = self.child.take() {
+            end_in_background(child, self.stream.take(), EXIT_TIMEOUT);
         }
     }
+}
+
+/// Ends `child` on a thread of its own: gives it `grace` to quit by itself,
+/// then closes `stream`, kills it and waits for it to end. Nothing here runs
+/// on the caller's thread, which is the UI thread. Returns the thread, for
+/// the tests.
+fn end_in_background(mut child: Child, stream: Option<TcpStream>, grace: Duration) -> Option<std::thread::JoinHandle<()>> {
+    let spawned = std::thread::Builder::new().name("media plugin exit".into()).spawn(move || {
+        let deadline = Instant::now() + grace;
+        while Instant::now() < deadline {
+            if let Ok(Some(_)) = child.try_wait() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        drop(stream);
+        let _ = child.kill();
+        let _ = child.wait();
+    });
+    spawned
+        .map_err(|e| log::warn!("media: no thread to end the plugin process: {e}"))
+        .ok()
 }
 
 /// `LD_LIBRARY_PATH` of the plugin process on Linux: SLPlugin's folder
@@ -957,5 +970,56 @@ mod tests {
         assert!(found.launcher.is_absolute(), "{}", found.launcher.display());
         assert_eq!(found.launcher, abs.join(LAUNCHERS[0]));
         assert_eq!(found.plugin_dir, abs.join("llplugin"));
+    }
+
+    /// Whether process `pid` still exists (a zombie counts: it is gone once
+    /// reaped).
+    #[cfg(unix)]
+    fn exists(pid: u32) -> bool {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_plugin_is_killed_and_reaped_off_the_callers_thread() {
+        let (mut process, _plugin) = running(Instant::now());
+        let child = Command::new("sleep").arg("30").spawn().expect("sleep");
+        let pid = child.id();
+        process.child = Some(child);
+        process.fail("test".into());
+        assert!(process.child.is_none(), "the process is handed off");
+        assert!(process.error().is_some());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while exists(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!exists(pid), "killed and reaped by the exit thread");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_exit_thread_waits_out_the_grace_then_kills() {
+        let quick = Command::new("sleep").arg("0.1").spawn().expect("sleep");
+        let started = Instant::now();
+        end_in_background(quick, None, Duration::from_secs(20))
+            .expect("thread")
+            .join()
+            .expect("join");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "a process that quits by itself is not waited for the whole grace"
+        );
+
+        let stuck = Command::new("sleep").arg("30").spawn().expect("sleep");
+        let pid = stuck.id();
+        end_in_background(stuck, None, Duration::from_millis(200))
+            .expect("thread")
+            .join()
+            .expect("join");
+        assert!(!exists(pid), "killed once the grace is over");
     }
 }
