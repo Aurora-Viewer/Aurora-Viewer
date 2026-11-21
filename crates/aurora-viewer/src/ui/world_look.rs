@@ -18,7 +18,8 @@ pub const WINDOW: &str = "world_look";
 #[derive(Debug, Default)]
 pub struct WorldLookUi {
     pub looks: LooksUi,
-    /// A table imported from this window goes into the world's stack.
+    /// A table imported from this window goes into the world's stack (set
+    /// by `app::world_look` once the import starts).
     pub importing: bool,
 }
 
@@ -67,15 +68,8 @@ pub fn show(
                     pano: false,
                     thumb: &thumb,
                 };
-                let mut actions = Vec::new();
-                state.looks.show(ui, p, Stack::world(look, favorites), opts, &mut actions);
+                state.looks.show(ui, p, Stack::world(look, favorites), opts, out);
                 look.on = switched_on(&before, &look.looks, look.on);
-                for action in actions {
-                    if matches!(action, Action::ImportLut) {
-                        state.importing = true;
-                    }
-                    out.push(action);
-                }
             });
     });
 }

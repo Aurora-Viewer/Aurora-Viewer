@@ -30,6 +30,12 @@ impl App {
         );
         self.panels.world_look = open;
         for action in actions {
+            // a table imported from this window goes into the world's stack;
+            // not while another window's import is still open (it is
+            // refused, and that import's table goes where it was asked)
+            if matches!(action, ui::snapshot::Action::ImportLut) && self.snapshots.lut_import.is_none() {
+                self.snapshots.world_ui.importing = true;
+            }
             self.photo_lut_action(action, false);
         }
         if self.settings.world_look != before || self.settings.snapshot.look_favorites.len() != stars {
@@ -88,6 +94,7 @@ impl App {
             .filter(|id| looks::name(id).is_some())
             .map(looks::Layer::new)
             .collect();
+        looks::sanitize(&mut w.looks);
         w.on = !w.looks.is_empty();
         let ui = &mut self.snapshots.world_ui.looks;
         ui.selected = w.looks.len().saturating_sub(1);

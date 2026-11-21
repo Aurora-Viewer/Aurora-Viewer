@@ -45,9 +45,22 @@ pub struct Thumbs {
     last_capture: Option<f64>,
     /// When tiles were last shown.
     last_shown: Option<f64>,
+    /// The part of the screen the stills are taken from (pixels).
+    source: Option<[u32; 4]>,
 }
 
 impl Thumbs {
+    /// The part of the screen the stills come from: the photo's frame, the
+    /// Director's picture, or the whole 3D view for the World filters
+    /// window alone. Changed (a window opened or closed, the format or the
+    /// window's size changed), a new still is taken at once instead of the
+    /// tiles keeping the old crop until the next `REFRESH`.
+    pub fn source(&mut self, rect: [u32; 4]) {
+        if self.source.replace(rect).is_some_and(|old| old != rect) {
+            self.last_capture = None;
+        }
+    }
+
     /// This frame's request for the tiles `shown`, with `capacity` slots
     /// (the renderer makes them on the first request) and the looks'
     /// `settings`.
@@ -156,6 +169,25 @@ mod tests {
         assert!(p.capture);
         assert_eq!(p.draw, Some((0, "lut:a".to_owned())), "tried again on the new still");
         assert!(t.slots().contains_key("lut:a"));
+    }
+
+    /// A new frame to take the stills from (the photo window closed with
+    /// the World filters window open, a window resized) takes a still at
+    /// once, and the tiles are drawn on it again.
+    #[test]
+    fn a_new_source_takes_a_still_at_once() {
+        let mut t = Thumbs::default();
+        let none = BTreeMap::new();
+        let shown = ids(&["Sepia"]);
+        t.source([100, 50, 900, 650]);
+        assert!(t.plan(0.0, &shown, 4, &none).capture);
+        assert!(!t.plan(0.5, &shown, 4, &none).capture);
+        t.source([100, 50, 900, 650]);
+        assert!(!t.plan(1.0, &shown, 4, &none).capture, "the same frame: no new still");
+        t.source([0, 0, 1280, 900]);
+        let p = t.plan(1.5, &shown, 4, &none);
+        assert!(p.capture, "the whole view now: a new still");
+        assert_eq!(p.draw, Some((0, "Sepia".to_owned())), "drawn again on it");
     }
 
     fn ids(names: &[&str]) -> Vec<String> {
