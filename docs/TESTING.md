@@ -1099,7 +1099,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_TP_SCREEN=legacy` or `alt` | The teleport screen of before 2026-10-17, to compare |
 | `AURORA_DEMO_TP_NO_ARRIVAL=1` | The region never confirms the demo teleport |
 | `AURORA_DEMO_TP_CANCEL=1\|locked` | The teleport screen's Cancel pressed during the demo teleport, or a teleport that cannot be cancelled |
-| `AURORA_DEMO_TP_AWAY=1` | Departure out of range of the demo region, then return |
+| `AURORA_DEMO_TP_AWAY=1\|snow` | Departure out of range of the demo region, then return; `snow`: over lying snow |
 | `AURORA_DEMO_AUTO_UNMUTE=1` | Ambient sounds and sound effects muted, unmuted by the demo teleport (see Details) |
 | `AURORA_DEMO_AGENT_JITTER=<mm>` | Small position corrections of our avatar |
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
@@ -1676,6 +1676,13 @@ when unfocused") is ignored during a screenshot.
   `AURORA_DEMO_CONV=aurora:friend-away` and `AURORA_DEMO_CONV_MENU=im`,
   Nova's Zoom is enabled at frame 740, disabled at frame 900 (Teleport To
   stays, through her map rights), and enabled again at frame 1000.
+  `snow` (#3664): the same trip over lying snow. At frame 300 the ground
+  fills with snow in calm weather (the Weather window's snow-fill button),
+  and both arrivals go through the app as from the network. Each one, in
+  another region, cleans up what lay (log: `weather: arrival in another
+  region, ground cleaned up true`): captured at frames 700 and 1100,
+  the plaza is white, then bare. With `AURORA_SNOW=0.5` (my own snow
+  falling) the log says `false` and the snow stays.
   The departure's arrival also says "Teleport completed from" and a link to
   the plaza in nearby chat (FSShowBackSLURL; capture at frame 900); the
   return says nothing, the far region having no name.
@@ -5249,7 +5256,7 @@ both open states and the selection count. Capture at frame 620.
   with no day (`default`: Firestorm's default day asset, the built-in
   default sky offline) or replies for another parcel and
   another region (`stale`: ignored).
-- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none|search-back|photo-list`**:
+- **`AURORA_DEMO_ENV_SELECT=1|lighting|list|search|search-none|search-back|photo-list|order|order-az`**:
   environment picker
   (`demo_env.rs`), with a library containing an
   "Environments" folder and a Settings folder in the inventory, whose
@@ -5268,6 +5275,13 @@ both open states and the selection count. Capture at frame 620.
   sky inventory copies and opens the photo's sky list at frame 900. Keep
   it open, scroll, search and clear the search: its width must stay stable,
   also with `AURORA_TEXT_SIZE=1.5` or `2` (#3421).
+  `order`: the items are dated (a later
+  one newer) and the sky list opens (2500) in the inventory's order,
+  newest first: the user's sky, then the library's from Annan Adored
+  Pink Sky down to A-12AM. `order-az`: the same with the lists' A–Z
+  switch on (2490): the user's sky, then the library's skies A to Z
+  (A-6PM before A-12AM: numbers by value, as the inventory's by-name
+  order), the switch lit beside the search field.
 - **`AURORA_DEMO_ENV_KEYS=u|y|n|x|j`**: at frame 300, Ctrl+Shift + the
   letter goes through the shortcut table as World › Environment's
   shortcuts (#1264): `u` Sunrise, `y` Midday, `n` Sunset, `x` Midnight,
@@ -6326,6 +6340,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_AUTOTUNE=1\|slow\|once` | The target frame rate (Autotune) running: on the real frames, or on a simulated heavy scene (with `AURORA_DEMO_CROWD=20`), with or without "Continuous" |
 | `AURORA_DEMO_SUITCASE=1` | The question before a Hypergrid teleport that leaves worn items behind |
 | `AURORA_DEMO_QUICKPREFS=1` | Opens the Quick preferences window (toolbar `quickprefs`) |
+| `AURORA_DEMO_PHOTOTOOLS=env\|light\|dof\|general[:photo]` | Opens the Phototools window (toolbar `phototools`) on a tab, with `:photo` the photo window too |
 | `AURORA_DEMO_DEBUG_SETTINGS=1`, `warning` or `<search>` | Opens the Debug Settings window (toolbar `settings_debug`) |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_CURRENCY=<symbol>` | An OpenSim grid's own money symbol (KC, OS$…) shown in place of L$ |
@@ -6407,6 +6422,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
 | `AURORA_DEMO_LURE=<case>` | Teleport offers and requests received |
 | `AURORA_DEMO_MATURITY=agree\|disagree\|fail` | Content rating changed, the server's answer |
+| `AURORA_DEMO_TELEPORT_ACCESS=entry\|region\|lure[:accept]` | A teleport refused for its content rating, and its prompt |
 | `AURORA_DEMO_HOME=<outcome>[:set]` | World › Set Home to Here and the region's answer |
 | `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
@@ -6786,6 +6802,35 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   switch. A value the setting's type refuses (`update_mode` = `x`) shows the
   reason and changes nothing. Look for the star on a changed setting, and for
   no login, service key or text holding a UUID anywhere in the list.
+- **`AURORA_DEMO_PHOTOTOOLS=env|light|dof|general[:photo]`**: opens Phototools
+  at the first frame, as the toolbar's button does, on the Environment tab
+  (`env`, also the default), Light, Depth of field & glow (`dof`) or General;
+  with `:photo` the photo window opens too (the viewfinder, Aurora's default
+  style, with Phototools over it). Environment, as sections that fold:
+  Environment settings (the Sky, Water and Day/Night lists, Personal
+  lighting, Pause clouds, the same switch as the photo window's), Quick
+  environments (four times of day, the shared environment), Environment
+  presets (three "New" buttons), Reflections (SSR, mirrors, probes, probe
+  range). Light: Lights and shadows settings (shadow quality, projector
+  shadows, worn lights, nearby lights), Ambient occlusion settings. Depth of
+  field & glow: Depth of field settings (the switch, the focus, Show focus
+  point, the view angle, the lens), HDR tone mapping, Glow. General: General
+  render settings (draw distance to exposure), Render options, Quality
+  (anti-aliasing to avatar display). With the photo window closed, each row is
+  the Preferences row: a change in one shows in the other, and a modified row
+  has its dot; compare with Preferences › Graphics for ranges and help. With
+  the photo window open, a banner under the tabs says what the photo window
+  changes, with its "Keep this light" (the environment only), and the rows
+  the photo window also has (the depth of field's switch, aperture and focus,
+  the shadow quality, the ambient occlusion, the worn lights, the exposure,
+  the sky, water, day and time of day, Pause clouds) change the photo: try the aperture and
+  the shadow quality, then close the photo window and look at Preferences,
+  which kept its own values. The shadow and occlusion rows are greyed while a
+  photo is being made. In the viewfinder the View angle row is greyed (the
+  viewfinder owns it and puts yours back when it closes). With the depth of
+  field on and Preferences › Graphics › Depth of field › "Show focus point"
+  on, a small yellow triad (red when the focus is locked) marks the focus
+  point, over everything and never in a photo.
 - **`AURORA_DEMO_QUICKPREFS=1`**: opens Quick preferences at the first
   frame, as the toolbar's button does. Top to bottom: Draw distance, Particles,
   Avatar physics detail, Level of detail, Fully rendered avatars, Avatar name
@@ -9348,6 +9393,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Adult" and the notification list shows "Content rating not changed".
   `fail`: the request fails, the same notice at once. A teleport asked
   meanwhile waits for the answer and is dropped on a failure.
+- **`AURORA_DEMO_TELEPORT_ACCESS=entry|region|lure[:accept]`**: the demo account's
+  preference is set to "General" and the demo's neighbouring regions are
+  adult. At frame 700 the viewer teleports to the eastern neighbour, which
+  refuses it (capture at about 780). `entry` (TeleportEntryAccessBlocked):
+  the notification "Teleport blocked" offers "Change and continue"; accepting
+  sets the preference to "Adult" and the teleport starts again by itself
+  (the log shows `teleport: restarting the refused teleport`), then "Content
+  rating changed" once it arrives. `region` (RegionTPAccessBlocked): "The
+  location you've chosen is rated Adult." with "Allow Adult content", the
+  same restart without the last notice. `lure`: an accepted teleport offer
+  is refused; the prompt offers "Change preferences" only, since a lure
+  cannot be sent again. Cancel leaves the preference and the teleport as
+  they are. `:accept` presses the prompt's first button at frame 760
+  (the log shows `demo: the rating prompt accepted`); capture after about
+  frame 1000 to see the arrival and its notice.
 - **`AURORA_DEMO_HOME=ok|refused|region|fail|udp|forbidden[:set]`**: the
   demo region answers World › Set Home to Here (also the right click of the
   home button). `ok` (the default): the capability keeps the place in whole

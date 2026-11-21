@@ -2327,6 +2327,33 @@ pub fn maturity_reply(asked: u8) -> Option<u8> {
     }
 }
 
+/// AURORA_DEMO_TELEPORT_ACCESS=entry|region|lure[:accept]: the demo's
+/// neighbouring regions are adult, and refuse a teleport while the
+/// preference excludes them (`world/teleport_access.rs`); `:accept` answers
+/// the prompt by its first button. The scene, and whether to accept.
+pub fn teleport_access_scene() -> Option<(String, bool)> {
+    let value = std::env::var("AURORA_DEMO_TELEPORT_ACCESS").ok()?;
+    Some(match value.split_once(':') {
+        Some((scene, answer)) => (scene.to_owned(), answer == "accept"),
+        None => (value, false),
+    })
+}
+
+/// The demo server's refusal of a teleport away from our region, while the
+/// preference is below adult: TeleportEntryAccessBlocked, or
+/// RegionTPAccessBlocked for `region`.
+pub fn teleport_access_refusal(preferred: u8) -> Option<aurora_net::teleport_access::AccessBlocked> {
+    use aurora_net::teleport_access::{ENTRY_ACCESS_BLOCKED, REGION_TP_ACCESS_BLOCKED};
+    let code = match teleport_access_scene()?.0.as_str() {
+        "region" => REGION_TP_ACCESS_BLOCKED,
+        _ => ENTRY_ACCESS_BLOCKED,
+    };
+    (preferred < aurora_net::search::SIM_ACCESS_ADULT).then(|| aurora_net::teleport_access::AccessBlocked {
+        code: code.into(),
+        region_access: aurora_net::search::SIM_ACCESS_ADULT,
+    })
+}
+
 pub fn lure_scene() -> Option<LureScene> {
     match std::env::var("AURORA_DEMO_LURE").ok()?.as_str() {
         "offer" => Some(LureScene::Offer),
@@ -7837,6 +7864,14 @@ pub fn away_teleport(frame: u64, world: &crate::world::World, kept: &mut Vec<(Uu
         NetEvent::MainRegionChanged { handle },
         NetEvent::AgentMovementComplete { handle, position, look_at },
     ])
+}
+
+/// AURORA_DEMO_TP_AWAY=snow (#3664): the same trip over lying snow. The
+/// ground fills with snow at frame 300 in calm weather (the Weather window's
+/// snow-fill button), and the arrivals go through the app as from the
+/// network, which cleans the snow left behind.
+pub fn away_snow() -> bool {
+    std::env::var("AURORA_DEMO_TP_AWAY").is_ok_and(|v| v == "snow")
 }
 
 /// AURORA_DEMO_TEXTURES_CHURN=1: streaming churn on top of the stress test,
