@@ -15,6 +15,15 @@ use uuid::Uuid;
 impl App {
     /// "new" editors start from what is shown (onOpen without an item),
     /// with the rights of the settings shown (`Rights::of_source`).
+    /// "New sky / water / day cycle…" (World.EnvPreset, Phototools): a day
+    /// cycle starts empty, the others from what is shown.
+    pub(super) fn open_new_environment(&mut self, kind: SettingsKind) {
+        match kind {
+            SettingsKind::Day => self.open_new_day_editor(),
+            kind => self.open_env_editor_snapshot(kind),
+        }
+    }
+
     pub(super) fn open_env_editor_snapshot(&mut self, kind: SettingsKind) {
         let (sky, water) = self.world.eep.current();
         // an open editor of the same kind shows its own settings

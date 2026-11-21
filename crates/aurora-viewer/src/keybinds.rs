@@ -533,6 +533,9 @@ pub enum Action {
     /// "Snapshot to Disk" (Firestorm Ctrl+`): a photo with the settings of
     /// the photo window, without it.
     PhotoToDisk,
+    /// The Phototools window (menu_viewer.xml `phototools_item_call`,
+    /// shortcut="alt|P").
+    Phototools,
     /// World › Environment's fixed times of day and Use Shared Environment
     /// (menu_viewer.xml: `World.EnvSettings` sunrise / noon / sunset /
     /// midnight / region, Ctrl+Shift+U / Y / N / X / J).
@@ -918,6 +921,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::PhotoWindow, aurora_i18n::tr!("keybinds-photo-window")),
                     (Action::PhotoToDisk, aurora_i18n::tr!("keybinds-photo-to-disk")),
+                    (Action::Phototools, aurora_i18n::tr!("toolbar-command-phototools")),
                 ],
             ),
             (
@@ -1353,6 +1357,7 @@ impl KeyBindings {
             (Action::RefreshAttachments, [kalt(K::KeyR, false, true), None]),
             (Action::PhotoWindow, [kmod(K::KeyS, true, true), None]),
             (Action::PhotoToDisk, [kmod(K::Backquote, true, false), None]),
+            (Action::Phototools, [kalt(K::KeyP, false, false), None]),
             // menu_viewer.xml: World › Environment
             (Action::EnvSunrise, [kmod(K::KeyU, true, true), None]),
             (Action::EnvMidday, [kmod(K::KeyY, true, true), None]),
@@ -3086,6 +3091,7 @@ mod tests {
             (Action::ResyncAnimations, (true, false, false), [K::KeyS; 4]),
             (Action::RefreshAttachments, (false, true, true), [K::KeyR; 4]),
             (Action::PhotoWindow, (true, true, false), [K::KeyS; 4]),
+            (Action::Phototools, (false, false, true), [K::KeyP; 4]),
             (Action::SitGround, (false, true, true), [K::KeyS; 4]),
             (Action::EnvSunrise, (true, true, false), [K::KeyU; 4]),
             (Action::EnvMidday, (true, true, false), [K::KeyY, K::KeyY, K::KeyY, K::KeyZ]),
@@ -3211,6 +3217,28 @@ mod tests {
         assert_eq!(
             kb.get(Action::ResyncAnimations),
             KeyBindings::default().get(Action::ResyncAnimations)
+        );
+    }
+
+    #[test]
+    fn alt_p_opens_phototools_and_leaves_move_lock_and_preferences_alone() {
+        let kb = KeyBindings::default();
+        let p = Input::key(letter(KeyCode::KeyP));
+        let alt = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        assert_eq!(kb.triggered(&p, alt), Some(Action::Phototools));
+        assert_eq!(kb.triggered(&p, Mods { ctrl: true, ..alt }), Some(Action::MoveLock));
+        assert_eq!(
+            kb.triggered(
+                &p,
+                Mods {
+                    ctrl: true,
+                    ..Default::default()
+                }
+            ),
+            Some(Action::Preferences)
         );
     }
 

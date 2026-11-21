@@ -134,6 +134,7 @@ mod own_motion;
 mod pay;
 mod photo_isolate;
 mod photo_reel;
+mod phototools;
 mod physics_editor;
 mod plate_click;
 mod pointing;
@@ -910,6 +911,9 @@ pub struct App {
     /// Debug Settings (Advanced.ShowDebugSettings).
     debug_settings_ui: ui::debug_settings::DebugSettingsUi,
     debug_settings_demo_done: bool,
+    /// Phototools (the toolbar's `phototools`).
+    phototools_ui: ui::phototools::PhototoolsUi,
+    phototools_demo_done: bool,
     /// Quick preferences (the toolbar's `quickprefs`).
     quick_prefs_ui: ui::quick_prefs::QuickPrefsUi,
     quick_prefs_demo_done: bool,
@@ -1104,6 +1108,9 @@ pub struct App {
     beacon_hit: Option<ui::minimap::BeaconHit>,
     /// The avatar whose plate is under the pointer (app/plate_click.rs).
     plate_hover: Option<uuid::Uuid>,
+    /// A left press on our own plate whose action waits for the release
+    /// (app/plate_click.rs).
+    own_plate_click: Option<plate_click::OwnPlateClick>,
     /// Block list version applied to object sounds, and the objects whose
     /// sounds it silenced.
     sound_blocks: (u64, std::collections::HashSet<uuid::Uuid>),
@@ -2118,6 +2125,8 @@ impl App {
             avatar_mark_last: None,
             debug_settings_ui: Default::default(),
             debug_settings_demo_done: false,
+            phototools_ui: Default::default(),
+            phototools_demo_done: false,
             quick_prefs_ui: Default::default(),
             quick_prefs_demo_done: false,
             director: Default::default(),
@@ -2246,6 +2255,7 @@ impl App {
             name_tag_visibility: Default::default(),
             beacon_hit: None,
             plate_hover: None,
+            own_plate_click: None,
             sound_blocks: Default::default(),
             sound_changes: Vec::new(),
             devices_listed: false,
@@ -2510,6 +2520,18 @@ impl App {
             self.world.maturity.hold(cmd, actor);
             return;
         }
+        // LLAgent::mTeleportRequest: what a refusal for the rating restarts
+        if matches!(
+            cmd,
+            NetCommand::TeleportTo { .. }
+                | NetCommand::TeleportLandmark(_)
+                | NetCommand::TeleportToRegion { .. }
+                | NetCommand::TeleportHome
+                | NetCommand::AcceptLure { .. }
+        ) {
+            let show_progress = self.world.tp_show_progress;
+            self.world.teleport_access.sent(&cmd, actor, self.tp_dest.clone(), show_progress);
+        }
         // AURORA_DEMO_EXPERIENCE: the simulator and the capabilities
         if self.demo
             && let Some(reply) = self.experience_demo.as_mut().and_then(|demo| demo.reply(&cmd))
@@ -2557,6 +2579,22 @@ impl App {
             log::info!("demo maturity: asked {maturity}, answer {result:?}");
             self.world.apply(NetEvent::MaturityPreference(result));
             return;
+        }
+        // AURORA_DEMO_TELEPORT_ACCESS: the adult neighbour refuses the
+        // preference (TeleportFailed with its AlertInfo)
+        if self.demo {
+            let away = match &cmd {
+                NetCommand::TeleportTo { handle, .. } => Some(*handle) != self.world.main_region,
+                NetCommand::AcceptLure { .. } => true,
+                _ => false,
+            };
+            if away && let Some(blocked) = crate::demo::teleport_access_refusal(self.world.agent_access().preferred) {
+                log::info!("demo teleport refused for its rating: {}", blocked.code);
+                self.world.apply(NetEvent::TeleportAccessBlocked(blocked));
+                // the prompt replaces the simulator's reason
+                self.world.apply(NetEvent::TeleportFailed { reason: String::new() });
+                return;
+            }
         }
         if self.demo && self.gesture_demo_command(&cmd) {
             return;
@@ -4827,6 +4865,9 @@ impl App {
         if self.hud_drag.is_some() {
             return;
         }
+        if let Some(click) = &mut self.own_plate_click {
+            click.motion(dx, dy, self.egui_ctx.pixels_per_point());
+        }
         let s = self.settings.mouse_sensitivity;
         if self.camera.mouselook() {
             // Alt held: the grab tool has the free cursor, the view stays
@@ -5095,6 +5136,7 @@ impl App {
                     .data_mut(|d| d.insert_temp(ui::environment::demo_open_id(&salt), String::new()));
             }
             Step::Search(kind, text) => self.env_ui.search_list = Some((kind, text)),
+            Step::ListsByName => self.settings.env_lists_by_name = true,
         }
     }
 
@@ -5541,6 +5583,7 @@ impl App {
             Action::RefreshAttachments => self.refresh_attachments(),
             Action::PhotoWindow => ui::widgets::toggle_floater(&self.egui_ctx, ui::snapshot::WINDOW, &mut self.panels.snapshot),
             Action::PhotoToDisk => self.photo_to_disk(),
+            Action::Phototools => ui::widgets::toggle_floater(&self.egui_ctx, ui::phototools::WINDOW, &mut self.panels.phototools),
             Action::EnvSunrise | Action::EnvMidday | Action::EnvSunset | Action::EnvMidnight | Action::EnvShared => {
                 self.env_shortcut(action)
             }
@@ -5615,6 +5658,7 @@ impl App {
     fn world_press(&mut self) {
         self.left_down = true;
         self.world_mouse_walk_pending = false;
+        self.own_plate_click = None;
         if self.hud_drag_requested()
             && self.huds_shown()
             && let Some(idx) = self.scene.hud_move_pick(&self.world, self.cursor_pos)
@@ -5677,7 +5721,9 @@ impl App {
         // (kept until the depth is in hand: the press is run again then)
         let double = std::mem::take(&mut self.double_press);
         let (ray, depth) = (picked.ray, picked.depth);
-        // another avatar's plate with a click action takes the click
+        // someone else's plate with a click action takes the press; on our
+        // own plate the press is our avatar's, its action waits for the
+        // release (own_plate_press, below)
         if self.plate_press(picked.tag) {
             return;
         }
@@ -5840,6 +5886,9 @@ impl App {
                 self.hold_focus_cursor();
             }
         } else if let (Some(p), Some(ray)) = (avatar_hit, ray) {
+            // a press on our own plate: its click action waits for a
+            // release without a drag (app/plate_click.rs)
+            self.own_plate_press(picked.tag);
             // ClickOnAvatarKeepsCamera (LLToolPie::handleLeftClickPick):
             // always LLToolCamera::pickCallback on the hit, then only when the
             // option is off call setFocusOnAvatar(true) (snap behind + steer).
@@ -8386,6 +8435,10 @@ impl App {
         }
         self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
         if pressed {
+            // a walk, not a click on our own plate
+            if let Some(click) = &mut self.own_plate_click {
+                click.other_button();
+            }
             self.right_gesture = RightGesture {
                 start: self.cursor_pos,
                 ..RightGesture::default()
@@ -8531,6 +8584,8 @@ impl App {
         } else if self.mouse_mode != MouseMode::None {
             self.end_mouse_drag();
         }
+        // a click on our own plate: its action, now that the press is over
+        self.own_plate_release();
     }
 
     /// RlvActions::canTeleport*: reject before UI and demo side effects.
@@ -10239,6 +10294,13 @@ impl App {
         // for it
         if !self.settings.rlva_enabled {
             self.world.maturity.cancel_script_teleports();
+            self.world.teleport_access.cancel_script_teleports();
+        }
+        // a teleport refused for its rating, restarted (teleport_access.rs):
+        // its screen again while it waits for the preference
+        if let Some(restart) = self.world.teleport_access.take_restart() {
+            let dest = restart.dest.unwrap_or_default();
+            self.begin_teleport(dest, restart.show_progress);
         }
         for (actor, c) in self.world.maturity.take_commands() {
             if matches!(
@@ -10283,12 +10345,15 @@ impl App {
                 self.send(c);
             }
         }
-        for c in self.world.take_map_commands() {
-            if let NetCommand::TeleportTo { handle, .. } = &c {
+        for mut c in self.world.take_map_commands() {
+            if matches!(c, NetCommand::TeleportTo { .. }) {
                 let join = self.world.prepare_friend_join(&c);
                 let flight_target = self.world.friend_teleport_avatar(&c);
+                // Friend intents match the map's tile command; convert only
+                // afterwards, before local/remote UI and the RLVa preflight.
+                self.world.normalize_map_teleport(&mut c);
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
-                let show = Some(*handle) != self.world.main_region;
+                let show = matches!(&c, NetCommand::TeleportTo { handle, .. } if Some(*handle) != self.world.main_region);
                 let accepted = if join.is_none()
                     && let Some(avatar) = flight_target
                 {
@@ -10401,6 +10466,47 @@ impl App {
         }
         if self.demo && self.frame_count == 650 && std::env::var_os("AURORA_DEMO_EXIT").is_some() {
             self.request_exit();
+        }
+        // AURORA_DEMO_TELEPORT_ACCESS: a teleport to the eastern neighbour
+        // (a lure accepted for `lure`), once settled
+        if self.demo
+            && self.frame_count == 700
+            && let Some((scene, _)) = crate::demo::teleport_access_scene()
+            && let Some(main) = self.world.main_region
+        {
+            if scene == "lure" {
+                self.send(NetCommand::AcceptLure {
+                    lure_id: uuid::Uuid::nil(),
+                    godlike: false,
+                });
+            } else {
+                let east = main + (256u64 << 32);
+                let teleport = NetCommand::TeleportTo {
+                    handle: east,
+                    position: Vec3::new(128.0, 128.0, 30.0),
+                    look_at: Vec3::X,
+                };
+                self.request_user_teleport(teleport, aurora_i18n::tr!("demo-teleport-access-neighbour").into(), true);
+            }
+        }
+        // AURORA_DEMO_TELEPORT_ACCESS=…:accept: the prompt's first button
+        if self.demo
+            && self.frame_count == 760
+            && crate::demo::teleport_access_scene().is_some_and(|(_, accept)| accept)
+            && let Some(id) = self
+                .world
+                .notifications
+                .list
+                .iter()
+                .rev()
+                .find(|n| matches!(n.data, crate::world::notifications::Data::MaturityChange { .. }))
+                .map(|n| n.id)
+        {
+            log::info!("demo: the rating prompt accepted");
+            let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Accept);
+            for c in commands {
+                self.send(c);
+            }
         }
         // AURORA_DEMO_HOME=<outcome>:set: World › Set Home to Here, once settled
         if self.demo
@@ -16354,11 +16460,9 @@ impl App {
                 self.open_web_link(url, None);
             }
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
+            BarAction::ResumeClouds => self.snapshots.ui.light.clouds_paused = false,
             BarAction::AuroraWeather => self.env_ui.weather_open = true,
-            BarAction::NewEnvironment(kind) => match kind {
-                crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
-                kind => self.open_env_editor_snapshot(kind),
-            },
+            BarAction::NewEnvironment(kind) => self.open_new_environment(kind),
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
@@ -17882,6 +17986,12 @@ impl App {
         let p = self.palette;
         let ctx = ui.ctx().clone();
         ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
+        // a list's A–Z switch last frame, saved before it is published again
+        if let Some(by_name) = ui::environment::take_lists_by_name_change(&ctx) {
+            self.settings.env_lists_by_name = by_name;
+            self.settings.save();
+        }
+        ui::environment::set_lists_by_name(&ctx, self.settings.env_lists_by_name);
         ui::widgets::local_texture::sync(
             &ctx,
             self.world.local_assets.keys().copied().chain(
@@ -18456,6 +18566,7 @@ impl App {
                     fps: self.perf.fps,
                     flying: self.world.agent.flying,
                     seated: self.world.agent.is_sitting(),
+                    clouds_paused: self.photo_clouds_paused() && !self.panels.snapshot,
                     ping_ms: self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed),
                     balance_ink: ui::balance_gains::ink(&self.palette, balance.flash),
                     balance: balance.balance,
@@ -19354,15 +19465,16 @@ impl App {
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, `World::is_typing_nearby`;
                 // never one whose chat is blocked, #1395)
-                self.chat_ui.nearby_count = 0;
+                let chat_ranges = crate::world::radar::chat_ranges();
+                self.chat_ui.nearby_count = ui::chat::earshot_count(
+                    self.radar.entries().filter(|e| !e.left_behind).map(|e| e.range),
+                    self.chat_ui.earshot_range(chat_ranges),
+                );
                 self.chat_ui.nearby_typing.clear();
-                let say = crate::world::radar::chat_ranges().say;
+                let say = chat_ranges.say;
                 for e in self.radar.entries() {
-                    if !e.left_behind && e.range.is_some_and(|d| d <= say) {
-                        self.chat_ui.nearby_count += 1;
-                        if e.typing && !self.world.nearby_typing_hidden(&e.id) {
-                            self.chat_ui.nearby_typing.push(e.id);
-                        }
+                    if !e.left_behind && e.range.is_some_and(|d| d <= say) && e.typing && !self.world.nearby_typing_hidden(&e.id) {
+                        self.chat_ui.nearby_typing.push(e.id);
                     }
                 }
                 // AURORA_DEMO_CONV=aurora / bubbles: someone types in the
@@ -20915,7 +21027,7 @@ impl App {
                 );
                 t = self.ui_parts.lap(Part::UiPerf, t);
                 // environment selector (Firestorm's quick preferences lists)
-                if self.panels.environment || self.panels.quick_prefs || self.panels.director {
+                if self.panels.environment || self.panels.quick_prefs || self.panels.phototools || self.panels.director {
                     if !self.env_scan {
                         self.env_scan = true;
                         self.env_ui.scan_left = usize::MAX;
@@ -20944,11 +21056,20 @@ impl App {
                 // Quick preferences' environment block shares the window's
                 // lists and "Personal lighting"
                 let quick_actions = self.quick_prefs_window(&ctx, &p, &mut lighting);
+                // and Phototools'
+                let phototools_actions = self.phototools_window(&ctx, &p, &mut lighting);
                 // so does the Director's
                 let director_actions = self.director_window(&ctx, &p, &mut lighting);
                 self.debug_settings_window(&ctx, &p);
                 let reset = self.personal_lighting(&ctx, &p, lighting);
-                self.env_actions(env_actions.into_iter().chain(quick_actions).chain(director_actions).chain(reset));
+                self.env_actions(
+                    env_actions
+                        .into_iter()
+                        .chain(quick_actions)
+                        .chain(phototools_actions)
+                        .chain(director_actions)
+                        .chain(reset),
+                );
                 self.draw_env_editor(&ctx, &p);
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
@@ -22725,7 +22846,7 @@ impl ApplicationHandler for App {
                 }
             }
             // AURORA_DEMO_MATURITY: "General" asked once the login is known
-            if crate::demo::maturity_scene().is_some() {
+            if crate::demo::maturity_scene().is_some() || crate::demo::teleport_access_scene().is_some() {
                 self.world.set_maturity_preference(aurora_net::search::SIM_ACCESS_PG);
             }
             // AURORA_DEMO_LURE=card-answered / notification-answered: the
