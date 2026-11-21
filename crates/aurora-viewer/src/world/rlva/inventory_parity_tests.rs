@@ -137,6 +137,43 @@ fn shared_wear_locks_keep_items_in_place() {
     }
 }
 
+/// RlvFolderLocks::canRemoveFolder (rlvlocks.h), through
+/// get_is_category_removable (llinventoryfunctions.cpp): the shared path lock
+/// of @sharedwear and @sharedunwear, held on #RLV, keeps #RLV and its folders
+/// from being deleted; the root lock of the unshared twins does not count.
+#[test]
+fn shared_wear_locks_keep_shared_folders() {
+    let mut l = linked();
+    let (spare, issuer) = (l.spare, l.issuer);
+    let rlv = shared(&l);
+    // (Clothes holds the body, whose link in #RLV @sharedunwear keeps on)
+    let root = l.world.inventory.root;
+    let outside = folder(&mut l.world, 0xF0F0, root, "Boxes", -1);
+    let nil = Uuid::nil();
+    let gone = |w: &World, id| {
+        w.rlva_inventory_mutation_allowed(
+            &Mutation {
+                operations: vec![Operation::Delete { id, folder: true }],
+                ..Default::default()
+            },
+            nil,
+        )
+    };
+    assert!(gone(&l.world, spare) && gone(&l.world, rlv), "nothing set");
+    for lock in ["@sharedunwear", "@sharedwear"] {
+        say(&mut l.world, issuer, &format!("{lock}=n"));
+        assert!(!gone(&l.world, spare), "{lock}: a shared folder");
+        assert!(!gone(&l.world, rlv), "{lock}: #RLV");
+        assert!(gone(&l.world, outside), "{lock}: outside #RLV");
+        say(&mut l.world, issuer, &format!("{lock}=y"));
+    }
+    for lock in ["@unsharedunwear", "@unsharedwear"] {
+        say(&mut l.world, issuer, &format!("{lock}=n"));
+        assert!(gone(&l.world, spare), "{lock}: the root lock leaves folders");
+        say(&mut l.world, issuer, &format!("{lock}=y"));
+    }
+}
+
 /// RlvFolderLocks::canRenameFolder (rlvlocks.h): #RLV holds the shared path
 /// lock of the four placement rules, so it keeps its name under any of them.
 #[test]

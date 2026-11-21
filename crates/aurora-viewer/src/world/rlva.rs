@@ -571,6 +571,9 @@ fn valid_option(c: &Command) -> bool {
             uuid_set(option).is_some()
         }
         "showhovertext" => uuid_set(option).is_some(),
+        // RlvBehaviourHandler<RLV_BHVR_SETOVERLAY_TOUCH>::onCommand
+        // (rlvhandler.cpp) never reads its option: any one is accepted.
+        "setoverlay_touch" => true,
         // (the same null key, naming no one; @sendimto's mere presence
         // still makes `rlva_can_send_session` check every session, as
         // FSFloaterIM::sendMsgFromInputEditor does)

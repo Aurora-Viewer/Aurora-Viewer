@@ -756,11 +756,14 @@ impl World {
             let Some(f) = self.inventory.folders.get(&id) else {
                 return false;
             };
+            // RlvFolderLocks::canRemoveFolder (rlvlocks.h) counts every lock
+            // but the inventory root's (ST_ROOTFOLDER): @sharedwear and
+            // @sharedunwear, held on #RLV, keep it and its folders as well.
             if !appearance::loaded(&self.inventory, id)
                 || [false, true].into_iter().any(|add| {
                     self.rlva_folder_signature_in(&locks, id, add, Uuid::nil())
                         .iter()
-                        .any(|(_, name, _)| name.contains("this"))
+                        .any(|(_, name, _)| name.contains("this") || matches!(name.as_str(), "sharedwear" | "sharedunwear"))
                 })
             {
                 return false;

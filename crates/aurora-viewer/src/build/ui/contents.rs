@@ -353,9 +353,9 @@ fn item_row(
             let taken = contents_selection::acted_on(tool, object_id, item);
             let transfers: Result<Vec<_>, _> = taken.iter().map(|it| tool.task_transfer_kind(world, object_id, it)).collect();
             let can_take = transfers.is_ok();
-            // LLTaskInvFVBridge::buildContextMenu: the scripts and notecards
-            // of an attachment that cannot be taken off stay closed.
-            let closed = (script || item.asset_type == 7) && world.rlva_locked_attachment(idx);
+            // LLTaskInvFVBridge::buildContextMenu: RLVa keeps the item closed
+            // (@viewnote, @viewscript, @viewtexture, a locked attachment).
+            let closed = (script || item.asset_type == 7 || preview) && world.rlva_task_open_blocked(idx, i32::from(item.asset_type));
             let can_open = (script || item.asset_type == 7 || preview) && !closed;
             let no_open = if closed {
                 aurora_i18n::tr!("rlva-blocked")
