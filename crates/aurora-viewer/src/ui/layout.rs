@@ -56,10 +56,17 @@ fn restore(ctx: &egui::Context, saved: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Save the layout now (on exit, after a restored backup).
+/// Save the layout now (on exit, after a restored backup), on a save
+/// thread (saves.rs); the exit waits for it.
 pub fn save(ctx: &egui::Context) {
     let (generation, mem) = snapshot(ctx);
-    write(generation, &mem);
+    queue(generation, mem);
+}
+
+/// Hands the snapshot's write to a save thread: one after the other, a
+/// snapshot not written yet replaced by the newer one.
+fn queue(generation: u64, mem: egui::Memory) {
+    crate::saves::replace(path(), move || write(generation, &mem));
 }
 
 /// The layout as `ui_layout.ron` holds it (and a settings backup).
@@ -153,12 +160,7 @@ impl Autosave {
         self.room = Some(room);
         if self.mark(released || resized, now) {
             let (generation, mem) = snapshot(ctx);
-            let spawned = std::thread::Builder::new()
-                .name("aurora-layout-save".into())
-                .spawn(move || write(generation, &mem));
-            if let Err(e) = spawned {
-                log::warn!("ui layout not saved: {e}");
-            }
+            queue(generation, mem);
         }
     }
 
@@ -190,6 +192,34 @@ pub fn forget(ctx: &egui::Context) {
     let options = ctx.options(|o| o.clone());
     ctx.memory_mut(|m| *m = egui::Memory::default());
     ctx.options_mut(|o| *o = options);
+}
+
+/// "Reset window positions and sizes" (Preferences › Layout): every
+/// window goes back to its default place and size, expanded, and leaves the
+/// group it was glued to; the settings stay as they are. The Legacy Viewer
+/// has no such button: its floater rects are settings, which only "Reset
+/// All Settings" brings back (LLFloater::storeRectControl,
+/// indra/llui/llfloater.cpp). The windows on screen go back at their next
+/// frame, the others when they open (`take_reset`); the toolstrips, placed
+/// by their default anchor once forgotten here, need nothing more.
+pub(crate) fn reset_windows(ctx: &egui::Context) {
+    windows(ctx, |w| {
+        w.placed.clear();
+        w.links.clear();
+        w.parked_moves.clear();
+        w.resets += 1;
+        w.reset_done.clear();
+        w.live.followed = None;
+        w.live.follow.clear();
+        w.live.settle.clear();
+        w.live.places.clear();
+    });
+}
+
+/// True once per window after a "Reset window positions and sizes": the
+/// window then takes its default place, size and expanded state.
+pub(crate) fn take_reset(ctx: &egui::Context, id: Id) -> bool {
+    windows(ctx, |w| w.resets > 0 && w.reset_done.insert(id.value()))
 }
 
 /// Remove the file; a background save still on its way, older than
@@ -510,6 +540,23 @@ struct Windows {
     /// Windows snapped side by side: they move together (`snap::group`).
     #[serde(default)]
     links: BTreeSet<snap::Link>,
+    /// How many times "Reset window positions and sizes" was pressed, and
+    /// the windows that went back to their defaults since the last press
+    /// (`take_reset`): a window closed at the press goes back the next time
+    /// it opens, whatever session that is.
+    #[serde(default)]
+    resets: u64,
+    #[serde(default)]
+    reset_done: BTreeSet<u64>,
+    /// Windows hidden for a while by their owner, not closed by the user
+    /// (the blocks taken out of the build window): their groups wait for
+    /// them, and a group dragged meanwhile takes them along (`park`).
+    #[serde(default)]
+    parked: BTreeSet<u64>,
+    /// Where each parked window goes when it shows again, its group having
+    /// moved while it was hidden.
+    #[serde(default)]
+    parked_moves: BTreeMap<u64, Pos2>,
     #[serde(skip)]
     live: Live,
 }
@@ -616,7 +663,7 @@ pub(crate) fn slot(ctx: &egui::Context, id: Id) -> Slot {
         let followed = usable(screen).then(|| w.follow(key, screen, room)).flatten();
         let preserve_anchor = followed.is_some() || !sized || w.live.settle.contains_key(&key);
         let limits = w.live.limits.filter(|(window, _)| *window == key).map(|(_, limits)| limits);
-        let mut pos = w.live.places.remove(&key).or(followed);
+        let mut pos = w.live.places.remove(&key).or(followed).or_else(|| w.parked_moves.remove(&key));
         if sized {
             // measured last frame: back where it belongs, unless it is
             // given another place now
@@ -720,6 +767,19 @@ impl Slot {
 }
 
 /// An explicit placement follows the same rule as a completed mouse move.
+/// Window `id` is parked (or no longer): hidden by its owner while closed,
+/// it keeps the windows it is glued to, and follows them if they are moved
+/// meanwhile; shown again, it is glued to them as before.
+pub(crate) fn park(ctx: &egui::Context, id: Id, parked: bool) {
+    windows(ctx, |w| {
+        if parked {
+            w.parked.insert(id.value());
+        } else if w.parked.remove(&id.value()) {
+            w.parked_moves.remove(&id.value());
+        }
+    });
+}
+
 pub(crate) fn reanchor(ctx: &egui::Context, id: Id) {
     windows(ctx, |w| {
         w.live.reanchor_after_show.insert(id.value());
@@ -1151,6 +1211,77 @@ mod tests {
         frame(1600.0, true);
         let rect = ctx.memory(|m| m.area_rect(Id::unique(CORNER))).expect("shown");
         assert_eq!(1600.0 - rect.right(), 8.0, "{rect:?}");
+    }
+
+    /// "Reset window positions and sizes": a window moved, resized and
+    /// minimized takes the rect of its first opening again, expanded; one
+    /// closed at the press does when it opens; "Undo" (the layout taken
+    /// before the press) puts the moved one back.
+    #[test]
+    fn reset_windows_brings_a_moved_resized_minimized_window_back() {
+        const WINDOW: &str = "layout_reset";
+        let ctx = egui::Context::default();
+        let palette = crate::theme::Theme::default().palette();
+        let mut time = 0.0;
+        let mut frames = |ctx: &egui::Context, open: bool| {
+            for _ in 0..3 {
+                time += 1.0 / 60.0;
+                let input = egui::RawInput {
+                    screen_rect: Some(screen(1280.0, 720.0)),
+                    time: Some(time),
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    crate::ui::widgets::Floater::new(WINDOW, "Window", Pos2::new(200.0, 150.0), Vec2::new(300.0, 200.0))
+                        .silent()
+                        .show(ui.ctx(), &palette, &mut { open }, |ui| {
+                            ui.label("content");
+                        });
+                });
+                output.textures_delta.clear();
+            }
+        };
+        let rect = |ctx: &egui::Context| ctx.memory(|m| m.area_rect(Id::unique(WINDOW))).expect("shown");
+        let minimized = |ctx: &egui::Context| crate::ui::widgets::floater_minimized(ctx, WINDOW);
+        frames(&ctx, true);
+        let first = rect(&ctx);
+        // moved and resized as by the user, then minimized
+        let moved = Rect::from_min_size(Pos2::new(640.0, 320.0), Vec2::new(420.0, 260.0));
+        crate::ui::widgets::place_floater(&ctx, WINDOW, moved.min, moved.size());
+        frames(&ctx, true);
+        let placed = rect(&ctx);
+        assert_eq!(placed.min, moved.min);
+        assert_ne!(placed.size(), first.size());
+        crate::ui::widgets::minimize_floater(&ctx, WINDOW);
+        frames(&ctx, true);
+        assert!(minimized(&ctx));
+        let before = text(&ctx).expect("layout");
+
+        crate::ui::widgets::reset_windows(&ctx);
+        frames(&ctx, true);
+        assert!(!minimized(&ctx));
+        assert_eq!(rect(&ctx), first);
+        let recorded = windows(&ctx, |w| w.placed[&Id::unique(WINDOW).value()]);
+        assert_eq!(recorded.rect, first);
+
+        // "Undo": the layout of before the press
+        restore(&ctx, &before).expect("restore");
+        frames(&ctx, true);
+        assert!(minimized(&ctx));
+        assert_eq!(rect(&ctx).min, moved.min);
+
+        // closed at the press, still minimized: back when it opens
+        frames(&ctx, false);
+        crate::ui::widgets::reset_windows(&ctx);
+        frames(&ctx, false);
+        assert!(minimized(&ctx), "a closed window is left alone until it opens");
+        frames(&ctx, true);
+        assert!(!minimized(&ctx));
+        assert_eq!(rect(&ctx), first);
+        // once only: moved after the reset, it stays where it is put
+        crate::ui::widgets::place_floater(&ctx, WINDOW, moved.min, moved.size());
+        frames(&ctx, true);
+        assert_eq!(rect(&ctx), placed);
     }
 
     #[test]

@@ -8,10 +8,11 @@
 //! keeps the same layout, so the Legacy Viewer still lists every outfit.
 
 use super::appearance::{FT_MY_OUTFITS, FT_OUTFIT, base, system_folder};
-use super::inventory::Inventory;
 use super::inventory::actions;
+use super::inventory::{Folder, Inventory};
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{Mutation, Operation};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Levels of groups under My Outfits: a folder moved there may hold three
@@ -86,8 +87,62 @@ pub fn in_my_outfits(inv: &Inventory, id: Uuid) -> bool {
             .is_some_and(|parent| parent.children.contains(&id) && container(inv, parent.info.id))
 }
 
-/// The groups and outfits a container holds, each sorted by name.
-fn children(inv: &Inventory, id: Uuid, reverse: bool) -> (Vec<(String, Uuid)>, Vec<(String, Uuid)>) {
+/// The main order of the outfit list and gallery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SortBy {
+    #[default]
+    NameAscending,
+    NameDescending,
+    /// The Legacy Viewer's "Sort newest first".
+    Newest,
+    /// An Aurora addition: the same date, the other way (#2347).
+    Oldest,
+}
+
+/// How outfits are sorted: `by`, under the two groupings that can be added
+/// to it. The Legacy Viewer has separate settings for its list
+/// (FSOutfitListSortOrder: newest first, favorites to top) and its gallery
+/// (OutfitGallerySortOrder: favorites or images to top, one at a time).
+/// Aurora has one choice for both views, and the two can be combined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Sort {
+    pub by: SortBy,
+    pub favorites_first: bool,
+    pub images_first: bool,
+}
+
+/// What an outfit's date is: the newest creation date of the items directly
+/// in it. Folders have no date of their own, and saving an outfit makes new
+/// links, so this is when it was last saved (get_outfit_tab_creation_date,
+/// indra/newview/lloutfitslist.cpp). 0 for an outfit with no dated item.
+fn outfit_date(inv: &Inventory, id: Uuid) -> i64 {
+    let items = inv.folders.get(&id).into_iter().flat_map(|f| &f.items);
+    items
+        .filter_map(|item| inv.items.get(item))
+        .map(|it| it.created_at)
+        .max()
+        .unwrap_or(0)
+}
+
+/// The date part of an outfit's sort key. An outfit with no date (not loaded yet) stays at the end in
+/// both directions; its place then comes with its links.
+fn date_rank(inv: &Inventory, id: Uuid, by: SortBy) -> i64 {
+    let newest_first = match by {
+        SortBy::NameAscending | SortBy::NameDescending => return 0,
+        SortBy::Newest => true,
+        SortBy::Oldest => false,
+    };
+    match outfit_date(inv, id) {
+        ..=0 => i64::MAX,
+        date if newest_first => -date,
+        date => date,
+    }
+}
+
+/// The groups and outfits a container holds, each in order: groups by name
+/// (only Name: Z to A reverses them), outfits by `sort`.
+fn children(inv: &Inventory, id: Uuid, sort: Sort) -> (Vec<(String, Uuid)>, Vec<(String, Uuid)>) {
     let mut groups = Vec::new();
     let mut outfits = Vec::new();
     for child in inv.folders.get(&id).into_iter().flat_map(|f| &f.children) {
@@ -99,18 +154,31 @@ fn children(inv: &Inventory, id: Uuid, reverse: bool) -> (Vec<(String, Uuid)>, V
         }
         let named = (f.info.name.to_lowercase(), *child);
         if outfit(inv, *child) {
-            outfits.push(named);
+            let rank = (
+                sort.favorites_first && !f.info.favorite,
+                sort.images_first && f.info.thumbnail.is_nil(),
+                date_rank(inv, *child, sort.by),
+            );
+            outfits.push((rank, named));
         } else if plain_group(inv, *child) {
             groups.push(named);
         }
     }
-    for list in [&mut groups, &mut outfits] {
-        list.sort();
-        if reverse {
-            list.reverse();
-        }
+    let descending = sort.by == SortBy::NameDescending;
+    // names, and the ties of a date order, in dictionary order, as the Legacy
+    // Viewer's LLOutfitTabNameComparator and LLOutfitTabDateComparator
+    // (indra/newview/lloutfitslist.cpp, LLStringUtil::compareDict)
+    let by_name = |a: &(String, Uuid), b: &(String, Uuid)| crate::natural_order::cmp_folded(&a.0, &b.0).then(a.1.cmp(&b.1));
+    outfits.sort_by(|(a_rank, a), (b_rank, b)| {
+        a_rank
+            .cmp(b_rank)
+            .then_with(|| if descending { by_name(b, a) } else { by_name(a, b) })
+    });
+    groups.sort();
+    if descending {
+        groups.reverse();
     }
-    (groups, outfits)
+    (groups, outfits.into_iter().map(|(_, named)| named).collect())
 }
 
 /// How `tree` orders a folder's groups and outfits.
@@ -123,20 +191,15 @@ pub enum Order {
     Gallery,
 }
 
-/// The outfit tree of My Outfits in display order (`Order`), each kind by
-/// name (`reverse` for Z to A). A filter (`needle`, lower case) keeps the
-/// outfits whose name or one of whose groups' names holds it, and the
-/// groups that keep one; without a filter every group shows, empty ones
-/// too, so that a new one can be used.
-pub fn tree(inv: &Inventory, needle: &str, reverse: bool, order: Order) -> Vec<Entry> {
+/// The outfit tree of My Outfits in display order (`Order`), its groups by
+/// name and its outfits by `sort`. A filter (`needle`, lower case) keeps the
+/// outfits whose name, one of whose groups' names or one of whose items'
+/// names holds it, and the groups that keep one; without a filter every
+/// group shows, empty ones too, so that a new one can be used.
+pub fn tree(inv: &Inventory, needle: &str, sort: Sort, order: Order) -> Vec<Entry> {
     let mut entries = Vec::new();
     if let Some(my) = my_outfits(inv) {
-        let walk = Walk {
-            inv,
-            needle,
-            reverse,
-            order,
-        };
+        let walk = Walk { inv, needle, sort, order };
         walk.folder(my, 0, needle.is_empty(), &mut entries);
     }
     entries
@@ -145,14 +208,14 @@ pub fn tree(inv: &Inventory, needle: &str, reverse: bool, order: Order) -> Vec<E
 struct Walk<'a> {
     inv: &'a Inventory,
     needle: &'a str,
-    reverse: bool,
+    sort: Sort,
     order: Order,
 }
 
 impl Walk<'_> {
     /// Adds what the container `id` shows; how many outfits that is.
     fn folder(&self, id: Uuid, depth: usize, matched: bool, out: &mut Vec<Entry>) -> usize {
-        let (groups, outfits) = children(self.inv, id, self.reverse);
+        let (groups, outfits) = children(self.inv, id, self.sort);
         let outfits_first = self.order == Order::Gallery && depth > 0;
         let mut count = 0;
         if outfits_first {
@@ -168,7 +231,7 @@ impl Walk<'_> {
     fn outfits(&self, outfits: &[(String, Uuid)], depth: usize, matched: bool, out: &mut Vec<Entry>) -> usize {
         let mut count = 0;
         for (name, outfit) in outfits {
-            if matched || name.contains(self.needle) {
+            if matched || name.contains(self.needle) || self.contents(*outfit) {
                 out.push(Entry {
                     id: *outfit,
                     depth,
@@ -179,6 +242,35 @@ impl Walk<'_> {
             }
         }
         count
+    }
+
+    /// Whether an item of the outfit `id` has `needle` in its name, so that
+    /// the outfit is kept for what the Legacy Viewer shows inside it. Its
+    /// subfolders are walked, folder links and items that do not go on the
+    /// avatar left out, as LLWearableItemsList::updateList collects the
+    /// outfit's items with collectDescendentsIf and LLFindOutfitItems
+    /// (indra/newview/llwearableitemslist.cpp); the tab stays when the
+    /// outfit's title or one of those items matches
+    /// (LLOutfitsList::applyFilterToTab, lloutfitslist.cpp).
+    fn contents(&self, id: Uuid) -> bool {
+        contents_folders(self.inv, id).any(|folder| {
+            folder.items.iter().filter_map(|id| self.inv.items.get(id)).any(|item| {
+                if item.parent != folder.info.id {
+                    return false;
+                }
+                // LLViewerInventoryItem::getType/getName and Appearance's rows use the link target.
+                let original = if item.asset_type == 24 {
+                    let Some(target) = self.inv.items.get(&item.asset_id) else {
+                        // An unresolved wearable link's row shows its own label in grey.
+                        return matches!(item.inv_type, 6 | 17 | 18 | 20) && item.name.to_lowercase().contains(self.needle);
+                    };
+                    target
+                } else {
+                    item
+                };
+                matches!(original.asset_type, 5 | 6 | 13 | 21) && original.name.to_lowercase().contains(self.needle)
+            })
+        })
     }
 
     fn groups(&self, groups: &[(String, Uuid)], depth: usize, matched: bool, out: &mut Vec<Entry>) -> usize {
@@ -204,6 +296,28 @@ impl Walk<'_> {
         }
         count
     }
+}
+
+/// The real folders searched inside an outfit, including the outfit itself.
+pub fn contents_folders(inv: &Inventory, outfit: Uuid) -> impl Iterator<Item = &Folder> {
+    let mut pending = vec![outfit];
+    let mut seen = std::collections::HashSet::new();
+    std::iter::from_fn(move || {
+        loop {
+            let id = pending.pop()?;
+            let Some(folder) = inv.folders.get(&id).filter(|f| !f.library && seen.insert(id)) else {
+                continue;
+            };
+            pending.extend(
+                folder
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|child| inv.folders.get(child).is_some_and(|f| f.info.parent == id)),
+            );
+            return Some(folder);
+        }
+    })
 }
 
 /// Every group and outfit of My Outfits, for Appearance to keep loaded:
@@ -356,7 +470,7 @@ pub fn trash(inv: &Inventory, id: Uuid) -> Result<Mutation, String> {
 pub fn targets(inv: &Inventory) -> Vec<(Uuid, usize)> {
     let mut out: Vec<_> = my_outfits(inv).map(|my| (my, 0)).into_iter().collect();
     out.extend(
-        tree(inv, "", false, Order::List)
+        tree(inv, "", Sort::default(), Order::List)
             .into_iter()
             .filter(|e| e.group)
             .map(|e| (e.id, e.depth + 1)),
@@ -534,7 +648,7 @@ mod tests {
     #[test]
     fn the_tree_lists_groups_first_then_outfits_by_name() {
         let inv = demo();
-        let all = rows(&tree(&inv, "", false, Order::List));
+        let all = rows(&tree(&inv, "", Sort::default(), Order::List));
         assert_eq!(
             all[..8],
             [
@@ -552,7 +666,11 @@ mod tests {
         let mut loose: Vec<_> = all[8..].iter().map(|r| (r.0, r.1, r.2)).collect();
         loose.sort();
         assert_eq!(loose, (702..706).map(|n| (n, 0, false)).collect::<Vec<_>>());
-        let reversed = tree(&inv, "", true, Order::List);
+        let z_to_a = Sort {
+            by: SortBy::NameDescending,
+            ..Sort::default()
+        };
+        let reversed = tree(&inv, "", z_to_a, Order::List);
         assert_eq!(reversed[0].id, id(743), "Z to A: Spring first");
         assert!(reversed.last().is_some_and(|e| e.depth == 0 && !e.group), "loose outfits last");
     }
@@ -560,7 +678,7 @@ mod tests {
     #[test]
     fn the_gallery_puts_a_groups_outfits_before_its_subgroups() {
         let inv = demo();
-        let all = rows(&tree(&inv, "", false, Order::Gallery));
+        let all = rows(&tree(&inv, "", Sort::default(), Order::Gallery));
         assert_eq!(
             all[..4],
             [
@@ -579,13 +697,79 @@ mod tests {
         let inv = demo();
         // "night" names a group (its outfit stays) and the outfit itself
         assert_eq!(
-            rows(&tree(&inv, "night", false, Order::List)),
+            rows(&tree(&inv, "night", Sort::default(), Order::List)),
             vec![(741, 0, true, 1), (742, 1, true, 1), (747, 2, false, 0)]
         );
         // a group's name keeps all its outfits; empty groups go
-        let club = rows(&tree(&inv, "club", false, Order::List));
+        let club = rows(&tree(&inv, "club", Sort::default(), Order::List));
         assert_eq!(club, vec![(740, 0, true, 2), (745, 1, false, 0), (744, 1, false, 0)]);
-        assert!(tree(&inv, "nothing", false, Order::List).is_empty());
+        assert!(tree(&inv, "nothing", Sort::default(), Order::List).is_empty());
+    }
+
+    #[test]
+    fn a_filter_also_keeps_the_outfits_that_contain_the_item() {
+        let inv = demo();
+        // "Earrings" is in "Neurolab" and "Leather Jacket" only, whatever
+        // their names: the Legacy Viewer keeps a tab whose items match
+        // (LLOutfitsList::applyFilterToTab with list->hasMatchedItems).
+        let earrings = inv.items[&id(718)].name.to_lowercase();
+        for order in [Order::List, Order::Gallery] {
+            let rows = rows(&tree(&inv, &earrings, Sort::default(), order));
+            let mut found: Vec<_> = rows.iter().map(|r| (r.0, r.2)).collect();
+            found.sort();
+            assert_eq!(found, vec![(704, false), (705, false)]);
+        }
+    }
+
+    #[test]
+    fn a_filter_walks_the_subfolders_of_an_outfit() {
+        let mut inv = demo();
+        let outfit = id(702);
+        let inner = id(748);
+        let mut folder = inv.folders[&id(743)].clone();
+        folder.info.id = inner;
+        folder.info.parent = outfit;
+        folder.children.clear();
+        folder.items.clear();
+        inv.folders.insert(inner, folder);
+        let mut item = inv.items[&id(719)].clone();
+        item.id = id(750);
+        item.parent = inner;
+        item.name = "Zebra socks".into();
+        inv.items.insert(item.id, item.clone());
+        inv.folders.get_mut(&inner).expect("inner").items.push(item.id);
+        inv.folders.get_mut(&outfit).expect("outfit").children.push(inner);
+        assert_eq!(rows(&tree(&inv, "zebra", Sort::default(), Order::List)), vec![(702, 0, false, 0)]);
+        inv.folders.get_mut(&inner).expect("inner").library = true;
+        assert!(
+            tree(&inv, "zebra", Sort::default(), Order::List).is_empty(),
+            "the Library is outside the outfit"
+        );
+    }
+
+    #[test]
+    fn a_filter_matches_a_missing_wearable_links_grey_label_but_skips_folder_links() {
+        let mut inv = demo();
+        let outfit = id(704);
+        let mut link = inv.items[&inv.folders[&outfit].items[0]].clone();
+        link.id = id(9004);
+        link.parent = outfit;
+        link.asset_id = id(9005);
+        link.asset_type = 24;
+        link.inv_type = 18;
+        link.name = "Unresolved garment".into();
+        inv.missing_items.insert(link.asset_id);
+        let mut folder_link = link.clone();
+        folder_link.id = id(9006);
+        folder_link.asset_type = 25;
+        folder_link.asset_id = id(702);
+        folder_link.name = "Referenced folder".into();
+        inv.add_items(vec![link, folder_link]);
+        assert_eq!(
+            rows(&tree(&inv, "unresolved garment", Sort::default(), Order::List)),
+            vec![(704, 0, false, 0)]
+        );
+        assert!(tree(&inv, "referenced folder", Sort::default(), Order::List).is_empty());
     }
 
     #[test]
@@ -600,7 +784,7 @@ mod tests {
         // old-style outfit (isOutfitFolder), not a group
         inv.folders.get_mut(&id(743)).expect("spring").items = (900..904).map(Uuid::from_u128).collect();
         assert!(!is_group(&inv, id(743)));
-        assert!(!tree(&inv, "", false, Order::List).iter().any(|e| e.id == id(743)));
+        assert!(!tree(&inv, "", Sort::default(), Order::List).iter().any(|e| e.id == id(743)));
         // the Current Outfit is not under My Outfits
         let cof = super::super::appearance::cof(&inv).expect("current outfit");
         assert!(!container(&inv, cof));
@@ -708,5 +892,131 @@ mod tests {
         assert_eq!(targets(&inv), vec![(my, 0), (id(741), 1), (id(742), 2), (id(740), 1), (id(743), 1)]);
         assert_eq!(path(&inv, id(742)), "Beach › Night");
         assert_eq!(path(&inv, my), "");
+    }
+
+    /// The demo outfits, dated by the links added to them.
+    fn dated(dates: &[(u128, i64)]) -> Inventory {
+        let mut inv = Inventory::default();
+        super::super::appearance::seed_demo(&mut inv, id(1));
+        let items = dates.iter().enumerate().flat_map(|(n, (outfit, date))| {
+            // the outfit's date is its newest link, whatever the order
+            [date / 2, *date].map(|created_at| aurora_net::inventory::InvItem {
+                id: Uuid::new_v4(),
+                parent: id(*outfit),
+                name: format!("link {n}"),
+                created_at,
+                ..Default::default()
+            })
+        });
+        let items: Vec<_> = items.collect();
+        inv.add_items(items);
+        inv
+    }
+
+    fn sorted(inv: &Inventory, sort: Sort) -> Vec<u128> {
+        tree(inv, "", sort, Order::List).iter().map(|e| e.id.as_u128()).collect()
+    }
+
+    fn by(by: SortBy) -> Sort {
+        Sort { by, ..Sort::default() }
+    }
+
+    #[test]
+    fn date_orders_use_the_newest_link_and_keep_undated_outfits_last() {
+        // 702 has no dated link: not loaded yet, in both directions
+        let inv = dated(&[(703, 300), (704, 100), (705, 200)]);
+        assert_eq!(sorted(&inv, by(SortBy::Newest)), [703, 705, 704, 702]);
+        assert_eq!(sorted(&inv, by(SortBy::Oldest)), [704, 705, 703, 702]);
+    }
+
+    #[test]
+    fn outfits_saved_at_the_same_time_keep_name_order() {
+        let inv = dated(&[(702, 100), (703, 100), (704, 100), (705, 100)]);
+        let names = sorted(&inv, Sort::default());
+        assert_eq!(sorted(&inv, by(SortBy::Newest)), names);
+        assert_eq!(sorted(&inv, by(SortBy::Oldest)), names);
+    }
+
+    #[test]
+    fn outfit_names_compare_their_numbers_by_value_in_every_order() {
+        let mut inv = dated(&[(702, 100), (703, 100)]);
+        for (outfit, name) in [(702, "Look 10"), (703, "Look 2")] {
+            inv.folders.get_mut(&id(outfit)).expect("a demo outfit").info.name = name.into();
+        }
+        let ours = |inv: &Inventory, sort| -> Vec<u128> { sorted(inv, sort).into_iter().filter(|n| [702, 703].contains(n)).collect() };
+        assert_eq!(ours(&inv, Sort::default()), [703, 702]);
+        assert_eq!(ours(&inv, by(SortBy::Newest)), [703, 702]);
+        assert_eq!(ours(&inv, by(SortBy::Oldest)), [703, 702]);
+        assert_eq!(ours(&inv, by(SortBy::NameDescending)), [702, 703]);
+    }
+
+    #[test]
+    fn favorites_and_images_go_on_top_of_any_order_and_combine() {
+        let mut inv = dated(&[(702, 400), (703, 300), (704, 200), (705, 100)]);
+        inv.folders.get_mut(&id(704)).expect("outfit").info.favorite = true;
+        inv.folders.get_mut(&id(705)).expect("outfit").info.favorite = true;
+        inv.folders.get_mut(&id(703)).expect("outfit").info.thumbnail = id(9);
+        inv.folders.get_mut(&id(705)).expect("outfit").info.thumbnail = id(9);
+        let sort = |favorites_first, images_first| Sort {
+            by: SortBy::Newest,
+            favorites_first,
+            images_first,
+        };
+        assert_eq!(sorted(&inv, sort(false, false)), [702, 703, 704, 705]);
+        assert_eq!(sorted(&inv, sort(true, false)), [704, 705, 702, 703]);
+        assert_eq!(sorted(&inv, sort(false, true)), [703, 705, 702, 704]);
+        assert_eq!(sorted(&inv, sort(true, true)), [705, 704, 703, 702]);
+        // on a name order, each part stays reversed
+        let z_to_a = Sort {
+            by: SortBy::NameDescending,
+            favorites_first: true,
+            images_first: false,
+        };
+        let names = sorted(&inv, by(SortBy::NameDescending));
+        let (top, rest): (Vec<u128>, Vec<u128>) = names.iter().partition(|n| [704, 705].contains(*n));
+        assert_eq!(sorted(&inv, z_to_a), [top, rest].concat());
+    }
+
+    #[test]
+    fn groups_stay_by_name_under_a_date_order_and_each_group_sorts_its_outfits() {
+        let mut inv = demo();
+        // Club holds two outfits: the later name gets the newer date
+        let club: Vec<_> = inv.folders[&id(740)].children.clone();
+        assert_eq!(club, [id(744), id(745)]);
+        let names = |inv: &Inventory, sort| -> Vec<Uuid> {
+            tree(inv, "", sort, Order::List)
+                .iter()
+                .map(|e| e.id)
+                .filter(|e| club.contains(e))
+                .collect()
+        };
+        let by_name = names(&inv, Sort::default());
+        let links: Vec<_> = by_name
+            .iter()
+            .enumerate()
+            .map(|(n, outfit)| aurora_net::inventory::InvItem {
+                id: Uuid::new_v4(),
+                parent: *outfit,
+                created_at: 100 + n as i64,
+                ..Default::default()
+            })
+            .collect();
+        inv.add_items(links);
+        let reversed: Vec<_> = by_name.iter().rev().copied().collect();
+        assert_eq!(names(&inv, by(SortBy::Newest)), reversed);
+        assert_eq!(names(&inv, by(SortBy::Oldest)), by_name);
+        let groups = |sort| -> Vec<Uuid> { tree(&inv, "", sort, Order::List).iter().filter(|e| e.group).map(|e| e.id).collect() };
+        assert_eq!(groups(by(SortBy::Newest)), groups(Sort::default()));
+        assert_eq!(groups(by(SortBy::Oldest)), groups(Sort::default()));
+    }
+
+    #[test]
+    fn the_filter_applies_to_date_orders_too() {
+        let inv = dated(&[(702, 400), (703, 100), (704, 200), (705, 300)]);
+        let found = |sort| -> Vec<u128> { tree(&inv, "o", sort, Order::List).iter().map(|e| e.id.as_u128()).collect() };
+        // "Cop" and "Neurolab" hold the letter, "Leather Jacket" in its
+        // items' names; the newest outfit, empty, does not
+        assert_eq!(found(by(SortBy::Newest)), [705, 704, 703]);
+        assert_eq!(found(by(SortBy::Oldest)), [703, 704, 705]);
     }
 }

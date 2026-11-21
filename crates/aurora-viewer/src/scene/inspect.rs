@@ -80,7 +80,7 @@ impl Scene {
         let mut textures = HashSet::new();
         let mut total: f32 = prims.iter().map(|&i| self.prim_render_cost(world, i, &mut textures)).sum();
         for id in &textures {
-            total += texture_cost(self.textures.full_size(id)) as f32;
+            total += texture_cost(self.textures.known_size(id)) as f32;
         }
         total.clamp(0.0, MAX_ATTACHMENT_COMPLEXITY) as u32
     }

@@ -4,10 +4,13 @@
 //! shown in the experience profile. Firestorm (indra/newview, originally LGPL
 //! 2.1): process_script_question asks LLExperienceCache::get before adding
 //! ScriptQuestionExperience (process_script_experience_details), and
-//! LLFloaterExperienceProfile reads and changes the permission.
+//! LLFloaterExperienceProfile reads and changes the permission, and lets an
+//! administrator edit the experience (experienceIsAdmin, doSave).
 
 use aurora_net::NetCommand;
-use aurora_net::experience::{ExperienceDetails, ExperienceListKind, ExperiencePermission, ExperiencePermissionChange};
+use aurora_net::experience::{
+    ExperienceDetails, ExperienceListKind, ExperiencePermission, ExperiencePermissionChange, ExperienceUpdate, UpdateNote,
+};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -38,6 +41,17 @@ pub struct Experiences {
     pub profile: Option<Uuid>,
     /// An explicit profile opening, including reopening the same experience.
     pub profile_raise: bool,
+    /// The profile opens on its Edit tab once the agent is known to
+    /// administer the experience (LLFloaterExperienceProfile::mPostEdit).
+    pub profile_edit: bool,
+    /// The experiences the agent may edit: IsExperienceAdmin said so and the
+    /// region has UpdateExperience.
+    pub admin: HashSet<Uuid>,
+    /// An UpdateExperience request in flight (Save waits).
+    pub saving: HashSet<Uuid>,
+    /// The last save's outcome: the fields the server ignored, or why it
+    /// failed.
+    pub saved: HashMap<Uuid, Result<Vec<UpdateNote>, String>>,
     /// The experiences each group owns (LLPanelGroupExperiences), None
     /// while asked.
     pub groups: HashMap<Uuid, Option<Vec<Uuid>>>,
@@ -122,12 +136,50 @@ impl Experiences {
         }
     }
 
-    /// Open the profile: its details and the current permission.
+    /// Open the profile: its details, the current permission, and whether
+    /// the agent may edit it (refreshExperience asks getExperienceAdmin).
     pub fn open_profile(&mut self, experience: Uuid) {
         self.profile = Some(experience);
         self.profile_raise = true;
         self.want(experience);
         self.change(experience, ExperiencePermissionChange::Query);
+        self.out.push(NetCommand::ExperienceAdmin(experience));
+        self.profile_edit = false;
+        self.saved.remove(&experience);
+    }
+
+    /// experienceIsAdmin's answer.
+    pub fn admin_arrived(&mut self, experience: Uuid, admin: bool) {
+        if admin {
+            self.admin.insert(experience);
+        } else {
+            self.admin.remove(&experience);
+        }
+    }
+
+    /// doSave: the package `update_body` built.
+    pub fn save(&mut self, experience: Uuid, body: aurora_llsd::Llsd) {
+        self.saving.insert(experience);
+        self.saved.remove(&experience);
+        self.out.push(NetCommand::UpdateExperience { experience, body });
+    }
+
+    /// onSaveComplete: the experience as saved replaces the cached one; an
+    /// answer that does not name it saved nothing that can be shown.
+    pub fn updated(&mut self, experience: Uuid, result: Result<ExperienceUpdate, String>) {
+        self.saving.remove(&experience);
+        let outcome = match result {
+            Ok(ExperienceUpdate {
+                notes,
+                details: Some(details),
+            }) => {
+                self.details.insert(experience, details);
+                Ok(notes)
+            }
+            Ok(ExperienceUpdate { details: None, .. }) => Err(aurora_i18n::tr!("ui-experience-profile-not-saved").to_owned()),
+            Err(e) => Err(e),
+        };
+        self.saved.insert(experience, outcome);
     }
 
     /// LLPanelGroupExperiences::activate: the group's list asked again
@@ -308,6 +360,48 @@ mod tests {
             !xp.take_commands().iter().any(|c| matches!(c, NetCommand::ExperienceInfo(_))),
             "already asked"
         );
+    }
+
+    #[test]
+    fn an_administrator_saves_and_the_answer_refreshes_the_details() {
+        let mut xp = Experiences::default();
+        let id = Uuid::from_u128(0xC);
+        xp.open_profile(id);
+        assert!(
+            xp.take_commands()
+                .iter()
+                .any(|c| matches!(c, NetCommand::ExperienceAdmin(e) if *e == id))
+        );
+        xp.admin_arrived(id, true);
+        assert!(xp.admin.contains(&id));
+        xp.save(id, aurora_llsd::Llsd::new_map());
+        assert!(xp.saving.contains(&id));
+        assert!(matches!(&xp.take_commands()[..], [NetCommand::UpdateExperience { experience, .. }] if *experience == id));
+        let saved = ExperienceDetails {
+            id,
+            name: "Club Doors".into(),
+            ..Default::default()
+        };
+        xp.updated(
+            id,
+            Ok(ExperienceUpdate {
+                notes: Vec::new(),
+                details: Some(saved),
+            }),
+        );
+        assert!(!xp.saving.contains(&id));
+        assert_eq!(xp.details[&id].name, "Club Doors");
+        assert_eq!(xp.saved.get(&id), Some(&Ok(Vec::new())));
+        // an answer without the experience, or a failure, says so
+        xp.save(id, aurora_llsd::Llsd::new_map());
+        xp.updated(id, Ok(ExperienceUpdate::default()));
+        assert!(matches!(xp.saved.get(&id), Some(Err(_))));
+        assert_eq!(xp.details[&id].name, "Club Doors", "kept");
+        xp.save(id, aurora_llsd::Llsd::new_map());
+        xp.updated(id, Err("status 500".into()));
+        assert_eq!(xp.saved.get(&id), Some(&Err("status 500".into())));
+        xp.admin_arrived(id, false);
+        assert!(!xp.admin.contains(&id));
     }
 
     #[test]

@@ -180,15 +180,22 @@ impl Offers {
         let Some(offer) = self.offered.remove(&notification) else {
             return;
         };
+        // LLOfferInfo::inventory_task_offer_callback (llviewermessage.cpp)
+        // notifies only when the description holds its literal
+        // "'  ( http://", and names the text before it.
+        let named = offer
+            .task
+            .then(|| offer.im.message.find("'  ( http://").and_then(|end| offer.im.message.get(1..end)))
+            .flatten();
         if !accepted {
-            if offer.task {
-                self.notices.push(format!("declined inv_offer {}", offer.name));
+            if let Some(name) = named {
+                self.notices.push(format!("declined inv_offer {name}"));
             }
             return;
         }
         if !allow {
-            if offer.task {
-                self.notices.push(format!("accepted_in_inv inv_offer {}", offer.name));
+            if let Some(name) = named {
+                self.notices.push(format!("accepted_in_inv inv_offer {name}"));
             }
             return;
         }
@@ -481,10 +488,17 @@ impl crate::world::World {
                 .observe(im, notification, self.rlva.preferences.allow_shared_offers)
     }
 
-    /// isGiveToRLVOffer: retain consent even when shared filing is disabled
-    /// or its bounded queue is full.
+    /// RlvInventory::isGiveToRLVOffer (rlvinventory.cpp), which keeps an
+    /// offer out of the automatic acceptance (inventory_offer_handler,
+    /// llimprocessing.cpp): a "#RLV/~" folder, while giving to #RLV is
+    /// allowed (RestrainedLoveForbidGiveToRLV off) and #RLV exists. Otherwise
+    /// it is an ordinary offer. A full queue still asks.
     pub(crate) fn rlva_inventory_offer_needs_confirmation(&self, im: &InstantMessage) -> bool {
-        self.rlva.enabled() && im.binary_bucket.first().copied() == Some(8) && name(im, im.dialog == im::TASK_INVENTORY_OFFERED).is_some()
+        self.rlva.enabled()
+            && self.rlva.preferences.allow_shared_offers
+            && super::inventory::shared_root(&self.inventory).is_some()
+            && im.binary_bucket.first().copied() == Some(8)
+            && name(im, im.dialog == im::TASK_INVENTORY_OFFERED).is_some()
     }
 
     pub(crate) fn rlva_shared_offer_answer(&mut self, notification: u64, commands: &mut [NetCommand]) {
@@ -589,7 +603,7 @@ mod tests {
             session_id: Uuid::from_u128(5),
             dialog: if task { im::TASK_INVENTORY_OFFERED } else { im::INVENTORY_OFFERED },
             message: if task {
-                "'#RLV/~Wardrobe/Cuffs' ( https://maps.secondlife.com/secondlife/Example/128/128/0 )".into()
+                "'#RLV/~Wardrobe/Cuffs'  ( http://slurl.com/secondlife/Example/128/128/0 )".into()
             } else {
                 "#RLV/~Wardrobe/Cuffs".into()
             },
@@ -757,5 +771,29 @@ mod tests {
             commands.is_empty(),
             "ordinary Received-items filing resumes its deferred acceptance"
         );
+    }
+
+    /// LLOfferInfo::inventory_task_offer_callback (llviewermessage.cpp):
+    /// a "#RLV/~" task offer is filed in #RLV whatever follows its name, but
+    /// "declined" and "accepted_in_inv" are only sent when the description
+    /// holds the literal "'  ( http://".
+    #[test]
+    fn rlva_task_offer_notices_need_the_reference_location_token() {
+        let mut message = offer(true, Uuid::from_u128(3));
+        message.message = "'#RLV/~Wardrobe/Cuffs' ( https://maps.secondlife.com/secondlife/Example/128/128/0 )".into();
+        let mut planner = Offers::default();
+        assert!(planner.observe(&message, 10, true), "still a gift to #RLV");
+        let mut commands = [inventory_answer(
+            message.from_agent_id,
+            message.session_id,
+            true,
+            false,
+            Uuid::nil(),
+        )];
+        planner.answer(10, &mut commands, true, None, Instant::now());
+        planner.observe(&message, 11, false);
+        commands[0] = inventory_answer(message.from_agent_id, message.session_id, true, true, Uuid::nil());
+        planner.answer(11, &mut commands, false, None, Instant::now());
+        assert!(planner.notices.is_empty(), "{:?}", planner.notices);
     }
 }

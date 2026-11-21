@@ -23,6 +23,10 @@ pub(super) enum DayFetch {
 impl App {
     /// loadInventoryItem for a day cycle item (edit_context "inventory").
     pub(super) fn day_editor_load(&mut self, item: Uuid) {
+        // env_edit_extdaycycle is filtered under @setenv (rlvhandler.cpp)
+        if self.rlva_environment_windows_locked() {
+            return;
+        }
         let Some(it) = self.world.inventory.items.get(&item).cloned() else {
             return;
         };
@@ -230,11 +234,15 @@ impl App {
                 self.day_editor.message = Some((aurora_i18n::tr!("ui-env-editor-copied").into(), false));
             }
             (None, Some(it)) => {
+                // renamed too when saved over with another name, as
+                // LLSettingsVOBase::updateInventoryItem does (update_name)
+                self.rename_settings_item(&it, doc.name());
                 self.day_editor.saving = Some(request);
                 self.send(NetCommand::SaveInventoryContent {
                     request,
                     item: it.id,
                     asset_type: 56,
+                    lua: false,
                     data: doc.to_asset(),
                 });
             }
@@ -278,7 +286,13 @@ impl App {
     pub(super) fn day_editor_saved(&mut self, result: Result<aurora_net::inventory::InvItem, String>) {
         self.day_editor.saving = None;
         match result {
-            Ok(it) => {
+            Ok(mut it) => {
+                if self.day_editor.item == Some(it.id)
+                    && let Some(doc) = &self.day_editor.doc
+                {
+                    // (trimmed, as the rename sent it)
+                    it.name = doc.name().trim().to_owned();
+                }
                 self.world.inventory.add_items(vec![it.clone()]);
                 self.day_editor.saved(
                     it.id,

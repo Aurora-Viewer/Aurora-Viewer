@@ -38,7 +38,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => {
             cx.group(tr!("ui-options-name-tags"), |cx| {
-                cx.toggle(tr!("ui-options-show-own-tag"), "", &field!(show_own_name_tag));
+                cx.toggle(
+                    tr!("ui-options-show-own-tag"),
+                    tr!("ui-options-show-own-tag-help"),
+                    &field!(show_own_name_tag),
+                );
                 cx.toggle(tr!("ui-options-show-friend-tags"), "", &field!(show_friend_name_tags));
                 cx.toggle(tr!("ui-options-show-other-tags"), "", &field!(show_other_name_tags));
                 cx.toggle(
@@ -99,6 +103,17 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(tag_complexity_own),
                     );
                 });
+                // FSTagShowDistance, FSTagShowDistanceColors (panel_preferences_colors.xml)
+                cx.toggle(
+                    tr!("ui-options-distance-in-name-tags"),
+                    tr!("ui-options-distance-in-name-tags-help"),
+                    &field!(tag_distance),
+                );
+                cx.toggle(
+                    tr!("ui-options-names-by-distance"),
+                    tr!("ui-options-names-by-distance-help"),
+                    &field!(tag_distance_colors),
+                );
             });
             // the plates' settings mean nothing to the classic name tags
             cx.group(tr!("ui-options-aurora-avatar-plates"), |cx| {
@@ -122,7 +137,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 let choices: Vec<(PlateClick, &str)> = PlateClick::ALL.iter().map(|a| (*a, plate_click_label(*a))).collect();
                 cx.combo(
                     tr!("ui-options-plate-click"),
-                    tr!("ui-options-plate-click-help"),
+                    tr!("ui-options-plate-click-own-help"),
                     &field!(plate_click),
                     &choices,
                 );
@@ -313,7 +328,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     );
                 });
             });
-            // PlayTypingAnim and FSTypeDuringEmote (panel_preferences_chat.xml)
+            // PlayTypingAnim, FSTypeDuringEmote and PlayChatAnim
+            // (panel_preferences_chat.xml)
             cx.group(tr!("ui-options-typing-and-voice"), |cx| {
                 cx.toggle(
                     tr!("ui-options-play-typing-anim"),
@@ -328,6 +344,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(type_during_emote),
                     );
                 });
+                cx.toggle(
+                    tr!("ui-options-play-chat-anim"),
+                    tr!("ui-options-play-chat-anim-hint"),
+                    &field!(play_chat_anim),
+                );
                 cx.toggle(tr!("voice-lip-sync"), "", &field!(audio.lip_sync));
             });
             // ANIM_AGENT_CUSTOMIZE, always played by the Legacy Viewer
