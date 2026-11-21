@@ -308,11 +308,10 @@ impl App {
                 // The Movelock window's Repair: recompile and restart both scripts.
                 crate::ik_edit::poser::Request::RepairBridge => self.bridge_runtime.retry(Instant::now()),
                 crate::ik_edit::poser::Request::ObjectName(object) => {
-                    if let Some(object) = self.world.objects.index_of_uuid(&object).and_then(|i| self.world.objects.get(i)) {
-                        self.net.send(aurora_net::NetCommand::RequestObjectProperties {
-                            handle: object.key.region,
-                            object: object.full_id,
-                        });
+                    let target = self.world.objects.index_of_uuid(&object).and_then(|i| self.world.objects.get(i));
+                    if let Some((handle, object)) = target.map(|o| (o.key.region, o.full_id)) {
+                        // through `send`, as every other property request (the demo answers it)
+                        self.send(aurora_net::NetCommand::RequestObjectProperties { handle, object });
                     }
                 }
             }

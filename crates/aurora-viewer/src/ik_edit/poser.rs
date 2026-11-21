@@ -301,10 +301,14 @@ impl State {
     }
 }
 impl Editor {
+    /// Keeps the names the subject menu asked for (`Request::ObjectName`);
+    /// the properties of every other object (hover tips, area search, the
+    /// build selection) are not the poser's to keep.
     pub(crate) fn update_poser_subject_names(&mut self, props: &[aurora_net::build::ObjectProps]) {
         for prop in props.iter().filter(|p| !p.name.trim().is_empty()) {
-            self.poser.subject_names.insert(prop.object_id, prop.name.clone());
-            self.poser.subject_name_requested.remove(&prop.object_id);
+            if self.poser.subject_name_requested.remove(&prop.object_id).is_some() {
+                self.poser.subject_names.insert(prop.object_id, prop.name.clone());
+            }
         }
     }
     pub(super) fn poser_edited(&self, bone: usize) -> bool {

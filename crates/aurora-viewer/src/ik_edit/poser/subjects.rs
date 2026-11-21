@@ -5,7 +5,24 @@ use crate::{
     world::{bridge::QueryState, poser_consent},
 };
 
+/// Where you stand, for the subjects' distance: computed once per menu
+/// frame by the caller rather than once per object.
+pub(super) fn own_position(world: &World) -> Option<Vec3> {
+    let index = world.objects.index_of_uuid(&world.agent_id)?;
+    Scene::object_transform(world, index, Instant::now(), 0).map(|t| t.0)
+}
+/// An animesh's own skeleton root (`animesh::owner`): a linkset root, rezzed
+/// or worn, flagged animated. A plain test for the cheap flag comes first.
+fn animesh_root(world: &World, index: usize, object: &crate::world::objects::Object) -> bool {
+    object.extra.extended_mesh_flags.unwrap_or(0) & aurora_prim::extra::EXTENDED_MESH_ANIMATED != 0
+        && Scene::skeleton_owner(world, index).is_some_and(|(owner, root)| owner == object.full_id && root == index)
+}
 pub(super) fn eligibility_reason(world: &World, id: Uuid) -> Option<&'static str> {
+    eligibility_reason_from(world, id, own_position(world))
+}
+/// `eligibility_reason` with your position already known (`own_position`):
+/// the cheap tests first, the object's own transform last.
+pub(super) fn eligibility_reason_from(world: &World, id: Uuid, own_at: Option<Vec3>) -> Option<&'static str> {
     if id == world.agent_id {
         return id.is_nil().then_some("not-owned");
     }
@@ -17,6 +34,9 @@ pub(super) fn eligibility_reason(world: &World, id: Uuid) -> Option<&'static str
     };
     if object.is_avatar() {
         return (!world.poser_consent.can_pose(world, id)).then_some("no-consent");
+    }
+    if !animesh_root(world, index, object) {
+        return Some("not-root");
     }
     // the simulator leaves OwnerID empty in most object updates and fills
     // it only with ObjectProperties (a selection): the update flags say
@@ -35,22 +55,18 @@ pub(super) fn eligibility_reason(world: &World, id: Uuid) -> Option<&'static str
         return Some("muted");
     }
     if !Scene::object_transform(world, index, Instant::now(), 0)
-        .zip(
-            world
-                .objects
-                .index_of_uuid(&world.agent_id)
-                .and_then(|i| Scene::object_transform(world, i, Instant::now(), 0)),
-        )
-        .is_some_and(|(a, b)| a.0.distance(b.0) <= 50.0)
+        .zip(own_at)
+        .is_some_and(|(a, b)| a.0.distance(b) <= 50.0)
     {
         return Some("too-far");
     }
-    if !Scene::skeleton_owner(world, index).is_some_and(|(owner, root)| owner == id && root == index) {
-        return Some("not-root");
-    }
-    // no pose of its own yet is fine: a still animesh is posed only once
-    // it animates, and the poser does not need that pose to start
     None
+}
+/// Whether the poser can open on this subject now: an animesh whose
+/// skeleton is not posed yet (its rigged mesh still loading) has no frame,
+/// and the poser window would show nothing for it.
+pub(super) fn has_frame(world: &World, id: Uuid) -> bool {
+    id == world.agent_id || Frame::subject(world, id).is_some()
 }
 pub(super) fn allowed(world: &World, id: Uuid) -> bool {
     eligibility_reason(world, id).is_none()
@@ -158,7 +174,8 @@ impl Editor {
         ids
     }
     pub(super) fn pick_subject(&mut self, world: &World, id: Uuid) {
-        if !allowed(world, id) {
+        // without a frame the poser window shows nothing (`show_poser`)
+        if !allowed(world, id) || !has_frame(world, id) {
             return;
         }
         self.poser.subject = id;
@@ -314,6 +331,8 @@ impl Editor {
         self.poser
             .subject_skip_logged
             .retain(|_, at| at.elapsed() < std::time::Duration::from_secs(300));
+        // the names of objects that are gone
+        self.poser.subject_names.retain(|id, _| world.objects.index_of_uuid(id).is_some());
         use crate::world::poser_consent::Status;
         ui.set_width(MENU_W);
         let now = ui.input(|i| i.time);
@@ -345,14 +364,26 @@ impl Editor {
         {
             pick = Some(world.agent_id);
         }
-        for (_, object) in world.objects.iter() {
+        // your position once per frame, not once per object
+        let own_at = own_position(world);
+        for (index, object) in world.objects.iter() {
             let id = object.full_id;
-            if id == world.agent_id || object.is_avatar() {
+            // an animesh is an animated linkset root: every other prim
+            // (most of what you own) stops at these two plain tests
+            if id == world.agent_id || object.is_avatar() || !animesh_root(world, index, object) {
                 continue;
             }
-            match eligibility_reason(world, id) {
+            // a rigged mesh still loading has no pose yet: the poser would
+            // open on nothing (`Frame::subject`), so it waits in the log
+            let reason = eligibility_reason_from(world, id, own_at).or_else(|| (!has_frame(world, id)).then_some("no-pose"));
+            match reason {
                 None => {
-                    if !self.poser.subject_names.contains_key(&id)
+                    // a worn animesh is named by its inventory item
+                    let worn_name = object
+                        .attachment_item_id()
+                        .is_some_and(|item| world.inventory.items.contains_key(&item));
+                    if !worn_name
+                        && !self.poser.subject_names.contains_key(&id)
                         && self
                             .poser
                             .subject_name_requested
@@ -371,17 +402,16 @@ impl Editor {
                     }
                 }
                 Some(reason)
-                    if object.extra.extended_mesh_flags.unwrap_or(0) & aurora_prim::extra::EXTENDED_MESH_ANIMATED != 0
-                        && self
-                            .poser
-                            .subject_skip_logged
-                            .get(&id)
-                            .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(30)) =>
+                    if self
+                        .poser
+                        .subject_skip_logged
+                        .get(&id)
+                        .is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(30)) =>
                 {
                     log::debug!("poser animesh {} not offered: {reason}", object.key.local_id);
                     self.poser.subject_skip_logged.insert(id, Instant::now());
                 }
-                _ => {}
+                Some(_) => {}
             }
         }
         ui.add_space(4.0);
