@@ -390,6 +390,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::GroupChat(..) => "GroupChat",
         CtxAction::ActivateGroup(..) => "ActivateGroup",
         CtxAction::JoinGroup(..) => "JoinGroup",
+        CtxAction::RequestGroupData(..) => "RequestGroupData",
         CtxAction::PinGroup(..) => "PinGroup",
         CtxAction::LeaveGroup(..) => "LeaveGroup",
         CtxAction::GroupChatBlocked(..) => "GroupChatBlocked",
