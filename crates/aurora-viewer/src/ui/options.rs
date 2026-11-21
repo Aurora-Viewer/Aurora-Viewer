@@ -1262,7 +1262,9 @@ fn binding_cell(
         .as_ref()
         .map(|b| kb.rivals(a, b).into_iter().map(crate::keybinds::label).collect())
         .unwrap_or_default();
-    let tip = if capturing {
+    let tip = if capturing && a == crate::keybinds::Action::CommandSearch {
+        aurora_i18n::tr!("common-press-a-key").to_owned()
+    } else if capturing {
         aurora_i18n::tr!("ui-options-key-combination-ctrl-shift-alt-or-mouse-button-wheel").to_owned()
     } else if others.is_empty() {
         aurora_i18n::tr!("ui-options-click-change-right-click-clear").to_owned()

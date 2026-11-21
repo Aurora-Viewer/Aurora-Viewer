@@ -15720,3 +15720,6 @@ game-control-action-boom-down = Grua ↓
 game-control-action-escape = ESC
 picker-local-newest = Mais recentes primeiro
 picker-local-name = Nome A–Z
+
+command-search-title = Pesquisa de comandos
+command-search-enable = Ativar a pesquisa de comandos

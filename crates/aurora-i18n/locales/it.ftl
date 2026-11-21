@@ -15660,3 +15660,6 @@ game-control-action-boom-down = Braccio ↓
 game-control-action-escape = ESC
 picker-local-newest = Prima i più recenti
 picker-local-name = Nome A–Z
+
+command-search-title = Ricerca comandi
+command-search-enable = Attiva la ricerca comandi

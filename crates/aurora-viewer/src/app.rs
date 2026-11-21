@@ -97,6 +97,7 @@ mod photo_gaze;
 pub(crate) use gpu_stall::withdraw_all as withdraw_gpu_notices;
 mod autotune;
 mod avatar_align;
+mod command_search;
 mod debug_settings;
 mod draw_stepping;
 mod graphics_start;
@@ -539,6 +540,7 @@ pub struct App {
     /// The avatar render info and the complexity notice (app/render_info.rs).
     render_info: render_info::Tracker,
     panels: Panels,
+    command_search: ui::command_search::CommandSearch,
     /// Conversations and the mini-map as last frame left them (their
     /// startup settings follow an open or a close only).
     startup_windows: ui::StartupWindows,
@@ -1974,6 +1976,7 @@ impl App {
             render_info: Default::default(),
             startup_windows: ui::StartupWindows::new(&panels),
             panels,
+            command_search: Default::default(),
             chat_ui,
             toolbar_ui: Default::default(),
             dock_layout: Default::default(),
@@ -3579,6 +3582,7 @@ impl App {
     }
 
     fn back_to_login(&mut self, error: Option<String>) {
+        self.command_search.close();
         // FSFloaterPoseStand::onClose for the departing account: its AO back on
         // before the settings are saved and the account state replaced
         self.close_pose_stand();
@@ -13144,6 +13148,7 @@ impl App {
             self.gesture_demo_input(&mut raw);
             self.suggest_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
+            self.command_search.demo_input(self.frame_count, &mut raw);
             raw.events.extend(ui::menu::search_demo_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::worn_events(&ctx, self.frame_count));
@@ -16357,6 +16362,9 @@ impl App {
                 .collect();
             self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_lure_region());
         }
+        if let Some(action) = a.command_search {
+            self.handle_command_search(action);
+        }
         if let Some(asset) = a.landmark {
             self.record_library_asset(asset, 3);
             self.request_user_teleport(
@@ -18896,6 +18904,34 @@ impl App {
                 } else {
                     ui::bars::islands::set_favorites_row_bottom(&ctx, None);
                 }
+                if self.command_search.is_open() {
+                    let environment_free = !self.world.rlva.has("setenv") && !self.world.rlva.has("setsphere");
+                    if environment_free {
+                        if !self.env_scan {
+                            self.env_scan = true;
+                            self.env_ui.scan_left = usize::MAX;
+                        }
+                        self.env_ui.refresh(&ctx, &self.world.inventory);
+                    }
+                    let places = if status.location_hidden {
+                        Default::default()
+                    } else {
+                        self.world.landmarks.saved_places(&self.world.inventory)
+                    };
+                    let sources = ui::command_search::Sources {
+                        places: &places,
+                        can_teleport: self.world.rlva_can_teleport_landmark(),
+                        can_show_map: !self.rlva_refuses_shortcut(Action::WorldMap),
+                        can_show_inventory: !self.rlva_refuses_shortcut(Action::Inventory),
+                        has_photos: !self.snapshots.reel.reel.is_empty(),
+                        environments: environment_free.then(|| self.env_ui.catalog()),
+                    };
+                    let (bar, action) = self.command_search.show(&ctx, &p, &mut self.panels, &status, sources);
+                    if !matches!(bar, BarAction::None) {
+                        a.bar = bar;
+                    }
+                    a.command_search = action;
+                }
                 // AURORA_DEMO_BARS: the mockup's voice (connected; talking
                 // with `voice`) and chat island width, for this run only and
                 // with the islands (Firestorm's bars stay as they were)
@@ -20985,7 +21021,7 @@ impl App {
                     &mut c,
                     &mut open,
                     self.settings.landmarks_by_date,
-                    self.settings.confirm_teleports,
+                    self.settings.confirm_teleports || (self.demo && ui::command_search::demo_confirm()),
                     places_env.as_ref(),
                 );
                 self.panels.places = open;
@@ -21430,6 +21466,7 @@ struct UiActions {
     login: LoginAction,
     chat: Option<ui::chat::OutgoingChat>,
     bar: BarAction,
+    command_search: Option<ui::command_search::Action>,
     settings_changed: bool,
     ui_scale_changed: bool,
     font_changed: bool,
@@ -21472,6 +21509,7 @@ impl UiActions {
         if !matches!(later.bar, BarAction::None) {
             self.bar = later.bar;
         }
+        first(&mut self.command_search, later.command_search);
         self.settings_changed |= later.settings_changed;
         self.ui_scale_changed |= later.ui_scale_changed;
         self.font_changed |= later.font_changed;
@@ -24966,6 +25004,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(false) => {
+                self.command_search.close();
                 self.super_held = false;
                 self.ime_preedit = false;
                 self.options_ui.cancel_joystick_capture();
@@ -25072,6 +25111,9 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
+                    if self.command_search.is_open() && self.command_search_input(code, ke, mods) {
+                        return;
+                    }
                     // The animation editor owns its accelerators before the
                     // global keybind table (Home=Fly, Ctrl+S=Resync). egui
                     // already received this event above; only route it when
@@ -25159,6 +25201,9 @@ impl ApplicationHandler for App {
                         })
                         .flatten();
                     let ui_shortcut = build_shortcut.is_some();
+                    if !ui_shortcut && self.command_search_input(code, ke, mods) {
+                        return;
+                    }
                     let command_key = pressed && !altgr_text && self.settings.keybinds.triggered(&input, mods).is_some();
                     if ui_shortcut || command_key {
                         self.down.remove(&input);
@@ -25328,8 +25373,13 @@ impl ApplicationHandler for App {
                 let over_ui = self.ui_takes_pointer();
                 // shortcut being captured: middle / side buttons bind, left / right cancel
                 if self.options_ui.capture.is_some() {
-                    if pressed {
-                        self.finish_capture(Input::mouse(*button));
+                    let input = Input::mouse(*button);
+                    let keyboard_only = matches!(
+                        self.options_ui.capture,
+                        Some(ui::options::Capture::Binding(Action::CommandSearch, _))
+                    );
+                    if pressed && (!keyboard_only || input.is_none()) {
+                        self.finish_capture(input);
                     }
                     return;
                 }
@@ -26367,22 +26417,26 @@ mod tests {
         let mut actions = UiActions {
             settings_changed: true,
             landmark: Some(a),
+            command_search: Some(crate::ui::command_search::Action::ShowOnMap(a)),
             gestures: vec![a],
             ..Default::default()
         };
         actions.merge(UiActions::default());
         assert!(actions.settings_changed);
         assert_eq!(actions.landmark, Some(a));
+        assert_eq!(actions.command_search, Some(crate::ui::command_search::Action::ShowOnMap(a)));
         assert_eq!(actions.gestures, vec![a]);
         // a second pass that acts too keeps the first one-off action and adds
         // to the lists
         actions.merge(UiActions {
             landmark: Some(b),
+            command_search: Some(crate::ui::command_search::Action::ShowOnMap(b)),
             gestures: vec![b],
             font_changed: true,
             ..Default::default()
         });
         assert_eq!(actions.landmark, Some(a));
+        assert_eq!(actions.command_search, Some(crate::ui::command_search::Action::ShowOnMap(a)));
         assert_eq!(actions.gestures, vec![a, b]);
         assert!(actions.settings_changed && actions.font_changed);
     }

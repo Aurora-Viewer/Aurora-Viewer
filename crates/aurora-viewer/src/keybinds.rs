@@ -472,6 +472,7 @@ pub enum Action {
     Search,
     Performance,
     Preferences,
+    CommandSearch,
     /// Hide or show the interface (Firestorm's View › Show User Interface,
     /// Alt+Shift+U, `View.ToggleUI`).
     ToggleInterface,
@@ -738,6 +739,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Search, aurora_i18n::tr!("search-title")),
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
                     (Action::Preferences, aurora_i18n::tr!("common-preferences")),
+                    (Action::CommandSearch, aurora_i18n::tr!("command-search-title")),
                     (Action::ToggleInterface, aurora_i18n::tr!("keybinds-hide-interface")),
                     (Action::HoverTips, aurora_i18n::tr!("ui-options-hover-tips")),
                     (Action::Import, aurora_i18n::tr!("keybinds-import-files")),
@@ -1005,6 +1007,7 @@ impl KeyBindings {
             (Action::Search, [kmod(K::KeyF, true, false), None]),
             (Action::Performance, [kmod(K::Digit1, true, true), None]),
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
+            (Action::CommandSearch, [kmod(K::KeyP, true, true), None]),
             // menu_viewer.xml: Show User Interface, shortcut="alt|shift|U"
             (Action::ToggleInterface, [kalt(K::KeyU, false, true), None]),
             // menu_viewer.xml: Show Tips, shortcut="control|shift|T"
@@ -1678,7 +1681,8 @@ impl KeyBindings {
     /// binding without modifiers when neither Ctrl nor Alt is held.
     pub fn triggered(&self, input: &Input, m: Mods) -> Option<Action> {
         let exact = self.map.iter().find(|(a, bs)| {
-            !is_held(*a)
+            *a != Action::CommandSearch
+                && !is_held(*a)
                 && !is_chat(*a)
                 && bs
                     .iter()
@@ -1693,8 +1697,19 @@ impl KeyBindings {
         }
         self.map
             .iter()
-            .find(|(a, bs)| !is_held(*a) && !is_chat(*a) && bs.iter().flatten().any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift))
+            .find(|(a, bs)| {
+                *a != Action::CommandSearch
+                    && !is_held(*a)
+                    && !is_chat(*a)
+                    && bs.iter().flatten().any(|b| &b.input == input && !b.ctrl && !b.alt && !b.shift)
+            })
             .map(|(a, _)| *a)
+    }
+
+    /// The palette must yield to an existing action.
+    pub(crate) fn command_search_key(&self, input: Input, mods: Mods) -> bool {
+        let binding = Binding::captured(input, mods);
+        self.get(Action::CommandSearch).contains(&Some(binding.clone())) && self.rivals(Action::CommandSearch, &binding).is_empty()
     }
 
     /// A menu/window action owns the press, including a key held before
@@ -1727,6 +1742,7 @@ impl KeyBindings {
             && !self.map.iter().any(|(a, bs)| {
                 *a != Action::Up
                     && *a != Action::HudDrag
+                    && *a != Action::CommandSearch
                     && !is_chat(*a)
                     && bs.iter().flatten().any(|b| &b.input == input && b.ctrl && !b.alt && !b.shift)
             })
@@ -1767,6 +1783,28 @@ mod tests {
     /// through here (Ctrl+Q is KeyA on AZERTY, Ctrl+H is KeyJ on Dvorak).
     fn letter(us_key: KeyCode) -> KeyCode {
         layout::current().named_key(us_key)
+    }
+
+    #[test]
+    fn command_search_shortcut_yields_to_an_existing_action() {
+        let mut bindings = KeyBindings::default();
+        let default = bindings.get(Action::CommandSearch)[0].clone().unwrap();
+        let mods = Mods {
+            ctrl: true,
+            shift: true,
+            ..Mods::default()
+        };
+        assert!(bindings.command_search_key(default.input.clone(), mods));
+        assert_eq!(bindings.triggered(&default.input, mods), None);
+        bindings.set(Action::Search, 0, Some(default.clone()));
+        assert!(!bindings.command_search_key(default.input.clone(), mods));
+        assert_eq!(bindings.triggered(&default.input, mods), Some(Action::Search));
+        bindings.set(
+            Action::CommandSearch,
+            0,
+            Some(Binding::captured(Input::key(KeyCode::F8), Mods::default())),
+        );
+        assert!(bindings.command_search_key(Input::key(KeyCode::F8), Mods::default()));
     }
 
     /// LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).

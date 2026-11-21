@@ -18,6 +18,7 @@ pub mod bars;
 pub mod bidi;
 pub mod blacklist;
 pub mod bumps;
+pub(crate) mod command_search;
 pub mod sound_explorer;
 pub mod voice_controls;
 // Bug report form (disabled, see main.rs):

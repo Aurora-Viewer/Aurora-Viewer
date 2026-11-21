@@ -1244,6 +1244,131 @@ mod tests {
         }
     }
 
+    #[test]
+    fn command_search_enter_runs_the_exact_world_map_label_once() {
+        assert!(crate::settings::Settings::default().command_search);
+        let (panels, action) = search_and_enter(aurora_i18n::tr!("common-world-map"), Default::default(), false);
+        assert!(panels.world_map);
+        assert!(!panels.minimap);
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn command_search_routes_preferences_toolbar_and_saved_places() {
+        use crate::ui::command_search::{Action, Sources};
+        use crate::ui::options::Page;
+        use crate::world::landmarks::SavedPlace;
+        let places = [SavedPlace {
+            name: "Boreal Beach".into(),
+            asset: uuid::Uuid::from_u128(44),
+            favorite: true,
+            folders: "Trips".into(),
+        }];
+        let sources = Sources {
+            places: &places,
+            can_teleport: true,
+            can_show_map: true,
+            ..Default::default()
+        };
+        let (_, action) = search_and_enter(
+            &format!("{} {}", aurora_i18n::tr!("common-preferences"), Page::Privacy.name()),
+            sources,
+            false,
+        );
+        assert_eq!(action, Some(Action::Preferences(Page::Privacy, 0)));
+        let (_, action) = search_and_enter("Trips Boreal Beach", sources, false);
+        assert_eq!(
+            action,
+            Some(Action::Teleport {
+                asset: places[0].asset,
+                name: places[0].name.clone()
+            })
+        );
+        let (_, action) = search_and_enter(&format!("{} Boreal", aurora_i18n::tr!("common-show-on-map")), sources, false);
+        assert_eq!(action, Some(Action::ShowOnMap(places[0].asset)));
+        let blocked = Sources {
+            can_show_map: false,
+            ..sources
+        };
+        let (_, action) = search_and_enter(&format!("{} Boreal", aurora_i18n::tr!("common-show-on-map")), blocked, false);
+        assert!(action.is_none());
+        let (_, action) = search_and_enter("Boreal Beach", sources, true);
+        assert!(action.is_none());
+        let (panels, _) = search_and_enter(aurora_i18n::tr!("texture-library-title"), sources, false);
+        assert!(panels.texture_library);
+        use crate::world::env_select::{SettingsCatalog, SettingsChoice, SettingsKind};
+        for kind in [SettingsKind::Sky, SettingsKind::Water, SettingsKind::Day] {
+            let choice = SettingsChoice {
+                item: uuid::Uuid::from_u128(45),
+                asset: uuid::Uuid::from_u128(46),
+                name: "Evening preset".into(),
+            };
+            let mut catalog = SettingsCatalog::default();
+            match kind {
+                SettingsKind::Sky => catalog.sky.push(choice.clone()),
+                SettingsKind::Water => catalog.water.push(choice.clone()),
+                SettingsKind::Day => catalog.day.push(choice.clone()),
+            }
+            let environment_sources = Sources {
+                environments: Some(&catalog),
+                ..sources
+            };
+            let (_, action) = search_and_enter("Evening preset", environment_sources, false);
+            assert_eq!(
+                action,
+                Some(Action::Environment(crate::ui::environment::EnvAction::Pick(kind, choice.asset)))
+            );
+        }
+    }
+
+    fn search_and_enter(
+        query: &str,
+        sources: crate::ui::command_search::Sources<'_>,
+        hide_location: bool,
+    ) -> (Panels, Option<crate::ui::command_search::Action>) {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let settings = crate::settings::Settings::default();
+        let mut panels = Panels::from_settings(&settings);
+        let mut search = crate::ui::command_search::CommandSearch::default();
+        panels.world_map = false;
+        panels.minimap = false;
+        search.toggle(&ctx);
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut status = status(false, false);
+        status.location_hidden = hide_location;
+        let mut result = None;
+        for events in [
+            vec![],
+            vec![],
+            vec![egui::Event::Text(query.to_owned())],
+            vec![],
+            vec![enter.clone()],
+            vec![enter],
+        ] {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 720.0))),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| {
+                if search.is_open() {
+                    let (_, action) = search.show(ui.ctx(), &p, &mut panels, &status, sources);
+                    if let Some(action) = action {
+                        assert!(result.replace(action).is_none(), "a selection may only run once");
+                    }
+                }
+            });
+        }
+        (panels, result)
+    }
+
     /// Two frames of the islands in a screen `width` wide (16:9), the
     /// pointer at `pointer`; the areas' rectangles by name, and what the
     /// last frame painted.

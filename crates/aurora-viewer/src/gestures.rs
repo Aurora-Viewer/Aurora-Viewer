@@ -146,6 +146,16 @@ impl Manager {
         self.choose(&matching)
     }
 
+    pub(crate) fn uses_key(&self, key: u8, mask: u32) -> bool {
+        self.enabled
+            && key != KEY_NONE
+            && self.active.iter().any(|id| {
+                self.entries
+                    .get(id)
+                    .is_some_and(|e| e.definition.key == key && e.definition.mask == mask)
+            })
+    }
+
     /// LLViewerInput::handleKey: a key held down repeats, and its repeats
     /// trigger gestures too, except the function keys F1 to F12.
     pub fn repeat_triggers(key: u8) -> bool {

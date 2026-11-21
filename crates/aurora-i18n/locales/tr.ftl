@@ -15677,3 +15677,6 @@ game-control-action-boom-down = Vinç ↓
 game-control-action-escape = ESC
 picker-local-newest = Önce en yeni
 picker-local-name = Ad A–Z
+
+command-search-title = Komut arama
+command-search-enable = Komut aramayı etkinleştir
