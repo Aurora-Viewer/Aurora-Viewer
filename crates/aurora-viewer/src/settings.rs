@@ -4352,7 +4352,7 @@ mod tests {
         assert!(!s.planet_curvature);
         assert_eq!(s.planet_radius(), None);
         assert_eq!(s.planet_radius_km, 6371.0);
-        for (asked, kept) in [(1.0, 100.0), (6371.0, 6371.0), (1.0e9, 100_000.0), (f32::NAN, 6371.0)] {
+        for (asked, kept) in [(1.0, 1000.0), (6371.0, 6371.0), (1.0e9, 100_000.0), (f32::NAN, 6371.0)] {
             let s = super::Settings {
                 planet_curvature: true,
                 planet_radius_km: asked,

@@ -90,10 +90,10 @@ mod tests {
             })
         );
         assert_eq!(
-            parse(" 25 : 200 "),
+            parse(" 25 : 2000 "),
             Some(Scenario {
                 height: 25.0,
-                radius_km: Some(200.0)
+                radius_km: Some(2000.0)
             })
         );
         assert_eq!(
@@ -104,7 +104,7 @@ mod tests {
             })
         );
         // within the setting's radii, as the renderer draws them
-        assert_eq!(parse("10:50").and_then(|s| s.radius_km), Some(100.0));
+        assert_eq!(parse("10:50").and_then(|s| s.radius_km), Some(1000.0));
         assert_eq!(parse("high"), None);
         assert_eq!(parse("10:-5"), None);
     }

@@ -5314,7 +5314,7 @@ both open states and the selection count. Capture at frame 620.
   water. What to look at: flat, the sea runs out to the middle of the
   picture; curved, it ends at a sharp horizon just under the middle, with
   the sky below it (from 10 m on the Earth only ~0.1°, 2 px at 1080p; from
-  300 m 0.56°; `10:200` puts a 200 km planet's horizon ~2 km out). The sea
+  300 m 0.56°; `300:1000` puts a 1,000 km planet's horizon ~25 km out, 1.4° under eye level; radii under 1,000 km are raised to it). The sea
   has no seam or step where the region's cells meet the far slabs, and
   nothing in the region moves. Capture from `AURORA_CAPTURE_FRAMES=800`.
 - **`AURORA_DEMO_CLOUDS=fair|broken|stratocumulus|overcast`**: turns on

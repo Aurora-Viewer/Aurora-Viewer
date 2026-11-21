@@ -20,9 +20,12 @@ use glam::{Vec2, Vec3};
 /// The Earth's mean radius (m), the default.
 pub const EARTH_RADIUS: f32 = 6_371_000.0;
 
-/// The radii the setting allows (m): from a small moon, whose horizon is
-/// still a few kilometres out from a standing avatar, to a gas giant.
-pub const RADIUS_MIN: f32 = 100_000.0;
+/// The radii the setting allows (m): from a small moon to a gas giant. The
+/// name tags, hover text, beacons, gizmos, ray picks and the GPU culling
+/// still work in the flat world (TASKS.md); down to 1,000 km they stray by
+/// at most 3 cm at 256 m and half a metre at 1 km, under a pixel to a few
+/// at those distances.
+pub const RADIUS_MIN: f32 = 1_000_000.0;
 pub const RADIUS_MAX: f32 = 100_000_000.0;
 
 /// The bend of one frame.
