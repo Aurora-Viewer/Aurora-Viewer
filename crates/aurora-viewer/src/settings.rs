@@ -50,6 +50,17 @@ pub enum BlockedChat {
 /// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
 /// row per message, no pictures), a messenger's bubbles (`ui/chat/bubbles.rs`)
 /// or the lines of Firestorm's conversations (the legacy style).
+/// What an avatar's name plate shows at close range (`ui::nameplate`):
+/// the complete plate, the picture alone in a round plate, or the display
+/// name alone. The classic name tags (`classic_name_tags`) ignore it.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PlateStyle {
+    #[default]
+    Plates,
+    Icon,
+    Name,
+}
+
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ChatStyle {
     #[default]
@@ -1362,6 +1373,8 @@ pub struct Settings {
     /// Avatar name tags drawn as before the name plates (`ui::nameplate`):
     /// lines of text on a flat tag, in the tag colors of the preferences.
     pub classic_name_tags: bool,
+    /// The name plates' look: complete, icon only or name only.
+    pub plate_style: PlateStyle,
     /// Complete name plates for friends only: the others stop at the
     /// compact pill (off by default).
     pub plates_friends_only_full: bool,
@@ -2770,6 +2783,7 @@ impl Default for Settings {
             classic_controls: false,
             camera_shots: Vec::new(),
             camera_views: Default::default(),
+            plate_style: PlateStyle::Plates,
             plates_friends_only_full: false,
             plates_friend_tint: true,
             plates_hover_expand: true,

@@ -6,7 +6,7 @@
 
 use super::super::cx::{Cx, F, field};
 use crate::build::MoveHologram;
-use crate::settings::{ChatStyle, DestinationsStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
+use crate::settings::{ChatStyle, DestinationsStyle, NotificationsStyle, PhotoWindowStyle, PlateStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::world::beams::Style as BeamStyle;
 use crate::world::lookat::{Aim, Style};
@@ -368,6 +368,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-aurora-classic"),
                     &field!(classic_name_tags),
                 );
+                // the plates' own look, meaningless to the classic tags
+                let classic_tags = cx.s.classic_name_tags;
+                cx.subs(classic_tags, |cx| {
+                    cx.wide().choice(
+                        tr!("ui-options-aurora-plate-style"),
+                        tr!("ui-options-aurora-plate-style-help"),
+                        &field!(plate_style),
+                        &[
+                            (PlateStyle::Plates, tr!("ui-options-aurora-plate-style-full"), true),
+                            (PlateStyle::Icon, tr!("ui-options-aurora-plate-style-icon"), false),
+                            (PlateStyle::Name, tr!("ui-options-aurora-plate-style-name"), false),
+                        ],
+                    );
+                });
                 cx.wide().choice(
                     tr!("ui-options-aurora-look-at"),
                     tr!("ui-options-aurora-look-at-help"),

@@ -12681,6 +12681,7 @@ What the inventory must show with these scenarios:
 | `AURORA_IMPOSTOR_POSES=every` or `alt` | Impostors posed at every frame, as before |
 | `AURORA_ANCHOR_CENTRES=every` | The centre of every worn object recomputed at every frame, as before |
 | `AURORA_NAME_TAGS=classic`, `plate` or `alt` | Style of the avatar name tags for this launch |
+| `AURORA_PLATE_STYLE=plates`, `icon` or `name` | Look of the name plates for this launch: complete, icon only or name only |
 | `AURORA_LABEL_OCCLUSION=0` | Name tags and floating texts drawn over the scene, as before, instead of behind what is in front of them |
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 without its disk cache |
@@ -12897,6 +12898,12 @@ What the inventory must show with these scenarios:
   `objects=` of `perf summary`, the `avatar … shown after` lines, and the
   `simulator bandwidth:` lines, which tell what is asked at first and at
   each change (losses, or the viewer falling behind).
+- **`AURORA_PLATE_STYLE`**: `icon` draws every name plate as the profile
+  picture in a round plate with its status dot and voice ring, `name` as
+  the display name in the compact pill without badges (the far pill
+  beyond 40 m), without touching Preferences › Aurora › "Plate style".
+  Hovering a plate still shows it complete. Use with
+  `AURORA_DEMO_TAGS=voice` to see the nine residents in both looks.
 - **`AURORA_NAME_TAGS`**: `classic` or `plate` imposes the style of the
   avatar name tags (classic or name plates) without touching the "Name tag
   style" setting. `alt` alternates within the same session, at each

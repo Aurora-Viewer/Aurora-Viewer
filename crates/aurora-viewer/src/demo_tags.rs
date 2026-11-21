@@ -58,6 +58,22 @@ pub fn apply_distance_preferences(settings: &mut crate::settings::Settings) {
     }
 }
 
+/// AURORA_PLATE_STYLE=plates|icon|name: the plates' look for this run,
+/// without touching the shared settings (docs/TESTING.md).
+pub fn plate_style() -> Option<crate::settings::PlateStyle> {
+    use crate::settings::PlateStyle;
+    static STYLE: std::sync::OnceLock<Option<PlateStyle>> = std::sync::OnceLock::new();
+    *STYLE.get_or_init(|| match std::env::var("AURORA_PLATE_STYLE").ok()?.trim() {
+        "plates" => Some(PlateStyle::Plates),
+        "icon" => Some(PlateStyle::Icon),
+        "name" => Some(PlateStyle::Name),
+        other => {
+            log::warn!("AURORA_PLATE_STYLE: unknown style {other:?} (plates, icon or name)");
+            None
+        }
+    })
+}
+
 pub fn mode() -> Option<Mode> {
     static MODE: std::sync::OnceLock<Option<Mode>> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_TAGS").ok()?.trim() {

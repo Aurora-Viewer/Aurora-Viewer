@@ -1486,3 +1486,43 @@ fn the_distance_follows_the_name_on_every_level_and_colors_it() {
     });
     assert!(!galley_colors(set).contains(&p.success));
 }
+
+#[test]
+fn plate_styles_pick_their_levels() {
+    use crate::settings::PlateStyle;
+    for level in [Level::Full, Level::Compact, Level::Far] {
+        assert_eq!(styled_level(PlateStyle::Plates, level), level);
+        assert_eq!(styled_level(PlateStyle::Icon, level), Level::Icon);
+    }
+    assert_eq!(styled_level(PlateStyle::Name, Level::Full), Level::Name);
+    assert_eq!(styled_level(PlateStyle::Name, Level::Compact), Level::Name);
+    assert_eq!(styled_level(PlateStyle::Name, Level::Far), Level::Far);
+    // hovering still shows the complete plate
+    assert_eq!(hover_level(Level::Icon, true, true), Level::Full);
+    assert_eq!(hover_level(Level::Name, true, true), Level::Full);
+}
+
+#[test]
+fn icon_and_name_plates_carry_no_badges_or_lines() {
+    let mut c = content();
+    c.in_voice = true;
+    c.typing = true;
+    c.friend = true;
+    for level in [Level::Icon, Level::Name] {
+        assert_eq!(badges(level, &c).len(), 0);
+        assert_eq!(sub_lines(level, &c), [None, None]);
+    }
+    assert_eq!(status_dot(Level::Icon, &c), Some(Presence::Online));
+    assert_eq!(status_dot(Level::Name, &c), None);
+}
+
+#[test]
+fn icon_plate_is_a_circle_around_the_picture() {
+    let m = Metrics::of(Level::Icon, SCALE);
+    let l = layout(Level::Icon, &m, &TextSize::default(), 0);
+    assert_eq!(l.size.x, l.size.y);
+    let photo = l.photo.expect("the icon plate has its picture");
+    assert_eq!(photo.center, Pos2::new(l.size.x * 0.5, l.size.x * 0.5));
+    assert!(photo.radius < l.size.x * 0.5, "the border shows around the picture");
+    assert!(l.dot.is_some());
+}

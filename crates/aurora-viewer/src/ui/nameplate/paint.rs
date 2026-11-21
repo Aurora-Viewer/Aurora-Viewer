@@ -256,11 +256,12 @@ pub(super) fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
     // tag gives it a line of its own), and never the part that gets elided
     let name_tail = c
         .distance
-        .filter(|d| d.shown)
+        .filter(|d| d.shown && level != Level::Icon)
         .zip(band)
         .map(|(d, band)| line(env, &format!(" · {}", d.text()), small(readable(band)), m.max_text * 0.6));
     let room = m.max_text - name_tail.as_ref().map_or(0.0, |t| t.size().x);
-    let name = line(env, &c.name, format, room);
+    // the icon only plate has no text: its name shows on hover
+    let name = line(env, if level == Level::Icon { "" } else { &c.name }, format, room);
     let detail_color = |d: &super::Detail| if d.alert { p.amber } else { p.muted };
     let subs = super::sub_lines(level, c).map(|sub| {
         Some(match sub? {
@@ -287,7 +288,7 @@ pub(super) fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
     };
     let badges = super::badges(level, c);
     // the staff's tag, its letters in the mark's colors; not on the far pill
-    let staff = c.mark.filter(|_| level != Level::Far).map(|mark| {
+    let staff = c.mark.filter(|_| !matches!(level, Level::Far | Level::Icon)).map(|mark| {
         let look = Look::new(mark);
         let job = crate::ui::staff::label_job(env.painter.ctx(), p, &look, aurora::TAG_TEXT * m.scale, t);
         (env.painter.layout_job(job), look, t)
