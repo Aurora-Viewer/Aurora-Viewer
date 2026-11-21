@@ -4341,7 +4341,7 @@ impl Backend {
                 count: None,
             },
             // the point lights' tint maps (`point_shadow_tint`)
-            float_tex(30),
+            float_tex(33),
             // the Milky Way map (stars.rs milky_way_texels)
             wgpu::BindGroupLayoutEntry {
                 binding: 25,
@@ -6847,7 +6847,7 @@ impl Backend {
                         resource: wgpu::BindingResource::TextureView(soft.unwrap_or(milky_way)),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 30,
+                        binding: 33,
                         resource: wgpu::BindingResource::TextureView(point_tint),
                     },
                     wgpu::BindGroupEntry {

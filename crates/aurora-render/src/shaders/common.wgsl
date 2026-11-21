@@ -291,7 +291,7 @@ const PALETTE_STRIDE: u32 = 261u;
 // `cs_gi_sky`): in g how open each place is (`screen_open`).
 @group(0) @binding(32) var gi_open_tex: texture_2d<f32>;
 // the point lights' tint maps (point_tint)
-@group(0) @binding(30) var point_tint_tex: texture_2d<f32>;
+@group(0) @binding(33) var point_tint_tex: texture_2d<f32>;
 
 // Reflection probes (probes.rs, reflectionProbeF.glsl).
 // The probes of the frame's list at most (probes::MAX_PROBES).
