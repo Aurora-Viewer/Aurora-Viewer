@@ -12698,7 +12698,7 @@ ui-group-notices-saved = Сохранено
 ui-group-notices-attachment = Вложение
 ui-group-notices-subject = Тема
 ui-group-notices-message = Сообщение…
-ui-group-notices-drop = Перетащите предмет из инвентаря с правами копирования и передачи
+ui-group-notices-drop = Перетащите предмет или ориентир из инвентаря, избранного или мест (нужны права на копирование и передачу).
 ui-group-notices-not-attachable = Предмет нельзя вложить. Для этого нужны права копирования и передачи, а предмет должен быть снят.
 ui-group-notices-remove-attachment = Убрать вложение
 ui-group-notices-send =
@@ -16178,3 +16178,164 @@ game-control-action-boom-down = Опустить камеру ↓
 game-control-action-escape = Esc
 picker-local-newest = Сначала новые
 picker-local-name = Имя А–Я
+
+### Release translations
+
+ui-options-planet-curvature = Планетная кривая
+ui-options-planet-curvature-help = Рисует мир на круглой планете: открытая вода падает к реальному горизонту вместо того, чтобы выходить на уровень глаз, с небом под ней. Только вид изменяется: регионы, физика и то, что видят другие остаются плоскими. На Земле падение в пределах расстояния рисования составляет несколько сантиметров; это видно на дальнем море. Отличается от Legacy Viewer
+ui-options-planet-radius = Радиус планеты
+ui-options-planet-radius-help = Нарисован радиус планеты в километрах. Радиус Земли составляет 6371 км: с высоты 10 м море заканчивается на расстоянии около 11 км. Более мелкая планета приближает горизонт
+ui-options-camera-frame-while-posing = Рамка аватара во время позирования
+ui-options-camera-frame-while-posing-tip = Открытие poser кадрирует аватара, а нажатие на соединение приближает камеру к нему. Перетаскивание соединения никогда не перемещает камеры.
+ui-options-camera-still-while-posing = Держите камеру неподвижной во время позирования
+ui-options-camera-still-while-posing-tip = Когда вы позируете, камера перестает следить за аватаром, его фокусом и частями тела, а ходьба не сбрасывает его. Орбита, масштабирование, панорамирование и предварительные настройки по-прежнему работают.
+ui-options-group-emotes = Групповые эмоции с сообщениями отправителя
+ui-options-group-emotes-hint = В стиле чата Aurora действие наподобие «/me waves» отображается под тем же заголовком, что и сообщения того же отправителя непосредственно до или после него. Отдельный заголовок для действия не создаётся.
+content-perms-nested = Включение объектов внутри объектов
+content-perms-nested-help = Это также изменяет содержимое вложенных объектов, до пяти уровней глубины. Каждый объект размещается в мире на два метра выше примитива, который его содержит. Его выполняемые сценарии останавливаются, его содержание изменяется, и его сценарии перезапускаются. Затем объект сохраняется обратно в контейнер. Права доступа к объекту в контейнере устанавливаются и проверяются перед удалением его временной копии в мировом пространстве. Объекты, которые вы не можете копировать, передавать или изменять остаются закрытыми. Вам требуется разрешение для построения в месте размещения.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } объект в содержимом будет открыт, пропущен: { $skipped }.
+       *[other] { $objects } объекты в содержимом будут открыты, пропущены: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = запрещение копирования или передачи
+content-perms-nested-skip-no-modify = не может быть изменено
+content-perms-nested-skip-depth = более 5 уровней глубины
+content-perms-nested-rezzing = Размещение объекта "{ $name }” в мире (уровень гнездования { $level })…
+content-perms-nested-stopping = Остановка сценариев “{ $name }”…
+content-perms-nested-applying = Изменение содержания “{ $name }”…
+content-perms-nested-restoring = Запуск сценариев “{ $name }” снова…
+content-perms-nested-saving = Сохранение объекта “{ $name }” обратно в его контейнер…
+content-perms-nested-deleting = Удаление временной копии в мире “{ $name }”…
+content-perms-nested-finished = Обновлено элементов: { $count }. Вложенных объектов: { $objects }. Пропущено: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } остался рядом с оригиналом: названия отличались.
+       *[other] { $kept } хранились рядом с оригиналами: названия отличались.
+    }
+content-perms-nested-stopped = Остановлено: временные копии в мире были удалены, оригинальные элементы остались такими, какими они были.
+content-perms-nested-stop-help = Останавливает операцию и удаляет временные копии, которые ещё находятся в мире. Исходные предметы остаются без изменений. Объекты, уже сохранённые обратно, сохраняют изменения.
+content-perms-nested-scripts-warning = Каждый объект создаётся в мире (rez), поэтому действия его скриптов при появлении, например взрыв, телепортация или передача предмета, выполняются до того, как скрипты можно остановить. Чтобы этого избежать, сначала включите параметр «Отключить скрипты» в разделе «Регион / поместье» в регионе, которым вы управляете, и выключите его по завершении.
+content-perms-nested-original-kept = “{ $name }” был сохранен обратно, но его первоначальный элемент не мог быть удалён: оба находятся в содержимом.
+content-perms-nested-copy-left = Временная копия в мире “{ $name }” не могла быть удалена: удалите её вручную.
+content-perms-nested-save-unconfirmed = сохранение назад не было подтверждено
+content-perms-nested-saved-perms-unconfirmed = Остановлено: разрешения объекта, сохраненного обратно в его контейнер, не могли быть подтверждены. Временные рабочие копии в мире были оставлены; проверьте их перед удалением.
+content-perms-nested-timeout = симулятор не ответил вовремя
+content-perms-nested-rez-refused = Остановлен: симулятор отказался разместить в мире “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Стоп: “{ $name }” не появился в течение 15 секунд. Если он появится позже над примитивным объектом, удалите его.
+content-perms-nested-not-ours = Стоп: объект, помещенный в мир для “{ $name }” не происходит из этого содержимого, он был оставлен в мире.
+content-perms-nested-unverified = Стоп: объект, который появился для “{ $name }” не мог быть проверен как размещенный в мире из этого содержимого, поэтому он был оставлен в месте.
+content-perms-nested-group-split = Остановлено: “{ $name }” (несколько объектов сохраненных как один) возвращался как единый объект. Его части, помещенные в мир, оставались в мире: выберите их все и возьмите их для повторного создания группы.
+content-perms-nested-failed = “{ $name }" остался без изменений: { $reason }.
+content-perms-nested-original-gone = «{ $name }» сохраняется в мире: его сохранение не было подтверждено, и его первоначальный элемент исчез.
+content-perms-nested-gone = объект покинул мир
+content-perms-nested-land-denied = Остановлено: Вы не можете строить над этим примитивным объектом, где объекты будут размещены в мире.
+content-perms-nested-parcel-full = Остановлено: в пакете не осталось места для временных копий в мире.
+content-perms-nested-rlva = Остановлено: размещение объектов в мире ограничено (RLVa).
+content-perms-nested-too-many = слишком много сценариев
+content-perms-nested-unreadable = его содержимое не может быть прочитано
+content-perms-demo-chest = Комод для хранения
+content-perms-demo-notes = Заметки внутри ящика для хранения
+content-perms-demo-outer = Наружная коробка
+content-perms-demo-glow = Скрипт, который заставляет объект светиться
+content-perms-demo-readme = Прочитайте меня первым
+content-perms-demo-inner = Внутренний контейнер
+content-perms-demo-inner-note = Примечание внутри коробки
+content-perms-demo-tiny = Очень маленькая коробка
+content-perms-demo-spin = Сценарий, который вращает объект
+content-perms-demo-heirloom = Семейный реликвий
+content-perms-demo-sealed = Запечатанная коробка
+content-perms-demo-linked = Группа соединённых объектов
+content-perms-demo-pebble = Малый закруглённый камень
+content-perms-demo-stack = Ящик
+dev-toolbox-o10 = Шаблоны:Аватар
+ui-appearance-date-newest-first = Дата: новейшие первые
+ui-appearance-date-oldest-first = Дата: старейший первый
+ui-appearance-favorites-to-top = Вверх
+ui-appearance-images-to-top = Вернуться вверх
+ui-environment-sort-by-name = Сортировать по алфавиту
+ui-environment-sorted-by-name = В настоящее время отсортированы по названию. Нажмите, чтобы восстановить порядок из вашего инвентаря.
+ui-environment-in-inventory-order = В порядке вашего инвентаря. Нажмите, чтобы сортировать их A–Z.
+ui-chat-contacts-groups-sub = Группы · { $count }
+ui-options-soft-shadows = Мягкие тени
+ui-options-soft-shadows-help = Солнечные тени с более мягкими краями, чем дальше объект находится от того, что он затмевает, как в реальной жизни: тень высокого столба размывает к концу, а нога остается резкой. Экспериментальный, по умолчанию выключен; стоит долю миллисекунды на видеокарте
+ui-options-shadow-softness = Мягкость тени
+ui-options-shadow-softness-help = Размер света для мягких теней: 1 - свет с диаметром 2,3 градуса, 2 - более крупный, который смягчает тени в два раза (реальное солнце имеет диаметр около 0,2), 0 - свет без размера: тени остаются такими же, как и раньше, включая тени прожектора
+ui-options-shadow-softness-needs-soft = Включите Мягкие тени, чтобы использовать это
+ui-options-shadow-intensity = Интенсивность тени
+ui-options-shadow-intensity-help = Насколько темны солнечные тени: 1 - нормальная темнота, ниже впускает больше света в них
+ui-options-system-fonts-searching = Поиск шрифтов…
+demo-emotes-nova = /me устанавливает скамью у фонтана
+demo-emotes-orion = Выглядит великолепно отсюда!
+demo-teleport-access-neighbour = Взрослый сосед (демо)
+photo-light-shadow-softness = Мягкость тени
+photo-light-shadow-intensity = Интенсивность тени
+photo-light-shadow-reset = Вернуться к значению Настройки
+world-teleport-access-blocked-title = Телепорт заблокирован
+world-teleport-access-adults-only = В регионе, который вы пытаетесь посетить, содержится { $rating } контента, доступного только для взрослых.
+world-teleport-access-change-and-reteleport = В регионе, который вы хотите посетить, есть материалы категории { $rating }. Ваши текущие настройки исключают материалы категории { $rating }. Можно изменить настройки и продолжить телепортацию или отменить её.
+world-teleport-access-change = В регионе, который вы хотите посетить, есть материалы категории { $rating }. Ваши текущие настройки исключают материалы категории { $rating }. Можно изменить настройки или отменить телепортацию. После изменения настроек вам нужно будет снова попробовать телепортироваться.
+world-teleport-access-out-of-sync = У нас возникли технические трудности с вашим телепортом, потому что ваши предпочтения не синхронизированы с сервером.
+world-teleport-access-rated = Выбранное вами место имеет рейтинг { $rating }.
+world-teleport-access-allow = Ваши текущие настройки исключают материалы категории { $rating }. Если разрешить их, настройки обновятся.
+world-teleport-access-allow-button = Разрешить содержимое { $rating }
+world-teleport-access-not-on-account = Регион, который вы пытаетесь посетить, имеет рейтинг { $rating }, что недоступно для вашего типа учетной записи.
+world-teleport-access-change-and-continue = Изменение и продолжение
+world-teleport-access-change-preferences = Изменить предпочтения
+world-teleport-access-preference-changed-title = Рейтинг изменён
+world-teleport-access-preference-changed = Вы больше не будете получать уведомления о том, что собираетесь посетить регион с контентом { $rating }. В будущем вы можете изменить настройки контента в разделе Настройки › Конфиденциальность.
+people-show-group-sheet = Показать подробности группы
+people-group-details-empty = Нет группы для отображения
+ui-options-plate-click-own-help = Действие левой кнопки мыши на чьей-то тарелке; курсор превращается в руку. На вашей собственной тарелки, щелчок открывает ваш профиль или меню, когда один из них выбран; удерживая кнопку там по-прежнему превращает свой аватар.
+ao-import-unfinished-retry = Незавершённый AO импорт уже существует в #Aurora/{ $folder }. Используйте уведомление о восстановлении в AO окно перед повторением.
+ao-unfinished-import =
+    { $count ->
+        [one] Импорт AO в #Aurora/{ $folder } не завершён. Число наборов: { $count }.
+       *[other] Импорт AO в #Aurora/{ $folder } не завершён. Число наборов: { $count }.
+    }
+ao-finish-import = Завершить импорт
+ao-show-in-inventory = Показать в инвентаре
+ao-duplicate-native =
+    { $count ->
+        [one] Обнаружена другая папка: #Aurora/{ $folder }. Число наборов: { $count }. Объединить её с активной папкой AO?
+       *[other] Обнаружена другая папка: #Aurora/{ $folder }. Число наборов: { $count }. Объединить её с активной папкой AO?
+    }
+ao-native-already-exists = Встроенная переопределение анимации с этим именем уже существует
+rlva-tools-retained = Сохраняется до входа в систему
+rlva-read-at-login = Изменения вступают в силу при следующем входе.
+rlva-debug-commands-chat = Каждая команда также получает строку в близлежащем чате, под именем объекта: что она выполняет, что не работает и почему, что ожидает входа.
+rlva-blocked-start-im = Не удается запустить IM сессии с { $recipient } в связи с RLV ограничения
+rlva-blocked-start-conference = Не удается начать конференцию с [RECIPIENT] в связи с RLV ограничения
+rlva-anonym-waiting = (загрузка…)
+rlva-anonym-unknown = (неизвестно)
+rlva-blocked-teleport = Не удается начать телепортацию из-за ограничений RLV
+rlva-blocked-permission-attach = Попытка подключения '{ $object }' было отказано из-за RLV ограничения
+rlva-blocked-permission-teleport = '{ $object }' было отказано в разрешении телепортировать вас из-за RLV ограничения
+rlva-blocked-view-notecard = Не удалось открыть notecard из-за ограничений RLVa.
+rlva-blocked-view-script = Не удалось открыть сценарий из-за ограничений RLVa.
+rlva-blocked-view-texture = Не удалось открыть текстуру из-за ограничений RLVa.
+rlva-debug-explicit-point = Игнорировать имена точек присоединения для элементов инвентаризации и папок
+rlva-debug-explicit-point-hint = Пока точка присоединения заблокирована, Wear and Add отправляет объект к его точке по умолчанию вместо точки, которую указывает его имя или название папки (неполное).
+phototools-environment-settings = Настройки окружающей среды
+phototools-quick-environments = Быстрые среды
+phototools-environment-presets = Пресеты среды
+phototools-general-render = Общие настройки рендеринга
+phototools-render-options = Параметры рендеринга
+ui-bars-clouds-paused = Облака приостановлены
+ui-bars-clouds-paused-tip = Облака остаются неподвижными в течение этой сессии. Нажмите, чтобы позволить им снова двигаться.
+phototools-tab-dof-glow = Глубина резкости и свечение
+phototools-lights-shadows = Настройки света и тени
+phototools-ambient-occlusion = Настройки затенения окружения
+phototools-dof = Настройки глубины резкости
+phototools-tone-mapping = Настройки отображения тонов HDR
+phototools-glow = Настройки сияния
+phototools-photo-banner = Фото окно открыто: строки фото окна также изменить фотографию. Глубина поля сохраняется для ваших следующих фотографий; свет, экспозиция, тени, окружающей окклюзии и изношенных освещения длится до тех пор, пока фото окно закрывается.
+phototools-photo-boost = Качество фотографии повышается: графические строки показывают повышение значений, и изменения, которые вы там делаете, сохраняются как ваши собственные.
+phototools-photo-focus-help = Клик: точка последнего нажатия в мире. Указатель: точка под указателем. Руководство: расстояние, которое вы установили.
+phototools-photo-distance-help = Расстояние, на котором фокусируется объектив при ручном фокусировании.
+phototools-director-lens = Объектив директора показывается, когда его окно открыто, над настройками ниже.
+phototools-view-angle-viewfinder = Видоискатель владеет углом обзора: ваш возвращается, когда он закрывается.
+ui-options-dof-show-focus-point = Показать точку фокуса
+ui-options-dof-show-focus-point-help = Небольшой крест на точке фокусировки линзы: желтый, когда он свободен, красный, когда заблокирован.

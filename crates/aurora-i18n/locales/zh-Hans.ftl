@@ -12248,7 +12248,7 @@ ui-group-notices-saved = 已保存
 ui-group-notices-attachment = 附件
 ui-group-notices-subject = 主题
 ui-group-notices-message = 消息……
-ui-group-notices-drop = 从库存拖入项目（可复制 + 可转让）
+ui-group-notices-drop = 从物品栏、收藏或地点拖入物品或地标（需要复制和转让权限）。
 ui-group-notices-not-attachable = 此项目无法作为附件：它必须可复制且可转让，且未被穿戴。
 ui-group-notices-remove-attachment = 移除附件
 ui-group-notices-send = { $count ->
@@ -15644,3 +15644,164 @@ game-control-action-boom-down = 相机下移 ↓
 game-control-action-escape = Esc
 picker-local-newest = 最新优先
 picker-local-name = 名称 A–Z
+
+### Release translations
+
+ui-options-planet-curvature = 行星曲率
+ui-options-planet-curvature-help = 在圆形星球上绘制世界:开放的水落到真正的地平线,而不是流出眼睛高度,下面是天空。 只有视图变化:区域、物理和其他人看到的东西保持平坦。 在地球上,绘制距离内的降落是几厘米;在远海上显示。
+ui-options-planet-radius = 行星半径
+ui-options-planet-radius-help = 地球的半径是6371公里:从10米高处,海洋在11公리远处结束。 一个较小的行星使地平线更接近
+ui-options-camera-frame-while-posing = 摆姿势时框架头像
+ui-options-camera-frame-while-posing-tip = 打开姿势框架会将头像设置为帧,点击关节会使摄像头靠近它。 拖动关节不会移动摄像机。
+ui-options-camera-still-while-posing = 拍照时保持相机静止
+ui-options-camera-still-while-posing-tip = 当您拍照时,相机会停止跟踪头像、焦点和身体部位,而走路不会重置它。 轨道、缩放、平移和预设仍然有效。
+ui-options-group-emotes = 包含发件人的消息的群组表情
+ui-options-group-emotes-hint = 在 Aurora 聊天样式下，像“/me waves”这样的动作会和同一个人紧接着发送的前后消息共用标题，动作本身不另起标题。
+content-perms-nested = 在对象中包含对象
+content-perms-nested-help = 这也可以编辑嵌套对象的内容,最多可达五个层次深度。 每个对象都被放置在包含它的原始文件上方两米的世界中。 它的运行脚本将被停止,其内容将被更改,并且它的脚本会重新启动。 然后,对象将被保存回容器中。 在删除世界中的临时副本之前,容器中的对象权限将被设置和检查。 不能复制、转移或修改的对象仍然关闭。
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } 内容中的对象将被打开,跳过: { $skipped }.
+       *[other] { $objects } 内容中的对象将被打开,跳过: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = 禁止复制或转让
+content-perms-nested-skip-no-modify = 无法修改
+content-perms-nested-skip-depth = 超过5级深
+content-perms-nested-rezzing = 放置对象 “{ $name }世界上最美丽的女人 { $level })…
+content-perms-nested-stopping = 停止“{ $name }”的脚本
+content-perms-nested-applying = 更改“{ $name }”内容
+content-perms-nested-restoring = 开始“{ $name }”的脚本再次 . .
+content-perms-nested-saving = 保存对象“{ $name }”回到其容器中 . .
+content-perms-nested-deleting = 在世界上删除临时副本 “{ $name }”…
+content-perms-nested-finished = 已更新物品：{ $count }。处理的嵌套对象：{ $objects }。已跳过：{ $skipped }。
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept }保留在原来的旁边:名称不同。
+       *[other] { $kept }保留在他们的原始旁边:名称不同。
+    }
+content-perms-nested-stopped = 停止:世界中的临时副本被删除,原始项目保持不变。
+content-perms-nested-stop-help = 停止操作，并删除仍在世界中的临时副本。原始物品保持原状，已保存回容器的对象会保留改动。
+content-perms-nested-scripts-warning = 每个对象都会先在世界中生成（rez），因此爆炸、传送或发放物品等生成时触发的脚本动作，会在脚本被停止前执行。要防止这些动作，请先在您管理的区域中通过「区域／地产」开启「禁用脚本」，操作完成后再关闭该选项。
+content-perms-nested-original-kept = “{ $name }”已保存回来,但它的原始项目无法删除:两者都在内容中。
+content-perms-nested-copy-left = 世界中“{ $name }”的临时副本无法删除:手动删除。
+content-perms-nested-save-unconfirmed = 保存回来没有被确认
+content-perms-nested-saved-perms-unconfirmed = 停止:无法确认保存到容器中的对象的权限。 世界中的临时工作副本已被保留;在删除之前检查它们。
+content-perms-nested-timeout = 模拟器没有及时响应
+content-perms-nested-rez-refused = 停止: 模拟器拒绝放置在世界 “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = 停止:“{ $name }”在15秒内没有出现,如果它后来出现在原始对象上方,请删除它。
+content-perms-nested-not-ours = 停止:在世界中放置的“{ $name }”对象不来自这些内容,它被留在世界。
+content-perms-nested-unverified = 停止:出现在“{ $name }”的对象无法从这些内容中检查是否放置在世界上,因此它被留在世界中。
+content-perms-nested-group-split = 停止 : “ { $name } ” ( 保存为一个的多个物体)作为单一物体返回,其放置在世界中的部分保留在世界中:选择它们并将它们重新组合。
+content-perms-nested-failed = “{ $name }” 保持不变： { $reason }.
+content-perms-nested-original-gone = “{ $name }”被保存在世界里:它的保存回来没有得到确认,它原来的物品已经不见了。
+content-perms-nested-gone = 物体离开了世界
+content-perms-nested-land-denied = 停止:您无法在这个原始对象上面建造,因为这些对象会被放置在世界中。
+content-perms-nested-parcel-full = 停止:包没有空间留给世界中的临时副本。
+content-perms-nested-rlva = 停止:在世界中放置对象受到限制(RLVa ) 。
+content-perms-nested-too-many = 太多的脚本
+content-perms-nested-unreadable = 您访问的页面无法找到
+content-perms-demo-chest = 储物柜
+content-perms-demo-notes = 存储箱内的笔记
+content-perms-demo-outer = 外盒
+content-perms-demo-glow = 脚本,使对象发光
+content-perms-demo-readme = 先读我
+content-perms-demo-inner = 內容器
+content-perms-demo-inner-note = 内盒内的说明
+content-perms-demo-tiny = 非常小的盒子
+content-perms-demo-spin = 旋转对象的脚本
+content-perms-demo-heirloom = 家族遗物
+content-perms-demo-sealed = 密封盒
+content-perms-demo-linked = 连接对象组
+content-perms-demo-pebble = 小圆石
+content-perms-demo-stack = 箱堆
+dev-toolbox-o10 = 阿凡達搜尋框
+ui-appearance-date-newest-first = 日期:最新的首先
+ui-appearance-date-oldest-first = 日期:最早的第一个
+ui-appearance-favorites-to-top = 返回顶部
+ui-appearance-images-to-top = 回到顶部
+ui-environment-sort-by-name = 按字母顺序排列
+ui-environment-sorted-by-name = 按照名称排序。 单击以从库存中恢复订单。
+ui-environment-in-inventory-order = 在您的库存顺序。 点击排序他们 A–Z.
+ui-chat-contacts-groups-sub = 团体 · { $count }
+ui-options-soft-shadows = 柔影
+ui-options-soft-shadows-help = 太阳阴影的边缘越柔和,物体距离其阴影越远,就像在现实生活中一样:高杆的阴影向顶部模糊,而脚仍保持清晰。 试验性,默认关闭;显卡耗费毫秒
+ui-options-shadow-softness = 影子柔軟度
+ui-options-shadow-softness-help = 柔和阴影的光线大小:1是2.3度的光,2是一个较大的光,柔化阴影两倍(真正的太阳大约是0.2 ) , 0是一个没有尺寸的光:阴影像以前一样,投影机包括在内
+ui-options-shadow-softness-needs-soft = 打开软阴影以使用此功能
+ui-options-shadow-intensity = 陰影強度
+ui-options-shadow-intensity-help = 太阳影子有多暗:1是正常的黑暗,较低让更多的光线进入他们
+ui-options-system-fonts-searching = 寻找字体…
+demo-emotes-nova = /me设置了一个长凳下来的喷泉
+demo-emotes-orion = 从这里看起来很棒!
+demo-teleport-access-neighbour = 成年邻居(演示)
+photo-light-shadow-softness = 影子柔軟度
+photo-light-shadow-intensity = 陰影強度
+photo-light-shadow-reset = 回到首选项的值
+world-teleport-access-blocked-title = 电传阻止
+world-teleport-access-adults-only = 您要访问的区域包含{ $rating }个内容,仅供成人访问。
+world-teleport-access-change-and-reteleport = 您尝试前往的区域含有 { $rating } 分级的内容。您的当前偏好设置不允许 { $rating } 分级的内容。您可以更改设置并继续传送，也可以取消本次传送。
+world-teleport-access-change = 您尝试前往的区域含有 { $rating } 分级的内容。您的当前偏好设置不允许 { $rating } 分级的内容。您可以更改设置或取消传送。更改设置后，请重新尝试传送。
+world-teleport-access-out-of-sync = 我们正在与您的电传技术困难,因为您的偏好设置与服务器同步。
+world-teleport-access-rated = 您选择的位置评分为{ $rating }。
+world-teleport-access-allow = 您的当前偏好设置不允许 { $rating } 分级的内容。允许此类内容将更新您的偏好设置。
+world-teleport-access-allow-button = 允许{ $rating }内容
+world-teleport-access-not-on-account = 您正在访问的区域评级为 { $rating },这对于您的帐户类型不可用。
+world-teleport-access-change-and-continue = 改变并继续
+world-teleport-access-change-preferences = 更改首选项
+world-teleport-access-preference-changed-title = 内容评级更改
+world-teleport-access-preference-changed = 您将不再收到关于即将访问包含 { $rating } 内容的区域的通知。 您可以在"偏好设置 › 隐私"中更改您的内容偏好。
+people-show-group-sheet = 显示群组详细信息
+people-group-details-empty = 没有要显示的组
+ui-options-plate-click-own-help = 左键点击某人的盘子,光标变成手形。 在你自己的盘子上,点击会打开你的个人资料或菜单;按住那里的按钮仍然会转动你的头像。
+ao-import-unfinished-retry = 未完成作品 AO 导入已存在于 #Aurora/{ $folder }使用恢复通知中的 AO 重试之前关闭窗口。
+ao-unfinished-import =
+    { $count ->
+        [one] #Aurora/{ $folder } 中的 AO 导入尚未完成。套数：{ $count }。
+       *[other] #Aurora/{ $folder } 中的 AO 导入尚未完成。套数：{ $count }。
+    }
+ao-finish-import = 完成进口
+ao-show-in-inventory = 在库存中显示
+ao-duplicate-native =
+    { $count ->
+        [one] 找到了另一个文件夹：#Aurora/{ $folder }。套数：{ $count }。要将它合并到正在使用的 AO 文件夹吗？
+       *[other] 找到了另一个文件夹：#Aurora/{ $folder }。套数：{ $count }。要将它合并到正在使用的 AO 文件夹吗？
+    }
+ao-native-already-exists = 已存在此名称的内置动画覆盖
+rlva-tools-retained = 在登录前保留
+rlva-read-at-login = 更改将在下次登录时生效。
+rlva-debug-commands-chat = 每个命令也会在附近的聊天中获得一行,在对象名称下:它执行了什么、失败了什么以及为什么、等待登录的是什么。
+rlva-blocked-start-im = 无法找到页面 IM 会议 { $recipient } 由于 RLV 限制
+rlva-blocked-start-conference = 无法找到页面 [RECIPIENT] 由于 RLV 限制
+rlva-anonym-waiting = （加载中…）
+rlva-anonym-unknown = （未知）
+rlva-blocked-teleport = 由于RLV限制,无法启动传送
+rlva-blocked-permission-attach = 试图连接 '{ $object }您访问的页面不存在 RLV 限制
+rlva-blocked-permission-teleport = '{ $object }' 被拒绝权限,以电传你由于 RLV 限制
+rlva-blocked-view-notecard = 由于RLVa限制,无法打开notecard。
+rlva-blocked-view-script = 由于RLVa限制,无法打开脚本。
+rlva-blocked-view-texture = 由于RLVa限制,无法打开纹理。
+rlva-debug-explicit-point = 忽略库存项目和文件夹上的附加点名称
+rlva-debug-explicit-point-hint = 当附加点被锁定时,Wear and Add 将对象发送到其默认点而不是其名称或文件夹名称提供的点(不完整 ) 。
+phototools-environment-settings = 环境设置
+phototools-quick-environments = 快速環境
+phototools-environment-presets = 环境预设
+phototools-general-render = 一般渲染设置
+phototools-render-options = 渲染选项
+ui-bars-clouds-paused = 云停止
+ui-bars-clouds-paused-tip = 云彩在此会话中保持静止。 点击让它们再次移动。
+phototools-tab-dof-glow = 景深和辉光
+phototools-lights-shadows = 光线和阴影设置
+phototools-ambient-occlusion = 环境光遮蔽设置
+phototools-dof = 景深设置
+phototools-tone-mapping = HDR 色调映射设置
+phototools-glow = 发光设置
+phototools-photo-banner = 照片窗口打开:照片的窗口也有行更改照片。 场景深度保留为您的下一张照片;光线,曝光,阴影,环境遮挡和磨损灯光持续到照片视窗关闭。
+phototools-photo-boost = 照片质量提升:图形行显示提升值,您在其中所做的更改将保留为您自己的更改。
+phototools-photo-focus-help = 点击:在世界上最后点击的点。 指针:指针下方的点. 手动:您设置的距离.
+phototools-photo-distance-help = 手动对焦时镜头聚焦的距离。
+phototools-director-lens = 当 Director's Lens 窗口打开时,它会在下面的设置上显示。
+phototools-view-angle-viewfinder = 取景器拥有视角:当它关闭时,您的视角会回来。
+ui-options-dof-show-focus-point = 显示焦点
+ui-options-dof-show-focus-point-help = 镜头聚焦点上的小十字线:黄色是自由的,红色是锁定的。

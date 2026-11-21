@@ -12340,7 +12340,7 @@ ui-group-notices-saved = Guardado
 ui-group-notices-attachment = Adjunto
 ui-group-notices-subject = Asunto
 ui-group-notices-message = Mensaje…
-ui-group-notices-drop = Arrastre un ítem desde el inventario (copiar + transferir)
+ui-group-notices-drop = Arrastra un objeto o un punto de referencia desde Inventario, Favoritos o Lugares (requiere permisos de copia y transferencia).
 ui-group-notices-not-attachable = Este ítem no se puede adjuntar: debe poder copiarse y transferirse, y no estar puesto.
 ui-group-notices-remove-attachment = Quitar el adjunto
 ui-group-notices-send = { $count ->
@@ -15742,3 +15742,164 @@ game-control-action-boom-down = Bajar cámara ↓
 game-control-action-escape = Esc
 picker-local-newest = Más recientes primero
 picker-local-name = Nombre A–Z
+
+### Release translations
+
+ui-options-planet-curvature = Curvatura del planeta
+ui-options-planet-curvature-help = Dibuja el mundo en un planeta redondo: las aguas abiertas caen hacia un horizonte real en lugar de salir a la altura de los ojos, con el cielo debajo. Solo cambia la vista: las regiones, la física y lo que otros ven se mantienen planos. En la Tierra, la caída dentro de la distancia de dibujo es de unos pocos centímetros; se muestra en el mar lejano.
+ui-options-planet-radius = Radio del planeta
+ui-options-planet-radius-help = El radio del planeta dibujado, en kilómetros. El de la Tierra es de 6371 km: desde 10 m arriba, el mar termina a unos 11 km. Un planeta más pequeño acerca el horizonte
+ui-options-camera-frame-while-posing = Enmarca el avatar mientras poseas
+ui-options-camera-frame-while-posing-tip = Al abrir el posador se enmarca el avatar, y al hacer clic en un joint se acerca la cámara a él, pero arrastrar un joint nunca mueve la cámara.
+ui-options-camera-still-while-posing = Mantenga la cámara inmóvil mientras posa
+ui-options-camera-still-while-posing-tip = Mientras poseas, la cámara deja de seguir al avatar, su enfoque y sus partes del cuerpo, y caminar no lo restablece.La órbita, el zoom, el panorámico y los ajustes preestablecidos siguen funcionando.
+ui-options-group-emotes = Emotes grupales con los mensajes del remitente
+ui-options-group-emotes-hint = En el estilo de chat Aurora, una acción como «/me waves» aparece bajo el mismo encabezado que los mensajes que esa persona envía justo antes o después. La acción no tiene encabezado propio.
+content-perms-nested = Incluir objetos dentro de objetos
+content-perms-nested-help = Esto también edita el contenido de los objetos anidados, hasta cinco niveles de profundidad. Cada objeto se coloca en el mundo dos metros por encima de la primitiva que lo contiene. Sus scripts en ejecución se detienen, su contenido se cambia y sus scripts se reinician. El objeto luego se guarda de nuevo en el contenedor. Los permisos del objeto en el container se establecen y se comprueban antes de que se elimine su copia temporal en el world. Los objetos que no puede copiar, transferir o modificar permanecen cerrados. Necesita permiso para construir en la ubicación de colocación.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } Se abrirá un objeto en el contenido, saltado: { $skipped }.
+       *[other] { $objects } Los objetos en el contenido se abrirán, saltados: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = Sin copia ni transferencia
+content-perms-nested-skip-no-modify = No se puede modificar
+content-perms-nested-skip-depth = Más de 5 niveles de profundidad
+content-perms-nested-rezzing = Colocar el objeto “{ $name }” en el mundo (nivel de anidación { $level })…
+content-perms-nested-stopping = Deteniendo los guiones de “{ $name }”…
+content-perms-nested-applying = Cambiando el contenido de “{ $name }”…
+content-perms-nested-restoring = Iniciando los scripts de “{ $name }” otra vez…
+content-perms-nested-saving = Guardando el objeto “{ $name }” de nuevo en su contenedor…
+content-perms-nested-deleting = Eliminando la copia temporal en el mundo de “{ $name }”…
+content-perms-nested-finished = Elementos actualizados: { $count }. Objetos anidados: { $objects }. Omitidos: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } mantenido junto a su original: los nombres difieren.
+       *[other] { $kept } mantenido junto a sus originales: los nombres difieren.
+    }
+content-perms-nested-stopped = Detenido: las copias temporales en el mundo se eliminaron, los elementos originales se dejaron como estaban.
+content-perms-nested-stop-help = Detiene la operación y elimina las copias temporales que aún están en el mundo. Los elementos originales quedan como estaban. Los objetos que ya se guardaron de nuevo conservan los cambios.
+content-perms-nested-scripts-warning = Cada objeto se materializa en el mundo (rez), por lo que los scripts ejecutan sus acciones de inicio, como una explosión, un teletransporte o la entrega de un objeto, antes de que se puedan detener. Para evitarlo, activa primero Desactivar scripts en Región / Territorio, en una región que administres, y desactiva esa opción al terminar.
+content-perms-nested-original-kept = “{ $name }” fue guardado de nuevo, pero su elemento original no pudo ser eliminado: ambos están en el contenido.
+content-perms-nested-copy-left = La copia temporal en el mundo de “{ $name }” no pudo ser eliminada: elimínela manualmente.
+content-perms-nested-save-unconfirmed = La devolución del ahorro no fue confirmada
+content-perms-nested-saved-perms-unconfirmed = Detenido: los permisos del objeto guardado de nuevo en su contenedor no se pudieron confirmar Las copias de trabajo temporales en el mundo se han mantenido; compruébelas antes de eliminarlas.
+content-perms-nested-timeout = El simulador no respondió a tiempo
+content-perms-nested-rez-refused = Detenido: el simulador se negó a colocar en el mundo “{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Detenido: “{ $name }” no apareció en 15 segundos Si aparece más tarde sobre el objeto primitivo, elimínelo.
+content-perms-nested-not-ours = Detenida: el objeto colocado en el mundo para “{ $name }” no proviene de estos contenidos, se dejó en mundo.
+content-perms-nested-unverified = Detenido: el objeto que apareció para “{ $name }” no se pudo verificar como colocado en el mundo a partir de estos contenidos, por lo que se dejó en mundo.
+content-perms-nested-group-split = Detenido: “{ $name }” (varios objetos guardados como uno) volvía como un único objeto, sus partes colocadas en el mundo se mantenían en mundo: seleccionarlos todos y tomarlos para hacer el grupo de nuevo.
+content-perms-nested-failed = “{ $name }” se dejó sin cambios: { $reason }.
+content-perms-nested-original-gone = “{ $name }” se mantiene en el mundo: su salvación no fue confirmada y su objeto original ha desaparecido.
+content-perms-nested-gone = El objeto dejó el mundo
+content-perms-nested-land-denied = Detenido: no puedes construir sobre este objeto primitivo, donde los objetos se colocarían en el mundo.
+content-perms-nested-parcel-full = Detenido: el paquete no tiene espacio para las copias temporales en el mundo.
+content-perms-nested-rlva = Detenido: la colocación de objetos en el mundo está restringida (RLVa).
+content-perms-nested-too-many = Demasiados scripts
+content-perms-nested-unreadable = No se pudo leer su contenido
+content-perms-demo-chest = Cofre de almacenamiento
+content-perms-demo-notes = Notas dentro del cofre de almacenamiento
+content-perms-demo-outer = Caja externa
+content-perms-demo-glow = Script que hace brillar el objeto
+content-perms-demo-readme = Léeme primero
+content-perms-demo-inner = Contenedor interno
+content-perms-demo-inner-note = Nota dentro de la caja interna
+content-perms-demo-tiny = Caja muy pequeña
+content-perms-demo-spin = Script que gira el objeto
+content-perms-demo-heirloom = Relicario de familia
+content-perms-demo-sealed = Caja sellada
+content-perms-demo-linked = Grupo de objetos unidos
+content-perms-demo-pebble = Piedra redondeada pequeña
+content-perms-demo-stack = Pila de cajas
+dev-toolbox-o10 = Hitboxes de Avatar
+ui-appearance-date-newest-first = Fecha: más nuevo primero
+ui-appearance-date-oldest-first = Fecha: más antiguo primero
+ui-appearance-favorites-to-top = Volver al principio
+ui-appearance-images-to-top = Volver al inicio
+ui-environment-sort-by-name = Ordenar alfabéticamente
+ui-environment-sorted-by-name = Actualmente ordenados por nombre. Haga clic para restaurar el orden de su inventario.
+ui-environment-in-inventory-order = En el orden de tu inventario. Haz clic para ordenarlos A–Z.
+ui-chat-contacts-groups-sub = Grupos · { $count }
+ui-options-soft-shadows = Sombras suaves
+ui-options-soft-shadows-help = Sombras solares con bordes más suaves a medida que el objeto se aleja de lo que sombrea, como en la vida real: la sombra de un poste alto se desenfoca hacia su punta mientras que un pie permanece nítido Experimental, desactivado por defecto; cuesta una fracción de milisegundo en la tarjeta gráfica
+ui-options-shadow-softness = La suavidad de la sombra
+ui-options-shadow-softness-help = El tamaño de la luz para las sombras suaves: 1 es una luz de 2.3 grados de diámetro, 2 una más grande que suaviza las sombres dos veces más (el sol real es de unos 0.2), 0 una luz sin tamaño: las sombris son como antes, incluido el proyector
+ui-options-shadow-softness-needs-soft = Activa Sombras suaves para usar esto
+ui-options-shadow-intensity = Intensidad de la sombra
+ui-options-shadow-intensity-help = Qué tan oscuras son las sombras del sol: 1 es la oscuridad normal, menor deja entrar más luz en ellas
+ui-options-system-fonts-searching = Buscando fuentes…
+demo-emotes-nova = /me pone un banco junto a la fuente
+demo-emotes-orion = ¡Se ve genial desde aquí!
+demo-teleport-access-neighbour = Vecino adulto (demo)
+photo-light-shadow-softness = La suavidad de la sombra
+photo-light-shadow-intensity = Intensidad de la sombra
+photo-light-shadow-reset = Volver al valor de Preferencias
+world-teleport-access-blocked-title = Teletransporte bloqueado
+world-teleport-access-adults-only = La región que estás intentando visitar contiene { $rating } contenido, que es accesible solo para adultos.
+world-teleport-access-change-and-reteleport = La región que intentas visitar contiene contenido con la clasificación { $rating }. Tus preferencias actuales excluyen el contenido con la clasificación { $rating }. Puedes cambiar las preferencias y continuar con el teletransporte, o cancelarlo.
+world-teleport-access-change = La región que intentas visitar contiene contenido con la clasificación { $rating }. Tus preferencias actuales excluyen el contenido con la clasificación { $rating }. Puedes cambiar las preferencias o cancelar el teletransporte. Si cambias las preferencias, tendrás que intentar el teletransporte de nuevo.
+world-teleport-access-out-of-sync = Estamos teniendo dificultades técnicas con tu teletransporte porque tus preferencias no están sincronizadas con el servidor.
+world-teleport-access-rated = La ubicación que has elegido tiene una calificación de { $rating }.
+world-teleport-access-allow = Tus preferencias actuales excluyen el contenido con la clasificación { $rating }. Si lo permites, se actualizarán tus preferencias.
+world-teleport-access-allow-button = Permitir { $rating } contenido
+world-teleport-access-not-on-account = La región que estás intentando visitar tiene la clasificación { $rating }, que no está disponible en tu tipo de cuenta.
+world-teleport-access-change-and-continue = Cambiar y continuar
+world-teleport-access-change-preferences = Cambiar las preferencias
+world-teleport-access-preference-changed-title = Clasificación de contenido cambiada
+world-teleport-access-preference-changed = No recibirás más notificaciones de que vas a visitar una región con contenido { $rating }.Puedes cambiar tus preferencias de contenido en el futuro en Preferencias › Privacidad.
+people-show-group-sheet = Mostrar detalles del grupo
+people-group-details-empty = No hay grupo para mostrar
+ui-options-plate-click-own-help = Acción de un clic izquierdo en el plato de alguien; el cursor se convierte en una mano.En su propio plato, un clic abre su perfil o su menú cuando uno de ellos es elegido; manteniendo pulsado el botón allí todavía gira su avatar.
+ao-import-unfinished-retry = Una obra inacabada AO La importación ya existe en #Aurora/{ $folder }. Utilice el aviso de recuperación en la AO Cierre la ventana antes de volver a intentarlo.
+ao-unfinished-import =
+    { $count ->
+        [one] Importación de AO sin terminar en #Aurora/{ $folder }. Número de conjuntos: { $count }.
+       *[other] Importación de AO sin terminar en #Aurora/{ $folder }. Número de conjuntos: { $count }.
+    }
+ao-finish-import = Terminar la importación
+ao-show-in-inventory = Mostrar en el inventario
+ao-duplicate-native =
+    { $count ->
+        [one] Se encontró otra carpeta: #Aurora/{ $folder }. Número de conjuntos: { $count }. ¿Quieres combinarla con la carpeta de AO activa?
+       *[other] Se encontró otra carpeta: #Aurora/{ $folder }. Número de conjuntos: { $count }. ¿Quieres combinarla con la carpeta de AO activa?
+    }
+ao-native-already-exists = Ya existe una anulación de animación integrada con este nombre
+rlva-tools-retained = Retenido hasta el inicio de sesión
+rlva-read-at-login = Los cambios surten efecto en el próximo inicio de sesión.
+rlva-debug-commands-chat = Cada comando también obtiene una línea en el chat cercano, bajo el nombre del objeto: lo que ejecuta, qué falla y por qué, qué espera el inicio de sesión.
+rlva-blocked-start-im = No se puede iniciar un chat privado con { $recipient } por las restricciones de RLV
+rlva-blocked-start-conference = No se puede iniciar una conversación de grupo con [RECIPIENT] por las restricciones de RLV
+rlva-anonym-waiting = (Cargando…)
+rlva-anonym-unknown = (Desconocido)
+rlva-blocked-teleport = No se puede iniciar el teletransporte debido a las restricciones RLV
+rlva-blocked-permission-attach = No se pudo adjuntar «{ $object }» por las restricciones de RLV
+rlva-blocked-permission-teleport = Se denegó a «{ $object }» el permiso para teletransportarte debido a las restricciones de RLV
+rlva-blocked-view-notecard = No se puede abrir la tarjeta de notas debido a las restricciones RLVa.
+rlva-blocked-view-script = No se puede abrir el script debido a las restricciones RLVa.
+rlva-blocked-view-texture = No se puede abrir la textura debido a las restricciones RLVa.
+rlva-debug-explicit-point = Ignorar nombres de puntos de adjunción en elementos de inventario y carpetas
+rlva-debug-explicit-point-hint = Mientras un punto de adjunción está bloqueado, Wear and Add envía un objeto a su punto predeterminado en lugar del punto que da su nombre o el nombre de su carpeta (incompleto).
+phototools-environment-settings = Configuración del entorno
+phototools-quick-environments = Entornos rápidos
+phototools-environment-presets = Presets de entorno
+phototools-general-render = Configuración general de renderizado
+phototools-render-options = Opciones de renderización
+ui-bars-clouds-paused = Las nubes pausadas
+ui-bars-clouds-paused-tip = Las nubes se mantienen inmóviles durante esta sesión. Haga clic para que se muevan de nuevo.
+phototools-tab-dof-glow = Profundidad de campo y brillo
+phototools-lights-shadows = Ajustes de luces y sombras
+phototools-ambient-occlusion = Ajustes de oclusión ambiental
+phototools-dof = Ajustes de profundidad de campo
+phototools-tone-mapping = Configuración de mapeo tonal HDR
+phototools-glow = Ajustes de brillo
+phototools-photo-banner = Ventana de fotos abierta: las filas de la ventana de fotos también cambian la foto.La profundidad de campo se mantiene para sus próximas fotos; la luz, la exposición, las sombras, la oclusión ambiental y las luces desgastadas duran hasta que se cierra la ventana.
+phototools-photo-boost = La calidad de la foto se eleva: las filas gráficas muestran los valores elevados, y un cambio que haga allí se mantiene como propio.
+phototools-photo-focus-help = Clic: el último punto del mundo en el que se ha hecho clic. Puntero: el punto debajo del puntero. Manual: una distancia que usted establezca.
+phototools-photo-distance-help = La distancia a la que enfoca el objetivo en enfoque manual.
+phototools-director-lens = La lente del director se muestra mientras su ventana está abierta, sobre los ajustes de abajo.
+phototools-view-angle-viewfinder = El visor es el dueño del ángulo de visión: el tuyo vuelve cuando se cierra.
+ui-options-dof-show-focus-point = Mostrar punto de enfoque
+ui-options-dof-show-focus-point-help = Una pequeña cruz en el punto de enfoque de la lente: amarillo cuando está libre, rojo cuando está bloqueado.

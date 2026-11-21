@@ -12279,7 +12279,7 @@ ui-group-notices-saved = Kaydedildi
 ui-group-notices-attachment = Ek
 ui-group-notices-subject = Konu
 ui-group-notices-message = İleti…
-ui-group-notices-drop = Envanterden bir öğe sürükleyin (kopyalama + aktarma)
+ui-group-notices-drop = Envanter, Favoriler veya Yerler bölümünden bir öğeyi ya da yer işaretini sürükleyin (kopyalama ve aktarma izni gerekir).
 ui-group-notices-not-attachable = Bu öğe eklenemez: kopyalanabilir ve aktarılabilir olmalı, giyili olmamalıdır.
 ui-group-notices-remove-attachment = Eki kaldır
 ui-group-notices-send = { $count ->
@@ -15681,3 +15681,164 @@ game-control-action-boom-down = Vinç ↓
 game-control-action-escape = ESC
 picker-local-newest = Önce en yeni
 picker-local-name = Ad A–Z
+
+### Release translations
+
+ui-options-planet-curvature = Gezegen eğriliği
+ui-options-planet-curvature-help = Dünyayı yuvarlak bir gezegen üzerinde çizer: açık su göz seviyesine doğru akmak yerine gerçek ufuğa düşer, gökyüzü alttadır. Sadece görüntü değişir: bölgeler, fizik ve diğerlerinin gördükleri düz kalır. Dünya' da çizilecek mesafe içindeki damla birkaç santimetredir; uzak denizde gösterilir. Legacy Viewer' dan farklı
+ui-options-planet-radius = Gezegen yarıçapı
+ui-options-planet-radius-help = Gezegenin kilometrelerce çizilmiş yarıçapı. Dünya' nın yarıçası 6371 km: 10 m yükseklikte, denizin sonu yaklaşık 11 km uzaklıktadır. Daha küçük bir gezegen ufuğu daha yakın getirir
+ui-options-camera-frame-while-posing = Poze ederken avatarı çerçeveleme
+ui-options-camera-frame-while-posing-tip = Pozer'ı açmak Avatar'ı çerçeveler ve bir birleşmeye tıklayarak kamerayı ona yaklaştırır. Bir birleşmeyi çekmek kamerayı hiçbir zaman hareket ettirmemektedir.
+ui-options-camera-still-while-posing = Poz verirken kamerayı hareketsiz tut
+ui-options-camera-still-while-posing-tip = Poze ederken, kamera avatar'ı takip etmeyi bırakır, odaklanır ve vücut parçalarını izler. Yürümek onu geri yüklemez. Yörünge, zoom, panoramik ve önceden ayarlanmışlar hala çalışır.
+ui-options-group-emotes = Göndericinin mesajlarıyla grup emojileri
+ui-options-group-emotes-hint = Aurora sohbet stilinde, “/me waves” gibi bir eylem, aynı kişinin hemen önce veya sonra gönderdiği mesajlarla aynı başlık altında gösterilir. Eyleme ayrı bir başlık açılmaz.
+content-perms-nested = Nesneleri nesnelerin içine dahil et
+content-perms-nested-help = Bu aynı zamanda, beş seviyeye kadar derinliğe sahip, yuvalanmış nesnelerin içeriğini de düzenler. Her nesnenin kendisini barındıran temelin iki metre üstünde yerleştirildiği dünyadır. Çalışan scriptleri durdurulur, içeriği değiştirilir ve scriptleri yeniden başlatılır. Nesne daha sonra konteynerin içine geri kaydedilir. Konteynerdeki nesneenin izinleri, dünyadaki geçici kopyası silinmeden önce ayarlanır ve kontrol edilir. Kopyalayamadığınız, taşıyamadığınız veya değiştiremediğiniz nesneler kapalı kalır. Yerleştirme yerinde inşa etmek için izin gerekiyor.
+content-perms-nested-preview =
+    { $objects ->
+        [one] { $objects } içerikteki nesne açılacak, atlatılacaktır: { $skipped }.
+       *[other] { $objects } içerikteki nesneler açılacak, atlatılacaktır: { $skipped }.
+    }
+content-perms-nested-entry = { $name } ({ $reason })
+content-perms-nested-separator = { ", " }
+content-perms-nested-skip-no-copy = kopyalama veya aktarma yok
+content-perms-nested-skip-no-modify = değiştirilemez
+content-perms-nested-skip-depth = 5 seviyeden daha derin
+content-perms-nested-rezzing = Nesne yerleştiriliyor{ $name }Dünyada (üreme seviyesi) { $level })…
+content-perms-nested-stopping = "{ $name }" senaryosu durduruluyor...
+content-perms-nested-applying = "{ $name }"ün içeriği değiştiriliyor...
+content-perms-nested-restoring = "{ $name }"ün senaryoları yeniden başlatılıyor...
+content-perms-nested-saving = Nesne “{ $name }” konteynerine geri kaydedildi…
+content-perms-nested-deleting = "{ $name }"ün dünyadaki geçici kopyası siliniyor...
+content-perms-nested-finished = Güncellenen öğeler: { $count }. İç içe nesneler: { $objects }. Atlananlar: { $skipped }.
+content-perms-nested-kept-next =
+    { $kept ->
+        [one] { $kept } orijinalinin yanında kaldı: isimler farklıydı.
+       *[other] { $kept } orijinallerinin yanında kaldı: isimler farklıydı.
+    }
+content-perms-nested-stopped = Durduruldu: Dünyadaki geçici kopyalar silindi, orijinal parçalar olduğu gibi bırakıldı.
+content-perms-nested-stop-help = İşlemi durdurur ve dünyada kalan geçici kopyaları siler. Özgün öğeler olduğu gibi kalır. Geri kaydedilmiş nesneler değişikliklerini korur.
+content-perms-nested-scripts-warning = Her nesne dünyada oluşturulur (rez). Bu yüzden komut dosyalarının oluşum sırasında çalıştırdığı patlama, ışınlanma veya eşya verme gibi işlemler, dosyalar durdurulmadan önce gerçekleşir. Bunu önlemek için yönettiğiniz bir bölgede önce Bölge / Mülk ayarlarından Komut dosyalarını devre dışı bırak seçeneğini açın ve işiniz bitince kapatın.
+content-perms-nested-original-kept = "{ $name }" geri kaydedildi, ancak orijinal maddesi kaldırılamadı: her ikisi de içeriktedir.
+content-perms-nested-copy-left = Dünyadaki "{ $name }"'ün geçici kopyası silinmedi: onu elle sil.
+content-perms-nested-save-unconfirmed = Geri kaydetme doğrulanmadı
+content-perms-nested-saved-perms-unconfirmed = Durduruldu: Nesnenin konteynerine geri kaydedilen izinleri doğrulanamadı. Dünyadaki geçici çalışma kopyaları korunmuştur; onları silmeden önce kontrol edin.
+content-perms-nested-timeout = Simülasyon zamanında cevap vermedi
+content-perms-nested-rez-refused = Durduruldu: simülasyon dünyaya yerleşmeyi reddetti "{ $name }” ({ $reason }).
+content-perms-nested-rez-timeout = Durduruldu: "{ $name }" 15 saniye içinde görünmedi. Eğer daha sonra ilkel nesnenin üzerinde görünürse, onu sil.
+content-perms-nested-not-ours = Durduruldu: “{ $name }” için dünyaya konulan nesne bu içeriklerden gelmemektedir, dünyada bırakılmıştır.
+content-perms-nested-unverified = Durduruldu: "{ $name }" için görünen nesne bu içeriklerden dünyaya konulmuş olarak kontrol edilemedi, bu yüzden dünyada bırakıldı.
+content-perms-nested-group-split = Durduruldu: "{ $name }" (birçok nesne tek olarak kaydedilmiştir) tek bir nesnenin geri döndüğünü gösterdi. Dünyaya yerleştirilen parçaları dünyada kaldı: hepsini seçin ve grubu yeniden oluşturmak için onları alın.
+content-perms-nested-failed = “{ $name }” değişmeden bırakıldı: { $reason }.
+content-perms-nested-original-gone = "{ $name }" dünyada tutulur: geri kaydetme onaylanmamıştır ve orijinal maddesi gitmiştir.
+content-perms-nested-gone = Nesne dünyayı terk etti.
+content-perms-nested-land-denied = Durduruldu: bu ilkel nesnenin üzerinde inşa edemezsiniz, nesnelerin dünyaya konacağı yer.
+content-perms-nested-parcel-full = Durduruldu: Paketin dünyadaki geçici kopyalar için geriye hiçbir yer kalmadı.
+content-perms-nested-rlva = Durduruldu: Dünyada nesneler koymak kısıtlıdır (RLVa).
+content-perms-nested-too-many = çok fazla script
+content-perms-nested-unreadable = içeriği okunamamıştır
+content-perms-demo-chest = Depolama sandıkları
+content-perms-demo-notes = Depodaki notlar.
+content-perms-demo-outer = Dış kutu
+content-perms-demo-glow = Nesneyi parlatmaya yarayan bir script
+content-perms-demo-readme = Önce beni oku.
+content-perms-demo-inner = İç konteyner
+content-perms-demo-inner-note = İç kutunun içindeki not
+content-perms-demo-tiny = Çok küçük bir kutu
+content-perms-demo-spin = Nesneyi döndüren script
+content-perms-demo-heirloom = Aile mirasçısı
+content-perms-demo-sealed = Mühürlenmiş kutu
+content-perms-demo-linked = Birleştirilmiş nesnelerin grubu
+content-perms-demo-pebble = Küçük yuvarlak taş
+content-perms-demo-stack = Sandık yığını
+dev-toolbox-o10 = Avatar isabet kutuları
+ui-appearance-date-newest-first = Tarih: en yeni önce
+ui-appearance-date-oldest-first = Tarih: en eski önce
+ui-appearance-favorites-to-top = Tepeye git
+ui-appearance-images-to-top = Resimler
+ui-environment-sort-by-name = Alfabe olarak sırala
+ui-environment-sorted-by-name = Şu anda isimlere göre sıralanmıştır. Envanterinizdeki düzeni geri getirmek için tıklayınız.
+ui-environment-in-inventory-order = Envanterinizin sırasına göre. Düzenlemek için tıklayın A–Z.
+ui-chat-contacts-groups-sub = Gruplar · { $count }
+ui-options-soft-shadows = Yumuşak gölgeler
+ui-options-soft-shadows-help = Güneş gölgeleri, nesne gölgelediği şeyden uzaklaştıkça daha yumuşak kenarlarla görünür, gerçek hayatta olduğu gibi: yüksek bir dalın gölgesi ucuna doğru bulanıklaşır ama ayak keskin kalır. Deneysel, varsayılan olarak kapalı; grafik kartı için mili saniyenin bir parçası kadar maliyetli
+ui-options-shadow-softness = Gölge yumuşaklığı
+ui-options-shadow-softness-help = Yumuşak gölgeler için ışığın büyüklüğü: 1 2. 3 derece çapında bir ışık, 2 gölgeleri iki kat yumuşatmış olan daha büyük bir ısı (gerçek güneş yaklaşık 0. 2' dir), 0 boyutu olmayan ışıktır: projeksiyonlar dahil olmak üzere gölgelerin önceki hali
+ui-options-shadow-softness-needs-soft = Bunu kullanmak için Yumuşak Gölgeleri etkinleştir
+ui-options-shadow-intensity = Gölge yoğunluğu
+ui-options-shadow-intensity-help = Güneşin gölgelerinin ne kadar karanlık olduğu: 1 normal karanlık, daha düşük onlar için daha fazla ışık bırakır
+ui-options-system-fonts-searching = Yazı tipleri aranıyor...
+demo-emotes-nova = /me, çeşmenin yanında bir bank kuruyor.
+demo-emotes-orion = Buradan harika görünüyor!
+demo-teleport-access-neighbour = Yetişkin komşu (demo)
+photo-light-shadow-softness = Gölge yumuşaklığı
+photo-light-shadow-intensity = Gölge yoğunluğu
+photo-light-shadow-reset = Seçeneklerin değerine geri dön
+world-teleport-access-blocked-title = Teleport engellendi.
+world-teleport-access-adults-only = Ziyaret etmeye çalıştığınız bölgede sadece yetişkinler için erişilebilir olan { $rating } içerik bulunuyor.
+world-teleport-access-change-and-reteleport = Ziyaret etmeye çalıştığınız bölgede { $rating } dereceli içerik var. Mevcut tercihleriniz { $rating } dereceli içeriğe izin vermiyor. Tercihlerinizi değiştirip ışınlanmaya devam edebilir veya ışınlanmayı iptal edebilirsiniz.
+world-teleport-access-change = Ziyaret etmeye çalıştığınız bölgede { $rating } dereceli içerik var. Mevcut tercihleriniz { $rating } dereceli içeriğe izin vermiyor. Tercihlerinizi değiştirebilir veya ışınlanmayı iptal edebilirsiniz. Tercihleri değiştirdikten sonra tekrar ışınlanmayı deneyin.
+world-teleport-access-out-of-sync = Teleportasyonunuzla ilgili teknik bir sorunumuz var çünkü tercihleriniz sunucu ile senkronize değil.
+world-teleport-access-rated = Seçtiğin yer { $rating } puanına sahip.
+world-teleport-access-allow = Mevcut tercihleriniz { $rating } dereceli içeriğe izin vermiyor. İzin verirseniz tercihleriniz güncellenir.
+world-teleport-access-allow-button = { $rating } içeriğine izin ver
+world-teleport-access-not-on-account = Ziyaret etmeye çalıştığınız bölgenin derecesi { $rating }'dür ve bu değer hesabınızda mevcut değildir.
+world-teleport-access-change-and-continue = Değiştir ve devam et
+world-teleport-access-change-preferences = Seçenekleri değiştir
+world-teleport-access-preference-changed-title = İçerik derecelendirmesi değiştirildi
+world-teleport-access-preference-changed = { $rating } içeriği olan bir bölgeyi ziyaret etmek üzere olduğunuz hakkında daha fazla bildirim almayacaksınız. Gelecekte içerik tercihlerinizi Seçenekler › Mahremiyet'te değiştirebilirsiniz.
+people-show-group-sheet = Grup ayrıntılarını göster
+people-group-details-empty = Gösterilecek grup yok
+ui-options-plate-click-own-help = Bir başkasının masası üzerinde sol tıklamanın etkisi; işaretçi el haline dönüşür. Kendi masanızda, bir tıklama profilinizi veya menünüzi açabilir, bunlardan biri seçildiğinde; düğmeyi tutmanız hala avatarınızı döndürür.
+ao-import-unfinished-retry = Bitmemiş bir şey. AO import zaten mevcuttur #Aurora/{ $folder }- İade bildirimini kullanın. AO Yeniden denemeden önce pencereyi kapatın.
+ao-unfinished-import =
+    { $count ->
+        [one] #Aurora/{ $folder } konumundaki AO içe aktarma işlemi tamamlanmadı. Set sayısı: { $count }.
+       *[other] #Aurora/{ $folder } konumundaki AO içe aktarma işlemi tamamlanmadı. Set sayısı: { $count }.
+    }
+ao-finish-import = İthalatı tamamla
+ao-show-in-inventory = Envanterde göster
+ao-duplicate-native =
+    { $count ->
+        [one] Başka bir klasör bulundu: #Aurora/{ $folder }. Set sayısı: { $count }. Etkin AO klasörüyle birleştirilsin mi?
+       *[other] Başka bir klasör bulundu: #Aurora/{ $folder }. Set sayısı: { $count }. Etkin AO klasörüyle birleştirilsin mi?
+    }
+ao-native-already-exists = Bu isimle bir iç animasyon üstatma zaten mevcuttur
+rlva-tools-retained = Girişe kadar saklanır
+rlva-read-at-login = Değişiklikler bir sonraki girişte geçerli olur.
+rlva-debug-commands-chat = Her komut, nesnenin adının altında yakındaki sohbette bir satır alır: neyi gerçekleştirir, ne başarısız olur ve neden, giriş için bekleyen nedir.
+rlva-blocked-start-im = Başlatılamadı IM ile oturum { $recipient } sebebiyle RLV kısıtlamalar
+rlva-blocked-start-conference = Konferans başlatılamadı [RECIPIENT] sebebiyle RLV kısıtlamalar
+rlva-anonym-waiting = (Yükleniyor...)
+rlva-anonym-unknown = (Bilinmiyor)
+rlva-blocked-teleport = RLV kısıtlamalarından dolayı teleport başlatılamadı
+rlva-blocked-permission-attach = Bağlantı denedi '{ $object }'Reddedildi. RLV kısıtlamalar
+rlva-blocked-permission-teleport = '{ $object }'Sizi teleport etme izni reddedildi. RLV kısıtlamalar
+rlva-blocked-view-notecard = RLVa kısıtlamalarından dolayı notcard açılamadı.
+rlva-blocked-view-script = RLVa kısıtlamalarından dolayı script açılamadı.
+rlva-blocked-view-texture = RLVa kısıtlamalarından dolayı doku açılamadı.
+rlva-debug-explicit-point = Envanter nesneleri ve dizinler üzerindeki bağlantı noktası isimlerini görmezden gel
+rlva-debug-explicit-point-hint = Bir bağlantı noktası kilitlendiğinde, Wear and Add bir nesneyi adının veya dosya adı verdiği nokta yerine varsayılan noktasına gönderir (eksik).
+phototools-environment-settings = Ortam ayarları
+phototools-quick-environments = Hızlı ortamlar
+phototools-environment-presets = Çevre önayarları
+phototools-general-render = Genel görüntüleme ayarları
+phototools-render-options = Render seçenekleri
+ui-bars-clouds-paused = Bulutlar durduruldu
+ui-bars-clouds-paused-tip = Bulutlar bu oturum için hareketsiz tutuldu. Yeniden hareket etmeleri için tıklayınız.
+phototools-tab-dof-glow = Alan derinliği ve parıltı
+phototools-lights-shadows = Işık ve gölge ayarları
+phototools-ambient-occlusion = Ortam perdeleme ayarları
+phototools-dof = Alan derinliği ayarları
+phototools-tone-mapping = HDR ton haritalama ayarları
+phototools-glow = Parıltı ayarları
+phototools-photo-banner = Fotoğraf penceresi açık: fotoğraf penceresinin satırları da fotoğrafı değiştirir. Alan derinliği bir sonraki fotoğraflarınız için korunur; ışık, mesafe, gölgeler, çevresel kapama ve kullanılmış ışıklar fotoğraf penceresinde kapanana kadar devam eder.
+phototools-photo-boost = Fotoğraf kalitesi yükseltilmiştir: grafik satırları yükseltilmiş değerleri gösterir ve burada yaptığınız bir değişiklik sizin gibi tutulur.
+phototools-photo-focus-help = Tıkla: Dünya' da son tıklandığı nokta. İzleyici: İzleyicinin altındaki nokta. El: Belirlediğiniz bir mesafe.
+phototools-photo-distance-help = Lensin manuel fokusta odaklanan mesafe.
+phototools-director-lens = Yönetmenin lensi, penceresi açıkken aşağıda yer alan ayarların üzerinde gösterilir.
+phototools-view-angle-viewfinder = Gözlemci görüş açısına sahiptir: kapandığında sizinki geri gelir.
+ui-options-dof-show-focus-point = Odak noktasını göster
+ui-options-dof-show-focus-point-help = Lensin odaklandığı noktada küçük bir haç: serbest olduğunda sarı, kilitlendiği zaman kırmızıdır.
