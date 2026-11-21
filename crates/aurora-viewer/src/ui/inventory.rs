@@ -156,9 +156,11 @@ pub enum InvAction {
     /// some questions for a drag only (LLFolderBridge::dragCategoryIntoFolder).
     Drop(Mutation),
     /// Undo (true) or redo the inventory history's next step
-    /// (`world::inventory::undo`): Ctrl+Z / Ctrl+Y and the menus.
+    /// (`world::inventory::undo`): Ctrl+Z / Ctrl+Y and the menus. `named`:
+    /// from the menu, which named the step it takes (`History::plan`).
     History {
         undo: bool,
+        named: bool,
     },
     Create {
         parent: Uuid,

@@ -538,3 +538,35 @@ fn inventory_drag_with_ctrl_copies_an_item_whose_copy_has_no_operations() {
     assert!(drag::changes(&copy));
     assert!(!drag::changes(&Mutation::default()));
 }
+
+#[test]
+fn copy_to_the_other_pane_is_refused_for_a_no_copy_item() {
+    let (inv, ids) = crate::world::inventory::undo::tests_support::fixture();
+    let prefs = InventoryPreferences::default();
+    let facts = Facts::default();
+    // the sword lacks Copy in the fixture; the hat has it
+    assert!(!drag::would_drop(
+        &inv,
+        &[ids.sword],
+        ids.clothes,
+        drag::DropMode::Copy,
+        &prefs,
+        &facts
+    ));
+    assert!(drag::would_drop(
+        &inv,
+        &[ids.sword],
+        ids.clothes,
+        drag::DropMode::Move,
+        &prefs,
+        &facts
+    ));
+    assert!(drag::would_drop(
+        &inv,
+        &[ids.hat],
+        ids.objects,
+        drag::DropMode::Copy,
+        &prefs,
+        &facts
+    ));
+}

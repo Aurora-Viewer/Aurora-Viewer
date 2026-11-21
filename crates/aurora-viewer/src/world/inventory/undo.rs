@@ -120,10 +120,8 @@ impl Step {
                     if rules::parent(inv, m.id) != Some(at) {
                         continue;
                     }
-                    // a folder that still takes entries, or the Trash a
-                    // delete goes to again
-                    let takes = rules::destination(inv, back) || (*trash && !undo && rules::system(inv, 14) == Some(back));
-                    let back = if takes {
+                    let trash_root = rules::system(inv, 14);
+                    let back = if rules::destination(inv, back) {
                         back
                     } else if undo && *trash {
                         // its folder is gone or in the Trash itself: Restore's place
@@ -132,6 +130,12 @@ impl Step {
                             Some(folder) => folder,
                             None => continue,
                         }
+                    } else if let Some(root) = trash_root.filter(|root| back == *root || rules::under(inv, back, *root)) {
+                        // it came out of the Trash (a Restore, a drag out of
+                        // it), or a delete is done again: back to the Trash's
+                        // top, through the rules of a delete (`removable`,
+                        // worn items)
+                        root
                     } else {
                         continue;
                     };
@@ -191,6 +195,17 @@ impl Step {
                 if !undo && !rules::destination(inv, *parent) {
                     return Err(Refusal::Gone);
                 }
+                // a new folder holds only what was put there since, maybe
+                // by a route the history does not record (an offer, an
+                // outfit saved): not sent to the Trash with it
+                if undo
+                    && *made == Made::Folder
+                    && kept
+                        .iter()
+                        .any(|id| inv.folders.get(id).is_some_and(|f| !f.items.is_empty() || !f.children.is_empty()))
+                {
+                    return Err(Refusal::Refused(aurora_i18n::tr!("inventory-undo-folder-not-empty").into()));
+                }
                 let to = if undo { trash } else { *parent };
                 let change = rules::move_selection(inv, &kept, to, rules_of.protected, rules_of.worn).map_err(Refusal::Refused)?;
                 Ok((
@@ -211,6 +226,28 @@ fn finish(change: &mut Mutation) {
     change.refresh.dedup();
 }
 
+/// What a copy will look like: its name, its type, its creator and its
+/// base rights, all of which a copy keeps (an unrelated item that lands in
+/// the folder meanwhile is not taken for it).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Copied {
+    name: String,
+    asset_type: i32,
+    inv_type: i32,
+    creator: Uuid,
+    base_mask: u32,
+}
+
+impl Copied {
+    fn is(&self, it: &aurora_net::inventory::InvItem) -> bool {
+        it.name == self.name
+            && it.asset_type == self.asset_type
+            && it.inv_type == self.inv_type
+            && it.creator == self.creator
+            && it.base_mask == self.base_mask
+    }
+}
+
 /// A change on its way, waiting for the server to accept it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Draft {
@@ -226,8 +263,8 @@ pub enum Draft {
         folders: Vec<Uuid>,
         /// The originals linked.
         links: Vec<Uuid>,
-        /// The names of the items copied.
-        copies: Vec<String>,
+        /// The items copied, as their copies will be.
+        copies: Vec<Copied>,
         /// What `parent` held before.
         before: HashSet<Uuid>,
         /// The server's ids of the new folders, from the first reply of a
@@ -325,10 +362,17 @@ pub fn draft(inv: &Inventory, change: &Mutation) -> Option<Draft> {
         if !same(copy.parent) {
             return None;
         }
-        copies.push(if copy.name.is_empty() {
-            rules::name(inv, copy.item)
-        } else {
-            copy.name.clone()
+        let original = inv.items.get(&copy.item)?;
+        copies.push(Copied {
+            name: if copy.name.is_empty() {
+                original.name.clone()
+            } else {
+                copy.name.clone()
+            },
+            asset_type: original.asset_type,
+            inv_type: original.inv_type,
+            creator: original.creator,
+            base_mask: original.base_mask,
         });
     }
     let parent = parent?;
@@ -387,7 +431,7 @@ impl Draft {
                         } else {
                             copies
                                 .iter()
-                                .position(|name| *name == it.name)
+                                .position(|copied| copied.is(it))
                                 .map(|i| copies.swap_remove(i))
                                 .map(|_| *id)
                         };
@@ -410,12 +454,18 @@ enum Flight {
     Redo(Step),
 }
 
+/// The menu's step of Undo and of Redo (`History::shown`), by the inventory
+/// generation and the lengths of both lists it was found for.
+type Shown = [Option<((u64, usize, usize), Option<usize>)>; 2];
+
 /// The session's history (see the module).
 #[derive(Default, Debug)]
 pub struct History {
     undo: VecDeque<Step>,
     redo: Vec<Step>,
     flights: HashMap<Uuid, Flight>,
+    /// The world is shared with other threads: a lock, not a `Cell`.
+    shown: std::sync::Mutex<Shown>,
 }
 
 impl History {
@@ -431,9 +481,12 @@ impl History {
         self.redo.last()
     }
 
-    /// An undo or a redo is on its way.
+    /// An undo, a redo or a recorded change is on its way: the history
+    /// waits for it, so that its steps stay in order (a paste's copies may
+    /// arrive long after the inventory's own lock is free; an undo then
+    /// would take the step before, and the paste's arrival would wipe Redo).
     pub fn busy(&self) -> bool {
-        self.flights.values().any(|f| !matches!(f, Flight::Record(_)))
+        !self.flights.is_empty()
     }
 
     /// A new change of the user's: kept, and the steps undone are gone.
@@ -454,7 +507,12 @@ impl History {
     /// The change that takes back the last step (`undo`) or does the last
     /// one undone again. The steps with nothing left are dropped on the way;
     /// a step a rule refuses stays, with the rule's message.
-    pub fn plan(&mut self, inv: &Inventory, undo: bool, rules_of: &Rules<'_>) -> Result<(Mutation, Step), String> {
+    ///
+    /// A step whose entries all moved or are gone is dropped. From the keys
+    /// (`named` false) the undo then stops there, saying so: the user did
+    /// not see which step comes next. From the menu, which named the step
+    /// it would take (`shown`), it goes on to that one.
+    pub fn plan(&mut self, inv: &Inventory, undo: bool, rules_of: &Rules<'_>, named: bool) -> Result<(Mutation, Step), String> {
         let mut dropped = false;
         loop {
             let next = if undo { self.undo.back() } else { self.redo.last() };
@@ -467,6 +525,14 @@ impl History {
                 }
                 .into());
             };
+            if dropped && !named {
+                return Err(if undo {
+                    aurora_i18n::tr!("inventory-undo-dropped")
+                } else {
+                    aurora_i18n::tr!("inventory-redo-dropped")
+                }
+                .into());
+            }
             match step.plan(inv, undo, rules_of) {
                 // what went to the outfit or the Marketplace since keeps
                 // their rules
@@ -490,18 +556,40 @@ impl History {
     /// The step an Undo (or Redo) would take now, for its menu entry: the
     /// newest whose entries are still where it left them (`plan` drops the
     /// others first).
+    /// Planning a step (a delete of thousands of entries) is not redone
+    /// every frame the menu is open: it is kept until the inventory or the
+    /// history changes.
     pub fn shown(&self, inv: &Inventory, undo: bool) -> Option<&Step> {
-        let none = HashSet::new();
-        let rules_of = Rules {
-            protected: &none,
-            worn: &none,
+        let key = (inv.generation, self.undo.len(), self.redo.len());
+        let mut cache = self.shown.lock().map(|cache| *cache).unwrap_or_default();
+        let slot = &mut cache[usize::from(!undo)];
+        let back = match *slot {
+            Some((at, back)) if at == key => back,
+            _ => {
+                let none = HashSet::new();
+                let rules_of = Rules {
+                    protected: &none,
+                    worn: &none,
+                };
+                let mut steps: Box<dyn Iterator<Item = &Step>> = if undo {
+                    Box::new(self.undo.iter().rev())
+                } else {
+                    Box::new(self.redo.iter().rev())
+                };
+                let back = steps.position(|step| !matches!(step.plan(inv, undo, &rules_of), Err(Refusal::Gone)));
+                *slot = Some((key, back));
+                if let Ok(mut kept) = self.shown.lock() {
+                    *kept = cache;
+                }
+                back
+            }
         };
-        let mut steps: Box<dyn Iterator<Item = &Step>> = if undo {
-            Box::new(self.undo.iter().rev())
+        let back = back?;
+        if undo {
+            self.undo.iter().rev().nth(back)
         } else {
-            Box::new(self.redo.iter().rev())
-        };
-        steps.find(|step| !matches!(step.plan(inv, undo, &rules_of), Err(Refusal::Gone)))
+            self.redo.iter().rev().nth(back)
+        }
     }
 
     /// The entries the steps made: a copy found for one is not another's.
@@ -579,9 +667,9 @@ impl Inventory {
 
     /// The change that undoes (or redoes) the history's next step: see
     /// `History::plan`.
-    pub fn plan_history(&mut self, undo: bool, rules_of: &Rules<'_>) -> Result<(Mutation, Step), String> {
+    pub fn plan_history(&mut self, undo: bool, rules_of: &Rules<'_>, named: bool) -> Result<(Mutation, Step), String> {
         let mut history = std::mem::take(&mut self.undo);
-        let plan = history.plan(self, undo, rules_of);
+        let plan = history.plan(self, undo, rules_of, named);
         self.undo = history;
         plan
     }
@@ -606,7 +694,7 @@ impl Inventory {
         for change in changes.into_iter().flatten() {
             self.demo_send(agent, change, |inv, request, change| inv.record_change(request, change));
         }
-        if let Ok((change, step)) = self.plan_history(true, &rules_of) {
+        if let Ok((change, step)) = self.plan_history(true, &rules_of, true) {
             self.demo_send(agent, change, |inv, request, _| inv.undo.begin(request, true, step));
         }
     }
@@ -650,7 +738,7 @@ pub(crate) mod tests_support {
         pub sword: Uuid,
     }
 
-    fn folder(inv: &mut Inventory, id: Uuid, parent: Uuid, name: &str, kind: i32) {
+    pub(crate) fn folder(inv: &mut Inventory, id: Uuid, parent: Uuid, name: &str, kind: i32) {
         inv.folders.insert(
             id,
             Folder {

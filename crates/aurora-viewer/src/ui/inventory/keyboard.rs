@@ -157,6 +157,7 @@ pub(super) fn commands(
             shortcuts::Command::Undo | shortcuts::Command::Redo if st.pending.is_none() => {
                 actions.push(InvAction::History {
                     undo: command == shortcuts::Command::Undo,
+                    named: false,
                 });
             }
             _ => {}

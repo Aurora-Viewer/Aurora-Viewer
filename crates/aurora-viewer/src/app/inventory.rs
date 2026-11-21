@@ -325,7 +325,7 @@ impl App {
     /// Ctrl+Z / Ctrl+Y and the menus' Undo and Redo (`undo` false for a
     /// redo): the history's next step, through the inventory's rules, or
     /// why not in the pane that asked.
-    fn inventory_history(&mut self, undo: bool, editor: Uuid) {
+    fn inventory_history(&mut self, undo: bool, named: bool, editor: Uuid) {
         if self.inventory_ui.pending.is_some() || self.world.inventory.undo.busy() {
             return;
         }
@@ -334,7 +334,7 @@ impl App {
             protected: &self.settings.inventory.protected,
             worn: &worn,
         };
-        match self.world.inventory.plan_history(undo, &rules_of) {
+        match self.world.inventory.plan_history(undo, &rules_of, named) {
             Ok((change, step)) => self.submit_inventory_edit(change, None, editor, Undo::Step(undo, step)),
             Err(reason) => self.inventory_pane(editor).message = reason,
         }
@@ -474,7 +474,7 @@ impl App {
                 }
             }
             InvAction::Drop(change) => self.edit_inventory(change, true, editor),
-            InvAction::History { undo } => self.inventory_history(undo, editor),
+            InvAction::History { undo, named } => self.inventory_history(undo, named, editor),
             InvAction::Create { parent, kind, name } => {
                 // nil: New from the empty space of Recent, Worn or
                 // Favorites, into the type's own folder

@@ -1050,7 +1050,7 @@ fn build_mode(
         c.slot("delete", 7);
     }
     extra::build(&mut c, inv, id, st, prefs, facts, all);
-    explorer::build(&mut c, inv, id, st, prefs, all, background);
+    explorer::build(&mut c, inv, id, st, prefs, facts, all, background);
     if !all {
         super::listings::restrict(&mut c, inv, id);
     }

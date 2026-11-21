@@ -107,6 +107,12 @@ pub(crate) fn mode_for(m: egui::Modifiers, mac: bool) -> DropMode {
     }
 }
 
+/// Whether a drop of `ids` into `to` would change anything (the menus'
+/// Copy / Move to the other pane, greyed otherwise).
+pub(super) fn would_drop(inv: &Inventory, ids: &[Uuid], to: Uuid, mode: DropMode, prefs: &InventoryPreferences, facts: &Facts) -> bool {
+    mutation(inv, ids, to, mode, prefs, facts).is_ok_and(|plan| changes(&plan))
+}
+
 /// The change a drop of `ids` into `to` makes.
 fn mutation(
     inv: &Inventory,

@@ -78,6 +78,7 @@ pub(super) fn build(
     id: Uuid,
     st: &InventoryUi,
     prefs: &InventoryPreferences,
+    facts: &Facts,
     all: bool,
     background: bool,
 ) {
@@ -143,12 +144,16 @@ pub(super) fn build(
             let ids = st.selected_ids(id);
             let to = other.unwrap_or_default();
             let allowed = other.is_some() && !ids.contains(&to) && ids.iter().all(|id| rules::parent(inv, *id) != Some(to));
+            // greyed when the drop's own plan refuses (a no-copy item's
+            // copy, a protected or worn entry's move), as the drag shows
+            let would = |mode| allowed && !all && super::super::drag::would_drop(inv, &ids, to, mode, prefs, facts);
+            let (copy, moves) = (would(super::super::drag::DropMode::Copy), would(super::super::drag::DropMode::Move));
             c.add(
                 "copy-to-pane",
                 TEXT,
                 "copy-filled",
                 aurora_i18n::tr!("inventory-copy-to-other-pane"),
-                allowed,
+                copy,
                 Command::Explorer(ExplorerCommand::ToOtherPane(ids.clone(), true)),
             );
             c.add(
@@ -156,7 +161,7 @@ pub(super) fn build(
                 TEXT,
                 "arrow-right",
                 aurora_i18n::tr!("inventory-move-to-other-pane"),
-                allowed,
+                moves,
                 Command::Explorer(ExplorerCommand::ToOtherPane(ids, false)),
             );
         }
@@ -280,7 +285,7 @@ pub(super) fn build(
             icon,
             &label,
             step.is_some() && !busy,
-            Command::Invoke(InvAction::History { undo }),
+            Command::Invoke(InvAction::History { undo, named: true }),
         );
     }
 }
