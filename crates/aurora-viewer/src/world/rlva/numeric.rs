@@ -205,11 +205,13 @@ fn strtod(text: &str) -> Option<(f64, bool)> {
         _ => (false, text),
     };
     let sign = if negative { -1.0 } else { 1.0 };
-    let lower: Vec<u8> = body.iter().take(8).map(u8::to_ascii_lowercase).collect();
-    if lower.starts_with(b"inf") {
+    // Called for numeric rule options on every frame (name tag distances,
+    // IM ranges): nothing here allocates.
+    let starts = |word: &[u8]| body.get(..word.len()).is_some_and(|head| head.eq_ignore_ascii_case(word));
+    if starts(b"inf") {
         return Some((sign * f64::INFINITY, true));
     }
-    if lower.starts_with(b"nan") {
+    if starts(b"nan") {
         return Some((f64::NAN, true));
     }
     if let Some((value, _)) = hex_float(body) {
@@ -219,11 +221,9 @@ fn strtod(text: &str) -> Option<(f64, bool)> {
     if length == 0 {
         return None;
     }
-    let number = std::str::from_utf8(&text[..length]).ok()?;
-    // A point with no digit before or after it is not read by Rust.
-    let number = number.replace("-.", "-0.").replace("+.", "0.");
-    let number = if number.starts_with('.') { format!("0{number}") } else { number };
-    let value = number.trim_end_matches('.').parse::<f64>().ok()?;
+    // Rust reads `.5`, `-.5`, `+.5` and `5.` as strtod does; the lone point
+    // it refuses never gets here (decimal_length is 0 without a digit).
+    let value = std::str::from_utf8(&text[..length]).ok()?.parse::<f64>().ok()?;
     let nonzero = text[..length]
         .iter()
         .take_while(|b| !matches!(b, b'e' | b'E'))
@@ -437,6 +437,11 @@ mod tests {
         assert_eq!(stof("5."), Some(5.0));
         assert_eq!(stof(".5"), Some(0.5));
         assert_eq!(stof("-.5"), Some(-0.5));
+        assert_eq!(stof("+.5"), Some(0.5));
+        assert_eq!(stof("+5."), Some(5.0));
+        assert_eq!(stof("5.e1"), Some(50.0));
+        assert_eq!(stof(".5e-1"), Some(0.05));
+        assert_eq!(stof("-."), None);
         assert_eq!(stof("1e2"), Some(100.0));
         assert_eq!(stof("1e"), Some(1.0));
         assert_eq!(stof("1e+"), Some(1.0));
@@ -445,6 +450,8 @@ mod tests {
         assert_eq!(stof("0x"), Some(0.0));
         assert_eq!(stof("inf"), Some(f32::INFINITY));
         assert_eq!(stof("-Infinity"), Some(f32::NEG_INFINITY));
+        assert_eq!(stof("INF"), Some(f32::INFINITY));
+        assert_eq!(stof("in"), None);
         assert!(stof("nan").is_some_and(f32::is_nan));
         assert!(stof("NaN(1)").is_some_and(f32::is_nan));
         assert_eq!(stof("1e39"), None);
