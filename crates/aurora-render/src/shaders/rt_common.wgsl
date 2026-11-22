@@ -16,7 +16,9 @@
 const FLAG_FULLBRIGHT: u32 = 1u;
 const FLAG_ALPHA_MASK: u32 = 2u;
 const FLAG_PBR: u32 = 8u;
+const FLAG_PLANAR: u32 = 32u;
 const FLAG_TERRAIN: u32 = 64u;
+const FLAG_TEX_ANIM: u32 = 1024u;
 const FLAG_SKINNED: u32 = 128u;
 const FLAG_ANCHORED: u32 = 4096u;
 const SKELETON_ANCHOR: u32 = 208u;
@@ -28,6 +30,8 @@ const RECORD_UV_ST: u32 = 6u;
 const RECORD_PARAMS: u32 = 7u;
 const RECORD_TEX: u32 = 8u;
 const RECORD_FLAGS: u32 = 9u;
+const RECORD_ANIM: u32 = 14u;
+const RECORD_ANIM_XF: u32 = 15u;
 // u32 words of an arena vertex and of a skin vertex (types.rs)
 const VERTEX_WORDS: u32 = 6u;
 const SKIN_WORDS: u32 = 3u;
@@ -78,6 +82,10 @@ fn cull_face(record: u32) -> CullFace {
 // `cell_table`; `hit_of` below): the small still faces of a cell share one
 // level, in world space.
 @group(1) @binding(8) var<storage, read> merged_records: array<u32>;
+// The texture animations' clock, the shading's (renderer.rs `anim_now`
+// zw, object.wgsl `tex_anim_st`'s `clock`): milliseconds, then the bits of
+// their fraction (rt_shadows.rs `write_texture_clock`).
+@group(1) @binding(9) var<storage, read> tex_clock: vec4<u32>;
 // The bit of the scene's custom index that says a merged cell.
 const MERGED: u32 = 0x800000u;
 // The instances' cull masks (rt_shadows.rs `SOLID`, `GLASS`): the opaque
@@ -198,6 +206,11 @@ fn surface_at(record: u32, primitive: u32, bary: vec2<f32>, dir: vec3<f32>) -> S
     s.record = record;
     s.normal = n;
     s.uv = vertex_uv(v0) * w.x + vertex_uv(v1) * w.y + vertex_uv(v2) * w.z;
+    // (object.wgsl `face_st`; a HUD's zoom aside, no HUD is traced)
+    if ((record_vec(record, RECORD_FLAGS).x & FLAG_PLANAR) != 0u) {
+        let local_p = vertex_pos(v0) * w.x + vertex_pos(v1) * w.y + vertex_pos(v2) * w.z;
+        s.uv = planar_st(local_p, local_n, record_model(record));
+    }
     return s;
 }
 
@@ -259,23 +272,193 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3<f32>(0.04045));
 }
 
-// The diffuse map's coordinates (object.wgsl `te_uv`: `ll_uv` / `pbr_uv`).
-// Not yet: planar mapping and texture animation.
+// The diffuse map's coordinates (object.wgsl `diffuse_uv`: the texture
+// animation at the shading's time, then `te_uv`, `ll_uv` / `pbr_uv`), from
+// the face's own (`surface_at`: planar mapping is in them).
 fn diffuse_uv(record: u32, uv: vec2<f32>) -> vec2<f32> {
     let so = record_vecf(record, RECORD_UV_ST);
     let rot = record_vecf(record, RECORD_PARAMS).x;
+    let flags = record_vec(record, RECORD_FLAGS).x;
+    var st = uv;
+    if ((flags & FLAG_TEX_ANIM) != 0u) {
+        // (an animated legacy face's animation holds its texture entry's
+        // transform)
+        let a = tex_anim_st(uv, anim_record(record), tex_clock.xy);
+        if ((flags & FLAG_PBR) == 0u) {
+            return vec2<f32>(a.x, 1.0 - a.y);
+        }
+        st = a;
+    }
     let c = cos(rot);
     let sn = sin(rot);
-    if ((record_vec(record, RECORD_FLAGS).x & FLAG_PBR) != 0u) {
-        let v = vec2<f32>(uv.x, 1.0 - uv.y) * so.xy;
+    if ((flags & FLAG_PBR) != 0u) {
+        let v = vec2<f32>(st.x, 1.0 - st.y) * so.xy;
         return vec2<f32>(c * v.x + sn * v.y, -sn * v.x + c * v.y) + so.zw;
     }
-    var s = uv.x - 0.5;
-    var t = uv.y - 0.5;
+    var s = st.x - 0.5;
+    var t = st.y - 0.5;
     let tmp = s;
     s = s * c + t * sn;
     t = -tmp * sn + t * c;
     return vec2<f32>(s * so.x + so.z + 0.5, 1.0 - (t * so.y + so.w + 0.5));
+}
+
+// The texture animation and the planar mapping of a face, as the shading
+// draws them: object.wgsl's functions, taken here as they are
+// (rt_shadows.rs `rt_texture_coordinates_are_the_shadings`), on the parts
+// of a draw record they read, under the shading's name. The rays read a
+// face's texture where the eye sees it: the sea's animated foam cast the
+// shadow of its unmoved texture, where no foam was shown (2026-11-22, grid
+// report of beta7).
+struct DrawRecord {
+    flags: vec4<u32>,
+    anim: vec4<u32>,
+    anim_xf: vec4<f32>,
+};
+
+fn anim_record(record: u32) -> DrawRecord {
+    return DrawRecord(record_vec(record, RECORD_FLAGS), record_vec(record, RECORD_ANIM), record_vecf(record, RECORD_ANIM_XF));
+}
+
+fn planar_st(pos: vec3<f32>, normal: vec3<f32>, model: mat4x4<f32>) -> vec2<f32> {
+    let n = normalize(normal);
+    var b = vec3<f32>(1.0, 0.0, 0.0);
+    if (abs(n.x) >= 0.5) {
+        b = vec3<f32>(0.0, select(1.0, -1.0, n.x < 0.0), 0.0);
+    } else if (n.y > 0.0) {
+        b = vec3<f32>(-1.0, 0.0, 0.0);
+    }
+    let t = cross(b, n);
+    let scale = vec3<f32>(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
+    let p = pos * scale;
+    return vec2<f32>(1.0 + (dot(b, p) * 2.0 - 0.5), -(dot(t, p) * 2.0 - 0.5));
+}
+
+fn ll_xform(st: vec2<f32>, sto: vec4<f32>, rot: f32) -> vec2<f32> {
+    var s = st.x - 0.5;
+    var t = st.y - 0.5;
+    let ca = cos(rot);
+    let sa = sin(rot);
+    let tmp = s;
+    s = s * ca + t * sa;
+    t = -tmp * sa + t * ca;
+    s = s * sto.x + sto.z + 0.5;
+    t = t * sto.y + sto.w + 0.5;
+    return vec2<f32>(s, t);
+}
+
+const TA_LOOP: u32 = 2u;
+const TA_REVERSE: u32 = 4u;
+const TA_PING_PONG: u32 = 8u;
+const TA_SMOOTH: u32 = 16u;
+const TA_ROTATE: u32 = 32u;
+const TA_SCALE: u32 = 64u;
+
+struct TexAnimDef {
+    mode: u32,
+    size_x: f32,
+    size_y: f32,
+    start: f32,
+    rate: f32,
+    num: f32,
+    full: f32,
+};
+
+fn tex_anim_def(rec: DrawRecord) -> TexAnimDef {
+    var d: TexAnimDef;
+    let packed = rec.flags.w;
+    d.mode = packed & 0xffu;
+    d.size_x = f32((packed >> 8u) & 0xffu);
+    d.size_y = f32((packed >> 16u) & 0xffu);
+    d.start = bitcast<f32>(rec.anim.y);
+    let length = bitcast<f32>(rec.anim.z);
+    d.rate = bitcast<f32>(rec.anim.w);
+    d.num = select(max(d.size_x * d.size_y, 1.0), length, length != 0.0);
+    d.full = d.num;
+    if ((d.mode & TA_PING_PONG) != 0u) {
+        if ((d.mode & TA_SMOOTH) != 0u) {
+            d.full = 2.0 * d.num;
+        } else if ((d.mode & TA_LOOP) != 0u) {
+            d.full = max(2.0 * d.num - 2.0, 1.0);
+        } else {
+            d.full = max(2.0 * d.num - 1.0, 1.0);
+        }
+    }
+    return d;
+}
+
+// LOOP wraps (C fmod), one-shot stops on the last frame.
+fn tex_anim_wrap(d: TexAnimDef, raw: f32) -> f32 {
+    if ((d.mode & TA_LOOP) != 0u) {
+        return raw % d.full;
+    }
+    return min(d.full - 1.0, raw);
+}
+
+// Wrapped frame counter at the current time (tex_anim.rs clock_counter): a
+// looping animation wraps the whole seconds before adding the sub-second
+// part, so the motion stays smooth after hours.
+fn tex_anim_counter(d: TexAnimDef, rec: DrawRecord, clock: vec2<u32>) -> f32 {
+    if (d.rate == 0.0) {
+        return tex_anim_wrap(d, bitcast<f32>(rec.anim.x));
+    }
+    let e_ms = bitcast<i32>(clock.x - rec.anim.x);
+    let frac = bitcast<f32>(clock.y);
+    if (e_ms >= 0) {
+        let whole = f32(e_ms / 1000);
+        let part = (f32(e_ms % 1000) + frac) * 0.001;
+        if ((d.mode & TA_LOOP) != 0u) {
+            let full = abs(d.full);
+            let a = abs(d.rate);
+            let m = ((a * whole) % full + a * part) % full;
+            return select(m, -m, d.rate < 0.0);
+        }
+        return tex_anim_wrap(d, d.rate * whole + d.rate * part);
+    }
+    return tex_anim_wrap(d, d.rate * (f32(e_ms) + frac) * 0.001);
+}
+
+// Animated GL texture coordinates of a face (`st` before any transform).
+fn tex_anim_st(st: vec2<f32>, rec: DrawRecord, clock: vec2<u32>) -> vec2<f32> {
+    let d = tex_anim_def(rec);
+    let smooth_mode = (d.mode & TA_SMOOTH) != 0u;
+    var fc = tex_anim_counter(d, rec, clock);
+    if (!smooth_mode) {
+        fc = floor(fc + 0.01);
+        fc = min(d.full - 1.0, fc);
+    }
+    if ((d.mode & TA_PING_PONG) != 0u && fc >= d.num) {
+        fc = select((d.num - 1.99) - (fc - d.num), d.num - (fc - d.num), smooth_mode);
+    }
+    if ((d.mode & TA_REVERSE) != 0u) {
+        fc = select((d.num - 0.99) - fc, d.num - fc, smooth_mode);
+    }
+    fc += d.start;
+    if (!smooth_mode) {
+        fc = floor(fc + 0.5);
+    }
+    let c = rec.anim_xf;
+    var sto: vec4<f32>;
+    var rot: f32;
+    if ((d.mode & TA_ROTATE) != 0u) {
+        rot = fc;
+        sto = c;
+    } else if ((d.mode & TA_SCALE) != 0u) {
+        rot = c.z;
+        sto = vec4<f32>(fc, fc, c.x, c.y);
+    } else {
+        rot = c.x;
+        if (d.size_x > 0.0 && d.size_y > 0.0) {
+            // c.yz = 1 / grid size
+            let x_frame = fc % d.size_x;
+            let y_frame = trunc(fc / d.size_x);
+            sto = vec4<f32>(c.y, c.z, (-0.5 + 0.5 * c.y) + x_frame * c.y, (0.5 - 0.5 * c.z) - y_frame * c.z);
+        } else {
+            // no grid: offset only, the texture entry's repeats (c.yz)
+            sto = vec4<f32>(c.y, c.z, fc, 0.0);
+        }
+    }
+    return ll_xform(st, sto, rot);
 }
 
 // A mip past any texture's last: its 1×1, the texture's mean colour.

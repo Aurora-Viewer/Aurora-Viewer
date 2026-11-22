@@ -2456,6 +2456,9 @@ pub(crate) struct RtShadows {
     merged_records: wgpu::Buffer,
     merged_list: Vec<u32>,
     merged_faces: usize,
+    /// The texture animations' clock (rt_common.wgsl `tex_clock`,
+    /// `write_texture_clock`).
+    tex_clock: wgpu::Buffer,
     /// The geometries of `still` with no bottom level yet, the next one
     /// last.
     queue: Vec<Key>,
@@ -2646,7 +2649,7 @@ impl RtShadows {
             label: Some("rt shadows"),
             source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")]).into()),
         });
-        let scene_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..9).map(|b| storage_entry(b, true)).collect();
+        let scene_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..10).map(|b| storage_entry(b, true)).collect();
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rt scene"),
             entries: &scene_entries,
@@ -2754,6 +2757,12 @@ impl RtShadows {
             merged_records: records_buffer(device, "rt shadows merged records", 4096),
             merged_list: Vec::new(),
             merged_faces: 0,
+            tex_clock: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rt texture clock"),
+                size: 16,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
             queue: Vec::new(),
             stale: true,
             built_at: 0,
@@ -5584,6 +5593,13 @@ impl RtShadows {
 }
 
 impl RtShadows {
+    /// The texture animations' time of this frame (renderer.rs `anim_now`
+    /// zw, the shading's): the rays read an animated face's texture at the
+    /// frame the eye sees (rt_common.wgsl `diffuse_uv`).
+    pub fn write_texture_clock(&self, queue: &wgpu::Queue, clock: [u32; 2]) {
+        queue.write_buffer(&self.tex_clock, 0, bytemuck::cast_slice(&[clock[0], clock[1], 0, 0]));
+    }
+
     /// The scene's tables for the ray-traced passes (rt_common.wgsl group
     /// 1), each bound up to the device's limit.
     fn scene_group(&mut self, device: &wgpu::Device, scene: &crate::packet::SceneGpu) -> wgpu::BindGroup {
@@ -5598,6 +5614,7 @@ impl RtShadows {
             &scene.faces,
             &self.poser.records,
             &self.merged_records,
+            &self.tex_clock,
         ];
         if !self.warned && buffers.iter().any(|b| b.size() > max) {
             log::warn!("ray tracing: a scene buffer is larger than the device binds; what lies past it is not traced right");
@@ -5696,6 +5713,45 @@ mod tests {
         };
         let (from, to) = ("const MAX_PROBES: u32", "    probes: array<Probe, MAX_PROBES>,\n};");
         assert_eq!(block(RT_PROBES, from, to), block(include_str!("shaders/common.wgsl"), from, to));
+    }
+
+    /// The rays read a face's texture where the shading draws it:
+    /// rt_common.wgsl holds object.wgsl's planar mapping and texture
+    /// animation as they are, and reads the draw record's parts they take
+    /// where `types::DrawRecord` has them.
+    #[test]
+    fn rt_texture_coordinates_are_the_shadings() {
+        let block = |src: &str, from: &str, to: &str| {
+            let src = src.replace("\r\n", "\n");
+            let start = src.find(from).expect("the block's first line");
+            let end = start + src[start..].find(to).expect("the block's last line") + to.len();
+            src[start..end].to_string()
+        };
+        let rt = include_str!("shaders/rt_common.wgsl");
+        let object = include_str!("shaders/object.wgsl");
+        for (from, to) in [
+            ("fn planar_st(", "\n}"),
+            ("fn ll_xform(", "\n}"),
+            ("const TA_LOOP: u32 = 2u;", "    return ll_xform(st, sto, rot);\n}"),
+        ] {
+            assert_eq!(block(rt, from, to), block(object, from, to), "{from}");
+        }
+        let common = include_str!("shaders/common.wgsl");
+        for flag in ["FLAG_PBR", "FLAG_PLANAR", "FLAG_TEX_ANIM"] {
+            let line = format!("const {flag}: u32 = ");
+            assert_eq!(block(rt, &line, ";"), block(common, &line, ";"), "{flag}");
+        }
+        let vec4 = |name: &str| -> usize {
+            let line = block(rt, &format!("const {name}: u32 = "), "u;");
+            line.trim_end_matches("u;")
+                .rsplit(' ')
+                .next()
+                .and_then(|n| n.parse().ok())
+                .expect("a number")
+        };
+        assert_eq!(vec4("RECORD_ANIM") * 16, std::mem::offset_of!(crate::types::DrawRecord, anim));
+        assert_eq!(vec4("RECORD_ANIM_XF") * 16, std::mem::offset_of!(crate::types::DrawRecord, anim_xf));
+        assert_eq!(vec4("RECORD_FLAGS") * 16, std::mem::offset_of!(crate::types::DrawRecord, flags));
     }
 
     /// No traced pass's SPIR-V gives a ray query a null value. naga 30

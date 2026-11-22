@@ -10032,6 +10032,7 @@ impl Backend {
                 self.contact_now,
                 self.settings.rt_tuning.sun_softness,
             );
+            rt.write_texture_clock(&self.queue, [self.anim_now[2], self.anim_now[3]]);
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
