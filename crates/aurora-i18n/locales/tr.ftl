@@ -4919,7 +4919,6 @@ ui-sound-movelock-toggle = Movelock açık / kapalı
 world-mod-invitation-to-join-a-group = Bir gruba katılma daveti
 world-notifications-group-fee = Üyelik ücreti: L$ { $fee }
 ui-context-invite-to-group = Gruba Davet Et
-ui-profile-invite-to-group-coming-soon = Gruba davet et (yakında)
 ui-contacts-invite = Davet Et...
 ui-contacts-invite-help = Bu gruba sakin davet et
 ui-login-i-accept-the-terms-and-want-to-log-in = Şartları kabul ediyorum ve oturum açmak istiyorum

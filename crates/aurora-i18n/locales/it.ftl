@@ -4918,7 +4918,6 @@ ui-sound-movelock-toggle = Blocco del movimento attivato / disattivato
 world-mod-invitation-to-join-a-group = Invito a unirsi a un gruppo
 world-notifications-group-fee = Quota di iscrizione: L$ { $fee }
 ui-context-invite-to-group = Invita nel gruppo
-ui-profile-invite-to-group-coming-soon = Invita nel gruppo (prossimamente)
 ui-contacts-invite = Invita...
 ui-contacts-invite-help = Invita residenti in questo gruppo
 ui-login-i-accept-the-terms-and-want-to-log-in = Accetto i termini e voglio accedere

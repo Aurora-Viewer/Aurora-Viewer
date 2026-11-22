@@ -5015,7 +5015,6 @@ ui-sound-movelock-toggle = Blokada ruchu włączona / wyłączona
 world-mod-invitation-to-join-a-group = Zaproszenie do dołączenia do grupy
 world-notifications-group-fee = Opłata członkowska: { $fee } L$
 ui-context-invite-to-group = Zaproś do grupy
-ui-profile-invite-to-group-coming-soon = Zaproś do grupy (wkrótce)
 ui-contacts-invite = Zaproś...
 ui-contacts-invite-help = Zaproś rezydentów do tej grupy
 ui-login-i-accept-the-terms-and-want-to-log-in = Akceptuję warunki i chcę się zalogować

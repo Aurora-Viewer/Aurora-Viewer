@@ -4918,7 +4918,6 @@ ui-sound-movelock-toggle = Bevegelseslås på / av
 world-mod-invitation-to-join-a-group = Invitasjon til å bli med i en gruppe
 world-notifications-group-fee = Medlemsavgift: L$ { $fee }
 ui-context-invite-to-group = Inviter til gruppe
-ui-profile-invite-to-group-coming-soon = Inviter til gruppe (kommer snart)
 ui-contacts-invite = Inviter...
 ui-contacts-invite-help = Inviter beboere til denne gruppen
 ui-login-i-accept-the-terms-and-want-to-log-in = Jeg godtar vilkårene og vil logge inn
