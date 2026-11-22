@@ -575,7 +575,16 @@ fn the_head_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
             "{style:?}: close"
         );
-        // the harness keeps the closed conversation; the next one is shown (#4373)
+        // its neighbour in the list shows next (#4373)
+        let order = if style.workspace() {
+            super::sidebar::tab_order(&h.world, &h.st)
+        } else {
+            super::keys::legacy_order(&h.world, &h.st)
+        };
+        let next = super::keys::after_close(&order, BOB);
+        assert!(next.is_some() && next != Some(BOB), "{style:?}: a conversation beside Bob");
+        assert_eq!(h.st.selected, next, "{style:?}: the neighbour shown");
+        // the harness keeps the closed conversation: back to Bob's
         h.st.selected = Some(BOB);
         h.settle();
         h.press(control_id("head-search-filled"));
@@ -2618,7 +2627,16 @@ fn the_window_of_tabs_still_acts() {
             has(&h.take(), |a| matches!(a, ConvAction::Close(id) if *id == BOB)),
             "{style:?}: close"
         );
-        // the harness keeps the closed conversation; the next one is shown (#4373)
+        // its neighbour in the list shows next (#4373)
+        let order = if style.workspace() {
+            super::sidebar::tab_order(&h.world, &h.st)
+        } else {
+            super::keys::legacy_order(&h.world, &h.st)
+        };
+        let next = super::keys::after_close(&order, BOB);
+        assert!(next.is_some() && next != Some(BOB), "{style:?}: a conversation beside Bob");
+        assert_eq!(h.st.selected, next, "{style:?}: the neighbour shown");
+        // the harness keeps the closed conversation: back to Bob's
         h.st.selected = Some(BOB);
         h.settle();
         h.press(classic_id("phone-filled"));
