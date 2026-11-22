@@ -54,7 +54,7 @@ pub fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
     if !egui::DragAndDrop::has_payload_of_type::<TaskDrag>(ctx) || !crate::outside::carry::dragging(ctx) {
         return None;
     }
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     Some(ctx.data_mut(|data| {
         data.get_temp::<(u64, egui::CursorIcon)>(egui::Id::unique("task_inventory_drag_cursor"))
             .filter(|(at, _)| *at == pass)
@@ -63,7 +63,7 @@ pub fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
 }
 
 fn target_cursor(ctx: &egui::Context, cursor: egui::CursorIcon) -> bool {
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|data| {
         let id = egui::Id::unique("task_inventory_drag_cursor");
         if data.get_temp::<(u64, egui::CursorIcon)>(id).is_none_or(|(at, _)| at != pass) {
@@ -176,7 +176,7 @@ fn begin<E: AsRef<str>>(ui: &mut egui::Ui, r: &egui::Response, object: Uuid, ite
 pub fn target(ui: &mut egui::Ui, p: &Palette, r: &egui::Response, inv: &Inventory, folder: Uuid, actions: &mut Vec<InvAction>) {
     if demo_enabled() && folder != inv.root {
         // the folder's own row comes before the zones enclosing it
-        let pass = ui.ctx().cumulative_pass_nr();
+        let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
         ui.ctx().data_mut(|d| {
             if d.get_temp::<(u64, egui::Rect)>(demo_target_id(folder))
                 .is_none_or(|(at, _)| at != pass)

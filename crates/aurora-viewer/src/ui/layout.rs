@@ -399,7 +399,7 @@ fn islands_id() -> Id {
 /// An island of the bars was drawn this frame at `rect` (`bars::islands`):
 /// the windows keep their title clear of them (`clear_of_islands`).
 pub(crate) fn island_drawn(ctx: &egui::Context, rect: Rect) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let islands = d.get_temp_mut_or_default::<(u64, Vec<Rect>)>(islands_id());
         if islands.0 != frame {
@@ -411,7 +411,7 @@ pub(crate) fn island_drawn(ctx: &egui::Context, rect: Rect) {
 
 /// The islands drawn this frame.
 pub(crate) fn islands(ctx: &egui::Context) -> Vec<Rect> {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<(u64, Vec<Rect>)>(islands_id()))
         .filter(|(drawn, _)| *drawn == frame)
         .map(|(_, rects)| rects)

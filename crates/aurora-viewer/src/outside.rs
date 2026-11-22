@@ -32,6 +32,14 @@
 //! the next pass, opens what was asked and lets go of the windows nothing
 //! drew in: closed, hidden with the interface, or back inside.
 //!
+//! egui counts the frames and the passes of each viewport apart. What the
+//! interface stamps with them is read across windows (a drop target and
+//! the drag that looks for it, a menu and the window that moved), so the
+//! stamps are those of the viewer's own window everywhere:
+//! `cumulative_frame_nr_for(ViewportId::ROOT)` and its pass twin, which a
+//! test of this module asks of every source. A pass outside runs once
+//! inside each pass of the viewer's window, and so shares its numbers.
+//!
 //! The native windows are made and let go between passes
 //! ([`Outside::open`], [`Outside::close`]), with the event loop the frame
 //! has. A closed window stays until the render thread has destroyed its
@@ -1053,5 +1061,72 @@ mod tests {
         // (without a native window nothing is asked of it)
         assert!(!outside.is_open(id));
         assert_eq!(outside.show(&ctx, id, |_| ()), None);
+    }
+
+    fn sources(path: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        if path.is_dir() {
+            for entry in std::fs::read_dir(path).expect("a source directory can be read") {
+                sources(&entry.expect("a directory entry").path(), out);
+            }
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path.to_owned());
+        }
+    }
+
+    /// The frame and pass numbers of a pass outside are its viewport's own:
+    /// a stamp read in another window is the viewer's own window's.
+    #[test]
+    fn frames_and_passes_are_counted_by_the_viewers_own_window() {
+        let mut files = Vec::new();
+        sources(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+        assert!(files.len() > 100, "the sources were found");
+        let own = [concat!(".cumulative_frame", "_nr()"), concat!(".cumulative_pass", "_nr()")];
+        let mut found = Vec::new();
+        for file in files {
+            let source = std::fs::read_to_string(&file).expect("a source file can be read");
+            for (n, line) in source.lines().enumerate() {
+                if own.iter().any(|call| line.contains(call)) && !line.trim_start().starts_with("//") {
+                    found.push(format!("{}:{}", file.display(), n + 1));
+                }
+            }
+        }
+        assert!(
+            found.is_empty(),
+            "a window drawn outside counts its own frames and passes: use cumulative_frame_nr_for(egui::ViewportId::ROOT) \
+             or cumulative_pass_nr_for(egui::ViewportId::ROOT) at {found:?}"
+        );
+    }
+
+    #[test]
+    fn a_pass_outside_reads_the_frame_of_the_viewers_own_window() {
+        let ctx = egui::Context::default();
+        let _outside = Outside::new(&ctx);
+        let id = egui::ViewportId::from_hash_of("counted apart");
+        let kept: Rc<RefCell<Option<(u64, u64)>>> = Rc::default();
+        let for_pass = kept.clone();
+        egui::Context::set_immediate_viewport_renderer(move |ctx, viewport| {
+            let egui::ImmediateViewport { mut viewport_ui_cb, .. } = viewport;
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                *for_pass.borrow_mut() = Some((
+                    ui.ctx().cumulative_frame_nr_for(ui.ctx().viewport_id()),
+                    ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),
+                ));
+                viewport_ui_cb(ui);
+            });
+        });
+        // (the window goes outside after a few frames of the viewer)
+        let mut root = 0;
+        for frame in 0..5 {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                root = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
+                if frame >= 3 {
+                    ui.ctx().show_viewport_immediate(id, egui::ViewportBuilder::default(), |_, _| ());
+                }
+            });
+        }
+        let (own, of_root) = kept.borrow_mut().take().expect("the pass outside ran");
+        assert_eq!(root, 4);
+        assert_eq!(of_root, root);
+        assert_eq!(own, 1, "egui counts a viewport's frames apart");
     }
 }

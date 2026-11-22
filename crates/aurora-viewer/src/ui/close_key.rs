@@ -79,7 +79,7 @@ pub fn shown_extra(ctx: &egui::Context, id: Id) {
 /// visible one, over the windows behind it, and Ctrl+Shift+W all of them.
 /// `order` tells the newest (the notification id).
 pub fn shown_prompt(ctx: &egui::Context, id: Id, order: u64) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
         state.prompts.retain(|(other, at, _)| *other != id && at + 1 >= frame);
@@ -88,7 +88,7 @@ pub fn shown_prompt(ctx: &egui::Context, id: Id, order: u64) {
 }
 
 fn note(ctx: &egui::Context, id: Id, extra: bool) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
         let list = if extra { &mut state.extra } else { &mut state.shown };
@@ -110,7 +110,7 @@ fn listed_prompt(list: &[(Id, u64, u64)], id: Id, frame: u64) -> bool {
 /// is taken. Nothing with a dialog open (the menu entry is disabled while
 /// an alert shows), nor without a window: a field keeps the key then.
 pub fn begin(ctx: &egui::Context) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let mut state = ctx.data(|d| d.get_temp::<State>(state_id())).unwrap_or_default();
     state.shown.retain(|(_, at)| at + 1 >= frame);
     state.extra.retain(|(_, at)| at + 1 >= frame);
@@ -171,7 +171,7 @@ fn pressed_alone(ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers
 /// Ctrl+W asks the window `id` to close on this frame, once. Ctrl+Shift+W
 /// asks every window drawn on the last frame; each of them hears it.
 pub fn take(ctx: &egui::Context, id: Id) -> bool {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
         if state.all {

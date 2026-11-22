@@ -111,7 +111,7 @@ pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
 /// for one more) so the list takes it once nothing is above it.
 pub(super) fn return_focus(ctx: &egui::Context, st: &mut InventoryUi) {
     request_focus_ctx(ctx, st);
-    st.list_focus_frame = Some(ctx.cumulative_frame_nr() + 2);
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) + 2);
     // run those passes now, not at the next input
     ctx.request_repaint();
 }
@@ -127,7 +127,7 @@ type PendingFocus = (egui::Id, u64);
 /// above it is gone. A document lives in a window state of its own, so the
 /// request waits in the context for the list that opened it to take it.
 pub(crate) fn return_focus_to(ctx: &egui::Context, focus: egui::Id) {
-    let at = ctx.cumulative_frame_nr() + 2;
+    let at = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) + 2;
     ctx.data_mut(|d| d.insert_temp(pending_focus_id(), Some((focus, at))));
     ctx.request_repaint();
 }
@@ -140,7 +140,7 @@ pub(super) fn return_document_focus(ctx: &egui::Context, st: &mut InventoryUi) {
 }
 
 fn request_focus_ctx(ctx: &egui::Context, st: &mut InventoryUi) {
-    st.list_focus_frame = Some(ctx.cumulative_frame_nr());
+    st.list_focus_frame = Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT));
     ctx.memory_mut(|m| {
         m.request_focus(focus_id(st));
         m.set_focus_lock_filter(
@@ -178,7 +178,7 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     // A document opened from this list closed: take the keyboard back once
     // the window above is gone and no other widget holds it. The window can
     // outlive the close by a pass or two, so the request stays a few passes.
-    let now = ui.ctx().cumulative_frame_nr();
+    let now = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let focused = ui.memory(|m| m.focused());
     if let Some((focus, at)) = ui.ctx().data(|d| d.get_temp::<Option<PendingFocus>>(pending_focus_id())).flatten() {
         if focus == focus_id(st) {
@@ -207,7 +207,9 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
         && ui.is_enabled()
         && st.dialog.is_none()
         && !egui::Popup::is_any_open(ui.ctx())
-        && st.list_focus_frame.is_some_and(|frame| ui.ctx().cumulative_frame_nr() <= frame + 1)
+        && st
+            .list_focus_frame
+            .is_some_and(|frame| ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) <= frame + 1)
         && ui.memory(|m| m.focused().is_none() && m.allows_interaction(ui.layer_id()));
     if response.clicked() || response.has_focus() || restore {
         request_focus(ui, st);
@@ -490,7 +492,7 @@ pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) 
         // the list's clip, within a pixel: a row scrolled to the bottom ends
         // on the clip's edge. A wide row runs past the clip sideways.
         let shown = (
-            response.ctx.cumulative_frame_nr(),
+            response.ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT),
             response.interact_rect.height() + 1.0 >= response.rect.height(),
         );
         response.ctx.data_mut(|data| {
@@ -702,7 +704,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
                 log::info!(
                     "demo inventory keyboard down: frame={frame}, selected={:?}, drawn_whole={}",
                     st.selected,
-                    shown.is_some_and(|(drawn, whole)| whole && drawn + 1 >= ctx.cumulative_frame_nr())
+                    shown.is_some_and(|(drawn, whole)| whole && drawn + 1 >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
                 );
             }
             if !(660..=688).contains(&frame) || !frame.is_multiple_of(4) {

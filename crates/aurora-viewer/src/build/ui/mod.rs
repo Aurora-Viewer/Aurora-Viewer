@@ -353,7 +353,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
     // Only the pass just before counts: this runs only while no web page or
     // media face has the keyboard, and an older mark would take an Escape.
     let typing_id = egui::Id::unique("build_shortcuts_typing");
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let typing_before = ctx.data(|d| d.get_temp::<u64>(typing_id)).is_some_and(|typed| typed + 1 == pass);
     // Only a text entry: a focused button or list row leaves Escape to the
     // shortcuts, so Organize mode still closes on the first press.
@@ -500,11 +500,14 @@ pub fn show(
     {
         tool.ui.layout.open = true;
         tool.ui.layout.organizing = true;
-        if ctx.cumulative_frame_nr() >= 700 {
+        if ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 700 {
             tool.ui.layout.drag = Some(item);
         }
     }
-    if env.demo && ctx.cumulative_frame_nr() >= 700 && ctx.data(|data| data.get_temp::<bool>(demo_notice)) == Some(false) {
+    if env.demo
+        && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 700
+        && ctx.data(|data| data.get_temp::<bool>(demo_notice)) == Some(false)
+    {
         ctx.data_mut(|data| data.insert_temp(demo_notice, true));
         tool.status = aurora_i18n::tr!("build-link-pending").into();
     }

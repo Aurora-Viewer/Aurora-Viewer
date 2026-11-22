@@ -3959,7 +3959,7 @@ pub fn show(
     }
     let style = st.demo_style.unwrap_or(st.style);
     popout::one_picker(st);
-    st.gifs.close_if_hidden(ctx.cumulative_pass_nr());
+    st.gifs.close_if_hidden(ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
     // every entry of the window, whatever the column's search: it never
     // shows a conversation that is in its own window (`popout.rs`)
     let entries: Vec<Option<uuid::Uuid>> = std::iter::once(None)

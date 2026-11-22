@@ -250,7 +250,7 @@ pub fn island(
     let back = ui.interact(rect, Id::unique("bars_place_island"), Sense::click());
     place_options(&back, p, st, &mut action);
     // the demo cannot right-click: the same menu where the pointer would be
-    if super::demo::get().open == Some(super::demo::Open::PlaceOptions) && ui.ctx().cumulative_frame_nr() >= 300 {
+    if super::demo::get().open == Some(super::demo::Open::PlaceOptions) && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300 {
         let id = Id::unique("bars_place_demo_options");
         let mut open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         let at = Pos2::new(rect.left() + rect.width() * 0.3, rect.center().y);
@@ -650,7 +650,7 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     let dest_id = Id::unique("bars_place_destination");
     let (field_key, picker_key) = (dest_id.with("field"), dest_id.with("picker"));
     let mut text = ui.ctx().data_mut(|d| d.get_temp::<String>(dest_id)).unwrap_or_default();
-    if super::demo::get().locations && ui.ctx().cumulative_frame_nr() == super::location_suggest::DEMO_FRAME {
+    if super::demo::get().locations && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == super::location_suggest::DEMO_FRAME {
         text = super::location_suggest::DEMO_TYPED.to_owned();
     }
     // the landmarks and places the text names (kept under @showloc, as

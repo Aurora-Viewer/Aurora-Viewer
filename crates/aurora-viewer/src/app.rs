@@ -18954,7 +18954,7 @@ impl App {
                 let demo_chat_bar = if self.demo { ui::bars::demo::get() } else { Default::default() };
                 self.chat_ui.bar_mode = demo_chat_bar.chat_bar.unwrap_or(self.settings.chat_bar);
                 let autohide_chat_bar = self.chat_ui.bar_mode.hides();
-                if demo_chat_bar.chat_start && ctx.cumulative_frame_nr() == 300 {
+                if demo_chat_bar.chat_start && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 {
                     self.chat_ui.input = "Hello!".into();
                     self.chat_ui.focus_request = true;
                 }
@@ -19555,11 +19555,11 @@ impl App {
                 // opened at frame 300, immersive mode at 600 (`immersivetags`:
                 // the name tags shown, `immersivehuds`: the HUDs hidden, not
                 // saved)
-                if demo_hidden.is_some() && ctx.cumulative_frame_nr() == 600 && !self.interface.hidden {
+                if demo_hidden.is_some() && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 600 && !self.interface.hidden {
                     a.bar = BarAction::ToggleInterface;
                 }
                 if self.demo && ui::bars::demo::get().immersive {
-                    match ctx.cumulative_frame_nr() {
+                    match ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) {
                         300 => ui::widgets::open_floater(&ctx, "conversations", &mut self.panels.chat),
                         600 if !self.interface.hidden => {
                             self.settings.immersive_name_tags = ui::bars::demo::get().immersive_tags;

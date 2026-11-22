@@ -1283,7 +1283,7 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
 
 pub(super) fn finish(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: &mut BuildSettings) {
     if let Some(item) = tool.ui.layout.drag {
-        let demo_hold = ctx.cumulative_frame_nr() >= 700
+        let demo_hold = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 700
             && ctx.data(|data| data.get_temp::<Item>(egui::Id::unique("build-demo-layout-drag"))) == Some(item);
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
         if let Some(pos) = ctx.pointer_interact_pos() {

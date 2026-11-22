@@ -1771,7 +1771,7 @@ pub fn interface_hidden(ctx: &egui::Context) -> bool {
 /// Called between two frames.
 pub fn hide_windows(ctx: &egui::Context, hide: bool, keep: HideKeep) {
     let state = HiddenWindows {
-        capture: hide.then(|| ctx.cumulative_frame_nr()),
+        capture: hide.then(|| ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)),
         ids: Default::default(),
         keep,
     };
@@ -1786,7 +1786,7 @@ pub fn hide_windows(ctx: &egui::Context, hide: bool, keep: HideKeep) {
 
 /// The window `id` (`open` or not, with its `role`) is kept hidden this frame.
 fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, role: HideKeep) -> bool {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let Some(mut state) = d.get_temp::<HiddenWindows>(hidden_windows_id()) else {
             return false;
@@ -2092,7 +2092,7 @@ pub fn toggle_floater_closing(ctx: &egui::Context, id: &str, open: bool) -> bool
 /// runs (its questions, its cleanup): on its next frame drawn, this one or
 /// the next. A request for a window not drawn by then is dropped.
 pub fn close_floater(ctx: &egui::Context, id: &str) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(CLOSE), frame));
 }
 
@@ -2100,13 +2100,13 @@ pub fn close_floater(ctx: &egui::Context, id: &str) {
 /// [`close_floater`] asks by name: the cross of its window outside the
 /// viewer's.
 pub(crate) fn close_window(ctx: &egui::Context, window: egui::Id) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(window.with(CLOSE), frame));
 }
 
 /// The floater `id` was asked to close ([`close_floater`]), once.
 fn close_asked(ctx: &egui::Context, id: &str) -> bool {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.remove_temp::<u64>(egui::Id::unique(id).with(CLOSE)))
         .is_some_and(|at| at + 1 >= frame)
 }

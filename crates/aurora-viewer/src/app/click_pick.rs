@@ -638,7 +638,7 @@ impl App {
     /// field has committed to the selection it was typed for).
     pub(super) fn press_while_typing(&mut self) {
         let turn = Held::UiTurn {
-            pass: self.egui_ctx.cumulative_pass_nr(),
+            pass: self.egui_ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT),
             cursor: self.cursor_pos,
             mods: [self.alt, self.ctrl, self.shift],
         };
@@ -648,7 +648,7 @@ impl App {
     /// Run what is held, in order, until a click waits for its depth again
     /// or a `UiTurn` waits for the end of the interface's pass.
     fn drain_held(&mut self) {
-        while let Some((input, restore)) = self.clicks.next_held(self.egui_ctx.cumulative_pass_nr()) {
+        while let Some((input, restore)) = self.clicks.next_held(self.egui_ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT)) {
             let Some((cursor, mods)) = restore else {
                 self.replay(input);
                 continue;

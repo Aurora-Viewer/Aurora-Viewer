@@ -625,7 +625,7 @@ impl Previews {
         if self.image_window.as_mut().is_some_and(|view| view.window(ctx, p)) {
             self.image_window = None;
         }
-        let pass = ctx.cumulative_pass_nr();
+        let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
         if self.playing.as_ref().is_some_and(|v| !v.window && pass > v.drawn + 2) {
             self.playing = None;
         }
@@ -805,7 +805,7 @@ pub(super) fn cards(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, text:
 }
 
 fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, target: &Target, start: Start) {
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let width = pv.settings.size.width().min(ui.available_width().max(80.0));
     if pv.hidden.contains(&k) {
         hidden_line(ui, p, pv, k);
@@ -1222,7 +1222,7 @@ fn too_large(ui: &mut egui::Ui, p: &Palette, url: &str, size: Option<u64>, width
 /// its title and channel (a clip: its site); playing, the player in place of
 /// the picture with its buttons under it.
 fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, video: Option<&lp::Video>, width: f32) {
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let Some(Cached {
         entry: Entry::Video {
             title,

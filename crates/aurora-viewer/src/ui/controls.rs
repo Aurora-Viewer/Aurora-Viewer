@@ -1390,7 +1390,7 @@ fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Op
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(PAD_BUTTON), Sense::click_and_drag());
     // Continue only a primary press observed on this pad in consecutive frames.
     // A hidden pad may miss a release; a fresh press must start on a visible button.
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let (down, pressed) = ui.input(|i| (i.pointer.primary_down(), i.pointer.primary_pressed()));
     let pad_pressed = down
         && ui.data_mut(|d| {

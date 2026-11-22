@@ -148,7 +148,7 @@ pub(crate) fn carried_ids(ctx: &egui::Context) -> Option<Vec<Uuid>> {
 /// The cursor a destination outside the inventory windows gives the cargo
 /// held over it this pass (an object's Contents tab).
 pub(crate) fn feedback(ctx: &egui::Context, cursor: egui::CursorIcon) {
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(feedback_id(), Feedback { pass, cursor }));
 }
 
@@ -176,7 +176,7 @@ pub(crate) fn give_target_on(ctx: &egui::Context, layer: egui::LayerId, zone: eg
         return None;
     }
     let ids = give_ids(ctx)?;
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         d.insert_temp(
             feedback_id(),
@@ -207,7 +207,7 @@ pub(super) fn target(
     actions: &mut Vec<InvAction>,
 ) {
     let Some(cargo) = Cargo::hover(ui, r) else { return };
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     if ui
         .ctx()
         .data(|d| d.get_temp::<Feedback>(feedback_id()).is_some_and(|f| f.pass == pass))
@@ -254,7 +254,7 @@ pub(crate) fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
     if !crate::outside::carry::dragging(ctx) {
         return None;
     }
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<Feedback>(feedback_id()))
         .filter(|f| f.pass == pass)
         .map(|f| f.cursor)
