@@ -75,8 +75,9 @@ pub enum Level {
     /// "Icon only" plates (`PlateStyle::Icon`): the picture in a round
     /// plate, with its status dot, at every distance.
     Icon,
-    /// "Name only" plates (`PlateStyle::Name`): the display name in the
-    /// compact pill, without badges, up to the far distance.
+    /// "Name only" plates (`PlateStyle::Name`): the display name and the
+    /// group title in the compact pill, without badges, up to the far
+    /// distance.
     Name,
 }
 
@@ -423,9 +424,13 @@ pub enum SubLine<'a> {
     Detail(&'a Detail),
 }
 
-/// The lines under the name: none below the full level; at most two, a
-/// missing one leaving no empty line.
+/// The lines under the name: none below the full level, except the group
+/// title on a name only plate; at most two, a missing one leaving no empty
+/// line.
 pub fn sub_lines(level: Level, c: &Content) -> [Option<SubLine<'_>>; 2] {
+    if level == Level::Name {
+        return [c.title.as_deref().map(SubLine::Title), None];
+    }
     if level != Level::Full {
         return [None, None];
     }

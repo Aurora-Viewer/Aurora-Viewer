@@ -12900,7 +12900,7 @@ What the inventory must show with these scenarios:
   each change (losses, or the viewer falling behind).
 - **`AURORA_PLATE_STYLE`**: `icon` draws every name plate as the profile
   picture in a round plate with its status dot and voice ring, `name` as
-  the display name in the compact pill without badges (the far pill
+  the display name and group title in the compact pill without badges (the far pill
   beyond 40 m), without touching Preferences › Aurora › "Plate style".
   Hovering a plate still shows it complete. Use with
   `AURORA_DEMO_TAGS=voice` to see the nine residents in both looks.

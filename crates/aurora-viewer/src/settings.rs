@@ -52,7 +52,7 @@ pub enum BlockedChat {
 /// or the lines of Firestorm's conversations (the legacy style).
 /// What an avatar's name plate shows at close range (`ui::nameplate`):
 /// the complete plate, the picture alone in a round plate, or the display
-/// name alone. The classic name tags (`classic_name_tags`) ignore it.
+/// name with its group title. The classic name tags (`classic_name_tags`) ignore it.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PlateStyle {
     #[default]

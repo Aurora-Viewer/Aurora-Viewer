@@ -1510,8 +1510,12 @@ fn icon_and_name_plates_carry_no_badges_or_lines() {
     c.friend = true;
     for level in [Level::Icon, Level::Name] {
         assert_eq!(badges(level, &c).len(), 0);
-        assert_eq!(sub_lines(level, &c), [None, None]);
     }
+    assert_eq!(sub_lines(Level::Icon, &c), [None, None]);
+    // the name only plate keeps the group title, not the username
+    assert_eq!(sub_lines(Level::Name, &c), [Some(SubLine::Title("Loups du Nord")), None]);
+    c.title = None;
+    assert_eq!(sub_lines(Level::Name, &c), [None, None]);
     assert_eq!(status_dot(Level::Icon, &c), Some(Presence::Online));
     assert_eq!(status_dot(Level::Name, &c), None);
 }
