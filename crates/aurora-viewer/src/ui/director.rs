@@ -216,13 +216,42 @@ pub struct Env<'a> {
 }
 
 pub(super) fn row<R>(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), Sense::hover());
-        ui.painter()
-            .text(rect.left_center(), Align2::LEFT_CENTER, label, FontId::proportional(12.5), p.ink);
-        add(ui)
-    })
-    .inner
+    let font = widgets::control_font(ui, 12.5);
+    let label_width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), p.ink)
+        .size()
+        .x
+        .max(LABEL_W);
+    // Leave a slider and its editable value room at the active text size.
+    // Shorter fields use the same breakpoint, keeping the form consistent.
+    let value_width = ui
+        .painter()
+        .layout_no_wrap("000.0".to_owned(), egui::TextStyle::Button.resolve(ui.style()), p.ink)
+        .size()
+        .x
+        + ui.spacing().button_padding.x * 2.0;
+    let field_width = SLIDER_W + ui.spacing().item_spacing.x + value_width;
+    let label = egui::Label::new(RichText::new(label).font(font).color(p.ink)).wrap();
+    if label_width + ui.spacing().item_spacing.x + field_width > ui.available_width() {
+        ui.vertical(|ui| {
+            ui.add(label);
+            ui.horizontal_wrapped(add).inner
+        })
+        .inner
+    } else {
+        ui.horizontal_top(|ui| {
+            ui.add_sized(Vec2::new(label_width, 0.0), label);
+            add(ui)
+        })
+        .inner
+    }
+}
+
+fn text_button_size(ui: &egui::Ui) -> Vec2 {
+    let font = widgets::control_font(ui, 12.5);
+    let height = ui.fonts_mut(|f| f.row_height(&font)) + 2.0 * ui.spacing().button_padding.y;
+    Vec2::new(0.0, height.max(26.0))
 }
 
 /// An angle in radians as the sliders show it, in whole degrees: under
@@ -483,7 +512,7 @@ fn clear_prompt(ctx: &egui::Context, p: &Palette, d: &mut Director) {
         ui.label(aurora_i18n::tr!("director-clear-confirm-text", count = d.track.len()));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let size = Vec2::new(0.0, 26.0);
+            let size = text_button_size(ui);
             if widgets::action_button(
                 ui,
                 p,
@@ -625,7 +654,7 @@ fn lock_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, a
         ui.label(RichText::new(name).size(12.5).color(p.ink));
     });
     ui.horizontal_wrapped(|ui| {
-        let size = Vec2::new(0.0, 26.0);
+        let size = text_button_size(ui);
         if widgets::action_button(
             ui,
             p,
@@ -783,7 +812,7 @@ fn isolate_section(
         } else {
             ("pointer-filled", aurora_i18n::tr!("photo-isolate-pick"), ActionKind::Flat)
         };
-        if widgets::action_button(ui, p, glyph, label, kind, Vec2::new(0.0, 26.0)).clicked() {
+        if widgets::action_button(ui, p, glyph, label, kind, text_button_size(ui)).clicked() {
             out.push(Isolate::Picking(!iso.picking));
         }
         if iso.picking {
@@ -938,7 +967,7 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
             "crosshair",
             aurora_i18n::tr!("director-key-aim-take"),
             ActionKind::Flat,
-            Vec2::new(0.0, 26.0),
+            text_button_size(ui),
             aim != own,
         )
         .on_hover_text(tip)
@@ -949,7 +978,7 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
         }
     }
     ui.horizontal_wrapped(|ui| {
-        let size = Vec2::new(0.0, 26.0);
+        let size = text_button_size(ui);
         if widgets::action_button(
             ui,
             p,
@@ -1067,7 +1096,7 @@ fn path_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
             "gauge-filled",
             aurora_i18n::tr!("director-even-speed"),
             ActionKind::Flat,
-            Vec2::new(0.0, 26.0),
+            text_button_size(ui),
             d.track.len() >= 3,
         )
         .on_hover_text(aurora_i18n::tr!("director-even-speed-tip"))
@@ -1124,7 +1153,7 @@ fn playback_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
         "trash-filled",
         aurora_i18n::tr!("director-clear"),
         ActionKind::FlatDanger,
-        Vec2::new(0.0, 26.0),
+        text_button_size(ui),
         !d.track.is_empty(),
     )
     .clicked()
@@ -1959,6 +1988,73 @@ mod tests {
             });
         }
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    #[test]
+    fn form_labels_do_not_overlap_fields_with_large_text() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+
+        let labels = [
+            aurora_i18n::tr!("director-span-time"),
+            aurora_i18n::tr!("director-lens"),
+            aurora_i18n::tr!("director-key-ease"),
+        ];
+        for width in [260.0, 316.0] {
+            for scale in [1.0, 2.0] {
+                let mut frames = Frames::new();
+                let theme = crate::theme::Theme::default();
+                theme.apply(&frames.ctx, scale);
+                let p = theme.palette();
+                let mut seconds = 12.0;
+                let mut angle = 60.0;
+                let mut fields = Vec::new();
+                let mut right = 0.0;
+                let mut action_rect = Rect::NOTHING;
+                let action_label = aurora_i18n::tr!("director-update");
+                let mut draw = |ui: &mut egui::Ui| {
+                    ui.set_width(width);
+                    right = ui.max_rect().right();
+                    fields.clear();
+                    fields.push(row(ui, &p, labels[0], |ui| {
+                        ui.add(egui::DragValue::new(&mut seconds).fixed_decimals(1).suffix(" s")).rect
+                    }));
+                    fields.push(row(ui, &p, labels[1], |ui| {
+                        ui.spacing_mut().slider_width = SLIDER_W;
+                        ui.add(egui::Slider::new(&mut angle, 5.0..=120.0).fixed_decimals(0).suffix("°"))
+                            .rect
+                    }));
+                    fields.push(row(ui, &p, labels[2], |ui| {
+                        egui::ComboBox::from_id_salt("director_test_easing")
+                            .selected_text(aurora_i18n::tr!("director-curve-smooth"))
+                            .show_ui(ui, |_| {})
+                            .response
+                            .rect
+                    }));
+                    action_rect = widgets::action_button(ui, &p, "refresh", action_label, ActionKind::Flat, text_button_size(ui)).rect;
+                };
+                frames.run(Vec::new(), &mut draw);
+                let texts = frames.run(Vec::new(), &mut draw);
+                for (label, field) in labels.iter().zip(&fields) {
+                    let text = painted(&texts, label);
+                    assert!(!text.cut, "label shortened at {width}/{scale}: {label}");
+                    assert!(
+                        !text.rect.intersects(*field),
+                        "label overlaps its field at {width}/{scale}: {label}"
+                    );
+                    assert!(
+                        text.rect.right() <= right + 0.5 && field.right() <= right + 0.5,
+                        "row overflows at {width}/{scale}: {label}"
+                    );
+                }
+                let action = painted(&texts, action_label);
+                assert!(
+                    !action.cut && action_rect.contains_rect(action.rect),
+                    "action text outside its button at {width}/{scale}"
+                );
+                assert_eq!(seconds, 12.0);
+                assert_eq!(angle, 60.0);
+            }
+        }
     }
 
     #[test]

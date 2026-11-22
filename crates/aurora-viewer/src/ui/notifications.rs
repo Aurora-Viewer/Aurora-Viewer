@@ -762,13 +762,14 @@ pub(super) fn card(
                     }
                     ui.add_space(8.0);
                     ui.horizontal_top(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                            if button_sized(ui, p, aurora_i18n::tr!("common-ignore"), false, Some(Vec2::new(72.0, 22.0))).clicked() {
+                        // LLToastNotifyPanel::createButton auto-sizes these
+                        // labels; updateButtonsLayout keeps Block to the left
+                        // of Ignore. Only script labels use fixed columns.
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min).with_main_wrap(true), |ui| {
+                            if button(ui, p, aurora_i18n::tr!("common-ignore"), false).clicked() {
                                 out = Some(Response::Dismiss);
                             }
-                            if !own_object
-                                && button_sized(ui, p, aurora_i18n::tr!("common-block"), false, Some(Vec2::new(72.0, 22.0))).clicked()
-                            {
+                            if !own_object && button(ui, p, aurora_i18n::tr!("common-block"), false).clicked() {
                                 out = Some(Response::Block);
                             }
                         });
@@ -1597,10 +1598,10 @@ mod tests {
 
     #[test]
     fn script_dialog_pointer_clicks_return_the_original_button_in_both_styles() {
-        for aurora in [false, true] {
+        for (aurora, scale) in [(false, 1.0), (true, 1.0), (false, 2.0), (true, 2.0)] {
             let ctx = egui::Context::default();
             let theme = crate::theme::Theme::default();
-            theme.apply(&ctx, 1.0);
+            theme.apply(&ctx, scale);
             let p = theme.palette();
             let icons = Icons::default();
             let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -1694,6 +1695,40 @@ mod tests {
                     "aurora={aurora}, button={index}: {answer:?}"
                 );
             }
+            let mut footer = Vec::new();
+            for (label, block) in [(aurora_i18n::tr!("common-block"), true), (aurora_i18n::tr!("common-ignore"), false)] {
+                let (output, _) = frame(vec![]);
+                let text = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| match &s.shape {
+                        egui::Shape::Text(t) if t.galley.text() == label => Some(t),
+                        _ => None,
+                    })
+                    .expect("footer label visible");
+                assert!(!text.galley.elided, "aurora={aurora}, scale={scale}: {label} must stay whole");
+                let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                footer.push(rect);
+                let pos = rect.center();
+                frame(vec![egui::Event::PointerMoved(pos)]);
+                let click = |pressed| {
+                    vec![egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }]
+                };
+                frame(click(true));
+                let (_, answer) = frame(click(false));
+                assert!(
+                    matches!((answer, block), (Some(Response::Block), true) | (Some(Response::Dismiss), false)),
+                    "aurora={aurora}, scale={scale}: {label} keeps its action"
+                );
+            }
+            assert!(!footer[0].intersects(footer[1]));
+            assert!((footer[0].center().y - footer[1].center().y).abs() < 0.5);
+            assert!(footer[0].right() < footer[1].left(), "Block stays left of Ignore");
         }
     }
 
