@@ -3164,11 +3164,14 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
 
 /// A ray-traced shader's source: the enables, rt_common.wgsl, then `parts`
 /// in order (the shared rt_view.wgsl and rt_light.wgsl, then its own).
+/// `CULL_FACE_WORDS` is [`CullFace`]'s size: the rays read the culling's
+/// faces by it (rt_common.wgsl `cull_face`), whatever it adds.
 fn source(parts: &[&str]) -> String {
     let mut src = format!(
-        "enable wgpu_ray_query;\nenable wgpu_binding_array;\nconst SHADOW_CULL: u32 = {}u;\nconst EMITTER_SPHERE: bool = {};\n{}\n",
+        "enable wgpu_ray_query;\nenable wgpu_binding_array;\nconst SHADOW_CULL: u32 = {}u;\nconst EMITTER_SPHERE: bool = {};\nconst CULL_FACE_WORDS: u32 = {}u;\n{}\n",
         Override::from_env().cull.ray_flags(),
         Override::from_env().emitter_sphere,
+        std::mem::size_of::<CullFace>() / 4,
         include_str!("shaders/rt_common.wgsl")
     );
     for part in parts {
@@ -5721,6 +5724,36 @@ mod tests {
             if let Err(e) = v.validate(&module) {
                 panic!("{name}: {}", e.emit_to_string(&src));
             }
+        }
+    }
+
+    #[test]
+    fn the_rays_read_the_culling_faces_at_their_stride() {
+        // rt_common.wgsl `cull_face`: these words of each face, the faces
+        // CullFace's size apart, whatever the culling adds after them
+        assert_eq!(std::mem::offset_of!(CullFace, index_count), 0);
+        assert_eq!(std::mem::offset_of!(CullFace, first_index), 4);
+        assert_eq!(std::mem::offset_of!(CullFace, base_vertex), 8);
+        assert_eq!(std::mem::offset_of!(CullFace, object), 12);
+        assert_eq!(std::mem::offset_of!(CullFace, bits), 16);
+        assert_eq!(std::mem::size_of::<CullFace>() % 4, 0);
+        let words = std::mem::size_of::<CullFace>() / 4;
+        assert!(source(&[]).contains(&format!("const CULL_FACE_WORDS: u32 = {words}u;")));
+        let common = include_str!("shaders/rt_common.wgsl");
+        assert!(common.contains("var<storage, read> cull_faces: array<u32>;"));
+        // no shader indexes the faces but through `cull_face`
+        for (name, src) in [
+            ("rt_common", common),
+            ("rt_lights", include_str!("shaders/rt_lights.wgsl")),
+            ("rt_light", RT_LIGHT),
+            ("rt_view", RT_VIEW),
+            ("rt_gi", include_str!("shaders/rt_gi.wgsl")),
+            ("rt_reflect", include_str!("shaders/rt_reflect.wgsl")),
+            ("rt_shadows", include_str!("shaders/rt_shadows.wgsl")),
+        ] {
+            let direct = src.matches("cull_faces[").count();
+            let allowed = if name == "rt_common" { 5 } else { 0 };
+            assert_eq!(direct, allowed, "{name} indexes cull_faces itself");
         }
     }
 

@@ -409,7 +409,7 @@ fn glass_along(origin: vec3<f32>, dir: vec3<f32>, far: f32, own: f32, posed: boo
 fn pane_passes(c: RayIntersection, posed: bool, dir: vec3<f32>, own: f32) -> vec3<f32> {
     if (own > 0.5 && c.kind == RAY_QUERY_INTERSECTION_TRIANGLE) {
         let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
-        if (f32(cull_faces[h.record].object + 1u) == own) {
+        if (f32(cull_face(h.record).object + 1u) == own) {
             return vec3<f32>(1.0);
         }
     }

@@ -37,17 +37,32 @@ struct SkinBind {
     joint: vec4<u32>,
 };
 
-// gpu_cull::CullFace: a record's geometry in the arena
+// gpu_cull::CullFace: a record's geometry in the arena, its first fields
+// (`cull_face`)
 struct CullFace {
     index_count: u32,
     first_index: u32,
     base_vertex: i32,
     object: u32,
     bits: u32,
-    _p0: u32,
-    _p1: u32,
-    _p2: u32,
 };
+
+// The faces are read as words, `CULL_FACE_WORDS` a face (rt_shadows.rs
+// `source`: the Rust struct's size), so that fields added after these
+// (the culling's own) leave the rays' reading right. A WGSL copy of the
+// whole struct read the faces at the wrong stride once the culling's grew:
+// each hit took another face's triangle, its normal and its texture
+// coordinates, and the alpha-masked leaves cast shadows in shards.
+fn cull_face(record: u32) -> CullFace {
+    let at = record * CULL_FACE_WORDS;
+    return CullFace(
+        cull_faces[at],
+        cull_faces[at + 1u],
+        bitcast<i32>(cull_faces[at + 2u]),
+        cull_faces[at + 3u],
+        cull_faces[at + 4u],
+    );
+}
 
 @group(1) @binding(0) var<storage, read> records: array<vec4<u32>>;
 @group(1) @binding(1) var<storage, read> palettes: array<mat4x4<f32>>;
@@ -55,7 +70,7 @@ struct CullFace {
 @group(1) @binding(3) var<storage, read> vertices: array<u32>;
 @group(1) @binding(4) var<storage, read> skin: array<u32>;
 @group(1) @binding(5) var<storage, read> indices: array<u32>;
-@group(1) @binding(6) var<storage, read> cull_faces: array<CullFace>;
+@group(1) @binding(6) var<storage, read> cull_faces: array<u32>;
 // The records of the posed top level's faces: an instance's custom index
 // is where its skeleton's start, its geometries are its faces in order.
 @group(1) @binding(7) var<storage, read> posed_records: array<u32>;
@@ -165,7 +180,7 @@ struct Surface {
 // The surface of triangle `primitive` of `record` at `bary` (the hit's
 // barycentrics, of its second and third vertices), seen along `dir`.
 fn surface_at(record: u32, primitive: u32, bary: vec2<f32>, dir: vec3<f32>) -> Surface {
-    let face = cull_faces[record];
+    let face = cull_face(record);
     let first = face.first_index + primitive * 3u;
     let base = u32(max(face.base_vertex, 0));
     let v0 = base + index_at(first);
@@ -403,7 +418,7 @@ fn shadows_but(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool, ow
         return false;
     }
     let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
-    if (own > 0.5 && f32(cull_faces[h.record].object + 1u) == own) {
+    if (own > 0.5 && f32(cull_face(h.record).object + 1u) == own) {
         return false;
     }
     let s = surface_at(h.record, h.primitive, c.barycentrics, dir);
