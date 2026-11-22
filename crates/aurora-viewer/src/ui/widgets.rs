@@ -65,14 +65,14 @@ pub use tracks::{
 };
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
+pub use workspace::{
+    FORM_LABEL_W, FORM_SLIDER_W, Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark,
+    form_row, glyph, navigation, navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+};
 pub(crate) use workspace::{
     INVENTORY_LABEL_PADDING, finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
     organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
     organization_typography, overlay, overlay_frame, paint_world_label,
-};
-pub use workspace::{
-    Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
-    navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize
@@ -3711,6 +3711,34 @@ pub fn ink_rect(galley: &egui::Galley) -> egui::Rect {
         }
     }
     if ink.is_positive() { ink } else { galley.rect }
+}
+
+/// A dashed outline in `rect`: a place to drop something or a card that
+/// adds one (the profile's Give zone, the photo filters' drop zones).
+pub fn dashed_outline(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
+    let r = rect.shrink(0.75);
+    let path = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+    painter.extend(egui::Shape::dashed_line(&path, egui::Stroke::new(1.5, color), 5.0, 4.0));
+}
+
+/// A place number that turns over in `rect` (the contact sets' tiles and
+/// the photo filters' cards while one is held): `before` slides up and
+/// fades as `now` rises in, `turn` going from 0 to 1, eased out with a
+/// touch of overshoot as it lands.
+pub fn turning_number(ui: &egui::Ui, rect: egui::Rect, now: usize, before: Option<usize>, turn: f32, color: Color32) {
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let font = crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), rect.height() * 0.5, color).font_id;
+    let k = turn.clamp(0.0, 1.0);
+    let e = 1.0 - (1.0 - k).powi(3);
+    let travel = rect.height() * 0.6;
+    if let Some(before) = before.filter(|_| k < 1.0) {
+        let g = painter.layout_no_wrap(aurora_i18n::integer(before as i64), font.clone(), color);
+        let at = rect.center() - Vec2::new(0.0, travel * e);
+        paint_ink_centered(&painter, g, at, color.gamma_multiply(1.0 - e));
+    }
+    let g = painter.layout_no_wrap(aurora_i18n::integer(now as i64), font, color);
+    let at = rect.center() + Vec2::new(0.0, travel * (1.0 - e));
+    paint_ink_centered(&painter, g, at, color.gamma_multiply(e.max(0.15)));
 }
 
 /// Paint a galley so that its visible ink (not egui's text row, which

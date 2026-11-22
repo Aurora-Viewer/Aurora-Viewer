@@ -543,6 +543,55 @@ impl Motion {
     }
 }
 
+/// LiveMesh's elbow and knee bend (Avatar tab): our avatar's elbows and
+/// knees turned on top of what it plays, or of its rest pose when `hold`,
+/// to check how a rigged mesh in progress deforms. Drawn here only: nothing
+/// is sent, animations and uploads are unchanged. The axes are those of the
+/// mesh importer's test bend (`imports/mesh/preview.rs`). Aurora's own.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PreviewBend {
+    /// Degrees, 0..=150.
+    pub elbows: f32,
+    /// Degrees, 0..=150.
+    pub knees: f32,
+    /// The rest pose instead of the animations.
+    pub hold: bool,
+}
+
+impl PreviewBend {
+    /// The largest bend the sliders give, degrees.
+    pub const MAX: f32 = 150.0;
+
+    pub fn active(&self) -> bool {
+        self.hold || self.elbows > 0.0 || self.knees > 0.0
+    }
+
+    /// The local rotations bent, or `None` when there is nothing to bend.
+    pub fn apply(&self, rig: &Rig, rotations: &[Quat]) -> Option<Vec<Quat>> {
+        if !self.active() {
+            return None;
+        }
+        let mut out = if self.hold && rig.local_rot.len() == rotations.len() {
+            rig.local_rot.clone()
+        } else {
+            rotations.to_vec()
+        };
+        let elbows = self.elbows.clamp(0.0, Self::MAX).to_radians();
+        let knees = self.knees.clamp(0.0, Self::MAX).to_radians();
+        for (name, turn) in [
+            ("mElbowLeft", Quat::from_rotation_z(-elbows)),
+            ("mElbowRight", Quat::from_rotation_z(elbows)),
+            ("mKneeLeft", Quat::from_rotation_y(knees)),
+            ("mKneeRight", Quat::from_rotation_y(knees)),
+        ] {
+            if let Some(rotation) = rig.names.get(name).and_then(|&joint| out.get_mut(joint)) {
+                *rotation *= turn;
+            }
+        }
+        Some(out)
+    }
+}
+
 /// Motions and held pose of one avatar (or animesh).
 #[derive(Default)]
 pub struct Controller {
@@ -605,6 +654,8 @@ pub struct Controller {
     /// keeps the animation's and only the eyes look, a side glance; ½ a
     /// three-quarter turn. The photo window's "Look intensity" (1 − it).
     pub look_glance: f32,
+    /// LiveMesh's elbow and knee bend, on our avatar only.
+    pub preview_bend: PreviewBend,
     /// `look_over_animations` as last logged, with the head's strongest
     /// animation priority.
     look_over_logged: bool,
@@ -1900,6 +1951,8 @@ impl Controller {
         let (rotations, positions) = edited.as_ref().map_or((rotations, local_pos.as_slice()), |p| {
             (p.rotations.as_slice(), p.positions.as_slice())
         });
+        let bent = self.preview_bend.apply(rig, rotations);
+        let rotations = bent.as_deref().unwrap_or(rotations);
         let world = self.poser.as_ref().map_or_else(
             || rig.world_with(rotations, pelvis, positions, scale),
             |(pose, model)| pose.matrices(rig, *model),
@@ -3377,6 +3430,50 @@ mod tests {
     /// "Look intensity": the share of the turn the head takes, the eyes
     /// doing the rest; a glance leaves the head straight on the neck while
     /// the eyes still turn to the target.
+    /// LiveMesh's bend turns the elbows and knees about the importer's test
+    /// bend axes, over the pose played or the rest pose, and nothing else.
+    #[test]
+    fn the_preview_bend_turns_only_the_elbows_and_knees() {
+        let rig = rig();
+        let played: Vec<Quat> = (0..rig.len()).map(|i| Quat::from_rotation_x(i as f32 * 0.01)).collect();
+        assert!(PreviewBend::default().apply(&rig, &played).is_none(), "nothing to bend");
+        let bend = PreviewBend {
+            elbows: 90.0,
+            knees: 40.0,
+            hold: false,
+        };
+        let bent = bend.apply(&rig, &played).expect("bent");
+        let joint = |name: &str| rig.names[name];
+        for (name, turn) in [
+            ("mElbowLeft", Quat::from_rotation_z(-90f32.to_radians())),
+            ("mElbowRight", Quat::from_rotation_z(90f32.to_radians())),
+            ("mKneeLeft", Quat::from_rotation_y(40f32.to_radians())),
+            ("mKneeRight", Quat::from_rotation_y(40f32.to_radians())),
+        ] {
+            assert!(bent[joint(name)].angle_between(played[joint(name)] * turn) < 1e-3, "{name}");
+        }
+        let untouched = ["mElbowLeft", "mElbowRight", "mKneeLeft", "mKneeRight"].map(joint);
+        for (index, (a, b)) in bent.iter().zip(&played).enumerate() {
+            if !untouched.contains(&index) {
+                assert_eq!(a, b, "joint {index} keeps the pose played");
+            }
+        }
+        // held: the rest pose, bent
+        let held = PreviewBend { hold: true, ..bend }.apply(&rig, &played).expect("held");
+        assert_eq!(held[joint("mTorso")], rig.local_rot[joint("mTorso")]);
+        let knee = joint("mKneeLeft");
+        assert!(held[knee].angle_between(rig.local_rot[knee] * Quat::from_rotation_y(40f32.to_radians())) < 1e-3);
+        // the sliders' range
+        let far = PreviewBend {
+            elbows: 400.0,
+            ..Default::default()
+        }
+        .apply(&rig, &played)
+        .expect("bent");
+        let elbow = joint("mElbowRight");
+        assert!(far[elbow].angle_between(played[elbow] * Quat::from_rotation_z(PreviewBend::MAX.to_radians())) < 1e-3);
+    }
+
     #[test]
     fn the_look_glance_leaves_the_turn_to_the_eyes() {
         let rig = rig();

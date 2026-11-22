@@ -109,6 +109,12 @@ impl App {
     }
 
     pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
+        // the Avatar tab's bend shows on our avatar while the preview runs
+        self.scene.preview_bend = if self.blender_live.running() {
+            self.blender_live.bend
+        } else {
+            Default::default()
+        };
         self.blender_live.capture_placements(&mut self.world);
         if let Some((source, action)) = self.blender_live.object_action.take() {
             let source = if matches!(
@@ -215,6 +221,15 @@ impl App {
             let mode = std::env::var("AURORA_DEMO_BLENDER_LIVE").unwrap_or_default();
             if mode == "plugins" || mode.starts_with("installer-") {
                 self.blender_live.tab = crate::blender_live::Tab::Plugins;
+            }
+            // the window's other tabs, for the captures
+            use crate::blender_live::Tab;
+            match std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").unwrap_or_default().as_str() {
+                "place" => self.blender_live.tab = Tab::Place,
+                "avatar" => self.blender_live.tab = Tab::Avatar,
+                "import" => self.blender_live.tab = Tab::Import,
+                "plugins" => self.blender_live.tab = Tab::Plugins,
+                _ => {}
             }
             self.blender_live.installer.demo(&mode);
             if mode.starts_with("shape") {
