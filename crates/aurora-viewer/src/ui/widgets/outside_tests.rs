@@ -27,11 +27,46 @@ fn every_plain_window_may_go_outside_but_the_dev_toolbox() {
 
 #[test]
 fn a_window_whose_sizing_is_not_followed_outside_stays_inside() {
-    assert!(!window("d").compact_when_minimized(240.0).goes_outside());
     assert!(!window("e").keep_aspect(1.5, Vec2::ZERO).goes_outside());
+    // a compact view is drawn outside too, and a window over an overlay of
+    // the viewer's is a window of its own there
+    assert!(window("d").compact_when_minimized(240.0).goes_outside());
     let mut over = window("f");
     over.order = egui::Order::Foreground;
-    assert!(!over.goes_outside());
+    assert!(over.goes_outside());
+}
+
+/// A window with a compact view keeps it when it goes outside, and has
+/// the button that changes the view there: its body draws from the state.
+#[test]
+fn a_compact_view_is_kept_and_changed_outside() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let name = "test outside compact";
+    let window = egui::Id::unique(name);
+    let ctx = frames.ctx.clone();
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((name, "minimized")), true));
+    crate::outside::want(&ctx, window, true);
+    crate::outside::set_native(&ctx, window, true);
+    let mut seen_compact = None;
+    let mut open = true;
+    frames.run(Vec::new(), |ui| {
+        Floater::new(name, "Controls", egui::pos2(10.0, 10.0), Vec2::new(300.0, 200.0))
+            .silent()
+            .fixed()
+            .auto_height()
+            .compact_when_minimized(140.0)
+            .show(ui.ctx(), &p, &mut open, |ui| {
+                seen_compact = Some(floater_minimized(ui.ctx(), name));
+            });
+    });
+    assert_eq!(seen_compact, Some(true));
+    // the size asked of its window outside is the compact view's width
+    let asked = crate::outside::resizes(&ctx);
+    assert!(
+        asked.iter().any(|(id, size, held)| *id == window && size.x == 140.0 && *held),
+        "{asked:?}"
+    );
 }
 
 #[test]

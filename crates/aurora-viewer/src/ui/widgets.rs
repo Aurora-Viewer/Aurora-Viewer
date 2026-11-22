@@ -873,14 +873,10 @@ impl<'a> Floater<'a> {
     /// button for it. Not in the Legacy Viewer. Every window may, but those
     /// of `STAYS_INSIDE` and those whose sizing the window outside does not
     /// follow yet (`show_outside`): a height the user sets at a held width,
-    /// a kept ratio, a compact body when minimized, a layer over an
-    /// overlay.
+    /// a kept ratio. A window drawn over an overlay of the viewer's
+    /// (`order`) is a window of its own outside, over nothing.
     fn goes_outside(&self) -> bool {
-        !STAYS_INSIDE.contains(&self.id)
-            && !self.height_only
-            && self.aspect.is_none()
-            && self.compact_minimized.is_none()
-            && self.order == egui::Order::Middle
+        !STAYS_INSIDE.contains(&self.id) && !self.height_only && self.aspect.is_none()
     }
 
     pub fn framed_header(mut self, icon: &'a str) -> Self {
@@ -1539,8 +1535,11 @@ impl<'a> Floater<'a> {
                 cascade::hidden(ctx, window_id);
             }
         } else if go_outside {
-            // (it comes back expanded, where and as large as it was)
-            unminimize_quietly(ctx, self.id);
+            // (it comes back expanded, where and as large as it was; a
+            // compact view stays the view it has, outside too)
+            if self.compact_minimized.is_none() {
+                unminimize_quietly(ctx, self.id);
+            }
             crate::outside::want(ctx, window_id, true);
         } else if toggle_min {
             ctx.data_mut(|d| d.insert_persisted(min_id, !minimized));
@@ -1610,7 +1609,11 @@ impl<'a> Floater<'a> {
         // as tall as its content (fixed, or of automatic height), and for a
         // fixed one as wide when the content is wider than its width
         let content_sized = !self.resizable;
-        let (width, auto_height) = (self.default_size.x, self.auto_height);
+        // its compact view (`compact_minimized`), which its body draws from
+        // the same state as inside, as wide as inside
+        let compact = self.compact_minimized.filter(|_| floater_minimized(ctx, self.id));
+        let (width, auto_height) = (compact.unwrap_or(self.default_size.x), self.auto_height);
+        let mut toggle_compact = false;
         let mut content = None;
         let mut body = Some(body);
         let mut back = false;
@@ -1657,6 +1660,19 @@ impl<'a> Floater<'a> {
                                     .clicked()
                                 {
                                     back = true;
+                                }
+                                if self.compact_minimized.is_some() {
+                                    let tip = if compact.is_some() {
+                                        aurora_i18n::tr!("common-full-view")
+                                    } else {
+                                        aurora_i18n::tr!("common-compact-view")
+                                    };
+                                    if title_button(ui, p, minimize_title_icon(true, compact.is_some()))
+                                        .on_hover_text(tip)
+                                        .clicked()
+                                    {
+                                        toggle_compact = true;
+                                    }
                                 }
                                 for (icon, tip, clicked) in &mut self.actions {
                                     if title_button(ui, p, icon).on_hover_text(*tip).clicked() {
@@ -1767,6 +1783,9 @@ impl<'a> Floater<'a> {
                 .inner
         });
         title_draft_end(ctx, window_id, self.title_rename.as_ref(), title_draft, title_finished);
+        if toggle_compact {
+            ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((self.id, "minimized")), compact.is_none()));
+        }
         if back {
             crate::outside::want(ctx, window_id, false);
         }
