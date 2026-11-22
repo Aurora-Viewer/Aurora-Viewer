@@ -922,6 +922,7 @@ pub struct App {
     avatar_mark_last: Option<crate::world::avatar_marks::Rgb>,
     /// Debug Settings (Advanced.ShowDebugSettings).
     debug_settings_ui: ui::debug_settings::DebugSettingsUi,
+    camera_position_ui: ui::camera_position::CameraPositionUi,
     debug_settings_demo_done: bool,
     /// Phototools (the toolbar's `phototools`).
     phototools_ui: ui::phototools::PhototoolsUi,
@@ -2179,6 +2180,7 @@ impl App {
             avatar_mark_ui: None,
             avatar_mark_last: None,
             debug_settings_ui: Default::default(),
+            camera_position_ui: Default::default(),
             debug_settings_demo_done: false,
             phototools_ui: Default::default(),
             phototools_demo_done: false,
@@ -20786,6 +20788,7 @@ impl App {
                 ui::remote_object::show(&ctx, &p, &self.world, &mut self.remote_object);
                 self.photo_ui(&ctx, &p, projector, renderer);
                 self.controls_window(&ctx, &p);
+                self.camera_position_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
                 self.follow_window(&ctx, &p);
                 self.second_camera_window(&ctx, &p);
