@@ -207,6 +207,15 @@ pub(crate) fn seen(ctx: &egui::Context, window: egui::Id) {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<egui::Id>>(seen_id()).push(window));
 }
 
+/// A window of a Wayland session, where no program takes the focus by
+/// itself.
+fn on_wayland(window: &Window) -> bool {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    window
+        .window_handle()
+        .is_ok_and(|handle| matches!(handle.as_raw(), RawWindowHandle::Wayland(_)))
+}
+
 /// The windows outside to let go of: those of the interface that none
 /// drew in at the last pass.
 fn unseen(open: impl Iterator<Item = (egui::ViewportId, bool)>, seen: &[egui::Id]) -> Vec<egui::ViewportId> {
@@ -478,7 +487,16 @@ impl Outside {
         for window in raises {
             if let Some(native) = self.shared.borrow().windows.get(&viewport(window)) {
                 native.window.set_minimized(false);
-                native.window.focus_window();
+                if on_wayland(&native.window) {
+                    // winit's `focus_window` does nothing there: the system
+                    // is asked through an activation token, and signals the
+                    // window or brings it in front as it sees fit
+                    native
+                        .window
+                        .request_user_attention(Some(winit::window::UserAttentionType::Informational));
+                } else {
+                    native.window.focus_window();
+                }
             }
         }
         let front = self
