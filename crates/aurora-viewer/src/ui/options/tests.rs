@@ -42,6 +42,85 @@ fn a_search_reaching_the_system_fonts_row_does_not_wait_for_the_list() {
 }
 
 #[test]
+fn a_shared_preference_link_finds_the_row_without_changing_its_value() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = Settings::default();
+    let original = settings.chat_timestamps_nearby;
+    let defaults = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut result = OptionsResult::default();
+
+    st.open_setting("chat_timestamps_nearby".to_owned());
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+    });
+    assert!(matches!(st.go_to, Some((Page::Chat, 0, Some(_)))));
+    assert!(st.pending_setting.is_none());
+    assert_eq!(settings.chat_timestamps_nearby, original);
+    assert!(!result.changed);
+
+    // A setting inside a collapsed cog also opens its parent.
+    st.open_setting("name_tag_show_seconds".to_owned());
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+    });
+    assert!(matches!(st.go_to, Some((Page::Avatars, 0, Some(_)))));
+    assert!(st.open_parent.is_some());
+}
+
+#[test]
+fn a_dotted_preference_link_finds_its_graphics_tab_and_translated_label() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = Settings::default();
+    let defaults = Settings::default();
+    let mut st = OptionsUi::default();
+    let mut result = OptionsResult::default();
+    st.open_setting("parcel_visibility.mode".into());
+    run_ui(&ctx, egui::RawInput::default(), |ui| {
+        count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+    });
+    assert!(matches!(st.go_to, Some((Page::Graphics, 6, Some(RowFlash::Link(_))))));
+    assert_eq!(
+        setting_link_label("parcel_visibility.mode"),
+        format!(
+            "{} › {}",
+            aurora_i18n::tr!("common-preferences"),
+            aurora_i18n::tr!("parcel-visibility-mode")
+        )
+    );
+    assert!(!result.setting_unavailable);
+}
+
+#[test]
+fn unavailable_preference_links_preserve_the_current_search_and_show_a_notice_once() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = Settings::default();
+    let defaults = Settings::default();
+    let mut st = OptionsUi {
+        page: Page::Sound,
+        query: "volume".into(),
+        ..Default::default()
+    };
+    settings.chat_style = crate::settings::ChatStyle::Legacy;
+    for path in ["removed.setting", "keybinds", "audio.ui", "show_recent_emojis"] {
+        st.open_setting(path.into());
+        for expected_notice in [true, false] {
+            let mut result = OptionsResult::default();
+            run_ui(&ctx, egui::RawInput::default(), |ui| {
+                count(ui, &p, &mut settings, &defaults, &mut st, &mut result);
+            });
+            assert_eq!(result.setting_unavailable, expected_notice, "{path}");
+            assert!(st.go_to.is_none());
+            assert_eq!(st.page, Page::Sound);
+            assert_eq!(st.query, "volume");
+        }
+    }
+}
+
+#[test]
 fn opening_preferences_focuses_search_without_taking_it_back() {
     let mut frames = Frames::new();
     let ctx = frames.ctx.clone();
@@ -648,6 +727,18 @@ fn the_sound_page_puts_push_to_talk_back_only() {
     assert_ne!(s.keybinds.get(Action::Fly), d.keybinds.get(Action::Fly));
     reset_page_settings(Page::Shortcuts, &mut s);
     assert_eq!(s.keybinds.get(Action::Fly), d.keybinds.get(Action::Fly));
+}
+
+#[test]
+fn voice_output_device_has_its_own_sound_preference() {
+    let paths = collected();
+    assert!(paths.contains(&(Page::Sound, "audio.voice_output_device".into())), "{paths:?}");
+    let mut settings = Settings::default();
+    let label = cx::fold(aurora_i18n::tr!("ui-options-voice-output"));
+    assert!(
+        counts(&mut settings, &label).hits(Page::Sound) >= 1,
+        "Voice output row is searchable"
+    );
 }
 
 #[test]

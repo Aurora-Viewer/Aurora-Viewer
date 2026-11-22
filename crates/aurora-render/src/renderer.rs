@@ -9520,6 +9520,19 @@ impl Backend {
             Ok("check") => 0x400000,
             _ => 0,
         });
+        // AURORA_PROBE_FACE=exact|alt: the main view's surfaces find their
+        // probes from their own position, as before (the grain of a wall on
+        // the face of a box probe), or one second in two (common.wgsl
+        // PROBE_FACE_EXACT, probe_point)
+        static PROBE_FACE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+        let probe_face = *PROBE_FACE.get_or_init(|| match std::env::var("AURORA_PROBE_FACE").as_deref().map(str::trim) {
+            Ok("exact") => 1,
+            Ok("alt") => 2,
+            _ => 0,
+        });
+        if shadow_bias_legacy_now(probe_face, std::time::SystemTime::now()) {
+            main.light_sets.mode[2] |= 0x800000;
+        }
         main.light_sets.mode[2] |= match blend_ao {
             BlendAo::New => 0x10000,
             BlendAo::Old => 0x4000,
@@ -9556,7 +9569,7 @@ impl Backend {
         }
         // (common.wgsl LOCAL_TRACED)
         if rt_lights_now {
-            main.light_sets.mode[2] |= 0x800000;
+            main.light_sets.mode[2] |= 0x1000000;
         }
         // (common.wgsl SPECULAR_AA)
         if specular_aa_now(self.settings.specular_aa) {

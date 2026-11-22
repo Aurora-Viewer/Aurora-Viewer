@@ -274,6 +274,7 @@ fn graphics_card(cx: &mut Cx) {
                     &st.gpus,
                     COMBO_W,
                     tr!("ui-options-graphics-card-automatic"),
+                    false,
                 )
                 .0
             },

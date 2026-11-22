@@ -24,6 +24,21 @@ use uuid::Uuid;
 
 const PREFIX: &str = "secondlife:///app/";
 
+/// A setting path is a stable, ASCII field identifier, not translated text.
+fn valid_preference_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 128
+        && !path.starts_with('.')
+        && !path.ends_with('.')
+        && !path.contains("..")
+        && path.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'.')
+}
+
+/// A read-only deep link to a Preferences row; invalid paths cannot be shared.
+pub fn preference_link(path: &str) -> Option<String> {
+    valid_preference_path(path).then(|| format!("{PREFIX}preferences/{path}"))
+}
+
 /// What a verb of `secondlife:///app/agent/<id>/<verb>` does besides showing
 /// the profile (LLAgentHandler::handle).
 #[derive(Debug, Clone, PartialEq)]
@@ -144,6 +159,8 @@ pub enum AppLink {
         category: String,
         query: String,
     },
+    /// `preferences/<setting path>` only opens and highlights a setting.
+    Preferences(String),
     AreaSearch(Box<crate::settings::area_search::Filters>),
     Blocked(Blocked),
     /// Any other command, or one whose arguments are wrong: the Legacy
@@ -260,6 +277,10 @@ pub fn parse(url: &str) -> Option<AppLink> {
             category: token(1).to_owned(),
             query: unescape(token(2)),
         }),
+        "preferences" if tokens.len() == 2 => {
+            let path = token(1);
+            valid_preference_path(path).then(|| AppLink::Preferences(path.to_owned()))
+        }
         "wear_folder" => Some(AppLink::Blocked(Blocked::WearFolder)),
         "add_folder" => Some(AppLink::Blocked(Blocked::AddFolder)),
         "remove_folder" => Some(AppLink::Blocked(Blocked::RemoveFolder)),
@@ -405,6 +426,38 @@ mod tests {
 
     fn uid() -> Uuid {
         Uuid::parse_str(ID).expect("test id")
+    }
+
+    #[test]
+    fn generated_preference_links_round_trip() {
+        for path in ["chat_timestamps_nearby", "colors.chat_beyond_range"] {
+            let url = preference_link(path).expect("valid setting path");
+            assert_eq!(parse(&url), Some(AppLink::Preferences(path.to_owned())));
+        }
+        for path in ["", ".secret", "bad..path", "chat/other", "contains space"] {
+            assert!(preference_link(path).is_none(), "{path}");
+        }
+    }
+
+    #[test]
+    fn preferences_links_accept_only_setting_paths() {
+        assert_eq!(
+            parse("secondlife:///app/preferences/chat_timestamps_nearby"),
+            Some(AppLink::Preferences("chat_timestamps_nearby".to_owned()))
+        );
+        assert_eq!(
+            parse("secondlife:///app/preferences/colors.chat_beyond_range"),
+            Some(AppLink::Preferences("colors.chat_beyond_range".to_owned()))
+        );
+        for url in [
+            "secondlife:///app/preferences/",
+            "secondlife:///app/preferences/../../secret",
+            "secondlife:///app/preferences/%2E%2E",
+            "secondlife:///app/preferences/chat/extra",
+            "secondlife:///app/preferences/chat%20name",
+        ] {
+            assert_eq!(parse(url), Some(AppLink::Unsupported), "{url}");
+        }
     }
 
     #[test]

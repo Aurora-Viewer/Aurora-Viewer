@@ -3934,7 +3934,7 @@ Collada on an object of their own (prim, sculpt and mesh), on a bought one
 (nothing exportable) and on a megaprim, and checks that a texture they did not
 upload, or have no item of, is never written.
 
-**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|derender-part|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|animated|menu|edit|move|freeze|inspect|detach-delete|detach-delete-confirm|derender-part|inventory|library|sound|temporary|temporary-detach|temporary-drop`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
@@ -3981,6 +3981,14 @@ access to a grid.
 - `inspect`: "Inspect" at frame 740: the window lists the root and the
   linked prim, their figures and the totals; the prim of the highlighted
   row is outlined in yellow, the others in blue.
+- `detach-delete`: "Detach and Delete" (the trash icon of the menu's
+  bottom bar) at frame 740: Inventory's "Detach and Delete" confirmation
+  opens over the world and the Inventory window does not change. Capture
+  at frame 760.
+- `detach-delete-confirm`: like `detach-delete`, then presses its button at
+  frame 780. The log writes `demo worn detach-delete:` lines at frames 760,
+  800, 900 and 1200 with `worn`, `trash`, `waiting` and `message`: worn at
+  760, then taken off and in the Trash, no wait left and no message.
 - `derender-part` (#3384): "Edit" on the backpack at frame 700, "Edit
   linked parts" ticked and its linked prim selected at 720, right click on
   that prim at 740, "Derender temporarily" at 780: only the linked prim
@@ -4438,6 +4446,13 @@ swimming/water walking and the manager button. Check Escape, click-away and repe
 Existing movement preferences and the full manager must reflect the same
 choices. The other menus/commands still open the full manager directly.
 
+Mini AO window: `AURORA_DEMO_AO=mini` seeds the same complete swimming set
+with the Mini AO window open, as after a relog with it open, and closes the
+full manager at frame 360. Capture around frame 600. Check the "now playing"
+line, previous / next, the set list, Sits, Settings (the full AO window opens
+and the mini window stays open), and the AO popup's "Open mini AO window",
+hidden while the window is shown and expanding it when it is minimized.
+
 For #1394 on the grid, turn automatic cycling off, choose a non-first stand
 from the manager and then from the quick arrows, and check it after logout/login
 and a full viewer restart. Repeat with another set/account and an independent
@@ -4776,6 +4791,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_PBR_EMISSIVE=1\|sided` | Emissive PBR spheres or transparent single-/double-sided faces |
 | `AURORA_DEMO_RT_WALK=1` | Our avatar, heavy and in a hat, walks: its ray-traced shadow follows it |
 | `AURORA_DEMO_RT_SWITCH=<frame>[:<frame>]` | Ray tracing turned on at these frames, as Preferences would: no long frame |
+| `AURORA_DEMO_PBR_MIXED=1` | One cube with white PBR metal on every face but 4, which keeps a red legacy texture (#4467) |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
@@ -5099,6 +5115,16 @@ both open states and the selection count. Capture at frame 620.
   its alpha), the masked one is cut out by its cutoff and the blended one
   is not drawn, only their labels show. The opaque one missing is the bug of a worn mesh attachment that
   the Legacy Viewer draws.
+- **`AURORA_DEMO_PBR_MIXED=1`**: one cube at a fixed local id (99750), a
+  white metal PBR material on every face but 4, which keeps a red-tinted
+  legacy texture, so the two modes read apart. With
+  `AURORA_DEMO_BUILD=mixed-face,object:99750,4`, the prim is selected whole
+  and then its Blinn-Phong face 4: the Blinn-Phong tab opens and only that
+  face shows its legacy texture; the PBR faces keep rendering (#4467). The
+  Legacy Viewer hides every PBR face of the prim when its Blinn-Phong tab
+  opens; hiding the faces the tab edits only is Aurora's deliberate
+  difference. `AURORA_DEMO_BUILD=move,object:99750` selects the whole prim
+  again and shows all its PBR faces.
 - **`AURORA_DEMO_TEXANIM=1`**: two rows of panels in place of the
   alpha panels — smooth scrolling, grid of 4 × 4 frames, ping-pong,
   rotation, scale (alpha mask: prepass and shadows), a cube animated on
@@ -5501,7 +5527,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_LAMP_BLINK=<frames>` | A lamp ahead of the start view, switched off and on every `frames` frames |
 | `AURORA_DEMO_LAMP_MOVE=<frames>[,<stop>]` | The same lamp carried from side to side behind a post, a crossing every `frames` frames |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
-| `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, or a box filling the room |
+| `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box\|inner][,shiny]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, a box filling the room, or a box on its inner faces; `shiny` makes the room shiny |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 | `AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails, for the whole run or that long, from the start or `after` seconds |
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
@@ -6032,6 +6058,16 @@ both open states and the selection count. Capture at frame 620.
   it; with `AURORA_RT_GI=1` the glow on the walls must go with the lamp.
   The viewer smooths an object's movement, so the lamp drawn is about
   two frames behind the place sent.
+- **`AURORA_DEMO_PROBE_ROOM=<ambiance>[,box|inner][,shiny]`**: a closed
+  room of 16 × 16 × 5 m (walls, floor and roof 0.2 m thick) with a warm
+  lamp, at `AURORA_DEMO_POS="100,100"`, and a manual probe of that
+  ambiance (#2217). Without an option the probe is a 4 m sphere crossing
+  the floor; `box`, a box through the middle of the walls, the floor and
+  the roof (their inner faces inside it); `inner`, a box whose faces are
+  the inner faces of the room, as a creator sizes one to a room's inside.
+  `shiny` gives the room a high shininess (legacy, no material): the
+  probe's image of the room shows in its walls. `1,inner,shiny` shows the
+  grain of `AURORA_PROBE_FACE=exact`.
 - **Probe selection (#446):** combine `AURORA_DEMO_PROBES=1` with
   `AURORA_DEMO_BUILD=move,0,0` and capture after frame 650. With no object
   selected, every inspector section must show "Select reflection probes"
@@ -6624,7 +6660,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
-| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
+| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open\|delete` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open empty tabs; `icon-bar` opens the quick import bar; `type-*` opens independent type windows |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -9943,7 +9979,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   into a menu, contact sets wrap when needed, and every quick action stays
   visible. The list controls must stay inside their pane. Returning
   from the large layout to a reduced one restores the list and its selection.
-- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew]|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
+- **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|service[:skew|self]|restore[:slow]|import[:run|again|login|same|none]|shared[:on]|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in
   `config\demo\accounts\<demo account uuid>\chat_logs\demo\`, never in
@@ -9997,6 +10033,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
     What to see: that message once in her conversation, live and not
     greyed, with no grey copy of it a little later, also after the
     refresh 15 s after it.
+  - `service:self` (#4499): `service` whose conversation list also holds a
+    direct conversation with the demo account itself, second in the list,
+    as the grid listed for one account. What to see: Nova's history as
+    for `service`, and in the log `conversation-list accepted:` with
+    `self=1`, then a `history response` for each of the three residents
+    and none for the account itself.
   - `restore` (#1683): write and read back the demo account's `open_ims.xml`
     with a resident, a typed group and an older untyped group entry. Both
     quiet groups must show their names and group controls without receiving
@@ -11223,7 +11265,7 @@ In `showcase-hd`, the selected outfit has a 1024 px striped portrait loaded from
 texture disk cache, as after login. Reopen the showcase or select the outfit again:
 the card keeps its thumbnail and the large pane shows the striped portrait.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|showcase-hd|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|portrait-hd|portrait-hd-poor|photo-mode-hd|batch|batch-run|batch-hd|batch-hd-poor|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial|xml|xml-unavailable`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|showcase|showcase-hd|portrait|portrait-not-worn|portrait-shot|portrait-bust|portrait-face|portrait-profile|photo-mode|portrait-hd|portrait-hd-poor|photo-mode-hd|batch|batch-run|batch-hd|batch-hd-poor|batch-folder|outfits|multi-gallery|multi-outfits|multi-items|multi-worn|clipboard|folders|folders-outfits|folders-many|folders-many-outfits|worn|save|edit|layers|layers-drag|layers-hold|wearables|wearables-outfits|wearables-edit|menu|duplicates|broken|take-off-folder|json-import|json-partial|xml|xml-unavailable`**
 — opens Appearance with four synthetic outfits:
 
 - `xml`: opens Appearance’s gear menu at frame 650, showing Export my
@@ -11342,6 +11384,14 @@ gallery's double-click continues to open the outfit's contents.
   L$ 10 each, the outfit's previous HD picture goes to the Trash); the
   window counts "HD pictures saved: n (L$ …)", those still being sent and
   those not sent. The log says `outfit HD picture: …` for each.
+- `batch-folder`: the batch window over the demo's "Beach" folder only (its
+  "Night" subfolder's outfit included), as the banner opens it with the
+  showcase filtered to a folder: the headline "Outfits to photograph in
+  Beach", one outfit unticked. The bar above the rows: "All outfits" with a
+  dash, "1 of 2", Without picture. A click on All ticks both ("2 of 2",
+  Start (2)), a second unticks both (Start greyed), Without picture ticks
+  those without a picture again and greys itself. Locked and empty outfits
+  are never ticked.
 - `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
   cards. Fit shows the whole image; Fill uses a centred crop without stretching.
   The discs stay round, the images stay inside their frames and the names and
@@ -11499,7 +11549,7 @@ rezzed object must disappear while its inventory original stays in place and
 no inventory deletion dialog opens. Capture at frames 710 and 780. Clicking
 an inventory row afterwards must give its ordinary shortcuts back to the list.
 
-**`AURORA_DEMO_GESTURES=manager|editor|numpad|chat-keys|play|replay|once|channel|channel-replace|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
+**`AURORA_DEMO_GESTURES=manager|editor|numpad|chat-keys|play|replay|once|channel|channel-replace|completion|completion-send|list|communicate|communicate-open|delete`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
 inactive chime on F10. `manager` opens the list; `editor` also opens the
 chat gesture's editor; `play` starts the chat and animation at frame 650.
@@ -11515,6 +11565,12 @@ conversation, in the Aurora and Legacy styles. Text and editing keys stay
 in the field; popup menus and other editors keep their function keys.
 Capture at frame 620 for the list/editor, 680 during playback and 800
 after the explicit pause. Sounds stay muted unless `AURORA_DEMO_SOUND=1`.
+`delete` asks Inventory's "Detach and Delete" on the active F8 gesture
+at frame 650 and presses its button at 700, as the Legacy Viewer's
+Delete does for an active gesture (`get_is_item_worn`,
+`LLGestureBridge::removeItem`). The log writes `demo gesture delete:`
+lines: active at 600, `asked: Ok(())`, then inactive and in the Trash
+at 900, no wait left and no message.
 `once` (#2931) adds an authored one-shot on `/once` (F6), plays it at frames 650 and 1010,
 and waits for its natural completion before writing the finished chat line;
 there is no Stop Animation step. At 60 FPS capture frames 680, 950 and 1310:
@@ -12779,6 +12835,7 @@ What the inventory must show with these scenarios:
 | `AURORA_THROTTLE_MAX_KBPS=<n>` | Most bandwidth asked from the simulator for this launch (6,000 by default, up to 50,000) |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
+| `AURORA_PROBE_FACE=exact` or `alt` | Surfaces find their reflection probes from their own position, as before (grain on a wall lying on the face of a box probe), or one second in two |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 | `AURORA_LEGACY_GLARE=0` | Transparent legacy materials without their glare (wet and shine layers invisible), as before #3259 |
 | `AURORA_BLEND_FACE_RANK=0` | Blended faces of one object lying on one another without their face order in the exact and stochastic orders, as before |
@@ -13418,6 +13475,22 @@ What the inventory must show with these scenarios:
     under MSAA too (`AURORA_AA=3`): a sample at the edge of a triangle seen
     edge-on is shaded at a position that can be behind the camera, which is
     why such positions walk the whole list.
+- **`AURORA_PROBE_FACE=exact|alt`**: by default a surface finds its
+  reflection probes 1 cm in front of it, along its normal (`probe_point` in
+  `common.wgsl`). A creator often sizes a box probe to the inside of a room,
+  its faces on those of the walls, the floor and the roof: whether a point
+  of such a face is in the box then turns on the rounding of its position,
+  pixel by pixel, and a shiny wall showed the box's image of the room and
+  the automatic probes' in speckles and streaks, as z-fighting does. The
+  Legacy Viewer tests the position itself (`shouldSampleProbe`,
+  reflectionProbeF.glsl), with no margin either.
+  - `exact`: the position itself, as before, in the main view.
+  - `alt`: `exact` one second in two.
+
+  Demo: `AURORA_DEMO_PROBE_ROOM=1,inner,shiny` with
+  `AURORA_DEMO_POS="100,100"` (the box's faces on the walls, the floor's
+  top and the roof's underside): the shiny room must be clean; with
+  `AURORA_PROBE_FACE=exact` its walls, floor and roof show the grain.
 - **`AURORA_LIGHT_TILES=0|alt|check`**: by default, a lit fragment only
   walks the local lights that cover at once its screen column, its row and
   its depth slice (32 of each; sets computed each frame on the render
