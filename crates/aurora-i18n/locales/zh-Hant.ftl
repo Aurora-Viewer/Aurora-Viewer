@@ -10596,6 +10596,7 @@ people-groups-count-unlimited = { $count ->
 people-groups-none = 無目前群組
 people-groups-none-sub = 名稱上方不顯示頭銜
 people-groups-active-tag = 目前
+people-groups-deactivate = 停用
 people-groups-active = 目前群組
 people-groups-member = 成員
 people-groups-title = 頭銜：{ $title }

@@ -10779,6 +10779,7 @@ people-groups-count-unlimited = { $count ->
 people-groups-none = Aucun groupe actif
 people-groups-none-sub = Aucun titre affiché au-dessus de votre nom
 people-groups-active-tag = actif
+people-groups-deactivate = Désactiver
 people-groups-active = Groupe actif
 people-groups-member = Membre
 people-groups-title = Titre : { $title }

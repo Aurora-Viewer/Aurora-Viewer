@@ -10628,6 +10628,7 @@ people-groups-count-unlimited = { $count ->
 people-groups-none = Aktif grup yok
 people-groups-none-sub = Adınızın üstünde bir unvan gösterilmiyor
 people-groups-active-tag = aktif
+people-groups-deactivate = Devre Dışı Bırak
 people-groups-active = Aktif grup
 people-groups-member = Üye
 people-groups-title = Unvan: { $title }

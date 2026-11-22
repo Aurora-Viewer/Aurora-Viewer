@@ -10686,6 +10686,7 @@ people-groups-count-unlimited = { $count ->
 people-groups-none = アクティブなグループなし
 people-groups-none-sub = 名前の上にタイトルを表示しない
 people-groups-active-tag = 有効
+people-groups-deactivate = 無効化
 people-groups-active = アクティブなグループ
 people-groups-member = メンバー
 people-groups-title = タイトル：{ $title }

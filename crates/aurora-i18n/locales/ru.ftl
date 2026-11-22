@@ -10927,6 +10927,7 @@ people-groups-count-unlimited =
 people-groups-none = Нет активной группы
 people-groups-none-sub = Над вашим именем нет титула
 people-groups-active-tag = активна
+people-groups-deactivate = Деактивировать
 people-groups-active = Активная группа
 people-groups-member = Участник
 people-groups-title = Титул: { $title }
