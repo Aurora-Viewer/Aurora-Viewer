@@ -660,7 +660,12 @@ impl Previews {
         // every frame of a drag (#941); outside a drag its height follows
         // its width when another video starts in it, or when the title
         // bar measured differently
-        let outer = ctx.memory(|m| m.area_rect(egui::Id::unique(PLAYER_WINDOW)));
+        // (in a window outside the picture keeps its shape in whatever room
+        // the user gives the window, which takes its shape once per video:
+        // `Floater::show_outside`)
+        let outer = ctx
+            .memory(|m| m.area_rect(egui::Id::unique(PLAYER_WINDOW)))
+            .filter(|_| !crate::outside::wanted(ctx, egui::Id::unique(PLAYER_WINDOW)));
         if let (Some(body), Some(outer)) = (body, outer)
             && !crate::ui::widgets::floater_minimized(ctx, PLAYER_WINDOW)
         {

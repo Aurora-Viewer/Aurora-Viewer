@@ -871,12 +871,12 @@ impl<'a> Floater<'a> {
     /// The user may send this window to a window of the system, outside
     /// the viewer's, and bring it back (outside.rs): its title bar has the
     /// button for it. Not in the Legacy Viewer. Every window may, but those
-    /// of `STAYS_INSIDE` and those whose sizing the window outside does not
-    /// follow yet (`show_outside`): a height the user sets at a held width,
-    /// a kept ratio. A window drawn over an overlay of the viewer's
-    /// (`order`) is a window of its own outside, over nothing.
+    /// of `STAYS_INSIDE` and one whose sizing the window outside does not
+    /// follow (`show_outside`): a height the user sets at a held width. A
+    /// window drawn over an overlay of the viewer's (`order`) is a window
+    /// of its own outside, over nothing.
     fn goes_outside(&self) -> bool {
-        !STAYS_INSIDE.contains(&self.id) && !self.height_only && self.aspect.is_none()
+        !STAYS_INSIDE.contains(&self.id) && !self.height_only
     }
 
     pub fn framed_header(mut self, icon: &'a str) -> Self {
@@ -1615,6 +1615,10 @@ impl<'a> Floater<'a> {
         let (width, auto_height) = (compact.unwrap_or(self.default_size.x), self.auto_height);
         let mut toggle_compact = false;
         let mut content = None;
+        // a picture of a kept shape (`keep_aspect`): its ratio, and once
+        // drawn the height of the window's head and the window's width
+        let ratio = self.aspect.map(|(ratio, _)| ratio);
+        let mut shape = None;
         let mut body = Some(body);
         let mut back = false;
         // a document's name, renamed by a double click on it as in the
@@ -1758,6 +1762,20 @@ impl<'a> Floater<'a> {
                         divider(ui, p);
                         ui.add_space(UNDER_DIVIDER);
                     }
+                    if let Some(ratio) = ratio {
+                        // the system sizes the window as the user likes,
+                        // to the whole screen too, and no system holds a
+                        // window to a ratio the same way: the picture
+                        // keeps its shape in the room it has, as in any
+                        // player, where the edges held it inside
+                        let room = ui.available_rect_before_wrap();
+                        shape = Some((room.top(), ui.ctx().content_rect().width()));
+                        ui.allocate_rect(room, Sense::hover());
+                        let picture = egui::Rect::from_center_size(room.center(), letterboxed(room.size(), ratio));
+                        return ui
+                            .scope_builder(egui::UiBuilder::new().max_rect(picture), |ui| body.take().map(|body| body(ui)))
+                            .inner;
+                    }
                     if !content_sized {
                         return body.take().map(|body| body(ui));
                     }
@@ -1789,6 +1807,16 @@ impl<'a> Floater<'a> {
         if back {
             crate::outside::want(ctx, window_id, false);
         }
+        if let (Some(ratio), Some((head, width))) = (ratio, shape) {
+            // the window takes the picture's shape once, at its width,
+            // when the picture changes shape (another video): the user
+            // sizes it freely after that
+            let ratio_id = window_id.with("outside ratio");
+            if ctx.data(|d| d.get_temp::<f32>(ratio_id)) != Some(ratio) {
+                crate::outside::resize(ctx, window_id, Vec2::new(width, head + width / ratio), false);
+                ctx.data_mut(|d| d.insert_temp(ratio_id, ratio));
+            }
+        }
         if let Some(content) = content {
             let size = ctx
                 .data_mut(|d| d.get_persisted::<Vec2>(window_id.with(OUTSIDE_SIZE)))
@@ -1803,6 +1831,16 @@ impl<'a> Floater<'a> {
             }
         }
         out
+    }
+}
+
+/// The largest size of the ratio `ratio` (width over height) in `room`: a
+/// picture of a kept shape in a window outside of any shape.
+fn letterboxed(room: Vec2, ratio: f32) -> Vec2 {
+    if room.x > room.y * ratio {
+        Vec2::new(room.y * ratio, room.y)
+    } else {
+        Vec2::new(room.x, room.x / ratio)
     }
 }
 

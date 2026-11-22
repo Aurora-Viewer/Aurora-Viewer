@@ -277,6 +277,12 @@ pub(crate) fn resizes(ctx: &egui::Context) -> Vec<Resize> {
     ctx.data(|d| d.get_temp(sizes_id())).unwrap_or_default()
 }
 
+/// The sizes asked, taken as the windows' host takes them.
+#[cfg(test)]
+pub(crate) fn take_resizes(ctx: &egui::Context) -> Vec<Resize> {
+    ctx.data_mut(|d| d.remove_temp(sizes_id())).unwrap_or_default()
+}
+
 /// Asks for a window outside, opened before the next pass.
 pub(crate) fn ask(ctx: &egui::Context, ask: Ask) {
     ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<Ask>>(asks_id()).push(ask));

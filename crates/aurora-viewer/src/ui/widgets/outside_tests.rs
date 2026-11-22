@@ -27,9 +27,13 @@ fn every_plain_window_may_go_outside_but_the_dev_toolbox() {
 
 #[test]
 fn a_window_whose_sizing_is_not_followed_outside_stays_inside() {
-    assert!(!window("e").keep_aspect(1.5, Vec2::ZERO).goes_outside());
-    // a compact view is drawn outside too, and a window over an overlay of
-    // the viewer's is a window of its own there
+    let mut tall = window("e");
+    tall.height_only = true;
+    assert!(!tall.goes_outside());
+    // a picture of a kept shape keeps it in its window outside, a compact
+    // view is drawn there too, and a window over an overlay of the
+    // viewer's is a window of its own there
+    assert!(window("g").keep_aspect(1.5, Vec2::ZERO).goes_outside());
     assert!(window("d").compact_when_minimized(240.0).goes_outside());
     let mut over = window("f");
     over.order = egui::Order::Foreground;
@@ -279,4 +283,57 @@ fn a_document_outside_is_renamed_in_its_window() {
     frame(false, Vec::new());
     frame(false, vec![enter()]);
     assert_eq!(take_title_rename(&ctx, name), None);
+}
+
+#[test]
+fn a_picture_keeps_its_shape_in_a_window_outside_of_any_shape() {
+    // a wide window: bars at the sides; a tall one: above and below
+    assert_eq!(letterboxed(Vec2::new(1000.0, 300.0), 2.0), Vec2::new(600.0, 300.0));
+    assert_eq!(letterboxed(Vec2::new(400.0, 900.0), 2.0), Vec2::new(400.0, 200.0));
+    assert_eq!(letterboxed(Vec2::new(640.0, 360.0), 16.0 / 9.0), Vec2::new(640.0, 360.0));
+}
+
+/// The body of a window of a kept shape gets, outside, the room of that
+/// shape, and its window is asked the picture's shape once per shape.
+#[test]
+fn a_window_of_a_kept_shape_draws_its_picture_at_its_ratio_outside() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let name = "test outside player";
+    let window = egui::Id::unique(name);
+    let ctx = frames.ctx.clone();
+    crate::outside::want(&ctx, window, true);
+    crate::outside::set_native(&ctx, window, true);
+    let mut open = true;
+    let mut draw = |frames: &mut elide_tests::Frames, ratio: f32| {
+        let mut got = None;
+        frames.run(Vec::new(), |ui| {
+            got = Floater::new(name, "Player", egui::pos2(10.0, 10.0), Vec2::new(480.0, 300.0))
+                .silent()
+                .flush_body()
+                .keep_aspect(ratio, Vec2::ZERO)
+                .show(ui.ctx(), &p, &mut open, |ui| ui.available_size());
+        });
+        got
+    };
+    let size = draw(&mut frames, 2.0).expect("the body is drawn");
+    assert!((size.x / size.y - 2.0).abs() < 0.01, "{size:?}");
+    let asked = |ctx: &egui::Context| -> Vec<Vec2> {
+        crate::outside::take_resizes(ctx)
+            .into_iter()
+            .filter(|(id, _, held)| *id == window && !held)
+            .map(|(_, size, _)| size)
+            .collect()
+    };
+    let wide = asked(&ctx);
+    assert_eq!(wide.len(), 1, "{wide:?}");
+    // the same shape again: its window is the user's to size
+    draw(&mut frames, 2.0);
+    assert_eq!(asked(&ctx), Vec::new());
+    // another video, of another shape: asked once more, at the same width
+    draw(&mut frames, 1.0);
+    let square = asked(&ctx);
+    assert_eq!(square.len(), 1, "{square:?}");
+    assert_eq!(square[0].x, wide[0].x);
+    assert!((square[0].y - wide[0].y - wide[0].x / 2.0).abs() < 0.01, "{wide:?} {square:?}");
 }
