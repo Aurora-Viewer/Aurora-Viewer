@@ -1163,11 +1163,15 @@ fn message_emphasis(kind: ChatKind, italics: bool) -> super::fonts::TextEmphasis
 /// LLViewerChat::getChatColor (indra/newview/llviewerchat.cpp) has no colour
 /// of its own for `/me`, only the italics (`message_emphasis`).
 fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> Color32 {
+    message_color_with_keyword(line, p, world, super::colors::keyword_color(line))
+}
+
+fn message_color_with_keyword(line: &crate::world::ChatLine, p: &Palette, world: &World, keyword: Option<Color32>) -> Color32 {
     if let Some(color) = super::colors::contact_chat_color(line, world) {
         return color;
     }
     history_tone(p, line.origin)
-        .or_else(|| super::colors::keyword_color(line))
+        .or(keyword)
         .unwrap_or_else(|| match line.kind.volume() {
             Some(ChatType::Whisper) => p.muted,
             Some(ChatType::Shout) => p.ink,
@@ -6731,6 +6735,48 @@ mod tests {
             line.text = text.into();
             assert_eq!(message_color(&line, &p, &world), theirs);
         }
+    }
+
+    #[test]
+    fn emote_keyword_colour_overrides_sender_colour() {
+        let p = crate::theme::Theme::default().palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let settings = crate::keywords::KeywordSettings {
+            on: true,
+            in_chat: true,
+            words: "raven".into(),
+            change_color: true,
+            ..Default::default()
+        };
+        let matcher = crate::keywords::Matcher::new(&settings);
+        let keyword = Color32::from_rgba_unmultiplied(settings.color[0], settings.color[1], settings.color[2], settings.color[3]);
+        let mut line = crate::world::ChatLine {
+            time: std::time::UNIX_EPOCH,
+            from: "Resident".into(),
+            text: "/me waves".into(),
+            kind: ChatKind::Local(ChatType::Normal),
+            source: uuid::Uuid::from_u128(7),
+            origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
+        };
+
+        let matched = |line: &crate::world::ChatLine| matcher.matches(&line.from, &line.text, true).then_some(keyword);
+
+        assert_eq!(matched(&line), None);
+        let ordinary = message_color_with_keyword(&line, &p, &world, matched(&line));
+
+        line.text = "/me waves at raven".into();
+        assert_eq!(matched(&line), Some(keyword));
+        assert_eq!(message_color_with_keyword(&line, &p, &world, matched(&line)), keyword);
+        assert_ne!(ordinary, keyword);
+
+        line.origin = Origin::Log;
+        assert_eq!(
+            Some(message_color_with_keyword(&line, &p, &world, matched(&line))),
+            history_tone(&p, Origin::Log),
+        );
     }
 
     /// The pills' sender names: a resident's profile (ours for our own
