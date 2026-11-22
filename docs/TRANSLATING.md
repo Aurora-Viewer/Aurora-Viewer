@@ -140,6 +140,7 @@ Japanese, beyond the plural:
   A number that sits beside a placeable's value stays half width too, so
   that the two match: the month names a date is built with (`10月`, then
   `{ $day }日`) and the limit of a count (`{ $bytes }／65,536バイト`). So do
+  numbers with a thousands comma (65,536, 1,000),
   product names and versions (SOCKS 5, JPEG 2000, Blender 2.93), L$
   amounts, channel numbers and negative values the user types.
 - Terms: アバター, インベントリ, フレンド, グループ, 区画 (parcel),
@@ -147,7 +148,9 @@ Japanese, beyond the plural:
   外観 (an avatar's appearance), アピアランス (the Preferences page that
   sets the viewer's own look), 初期設定 (Preferences), 設定 (Aurora's own
   settings), 近くのチャット, テレポート, ランドマーク, スクリプト,
-  テクスチャ, フォルダ, ごみ箱; look an existing one up in `ja.ftl` before choosing a new one.
+  テクスチャ, フォルダ, フィルタ, セレクタ (no final ー), 会話 (a conference),
+  ごみ箱; look an existing one up in `ja.ftl` before choosing a new
+  one.
   The Me menu is 私, as in the official viewer and Alchemy (the Legacy
   Viewer's Japanese interface says アバター there); a hint that names one of
   its items writes 「私」＞「…」.
