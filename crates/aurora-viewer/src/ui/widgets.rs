@@ -1222,7 +1222,11 @@ impl<'a> Floater<'a> {
                             (false, true) => aurora_i18n::tr!("common-expand"),
                             (false, false) => aurora_i18n::tr!("common-collapse"),
                         };
-                        if title_button(ui, p, icon).on_hover_text(tip).clicked() {
+                        let response = title_button(ui, p, icon).on_hover_text(tip);
+                        #[cfg(test)]
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(egui::Id::unique(("floater_minimize", self.id)), response.rect));
+                        if response.clicked() {
                             toggle_min = true;
                         }
                         for (icon, tip, clicked) in &mut self.actions {

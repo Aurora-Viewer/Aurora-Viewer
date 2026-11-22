@@ -36,9 +36,11 @@ impl App {
                 no_collisions: flight.no_collisions,
             }),
         };
-        // AURORA_DEMO_CONTROLS=compact…: compact for the run, not saved
+        // AURORA_DEMO_CONTROLS=compact…: the camera's form for the run,
+        // compact first, its title button switching it, never saved
+        let demo = (self.demo && demo_compact()).then(|| *self.demo_compact_camera.get_or_insert(true));
         let before = crate::ui::controls::Compact {
-            camera: self.settings.compact_controls || (self.demo && demo_compact()),
+            camera: demo.unwrap_or(self.settings.compact_controls),
             movement: self.settings.compact_movement_controls,
         };
         let mut compact = before;
@@ -51,10 +53,15 @@ impl App {
             self.settings.classic_controls,
             &view,
         );
-        if compact != before {
-            if compact.camera != before.camera {
+        if compact.camera != before.camera {
+            if demo.is_some() {
+                self.demo_compact_camera = Some(compact.camera);
+            } else {
                 self.settings.compact_controls = compact.camera;
+                self.settings.save();
             }
+        }
+        if compact.movement != before.movement {
             self.settings.compact_movement_controls = compact.movement;
             self.settings.save();
         }
@@ -226,15 +233,16 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_CONTROLS=camera | movement | compact | compact-move |
+    /// AURORA_DEMO_CONTROLS=camera | roll | movement | compact |
+    /// compact-move | compact-close | compact-move-back | movement-compact |
     /// classic | free | free-compact: the window open (minimized for
     /// `compact`; `compact-move` also, then Move pressed 40 frames later as
     /// the toolbar does, #1815; `compact-close` the camera's toolbar button
     /// pressed at 640, which closes it, and again at 680, which opens it
     /// compact, #3904; `compact-move-back` Move pressed at 640, then the
     /// window's Camera tab at 660: compact again, logged at 680, #3904;
-    /// `movement-compact` the Movement tab made compact at
-    /// 640, as its title button does: the movement pad); `free` the
+    /// `movement-compact` the Movement tab shown compact at 640, for the
+    /// run, its saved choice left as it is: the movement pad); `free` the
     /// photo window's free camera on, which opens it, `free-compact` the
     /// same minimized; 40 frames later the free camera has flown 2 m to the
     /// left and 1 m up and turned toward the avatar, which stayed.
@@ -353,9 +361,10 @@ impl App {
     }
 }
 
-/// AURORA_DEMO_CONTROLS=compact | compact-move | compact-close: the
-/// Controls window compact for the run, whatever the saved choice
-/// (`Settings::compact_controls` is left as it is).
+/// AURORA_DEMO_CONTROLS=compact | compact-move | compact-move-back |
+/// compact-close: the camera's form compact for the run, whatever the saved
+/// choice (`Settings::compact_controls` is left as it is, its title button
+/// switches `App::demo_compact_camera`).
 fn demo_compact() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {

@@ -1501,8 +1501,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         menu::separator(ui, p);
         // Firestorm's View › Camera Controls and Movement Controls: checked
         // while shown, a click toggles them as the toolbar buttons do
-        // (View.ToggleCameraFloater, Floater.Toggle "moveview"), the compact
-        // camera window included (#3904)
+        // (View.ToggleCameraFloater, Floater.Toggle "moveview"), compact
+        // windows included (#3904); here in the World menu
         let camera = crate::keybinds::chord_label("KeyC", true, false, true);
         if menu::check_keys(
             ui,
