@@ -1611,6 +1611,17 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
 // is in the shadow).
 var<private> contact_share: f32 = 1.0;
 
+// Whether the fragment being shaded takes the traced sun's glass with its
+// mask (`sun_shadow`): yes on the surface the mask was traced for, no on a
+// blended layer that only lies on it (`contact_share` from
+// `on_occlusion_surface`). The glass in that surface's mask is mostly the
+// layer itself: a sea's foam lying on the sand went dark in its own
+// shadow (2026-11-22, grid report of beta6). As the Legacy Viewer, whose
+// blended face is lit where its own texel casts in the shadow map, the
+// sand under it in the shadow. Another pane's tint over the layer is lost
+// with it.
+var<private> contact_glass: bool = true;
+
 // The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
 // what the shadow map is too coarse to show, taken as the darker of the
 // two (sun_shadow). 1 elsewhere: other views, blended faces, off.
@@ -1720,7 +1731,7 @@ fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<
     if (frame.contact.z > 0.5 && frame.params.z > 0.5 && contact_share > 0.0 && !in_reflection_pass()) {
         let p = vec2<i32>(frag);
         let size = vec2<i32>(textureDimensions(sun_glass_tex));
-        if (all(p >= vec2<i32>(0)) && all(p < size)) {
+        if (contact_glass && all(p >= vec2<i32>(0)) && all(p < size)) {
             sun_glass = textureLoad(sun_glass_tex, p, 0).rgb;
         }
         let traced = contact_shadow(frag);

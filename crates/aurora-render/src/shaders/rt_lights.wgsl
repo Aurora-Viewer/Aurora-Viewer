@@ -398,8 +398,9 @@ fn light_fresh(i: u32) -> f32 {
 // the panes of the light's own prim aside (`own`, as rt_common.wgsl
 // `shadows_but`): a lamp's bulb is often a blended face. The still faces'
 // level and, with `posed`, the moving faces' (a pane being carried); worn
-// glass is not traced yet (rt_shadows.rs `look`).
-fn glass_along(origin: vec3<f32>, dir: vec3<f32>, far: f32, own: f32, posed: bool) -> vec3<f32> {
+// glass is not traced yet (rt_shadows.rs `look`). A pane met within
+// `lying` of the ray's way (m) lies on the surface (`lying_on`).
+fn glass_along(origin: vec3<f32>, dir: vec3<f32>, far: f32, own: f32, posed: bool, lying: f32) -> vec3<f32> {
     var through = vec3<f32>(1.0);
     if (far <= 0.0) {
         return through;
@@ -408,19 +409,42 @@ fn glass_along(origin: vec3<f32>, dir: vec3<f32>, far: f32, own: f32, posed: boo
     var rq: ray_query;
     rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
-        through *= pane_passes(rayQueryGetCandidateIntersection(&rq), false, dir, own);
+        through *= pane_passes(rayQueryGetCandidateIntersection(&rq), false, dir, own, lying);
     }
     if (posed) {
         rayQueryInitialize(&rq, posed_tlas, ray);
         while (rayQueryProceed(&rq)) {
-            through *= pane_passes(rayQueryGetCandidateIntersection(&rq), true, dir, own);
+            through *= pane_passes(rayQueryGetCandidateIntersection(&rq), true, dir, own, lying);
         }
     }
     return through;
 }
 
-// `glass_passes`, 1 for a pane of the light's own prim (`own`).
-fn pane_passes(c: RayIntersection, posed: bool, dir: vec3<f32>, own: f32) -> vec3<f32> {
+// How far along a lamp's ray from a pixel the blended layers lying on its
+// surface reach (m): from where the ray rises above it as high as
+// common.wgsl `layer_on_surface` holds a layer to be on the surface. Such
+// a layer takes this surface's share of the lamps (common.wgsl
+// `local_traced`), so with its own glass in it a sea's foam on the sand
+// went dark in its own shadow (2026-11-22, grid report of beta6). Its
+// shadow on the surface under it is left with it: the Legacy Viewer
+// shadows no point light at all. `flat` is the surface's normal, `dist`
+// its distance from the eye.
+fn lying_on(flat: vec3<f32>, dir: vec3<f32>, dist: f32) -> f32 {
+    let height = 2.0 * max(LAYER_REACH, 0.01 * dist);
+    let rise = dot(flat, dir);
+    // (a ray into the surface meets its opaque side first)
+    return select(height / rise, 0.0, rise <= 0.0);
+}
+
+// common.wgsl `SCREEN_LAYER_REACH`.
+const LAYER_REACH: f32 = 0.03;
+
+// `glass_passes`, 1 for a pane of the light's own prim (`own`) and for one
+// nearer than `lying` (`lying_on`).
+fn pane_passes(c: RayIntersection, posed: bool, dir: vec3<f32>, own: f32, lying: f32) -> vec3<f32> {
+    if (c.kind == RAY_QUERY_INTERSECTION_TRIANGLE && c.t < lying) {
+        return vec3<f32>(1.0);
+    }
     if (own > 0.5 && c.kind == RAY_QUERY_INTERSECTION_TRIANGLE) {
         let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
         if (f32(cull_face(h.record).object + 1u) == own) {
@@ -474,8 +498,10 @@ fn light_ray(i: u32, origin: vec3<f32>, flat: vec3<f32>, u: vec2<f32>) -> vec4<f
         t = blocked_at(origin, dir, near, last, posed, curved, own);
     }
     if (t < 0.0) {
-        // the glass over the same way as the opaque test's
-        return vec4<f32>(glass_along(origin, dir, select(reach, last, past), select(0.0, own, past), posed), -1.0);
+        // the glass over the same way as the opaque test's, but the layers
+        // lying on the surface (`lying_on`)
+        let lying = lying_on(flat, dir, distance(origin, params.camera.xyz));
+        return vec4<f32>(glass_along(origin, dir, select(reach, last, past), select(0.0, own, past), posed, lying), -1.0);
     }
     return vec4<f32>(vec3<f32>(0.0), min(2.0 * size * t / max(span - t, 0.05), 4.0));
 }

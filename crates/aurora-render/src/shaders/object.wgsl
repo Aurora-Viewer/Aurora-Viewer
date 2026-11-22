@@ -1682,6 +1682,9 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         }
         screen_share = select(0.0, max(share, on), in_depth);
         contact_share = max(select(0.0, share, frame.contact.y > 0.5), select(0.0, on, contact));
+        // the depth holds the texel from SCREEN_BLEND_ALPHA: under it, the
+        // traced surface is what the layer lies on
+        contact_glass = in_depth && share > 0.0;
     }
     // Share this calculation across both lighting branches: duplicating its
     // wave/shadow code crashes Apple's Metal pipeline compiler.

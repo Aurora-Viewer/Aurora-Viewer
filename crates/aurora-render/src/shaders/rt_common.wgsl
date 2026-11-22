@@ -432,8 +432,9 @@ fn shadows_but(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool, ow
 // shadow ray meets lets through of the light: its colour as far as its
 // alpha covers it, times what its alpha leaves, mix(1, rgb, a) * (1 - a),
 // panes in a row multiplying. The rule PR #3821 (circuskid) gives the
-// point lights' shadow maps, here for the rays. 1 for a candidate that is
-// no triangle.
+// point lights' shadow maps, here for the rays. Only where the texel casts
+// at all (`glass_casts`), as the shadow maps' blended faces. 1 for a
+// candidate that is no triangle.
 fn glass_passes(c: RayIntersection, posed: bool, dir: vec3<f32>) -> vec3<f32> {
     if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
         return vec3<f32>(1.0);
@@ -441,9 +442,40 @@ fn glass_passes(c: RayIntersection, posed: bool, dir: vec3<f32>) -> vec3<f32> {
     let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
     let s = surface_at(h.record, h.primitive, c.barycentrics, dir);
     let b = base_color(h.record, s.uv, 0.0);
+    if (!glass_casts(h.record, b.a)) {
+        return vec3<f32>(1.0);
+    }
     let a = clamp(b.a, 0.0, 1.0);
     return mix(vec3<f32>(1.0), clamp(b.rgb, vec3<f32>(0.0), vec3<f32>(1.0)), a) * (1.0 - a);
 }
+
+// Whether a blended texel of `record`, of opacity `alpha` (its texture's
+// times its colour's), casts a shadow: the test of the shadow maps'
+// blended faces (object.wgsl `fs_shadow`, as LLPipeline::renderAlphaObjects
+// draws them with shadowAlphaMaskF.glsl, indra/newview/pipeline.cpp,
+// LGPL 2.1): a legacy face whose texture is under ALPHA_BLEND_CUTOFF
+// (0.598) casts nothing, and no face under 0.05. A mostly transparent
+// face, the sea's waves and foam, a veil, cast a shadow of their whole
+// surface before (2026-11-22, grid report of beta6: a grid of dark squares
+// on the sand under the waves). Over the cutoff the pane keeps its
+// coloured light (#3821) where the maps dither it to half: what it lets
+// through, (1 - a) times its tint, is a little less than their half from
+// 0.6 to 0.88, and a little more than their none above.
+fn glass_casts(record: u32, alpha: f32) -> bool {
+    if (alpha < 0.05) {
+        return false;
+    }
+    let flags = record_vec(record, RECORD_FLAGS).x;
+    if ((flags & (FLAG_PBR | FLAG_SKINNED)) != 0u) {
+        return true;
+    }
+    // the texture's own opacity, the colour's taken out of the texel's
+    let tint = record_vecf(record, RECORD_BASE_COLOR).a;
+    return alpha >= ALPHA_BLEND_CUTOFF * tint;
+}
+
+// LLPipeline's ALPHA_BLEND_CUTOFF (pipeline.cpp), object.wgsl `fs_shadow`'s.
+const ALPHA_BLEND_CUTOFF: f32 = 0.598;
 
 // A hash of `v` (PCG), for the passes' random numbers.
 fn pcg(v: u32) -> u32 {
