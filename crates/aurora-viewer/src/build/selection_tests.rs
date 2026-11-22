@@ -2045,3 +2045,25 @@ fn rlva_rectangles_follow_fartouch_and_select_nothing_under_interact() {
     restrict(&mut world, "@interact=n");
     assert!(!take(&mut world, &mut tool, &settings) && tool.selection.is_empty());
 }
+
+#[test]
+fn a_prim_is_counted_again_when_a_hollow_gives_it_a_seventh_face() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99614);
+    // the box's count, kept by the app for its shape
+    let count = tool.num_faces(&world, idx);
+    assert_eq!(count, 6);
+    tool.set_face_count(&world, idx, count);
+    assert!(tool.face_count_known(&world, idx));
+    // LLPrimitive::setVolume: the TE count follows the new volume
+    world.objects.get_mut(idx).unwrap().volume.profile.hollow = 0.5;
+    assert!(!tool.face_count_known(&world, idx));
+    assert_eq!(tool.num_faces(&world, idx), 7);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(idx), Some(6), false);
+    assert_eq!(tool.sel_te(&world), [(idx, 6)]);
+    tool.set_face_count(&world, idx, 7);
+    assert!(tool.face_count_known(&world, idx));
+    tool.forget_face_count(&world.objects.get(idx).unwrap().full_id);
+    assert!(!tool.face_count_known(&world, idx));
+}

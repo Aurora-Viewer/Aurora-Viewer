@@ -1516,9 +1516,8 @@ mod tests {
         assert!((search.right() - parent.left()).abs() < 1.5, "{parent:?} / {search:?}");
         assert_eq!(ctx.read_response(query_id).unwrap().layer_id.id, search_id);
         editing::select(&ctx, query_id, 2..2, true);
-        // Verify that inline Find/Replace survives switching between window
-        // widths that can and cannot fit the toolbar.
-        for width in [840.0, 1250.0, 660.0, 840.0] {
+        // Wide cases must fit every inline control, including Whole words.
+        for (width, expected_inline) in [(1000.0, true), (1250.0, true), (660.0, false), (1000.0, true)] {
             super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(100.0, 120.0), Vec2::new(width, 650.0));
             settings.search_inline = false;
             for _ in 0..4 {
@@ -1531,8 +1530,8 @@ mod tests {
             }
             let output = frame_settings(&ctx, &mut editors, &mut settings, vec![]);
             let query = ctx.read_response(query_id).unwrap();
-            assert_eq!(query.layer_id.id, if width > 800.0 { parent_id } else { search_id });
-            if width > 800.0 {
+            assert_eq!(query.layer_id.id, if expected_inline { parent_id } else { search_id });
+            if expected_inline {
                 let parent = ctx.memory(|m| m.area_rect(parent_id)).unwrap();
                 let source_after = ctx.read_response(source_id(target)).unwrap().rect;
                 assert!(parent.contains_rect(query.rect) && query.rect.left() > parent.left() + parent.width() / 3.0);
@@ -1562,9 +1561,9 @@ mod tests {
                     .iter()
                     .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-query")))
                     .count(),
-                if width > 800.0 { 1 } else { 2 } // Text Find button; floating mode also has a query label.
+                if expected_inline { 1 } else { 2 } // Text Find button; floating mode also has a query label.
             );
-            if width > 800.0 {
+            if expected_inline {
                 let label_pos = |label| {
                     output
                         .shapes
