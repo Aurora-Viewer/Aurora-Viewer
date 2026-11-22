@@ -187,6 +187,47 @@ pub(crate) fn in_focus(ctx: &egui::Context, window: egui::Id) -> bool {
     ctx.data(|d| d.get_temp::<egui::Id>(front_id())) == Some(window)
 }
 
+fn left_id() -> egui::Id {
+    egui::Id::unique("aurora outside left")
+}
+
+/// A window outside that lost the focus this long ago at most lost it to
+/// what asks about it now: the click on its toolbar button, in the
+/// viewer's window, takes the focus on its way.
+const LEFT_FOR: f64 = 1.0;
+
+/// The window `window` is in its window outside and in front, as far as
+/// the viewer can tell: it has the system's focus, or had it until a
+/// moment ago ([`LEFT_FOR`]). No system tells a program what covers its
+/// windows: one that the focus left longer ago may be behind anything.
+pub(crate) fn shows_in_front(ctx: &egui::Context, window: egui::Id) -> bool {
+    in_focus(ctx, window)
+        || ctx
+            .data(|d| d.get_temp::<(egui::Id, f64)>(left_id()))
+            .is_some_and(|(left, at)| left == window && ctx.input(|i| i.time) - at <= LEFT_FOR)
+}
+
+/// The window outside with the focus at this frame, for [`in_focus`], and
+/// the one that just lost it with the time, for [`shows_in_front`].
+fn publish_front(ctx: &egui::Context, front: Option<egui::Id>) {
+    let now = ctx.input(|i| i.time);
+    ctx.data_mut(|d| {
+        if let Some(was) = d.get_temp::<egui::Id>(front_id())
+            && Some(was) != front
+        {
+            d.insert_temp(left_id(), (was, now));
+        }
+        match front {
+            Some(front) => {
+                d.insert_temp(front_id(), front);
+            }
+            None => {
+                d.remove::<egui::Id>(front_id());
+            }
+        }
+    });
+}
+
 /// Asks the system to bring the window outside of `window` in front, at
 /// the next frame: what brings a window inside to the top (a click on a
 /// notification, its toolbar button). The system may only signal it where
@@ -198,6 +239,18 @@ pub(crate) fn raise(ctx: &egui::Context, window: egui::Id) {
             raises.push(window);
         }
     });
+}
+
+/// The windows asked in front and not raised yet.
+#[cfg(test)]
+pub(crate) fn raises(ctx: &egui::Context) -> Vec<egui::Id> {
+    ctx.data(|d| d.get_temp(raises_id())).unwrap_or_default()
+}
+
+/// The window outside with the focus, as the host tells it each frame.
+#[cfg(test)]
+pub(crate) fn set_front(ctx: &egui::Context, front: Option<egui::Id>) {
+    publish_front(ctx, front);
 }
 
 /// The sizes asked and not given yet.
@@ -577,14 +630,7 @@ impl Outside {
             .iter()
             .find(|(_, native)| native.of_interface && native.focused)
             .map(|(id, _)| id.0);
-        ctx.data_mut(|d| match front {
-            Some(front) => {
-                d.insert_temp(front_id(), front);
-            }
-            None => {
-                d.remove::<egui::Id>(front_id());
-            }
-        });
+        publish_front(ctx, front);
         let gone = unseen(
             self.shared.borrow().windows.iter().map(|(id, native)| (*id, native.of_interface)),
             &seen,
@@ -1014,6 +1060,47 @@ mod tests {
         ctx.data_mut(|d| d.insert_temp(front_id(), chat));
         assert!(in_focus(&ctx, chat));
         assert!(!in_focus(&ctx, people));
+    }
+
+    #[test]
+    fn a_window_outside_stays_in_front_for_a_moment_after_the_focus_left() {
+        let ctx = egui::Context::default();
+        let (chat, people) = (egui::Id::unique("conversations"), egui::Id::unique("people"));
+        let at = |time: f64| {
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |_| {},
+            );
+        };
+        at(10.0);
+        publish_front(&ctx, Some(chat));
+        assert!(shows_in_front(&ctx, chat));
+        assert!(!shows_in_front(&ctx, people));
+        // the click in the viewer's window takes the focus: still in front
+        at(10.2);
+        publish_front(&ctx, None);
+        assert!(!in_focus(&ctx, chat));
+        assert!(shows_in_front(&ctx, chat));
+        at(10.9);
+        publish_front(&ctx, None);
+        assert!(shows_in_front(&ctx, chat));
+        // longer ago: anything may cover it by now
+        at(11.5);
+        publish_front(&ctx, None);
+        assert!(!shows_in_front(&ctx, chat));
+        // the focus that goes to another window outside leaves the first
+        at(20.0);
+        publish_front(&ctx, Some(chat));
+        at(20.1);
+        publish_front(&ctx, Some(people));
+        assert!(shows_in_front(&ctx, people));
+        assert!(shows_in_front(&ctx, chat));
+        at(22.0);
+        assert!(shows_in_front(&ctx, people));
+        assert!(!shows_in_front(&ctx, chat));
     }
 
     #[test]

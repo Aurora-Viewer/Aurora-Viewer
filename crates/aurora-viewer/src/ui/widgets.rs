@@ -2255,12 +2255,30 @@ pub fn expand_floater(ctx: &egui::Context, id: &str) {
     ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
 }
 
+/// The floater `id` is in its window outside the viewer's and not in front
+/// there: another program's window may cover it, which no window inside
+/// the viewer's can be. Its toolbar button, menu entry or shortcut then
+/// brings it in front instead of closing it unseen, and closes it at the
+/// next press: the rule of LLFloaterReg::toggleInstanceOrBringToFront
+/// (indra/llui/llfloaterreg.cpp) for a floater without the focus. Not in
+/// the Legacy Viewer, which has no window outside; a window inside keeps
+/// its toggle.
+fn outside_behind(ctx: &egui::Context, id: &str) -> bool {
+    let window = egui::Id::unique(id);
+    crate::outside::native(ctx, window) && !crate::outside::shows_in_front(ctx, window)
+}
+
 /// The toolbar button, menu entry or shortcut of the floater `id`
 /// (LLFloaterReg::toggleInstance): a floater shown closes, a minimized one
 /// expands, a closed one opens expanded. LLFloater::openFloater and
 /// closeFloater both unminimize, so a window closed while minimized does not
-/// come back as a bar.
+/// come back as a bar. In its window outside and behind, it comes in front
+/// ([`outside_behind`]).
 pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
+    if *open && outside_behind(ctx, id) {
+        bring_floater_front(ctx, id);
+        return;
+    }
     if *open && floater_minimized(ctx, id) {
         expand_floater(ctx, id);
         return;
@@ -2275,7 +2293,9 @@ pub fn toggle_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
 /// true asks the caller to open a closed one.
 #[must_use]
 pub fn toggle_floater_closing(ctx: &egui::Context, id: &str, open: bool) -> bool {
-    if open && floater_minimized(ctx, id) {
+    if open && outside_behind(ctx, id) {
+        bring_floater_front(ctx, id);
+    } else if open && floater_minimized(ctx, id) {
         expand_floater(ctx, id);
     } else if open {
         close_floater(ctx, id);

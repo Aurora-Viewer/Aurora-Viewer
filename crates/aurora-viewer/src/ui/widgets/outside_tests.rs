@@ -120,3 +120,27 @@ fn the_size_asked_of_a_window_outside_is_forgotten_at_another_zoom() {
     ));
     assert!(follows_content(Vec2::new(350.0, 400.0), content, asked_at(None, 1.0)));
 }
+
+#[test]
+fn the_button_of_a_window_outside_brings_it_in_front_before_it_closes_it() {
+    let ctx = egui::Context::default();
+    let id = egui::Id::unique("inventory");
+    crate::outside::set_native(&ctx, id, true);
+    // behind, as far as the viewer can tell: the press brings it in front
+    let mut open = true;
+    toggle_floater(&ctx, "inventory", &mut open);
+    assert!(open);
+    assert_eq!(crate::outside::raises(&ctx), [id]);
+    assert!(!toggle_floater_closing(&ctx, "inventory", true));
+    assert!(!close_asked(&ctx, "inventory"));
+    // with the focus: it closes, as inside
+    crate::outside::set_front(&ctx, Some(id));
+    toggle_floater(&ctx, "inventory", &mut open);
+    assert!(!open);
+    assert!(!toggle_floater_closing(&ctx, "inventory", true));
+    assert!(close_asked(&ctx, "inventory"));
+    // a window inside keeps its toggle
+    let mut people = true;
+    toggle_floater(&ctx, "people", &mut people);
+    assert!(!people);
+}
