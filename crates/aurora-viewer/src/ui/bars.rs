@@ -11,7 +11,7 @@ pub mod favorites;
 mod graphics;
 pub mod islands;
 mod location_suggest;
-mod place;
+pub(crate) mod place;
 pub mod side;
 pub(crate) mod sizing;
 mod tp_list;
@@ -149,6 +149,10 @@ pub enum BarAction {
         handle: aurora_net::RegionHandle,
         position: glam::Vec3,
     },
+    /// A place of the saved teleport history (the place menu's Recent
+    /// rows), by its global position, as the Places window teleports
+    /// (LLTeleportHistoryStorage::goToItem).
+    TeleportSavedPlace(glam::DVec3),
     /// Communicate > Online status changed.
     SetStatus(crate::world::status::StatusModes),
     /// Open the chat preferences (automatic responses).
@@ -262,7 +266,10 @@ pub struct IslandsLook {
 pub struct RecentPlace {
     pub name: String,
     pub region: String,
-    pub slurl: String,
+    /// The saved global position: on Second Life the history keeps no
+    /// SLURL (only OpenSim's Hypergrid places have one), so the row
+    /// teleports by this, like the Places window (#4370).
+    pub global: glam::DVec3,
 }
 
 pub struct StatusInfo<'a> {

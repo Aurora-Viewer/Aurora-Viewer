@@ -16582,6 +16582,7 @@ impl App {
                     Some(handle) != self.world.main_region,
                 );
             }
+            BarAction::TeleportSavedPlace(global) => self.teleport_saved_place(global),
             BarAction::SetStatus(m) => {
                 self.world.set_away(m.away);
                 self.auto_away = false;
@@ -17209,29 +17210,9 @@ impl App {
         (demo.classic.unwrap_or(s.classic_bars), look)
     }
 
-    /// The last places of the teleport history for the place menu, newest
-    /// first, without the one we stand in (its last entry): two, as in the
-    /// mockup.
+    /// The place menu's Recent rows (`place::recent`).
     fn recent_places(&self) -> Vec<ui::bars::RecentPlace> {
-        self.world
-            .tp_storage
-            .items
-            .iter()
-            .rev()
-            .skip(1)
-            .take(2)
-            .map(|item| {
-                let (name, region) = match item.title.rsplit_once(", ") {
-                    Some((name, region)) => (name.to_owned(), region.to_owned()),
-                    None => (item.title.clone(), String::new()),
-                };
-                ui::bars::RecentPlace {
-                    name,
-                    region,
-                    slurl: item.slurl.clone(),
-                }
-            })
-            .collect()
+        ui::bars::place::recent(&self.world.tp_storage.items)
     }
 
     /// The grid of the session for the web search: only the main grid's

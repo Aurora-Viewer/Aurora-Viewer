@@ -731,16 +731,69 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
         menu::heading(ui, p, aurora_i18n::tr!("ui-bars-recent-places"));
         for r in &st.recent {
             if menu::item_keys(ui, p, "arrow-back-up", &r.name, &r.region) {
-                action = Some(BarAction::TeleportTo(r.slurl.clone()));
+                action = Some(BarAction::TeleportSavedPlace(r.global));
             }
         }
     }
     action
 }
 
+/// The last places of the saved teleport history for the place menu,
+/// newest first, without the one we stand in (its last entry): two, as in
+/// the mockup. Each keeps its global position, which the row teleports to
+/// (`BarAction::TeleportSavedPlace`): the SLURL is empty on Second Life.
+pub fn recent(items: &[crate::world::tphistory::HistoryItem]) -> Vec<super::RecentPlace> {
+    items
+        .iter()
+        .rev()
+        .skip(1)
+        .take(2)
+        .map(|item| {
+            let (name, region) = match item.title.rsplit_once(", ") {
+                Some((name, region)) => (name.to_owned(), region.to_owned()),
+                None => (item.title.clone(), String::new()),
+            };
+            super::RecentPlace {
+                name,
+                region,
+                global: item.global,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn visit(title: &str, x: f64) -> crate::world::tphistory::HistoryItem {
+        crate::world::tphistory::HistoryItem {
+            title: title.into(),
+            global: glam::DVec3::new(x, 256_000.0, 25.0),
+            date: x,
+            slurl: String::new(),
+        }
+    }
+
+    /// #4370: the Recent rows are the two places before the one we stand
+    /// in, newest first, and teleport by their saved position, since a
+    /// Second Life history item has no SLURL.
+    #[test]
+    fn recent_places_keep_their_position_for_the_teleport() {
+        let items = [
+            visit("Old Garden, Ahern", 1.0),
+            visit("Moon Garden, Lunaria", 2.0),
+            visit("Bare Region", 3.0),
+            visit("Here, Home", 4.0),
+        ];
+        let rows = recent(&items);
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].name.as_str(), rows[0].region.as_str()), ("Bare Region", ""));
+        assert_eq!(rows[0].global, items[2].global);
+        assert_eq!((rows[1].name.as_str(), rows[1].region.as_str()), ("Moon Garden", "Lunaria"));
+        assert_eq!(rows[1].global, items[1].global);
+        assert!(recent(&items[..1]).is_empty());
+    }
 
     fn widths() -> Widths {
         Widths {
