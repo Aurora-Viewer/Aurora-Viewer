@@ -14894,6 +14894,9 @@ blender-live-bend-note = Only you see the bend, on your avatar. Your animations,
 blender-live-levels = Levels of detail
 blender-live-levels-pending = Blender prepares the levels of detail when you click Import.
 blender-live-levels-note = Prepared in Blender from each object's LiveMesh settings.
+blender-live-quick-look-tip = Quick look: see this object larger
+blender-live-quick-look-drag = Drag to turn it, double-click to face it again.
+blender-live-quick-look-changed = Changed in Blender { $ago } ago.
 
 inventory-bulk-permissions = Bulk permissions
 inventory-bulk-adjust = Adjust item permissions

@@ -1359,7 +1359,10 @@ window, with its widgets (`widgets::wrapping_tabs`, `collapsing`, `form_row`):
 a status line above five tabs, retained across reopening with separate scroll
 positions. Objects holds one card per source (linksets unfold to their prims;
 each card's time comes from a per-source digest made on the transport thread,
-`PreparedSource::digest`) and the folded Connection section; Place the
+`PreparedSource::digest`; its live thumbnail, `blender_live/thumbnail.rs`, is
+an unskinned `aurora_render::preview::Model` capped at 20,000 triangles and
+128-pixel textures, built on the job pool once the digest has settled, and
+shown larger in Quick look) and the folded Connection section; Place the
 selected static object's placement; Avatar the elbow and knee bend
 (`scene::anim::PreviewBend`, applied to our avatar's local pose after the
 animations, drawn only) and the shape transfer; Import the frozen import and

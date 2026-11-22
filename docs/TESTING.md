@@ -4091,7 +4091,7 @@ To check with these scenarios:
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns; `far`: an animesh carried far by its animation and one worn far from its point |
 | `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
-| `AURORA_DEMO_BLENDER_LIVE_TAB=place\|avatar\|import\|plugins` | Opens the LiveMesh window of the Blender demo on that tab |
+| `AURORA_DEMO_BLENDER_LIVE_TAB=place\|avatar\|import\|plugins\|quick-look` | Opens the LiveMesh window of the Blender demo on that tab, or Quick look |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose and animation editor (IK Edit, Poser, native animation creation) |
@@ -4125,7 +4125,8 @@ indented prim numbers and object/prim counts. The Edit linked checkbox belongs t
 the native build tools and context menu; it is absent from the LiveMesh
 window. `AURORA_DEMO_BLENDER_LIVE_TAB` opens the window on its Place, Avatar,
 Import or Plugins tab instead of Objects (with `static-linked`, Place shows
-the selected root's placement). `static-hud` attaches it at HUD Center;
+the selected root's placement); `quick-look` opens Quick look on the selected
+object, under the Objects cards and their live thumbnails. `static-hud` attaches it at HUD Center;
 `static-attached` attaches it to the right hand; `static-detached` removes its
 draw object while retaining the source row. Check numeric/gizmo transforms,
 body/HUD menus, detach/rez, source visibility and geometry updates, with the

@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-fn triangle() -> serde_json::Value {
+pub(super) fn triangle() -> serde_json::Value {
     let vertices: Vec<_> = [[0.0,0.0,0.0], [0.2,0.0,0.0], [0.0,0.2,0.0]].into_iter().map(|position| {
         serde_json::json!({"position":position,"normal":[0.0,0.0,1.0],"uv":[0.0,0.0],"joints":[0,0,0,0],"weights":[2.0,0.0,0.0,0.0]})
     }).collect();
@@ -166,7 +166,7 @@ fn blender_live_window_stays_steady_at_reported_ui_scales() {
     }
 }
 
-fn static_triangle() -> serde_json::Value {
+pub(super) fn static_triangle() -> serde_json::Value {
     let mut value = triangle();
     value["meshes"][0]["joints"] = serde_json::json!([]);
     value["meshes"][0]["inverse_bind"] = serde_json::json!([]);
@@ -242,7 +242,7 @@ fn blender_live_static_sources_reject_accidental_skin_data() {
     assert!(!prepared.sources[0].rigged());
     assert!(prepared.sources[1].rigged());
 }
-fn prepare(value: &serde_json::Value) -> Result<protocol::Prepared, String> {
+pub(super) fn prepare(value: &serde_json::Value) -> Result<protocol::Prepared, String> {
     protocol::prepare(&serde_json::to_vec(value).expect("JSON"), &supported())
 }
 
