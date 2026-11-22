@@ -9704,7 +9704,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   a set's symbol after the name where the set has one, its colour's dot
   otherwise, #1104), `groups` (860 × 500: "No active group", Aurora Builders active,
   pinned, two notices unread and its sheet open, the market's chat
-  blocked, "3 groups out of 42"), `sets` (520 × 430: Family, Clubbing and
+  blocked, "3 groups out of 42"; `groups-hover` puts the Northern Wolves under the pointer, its Activate out, and `groups-hover-active` the active Aurora Builders, its Deactivate), `sets` (520 × 430: Family, Clubbing and
   Shop, the wolf's nickname, a non-friend, Nova chosen with her quick
   actions out: move, take out, menu), `recent` (420 × 300: four residents
   met lately, how long ago and where) and `blocked` (420 × 300: a resident
