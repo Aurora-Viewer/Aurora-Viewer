@@ -190,6 +190,12 @@ fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     if underlined_button(ui, p, aurora_i18n::tr!("common-preferences"), st.preferences_open).clicked() {
         st.preferences_open = !st.preferences_open;
     }
+    if underlined_button(ui, p, aurora_i18n::tr!("inventory-sorter-title"), st.sorter_open())
+        .on_hover_text(aurora_i18n::tr!("inventory-sorter-open"))
+        .clicked()
+    {
+        st.request_sorter(st.scope);
+    }
     tree_actions(ui, p, st);
 }
 

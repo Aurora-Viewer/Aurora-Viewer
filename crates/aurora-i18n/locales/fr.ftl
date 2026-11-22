@@ -14815,6 +14815,426 @@ inventory-bulk-adjust = Modifier les permissions des éléments
 inventory-bulk-reading = Lecture des dossiers et sous-dossiers sélectionnés…
 inventory-bulk-load-failed = Impossible de lire tous les dossiers sélectionnés. Aucune permission n’a été modifiée. Réessayez.
 inventory-bulk-unchanged = Aucun élément admissible ne nécessite de modification.
+inventory-sorter-title = Tri automatique
+inventory-sorter-menu = Tri automatique…
+inventory-sorter-base = Ranger dans
+inventory-sorter-base-hint = Un dossier à la racine de Mon inventaire
+inventory-sorter-folders = Trier aussi les dossiers, chacun en entier (livraisons déballées)
+inventory-sorter-rules = Mes règles
+inventory-sorter-rule-add = Ajouter une règle
+inventory-sorter-rule-remove = Supprimer cette règle
+inventory-sorter-preview = Où va chaque élément
+inventory-sorter-not-recognised = Non reconnus, restent en place
+inventory-sorter-moves = { $count ->
+    [one] { $count } élément à déplacer
+   *[other] { $count } éléments à déplacer
+    }
+inventory-sorter-unpackers = { $count ->
+    [one] dont { $count } boîte à déballer
+   *[other] dont { $count } boîtes à déballer
+    }
+inventory-sorter-kept = { $count ->
+    [one] { $count } élément porté, lien ou verrouillé reste en place
+   *[other] { $count } éléments portés, liens ou verrouillés restent en place
+    }
+inventory-sorter-loading = Chargement du dossier…
+inventory-sorter-nothing = Rien à trier dans ce dossier.
+inventory-sorter-start = { $count ->
+    [one] Trier { $count } élément
+   *[other] Trier { $count } éléments
+    }
+inventory-sorter-progress = Tri : { $done } sur { $total }
+inventory-sorter-done = { $count ->
+    [one] { $count } élément trié.
+   *[other] { $count } éléments triés.
+    }
+inventory-sorter-default-base = Trié
+inventory-sorter-several-bodies = Plusieurs corps
+inventory-sorter-tattoos = Tatouages
+inventory-sorter-skins = Peaux
+inventory-sorter-makeup = Maquillage
+inventory-sorter-hair = Cheveux
+inventory-sorter-eyes = Yeux
+inventory-sorter-nails = Ongles
+inventory-sorter-shoes = Chaussures
+inventory-sorter-stockings = Bas et chaussettes
+inventory-sorter-lingerie = Lingerie
+inventory-sorter-swimwear = Maillots de bain
+inventory-sorter-bodysuits = Bodys et combinaisons
+inventory-sorter-dresses = Robes
+inventory-sorter-skirts = Jupes
+inventory-sorter-pants = Pantalons
+inventory-sorter-shorts = Shorts
+inventory-sorter-jackets = Vestes et manteaux
+inventory-sorter-tops = Hauts
+inventory-sorter-sleepwear = Peignoirs et nuit
+inventory-sorter-gloves = Gants
+inventory-sorter-jewelry = Bijoux
+inventory-sorter-accessories = Accessoires
+inventory-sorter-body-addons = Ajouts de corps
+inventory-sorter-shapes = Silhouettes
+inventory-sorter-animations = Animations et poses
+inventory-sorter-furniture = Meubles
+inventory-sorter-decor = Décoration
+inventory-sorter-outfits = Tenues et ensembles
+inventory-sorter-landmarks = Repères
+inventory-sorter-notecards = Notes
+inventory-sorter-scripts = Scripts
+inventory-sorter-sounds = Sons
+inventory-sorter-textures = Textures
+inventory-sorter-environment = Environnement
+inventory-sorter-materials = Matériaux
+inventory-sorter-animated-objects = Objets animés
+inventory-sorter-gestures = Gestes
+inventory-sorter-intro = Range les éléments et dossiers en vrac dans des dossiers par corps et par genre, d'après leur nom. Rien n'est copié, renommé ni modifié : les éléments sont seulement déplacés.
+inventory-sorter-rules-hint = Vos règles passent en premier, de haut en bas : la première qui correspond à un nom décide où il va.
+inventory-sorter-rule-words = Quand le nom contient
+inventory-sorter-rule-folder = Chemin du dossier, par exemple Maison/Chaises
+inventory-sorter-menu-entries = Tri automatique
+inventory-sorter-undo-stays = { $count ->
+    [one] 1 élément reste où il est : déplacé à la main depuis, disparu, ou dans un endroit que le tri automatique ne touche pas.
+   *[other] { $count } éléments restent où ils sont : déplacés à la main depuis, disparus, ou dans un endroit que le tri automatique ne touche pas.
+    }
+inventory-sorter-undo-nothing = Rien des derniers tris ne peut être remis en place : leurs éléments ont été déplacés à la main, ont disparu, ou sont dans des endroits que le tri automatique ne touche pas.
+inventory-sorter-undo-loading = Chargement des dossiers où les derniers tris ont rangé les éléments ; l'aperçu de l'annulation s'ouvre une fois qu'ils sont chargés.
+inventory-sorter-busy-elsewhere = Le tri automatique tourne déjà dans une autre fenêtre d’inventaire : attendez qu’il y termine.
+inventory-sorter-history-loading = L'historique du tri automatique est encore en lecture ; réessayez dans un instant.
+inventory-sorter-trash-gone = (n’est plus dans l’inventaire)
+inventory-sorter-trash-more = …et { $count } de plus
+inventory-sorter-vocab-title = Vérification du vocabulaire
+inventory-sorter-vocab-summary = { $ok } noms sur { $total } sont triés comme prévu
+inventory-sorter-vocab-name = Nom
+inventory-sorter-vocab-expected = Attendu
+inventory-sorter-vocab-got = Résultat
+inventory-sorter-vocab-stays = (reste)
+inventory-sorter-menu-creator = Tri automatique par ce créateur
+inventory-sorter-by-creator = Par { $name }
+inventory-sorter-creator-unknown = un créateur inconnu
+inventory-sorter-hint-store-optional = Dossier de la boutique (facultatif)
+inventory-sorter-hint-store-optional-tip = Laissez vide pour utiliser la boutique lue dans les noms des objets (quand le tri par boutique est actif) ; saisissez-en une pour ranger les objets de ce créateur dans ce dossier de boutique.
+inventory-sorter-open = Tri automatique : ranger les éléments en vrac par corps et par genre
+inventory-sorter-source = Dossier à trier
+inventory-sorter-selection = { $count ->
+    [one] { $count } élément sélectionné
+   *[other] { $count } éléments sélectionnés
+    }
+inventory-sorter-change = Changer…
+inventory-sorter-options = Options
+inventory-sorter-rule-enabled = Utiliser cette règle
+inventory-sorter-rule-number = Règle { $n }
+inventory-sorter-rule-up = Monter : essayée plus tôt
+inventory-sorter-rule-down = Descendre : essayée plus tard
+inventory-sorter-rule-words-hint = Des mots, par exemple chaise noire
+inventory-sorter-match-all = Tous les mots
+inventory-sorter-match-any = Un des mots
+inventory-sorter-match-phrase = Expression exacte
+inventory-sorter-rule-to = Le déplacer vers
+inventory-sorter-to-new = Un dossier du dossier de tri
+inventory-sorter-to-mine = Un de mes dossiers
+inventory-sorter-folder-missing = Ce dossier n'existe plus
+inventory-sorter-rule-incomplete = Ajoutez des mots et une destination pour utiliser cette règle.
+inventory-sorter-pick-title = Choisir un dossier
+inventory-sorter-pick-search = Rechercher un dossier
+inventory-sorter-heads = Têtes
+inventory-sorter-huds = HUD
+inventory-sorter-vehicles = Véhicules
+inventory-sorter-pets = Animaux
+inventory-sorter-pre-trash = Pré-corbeille
+inventory-sorter-variant-squish = Squish
+inventory-sorter-stores = Boutiques
+inventory-sorter-by-store = Un dossier par boutique
+inventory-sorter-by-store-hint = Lit la boutique dans l’étiquette du créateur ([Boutique] +, *Boutique*, Boutique - …) et range sous la catégorie, par exemple Mobilier / Boutique.
+inventory-sorter-excluded = Dossiers jamais touchés
+inventory-sorter-excluded-hint = Le tri automatique ne prend rien dans ces dossiers ni dans ce qu’ils contiennent. La corbeille et les annonces de la Place du marché ne sont de toute façon jamais touchées.
+inventory-sorter-exclude-add = Ajouter un dossier…
+inventory-sorter-exclude-remove = Retirer de la liste
+inventory-sorter-own = Mes dossiers
+inventory-sorter-own-hint = Le tri de tout l’inventaire ouvre ces dossiers et trie leur contenu, même quand leur nom ressemble à celui d’un produit (Hair Collection, Lingerie Drawer). Ils ne sont jamais déplacés en entier : trier un dossier qui en contient un le laisse à sa place. Les dossiers par défaut et protégés ne peuvent pas être ajoutés.
+inventory-sorter-own-add = Ajouter un dossier…
+inventory-sorter-own-remove = Retirer de la liste
+inventory-sorter-own-refused = { $path } (ignoré : ce n’est plus un de vos propres dossiers)
+inventory-sorter-whole = Tout l’inventaire
+inventory-sorter-whole-tip = Trier les éléments en vrac de Mon inventaire, d’Objets et de vos propres dossiers
+inventory-sorter-whole-intro = Trie les éléments en vrac de Mon inventaire, le contenu d’Objets et de vos propres dossiers, et les dossiers par défaut que vous avez autorisés dans les options ; les livraisons sont déplacées d’un bloc, jamais ouvertes. Jamais touchés : les autres dossiers par défaut (Habits, Parties du corps, Repères…), les objets trouvés sauf si leur interrupteur est activé, les tenues, la corbeille, la Place du marché, les objets reçus, #RLV, #Firestorm, #Aurora et Animation Overrides (les autres dossiers # sont les vôtres), les dossiers exclus et verrouillés.
+inventory-sorter-whole-title = Trier tout l’inventaire ?
+inventory-sorter-whole-text = { $count ->
+    [one] { $count } élément de tout votre inventaire va être déplacé dans les dossiers de tri. Les dossiers sont déplacés d’un bloc et rien n’est supprimé.
+   *[other] { $count } éléments de tout votre inventaire vont être déplacés dans les dossiers de tri. Les dossiers sont déplacés d’un bloc et rien n’est supprimé, mais tout remettre en place à la main prend du temps.
+    }
+inventory-sorter-whole-check = J’ai vérifié l’aperçu et je veux trier tout mon inventaire
+inventory-sorter-to-pre-trash = Pré-corbeille
+inventory-sorter-rule-pre-trash-hint = Vérifie tout le dossier trié, déjà rangé ou non, à toute profondeur. Les correspondances attendent dans Pré-corbeille jusqu'à votre confirmation.
+inventory-sorter-rule-pre-trash-unsorted-hint = Vérifie tout le dossier trié, à toute profondeur, sauf le dossier { $folder }. Les correspondances attendent dans Pré-corbeille jusqu'à votre confirmation.
+inventory-sorter-look-in = Chercher dans
+inventory-sorter-rule-inside-deliveries = Rechercher uniquement les articles, y compris dans les dossiers de livraison
+inventory-sorter-look-all = Partout
+inventory-sorter-look-unsorted = Partout sauf Trié
+inventory-sorter-pre-trash-waiting = { $count ->
+    [one] { $count } élément attend dans la Pré-corbeille
+   *[other] { $count } éléments attendent dans la Pré-corbeille
+    }
+inventory-sorter-pre-trash-hint = Ouvrez le dossier Pré-corbeille de votre inventaire et sortez-en ce que vous voulez garder. Le reste part à la corbeille quand vous confirmez.
+inventory-sorter-pre-trash-loading = Pré-corbeille est encore en chargement : le bouton sera prêt une fois tout son contenu connu.
+inventory-sorter-pre-trash-empty = Mettre à la corbeille
+inventory-sorter-pre-trash-title = Mettre la Pré-corbeille à la corbeille ?
+inventory-sorter-pre-trash-text = { $count ->
+    [one] { $count } élément du dossier Pré-corbeille part à la corbeille. Vous pouvez encore l’en sortir tant qu’elle n’est pas vidée.
+   *[other] { $count } éléments du dossier Pré-corbeille partent à la corbeille. Vous pouvez encore les en sortir tant qu’elle n’est pas vidée.
+    }
+inventory-cleanup-tab = Nettoyer
+inventory-cleanup-intro = Envoyez tout ce qui a été acquis avant une date dans Pré-corbeille, ou à la corbeille. Un dossier de livraison n'est jamais divisé : il part entier, ou reste entier.
+inventory-cleanup-when = Acquis avant
+inventory-cleanup-age-1 = Plus d'un an
+inventory-cleanup-age-2 = 2 ans
+inventory-cleanup-age-3 = 3 ans
+inventory-cleanup-age-5 = 5 ans
+inventory-cleanup-age-custom = Personnalisé
+inventory-cleanup-before = Acquis avant le { $date }
+inventory-cleanup-date = { $day } { $month } { $year }
+inventory-cleanup-month-1 = janvier
+inventory-cleanup-month-2 = février
+inventory-cleanup-month-3 = mars
+inventory-cleanup-month-4 = avril
+inventory-cleanup-month-5 = mai
+inventory-cleanup-month-6 = juin
+inventory-cleanup-month-7 = juillet
+inventory-cleanup-month-8 = août
+inventory-cleanup-month-9 = septembre
+inventory-cleanup-month-10 = octobre
+inventory-cleanup-month-11 = novembre
+inventory-cleanup-month-12 = décembre
+inventory-cleanup-types = Types
+inventory-cleanup-all = Tous
+inventory-cleanup-none = Aucun
+inventory-cleanup-kind-objects = Objets
+inventory-cleanup-kind-clothing = Vêtements
+inventory-cleanup-kind-body-parts = Parties du corps
+inventory-cleanup-kind-notecards = Notes
+inventory-cleanup-kind-landmarks = Repères
+inventory-cleanup-kind-textures = Textures et photos
+inventory-cleanup-kind-scripts = Scripts
+inventory-cleanup-kind-sounds = Sons
+inventory-cleanup-kind-animations = Animations
+inventory-cleanup-kind-gestures = Gestes
+inventory-cleanup-kind-materials = Matériaux et réglages
+inventory-cleanup-kind-calling-cards = Cartes de visite
+inventory-cleanup-where = Où
+inventory-cleanup-whole = Tout l'inventaire
+inventory-cleanup-this-folder = Ce dossier
+inventory-cleanup-include-sorted = Inclure le dossier { $folder }
+inventory-cleanup-never = Jamais touchés : les dossiers par défaut autres qu’Objets (sauf ceux autorisés dans les options), les objets trouvés sauf si leur interrupteur est activé, la corbeille, la Place du marché, la bibliothèque, les tenues, les favoris, les objets reçus, #RLV, #Firestorm, #Aurora, Animation Overrides, les dossiers exclus et verrouillés, les objets portés et les liens.
+inventory-cleanup-loading = { $count ->
+    [one] Chargement d'un dossier…
+   *[other] Chargement de { $count } dossiers…
+    }
+inventory-cleanup-summary = { $count ->
+    [one] 1 objet acquis avant le { $date }
+   *[other] { $count } objets acquis avant le { $date }
+    }
+inventory-cleanup-nothing = Rien de ces types n'a été acquis avant le { $date }.
+inventory-cleanup-folders = Dossiers, pris entiers
+inventory-cleanup-folder-items = { $count ->
+    [one] 1 objet
+   *[other] { $count } objets
+    }
+inventory-cleanup-more = { $count ->
+    [one] …et 1 de plus
+   *[other] …et { $count } de plus
+    }
+inventory-cleanup-keep-tip = Décochez pour le garder
+inventory-cleanup-to-pre-trash = { $count ->
+    [one] Déplacer 1 dans Pré-corbeille
+   *[other] Déplacer { $count } dans Pré-corbeille
+    }
+inventory-cleanup-to-trash = { $count ->
+    [one] Mettre 1 à la corbeille…
+   *[other] Mettre { $count } à la corbeille…
+    }
+inventory-cleanup-trash-title = Mettre à la corbeille ?
+inventory-cleanup-trash-text = { $count ->
+    [one] 1 élément part à la corbeille. Vous pouvez le récupérer tant que la corbeille n'est pas vidée.
+   *[other] { $count } éléments partent à la corbeille. Vous pouvez les récupérer tant que la corbeille n'est pas vidée.
+    }
+inventory-cleanup-trash-progress = Mise à la corbeille : { $done } / { $total }
+inventory-cleanup-trash-done = { $count ->
+    [one] 1 élément mis à la corbeille
+   *[other] { $count } éléments mis à la corbeille
+    }
+inventory-sorter-kinds = Types à trier
+inventory-sorter-kinds-hint = Les types décochés restent où ils sont. Un clic droit sur un objet le trie quel que soit son type.
+inventory-sorter-hints = Indices de boutique
+inventory-sorter-hints-hint = Pour les boutiques dont les noms ne disent pas ce qu'elles vendent : leurs objets vont dans la catégorie choisie.
+inventory-sorter-hint-store = Nom de la boutique
+inventory-sorter-hint-remove = Retirer cet indice
+inventory-sorter-hint-add = Ajouter un indice de boutique
+inventory-cleanup-empty-folders = Inclure les dossiers vides
+inventory-purge-hint = Pour un dossier trop grand pour être vidé d’un coup (le serveur refuse) : supprimé définitivement quelques entrées à la fois, à un rythme mesuré, avec Pause et Arrêter.
+inventory-purge-trash-name = Corbeille
+inventory-purge-steps = Vider { $folder } petit à petit ({ $count })
+inventory-purge-loading = Chargement de { $folder } d’abord…
+inventory-purge-title = Supprimer définitivement tout le contenu de { $folder } ?
+inventory-purge-text = { $count ->
+    [one] 1 élément de { $folder } sera supprimé définitivement. Impossible d’annuler.
+   *[other] { $count } éléments de { $folder } seront supprimés définitivement, quelques-uns à la fois. Impossible d’annuler.
+}
+inventory-purge-go = Supprimer définitivement
+inventory-purge-progress = Suppression définitive : { $done } / { $total }
+inventory-purge-done = { $count } supprimés définitivement, { $failed } restants (refusés, ou dans des dossiers illisibles).
+inventory-purge-unreadable = { $folder } n’a pas pu être lu : réessayez plus tard
+inventory-purge-refused = Le serveur a refusé 20 morceaux d’affilée : arrêt après { $count } supprimés définitivement, { $failed } restants. Réessayez plus tard.
+inventory-purge-stopped = Arrêté : { $count } supprimés définitivement, { $failed } restants.
+inventory-purge-worn = { $folder } contient un élément porté : enlevez-le d’abord.
+inventory-cleanup-locked = { $count ->
+    [one] 1 objet des dossiers par défaut verrouillés (Habits, Parties du corps…) n’est pas examiné.
+   *[other] { $count } objets des dossiers par défaut verrouillés (Habits, Parties du corps…) ne sont pas examinés.
+}
+inventory-cleanup-locked-options = Déverrouiller dans Options
+inventory-cleanup-find-old = Objets anciens
+inventory-cleanup-find-duplicates = Doublons
+inventory-cleanup-duplicates-intro = Trouvez les objets que vous avez en plusieurs exemplaires. Un exemplaire de chacun reste à sa place (d’abord un déjà rangé dans vos dossiers triés ou vos propres dossiers, sinon le plus ancien) ; les autres vont dans la Pré-corbeille pour que vous les examiniez. Rien n’est supprimé.
+inventory-cleanup-duplicates-no-copy = Inclure les objets non copiables (les doubles de gacha gardés pour l’échange sont laissés par défaut)
+inventory-cleanup-duplicates-landmarks = Inclure les repères isolés (jamais ceux d’une livraison)
+inventory-cleanup-duplicates-notecards = Inclure les notes isolées (jamais celles d’une livraison)
+inventory-cleanup-duplicates-whole-hint = Une livraison n’est jamais ouverte : seule une deuxième livraison identique part, entière. Recherchés : objets, habits, parties du corps, gestes et animations.
+inventory-cleanup-duplicates-nothing = Aucun objet de ces types n’est en plusieurs exemplaires.
+inventory-cleanup-duplicates-summary = { $count ->
+    [one] 1 exemplaire en trop de { $items } objets
+   *[other] { $count } exemplaires en trop de { $items } objets
+}
+inventory-cleanup-find-demos = Démos
+inventory-cleanup-demos-intro = Trouve les copies de démonstration que les boutiques donnent pour essayer (un nom avec le mot DEMO, jamais Demon). Elles vont dans la Pré-corbeille pour que vous les regardiez ; un dossier de démo part entier. Rien n’est supprimé.
+inventory-cleanup-demos-nothing = Aucune démo de ces types.
+inventory-cleanup-demos-summary = { $count ->
+    [one] 1 démo ({ $items } objets)
+   *[other] { $count } démos ({ $items } objets)
+}
+inventory-cleanup-empty-group = Dossiers vides
+inventory-cleanup-empty-summary = { $count ->
+    [one] Un dossier vide sélectionné
+   *[other] { $count } dossiers vides sélectionnés
+    }
+inventory-cleanup-empty-nothing = Aucun dossier vide trouvé.
+inventory-cleanup-empty-intro = Recherchez les dossiers qui ne contiennent aucun article, même dans leurs sous-dossiers, et placez les dossiers sélectionnés dans la Pré-corbeille.
+inventory-share-section = Partager mes réglages
+inventory-share-section-hint = Donnez vos règles, indices de boutique et options à quelqu'un sous forme de texte, pour une note ou un chat.
+inventory-share-open = Partager…
+inventory-import-open = Importer…
+inventory-share-title = Partager les réglages du tri automatique
+inventory-share-hint = Décochez ce que vous voulez garder pour vous. Les règles vers vos propres dossiers et les dossiers exclus ne sont jamais partagés.
+inventory-share-private = Seulement dans votre inventaire
+inventory-share-my-folder = mon dossier
+inventory-share-base = Nom du dossier de tri : { $name }
+inventory-share-copy = Copier dans le presse-papiers
+inventory-share-copied = Copié. Collez-le dans une note ou un chat.
+inventory-import-title = Importer des réglages du tri automatique
+inventory-import-hint = Collez ici le texte partagé (Ctrl+V), puis cochez ce que vous voulez.
+inventory-import-nothing = Aucun réglage de tri automatique trouvé dans ce texte.
+inventory-import-changes = { $count ->
+    [one] Ce fichier change 1 de vos réglages par défaut
+   *[other] Ce fichier change { $count } de vos réglages par défaut
+    }
+inventory-import-pre-trash = envoie vers la Pré-corbeille
+inventory-import-folders = Trier aussi les dossiers
+inventory-import-none = aucun
+inventory-import-skipped = { $count ->
+    [one] 1 ligne illisible a été ignorée
+   *[other] { $count } lignes illisibles ont été ignorées
+    }
+inventory-import-already = déjà dans les vôtres
+inventory-import-add = Ajouter aux miens
+inventory-import-replace = Remplacer les miens
+inventory-import-done = Importé.
+inventory-import-replace-title = Remplacer vos règles et indices de boutique ?
+inventory-import-replace-text = Vos règles et indices de boutique absents de ce texte sont retirés, et les règles, indices et options cochés sont ajoutés. Vos règles vers vos propres dossiers et vos dossiers exclus restent.
+inventory-sorter-kept-worn = Restent : portés, ou contenant un objet porté
+inventory-sorter-kept-link = Restent : liens (ils appartiennent à leur dossier)
+inventory-sorter-kept-locked = Restent : dans un dossier verrouillé
+inventory-sorter-kept-excluded = Restent : dans un dossier exclu
+inventory-sorter-kept-own = Restent : Mes dossiers et ceux qui en contiennent, jamais déplacés en entier
+inventory-sorter-kept-protected = Restent : dossiers système et protégés
+inventory-sorter-kept-loading = Restent pour l'instant : dossiers encore en chargement (ils bougent une fois chargés)
+inventory-sorter-kept-unreadable = Restent : un dossier à l’intérieur n’a pas pu être lu, il n’est donc jamais déplacé en entier
+inventory-sorter-kept-delivery = Reste dans les dossiers de livraison
+inventory-sorter-done-skipped = { $count ->
+        [one] { $count } trié
+       *[other] { $count } triés
+    } ; { $skipped ->
+        [one] { $skipped } ignoré car il a changé depuis l'aperçu.
+       *[other] { $skipped } ignorés car ils ont changé depuis l'aperçu.
+    }
+inventory-sorter-retrying = { $error } (nouvel essai, tentative { $attempt })
+inventory-sorter-done-failed = { $count ->
+        [one] { $count } trié
+       *[other] { $count } triés
+    } ; { $skipped ->
+        [one] { $skipped } ignoré (changé depuis l'aperçu)
+       *[other] { $skipped } ignorés (changés depuis l'aperçu)
+    } ; { $failed ->
+        [one] { $failed } refusé par le serveur et laissé en place.
+       *[other] { $failed } refusés par le serveur et laissés en place.
+    }
+inventory-sorter-paused = En pause : { $done } / { $total }
+inventory-sorter-eta = encore environ { $minutes } min
+inventory-sorter-pause = Pause
+inventory-sorter-resume = Reprendre
+inventory-sorter-undo-source = Annulation du dernier tri
+inventory-sorter-resume-source = Le tri interrompu
+inventory-sorter-snapshot-source = La disposition du { $date }
+inventory-sorter-undo-section = Annuler et instantanés
+inventory-sorter-undo-hint = Chaque tri est mémorisé et un instantané de votre disposition est pris avant. Chacun de ces boutons ouvre d'abord son aperçu.
+inventory-sorter-resume-run = Reprendre le tri interrompu ({ $count ->
+        [one] { $count } restant
+       *[other] { $count } restants
+    })
+inventory-sorter-undo-run = Annuler le dernier tri ({ $count ->
+        [one] { $count } déplacement
+       *[other] { $count } déplacements
+    }, { $date })
+inventory-sorter-undo-none = Aucun tri à annuler pour l'instant.
+inventory-sorter-snapshots = Instantanés
+inventory-sorter-snapshot-take = Prendre un instantané
+inventory-sorter-share-layout = Enregistrer l’organisation de mon inventaire à partager…
+inventory-sorter-share-layout-hint = Enregistre les noms des dossiers et des objets, leurs emplacements et les types d’objets dans un fichier sur votre Bureau. Le fichier exclut les noms de compte, les identifiants d’origine, y compris ceux des assets, ainsi que la corbeille, les objets trouvés, les cartes de visite et les repères. L’enregistrement ne déplace rien dans votre inventaire.
+inventory-sorter-share-layout-loading = Lecture de tout votre inventaire d’abord…
+inventory-sorter-share-layout-progress = { $read } dossiers lus sur { $total }, { $failed } illisibles
+inventory-sorter-share-layout-now = Enregistrer ce qui est chargé maintenant
+inventory-sorter-share-layout-saving = Enregistrement…
+inventory-sorter-share-layout-saved = Enregistré dans { $path }
+inventory-sorter-share-layout-unread = { $count ->
+        [one] { $count } dossier n’a pas pu être lu : il est marqué comme inconnu dans le fichier.
+       *[other] { $count } dossiers n’ont pas pu être lus : ils sont marqués comme inconnus dans le fichier.
+    }
+inventory-sorter-share-layout-show = Afficher dans le dossier
+inventory-sorter-share-layout-failed = L’organisation n’a pas pu être enregistrée : { $error }
+inventory-sorter-snapshot-restore = Remettre cette disposition…
+inventory-sorter-snapshot-unreadable = Cet instantané n'a pas pu être lu.
+inventory-sorter-snapshot-loading = Lecture de l'instantané…
+inventory-sorter-current-base = Dossier de destination actuel : { $path }
+inventory-sorter-layout-import = Importer une disposition…
+inventory-sorter-layout-export = Exporter une sauvegarde…
+inventory-sorter-layout-exported = Sauvegarde de la disposition enregistrée.
+inventory-sorter-layout-file-error = Impossible d’ouvrir ou d’enregistrer le fichier de disposition.
+inventory-sorter-layout-confirm = Restaurer cette disposition partagée ?
+inventory-sorter-layout-by-name = Ce fichier partagé ne contient pas les identifiants d’inventaire. L’aperçu associe les noms d’objets exacts et uniques aux chemins de dossiers existants. Utilisez un fichier de votre inventaire. Des noms identiques peuvent désigner des objets différents.
+inventory-sorter-layout-check = J’ai vérifié ces correspondances et je souhaite les restaurer
+inventory-sorter-layout-matches = { $count } entrées n’ont pas pu être associées ou déplacées. Les dossiers restent en place.
+inventory-sorter-layout-incomplete = Impossible de charger { $count } dossiers. Tous les dossiers doivent être chargés avant d’associer une disposition partagée.
+inventory-sorter-moved-by-hand = Déplacés à la main depuis
+inventory-sorter-restore-summary = Laissés tels quels : { $new } nouveaux depuis l'instantané, { $trashed } dans la corbeille, { $gone } supprimés ou dont le dossier n'existe plus, { $kept } portés, liens, protégés, exclus ou pas encore chargés. { $hand } déplacés à la main sont listés à part.
+inventory-sorter-snapshot-other-account = Cet instantané appartient à un autre compte : il n'est pas restauré ici.
+inventory-sorter-held = En attente de la téléportation : { $done } / { $total }
+inventory-sorter-no-answer = Le serveur n'a pas répondu
+inventory-sorter-defaults = Dossiers par défaut
+inventory-sorter-defaults-hint = Le tri automatique ne touche jamais vos dossiers par défaut, sauf Objets. Vous pouvez en autoriser un, à vos risques. La corbeille, la Place du marché, les tenues, la tenue actuelle, les objets reçus, les favoris, la bibliothèque, #RLV, #Firestorm, #Aurora et Animation Overrides (les dossiers de l'AO) ne peuvent jamais l'être.
+inventory-sorter-lost-found = Inclure les objets trouvés
+inventory-sorter-lost-found-tip = Trie les objets trouvés comme vos propres dossiers : ce qui y est arrivé part dans les dossiers de tri.
+inventory-sorter-unlock = Autoriser…
+inventory-sorter-unlock-remove = Autorisé : verrouiller à nouveau
+inventory-sorter-unlock-title = Autoriser le tri automatique dans { $folder } ?
+inventory-sorter-unlock-text = Le tri déplacera alors des objets de { $folder } vers les dossiers de tri, comme depuis vos propres dossiers. Certains scripts, HUD et autres viewers attendent des objets dans { $folder } : ils risquent de ne plus les trouver. Les objets portés, liens et gestes actifs restent en place, les dossiers de livraison bougent entiers et ne sont jamais ouverts, le dossier lui-même ne bouge jamais, et vos derniers tris peuvent être annulés.
+inventory-sorter-unlock-confirm = L'autoriser
+inventory-sorter-unlocked-list = Déverrouillés par vous : { $folders }
+inventory-sorter-updating = Votre inventaire change encore : l'aperçu sera refait une fois stabilisé.
 parcel-visibility-mode = Masquer le contenu hors de la parcelle actuelle
 parcel-visibility-help = Le terrain, votre avatar et vos HUD restent visibles. Les objets, les autres avatars et leurs effets visuels hors de la parcelle sont masqués. La liste choisit où ce filtre s’applique.
 parcel-visibility-always = Partout

@@ -61,6 +61,7 @@ mod rows;
 pub(crate) mod smart;
 mod smart_builder;
 pub(crate) mod smart_store;
+mod sorter;
 pub(crate) mod task_drop;
 pub(crate) mod task_selection;
 pub mod thumbnail;
@@ -207,6 +208,9 @@ pub enum InvAction {
     StopConfirmingDelete,
     /// A line in chat, for an inventory action asked from outside the window.
     Notice(String),
+    /// Read these folders with all they hold through the inventory's
+    /// background walk (Auto-sort's layout to share).
+    FetchSubtrees(Vec<Uuid>),
     WearLibrary {
         item: Uuid,
         replace: bool,
@@ -460,6 +464,7 @@ fn keeps_window(w: &InventoryWindow) -> bool {
         || w.state.thumbnail.item.is_some()
         || w.state.bulk_permissions.active()
         || w.state.detach_delete.is_some()
+        || w.state.sorter.active()
 }
 
 /// The additional window's id: one at a time, its place and size kept
@@ -568,6 +573,7 @@ pub struct InventoryUi {
     was_open: bool,
     focus_search: bool,
     bulk_permissions: bulk_permissions::State,
+    sorter: sorter::State,
     menu_editor: context_customize::State,
     menu_notecards: context_notecards::State,
     /// Library wearables being copied to be worn: copy request → replace.
@@ -2472,6 +2478,7 @@ pub fn show(
     // What is worn, the attachment points and the names are read for the
     // windows and dialogs that show them, not every frame while closed.
     let shown = *open
+        || st.sorter.active()
         || dual.is_some()
         || st.dialog.is_some()
         || st.detach_delete.is_some()
@@ -2484,6 +2491,7 @@ pub fn show(
                 || w.state.move_to.is_some()
                 || w.state.thumbnail.item.is_some()
                 || w.state.bulk_permissions.active()
+                || w.state.sorter.active()
         });
     let mut facts = if shown {
         Facts::from_world(world, appearance_busy)
@@ -2589,6 +2597,23 @@ pub fn show(
                 .insert(*id, world.social.name_in(crate::world::names::NameScope::Roster, id));
         }
     }
+    // Auto-sort's creator hints show who they are for: the names are asked
+    // for while the window is open and kept once known
+    if st.sorter_open() || st.windows.iter().any(|w| w.state.sorter_open()) {
+        for hint in prefs.sorter.store_hints.iter_mut() {
+            let Some(creator) = hint.creator else { continue };
+            world.social.want_name(creator);
+            let name = world.social.name_of(&creator);
+            let name: String = name.chars().take(64).collect();
+            if name != "…" && hint.creator_name != name {
+                hint.creator_name = name;
+            }
+        }
+    }
+    // Auto-sort holds its batches while a teleport runs, and counts active
+    // gestures as worn (never moved)
+    let sorter_hold = world.teleporting;
+    let sorter_worn: HashSet<Uuid> = facts.worn.iter().chain(facts.active_gestures.iter()).copied().collect();
     let inv = &mut world.inventory;
     if let Some(dual) = dual.as_deref_mut() {
         if !*open {
@@ -2619,6 +2644,7 @@ pub fn show(
     context_catalog::process_deferred(inv, st, prefs, &facts, &mut actions);
     delete::finish_detach(inv, st, prefs, &facts, &mut actions);
     bulk_permissions::show(ctx, p, inv, st, world.agent_id, &mut actions);
+    sorter::show(ctx, p, inv, st, prefs, &sorter_worn, facts.agent, sorter_hold, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
     // Copied folders load their whole tree for the paste; once loaded, they
@@ -2822,6 +2848,23 @@ pub fn show(
             // what it was deleting went with its folder
             w.state.detach_delete = None;
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
+            // (its Auto-sort run goes on to its end, its window too, with the
+            // inventory's request in progress as the other windows see it)
+            if w.state.sorter.active() {
+                w.state.pending = st.pending;
+                w.state.progress.clone_from(&st.progress);
+                sorter::show(
+                    ctx,
+                    p,
+                    &mut world.inventory,
+                    &mut w.state,
+                    prefs,
+                    &sorter_worn,
+                    facts.agent,
+                    sorter_hold,
+                    &mut actions,
+                );
+            }
             continue;
         }
         w.state.ui_id = w.id;
@@ -2929,6 +2972,17 @@ pub fn show(
             w.state.view = Default::default();
         }
         bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, world.agent_id, &mut actions);
+        sorter::show(
+            ctx,
+            p,
+            &mut world.inventory,
+            &mut w.state,
+            prefs,
+            &sorter_worn,
+            facts.agent,
+            sorter_hold,
+            &mut actions,
+        );
         if w.id != listings::PANEL {
             finish_hidden_rename(&world.inventory, &mut w.state, &mut actions);
         }

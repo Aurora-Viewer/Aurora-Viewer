@@ -1289,6 +1289,14 @@ pub(super) struct PendingDelete {
 }
 
 impl DeleteRequest {
+    /// A delete no window follows (Auto-sort's Clean up): it never moves a
+    /// window's selection when it is done.
+    pub(crate) fn detached(mut self) -> Self {
+        // (no window has this id: the main one's is nil)
+        self.selection.window = Uuid::max();
+        self
+    }
+
     pub(crate) fn new(inv: &Inventory, st: &InventoryUi, ids: &[Uuid], change: Mutation) -> Self {
         Self::with_selection(inv, DeleteSelection::of(inv, st, ids), change)
     }
