@@ -10260,6 +10260,7 @@ script-search-query = Find
 script-search-replacement = Replace
 script-search-insensitive = Case insensitive
 script-search-up = Search upwards
+script-search-whole-words = Whole words
 script-search-find = Find
 script-search-replace = Replace
 script-search-replace-all = Replace all

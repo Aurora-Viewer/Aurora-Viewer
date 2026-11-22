@@ -10183,6 +10183,7 @@ script-search-query = 検索
 script-search-replacement = 置き換え
 script-search-insensitive = 大文字と小文字を区別しない
 script-search-up = 上方向に検索
+script-search-whole-words = 単語全体のみ
 script-search-find = 検索
 script-search-replace = 置き換え
 script-search-replace-all = すべて置き換え
