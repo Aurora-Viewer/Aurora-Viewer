@@ -936,6 +936,20 @@ fn inventory_style_choices_work_from_search_and_reset_with_the_aurora_page() {
     for _ in 0..3 {
         texts = frame(Vec::new(), &mut s);
     }
+    let choice_x = |label: &str| {
+        texts
+            .iter()
+            .find(|text| text.source == label)
+            .expect("inventory style choice")
+            .rect
+            .center()
+            .x
+    };
+    assert!(
+        choice_x(tr!("ui-options-aurora-about-land-aurora")) < choice_x(explorer)
+            && choice_x(explorer) < choice_x(tr!("ui-options-aurora-about-land-classic")),
+        "inventory choices must read Aurora, Explorer, then Legacy from left to right"
+    );
     for (style, label) in [
         (InventoryStyle::Explorer, explorer),
         (InventoryStyle::Classic, tr!("ui-options-aurora-about-land-classic")),

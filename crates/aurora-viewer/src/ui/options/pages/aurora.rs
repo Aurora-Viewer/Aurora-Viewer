@@ -314,9 +314,9 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-aurora-inventory-help"),
                 &field!(inventory_style),
                 &[
-                    (InventoryStyle::Classic, classic, false),
                     (InventoryStyle::Aurora, aurora, true),
                     (InventoryStyle::Explorer, tr!("ui-options-aurora-inventory-explorer"), true),
+                    (InventoryStyle::Classic, classic, false),
                 ],
             );
             look(
