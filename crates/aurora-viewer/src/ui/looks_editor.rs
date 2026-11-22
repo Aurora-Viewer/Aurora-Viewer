@@ -154,6 +154,9 @@ pub struct LooksUi {
     numbers: HashMap<Key, (usize, Option<usize>, f64)>,
     /// Until when a move from the keyboard or ⋯ shows the numbers.
     flash: f64,
+    /// The place a card moved with Alt + ↑ ↓ went to: its row takes the
+    /// focus back on the next frame.
+    refocus: Option<usize>,
     /// Each card's height, measured when it was last drawn.
     heights: HashMap<Key, f32>,
     /// Each open card's settings, as tall as they were last drawn (what
@@ -512,13 +515,23 @@ impl LooksUi {
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = GAP;
                 let width = ui.available_width();
+                // each row's id follows its card, not its place: the focus
+                // (and what a screen reader announces) stays on the card it
+                // was given to when the cards move
                 let rows: Vec<egui::Response> = keys
                     .iter()
-                    .map(|k| {
+                    .enumerate()
+                    .map(|(i, k)| {
                         let h = self.heights.get(k).copied().unwrap_or(HEAD);
-                        ui.allocate_exact_size(Vec2::new(width, h), Sense::click_and_drag()).1
+                        let (_, rect) = ui.allocate_space(Vec2::new(width, h));
+                        let row = ui.interact(rect, self.id(("card_row", k)), Sense::click_and_drag());
+                        if self.refocus == Some(i) {
+                            row.request_focus();
+                        }
+                        row
                     })
                     .collect();
+                self.refocus = None;
                 let id = ui.make_persistent_id("looks_reorder");
                 let layout = reorder::update_sized(ui, id, &keys, &rows, true, gap.map(|g| (g, HEAD + GAP)), true);
                 if let Some(i) = layout.started {
@@ -745,22 +758,38 @@ impl LooksUi {
         }
         keep_keys(resp);
         if resp.has_focus() {
-            let (up, down) = ui.input(|inp| {
+            // (taken from the input: the list around does not scroll with it)
+            let (up, down) = ui.input_mut(|inp| {
                 (
-                    inp.modifiers.alt && inp.key_pressed(egui::Key::ArrowUp),
-                    inp.modifiers.alt && inp.key_pressed(egui::Key::ArrowDown),
+                    inp.consume_key(egui::Modifiers::ALT, egui::Key::ArrowUp),
+                    inp.consume_key(egui::Modifiers::ALT, egui::Key::ArrowDown),
                 )
             });
-            if up && i > 0 {
-                self.flash_move(ui, s, i, i - 1, edits);
+            // the focus goes with the card to its new place (two copies of
+            // a look swap their keys as they pass each other)
+            let to = if up && i > 0 {
+                Some(i - 1)
             } else if down && i + 1 < n {
-                self.flash_move(ui, s, i, i + 1, edits);
+                Some(i + 1)
+            } else {
+                None
+            };
+            if let Some(to) = to {
+                self.flash_move(ui, s, i, to, edits);
+                self.refocus = Some(to);
             }
         }
         let label = aurora_i18n::tr!("photo-looks-card", name = name.as_ref(), place = i + 1, count = n);
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label.clone()));
+        // which copy of its look this card is: its ids and its measures
+        let copy = s.looks[..i].iter().filter(|l| l.id == layer.id).count();
+        let key = (layer.id.clone(), copy);
+        // its own id scope: two copies of a look are both open at once, and
+        // their settings (the colour swatches, the names) would otherwise
+        // register the same ids
         let mut child = ui.new_child(
             UiBuilder::new()
+                .id_salt(("card", &key))
                 .max_rect(rect.shrink2(Vec2::new(8.0, 0.0)))
                 .layout(Layout::top_down(Align::Min)),
         );
@@ -844,8 +873,6 @@ impl LooksUi {
         }
         // the settings unroll as the card opens and roll up as it closes:
         // the card's height follows, and the cards under it glide with it
-        let copy = s.looks[..i].iter().filter(|l| l.id == layer.id).count();
-        let key = (layer.id.clone(), copy);
         let t = ui
             .ctx()
             .animate_bool_with_time(self.id(("card_open", key.0.as_str(), copy)), open, UNROLL);
@@ -2071,6 +2098,83 @@ mod tests {
         frame(&mut frames, &mut ed, &mut s, Vec::new());
         let ids: Vec<&str> = s.looks.iter().map(|l| l.id.as_str()).collect();
         assert_eq!(ids, ["aurora:vhs"]);
+    }
+
+    fn alt(key: egui::Key) -> Vec<egui::Event> {
+        let event = |pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::ALT,
+        };
+        vec![event(true), event(false)]
+    }
+
+    /// Alt + ↓ pressed twice takes a card down two places: the focus goes
+    /// with the card, not with its old place (which the next card takes),
+    /// for two copies of a look too.
+    #[test]
+    fn alt_arrows_keep_moving_the_same_card() {
+        let ids = |s: &Settings| s.looks.iter().map(|l| (l.id.clone(), l.strength)).collect::<Vec<_>>();
+        let mut first = looks::Layer::new("Sepia");
+        first.strength = 30;
+        for second in ["aurora:vhs", "Sepia"] {
+            let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+            let mut ed = LooksUi::default();
+            let mut s = Settings {
+                looks: vec![first.clone(), looks::Layer::new(second), looks::Layer::new("Negative")],
+                ..Default::default()
+            };
+            frame(&mut frames, &mut ed, &mut s, Vec::new());
+            let row = ed.id(("card_row", &("Sepia".to_owned(), 0)));
+            frames.ctx.memory_mut(|m| m.request_focus(row));
+            frame(&mut frames, &mut ed, &mut s, Vec::new());
+            frame(&mut frames, &mut ed, &mut s, alt(egui::Key::ArrowDown));
+            frame(&mut frames, &mut ed, &mut s, Vec::new());
+            frame(&mut frames, &mut ed, &mut s, alt(egui::Key::ArrowDown));
+            frame(&mut frames, &mut ed, &mut s, Vec::new());
+            assert_eq!(ids(&s)[2], ("Sepia".to_owned(), 30), "{second}: the first card went to the bottom");
+            frame(&mut frames, &mut ed, &mut s, alt(egui::Key::ArrowUp));
+            frame(&mut frames, &mut ed, &mut s, Vec::new());
+            assert_eq!(ids(&s)[1], ("Sepia".to_owned(), 30), "{second}: and back up one");
+        }
+    }
+
+    /// Two copies of an Aurora look are open together: each card has its
+    /// own ids (its colour swatch, its settings' names).
+    #[test]
+    fn two_copies_of_a_look_open_without_an_id_clash() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        frames.ctx.options_mut(|o| o.warn_on_id_clash = true);
+        let mut ed = LooksUi::default();
+        ed.open.insert("aurora:teal-orange".into());
+        let mut s = Settings {
+            looks: vec![looks::Layer::new("aurora:teal-orange"), looks::Layer::new("aurora:teal-orange")],
+            ..Default::default()
+        };
+        let p = crate::theme::Theme::default().skin_palette();
+        let thumb = |_: &str| None;
+        for _ in 0..4 {
+            let texts = frames.run(Vec::new(), |ui| {
+                let opts = Options {
+                    list_height: 200.0,
+                    height: Some(800.0),
+                    compare: true,
+                    luts: &[],
+                    pano: false,
+                    thumb: &thumb,
+                };
+                ed.show(ui, &p, Stack::photo(&mut s), opts, &mut Vec::new());
+            });
+            let clashes: Vec<_> = texts
+                .iter()
+                .filter(|t| t.source.contains(" use of "))
+                .map(|t| (t.source.clone(), t.rect))
+                .collect();
+            assert!(clashes.is_empty(), "no id used twice: {clashes:?}");
+        }
+        assert!(ed.drawn.len() == 2 && ed.drawn[1].height() > HEAD, "both cards are open");
     }
 
     /// Default values (in the ⋯ actions) puts an Aurora look's settings
