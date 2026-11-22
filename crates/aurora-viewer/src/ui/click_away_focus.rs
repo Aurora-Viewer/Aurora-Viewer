@@ -21,10 +21,14 @@
 //! of its own, inside the viewer's, and egui runs the output hook once that
 //! pass is over: the focus `Memory` gives then is the viewer's own
 //! window's. What such a window surrenders is taken when its next pass
-//! begins, before any of its widgets runs.
+//! begins, before any of its widgets runs. And egui forgets the focus
+//! requests of the viewer's own pass when that window's pass begins inside
+//! it: they are read just before (`focus_asked`), so that a focus given
+//! back to a field of the viewer's window is kept with a window outside
+//! drawn later in the frame.
 
 use egui::output::IMEOutput;
-use egui::{Context, FullOutput, IMEPurpose, Id, Rect, SurrenderFocusOn, Ui, ViewportId};
+use egui::{Context, FullOutput, IMEPurpose, Id, RawInput, Rect, SurrenderFocusOn, Ui, ViewportId};
 
 /// Installs the plugin on `ctx` (once: egui keeps one plugin per type).
 pub fn install(ctx: &Context) {
@@ -47,11 +51,39 @@ struct ClickAwayFocus {
     /// What the windows outside the viewer's surrender, each at its next
     /// pass.
     later: Vec<(ViewportId, Id)>,
+    /// Something asked for a focus in the viewer's own pass before the pass
+    /// of a window outside began in it.
+    asked_before: bool,
+}
+
+/// Whether something asked for a focus since the pass in progress began.
+/// egui keeps it in a flag of its `Memory` that it only shows in the output
+/// of a pass that ends, and forgets when any pass begins: its `Debug` is
+/// the one way to read it in between. A test fails if egui renames it.
+fn focus_asked(ctx: &Context) -> bool {
+    ctx.memory(|m| format!("{m:?}")).contains("requested_interrupt_ime: true")
 }
 
 impl egui::Plugin for ClickAwayFocus {
     fn debug_name(&self) -> &'static str {
         "click_away_focus"
+    }
+
+    fn input_hook(&mut self, ctx: &Context, input: &mut RawInput) {
+        if input.viewport_id == ViewportId::ROOT {
+            self.asked_before = false;
+            return;
+        }
+        // the pass of a window outside is about to begin, in the viewer's
+        // own: only a click that may take a focus there needs the answer
+        let clicked = ctx.input(|i| match self.on {
+            SurrenderFocusOn::Presses => i.pointer.any_pressed(),
+            SurrenderFocusOn::Clicks => i.pointer.any_click(),
+            SurrenderFocusOn::Never => false,
+        });
+        if clicked && !self.asked_before && ctx.memory(|m| m.focused()).is_some() {
+            self.asked_before = focus_asked(ctx);
+        }
     }
 
     fn on_begin_pass(&mut self, ui: &mut Ui) {
@@ -111,7 +143,8 @@ impl egui::Plugin for ClickAwayFocus {
             .platform_output
             .ime
             .as_ref()
-            .is_some_and(|ime| ime.should_interrupt_composition);
+            .is_some_and(|ime| ime.should_interrupt_composition)
+            || (self.window == ViewportId::ROOT && self.asked_before);
         if std::mem::take(&mut self.probe) {
             output.platform_output.ime = None;
         }
@@ -360,5 +393,73 @@ mod tests {
         let field = pos2(40.0, 15.0);
         o.click(field);
         assert!(o.focused(), "a click on the field keeps it");
+    }
+
+    /// A field of the viewer's own window keeps the focus a widget gives
+    /// back to it, a window outside drawn after that widget in the frame.
+    #[test]
+    fn the_focus_given_back_inside_is_kept_with_a_window_outside_drawn_after() {
+        let ctx = Context::default();
+        super::install(&ctx);
+        ctx.set_embed_viewports(false);
+        Context::set_immediate_viewport_renderer(move |ctx, viewport| {
+            let egui::ImmediateViewport {
+                ids, mut viewport_ui_cb, ..
+            } = viewport;
+            let info = egui::ViewportInfo {
+                parent: Some(ids.parent),
+                ..Default::default()
+            };
+            let input = RawInput {
+                viewport_id: ids.this,
+                viewports: std::iter::once((ids.this, info)).collect(),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))),
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| viewport_ui_cb(ui));
+            out.textures_delta.clear();
+        });
+        let field = Id::unique("click_away_inside_field");
+        let window = egui::ViewportId::from_hash_of("click_away_other");
+        let back = std::cell::Cell::new(true);
+        let frame = |events: Vec<Event>| {
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))),
+                events,
+                ..Default::default()
+            };
+            let mut out = ctx.run_ui(input, |ui| {
+                let mut text = String::from("hello");
+                ui.add(TextEdit::singleline(&mut text).id(field));
+                ui.add_space(100.0);
+                if ui.button("Cut").clicked() && back.get() {
+                    ui.ctx().memory_mut(|m| m.request_focus(field));
+                }
+                ui.ctx().show_viewport_immediate(window, egui::ViewportBuilder::default(), |ui, _| {
+                    ui.label("outside");
+                });
+            });
+            out.textures_delta.clear();
+        };
+        frame(Vec::new());
+        ctx.memory_mut(|m| m.request_focus(field));
+        // (what `focus_asked` reads, under the name egui gives it)
+        assert!(super::focus_asked(&ctx));
+        frame(Vec::new());
+        assert!(!super::focus_asked(&ctx));
+        let press = |pressed| Event::PointerButton {
+            pos: BUTTON,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(vec![Event::PointerMoved(BUTTON), press(true)]);
+        frame(vec![press(false)]);
+        assert!(ctx.memory(|m| m.has_focus(field)), "the button gave the focus back");
+        // and a button that gives nothing back still takes it
+        back.set(false);
+        frame(vec![press(true)]);
+        frame(vec![press(false)]);
+        assert!(!ctx.memory(|m| m.has_focus(field)), "the click away took the focus");
     }
 }
