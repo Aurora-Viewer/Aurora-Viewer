@@ -8586,6 +8586,7 @@ photo-vf-help-free-camera = Freie Kamera: die Bewegungstasten, rechte Maustaste 
 photo-vf-hints = Liste der Steuerelemente
 photo-vf-shown = Angezeigt
 photo-vf-hidden-one = Versteckt
+photo-vf-keep-framing = Bildausschnitt behalten
 photo-vf-dial-focal = Brennweite
 photo-vf-dial-aperture = Blende
 photo-vf-dial-exposure = Belichtung

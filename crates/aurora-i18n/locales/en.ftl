@@ -8646,6 +8646,7 @@ photo-vf-help-free-camera = Free camera: the movement keys, right button held to
 photo-vf-hints = Controls list
 photo-vf-shown = Shown
 photo-vf-hidden-one = Hidden
+photo-vf-keep-framing = Keep the framing
 photo-vf-dial-focal = focal length
 photo-vf-dial-aperture = aperture
 photo-vf-dial-exposure = exposure

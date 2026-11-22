@@ -8660,6 +8660,7 @@ photo-vf-help-free-camera = Вільна камера: клавіші руху, 
 photo-vf-hints = Список керування
 photo-vf-shown = Показано
 photo-vf-hidden-one = Приховано
+photo-vf-keep-framing = Зберігати кадр
 photo-vf-dial-focal = фокусна відстань
 photo-vf-dial-aperture = діафрагма
 photo-vf-dial-exposure = експозиція

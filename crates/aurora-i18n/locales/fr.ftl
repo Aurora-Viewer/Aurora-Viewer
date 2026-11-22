@@ -8654,6 +8654,7 @@ photo-vf-help-free-camera = Caméra libre : les touches de déplacement, clic dr
 photo-vf-hints = Aide-mémoire
 photo-vf-shown = Affiché
 photo-vf-hidden-one = Masqué
+photo-vf-keep-framing = Garder le cadrage
 photo-vf-dial-focal = focale
 photo-vf-dial-aperture = ouverture
 photo-vf-dial-exposure = exposition

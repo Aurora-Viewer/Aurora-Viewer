@@ -8733,6 +8733,7 @@ photo-vf-help-free-camera = Свободная камера управляетс
 photo-vf-hints = Список команд
 photo-vf-shown = Показан
 photo-vf-hidden-one = Скрыт
+photo-vf-keep-framing = Сохранять кадр
 photo-vf-dial-focal = фокусное расстояние
 photo-vf-dial-aperture = диафрагма
 photo-vf-dial-exposure = экспозиция

@@ -8516,6 +8516,7 @@ photo-vf-help-free-camera = Fritt kamera: bevegelsestastene, høyre knapp holdt 
 photo-vf-hints = Oversikt over kontroller
 photo-vf-shown = Vist
 photo-vf-hidden-one = Skjult
+photo-vf-keep-framing = Behold utsnittet
 photo-vf-dial-focal = brennvidde
 photo-vf-dial-aperture = blenderåpning
 photo-vf-dial-exposure = eksponering
