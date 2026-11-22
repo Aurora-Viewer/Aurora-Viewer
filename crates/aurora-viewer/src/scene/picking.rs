@@ -3224,9 +3224,9 @@ pub(crate) mod tests {
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
-        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = true;
+        world.objects.get_mut(front).unwrap().render.blinn_phong_faces = u64::MAX;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
-        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = false;
+        world.objects.get_mut(front).unwrap().render.blinn_phong_faces = 0;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
     }
 
@@ -3727,9 +3727,9 @@ pub(crate) mod tests {
         ov.transforms[0].offset = [0.2, 0.1];
         world.gltf_overrides.insert(key, vec![(0, ov)].into());
         assert!((uv(&world, &scene) - Vec2::new(0.9, 0.55)).length() < 0.0001);
-        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = true;
+        world.objects.get_mut(front).unwrap().render.blinn_phong_faces = u64::MAX;
         assert!((uv(&world, &scene) - Vec2::new(0.25, 0.65)).length() < 0.0001);
-        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = false;
+        world.objects.get_mut(front).unwrap().render.blinn_phong_faces = 0;
         assert!((uv(&world, &scene) - Vec2::new(0.9, 0.55)).length() < 0.0001);
     }
 

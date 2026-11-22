@@ -5630,6 +5630,32 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_PBR_MIXED=1: one cube with a white PBR metal on every face
+    // but 4, which keeps a red-tinted legacy texture, for Select face on a
+    // mixed prim (#4467): clicking the Blinn-Phong face 4 must leave the PBR
+    // faces rendering.
+    if std::env::var_os("AURORA_DEMO_PBR_MIXED").is_some() {
+        let floor = height(cx, cy) + 0.35;
+        let mut t = TextureEntry::default();
+        for f in t.faces.iter_mut() {
+            // distinct from the metal's white, so the two modes read apart
+            f.texture = TEX_FRAMES;
+            f.color = [1.0, 0.25, 0.25, 1.0];
+        }
+        add(prim(
+            99750,
+            Vec3::new(136.2, 130.5, floor + 1.15),
+            Quat::IDENTITY,
+            Vec3::splat(1.6),
+            boxp,
+            Arc::new(t),
+            ExtraParams {
+                render_materials: [0, 1, 2, 3, 5].into_iter().map(|f| (f, MAT_PBR_METAL[0])).collect(),
+                ..Default::default()
+            },
+            "",
+        ));
+    }
     // AURORA_DEMO_PBR_OVERRIDE=1: two slabs with the same PBR material (one
     // tile over the whole face); the second one gets a GLTF material override
     // (4 × 4 repeats on every map, a tint), sent as the simulator's notation
@@ -6166,13 +6192,19 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
-    // AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]: a closed room with a lamp and a
-    // manual probe of that ambiance, at AURORA_DEMO_POS="100,100" (#2217): a
-    // sphere that crosses the floor, or a box that fills the room
+    // AURORA_DEMO_PROBE_ROOM=<ambiance>[,box|inner][,shiny]: a closed room
+    // with a lamp and a manual probe of that ambiance, at
+    // AURORA_DEMO_POS="100,100" (#2217): a sphere that crosses the floor, a
+    // box that fills the room, or a box on the inner faces of its walls,
+    // floor and roof, as a creator sizes one to a room's inside; `shiny`
+    // gives those faces a high shininess, which shows their reflection
     if let Ok(room) = std::env::var("AURORA_DEMO_PROBE_ROOM") {
-        let mut values = room.split(',');
-        let ambiance = values.next().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0);
-        let filled = values.next().is_some_and(|v| v.trim() == "box");
+        let mut values = room.split(',').map(str::trim);
+        let ambiance = values.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        let options: Vec<&str> = values.collect();
+        let filled = options.contains(&"box");
+        let inner = options.contains(&"inner");
+        let shiny = if options.contains(&"shiny") { 3 } else { 0 };
         let (x, y) = (100.0, 100.0);
         let z = g(x, y);
         let (half, height) = (8.0, 5.0);
@@ -6191,7 +6223,7 @@ pub fn events() -> Vec<NetEvent> {
                 Quat::IDENTITY,
                 scale,
                 boxp,
-                te(matte, 0, false, 0.0),
+                te(matte, shiny, false, 0.0),
                 ExtraParams::default(),
                 "",
             ));
@@ -6216,7 +6248,17 @@ pub fn events() -> Vec<NetEvent> {
             "",
         ));
         id += 1;
-        let (center, scale, flags) = if filled {
+        // (the walls, floor and roof are 0.2 m thick: their inner faces are
+        // 0.1 m inside the walls' centres, the floor's top at 0.2 m and the
+        // roof's underside at `height - 0.1`)
+        let (center, scale, flags) = if inner {
+            let (bottom, top) = (0.2, height - 0.1);
+            (
+                Vec3::new(x, y, z + (bottom + top) / 2.0),
+                Vec3::new(2.0 * half - 0.2, 2.0 * half - 0.2, top - bottom),
+                0x1,
+            )
+        } else if filled {
             (Vec3::new(x, y, z + height / 2.0), Vec3::new(2.0 * half, 2.0 * half, height), 0x1)
         } else {
             (Vec3::new(x + 3.0, y + 3.0, z + 0.2), Vec3::splat(4.0), 0x0)

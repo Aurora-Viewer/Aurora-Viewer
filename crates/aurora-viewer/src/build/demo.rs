@@ -14,6 +14,8 @@
 //!   to linked editing and click the requested part (ready stops before switching).
 //!   faces | faces-invisible | faces-ready: plain / Shift face clicks on
 //!   three prims of two objects (ready stops before the face clicks).
+//!   mixed-face,object:<id>,<face>: select one prim, then pick one of its
+//!   faces (AURORA_DEMO_PBR_MIXED, #4467).
 //!   faces-picker | faces-picker-material: select one face and keep its picker open.
 //!   faces-picker-local | faces-picker-material-local: the same, on its Local tab.
 //!   faces-picker-normal-local | faces-picker-specular-local: local legacy maps.
@@ -613,6 +615,20 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             295 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(Some(1))],
             320 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(Some(2))],
             345 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(None)],
+            _ => Vec::new(),
+        };
+    }
+    if parts[0] == "mixed-face" {
+        // `mixed-face,object:<id>,<face>`: select a whole prim, then pick one
+        // of its faces, for AURORA_DEMO_PBR_MIXED (#4467).
+        let face = parts.get(2).and_then(|part| part.parse::<u8>().ok());
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            240 => match (object, face) {
+                (Some(idx), Some(face)) => vec![Step::Face(idx, face, false)],
+                _ => Vec::new(),
+            },
             _ => Vec::new(),
         };
     }

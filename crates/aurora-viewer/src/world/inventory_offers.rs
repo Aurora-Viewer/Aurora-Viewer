@@ -1065,7 +1065,16 @@ mod tests {
             if blocked {
                 w.block(JANE, "Jane Doe", super::super::mutes::MuteType::Agent).unwrap();
             } else {
+                // a gift for #RLV waits for its answer while #RLV exists
+                // (RlvInventory::isGiveToRLVOffer)
                 w.rlva_configure(true);
+                w.inventory.created_folders(vec![InvFolder {
+                    id: Uuid::from_u128(0x31),
+                    parent: w.inventory.root,
+                    type_default: -1,
+                    name: "#RLV".into(),
+                    ..Default::default()
+                }]);
             }
             w.chat.clear();
             w.ui_sounds.clear();
@@ -1103,29 +1112,48 @@ mod tests {
         }
         clean(&w, &root);
 
+        // RlvInventory::isGiveToRLVOffer (rlvinventory.cpp): only while
+        // giving to #RLV is allowed and #RLV exists; otherwise the offer is
+        // accepted like any other.
         for enabled in [false, true] {
             for allow_filing in [false, true] {
-                let root = temp();
-                let mut w = world(&root);
-                w.inventory_offers.auto_accept = true;
-                w.inventory_offers.auto_accept_chat = false;
-                w.inventory_offers.auto_accept_notify = false;
-                w.rlva_configure(enabled);
-                w.rlva.preferences.allow_shared_offers = allow_filing;
-                for dialog in [im::INVENTORY_OFFERED, im::TASK_INVENTORY_OFFERED] {
-                    let task = dialog == im::TASK_INVENTORY_OFFERED;
-                    let mut gift = offer(dialog, if task { "'#RLV/~Wardrobe/Cuffs'" } else { "#RLV/~Wardrobe/Cuffs" });
-                    gift.binary_bucket[0] = AT_CATEGORY as u8;
-                    w.on_im(gift);
-                    assert_eq!(answers(&w.take_social_commands()).is_empty(), enabled);
-                    if enabled {
-                        let id = w.notifications.list.last().expect("shared offer confirmation").id;
-                        let commands = w.respond_notification(id, Response::Accept).0;
-                        assert_eq!(answers(&commands).len(), 1);
+                for shared in [false, true] {
+                    let root = temp();
+                    let mut w = world(&root);
+                    w.inventory_offers.auto_accept = true;
+                    w.inventory_offers.auto_accept_chat = false;
+                    w.inventory_offers.auto_accept_notify = false;
+                    w.rlva_configure(enabled);
+                    w.rlva.preferences.allow_shared_offers = allow_filing;
+                    if shared {
+                        w.inventory.created_folders(vec![InvFolder {
+                            id: Uuid::from_u128(0x31),
+                            parent: w.inventory.root,
+                            type_default: -1,
+                            name: "#RLV".into(),
+                            ..Default::default()
+                        }]);
                     }
-                    assert!(w.notifications.list.is_empty());
+                    let asks = enabled && allow_filing && shared;
+                    for dialog in [im::INVENTORY_OFFERED, im::TASK_INVENTORY_OFFERED] {
+                        let task = dialog == im::TASK_INVENTORY_OFFERED;
+                        let mut gift = offer(dialog, if task { "'#RLV/~Wardrobe/Cuffs'" } else { "#RLV/~Wardrobe/Cuffs" });
+                        gift.binary_bucket[0] = AT_CATEGORY as u8;
+                        w.on_im(gift);
+                        assert_eq!(
+                            answers(&w.take_social_commands()).is_empty(),
+                            asks,
+                            "rlva {enabled}, filing {allow_filing}, #RLV {shared}, task {task}"
+                        );
+                        if asks {
+                            let id = w.notifications.list.last().expect("shared offer confirmation").id;
+                            let commands = w.respond_notification(id, Response::Accept).0;
+                            assert_eq!(answers(&commands).len(), 1);
+                        }
+                        assert!(w.notifications.list.is_empty());
+                    }
+                    clean(&w, &root);
                 }
-                clean(&w, &root);
             }
         }
     }

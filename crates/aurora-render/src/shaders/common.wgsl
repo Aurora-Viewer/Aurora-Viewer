@@ -532,6 +532,32 @@ fn probe_max_lod() -> f32 {
     return probe_set.max_lod;
 }
 
+// frame.light_mode.z, AURORA_PROBE_FACE=exact: the probes found from the
+// surface's own position, as before (and as the Legacy Viewer).
+const PROBE_FACE_EXACT: u32 = 0x800000u;
+// How far along its normal a surface is looked up in the probes (m).
+const PROBE_FACE_OFFSET: f32 = 0.01;
+
+// Where a surface at `world_pos`, of normal `n`, finds its probes: 1 cm in
+// front of it. A creator sizes a box probe to the inside of a room, its
+// faces on those of the walls, the floor and the roof; whether a point of
+// such a face is in the box (|lp| <= 1, shouldSampleProbe in
+// reflectionProbeF.glsl) then turns on the rounding of its position, pixel
+// by pixel, between the box's sharp image of the room and the automatic
+// probes'. On a shiny wall it showed as a grain of speckles and streaks,
+// as z-fighting does. A point in front of the face is in the box for the
+// walls inside it and out of it for a face outside it whose side is on the
+// box (the outer face of a box that holds the walls). The Legacy Viewer
+// tests the position itself; the offset moves the parallax by 1 cm, which
+// does not show (the rounding is about 1 mm at the top of a skybox's
+// 4096 m).
+fn probe_point(world_pos: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    if ((frame.light_mode.z & PROBE_FACE_EXACT) != 0u) {
+        return world_pos;
+    }
+    return world_pos + n * PROBE_FACE_OFFSET;
+}
+
 // reflectionProbeF.glsl sampleProbes (+ shouldSampleProbe, tapRefMap,
 // sphereWeight, boxIntersect), in world space: radiance seen along `dir`
 // from `pos` at mip `lod`. Probe 0 is the default probe, sampled whenever
@@ -2068,7 +2094,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         // normal, each probe mixed with the sky ambient by its ambiance
         // (sampleProbeAmbient), and pbrIbl radiance from the probes (ambient
         // occlusion only), in one walk of the probes
-        let s = sample_probes_pair(world_pos, frag, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), !legacy, true, hemi);
+        let s = sample_probes_pair(probe_point(world_pos, n), frag, ProbeLookup(n, 0.0, true), ProbeLookup(r, roughness * probe_max_lod(), false), !legacy, true, hemi);
         if (s.a.w > 0.0) {
             amb = s.a.rgb * probe_pass_ambiance();
         }
@@ -2886,7 +2912,7 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
     let hemi = mix(mix(frame.ground_color.rgb, frame.sky_horizon.rgb, clamp(up * 2.0, 0.0, 1.0)),
                    frame.sky_zenith.rgb, clamp(up * 2.0 - 1.0, 0.0, 1.0));
     let r = reflect(-v, n);
-    var env = probe_radiance(world_pos, frag, r, roughness, mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness));
+    var env = probe_radiance(probe_point(world_pos, n), frag, r, roughness, mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness));
     let m = mirror_tap(world_pos, r, 1.0 - clamp(roughness_in, 0.0, 1.0));
     env = mix(env, m.rgb, m.a);
     // pbrIbl scales the specular by the material's occlusion only (ORM red);
