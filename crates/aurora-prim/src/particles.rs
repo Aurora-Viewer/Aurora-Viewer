@@ -1435,10 +1435,11 @@ mod tests {
             ..Default::default()
         };
         let mut src = ParticleSource::new(data, 3);
+        let mut budget = usize::MAX;
         let mut ctx = SourceContext::default();
         for i in 0..links {
             ctx.pos = Vec3::new(i as f32, 0.0, 0.0);
-            src.update(0.06, &ctx, &mut usize::MAX);
+            src.update(0.06, &ctx, &mut budget);
         }
         (src, ctx)
     }
@@ -1477,7 +1478,8 @@ mod tests {
         src.remove_particles(|at| at.x > border);
         assert_eq!(src.particles().iter().map(|p| p.pos).collect::<Vec<_>>(), kept);
         // the next particle begins a new chain: not linked to the survivors
-        src.update(0.06, &ctx, &mut usize::MAX);
+        let mut budget = usize::MAX;
+        src.update(0.06, &ctx, &mut budget);
         let newest = *src.particles().last().expect("a new particle");
         assert!(!newest.chained);
         // nothing named: nothing removed
