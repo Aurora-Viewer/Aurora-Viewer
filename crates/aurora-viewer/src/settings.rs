@@ -5361,9 +5361,10 @@ mod tests {
         deluxe_v18().write(&mut old);
         old.ao_method = 0;
         let now = old.sanitized();
-        // straight to the Deluxe of now
-        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
-        assert_eq!((now.ao_method, now.gtao_quality), (1, 3));
+        // to the Deluxe of then (GTAO at Ultra), then to High once Deluxe
+        // became Deluxe (RT) (version 46)
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
+        assert_eq!((now.ao_method, now.gtao_quality), (1, 2));
         // chosen after the change: kept
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
@@ -5380,10 +5381,10 @@ mod tests {
         };
         deluxe_v18().write(&mut old);
         let now = old.sanitized();
-        // through version 19 to the Deluxe of now: the contact shadows and
-        // the indirect light, the experimental bloom off
-        assert!(now.contact_shadows && !now.bloom && now.screen_indirect_light);
-        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
+        // through version 19 to the Deluxe of then, then to High (version
+        // 46): the contact shadows, the experimental bloom off
+        assert!(now.contact_shadows && !now.bloom && !now.screen_indirect_light);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
         // turned off after the change: kept off
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
@@ -5400,9 +5401,9 @@ mod tests {
         };
         deluxe_v19().write(&mut old);
         let now = old.sanitized();
-        // to the Deluxe of now: the bloom off, the indirect light on again
-        assert!(now.contact_shadows && !now.bloom && now.screen_indirect_light);
-        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
+        // to the Deluxe of then (the bloom off), then to High (version 46)
+        assert!(now.contact_shadows && !now.bloom && !now.screen_indirect_light);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
         // turned on again after the change: kept on
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
@@ -5438,7 +5439,8 @@ mod tests {
         for (former, preset) in [
             (medium_v20(), Preset::Medium),
             (high_v20(), Preset::High),
-            (deluxe_v20(), Preset::Deluxe),
+            // (the Deluxe of then, then High since Deluxe became Deluxe (RT))
+            (deluxe_v20(), Preset::High),
         ] {
             let mut old = Settings {
                 settings_version: 20,
@@ -5468,12 +5470,11 @@ mod tests {
     }
 
     #[test]
-    fn earlier_files_trace_the_shadows_once_and_keep_their_level() {
-        use crate::graphics_presets::{Preset, high_v20};
+    fn earlier_files_go_back_to_the_shadow_maps_once_and_the_former_deluxe_to_high() {
+        use crate::graphics_presets::{Preset, deluxe_v45, high_v20};
         let path = scratch_settings_file();
-        // a file written before ray tracing holds none: it read as off, so
-        // the earlier levels' migrations still find their level, then the
-        // shadows are traced
+        // a file written before ray tracing holds none: it reads as off, so
+        // the earlier levels' migrations still find their level
         let without = |version: u32, level: &dyn Fn(&mut Settings)| {
             let mut s = Settings {
                 settings_version: version,
@@ -5485,38 +5486,45 @@ mod tests {
             let (s, newer) = Settings::read_document(file, &path).expect("readable settings");
             s.finished(newer)
         };
-        for preset in [Preset::High, Preset::Deluxe] {
-            let now = without(44, &|s| preset.apply(s));
-            assert_eq!(now.ray_tracing, RayTracingSettings::SHADOWS, "{preset:?}");
-            assert_eq!(Preset::matching(&now), Some(preset), "{preset:?}");
-        }
+        let now = without(44, &|s| Preset::High.apply(s));
+        assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
+        // the former Deluxe moves to High, nothing traced
+        let now = without(44, &|s| deluxe_v45().write(s));
+        assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
         let now = without(20, &|s| high_v20().write(s));
         assert_eq!(Preset::matching(&now), Some(Preset::High));
-        // a level without shadows stays itself, nothing traced
         let now = without(44, &|s| Preset::Low.apply(s));
         assert_eq!(Preset::matching(&now), Some(Preset::Low));
-        // a file that held the switches off, written while ray tracing was
-        // experimental: the shadows on once, its experimental choices kept
-        let mut old = Settings {
-            settings_version: 44,
+        // a file of version 45, which traced the shadows by default: back to
+        // the shadow maps once, its High and its Deluxe both to High
+        for level in [Preset::High.values(), deluxe_v45()] {
+            let mut old = Settings {
+                settings_version: 45,
+                ..Settings::default()
+            };
+            level.write(&mut old);
+            old.ray_tracing = RayTracingSettings::SHADOWS;
+            let now = old.sanitized();
+            assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
+            assert_eq!(Preset::matching(&now), Some(Preset::High));
+        }
+        // chosen after the migration, Deluxe (RT) and ray tracing by hand: kept
+        let mut deluxe = Settings::default();
+        Preset::Deluxe.apply(&mut deluxe);
+        let kept = deluxe.sanitized();
+        assert_eq!(kept.ray_tracing, RayTracingSettings::DELUXE);
+        assert_eq!(Preset::matching(&kept), Some(Preset::Deluxe));
+        let by_hand = Settings {
+            ray_tracing: RayTracingSettings::SHADOWS,
             ..Settings::default()
         };
-        old.ray_tracing = RayTracingSettings {
-            reflections: true,
-            ..RayTracingSettings::OFF
-        };
-        let now = old.sanitized();
-        assert_eq!(
-            now.ray_tracing,
-            RayTracingSettings {
-                reflections: true,
-                ..RayTracingSettings::SHADOWS
-            }
-        );
-        // turned off after the migration, back to the shadow maps: kept
-        let mut maps = Settings::default();
-        maps.ray_tracing.enabled = false;
-        assert!(!maps.sanitized().ray_tracing.enabled);
+        assert_eq!(by_hand.sanitized().ray_tracing, RayTracingSettings::SHADOWS);
+        // nothing traced by default, and the warning of Deluxe (RT) not seen
+        let d = Settings::default();
+        assert_eq!(d.ray_tracing, RayTracingSettings::OFF);
+        assert!(!d.deluxe_rt_warned);
     }
 
     #[test]
@@ -6401,7 +6409,10 @@ mod tests {
             old.blend_order = Settings::default().blend_order;
             let read = old.sanitized();
             assert_eq!(read.blend_order, order, "{level:?}");
-            assert_eq!(Preset::matching(&read), Some(level));
+            // (Deluxe (RT)'s values in a file of then: its ray tracing goes
+            // off once with version 46, which leaves High's)
+            let shown = if level == Preset::Deluxe { Preset::High } else { level };
+            assert_eq!(Preset::matching(&read), Some(shown));
             // and the level itself, chosen now
             let mut new = Settings::default();
             level.apply(&mut new);
