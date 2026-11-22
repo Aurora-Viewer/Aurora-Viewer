@@ -16,9 +16,15 @@
 //! it is under the pointer or something asked for a focus during the pass
 //! (`Memory::request_focus`, whose only trace outside egui is the IME
 //! interrupt it requests). To be removed once egui is fixed.
+//!
+//! A window of the interface outside the viewer's (outside.rs) has a pass
+//! of its own, inside the viewer's, and egui runs the output hook once that
+//! pass is over: the focus `Memory` gives then is the viewer's own
+//! window's. What such a window surrenders is taken when its next pass
+//! begins, before any of its widgets runs.
 
 use egui::output::IMEOutput;
-use egui::{Context, FullOutput, IMEPurpose, Id, Rect, SurrenderFocusOn, Ui};
+use egui::{Context, FullOutput, IMEPurpose, Id, Rect, SurrenderFocusOn, Ui, ViewportId};
 
 /// Installs the plugin on `ctx` (once: egui keeps one plugin per type).
 pub fn install(ctx: &Context) {
@@ -36,6 +42,11 @@ struct ClickAwayFocus {
     /// The IME output put in so that egui reports a focus request of the
     /// pass, to take out again.
     probe: bool,
+    /// The window whose pass decided `surrender`.
+    window: ViewportId,
+    /// What the windows outside the viewer's surrender, each at its next
+    /// pass.
+    later: Vec<(ViewportId, Id)>,
 }
 
 impl egui::Plugin for ClickAwayFocus {
@@ -53,6 +64,13 @@ impl egui::Plugin for ClickAwayFocus {
         });
         self.surrender = None;
         self.probe = false;
+        let window = ui.ctx().viewport_id();
+        self.later.retain(|(of, id)| {
+            if *of == window {
+                ui.ctx().memory_mut(|m| m.surrender_focus(*id));
+            }
+            *of != window
+        });
     }
 
     fn on_end_pass(&mut self, ui: &mut Ui) {
@@ -70,6 +88,7 @@ impl egui::Plugin for ClickAwayFocus {
             return;
         }
         self.surrender = Some(focused);
+        self.window = ctx.viewport_id();
         // egui only reports the focus requests of the pass in an IME output
         ctx.output_mut(|o| {
             if o.ime.is_none() {
@@ -96,8 +115,17 @@ impl egui::Plugin for ClickAwayFocus {
         if std::mem::take(&mut self.probe) {
             output.platform_output.ime = None;
         }
-        if !requested {
+        if requested {
+            return;
+        }
+        if self.window == ctx.viewport_id() {
             ctx.memory_mut(|m| m.surrender_focus(id));
+        } else {
+            // (a window closed before its next pass leaves an entry behind:
+            // one per window at most, its field gone with it)
+            self.later.retain(|(of, _)| *of != self.window);
+            self.later.push((self.window, id));
+            ctx.request_repaint_of(self.window);
         }
     }
 }
@@ -214,5 +242,123 @@ mod tests {
         assert!(b.focused(), "a click on the field keeps it");
         // egui's own surrender stays off
         assert_eq!(b.ctx.options(|o| o.input_options.surrender_focus_on), egui::SurrenderFocusOn::Never);
+    }
+
+    /// A field and a button in a window outside the viewer's, whose pass
+    /// runs inside the viewer's as `outside::pass` runs it; the button
+    /// gives the focus back to the field when `back`.
+    struct Outside {
+        ctx: Context,
+        window: egui::ViewportId,
+        field: Id,
+        events: std::rc::Rc<std::cell::RefCell<Vec<Event>>>,
+        back: bool,
+    }
+
+    impl Outside {
+        fn new(back: bool) -> Self {
+            let ctx = Context::default();
+            super::install(&ctx);
+            ctx.set_embed_viewports(false);
+            let events: std::rc::Rc<std::cell::RefCell<Vec<Event>>> = Default::default();
+            let for_pass = events.clone();
+            Context::set_immediate_viewport_renderer(move |ctx, viewport| {
+                let egui::ImmediateViewport {
+                    ids, mut viewport_ui_cb, ..
+                } = viewport;
+                let info = egui::ViewportInfo {
+                    parent: Some(ids.parent),
+                    ..Default::default()
+                };
+                let input = RawInput {
+                    viewport_id: ids.this,
+                    viewports: std::iter::once((ids.this, info)).collect(),
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))),
+                    events: std::mem::take(&mut *for_pass.borrow_mut()),
+                    ..Default::default()
+                };
+                let mut out = ctx.run_ui(input, |ui| viewport_ui_cb(ui));
+                out.textures_delta.clear();
+            });
+            let mut outside = Outside {
+                ctx,
+                window: egui::ViewportId::from_hash_of("click_away_outside"),
+                field: Id::unique("click_away_outside_field"),
+                events,
+                back,
+            };
+            outside.frame(Vec::new());
+            let field = outside.field;
+            outside.in_window(move |ui| ui.ctx().memory_mut(|m| m.request_focus(field)));
+            assert!(outside.focused());
+            outside
+        }
+
+        /// A frame of the viewer: a field of its own, then the window
+        /// outside, `extra` run in it after its widgets.
+        fn frame_with(&mut self, events: Vec<Event>, extra: impl Fn(&mut egui::Ui)) {
+            *self.events.borrow_mut() = events;
+            let (window, field, back) = (self.window, self.field, self.back);
+            let mut out = self.ctx.run_ui(RawInput::default(), |ui| {
+                ui.label("inside");
+                ui.ctx().show_viewport_immediate(window, egui::ViewportBuilder::default(), |ui, _| {
+                    let mut text = String::from("hello");
+                    ui.add(TextEdit::singleline(&mut text).id(field));
+                    ui.add_space(100.0);
+                    if ui.button("Bold").clicked() && back {
+                        ui.ctx().memory_mut(|m| m.request_focus(field));
+                    }
+                    extra(ui);
+                });
+            });
+            out.textures_delta.clear();
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            self.frame_with(events, |_| {});
+        }
+
+        fn in_window(&mut self, extra: impl Fn(&mut egui::Ui)) {
+            self.frame_with(Vec::new(), extra);
+        }
+
+        fn click(&mut self, at: Pos2) {
+            let press = |pressed| Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![Event::PointerMoved(at), press(true)]);
+            self.frame(vec![press(false)]);
+        }
+
+        /// The field has the focus of its window, read in that window.
+        fn focused(&mut self) -> bool {
+            let seen = std::cell::Cell::new(false);
+            let field = self.field;
+            self.in_window(|ui| seen.set(ui.ctx().memory(|m| m.has_focus(field))));
+            seen.get()
+        }
+    }
+
+    /// The field of a window outside the viewer's loses the focus to a
+    /// click elsewhere in that window (the web browser's address kept the
+    /// keys typed after its page was clicked), and keeps it when the widget
+    /// clicked gives it back.
+    #[test]
+    fn a_click_elsewhere_takes_the_focus_in_a_window_outside_too() {
+        let mut o = Outside::new(false);
+        o.click(BUTTON);
+        assert!(!o.focused(), "the click away took the focus");
+        // the viewer's own window has no focus to lose, and none appeared
+        assert_eq!(o.ctx.memory(|m| m.focused()), None);
+        let mut o = Outside::new(true);
+        o.click(BUTTON);
+        assert!(o.focused(), "the button gave the focus back");
+        let mut o = Outside::new(false);
+        let field = pos2(40.0, 15.0);
+        o.click(field);
+        assert!(o.focused(), "a click on the field keeps it");
     }
 }
