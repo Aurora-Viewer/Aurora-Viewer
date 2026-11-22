@@ -37,11 +37,12 @@
 // (rt_history.wgsl `light_changed`) the history holds a few frames, so a
 // lamp switched on has its shadows at once.
 // The sun's soft shadow shares this history: `cs_lights_reuse` averages
-// the sun's ray of each frame (rt_shadows.wgsl) beside the share, and where
-// a shadow moved off a still surface (a walking avatar's, off the floor)
-// keeps the history within what this frame's rays found around the pixel,
-// as AMD's FidelityFX shadow denoiser does, so the floor clears at once
-// instead of holding a trail. The colour the glass gives the sun
+// the sun's ray of each frame (rt_shadows.wgsl) beside the share. Where a
+// shadow moved off a still surface (a walking avatar's, off the floor) or
+// onto it, the sun's history and the share's are kept within what this
+// frame's rays found around the pixel, as AMD's FidelityFX shadow denoiser
+// does (`lamp_range`), so the floor clears at once instead of holding a
+// trail. The colour the glass gives the sun
 // (rt_shadows.wgsl `out_glass`, its ray as noisy as the shadow's) is
 // averaged the same way beside it (`glass_history`), then over the rays
 // that arrived (`glass_of`).
@@ -150,7 +151,7 @@ fn neighbours() -> u32 {
     return min(u32(params.tuning.z), NEIGHBOURS);
 }
 // How far around a pixel (pixels each way) this frame's sun rays bound its
-// history.
+// history, and the lamps' rays the share's (`lamp_range`).
 const SUN_RANGE: i32 = 2;
 // A light's radius (m): its prim's, within these. The Legacy Viewer's point
 // lights cast no shadow: the size is this pass's own, a lamp's bulb at
@@ -964,10 +965,31 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
             kept = min(kept, params.changes.z);
         }
         frames = min(h.a + 1.0, kept);
-        share = mix(h.r, sample, 1.0 / frames);
+        var was_share = h.r;
+        var was_tint = vec3<f32>(0.0);
+        if (tinted) {
+            was_tint = textureLoad(prev_tint, back.xy, 0).rgb;
+        }
+        if (total > 0.0 && abs(was_share - sample) > 0.002) {
+            // a history this frame's rays disagree with, as the sun's below:
+            // a penumbra's mixed rays (or the rays of lights that differ
+            // there) leave it be, rays that all agree around the pixel (the
+            // shadow of an avatar going by on a still wall, a still floor)
+            // bring it and its tint to them at once, and its length down by
+            // as much (2026-11-22, grid report of beta10: the own avatar's
+            // shadow from a street lamp trailed across a wall)
+            let range = lamp_range(pixel, size);
+            if (range.lo.w <= range.hi.w) {
+                let within = clamp(was_share, range.lo.w, range.hi.w);
+                frames = max(frames * (1.0 - abs(within - was_share)), 1.0);
+                was_share = within;
+                was_tint = clamp(was_tint, range.lo.rgb, range.hi.rgb);
+            }
+        }
+        share = mix(was_share, sample, 1.0 / frames);
         moment = mix(textureLoad(prev_guide, back.xy, 0).w, moment, 1.0 / frames);
         if (tinted) {
-            tint = mix(textureLoad(prev_tint, back.xy, 0).rgb, tint, 1.0 / frames);
+            tint = mix(was_tint, tint, 1.0 / frames);
         }
 
         var was = h.g;
@@ -1007,6 +1029,41 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     if (tinted) {
         textureStore(out_tint, pixel, vec4<f32>(tint, 0.0));
     }
+}
+
+// What this frame's lamp rays found around `pixel` (`SUN_RANGE` each way,
+// every other pixel of the square, as the sun's): the least and the most of
+// what arrived of their lights' red, green and blue (0 for a ray stopped,
+// what the glass left of it otherwise), and of its luminance in `w`. A
+// pixel no light was drawn at counts for nothing; `lo.w > hi.w` when none
+// was. A pixel's share and tint weigh rays from as far as `REUSE_RADIUS`
+// (`cs_lights_reuse`): these bounds pull its history only towards what the
+// rays nearest it found.
+struct LampRange {
+    lo: vec4<f32>,
+    hi: vec4<f32>,
+};
+
+fn lamp_range(pixel: vec2<i32>, size: vec2<i32>) -> LampRange {
+    var lo = vec4<f32>(1.0e9);
+    var hi = vec4<f32>(-1.0e9);
+    for (var y = -SUN_RANGE; y <= SUN_RANGE; y++) {
+        for (var x = -SUN_RANGE; x <= SUN_RANGE; x++) {
+            if (((x + y) & 1) != 0) {
+                continue;
+            }
+            let q = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
+            let m = textureLoad(mid, q, 0);
+            if ((m.x & MID_DRAWN) == 0u) {
+                continue;
+            }
+            let rgb = select(vec3<f32>(0.0), unpack4x8unorm(m.z).xyz, (m.x & MID_SEEN) != 0u);
+            let v = vec4<f32>(rgb, dot(rgb, LUMA));
+            lo = min(lo, v);
+            hi = max(hi, v);
+        }
+    }
+    return LampRange(lo, hi);
 }
 
 // Last frame's glass history where `pixel`'s surface stood, read between
