@@ -42,6 +42,15 @@ fn searchable_name(i: &TaskItem) -> String {
     name
 }
 
+/// Whether an item passes the Contents filter, `filter` already trimmed and
+/// in capitals. The Legacy Viewer's Contents tab filters with the
+/// inventory's LLInventoryFilter (LLPanelContents::onFilterEdit,
+/// llpanelcontents.cpp), so the same text rules apply: `a+b` needs every
+/// term, `"word"` a whole word (#4419).
+fn passes_filter(i: &TaskItem, filter: &str) -> bool {
+    filter.is_empty() || crate::ui::inventory::view::matches_text(&searchable_name(i).to_uppercase(), filter)
+}
+
 /// "Contents (N items)".
 fn root_label(n: usize) -> String {
     aurora_i18n::tr!("contents-count", count = n)
@@ -146,7 +155,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let mut list: Vec<&TaskItem> = items
         .iter()
         .filter(|i| filters.matches(i))
-        .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
+        .filter(|i| passes_filter(i, &filter))
         .collect();
     list.sort_by_key(|i| crate::natural_order::key(&i.name));
     tool.ui
@@ -563,5 +572,30 @@ mod tests {
         };
         assert_eq!(display_name(&i), aurora_i18n::tr!("common-new-script"));
         assert!(searchable_name(&i).contains(aurora_i18n::tr!("build-ui-contents-no-transfer")));
+    }
+
+    /// #4419: `+` separates terms that must all be in the name, with other
+    /// words between them, and `"word"` matches a whole word, as in the
+    /// inventory search; the restriction tags stay searchable.
+    #[test]
+    fn the_filter_takes_plus_terms_and_whole_words() {
+        let i = TaskItem {
+            name: "Avani Witham Collection, Full Set Arranged".into(),
+            owner_mask: perm::COPY | perm::MODIFY,
+            ..Default::default()
+        };
+        let passes = |text: &str| passes_filter(&i, &text.trim().to_uppercase());
+        assert!(passes(""));
+        assert!(passes("witham"));
+        assert!(passes("witham+full"));
+        assert!(passes("full+witham"));
+        assert!(passes("witham + full"));
+        assert!(!passes("witham+missing"));
+        assert!(passes("\"set\""));
+        assert!(!passes("\"arrange\""));
+        assert!(passes("arrange"));
+        let tag = aurora_i18n::tr!("build-ui-contents-no-transfer");
+        let tag_word = tag.trim().trim_matches(|c: char| !c.is_alphanumeric());
+        assert!(passes(&format!("witham+{tag_word}")));
     }
 }

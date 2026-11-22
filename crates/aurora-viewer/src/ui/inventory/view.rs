@@ -1334,7 +1334,10 @@ fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
         .then_with(|| a.id.cmp(&b.id))
 }
 
-fn matches_text(value: &str, query: &str) -> bool {
+/// The Legacy Viewer's filter text (LLInventoryFilter::setFilterSubString,
+/// checkAgainstFilterSubString): `a+b` needs every term, `"word"` a whole
+/// word. Also the object Contents filter's (`build::ui::contents`).
+pub(crate) fn matches_text(value: &str, query: &str) -> bool {
     if let Some(exact) = query.strip_prefix('"').and_then(|q| q.strip_suffix('"')) {
         return value.split_whitespace().any(|word| word == exact);
     }
