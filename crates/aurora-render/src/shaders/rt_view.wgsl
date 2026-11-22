@@ -107,6 +107,53 @@ fn ray_origin(world: vec3<f32>, n: vec3<f32>, dist: f32) -> vec3<f32> {
     return world + off * (0.01 + 0.002 * dist);
 }
 
+// How far along a ray from a pixel the layers lying on its surface reach
+// (m): from where the ray rises above it as high as common.wgsl
+// `layer_on_surface` holds a layer to be on the surface. `flat` is the
+// surface's normal, `dist` its distance from the eye.
+// - A lamp's ray (rt_lights.wgsl `pane_passes`): a blended layer takes
+//   this surface's share of the lamps (common.wgsl `local_traced`), so
+//   with its own glass in it a sea's foam on the sand went dark in its own
+//   shadow (2026-11-22, grid report of beta6). Its shadow on the surface
+//   under it is left with it: the Legacy Viewer shadows no point light.
+// - The sun's (rt_shadows.wgsl, `lies_on`): a layer lying on the surface
+//   casts nothing on it, as in the shadow maps, whose biases leave out
+//   what lies that near a surface (common.wgsl `cascade_shadow`: the
+//   normal offset, two texels along the light, the slope bias of the
+//   shadow pipelines; the Legacy Viewer's RenderShadowOffset and
+//   RenderShadowBias, shadowUtil.glsl `sampleDirectionalShadow` and
+//   `pcfShadow`). The stacked layers of a sea's waves cast brown patches
+//   on the sand where the maps show none (2026-11-22, grid report of
+//   beta7).
+fn lying_on(flat: vec3<f32>, dir: vec3<f32>, dist: f32) -> f32 {
+    let height = 2.0 * max(LAYER_REACH, 0.01 * dist);
+    let rise = dot(flat, dir);
+    // (a ray into the surface meets its opaque side first)
+    return select(height / rise, 0.0, rise <= 0.0);
+}
+
+// common.wgsl `SCREEN_LAYER_REACH`.
+const LAYER_REACH: f32 = 0.03;
+
+// Whether candidate `c` of a sun ray from a pixel whose surface's normal
+// is `flat` is a layer lying on that surface: met within `lying`
+// (`lying_on`) and turned as the surface (within about 25°), as the sheets
+// of a sea's waves and foam over the sand. A wall or a plant rising from
+// the surface is not, and casts. Only the alpha-masked and blended faces
+// come here (the traversal commits the opaque ones itself): an opaque
+// sheet lying on a surface still casts.
+fn lies_on(c: RayIntersection, posed: bool, dir: vec3<f32>, flat: vec3<f32>, lying: f32) -> bool {
+    if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE || c.t >= lying) {
+        return false;
+    }
+    let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+    let s = surface_at(h.record, h.primitive, c.barycentrics, dir);
+    return abs(dot(s.normal, flat)) > LAYER_TURN;
+}
+
+// The cosine of the most a layer lying on a surface may be turned from it.
+const LAYER_TURN: f32 = 0.9;
+
 // Two numbers in [0, 1) for a pixel's point on a light's disc this frame
 // (rt_shadows.wgsl's sun, rt_lights.wgsl's lamps): a sequence that fills
 // the disc evenly from frame to frame (two of R3's three, Roberts 2018:

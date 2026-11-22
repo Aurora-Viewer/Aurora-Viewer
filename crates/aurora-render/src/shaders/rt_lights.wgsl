@@ -420,25 +420,6 @@ fn glass_along(origin: vec3<f32>, dir: vec3<f32>, far: f32, own: f32, posed: boo
     return through;
 }
 
-// How far along a lamp's ray from a pixel the blended layers lying on its
-// surface reach (m): from where the ray rises above it as high as
-// common.wgsl `layer_on_surface` holds a layer to be on the surface. Such
-// a layer takes this surface's share of the lamps (common.wgsl
-// `local_traced`), so with its own glass in it a sea's foam on the sand
-// went dark in its own shadow (2026-11-22, grid report of beta6). Its
-// shadow on the surface under it is left with it: the Legacy Viewer
-// shadows no point light at all. `flat` is the surface's normal, `dist`
-// its distance from the eye.
-fn lying_on(flat: vec3<f32>, dir: vec3<f32>, dist: f32) -> f32 {
-    let height = 2.0 * max(LAYER_REACH, 0.01 * dist);
-    let rise = dot(flat, dir);
-    // (a ray into the surface meets its opaque side first)
-    return select(height / rise, 0.0, rise <= 0.0);
-}
-
-// common.wgsl `SCREEN_LAYER_REACH`.
-const LAYER_REACH: f32 = 0.03;
-
 // `glass_passes`, 1 for a pane of the light's own prim (`own`) and for one
 // nearer than `lying` (`lying_on`).
 fn pane_passes(c: RayIntersection, posed: bool, dir: vec3<f32>, own: f32, lying: f32) -> vec3<f32> {

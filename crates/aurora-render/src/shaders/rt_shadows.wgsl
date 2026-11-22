@@ -90,12 +90,17 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     let flags = select(SHADOW_CULL, RAY_FLAG_NONE, curved) | RAY_FLAG_TERMINATE_ON_FIRST_HIT
         | select(RAY_FLAG_NONE, RAY_FLAG_FORCE_NO_OPAQUE, curved);
     let ray = RayDesc(flags, SOLID, 0.0, params.mode.z, origin, dir);
+    // the masked and blended layers lying on the pixel's surface cast
+    // nothing on it, as in the shadow maps (rt_view.wgsl `lies_on`); none
+    // for a curved pixel, turned from the sun
+    let lying = lying_on(n, dir, dist);
     var shadow = 0.0;
     // (one query for both levels: a pass pays for each query it holds)
     var rq: ray_query;
     rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
-        if (shadows(rayQueryGetCandidateIntersection(&rq), false, dir, curved)) {
+        let c = rayQueryGetCandidateIntersection(&rq);
+        if (!lies_on(c, false, dir, n, lying) && shadows(c, false, dir, curved)) {
             rayQueryConfirmIntersection(&rq);
         }
     }
@@ -104,7 +109,8 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     } else if (params.mode.w > 0.5) {
         rayQueryInitialize(&rq, posed_tlas, ray);
         while (rayQueryProceed(&rq)) {
-            if (shadows(rayQueryGetCandidateIntersection(&rq), true, dir, curved)) {
+            let c = rayQueryGetCandidateIntersection(&rq);
+            if (!lies_on(c, true, dir, n, lying) && shadows(c, true, dir, curved)) {
                 rayQueryConfirmIntersection(&rq);
             }
         }
@@ -119,14 +125,20 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
         let pane = RayDesc(SHADOW_CULL, GLASS, 0.0, params.mode.z, origin, dir);
         rayQueryInitialize(&rq, scene_tlas, pane);
         while (rayQueryProceed(&rq)) {
-            glass *= glass_passes(rayQueryGetCandidateIntersection(&rq), false, dir);
+            let c = rayQueryGetCandidateIntersection(&rq);
+            if (!lies_on(c, false, dir, n, lying)) {
+                glass *= glass_passes(c, false, dir);
+            }
         }
         // the moving faces are the posed level's (a pane being carried);
         // worn glass is not traced yet
         if (params.mode.w > 0.5) {
             rayQueryInitialize(&rq, posed_tlas, pane);
             while (rayQueryProceed(&rq)) {
-                glass *= glass_passes(rayQueryGetCandidateIntersection(&rq), true, dir);
+                let c = rayQueryGetCandidateIntersection(&rq);
+                if (!lies_on(c, true, dir, n, lying)) {
+                    glass *= glass_passes(c, true, dir);
+                }
             }
         }
     }
