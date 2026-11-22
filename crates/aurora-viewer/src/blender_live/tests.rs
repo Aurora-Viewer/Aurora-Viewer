@@ -869,6 +869,13 @@ fn blender_live_cards_tabs_and_import_follow_the_selection() {
         }
         frame(live, can_upload, vec![])
     }
+    // Hide all, then Show all
+    let hide = positions(&out, aurora_i18n::tr!("blender-live-hide-all"))[0];
+    let out = press(&mut frame, &mut live, true, hide);
+    assert!(sources.iter().all(|id| live.state(*id) == SourceState::Hidden));
+    let show = positions(&out, aurora_i18n::tr!("blender-live-show-all"))[0];
+    let out = press(&mut frame, &mut live, true, show);
+    assert!(sources.iter().all(|id| live.state(*id) == SourceState::Visible));
     // a card's name selects its object
     let other = positions(&out, "Other garment")[0];
     press(&mut frame, &mut live, true, other);
@@ -1261,4 +1268,32 @@ fn blender_lods_transport_negotiates_ignores_stale_results_and_keeps_live_revisi
     assert_eq!(exchange(&serde_json::to_vec(&next).expect("snapshot"))["revision"], 2);
     assert_eq!(shared.status.lock().received, 2);
     drop(owner);
+}
+
+/// A card's time moves only for the object a revision changed.
+#[test]
+fn blender_live_change_times_follow_each_source() {
+    let mut value = static_triangle();
+    let mut other = value["meshes"][0].clone();
+    other["name"] = "Other part".into();
+    value["meshes"].as_array_mut().expect("meshes").push(other);
+    let mut live = Live::default();
+    live.receive(prepare(&value).expect("two sources"));
+    let ids: Vec<_> = live.snapshot.as_ref().expect("snapshot").sources.iter().map(|s| s.id).collect();
+    let first: Vec<_> = ids.iter().map(|id| live.changed[id]).collect();
+    assert!(live.received_at.is_some());
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    // the same geometry again: no change
+    value["revision"] = 2.into();
+    live.receive(prepare(&value).expect("same"));
+    assert_eq!(ids.iter().map(|id| live.changed[id]).collect::<Vec<_>>(), first);
+    // the second object moves a vertex
+    value["revision"] = 3.into();
+    value["meshes"][1]["faces"][0]["vertices"][0]["position"][0] = 0.25.into();
+    live.receive(prepare(&value).expect("edited"));
+    assert_eq!(live.changed[&ids[0]], first[0], "the untouched object keeps its time");
+    assert_ne!(live.changed[&ids[1]].0, first[1].0, "the edited object has a new digest");
+    assert!(live.changed[&ids[1]].1 > first[1].1, "and a new time");
+    live.stop();
+    assert!(live.changed.is_empty() && live.received_at.is_none(), "Stop forgets the times");
 }

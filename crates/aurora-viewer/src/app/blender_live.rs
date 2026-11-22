@@ -109,6 +109,12 @@ impl App {
     }
 
     pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
+        // the Avatar tab's bend shows on our avatar while the preview runs
+        self.scene.preview_bend = if self.blender_live.running() {
+            self.blender_live.bend
+        } else {
+            Default::default()
+        };
         self.blender_live.capture_placements(&mut self.world);
         if let Some((source, action)) = self.blender_live.object_action.take() {
             let source = if matches!(

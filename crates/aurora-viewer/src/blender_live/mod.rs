@@ -121,6 +121,12 @@ pub struct Live {
     pub next_local_id: u32,
     pub attach_choices: Vec<(u8, bool, String)>,
     pub placement_dirty: HashSet<Uuid>,
+    /// The Avatar tab's elbow and knee bend, while the preview runs.
+    pub bend: crate::scene::anim::PreviewBend,
+    /// When each source last changed (`PreparedSource::digest`), and when
+    /// the last snapshot came: the cards' and the status line's times.
+    pub changed: HashMap<Uuid, (u64, std::time::Instant)>,
+    pub received_at: Option<std::time::Instant>,
 }
 impl Default for Live {
     fn default() -> Self {
@@ -158,6 +164,9 @@ impl Default for Live {
             next_local_id: 1,
             attach_choices: Vec::new(),
             placement_dirty: HashSet::new(),
+            bend: Default::default(),
+            changed: HashMap::new(),
+            received_at: None,
         }
     }
 }
@@ -198,6 +207,18 @@ impl Live {
 
     pub fn receive(&mut self, snapshot: protocol::Prepared) -> Option<protocol::Prepared> {
         self.states.retain(|id, _| snapshot.sources.iter().any(|source| source.id == *id));
+        let now = std::time::Instant::now();
+        self.received_at = Some(now);
+        self.changed.retain(|id, _| snapshot.sources.iter().any(|source| source.id == *id));
+        for source in &snapshot.sources {
+            match self.changed.get_mut(&source.id) {
+                Some(entry) if entry.0 == source.digest => {}
+                Some(entry) => *entry = (source.digest, now),
+                None => {
+                    self.changed.insert(source.id, (source.digest, now));
+                }
+            }
+        }
         // Pausing a Blender entry temporarily omits it from the wire. Keep a
         // bounded session history so resuming cannot rez a detached source.
         self.placements
@@ -315,6 +336,8 @@ impl Live {
 
     pub fn stop(&mut self) {
         self.import = Default::default();
+        self.received_at = None;
+        self.changed.clear();
         self.start_requested = false;
         self.server = None;
         self.clear = true;

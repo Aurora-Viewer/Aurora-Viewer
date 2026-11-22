@@ -231,20 +231,30 @@ off on each viewer launch, and changing accounts stops it.
 ## Manage objects and upload in Aurora
 
 Aurora's **Build → LiveMesh** window follows the Director's layout: a status
-line (link, revision, **Enable preview** or **Stop and remove**) above five
-tabs.
+line (link, revision, time since the last snapshot, **Enable preview** or
+**Stop and remove**) above five tabs.
 
 - **Objects**: one card per source object, by its Blender name, even if it
   spans several render batches. The line under the name says whether it is
   static or rigged (a **Rigged** tag), its prims and its triangles. A linkset's
-  card unfolds to its prims (`#2 · Frame`). Clicking a name selects the
-  object; the **…** menu imports it or opens **Place**. The folded
+  card unfolds to its prims (`#2 · Frame`). On the right, the time since
+  Blender last changed that object (teal for the first five seconds): a
+  revision that leaves an object as it was does not reset its time.
+  Clicking a name selects the object; the **…** menu imports it or opens
+  **Place**. **Show all** and **Hide all** act on every object not removed. The folded
   **Connection** section holds the port, the loopback address and **Remove
   meshes**.
 - **Place**: where the selected static object is, its placement actions, and
   its position, rotation and size.
-- **Avatar**: the shape transfer (below).
-- **Import**: the selected object frozen into the mesh importer.
+- **Avatar**: **Check the weights** bends your avatar's **Elbows** and
+  **Knees** (0–150°) on top of what it plays, or of its rest pose with
+  **Hold this pose instead of my animations**, to see how a rigged mesh in
+  progress deforms. The bend is drawn for you only, while the preview runs:
+  nothing is sent, and your animations, other residents' view and the import
+  are unchanged. The axes are those of the mesh importer's test bend. Then
+  the shape transfer (below).
+- **Import**: the selected object frozen into the mesh importer, with the
+  triangles of its four levels of detail once Blender has prepared them.
 - **Plugins**: the plug-in in each Blender found, and the manual ZIP.
 
 Click an object's eye to hide it temporarily; showing it again displays its

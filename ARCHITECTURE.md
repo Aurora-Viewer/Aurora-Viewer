@@ -1357,10 +1357,14 @@ Hidden/removed sources keep receiving edits, with no simulator traffic.
 The LiveMesh floater (`blender_live/ui.rs`) is built like the Director's
 window, with its widgets (`widgets::wrapping_tabs`, `collapsing`, `form_row`):
 a status line above five tabs, retained across reopening with separate scroll
-positions. Objects holds one card per source (linksets unfold to their prims)
-and the folded Connection section; Place the selected static object's
-placement; Avatar the shape transfer; Import the frozen import; Plugins the
-installation, progress, completion and manual ZIP export.
+positions. Objects holds one card per source (linksets unfold to their prims;
+each card's time comes from a per-source digest made on the transport thread,
+`PreparedSource::digest`) and the folded Connection section; Place the
+selected static object's placement; Avatar the elbow and knee bend
+(`scene::anim::PreviewBend`, applied to our avatar's local pose after the
+animations, drawn only) and the shape transfer; Import the frozen import and
+its prepared LOD triangles; Plugins the installation, progress, completion and
+manual ZIP export.
 Each source row requests its own fresh LOD bundle;
 visibility and bulk removal remain independent of import selection.
 Plugins lists detected Blender versions and installed plug-in versions, with a

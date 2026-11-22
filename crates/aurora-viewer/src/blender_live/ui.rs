@@ -53,6 +53,10 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &Palette, can_upload
     )
     .steady_size();
     floater.min_size = MIN_SIZE;
+    if live.received_at.is_some() {
+        // the "2 s ago" times move on
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+    }
     floater.show(ctx, p, &mut open, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
         // the body keeps the window's width: a long label or a row of fields
@@ -123,12 +127,16 @@ fn status(live: &mut Live, ui: &mut egui::Ui, p: &Palette) -> bool {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let mut text = egui::text::LayoutJob::default();
                 text.append(label, 0.0, egui::TextFormat::simple(egui::FontId::proportional(12.5), p.ink));
-                if let Some(revision) = live.revision {
+                let muted = egui::TextFormat::simple(egui::FontId::proportional(11.5), p.muted);
+                if let Some(revision) = live.snapshot.as_ref().map(|s| s.revision) {
                     text.append(
                         &format!("  ·  {}", aurora_i18n::tr!("blender-live-revision", revision = revision)),
                         0.0,
-                        egui::TextFormat::simple(egui::FontId::proportional(11.5), p.muted),
+                        muted.clone(),
                     );
+                }
+                if let Some(at) = live.received_at {
+                    text.append(&format!("  ·  {}", ago(at).0), 0.0, muted);
                 }
                 ui.add(egui::Label::new(text).truncate());
             });
@@ -145,6 +153,36 @@ fn status(live: &mut Live, ui: &mut egui::Ui, p: &Palette) -> bool {
         ui.colored_label(if live.import.error { p.danger } else { p.muted }, &live.import.message);
     }
     start
+}
+
+/// How long ago `at` was, as the cards and the status line write it, and
+/// whether it is fresh (under five seconds: the time shows in teal).
+fn ago(at: std::time::Instant) -> (String, bool) {
+    let seconds = at.elapsed().as_secs();
+    let text = if seconds < 60 {
+        aurora_i18n::tr!("blender-live-ago-seconds", count = seconds)
+    } else if seconds < 3600 {
+        aurora_i18n::tr!("blender-live-ago-minutes", count = seconds / 60)
+    } else {
+        aurora_i18n::tr!("blender-live-ago-hours", count = seconds / 3600)
+    };
+    (text, seconds < 5)
+}
+
+fn time_width(ui: &egui::Ui, text: &str) -> f32 {
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.0), egui::Color32::PLACEHOLDER)
+        .size()
+        .x
+}
+
+/// A card's time since its source last changed, right-aligned.
+fn ago_label(ui: &mut egui::Ui, p: &Palette, at: Option<std::time::Instant>) {
+    if let Some(at) = at {
+        let (text, fresh) = ago(at);
+        ui.label(RichText::new(text).size(11.0).color(if fresh { p.teal } else { p.muted }))
+            .on_hover_text(aurora_i18n::tr!("blender-live-changed-tip"));
+    }
 }
 
 /// The name a list gives a source: a linked prim's number, a linkset's
@@ -180,7 +218,39 @@ fn objects(live: &mut Live, ui: &mut egui::Ui, p: &Palette, can_upload: bool) {
             .count()),
         triangles = live.triangles
     );
-    list_heading(ui, p, &counts, |_| {});
+    let mut shown = None;
+    list_heading(ui, p, &counts, |ui| {
+        let any = |state| sources.iter().any(|s| live.state(s.id) == state);
+        if ui
+            .add_enabled_ui(any(SourceState::Visible), |ui| {
+                widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-hide-all"))
+            })
+            .inner
+            .clicked()
+        {
+            shown = Some(SourceState::Hidden);
+        }
+        if ui
+            .add_enabled_ui(any(SourceState::Hidden), |ui| {
+                widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-show-all"))
+            })
+            .inner
+            .clicked()
+        {
+            shown = Some(SourceState::Visible);
+        }
+    });
+    if let Some(state) = shown {
+        // removed objects stay removed
+        let kept: Vec<_> = sources
+            .iter()
+            .filter(|s| live.state(s.id) != SourceState::Removed)
+            .map(|s| s.id)
+            .collect();
+        for id in kept {
+            live.set_state(id, state);
+        }
+    }
     if sources.iter().all(|s| live.state(s.id) == SourceState::Removed) {
         note(ui, p, aurora_i18n::tr!("blender-live-empty"));
     }
@@ -203,9 +273,13 @@ fn objects(live: &mut Live, ui: &mut egui::Ui, p: &Palette, can_upload: bool) {
                     .filter(|kid| live.state(kid.source.id) != SourceState::Removed)
                     .collect();
                 let tris = triangles(source) + kids.iter().map(|kid| triangles(&kid.source)).sum::<usize>();
+                let changed = std::iter::once(source.id)
+                    .chain(kids.iter().map(|kid| kid.source.id))
+                    .filter_map(|id| live.changed.get(&id).map(|entry| entry.1))
+                    .max();
                 let open_id = ui.make_persistent_id(("blender_live_kids", source.id));
                 kids_open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(true);
-                let toggle = object_card(live, ui, p, row, tris, (!kids.is_empty()).then_some(kids_open), can_upload);
+                let toggle = object_card(live, ui, p, row, tris, changed, (!kids.is_empty()).then_some(kids_open), can_upload);
                 if toggle {
                     kids_open = !kids_open;
                     ui.ctx().data_mut(|d| d.insert_temp(open_id, kids_open));
@@ -342,6 +416,7 @@ fn object_card(
     p: &Palette,
     row: &links::Row,
     tris: usize,
+    changed: Option<std::time::Instant>,
     kids: Option<bool>,
     can_upload: bool,
 ) -> bool {
@@ -359,8 +434,9 @@ fn object_card(
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             eye(live, ui, p, source.id);
-            // the menu and the caret take their room from the right
-            let buttons = 20.0 + if kids.is_some() { 20.0 + 6.0 } else { 0.0 } + 6.0;
+            // the time, the caret and the menu take their room from the right
+            let time_w = changed.map_or(0.0, |at| time_width(ui, &ago(at).0) + 6.0);
+            let buttons = 20.0 + if kids.is_some() { 20.0 + 6.0 } else { 0.0 } + 6.0 + time_w;
             let width = ui.available_width() - buttons;
             name_block(live, ui, p, source, &display_name(row), Some((&detail, rigged)), width);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -374,6 +450,7 @@ fn object_card(
                         true,
                     );
                 }
+                ago_label(ui, p, changed);
             });
         });
     });
@@ -395,10 +472,13 @@ fn kid_card(live: &mut Live, ui: &mut egui::Ui, p: &Palette, row: &links::Row, c
                     .layout_no_wrap(tris.clone(), egui::FontId::proportional(10.5), p.muted)
                     .size()
                     .x;
-                let width = ui.available_width() - tris_w - 20.0 - 12.0;
+                let changed = live.changed.get(&source.id).map(|entry| entry.1);
+                let time_w = changed.map_or(0.0, |at| time_width(ui, &ago(at).0) + 6.0);
+                let width = ui.available_width() - tris_w - 20.0 - 12.0 - time_w;
                 name_block(live, ui, p, source, &display_name(row), None, width);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     card_menu(live, ui, p, source, can_upload);
+                    ago_label(ui, p, changed);
                     ui.label(RichText::new(tris).size(10.5).color(p.muted));
                 });
             });
@@ -590,6 +670,36 @@ fn avatar(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
     widgets::collapsing(
         ui,
         p,
+        "blender_live_bend",
+        aurora_i18n::tr!("blender-live-bend-section"),
+        true,
+        |ui| {
+            let max = crate::scene::anim::PreviewBend::MAX;
+            for (label, value) in [
+                (aurora_i18n::tr!("blender-live-elbows"), &mut live.bend.elbows),
+                (aurora_i18n::tr!("blender-live-knees"), &mut live.bend.knees),
+            ] {
+                widgets::form_row(ui, p, label, |ui| {
+                    ui.spacing_mut().slider_width = widgets::FORM_SLIDER_W;
+                    ui.add(
+                        egui::Slider::new(value, 0.0..=max)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .fixed_decimals(0)
+                            .suffix("°")
+                            .trailing_fill(true),
+                    );
+                });
+            }
+            widgets::switch_labeled(ui, p, &mut live.bend.hold, aurora_i18n::tr!("blender-live-bend-hold"));
+            if live.bend.active() && widgets::flat_button(ui, p, aurora_i18n::tr!("common-reset")).clicked() {
+                live.bend = Default::default();
+            }
+            note(ui, p, aurora_i18n::tr!("blender-live-bend-note"));
+        },
+    );
+    widgets::collapsing(
+        ui,
+        p,
         "blender_live_shape",
         aurora_i18n::tr!("blender-live-shape-section"),
         true,
@@ -654,6 +764,29 @@ fn import(live: &mut Live, ui: &mut egui::Ui, p: &Palette, can_upload: bool) {
         widgets::action_button_fit(ui, "file-upload-filled", label),
         ui.spacing().interact_size.y.max(26.0),
     );
+    widgets::collapsing(ui, p, "blender_live_levels", aurora_i18n::tr!("blender-live-levels"), true, |ui| {
+        match live.import.levels.filter(|(source, _)| Some(*source) == selected) {
+            Some((_, levels)) => {
+                let high = levels[0].max(1) as f32;
+                for (name, count) in [
+                    aurora_i18n::tr!("import-lod-high"),
+                    aurora_i18n::tr!("import-lod-medium"),
+                    aurora_i18n::tr!("import-lod-low"),
+                    aurora_i18n::tr!("import-lod-lowest"),
+                ]
+                .into_iter()
+                .zip(levels)
+                {
+                    widgets::form_row(ui, p, name, |ui| {
+                        widgets::level(ui, p, name, count as f32 / high, widgets::FORM_SLIDER_W, p.violet);
+                        ui.label(RichText::new(aurora_i18n::tr!("blender-live-triangles", triangles = count)).size(11.5));
+                    });
+                }
+            }
+            None => note(ui, p, aurora_i18n::tr!("blender-live-levels-pending")),
+        }
+        note(ui, p, aurora_i18n::tr!("blender-live-levels-note"));
+    });
     if widgets::action_button_if(
         ui,
         p,
