@@ -2514,6 +2514,13 @@ mod tests {
         }
         h.frame(vec![Event::Ime(egui::ImeEvent::Commit("demo o".into()))]);
         assert_eq!(h.st.selected, Some(id(8100)), "a new prefix after 1.5 s, from an IME commit");
+        assert_eq!(h.st.type_ahead.text, "demo o");
+
+        // LLFolderView::handleKeyHere clears the prefix after an arrow.
+        h.frame(vec![arrow(true, false)]);
+        assert_eq!(h.st.type_ahead.text, "");
+        h.frame(vec![Event::Text("tar".into())]);
+        assert_eq!(h.st.selected, Some(id(8108)), "the next prefix starts fresh");
 
         // The filter field keeps its own typing: the list does not type ahead.
         let field = h.text("Filter inventory");

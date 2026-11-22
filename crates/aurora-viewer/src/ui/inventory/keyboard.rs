@@ -38,8 +38,19 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
     };
     let selected_after_delete = delete::reconcile_selection(inv, st);
     // A click starts a new prefix, as LLFolderView::handleMouseDown clears
-    // mSearchString, even when the click gives the keyboard to another field.
-    if ui.input(|i| i.pointer.any_pressed()) {
+    // mSearchString, and so do Escape, F2, Home/End, Page Up/Down and any
+    // arrow once handled (LLFolderView::handleKeyHere), even when the click
+    // gives the keyboard to another field.
+    let cleared = ui.input(|i| {
+        i.pointer.any_pressed()
+            || i.key_pressed(egui::Key::Escape)
+            || i.key_pressed(egui::Key::F2)
+            || i.key_pressed(egui::Key::Home)
+            || i.key_pressed(egui::Key::End)
+            || i.key_pressed(egui::Key::PageUp)
+            || i.key_pressed(egui::Key::PageDown)
+    });
+    if cleared {
         st.type_ahead.text.clear();
     }
     if !clipboard::list_has_focus(ui, st) || st.rename.is_some() {
@@ -79,6 +90,11 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
             Arrow::Up | Arrow::Down => step(inv, st, filtered, arrow == Arrow::Down, shift),
             Arrow::Left | Arrow::Right => fold(inv, st, filtered, arrow == Arrow::Right),
         }
+    }
+    if navigated {
+        // LLFolderView::handleKeyHere clears the prefix after moving the
+        // selection with an arrow.
+        st.type_ahead.text.clear();
     }
     typed || navigated || selected_after_delete
 }
