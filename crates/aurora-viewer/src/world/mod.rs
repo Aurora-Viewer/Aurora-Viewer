@@ -378,6 +378,14 @@ pub struct ChatLine {
     /// How RLVa's `@shownames` left the resident who wrote the line when it
     /// arrived (`World::rlva_freeze_line`).
     pub speaker: Speaker,
+    /// Read back into a private conversation, decided when its history
+    /// loads, where the other resident is known (`peer` of
+    /// `World::history_lines` and `World::service_lines`): its sender's
+    /// name, ours included, is looked up each time it is drawn, as a live
+    /// line's (`ui::chat::log_names_resolve`, #4261). False for every other
+    /// line: the nearby chat's, a group's or a conference's history and the
+    /// History window's pages keep the name the file gives.
+    pub private_history: bool,
 }
 
 impl ChatLine {
@@ -2676,6 +2684,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
@@ -2694,6 +2703,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         self.notice_topics.note(&line, topic);
         self.conversation_push(session, line, false);
@@ -5448,6 +5458,7 @@ impl World {
             blocked: false,
             beyond_range,
             speaker,
+            private_history: false,
         });
     }
 
@@ -5544,6 +5555,7 @@ impl World {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             };
             let opened = !self.chat_log.conversations.known.contains(&im.from_agent_id);
             let (line_time, line_text) = (line.time, line.text.clone());
@@ -5662,6 +5674,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         });
     }
 
@@ -6767,6 +6780,7 @@ impl World {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let (line_time, line_text) = (line.time, line.text.clone());
         self.conversation_push(to, line, false);

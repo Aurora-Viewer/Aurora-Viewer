@@ -2943,19 +2943,25 @@ pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
     }
 }
 
-/// A line read back that still shows its resident's cached name: one of a
-/// private conversation, whose sender is known (`Origin::Log`, `ChatKind::Im`
-/// with a source). Every other history line keeps the file's name.
+/// A line read back whose sender's name is looked up each time it is drawn,
+/// as a live line's: one of a private conversation's history
+/// (`ChatLine::private_history`, decided when the history loads, where the
+/// other resident is known), the other resident's or ours. Both sides
+/// resolve when drawn, so a name option changed while the conversation is
+/// open renames them together. Every other history line keeps the file's
+/// name: the nearby chat's, a group's or a conference's (whose members'
+/// names may be cached too, so the line alone cannot tell) and the History
+/// window's.
 pub(crate) fn log_names_resolve(line: &crate::world::ChatLine) -> bool {
-    line.origin == Origin::Log && line.kind == ChatKind::Im && !line.source.is_nil()
+    line.origin == Origin::Log && line.private_history
 }
 
 /// The name a line gives its sender
 /// (FSChatHistoryHeader): the display name looked up, mine, else the name
 /// the line came with. A line read back from a transcript keeps the name
-/// the file gives it (but for a resident's line in a private conversation,
-/// which shows their cached name, and our own lines there, which load with
-/// ours: `World::private_log_name`), under RLVa's `@shownames` and `@showloc` too:
+/// the file gives it (but for a private conversation's, whose names are
+/// looked up as the live lines': `log_names_resolve`), under RLVa's
+/// `@shownames` and `@showloc` too:
 /// FSChatHistory::appendMessage (indra/newview/fschathistory.cpp) writes
 /// `mFromName` as it is for a `message_from_log`, and nothing sets
 /// `mRlvNamesFiltered` on it (`ChatLine::wording`).
@@ -2966,13 +2972,12 @@ pub(crate) fn log_names_resolve(line: &crate::world::ChatLine) -> bool {
 /// and an object the name it was given then, whatever the restriction
 /// became since (FSChatHistory::appendMessage writes `chat.mFromName` once).
 pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
-    // A line read back keeps the file's name, except a resident's in a
-    // private conversation: their cached display name, as their live lines
-    // show (Roster scope, which `@shownames` never hides). An uncached name
-    // is queued by `get_in` and shown as written until it arrives. Our own
-    // lines are renamed when they load (`World::private_log_name`).
-    let log_resolved = log_names_resolve(line);
-    if (line.origin != Origin::Live && !log_resolved) || line.anonymous() {
+    // A line read back keeps the file's name, except in a private
+    // conversation: the cached name, theirs or ours, as the live lines show
+    // (Roster scope, which `@shownames` never hides). An uncached name is
+    // queued by `get_in` and shown as written until it arrives.
+    let logged = line.origin != Origin::Live;
+    if (logged && !log_names_resolve(line)) || line.anonymous() {
         return line.from.clone();
     }
     let own = line.kind.is_own();
@@ -2985,7 +2990,8 @@ pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::Ch
     };
     match cached {
         Some(n) => n.display(&names.options),
-        None if own => own_name.to_owned(),
+        // (one of our history lines: the file's name, as `draw_line`)
+        None if own && !logged => own_name.to_owned(),
         None => line.from.clone(),
     }
 }
@@ -3655,8 +3661,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let (p, world) = (env.p, env.world);
     ui.spacing_mut().item_spacing.y = 2.0;
     let w = ui.available_width();
-    // history lines: greyed, their name as written (message_from_log); their
-    // sender, when its name was cached, gives the picture and the profile
+    // history lines: greyed, their name as written (message_from_log) but
+    // in a private conversation (`log_names_resolve`); their sender, when
+    // its name was cached, gives the picture and the profile
     let logged = line.origin != Origin::Live;
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
     if let Some((year, month, day)) = look.marker {
@@ -3731,6 +3738,12 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     };
     if look.header {
         ui.add_space(6.0);
+        // A history line's header names its sender without the " - username"
+        // a live header adds, a private conversation's resolved name too:
+        // history is a record, and the short form keeps it readable. The
+        // Legacy Viewer's history header shows no user name either
+        // (FSChatHistoryHeader::setup cuts " (username)" from a
+        // CHAT_STYLE_HISTORY line's name, fschathistory.cpp).
         let username = cached.filter(|_| !logged).and_then(|n| n.chat_username(&names.options));
         egui::Frame::new()
             .fill(p.raised.gamma_multiply(0.55))
@@ -6887,6 +6900,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
             line_job(
@@ -6973,6 +6987,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let id = uuid::Uuid::from_u128;
         assert_eq!(
@@ -7010,6 +7025,7 @@ mod tests {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             });
         }
         let ctx = egui::Context::default();
@@ -7800,6 +7816,7 @@ mod tests {
                 blocked: false,
                 beyond_range: false,
                 speaker: Default::default(),
+                private_history: false,
             });
             world.chat_clock.pushed_back();
         }

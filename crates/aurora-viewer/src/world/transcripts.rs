@@ -604,30 +604,14 @@ impl World {
             .any(|(first, last)| !first.trim().is_empty() && legacy == bare(&format!("{first} {last}")))
     }
 
-    /// The name of one of our own lines read back in a private
-    /// conversation: our cached display name, as the live lines show
-    /// (`NameScope::Roster`, which `@shownames` never hides), else the one
-    /// the file gives. The nearby chat's and a group's own lines keep the
-    /// file's name, like the Legacy Viewer's history (`message_from_log`).
-    /// Resolved once, when the conversation loads its history: a name not
-    /// cached yet then, or display names switched while it is open, leave
-    /// these lines as they were loaded.
-    pub(crate) fn private_log_name(&self, kind: ChatKind, peer: Option<Uuid>, from: String) -> String {
-        let names = &self.social.avatar_names;
-        match (kind, peer) {
-            (ChatKind::Own(_), Some(_)) => names
-                .get_in(NameScope::Roster, &self.agent_id)
-                .map_or(from, |n| n.display(&names.options)),
-            _ => from,
-        }
-    }
-
     /// The lines of a transcript's end as conversation lines
     /// (addMessagesFromHistoryCache). A line without a date takes the time
     /// of the one before. `keep_all`: one line per entry, the empty ones
     /// too (the History window counts them). `peer`: the other resident of
     /// a private conversation, the sender of its lines whose name is not
-    /// cached (a group's or the nearby chat's stay unknown then).
+    /// cached (a group's or the nearby chat's stay unknown then); its lines
+    /// are `ChatLine::private_history`, whose names are looked up when they
+    /// are drawn. Every line keeps the name the file gives in `from`.
     pub fn history_lines(&self, entries: Vec<Entry>, nearby: bool, keep_all: bool, peer: Option<Uuid>) -> Vec<ChatLine> {
         let own = self.own_log_names();
         let names = &self.social.avatar_names;
@@ -658,11 +642,7 @@ impl World {
                 };
                 ChatLine {
                     time: last,
-                    from: if kind == ChatKind::System {
-                        String::new()
-                    } else {
-                        self.private_log_name(kind, peer, e.from)
-                    },
+                    from: if kind == ChatKind::System { String::new() } else { e.from },
                     text: e.text,
                     kind,
                     source,
@@ -670,6 +650,7 @@ impl World {
                     blocked: false,
                     beyond_range: false,
                     speaker: Default::default(),
+                    private_history: peer.is_some(),
                 }
             })
             .collect()
@@ -677,8 +658,11 @@ impl World {
 
     fn apply_history(&mut self, loaded: Loaded) {
         let nearby = loaded.conversation.is_nil();
-        // a private conversation is keyed by the other resident
-        let peer = (!nearby && !self.is_group_session(&loaded.conversation)).then_some(loaded.conversation);
+        // a private conversation is keyed by the other resident; a group's
+        // or a conference's is not one, by its session or by our membership
+        // (as `transcript_stem` names its file)
+        let id = loaded.conversation;
+        let peer = (!nearby && !self.is_group_session(&id) && self.groups.group(&id).is_none()).then_some(id);
         let lines = self.history_lines(loaded.entries, nearby, false, peer);
         if nearby {
             self.nearby_history = HistoryState::Done;
@@ -790,6 +774,7 @@ impl World {
                     blocked: false,
                     beyond_range: false,
                     speaker: Default::default(),
+                    private_history: false,
                 }
             })
             .collect();
@@ -959,6 +944,9 @@ mod tests {
         // other resident of the conversation), ours names nobody, as live
         let sources: Vec<Uuid> = s.lines.iter().take(2).map(|l| l.source).collect();
         assert_eq!(sources, [jane, Uuid::nil()]);
+        // a private conversation's history, its names looked up when drawn
+        let private: Vec<bool> = s.lines.iter().map(|l| l.private_history).collect();
+        assert_eq!(private, [true, true, false]);
         assert_eq!(s.unread, 1);
         assert_eq!(file_texts(&w, "Jane Doe").len(), 3);
         clean(&w, &root);
@@ -1042,6 +1030,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         });
         // ours, as the simulator echoes it, keeps its volume and its verb
         // (#1323)
@@ -1159,6 +1148,8 @@ mod tests {
                 ("later", Origin::ServerLog),
             ]
         );
+        // a group's history keeps the names it was written with
+        assert!(w.social.ims[0].lines.iter().all(|l| !l.private_history));
         // opened by us: the server's lines are now in the file too
         assert!(w.chat_log.flush(WAIT));
         assert_eq!(file_texts(&w, &stem).len(), 4);
@@ -1595,16 +1586,18 @@ mod tests {
                 entry(chat_log::format::SYSTEM_FROM, "a notice"),
             ]
         };
-        // a group or the nearby chat: the cached name only
-        let sources: Vec<Uuid> = w.history_lines(entries(), false, false, None).iter().map(|l| l.source).collect();
+        // a group or the nearby chat: the cached name only, and every line
+        // keeps the file's names (Bob's cached one included)
+        let lines = w.history_lines(entries(), false, false, None);
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
         assert_eq!(sources, [bob, Uuid::nil(), Uuid::nil()]);
-        // a private conversation: its other resident when the name is unknown
-        let sources: Vec<Uuid> = w
-            .history_lines(entries(), false, false, Some(jane))
-            .iter()
-            .map(|l| l.source)
-            .collect();
+        assert!(lines.iter().all(|l| !l.private_history));
+        // a private conversation: its other resident when the name is
+        // unknown, and its names looked up when drawn
+        let lines = w.history_lines(entries(), false, false, Some(jane));
+        let sources: Vec<Uuid> = lines.iter().map(|l| l.source).collect();
         assert_eq!(sources, [bob, jane, Uuid::nil()]);
+        assert!(lines.iter().all(|l| l.private_history));
         clean(&w, &root);
     }
 

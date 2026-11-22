@@ -686,66 +686,72 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         assert_eq!(NAMES, NameScope::Roster);
         assert_eq!(super::super::sender_name(&world, "Aurora Demo", &line), "Near Tester");
-        // a private conversation's history shows the cached display name;
-        // not cached yet, the file's name (and the lookup is queued)
-        let mut im = line.clone();
-        im.kind = crate::world::ChatKind::Im;
-        im.source = near;
-        world.social.avatar_names.on_display_names(
-            &[aurora_net::AvatarNameData {
-                id: near,
-                username: "near.tester".into(),
-                display_name: "Nova".into(),
-                legacy_first: "Near".into(),
-                legacy_last: "Tester".into(),
-                ..Default::default()
-            }],
-            &[],
-            Some(3600),
-        );
-        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &im), "Nova");
-        // `draw_line` (the transcript's rows) follows the same rule
-        assert!(super::super::log_names_resolve(&im));
-        assert!(!super::super::log_names_resolve(&line));
-        assert!(!super::super::log_names_resolve(&crate::world::ChatLine {
-            source: uuid::Uuid::nil(),
-            ..im.clone()
-        }));
-        let mut unknown = im.clone();
-        unknown.source = uuid::Uuid::from_u128(77);
-        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &unknown), "Near Tester");
-        // with display names off, the same setting as the live lines
-        world.social.avatar_names.options.use_display_names = false;
-        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &im), "Near Tester");
-        world.social.avatar_names.options.use_display_names = true;
-        // our own lines: renamed when a private conversation loads them,
-        // never in the nearby chat or a group
+        // the same lines as a private conversation and a group load them
+        // (`World::history_lines`), the group member's name cached too
         let me = world.agent_id;
+        let name = |id, username: &str, display: &str, first: &str, last: &str| aurora_net::AvatarNameData {
+            id,
+            username: username.into(),
+            display_name: display.into(),
+            legacy_first: first.into(),
+            legacy_last: last.into(),
+            ..Default::default()
+        };
         world.social.avatar_names.on_display_names(
-            &[aurora_net::AvatarNameData {
-                id: me,
-                username: "aurora.demo".into(),
-                display_name: "Aurie".into(),
-                legacy_first: "Aurora".into(),
-                legacy_last: "Demo".into(),
-                ..Default::default()
-            }],
+            &[
+                name(near, "near.tester", "Nova", "Near", "Tester"),
+                name(me, "aurora.demo", "Aurie", "Aurora", "Demo"),
+            ],
             &[],
             Some(3600),
         );
-        let own = crate::world::ChatKind::OWN;
-        assert_eq!(world.private_log_name(own, Some(near), "Aurora Demo".into()), "Aurie");
-        assert_eq!(world.private_log_name(own, None, "Aurora Demo".into()), "Aurora Demo");
-        assert_eq!(
-            world.private_log_name(crate::world::ChatKind::Im, Some(near), "Near Tester".into()),
-            "Near Tester"
-        );
-        let mut mine = line.clone();
-        mine.kind = own;
-        assert_eq!(super::super::sender_name(&world, "Aurora Demo", &mine), "Near Tester");
+        let entry = |from: &str| crate::world::chat_log::Entry {
+            stamp: String::new(),
+            time: None,
+            from: from.into(),
+            text: "hello".into(),
+        };
+        let entries = || vec![entry("Near Tester"), entry("Aurora Demo")];
+        let private = world.history_lines(entries(), false, false, Some(near));
+        let group = world.history_lines(entries(), false, false, None);
+        let senders = |world: &World, lines: &[ChatLine]| -> Vec<String> {
+            lines.iter().map(|l| super::super::sender_name(world, "Me", l)).collect()
+        };
+        for lines in [&private, &group] {
+            let kinds: Vec<_> = lines.iter().map(|l| (l.kind, l.source)).collect();
+            assert_eq!(
+                kinds,
+                [(crate::world::ChatKind::Im, near), (crate::world::ChatKind::OWN, uuid::Uuid::nil())]
+            );
+        }
+        // a private conversation's history: the cached names, theirs and
+        // ours, as its live lines show them (`draw_line`, the rows, follows
+        // the same rule)
+        assert_eq!(senders(&world, &private), ["Nova", "Aurie"]);
+        assert!(private.iter().all(super::super::log_names_resolve));
+        // a group member's line keeps the name it was written with, and so
+        // does ours there
+        assert_eq!(senders(&world, &group), ["Near Tester", "Aurora Demo"]);
+        assert!(!group.iter().any(super::super::log_names_resolve));
+        assert!(!super::super::log_names_resolve(&line));
+        // display names turned off while the conversation is open: both
+        // sides follow, and back
+        world.social.avatar_names.options.use_display_names = false;
+        assert_eq!(senders(&world, &private), ["Near Tester", "Aurora Demo"]);
+        world.social.avatar_names.options.use_display_names = true;
+        assert_eq!(senders(&world, &private), ["Nova", "Aurie"]);
+        // a name not cached yet: as the file gives it, theirs (the lookup is
+        // queued) and ours (not the live lines' "Me")
+        let mut unknown = private[0].clone();
+        unknown.source = uuid::Uuid::from_u128(77);
+        assert_eq!(super::super::sender_name(&world, "Me", &unknown), "Near Tester");
+        world.agent_id = uuid::Uuid::from_u128(78);
+        assert_eq!(super::super::sender_name(&world, "Me", &private[1]), "Aurora Demo");
+        world.agent_id = me;
         // said now: the stand-in the line takes when it arrives
         let mut said = line.clone();
         said.origin = crate::world::Origin::Live;

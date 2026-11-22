@@ -122,6 +122,9 @@ fn the_archive_comes_back_as_history_without_touching_unread() {
     let s = &w.social.ims[0];
     assert_eq!(s.unread, 1, "history is never unread");
     assert_eq!(s.lines[0].source, JANE);
+    // a direct conversation's history: its names looked up when drawn
+    let private: Vec<bool> = s.lines.iter().map(|l| l.private_history).collect();
+    assert_eq!(private, [true, true, false]);
     assert!(!w.chat_service.view_loading(JANE));
     clean(&w, &root);
 }
