@@ -489,21 +489,12 @@ fn a_scripted_window_kept_in_comes_out_afterwards() {
 }
 
 #[test]
-fn final_notification_answer_closes_the_list() {
-    let mut list = Notifications::default();
-    let first = info(&mut list, "First");
-    let second = info(&mut list, "Second");
-    assert!(!super::super::notifications::last_notification_answered(
-        &list,
-        &[(first, Response::Dismiss)],
-    ));
-    list.respond(first, Response::Dismiss, |_| Uuid::nil(), Uuid::nil());
-    assert!(!super::super::notifications::last_notification_answered(
-        &list,
-        &[(first, Response::Dismiss)],
-    ));
-    assert!(super::super::notifications::last_notification_answered(
-        &list,
-        &[(second, Response::Dismiss)],
-    ));
+fn notification_list_closes_only_after_becoming_empty() {
+    use super::super::notifications::list_emptied;
+
+    assert!(list_emptied(true, false, Tab::ToDo));
+    assert!(!list_emptied(true, true, Tab::ToDo));
+    assert!(!list_emptied(false, false, Tab::ToDo));
+    assert!(!list_emptied(false, true, Tab::ToDo));
+    assert!(!list_emptied(true, false, Tab::History));
 }
