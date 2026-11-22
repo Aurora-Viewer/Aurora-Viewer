@@ -20,7 +20,7 @@ import tempfile
 
 from maya import cmds
 
-from . import convert
+from . import bindinfo, convert
 
 MODULE = "Mayastar" + "_xmlShape"
 # The control MayaStar's import reads first: a MayaStar rig is in the scene.
@@ -84,17 +84,6 @@ def rig_joints(names):
     return candidates[0]
 
 
-def _remember(payload, joints):
-    for joint in payload["joints"]:
-        node = joints.get(joint["name"])
-        if node is None:
-            continue
-        for attribute, values in (("auroraShapeBind", joint["inverse_bind"]), ("auroraShapeHead", joint["head"])):
-            if not cmds.attributeQuery(attribute, node=node, exists=True):
-                cmds.addAttr(node, longName=attribute, dataType="doubleArray")
-            cmds.setAttr(node + "." + attribute, [float(value) for value in values], type="doubleArray")
-
-
 def apply(payload):
     """Reshape the MayaStar rig with the shape; one undo step."""
     module, shape_import = importer()
@@ -120,7 +109,7 @@ def apply(payload):
             shape_import.importShape()
         finally:
             module.cmds = original
-        _remember(payload, joints)
+        bindinfo.remember(payload, joints)
     finally:
         module.cmds = original
         if opened:

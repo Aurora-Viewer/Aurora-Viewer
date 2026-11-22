@@ -24,6 +24,7 @@ import sys
 sys.path.insert(0, str(ROOT / "maya"))
 from aurora_live_maya import shape_rules  # noqa: E402  (relative imports need the package)
 from aurora_live_maya import convert as package_convert  # noqa: E402
+from aurora_live_maya import rig_rules  # noqa: E402
 client = load("aurora_maya_client", ROOT / "blender" / "aurora_live" / "client.py")
 
 
@@ -404,6 +405,122 @@ class Shape(unittest.TestCase):
         self.assertEqual(shape_rules.node_name("ゆき"), "Shape")
 
 
+class Groups(unittest.TestCase):
+    def test_explicit_choices_win_over_maya_parenting(self):
+        static = {"a", "b", "c", "d"}
+        hierarchy = {"b": "a", "c": "b", "d": None, "a": None}
+        parents = convert.link_parents(static, hierarchy, {"c": None, "d": "a"})
+        self.assertEqual(convert.static_roots(parents), {"a": "a", "b": "a", "c": "c", "d": "a"})
+        # A parent that is not static (skinned, paused, missing) links nothing.
+        parents = convert.link_parents({"b"}, {"b": "a"}, {})
+        self.assertEqual(parents, {"b": None})
+
+    def test_group_ungroup_and_make_root(self):
+        overrides = convert.group(["b", "c", "d"], "b", {})
+        roots = convert.static_roots(convert.link_parents({"a", "b", "c", "d"}, {}, overrides))
+        self.assertEqual(roots, {"a": "a", "b": "b", "c": "b", "d": "b"})
+        made = convert.make_root("d", roots, overrides)
+        self.assertEqual(convert.static_roots(convert.link_parents({"a", "b", "c", "d"}, {}, made)),
+                         {"a": "a", "b": "d", "c": "d", "d": "d"})
+        # Ungroup a child: only it leaves.
+        child = convert.ungroup(["c"], roots, overrides)
+        self.assertEqual(convert.static_roots(convert.link_parents({"a", "b", "c", "d"}, {}, child)),
+                         {"a": "a", "b": "b", "c": "c", "d": "b"})
+        # Ungroup the root: the whole linkset splits.
+        whole = convert.ungroup(["b"], roots, overrides)
+        self.assertEqual(set(convert.static_roots(convert.link_parents({"a", "b", "c", "d"}, {}, whole)).values()),
+                         {"a", "b", "c", "d"})
+        text = convert.overrides_format({"c": "b", "d": None})
+        self.assertEqual(convert.overrides_parse(text), {"c": "b", "d": None})
+
+
+class ShapeApply(unittest.TestCase):
+    def test_a_joint_moves_from_the_default_skeleton_to_the_shape(self):
+        # Default head at 1.0 m up, the shape puts it at 1.1 m, scaled 1.2:
+        # a point at the old head lands on the new head, in Maya's frame.
+        frame = convert.TO_SL  # Y up, centimetres
+        default = convert.column_major(convert.translation((0, 0, -1.0)))
+        shaped = convert.column_major(convert.inverse(convert.chain(convert.translation((0, 0, 1.1)), convert.scale(1.2))))
+        delta = convert.shape_delta(shaped, default, frame)
+        self.assertTrue(close(convert.point(delta, (0, 100, 0)), (0, 110, 0)))
+        # 10 cm above the old head: scaled by the shape, above the new head.
+        self.assertTrue(close(convert.point(delta, (0, 110, 0)), (0, 122, 0)))
+        # The same shape again changes nothing.
+        self.assertTrue(close(convert.point(convert.shape_delta(shaped, shaped, frame), (3, 4, 5)), (3, 4, 5)))
+
+
+class Rig(unittest.TestCase):
+    def test_the_default_skeleton_stands_like_second_lifes(self):
+        joints = rig_rules.default_joints()
+        heads = {j["name"]: j["head"] for j in joints}
+        self.assertEqual(len(joints), 159)
+        self.assertTrue(close(heads["mPelvis"], (0, 0, 1.067), 4))
+        self.assertGreater(heads["mHead"][2], heads["mNeck"][2])
+        self.assertGreater(heads["mNeck"][2], heads["mChest"][2])
+        # Symmetric arms, left on +Y; feet near the ground.
+        left, right = heads["mWristLeft"], heads["mWristRight"]
+        self.assertGreater(left[1], 0.5)
+        self.assertTrue(close(left, (right[0], -right[1], right[2]), 4))
+        self.assertLess(heads["mAnkleLeft"][2], 0.2)
+        # Same names and order as the shape transfer's skeleton.
+        self.assertEqual([(j["name"], j["parent"]) for j in joints], shape_rules.skeleton())
+        self.assertEqual(sum(j["collision"] for j in joints), 26)
+
+    def test_joints_sort_into_the_starters_layers(self):
+        layers = {j["name"]: rig_rules.layer(j) for j in rig_rules.default_joints()}
+        self.assertEqual(layers["mPelvis"], "Body")
+        self.assertEqual(layers["BELLY"], "Fitted_Mesh")
+        self.assertEqual(layers["mHandIndex1Left"], "Bento_Hands")
+        self.assertEqual(layers["mFaceEyeAltLeft"], "Bento_Face")
+        self.assertTrue(all(name.replace("_", "").isalnum() for name in set(layers.values())))
+
+    def test_automatic_weight_joint_sets(self):
+        joints = rig_rules.default_joints()
+        body, everything = rig_rules.weight_joints(joints, "body"), rig_rules.weight_joints(joints, "all")
+        self.assertIn("mChest", body)
+        self.assertNotIn("mSpine1", body)
+        self.assertNotIn("BELLY", body)
+        self.assertIn("mHandIndex1Left", everything)
+        self.assertNotIn("mSpine3", everything)
+        self.assertNotIn("PELVIS", everything)
+        self.assertTrue(set(body) < set(everything))
+
+    def test_the_test_shirt_is_closed_at_its_seams_and_weighted_to_four(self):
+        heads = {j["name"]: j["head"] for j in rig_rules.default_joints()}
+        vertices, faces, uvs, weights = rig_rules.tshirt(heads)
+        self.assertEqual(len(faces), len(uvs))
+        self.assertTrue(all(len(face) == 4 and len(uv) == 4 for face, uv in zip(faces, uvs)))
+        self.assertTrue(all(0 <= i < len(vertices) for face in faces for i in face))
+        for influences in weights:
+            self.assertLessEqual(len(influences), 4)
+            self.assertAlmostEqual(sum(w for _, w in influences), 1.0)
+        # Every vertex is used; sleeves reach past the shoulders.
+        self.assertEqual({i for face in faces for i in face}, set(range(len(vertices))))
+        self.assertGreater(max(v[1] for v in vertices), heads["mShoulderLeft"][1] + 0.2)
+        # Every face points outward: away from the torso's axis, or for the
+        # sleeves away from the body's middle plane, never inward.
+        for face in faces:
+            a, b, c = (vertices[i] for i in face[:3])
+            normal = rig_rules._cross(rig_rules._sub(b, a), rig_rules._sub(c, b))
+            centre = [sum(vertices[i][axis] for i in face) / len(face) for axis in range(3)]
+            if abs(centre[1]) < 0.2:
+                self.assertGreater(normal[0] * centre[0] + normal[1] * centre[1], -1e-9, face)
+
+    def test_poles_go_behind_elbows_and_ahead_of_knees(self):
+        heads = {j["name"]: j["head"] for j in rig_rules.default_joints()}
+        elbow = heads["mElbowLeft"]
+        pole = rig_rules.pole_position(heads, "HandLeft")
+        self.assertLess(pole[0], elbow[0] - 0.3)  # behind (SL faces +X)
+        self.assertAlmostEqual(pole[2], elbow[2], places=2)
+        knee = heads["mKneeRight"]
+        pole = rig_rules.pole_position(heads, "FootRight")
+        self.assertGreater(pole[0], knee[0] + 0.1)
+        # A bent arm keeps its bend plane.
+        bent = dict(heads, mElbowLeft=(elbow[0], elbow[1], elbow[2] - 0.15))
+        pole = rig_rules.pole_position(bent, "HandLeft")
+        self.assertLess(pole[2], elbow[2] - 0.15)
+
+
 class FakeCmds:
     """The maya.cmds calls mayastar.py makes, over a tiny scene."""
 
@@ -447,9 +564,10 @@ def load_mayastar(fake):
     # A fresh copy bound to this fake: the package keeps the last import.
     import importlib
     import aurora_live_maya
-    sys.modules.pop("aurora_live_maya.mayastar", None)
-    if hasattr(aurora_live_maya, "mayastar"):
-        delattr(aurora_live_maya, "mayastar")
+    for name in ("mayastar", "bindinfo"):
+        sys.modules.pop("aurora_live_maya." + name, None)
+        if hasattr(aurora_live_maya, name):
+            delattr(aurora_live_maya, name)
     return importlib.import_module("aurora_live_maya.mayastar")
 
 

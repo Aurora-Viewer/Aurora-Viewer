@@ -53,38 +53,70 @@ const MAYA_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../maya/aurora_live_maya/__init__.py"),
     ),
     (
-        "aurora_live_maya/convert.py",
-        include_bytes!("../../../../maya/aurora_live_maya/convert.py"),
+        "aurora_live_maya/bindinfo.py",
+        include_bytes!("../../../../maya/aurora_live_maya/bindinfo.py"),
+    ),
+    (
+        "aurora_live_maya/build.py",
+        include_bytes!("../../../../maya/aurora_live_maya/build.py"),
     ),
     (
         "aurora_live_maya/capture.py",
         include_bytes!("../../../../maya/aurora_live_maya/capture.py"),
     ),
     (
-        "aurora_live_maya/materials.py",
-        include_bytes!("../../../../maya/aurora_live_maya/materials.py"),
+        "aurora_live_maya/controls.py",
+        include_bytes!("../../../../maya/aurora_live_maya/controls.py"),
     ),
     (
-        "aurora_live_maya/session.py",
-        include_bytes!("../../../../maya/aurora_live_maya/session.py"),
+        "aurora_live_maya/convert.py",
+        include_bytes!("../../../../maya/aurora_live_maya/convert.py"),
     ),
     (
         "aurora_live_maya/lods.py",
         include_bytes!("../../../../maya/aurora_live_maya/lods.py"),
     ),
     (
+        "aurora_live_maya/materials.py",
+        include_bytes!("../../../../maya/aurora_live_maya/materials.py"),
+    ),
+    (
         "aurora_live_maya/mayastar.py",
         include_bytes!("../../../../maya/aurora_live_maya/mayastar.py"),
+    ),
+    (
+        "aurora_live_maya/rig.py",
+        include_bytes!("../../../../maya/aurora_live_maya/rig.py"),
+    ),
+    (
+        "aurora_live_maya/rig_rules.py",
+        include_bytes!("../../../../maya/aurora_live_maya/rig_rules.py"),
+    ),
+    (
+        "aurora_live_maya/rigs.py",
+        include_bytes!("../../../../maya/aurora_live_maya/rigs.py"),
+    ),
+    (
+        "aurora_live_maya/session.py",
+        include_bytes!("../../../../maya/aurora_live_maya/session.py"),
     ),
     (
         "aurora_live_maya/shape.py",
         include_bytes!("../../../../maya/aurora_live_maya/shape.py"),
     ),
     (
+        "aurora_live_maya/shape_apply.py",
+        include_bytes!("../../../../maya/aurora_live_maya/shape_apply.py"),
+    ),
+    (
         "aurora_live_maya/shape_rules.py",
         include_bytes!("../../../../maya/aurora_live_maya/shape_rules.py"),
     ),
     ("aurora_live_maya/ui.py", include_bytes!("../../../../maya/aurora_live_maya/ui.py")),
+    (
+        "aurora_live_maya/weights.py",
+        include_bytes!("../../../../maya/aurora_live_maya/weights.py"),
+    ),
     (
         "aurora_live_maya/avatar_skeleton.xml",
         include_bytes!("../../assets/character/avatar_skeleton.xml"),

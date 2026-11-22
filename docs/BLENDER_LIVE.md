@@ -790,7 +790,7 @@ position overrides are not applied to Aurora's skeleton.
 
 ## Maya
 
-Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.4.0). It uses the same
+Aurora LiveMesh also works from Autodesk Maya 2022 and later (plug-in 0.5.0). It uses the same
 connection, port (17655) and key as the Blender plug-in, so the viewer side is
 the same: start the preview in Aurora's **LiveMesh** window first.
 
@@ -800,8 +800,15 @@ later** and click **Save Maya plug-in…**. Extract the ZIP anywhere, then drag
 your Maya scripts folder, adds a **LiveMesh** button to an **Aurora** shelf
 and opens the window. Dragging a newer `install.mel` replaces the old copy.
 
-**Use.** Select mesh objects and click **Add selected**, then **Connect**. The
-list is saved with the scene. Edits are sent after a short pause, at most once
+**Use.** The window has five tabs: **Live**, **Import / LOD**, **Rig**,
+**Weights** and **Controls**. In **Live**, select mesh objects and click **Add
+selected**, then **Connect**. The list is saved with the scene. **Pause**
+keeps an entry but takes it out of the preview; **Resume** sends it again.
+**Group** makes the selected meshes without a skin one linkset, the first
+selected being its root; **Ungroup** on a root frees its whole linkset, on a
+child only that child; **Make root** changes a linkset's root. These choices
+win over Maya parenting and are saved with the scene; a paused root leaves
+its children independent while paused. Edits are sent after a short pause, at most once
 per interval (2 seconds by default) with **Automatic updates** on; **Update
 now** sends at once and reloads the texture files.
 
@@ -886,10 +893,48 @@ now** sends at once and reloads the texture files.
   now with the `display`, `u8` and `type` attributes MayaStar reads); the
   plug-in answers MayaStar's file dialog with it for that one call and
   deletes the file. One undo reverts it. Each joint of the rig then keeps
-  the shape's bind, so a garment previews with your shape once. A rig
-  without MayaStar is refused: Maya has no other shape updater to drive.
-- **Not in this version:** rig creation, posing helpers and explicit
-  grouping. Use the Blender plug-in for those.
+  the shape's bind, so a garment previews with your shape once. 
+- **Apply my shape to another rig.** Without MayaStar, the plug-in reshapes
+  the selected SL rig itself, like the Blender plug-in's generic path: each
+  SL joint moves by its change from the previous shape (the rig's last
+  received one, or SL's default skeleton) to yours, the rest geometry of the
+  meshes skinned to it follows by their weights, and their skins re-bind at
+  the new joint places (Go to Bind Pose follows). Joints, weights and
+  orientations are kept; one undo reverts it. The rig should stand at the
+  origin. Meshes with blend shapes or other deformers before their skin are
+  refused: use MayaStar or the Blender plug-in for them.
+- **Rig.** **Create SL avatar rig** adds the 133 Bento bones and 26 Fitted
+  Mesh collision volumes at SL's standard rest, world-aligned in their own
+  `AuroraRig` namespace, with an optional rigged test T-shirt (open neck,
+  hem and cuffs, four weights per vertex) that joins the live list. Its
+  joints go to display layers (`SL_Body`, `SL_Bento_Hands`, `SL_Bento_Face`,
+  `SL_Fitted_Mesh`…): body and hands shown, the rest hidden; the tab shows a
+  checkbox per layer, **Show all** and **Hide all**. **Sort the selected rig
+  into SL layers** does the same for an existing rig. Hiding a layer changes
+  the display only.
+- **Weights.** The tools use the selected rig, the rig of the selected
+  meshes or the scene's only rig, which must stand in its bind pose.
+  **Recalculate weights** binds the selected meshes with Maya's heat-map bind
+  to the classic SL body joints (**SL body**) or every deforming joint but
+  collision volumes and the folded Bento spine (**All deform joints**), then
+  keeps the strongest four, normalized; a vertex left unweighted cancels the
+  run. **Transfer weights** copies a skinned source mesh's weights to the
+  selected meshes (nearest surface point or nearest vertex), refusing the
+  whole run when a vertex is farther than **Max distance** (0 for
+  unlimited). **Normalize to 4 weights** cleans existing weights. Each is one
+  undo step; weighted meshes join the live list, paused ones stay paused.
+- **Controls.** **Add root / COG** adds a ring on the ground that moves the
+  whole posed rig and a diamond at the pelvis that the pelvis follows.
+  **Create IK controls** adds a target and a pole for each hand and foot
+  (elbow poles behind the arms, knee poles ahead), off until you tick the
+  limb; ticking snaps the target to the wrist or ankle, and rotating the
+  target turns the hand or foot. **Classic eyes +** and **Bento eyes +** add
+  a look-at target two metres ahead; **Focus** turns the eyes toward it,
+  **Recentre** puts it back in front. Controls are never skinned, so the
+  preview ignores them; joints already driven by a constraint are refused.
+  Aurora keeps playing its own animations on the rest mesh.
+- **Not in this version:** blend shapes before the skin when applying a shape
+  without MayaStar.
 
 The plug-in's pure rules (frames, binds, weights, packing, colour tables) have
 tests that run without Maya: `python maya/tests/test_convert.py`.

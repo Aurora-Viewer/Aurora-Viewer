@@ -652,3 +652,77 @@ def slot_mapping(level_groups, high_groups):
     if len(set(mapping)) != len(mapping):
         raise ValueError("Duplicate material slots in a LOD are ambiguous")
     return mapping
+
+
+# ------------------------------------------------------------ explicit groups
+
+def link_parents(static, hierarchy, overrides):
+    """Each static source's linkset parent. `hierarchy` gives the nearest
+    synchronized static Maya ancestor; `overrides` holds the list's explicit
+    choices (a parent, or None for independent), which win, as the Blender
+    plug-in's explicit groups win over Blender parenting."""
+    parents = {}
+    for source in static:
+        if source in overrides:
+            parent = overrides[source]
+            parents[source] = parent if parent in static and parent != source else None
+        else:
+            parent = hierarchy.get(source)
+            parents[source] = parent if parent in static else None
+    return parents
+
+
+def group(selected, active, overrides):
+    """Group: the selected static sources join one linkset under `active`."""
+    result = dict(overrides)
+    result[active] = None
+    for source in selected:
+        if source != active:
+            result[source] = active
+    return result
+
+
+def ungroup(selected, roots, overrides):
+    """Ungroup: a selected root frees its whole linkset; a selected child
+    leaves alone and the others stay linked."""
+    result = dict(overrides)
+    for source in selected:
+        if roots.get(source) == source:
+            for member, root in roots.items():
+                if root == source:
+                    result[member] = None
+        elif source in roots:
+            result[source] = None
+    return result
+
+
+def make_root(target, roots, overrides):
+    """Make root: `target` becomes the root of its whole linkset."""
+    result = dict(overrides)
+    root = roots.get(target)
+    for member, member_root in roots.items():
+        if member_root == root and member != target:
+            result[member] = target
+    result[target] = None
+    return result
+
+
+def overrides_parse(text):
+    result = {}
+    for item in (text or "").split(";"):
+        child, separator, parent = item.partition("=")
+        if child and separator:
+            result[child] = parent or None
+    return result
+
+
+def overrides_format(overrides):
+    return ";".join("{}={}".format(child, parent or "") for child, parent in sorted(overrides.items()))
+
+
+def shape_delta(new_inverse_bind, previous_inverse_bind, frame):
+    """How one joint changes when a shape is applied, in Maya's frame:
+    F^-1 · inverse(new inverse bind) · previous inverse bind · F (the Blender
+    plug-in's shape_apply deltas). Both binds column-major, SL metres."""
+    new_world = inverse(from_column_major(new_inverse_bind))
+    return chain(inverse(frame), new_world, from_column_major(previous_inverse_bind), frame)

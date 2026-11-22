@@ -13,13 +13,15 @@ import uuid
 import maya.api.OpenMaya as om
 from maya import cmds
 
-from . import capture, client, convert, lods, materials, mayastar, shape, shape_rules
+from . import capture, client, convert, lods, materials, mayastar, rigs, shape, shape_apply, shape_rules
 
 SOURCES_KEY = "auroraLiveMayaSources"
 BIND_KEY = "auroraLiveMayaBindAxes"
 UNITS_KEY = "auroraLiveMayaUnits"
 UNIT_MODES = ("auto", "cm", "m")
 LODS_KEY = "auroraLiveMayaLods"
+PAUSED_KEY = "auroraLiveMayaPaused"
+GROUPS_KEY = "auroraLiveMayaGroups"
 PORT, AUTO, INTERVAL = "auroraLiveMayaPort", "auroraLiveMayaAuto", "auroraLiveMayaInterval"
 DEFAULT_PORT, DEFAULT_INTERVAL = 17655, 2.0
 EDIT_QUIET_SECONDS = 0.15
@@ -72,11 +74,71 @@ class Session:
         values = cmds.fileInfo(SOURCES_KEY, query=True)
         # Node UUIDs hold no comma: a plain list needs no quoting in the file.
         self.sources = [value for value in (values[0].split(",") if values else []) if value][:32]
+        values = cmds.fileInfo(PAUSED_KEY, query=True)
+        self.paused = {value for value in (values[0].split(",") if values else []) if value in self.sources}
+        values = cmds.fileInfo(GROUPS_KEY, query=True)
+        self.overrides = {child: parent for child, parent in convert.overrides_parse(values[0] if values else "").items()
+                          if child in self.sources}
         self.errors, self.dirty = {}, True
         self._rewatch()
 
     def save(self):
+        self.paused &= set(self.sources)
+        self.overrides = {child: parent for child, parent in self.overrides.items() if child in self.sources}
         cmds.fileInfo(SOURCES_KEY, ",".join(self.sources))
+        cmds.fileInfo(PAUSED_KEY, ",".join(sorted(self.paused)))
+        cmds.fileInfo(GROUPS_KEY, convert.overrides_format(self.overrides))
+
+    # ------------------------------------------------------ pause and groups
+
+    def set_paused(self, identities, paused):
+        """Pausing keeps the entry and drops it from the preview; resuming
+        sends its latest state (Blender plug-in's synchronization toggle)."""
+        for identity in identities:
+            if identity in self.sources:
+                (self.paused.add if paused else self.paused.discard)(identity)
+        self.save()
+        self.touch()
+
+    def _static(self):
+        result = {}
+        for identity in self.sources:
+            node = self.node(identity)
+            shape = capture.shape_of(node) if node else None
+            if shape and not capture.skin_of(shape):
+                result[identity] = node
+        return result
+
+    def roots(self):
+        """Linkset root of every static entry, paused ones included."""
+        static = self._static()
+        by_path = {node: identity for identity, node in static.items()}
+        hierarchy = {}
+        for identity, node in static.items():
+            hierarchy[identity] = next((by_path[a] for a in _ancestors(node) if a in by_path), None)
+        return convert.static_roots(convert.link_parents(set(static), hierarchy, self.overrides))
+
+    def group(self, identities):
+        static = self._static()
+        chosen = [identity for identity in identities if identity in static]
+        if len(chosen) < 2:
+            raise ValueError("Select two or more meshes without a skin to group them")
+        self.overrides = convert.group(chosen, chosen[0], self.overrides)
+        self.save()
+        self.touch()
+
+    def ungroup(self, identities):
+        self.overrides = convert.ungroup(identities, self.roots(), self.overrides)
+        self.save()
+        self.touch()
+
+    def make_root(self, identity):
+        roots = self.roots()
+        if identity not in roots:
+            raise ValueError("Only meshes without a skin form linksets")
+        self.overrides = convert.make_root(identity, roots, self.overrides)
+        self.save()
+        self.touch()
 
     def bind_axes(self):
         values = cmds.fileInfo(BIND_KEY, query=True)
@@ -139,12 +201,25 @@ class Session:
         self.touch()
 
     def rows(self):
-        """(id, display name, message) of each synchronized source."""
+        """(id, display name, message) of each synchronized source, linkset
+        children right under their root and numbered like the build tools."""
+        try:
+            roots = self.roots()
+        except (ValueError, RuntimeError):
+            roots = {}
+        order = [identity for identity in self.sources if roots.get(identity, identity) == identity]
         result = []
-        for identity in self.sources:
-            node = self.node(identity)
-            name = node.rsplit("|", 1)[-1] if node else "(missing)"
-            result.append((identity, name, self.errors.get(identity, "")))
+        for identity in order:
+            children = [child for child in self.sources if child != identity and roots.get(child) == identity]
+            for number, member in enumerate([identity] + children, 1):
+                node = self.node(member)
+                name = node.rsplit("|", 1)[-1] if node else "(missing)"
+                if children:
+                    name = (name + " (root, {} prims)".format(len(children) + 1)) if member == identity else (
+                        "    #{} {}".format(number, name))
+                if member in self.paused:
+                    name += " [paused]"
+                result.append((member, name, self.errors.get(member, "")))
         return result
 
     # ------------------------------------------------------ connection
@@ -348,8 +423,14 @@ class Session:
         try:
             if isinstance(payload, dict) and payload.get("action") == "apply":
                 shape_rules.validate(payload, shape_rules.skeleton())
-                rig = mayastar.apply(payload)
-                self.notice = "Shape applied with MayaStar to " + rig
+                if cmds.objExists(mayastar.CONTROL):
+                    # A MayaStar rig reshapes itself (like Avastar in Blender).
+                    rig = mayastar.apply(payload)
+                    self.notice = "Shape applied with MayaStar to " + rig
+                else:
+                    unit = capture.scene_unit(self.units(), [self.node(key) for key in self.sources if self.node(key)])
+                    rig = shape_apply.apply(payload, rigs.resolve(), capture.up_axis(), unit)
+                    self.notice = "Shape applied to " + rig.rsplit("|", 1)[-1]
                 self.touch()
                 self.client.shape_result(identity)
                 return
@@ -379,7 +460,7 @@ class Session:
         self.unit = unit
         for identity in self.sources:
             transform = self.node(identity)
-            if transform:
+            if transform and identity not in self.paused:
                 nodes[identity] = transform
         static = {}
         for identity, transform in nodes.items():
@@ -402,16 +483,13 @@ class Session:
                 static[identity] = transform
         # Maya parenting makes linksets: a static mesh under another
         # synchronized static mesh is a prim of that one's linkset.
+        # Explicit Group / Ungroup / Make root choices win over parenting; a
+        # paused or failed root leaves its children independent.
         by_path = {transform: identity for identity, transform in static.items()}
-        parents = {}
+        hierarchy = {}
         for identity, transform in static.items():
-            parent = None
-            for ancestor in _ancestors(transform):
-                if ancestor in by_path:
-                    parent = by_path[ancestor]
-                    break
-            parents[identity] = parent
-        roots = convert.static_roots(parents)
+            hierarchy[identity] = next((by_path[a] for a in _ancestors(transform) if a in by_path), None)
+        roots = convert.static_roots(convert.link_parents(set(static), hierarchy, self.overrides))
         for mesh in meshes:
             identity = next(key for key in nodes if _uuid_for(key) == mesh["source_id"])
             root = roots.get(identity)
