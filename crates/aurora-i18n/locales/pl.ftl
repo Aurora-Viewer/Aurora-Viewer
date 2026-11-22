@@ -8671,6 +8671,7 @@ photo-vf-help-free-camera = Swobodna kamera: klawisze ruchu, przytrzymany prawy 
 photo-vf-hints = Lista sterowania
 photo-vf-shown = Widoczna
 photo-vf-hidden-one = Ukryta
+photo-vf-keep-framing = Zachowaj kadr
 photo-vf-dial-focal = ogniskowa
 photo-vf-dial-aperture = przysłona
 photo-vf-dial-exposure = ekspozycja

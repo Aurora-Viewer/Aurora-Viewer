@@ -8533,6 +8533,7 @@ photo-vf-help-free-camera = Serbest kamera: hareket tuşları, bakmak için sağ
 photo-vf-hints = Kontrol listesi
 photo-vf-shown = Gösterildi
 photo-vf-hidden-one = Gizli
+photo-vf-keep-framing = Kadrajı koru
 photo-vf-dial-focal = odak uzaklığı
 photo-vf-dial-aperture = diyafram
 photo-vf-dial-exposure = pozlama

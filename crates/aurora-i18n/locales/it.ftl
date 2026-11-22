@@ -8519,6 +8519,7 @@ photo-vf-help-free-camera = Camera libera: i tasti di movimento, pulsante destro
 photo-vf-hints = Elenco dei comandi
 photo-vf-shown = Mostrato
 photo-vf-hidden-one = Nascosto
+photo-vf-keep-framing = Mantieni l'inquadratura
 photo-vf-dial-focal = lunghezza focale
 photo-vf-dial-aperture = apertura
 photo-vf-dial-exposure = esposizione

@@ -8551,6 +8551,7 @@ photo-vf-help-free-camera = Câmara livre: as teclas de movimento, botão direit
 photo-vf-hints = Lista de controlos
 photo-vf-shown = Mostrado
 photo-vf-hidden-one = Oculto
+photo-vf-keep-framing = Manter o enquadramento
 photo-vf-dial-focal = distância focal
 photo-vf-dial-aperture = abertura
 photo-vf-dial-exposure = exposição

@@ -8564,6 +8564,7 @@ photo-vf-help-free-camera = フリーカメラ：移動キー、右ボタンを�
 photo-vf-hints = 操作の一覧
 photo-vf-shown = 表示中
 photo-vf-hidden-one = 非表示
+photo-vf-keep-framing = 構図を保持
 photo-vf-dial-focal = 焦点距離
 photo-vf-dial-aperture = 絞り
 photo-vf-dial-exposure = 露光

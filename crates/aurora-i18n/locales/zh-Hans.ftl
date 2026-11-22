@@ -8506,6 +8506,7 @@ photo-vf-help-free-camera = 自由相机：使用移动键控制，按住鼠标�
 photo-vf-hints = 操作列表
 photo-vf-shown = 已显示
 photo-vf-hidden-one = 隐藏
+photo-vf-keep-framing = 保留构图
 photo-vf-dial-focal = 焦距
 photo-vf-dial-aperture = 光圈
 photo-vf-dial-exposure = 曝光

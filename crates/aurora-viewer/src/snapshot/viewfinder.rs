@@ -226,6 +226,11 @@ pub struct Prefs {
     /// Where the photo reel's tray was moved: its top left in fractions of
     /// the screen (None: bottom left).
     pub reel_at: Option<[f32; 2]>,
+    /// The next opening of the session takes back the framing it closed on
+    /// (`KeptView` and the tilt). Off: every opening starts from the
+    /// camera as it is, level, as before the framing was kept (the human's
+    /// request, 2026-11-22).
+    pub keep_framing: bool,
 }
 
 impl Default for Prefs {
@@ -241,6 +246,7 @@ impl Default for Prefs {
             timer: 0,
             dof_defaulted: false,
             reel_at: None,
+            keep_framing: true,
         }
     }
 }
@@ -1187,6 +1193,16 @@ mod tests {
         assert!(KeptView::shown(eye, at, eye + Vec3::splat(0.001), at));
         assert!(!KeptView::shown(eye, at, eye + Vec3::X * 0.5, at), "the camera moved");
         assert!(!KeptView::shown(eye, at, eye, at + Vec3::Z), "it looks elsewhere");
+    }
+
+    #[test]
+    fn the_framing_is_kept_by_default_and_for_older_profiles() {
+        assert!(Prefs::default().keep_framing);
+        // a profile saved before the switch existed keeps the framing
+        let old: Prefs = serde_json::from_str(r#"{"beep": false, "timer": 2}"#).expect("old prefs");
+        assert!(old.keep_framing);
+        let off: Prefs = serde_json::from_str(r#"{"keep_framing": false}"#).expect("prefs");
+        assert!(!off.keep_framing);
     }
 
     #[test]
