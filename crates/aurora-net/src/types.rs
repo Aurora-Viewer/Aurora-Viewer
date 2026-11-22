@@ -1287,6 +1287,10 @@ pub enum NetEvent {
     InventoryUpdated {
         folders: Vec<crate::inventory::InvFolder>,
         items: Vec<crate::inventory::InvItem>,
+        /// From BulkUpdateInventory (UDP or event queue): a delivery or an
+        /// unpack, whose folders the viewer reads at once so they sort by
+        /// their contents (#3025). Every other server change leaves it false.
+        bulk: bool,
     },
     /// Delivery identity follows InventoryUpdated, so observers see its headers.
     InventoryDelivery {
