@@ -3,14 +3,14 @@
 // `cs_lights`, a pixel of the depth prepass at a time: the light it traces,
 // by resampled importance sampling (Talbot 2005) over the point lights that
 // reach it, each weighed by the diffuse light it would give unshadowed
-// (every light once when no more than `CANDIDATES` reach it), then with
+// (every light once when no more than `candidates` reach it), then with
 // ReSTIR (Bitterli et al. 2020) merged with the pixel's choice last frame;
 // then one shadow ray toward it. A light has a size (`light_size`): the ray
 // goes to a point of the disc it shows the pixel, another each frame, so
 // its shadow has a penumbra, narrow at the foot of what casts it and wider
 // away from it. The choice and what the ray found are written to `mid`.
 // `cs_lights_reuse`: the share of the local light that arrives, from the
-// pixel's own sample and `NEIGHBOURS` around it on the same surface, as
+// pixel's own sample and `neighbours` around it on the same surface, as
 // Tokuyoshi's visibility reuse (AMD, "Efficient Visibility Reuse for
 // Real-time ReSTIR", 2024): each sample's light was drawn in proportion to
 // its unshadowed light, so the visibilities found, weighed by how much
@@ -113,12 +113,20 @@ struct Params {
     columns: array<vec4<u32>, 16>,
     rows: array<vec4<u32>, 16>,
     slices: array<vec4<u32>, 16>,
-    // x: the lamps' softness, Preferences' (`light_size`: 0 sharp).
+    // x: the lamps' softness, Preferences' (`light_size`: 0 sharp); y, z:
+    // the ray tracing quality's candidates and neighbours (`candidates`,
+    // `neighbours`).
     tuning: vec4<f32>,
 };
 
-// Candidates a pixel draws among the lights reaching it.
+// Candidates a pixel draws among the lights reaching it, at most, and
+// those the ray tracing quality asks for (rt_shadows.rs `LampQuality`):
+// fewer weigh fewer lights, and leave the choice noisier.
 const CANDIDATES: u32 = 8u;
+
+fn candidates() -> u32 {
+    return clamp(u32(params.tuning.y), 1u, CANDIDATES);
+}
 // The most a choice kept from last frame counts for, against this frame's.
 const CONFIDENCE_MAX: f32 = 20.0;
 // Frames the share's history averages at most; on a surface that moved on
@@ -132,10 +140,15 @@ const HISTORY_FACING: f32 = 0.7;
 const MAX_LIGHTS: u32 = 64u;
 // Rays a pixel traces on a frame with no history (cs_lights).
 const RESET_RAYS: u32 = 8u;
-// The neighbours whose samples a pixel reuses, and how far they are at most
-// (pixels).
+// The neighbours whose samples a pixel reuses, at most, and how far they
+// are at most (pixels); those the ray tracing quality asks for
+// (`neighbours`), spread over the same radius.
 const NEIGHBOURS: u32 = 4u;
 const REUSE_RADIUS: f32 = 8.0;
+
+fn neighbours() -> u32 {
+    return min(u32(params.tuning.z), NEIGHBOURS);
+}
 // How far around a pixel (pixels each way) this frame's sun rays bound its
 // history.
 const SUN_RANGE: i32 = 2;
@@ -572,7 +585,8 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     var chosen_target = 0.0;
     var sum = 0.0;
     var confidence = 0.0;
-    let few = count <= CANDIDATES;
+    let draws = candidates();
+    let few = count <= draws;
     if (count > 0u) {
         if (few) {
             let at = turn(id.xy, u32(params.mode.z)) * total;
@@ -589,11 +603,11 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             sum = total;
         } else {
-            for (var k = 0u; k < CANDIDATES; k++) {
+            for (var k = 0u; k < draws; k++) {
                 let entry = min(u32(rand(&seed) * f32(count)), count - 1u);
                 let i = nth_light(reaching, entry);
                 let p = light_target(i, world, n);
-                let weight = p * f32(count) / f32(CANDIDATES);
+                let weight = p * f32(count) / f32(draws);
                 sum += weight;
                 if (rand(&seed) * sum < weight) {
                     chosen = i;
@@ -754,14 +768,15 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         var samples = 0u;
         let angle = rand(&seed) * 2.0 * PI;
         // one light: its visibility from here is the share
-        let around = select(NEIGHBOURS, 0u, count == 1u);
+        let spread = neighbours();
+        let around = select(spread, 0u, count == 1u);
         for (var k = 0u; k <= around; k++) {
             var q = pixel;
             var m = own;
             var far = 0.0;
             if (k > 0u) {
                 // a golden-angle spiral, turned anew for each pixel and frame
-                let r = REUSE_RADIUS * sqrt((f32(k) - 0.5) / f32(NEIGHBOURS));
+                let r = REUSE_RADIUS * sqrt((f32(k) - 0.5) / f32(spread));
                 let a = angle + f32(k) * 2.39996;
                 q = pixel + vec2<i32>(round(vec2<f32>(cos(a), sin(a)) * r));
                 far = length(vec2<f32>(q - pixel));

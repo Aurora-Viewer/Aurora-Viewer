@@ -2312,6 +2312,9 @@ struct Denoise {
     params_for: Option<(u32, u32, bool)>,
     /// The variance under which a pixel is left as it is.
     floor: f32,
+    /// The à-trous passes `encode` runs, of [`ATROUS_PASSES`]: the lamps'
+    /// take fewer at a lower ray tracing quality ([`LampQuality`]).
+    passes: usize,
 }
 /// How far an indirect ray goes (m): the light bounced from further off
 /// is faint, and shorter rays are quicker.
@@ -4416,6 +4419,7 @@ impl Denoise {
             tiles: None,
             params_for: None,
             floor,
+            passes: ATROUS_PASSES,
         }
     }
 
@@ -4490,7 +4494,7 @@ impl Denoise {
         };
         let groups = (size.0.div_ceil(8), size.1.div_ceil(8));
         let mut input = history;
-        for (k, params) in self.params.iter().enumerate() {
+        for (k, params) in self.params.iter().enumerate().take(self.passes.clamp(1, ATROUS_PASSES) + 1) {
             let output = first.filter(|_| k == 1).unwrap_or(&ping[k % 2]);
             let mut entries = vec![
                 wgpu::BindGroupEntry {
@@ -4769,6 +4773,64 @@ fn emitter_key(source_id: u32) -> f32 {
     if source_id < 1 << 24 { source_id as f32 } else { 0.0 }
 }
 
+/// The lamps' part of a ray tracing quality, which trades their shadows'
+/// noise for time (RtTuning's `lamps` and `lamp_*`): how many lights cast
+/// traced shadows ([`traced_count`]), the lights a pixel weighs to draw
+/// the one it traces (rt_lights.wgsl `candidates`), the neighbours whose
+/// samples it reuses (`neighbours`), and the denoiser's à-trous passes
+/// over their share ([`Denoise::passes`]). Each ray tracing quality keeps
+/// every lamp's shadow on: one ray a pixel, at its full resolution.
+/// [`LampQuality::HIGH`] is the pass as it was before the qualities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LampQuality {
+    pub lamps: u32,
+    pub candidates: u32,
+    pub reuse: u32,
+    pub denoise: u32,
+}
+
+impl LampQuality {
+    pub const HIGH: Self = Self {
+        lamps: 64,
+        candidates: 8,
+        reuse: 4,
+        denoise: 4,
+    };
+    pub const MEDIUM: Self = Self {
+        lamps: 16,
+        candidates: 4,
+        reuse: 3,
+        denoise: 3,
+    };
+    pub const LOW: Self = Self {
+        lamps: 8,
+        candidates: 2,
+        reuse: 2,
+        denoise: 2,
+    };
+
+    /// What `tuning` asks for, within what the passes do.
+    pub fn of(tuning: crate::RtTuning) -> Self {
+        Self {
+            lamps: traced_count(tuning) as u32,
+            candidates: tuning.lamp_candidates.clamp(1, Self::HIGH.candidates),
+            reuse: tuning.lamp_reuse.min(Self::HIGH.reuse),
+            denoise: tuning.lamp_denoise.clamp(1, ATROUS_PASSES as u32),
+        }
+    }
+
+    /// `tuning` with this quality's lamps.
+    pub fn apply(self, tuning: crate::RtTuning) -> crate::RtTuning {
+        crate::RtTuning {
+            lamps: self.lamps,
+            lamp_candidates: self.candidates,
+            lamp_reuse: self.reuse,
+            lamp_denoise: self.denoise,
+            ..tuning
+        }
+    }
+}
+
 /// How many of the frame's first lights cast traced shadows, as
 /// Preferences set it: common.wgsl `shared_light` leaves the others
 /// unshadowed (the frame's `light_mode.z`, renderer.rs).
@@ -4977,7 +5039,10 @@ impl RtShadows {
             columns: light.light_sets.columns,
             rows: light.light_sets.rows,
             slices: light.light_sets.slices,
-            tuning: [tuning.lamp_softness.max(0.0), 0.0, 0.0, 0.0],
+            tuning: {
+                let q = LampQuality::of(tuning);
+                [tuning.lamp_softness.max(0.0), q.candidates as f32, q.reuse as f32, 0.0]
+            },
         };
         put(device, queue, encoder, &l.buffer, bytemuck::bytes_of(&u), round);
         let timer = l.timer.as_ref().filter(|_| round.first());
@@ -5067,6 +5132,7 @@ impl RtShadows {
             pass.set_bind_group(0, &reuse_group, &[]);
             pass.dispatch_workgroups(groups.0, groups.1, 1);
         }
+        l.denoise.passes = LampQuality::of(tuning).denoise as usize;
         l.denoise.prepare(device, queue, encoder, t.size, tinted, None, round);
         let (denoised, denoised_tint) = {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -7213,6 +7279,35 @@ mod tests {
                 count
             );
         }
+    }
+
+    /// High is the lamps' pass as it was: the defaults, and the shader's
+    /// most; Medium and Low cost less at every knob and keep a ray a
+    /// pixel; what a setting asks is kept within what the passes do.
+    #[test]
+    fn rt_shadows_the_lamps_quality_tiers() {
+        let default = crate::RtTuning::default();
+        assert_eq!(LampQuality::of(default), LampQuality::HIGH);
+        assert_eq!(LampQuality::HIGH.apply(default), default);
+        let lights = include_str!("shaders/rt_lights.wgsl");
+        assert!(lights.contains(&format!("const CANDIDATES: u32 = {}u;", LampQuality::HIGH.candidates)));
+        assert!(lights.contains(&format!("const NEIGHBOURS: u32 = {}u;", LampQuality::HIGH.reuse)));
+        assert_eq!(LampQuality::HIGH.denoise as usize, ATROUS_PASSES);
+        assert_eq!(LampQuality::HIGH.lamps as usize, MAX_TRACED_LIGHTS);
+        for (better, worse) in [(LampQuality::HIGH, LampQuality::MEDIUM), (LampQuality::MEDIUM, LampQuality::LOW)] {
+            assert!(worse.lamps < better.lamps && worse.candidates < better.candidates, "{worse:?}");
+            assert!(worse.reuse < better.reuse && worse.denoise < better.denoise, "{worse:?}");
+            assert_eq!(LampQuality::of(worse.apply(default)), worse);
+        }
+        let asked = crate::RtTuning {
+            lamps: 0,
+            lamp_candidates: 0,
+            lamp_reuse: 9,
+            lamp_denoise: 0,
+            ..default
+        };
+        let kept = LampQuality::of(asked);
+        assert_eq!((kept.lamps, kept.candidates, kept.reuse, kept.denoise), (1, 1, 4, 1));
     }
 
     #[test]

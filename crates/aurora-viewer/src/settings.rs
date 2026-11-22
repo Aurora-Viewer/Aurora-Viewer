@@ -4161,6 +4161,10 @@ impl Settings {
                 sun_softness: self.rt_sun_softness.clamp(0.0, RT_SOFTNESS_MAX),
                 lamp_softness: self.rt_lamp_softness.clamp(0.0, RT_SOFTNESS_MAX),
                 lamps: u32::from(self.rt_shadow_lamps.clamp(1, RT_SHADOW_LAMPS_MAX)),
+                // (the ray tracing quality's High, until its menu sets them)
+                lamp_candidates: aurora_render::LampQuality::HIGH.candidates,
+                lamp_reuse: aurora_render::LampQuality::HIGH.reuse,
+                lamp_denoise: aurora_render::LampQuality::HIGH.denoise,
                 projectors: self.projector_shadows,
             },
             // set each frame by the app while it rains

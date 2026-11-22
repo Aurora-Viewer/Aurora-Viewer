@@ -1240,6 +1240,15 @@ pub struct RtTuning {
     /// `LightList`'s order) cast traced shadows; the others light
     /// unshadowed, as the Legacy Viewer's point lights.
     pub lamps: u32,
+    /// The lamps' cost against their noise, for the ray tracing quality
+    /// (rt_shadows.rs `LampQuality`; the defaults are its High, the
+    /// pass as it was before them): the lights a pixel weighs to draw the
+    /// one it traces, when more reach it (rt_lights.wgsl `candidates`, 1 to
+    /// 8), the neighbours whose samples it reuses (`neighbours`, 0 to 4),
+    /// and the denoiser's à-trous passes over their share (1 to 4).
+    pub lamp_candidates: u32,
+    pub lamp_reuse: u32,
+    pub lamp_denoise: u32,
     /// The projectors cast traced shadows (the Legacy Viewer's "Sun/Moon +
     /// Projectors" shadow detail, Aurora's projector shadows option).
     pub projectors: bool,
@@ -1251,6 +1260,9 @@ impl Default for RtTuning {
             sun_softness: 1.0,
             lamp_softness: 1.0,
             lamps: 64,
+            lamp_candidates: 8,
+            lamp_reuse: 4,
+            lamp_denoise: 4,
             projectors: true,
         }
     }
