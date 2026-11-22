@@ -14,6 +14,7 @@ mod compact;
 pub(crate) mod contents;
 pub(crate) mod contents_permissions;
 mod contents_selection;
+mod detach;
 pub(crate) mod export;
 mod features;
 mod floaters;
@@ -161,6 +162,51 @@ pub enum Confirm {
     Probe,
 }
 
+/// The Contents list filters, after the inventory's (types and required
+/// rights), the rights being the next owner's: what someone would get from
+/// these items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContentsFilters {
+    /// One bit per inventory type (LLInventoryType); every bit: no filter.
+    pub types: u32,
+    /// Rights the next owner must get (copy, modify, transfer bits).
+    pub next_owner: u32,
+}
+
+impl Default for ContentsFilters {
+    fn default() -> Self {
+        Self {
+            types: u32::MAX,
+            next_owner: 0,
+        }
+    }
+}
+
+impl ContentsFilters {
+    pub fn active(&self) -> bool {
+        *self != Self::default()
+    }
+
+    /// The item passes the filters. Objects stored as a coalesced set count
+    /// as objects, as in the inventory; the next owner's rights are the
+    /// next-owner mask within the base mask.
+    pub fn matches(&self, item: &aurora_net::build::TaskItem) -> bool {
+        let kind = if item.inv_type == 17 { 6 } else { i32::from(item.inv_type) };
+        if self.types != u32::MAX && (!(0..32).contains(&kind) || self.types & (1_u32 << kind) == 0) {
+            return false;
+        }
+        item.next_owner_mask & item.base_mask & self.next_owner == self.next_owner
+    }
+}
+
+/// The material of the selected faces, waiting for its name (the Legacy
+/// Viewer's SaveMaterialAs notification).
+pub struct MaterialSaveDraft {
+    pub name: String,
+    pub data: Vec<u8>,
+    pub rights: crate::build::texture_copy::MaterialSave,
+}
+
 /// State of the floater kept between frames.
 #[derive(Default)]
 pub struct FloaterState {
@@ -177,6 +223,24 @@ pub struct FloaterState {
     color_focused: bool,
     /// Texture tab: 0 Classic (Blinn-Phong), 1 PBR, 2 Media.
     pub tex_tab: usize,
+    /// A block being dragged out of the build window with Alt.
+    pub detach_drag: Option<crate::build::layout::Block>,
+    /// Each detached window's rect when the button went down, to tell a
+    /// move by its title (put back when dropped on the build window).
+    detach_press: std::collections::BTreeMap<crate::build::layout::Block, egui::Rect>,
+    /// Section tabs taken out of the build window (shown or not).
+    pub detached_tabs: Vec<usize>,
+    /// Section tabs shown this frame in a window of their own.
+    pub detached_shown: Vec<usize>,
+    /// The build window's body height last frame, and the height its shared
+    /// controls need without any section (`detach::fit_window`).
+    body_height: Option<f32>,
+    sectionless_body: Option<f32>,
+    /// Windows just taken out, fitting their height to their content for
+    /// these many more frames.
+    detach_fit: std::collections::BTreeMap<crate::build::layout::Block, u8>,
+    /// "Save material as": the name being typed, and what Save will store.
+    pub material_save: Option<MaterialSaveDraft>,
     /// PBR transform channel (All, Color, Normal, (O)RM, Emissive).
     pub pbr_channel: usize,
     /// Blinn-Phong UV channel (Diffuse, Normal, Specular).
@@ -191,6 +255,9 @@ pub struct FloaterState {
     /// "For sale" ticked / sale type / price not applied yet (Apply).
     pub sale_draft: Option<(bool, u8, i32)>,
     pub contents_filter: String,
+    /// The Contents filters: item types and the next owner's rights.
+    pub contents_filters: ContentsFilters,
+    pub contents_filters_open: bool,
     /// Independent from every personal/folder inventory window.
     pub contents_rights: crate::ui::inventory::permissions::Rights,
     /// The language picked for "New script"; None follows the region (Lua
@@ -227,8 +294,8 @@ pub struct FloaterState {
     pub planar_align: bool,
     pub bulk_perms_open: bool,
     pub bulk: contents_permissions::BulkState,
-    /// Contents item whose properties are shown.
-    pub item_properties: Option<item_properties::TaskProperties>,
+    /// Contents items whose properties windows are open, oldest first.
+    pub item_properties: Vec<item_properties::TaskProperties>,
     /// CantSelectReflectionProbe shown once.
     pub probe_warned: bool,
     /// Images the swatches want loaded (drained by the app).
@@ -378,6 +445,8 @@ pub fn show(
         tool.ui.layout.open = false;
         tool.ui.layout.organizing = false;
         tool.ui.layout.drag = None;
+        detach::hide(tool);
+        detach::park(ctx, s);
         return false;
     }
     press_takes_build_field_focus(ctx);
@@ -456,19 +525,21 @@ pub fn show(
     }
     if !s.legacy_window
         && tool.tool == Tool::Edit
-        && !s
-            .layout
-            .in_panel(crate::build::layout::Panel::Navigation)
-            .iter()
-            .any(|item| layout::section(*item) == Some(tool.tab))
+        && (detach::tab_detached(s, tool.tab) || !s.layout.in_bars().iter().any(|item| layout::section(*item) == Some(tool.tab)))
     {
-        tool.tab = s
-            .layout
-            .in_panel(crate::build::layout::Panel::Navigation)
-            .iter()
-            .find_map(|item| layout::section(*item))
+        // A section in a window of its own leaves the build window to the
+        // next one still in it (none: the build window shows no section).
+        let navigation = s.layout.in_bars();
+        let mut tabs = navigation.iter().filter_map(|item| layout::section(*item));
+        tool.tab = tabs
+            .clone()
+            .find(|tab| !detach::tab_detached(s, *tab))
+            .or_else(|| detach::tab_detached(s, tool.tab).then_some(tool.tab))
+            .or_else(|| tabs.next())
             .unwrap_or(6);
     }
+    detach::prepare(tool, s);
+    detach::park(ctx, s);
     tool.ui.layout.targets.clear();
     tool.ui.layout.zones.clear();
     tool.ui.layout.footer_cells.clear();
@@ -476,7 +547,6 @@ pub fn show(
     let mut legacy_toggle_sections = false;
     let mut copy_uuid = false;
     let mut summary_clicked = false;
-    let mut toggle_settings = false;
     if s.legacy_window {
         tool.ui.layout.organizing = false;
         tool.ui.layout.drag = None;
@@ -510,10 +580,10 @@ pub fn show(
             if !tool.selection.is_empty() {
                 floater.header_summary_action = Some(&mut summary_clicked);
             }
+        } else {
+            // the selection line's room, so the bars do not move between tools
+            floater.header_summary = Some(egui::RichText::new(" ").size(common::BODY).into());
         }
-    }
-    if !s.legacy_window && !matches!(tool.tool, Tool::Edit | Tool::Create) {
-        floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
     }
     // Keep the user's Build size. Large Appearance › Text size reflows inside
     // the floater (shape fields and Legacy Texture slots); it must not shove
@@ -523,6 +593,10 @@ pub fn show(
     } else {
         compact::minimum_size(tool, s)
     };
+    if detach::sectionless(tool, s) {
+        // Its height is set to its shared controls (detach::fit_window).
+        floater.min_size.y = 100.0;
+    }
     if !s.expanded {
         floater.default_size.x = ctx
             .data(|d| d.get_temp::<Vec2>(egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size")))
@@ -537,6 +611,9 @@ pub fn show(
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
+    if !s.legacy_window {
+        detach::fit_window(ctx, tool, s);
+    }
     if summary_clicked {
         tool.ui.weights_open = !tool.ui.weights_open;
     }
@@ -550,9 +627,6 @@ pub fn show(
     if copy_uuid && !tool.selection.is_empty() {
         ctx.copy_text(tool.copy_keys(world, s, mods.shift));
     }
-    if toggle_settings {
-        tool.ui.layout.open = !tool.ui.layout.open;
-    }
     if !tool.ui.layout.open {
         tool.ui.layout.organizing = false;
         tool.ui.layout.drag = None;
@@ -561,6 +635,8 @@ pub fn show(
         tool.ui.layout.open = true;
         tool.ui.grid_options_open = false;
     }
+    detach::finish(ctx, p, tool, s);
+    detach::windows(ctx, p, tool, world, s, mods, env);
     layout::settings(ctx, p, tool, world, s, mods);
     layout::finish(ctx, p, tool, s);
     notecards::show(ctx, p, tool, world, s);

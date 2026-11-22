@@ -7,6 +7,14 @@ struct CausticOut {
     @location(0) source:vec2<f32>,
     @location(1) @interpolate(flat) layer:u32,
 };
+// The fewer ripples of the lower qualities (water_micro_count) bend the
+// light less: their caustics would focus softly. The map bends it more for
+// them, so every quality draws lines about as sharp; the surface keeps its
+// own ripples.
+fn caustic_focus_gain(quality:u32)->f32 {
+    let q=min(quality,3u);
+    return select(select(1.0,1.15,q==2u),select(1.4,1.6,q==0u),q<2u);
+}
 @vertex
 fn vs_caustic(@builtin(vertex_index) vertex:u32,@builtin(instance_index) instance:u32)->CausticOut {
     let sizes=array<u32,4>(96u,160u,224u,256u);
@@ -14,7 +22,7 @@ fn vs_caustic(@builtin(vertex_index) vertex:u32,@builtin(instance_index) instanc
     let layer=instance/count;let cell=instance%count;
     let corners=array<vec2<f32>,6>(vec2<f32>(0.0,0.0),vec2<f32>(1.0,0.0),vec2<f32>(1.0,1.0),vec2<f32>(0.0,0.0),vec2<f32>(1.0,1.0),vec2<f32>(0.0,1.0));
     let p=(vec2<f32>(f32(cell%n),f32(cell/n))+corners[vertex])/f32(n)*18.0-1.0;
-    let wave=water_micro(p,caustic_fx.clock.x,caustic_fx.counts.w,0.0);
+    let wave=water_micro(p,caustic_fx.clock.x,caustic_fx.counts.w,0.0)*vec3<f32>(vec2<f32>(caustic_focus_gain(caustic_fx.counts.w)),1.0);
     let normal=normalize(vec3<f32>(-wave.xy,1.0));
     let ray=refract(vec3<f32>(0.0,0.0,-1.0),normal,0.7501875);
     let depths=array<f32,3>(0.75,2.5,7.0);
@@ -27,7 +35,7 @@ fn fs_caustic(in:CausticOut)->@location(0) vec4<f32> {
     let dx=dpdx(in.source);let dy=dpdy(in.source);
     let area=abs(dx.x*dy.y-dx.y*dy.x);
     let depths=array<f32,3>(0.75,2.5,7.0);
-    let curvature=water_micro_curvature(in.source,caustic_fx.clock.x,caustic_fx.counts.w)*depths[in.layer]*0.25;
+    let curvature=water_micro_curvature(in.source,caustic_fx.clock.x,caustic_fx.counts.w)*depths[in.layer]*0.25*caustic_focus_gain(caustic_fx.counts.w);
     let jacobian=(1.0+curvature.x)*(1.0+curvature.z)-curvature.y*curvature.y;
     // The analytic lens Jacobian smooths tessellation plateaus; projected area
     // anchors flux. A finite solar disc / pixel footprint bounds singular folds.

@@ -194,7 +194,7 @@ const MID_DRAWN: u32 = 0x200u;
 // What the glass leaves of the sun: this frame's ray (rt_shadows.wgsl
 // `out_glass`) and its history, rgb the colour times the light and a the
 // light (cs_lights_reuse, `glass_history`), then what the frame binds
-// (cs_lights_filter, the frame's binding 29: common.wgsl `sun_glass`).
+// (cs_lights_filter, the frame's binding 31: common.wgsl `sun_glass`).
 @group(0) @binding(20) var sun_glass_now: texture_2d<f32>;
 @group(0) @binding(21) var prev_glass: texture_2d<f32>;
 @group(0) @binding(22) var out_glass_history: texture_storage_2d<rgba16float, write>;

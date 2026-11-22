@@ -519,7 +519,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.item_if(
         "briefcase-filled",
         aurora_i18n::tr!("ui-context-show-in-inventory"),
-        f.object.attachment_item.is_some(),
+        f.object.attachment_item.is_some() && !f.show_original_blocked,
         CtxAction::AttachmentInventory(f.object.attachment_item.unwrap_or_default()),
     );
     // Object.SetFavorite Add / Remove, the one that applies
@@ -548,6 +548,16 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         aurora_i18n::tr!("common-detach"),
         f.object.detach,
         CtxAction::Detach(key),
+    );
+    // An Aurora addition, in no Legacy menu: the confirmation that Delete
+    // of a worn item asks in Inventory ("DeleteWornItems"), offered on the
+    // worn object. It re-checks body parts, RLVa and the Trash move before
+    // anything comes off.
+    ui.item_if(
+        "trash-x-filled",
+        aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
+        f.object.detach && f.object.attachment_item.is_some_and(|item| !item.is_nil()),
+        CtxAction::DetachDelete(key),
     );
     save_as_submenu(ui, f.object.id);
     ui.separator();
@@ -1873,6 +1883,8 @@ mod tests {
             "common-edit",
             "ui-context-edit-pbr-material",
             "common-detach",
+            // ours: Detach and Delete, in no Legacy menu
+            "ui-inventory-dialogs-detach-and-delete",
             "common-save-as>",
             "-",
             "status-sit",
@@ -2188,6 +2200,24 @@ mod tests {
             };
             assert!(!find(world_menu(&target, &friend, Vec3::ZERO), "common-become-friends").enabled);
         }
+    }
+
+    #[test]
+    fn our_attachment_offers_detach_and_delete_once_detach_and_its_item_allow_it() {
+        let key = ObjKey { region: 1, local_id: 42 };
+        let mut f = Facts::default();
+        let menu = |f: &Facts| world_menu(&Target::Attachment { key }, f, Vec3::ZERO);
+        let label = "ui-inventory-dialogs-detach-and-delete";
+        assert!(!row(menu(&f), label).enabled);
+        // detach allowed but no inventory item to delete: still greyed
+        f.object.detach = true;
+        assert!(!row(menu(&f), label).enabled);
+        f.object.attachment_item = Some(Uuid::from_u128(5));
+        let entry = row(menu(&f), label);
+        assert!(entry.enabled && matches!(entry.kind, Kind::Action(CtxAction::DetachDelete(k)) if k == key));
+        // an RLVa remove lock greys it with Detach
+        f.object.detach = false;
+        assert!(!row(menu(&f), label).enabled);
     }
 
     #[test]
@@ -2510,5 +2540,33 @@ mod rlva_fly_tests {
         for target in [&own, &worn] {
             assert!(fly_enabled(world_menu(target, &f, Vec3::ZERO)));
         }
+    }
+}
+
+#[cfg(test)]
+mod rlva_showinv_tests {
+    use super::*;
+
+    /// enable_object_show_original (indra/newview/llviewermenu.cpp):
+    /// "Show in inventory" of our attachment is greyed under @showinv.
+    #[test]
+    fn show_in_inventory_is_greyed_under_showinv() {
+        let key = ObjKey { region: 1, local_id: 42 };
+        let mut f = Facts::default();
+        f.object.attachment_item = Some(Uuid::from_u128(5));
+        let menu = |f: &Facts| world_menu(&Target::Attachment { key }, f, Vec3::ZERO);
+        let row = |entries: Vec<Entry>| {
+            fn find(entries: Vec<Entry>) -> Option<bool> {
+                entries.into_iter().find_map(|e| match e.kind {
+                    Kind::Submenu(inner) => find(inner),
+                    Kind::Action(CtxAction::AttachmentInventory(_)) => Some(e.enabled),
+                    _ => None,
+                })
+            }
+            find(entries).expect("a Show in inventory row")
+        };
+        assert!(row(menu(&f)));
+        f.show_original_blocked = true;
+        assert!(!row(menu(&f)));
     }
 }

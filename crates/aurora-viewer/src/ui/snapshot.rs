@@ -209,9 +209,14 @@ pub struct View<'a> {
     /// HDR and Emissive is on: without it no exposure applies, the row is
     /// greyed.
     pub hdr: bool,
+    /// Preferences' shadow softness and intensity, under the photo's own.
+    pub shadows: ShadowView,
     pub env: EnvView<'a>,
     /// The key that brings the free camera back (Escape by default).
     pub back_key: Option<crate::keybinds::Binding>,
+    /// RLVa holds the view (`Rlva::camera_view_held`): the free camera
+    /// switch is greyed.
+    pub free_refused: bool,
     /// The photo quality is lowered to stay within the video memory.
     pub quality_reduced: bool,
     /// The last 360° panorama made, for the 360° format's preview.
@@ -225,6 +230,15 @@ pub struct PanoShown {
     pub yaw: f32,
     /// Which capture it is: a new one starts the viewer afresh.
     pub serial: u64,
+}
+
+/// What the Light section shows of the sun's shadows: Preferences' values,
+/// and whether the soft shadows are on (the softness acts only then).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShadowView {
+    pub softness: f32,
+    pub intensity: f32,
+    pub soft: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -399,7 +413,15 @@ impl SnapshotUi {
     pub fn light_only(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Vec<Action>) {
         ui.spacing_mut().item_spacing.y = 6.0;
         let before = self.light;
-        light_rows(ui, p, &mut self.light, (view.exposure, view.hdr), &view.env, Some(view), out);
+        light_rows(
+            ui,
+            p,
+            &mut self.light,
+            (view.exposure, view.hdr, view.shadows),
+            &view.env,
+            Some(view),
+            out,
+        );
         if self.light != before && !out.contains(&Action::Changed) {
             out.push(Action::Changed);
         }
@@ -860,7 +882,7 @@ impl SnapshotUi {
             }
         });
         row(ui, p, aurora_i18n::tr!("photo-free-camera"), None, |ui| {
-            widgets::switch(ui, p, &mut self.free.on);
+            ui.add_enabled_ui(!view.free_refused, |ui| widgets::switch(ui, p, &mut self.free.on));
         });
         free_camera_hint(ui, p, view.back_key.as_ref());
         if widgets::action_button(
@@ -1297,7 +1319,7 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
 /// A level of the photo's (shadows, occlusion) on Preferences' stepped
 /// slider: Preferences' `current` until one is chosen; under the photo
 /// quality's boost, never past it.
-fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, current: u8, boost: bool, labels: &[&str]) {
+pub(crate) fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, current: u8, boost: bool, labels: &[&str]) {
     use crate::snapshot::light::photo_level;
     ui.horizontal(|ui| {
         let mut level = photo_level(true, *value, current, boost);
@@ -1307,21 +1329,21 @@ fn quality_slider(ui: &mut egui::Ui, p: &Palette, value: &mut Option<u8>, curren
     });
 }
 
-/// The photo's quick light (Phototools' Quick Environments, the sky, water
-/// and day cycle lists of its Env tab, Pause Clouds, Attached Lights and
-/// Exposure, and the sun of "Personal lighting"), for the photo only: closing
-/// the photo mode gives the user's own back, unless "Keep this
-/// light".
+/// The photo's quick light (the time of day, the sky, water and day cycle
+/// lists, Pause Clouds, Attached Lights, Exposure, and the sun of
+/// "Personal lighting"). Closing the photo mode gives the user's own back,
+/// unless "Keep this light", except Pause Clouds, a switch of the session
+/// that Phototools shares.
 fn light_rows(
     ui: &mut egui::Ui,
     p: &Palette,
     l: &mut crate::snapshot::light::PhotoLight,
-    (exposure, hdr): (f32, bool),
+    (exposure, hdr, shadows): (f32, bool, ShadowView),
     env: &EnvView,
     quality: Option<&View>,
     out: &mut Vec<Action>,
 ) {
-    use crate::snapshot::light::EXPOSURE;
+    use crate::snapshot::light::{EXPOSURE, SHADOW_INTENSITY, SHADOW_SOFTNESS};
     ui.add_enabled_ui(!env.locked, |ui| env_rows(ui, p, l, env))
         .response
         .on_disabled_hover_text(aurora_i18n::tr!("rlva-blocked"));
@@ -1386,6 +1408,31 @@ fn light_rows(
         .response
         .on_disabled_hover_text(aurora_i18n::tr!("ui-options-needs-hdr-emissive"));
     });
+    // (the softness acts with the soft shadows only: greyed otherwise)
+    row(ui, p, aurora_i18n::tr!("photo-light-shadow-softness"), None, |ui| {
+        ui.add_enabled_ui(shadows.soft, |ui| {
+            shadow_slider(
+                ui,
+                p,
+                &mut l.shadow_softness,
+                shadows.softness,
+                SHADOW_SOFTNESS,
+                aurora_i18n::tr!("photo-light-shadow-reset"),
+            )
+        })
+        .response
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-options-shadow-softness-needs-soft"));
+    });
+    row(ui, p, aurora_i18n::tr!("photo-light-shadow-intensity"), None, |ui| {
+        shadow_slider(
+            ui,
+            p,
+            &mut l.shadow_intensity,
+            shadows.intensity,
+            SHADOW_INTENSITY,
+            aurora_i18n::tr!("photo-light-shadow-reset"),
+        );
+    });
     row(
         ui,
         p,
@@ -1421,13 +1468,33 @@ fn light_rows(
     });
 }
 
+/// A slider of the Light section for a value that is the photo's own once
+/// moved (`own`), Preferences' (`base`) until then, with the restore button
+/// of the exposure row.
+fn shadow_slider(ui: &mut egui::Ui, p: &Palette, own: &mut Option<f32>, base: f32, range: std::ops::RangeInclusive<f32>, reset: &str) {
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.spacing_mut().slider_width = (ui.available_width() - 130.0).max(40.0);
+        let mut value = own.unwrap_or(base);
+        let slider = egui::Slider::new(&mut value, range)
+            .fixed_decimals(2)
+            .clamping(egui::SliderClamping::Edits)
+            .custom_parser(aurora_i18n::parse_number);
+        if ui.add(slider).changed() {
+            *own = Some(value);
+        }
+        if widgets::icon_button(ui, p, "restore", reset, own.is_some()) {
+            *own = None;
+        }
+    });
+}
+
 /// Width of a list's label in the Light section.
 const ENV_LABEL_W: f32 = 86.0;
 
 /// The photo's time of day, sky, water, day cycle and sun over the
 /// environment shown (`world::eep_photo`); each row's restore button gives
 /// the user's own back.
-fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::PhotoLight, env: &EnvView) {
+pub(crate) fn env_rows(ui: &mut egui::Ui, p: &Palette, l: &mut crate::snapshot::light::PhotoLight, env: &EnvView) {
     use crate::world::env_select::SettingsKind;
     ui.label(RichText::new(aurora_i18n::tr!("photo-light-time")).color(p.ink));
     ui.horizontal_wrapped(|ui| {
@@ -2027,6 +2094,11 @@ mod tests {
             ambient_occlusion: 0,
             quality_boost: false,
             hdr: true,
+            shadows: ShadowView {
+                softness: 0.25,
+                intensity: 1.0,
+                soft: false,
+            },
             env: EnvView {
                 catalog,
                 own: crate::world::eep_env::LocalView::SHARED,
@@ -2035,6 +2107,7 @@ mod tests {
                 loading: false,
             },
             back_key: None,
+            free_refused: false,
             quality_reduced: false,
             pano: None,
         }
@@ -2160,11 +2233,17 @@ mod tests {
         };
         for _ in 0..2 {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                light_rows(ui, &p, &mut light, (1.234, true), &env, None, &mut Vec::new())
+                let shadows = ShadowView {
+                    softness: 1.0,
+                    intensity: 1.0,
+                    soft: true,
+                };
+                light_rows(ui, &p, &mut light, (1.234, true, shadows), &env, None, &mut Vec::new())
             });
             output.textures_delta.clear();
         }
         assert_eq!(light.exposure, None);
+        assert_eq!((light.shadow_softness, light.shadow_intensity), (None, None));
         assert!(light.env.is_empty(), "showing the Light section picked {:?}", light.env);
     }
 }

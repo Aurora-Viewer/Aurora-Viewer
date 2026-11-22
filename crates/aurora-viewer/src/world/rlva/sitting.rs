@@ -17,6 +17,21 @@ pub struct Sitting {
     sit_actor: Uuid,
     stand_actor: Uuid,
     pending_ground: Option<Uuid>,
+    /// The ground sit a stand just released (m_fPendingGroundSit): sent
+    /// as RlvHandler::onSitOrStand sends it, without asking RLVa again.
+    released_ground: Option<Uuid>,
+    /// A sit asked by a path that records no @standtp origin: the `/siton`
+    /// chat command (chatbar_as_cmdline.cpp) and the area search's Sit
+    /// (FSPanelAreaSearchList::sitOnObject, fsareasearch.cpp) send
+    /// AgentRequestSit without RlvHandler::setSitSource.
+    pub(crate) no_sit_source: bool,
+}
+
+impl Sitting {
+    /// Whether `actor`'s ground sit is the one a stand just released.
+    pub(super) fn ground_released(&self, actor: Uuid) -> bool {
+        self.released_ground == Some(actor)
+    }
 }
 
 impl Rlva {
@@ -35,6 +50,7 @@ impl Rlva {
             self.sitting.stand_actor = actor;
             self.sitting.sit_actor = Uuid::nil();
         } else if sit {
+            self.sitting.released_ground = None;
             self.sitting.sit_actor = actor;
             self.sitting.stand_actor = Uuid::nil();
         }
@@ -59,9 +75,12 @@ impl World {
 
     /// getsitid reports the seat's root linkset, whereas notifications name
     /// the actual parent prim. Both remain independent of location privacy.
+    /// Ground-sitting, the root is the avatar itself: @getsitid replies
+    /// with our own id (gAgentAvatarp->getRoot() under isSitting(),
+    /// RLV_BHVR_GETSITID in RlvHandler::processReplyCommand, rlvhandler.cpp).
     pub(crate) fn rlva_sit_id(&self) -> Uuid {
         if !self.agent.seated {
-            return Uuid::nil();
+            return if self.agent.ground_sit { self.agent_id } else { Uuid::nil() };
         }
         let Some(mut index) = self
             .objects
@@ -100,16 +119,31 @@ impl World {
 
     /// Observe confirmed avatar state, not intent. Keep the previous seat
     /// through missing parent updates, and emit removals before additions.
-    /// A stand return takes precedence over a delayed ground sit.
+    /// Leaving a seat, for the ground, another seat or nothing, is a stand
+    /// (LLVOAvatar::getOffObject → sitDown(false) → RlvHandler::onSitOrStand,
+    /// indra/newview/llvoavatar.cpp and rlvhandler.cpp): under @standtp it
+    /// returns where the last recorded sit was asked, whenever that place
+    /// was recorded; otherwise it releases a ground sit a force left
+    /// pending, which waits for the next stand when @standtp took this one.
     pub fn rlva_sitting_tick(&mut self) -> Vec<(Uuid, NetCommand)> {
         if !self.rlva.enabled() {
             return Vec::new();
         }
         let Some(current) = self.rlva_seat() else { return Vec::new() };
+        self.rlva.sitting.released_ground = None;
+        let mut commands = Vec::new();
         if let Some(previous) = self.rlva.sitting.previous
             && previous != current
         {
             if previous != Seat::Standing {
+                if self.rlva.has("standtp")
+                    && let Some(origin) = self.rlva.stand_origin.take()
+                {
+                    self.rlva.stand_return = Some(origin);
+                } else if let Some(actor) = self.rlva.sitting.pending_ground.take() {
+                    self.rlva.sitting.released_ground = Some(actor);
+                    commands.push((actor, NetCommand::OneShotControl(control::SIT_ON_GROUND)));
+                }
                 let actor = std::mem::take(&mut self.rlva.sitting.stand_actor);
                 let legal = !self.rlva.has_except("unsit", actor);
                 self.rlva_sit_notice("unsat", previous, legal);
@@ -121,17 +155,20 @@ impl World {
             }
         }
         self.rlva.sitting.previous = Some(current);
-        if self.rlva.stand_return.is_some() {
-            self.rlva.sitting.pending_ground = None;
-        } else if current == Seat::Standing
-            && let Some(actor) = self.rlva.sitting.pending_ground.take()
-        {
-            let command = NetCommand::OneShotControl(control::SIT_ON_GROUND);
-            if self.rlva_allows_command(&command, actor) {
-                return vec![(actor, command)];
-            }
-        }
-        Vec::new()
+        commands
+    }
+
+    /// The @standtp return a stand left (RlvUtil::forceTp, rlvcommon.cpp,
+    /// on the next idle): to where the sit was asked, facing where the
+    /// camera looks (LLAgent::teleportViaLocationLookAt with no look-at,
+    /// llagent.cpp). The send boundary lets it through whatever the
+    /// teleport locks (RlvUtil::isForceTp).
+    pub fn rlva_stand_return_command(&self, camera_at: glam::Vec3) -> Option<NetCommand> {
+        self.rlva.stand_return.map(|(handle, position)| NetCommand::TeleportTo {
+            handle,
+            position,
+            look_at: camera_at,
+        })
     }
 
     fn rlva_sit_notice(&mut self, verb: &str, seat: Seat, legal: bool) {
@@ -256,15 +293,15 @@ mod tests {
             let origin = (w.main_region.unwrap(), w.agent.position);
             sit(&mut w, actor);
             assert_eq!(w.rlva.stand_origin, Some(origin), "{actor}");
-            w.rlva_update_stand();
+            w.rlva_sitting_tick();
             assert!(w.rlva.stand_return.is_none(), "the sit is not answered yet");
             seated(&mut w, true);
             // the seat carries the avatar away
             w.agent.position += glam::Vec3::X * 20.0;
-            w.rlva_update_stand();
+            w.rlva_sitting_tick();
             assert!(w.rlva.stand_return.is_none());
             seated(&mut w, false);
-            w.rlva_update_stand();
+            w.rlva_sitting_tick();
             assert_eq!(w.rlva.stand_return, Some(origin), "{actor}: back where the sit was asked");
             assert!(w.rlva.stand_origin.is_none());
         }
@@ -273,9 +310,9 @@ mod tests {
         sit(&mut w, Uuid::nil());
         seated(&mut w, true);
         restrict(&mut w, A, "standtp=n");
-        w.rlva_update_stand();
+        w.rlva_sitting_tick();
         seated(&mut w, false);
-        w.rlva_update_stand();
+        w.rlva_sitting_tick();
         assert!(w.rlva.stand_origin.is_none() && w.rlva.stand_return.is_none());
         // a ground sit records nothing either
         let mut ground = NetCommand::OneShotControl(control::SIT_ON_GROUND);
@@ -284,8 +321,12 @@ mod tests {
         assert!(w.rlva.stand_origin.is_none());
     }
 
+    /// RlvHandler::onSitOrStand (rlvhandler.cpp): the ground sit a force
+    /// left pending goes at the stand without asking RLVa again, a lock set
+    /// meanwhile by another object included; a @standtp return takes that
+    /// stand and the ground sit waits for the next one.
     #[test]
-    fn rlva_delayed_ground_sit_rechecks_new_locks_and_yields_to_stand_returns_and_disable() {
+    fn rlva_delayed_ground_sit_goes_at_the_stand_unless_standtp_took_it() {
         let mut w = world();
         seated(&mut w, true);
         w.rlva_sitting_tick();
@@ -293,18 +334,40 @@ mod tests {
         w.rlva.note_sit_command(&stand, A);
         restrict(&mut w, B, "sit=n");
         seated(&mut w, false);
-        assert!(w.rlva_sitting_tick().is_empty(), "a later sit lock cancels the delayed action");
+        let ground = w.rlva_sitting_tick();
+        assert!(matches!(&ground[..], [(actor, NetCommand::OneShotControl(control::SIT_ON_GROUND))] if *actor == A));
+        assert!(
+            w.rlva_allows_command(&ground[0].1, A),
+            "m_fPendingGroundSit is not asked again, @sit=n of another object or not"
+        );
+        assert!(!w.rlva_allows_command(&ground[0].1, Uuid::nil()), "only that one");
+        w.rlva.note_sit_command(&ground[0].1, A);
+        assert!(!w.rlva_allows_command(&ground[0].1, A), "once sent, the release is spent");
         restrict(&mut w, B, "clear");
         assert!(w.rlva_sitting_tick().is_empty());
+        // a @standtp return takes the stand: the ground sit waits
         seated(&mut w, true);
         w.rlva_sitting_tick();
         w.rlva_force_ground_sit(A);
+        restrict(&mut w, B, "standtp=n");
+        w.rlva.stand_origin = Some((42, glam::Vec3::ZERO));
         seated(&mut w, false);
-        w.rlva.stand_return = Some((42, glam::Vec3::ZERO));
         assert!(w.rlva_sitting_tick().is_empty());
+        assert_eq!(w.rlva.stand_return, Some((42, glam::Vec3::ZERO)));
         w.rlva.stand_return = None;
-        assert!(w.rlva_sitting_tick().is_empty(), "standtp does not leave a latent ground sit");
         seated(&mut w, true);
+        w.rlva_sitting_tick();
+        seated(&mut w, false);
+        assert!(
+            matches!(
+                &w.rlva_sitting_tick()[..],
+                [(_, NetCommand::OneShotControl(control::SIT_ON_GROUND))]
+            ),
+            "the next stand releases it"
+        );
+        // disabling RLVa drops it
+        seated(&mut w, true);
+        w.rlva_sitting_tick();
         w.rlva_force_ground_sit(A);
         w.rlva.configure(false);
         seated(&mut w, false);

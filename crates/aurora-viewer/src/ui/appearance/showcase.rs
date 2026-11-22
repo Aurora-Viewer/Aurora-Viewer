@@ -19,6 +19,7 @@ use crate::{
     ui::{fonts, icons, menu, widgets},
     world::{World, outfit_folders::Entry},
 };
+use aurora_i18n::UiUpper;
 use aurora_net::outfits::categories::Update;
 use egui::{Rect, Sense, Vec2};
 use std::collections::{HashMap, HashSet};
@@ -72,6 +73,9 @@ struct Cache {
     outfits: Vec<Uuid>,
     favorites: usize,
     no_picture: usize,
+    /// The outfits of the collection shown (`outfits`) without a picture:
+    /// the banner's count when a folder is chosen.
+    no_picture_here: usize,
 }
 
 impl State {
@@ -102,7 +106,7 @@ impl State {
                 }
                 false
             };
-            let outfits = shown
+            let outfits: Vec<Uuid> = shown
                 .iter()
                 .copied()
                 .filter(|id| match self.filter {
@@ -112,7 +116,9 @@ impl State {
                     Filter::Folder(folder) => within(id, folder),
                 })
                 .collect();
+            let no_picture_here = outfits.iter().filter(|id| !pictured.contains(id)).count();
             self.cache = Some(Cache {
+                no_picture_here,
                 generation: inv.generation,
                 shown: shown.to_vec(),
                 filter: self.filter,
@@ -211,11 +217,11 @@ pub(super) fn show(
     });
     let radius = ui.visuals().window_corner_radius;
     let face = p.field.gamma_multiply(0.65);
-    let (no_picture, favorites, outfits) = {
+    let (no_picture, favorites, outfits, no_picture_here) = {
         let mut state = std::mem::take(&mut st.showcase_state);
         let mut pictured = |id| !st.outfit_picture(&world.inventory, id).is_nil();
         let cache = state.outfits(&mut pictured, world, shown);
-        let out = (cache.no_picture, cache.favorites, cache.outfits.clone());
+        let out = (cache.no_picture, cache.favorites, cache.outfits.clone(), cache.no_picture_here);
         st.showcase_state = state;
         out
     };
@@ -233,7 +239,8 @@ pub(super) fn show(
         collection_menu(&mut g, p, world, st, entries, shown.len(), favorites, no_picture);
         g.add_space(6.0);
     }
-    banner(&mut g, p, world, st, shown, no_picture, actions);
+    let scope = banner_scope(st.showcase_state.filter, shown, &outfits, no_picture, no_picture_here);
+    banner(&mut g, p, world, st, scope, actions);
     egui::ScrollArea::vertical()
         .id_salt("appearance_showcase")
         .auto_shrink([false, false])
@@ -307,7 +314,7 @@ fn rail_column(
             if !groups.is_empty() {
                 ui.add_space(12.0);
                 ui.label(
-                    egui::RichText::new(aurora_i18n::tr!("ui-appearance-showcase-folders").to_uppercase())
+                    egui::RichText::new(aurora_i18n::tr!("ui-appearance-showcase-folders").ui_upper())
                         .size(11.0)
                         .strong()
                         .color(p.muted),
@@ -391,19 +398,36 @@ fn collection_menu(
     });
 }
 
-/// "N outfits have no picture yet", with Take the portraits (the batch
-/// portraits' window, over our own outfits shown); closed for the session
-/// by its cross.
-fn banner(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    world: &World,
-    st: &mut AppearanceUi,
-    shown: &[Uuid],
+/// What the banner counts and hands the batch portraits: with a folder of
+/// My Outfits chosen, its outfits (subfolders included) and the folder;
+/// otherwise every outfit shown.
+struct BannerScope<'a> {
+    outfits: &'a [Uuid],
     no_picture: usize,
-    actions: &mut Vec<Action>,
-) {
+    folder: Option<Uuid>,
+}
+
+fn banner_scope<'a>(filter: Filter, shown: &'a [Uuid], filtered: &'a [Uuid], no_picture: usize, no_picture_here: usize) -> BannerScope<'a> {
+    match filter {
+        Filter::Folder(folder) => BannerScope {
+            outfits: filtered,
+            no_picture: no_picture_here,
+            folder: Some(folder),
+        },
+        _ => BannerScope {
+            outfits: shown,
+            no_picture,
+            folder: None,
+        },
+    }
+}
+
+/// "N outfits have no picture yet", with Take the portraits (the batch
+/// portraits' window, over our own outfits of the scope); closed for the
+/// session by its cross.
+fn banner(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, scope: BannerScope, actions: &mut Vec<Action>) {
     let state = &mut st.showcase_state;
+    let no_picture = scope.no_picture;
     if no_picture == 0 || state.banner_hidden || state.filter == Filter::NoPicture {
         return;
     }
@@ -418,8 +442,8 @@ fn banner(
                 }
                 let take = aurora_i18n::tr!("ui-appearance-batch-open");
                 if widgets::flat_button(ui, p, take).clicked() {
-                    let own = shown.iter().copied().filter(|id| own_outfit(world, *id)).collect();
-                    actions.push(Action::OutfitBatch(own));
+                    let own = scope.outfits.iter().copied().filter(|id| own_outfit(world, *id)).collect();
+                    actions.push(Action::OutfitBatch(own, scope.folder));
                 }
                 ui.add(egui::Label::new(egui::RichText::new(text).size(12.0).color(p.muted)).truncate());
             });
@@ -942,7 +966,7 @@ fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(title.to_uppercase()).size(11.0).strong().color(p.muted));
+            ui.label(egui::RichText::new(title.ui_upper()).size(11.0).strong().color(p.muted));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(egui::RichText::new(rows.len().to_string()).size(11.0).color(p.muted));
             });
@@ -1055,6 +1079,41 @@ mod tests {
         world.inventory.generation += 1;
         collection(&world, &mut st, Filter::Folder(Uuid::from_u128(740)));
         assert_eq!(st.showcase_state.filter, Filter::All);
+    }
+
+    /// With a folder chosen, the banner counts and hands the batch only
+    /// that folder's outfits, its subfolders' included; otherwise every
+    /// outfit shown.
+    #[test]
+    fn the_banner_follows_the_folder_chosen() {
+        let (mut world, mut st) = grouped();
+        let (beach, beach_day, beach_night) = (Uuid::from_u128(741), Uuid::from_u128(746), Uuid::from_u128(747));
+        world.inventory.folders.get_mut(&beach_day).expect("Beach Day").info.thumbnail = Uuid::from_u128(9_000);
+        world.inventory.generation += 1;
+        let scope_of = |world: &World, st: &mut AppearanceUi, filter: Filter| {
+            st.showcase_state.filter = filter;
+            let shown = st.shown_outfits(&world.inventory);
+            let mut state = std::mem::take(&mut st.showcase_state);
+            let mut pictured = |id| !st.outfit_picture(&world.inventory, id).is_nil();
+            let cache = state.outfits(&mut pictured, world, &shown);
+            let scope = banner_scope(filter, &shown, &cache.outfits, cache.no_picture, cache.no_picture_here);
+            let out = (scope.outfits.to_vec(), scope.no_picture, scope.folder);
+            st.showcase_state = state;
+            out
+        };
+        let (outfits, missing, folder) = scope_of(&world, &mut st, Filter::Folder(beach));
+        assert_eq!(folder, Some(beach));
+        assert_eq!(outfits.len(), 2);
+        assert!(outfits.contains(&beach_night), "Night's outfit is in Beach");
+        assert_eq!(missing, 1, "Beach Day has a picture");
+        let (outfits, missing, folder) = scope_of(&world, &mut st, Filter::All);
+        assert_eq!((outfits.len(), missing, folder), (8, 7, None));
+        let (outfits, _, folder) = scope_of(&world, &mut st, Filter::Favorites);
+        assert_eq!(
+            (outfits.len(), folder),
+            (8, None),
+            "a collection that is not a folder keeps every outfit"
+        );
     }
 
     /// Every text drawn, with where its galley starts.

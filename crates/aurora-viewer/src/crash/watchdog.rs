@@ -118,6 +118,7 @@ pub const EFFECT_WORDS: &[&str] = &[
     "shadows",
     "projector-shadows",
     "contact-shadows",
+    "soft-shadows",
     "ray-tracing",
     "rt-lights",
     "rt-indirect",
@@ -300,6 +301,10 @@ fn run(dir: &Path, main: Option<&super::native::Thread>) {
     let mut written: Option<Instant> = None;
     loop {
         std::thread::sleep(TICK);
+        // A graphics driver gives a fatal signal its own handler when it
+        // first compiles a shader, at any time in the session.
+        #[cfg(target_os = "linux")]
+        super::native::reclaim_lasting();
         let window = WINDOW.load(Ordering::Relaxed);
         if window != 0 {
             if window_hung(window) {
@@ -338,6 +343,15 @@ fn write_alive(dir: &Path, responsive: Option<u64>) {
     }
     if let Some(memory) = crate::sys_probe::process_memory() {
         let _ = writeln!(text, "ram_mb={}", memory.working_set >> 20);
+        // committed, resident or not: the working set alone said 97 MB of
+        // a viewer whose memory Windows had paged out (#2998)
+        let _ = writeln!(text, "private_mb={}", memory.private >> 20);
+    }
+    if let Some(pc) = crate::sys_probe::system_memory() {
+        let _ = writeln!(text, "pc_ram_mb={}/{}", pc.available >> 20, pc.total >> 20);
+        if pc.commit_limit > 0 {
+            let _ = writeln!(text, "pc_commit_mb={}/{}", pc.committed >> 20, pc.commit_limit >> 20);
+        }
     }
     if let Some(state) = STATE.try_lock().ok().and_then(|s| s.clone()) {
         state.lines(&mut text);

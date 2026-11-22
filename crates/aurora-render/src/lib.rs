@@ -19,6 +19,7 @@ mod bloom;
 mod clouds;
 pub mod clouds_noise;
 mod contact_shadows;
+pub mod curvature;
 mod cutout;
 // (Vulkan only: Metal textures stay with wgpu's allocator)
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
@@ -71,6 +72,7 @@ pub mod second_view;
 mod selection;
 pub mod shadow_cull;
 mod shadow_merge;
+mod soft_shadows;
 #[cfg(test)]
 mod specular_aa;
 pub mod spirv_fix;
@@ -138,6 +140,8 @@ pub use hud::HudView;
 pub use label_depth::{WORLD_OVERLAY_NEAR_W, clip_world_line, world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use renderer::{CASCADES, RenderError};
+// What a tile of a photo draws around what it keeps for the soft shadows.
+pub use soft_shadows::tile_reach as soft_shadow_tile_reach;
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
 pub use ui_blur::{blurred_backdrop, set_ui_blur};
@@ -189,17 +193,21 @@ pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
     water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER)
 }
 
-/// object.wgsl as the device takes it: without the attribute of the early
-/// depth test (`fs_blend_once`) where the device does not know it, as on
-/// Metal. naga refuses a whole module for one entry point it cannot read,
-/// so every module made from object.wgsl (the scene, the stochastic
-/// transparency, the impostors) takes it from here (#3751).
+/// object.wgsl as the device takes it: without the attributes of the early
+/// depth test (`fs_blend_once`; `fs_depth_occlusion`, which then runs for
+/// the texels the depth would have ruled out, and writes the same) where
+/// the device does not know them, as on Metal. naga refuses a whole module
+/// for one entry point it cannot read, so every module made from
+/// object.wgsl (the scene, the stochastic transparency, the impostors)
+/// takes it from here (#3751).
 pub(crate) fn object_shader_source(features: wgpu::Features) -> String {
     let source = water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"));
     if features.contains(blend_exact::EARLY_TEST) {
         source.into_owned()
     } else {
-        source.replace("@early_depth_test(force)", "")
+        source
+            .replace("@early_depth_test(force)", "")
+            .replace("@early_depth_test(less_equal)", "")
     }
 }
 
@@ -325,6 +333,7 @@ mod shader_tests {
             r#"
 struct ProbeFrame {{view_proj:mat4x4<f32>}};
 @group(0) @binding(0) var<uniform> frame:ProbeFrame;
+fn world_clip(p:vec3<f32>)->vec4<f32> {{return frame.view_proj*vec4<f32>(p,1.0);}}
 struct VsIn {{@builtin(vertex_index) vertex:u32,@builtin(instance_index) layer:u32}};
 struct WaterOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>,@location(1) level:f32}};
 struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
@@ -659,6 +668,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                     r#"
 struct Frame {{view_proj:mat4x4<f32>}};
 @group(0) @binding(0) var<uniform> frame:Frame;
+fn world_clip(p:vec3<f32>)->vec4<f32> {{return frame.view_proj*vec4<f32>(p,1.0);}}
 struct WaterOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
 struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
 @vertex fn vertex(@builtin(vertex_index) v:u32,@builtin(instance_index) layer:u32)->WaterOut {{
@@ -1119,6 +1129,20 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     #[test]
     fn ssr_shader_is_valid() {
         validate(&format!("{}\n{}", crate::COMMON_SHADER, include_str!("shaders/ssr.wgsl")));
+    }
+
+    /// The variants compiled while the soft shadows are off (`SOFT_PATH`
+    /// false in common.wgsl) are valid too.
+    #[test]
+    fn scene_and_ssr_shaders_without_the_soft_path_are_valid() {
+        let common = crate::renderer::common_shader_for(false);
+        validate(&format!(
+            "{}\n{}\n{}",
+            common,
+            include_str!("shaders/object.wgsl"),
+            include_str!("shaders/env.wgsl")
+        ));
+        validate(&format!("{}\n{}", common, include_str!("shaders/ssr.wgsl")));
     }
 
     #[test]

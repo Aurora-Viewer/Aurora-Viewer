@@ -2038,7 +2038,7 @@ pub(crate) struct Targets {
     pub result: wgpu::TextureView,
     /// What the glass leaves of the traced sun's red, green and blue, 1
     /// where it meets none (rt_shadows.wgsl `out_glass`): the frame's
-    /// binding 29 (common.wgsl `sun_glass`).
+    /// binding 31 (common.wgsl `sun_glass`).
     pub glass: wgpu::TextureView,
     pub reflect: Option<ReflectTargets>,
     pub gi: Option<GiTargets>,

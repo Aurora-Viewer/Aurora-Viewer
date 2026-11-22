@@ -264,6 +264,9 @@ const UNDER_DIVIDER: f32 = 5.0;
 const BODY_CHROME: f32 = FLOATER_MARGIN.top as f32 + FLOATER_MARGIN.bottom as f32 + 2.0 * FLOATER_STROKE;
 /// The least height the scrolled body of a floater keeps.
 const MIN_SCROLLED_BODY: f32 = 80.0;
+/// The outer height egui gives a window it opens without a default height
+/// (`egui::Window::new`): the room a fixed floater first lays its body in.
+const EGUI_WINDOW_HEIGHT: f32 = 420.0;
 
 /// What a floater of the usual layout (title row and divider, no status
 /// row, neither `flush_body` nor `framed_header`) adds around its body:
@@ -627,6 +630,9 @@ pub struct Floater<'a> {
     /// Its layer: the windows' own (`Middle`), or `Foreground` over an
     /// overlay whose controls sit there (the photo viewfinder's poser).
     pub order: egui::Order,
+    /// No title bar: its close cross in a small box against its right edge
+    /// (see `headless`).
+    pub headless: bool,
     cascade: Option<CascadeGroup>,
     partial_outside: bool,
     /// A chat window: it stays in immersive mode (`hide_windows`).
@@ -663,6 +669,7 @@ impl<'a> Floater<'a> {
             steady_size: false,
             aspect: None,
             order: egui::Order::Middle,
+            headless: false,
             cascade: None,
             partial_outside: false,
             chat: false,
@@ -775,6 +782,15 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// No title bar, only a close cross in a small box against the window's
+    /// right edge, at its top, outside it (the build window's transform
+    /// block taken out): the window is moved by its background, as any
+    /// window by the room its widgets leave, and it cannot be minimized.
+    pub fn headless(mut self) -> Self {
+        self.headless = true;
+        self
+    }
+
     /// Mark the minimized bar while `waiting` (unread messages inside).
     pub fn attention(mut self, waiting: bool) -> Self {
         self.attention = waiting;
@@ -828,7 +844,8 @@ impl<'a> Floater<'a> {
             }
         }
         // persisted with the UI layout (ui_layout.ron)
-        let minimized = ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
+        // a window without a title bar has no bar to be minimized to
+        let minimized = !self.headless && ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
         // minimized with its compact body: sized by that body
         let compact = minimized && self.compact_minimized.is_some();
         if !self.silent {
@@ -836,12 +853,13 @@ impl<'a> Floater<'a> {
         }
         let opacity = super::surface_opacity::window(ctx, self.id, self.chat);
         let shadow = ctx.global_style().visuals.window_shadow;
+        let fill = super::surface_opacity::frame_fill(
+            p,
+            Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
+            opacity,
+        );
         let frame = egui::Frame::new()
-            .fill(super::surface_opacity::frame_fill(
-                p,
-                Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
-                opacity,
-            ))
+            .fill(fill)
             .stroke(border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))))
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
             .shadow(egui::Shadow {
@@ -850,6 +868,12 @@ impl<'a> Floater<'a> {
             })
             .inner_margin(if self.framed_header.is_some() {
                 egui::Margin::ZERO
+            } else if self.headless {
+                egui::Margin {
+                    top: 8,
+                    bottom: 8,
+                    ..FLOATER_MARGIN
+                }
             } else if self.flush_body {
                 egui::Margin {
                     left: 0,
@@ -919,12 +943,26 @@ impl<'a> Floater<'a> {
             .frame(frame)
             .default_pos(self.default_pos)
             .resizable(false);
+        // A window sized by its content lays its body out in the room egui's
+        // window had the frame before, and only ever grows past it: squeezed
+        // once (the viewer's window made tiny), that room stayed small, and a
+        // body that fits it (a scroll area, wrapped text) kept the window
+        // small for good (the Director's, Aurora Weather's: the human's
+        // reports of 2026-11-17 and 2026-11-21). It gets at least the room
+        // egui gives a window it opens, which changes nothing until a squeeze.
         if self.auto_height && !minimized {
-            w = w.auto_sized().min_width(self.default_size.x).max_width(self.default_size.x);
+            w = w
+                .auto_sized()
+                .min_width(self.default_size.x)
+                .max_width(self.default_size.x)
+                .min_height(work.height());
         } else if self.resizable && !minimized {
             w = w.default_size(self.default_size).min_size(self.min_size);
         } else if !minimized {
-            w = w.default_width(self.default_size.x);
+            w = w
+                .default_width(self.default_size.x)
+                .min_width(self.default_size.x)
+                .min_height(EGUI_WINDOW_HEIGHT.min(work.height()));
         }
         // LLFloater::setMinimized keeps the expanded geometry. egui's Resize
         // otherwise retains the old height when the body disappears, and then
@@ -1028,6 +1066,14 @@ impl<'a> Floater<'a> {
             // each restoration even though Resize remembered the right size.
             if resizable || (restore && !self.auto_height) {
                 ui.set_min_size(ui.available_size());
+            }
+            if self.headless {
+                // the body alone: the cross is in its box outside the window
+                out = Some(body(ui));
+                if let Some(rect) = held {
+                    outer.advance_cursor_after_rect(rect);
+                }
+                return;
             }
             // title bar
             let mut buttons_left = f32::INFINITY;
@@ -1227,7 +1273,13 @@ impl<'a> Floater<'a> {
                 if scrolls {
                     let above = ui.cursor().top() - ui.max_rect().top();
                     let room = (work.height() - above - BODY_CHROME).max(MIN_SCROLLED_BODY);
-                    let shown = egui::ScrollArea::vertical().id_salt("floater_body").max_height(room).show(ui, body);
+                    // exactly the room tall while it scrolls, not the
+                    // smaller room a squeeze left (`auto_height_body`)
+                    let shown = egui::ScrollArea::vertical()
+                        .id_salt("floater_body")
+                        .max_height(room)
+                        .min_scrolled_height(room)
+                        .show(ui, body);
                     still_too_tall = shown.content_size.y > room + 0.5;
                     out = Some(shown.inner);
                 } else {
@@ -1249,6 +1301,9 @@ impl<'a> Floater<'a> {
                 ctx.data_mut(|d| d.insert_temp(scroll_id, too_tall));
             }
             slot.shown(ctx, response.response.rect, minimized);
+            if self.headless && headless_close(ctx, p, window_id, &response.response, fill, opacity, self.order) {
+                close = true;
+            }
             if self.cascade.is_some() {
                 cascade::shown(ctx, window_id, response.response.rect, minimized);
             }
@@ -1810,6 +1865,48 @@ fn minimize_title_icon(compact: bool, minimized: bool) -> &'static str {
 }
 
 /// Title bar button with a Tabler icon (drawn by hand if it is missing).
+/// The close cross of a window without a title bar (`Floater::headless`):
+/// a small box of the window's surface against its right edge, at its top,
+/// drawn just above the window; true when it is clicked.
+fn headless_close(
+    ctx: &egui::Context,
+    p: &Palette,
+    window: egui::Id,
+    shown: &egui::Response,
+    fill: Color32,
+    opacity: f32,
+    order: egui::Order,
+) -> bool {
+    const SIZE: f32 = 22.0;
+    // its left border lies on the window's right border
+    let pos = egui::pos2(shown.rect.right() - FLOATER_STROKE, shown.rect.top());
+    let area = egui::Area::new(window.with("headless_close"))
+        .order(order)
+        .fixed_pos(pos)
+        .movable(false)
+        .constrain(false)
+        .fade_in(false)
+        .show(ctx, |ui| {
+            let glass = ui.painter().add(egui::Shape::Noop);
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(SIZE), Sense::click());
+            let radius = ctx.global_style().visuals.window_corner_radius;
+            // square against the window, rounded like it outside
+            let corners = egui::CornerRadius { nw: 0, sw: 0, ..radius };
+            ui.painter().rect(
+                rect,
+                corners,
+                fill,
+                border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))),
+                egui::StrokeKind::Inside,
+            );
+            workspace::finish_glass_faded(ui.painter(), glass, rect, p, f32::from(radius.ne), opacity);
+            paint_title_button(ui, p, "x", &response);
+            response.on_hover_text(aurora_i18n::tr!("common-close")).clicked()
+        });
+    ctx.set_sublayer(shown.layer_id, area.response.layer_id);
+    area.inner
+}
+
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     title_button_sized(ui, p, icon, Vec2::splat(16.0))
 }
@@ -2227,21 +2324,40 @@ pub(crate) fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
 
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    tabs_row(ui, p, selected, labels, false, false).0
+}
+
+/// The flat tab strip, with the rect of each tab (a tab that opens when
+/// something is dragged over it).
+pub fn tabs_at(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> (bool, Vec<egui::Rect>) {
     tabs_row(ui, p, selected, labels, false, false)
 }
 
 /// The same tab strip at the density of fixed inspector controls.
 pub fn compact_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    tabs_row(ui, p, selected, labels, false, true).0
+}
+
+/// The compact tab strip, with the rect of each tab.
+pub fn compact_tabs_at(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> (bool, Vec<egui::Rect>) {
     tabs_row(ui, p, selected, labels, false, true)
 }
 
 /// Equal-width tabs spanning a data inspector, with the usual theme and input handling.
 pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, true, false)
+    tabs_row(ui, p, selected, labels, true, false).0
 }
 
-fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], stretched: bool, compact: bool) -> bool {
+fn tabs_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    selected: &mut usize,
+    labels: &[(&str, bool)],
+    stretched: bool,
+    compact: bool,
+) -> (bool, Vec<egui::Rect>) {
     let mut changed = false;
+    let mut rects = Vec::with_capacity(labels.len());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let n = labels.len().max(1) as f32;
@@ -2268,6 +2384,7 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
                 text_w[i] * compact + extra.min(40.0)
             };
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, height), if *enabled { Sense::click() } else { Sense::hover() });
+            rects.push(rect);
             let sel = *selected == i;
             if sel || (resp.hovered() && *enabled) {
                 let fill = if sel {
@@ -2300,7 +2417,7 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
             }
         }
     });
-    changed
+    (changed, rects)
 }
 
 /// Height of a `segmented` choice, room around its segments, and room
@@ -2534,6 +2651,17 @@ pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enable
 /// when clicked.
 pub fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
     small_icon_button(ui, p, icon, tip, true, on)
+}
+
+/// The A–Z switch of a list drawn from the inventory: lit while `by_name`,
+/// off for the list's own order, `tip` saying which and what a click does;
+/// flips `by_name` and returns true when clicked.
+pub fn sort_by_name_toggle(ui: &mut egui::Ui, p: &Palette, by_name: &mut bool, tip: &str) -> bool {
+    let clicked = icon_toggle(ui, p, "sort-ascending-letters", tip, *by_name);
+    if clicked {
+        *by_name = !*by_name;
+    }
+    clicked
 }
 
 /// Flat icon toggle with a larger glyph and hit target, in logical points.

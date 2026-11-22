@@ -20,7 +20,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
                     1 => 0,
                     _ => 2,
                 };
-                if widgets::compact_tabs(
+                let (clicked, rects) = widgets::compact_tabs_at(
                     ui,
                     p,
                     &mut tab,
@@ -29,7 +29,18 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
                         (aurora_i18n::tr!("build-ui-texture-blinn-phong"), true),
                         (aurora_i18n::tr!("extra-media"), true),
                     ],
-                ) {
+                );
+                // inventory held over PBR or Blinn-Phong opens it (the texture
+                // panel's open_tabs_on_drag_and_drop, panel_fs_tools_texture.xml)
+                let mut held = false;
+                for (index, rect) in rects.iter().enumerate().take(2) {
+                    let id = egui::Id::unique("legacy-build-drag-open-texture").with(index);
+                    if crate::ui::inventory::drag::navigation::tab_held_over(ui, *rect, id) {
+                        tab = index;
+                        held = true;
+                    }
+                }
+                if clicked || held {
                     tool.ui.tex_tab = match tab {
                         0 => 1,
                         1 => 0,
@@ -406,6 +417,10 @@ pub(super) fn pbr_surface(
     maps_mixed: [bool; 4],
     model: Option<std::sync::Arc<aurora_render::preview::Model>>,
     editable: bool,
+    (save_material, save): (
+        &aurora_assets::material::PbrMaterial,
+        Option<crate::build::texture_copy::MaterialSave>,
+    ),
 ) {
     let scale = super::super::common::font_scale(ui);
     let map_step = 74.0 * scale;
@@ -441,6 +456,9 @@ pub(super) fn pbr_surface(
             60.0,
         );
     }
+    // Save to inventory, in the free cell under Emissive, as in Aurora's layout.
+    let mut cell = child(ui, canvas, 64.0, map_step * 2.0, 60.0, map_h, "legacy-pbr-save");
+    super::save_button(&mut cell, p, tool, save_material, save, 60.0);
     for (y, target, color) in [
         (
             0.0,

@@ -64,8 +64,9 @@ pub enum Action {
     /// The photo mode, square, for an outfit's picture.
     OutfitPhotoMode(Uuid),
     /// The batch portraits' window, over these outfits (the showcase's,
-    /// in its order).
-    OutfitBatch(Vec<Uuid>),
+    /// in its order), and the folder of My Outfits they were chosen from
+    /// (the showcase filtered to it), named in the window.
+    OutfitBatch(Vec<Uuid>, Option<Uuid>),
     Wear(Uuid, bool),
     WearOutfits {
         folders: Vec<Uuid>,
@@ -292,7 +293,16 @@ pub fn dirty(inv: &Inventory) -> bool {
         let mut keys: Vec<_> = folder_links(inv, id)
             .into_iter()
             .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13 | 21)))
-            .map(|l| (l.target, l.name, l.desc))
+            // read as the Legacy Viewer holds them (LLInventoryItem::fromLLSD):
+            // an outfit saved before the links went out in plain ASCII is
+            // not a change
+            .map(|l| {
+                (
+                    l.target,
+                    aurora_net::outfits::link_name(&l.name),
+                    aurora_net::outfits::link_desc(&l.desc),
+                )
+            })
             .collect();
         keys.sort();
         keys
@@ -989,7 +999,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         | Action::OutfitSnapshot(_)
         | Action::OutfitPortrait(_)
         | Action::OutfitPhotoMode(_)
-        | Action::OutfitBatch(_)
+        | Action::OutfitBatch(..)
         | Action::Category(..)
         | Action::Folders(_)
         | Action::DeleteFromOutfit { .. }
@@ -1651,7 +1661,8 @@ pub fn seed_demo_wearables(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, cof, &links);
 }
 
-/// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`: the number of generated
+/// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]`:
+/// the number of generated
 /// outfits added to the Appearance demo (a large wardrobe), 0 without it.
 pub fn demo_outfit_count() -> usize {
     std::env::var("AURORA_DEMO_OUTFITS")
@@ -1712,14 +1723,33 @@ pub fn seed_demo_take_off(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, sub, &hair);
 }
 
-/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`).
+/// The outfit sort the modes of `AURORA_DEMO_OUTFITS` ask for, if any.
+pub fn demo_outfit_sort() -> Option<super::outfit_folders::Sort> {
+    use super::outfit_folders::{Sort, SortBy};
+    let modes = ["newest", "oldest", "favorites", "images"];
+    modes.iter().any(|mode| demo_outfit_mode(mode)).then(|| Sort {
+        by: if demo_outfit_mode("newest") {
+            SortBy::Newest
+        } else if demo_outfit_mode("oldest") {
+            SortBy::Oldest
+        } else {
+            SortBy::NameAscending
+        },
+        favorites_first: demo_outfit_mode("favorites"),
+        images_first: demo_outfit_mode("images"),
+    })
+}
+
+/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`, ...).
 pub fn demo_outfit_mode(mode: &str) -> bool {
     std::env::var("AURORA_DEMO_OUTFITS").is_ok_and(|v| v.split(',').skip(1).any(|m| m.trim() == mode))
 }
 
 /// A large wardrobe for the Appearance demo: `count` outfits with generated
 /// names, 20 to 60 links each to a pool of generated clothes, objects and
-/// body parts, and a thumbnail (never loaded offline) on one in four.
+/// body parts, a thumbnail (never loaded offline) on one in four, and a
+/// date that does not follow the names; with the `favorites` mode, one in
+/// five is a favorite.
 pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
     use super::inventory::Folder;
     let Some(my) = system_folder(inv, FT_MY_OUTFITS) else {
@@ -1751,10 +1781,13 @@ pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
         })
         .collect();
     inv.add_items(pool.clone());
+    let favorites = demo_outfit_mode("favorites");
     let mut contents = Vec::with_capacity(count);
     let mut outfits = Vec::with_capacity(count);
     for i in 0..count {
         let id = Uuid::from_u128(2_000_000 + i as u128);
+        // a day apart: the names sort by style first, so not in their order
+        let saved = 1_700_000_000 + ((i * 7919) % count.max(1)) as i64 * 86_400;
         let name = format!("{} {} {:04}", STYLES[i % STYLES.len()], KINDS[(i / 7) % KINDS.len()], i);
         inv.folders.insert(
             id,
@@ -1770,6 +1803,7 @@ pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
                     } else {
                         Uuid::nil()
                     },
+                    favorite: favorites && i % 5 == 0,
                     ..Default::default()
                 },
                 children: Vec::new(),
@@ -1794,6 +1828,7 @@ pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
                     owner: agent,
                     base_mask: 0x7fffffff,
                     owner_mask: 0x7fffffff,
+                    created_at: saved,
                     ..Default::default()
                 }
             })
@@ -2645,6 +2680,30 @@ mod tests {
         demo_mutate(&mut inv, Uuid::from_u128(1), &change).expect("mutation");
         assert_eq!(base(&inv), Some(change.folder));
         assert!(!dirty(&inv));
+        // #4225: an outfit saved with a UTF-8 link name, worn since with the
+        // plain-ASCII link the Legacy Viewer sends, has not changed
+        let target = folder_links(&inv, change.folder).iter().find(|l| !l.folder).expect("link").target;
+        let name = "Veste « été »";
+        for (folder, link_name) in [
+            (change.folder, name.to_owned()),
+            (cof(&inv).expect("COF"), aurora_net::outfits::link_name(name)),
+        ] {
+            let link = inv
+                .items
+                .values_mut()
+                .find(|it| it.parent == folder && it.asset_type == 24 && it.asset_id == target)
+                .expect("outfit link");
+            link.name = link_name;
+        }
+        assert!(!dirty(&inv), "the same link read as the Legacy Viewer reads it");
+        let cof_folder = cof(&inv).expect("COF");
+        let link = inv
+            .items
+            .values_mut()
+            .find(|it| it.parent == cof_folder && it.asset_type == 24 && it.asset_id == target)
+            .expect("COF link");
+        link.desc = "@1501".into();
+        assert!(dirty(&inv), "another layer is still a change");
     }
     #[test]
     fn body_parts_cannot_be_removed_and_unloaded_outfits_cannot_be_worn() {

@@ -21,7 +21,7 @@
 // where the ray was stopped. Its ray goes to another point of the sun's
 // disc each frame, as the shadow's: the lights' passes average it as they
 // do the shadow (rt_lights.wgsl `glass_history`), over the rays that
-// arrived, into the frame's binding 29 (common.wgsl `sun_glass`).
+// arrived, into the frame's binding 31 (common.wgsl `sun_glass`).
 
 // After rt_common.wgsl, rt_view.wgsl and wgpu_ray_query's enable
 // (rt_shadows.rs `source`).

@@ -39,6 +39,7 @@ pub(super) fn show(
         EditDialog::Properties(..) => aurora_i18n::tr!("ui-inventory-dialogs-object-properties"),
         EditDialog::Delete(_, true) => aurora_i18n::tr!("ui-inventory-dialogs-purge-selection"),
         EditDialog::Delete(_, false) => aurora_i18n::tr!("ui-inventory-dialogs-delete-selection"),
+        EditDialog::DetachDelete(_) => aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
         EditDialog::Empty(_) => aurora_i18n::tr!("common-empty-trash"),
         EditDialog::Ungroup(_) => aurora_i18n::tr!("ui-inventory-dialogs-ungroup-folder"),
         EditDialog::Discard(..) | EditDialog::SaveEmbedded(..) => aurora_i18n::tr!("ui-inventory-dialogs-save-changes"),
@@ -51,7 +52,7 @@ pub(super) fn show(
         dialog,
         EditDialog::Discard(_) | EditDialog::CopyEmbedded(..) | EditDialog::SaveEmbedded(_)
     );
-    let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::Empty(_));
+    let confirmation = matches!(dialog, EditDialog::Delete(..) | EditDialog::DetachDelete(_) | EditDialog::Empty(_));
     let window_id = format!(
         "inventory_{}_{}",
         if properties {
@@ -218,6 +219,32 @@ pub(super) fn show(
                         }
                         Err(reason) => st.message = reason,
                     }
+                }
+            }
+            // "DeleteWornItems" (notifications.xml): no ignore box.
+            EditDialog::DetachDelete(ids) => {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(if ids.len() == 1 {
+                        aurora_i18n::tr!("ui-inventory-dialogs-delete", value0 = rules::name(inv, ids[0]).to_string())
+                    } else {
+                        aurora_i18n::tr!("ui-inventory-dialogs-delete-the-selected-items", value0 = format!("{}", ids.len()))
+                    })
+                    .strong()
+                    .color(p.ink),
+                );
+                ui.add_space(4.0);
+                ui.label(aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete-body"));
+                if confirmation_buttons(
+                    ui,
+                    p,
+                    st.pending.is_none(),
+                    aurora_i18n::tr!("ui-inventory-dialogs-detach-and-delete"),
+                    &mut done,
+                    st.ui_id,
+                ) {
+                    super::delete::start_detach(inv, st, prefs, facts, actions, std::mem::take(ids));
+                    done = true;
                 }
             }
             EditDialog::Empty(id) => {
@@ -592,7 +619,11 @@ fn confirmation_buttons(ui: &mut egui::Ui, p: &Palette, enabled: bool, label: &s
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_enabled_ui(enabled, |ui| {
                 // the Legacy Viewer's default="true" OK: Enter clicks it
-                let response = widgets::default_button_sized(ui, p, label, Vec2::new(120.0, 28.0));
+                // 120 px, wider when the label needs it ("Detach and Delete")
+                let font = widgets::control_font(ui, 12.0);
+                let text = ui.painter().layout_no_wrap(label.to_owned(), font, p.ink).size().x;
+                let width = (text + 2.0 * ui.spacing().button_padding.x + 8.0).max(120.0);
+                let response = widgets::default_button_sized(ui, p, label, Vec2::new(width, 28.0));
                 if cfg!(test) || super::delete::demo_enabled() {
                     ui.ctx()
                         .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_delete_confirm", window)), response.rect.center()));
@@ -634,9 +665,9 @@ pub(super) fn preview(
         animation(ctx, p, inv, st, it, actions);
         return;
     }
-    if !inv.can_preview(it.asset_type) {
-        return;
-    }
+    // (RLVa's @viewnote, @viewscript and @viewtexture refuse to open a
+    // preview, `InvAction::Preview`; one already open stays, as
+    // RlvUIEnabler::filterFloaterViewXXX validates the opening alone)
     let mut view = if it.asset_type == 7 {
         *st.notecard_view.get_or_insert(prefs.notecard_view)
     } else {
@@ -727,10 +758,40 @@ pub(super) fn preview(
                 actions.push(InvAction::Environment(it.asset_id, it.flags));
             }
             let mut edited = super::embedded::EditorResult::default();
+            let mut find_changed = false;
+            let text_editable = editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_)));
+            let editor_id = egui::Id::unique(("inventory_document_text", st.ui_id, id));
             match &mut st.preview_text {
                 Some(Ok(text)) => {
                     if matches!(it.asset_type, 7 | 10) && !editable {
                         ui.label(RichText::new(aurora_i18n::tr!("notecard-read-only")).color(p.muted));
+                    }
+                    if it.asset_type == 7 {
+                        // LLPreviewNotecard::handleKeyHere: Ctrl+F in the
+                        // window opens its find, wherever its keyboard is
+                        let preview_id = editor_id.with("markdown");
+                        let mut fields = vec![editor_id, preview_id];
+                        fields.extend(super::find::field_ids(editor_id));
+                        fields.extend(super::find::field_ids(preview_id));
+                        let shortcut = crate::ui::find_shortcut::take(ui, &fields);
+                        // the Markdown view is read-only: its find searches
+                        // the text it shows, and replaces nothing
+                        if view == super::markdown::View::Markdown {
+                            if (shortcut || st.notecard_find.open)
+                                && let Some(rendered) = st.notecard_markdown.get(ui.ctx(), text)
+                            {
+                                let mut shown = rendered.text.clone();
+                                if shortcut {
+                                    st.notecard_find.begin(ui.ctx(), preview_id, &shown);
+                                }
+                                st.notecard_find.bar(ui, p, preview_id, &mut shown, false);
+                            }
+                        } else {
+                            if shortcut {
+                                st.notecard_find.begin(ui.ctx(), editor_id, text);
+                            }
+                            find_changed = st.notecard_find.bar(ui, p, editor_id, text, text_editable);
+                        }
                     }
                     let documents = matches!(it.asset_type, 7 | 10);
                     // the Save row is as tall as its button: its text and
@@ -767,10 +828,10 @@ pub(super) fn preview(
                             ui,
                             p,
                             icons,
-                            egui::Id::unique(("inventory_document_text", st.ui_id, id)),
+                            editor_id,
                             text,
                             st.preview_source.as_mut(),
-                            editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))),
+                            text_editable,
                             editor_size,
                             view,
                             &mut st.notecard_markdown,
@@ -823,7 +884,7 @@ pub(super) fn preview(
                     st.preview_message = aurora_i18n::tr!("common-item-not-found").into();
                 }
             }
-            if edited.changed {
+            if edited.changed || find_changed {
                 st.document_changed();
             }
             if let Some(marker) = edited.open {
@@ -854,6 +915,7 @@ pub(super) fn preview(
             let can_save =
                 editable && st.preview_dirty && !st.save_pending && valid_size && !matches!(st.dialog, Some(EditDialog::Discard(_)));
             let mut clicked_save = false;
+            let mut clicked_find = false;
             if matches!(it.asset_type, 7 | 10) {
                 ui.horizontal(|ui| {
                     clicked_save = ui
@@ -862,6 +924,11 @@ pub(super) fn preview(
                         })
                         .inner
                         .clicked();
+                    // LLPreviewNotecard::onSearchButtonClicked (FIRE-13969)
+                    if it.asset_type == 7 {
+                        let loaded = matches!(st.preview_text, Some(Ok(_)));
+                        clicked_find = widgets::icon_button(ui, p, "search-filled", aurora_i18n::tr!("script-search-title"), loaded);
+                    }
                     if st.save_pending {
                         ui.spinner();
                         ui.label(aurora_i18n::tr!("notecard-saving"));
@@ -877,6 +944,15 @@ pub(super) fn preview(
                         );
                     }
                 });
+            }
+            if clicked_find && let Some(Ok(text)) = &st.preview_text {
+                if view == super::markdown::View::Markdown {
+                    let shown = st.notecard_markdown.get(ui.ctx(), text).map(|rendered| rendered.text.clone());
+                    st.notecard_find
+                        .begin(ui.ctx(), editor_id.with("markdown"), shown.as_deref().unwrap_or_default());
+                } else {
+                    st.notecard_find.begin(ui.ctx(), editor_id, text);
+                }
             }
             if can_save
                 && (clicked_save || edited.save)
@@ -899,7 +975,7 @@ pub(super) fn preview(
             }
         }
     });
-    super::embedded::preview(ctx, p, st, inv, images);
+    super::embedded::preview(ctx, p, st, images);
     if !open {
         if st.save_pending {
             st.close_after_save = true;

@@ -214,6 +214,9 @@ pub struct Facts {
     /// (object_selected_and_point_valid, indra/newview/llviewermenu.cpp).
     pub wear_default_blocked: bool,
     pub wear_blocked_points: Vec<u8>,
+    /// RLVa's @showinv: "Show in inventory" of our attachment is greyed
+    /// (enable_object_show_original, indra/newview/llviewermenu.cpp).
+    pub show_original_blocked: bool,
     /// RLVa is on for the session: Derender is greyed on our own
     /// attachments (enable_derender_object, indra/newview/llviewermenu.cpp).
     pub rlva_enabled: bool,
@@ -331,6 +334,9 @@ pub enum CtxAction {
     ForgetHudScale(ObjKey),
     SetHudMoveLock(ObjKey, bool),
     Detach(ObjKey),
+    /// Take a worn attachment off, then move its item to the Trash, after
+    /// Inventory's "Detach and Delete" confirmation.
+    DetachDelete(ObjKey),
     AttachmentInventory(Uuid),
     EditAttachment(ObjKey),
     /// "Touch" / "Edit" of a worn item in the inventory or the
