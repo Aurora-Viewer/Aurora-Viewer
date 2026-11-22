@@ -89,6 +89,9 @@ pub(crate) struct Ask {
     /// opens there, where the system lets a program place its windows.
     pub rect: egui::Rect,
     pub min_size: egui::Vec2,
+    /// Its size is its content's (`resize` with `held`): the user does not
+    /// resize it.
+    pub content_sized: bool,
 }
 
 /// The viewport of the window `window` of the interface.
@@ -143,13 +146,30 @@ fn sizes_id() -> egui::Id {
 
 /// Asks the system to give the window outside of `window` the size `size`
 /// (in the interface's points), at the next frame: what sizes a window
-/// inside by its name (`widgets::size_floater`). The last size asked wins.
-pub(crate) fn resize(ctx: &egui::Context, window: egui::Id, size: egui::Vec2) {
+/// inside by its name (`widgets::size_floater`), and the size of its
+/// content for a window that follows it (`held`: the user cannot change
+/// it). The last size asked wins; a size larger than the screen is brought
+/// down to it (`fitting`).
+pub(crate) fn resize(ctx: &egui::Context, window: egui::Id, size: egui::Vec2, held: bool) {
     ctx.data_mut(|d| {
-        let sizes = d.get_temp_mut_or_default::<Vec<(egui::Id, egui::Vec2)>>(sizes_id());
-        sizes.retain(|(asked, _)| *asked != window);
-        sizes.push((window, size));
+        let sizes = d.get_temp_mut_or_default::<Vec<Resize>>(sizes_id());
+        sizes.retain(|(asked, ..)| *asked != window);
+        sizes.push((window, size, held));
     });
+}
+
+/// A size asked of a window outside: the window, the size, held or not.
+type Resize = (egui::Id, egui::Vec2, bool);
+
+/// The share of the screen's height a window sized by its content takes at
+/// most: the system's bars take the rest, and no system tells their size
+/// through winit.
+const SCREEN_SHARE: f32 = 0.9;
+
+/// `size` brought down to the screen the window is on, `room` in the
+/// interface's points: its content scrolls in what is left.
+fn fitting(size: egui::Vec2, room: Option<egui::Vec2>) -> egui::Vec2 {
+    room.map_or(size, |room| egui::vec2(size.x.min(room.x), size.y.min(room.y * SCREEN_SHARE)))
 }
 
 /// The window `window` is in its window outside and that one has the
@@ -173,7 +193,7 @@ pub(crate) fn raise(ctx: &egui::Context, window: egui::Id) {
 
 /// The sizes asked and not given yet.
 #[cfg(test)]
-pub(crate) fn resizes(ctx: &egui::Context) -> Vec<(egui::Id, egui::Vec2)> {
+pub(crate) fn resizes(ctx: &egui::Context) -> Vec<Resize> {
     ctx.data(|d| d.get_temp(sizes_id())).unwrap_or_default()
 }
 
@@ -429,16 +449,30 @@ impl Outside {
                 d.remove_temp::<Vec<Ask>>(asks_id()).unwrap_or_default(),
                 d.remove_temp::<Vec<egui::Id>>(seen_id()).unwrap_or_default(),
                 d.remove_temp::<Vec<egui::Id>>(raises_id()).unwrap_or_default(),
-                d.remove_temp::<Vec<(egui::Id, egui::Vec2)>>(sizes_id()).unwrap_or_default(),
+                d.remove_temp::<Vec<Resize>>(sizes_id()).unwrap_or_default(),
             )
         });
         let zoom = ctx.zoom_factor();
-        for (window, size) in sizes {
+        for (window, size, held) in sizes {
             if let Some(native) = self.shared.borrow().windows.get(&viewport(window)) {
+                let room = native.window.current_monitor().map(|monitor| {
+                    let room = monitor.size().to_logical::<f32>(monitor.scale_factor());
+                    egui::vec2(room.width / zoom, room.height / zoom)
+                });
+                let size = fitting(size, room);
+                let size = winit::dpi::LogicalSize::new(size.x * zoom, size.y * zoom);
+                // a held size is the least and the most the system allows:
+                // both are lifted for the change, then set to the new size
+                if held {
+                    native.window.set_min_inner_size(None::<winit::dpi::LogicalSize<f32>>);
+                    native.window.set_max_inner_size(None::<winit::dpi::LogicalSize<f32>>);
+                }
                 // (the system answers with a resize of the window, or not at all)
-                let _ = native
-                    .window
-                    .request_inner_size(winit::dpi::LogicalSize::new(size.x * zoom, size.y * zoom));
+                let _ = native.window.request_inner_size(size);
+                if held {
+                    native.window.set_min_inner_size(Some(size));
+                    native.window.set_max_inner_size(Some(size));
+                }
             }
         }
         for window in raises {
@@ -828,13 +862,27 @@ mod tests {
     fn the_last_size_asked_of_a_window_outside_wins() {
         let ctx = egui::Context::default();
         let (inventory, people) = (egui::Id::unique("inventory"), egui::Id::unique("people"));
-        resize(&ctx, inventory, egui::vec2(600.0, 400.0));
-        resize(&ctx, people, egui::vec2(300.0, 500.0));
-        resize(&ctx, inventory, egui::vec2(1180.0, 400.0));
+        resize(&ctx, inventory, egui::vec2(600.0, 400.0), false);
+        resize(&ctx, people, egui::vec2(300.0, 500.0), true);
+        resize(&ctx, inventory, egui::vec2(1180.0, 400.0), false);
         assert_eq!(
             resizes(&ctx),
-            [(people, egui::vec2(300.0, 500.0)), (inventory, egui::vec2(1180.0, 400.0))]
+            [
+                (people, egui::vec2(300.0, 500.0), true),
+                (inventory, egui::vec2(1180.0, 400.0), false)
+            ]
         );
+    }
+
+    #[test]
+    fn a_size_larger_than_the_screen_is_brought_down_to_it() {
+        let room = Some(egui::vec2(1280.0, 800.0));
+        assert_eq!(fitting(egui::vec2(400.0, 600.0), room), egui::vec2(400.0, 600.0));
+        // taller than the screen less the system's bars: its content scrolls
+        assert_eq!(fitting(egui::vec2(400.0, 1100.0), room), egui::vec2(400.0, 720.0));
+        assert_eq!(fitting(egui::vec2(1600.0, 300.0), room), egui::vec2(1280.0, 300.0));
+        // (a system that does not tell the screen: as asked)
+        assert_eq!(fitting(egui::vec2(400.0, 1100.0), None), egui::vec2(400.0, 1100.0));
     }
 
     /// A restart: the layout is written at exit and read at the next start.

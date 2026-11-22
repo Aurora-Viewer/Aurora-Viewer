@@ -741,14 +741,12 @@ impl<'a> Floater<'a> {
     /// the viewer's, and bring it back (outside.rs): its title bar has the
     /// button for it. Not in the Legacy Viewer. Every window may, but those
     /// of `STAYS_INSIDE` and those whose sizing the window outside does not
-    /// follow yet (`show_outside`): a size that follows the content or
-    /// keeps a ratio, a compact body when minimized, a fixed size, a layer
-    /// over an overlay.
+    /// follow yet (`show_outside`): a height the user sets at a held width,
+    /// a kept ratio, a compact body when minimized, a layer over an
+    /// overlay.
     fn goes_outside(&self) -> bool {
         !STAYS_INSIDE.contains(&self.id)
-            && !self.auto_height
             && !self.height_only
-            && self.resizable
             && self.aspect.is_none()
             && self.compact_minimized.is_none()
             && self.order == egui::Order::Middle
@@ -1395,6 +1393,7 @@ impl<'a> Floater<'a> {
                     title: self.title.clone(),
                     rect: egui::Rect::from_min_size(min, size),
                     min_size: self.min_size,
+                    content_sized: !self.resizable,
                 },
             );
             return None;
@@ -1402,6 +1401,11 @@ impl<'a> Floater<'a> {
         crate::outside::seen(ctx, window_id);
         let flush = self.flush_body;
         let framed = self.framed_header.is_some();
+        // as tall as its content (fixed, or of automatic height), and for a
+        // fixed one as wide when the content is wider than its width
+        let content_sized = !self.resizable;
+        let (width, auto_height) = (self.default_size.x, self.auto_height);
+        let mut content = None;
         let mut body = Some(body);
         let mut back = false;
         let builder = egui::ViewportBuilder::default().with_title(self.title.clone());
@@ -1428,7 +1432,9 @@ impl<'a> Floater<'a> {
             egui::Frame::new()
                 .inner_margin(margin)
                 .show(ui, |ui| {
-                    ui.set_min_size(ui.available_size());
+                    if !content_sized {
+                        ui.set_min_size(ui.available_size());
+                    }
                     let mut buttons = |ui: &mut egui::Ui| {
                         ui.horizontal(|ui| {
                             ui.set_min_height(if framed { 20.0 } else { TITLE_ROW_MIN });
@@ -1496,15 +1502,53 @@ impl<'a> Floater<'a> {
                         divider(ui, p);
                         ui.add_space(UNDER_DIVIDER);
                     }
-                    body.take().map(|body| body(ui))
+                    if !content_sized {
+                        return body.take().map(|body| body(ui));
+                    }
+                    // its window takes the size of what it shows, and it
+                    // scrolls where the screen is too small for that
+                    // (`outside::fitting`), as inside a small viewer
+                    let above = ui.cursor().top();
+                    let shown = egui::ScrollArea::vertical()
+                        .id_salt("floater_body")
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| body.take().map(|body| body(ui)));
+                    let sides = f32::from(margin.left) + f32::from(margin.right);
+                    content = Some(Vec2::new(
+                        if auto_height {
+                            width
+                        } else {
+                            width.max(shown.content_size.x + sides)
+                        },
+                        above + shown.content_size.y + f32::from(margin.bottom),
+                    ));
+                    shown.inner
                 })
                 .inner
         });
         if back {
             crate::outside::want(ctx, window_id, false);
         }
+        if let Some(content) = content {
+            let size = ctx
+                .data_mut(|d| d.get_persisted::<Vec2>(window_id.with(OUTSIDE_SIZE)))
+                .unwrap_or(content);
+            let asked_id = window_id.with("outside content size");
+            let asked = ctx.data(|d| d.get_temp::<Vec2>(asked_id));
+            if follows_content(size, content, asked) {
+                crate::outside::resize(ctx, window_id, content, true);
+                ctx.data_mut(|d| d.insert_temp(asked_id, content));
+            }
+        }
         out
     }
+}
+
+/// Whether a window outside of the size `size` is asked to take the size
+/// `content` of what it shows: when they differ, and once per size, since
+/// the system may give less (a small screen) or nothing.
+fn follows_content(size: Vec2, content: Vec2, asked: Option<Vec2>) -> bool {
+    ((size.x - content.x).abs() > 1.0 || (size.y - content.y).abs() > 1.0) && asked != Some(content)
 }
 
 /// The rows under a window's title: its states, with the text action at
@@ -1912,7 +1956,7 @@ impl Footer {
 pub fn size_floater(ctx: &egui::Context, id: &str, size: Vec2) {
     let window_id = egui::Id::unique(id);
     if floater_outside(ctx, window_id) {
-        crate::outside::resize(ctx, window_id, size);
+        crate::outside::resize(ctx, window_id, size, false);
         return;
     }
     ctx.data_mut(|d| {

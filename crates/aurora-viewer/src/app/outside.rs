@@ -45,11 +45,17 @@ impl App {
             let attributes = crate::cli::with_desktop_id(Window::default_attributes())
                 .with_title(ask.title.clone())
                 .with_inner_size(logical(ask.rect.size(), zoom))
-                .with_min_inner_size(logical(ask.min_size, zoom))
+                .with_min_inner_size(logical(if ask.content_sized { ask.rect.size() } else { ask.min_size }, zoom))
                 .with_window_icon(icon.clone())
                 // (the one a recovery replaces does not take the focus
                 // from the window that had it)
                 .with_active(was.is_none_or(|was| was.focused));
+            // (a window sized by its content: the user does not resize it)
+            let attributes = if ask.content_sized {
+                attributes.with_max_inner_size(logical(ask.rect.size(), zoom))
+            } else {
+                attributes
+            };
             match opens_at(was.and_then(|was| was.at), origin, ask.rect.min, zoom) {
                 Some(at) => attributes.with_position(at),
                 None => attributes,

@@ -18,14 +18,15 @@ fn every_plain_window_may_go_outside_but_the_dev_toolbox() {
         .push(("circle-filled", "State".to_owned(), Color32::TRANSPARENT));
     inspector.header_summary = Some("1 object".into());
     assert!(inspector.goes_outside());
+    // a window sized by its content: its window outside follows it
+    assert!(window("profile").fixed().goes_outside());
+    assert!(window("weather").auto_height().goes_outside());
     // its tools read the world under the viewer's pointer
     assert!(!window(crate::ui::dev_toolbox::WINDOW).goes_outside());
 }
 
 #[test]
 fn a_window_whose_sizing_is_not_followed_outside_stays_inside() {
-    assert!(!window("a").fixed().goes_outside());
-    assert!(!window("b").auto_height().goes_outside());
     assert!(!window("d").compact_when_minimized(240.0).goes_outside());
     assert!(!window("e").keep_aspect(1.5, Vec2::ZERO).goes_outside());
     let mut over = window("f");
@@ -46,7 +47,7 @@ fn a_window_outside_is_read_and_sized_at_its_size_there() {
     assert_eq!(floater_size(&ctx, "inventory"), Some(Vec2::new(900.0, 700.0)));
     // sized by its name, it is the window of the system that is asked
     size_floater(&ctx, "inventory", Vec2::new(1180.0, 700.0));
-    assert_eq!(crate::outside::resizes(&ctx), [(id, Vec2::new(1180.0, 700.0))]);
+    assert_eq!(crate::outside::resizes(&ctx), [(id, Vec2::new(1180.0, 700.0), false)]);
     assert!(ctx.data_mut(|d| d.get_persisted::<Vec2>(id.with("expanded_size"))).is_none());
     // back inside, the window inside is sized as before
     crate::outside::want(&ctx, id, false);
@@ -55,4 +56,16 @@ fn a_window_outside_is_read_and_sized_at_its_size_there() {
         ctx.data_mut(|d| d.get_persisted::<Vec2>(id.with("expanded_size"))),
         Some(Vec2::new(500.0, 400.0))
     );
+}
+
+#[test]
+fn a_window_outside_takes_the_size_of_its_content_once_per_size() {
+    let (size, content) = (Vec2::new(350.0, 400.0), Vec2::new(350.0, 610.0));
+    assert!(follows_content(size, content, None));
+    // asked already: the system gave less (a small screen), or nothing
+    assert!(!follows_content(size, content, Some(content)));
+    // the content changed since
+    assert!(follows_content(size, content, Some(Vec2::new(350.0, 500.0))));
+    // as large as its content, to the pixel the system rounds to
+    assert!(!follows_content(Vec2::new(350.4, 609.6), content, None));
 }
