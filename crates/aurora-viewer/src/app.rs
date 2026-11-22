@@ -13314,6 +13314,8 @@ impl App {
             .prepare_scale_input(&raw, ctx.pixels_per_point(), self.numeric_drag.active());
         self.numeric_drag.before(&mut raw, ctx.pixels_per_point());
         let egui_state = &mut gfx.egui_state;
+        // (and what the windows outside read at their last pass)
+        self.inventory_ui.clipboard_input(&self.outside.take_heard());
         self.inventory_ui.clipboard_input(&raw.events);
         if self.inventory_ui.cut
             && (self.inventory_ui.native_clipboard_changed()

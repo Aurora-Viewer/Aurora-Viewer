@@ -263,6 +263,9 @@ struct Shared {
     /// own window (a text to copy, a link to open): the viewer's output
     /// takes them.
     commands: Vec<egui::OutputCommand>,
+    /// What this frame's passes outside read that the viewer follows in
+    /// every window (`heard`).
+    heard: Vec<egui::Event>,
 }
 
 struct Native {
@@ -304,7 +307,7 @@ struct Pass {
 /// What the pass of a window outside starts from: the events `raw` of the
 /// window, on a screen of its size at its scale, on the viewer's clock.
 fn pass_input(
-    raw: egui::RawInput,
+    mut raw: egui::RawInput,
     ids: egui::ViewportIdPair,
     size: (u32, u32),
     scale: f32,
@@ -312,6 +315,9 @@ fn pass_input(
     focused: bool,
     (time, predicted_dt, max_texture_side): (f64, f32, usize),
 ) -> egui::RawInput {
+    // (the keys read as in the viewer's own window: `App::render`)
+    crate::keybinds::adopt_mac_control_keys(&mut raw.events, cfg!(target_os = "macos"));
+    crate::keybinds::keep_select_all_exact(&mut raw.events);
     let points = egui::vec2(size.0 as f32, size.1 as f32) / (scale * zoom).max(0.01);
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, points);
     let info = egui::ViewportInfo {
@@ -331,6 +337,25 @@ fn pass_input(
         focused,
         ..raw
     }
+}
+
+/// What the viewer follows in every window, before the fields read it: an
+/// Escape and a paste, which end the Inventory's cut
+/// (`InventoryUi::clipboard_input`).
+fn heard(events: &[egui::Event]) -> impl Iterator<Item = egui::Event> + '_ {
+    events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                egui::Event::Key {
+                    key: egui::Key::Escape,
+                    pressed: true,
+                    ..
+                } | egui::Event::Paste(_)
+            )
+        })
+        .cloned()
 }
 
 /// A field or a menu of the pass under way reads the keyboard.
@@ -381,6 +406,7 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
     // (egui wants the window's code run whatever happens: `Outside::show`
     // only asks for a window that is open, so this is never the case)
     let input = input.unwrap_or_else(|| pass_input(egui::RawInput::default(), ids, (640, 480), 1.0, zoom, false, clock));
+    shared.borrow_mut().heard.extend(heard(&input.events));
     let mut keys = false;
     // One pass, where egui may run two to lay a new content out: the
     // window's code is run once (a `Floater`'s body is `FnOnce`), and what
@@ -719,6 +745,12 @@ impl Outside {
         ))
     }
 
+    /// What the last frame's passes outside read that the viewer follows in
+    /// every window: an Escape, a paste.
+    pub fn take_heard(&mut self) -> Vec<egui::Event> {
+        std::mem::take(&mut self.shared.borrow_mut().heard)
+    }
+
     /// What this frame's passes outside ask of the system besides their
     /// own window, to put before what the viewer's own pass asks.
     pub fn take_commands(&mut self) -> Vec<egui::OutputCommand> {
@@ -842,6 +874,43 @@ mod tests {
         assert_eq!(input.max_texture_side, Some(8192));
         // the window's own events, and no other
         assert_eq!(input.events, [egui::Event::PointerMoved(egui::pos2(10.0, 20.0))]);
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    /// Ctrl+Shift+A opens People from a field of the viewer's window: from
+    /// one of a window outside too, where egui would select all.
+    #[test]
+    fn the_keys_of_a_window_outside_read_as_in_the_viewer_s() {
+        let events = egui::RawInput {
+            events: vec![key(egui::Key::A, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)],
+            ..Default::default()
+        };
+        let input = pass_input(events, ids(), (1200, 800), 1.0, 1.0, true, (0.0, 1.0 / 60.0, 8192));
+        let [egui::Event::Key { modifiers, .. }] = input.events.as_slice() else {
+            panic!("the key is still there");
+        };
+        assert!(!modifiers.command && modifiers.shift);
+    }
+
+    #[test]
+    fn an_escape_and_a_paste_outside_are_heard_by_the_viewer() {
+        let events = [
+            egui::Event::PointerMoved(egui::pos2(10.0, 20.0)),
+            key(egui::Key::Escape, egui::Modifiers::NONE),
+            key(egui::Key::A, egui::Modifiers::NONE),
+            egui::Event::Paste("text".to_owned()),
+        ];
+        let heard: Vec<egui::Event> = heard(&events).collect();
+        assert_eq!(heard, [events[1].clone(), events[3].clone()]);
     }
 
     #[test]
