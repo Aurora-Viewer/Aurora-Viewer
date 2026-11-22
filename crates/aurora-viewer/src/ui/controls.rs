@@ -46,6 +46,8 @@ const BUTTON_H: f32 = 26.0;
 const SHOT_DELETE_W: f32 = 20.0;
 /// Room between the body's rows.
 const BODY_GAP: f32 = 8.0;
+/// The camera position window's button, in both styles.
+const POSITION_ICON: &str = "adjustments-horizontal-filled";
 /// A key list's row (`caps_rows`).
 const KEY_ROW_H: f32 = 16.0;
 
@@ -93,19 +95,19 @@ pub struct ControlsUi {
 /// The name being typed for a new camera position (the Legacy Viewer's
 /// LLFloaterSaveCameraPreset, inline).
 #[derive(Default)]
-struct ShotNaming {
-    open: bool,
+pub(crate) struct ShotNaming {
+    pub(crate) open: bool,
     /// Give the field the keyboard once, on its next frame. A request on
     /// every frame interrupts the input method each time (egui's
     /// `Memory::request_focus`, which egui-winit turns into
     /// `set_ime_allowed` off then on): a Japanese name could not be
     /// composed and the IME stalled the viewer (#3889).
     focus: bool,
-    name: String,
+    pub(crate) name: String,
 }
 
 impl ShotNaming {
-    fn start(&mut self) {
+    pub(crate) fn start(&mut self) {
         self.open = true;
         self.focus = true;
     }
@@ -177,6 +179,8 @@ pub enum ControlAction {
     SaveView(CameraPreset),
     /// The view back to its template.
     RestoreView(CameraPreset),
+    /// "Position...": the camera position window (`ui::camera_position`).
+    Position,
 }
 
 #[derive(Default)]
@@ -206,8 +210,8 @@ fn controls_width(ctx: &egui::Context, view: &View, classic: bool) -> f32 {
     .map(|label| regular(label, 12.5))
     .fold(0.0_f32, f32::max)
         + 46.0
-        + button_height
-        + ROW_GAP;
+        // the Position and save squares
+        + 2.0 * (button_height + ROW_GAP);
     let tabs = if classic {
         0.0
     } else {
@@ -448,13 +452,15 @@ impl ControlsUi {
         self.shots(ui, p, view, out, &grid);
     }
 
-    /// The saved camera positions (Firestorm's camera presets): a field as
-    /// wide as the two buttons above, the save button under the reset.
+    /// The saved camera positions (Firestorm's camera presets): a field,
+    /// the Position button, and the save button under the reset.
     fn shots(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output, grid: &ButtonGrid) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = ROW_GAP;
             if self.naming.open {
-                name_row(ui, p, &mut self.naming, grid.field, out);
+                if let Some(name) = name_row(ui, p, &mut self.naming, grid.field) {
+                    out.actions.push(ControlAction::SaveShot(name));
+                }
                 return;
             }
             let text = if view.shots.is_empty() {
@@ -462,16 +468,18 @@ impl ControlsUi {
             } else {
                 aurora_i18n::tr!("controls-shots")
             };
+            let height = control_height(ui);
+            let field_width = grid.field - height - ROW_GAP;
             let field = widgets::action_button(
                 ui,
                 p,
                 "bookmark-filled",
                 text,
                 widgets::ActionKind::Flat,
-                Vec2::new(grid.field, control_height(ui)),
+                Vec2::new(field_width, height),
             );
             egui::Popup::menu(&field).show(|ui| {
-                ui.set_min_width(grid.field);
+                ui.set_min_width(field_width);
                 for (i, shot) in view.shots.iter().enumerate() {
                     ui.horizontal(|ui| {
                         // the row takes the menu's width less the delete
@@ -492,6 +500,10 @@ impl ControlsUi {
                     });
                 }
             });
+            // camera_position_btn of floater_camera.xml ("Position...")
+            if square_button(ui, p, POSITION_ICON, aurora_i18n::tr!("controls-position-tip")) {
+                out.actions.push(ControlAction::Position);
+            }
             if square_button(ui, p, "device-floppy-filled", aurora_i18n::tr!("controls-shot-save-tip")) {
                 self.naming.start();
             }
@@ -1210,11 +1222,13 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: &mut Shot
         ui.spacing_mut().item_spacing.x = 4.0;
         if naming.open {
             let width = ui.available_width() - control_height(ui) - ROW_GAP;
-            name_row(ui, p, naming, width, out);
+            if let Some(name) = name_row(ui, p, naming, width) {
+                out.actions.push(ControlAction::SaveShot(name));
+            }
             return;
         }
         egui::ComboBox::from_id_salt("camera_shots_classic")
-            .width(ui.available_width() - 76.0)
+            .width(ui.available_width() - 76.0 - SHOT_DELETE_W - 4.0)
             .selected_text(aurora_i18n::tr!("controls-use-preset"))
             .show_ui(ui, |ui| {
                 for (i, shot) in view.shots.iter().enumerate() {
@@ -1223,6 +1237,10 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: &mut Shot
                     }
                 }
             });
+        // camera_position_btn of floater_camera.xml ("Position...")
+        if widgets::icon_button(ui, p, POSITION_ICON, aurora_i18n::tr!("controls-position-tip"), true) {
+            out.actions.push(ControlAction::Position);
+        }
         // save_preset_btn of floater_camera.xml ("Save as Preset")
         if widgets::icon_button(ui, p, "device-floppy-filled", aurora_i18n::tr!("controls-shot-save-tip"), true) {
             naming.start();
@@ -1278,7 +1296,8 @@ fn classic_movement(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Outpu
 /// (`CameraPreset::from_preset_name`, in the app). The field takes the
 /// keyboard once as it opens, like the dialog's line editor; a click
 /// elsewhere then keeps it.
-fn name_row(ui: &mut egui::Ui, p: &Palette, naming: &mut ShotNaming, width: f32, out: &mut Output) {
+/// The name typed when it is saved (also the camera position window's).
+pub(crate) fn name_row(ui: &mut egui::Ui, p: &Palette, naming: &mut ShotNaming, width: f32) -> Option<String> {
     let edit = ui.add_sized(
         Vec2::new(width, control_height(ui)),
         egui::TextEdit::singleline(&mut naming.name).hint_text(aurora_i18n::tr!("controls-shot-name")),
@@ -1292,14 +1311,16 @@ fn name_row(ui: &mut egui::Ui, p: &Palette, naming: &mut ShotNaming, width: f32,
         naming.open = false;
     }
     if (square_button(ui, p, "check", aurora_i18n::tr!("controls-shot-save")) || enter) && !typed.is_empty() {
-        out.actions.push(ControlAction::SaveShot(typed));
         naming.open = false;
         naming.name.clear();
-    } else if enter {
+        return Some(typed);
+    }
+    if enter {
         // an empty name saves nothing and the editor keeps the keyboard
         // (LLFloaterSaveCameraPreset::onBtnSave returns on an empty name)
         naming.focus = true;
     }
+    None
 }
 
 /// A view's right click, in both styles: the camera where it is becomes
@@ -1720,7 +1741,11 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                ui.horizontal(|ui| name_row(ui, p, naming, 200.0, &mut out));
+                ui.horizontal(|ui| {
+                    if let Some(name) = name_row(ui, p, naming, 200.0) {
+                        out.actions.push(ControlAction::SaveShot(name));
+                    }
+                });
             },
         );
         // no renderer here: the font atlas would trip TexturesDelta's drop check

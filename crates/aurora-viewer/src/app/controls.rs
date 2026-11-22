@@ -146,6 +146,63 @@ impl App {
             ControlAction::DeleteShot(i) => self.delete_camera_preset(i),
             ControlAction::SaveView(view) => self.save_camera_view(view),
             ControlAction::RestoreView(view) => self.restore_camera_view(view),
+            ControlAction::Position => {
+                crate::ui::widgets::toggle_floater(&self.egui_ctx, crate::ui::camera_position::WINDOW, &mut self.panels.camera_position)
+            }
+        }
+    }
+
+    /// The camera position window (#4587): the live offsets and distance,
+    /// applied and saved like a change of Preferences by the frame's
+    /// settings pass; its save goes the Controls window's way.
+    pub(super) fn camera_position_window(&mut self, ctx: &egui::Context, p: &Palette) {
+        self.camera_position_demo();
+        let locked = self.world.rlva.camera_preset_locked(uuid::Uuid::nil());
+        let mut open = self.panels.camera_position;
+        let out = self.camera_position_ui.show(ctx, p, &mut open, &mut self.settings, locked);
+        self.panels.camera_position = open;
+        if out.changed {
+            self.folders.settings_changed = true;
+        }
+        if let Some(name) = out.save {
+            self.control_action(ControlAction::SaveShot(name));
+        }
+    }
+
+    /// AURORA_DEMO_CONTROLS=position | classic-position (#4587): the
+    /// Controls window (Aurora's or the Legacy Viewer's) and the camera
+    /// position window open at 600; at 640 the camera is raised 0.5 m as
+    /// five Ctrl + wheel clicks do, which the window's Z shows at once. The
+    /// log gives the offsets before and after.
+    fn camera_position_demo(&mut self) {
+        if !self.demo
+            || !matches!(
+                std::env::var("AURORA_DEMO_CONTROLS").as_deref(),
+                Ok("position" | "classic-position")
+            )
+        {
+            return;
+        }
+        match self.frame_count {
+            600 => {
+                self.settings.classic_controls = std::env::var("AURORA_DEMO_CONTROLS").as_deref() == Ok("classic-position");
+                self.panels.camera_controls = true;
+                crate::ui::widgets::place_floater(
+                    &self.egui_ctx,
+                    crate::ui::camera_position::WINDOW,
+                    egui::pos2(360.0, 120.0),
+                    egui::vec2(330.0, 200.0),
+                );
+                self.panels.camera_position = true;
+                log::info!("demo camera position: camera offset {:?}", self.settings.camera.camera_offset);
+            }
+            640 => {
+                let c = &mut self.settings.camera;
+                c.camera_offset[2] += 0.5;
+                c.preset = crate::camera::CameraPreset::Custom;
+                log::info!("demo camera position: raised to {:?}", c.camera_offset);
+            }
+            _ => {}
         }
     }
 
