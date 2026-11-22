@@ -69,3 +69,53 @@ fn a_window_outside_takes_the_size_of_its_content_once_per_size() {
     // as large as its content, to the pixel the system rounds to
     assert!(!follows_content(Vec2::new(350.4, 609.6), content, None));
 }
+
+/// Ctrl+Shift+W in the viewer's window closes a window outside with the
+/// others; Ctrl+W there closes the front window inside, never this one.
+#[test]
+fn close_all_windows_closes_a_window_outside_too() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let window = egui::Id::unique("test outside closes");
+    crate::outside::want(&frames.ctx, window, true);
+    crate::outside::set_native(&frames.ctx, window, true);
+    let key = |modifiers: egui::Modifiers| egui::Event::Key {
+        key: egui::Key::W,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
+    let mut open = true;
+    let mut frame = |open: &mut bool, events: Vec<egui::Event>| {
+        frames.run(events, |ui| {
+            crate::ui::close_key::begin(ui.ctx());
+            Floater::new("test outside closes", "Outside", egui::pos2(10.0, 10.0), Vec2::new(200.0, 100.0))
+                .silent()
+                .show(ui.ctx(), &p, open, |_| ());
+        });
+    };
+    frame(&mut open, Vec::new());
+    frame(&mut open, vec![key(egui::Modifiers::COMMAND)]);
+    assert!(open, "Ctrl+W is for the front window inside");
+    frame(&mut open, vec![key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)]);
+    assert!(!open);
+}
+
+/// The size asked of a window outside is counted in points: at another
+/// zoom the same points are another size of the window.
+#[test]
+fn the_size_asked_of_a_window_outside_is_forgotten_at_another_zoom() {
+    let content = Vec2::new(350.0, 610.0);
+    assert!(!follows_content(
+        Vec2::new(350.0, 400.0),
+        content,
+        asked_at(Some((content, 1.0)), 1.0)
+    ));
+    assert!(follows_content(
+        Vec2::new(292.0, 508.0),
+        content,
+        asked_at(Some((content, 1.0)), 1.2)
+    ));
+    assert!(follows_content(Vec2::new(350.0, 400.0), content, asked_at(None, 1.0)));
+}

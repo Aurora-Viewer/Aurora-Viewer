@@ -1373,11 +1373,22 @@ impl<'a> Floater<'a> {
         if !self.silent {
             super::sound_cues::floater_shown(ctx, window_id);
         }
-        if close_asked(ctx, self.id) {
+        // Ctrl+Shift+W closes it with the windows inside; Ctrl+W goes to
+        // the front window of the viewer's own window, never to this one
+        let close_all = super::close_key::take(ctx, window_id);
+        super::close_key::shown_extra(ctx, window_id);
+        if close_all || close_asked(ctx, self.id) {
             *open = false;
             return None;
         }
+        // (no longer at its place among the windows inside)
+        if self.cascade.is_some() {
+            cascade::hidden(ctx, window_id);
+        }
+        let asked_id = window_id.with("outside content size");
         if !crate::outside::native(ctx, window_id) {
+            // (a new window outside: no size was asked of it yet)
+            ctx.data_mut(|d| d.remove::<(Vec2, f32)>(asked_id));
             // asked at this pass, opened before the next: as large as it
             // was outside last, or as it is inside
             let inside = egui::AreaState::load(ctx, window_id);
@@ -1533,15 +1544,23 @@ impl<'a> Floater<'a> {
             let size = ctx
                 .data_mut(|d| d.get_persisted::<Vec2>(window_id.with(OUTSIDE_SIZE)))
                 .unwrap_or(content);
-            let asked_id = window_id.with("outside content size");
-            let asked = ctx.data(|d| d.get_temp::<Vec2>(asked_id));
+            // (asked in points: at another zoom the same points are
+            // another size of the window, to ask again)
+            let zoom = ctx.zoom_factor();
+            let asked = asked_at(ctx.data(|d| d.get_temp::<(Vec2, f32)>(asked_id)), zoom);
             if follows_content(size, content, asked) {
                 crate::outside::resize(ctx, window_id, content, true);
-                ctx.data_mut(|d| d.insert_temp(asked_id, content));
+                ctx.data_mut(|d| d.insert_temp(asked_id, (content, zoom)));
             }
         }
         out
     }
+}
+
+/// The size last asked of a window outside, in points, when it was asked
+/// at the zoom `zoom`: at another the same points are another size.
+fn asked_at(asked: Option<(Vec2, f32)>, zoom: f32) -> Option<Vec2> {
+    asked.and_then(|(size, at)| (at == zoom).then_some(size))
 }
 
 /// Whether a window outside of the size `size` is asked to take the size
