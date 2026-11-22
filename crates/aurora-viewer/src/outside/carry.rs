@@ -238,6 +238,15 @@ impl Carry {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
                 self.pointers.entry(id).or_default().at = Some(*position);
+                // the pointer moved in the window a drop is waited for in:
+                // its place there now, from the system itself
+                if let Some((_, at)) = self
+                    .in_hand
+                    .as_mut()
+                    .and_then(|in_hand| in_hand.drop.as_mut().filter(|(to, _)| *to == id))
+                {
+                    *at = *position;
+                }
             }
             WindowEvent::CursorEntered { .. } => self.pointers.entry(id).or_default().over = true,
             WindowEvent::CursorLeft { .. } => self.pointers.entry(id).or_default().over = false,
@@ -411,10 +420,11 @@ impl Carry {
             // over that window: where the windows are does not tell what
             // another program covers, and an item is never dropped in a
             // window that is hidden
-            let said = in_hand.drop.and_then(|(id, at)| {
-                let pointer = self.pointers.get(&id).filter(|pointer| pointer.over)?;
-                Some((id, pointer.at.unwrap_or(at)))
-            });
+            // (at the place worked out, or where the pointer moved to since:
+            // the place that window's pointer had before is an old one)
+            let said = in_hand
+                .drop
+                .filter(|(id, _)| self.pointers.get(id).is_some_and(|pointer| pointer.over));
             if said.is_none() && now >= in_hand.until {
                 in_hand.drop = None;
             }
@@ -923,13 +933,17 @@ mod tests {
         let ctx = egui::Context::default();
         let mut carry = Carry::default();
         let target = window(2);
+        carry.window_event(&ctx, target, size(), &entered());
+        carry.window_event(&ctx, target, size(), &moved(700.0, 500.0));
+        carry.window_event(&ctx, target, size(), &left());
         let_go_of_over(&ctx, &mut carry, target);
         assert!(!carry.frame_start(&ctx));
         pass_with_release(&ctx);
         assert!(!carry.frame_start(&ctx));
         assert!(!carry.frame_start(&ctx));
         assert_eq!(carry.take_drop(), None);
-        // no place yet with the entry: the one worked out
+        // no place with the entry: the one worked out, not the one the
+        // pointer had when it last left that window
         carry.window_event(&ctx, target, size(), &entered());
         assert!(!carry.frame_start(&ctx));
         assert_eq!(egui::DragAndDrop::payload::<Item>(&ctx).as_deref(), Some(&Item(7)));
