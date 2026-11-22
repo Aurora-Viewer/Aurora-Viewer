@@ -194,8 +194,9 @@ fn split(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, sa
         } else if persistent_sheet {
             sheet::empty(&mut child, c.p, st.shown_tab == Some(TAB_GROUPS));
         }
-        if persistent_sheet && st.shown_tab == Some(TAB_FRIENDS) {
-            friends::sheet_toggle(&mut sheet::toggle_ui(ui, rect), c);
+        if persistent_sheet {
+            let groups = st.shown_tab == Some(TAB_GROUPS);
+            friends::sheet_toggle(&mut sheet::toggle_ui(ui, rect), c, groups);
         }
     }
 }
@@ -244,8 +245,9 @@ pub struct FriendsSettings {
     pub pictures: bool,
     /// FriendsListShowPermissions: the rights each friend gave us.
     pub permissions: bool,
-    /// Conversations › Contacts keeps its contact sheet collapsed: the list
-    /// takes the whole pane, as in a pane too narrow for both.
+    /// Conversations › Contacts keeps its sheet collapsed, under the Friends
+    /// and the Groups pills alike: the list takes the whole pane, as in a
+    /// pane too narrow for both.
     pub sheet_collapsed: bool,
 }
 
@@ -589,8 +591,9 @@ pub struct FriendsPane<'a, 'r> {
 
 /// The friends or groups tab drawn in `ui` (Conversations › Contacts),
 /// under their pills. No window widens for a sheet there: it shows beside
-/// the list when the pane has room and, on the friends, the contact sheet
-/// is not collapsed (`FriendsSettings::sheet_collapsed`), alone otherwise.
+/// the list when the pane has room and the sheet is not collapsed
+/// (`FriendsSettings::sheet_collapsed`, one choice for both pills), alone
+/// otherwise.
 pub fn friends_pane(ui: &mut egui::Ui, p: &Palette, world: &World, pane: FriendsPane, contacts: &mut ContactsUi) -> Vec<PeopleAction> {
     let FriendsPane {
         st,
@@ -603,8 +606,7 @@ pub fn friends_pane(ui: &mut egui::Ui, p: &Palette, world: &World, pane: Friends
     st.tab_shown(tab);
     st.sheet_grow = false;
     let room = nearby::sheet_fits(ui.available_width());
-    // The collapse button is the contact sheet's: the groups keep theirs.
-    let wide = room && (tab == TAB_GROUPS || !settings.sheet_collapsed);
+    let wide = room && !settings.sheet_collapsed;
     if st.inline_friends_wide && !wide {
         nearby::close_sheet(st);
     }

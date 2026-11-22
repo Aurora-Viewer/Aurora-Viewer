@@ -45,9 +45,21 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, _data: &super::RadarData, st: &mut Peopl
     }
     ui.spacing_mut().item_spacing.y = 0.0;
     let line = Vec2::new(ui.available_width(), rows::TOOLBAR_H);
+    // in Conversations › Contacts, the button that expands the sheet ends the
+    // toolbar while the sheet is collapsed or has no room, as on the friends
+    // (`friends::sheet_toggle`; the sheet's head has the one that collapses it)
+    let toggle = c.embedded_contacts && !c.contact_sheet_on_click;
     ui.allocate_ui_with_layout(line, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let size = Vec2::new(0.0, rows::TOOLBAR_H);
+        // its place is kept first and the button drawn last, so that its
+        // coming and going does not shift the search field's automatic ids
+        let slot = toggle.then(|| {
+            let right = ui.max_rect().right();
+            let top = ui.max_rect().center().y - rows::TOOLBAR_H / 2.0;
+            ui.add_space(rows::TOOLBAR_H + 6.0);
+            Rect::from_min_size(Pos2::new(right - rows::TOOLBAR_H, top), Vec2::splat(rows::TOOLBAR_H))
+        });
         if widgets::action_button(
             ui,
             p,
@@ -71,6 +83,11 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, _data: &super::RadarData, st: &mut Peopl
         }
         let w = ui.available_width();
         widgets::clearable_search_box(ui, p, &mut st.filter, aurora_i18n::tr!("people-groups-filter"), w);
+        if let Some(slot) = slot {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(slot), |ui| {
+                super::friends::sheet_toggle(ui, c, true)
+            });
+        }
     });
     ui.add_space(6.0);
     count_line(ui, c);
@@ -274,6 +291,11 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, g: &GroupMembership) {
         let slot = rows::actions_slot(rect, left, end.names_right, 1, rows::BUTTON);
         let tip = aurora_i18n::tr!("people-show-group-sheet");
         if rows::actions(ui, p, slot, &[("info-circle-filled", tip)], ("people-group-act", g.id))[0].clicked() {
+            // a sheet the button collapsed is expanded again where there is
+            // room, as a friend's (`friends::show_sheet`)
+            if c.contact_sheet_room && c.friends.sheet_collapsed {
+                c.friends.sheet_collapsed = false;
+            }
             st.sel = vec![g.id];
             st.anchor = Some(g.id);
             open_group_sheet(c, st, g.id);
