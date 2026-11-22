@@ -2421,12 +2421,6 @@ impl TextureStreamer {
         if self.outfit_portrait == Some(*id) { 1024 } else { 256 }
     }
 
-    /// Width of the finest UI copy of a texture (its full size halved until
-    /// it fits 256 px), once its header is known.
-    pub fn ui_image_width(&self, id: &Uuid) -> Option<u32> {
-        self.ui_image_size(id).map(|(width, _)| width)
-    }
-
     /// Dimensions of the finest copy requested for an interface image.
     pub fn ui_image_size(&self, id: &Uuid) -> Option<(u32, u32)> {
         let (width, height) = self.full_size(id)?;
@@ -2434,15 +2428,11 @@ impl TextureStreamer {
         Some(texture_cache::discard_size(width, height, discard))
     }
 
-    /// Keep loading a texture whose UI copy came out `have` px wide, from
+    /// Keep loading a texture whose UI copy came out at `have` dimensions, from
     /// the first levels of a progressive download: a copy taken once and
     /// kept stays blurred, its texture no longer being asked for. The finer
     /// copy comes through `take_ui_image`, from the next upload, or from a
     /// worker when a finer level is already resident.
-    pub fn refine_ui_image(&mut self, id: Uuid, have: u32, jobs: &Jobs) {
-        self.refine_ui_image_size(id, (have, have), jobs);
-    }
-
     pub fn refine_ui_image_size(&mut self, id: Uuid, have: (u32, u32), jobs: &Jobs) {
         self.hold_ui_image(&id);
         let side = self.ui_side(&id);
