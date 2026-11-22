@@ -9107,7 +9107,7 @@ common-for-sale = For sale:
 ui-land-general-for-sale-to = For sale to:
 ui-profile-coming-soon = Coming soon
 ui-profile-aurora-my-profile = My profile
-ui-profile-aurora-help = A resident's profile: who they are, what you can do with them, then their favorite places, classifieds, first life, web profile and your notes. Preferences › Aurora › Profiles brings back the Legacy Viewer's window.
+ui-profile-aurora-help = A resident's profile: who they are, what you can do with them, then their picks, classifieds, first life, web profile and your notes. Preferences › Aurora › Profiles brings back the Legacy Viewer's window.
 ui-profile-aurora-conversation = Conversation
 ui-profile-aurora-call = Call
 ui-profile-aurora-add-friend = Add as friend
@@ -9138,7 +9138,7 @@ ui-profile-aurora-their-map = Find them on the map
 ui-profile-aurora-their-objects = Modify, delete or take their objects
 ui-profile-aurora-received-tip = { $right }: { $state }
 ui-profile-aurora-tab-profile = Profile
-ui-profile-aurora-tab-picks = Favorite places
+ui-profile-aurora-tab-picks = Picks
 ui-profile-aurora-tab-classifieds = Classifieds
 ui-profile-aurora-tab-first-life = First life
 ui-profile-aurora-tab-web = Web
@@ -9172,11 +9172,11 @@ ui-profile-aurora-part-bio = bio
 ui-profile-aurora-part-first-life = first life
 ui-profile-aurora-part-notes = notes
 ui-profile-aurora-part-places = { $count ->
-    [one] { $count } place
-   *[other] { $count } places
+    [one] { $count } pick
+   *[other] { $count } picks
     }
 ui-profile-aurora-part-classified = classified
-ui-profile-aurora-snapshot = Picture of the place
+ui-profile-aurora-snapshot = Picture
 ui-profile-aurora-teleport = Teleport
 ui-profile-aurora-description = Description
 ui-profile-aurora-category = Category
@@ -9192,11 +9192,11 @@ ui-profile-aurora-copy-slurl = Copy the SLURL
 ui-profile-aurora-here = My position here
 ui-profile-aurora-add-here = Add the place where I am
 ui-profile-aurora-picks-count = { $count } of { $limit } (account limit)
-ui-profile-aurora-picks-empty = No favorite place yet
-ui-profile-aurora-picks-empty-text = { $name } has not shared any place.
-ui-profile-aurora-picks-empty-own = Share your favorite places
-ui-profile-aurora-picks-empty-own-text = Other residents see them on your profile and teleport there in one click.
-ui-profile-aurora-delete-pick = Delete the place "{ $name }"?
+ui-profile-aurora-picks-empty = No picks yet
+ui-profile-aurora-picks-empty-text = { $name } has not shared any picks.
+ui-profile-aurora-picks-empty-own = Share what matters to you
+ui-profile-aurora-picks-empty-own-text = Use picks to highlight places, people, and things you care about.
+ui-profile-aurora-delete-pick = Delete the pick "{ $name }"?
 ui-profile-aurora-classifieds-empty = No classifieds
 ui-profile-aurora-classifieds-empty-text = { $name } has no classified published.
 ui-profile-aurora-classifieds-empty-own = Make a place or a service known

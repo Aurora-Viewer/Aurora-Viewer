@@ -3001,7 +3001,7 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
         p.groups = groups.into_iter().take(1).collect();
     } else if id == DEMO_FRIEND {
         // the friend of the profile mock-up: a place link and a web link in
-        // About, a partner, a group we are not in, three favorite places
+        // About, a partner, a group we are not in, three picks
         let region = aurora_i18n::tr!("common-boreal-lagoon");
         let slurl = format!("http://maps.secondlife.com/secondlife/{}/128/64/22", url_path(region));
         p.sl_about = aurora_i18n::tr!("demo-nova-about", slurl = slurl);
@@ -3047,7 +3047,7 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
 /// A group of the demo friend's profile that we are not in.
 const DEMO_FIREFLIES: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0010);
 
-/// The favorite places of the demo profiles and their snapshots.
+/// The picks of the demo profiles and their snapshots.
 const DEMO_PICKS: [(Uuid, Uuid); 3] = [
     (Uuid::from_u128(0x91C0_0001), demo_snapshot(1)),
     (Uuid::from_u128(0x91C0_0003), demo_snapshot(3)),
@@ -3146,7 +3146,7 @@ fn url_path(name: &str) -> String {
     out
 }
 
-/// A demo snapshot (favorite places, classifieds, the first life picture):
+/// A demo snapshot (picks, classifieds, the first life picture):
 /// `0x5A90…n`.
 pub const fn demo_snapshot(n: u128) -> Uuid {
     Uuid::from_u128(0x5A90_0000_0000_0000_0000_0000_0000_0000 | n)
@@ -3155,7 +3155,7 @@ pub const fn demo_snapshot(n: u128) -> Uuid {
 /// The demo first life picture.
 const DEMO_FIRST_LIFE: Uuid = demo_snapshot(6);
 
-/// The snapshot of a demo favorite place, classified or first life: a sky
+/// The snapshot of a demo pick, classified or first life: a sky
 /// gradient over three colors (the mock-up's pictures), 128 x 80.
 fn pick_snapshot(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     const SKIES: [[[f32; 3]; 3]; 6] = [

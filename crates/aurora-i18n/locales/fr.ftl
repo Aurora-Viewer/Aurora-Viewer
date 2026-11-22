@@ -9112,7 +9112,7 @@ common-for-sale = À vendre :
 ui-land-general-for-sale-to = À vendre à :
 ui-profile-coming-soon = À venir
 ui-profile-aurora-my-profile = Mon profil
-ui-profile-aurora-help = Le profil d'un résident : qui c'est, ce que vous pouvez faire avec lui, puis ses lieux préférés, ses annonces, sa première vie, son profil web et vos notes. Préférences › Aurora › Profils ramène la fenêtre du Legacy Viewer.
+ui-profile-aurora-help = Le profil d'un résident : qui c'est, ce que vous pouvez faire avec lui, puis ses favoris, ses annonces, sa première vie, son profil web et vos notes. Préférences › Aurora › Profils ramène la fenêtre du Legacy Viewer.
 ui-profile-aurora-conversation = Conversation
 ui-profile-aurora-call = Appel
 ui-profile-aurora-add-friend = Ajouter en ami
@@ -9143,7 +9143,7 @@ ui-profile-aurora-their-map = La trouver sur la carte
 ui-profile-aurora-their-objects = Modifier, supprimer ou prendre ses objets
 ui-profile-aurora-received-tip = { $right } : { $state }
 ui-profile-aurora-tab-profile = Profil
-ui-profile-aurora-tab-picks = Lieux préférés
+ui-profile-aurora-tab-picks = Favoris
 ui-profile-aurora-tab-classifieds = Petites annonces
 ui-profile-aurora-tab-first-life = Première vie
 ui-profile-aurora-tab-web = Web
@@ -9177,11 +9177,11 @@ ui-profile-aurora-part-bio = bio
 ui-profile-aurora-part-first-life = première vie
 ui-profile-aurora-part-notes = notes
 ui-profile-aurora-part-places = { $count ->
-    [one] { $count } lieu
-   *[other] { $count } lieux
+    [one] { $count } favori
+   *[other] { $count } favoris
     }
 ui-profile-aurora-part-classified = annonce
-ui-profile-aurora-snapshot = Image du lieu
+ui-profile-aurora-snapshot = Image
 ui-profile-aurora-teleport = Téléporter
 ui-profile-aurora-description = Description
 ui-profile-aurora-category = Catégorie
@@ -9197,11 +9197,11 @@ ui-profile-aurora-copy-slurl = Copier la SLURL
 ui-profile-aurora-here = Ma position ici
 ui-profile-aurora-add-here = Ajouter l'endroit où je suis
 ui-profile-aurora-picks-count = { $count } sur { $limit } (limite du compte)
-ui-profile-aurora-picks-empty = Pas encore de lieu préféré
-ui-profile-aurora-picks-empty-text = { $name } n'a partagé aucun lieu.
-ui-profile-aurora-picks-empty-own = Partagez vos endroits préférés
-ui-profile-aurora-picks-empty-own-text = Les autres résidents les voient sur votre profil et s'y téléportent en un clic.
-ui-profile-aurora-delete-pick = Supprimer le lieu « { $name } » ?
+ui-profile-aurora-picks-empty = Aucun favori pour le moment
+ui-profile-aurora-picks-empty-text = { $name } n'a partagé aucun favori.
+ui-profile-aurora-picks-empty-own = Partagez ce qui vous tient à cœur
+ui-profile-aurora-picks-empty-own-text = Utilisez vos favoris pour présenter les lieux, les personnes et les choses qui comptent pour vous.
+ui-profile-aurora-delete-pick = Supprimer le favori « { $name } » ?
 ui-profile-aurora-classifieds-empty = Aucune petite annonce
 ui-profile-aurora-classifieds-empty-text = { $name } n'a pas d'annonce publiée.
 ui-profile-aurora-classifieds-empty-own = Faites connaître un lieu, un service

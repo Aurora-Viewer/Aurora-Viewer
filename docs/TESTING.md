@@ -10032,7 +10032,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the scenarios of the profile mock-up are
   - a friend: `friend` (Nova, Premium, a contact set if
     `AURORA_DEMO_CONTACTS` seeded one, the rights on the Permissions line of
-    Info, three favorite places, two groups of which one in common, private
+    Info, three picks, two groups of which one in common, private
     notes);
   - a stranger: `wolf` (blocked: red badge, "Unblock"; "Add as friend" on
     the Friendship line of Info);
@@ -10046,10 +10046,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   and original, preset or custom aspect ratios.
 
   Options add up, separated by `:` (`self:edit:2`). The other tabs:
-  `friend:2` (Nova's favorite places, featured place over thumbnails),
+  `friend:2` (Nova's picks, with the featured pick above the thumbnails),
   `friend:3` (two classifieds, the first one unfolded), `friend:4` (first
   life picture and text), `friend:5` (notes), `nova:2|3|4` (the empty
-  states), `self:edit:2` (our places in their form, the card that adds
+  states), `self:edit:2` (our picks in their form, the card that adds
   one), `self:edit:3:form` (our classified in its form, with its clicks)
   and `self:3:publish` (a new classified and the strip that asks its
   price). Publishing takes the price from the demo balance; the demo keeps
