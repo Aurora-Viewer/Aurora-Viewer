@@ -51,7 +51,7 @@ cargo test --workspace --locked dropping_inventory_on_a_resident_row
 | Cross-window input | `organized_rows_publish_native_cargo_and_give_the_entire_selection_once`, `organized_item_drag_scrolls_faster_outside_the_pane_and_stops_on_release` |
 | Grid-facing validation | `explorer_creation_only_confirms_the_expected_owner_type_subtype_and_destination`, `explorer_bulk_next_owner_reports_unread_branches_and_revalidates_moved_items`, `confirmed_inventory_environment_never_redirects_to_a_second_region_or_parcel` |
 
-For an offline visual review, set `AURORA_DEMO=1` and `AURORA_DEMO_INVENTORY=aurora-organized`, then run `cargo run --locked -p aurora-viewer`. The demo selects Explorer at startup and allows switching styles afterward. An end-to-end grid review needs separate observations of both sides of a resident offer, the server-confirmed parent after a real inventory move, and confirmation or rejection when a parcel changes before an environment apply. [Demo selection](../crates/aurora-viewer/src/ui/inventory.rs) · [Upstream demo instructions](TESTING.md)
+For an offline visual review, set `AURORA_DEMO=1` and `AURORA_DEMO_INVENTORY=aurora-organized`, then run `cargo run --locked -p aurora-viewer -- --title "Test inventory-explorer"`. The demo selects Explorer at startup and allows switching styles afterward. An end-to-end grid review needs separate observations of both sides of a resident offer, the server-confirmed parent after a real inventory move, and confirmation or rejection when a parcel changes before an environment apply. [Demo selection](../crates/aurora-viewer/src/ui/inventory.rs) · [Upstream demo instructions](TESTING.md)
 
 ## Current upstream integration
 

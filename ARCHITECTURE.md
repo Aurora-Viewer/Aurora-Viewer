@@ -1,5 +1,15 @@
 # Aurora Viewer architecture
 
+`imports::ImageSizeLimit` separates a draft's Default/1024/2048 choice from
+the shared persisted image limit beside Import. Effective options feed previews,
+quotes, deduplication and encoding; changing the general limit updates inherited
+drafts and invalidates affected previews and mesh quotes. Local restoration,
+reload and staging retain explicit overrides. `import_texture` accepts large
+local source images and reduces them during preparation, retaining source pixels
+for later limit changes. Material map file requests use a token per slot so a
+changed limit preserves files still loading without accepting an older selection.
+Network JPEG2000 decoding keeps its own budgets.
+
 `imports/mesh.rs` exposes Automatic through the retained `LodSource::Legacy` /
 `process::Method::Legacy` chain, and Reliable. Retired serialized generation
 choices alias to Legacy. Scene budgets reserve `process::minimum_lod_triangles`

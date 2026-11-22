@@ -5034,9 +5034,13 @@ impl World {
                 }
                 None
             }
-            NetEvent::InventoryUpdated { folders, items } => {
+            NetEvent::InventoryUpdated { folders, items, bulk } => {
                 self.reveal_added(&folders, &items);
-                self.inventory.server_updated(folders, items);
+                if bulk {
+                    self.inventory.bulk_updated(folders, items);
+                } else {
+                    self.inventory.server_updated(folders, items);
+                }
                 None
             }
             NetEvent::InventoryDelivery { transaction, folders } => {

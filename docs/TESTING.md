@@ -1921,7 +1921,15 @@ when unfocused") is ignored during a screenshot.
   land) and `AURORA_DEMO_CLICKS=4000,900,440,menu`, capture frame 700: a right
   click on the ground inside the frame must open the land menu (About Land,
   Edit land), never the frame's menu with the frame outlined.
-- **`AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus]"`**:
+- **Object View while building (#3927):** `AURORA_DEMO_CLICKS=1000,object-view`
+  opens Build/Edit and the camera controls, enables Object View and sends
+  ordinary clicks through the asynchronous world picker. Add
+  `AURORA_DEMO_BUILD=move,object:118` and `AURORA_DEMO_BUILD_FRAME=560` to
+  begin with a selected object. Each resolved click logs `demo object view:
+  PASS` when Build stays open, the selection is unchanged and the camera
+  enters `FocusOrbit`; capture after frame 740. Turn Object View off to
+  check normal build selection again; Alt camera gestures should still work.
+- **`AURORA_DEMO_CLICKS="<ms>[,x,y|sweep|rigged][,clickable][,left|alt|menu|build|focus|object-view]"`**:
   one click on the world every `ms` milliseconds (250 if the value is not a
   number) once the world is displayed, button held 60 ms, through the same
   path as a mouse button (`app/click_pick.rs`), without ever taking the real
@@ -2047,6 +2055,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_TORTURED_PRIMS=1` | Hollow reversed sphere and ordinary prim controls |
 | `AURORA_DEMO_BEACONS=1` | Object beacons and World overlays |
 | `AURORA_DEMO_RENDER_TYPES=<kinds>` | Advanced › Rendering types: those kinds hidden from the start |
+| `AURORA_DEMO_UI_FEATURE=off\|cycle` | Advanced › Rendering features › UI (Ctrl+Alt+F1): the whole interface off at frame 600 (`cycle`: back at 900) |
 | `AURORA_DEMO_RELEASE_KEYS=1` | A vehicle script takes the movement keys: Advanced › Release keys enabled |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
 | `AURORA_DEMO_DEEP_PERMS=1\|run\|run-replace\|run-refuse` | Content permissions with objects inside objects: a chest of nested boxes |
@@ -2085,6 +2094,8 @@ when unfocused") is ignored during a screenshot.
 **Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. `guides` adds a light prim and turns on Bounding boxes for lights, Region corners and Chat range spheres: look for the white bounds and the yellow radius box of the light, the whisper, say and shout rings around the avatar (hidden by the ground and objects in front of them), and the labelled amber beacons of the region's far corners. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
 
 **Rendering types details.** `AURORA_DEMO_RENDER_TYPES` takes the kinds to hide, separated by commas: `terrain`, `water`, `sky`, `clouds`, `objects`, `avatars`, `animesh`, `trees`, `grass`, `particles` (unknown words are left aside). With `AURORA_DEMO_BARS=hidden` and a capture at frame 900: `objects` leaves the avatar on the bare terrain, the plaza's shadows gone; `avatars,animesh` leaves the name tag over an empty spot; `terrain,water` shows the sky under the plaza; `terrain,water,sky` a flat clear colour instead of the sky's gradient. Then open Advanced › Rendering types: the ticks match, and ticking back draws the kind at once. The grid check compares Develop › Rendering Types of the Legacy Viewer in a busy region (Avatars hides worn objects too; Animesh, Trees and Grass apart).
+
+**UI rendering feature details.** `AURORA_DEMO_UI_FEATURE=off` unticks Advanced › Rendering features › UI at frame 600, as Ctrl+Alt+F1 (Ctrl+Shift+F1 on Linux) does: capture at frame 700 or later. Only the world is left: no bar, window, toast, chat line, name tag, floating text, beacon nor selection outline; the HUD attachments stay (with `AURORA_DEMO_HUDS=1`), and so does RLVa's overlay (`AURORA_DEMO_RLVA=overlay`). The clicks go to the world, and the shortcut brings everything back where it was, the hidden interface (Alt+Shift+U) or immersive mode included. `cycle` turns it back on at frame 900: capture at frame 1000 to see the interface again. The grid check compares Advanced › Rendering Features › UI of the Legacy Viewer in a busy region.
 
 **Release keys details.** `AURORA_DEMO_RELEASE_KEYS=1` makes a vehicle script take the arrow keys and Page Up / Down at frame 400 (taken, not passed on), as llTakeControls does. Advanced › Release keys is then enabled (it is greyed without the variable); choosing it sends ForceScriptControlRelease, the demo region answers with the releases and the entry is greyed again. With `AURORA_DEMO_MENU_SEARCH=` a word of the label in the interface's language (`release` in English, `touches` in French), `AURORA_FPS_LIMIT=60` and a capture at frame 640, the entry shows under Advanced in the wolf menu's search. The demo does not block the avatar's movement while the keys are taken (the region does that on the grid).
 
@@ -6575,6 +6586,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_RELOAD_AVATAR=other\|self` | "Reload avatar" of the right-click menu, on the other avatar or ours |
+| `AURORA_DEBUG_EXPLORER_KEYS=1` | Bounded shortcut-routing diagnostics for Inventory Explorer (see Details) |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, animation playback previews, link type icons, lost inventory recovery, menus, layout notecards, filters, drag feedback, windows, keyboard, search selection and advanced search; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_INVENTORY_FAULT=<mode>` | The `big:…,fetch` demo's intended AIS failures: `transient[=<n>]`, `too-big`, `limit=<n>` |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|chat-keys\|play\|replay\|once\|channel\|channel-replace\|completion\|completion-send\|list\|communicate\|communicate-open\|delete` | Gesture manager, editor, numeric and focused-chat shortcuts, playback, back-to-back replays, commands to worn scripts and replacements on a channel, completion, the chat bar's list of gestures and menu access |
@@ -7085,15 +7097,31 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   alpha is retained, and 16-bit channels use their high byte, following
   `LLPngWrapper::normalizeImage`. Ordinary 8-bit RGB/RGBA files and material
   maps must still load with the same colours and transparency.
-  The texture inspector shows "Limit size to 1024 × 1024" only when the
-  unrestricted power-of-two width or height would exceed 1024. It is off by
-  default (2048 maximum). Each explicit change is saved; newly added textures
-  capture the latest choice when they join the list, while existing files
-  retain their own limit. Viewing a smaller image hides the switch without
-  replacing that remembered choice. With a 2048 × 1024 source opened
-  through `AURORA_DEMO_IMPORT_FILE`, check that toggling it changes the
-  upload size between 1024 × 512 and 2048 × 1024 and updates the fee. Only
-  the final power-of-two dimensions are shown, as in `LLFloaterImagePreview`.
+  The image-size selector after Import sets a shared, remembered maximum
+  of 1024 or 2048 pixels (2048 by default). Every texture and material has
+  its own selector with Global setting (current size), 1024 px, and 2048 px,
+  including small source images. Global setting shows the current shared
+  limit in parentheses, updating between 1024 px and 2048 px in both the
+  closed selector and its menu when the footer setting changes.
+  The footer shows a separate maximum-size label and selector, with spacing
+  after Import. In French, a texture's label refers to the singular image;
+  materials and the footer refer to images in the plural.
+  Global setting follows the shared choice immediately; an explicit choice
+  takes priority even when it is larger than the shared maximum. Check both the
+  unified importer and the separate texture/material windows: changing the
+  shared choice updates inherited previews and fees, but leaves overrides
+  unchanged. Returning an entry to Global setting resumes inheritance.
+  Open a source larger than 2048 through `AURORA_DEMO_IMPORT_FILE`, including
+  an 8192 × 8192 PNG and a 16K image. It must load without a dimension-limit
+  warning and shrink automatically to the selected maximum. With a
+  4096 × 2048 source, check upload dimensions of 1024 × 512 and 2048 × 1024,
+  the corresponding fees, and switching back to 2048 without enlarging a
+  previously reduced 1024 image. Material maps follow the same limit;
+  existing inventory textures are reused without re-uploading their pixels.
+  Restore a saved local texture/material with an explicit choice, then one
+  on Global setting: the override stays explicit, while the inherited limit
+  follows the current shared setting. Final power-of-two dimensions are shown, as in
+  `LLFloaterImagePreview`.
   Every scenario uses the same window and queue. Clicking a row in the left queue opens Files, including the already active
   item from Folder preview or Permissions; checkbox/filter changes retain the tab. Files shows its
   asset inspector; Folder preview shows that file's destination and can edit its path.
@@ -7476,6 +7504,7 @@ failure. Grid validation and any paid upload are performed by the human.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEBUG_EXPLORER_KEYS=1`**: opt-in `explorer-key` info-log lines for the first 32 recognized shortcut presses, tracing native input, focus and Explorer tab routing for up to two following frames. Records shortcut keys, modifier bits and opaque layer IDs, never typed text or inventory names. Use a separately named test log and unset after diagnosis; it changes no permission or mutation rule.
 - **`AURORA_DEMO_INVENTORY=offer-unsent|offer-sent|offer-uncertain`**: opens
   the real give confirmation for the synthetic no-copy object. Click **Give**.
   With `offer-unsent`, the item remains and the viewer reports that no offer
@@ -9704,7 +9733,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   a set's symbol after the name where the set has one, its colour's dot
   otherwise, #1104), `groups` (860 × 500: "No active group", Aurora Builders active,
   pinned, two notices unread and its sheet open, the market's chat
-  blocked, "3 groups out of 42"), `sets` (520 × 430: Family, Clubbing and
+  blocked, "3 groups out of 42"; `groups-hover` puts the Northern Wolves under the pointer, its Activate out, and `groups-hover-active` the active Aurora Builders, its Deactivate), `sets` (520 × 430: Family, Clubbing and
   Shop, the wolf's nickname, a non-friend, Nova chosen with her quick
   actions out: move, take out, menu), `recent` (420 × 300: four residents
   met lately, how long ago and where) and `blocked` (420 × 300: a resident

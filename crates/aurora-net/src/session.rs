@@ -411,6 +411,7 @@ fn emit(sh: &Shared, ev: NetEvent) {
 /// for the items then find their folder instead of Lost And Found.
 fn announce_folder(events: &crate::EventSender, folder: crate::inventory::InvFolder) {
     let _ = events.send(NetEvent::InventoryUpdated {
+        bulk: false,
         folders: vec![folder],
         items: Vec::new(),
     });
@@ -5469,6 +5470,7 @@ impl Session<'_> {
                 emit(
                     self.sh,
                     NetEvent::InventoryUpdated {
+                        bulk: false,
                         folders: Vec::new(),
                         items,
                     },
@@ -5543,7 +5545,14 @@ impl Session<'_> {
                     })
                     .collect();
                 let delivered = folders.iter().map(|folder: &crate::inventory::InvFolder| folder.id).collect();
-                emit(self.sh, NetEvent::InventoryUpdated { folders, items });
+                emit(
+                    self.sh,
+                    NetEvent::InventoryUpdated {
+                        folders,
+                        items,
+                        bulk: true,
+                    },
+                );
                 if !m.agent_data.transaction_id.is_nil() {
                     emit(
                         self.sh,
