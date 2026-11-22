@@ -36,7 +36,10 @@ pub const DEFAULT_PORT: u16 = 17655;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum Tab {
     #[default]
-    Connection,
+    Objects,
+    Place,
+    Avatar,
+    Import,
     Plugins,
 }
 
@@ -123,7 +126,7 @@ impl Default for Live {
     fn default() -> Self {
         Self {
             open: false,
-            tab: Tab::Connection,
+            tab: Tab::Objects,
             port: DEFAULT_PORT,
             server: None,
             error: None,

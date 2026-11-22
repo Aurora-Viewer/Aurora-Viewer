@@ -1354,12 +1354,13 @@ four File LODs already assigned. Preparation never requests a quote or upload;
 the normal review, quote and confirmed upload workflow follows. Preview-only
 elbow/knee flexion inspects skinning without altering the uploaded mesh.
 Hidden/removed sources keep receiving edits, with no simulator traffic.
-The LiveMesh floater has Connection and Plugins tabs, retained across reopening
-with separate scroll positions. Connection contains transport status, shape
-transfer, objects and their placement controls; Plugins contains installation,
-progress, completion and manual ZIP export. Its body uses scoped 16-point
-typography, including custom-painted controls through the UI font override.
-Port, loopback address and start/stop share a wrapping control row.
+The LiveMesh floater (`blender_live/ui.rs`) is built like the Director's
+window, with its widgets (`widgets::wrapping_tabs`, `collapsing`, `form_row`):
+a status line above five tabs, retained across reopening with separate scroll
+positions. Objects holds one card per source (linksets unfold to their prims)
+and the folded Connection section; Place the selected static object's
+placement; Avatar the shape transfer; Import the frozen import; Plugins the
+installation, progress, completion and manual ZIP export.
 Each source row requests its own fresh LOD bundle;
 visibility and bulk removal remain independent of import selection.
 Plugins lists detected Blender versions and installed plug-in versions, with a

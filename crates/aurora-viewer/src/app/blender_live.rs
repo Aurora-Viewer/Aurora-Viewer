@@ -216,6 +216,15 @@ impl App {
             if mode == "plugins" || mode.starts_with("installer-") {
                 self.blender_live.tab = crate::blender_live::Tab::Plugins;
             }
+            // the window's other tabs, for the captures
+            use crate::blender_live::Tab;
+            match std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").unwrap_or_default().as_str() {
+                "place" => self.blender_live.tab = Tab::Place,
+                "avatar" => self.blender_live.tab = Tab::Avatar,
+                "import" => self.blender_live.tab = Tab::Import,
+                "plugins" => self.blender_live.tab = Tab::Plugins,
+                _ => {}
+            }
             self.blender_live.installer.demo(&mode);
             if mode.starts_with("shape") {
                 self.demo_blender_shape(mode == "shape-readonly");

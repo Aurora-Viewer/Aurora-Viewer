@@ -14683,6 +14683,42 @@ blender-live-linkset-counts =
     }
 blender-object-linkset = { $name }‐ルート#1・{ $prims }個のプリム
 blender-object-linked-prim = #{ $number }個・{ $name }
+blender-live-tab-place = 配置
+blender-live-tab-avatar = アバター
+blender-live-objects-help = Blenderが送信しているメッシュです。選択すると配置でき、メニューからインポートできます。
+blender-live-more = その他
+blender-live-place = 配置
+blender-live-linked-prims = リンクされたプリムを表示または非表示
+blender-live-tag-rigged = リグ付き
+blender-live-card-rigged = { $triangles ->
+        [one] { $triangles }個の三角形
+       *[other] { $triangles }個の三角形
+    }
+blender-live-card-static = 静的・{ $triangles ->
+        [one] { $triangles }個の三角形
+       *[other] { $triangles }個の三角形
+    }
+blender-live-card-linkset = 静的・{ $prims ->
+        [one] { $prims }個のプリム
+       *[other] { $prims }個のプリム
+    }・{ $triangles ->
+        [one] { $triangles }個の三角形
+       *[other] { $triangles }個の三角形
+    }
+blender-live-triangles = { $triangles ->
+        [one] { $triangles }個の三角形
+       *[other] { $triangles }個の三角形
+    }
+blender-live-place-help = 選択した静的メッシュの場所です。リグ付きメッシュは常にアバターに追従します。
+blender-live-place-none = 配置する静的オブジェクトを選択してください。
+blender-live-where = 場所
+blender-live-transform = 位置、回転、サイズ
+blender-live-size-note = サイズはBlenderから送られる寸法に掛けられるため、Blenderでの後の編集でも保持されます。
+blender-live-avatar-help = リグ付きメッシュ用：シェイプをBlenderに送り、それに合わせてモデリングします。
+blender-live-shape-section = Blender内のシェイプ
+blender-live-import-help = 通常のインポート用にオブジェクトのスナップショットを固定します：確認、料金、そして確定。Blenderでの後の編集は反映されません。
+blender-live-from = 元
+blender-live-plugins-help = Auroraは各Blenderに対応するプラグインをインストールし、以前のものをバックアップし、古いバージョンをインストールすることはありません。
 
 inventory-bulk-permissions = 権限の一括変更
 inventory-bulk-adjust = アイテムの権限を調整
