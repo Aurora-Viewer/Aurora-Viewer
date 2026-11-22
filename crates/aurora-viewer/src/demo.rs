@@ -3001,7 +3001,7 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
         p.groups = groups.into_iter().take(1).collect();
     } else if id == DEMO_FRIEND {
         // the friend of the profile mock-up: a place link and a web link in
-        // About, a partner, a group we are not in, three favorite places
+        // About, a partner, a group we are not in, three picks
         let region = aurora_i18n::tr!("common-boreal-lagoon");
         let slurl = format!("http://maps.secondlife.com/secondlife/{}/128/64/22", url_path(region));
         p.sl_about = aurora_i18n::tr!("demo-nova-about", slurl = slurl);
@@ -3047,7 +3047,7 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
 /// A group of the demo friend's profile that we are not in.
 const DEMO_FIREFLIES: Uuid = Uuid::from_u128(0x6E00_0000_0000_0000_0000_0000_0000_0010);
 
-/// The favorite places of the demo profiles and their snapshots.
+/// The picks of the demo profiles and their snapshots.
 const DEMO_PICKS: [(Uuid, Uuid); 3] = [
     (Uuid::from_u128(0x91C0_0001), demo_snapshot(1)),
     (Uuid::from_u128(0x91C0_0003), demo_snapshot(3)),
@@ -3146,7 +3146,7 @@ fn url_path(name: &str) -> String {
     out
 }
 
-/// A demo snapshot (favorite places, classifieds, the first life picture):
+/// A demo snapshot (picks, classifieds, the first life picture):
 /// `0x5A90…n`.
 pub const fn demo_snapshot(n: u128) -> Uuid {
     Uuid::from_u128(0x5A90_0000_0000_0000_0000_0000_0000_0000 | n)
@@ -3155,7 +3155,7 @@ pub const fn demo_snapshot(n: u128) -> Uuid {
 /// The demo first life picture.
 const DEMO_FIRST_LIFE: Uuid = demo_snapshot(6);
 
-/// The snapshot of a demo favorite place, classified or first life: a sky
+/// The snapshot of a demo pick, classified or first life: a sky
 /// gradient over three colors (the mock-up's pictures), 128 x 80.
 fn pick_snapshot(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     const SKIES: [[[f32; 3]; 3]; 6] = [
@@ -6192,13 +6192,19 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
-    // AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]: a closed room with a lamp and a
-    // manual probe of that ambiance, at AURORA_DEMO_POS="100,100" (#2217): a
-    // sphere that crosses the floor, or a box that fills the room
+    // AURORA_DEMO_PROBE_ROOM=<ambiance>[,box|inner][,shiny]: a closed room
+    // with a lamp and a manual probe of that ambiance, at
+    // AURORA_DEMO_POS="100,100" (#2217): a sphere that crosses the floor, a
+    // box that fills the room, or a box on the inner faces of its walls,
+    // floor and roof, as a creator sizes one to a room's inside; `shiny`
+    // gives those faces a high shininess, which shows their reflection
     if let Ok(room) = std::env::var("AURORA_DEMO_PROBE_ROOM") {
-        let mut values = room.split(',');
-        let ambiance = values.next().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(1.0);
-        let filled = values.next().is_some_and(|v| v.trim() == "box");
+        let mut values = room.split(',').map(str::trim);
+        let ambiance = values.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        let options: Vec<&str> = values.collect();
+        let filled = options.contains(&"box");
+        let inner = options.contains(&"inner");
+        let shiny = if options.contains(&"shiny") { 3 } else { 0 };
         let (x, y) = (100.0, 100.0);
         let z = g(x, y);
         let (half, height) = (8.0, 5.0);
@@ -6217,7 +6223,7 @@ pub fn events() -> Vec<NetEvent> {
                 Quat::IDENTITY,
                 scale,
                 boxp,
-                te(matte, 0, false, 0.0),
+                te(matte, shiny, false, 0.0),
                 ExtraParams::default(),
                 "",
             ));
@@ -6242,7 +6248,17 @@ pub fn events() -> Vec<NetEvent> {
             "",
         ));
         id += 1;
-        let (center, scale, flags) = if filled {
+        // (the walls, floor and roof are 0.2 m thick: their inner faces are
+        // 0.1 m inside the walls' centres, the floor's top at 0.2 m and the
+        // roof's underside at `height - 0.1`)
+        let (center, scale, flags) = if inner {
+            let (bottom, top) = (0.2, height - 0.1);
+            (
+                Vec3::new(x, y, z + (bottom + top) / 2.0),
+                Vec3::new(2.0 * half - 0.2, 2.0 * half - 0.2, top - bottom),
+                0x1,
+            )
+        } else if filled {
             (Vec3::new(x, y, z + height / 2.0), Vec3::new(2.0 * half, 2.0 * half, height), 0x1)
         } else {
             (Vec3::new(x + 3.0, y + 3.0, z + 0.2), Vec3::splat(4.0), 0x0)

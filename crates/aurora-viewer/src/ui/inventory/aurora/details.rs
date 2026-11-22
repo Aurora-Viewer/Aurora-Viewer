@@ -868,7 +868,7 @@ fn details_below(
     heading(ui, p, aurora_i18n::tr!("inventory-details-next-owner"));
     for (bit, label) in [
         (rules::COPY, aurora_i18n::tr!("common-copy-2")),
-        (rules::MODIFY, aurora_i18n::tr!("common-edit")),
+        (rules::MODIFY, aurora_i18n::tr!("common-modify")),
         (rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
     ] {
         let editable = next_editable(inv, original, bit, st) && original.id == it.id;

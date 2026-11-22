@@ -17,7 +17,7 @@ pub(crate) fn defaults(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) 
     );
     ui.add_space(10.0);
     let columns = [
-        (64.0, aurora_i18n::tr!("common-edit"), aurora_i18n::tr!("common-edit")),
+        (64.0, aurora_i18n::tr!("common-modify"), aurora_i18n::tr!("common-modify")),
         (64.0, aurora_i18n::tr!("common-copy-2"), aurora_i18n::tr!("common-copy-2")),
         (70.0, aurora_i18n::tr!("common-transfer"), aurora_i18n::tr!("common-transfer")),
         (
