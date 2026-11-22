@@ -104,6 +104,15 @@ impl Selection {
         self.head = Some(Point { seq, at: range.end });
     }
 
+    /// Characters `range` of one line (a triple click on a paragraph),
+    /// copied as a drag over them is: the paragraph that starts the message
+    /// takes the line's "[time] Name: " prefix, which begins that line in the
+    /// Legacy Viewer's transcript; one after a line break does not.
+    pub fn select_paragraph(&mut self, seq: u64, range: Range<usize>, row_text: &str) {
+        self.start_at(Point { seq, at: range.start }, row_text);
+        self.head = Some(Point { seq, at: range.end });
+    }
+
     /// Every line, from the first to the last one shown.
     pub fn select_all(&mut self, first: u64, last: u64) {
         self.word = false;
@@ -434,6 +443,32 @@ pub fn word_at(rows: &[Row], pos: Pos2) -> Option<(u64, Range<usize>, &str)> {
     Some((row.seq, range, &row.text))
 }
 
+/// What a triple click at `pos` selects: the paragraph (up to a line break, or
+/// the whole message) under the pointer (`paragraph_range`). None off the lines
+/// or on an empty paragraph. Like the triple-click block of
+/// LLTextBase::handleMouseDown (indra/llui/lltextbase.cpp): a press within
+/// TRIPLE_CLICK_INTERVAL (0.3 s) of a double click (the timer starts in
+/// LLTextBase::handleDoubleClick) selects the whole logical line (`mLineNum`,
+/// its wrapped rows included). The transcript, FSChatHistory
+/// (indra/newview/fschathistory.h), is an LLTextEditor and has it; only
+/// LLTextBox skips it (`mSkipTripleClick`, indra/llui/lltextbox.cpp).
+pub fn paragraph_at(rows: &[Row], pos: Pos2) -> Option<(u64, Range<usize>, &str)> {
+    let row = rows.iter().find(|r| r.rect.top() <= pos.y && pos.y < r.rect.bottom())?;
+    let piece = nearest_piece(row, pos)?;
+    let range = paragraph_range(&row.text, piece.at(pos))?;
+    Some((row.seq, range, &row.text))
+}
+
+/// The paragraph around caret `at` of `text`, bounded by line breaks (`\n`) or
+/// the message's ends.
+fn paragraph_range(text: &str, at: usize) -> Option<Range<usize>> {
+    let chars: Vec<char> = text.chars().collect();
+    let at = at.min(chars.len());
+    let start = chars[..at].iter().rposition(|&c| c == '\n').map_or(0, |p| p + 1);
+    let end = chars[at..].iter().position(|&c| c == '\n').map_or(chars.len(), |p| at + p);
+    (start < end).then_some(start..end)
+}
+
 /// LLWStringUtil::isPartOfWord: a letter, a digit or '_'.
 fn part_of_word(c: char) -> bool {
     c == '_' || c.is_alphanumeric()
@@ -563,6 +598,39 @@ mod tests {
         assert_eq!(word_range(text, usize::MAX), None);
         // a message of one word
         assert_eq!(word_range("hello", 3), Some(0..5));
+    }
+
+    #[test]
+    fn a_triple_click_takes_the_paragraph_under_it() {
+        assert_eq!(paragraph_range("hello from Jane", 7), Some(0..15));
+        assert_eq!(paragraph_range("hello from Jane", 0), Some(0..15));
+        assert_eq!(paragraph_range("hello from Jane", 15), Some(0..15));
+        let multi = "first paragraph\nsecond paragraph\nthird";
+        assert_eq!(paragraph_range(multi, 0), Some(0..15));
+        assert_eq!(paragraph_range(multi, 15), Some(0..15));
+        assert_eq!(paragraph_range(multi, 16), Some(16..32));
+        assert_eq!(paragraph_range(multi, 32), Some(16..32));
+        assert_eq!(paragraph_range(multi, 33), Some(33..38));
+        assert_eq!(paragraph_range(multi, usize::MAX), Some(33..38));
+        assert_eq!(paragraph_range("", 0), None);
+    }
+
+    /// A triple-clicked paragraph is copied as a drag over it: the first one
+    /// with the line's prefix, one after a line break without; a double
+    /// click still copies the word alone.
+    #[test]
+    fn a_triple_clicked_paragraph_is_copied_as_a_drag_over_it() {
+        let text = "first paragraph\nsecond one";
+        let lines = [(10, "[12:00] Jane: ", text)];
+        let mut sel = Selection::default();
+        let first = paragraph_range(text, 3).expect("the first paragraph");
+        sel.select_paragraph(10, first, text);
+        assert_eq!(copy(&sel, &lines), "[12:00] Jane: first paragraph");
+        let second = paragraph_range(text, 20).expect("the second paragraph");
+        sel.select_paragraph(10, second, text);
+        assert_eq!(copy(&sel, &lines), "second one");
+        sel.select_in_row(10, 0..5, text);
+        assert_eq!(copy(&sel, &lines), "first");
     }
 
     #[test]
