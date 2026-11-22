@@ -649,6 +649,44 @@ fn floater_title_name(
         )
     }
 }
+/// The name being typed in the title of the window `window`, while its
+/// rename is allowed: in the viewer's window and in its window outside.
+fn title_draft_of(ctx: &egui::Context, window: egui::Id, rename: Option<&(String, bool)>) -> Option<FloaterTitleDraft> {
+    let allowed = rename.is_some_and(|(_, allowed)| *allowed);
+    ctx.data_mut(|d| d.get_temp::<FloaterTitleDraft>(window.with("title_rename_draft")))
+        .filter(|_| allowed)
+}
+
+/// Ends the pass of a title that can be renamed: a finished edit (`Some`,
+/// true to keep it) leaves its cleaned name for [`take_title_rename`] when
+/// it changed, and the draft still open is kept for the next pass.
+fn title_draft_end(
+    ctx: &egui::Context,
+    window: egui::Id,
+    rename: Option<&(String, bool)>,
+    mut draft: Option<FloaterTitleDraft>,
+    finished: Option<bool>,
+) {
+    if let Some(save) = finished {
+        if save
+            && let Some(edit) = draft.as_ref()
+            && let Some((original, true)) = rename
+            && let Some(name) = clean_floater_title_name(&edit.text)
+            && name != original.as_str()
+        {
+            ctx.data_mut(|d| d.insert_temp(window.with("title_rename_result"), name));
+        }
+        draft = None;
+    }
+    ctx.data_mut(|d| {
+        if let Some(draft) = draft {
+            d.insert_temp(window.with("title_rename_draft"), draft);
+        } else {
+            d.remove_temp::<FloaterTitleDraft>(window.with("title_rename_draft"));
+        }
+    });
+}
+
 /// A completed title rename, requested by the document editor's own floater.
 /// Only the caller performs permission checks and sends a metadata update.
 pub fn take_title_rename(ctx: &egui::Context, window: &str) -> Option<String> {
@@ -1020,12 +1058,8 @@ impl<'a> Floater<'a> {
         let mut go_outside = false;
         let mut out = None;
         let window_id = egui::Id::unique(self.id);
-        let title_draft_id = window_id.with("title_rename_draft");
         let title_field_id = window_id.with("title_rename_field");
-        let mut title_draft = ctx.data_mut(|d| d.get_temp::<FloaterTitleDraft>(title_draft_id));
-        if !self.title_rename.as_ref().is_some_and(|(_, allowed)| *allowed) {
-            title_draft = None;
-        }
+        let mut title_draft = title_draft_of(ctx, window_id, self.title_rename.as_ref());
         let mut title_finished: Option<bool> = None;
         let expanded_id = window_id.with("expanded_size");
         let restore_id = window_id.with("restore_size");
@@ -1495,24 +1529,7 @@ impl<'a> Floater<'a> {
                 resize::handles_of(ctx, p, &response.response, self.height_only);
             }
         }
-        if let Some(save) = title_finished {
-            if save
-                && let Some(draft) = title_draft.as_ref()
-                && let Some((original, true)) = self.title_rename.as_ref()
-                && let Some(name) = clean_floater_title_name(&draft.text)
-                && name != original.as_str()
-            {
-                ctx.data_mut(|d| d.insert_temp(window_id.with("title_rename_result"), name));
-            }
-            title_draft = None;
-        }
-        ctx.data_mut(|d| {
-            if let Some(draft) = title_draft {
-                d.insert_temp(title_draft_id, draft);
-            } else {
-                d.remove_temp::<FloaterTitleDraft>(title_draft_id);
-            }
-        });
+        title_draft_end(ctx, window_id, self.title_rename.as_ref(), title_draft, title_finished);
         if close {
             *open = false;
             // LLFloater::closeFloater: "Always unminimize before trying to
@@ -1597,6 +1614,11 @@ impl<'a> Floater<'a> {
         let mut content = None;
         let mut body = Some(body);
         let mut back = false;
+        // a document's name, renamed by a double click on it as in the
+        // title inside: the title of this window is the system's
+        let title_field_id = window_id.with("title_rename_field");
+        let mut title_draft = title_draft_of(ctx, window_id, self.title_rename.as_ref());
+        let mut title_finished: Option<bool> = None;
         let builder = egui::ViewportBuilder::default().with_title(self.title.clone());
         let out = ctx.show_viewport_immediate(crate::outside::viewport(window_id), builder, |ui, _| {
             super::close_key::pressed_outside(ui.ctx(), window_id);
@@ -1651,11 +1673,37 @@ impl<'a> Floater<'a> {
                                     status_dot(ui, *dot);
                                     ui.spacing_mut().item_spacing.x = 6.0;
                                 }
-                                if let Some(note) = &self.title_note {
-                                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
-                                    });
+                                if self.title_rename.is_none() && self.title_note.is_none() {
+                                    return;
                                 }
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                    if let Some((name, allowed)) = &self.title_rename {
+                                        let rect = floater_title_name(
+                                            ui,
+                                            RichText::new(name).size(TITLE_SIZE).strong().color(p.ink),
+                                            name,
+                                            true,
+                                            &mut title_draft,
+                                            &mut title_finished,
+                                            title_field_id,
+                                        );
+                                        if *allowed
+                                            && title_draft.is_none()
+                                            && ui
+                                                .interact(rect, window_id.with("title_double_click"), Sense::click())
+                                                .double_clicked()
+                                        {
+                                            title_draft = Some(FloaterTitleDraft {
+                                                text: name.clone(),
+                                                focus: true,
+                                            });
+                                            ui.ctx().request_repaint();
+                                        }
+                                    }
+                                    if let Some(note) = &self.title_note {
+                                        ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                                    }
+                                });
                             });
                         });
                     };
@@ -1716,6 +1764,7 @@ impl<'a> Floater<'a> {
                 })
                 .inner
         });
+        title_draft_end(ctx, window_id, self.title_rename.as_ref(), title_draft, title_finished);
         if back {
             crate::outside::want(ctx, window_id, false);
         }

@@ -196,3 +196,52 @@ fn the_button_of_a_window_outside_brings_it_in_front_before_it_closes_it() {
     toggle_floater(&ctx, "people", &mut people);
     assert!(!people);
 }
+
+/// A document's name is drawn in its window outside, whose title is the
+/// system's, and renamed there as in the title inside.
+#[test]
+fn a_document_outside_is_renamed_in_its_window() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let name = "test outside renamed";
+    let window = egui::Id::unique(name);
+    let ctx = frames.ctx.clone();
+    crate::outside::want(&ctx, window, true);
+    crate::outside::set_native(&ctx, window, true);
+    let typed = |ctx: &egui::Context, text: &str| {
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                window.with("title_rename_draft"),
+                FloaterTitleDraft {
+                    text: text.to_owned(),
+                    focus: true,
+                },
+            );
+        });
+    };
+    let enter = || egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let mut frame = |allowed: bool, events: Vec<egui::Event>| {
+        let mut open = true;
+        frames.run(events, |ui| {
+            Floater::new(name, "Old name", egui::pos2(10.0, 10.0), Vec2::new(300.0, 200.0))
+                .silent()
+                .rename_title("Old name", allowed)
+                .show(ui.ctx(), &p, &mut open, |_| ());
+        });
+    };
+    typed(&ctx, "New name");
+    frame(true, Vec::new());
+    frame(true, vec![enter()]);
+    assert_eq!(take_title_rename(&ctx, name).as_deref(), Some("New name"));
+    // without the right to rename, what was typed is dropped
+    typed(&ctx, "Another");
+    frame(false, Vec::new());
+    frame(false, vec![enter()]);
+    assert_eq!(take_title_rename(&ctx, name), None);
+}
