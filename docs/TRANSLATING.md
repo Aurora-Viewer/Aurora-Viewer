@@ -158,6 +158,8 @@ Japanese, beyond the plural:
   viewers are Auroraビューア and レガシービューア: "Legacy" is レガシー, as in
   the option labels the Legacy Viewer's Japanese interface already
   translates (昼間（レガシー）).
+- Numbered steps use the number-period characters ⒈ ⒉ ⒊ (U+2488…), not
+  １． nor 1.
 - A label quoted in a hint (「…」) is the exact text of that label in
   `ja.ftl`.
 - A continuation line of a multi-line message cannot start with `*`, `[`
