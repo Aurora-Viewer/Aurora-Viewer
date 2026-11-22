@@ -72,6 +72,8 @@ fn a_window_outside_takes_the_size_of_its_content_once_per_size() {
 
 /// Ctrl+Shift+W in the viewer's window closes a window outside with the
 /// others; Ctrl+W there closes the front window inside, never this one.
+/// (Without a host, egui runs the window outside in the viewer's pass: it
+/// reads the viewer's keys, those the front window inside left.)
 #[test]
 fn close_all_windows_closes_a_window_outside_too() {
     let mut frames = elide_tests::Frames::new();
@@ -86,20 +88,70 @@ fn close_all_windows_closes_a_window_outside_too() {
         repeat: false,
         modifiers,
     };
-    let mut open = true;
-    let mut frame = |open: &mut bool, events: Vec<egui::Event>| {
+    let (mut open, mut inside) = (true, true);
+    let mut frame = |open: &mut bool, inside: &mut bool, events: Vec<egui::Event>| {
         frames.run(events, |ui| {
             crate::ui::close_key::begin(ui.ctx());
+            Floater::new("test inside front", "Inside", egui::pos2(10.0, 10.0), Vec2::new(200.0, 100.0))
+                .silent()
+                .show(ui.ctx(), &p, inside, |_| ());
             Floater::new("test outside closes", "Outside", egui::pos2(10.0, 10.0), Vec2::new(200.0, 100.0))
                 .silent()
                 .show(ui.ctx(), &p, open, |_| ());
         });
     };
-    frame(&mut open, Vec::new());
+    frame(&mut open, &mut inside, Vec::new());
     let (command, all) = (egui::Modifiers::COMMAND, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT);
-    frame(&mut open, vec![key(true, command)]);
-    assert!(open, "Ctrl+W is for the front window inside");
-    frame(&mut open, vec![key(false, command), key(true, all)]);
+    frame(&mut open, &mut inside, vec![key(true, command)]);
+    frame(&mut open, &mut inside, vec![key(false, command)]);
+    assert!(!inside, "Ctrl+W is for the front window inside");
+    assert!(open);
+    inside = true;
+    frame(&mut open, &mut inside, Vec::new());
+    frame(&mut open, &mut inside, vec![key(true, all)]);
+    assert!(!open);
+    assert!(!inside);
+}
+
+/// Ctrl+W pressed in the window outside itself closes it, at the next
+/// frame of the interface; the key is taken from its fields.
+#[test]
+fn ctrl_w_in_a_window_outside_closes_it() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let window = egui::Id::unique("test outside closes itself");
+    crate::outside::want(&frames.ctx, window, true);
+    crate::outside::set_native(&frames.ctx, window, true);
+    let key = |modifiers: egui::Modifiers| egui::Event::Key {
+        key: egui::Key::W,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
+    let mut open = true;
+    let mut left_to_fields = false;
+    let mut frame = |open: &mut bool, left: &mut bool, events: Vec<egui::Event>| {
+        frames.run(events, |ui| {
+            crate::ui::close_key::begin(ui.ctx());
+            Floater::new(
+                "test outside closes itself",
+                "Outside",
+                egui::pos2(10.0, 10.0),
+                Vec2::new(200.0, 100.0),
+            )
+            .silent()
+            .show(ui.ctx(), &p, open, |ui| {
+                *left |= ui.input(|i| i.key_pressed(egui::Key::W));
+            });
+        });
+    };
+    frame(&mut open, &mut left_to_fields, Vec::new());
+    // (no window inside: the key reaches the window outside, as its own)
+    frame(&mut open, &mut left_to_fields, vec![key(egui::Modifiers::COMMAND)]);
+    assert!(open);
+    assert!(!left_to_fields);
+    frame(&mut open, &mut left_to_fields, Vec::new());
     assert!(!open);
 }
 

@@ -1550,11 +1550,12 @@ impl<'a> Floater<'a> {
         if !self.silent {
             super::sound_cues::floater_shown(ctx, window_id);
         }
-        // Ctrl+Shift+W closes it with the windows inside; Ctrl+W goes to
-        // the front window of the viewer's own window, never to this one
-        let close_all = super::close_key::take(ctx, window_id);
+        // Ctrl+Shift+W closes it with the windows inside. Ctrl+W in the
+        // viewer's window goes to the front window there, never to this
+        // one; pressed in this one, it closes it (`pressed_outside`, below)
+        let close_key = super::close_key::take(ctx, window_id);
         super::close_key::shown_extra(ctx, window_id);
-        if close_all || close_asked(ctx, self.id) {
+        if close_key || close_asked(ctx, self.id) {
             *open = false;
             return None;
         }
@@ -1598,6 +1599,7 @@ impl<'a> Floater<'a> {
         let mut back = false;
         let builder = egui::ViewportBuilder::default().with_title(self.title.clone());
         let out = ctx.show_viewport_immediate(crate::outside::viewport(window_id), builder, |ui, _| {
+            super::close_key::pressed_outside(ui.ctx(), window_id);
             let size = ui.max_rect().size();
             ui.ctx().data_mut(|d| d.insert_persisted(window_id.with(OUTSIDE_SIZE), size));
             // what follows the pointer during a drag, as the viewer's pass
