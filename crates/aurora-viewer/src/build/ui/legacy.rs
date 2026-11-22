@@ -305,7 +305,7 @@ pub(super) fn body(
                 selection(&mut summary, p, tool, world, s, mods);
                 if tool.tool != Tool::Land {
                     let mut tab = tab_index(tool.tab);
-                    if widgets::tabs(
+                    let (clicked, rects) = widgets::tabs_at(
                         ui,
                         p,
                         &mut tab,
@@ -316,7 +316,17 @@ pub(super) fn body(
                             (aurora_i18n::tr!("build-legacy-texture"), true),
                             (aurora_i18n::tr!("build-compact-contents"), true),
                         ],
-                    ) {
+                    );
+                    // inventory held over a tab opens it (floater_tools.xml's
+                    // open_tabs_on_drag_and_drop, LLTabContainer::handleDragAndDrop)
+                    let held = rects.iter().enumerate().find_map(|(index, rect)| {
+                        let id = egui::Id::unique("legacy-build-drag-open").with(index);
+                        crate::ui::inventory::drag::navigation::tab_held_over(ui, *rect, id).then_some(index)
+                    });
+                    if let Some(held) = held {
+                        tab = held;
+                    }
+                    if clicked || held.is_some() {
                         tool.tab = [6, 5, 2, 3, 4][tab];
                     }
                 }

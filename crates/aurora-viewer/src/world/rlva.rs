@@ -51,7 +51,7 @@ mod wardrobe;
 pub mod watchdog;
 mod wear_locks;
 
-pub use boundary::{Boundary, refused_reply};
+pub use boundary::{Boundary, command_name, refusal_shown, refused_reply};
 pub(crate) use inventory::shared_folder_exists;
 pub use inventory::{LAYERS, POINTS};
 use numeric::option_bool;

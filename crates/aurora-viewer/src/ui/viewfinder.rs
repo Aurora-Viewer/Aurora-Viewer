@@ -2575,6 +2575,14 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
             None
         }),
     ));
+    v.push((
+        aurora_i18n::tr!("photo-vf-keep-framing"),
+        yes_no(s.viewfinder.keep_framing),
+        Box::new(|s, _| {
+            s.viewfinder.keep_framing = !s.viewfinder.keep_framing;
+            None
+        }),
+    ));
     let timer = s.viewfinder.timer;
     v.push((
         aurora_i18n::tr!("photo-vf-timer"),

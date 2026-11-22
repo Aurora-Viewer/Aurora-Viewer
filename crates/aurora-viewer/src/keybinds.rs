@@ -475,6 +475,10 @@ pub enum Action {
     /// Hide or show the interface (Firestorm's View › Show User Interface,
     /// Alt+Shift+U, `View.ToggleUI`).
     ToggleInterface,
+    /// The whole interface drawn or not (#4092): the Legacy Viewer's
+    /// Advanced › Rendering Features › UI, Ctrl+Alt+F1 (Ctrl+Shift+F1 on
+    /// Linux), `Advanced.ToggleFeature` "ui" (menu_viewer.xml, ToggleUI).
+    ToggleUiFeature,
     /// The world's hover tips on or off (the Legacy Viewer's Show Tips,
     /// Ctrl+Shift+T, `View.ShowHoverTips`).
     HoverTips,
@@ -739,6 +743,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
                     (Action::Preferences, aurora_i18n::tr!("common-preferences")),
                     (Action::ToggleInterface, aurora_i18n::tr!("keybinds-hide-interface")),
+                    (Action::ToggleUiFeature, aurora_i18n::tr!("keybinds-ui-feature")),
                     (Action::HoverTips, aurora_i18n::tr!("ui-options-hover-tips")),
                     (Action::Import, aurora_i18n::tr!("keybinds-import-files")),
                     (Action::MuteAll, aurora_i18n::tr!("keybinds-mute-all-sound")),
@@ -1007,6 +1012,20 @@ impl KeyBindings {
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
             // menu_viewer.xml: Show User Interface, shortcut="alt|shift|U"
             (Action::ToggleInterface, [kalt(K::KeyU, false, true), None]),
+            // menu_viewer.xml: Rendering Features › UI, shortcut="control|alt|F1",
+            // shortcut_linux="control|shift|F1" (the desktops of Linux take
+            // Ctrl+Alt+F1 to switch consoles)
+            (
+                Action::ToggleUiFeature,
+                [
+                    if cfg!(target_os = "linux") {
+                        kmod(K::F1, true, true)
+                    } else {
+                        kalt(K::F1, true, false)
+                    },
+                    None,
+                ],
+            ),
             // menu_viewer.xml: Show Tips, shortcut="control|shift|T"
             (Action::HoverTips, [kmod(K::KeyT, true, true), None]),
             (Action::Import, [kmod(K::KeyU, true, false), None]),
