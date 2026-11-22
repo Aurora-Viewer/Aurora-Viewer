@@ -44,6 +44,8 @@ impl App {
         }
         if self.demo && self.frame_count == 360 {
             match self.ao_demo.as_deref() {
+                // the Mini AO window alone, without the manager
+                Some("mini") => self.panels.ao = false,
                 Some(mode) if mode.starts_with("quick") => {
                     self.panels.ao = false;
                     self.toolbar_ui.ao_quick.open = true;

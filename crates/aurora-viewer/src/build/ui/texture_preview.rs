@@ -1880,6 +1880,25 @@ mod tests {
     }
 
     #[test]
+    fn a_blinn_phong_preview_face_does_not_divert_a_drop_on_another_face() {
+        fixture(|world, tool, env, prims| {
+            let idx = prims[0];
+            let material = Uuid::from_u128(1910);
+            let map = Uuid::from_u128(1911);
+            tool.apply_inventory_surface(world, env, idx, &[1], material, true, false);
+            let diffuse = texture(world, idx, 1);
+            // Face 0 alone is shown in Blinn-Phong (#4467): a texture dropped
+            // on face 1 still goes into its PBR override, not on the diffuse.
+            world.objects.set_blinn_phong_faces(idx, 1 << 0, true);
+            tool.apply_inventory_surface(world, env, idx, &[1], map, false, false);
+            assert_eq!(BuildTool::gltf_override(world, idx, 1).textures[0], map);
+            assert_eq!(texture(world, idx, 1), diffuse);
+            assert!(world.objects.get(idx).unwrap().is_blinn_phong_preview(0));
+            assert!(!world.objects.get(idx).unwrap().is_blinn_phong_preview(1));
+        });
+    }
+
+    #[test]
     fn texture_library_drop_rejects_unmodifiable_objects_and_invalid_faces() {
         fixture(|world, tool, env, prims| {
             let idx = prims[0];

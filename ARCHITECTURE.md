@@ -2642,7 +2642,7 @@ and protection/worn state, then repeated on release. `drag_navigation.rs`
 toggles folders after a one-second hover, once per visit, independently of drop
 validity. It scrolls the actual inventory viewport (including virtualized search
 results) near its top/bottom edges and outside it vertically, with elapsed-time
-acceleration and ownership of the last entered inventory window. The final drag cursor and selection-count
+acceleration and ownership of the last entered inventory window; the scroll stops outside that window, under another one, and upward above its search row (`search_top`). `tab_held_over` opens a tab the cargo rests on (LLTabContainer::handleDragAndDrop), for the inventory's tabs and the build window's. The final drag cursor and selection-count
 badge are drawn after all windows. `drag_tests.rs` drives actual Ctrl-selection
 and pointer events; `drag_navigation_tests.rs` covers hover latching, scrolling,
 hidden sources, filtered lists, window ownership and cancellation.
@@ -3933,7 +3933,7 @@ with the application (`app/color_picker.rs`).
 `ui/widgets/workspace.rs` shares the navigation, the detail panels, the
 dialogs and the rows of the user inventory and of object contents
 (density, hover, selection and name style). `build/ui/compact.rs` arranges
-building in five sections in a compact inspector: General includes identity, group/share/deed, everyone/next-owner permissions before Click to, sale and search. Five tools share the configurable icon rail. Its visible rows set the minimum window height; the rail never uses a scrollbar, and short screens constrain the independently scrollable editing panels first. Position/size/rotation and their independent copy/paste controls occupy a full-width folding area; three reference icons and the settings gear sit in its right strip or folded bar. Option rows and whole manipulation/action toolbars can move between footer, side settings and hidden storage; rail icons can move between the rail and hidden storage. Organization disables ordinary control actions without changing their geometry. Layout and fold state are local preferences shared by every account in the global settings file. Versioned notecards export only construction settings and layout. Existing command permissions, drafts, material updates and object history remain authoritative. The object inventory fills the remaining section viewport. Native regressions cover pointer organization, checkbox row geometry, profile validation/roundtrip and existing material/content keyboard interactions.
+building in five sections in a compact inspector: General includes identity, group/share/deed, everyone/next-owner permissions before Click to, sale and search. Two button bars (top and bottom) take any of the five section and five tool buttons, each shown by its icon, its label or both (its right-click menu). `build/ui/detach.rs` takes a section or the transform block out into a window of its own (Alt+drag a bar button or the block, `BuildSettings::detached`): the button then shows or hides that window, which follows the build window, opens at a size fitted to its block, and goes back in when dragged onto the build window; the transform block's window has no title bar (`Floater::headless`, a small close box outside its edge) and `build/ui/object.rs` lays its X / Y / Z out by width, down to one under the other. Inventory held over a section button, the PBR / Blinn-Phong tabs or the inventory's tabs opens it after 0.2 s (`drag_navigation::tab_held_over`). Its visible rows set the minimum window height; the rail never uses a scrollbar, and short screens constrain the independently scrollable editing panels first. Position/size/rotation and their independent copy/paste controls occupy a full-width folding area; three reference icons and the settings gear sit in its right strip or folded bar. Option rows and whole manipulation/action toolbars can move between footer, side settings and hidden storage; rail icons can move between the rail and hidden storage. Organization disables ordinary control actions without changing their geometry. Layout and fold state are local preferences shared by every account in the global settings file. Versioned notecards export only construction settings and layout. Existing command permissions, drafts, material updates and object history remain authoritative. The object inventory fills the remaining section viewport. Native regressions cover pointer organization, checkbox row geometry, profile validation/roundtrip and existing material/content keyboard interactions.
 World / Local / Reference use three persistent icon buttons: vertical at the
 top of the expanded transform strip, horizontal in its folded bar, with a violet
 face for the active mode and muted inactive icons. Rez-under-land-group is in
@@ -3941,9 +3941,11 @@ side settings by default and remains available in Edit and Create. Linked-prim
 and face navigation have separate arrows.
 The shared Floater supports a compact status row in its title; construction
 uses independent lock, no-mod and ownership states. Material projection/options
-are inline rather than collapsed. Materials show three large Blinn-Phong previews
-in one row. PBR uses the same square size in a three-column grid: an actual GPU
-material preview followed by its four maps. The shared material preview cache
+are inline rather than collapsed. Materials list the Blinn-Phong maps in one
+column of 56-pixel swatches. PBR, the first sub-tab, pairs the same swatches in
+rows: an actual GPU material preview with the base colour, normal with emissive,
+then metallic-roughness; "Save material as" sends the selected faces' material
+to the inventory under `build::texture_copy::material_save_allowed`. The shared material preview cache
 builds the effective asset plus face overrides on scene workers. Tint, surface,
 lighting and per-channel UV controls follow below
 through the same native edit transactions; rectangular tint swatches use the
@@ -4446,7 +4448,11 @@ the libgcc unwinder's frames through the signal frame, then each frame as
 the unwinder and the loader's list under an alarm (another thread that
 crashes meanwhile waits for the file); it then hands the signal
 to the standard library's overflow handler or the default action, so the
-process ends as before. Panics and failed allocations get the same stacks. `threads.rs` names the
+process ends as before. A fault at an address where nothing is mapped is
+written without the unwinder, which would fault there in turn; and a fatal
+signal that a library gave its own handler (NVIDIA's shader compiler takes
+SIGABRT at its first compile) is taken back, every second by the watchdog
+and once the renderer is dropped at exit. Panics and failed allocations get the same stacks. `threads.rs` names the
 long-lived background threads the session cannot do without (network
 runtime, texture pages, frees, disk caches, chat history): their panic,
 which used to leave the viewer running without them, ends the session at
@@ -4839,7 +4845,13 @@ popup behavior. Its set selector and enable switch edit the same account as
 the manager; swim/water-walk and run/flight boosts edit existing movement
 preferences and retain the selected set's swimming-readiness gate. Child set
 menus keep the parent open; Escape/outside clicks dismiss it, and the manager
-button opens the existing floater. `ui/ao/category.rs` partitions every state
+button opens the existing floater. The popup and persistent `ui/ao/mini.rs`
+window share the state-step controls and show the current state and animation;
+the shared controls include the set's sit override. The mini window can be
+pinned from the popup (which expands it when minimized), toggled from the
+toolbar, and is remembered per account; its Settings button opens the manager
+beside it.
+`ui/ao/category.rs` partitions every state
 into General, Ground, Jumping, Flying and Swimming, in that order. General
 contains Standing, Sitting, Sitting on ground, Standing up, Typing and Always,
 with the sitting states immediately after Standing. Ground groups walking/running,

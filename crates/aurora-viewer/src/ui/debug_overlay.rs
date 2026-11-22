@@ -436,7 +436,7 @@ pub fn draw(
                 continue;
             }
             let (pos, rot, half) = avatar_hitbox_frame(pp, pr, o.scale);
-            wide.obb(pos, rot, half, super::minimap::avatar_color(world, &o.full_id, o));
+            wide.obb(pos, rot, half, super::minimap::avatar_color(world, &o.full_id));
         }
     }
 }
