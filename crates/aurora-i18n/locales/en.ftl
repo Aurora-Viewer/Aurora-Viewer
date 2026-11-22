@@ -14822,6 +14822,56 @@ blender-live-linkset-counts =
     }
 blender-object-linkset = { $name } — root #1 · { $prims } prims
 blender-object-linked-prim = #{ $number } · { $name }
+blender-live-tab-place = Place
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = The meshes Blender is sending. Select one to place it, or import it from its menu.
+blender-live-more = More
+blender-live-place = Place
+blender-live-linked-prims = Show or hide the linked prims
+blender-live-tag-rigged = Rigged
+blender-live-card-rigged = { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-card-static = Static · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-card-linkset = Static · { $prims ->
+        [one] { $prims } prim
+       *[other] { $prims } prims
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-triangles = { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-place-help = Where the selected static mesh is. Rigged meshes always follow your avatar.
+blender-live-place-none = Select a static object to place it.
+blender-live-where = Where
+blender-live-transform = Position, rotation and size
+blender-live-size-note = Size multiplies what Blender sends, so later edits in Blender keep it.
+blender-live-avatar-help = For rigged meshes: send your shape to Blender to model on it.
+blender-live-shape-section = Your shape in Blender
+blender-live-import-help = Freezes a snapshot of the object for the normal import: review, price, then confirm. Later edits in Blender do not change it.
+blender-live-from = From
+blender-live-plugins-help = Aurora installs the matching plug-in in each Blender, keeps a backup of the previous one and never installs an older version.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Time since Blender last changed this object
+blender-live-show-all = Show all
+blender-live-hide-all = Hide all
+blender-live-bend-section = Check the weights
+blender-live-elbows = Elbows
+blender-live-knees = Knees
+blender-live-bend-hold = Hold this pose instead of my animations
+blender-live-bend-note = Only you see the bend, on your avatar. Your animations, other residents' view and the import are unchanged.
+blender-live-levels = Levels of detail
+blender-live-levels-pending = Blender prepares the levels of detail when you click Import.
+blender-live-levels-note = Prepared in Blender from each object's LiveMesh settings.
 
 inventory-bulk-permissions = Bulk permissions
 inventory-bulk-adjust = Adjust item permissions

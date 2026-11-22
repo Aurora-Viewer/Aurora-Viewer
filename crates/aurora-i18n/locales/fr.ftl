@@ -14827,6 +14827,56 @@ blender-live-linkset-counts =
     }
 blender-object-linkset = { $name } — root #1 · { $prims } prims
 blender-object-linked-prim = #{ $number } · { $name }
+blender-live-tab-place = Placer
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = Les maillages que Blender envoie. Sélectionnez-en un pour le placer, ou importez-le depuis son menu.
+blender-live-more = Plus
+blender-live-place = Placer
+blender-live-linked-prims = Afficher ou masquer les prims liées
+blender-live-tag-rigged = Riggé
+blender-live-card-rigged = { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-card-static = Statique · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-card-linkset = Statique · { $prims ->
+        [one] { $prims } prim
+       *[other] { $prims } prims
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-triangles = { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-place-help = L’emplacement du maillage statique sélectionné. Les maillages riggés suivent toujours votre avatar.
+blender-live-place-none = Sélectionnez un objet statique pour le placer.
+blender-live-where = Emplacement
+blender-live-transform = Position, rotation et taille
+blender-live-size-note = La taille multiplie ce que Blender envoie : les modifications suivantes dans Blender la conservent.
+blender-live-avatar-help = Pour les maillages riggés : envoyez votre silhouette à Blender pour modéliser dessus.
+blender-live-shape-section = Votre silhouette dans Blender
+blender-live-import-help = Fige un instantané de l’objet pour l’import normal : vérification, prix, puis confirmation. Les modifications suivantes dans Blender ne le changent pas.
+blender-live-from = Source
+blender-live-plugins-help = Aurora installe le plug-in correspondant dans chaque Blender, garde une sauvegarde du précédent et n’installe jamais une version plus ancienne.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Temps écoulé depuis la dernière modification de cet objet dans Blender
+blender-live-show-all = Tout afficher
+blender-live-hide-all = Tout masquer
+blender-live-bend-section = Vérifier les poids
+blender-live-elbows = Coudes
+blender-live-knees = Genoux
+blender-live-bend-hold = Garder cette pose au lieu de mes animations
+blender-live-bend-note = Vous seul voyez la flexion, sur votre avatar. Vos animations, ce que voient les autres résidents et l’import ne changent pas.
+blender-live-levels = Niveaux de détail
+blender-live-levels-pending = Blender prépare les niveaux de détail quand vous cliquez sur Importer.
+blender-live-levels-note = Préparés dans Blender d’après les réglages LiveMesh de chaque objet.
 
 inventory-bulk-permissions = Permissions par lot
 inventory-bulk-adjust = Modifier les permissions des éléments
