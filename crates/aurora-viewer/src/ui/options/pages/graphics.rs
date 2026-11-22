@@ -227,7 +227,24 @@ fn ray_tracing(cx: &mut Cx) {
         );
         let off = blocked.is_some() || !cx.s.ray_tracing.enabled;
         cx.subs(off, |cx| {
-            use crate::settings::{RT_SHADOW_LAMPS_MAX, RT_SOFTNESS_MAX};
+            use crate::settings::{RT_QUALITY_HIGH, RT_SHADOW_LAMPS_MAX, RT_SOFTNESS_MAX, Settings};
+            // (Aurora's own, as the games that trace rays have it: every
+            // traced effect stays on, with fewer samples; choosing one sets
+            // its lamps' count, which the slider below still moves)
+            let levels = [
+                (0, tr!("ui-options-preset-low"), false),
+                (1, tr!("ui-options-preset-medium"), false),
+                (RT_QUALITY_HIGH, tr!("ui-options-preset-high"), false),
+            ];
+            if cx.keywords("RT raytracing").choice(
+                tr!("ui-options-rt-quality"),
+                tr!("ui-options-rt-quality-help"),
+                &field!(rt_quality),
+                &levels,
+            ) {
+                let lamps = Settings::rt_lamp_quality(cx.s.rt_quality).lamps;
+                cx.s.rt_shadow_lamps = u8::try_from(lamps).unwrap_or(RT_SHADOW_LAMPS_MAX).clamp(1, RT_SHADOW_LAMPS_MAX);
+            }
             // (Aurora's own: the Legacy Viewer's maps blur by a kernel,
             // RenderShadowBlurSize, a debug setting)
             cx.slider(

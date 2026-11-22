@@ -1936,6 +1936,12 @@ pub struct Settings {
     /// `RtTuning::probes`): more bounces, and no sky's light in a closed
     /// room. On by default; read only with the traced indirect light.
     pub rt_gi_probes: bool,
+    /// The ray tracing quality, 0 Low, 1 Medium, 2 High (`RT_QUALITY_HIGH`,
+    /// the default and Deluxe (RT)'s image): every traced effect stays on,
+    /// traced with fewer samples, at a coarser grid for the indirect light
+    /// (aurora-render `LampQuality` and `RtTuning::with_gi_quality`). Apart
+    /// from the graphics levels, like the softness.
+    pub rt_quality: u8,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -2938,6 +2944,7 @@ impl Default for Settings {
             rt_gi_probes: true,
             rt_lamp_softness: RT_SOFTNESS,
             rt_shadow_lamps: RT_SHADOW_LAMPS_MAX,
+            rt_quality: RT_QUALITY_HIGH,
             // an opt-in: the Legacy Viewer sorts its blended faces, and the
             // method's targets take video memory while it is on
             anisotropy: 8,
@@ -4145,6 +4152,34 @@ impl Settings {
         }
     }
 
+    /// The ray tracing quality's lamps (aurora-render `LampQuality`), Low,
+    /// Medium then High.
+    pub fn rt_lamp_quality(level: u8) -> aurora_render::LampQuality {
+        use aurora_render::LampQuality;
+        [LampQuality::LOW, LampQuality::MEDIUM, LampQuality::HIGH][usize::from(level.min(RT_QUALITY_HIGH))]
+    }
+
+    /// What the traced effects are asked for: the softness and the lamps of
+    /// Preferences, and the ray tracing quality's samples (its lamps' count
+    /// is the slider's, which choosing a quality moves:
+    /// ui/options/pages/graphics.rs `ray_tracing`). AURORA_RT_GI_QUALITY
+    /// sets the indirect light's alone for a launch (docs/TESTING.md).
+    fn rt_tuning(&self) -> aurora_render::RtTuning {
+        let level = self.rt_quality.min(RT_QUALITY_HIGH);
+        let base = aurora_render::RtTuning {
+            sun_softness: self.rt_sun_softness.clamp(0.0, RT_SOFTNESS_MAX),
+            lamp_softness: self.rt_lamp_softness.clamp(0.0, RT_SOFTNESS_MAX),
+            projectors: self.projector_shadows,
+            probes: self.rt_gi_probes,
+            ..aurora_render::RtTuning::default()
+        };
+        let gi = aurora_render::RtTuning::gi_quality_from_env().unwrap_or(usize::from(level));
+        aurora_render::RtTuning {
+            lamps: u32::from(self.rt_shadow_lamps.clamp(1, RT_SHADOW_LAMPS_MAX)),
+            ..Self::rt_lamp_quality(level).apply(base).with_gi_quality(gi)
+        }
+    }
+
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
         use aurora_render::{AntiAliasing, AoMethod, FsrQuality, Tonemapper};
         let mut water_effects = self.water_effects.render();
@@ -4198,20 +4233,7 @@ impl Settings {
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
             ray_tracing: self.ray_tracing.render(),
-            rt_tuning: aurora_render::RtTuning {
-                sun_softness: self.rt_sun_softness.clamp(0.0, RT_SOFTNESS_MAX),
-                lamp_softness: self.rt_lamp_softness.clamp(0.0, RT_SOFTNESS_MAX),
-                lamps: u32::from(self.rt_shadow_lamps.clamp(1, RT_SHADOW_LAMPS_MAX)),
-                // (the ray tracing quality's High, until its menu sets them)
-                lamp_candidates: aurora_render::LampQuality::HIGH.candidates,
-                lamp_reuse: aurora_render::LampQuality::HIGH.reuse,
-                lamp_denoise: aurora_render::LampQuality::HIGH.denoise,
-                projectors: self.projector_shadows,
-                probes: self.rt_gi_probes,
-                // (High, until the ray tracing quality has its setting;
-                // AURORA_RT_GI_QUALITY for a launch)
-                ..aurora_render::RtTuning::default().with_gi_quality(aurora_render::RtTuning::gi_quality_from_env().unwrap_or(2))
-            },
+            rt_tuning: self.rt_tuning(),
             // set each frame by the app while it rains
             rain_surfaces: false,
             anisotropy: self.anisotropy,
@@ -4334,6 +4356,9 @@ pub const RT_SOFTNESS_MAX: f32 = 4.0;
 /// by the human on 2026-11-22 after the grid tests: crisper and prettier
 /// than 1, the size measured, which version 47 moves to it once).
 pub const RT_SOFTNESS: f32 = 0.2;
+/// The ray tracing quality's levels (`Settings::rt_quality`): Low, Medium,
+/// High, the default.
+pub const RT_QUALITY_HIGH: u8 = 2;
 /// The most lamps that cast traced shadows (aurora-render's
 /// `MAX_TRACED_LIGHTS`).
 pub const RT_SHADOW_LAMPS_MAX: u8 = 64;
@@ -4708,6 +4733,51 @@ mod tests {
         assert!(old.rt_gi_probes);
         let off: Settings = serde_json::from_str(r#"{"rt_gi_probes":false}"#).expect("preferences");
         assert!(!off.render_settings().rt_tuning.probes);
+    }
+
+    #[test]
+    fn the_ray_tracing_quality_defaults_to_high_and_lowers_the_samples_only() {
+        use super::{RT_QUALITY_HIGH, Settings};
+        use aurora_render::LampQuality;
+        let high = Settings::default();
+        assert_eq!(high.rt_quality, RT_QUALITY_HIGH);
+        // preferences saved before the setting existed keep today's image
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert_eq!(old.rt_quality, RT_QUALITY_HIGH);
+        let t = high.render_settings().rt_tuning;
+        assert_eq!(LampQuality::of(t), LampQuality::HIGH);
+        if aurora_render::RtTuning::gi_quality_from_env().is_none() {
+            let full = aurora_render::RtTuning::default().with_gi_quality(2);
+            assert_eq!(
+                (t.gi_step, t.gi_probe_updates, t.gi_neighbours),
+                (full.gi_step, full.gi_probe_updates, full.gi_neighbours)
+            );
+        }
+        for level in 0..=RT_QUALITY_HIGH + 3 {
+            let s = Settings {
+                rt_quality: level,
+                rt_shadow_lamps: 5,
+                ..Settings::default()
+            };
+            let t = s.render_settings().rt_tuning;
+            let q = Settings::rt_lamp_quality(level);
+            assert_eq!(
+                (t.lamp_candidates, t.lamp_reuse, t.lamp_denoise),
+                (q.candidates, q.reuse, q.denoise),
+                "{level}"
+            );
+            // the lamps' count stays the slider's; the other effects stay on
+            assert_eq!(t.lamps, 5, "{level}");
+            assert_eq!((t.probes, t.projectors), (s.rt_gi_probes, s.projector_shadows), "{level}");
+            assert_eq!(
+                (t.sun_softness, t.lamp_softness),
+                (s.rt_sun_softness, s.rt_lamp_softness),
+                "{level}"
+            );
+        }
+        assert_eq!(Settings::rt_lamp_quality(0), LampQuality::LOW);
+        assert_eq!(Settings::rt_lamp_quality(1), LampQuality::MEDIUM);
+        assert_eq!(Settings::rt_lamp_quality(9), LampQuality::HIGH);
     }
 
     #[test]
