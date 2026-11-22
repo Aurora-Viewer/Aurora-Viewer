@@ -177,7 +177,7 @@ fn apply(server: &mut BTreeMap<Uuid, PlayingAnimation>, changes: &[(Uuid, bool)]
 }
 
 #[test]
-fn default_stop_echoes_keep_the_ao_state_and_observers_receive_the_same_owned_selection() {
+fn movement_defaults_stay_on_the_region_while_local_pose_uses_the_ao_selection() {
     let (_, mut set) = fixture();
     unique(&mut set, State::Walking, 27001);
     unique(&mut set, State::Standing, 27002);
@@ -188,26 +188,28 @@ fn default_stop_echoes_keep_the_ao_state_and_observers_receive_the_same_owned_se
     let mut runtime = Runtime::default();
     let raw = server.values().copied().collect::<Vec<_>>();
     let (pose, changes) = runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
-    assert!(
-        changes.contains(&(walk.id, false)),
-        "a low-priority AO need not compete with the stock walk"
-    );
+    assert!(!changes.contains(&(walk.id, false)));
     apply(&mut server, &changes, now);
-    assert_eq!(
-        pose.iter().map(|a| a.id).collect::<std::collections::BTreeSet<_>>(),
-        server.keys().copied().collect()
+    assert!(server.contains_key(&walk.id), "the region keeps its movement default");
+    assert!(
+        !pose.iter().any(|animation| animation.id == walk.id),
+        "the local AO masks stock WALK"
+    );
+    assert!(pose.iter().any(|animation| animation.id == step(&set, State::Walking, 0)));
+    assert!(
+        server.contains_key(&step(&set, State::Walking, 0)),
+        "observers receive the AO start"
     );
     for i in 1..10 {
         let raw = server.values().copied().collect::<Vec<_>>();
         let (pose, changes) = runtime.update(Some(&set), frame(&raw), now + Duration::from_secs(i), |_| true, |_| 0);
         assert_eq!(runtime.current, Some(State::Walking));
         assert!(changes.is_empty());
-        assert_eq!(
-            pose.iter().map(|a| a.id).collect::<std::collections::BTreeSet<_>>(),
-            server.keys().copied().collect()
-        );
+        assert!(!pose.iter().any(|animation| animation.id == walk.id));
+        assert!(server.contains_key(&walk.id));
     }
     let stand = signal(State::Standing, now + Duration::from_secs(10));
+    server.remove(&walk.id);
     server.insert(stand.id, stand);
     let raw = server.values().copied().collect::<Vec<_>>();
     let (_, changes) = runtime.update(Some(&set), frame(&raw), now + Duration::from_secs(10), |_| true, |_| 0);
@@ -235,7 +237,7 @@ fn default_reassertion_does_not_restart_the_cycle_and_jump_control_motions_survi
     let (first, _) = runtime.update(Some(&set), frame(&[walk]), now, |_| true, |_| 0);
     let later = PlayingAnimation::from_signal(walk.id, 2, now + Duration::from_secs(1), None);
     let (pose, changes) = runtime.update(Some(&set), frame(&[later]), now + Duration::from_secs(1), |_| true, |_| 0);
-    assert!(changes.contains(&(walk.id, false)));
+    assert!(!changes.contains(&(walk.id, false)));
     assert!(!changes.iter().any(|(_, start)| *start));
     assert_eq!(first, pose);
     let jump = signal(State::Jumping, now + Duration::from_secs(2));
@@ -322,13 +324,15 @@ fn disabling_then_reenabling_before_the_echo_keeps_one_ao_and_no_stale_default_p
     let walk = signal(State::Walking, now);
     let mut runtime = Runtime::default();
     let (pose, _) = runtime.update(Some(&set), frame(&[walk]), now, |_| true, |_| 0);
-    let raw = pose;
+    let mut raw = pose;
+    raw.push(walk);
     let mut f = frame(&raw);
     f.enabled = false;
-    runtime.update(Some(&set), f, now + Duration::from_millis(10), |_| true, |_| 0);
+    let (_, disabled_changes) = runtime.update(Some(&set), f, now + Duration::from_millis(10), |_| true, |_| 0);
+    assert!(!disabled_changes.contains(&(walk.id, false)));
     let (pose, changes) = runtime.update(Some(&set), frame(&raw), now + Duration::from_millis(20), |_| true, |_| 0);
     assert!(!pose.iter().any(|a| a.id == walk.id));
-    assert!(changes.contains(&(walk.id, false)));
+    assert!(!changes.contains(&(walk.id, false)));
     let (later, changes) = runtime.update(Some(&set), frame(&raw), now + Duration::from_secs(3), |_| true, |_| 0);
     assert_eq!(runtime.current, Some(State::Walking));
     assert_eq!(pose, later);

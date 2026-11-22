@@ -32,6 +32,8 @@ pub struct Settings {
 pub struct Account {
     pub enabled: bool,
     pub selected: Uuid,
+    /// Whether the compact AO window is open for this account.
+    pub mini_open: bool,
     /// Last animation link or group per state/track folder, across sets.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub animations: HashMap<Uuid, Uuid>,
