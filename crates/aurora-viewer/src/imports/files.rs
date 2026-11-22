@@ -726,12 +726,16 @@ impl Imports {
             wake.request_repaint();
         });
     }
-    pub fn reload(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
-        if self.busy() {
-            return;
-        }
-        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && !e.reloading && !e.from_live) else {
-            return;
+    /// Whether a reload started. Local previews never join an upload, so a
+    /// running one does not hold their reload back (see choose_local_files).
+    pub fn reload(&mut self, id: Uuid, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) -> bool {
+        let busy = self.busy();
+        let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.id == id && !e.reloading && !e.from_live && (e.local || !busy))
+        else {
+            return false;
         };
         entry.reloading = true;
         entry.status = Status::Preparing;
@@ -772,6 +776,7 @@ impl Imports {
             ));
             wake.request_repaint();
         });
+        true
     }
     pub fn choose_files(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context, options: import_texture::Options) {
         if !self.busy() {
@@ -1288,6 +1293,143 @@ mod tests {
             "watched paths: {:?}; expected map: {map_path:?}",
             watch.paths
         );
+    }
+    /// LLLocalBitmap::updateSelf: an export caught half written keeps the
+    /// last good texture and is retried, a change seen while a reload runs
+    /// is not lost, and the same entry is updated in place.
+    #[test]
+    fn local_texture_reloads_retry_a_half_written_export_and_never_skip_a_change() {
+        let ctx = egui::Context::default();
+        let (jobs, _results) = crate::scene::jobs::Jobs::new();
+        let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png");
+        let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
+        localize(&mut entries, &Preferences::default());
+        let id = entries[0].id;
+        let mut imports = Imports {
+            entries,
+            ..Default::default()
+        };
+        let width = |imports: &Imports| match &imports.entries[0].source {
+            Some(Source::Texture(image)) => image.width,
+            _ => panic!("texture source"),
+        };
+        let original = width(&imports);
+        let watch = |imports: &mut Imports| {
+            let paths = imports.entries[0].watch.as_ref().expect("watch").paths.clone();
+            imports
+                .tx
+                .send(Worker::Watch(id, super::super::local::stamp(&paths)))
+                .expect("send");
+            imports.poll(&ctx, &jobs, &world, &Default::default());
+            for _ in 0..1000 {
+                if !imports.entries[0].reloading {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                imports.poll(&ctx, &jobs, &world, &Default::default());
+            }
+            assert!(!imports.entries[0].reloading, "reload finishes");
+        };
+
+        // A change noticed while a reload is running stays unseen until the
+        // next check, instead of being taken as loaded.
+        image::save_buffer(&path, &[90u8; 8 * 8 * 4], 8, 8, image::ColorType::Rgba8).expect("export");
+        let before = imports.entries[0].watch.as_ref().expect("watch").stamp.clone();
+        imports.entries[0].reloading = true;
+        let paths = imports.entries[0].watch.as_ref().expect("watch").paths.clone();
+        imports
+            .tx
+            .send(Worker::Watch(id, super::super::local::stamp(&paths)))
+            .expect("send");
+        imports.poll(&ctx, &jobs, &world, &Default::default());
+        assert_eq!(imports.entries[0].watch.as_ref().expect("watch").stamp, before);
+        imports.entries[0].reloading = false;
+        watch(&mut imports);
+        assert_eq!(width(&imports), 8, "the next check loads the export");
+        assert_eq!(imports.entries.len(), 1);
+        assert_eq!(imports.entries[0].id, id, "updated in place");
+
+        // Half written: the last good texture stays, without an error, and
+        // the unchanged file is tried again at each check.
+        std::fs::write(&path, b"\x89PNG\r\n\x1a\n").expect("partial export");
+        for attempt in 1..=super::super::local::RELOAD_RETRIES {
+            watch(&mut imports);
+            assert_eq!(width(&imports), 8);
+            assert!(matches!(imports.entries[0].status, Status::Ready), "attempt {attempt}");
+            assert_eq!(imports.entries[0].watch.as_ref().expect("watch").failures, attempt);
+        }
+        // Once finished, the export loads into the same entry.
+        image::save_buffer(&path, &[200u8; 4 * 4 * 4], 4, 4, image::ColorType::Rgba8).expect("export");
+        watch(&mut imports);
+        assert_eq!(width(&imports), 4);
+        assert_eq!(imports.entries[0].watch.as_ref().expect("watch").failures, 0);
+        assert_ne!(original, 4);
+
+        // A file that stays unreadable shows its error once the retries are
+        // spent, and is not reloaded again until it changes.
+        std::fs::write(&path, b"broken").expect("broken export");
+        for _ in 0..=super::super::local::RELOAD_RETRIES {
+            watch(&mut imports);
+        }
+        assert!(matches!(imports.entries[0].status, Status::Error(_)));
+        assert_eq!(width(&imports), 4, "the face keeps the last good texture");
+        let watched = imports.entries[0].watch.as_ref().expect("watch");
+        assert_eq!(
+            watched.stamp,
+            super::super::local::stamp(&watched.paths),
+            "given up until the next change"
+        );
+    }
+    /// A press on Reload answers at once: a broken file shows its error
+    /// without the watch's quiet retries, and a good one is not loaded a
+    /// second time by the next check.
+    #[test]
+    fn a_manual_reload_shows_a_broken_file_at_once_and_is_not_repeated_by_the_watch() {
+        let ctx = egui::Context::default();
+        let (jobs, _results) = crate::scene::jobs::Jobs::new();
+        let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let files = Files::new();
+        let path = files.0.join("texture-demo.png");
+        let mut entries = load(&path, Choice::Texture, Default::default(), 30, &Preferences::default(), true).expect("local texture");
+        localize(&mut entries, &Preferences::default());
+        let id = entries[0].id;
+        let mut imports = Imports {
+            entries,
+            ..Default::default()
+        };
+        let settle = |imports: &mut Imports| {
+            imports.poll(&ctx, &jobs, &world, &Default::default());
+            for _ in 0..1000 {
+                if !imports.entries[0].reloading {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                imports.poll(&ctx, &jobs, &world, &Default::default());
+            }
+            assert!(!imports.entries[0].reloading, "reload finishes");
+        };
+
+        // A changed export, reloaded by hand: the next check finds nothing new.
+        image::save_buffer(&path, &[90u8; 8 * 8 * 4], 8, 8, image::ColorType::Rgba8).expect("export");
+        assert!(imports.reload(id, &jobs, &ctx), "manual reload starts");
+        settle(&mut imports);
+        assert!(matches!(imports.entries[0].status, Status::Ready));
+        let paths = imports.entries[0].watch.as_ref().expect("watch").paths.clone();
+        imports
+            .tx
+            .send(Worker::Watch(id, super::super::local::stamp(&paths)))
+            .expect("send");
+        imports.poll(&ctx, &jobs, &world, &Default::default());
+        assert!(!imports.entries[0].reloading, "the watch does not load the same file again");
+
+        // A broken file, reloaded by hand: its error shows on the first press.
+        std::fs::write(&path, b"broken").expect("broken export");
+        assert!(imports.reload(id, &jobs, &ctx), "manual reload starts");
+        settle(&mut imports);
+        assert!(matches!(imports.entries[0].status, Status::Error(_)), "the error shows at once");
+        assert_eq!(imports.entries[0].watch.as_ref().expect("watch").failures, 0, "no quiet retry");
     }
     #[test]
     fn long_wav_sources_enable_bounded_splitting_instead_of_uploading_an_oversized_asset() {

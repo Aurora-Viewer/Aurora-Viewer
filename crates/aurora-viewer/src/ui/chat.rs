@@ -1235,9 +1235,12 @@ fn shown_name<'a>(line: &crate::world::ChatLine, name: &'a str) -> &'a str {
     conversation_options::you(&conversation_options::current(), line).unwrap_or(name)
 }
 
-/// A system line's text as shown, in brackets with the option.
-fn system_text(text: &str) -> Cow<'_, str> {
-    conversation_options::system_text(&conversation_options::current(), text)
+/// Whether a system line is drawn in brackets: the option, but never the
+/// radar's own lines, which the Legacy Viewer's chat leaves plain (its
+/// CHAT_TYPE_RADAR, `notice_topics::Topic::Radar`).
+fn system_brackets(world: &World, line: &crate::world::ChatLine) -> bool {
+    let radar = world.notice_topics.of(line) == crate::world::notice_topics::Topic::Radar;
+    conversation_options::system_brackets(&conversation_options::current(), radar)
 }
 
 /// The day a group of lines was said, between two lines of different days
@@ -2549,7 +2552,84 @@ pub(crate) fn chat_text_marked(
     emphasis: impl Into<super::fonts::TextEmphasis>,
     mark: Option<Mark>,
 ) {
-    let emphasis = emphasis.into();
+    chat_text_all(
+        ui,
+        p,
+        emoji,
+        world,
+        scope,
+        want_names,
+        text,
+        size,
+        color,
+        emphasis.into(),
+        mark,
+        false,
+    );
+}
+
+/// `chat_text_marked` for a system line, in brackets around it when
+/// `brackets`. The Legacy Viewer's chat appends them as their own runs
+/// (FSChatHistory::appendMessage): written into the text, they read as a link
+/// given its own text, `[secondlife:///app/agent/<id>/about entered the
+/// region.]`, whose label takes the resident's name away.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn chat_text_bracketed(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    scope: TextScope,
+    want_names: &mut HashSet<uuid::Uuid>,
+    text: &str,
+    size: f32,
+    color: Color32,
+    emphasis: impl Into<super::fonts::TextEmphasis>,
+    mark: Option<Mark>,
+    brackets: bool,
+) {
+    chat_text_all(
+        ui,
+        p,
+        emoji,
+        world,
+        scope,
+        want_names,
+        text,
+        size,
+        color,
+        emphasis.into(),
+        mark,
+        brackets,
+    );
+}
+
+/// The pair around a system line in `brackets`, in reading order. A line that
+/// reads from the right takes the pair turned around: drawn as pieces of
+/// their own, the brackets miss the mirroring the bidi pass gives the text.
+fn bracket_pair(brackets: bool, rtl: bool) -> (&'static str, &'static str) {
+    match (brackets, rtl) {
+        (false, _) => ("", ""),
+        (true, false) => ("[", "]"),
+        (true, true) => ("]", "["),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn chat_text_all(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    scope: TextScope,
+    want_names: &mut HashSet<uuid::Uuid>,
+    text: &str,
+    size: f32,
+    color: Color32,
+    emphasis: super::fonts::TextEmphasis,
+    mark: Option<Mark>,
+    brackets: bool,
+) {
     // `@shownames` and `@showloc` rewrite the text and the labels of what no
     // resident typed, those of an avatar link included (RlvUtil::filterNames
     // and filterLocation run on the raw text of an object's line; `wording`
@@ -2563,12 +2643,17 @@ pub(crate) fn chat_text_marked(
     let segs = segments(text);
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(filtered.as_ref(), m.needle).is_empty());
-    if mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
+    if !brackets && mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
         emoji.rich_text(ui, filtered.as_ref(), size, color, emphasis);
         return;
     }
     let k = super::colors::get();
-    super::emoji::text_rows_in(ui, size, super::bidi::rtl_paragraph(text), |ui| {
+    let rtl = super::bidi::rtl_paragraph(text);
+    let (open, close) = bracket_pair(brackets, rtl);
+    super::emoji::text_rows_in(ui, size, rtl, |ui| {
+        if !open.is_empty() {
+            emoji.inline(ui, open, size, color, emphasis);
+        }
         for s in segs {
             match s {
                 Seg::Text(t) => marked_run(ui, emoji, &hide(t), size, color, emphasis, mark),
@@ -2630,6 +2715,9 @@ pub(crate) fn chat_text_marked(
                     );
                 }
             }
+        }
+        if !close.is_empty() {
+            emoji.inline(ui, close, size, color, emphasis);
         }
     });
 }
@@ -2942,10 +3030,10 @@ impl Copied<'_> {
     }
 }
 
-/// The selection of the lines (`select.rs`), as in Firestorm's transcript:
+/// The selection of the lines (`select.rs`), as in the Legacy Viewer's transcript:
 /// a drag selects across them (never moving the window), a double click
-/// selects a word, a click without a drag clears it; a press gives them the
-/// keyboard, then Ctrl+A selects the
+/// selects a word, a triple click selects a paragraph, a click without a drag
+/// clears it; a press gives them the keyboard, then Ctrl+A selects the
 /// whole conversation, Ctrl+C (Ctrl+Insert) copies the selection, Escape
 /// clears it, and what is typed goes to the conversation's field.
 fn select_lines(
@@ -3002,6 +3090,17 @@ fn select_lines(
         && let Some((seq, range, text)) = select::word_at(drawn, pos)
     {
         sel.select_in_row(seq, range, text);
+    }
+    // a triple click selects the paragraph under the pointer, as the
+    // triple-click block of LLTextBase::handleMouseDown
+    // (indra/llui/lltextbase.cpp) selects the logical line in the Legacy
+    // Viewer's transcript (FSChatHistory, an LLTextEditor); it is copied as a
+    // drag over it, the first paragraph with the "[time] Name: " prefix
+    if content.triple_clicked()
+        && let Some(pos) = content.interact_pointer_pos().filter(|p| area.contains(*p))
+        && let Some((seq, range, text)) = select::paragraph_at(drawn, pos)
+    {
+        sel.select_paragraph(seq, range, text);
     }
     // (no text cursor over the lines, though a drag selects them: the
     // arrow, the hand on links and names; the human's choice of 2026-10-16)
@@ -3418,18 +3517,19 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                 ui.label(header_time(ui, p, time));
             }
             ui.vertical(|ui| {
-                chat_text_marked(
+                chat_text_bracketed(
                     ui,
                     p,
                     env.emoji,
                     world,
                     line.wording(env.names),
                     env.want_names,
-                    &system_text(&line.text),
+                    &line.text,
                     super::fonts::chat_size(ui.ctx(), 12.5),
                     tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
                     true,
                     mark,
+                    system_brackets(world, line),
                 );
             });
         });
@@ -6377,6 +6477,62 @@ mod tests {
         }
         // the address alone is still a link, without the bracket
         assert_eq!(segments("[https://example.org]")[1], Seg::Url("https://example.org"));
+    }
+
+    /// #4386: a system line's brackets are drawn around it, not written into
+    /// the text its links are found in. Written in, `[<link> entered the
+    /// region.]` reads as a link given its own text and the resident's name
+    /// is lost; the Legacy Viewer appends them as their own runs
+    /// (FSChatHistory::appendMessage).
+    #[test]
+    fn a_system_line_keeps_the_name_of_the_link_it_starts_with() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let p = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = uuid::Uuid::from_u128(0x2A);
+        world.social.names.insert(id, "Nova Example".to_owned());
+        let text = format!("secondlife:///app/agent/{id}/about entered the region.");
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut frames = Frames::new();
+        let texts = frames.run(Vec::new(), |ui| {
+            let mut want = HashSet::new();
+            chat_text_bracketed(
+                ui,
+                &p,
+                &mut emoji,
+                &world,
+                NameScope::Roster.into(),
+                &mut want,
+                &text,
+                13.0,
+                p.ink,
+                false,
+                None,
+                true,
+            );
+        });
+        let drawn = |needle: &str| texts.iter().any(|t| t.source.contains(needle));
+        assert!(drawn("Nova Example"), "the resident's name is a link of the line");
+        assert!(drawn("entered the region."), "the rest of the line stays text");
+        // the brackets stand on their own, outside the link
+        assert!(texts.iter().any(|t| t.source == "["), "an opening bracket");
+        assert!(texts.iter().any(|t| t.source == "]"), "a closing bracket");
+        // the way it was, brackets written in: one link given its own text,
+        // the resident's name taken by the rest of the line
+        let wrapped = format!("[{text}]");
+        assert!(
+            matches!(segments(&wrapped).as_slice(), [Seg::Labelled(label, _)] if label == "entered the region."),
+            "the line written in brackets is a link given its own text"
+        );
+    }
+
+    #[test]
+    fn brackets_around_a_line_that_reads_from_the_right_are_turned_around() {
+        assert_eq!(bracket_pair(false, false), ("", ""));
+        assert_eq!(bracket_pair(false, true), ("", ""));
+        assert_eq!(bracket_pair(true, false), ("[", "]"));
+        // (a piece of its own misses the mirroring the bidi pass gives a run)
+        assert_eq!(bracket_pair(true, true), ("]", "["));
     }
 
     /// Long texts with many brackets or many link starts and few spaces are

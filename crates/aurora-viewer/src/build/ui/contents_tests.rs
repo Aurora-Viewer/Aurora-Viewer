@@ -254,7 +254,7 @@ fn script_properties_save_each_click_without_closing_and_survive_inventory_readb
         let labels = frame(vec![], &mut tool, &mut world);
         assert!(!labels.iter().any(|(text, _)| text == aurora_i18n::tr!("common-save")));
         let label = if mask == perm::MODIFY {
-            aurora_i18n::tr!("common-edit")
+            aurora_i18n::tr!("common-modify")
         } else {
             aurora_i18n::tr!("common-copy-2")
         };
@@ -487,12 +487,12 @@ fn object_icon_selects_the_job_filter_and_running_choices_stay_visible() {
     for _ in 0..4 {
         frame(&ctx, &mut tool, &world, vec![]);
     }
-    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-edit"));
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-modify"));
     click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-apply"));
     let submitted = tool.ui.bulk.job.as_ref().expect("started").options.clone();
     assert!(submitted.includes_type(6) && submitted.next_modify && submitted.next_copy);
     click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-clear"));
-    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-edit"));
+    click(&ctx, &mut tool, &world, aurora_i18n::tr!("common-modify"));
     assert_eq!(
         tool.ui.bulk.options, submitted,
         "displayed choices still describe the running operation"
