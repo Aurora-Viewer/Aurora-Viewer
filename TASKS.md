@@ -2972,6 +2972,8 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Interface
 
+- 🟡 Object Contents uses the inventory text matcher for plus-separated terms and quoted words in both Build styles ([#4419](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4419)).
+
 - ✅ Menu commands on toolbars ([#2341](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2341); [PR #2623](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/2623); validated by the human on the grid on 2026-11-06): add or remove 15 Build and Me commands from the menu row’s context menu; append new buttons to the bottom toolbar using the shared saved layout and live translated labels.
   - ✅ Grid check after the merge of main on 2026-11-21, validated by the human on the grid on 2026-11-21 with a test build of `main` and PRs #2622, #2623, #2682, #2687, #2787, #2801 and #2808: Build › Import › Add to toolbar and Remove from toolbar, the Me entries (Buy L$, Money Tracker, Experiences, Stand up, Fly override, Movelock options, Quickjump, Movement), and the Edit / Create / Land buttons greyed like the Build button while RLVa forbids building.
   - ✅ Review fixes of 2026-11-21: the buttons' state (Edit particles, Fly override, Quickjump) is given by the app before any bar is drawn, so the bottom and side bars follow it with the top bar hidden; Stand up greyed while standing (enable_standup_self); short labels on the Edit objects / Create prims / Edit land buttons, with Ctrl+3/4/5 in the menu's keys column; icons of their own for Movement enhancements (steering wheel) and Position lock options (lock with a cog).
