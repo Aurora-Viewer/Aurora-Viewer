@@ -1158,24 +1158,21 @@ fn message_emphasis(kind: ChatKind, italics: bool) -> super::fonts::TextEmphasis
     }
 }
 
-/// Precedence: history tone, keyword colour, then default emote colour.
-fn message_color_override(tone: Option<Color32>, keyword: Option<Color32>, emote: bool, emote_color: Color32) -> Option<Color32> {
-    tone.or(keyword).or_else(|| emote.then_some(emote_color))
-}
-
 /// The same message tone in the conversation thread and its nearby-chat card.
+/// An emote takes the colour of its sender's other lines, keyword included:
+/// LLViewerChat::getChatColor (indra/newview/llviewerchat.cpp) has no colour
+/// of its own for `/me`, only the italics (`message_emphasis`).
 fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> Color32 {
     if let Some(color) = super::colors::contact_chat_color(line, world) {
         return color;
     }
-    let tone = history_tone(p, line.origin);
-    let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
-
-    message_color_override(tone, super::colors::keyword_color(line), emote, p.violet_pale).unwrap_or_else(|| match line.kind.volume() {
-        Some(ChatType::Whisper) => p.muted,
-        Some(ChatType::Shout) => p.ink,
-        _ => super::colors::chat_color(line, world),
-    })
+    history_tone(p, line.origin)
+        .or_else(|| super::colors::keyword_color(line))
+        .unwrap_or_else(|| match line.kind.volume() {
+            Some(ChatType::Whisper) => p.muted,
+            Some(ChatType::Shout) => p.ink,
+            _ => super::colors::chat_color(line, world),
+        })
 }
 
 /// Time of a chat line, in Second Life time as the Legacy Viewer shows it
@@ -1641,11 +1638,12 @@ fn line_job(
     }
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     // the pills of the islands (the bars mockup's `.toasts`): a resident's
-    // name in semi-bold light violet, no colon, a system line in italics;
-    // every other colour stays the kind's
+    // name in semi-bold, in the senders' colour (Preferences › Emitter ›
+    // Avatars), no colon, a system line in italics; every other colour
+    // stays the kind's
     let resident = matches!(line.kind, ChatKind::Local(_) | ChatKind::Own(_));
     let mut name_fmt = match pill {
-        Some(family) => super::fonts::semibold_format(family, size, if resident { p.violet_light } else { col }),
+        Some(family) => super::fonts::semibold_format(family, size, if resident { super::colors::sender_color(line) } else { col }),
         None if compact => egui::TextFormat {
             color: super::colors::sender_color(line),
             font_id: egui::FontId::proportional(size),
@@ -5485,22 +5483,6 @@ pub(crate) fn bar_input(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn emote_keyword_color_overrides_default_emote_color() {
-        let emote = egui::Color32::from_rgb(170, 150, 220);
-        let keyword = egui::Color32::from_rgb(255, 153, 0);
-        let history = egui::Color32::GRAY;
-
-        assert_eq!(super::message_color_override(None, Some(keyword), true, emote), Some(keyword));
-        assert_eq!(super::message_color_override(None, None, true, emote), Some(emote));
-        assert_eq!(super::message_color_override(None, Some(keyword), false, emote), Some(keyword));
-        assert_eq!(super::message_color_override(None, None, false, emote), None);
-        assert_eq!(
-            super::message_color_override(Some(history), Some(keyword), true, emote),
-            Some(history)
-        );
-    }
-
-    #[test]
     fn alt_enter_alone_sends_ooc_before_the_channel_is_read() {
         let send_with = |keys: &super::shortcuts::ChatKeys, modifiers: egui::Modifiers| {
             let mut input = egui::InputState::default();
@@ -6664,11 +6646,11 @@ mod tests {
     }
 
     /// The islands' chat pills (the bars mockup): a resident's name in
-    /// semi-bold light violet followed by the text without a colon, an
-    /// object's name in its kind's colour, a system line in italics; the
+    /// semi-bold, in the senders' colour (Emitter › Avatars), followed by
+    /// the text without a colon, an object's name in its kind's colour, a system line in italics; the
     /// full-width bar's lines keep "Name: text" and their colours.
     #[test]
-    fn chat_pills_name_residents_in_violet_without_a_colon() {
+    fn chat_pills_name_residents_in_the_senders_colour_without_a_colon() {
         let p = crate::theme::Theme::default().palette();
         let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let family = egui::FontFamily::Proportional;
@@ -6701,7 +6683,7 @@ mod tests {
         let pill = job(&said, Some(&family));
         assert_eq!(pill.text, "Orion ExempleBienvenue");
         let name = &pill.sections[0];
-        assert_eq!(name.format.color, p.violet_light);
+        assert_eq!(name.format.color, crate::ui::colors::sender_color(&said));
         assert_eq!(pill.sections.last().map(|s| s.leading_space), Some(4.0));
         assert_eq!(pill.sections.last().map(|s| s.format.color), Some(p.ink));
         let bar = job(&said, None);
@@ -6713,6 +6695,42 @@ mod tests {
         let pill = job(&online, Some(&family));
         assert!(pill.sections.iter().all(|s| s.format.italics));
         assert!(!job(&online, None).sections.iter().any(|s| s.format.italics));
+    }
+
+    /// An emote is in its sender's message colour, ours ("My messages") and
+    /// another resident's ("Others") alike, as LLViewerChat::getChatColor.
+    #[test]
+    fn emotes_use_their_senders_message_colour_in_chat_cards() {
+        let p = crate::theme::Theme::default().palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut line = crate::world::ChatLine {
+            time: std::time::UNIX_EPOCH,
+            from: "Resident".into(),
+            text: String::new(),
+            kind: ChatKind::OWN,
+            source: uuid::Uuid::nil(),
+            origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
+        };
+        let mine = message_color(&line, &p, &world);
+        for text in ["/me waves", "/me's hat"] {
+            line.text = text.into();
+            assert_eq!(message_color(&line, &p, &world), mine);
+        }
+        line.origin = Origin::Log;
+        assert_eq!(Some(message_color(&line, &p, &world)), history_tone(&p, Origin::Log));
+        line.origin = Origin::Live;
+        line.kind = ChatKind::Local(ChatType::Normal);
+        line.source = uuid::Uuid::from_u128(7);
+        line.text = "hello".into();
+        let theirs = message_color(&line, &p, &world);
+        assert_ne!(theirs, mine);
+        for text in ["/me waves", "/me's hat"] {
+            line.text = text.into();
+            assert_eq!(message_color(&line, &p, &world), theirs);
+        }
     }
 
     /// The pills' sender names: a resident's profile (ours for our own

@@ -9,22 +9,35 @@ use crate::ui::{
 };
 use egui::{Context, Id, Rect, RichText, Vec2};
 
+const ACTION_TOP: f32 = 20.0;
+const ACTION_SIZE: f32 = 30.0;
+
 pub fn sidebar(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, card: Rect, width: f32, lowest: f32) -> bool {
-    let left = ctx.content_rect().right() - 32.0 - width;
-    egui::Area::new(Id::unique("login_news"))
-        .fixed_pos(egui::pos2(left, card.top()))
-        .show(ctx, |ui| {
-            ui.set_width(width);
-            super::news_panel(ui, p, icons, info, card.height().min(lowest - card.top()).max(120.0));
-        });
-    egui::Area::new(Id::unique("login_version"))
+    let screen = ctx.content_rect();
+    let left = screen.right() - 32.0 - width;
+    // Both login layouts share the top-right actions. Give their row a gutter
+    // even when a short window pushes the version panel down onto the news.
+    let column = Rect::from_min_max(
+        egui::pos2(left, screen.top() + ACTION_TOP + ACTION_SIZE + 8.0),
+        egui::pos2(screen.right(), lowest),
+    );
+    let version = egui::Area::new(Id::unique("login_version"))
         .pivot(egui::Align2::LEFT_BOTTOM)
         .fixed_pos(egui::pos2(left, card.top() - 14.0))
+        .constrain_to(column)
         .show(ctx, |ui| {
             ui.set_width(width);
             super::version_panel(ui, p, icons, info)
-        })
-        .inner
+        });
+    let news_top = card.top().max(version.response.rect.bottom() + 14.0);
+    egui::Area::new(Id::unique("login_news"))
+        .fixed_pos(egui::pos2(left, news_top))
+        .constrain_to(column)
+        .show(ctx, |ui| {
+            ui.set_width(width);
+            super::news_panel(ui, p, icons, info, (card.bottom().min(lowest) - news_top).max(120.0));
+        });
+    version.inner
 }
 
 fn version(ui: &mut egui::Ui, p: &Palette) {
@@ -109,9 +122,9 @@ pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sideb
     // The preferences before login (Firestorm opens them from the menu bar of
     // its login screen, menu_login.xml): one cogwheel in the top right corner.
     egui::Area::new(Id::unique("login_settings"))
-        .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-25.0, 20.0))
+        .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-25.0, ACTION_TOP))
         .show(ctx, |ui| {
-            if widgets::action_button(ui, p, "settings-filled", "", ActionKind::Flat, Vec2::splat(30.0))
+            if widgets::action_button(ui, p, "settings-filled", "", ActionKind::Flat, Vec2::splat(ACTION_SIZE))
                 .on_hover_text(aurora_i18n::tr!("common-preferences"))
                 .clicked()
             {
@@ -121,9 +134,9 @@ pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sideb
     // Left of it, the way to a larger, more readable interface before the
     // first login: Preferences › Accessibility.
     egui::Area::new(Id::unique("login_accessibility"))
-        .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-63.0, 20.0))
+        .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-63.0, ACTION_TOP))
         .show(ctx, |ui| {
-            if widgets::action_button(ui, p, "accessible-filled", "", ActionKind::Flat, Vec2::splat(30.0))
+            if widgets::action_button(ui, p, "accessible-filled", "", ActionKind::Flat, Vec2::splat(ACTION_SIZE))
                 .on_hover_text(aurora_i18n::tr!("login-accessibility"))
                 .clicked()
             {
