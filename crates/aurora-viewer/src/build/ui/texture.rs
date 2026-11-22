@@ -18,6 +18,7 @@ pub(super) mod texture_drop;
 use super::common::{check, combo, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
+use crate::build::planar_align::{PlanarFace, Xform, aligned};
 use crate::build::{BuildSettings, BuildTool, Tool, texture_copy};
 use crate::scene::legacy_mat::{LegacyMaterial, alpha_mode};
 use crate::theme::Palette;
@@ -284,13 +285,18 @@ impl BuildTool {
     /// Change the Blinn-Phong material of the selected faces (LLSelectedTEMaterial::
     /// set*): remove only the default material, preserving UVs of empty maps.
     fn edit_legacy(&mut self, env: &Env, world: &World, sel: &[Sel], f: impl Fn(&mut LegacyMaterial)) {
+        self.edit_legacy_faces(env, world, sel, |_, m| f(m));
+    }
+
+    /// `edit_legacy` with the index of each face in `sel`.
+    fn edit_legacy_faces(&mut self, env: &Env, world: &World, sel: &[Sel], f: impl Fn(usize, &mut LegacyMaterial)) {
         let mut puts = Vec::new();
-        for s in sel {
+        for (k, s) in sel.iter().enumerate() {
             let default = default_legacy_for_face(env, world, s);
             let mut m = self
                 .face_legacy(env, world, s.idx, s.face, &s.te)
                 .unwrap_or_else(|| default.clone());
-            f(&mut m);
+            f(k, &mut m);
             // A local diffuse can have alpha while the server texture is opaque.
             // Keep an explicit mode: removing it would restore auto detection
             // of the local image and make None transparent again.
@@ -1601,6 +1607,12 @@ fn bp_transforms(
                     m.specular_rot = a[4];
                 });
             }
+            // with "Align planar faces" on, the other faces follow the edited
+            // reference, last so that the material sync above does not undo
+            // it (FSPanelFace::sendTextureInfo)
+            if ch == 0 && planar && tool.ui.planar_align {
+                tool.align_planar_faces(world, env, sel, AlignLayer::All);
+            }
         }
     });
 }
@@ -1762,6 +1774,7 @@ fn face_options(
         }
     });
     // Align planar faces | Align
+    clear_planar_align(tool, planar);
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(cell, left, |ui| {
             ui.set_min_width(LEFT);
@@ -1774,21 +1787,44 @@ fn face_options(
                 .inner
                 .changed()
             {
-                tool.ui.planar_align = align;
+                set_planar_align(tool, world, env, sel, align);
             }
         });
-        let objects = sel.iter().map(|x| x.idx).collect::<std::collections::BTreeSet<_>>().len();
         if ui
             .add_enabled(
-                planar && tool.ui.planar_align && objects > 1,
+                align_button_enabled(planar, sel),
                 egui::Button::new(RichText::new(aurora_i18n::tr!("common-align")).size(12.0)),
             )
             .on_hover_text(aurora_i18n::tr!("build-ui-texture-aligns-the-available-texture-layers"))
             .clicked()
         {
-            tool.align_planar_faces(world, sel.iter().map(|x| (x.idx, x.face)).collect());
+            tool.align_planar_faces(world, env, sel, AlignLayer::of_tab(tool));
         }
     });
+}
+
+/// "Align planar faces" is only on while every selected face is planar
+/// (FSPanelFace::updateUI: `setValue(align_planar && enabled)`).
+pub(super) fn clear_planar_align(tool: &mut BuildTool, planar: bool) {
+    if !planar {
+        tool.ui.planar_align = false;
+    }
+}
+
+/// The check box changed: turned on, it aligns the faces at once
+/// (FSPanelFace::onCommitPlanarAlign).
+pub(super) fn set_planar_align(tool: &mut BuildTool, world: &mut World, env: &Env, sel: &[Sel], on: bool) {
+    tool.ui.planar_align = on;
+    if on {
+        tool.align_planar_faces(world, env, sel, AlignLayer::All);
+    }
+}
+
+/// The Align button: planar faces, at least two of them. The Legacy
+/// Viewer asks for two objects (FSPanelFace::updateUI); faces of one prim
+/// line up too here, as the check box already does there.
+pub(super) fn align_button_enabled(planar: bool, sel: &[Sel]) -> bool {
+    planar && sel.len() > 1
 }
 
 /// Whether "Copy" may run (FSPanelFace::updateCopyTexButton): the faces of
@@ -2097,28 +2133,162 @@ impl BuildTool {
         }
     }
 
-    /// "Align planar faces": the planar-mapped faces take the
-    /// repeats, rotation and offsets of the last selected one. Deviation:
-    /// LLFace::calcAlignedPlanarTE also shifts the offsets by the faces'
-    /// positions so that coplanar faces of different objects line up.
-    pub fn align_planar_faces(&mut self, world: &mut World, faces: Vec<(usize, u8)>) {
-        let Some(&(ref_idx, ref_face)) = faces.last() else { return };
-        let Some(r) = world
-            .objects
-            .get(ref_idx)
-            .and_then(|o| o.te.as_ref())
-            .map(|te| *te.face(ref_face as usize))
-        else {
-            return;
+    /// "Align planar faces": the selected planar-mapped faces continue the
+    /// texture of the reference face, the last one picked
+    /// (LLObjectSelection::getSelectedTEValue: the primary object's last
+    /// selected face), so that their edges meet (`build::planar_align`).
+    /// `AlignLayer::All` is the check box (FSPanelFaceSetAlignedTEFunctor:
+    /// the diffuse transform, given to the faces' normal and specular maps
+    /// too), the other layers the Align button on that map's tab
+    /// (FSPanelFaceSetAlignedConcreteTEFunctor, indra/newview/fspanelface.cpp).
+    /// Faces whose geometry is not loaded yet, or that are not planar, stay
+    /// as they are, like calcAlignedPlanarTE's `false`.
+    pub(super) fn align_planar_faces(&mut self, world: &mut World, env: &Env, sel: &[Sel], layer: AlignLayer) {
+        let Some(r) = self.align_reference(sel) else { return };
+        let now = std::time::Instant::now();
+        let faces: Vec<Option<PlanarFace>> = sel
+            .iter()
+            .map(|x| {
+                let te = world.objects.get(x.idx)?.te.as_ref()?;
+                te.face(x.face as usize)
+                    .planar()
+                    .then(|| planar_face(env, world, x.idx, x.face, now))?
+            })
+            .collect();
+        let Some(reference) = faces[r] else { return };
+        // the faces read now: a spinner edit of this frame is in the world
+        // already, not in `sel`
+        let current: Vec<Sel> = sel
+            .iter()
+            .map(|x| {
+                let te = world
+                    .objects
+                    .get(x.idx)
+                    .and_then(|o| o.te.as_ref())
+                    .map(|te| *te.face(x.face as usize));
+                Sel {
+                    te: te.unwrap_or(x.te),
+                    ..*x
+                }
+            })
+            .collect();
+        let legacy: Vec<Option<LegacyMaterial>> = current.iter().map(|x| self.face_legacy(env, world, x.idx, x.face, &x.te)).collect();
+        let te_xform = |f: &TextureFace| Xform {
+            scale: glam::Vec2::new(f.scale_s, f.scale_t),
+            offset: glam::Vec2::new(f.offset_s, f.offset_t),
+            rotation: f.rotation,
         };
-        self.edit_faces(world, |f, _, _| {
-            f.scale_s = r.scale_s;
-            f.scale_t = r.scale_t;
-            f.rotation = r.rotation;
-            f.offset_s = r.offset_s;
-            f.offset_t = r.offset_t;
+        let map_xform = |st: [f32; 4], rotation: f32| Xform {
+            scale: glam::Vec2::new(st[0], st[1]),
+            offset: glam::Vec2::new(st[2], st[3]),
+            rotation,
+        };
+        let reference_xform = match layer {
+            AlignLayer::All | AlignLayer::Diffuse => Some(te_xform(&current[r].te)),
+            // calcAlignedPlanarTE: a reference without that map aligns nothing
+            AlignLayer::Normal => legacy[r]
+                .as_ref()
+                .filter(|m| !m.normal_map.is_nil())
+                .map(|m| map_xform(m.normal_st, m.normal_rot)),
+            AlignLayer::Specular => legacy[r]
+                .as_ref()
+                .filter(|m| !m.specular_map.is_nil())
+                .map(|m| map_xform(m.specular_st, m.specular_rot)),
+        };
+        let Some(reference_xform) = reference_xform else { return };
+        let results: Vec<Option<Xform>> = faces
+            .iter()
+            .enumerate()
+            .map(|(k, f)| (k != r).then(|| aligned(&reference, &reference_xform, f.as_ref()?)).flatten())
+            .collect();
+
+        if matches!(layer, AlignLayer::All | AlignLayer::Diffuse) {
+            let by_face: std::collections::HashMap<(usize, u8), Xform> = sel
+                .iter()
+                .zip(&results)
+                .filter_map(|(x, a)| Some(((x.idx, x.face), (*a)?)))
+                .collect();
+            self.edit_faces(world, |f, idx, face| {
+                if let Some(a) = by_face.get(&(idx, face)) {
+                    [f.scale_s, f.scale_t] = a.scale.to_array();
+                    [f.offset_s, f.offset_t] = a.offset.to_array();
+                    f.rotation = a.rotation;
+                }
+            });
+        }
+        // the maps of the faces that have a legacy material: a face without
+        // one keeps none, rather than getting a material for its UVs only
+        let (normal, specular) = match layer {
+            AlignLayer::All => (true, true),
+            AlignLayer::Diffuse => return,
+            AlignLayer::Normal => (true, false),
+            AlignLayer::Specular => (false, true),
+        };
+        let (targets, xforms): (Vec<Sel>, Vec<Xform>) = current
+            .iter()
+            .zip(&results)
+            .zip(&legacy)
+            .filter_map(|((x, a), m)| Some((*x, a.filter(|_| m.is_some())?)))
+            .unzip();
+        if targets.is_empty() {
+            return;
+        }
+        self.edit_legacy_faces(env, world, &targets, |k, m| {
+            let a = xforms[k];
+            let st = [a.scale.x, a.scale.y, a.offset.x, a.offset.y];
+            if normal {
+                (m.normal_st, m.normal_rot) = (st, a.rotation);
+            }
+            if specular {
+                (m.specular_st, m.specular_rot) = (st, a.rotation);
+            }
         });
     }
+
+    /// Index in `sel` of the face the others align to: the last face picked
+    /// when it is on the last selected prim, else that prim's last face.
+    fn align_reference(&self, sel: &[Sel]) -> Option<usize> {
+        let last = sel.last()?;
+        self.last_face
+            .and_then(|f| sel.iter().rposition(|x| x.idx == last.idx && x.face == f))
+            .or(Some(sel.len() - 1))
+    }
+}
+
+/// What "Align planar faces" lines up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AlignLayer {
+    /// The check box: the diffuse transform, for every map.
+    All,
+    Diffuse,
+    Normal,
+    Specular,
+}
+
+impl AlignLayer {
+    /// The Align button's layer: the map of the open Blinn-Phong tab
+    /// (FSPanelFace::getTextureChannelToEdit), the diffuse elsewhere.
+    pub(super) fn of_tab(tool: &BuildTool) -> Self {
+        match (tool.ui.tex_tab, tool.ui.bp_channel) {
+            (0, 1) => Self::Normal,
+            (0, 2) => Self::Specular,
+            _ => Self::Diffuse,
+        }
+    }
+}
+
+/// Where a selected face lies, from its drawn geometry.
+fn planar_face(env: &Env, world: &World, idx: usize, face: u8, now: std::time::Instant) -> Option<PlanarFace> {
+    let (model, geom) = env.scene.drawn_geometry(world, idx, now)?;
+    let f = geom.pick_faces.get(face as usize)?.as_ref()?;
+    let p = |i: u16| f.positions.get(i as usize).map(|p| glam::Vec3::from_array(*p));
+    let triangles = f
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .filter_map(|t| Some([p(t[0])?, p(t[1])?, p(t[2])?]));
+    PlanarFace::new(triangles, model)
 }
 
 #[cfg(test)]
