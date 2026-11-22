@@ -586,6 +586,9 @@ struct Query {
     agent: Uuid,
     cutoff: i64,
     worn: HashSet<Uuid>,
+    /// The worn or active tag each worn original's label ends with, as it
+    /// is searched: " (worn on left hand)", " (active)"…
+    worn_tags: HashMap<Uuid, String>,
     names: HashMap<Uuid, String>,
 }
 
@@ -800,6 +803,22 @@ impl ViewCache {
         } else {
             HashSet::new()
         };
+        // LLItemBridge::buildSearchableName: the name searched is the row's
+        // whole label, so it holds the worn tag of LLObjectBridge and
+        // LLWearableBridge::getLabelSuffix and the active one of
+        // LLGestureBridge::getLabelSuffix (llinventorybridge.cpp): `+worn`
+        // finds what the avatar wears (#4423). The same text as the rows'
+        // tag (`Facts::worn_label`), lowercase like the searched names.
+        let worn_tags = if smart.is_none() && !text.is_empty() && matches!(prefs.search_field, SearchField::Name | SearchField::All) {
+            facts
+                .worn
+                .iter()
+                .chain(&facts.active_gestures)
+                .filter_map(|id| Some((*id, format!(" ({})", facts.original_worn_label(*id)?.to_lowercase()))))
+                .collect()
+        } else {
+            HashMap::new()
+        };
         let query = Query {
             root,
             text,
@@ -814,6 +833,7 @@ impl ViewCache {
             agent,
             cutoff,
             worn,
+            worn_tags,
             names,
         };
         if self.query.as_ref() == Some(&query) {
@@ -868,6 +888,12 @@ impl ViewCache {
         // LLItemBridge::getLabelSuffix: the translated link suffix, lowercase
         // like the searched names.
         let link_suffix = format!(" ({})", aurora_i18n::tr!("inventory-pill-link").to_lowercase());
+        let rights_suffixes = [
+            (rules::COPY, aurora_i18n::tr!("inventory-search-no-copy")),
+            (rules::MODIFY, aurora_i18n::tr!("inventory-search-no-modify")),
+            (rules::TRANSFER, aurora_i18n::tr!("inventory-search-no-transfer")),
+        ]
+        .map(|(bit, words)| (bit, format!(" ({})", words.to_lowercase())));
         self.results = self
             .entries
             .par_iter()
@@ -993,13 +1019,28 @@ impl ViewCache {
                     return false;
                 }
                 let creator = || query.names.get(&original.creator).map(|s| s.to_lowercase()).unwrap_or_default();
-                // LLItemBridge::buildDisplayName includes the link suffix in search.
+                // LLItemBridge::buildSearchableName: the name and its label's
+                // suffix (getLabelSuffix), in its order: the link tag, or the
+                // rights the agent lacks on its own item, then the worn tag.
                 let name = || {
-                    if linked {
-                        std::borrow::Cow::Owned(format!("{}{link_suffix}", e.name))
-                    } else {
-                        std::borrow::Cow::Borrowed(e.name.as_str())
+                    let rights = rules::label_missing_rights(it, inv.owner);
+                    let worn = query.worn_tags.get(&original_id);
+                    if !linked && rights == 0 && worn.is_none() {
+                        return std::borrow::Cow::Borrowed(e.name.as_str());
                     }
+                    let mut label = e.name.clone();
+                    if linked {
+                        label.push_str(&link_suffix);
+                    }
+                    for (bit, suffix) in &rights_suffixes {
+                        if rights & bit != 0 {
+                            label.push_str(suffix);
+                        }
+                    }
+                    if let Some(worn) = worn {
+                        label.push_str(worn);
+                    }
+                    std::borrow::Cow::Owned(label)
                 };
                 match query.field {
                     SearchField::Name => matches_text(&name(), &query.text),
@@ -1410,6 +1451,100 @@ mod tests {
             );
             assert!(view.results.contains(&id(91)));
             assert!(!view.results.contains(&id(10)));
+        }
+    }
+
+    /// The quick search of `text` in `field`, in All of the inventory.
+    fn search_text(inv: &Inventory, facts: &Facts, field: SearchField, text: &str) -> Vec<Uuid> {
+        let prefs = InventoryPreferences {
+            search_field: field,
+            ..Default::default()
+        };
+        let mut view = ViewCache::default();
+        view.search(inv, inv.root, text, &prefs, &Filters::default(), 0, None, facts, facts.agent, 1000);
+        view.results
+    }
+
+    #[test]
+    fn name_plus_worn_matches_what_the_avatar_wears_like_the_legacy_label() {
+        // #4423: `jacket+worn` finds the worn jacket, its link and an item
+        // whose own name says "worn", as the Legacy Viewer's label does
+        // (LLItemBridge::buildSearchableName with LLWearableBridge and
+        // LLObjectBridge::getLabelSuffix).
+        let (mut inv, mut facts) = fixture();
+        let mut jacket = item(20, id(2), "Denim Jacket", 100);
+        jacket.asset_type = 5;
+        jacket.inv_type = 18;
+        let spare = item(21, id(2), "Spare Jacket", 100);
+        let named = item(22, id(2), "Worn-out Jacket", 100);
+        let mut link = item(23, id(6), "Denim Jacket", 100);
+        link.asset_type = 24;
+        link.asset_id = id(20);
+        let ring = item(24, id(2), "Ring", 100);
+        let mut wave = item(25, id(2), "Wave", 100);
+        wave.asset_type = 21;
+        wave.inv_type = 20;
+        inv.add_items(vec![jacket, spare, named, link, ring, wave]);
+        facts.worn = [id(20), id(24)].into();
+        facts.worn_labels = [(id(24), "Worn on Left Hand".to_owned())].into();
+        facts.active_gestures = [id(25)].into();
+        for field in [SearchField::Name, SearchField::All] {
+            let search = |facts: &Facts, text: &str| {
+                let mut found = search_text(&inv, facts, field, text);
+                found.sort();
+                found
+            };
+            // the jacket, its link (" (link) (worn)") and the worn-out one
+            assert_eq!(search(&facts, "jacket+worn"), [id(20), id(22), id(23)], "{field:?}");
+            assert_eq!(search(&facts, "jacket+link+worn"), [id(23)], "{field:?}");
+            assert_eq!(search(&facts, "ring+worn on left hand"), [id(24)], "{field:?}");
+            assert_eq!(search(&facts, "wave+active"), [id(25)], "{field:?}");
+            // taken off: only the name is left
+            facts.worn.clear();
+            assert_eq!(search(&facts, "jacket+worn"), [id(22)], "{field:?}");
+            facts.worn = [id(20), id(24)].into();
+        }
+        // the description has no label tags
+        assert!(search_text(&inv, &facts, SearchField::Description, "worn").is_empty());
+    }
+
+    #[test]
+    fn the_searched_label_names_the_rights_missing_on_the_agents_own_items() {
+        // LLItemBridge::getLabelSuffix: " (no copy)", " (no modify)" and
+        // " (no transfer)" on the agent's own items only, never on a link.
+        let (mut inv, facts) = fixture();
+        inv.owner = id(98);
+        let mut no_copy = item(30, id(2), "Sofa", 100);
+        no_copy.owner = id(98);
+        no_copy.owner_mask = rules::MODIFY | rules::TRANSFER;
+        let mut no_mod_no_transfer = item(31, id(2), "Lamp", 100);
+        no_mod_no_transfer.owner = id(98);
+        no_mod_no_transfer.owner_mask = rules::COPY;
+        let mut group = item(32, id(2), "Group Sofa", 100);
+        group.owner = id(97);
+        group.group_owned = true;
+        group.owner_mask = rules::MODIFY;
+        let mut link = item(33, id(2), "Sofa", 100);
+        link.owner = id(98);
+        link.asset_type = 24;
+        link.asset_id = id(30);
+        let mut full = item(34, id(2), "Table", 100);
+        full.owner = id(98);
+        inv.add_items(vec![no_copy, no_mod_no_transfer, group, link, full]);
+        let no_copy_text = aurora_i18n::tr!("inventory-search-no-copy").to_lowercase();
+        let no_modify_text = aurora_i18n::tr!("inventory-search-no-modify").to_lowercase();
+        let no_transfer_text = aurora_i18n::tr!("inventory-search-no-transfer").to_lowercase();
+        for field in [SearchField::Name, SearchField::All] {
+            assert_eq!(search_text(&inv, &facts, field, &no_copy_text), [id(30)], "{field:?}");
+            assert_eq!(
+                search_text(&inv, &facts, field, &format!("lamp+{no_modify_text}+{no_transfer_text}")),
+                [id(31)],
+                "{field:?}"
+            );
+            assert!(
+                search_text(&inv, &facts, field, &format!("table+{no_copy_text}")).is_empty(),
+                "{field:?}"
+            );
         }
     }
 

@@ -12051,6 +12051,13 @@ separate searches enabled and disabled; that preference controls only the text.
 - `sort`, `filters`, `preferences`, `recent`, `worn`, `filtered`, `large`:
   system / date sort, filters, preferences, Recent / Worn tree,
   filter excluding objects or search of 1,500 items.
+- `search-worn`, `aurora-search-worn`: the All tab searching "worn" (in
+  the interface's language), in the Legacy and Aurora styles, which the
+  label of a worn item holds, as in the Legacy Viewer (#4423): the worn
+  clothing, body parts and attachments are listed, with the item that
+  has "worn" in its own name; the items not worn are not. Like every
+  `AURORA_DEMO_INVENTORY` mode, the mode's name chooses the window's
+  style, whatever the preference.
 - `many-folders`, `aurora-many-folders`: 300 more top folders, in the
   Legacy and Aurora styles; scroll to the end, press Collapse: the list
   goes back to its top.
