@@ -968,7 +968,7 @@ avatar stays put. Hold the right mouse button to look, use Shift to move
 faster or Ctrl to move slower, and press Escape to return. The **Controls**
 window provides camera and movement pads, saved camera positions and free
 camera controls. After signing in, expand **Quick camera views** and choose
-**Import camera slots from Legacy Viewer** to select a compatible account's
+**Import Aperture camera slots** to select an Aperture-compatible account's
 `settings_per_account.xml` (the `APStoredCamera*` slot format). Review the named slots before import; an occupied
 Aurora slot is left unchecked unless you select it for replacement. Aurora
 backs up the account's current quick views before applying the import. A

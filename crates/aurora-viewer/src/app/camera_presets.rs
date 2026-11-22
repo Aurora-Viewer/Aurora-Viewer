@@ -26,16 +26,14 @@ impl App {
         let path = account
             .map(|id| crate::settings::account_dir(&id).join(crate::camera::account_slots::FILE))
             .unwrap_or_default();
-        self.camera_slots.select(account, path, &self.settings.camera_shots);
+        self.camera_slots.select(account, path);
         self.refresh_camera_shots();
         self.controls_ui.reset_quick_names();
     }
 
     pub(super) fn sync_camera_slots(&mut self) {
         let demo_mode = self.demo.then(|| std::env::var("AURORA_DEMO_CAMERA_ACCOUNTS").ok()).flatten();
-        let demo_mode = demo_mode
-            .as_deref()
-            .filter(|m| matches!(*m, "prompt" | "empty" | "switch" | "legacy-import"));
+        let demo_mode = demo_mode.as_deref().filter(|m| matches!(*m, "switch" | "aperture-import"));
         let account = self.world.login.as_ref().map(|l| {
             if demo_mode.is_some() {
                 Uuid::from_u128(if demo_mode == Some("switch") && (700..800).contains(&self.frame_count) {
@@ -50,15 +48,14 @@ impl App {
         if account != self.camera_slots.account {
             self.slot_import.reset();
             if let Some(id) = account.filter(|_| demo_mode.is_some()) {
-                // Synthetic accounts and a process-specific directory keep the scenario repeatable.
-                let path = std::env::temp_dir()
-                    .join(format!("aurora-camera-demo-{}", std::process::id()))
-                    .join(id.to_string())
-                    .join(crate::camera::account_slots::FILE);
-                let mut legacy = CameraShot::at_avatar("Shared demo view".into(), [0.0, -4.0, 2.0], [0.0, 0.0, 1.0]);
-                legacy.quick_slot = Some(0);
-                legacy.quick_fov = Some(0.8);
-                self.camera_slots.select(account, path, &[legacy]);
+                let path = match self.camera_slots.demo_path(id) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        log::warn!("cannot create camera demo directory: {error}");
+                        return;
+                    }
+                };
+                self.camera_slots.select(account, path);
                 self.refresh_camera_shots();
                 self.controls_ui.reset_quick_names();
             } else {
@@ -70,33 +67,17 @@ impl App {
             self.controls_ui.reset_quick_names();
         }
         self.poll_legacy_slot_import();
-        // Existing quick-view regression scenarios explicitly choose migration.
-        if self.demo
-            && std::env::var("AURORA_DEMO_CONTROLS").is_ok_and(|m| m == "quick" || m == "classic-quick")
-            && self.camera_slots.state == crate::camera::account_slots::State::Import
-        {
-            self.camera_slots.choose_import(true);
-            self.refresh_camera_shots();
-            self.controls_ui.reset_quick_names();
-        }
         if let Some(mode) = demo_mode {
             self.camera_accounts_demo(mode);
         }
     }
 
     fn camera_accounts_demo(&mut self, mode: &str) {
-        use crate::camera::account_slots::State;
         use crate::ui::controls::ControlAction;
         if self.frame_count >= 600 {
             self.panels.camera_controls = true;
             self.panels.chat = false;
             self.panels.people = false;
-        }
-        if mode != "prompt" && self.frame_count >= 640 && self.camera_slots.state == State::Import {
-            self.camera_slots
-                .choose_import(mode == "switch" && self.camera_slots.account == Some(Uuid::from_u128(102)));
-            self.refresh_camera_shots();
-            self.controls_ui.reset_quick_names();
         }
         if mode == "switch" {
             match self.frame_count {
@@ -110,7 +91,7 @@ impl App {
                 _ => {}
             }
         }
-        if mode == "legacy-import" {
+        if mode == "aperture-import" {
             match self.frame_count {
                 660 => self.demo_legacy_slot_preview(),
                 780 => self.confirm_legacy_slot_import(),
@@ -132,45 +113,25 @@ impl App {
         use crate::camera::account_slots::State;
         use crate::ui::widgets;
         let state = self.camera_slots.state;
-        if !self.camera_slots.prompt_open || (!matches!(state, State::Import | State::Failed) && !self.camera_slots.write_failed) {
+        if !self.camera_slots.prompt_open || (state != State::Failed && !self.camera_slots.write_failed) {
             return;
         }
-        let mut choice = None;
         let mut retry = false;
-        let modal = widgets::Modal::new(egui::Id::unique("camera_account_import")).show(ctx, |ui| {
+        let modal = widgets::Modal::new(egui::Id::unique("camera_account_error")).show(ctx, |ui| {
             ui.set_width(420.0);
             ui.label(egui::RichText::new(aurora_i18n::tr!("camera-account-title")).strong().color(p.ink));
-            if state == State::Import {
-                ui.label(aurora_i18n::tr!("camera-account-import-help"));
-                ui.add_space(8.0);
-                ui.horizontal_wrapped(|ui| {
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("camera-account-import")).clicked() {
-                        choice = Some(true);
-                    }
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("camera-account-empty")).clicked() {
-                        choice = Some(false);
-                    }
-                });
+            ui.label(if self.camera_slots.write_failed {
+                aurora_i18n::tr!("camera-account-save-error")
             } else {
-                ui.label(if self.camera_slots.write_failed {
-                    aurora_i18n::tr!("camera-account-save-error")
-                } else {
-                    aurora_i18n::tr!("camera-account-load-error")
-                });
-                retry = widgets::flat_button(ui, p, aurora_i18n::tr!("camera-account-retry")).clicked();
-            }
+                aurora_i18n::tr!("camera-account-load-error")
+            });
+            retry = widgets::flat_button(ui, p, aurora_i18n::tr!("camera-account-retry")).clicked();
             if widgets::flat_button(ui, p, aurora_i18n::tr!("common-close")).clicked() {
                 self.camera_slots.prompt_open = false;
             }
         });
         if modal.should_close() {
             self.camera_slots.prompt_open = false;
-        }
-        if let Some(import) = choice {
-            self.camera_slots.choose_import(import);
-            self.camera_slots.prompt_open = false;
-            self.refresh_camera_shots();
-            self.controls_ui.reset_quick_names();
         }
         if retry {
             if self.camera_slots.write_failed {
@@ -185,7 +146,7 @@ impl App {
     /// restore path as named presets (Aperture's LLAgentCamera::storeCameraPosition).
     pub(super) fn save_quick_camera(&mut self, slot: u8, name: String) -> Result<(), String> {
         if self.camera_slots.state != crate::camera::account_slots::State::Ready {
-            return Err(aurora_i18n::tr!("camera-account-unavailable").to_owned());
+            return Err(aurora_i18n::tr!("camera-account-not-ready").to_owned());
         }
         if slot >= 8 || self.world.rlva.camera_preset_locked(Uuid::nil()) {
             return Err(aurora_i18n::tr!("camera-preset-locked").to_owned());
@@ -204,6 +165,7 @@ impl App {
         };
         let mut shot = self.capture_camera_preset(name.clone(), include, None)?;
         shot.quick_slot = Some(slot);
+        shot.roll = Some(self.camera.roll);
         // An extension of storeCameraPosition: keep LLZoomer's lens too,
         // without opting into the photo preset's DOF and exposure bundle.
         shot.quick_fov = Some(self.camera.flycam.as_ref().map_or(self.settings.camera.fov, |flight| flight.fov));
@@ -223,7 +185,6 @@ impl App {
         }
         let (camera, focus) = self.camera.current_offsets(&self.world.agent);
         let mut shot = CameraShot::at_avatar(name, camera.to_array(), focus.to_array());
-        shot.roll = include.anchor.map(|_| self.camera.roll);
         let (eye, at) = (self.camera.position, self.camera.target);
         shot.anchor = match include.anchor {
             None => None,
@@ -400,13 +361,11 @@ impl App {
         };
         // Position changes can reset roll. Restore it only after placement;
         // a photo lens preset below retains upstream's explicit tilt behavior.
-        if placed.is_ok()
-            && shot.anchor.is_some()
-            && let Some(roll) = shot.roll
-        {
+        if let Some(roll) = presets::position_roll(&shot, placed.is_ok()) {
             self.camera.roll = roll;
         }
         if placed.is_ok()
+            && shot.quick_slot.is_some()
             && shot.anchor.is_some()
             && let Some(fov) = shot.quick_fov
         {

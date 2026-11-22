@@ -281,9 +281,10 @@ selection for the Copy menu without replacing clickable links or emoji.
 `camera/account_slots.rs` owns the eight quick views of the logged-in avatar
 in `accounts/<agent UUID>/camera_quick_views.json`. A sequential worker loads
 and atomically saves the versioned file; generation tags discard replies from
-previous accounts. A missing file offers a one-time Import / Start empty choice
-when shared quick slots exist. Empty account files remain empty; the shared
-slots remain an untouched migration source. `app/camera_presets.rs` combines
+previous accounts. A missing file starts with empty slots; existing account
+files are loaded without falling back to shared settings. Demo account files
+use an owned temporary directory removed after pending writes finish.
+`app/camera_presets.rs` combines
 the account slots with shared ordinary presets for every menu and clears the
 cached names on account changes. Settings backups include the account file.
 `camera/legacy_slots.rs` reads only the eight quick-view fields and names from

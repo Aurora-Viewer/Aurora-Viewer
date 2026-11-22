@@ -3846,7 +3846,7 @@ impl App {
         self.record_inventory_logout();
         // the session's photo reel and its copies
         self.photo_reel_end();
-        self.camera_slots.select(None, Default::default(), &[]);
+        self.camera_slots.select(None, Default::default());
         self.refresh_camera_shots();
         self.controls_ui.reset_quick_names();
         if !self.demo {

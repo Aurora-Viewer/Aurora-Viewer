@@ -117,6 +117,17 @@ impl Include {
     }
 }
 
+/// Only numbered quick views keep position roll. Ordinary avatar presets
+/// level the camera (LLFloaterSaveCameraPreset); their optional photo lens
+/// still applies its own tilt afterwards. Failed placement keeps current roll.
+pub fn position_roll(shot: &CameraShot, placed: bool) -> Option<f32> {
+    if placed && shot.quick_slot.is_some() && shot.anchor.is_some() {
+        shot.roll
+    } else {
+        None
+    }
+}
+
 /// Render-space `p` in global metres, the main region's corner at `origin`.
 pub fn to_global(origin: (u32, u32), p: Vec3) -> [f64; 3] {
     [origin.0 as f64 + p.x as f64, origin.1 as f64 + p.y as f64, p.z as f64]
@@ -239,6 +250,24 @@ mod tests {
 
     fn shot(name: &str) -> CameraShot {
         CameraShot::at_avatar(name.to_owned(), [-3.0, 0.0, 0.75], [1.0, 0.0, 1.0])
+    }
+
+    #[test]
+    fn only_quick_views_restore_position_roll_after_successful_placement() {
+        let mut shot = CameraShot::at_avatar("View".into(), [0.0; 3], [0.0; 3]);
+        shot.roll = Some(0.4); // Older private builds also wrote this on ordinary presets.
+        assert_eq!(position_roll(&shot, true), None);
+        shot.quick_slot = Some(0);
+        assert_eq!(position_roll(&shot, true), Some(0.4));
+        assert_eq!(position_roll(&shot, false), None);
+        shot.anchor = None;
+        assert_eq!(position_roll(&shot, true), None);
+        shot.anchor = Some(Anchor::World {
+            camera: [1.0; 3],
+            focus: [2.0; 3],
+        });
+        shot.roll = None;
+        assert_eq!(position_roll(&shot, true), None);
     }
 
     #[test]

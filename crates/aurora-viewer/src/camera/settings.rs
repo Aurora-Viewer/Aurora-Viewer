@@ -592,7 +592,7 @@ pub struct CameraShot {
     /// Optional quick-access slot (zero-based), sharing ordinary preset storage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quick_slot: Option<u8>,
-    /// Roll belongs to the saved position; absent in older presets.
+    /// Numbered quick views keep roll; ordinary presets use only their photo lens tilt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roll: Option<f32>,
     /// Quick views keep the Ctrl-0/Ctrl-8 lens without photo DOF or exposure.

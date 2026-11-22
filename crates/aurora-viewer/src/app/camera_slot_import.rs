@@ -1,11 +1,10 @@
-//! On-demand, read-only Legacy Viewer camera slot import. The AO import's
+//! On-demand, read-only Aperture-compatible camera slot import. The AO import's
 //! picker/preview/confirm flow is the UI precedent (ui/ao/migration.rs).
 
 use super::App;
 use crate::camera::{CameraShot, account_slots::State, legacy_slots};
 use crate::theme::Palette;
 use crate::ui::widgets;
-use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use uuid::Uuid;
 
@@ -46,12 +45,18 @@ fn spawn(work: impl FnOnce() -> Outcome + Send + 'static) -> Option<Receiver<Out
 
 fn source_dialog() -> rfd::FileDialog {
     let mut dialog = rfd::FileDialog::new()
-        .set_title(aurora_i18n::tr!("camera-legacy-import"))
-        .add_filter("XML", &["xml"])
+        .set_title(aurora_i18n::tr!("camera-aperture-import"))
+        .add_filter(aurora_i18n::tr!("camera-aperture-xml"), &["xml"])
         .set_file_name("settings_per_account.xml");
-    if let Some(folder) = std::env::var_os("APPDATA").map(PathBuf::from).map(|p| p.join("Firestorm_x64"))
-        && folder.is_dir()
-    {
+    // LLDir platform conventions are shared with the other importers.
+    // Prefer Aperture, then compatible Legacy forks; macOS shares their folder.
+    let mut folders = crate::legacy_profile::app_folders();
+    folders.sort_by_key(|path| {
+        !path
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().to_lowercase().contains("aperture"))
+    });
+    if let Some(folder) = folders.into_iter().find(|path| path.is_dir()) {
         dialog = dialog.set_directory(folder);
     }
     dialog
@@ -226,8 +231,12 @@ impl App {
         let applying = self.slot_import.applying;
         let modal = widgets::Modal::new(egui::Id::unique("legacy_camera_slots_import")).show(ctx, |ui| {
             ui.set_width(460.0);
-            ui.label(egui::RichText::new(aurora_i18n::tr!("camera-legacy-import")).strong().color(p.ink));
-            ui.label(aurora_i18n::tr!("camera-legacy-help"));
+            ui.label(
+                egui::RichText::new(aurora_i18n::tr!("camera-aperture-import"))
+                    .strong()
+                    .color(p.ink),
+            );
+            ui.label(aurora_i18n::tr!("camera-aperture-help"));
             if let Some(folder) = &self.slot_import.source_folder {
                 ui.label(aurora_i18n::tr!("camera-legacy-source", folder = folder.as_str()));
             }
@@ -236,7 +245,7 @@ impl App {
             }
             if let Some(preview) = preview {
                 if preview.slots.is_empty() {
-                    ui.label(aurora_i18n::tr!("camera-legacy-none"));
+                    ui.label(aurora_i18n::tr!("camera-aperture-none"));
                 }
                 if !preview.invalid.is_empty() {
                     ui.label(aurora_i18n::tr!("camera-legacy-invalid", count = preview.invalid.len() as i64));

@@ -1,5 +1,5 @@
 //! Original fine-movement behavior by this contribution's author, first
-//! implemented in a personal Firestorm fork; adapted here for Aurora.
+//! implemented in a personal Legacy Viewer fork; adapted here for Aurora.
 //! Optional: ordinary camera controls retain their existing acceleration.
 
 pub fn control_rate(held: f32, precision: bool) -> f32 {

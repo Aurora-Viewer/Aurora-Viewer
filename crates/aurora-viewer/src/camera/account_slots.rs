@@ -1,8 +1,7 @@
 //! Account-scoped quick views, following Aperture Viewer's
 //! LLAgentCamera::storeCameraPosition and its
 //! gSavedPerAccountSettings (indra/newview/llagentcamera.cpp, originally LGPL 2.1).
-//! Shared slots remain an untouched migration source, never a fallback after
-//! an account has chosen Import or Start empty. One worker orders disk writes.
+//! New accounts start empty. One worker orders disk writes.
 
 use super::{CameraShot, presets};
 use serde::{Deserialize, Serialize};
@@ -23,7 +22,6 @@ pub enum State {
     #[default]
     Inactive,
     Loading,
-    Import,
     Ready,
     Failed,
 }
@@ -46,7 +44,7 @@ pub struct Store {
     pub write_failed: bool,
     pub prompt_open: bool,
     pub slots: Vec<CameraShot>,
-    legacy: Vec<CameraShot>,
+    demo_directory: Option<PathBuf>,
     path: PathBuf,
     generation: u64,
     worker: Option<(Sender<Request>, Receiver<Reply>)>,
@@ -84,6 +82,21 @@ fn write(path: &Path, document: &Document) -> Result<(), String> {
 }
 
 impl Store {
+    /// Own one unique directory for all synthetic accounts in this run.
+    pub fn demo_path(&mut self, account: Uuid) -> std::io::Result<PathBuf> {
+        if self.demo_directory.is_none() {
+            let root = std::env::temp_dir().join(format!("aurora-camera-demo-{}", Uuid::new_v4()));
+            std::fs::create_dir(&root)?;
+            self.demo_directory = Some(root);
+        }
+        Ok(self
+            .demo_directory
+            .as_ref()
+            .expect("demo directory created above")
+            .join(account.to_string())
+            .join(FILE))
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -120,13 +133,12 @@ impl Store {
         sent
     }
 
-    pub fn select(&mut self, account: Option<Uuid>, path: PathBuf, legacy: &[CameraShot]) {
+    pub fn select(&mut self, account: Option<Uuid>, path: PathBuf) {
         self.generation += 1;
         self.account = account.filter(|id| !id.is_nil());
         self.slots.clear();
         self.write_failed = false;
         self.prompt_open = true;
-        self.legacy = quick_only(legacy);
         self.path = path;
         self.state = State::Inactive;
         if self.account.is_some() {
@@ -171,7 +183,6 @@ impl Store {
                             self.slots = document.slots;
                             self.state = State::Ready;
                         }
-                        Ok(None) if !self.legacy.is_empty() => self.state = State::Import,
                         Ok(None) => {
                             self.state = State::Ready;
                             self.save();
@@ -197,15 +208,6 @@ impl Store {
             }
         }
         changed
-    }
-
-    pub fn choose_import(&mut self, import: bool) {
-        if self.state != State::Import {
-            return;
-        }
-        self.slots = if import { self.legacy.clone() } else { Vec::new() };
-        self.state = State::Ready;
-        self.save();
     }
 
     pub fn save(&mut self) {
@@ -234,6 +236,18 @@ impl Store {
             return true;
         }
         self.barrier().recv_timeout(std::time::Duration::from_secs(5)).is_ok()
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        if self.demo_directory.is_some()
+            && self.flush()
+            && let Some(root) = self.demo_directory.take()
+            && let Err(error) = std::fs::remove_dir_all(root)
+        {
+            log::warn!("cannot remove camera demo directory: {error}");
+        }
     }
 }
 
@@ -266,49 +280,52 @@ mod tests {
     }
 
     #[test]
-    fn account_slots_import_once_preserve_views_and_keep_empty_accounts_empty() {
+    fn account_slots_start_empty_and_persist_independently_after_restart() {
         let root = directory();
         let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
         let path = |id: Uuid| root.join(id.to_string()).join(FILE);
-        let legacy = vec![shot("Shared", 0), CameraShot::at_avatar("Named".into(), [0.0; 3], [0.0; 3])];
-        let original = legacy.clone();
         let mut store = Store::default();
-        store.select(Some(a), path(a), &legacy);
+        store.select(Some(a), path(a));
         settle(&mut store);
-        assert!(store.state == State::Import);
-        assert!(store.slots.is_empty());
-        store.choose_import(true);
+        assert!(store.state == State::Ready && store.slots.is_empty());
+        store.slots.push(shot("A", 0));
+        store.save();
+        store.select(Some(b), path(b));
         settle(&mut store);
-        assert_eq!(store.slots, quick_only(&legacy));
-        store.select(Some(b), path(b), &legacy);
-        settle(&mut store);
-        store.choose_import(false);
-        settle(&mut store);
-        assert!(store.slots.is_empty());
+        assert!(store.state == State::Ready && store.slots.is_empty());
         store.slots.push(shot("B", 0));
         store.save();
-        store.select(Some(a), path(a), &legacy);
+        store.select(Some(a), path(a));
         settle(&mut store);
-        assert_eq!(store.slots[0].name, "Shared");
+        assert_eq!(store.slots[0].name, "A");
         store.slots.clear();
         store.save();
         settle(&mut store);
         let mut restarted = Store::default();
-        restarted.select(Some(a), path(a), &legacy);
+        restarted.select(Some(a), path(a));
         settle(&mut restarted);
-        assert!(
-            restarted.state == State::Ready && restarted.slots.is_empty(),
-            "deletion must not reimport"
-        );
-        restarted.select(Some(b), path(b), &legacy);
+        assert!(restarted.state == State::Ready && restarted.slots.is_empty());
+        restarted.select(Some(b), path(b));
         settle(&mut restarted);
-        assert_eq!(restarted.slots[0].name, "B");
-        assert_eq!(restarted.slots[0].quick_fov, Some(0.7));
-        assert_eq!(restarted.slots[0].quick_focus_object, Some(Uuid::from_u128(9)));
-        assert_eq!(legacy, original, "shared rollback source is unchanged");
-        restarted.select(None, PathBuf::new(), &legacy);
+        assert_eq!(restarted.slots, quick_only(&[shot("B", 0)]));
+        restarted.select(None, PathBuf::new());
         assert!(restarted.slots.is_empty() && restarted.state == State::Inactive);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn demo_accounts_share_an_owned_directory_removed_after_writes_finish() {
+        let mut store = Store::default();
+        let a = Uuid::from_u128(1);
+        let path = store.demo_path(a).unwrap();
+        let root = store.demo_directory.clone().unwrap();
+        assert!(store.demo_path(Uuid::from_u128(2)).unwrap().starts_with(&root));
+        store.select(Some(a), path);
+        settle(&mut store);
+        store.slots.push(shot("A", 0));
+        store.save();
+        drop(store);
+        assert!(!root.exists());
     }
 
     #[test]
@@ -333,16 +350,15 @@ mod tests {
         )
         .unwrap();
         let mut store = Store::default();
-        store.select(Some(a), pa.clone(), &[]);
-        store.select(Some(b), pb.clone(), &[]);
+        store.select(Some(a), pa.clone());
+        store.select(Some(b), pb.clone());
         settle(&mut store);
         assert_eq!(store.slots[0].name, "B");
         for bytes in [b"broken".as_slice(), b"{}", b"{\"version\":2,\"slots\":[]}"] {
             std::fs::write(&pa, bytes).unwrap();
-            store.select(Some(a), pa.clone(), &[shot("Legacy", 0)]);
+            store.select(Some(a), pa.clone());
             settle(&mut store);
             assert!(store.state == State::Failed && store.slots.is_empty());
-            store.choose_import(true);
             store.save();
             settle(&mut store);
             assert_eq!(std::fs::read(&pa).unwrap(), bytes);
@@ -366,7 +382,7 @@ mod tests {
         let root = directory();
         let path = root.join("account").join(FILE);
         let mut store = Store::default();
-        store.select(Some(Uuid::from_u128(1)), path.clone(), &[]);
+        store.select(Some(Uuid::from_u128(1)), path.clone());
         settle(&mut store);
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(path.parent().unwrap()).unwrap();

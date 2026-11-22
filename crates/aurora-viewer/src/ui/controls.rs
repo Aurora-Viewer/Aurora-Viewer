@@ -573,11 +573,10 @@ impl ControlsUi {
                         State::Loading => aurora_i18n::tr!("camera-account-loading"),
                         State::Failed => aurora_i18n::tr!("camera-account-load-error"),
                         State::Ready => aurora_i18n::tr!("camera-account-save-error"),
-                        State::Import => aurora_i18n::tr!("camera-account-import-help"),
                         State::Inactive => aurora_i18n::tr!("camera-account-login"),
                     });
-                    if (matches!(view.quick_state, State::Import | State::Failed) || view.quick_write_failed)
-                        && widgets::flat_button(ui, p, aurora_i18n::tr!("camera-account-setup")).clicked()
+                    if (view.quick_state == State::Failed || view.quick_write_failed)
+                        && widgets::flat_button(ui, p, aurora_i18n::tr!("camera-account-retry-open")).clicked()
                     {
                         out.actions.push(ControlAction::QuickSetup);
                     }
@@ -616,7 +615,7 @@ impl ControlsUi {
                     }
                 });
                 ui.add_enabled_ui(ready, |ui| {
-                    if widgets::flat_button(ui, p, aurora_i18n::tr!("camera-legacy-import")).clicked() {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("camera-aperture-import")).clicked() {
                         out.actions.push(ControlAction::QuickImport);
                     }
                 });
@@ -3520,8 +3519,11 @@ mod tests {
                 let view = View {
                     zoom: 0.5,
                     roll: 0.0,
+                    precision: false,
                     preset: CameraPreset::Rear,
                     shots: &[],
+                    quick_state: crate::camera::account_slots::State::Ready,
+                    quick_write_failed: false,
                     views: &views,
                     flying: false,
                     always_run: false,

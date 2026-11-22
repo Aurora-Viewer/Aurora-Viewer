@@ -491,7 +491,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:open][:menu][:replace][:folded][:favorites][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora, a LUT or a creator's LUT), the last one's strength and settings, the before / after line, the filter panel and its cards' states |
 | `AURORA_DEMO_WORLD_LOOK=<look>[+<look>…][:window]` | The world filters switched on with those looks, on the whole 3D view outside the photo mode, and their window (see Details) |
 | `AURORA_DEMO_CONTROLS=quick\|classic-quick\|camera\|roll\|movement\|compact\|compact-move\|compact-close\|compact-move-back\|movement-compact\|classic\|classic-compact\|views\|classic-views\|position\|classic-position\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, a view saved and given back, the camera position window, or driving the photo window's free camera |
-| `AURORA_DEMO_CAMERA_ACCOUNTS=prompt\|empty\|switch\|legacy-import` | Per-account quick views and Legacy Viewer slot import preview |
+| `AURORA_DEMO_CAMERA_ACCOUNTS=switch\|aperture-import` | Per-account quick views and Aperture slot import preview |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
 `AURORA_DEMO_RENDER_TEXTURE`: with demo mode and `AURORA_CAPTURE`, the capture
@@ -1074,22 +1074,21 @@ gives `camera preset: anchor object <id>`); capture at 636 for the choosing
 button lit. The presets are saved in the demo profile's settings, like the
 Controls window's.
 
-`AURORA_DEMO_CAMERA_ACCOUNTS` uses synthetic account IDs and a fresh temporary
-camera directory for each process. `prompt` shows Import / Start empty for a
-synthetic shared view; `empty` chooses Start empty at frame 640. Capture these
-at frame 740. `switch` imports for A and saves A's slot, switches to B with
-an empty camera store and saves B's different view, then returns to A at
-frame 800 and loads its slot at 840.
-Capture at 900: the name must be Account A, FOV 0.7 and roll 0.3. Combine with `AURORA_DEMO_CONTROLS=classic`
-to check the Legacy layout. No grid login is involved. Unit tests additionally
-cover restart, keeping empty accounts empty, failed storage and backup/restore.
-`legacy-import` sets up an occupied Aurora slot and two synthetic Legacy Viewer
+`AURORA_DEMO_CAMERA_ACCOUNTS` uses synthetic account IDs and an owned temporary
+camera directory, removed at exit after pending writes finish. `switch` saves
+A's slot, switches to B with an empty camera store and saves B's different view,
+then returns to A at frame 800 and loads its slot at 840.
+Capture at 900: the name must be Account A, FOV 0.7 and roll 0.3. Combine with
+`AURORA_DEMO_CONTROLS=classic` to check the Legacy layout. No grid login is involved.
+Unit tests additionally cover restart, keeping empty accounts empty, failed storage,
+backup/restore and temporary-directory cleanup.
+`aperture-import` sets up an occupied Aurora slot and two synthetic Aperture
 views at frame 660. Capture at frame 720: the preview marks only the empty
 destination for import, and names the view that would be replaced in slot 1.
 At frame 780 it imports the selected slot; capture at frame 850 to inspect the
-result. The source file picker is exercised separately with a real account.
-For human grid validation, use two accounts: import on one, start empty on the
-other, save different names/positions/roll/zoom in the same slot, and relog
+result. The source file picker is exercised separately with a compatible XML file.
+For human grid validation, use two accounts: import on one and leave the other
+empty, save different names/positions/roll/zoom in the same slot, and relog
 each. Each must retain its own camera views.
 
 `AURORA_DEMO_CONTROLS` opens the Controls window at frame 600: `camera` on

@@ -72,6 +72,7 @@ GPL-3.0-or-later as described above.
 
 | Original code (`indra/`) and its authors | Ported in (`crates/`) | Licence |
 |---|---|---|
+| Eight-slot camera save/load, `newview/llagentcamera.cpp` (`LLAgentCamera::storeCameraPosition` / `loadCameraPosition`) and `newview/skins/default/xui/en/floater_phototools_camera.xml` — Aperture Viewer contributors (based on Copyright © 2010 Linden Research, Inc.), via the contributor's personal Legacy Viewer fork | `aurora-viewer/src/camera/account_slots.rs`, `camera/legacy_slots.rs`, `app/camera_slot_import.rs`, `app/camera_presets.rs`, `ui/controls.rs` | Originally LGPL 2.1 |
 | Region tracker, `newview/alfloaterregiontracker.cpp` — Copyright © 2014 Alchemy Viewer Project | `aurora-viewer/src/world/region_tracker.rs`, `ui/region_tracker.rs` | Originally LGPL 2.1 |
 | Alchemy's pose files, `newview/bdfloaterposer.cpp`, `bdanimator.cpp` (Alchemy Viewer) — Copyright © 2018 NiranV Dean | `aurora-viewer/src/ik_edit/poser/legacy_pose.rs` | Originally LGPL 2.1 |
 | Animation overrider, `newview/aoengine.cpp`, `aoengine.h`, `aoset.cpp`, `ao.cpp` — Copyright © 2011 Zi Ree | `aurora-viewer/src/ao/`, `ui/ao/`, `movement.rs`, `movement/water_walk.rs`, `world/friend_join.rs` | Originally LGPL 2.1 |
