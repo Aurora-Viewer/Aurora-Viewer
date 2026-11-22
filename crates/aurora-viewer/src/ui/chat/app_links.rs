@@ -128,6 +128,7 @@ fn resolved(world: &World, want_names: &mut HashSet<Uuid>, link: &AppLink) -> Op
             let name = world
                 .land
                 .known_experience(id)
+                .filter(|d| !d.invalid())
                 .map(|d| d.name.clone())
                 .or_else(|| world.experiences.details.get(id).map(|d| d.name.clone()));
             match name {
@@ -538,5 +539,31 @@ mod tests {
         let im = format!("secondlife:///app/agent/{id}/im");
         label(&im, &mut names);
         assert!(names.contains(&id));
+    }
+
+    /// A failed GetExperienceInfo leaves an invalid entry in the land's
+    /// cache; the link still shows the name the Experiences cache knows.
+    #[test]
+    fn a_failed_land_experience_falls_back_to_its_known_name() {
+        use aurora_net::NetEvent;
+        use aurora_net::experience::ExperienceDetails;
+        use aurora_net::land::LandEvent;
+
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = Uuid::from_u128(0xE1);
+        world.apply(NetEvent::Land(LandEvent::ExperienceInfo(vec![ExperienceDetails::unknown(id)])));
+        world.experiences.details.insert(
+            id,
+            ExperienceDetails {
+                id,
+                name: "Known experience".into(),
+                ..Default::default()
+            },
+        );
+        let mut wants = HashSet::new();
+        assert_eq!(
+            resolved(&world, &mut wants, &AppLink::Experience(id)).as_deref(),
+            Some("Known experience")
+        );
     }
 }

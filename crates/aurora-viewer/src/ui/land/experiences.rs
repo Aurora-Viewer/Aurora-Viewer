@@ -168,15 +168,17 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
 /// only, and two experiences with the same name cannot be told apart
 /// without their creator.
 pub(super) fn describe(world: &mut World, id: Uuid) -> (String, Option<String>) {
-    let Some(d) = world.land.experience(&id) else {
+    let Some(owner) = world
+        .land
+        .experience(&id)
+        .map(|d| (!d.invalid()).then_some(d.owner).filter(|o| !o.is_nil()))
+    else {
         return (aurora_i18n::tr!("common-loading").into(), None);
     };
-    let name = if d.name.trim().is_empty() {
-        aurora_i18n::tr!("ui-land-picker-experience-untitled").to_owned()
-    } else {
-        d.name.trim().to_owned()
-    };
-    let owner = (!d.invalid()).then_some(d.owner).filter(|o| !o.is_nil());
+    let name = world
+        .land
+        .experience_name(&id)
+        .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
     (name, owner.and_then(|owner| super::creator_name(world, owner)))
 }
 
