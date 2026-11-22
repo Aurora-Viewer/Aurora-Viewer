@@ -2705,4 +2705,77 @@ mod tests {
         assert_eq!(flags::OBJECT_MASK_PICK & flags::WORLD_BLEND_PICK, 0);
         assert_eq!(flags::STUDIO_STAGE & (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT), 0);
     }
+
+    /// The flags the shaders test in `frame.light_mode.z`, by name, with
+    /// their value. The low byte is a number, not a flag: left out.
+    fn light_mode_flags(sources: &[&str]) -> Vec<(String, u32)> {
+        const READ: &str = "light_mode.z & ";
+        let mut names: Vec<&str> = Vec::new();
+        for src in sources {
+            for (at, _) in src.match_indices(READ) {
+                let rest = &src[at + READ.len()..];
+                let end = rest
+                    .find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+                    .unwrap_or(rest.len());
+                let name = &rest[..end];
+                if name.starts_with(|c: char| c.is_ascii_uppercase()) && !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        names
+            .into_iter()
+            .map(|name| {
+                let declared = format!("const {name}: u32 = 0x");
+                let value = sources.iter().find_map(|src| {
+                    let rest = &src[src.find(&declared)? + declared.len()..];
+                    u32::from_str_radix(&rest[..rest.find('u')?], 16).ok()
+                });
+                (
+                    name.to_owned(),
+                    value.unwrap_or_else(|| panic!("{name} is declared in hexadecimal")),
+                )
+            })
+            .collect()
+    }
+
+    /// The pairs of `flags` that have a bit in common.
+    fn sharing_a_bit(flags: &[(String, u32)]) -> Vec<(&str, &str)> {
+        let mut pairs = Vec::new();
+        for (k, (a, bits)) in flags.iter().enumerate() {
+            for (b, other) in &flags[k + 1..] {
+                if bits & other != 0 {
+                    pairs.push((a.as_str(), b.as_str()));
+                }
+            }
+        }
+        pairs
+    }
+
+    /// Each flag of `frame.light_mode.z` has a bit of its own. Two changes
+    /// that each take the next free one merge without a conflict, and each
+    /// option then turns the other on.
+    #[test]
+    fn the_flags_of_the_light_mode_word_share_no_bit() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaders");
+        let sources: Vec<String> = std::fs::read_dir(&dir)
+            .expect("the shaders' folder")
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .filter(|path| path.extension().is_some_and(|e| e == "wgsl"))
+            .map(|path| std::fs::read_to_string(&path).expect("a shader's source"))
+            .collect();
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let flags = light_mode_flags(&sources);
+        assert!(flags.len() >= 16, "the flags are found: {flags:?}");
+        for (name, bits) in &flags {
+            assert_eq!(bits.count_ones(), 1, "{name} is one bit");
+            assert!(*bits > 0xff, "{name} is clear of the view's number");
+        }
+        assert_eq!(sharing_a_bit(&flags), []);
+
+        let clash = "const A: u32 = 0x800000u;\nconst B: u32 = 0x800000u;\nconst C: u32 = 0x400u;\n\
+                     if ((frame.light_mode.z & A) != 0u && (frame.light_mode.z & 0xffu) == 1u) {}\n\
+                     if ((frame.light_mode.z & B) != 0u || (frame.light_mode.z & C) != 0u) {}";
+        assert_eq!(sharing_a_bit(&light_mode_flags(&[clash])), [("A", "B")]);
+    }
 }
