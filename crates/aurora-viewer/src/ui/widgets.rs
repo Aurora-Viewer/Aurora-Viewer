@@ -1962,6 +1962,12 @@ pub fn floater_expand_pending(ctx: &egui::Context, id: &str) -> bool {
         || super::layout::reset_pending(ctx, egui::Id::unique(id))
 }
 
+/// Drops an expand asked for by `expand_floater` that the floater `id` has
+/// not shown yet (a window reset's is left).
+pub fn cancel_expand(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(EXPAND)));
+}
+
 /// The toolbar button, menu entry or shortcut of the floater `id`
 /// (LLFloaterReg::toggleInstance): a floater shown closes, a minimized one
 /// expands, a closed one opens expanded. LLFloater::openFloater and

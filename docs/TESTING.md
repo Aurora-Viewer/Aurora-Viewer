@@ -1063,6 +1063,10 @@ with "Compact camera controls" on for that run (not saved; #3904),
 `compact-close` the same, then the toolbar's camera button pressed at 640 (it
 closes, logged at 660) and again at 680 (it opens compact, logged and captured
 at 700; #3904),
+`compact-move-back` the same as `compact-move`, then the window's Camera tab
+clicked at 660 (the camera compact again, as saved, logged at 680; #3904),
+`movement-compact` the Movement tab made compact at 640, as its title button
+does (the movement pad and walk / run / fly; #3904, capture at 700),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
 not saved). `views` (Aurora's window) and `classic-views` (the Legacy
 Viewer's camera window) save a view (#2755): the camera turned away at 610

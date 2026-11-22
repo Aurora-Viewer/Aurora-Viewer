@@ -365,6 +365,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-aurora-controls-compact-help"),
                     &field!(compact_controls),
                 );
+                cx.toggle(
+                    tr!("ui-options-aurora-controls-compact-movement"),
+                    tr!("ui-options-aurora-controls-compact-movement-help"),
+                    &field!(compact_movement_controls),
+                );
             });
         }),
         1 => {

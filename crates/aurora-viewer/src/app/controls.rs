@@ -37,7 +37,10 @@ impl App {
             }),
         };
         // AURORA_DEMO_CONTROLS=compact…: compact for the run, not saved
-        let before = self.settings.compact_controls || (self.demo && demo_compact());
+        let before = crate::ui::controls::Compact {
+            camera: self.settings.compact_controls || (self.demo && demo_compact()),
+            movement: self.settings.compact_movement_controls,
+        };
         let mut compact = before;
         let out = self.controls_ui.show(
             ctx,
@@ -49,7 +52,10 @@ impl App {
             &view,
         );
         if compact != before {
-            self.settings.compact_controls = compact;
+            if compact.camera != before.camera {
+                self.settings.compact_controls = compact.camera;
+            }
+            self.settings.compact_movement_controls = compact.movement;
             self.settings.save();
         }
         self.controls_held = out.held;
@@ -225,7 +231,10 @@ impl App {
     /// `compact`; `compact-move` also, then Move pressed 40 frames later as
     /// the toolbar does, #1815; `compact-close` the camera's toolbar button
     /// pressed at 640, which closes it, and again at 680, which opens it
-    /// compact, #3904); `free` the
+    /// compact, #3904; `compact-move-back` Move pressed at 640, then the
+    /// window's Camera tab at 660: compact again, logged at 680, #3904;
+    /// `movement-compact` the Movement tab made compact at
+    /// 640, as its title button does: the movement pad); `free` the
     /// photo window's free camera on, which opens it, `free-compact` the
     /// same minimized; 40 frames later the free camera has flown 2 m to the
     /// left and 1 m up and turned toward the avatar, which stayed.
@@ -269,6 +278,27 @@ impl App {
             self.request_controls(true, true);
             log::info!("demo controls: Move pressed on the minimized window");
         }
+        if std::env::var("AURORA_DEMO_CONTROLS").as_deref() == Ok("compact-move-back") {
+            let compact = || crate::ui::widgets::floater_minimized(&self.egui_ctx, crate::ui::controls::WINDOW);
+            match self.frame_count {
+                640 => self.request_controls(true, true),
+                660 => {
+                    log::info!("demo controls: Move pressed, compact {}", compact());
+                    // the window's Camera tab clicked
+                    self.controls_ui.tab = crate::ui::controls::Tab::Camera;
+                }
+                680 => log::info!(
+                    "demo controls: back by the Camera tab, camera {} compact {}",
+                    self.panels.camera_controls,
+                    compact()
+                ),
+                _ => {}
+            }
+        }
+        if self.frame_count == 640 && std::env::var("AURORA_DEMO_CONTROLS").as_deref() == Ok("movement-compact") {
+            crate::ui::widgets::minimize_floater(&self.egui_ctx, crate::ui::controls::WINDOW);
+            log::info!("demo controls: the Movement tab made compact");
+        }
         if std::env::var("AURORA_DEMO_CONTROLS").as_deref() == Ok("compact-close") {
             let compact = || crate::ui::widgets::floater_minimized(&self.egui_ctx, crate::ui::controls::WINDOW);
             match self.frame_count {
@@ -305,9 +335,9 @@ impl App {
                 self.panels.camera_controls = true;
                 self.camera.roll = 15.0_f32.to_radians();
             }
-            Ok("movement") => self.panels.movement_controls = true,
+            Ok("movement" | "movement-compact") => self.panels.movement_controls = true,
             // compact for this run only (`demo_compact`, AGENTS.md section 4)
-            Ok("compact" | "compact-move" | "compact-close") => self.panels.camera_controls = true,
+            Ok("compact" | "compact-move" | "compact-move-back" | "compact-close") => self.panels.camera_controls = true,
             Ok("classic") => {
                 self.settings.classic_controls = true;
                 self.panels.camera_controls = true;
@@ -331,7 +361,7 @@ fn demo_compact() -> bool {
     *ON.get_or_init(|| {
         matches!(
             std::env::var("AURORA_DEMO_CONTROLS").as_deref(),
-            Ok("compact" | "compact-move" | "compact-close")
+            Ok("compact" | "compact-move" | "compact-move-back" | "compact-close")
         )
     })
 }
