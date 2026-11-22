@@ -16,6 +16,7 @@ struct Destination {
 }
 
 pub(super) struct MoveTo {
+    explorer_root: Option<Uuid>,
     ids: Vec<Uuid>,
     pub(super) filter: String,
     selected: Option<Uuid>,
@@ -34,6 +35,7 @@ pub(super) struct MoveTo {
 impl MoveTo {
     pub(super) fn new(ids: Vec<Uuid>) -> Self {
         Self {
+            explorer_root: None,
             ids,
             filter: String::new(),
             selected: None,
@@ -50,10 +52,20 @@ impl MoveTo {
         }
     }
 
+    pub(super) fn explorer(root: Uuid, ids: Vec<Uuid>) -> Self {
+        Self {
+            explorer_root: Some(root),
+            ..Self::new(ids)
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, inv: &Inventory, protected: &HashSet<Uuid>) {
         let generation = (inv.generation, aurora_i18n::language(), view::picker_sort(ctx));
         if self.generation != Some(generation) || self.protected != *protected {
             self.destinations = destinations(inv, &self.ids, protected);
+            if self.explorer_root.is_some() {
+                self.destinations.retain(|row| organized_model::personal_contents(inv, row.id));
+            }
             let order = view::picker_order(ctx, inv);
             self.destinations.par_sort_unstable_by_key(|row| order.rank(row.id));
             self.failed = inv
@@ -139,6 +151,9 @@ pub(super) fn show(
     actions: &mut Vec<InvAction>,
 ) {
     let Some(mut picker) = st.move_to.take() else { return };
+    if picker.explorer_root.is_some_and(|root| root != inv.root) {
+        return;
+    }
     if picker.generation.is_some_and(|generation| generation.0 != inv.generation) {
         picker.loaded = false;
     }
@@ -153,7 +168,11 @@ pub(super) fn show(
     let window_id = format!("inventory_move_to_{}", st.ui_id);
     Floater::new(
         &window_id,
-        aurora_i18n::tr!("inventory-move-to"),
+        if picker.explorer_root.is_some() {
+            aurora_i18n::tr!("explorer-real-move")
+        } else {
+            aurora_i18n::tr!("inventory-move-to")
+        },
         ctx.content_rect().center() - egui::vec2(260.0, 220.0),
         Vec2::new(520.0, 440.0),
     )
@@ -262,7 +281,15 @@ pub(super) fn show(
                     {
                         // Revalidate against the current model and permissions;
                         // the selection is the snapshot taken when the menu opened.
-                        match rules::move_selection(inv, &picker.ids, to, &prefs.protected, &facts.worn) {
+                        let allowed = picker.explorer_root.is_none()
+                            || (organized_model::personal_contents(inv, to)
+                                && picker.ids.iter().all(|id| !organized_model::client_managed(inv, *id)));
+                        let plan = if allowed {
+                            rules::move_selection(inv, &picker.ids, to, &prefs.protected, &facts.worn)
+                        } else {
+                            Err(aurora_i18n::tr!("explorer-real-unavailable").into())
+                        };
+                        match plan {
                             Ok(change) if !change.operations.is_empty() => {
                                 actions.push(InvAction::Edit(change));
                                 done = true;
@@ -759,7 +786,7 @@ mod tests {
                             &Default::default(),
                             &Default::default(),
                             &Default::default(),
-                            true,
+                            crate::settings::InventoryStyle::Classic,
                         )
                         .is_empty()
                     );

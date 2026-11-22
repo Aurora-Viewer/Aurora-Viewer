@@ -37,6 +37,8 @@ $pages = @(
     @{ Section = 'For testers'; Page = 'IK-Edit'; Title = 'IK Edit'; Source = 'docs/IK_EDIT.md' }
     @{ Section = 'For testers'; Page = 'Animation-creation'; Title = 'Create native animations'; Source = 'docs/ANIMATION_CREATION.md' }
     @{ Section = 'For testers'; Page = 'Poser'; Title = 'Local photo poser'; Source = 'docs/POSER.md' }
+    @{ Section = 'For testers'; Page = 'Inventory-Explorer'; Title = 'Inventory Explorer'; Source = 'docs/INVENTORY-EXPLORER.md' }
+    @{ Section = 'Technical'; Page = 'Inventory-Explorer-development'; Title = 'Inventory Explorer development'; Source = 'docs/INVENTORY-EXPLORER-DEVELOPMENT.md' }
     @{ Section = 'For testers'; Page = 'Dev-Toolbox'; Title = 'Dev Toolbox'; Source = 'docs/DEV_TOOLBOX.md' }
     @{ Section = 'Contributing'; Page = 'Guide-for-humans'; Title = 'Guide for humans'; Source = 'HUMANS.md' }
     @{ Section = 'Contributing'; Page = 'Test-options'; Title = 'Test options and profiling'; Source = 'docs/TESTING.md' }

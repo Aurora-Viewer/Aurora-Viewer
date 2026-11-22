@@ -198,7 +198,7 @@ fn place_portal_drags_start_from_every_favorites_and_places_view_and_leave_reord
                             );
                         }
                     }
-                    world_drop.replace(crate::ui::inventory::world_drag(root.ctx()));
+                    world_drop.replace(crate::ui::inventory::world_drag(root));
                     history_drop.replace(location_world_drag(root.ctx()));
                     ghost(root.ctx(), &p);
                 },

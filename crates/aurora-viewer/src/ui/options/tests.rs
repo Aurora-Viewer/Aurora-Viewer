@@ -441,7 +441,7 @@ const BEFORE: &[&str] = &[
     "classic_region_estate",
     "classic_places",
     "destinations_style",
-    "classic_inventory",
+    "inventory_style",
     "classic_pay_window",
     "legacy_money_tracker",
     "classic_controls",
@@ -912,6 +912,49 @@ fn click(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
         vec![button(false)],
         Vec::new(),
     ]
+}
+
+#[test]
+fn inventory_style_choices_work_from_search_and_reset_with_the_aurora_page() {
+    use crate::settings::InventoryStyle;
+    use aurora_i18n::tr;
+
+    let mut frames = Frames::new();
+    let mut s = Settings::default();
+    let defaults = Settings::default();
+    let palette = crate::theme::Theme::default().palette();
+    let (mut st, mut result) = (OptionsUi::default(), OptionsResult::default());
+    let explorer = tr!("ui-options-aurora-inventory-explorer");
+    let mut frame = |events, s: &mut Settings| {
+        frames.run(events, |ui| {
+            ui.set_width(700.0);
+            let mut cx = Cx::new(ui, palette, s, &defaults, &mut st, &mut result, Mode::Search, explorer);
+            run_page(&mut cx, Page::Aurora, Some(0));
+        })
+    };
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = frame(Vec::new(), &mut s);
+    }
+    for (style, label) in [
+        (InventoryStyle::Explorer, explorer),
+        (InventoryStyle::Classic, tr!("ui-options-aurora-about-land-classic")),
+        (InventoryStyle::Aurora, tr!("ui-options-aurora-about-land-aurora")),
+        (InventoryStyle::Explorer, explorer),
+    ] {
+        let at = texts
+            .iter()
+            .find(|t| t.source == label)
+            .expect("inventory style choice")
+            .rect
+            .center();
+        for events in click(at) {
+            texts = frame(events, &mut s);
+        }
+        assert_eq!(s.inventory_style, style);
+    }
+    reset_page_settings(Page::Aurora, &mut s);
+    assert_eq!(s.inventory_style, InventoryStyle::Aurora);
 }
 
 #[test]

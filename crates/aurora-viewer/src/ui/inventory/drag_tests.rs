@@ -135,7 +135,7 @@ impl Fixture {
                 if let Some(cursor) = drag::cursor(ui.ctx()) {
                     ui.ctx().set_cursor_icon(cursor);
                 }
-                drag::badge(ui.ctx(), &p);
+                drag::badge(ui.ctx(), &p, &self.inv);
             },
         );
         output.textures_delta.clear();

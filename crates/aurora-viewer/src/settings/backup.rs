@@ -224,7 +224,7 @@ impl Backup {
     /// this PC's login, window, folders and devices; `None` when they are
     /// not readable.
     pub fn settings(&self, current: &Settings) -> Option<Settings> {
-        let read = crate::tolerant::from_value::<Settings>(self.settings.clone()?, "settings backup")?;
+        let read = Settings::read_values(self.settings.clone()?, "settings backup")?;
         let mut restored = read.value.sanitized();
         restored.keep_this_pc(current);
         Some(restored)
@@ -422,6 +422,19 @@ mod tests {
             }
         }
         assert_eq!(backup.layout(), Some("layout"));
+    }
+
+    #[test]
+    fn restore_migrates_the_previous_inventory_style_into_a_new_backup() {
+        let current = Settings::default();
+        let previous = Backup {
+            settings: Some(serde_json::json!({"classic_inventory": false, "inventory": {"organized_explorer": true}})),
+            ..Default::default()
+        };
+        let restored = previous.settings(&current).unwrap();
+        assert_eq!(restored.inventory_style, crate::settings::InventoryStyle::Explorer);
+        let saved = Backup::new(&restored, None);
+        assert_eq!(saved.settings(&current).unwrap().inventory_style, restored.inventory_style);
     }
 
     #[test]

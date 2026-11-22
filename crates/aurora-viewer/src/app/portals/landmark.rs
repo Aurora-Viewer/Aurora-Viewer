@@ -214,7 +214,7 @@ pub(in crate::app) fn preview(ctx: &egui::Context, p: &Palette, point: egui::Pos
     } else {
         20.0
     };
-    egui::Area::new(egui::Id::unique("portal_landmark_preview"))
+    let hint = egui::Area::new(egui::Id::unique("portal_landmark_preview"))
         .order(egui::Order::Tooltip)
         .fixed_pos(point + egui::vec2(16.0, offset))
         .interactable(false)
@@ -223,6 +223,7 @@ pub(in crate::app) fn preview(ctx: &egui::Context, p: &Palette, point: egui::Pos
                 ui.label(aurora_i18n::tr!("portal-drop"));
             });
         });
+    ui::inventory::drag::note_hint_rect(ctx, hint.response.rect);
 }
 
 #[cfg(test)]
@@ -256,7 +257,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    read = ui::inventory::world_drag(ui.ctx());
+                    read = ui::inventory::world_drag(ui);
                     preview(ui.ctx(), &crate::theme::Theme::default().palette(), point);
                 },
             );

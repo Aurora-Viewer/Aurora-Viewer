@@ -1,4 +1,4 @@
-//! Aurora's inventory window (`Settings::classic_inventory` off): one
+//! Aurora's adaptive inventory window: one
 //! window that widens. At its default size, the Legacy Viewer's tree under
 //! icon tabs, with the selection's card at the bottom. From ~720 px the
 //! tabs become shortcuts in a column at the left above the folders, and the
@@ -109,11 +109,6 @@ fn demo_mode() -> Option<&'static str> {
     .as_deref()
 }
 
-/// Whether one of Aurora's inventory scenarios runs.
-pub fn demo_active() -> bool {
-    demo_mode().is_some()
-}
-
 /// The folder window of `aurora-folder-window` (its id names its layout).
 pub const DEMO_FOLDER_WINDOW: Uuid = Uuid::from_u128(0xA0F0);
 
@@ -124,6 +119,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     if frame == 2 {
         // "-no-details": the same width, the details hidden
         let size = match mode.strip_suffix("-no-details").unwrap_or(mode) {
+            "aurora-organized" => egui::vec2(790.0, 542.0),
             "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" | "aurora-delete-confirm-medium" | "aurora-gallery-medium" => {
                 egui::vec2(800.0, 640.0)
             }

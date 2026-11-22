@@ -12,6 +12,7 @@ pub(super) struct Uploads {
 }
 
 struct Upload {
+    explorer: Option<Uuid>,
     permissions: Option<crate::inventory::upload::Permissions>,
     transaction: Uuid,
     parent: Uuid,
@@ -84,6 +85,7 @@ impl Session<'_> {
         self.inventory_uploads.assets.insert(
             asset,
             Upload {
+                explorer: None,
                 transaction,
                 parent: pending.item.parent,
                 kind: 0,
@@ -128,6 +130,7 @@ impl Session<'_> {
         self.inventory_uploads.assets.insert(
             asset,
             Upload {
+                explorer: None,
                 transaction,
                 parent: upload.folder,
                 kind: 255,
@@ -150,8 +153,19 @@ impl Session<'_> {
         name: String,
         data: Vec<u8>,
         permissions: Option<crate::inventory::upload::Permissions>,
+        explorer: Option<Uuid>,
     ) {
         if kind >= 17 || data.is_empty() || data.len() > 64 * 1024 || self.inventory_uploads.assets.len() >= 8 {
+            if let Some(request) = explorer {
+                emit(
+                    self.sh,
+                    NetEvent::ExplorerItemCreated {
+                        request,
+                        result: Err(aurora_i18n::tr!("session-inventory-upload-creation-denied-invalid-type-size-or-upload-count").into()),
+                    },
+                );
+                return;
+            }
             emit(
                 self.sh,
                 NetEvent::InventoryOperationFailed(
@@ -175,6 +189,7 @@ impl Session<'_> {
         self.inventory_uploads.assets.insert(
             asset,
             Upload {
+                explorer,
                 transaction,
                 parent,
                 kind,
@@ -210,6 +225,7 @@ impl Session<'_> {
         self.inventory_uploads.assets.insert(
             asset,
             Upload {
+                explorer: None,
                 transaction,
                 parent: Uuid::nil(),
                 kind: 255,
@@ -336,6 +352,18 @@ impl Session<'_> {
                 }
                 return Ok(true);
             }
+            if !m.asset_block.success
+                && let Some(request) = upload.explorer
+            {
+                emit(
+                    self.sh,
+                    NetEvent::ExplorerItemCreated {
+                        request,
+                        result: Err(aurora_i18n::tr!("session-inventory-upload-the-server-rejected-the-new-clothing-asset").into()),
+                    },
+                );
+                return Ok(true);
+            }
             if !m.asset_block.success {
                 emit(
                     self.sh,
@@ -349,7 +377,7 @@ impl Session<'_> {
             m.agent_data.agent_id = self.agent_id();
             m.agent_data.session_id = self.session_id();
             m.inventory_block.folder_id = upload.parent;
-            m.inventory_block.callback_id = self.inventory_callback(true);
+            m.inventory_block.callback_id = self.creation_callback(upload.explorer);
             m.inventory_block.transaction_id = upload.transaction;
             m.inventory_block.next_owner_mask = upload.permissions.map_or(0x7fff_ffff, |rights| rights.next_owner);
             if let Some(rights) = upload.permissions {
@@ -396,6 +424,16 @@ impl Session<'_> {
                     );
                     return Ok(true);
                 }
+                if let Some(request) = removed.as_ref().and_then(|u| u.explorer) {
+                    emit(
+                        self.sh,
+                        NetEvent::ExplorerItemCreated {
+                            request,
+                            result: Err(aurora_i18n::tr!("session-inventory-upload-the-clothing-upload-was-interrupted").into()),
+                        },
+                    );
+                    return Ok(true);
+                }
                 if let Some((request, _)) = removed.and_then(|u| u.import) {
                     emit(
                         self.sh,
@@ -421,6 +459,7 @@ impl Session<'_> {
     pub(super) fn expire_inventory_uploads(&mut self) {
         let mut retry = Vec::new();
         let mut failed = false;
+        let mut explorer_failed = Vec::new();
         let mut imports = Vec::new();
         let mut wearables = Vec::new();
         let mut reports = 0;
@@ -436,6 +475,8 @@ impl Session<'_> {
                     reports += 1;
                 } else if let Some((request, _)) = &u.import {
                     imports.push(*request);
+                } else if let Some(request) = u.explorer {
+                    explorer_failed.push(request);
                 } else if u.wearable.is_none() {
                     failed = true;
                 }
@@ -456,6 +497,8 @@ impl Session<'_> {
                         reports += 1;
                     } else if let Some((request, _)) = &u.import {
                         imports.push(*request);
+                    } else if let Some(request) = u.explorer {
+                        explorer_failed.push(request);
                     } else if u.wearable.is_none() {
                         failed = true;
                     }
@@ -467,6 +510,15 @@ impl Session<'_> {
             }
             true
         });
+        for request in explorer_failed {
+            emit(
+                self.sh,
+                NetEvent::ExplorerItemCreated {
+                    request,
+                    result: Err(aurora_i18n::tr!("session-inventory-upload-the-clothing-upload-was-interrupted").into()),
+                },
+            );
+        }
         for asset in retry {
             self.send_inventory_packet(asset);
         }

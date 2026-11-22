@@ -174,6 +174,7 @@ impl App {
                 self.settings.inventory.creation_permissions.wearables.permissions(),
             ) {
                 Ok(data) => self.send(NetCommand::CreateInventoryWearable {
+                    explorer: None,
                     parent,
                     kind: KIND,
                     name,

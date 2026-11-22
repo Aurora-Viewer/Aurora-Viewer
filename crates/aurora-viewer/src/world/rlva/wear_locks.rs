@@ -83,6 +83,21 @@ impl WearLocks {
         }
     }
 
+    /// A fixed folder-removal snapshot for inventory action regressions.
+    #[cfg(test)]
+    pub(crate) fn holding_folders(folders: impl IntoIterator<Item = Uuid>) -> Self {
+        let folders: HashSet<_> = folders.into_iter().collect();
+        Self {
+            active: true,
+            folders: FolderSets {
+                holds: folders.clone(),
+                kept: folders,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
     /// Whether the worn item `item` (an original, not a link) can be taken off.
     pub fn can_remove(&self, item: Uuid) -> bool {
         !self.active || !self.fixed.contains(&item)

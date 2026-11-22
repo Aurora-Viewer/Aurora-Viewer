@@ -126,10 +126,18 @@ pub(super) fn similar(c: &mut Catalog, zone: &str, inv: &Inventory, id: Uuid, si
     }
 }
 
-pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts, all: bool) {
-    let single = st.selected_ids(id).len() == 1;
+pub(super) fn build(
+    c: &mut Catalog,
+    inv: &Inventory,
+    id: Uuid,
+    st: &InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    all: bool,
+    ids: Vec<Uuid>,
+) {
+    let single = ids.len() == 1;
     let folder = inv.folders.contains_key(&id);
-    let ids = st.selected_ids(id);
     let selected: Vec<_> = ids
         .iter()
         .filter_map(|id| rules::original(inv, *id))
@@ -277,16 +285,6 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             aurora_i18n::tr!("inventory-clean-broken-links"),
             ready && single && rules::mutable(inv, id),
             super::Command::Extra(Command::CleanLinks(id)),
-        );
-    }
-    if selected.first().is_some_and(|item| item.asset_type == 56) || all {
-        c.invoke(
-            "apply-parcel",
-            TEXT,
-            "map-filled",
-            aurora_i18n::tr!("ui-env-editor-apply-parcel"),
-            single && facts.parcel_environment && selected.first().is_some_and(|item| !item.asset_id.is_nil()),
-            InvAction::EnvironmentParcel(selected.first().map_or(id, |item| item.id)),
         );
     }
     if complete_selection && selected.iter().all(|item| matches!(item.asset_type, 0 | 15)) || all {

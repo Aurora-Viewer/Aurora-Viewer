@@ -64,33 +64,127 @@ fn percent(pos: f32) -> String {
     }
 }
 
+/// The exact inventory item, permission flags and destination at the time of the warning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct InventoryEnvironment {
+    agent: uuid::Uuid,
+    item: uuid::Uuid,
+    asset: uuid::Uuid,
+    kind: SettingsKind,
+    name: String,
+    flags: u32,
+    parcel: aurora_net::land::ConfirmedEnvParcel,
+    region_name: String,
+}
+
+impl InventoryEnvironment {
+    fn current(world: &crate::world::World, item: uuid::Uuid) -> Option<Self> {
+        let inv = &world.inventory;
+        let it = inv.items.get(&item)?;
+        let kind = crate::world::env_select::inventory_settings_kind(it)?;
+        if [14, 53]
+            .into_iter()
+            .any(|folder| crate::world::inventory::actions::in_type(inv, item, folder))
+        {
+            return None;
+        }
+        let p = env_apply::inventory_parcel(world)?;
+        let handle = world.main_region?;
+        let region = world.regions.get(&handle)?;
+        let mask = crate::world::inventory::actions::held(inv, it);
+        Some(Self {
+            agent: world.agent_id,
+            item,
+            asset: it.asset_id,
+            kind,
+            name: it.name.clone(),
+            // Inventory flags carry the EEP subtype in the low byte, not the asset's permission flags.
+            flags: env_apply::apply_flags(Some(mask), 0),
+            parcel: aurora_net::land::ConfirmedEnvParcel::new(handle, p),
+            region_name: if region.name.is_empty() {
+                format!("{handle}")
+            } else {
+                region.name.clone()
+            },
+        })
+    }
+}
+
 impl App {
-    /// LLSettingsBridge::performAction(apply_settings_parcel): apply the
-    /// inventory asset directly, retaining the ordinary access/ack path.
     pub(super) fn inventory_environment_parcel(&mut self, item: uuid::Uuid) {
-        let Some(item) = self
-            .world
-            .inventory
-            .items
-            .get(&item)
-            .filter(|item| item.asset_type == 56 && !item.asset_id.is_nil())
-            .cloned()
-        else {
+        if self.inventory_env_prompt.is_some() {
+            return;
+        }
+        let next = InventoryEnvironment::current(&self.world, item);
+        if next
+            .as_ref()
+            .is_some_and(|next| self.world.inventory_environment_pending(&next.parcel))
+        {
+            self.world.system_message(aurora_i18n::tr!("ui-env-apply-sent-parcel"));
+            return;
+        }
+        self.inventory_env_prompt = next;
+        if self.inventory_env_prompt.is_none() {
+            self.env_alert(
+                aurora_i18n::tr!("explorer-parcel-env-title"),
+                aurora_i18n::tr!("explorer-parcel-env-changed"),
+            );
+        }
+    }
+
+    pub(super) fn draw_inventory_environment_confirm(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.inventory_env_prompt.as_ref() else {
             return;
         };
-        let title = aurora_i18n::tr!("ui-env-editor-apply-parcel");
-        let Some(target) = self.apply_target(false, title) else { return };
-        let mask = crate::world::inventory::actions::held(&self.world.inventory, &item);
-        let command = LandCommand::EnvironmentApply {
-            local_id: target.local_id(),
-            track: None,
-            asset: item.asset_id,
-            name: item.name,
-            flags: env_apply::apply_flags(Some(mask), item.flags),
-            day_length: -1,
-            day_offset: -1,
+        let current = InventoryEnvironment::current(&self.world, pending.item);
+        if current.as_ref() != Some(pending) {
+            self.inventory_env_prompt = None;
+            self.env_alert(
+                aurora_i18n::tr!("explorer-parcel-env-title"),
+                aurora_i18n::tr!("explorer-parcel-env-changed"),
+            );
+            return;
+        }
+        let parcel = if pending.parcel.name.is_empty() {
+            format!("#{}", pending.parcel.local_id)
+        } else {
+            pending.parcel.name.clone()
         };
-        self.send_env_apply(target, command, Sender::Commit);
+        let mut apply = false;
+        let modal = crate::ui::widgets::Modal::new(egui::Id::unique("inventory_parcel_environment_warning")).show(ctx, |ui| {
+            ui.set_max_width(390.0);
+            ui.heading(aurora_i18n::tr!("explorer-parcel-env-title"));
+            ui.add_space(6.0);
+            ui.label(aurora_i18n::tr!(
+                "explorer-parcel-env-warning",
+                preset = pending.name.as_str(),
+                parcel = parcel.as_str(),
+                region = pending.region_name.as_str()
+            ));
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button(aurora_i18n::tr!("common-cancel")).clicked() {
+                    ui.close();
+                }
+                apply = ui.button(aurora_i18n::tr!("explorer-parcel-env-confirm")).clicked();
+            });
+        });
+        if apply {
+            // The revalidated snapshot above is the one the user saw. Consume it before dispatch.
+            if let Some(p) = self.inventory_env_prompt.take()
+                && let Some(request) = self.world.begin_inventory_environment(&p.parcel)
+            {
+                self.send(NetCommand::Land(LandCommand::InventoryEnvironment {
+                    request,
+                    parcel: p.parcel,
+                    asset: p.asset,
+                    name: p.name,
+                    flags: p.flags,
+                }));
+            }
+        } else if modal.should_close() {
+            self.inventory_env_prompt = None;
+        }
     }
     /// LLEnvironment::isExtendedEnvironmentEnabled: the agent's region has
     /// ExtEnvironment (always in the offline demo).
@@ -817,4 +911,69 @@ fn import_day_file(path: &Path) -> Result<DayDoc, String> {
         };
         fail(reasons)
     })
+}
+
+#[cfg(test)]
+mod inventory_confirmation_tests {
+    use super::*;
+    use crate::world::World;
+    use aurora_net::{NetEvent, inventory::InvItem};
+    use uuid::Uuid;
+
+    #[test]
+    fn explorer_confirmation_snapshot_tracks_item_identity_permissions_and_the_occupied_parcel() {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let region = 65_536_u64 << 32 | 32_768;
+        let agent = Uuid::from_u128(1);
+        let item = Uuid::from_u128(2);
+        world.agent_id = agent;
+        world.inventory.owner = agent;
+        world.agent.position = glam::Vec3::new(2.0, 2.0, 20.0);
+        world.main_region = Some(region);
+        world.apply(NetEvent::Capabilities {
+            handle: region,
+            caps: Arc::new([("ExtEnvironment".to_owned(), "demo://environment".to_owned())].into()),
+        });
+        world.parcel = Some(Arc::new(ParcelInfo {
+            local_id: 2,
+            owner_id: agent,
+            status: aurora_net::land::OS_LEASED,
+            name: "Home".into(),
+            region_allow_env_override: true,
+            area: 65536,
+            bitmap: vec![255; 512],
+            ..Default::default()
+        }));
+        world.inventory.items.insert(
+            item,
+            InvItem {
+                id: item,
+                asset_id: Uuid::from_u128(3),
+                owner: agent,
+                owner_mask: 0x6000,
+                asset_type: 56,
+                inv_type: 25,
+                flags: 2,
+                name: "My day".into(),
+                ..Default::default()
+            },
+        );
+        let original = InventoryEnvironment::current(&world, item).unwrap();
+        assert_eq!(original.flags, 0, "day subtype 2 is not an EEP no-modify flag");
+        assert_eq!(InventoryEnvironment::current(&world, item).as_ref(), Some(&original));
+        world.inventory.items.get_mut(&item).unwrap().owner_mask = 0;
+        let limited = InventoryEnvironment::current(&world, item).unwrap();
+        assert_eq!(
+            limited.flags,
+            crate::world::env_edit::FLAG_NOMOD | crate::world::env_edit::FLAG_NOTRANS
+        );
+        assert_ne!(original, limited);
+        world.inventory.items.get_mut(&item).unwrap().asset_id = Uuid::from_u128(4);
+        assert_ne!(InventoryEnvironment::current(&world, item).as_ref(), Some(&limited));
+        Arc::make_mut(world.parcel.as_mut().unwrap()).owner_id = Uuid::from_u128(5);
+        assert!(InventoryEnvironment::current(&world, item).is_none());
+        Arc::make_mut(world.parcel.as_mut().unwrap()).owner_id = agent;
+        world.inventory.items.remove(&item);
+        assert!(InventoryEnvironment::current(&world, item).is_none());
+    }
 }

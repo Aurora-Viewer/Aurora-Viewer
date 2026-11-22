@@ -55,6 +55,33 @@ impl App {
     /// The session ended: a lost link offers to reconnect where the user was
     /// (a kick does not), a region restart keeps its own message.
     pub(super) fn on_disconnected(&mut self, reason: &str, lost: bool) {
+        for origin in std::mem::take(&mut self.inventory_ui.explorer_home_queue) {
+            self.inventory_ui.explorer_folder_result(
+                &self.world.inventory,
+                &origin,
+                Err(aurora_i18n::tr!("explorer-create-disconnected")),
+                self.demo,
+            );
+        }
+        for (_, origin) in std::mem::take(&mut self.inventory_ui.explorer_items) {
+            self.inventory_ui.explorer_folder_result(
+                &self.world.inventory,
+                &origin,
+                Err(aurora_i18n::tr!("explorer-create-disconnected")),
+                self.demo,
+            );
+        }
+        if let Some(origin) = self.inventory_ui.explorer_creation.take() {
+            self.inventory_ui.finish_mutation(false);
+            self.inventory_ui.created_selection = None;
+            self.inventory_ui.pending_refresh.clear();
+            self.inventory_ui.explorer_folder_result(
+                &self.world.inventory,
+                &origin,
+                Err(aurora_i18n::tr!("explorer-create-disconnected")),
+                self.demo,
+            );
+        }
         self.session_ended();
         let restart = self.restart_disconnect();
         let place = if lost && restart.is_none() {

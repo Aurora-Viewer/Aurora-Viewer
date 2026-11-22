@@ -307,6 +307,15 @@ pub enum DestinationsStyle {
     Legacy,
 }
 
+/// The inventory window selected in Preferences › Aurora.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum InventoryStyle {
+    Classic,
+    #[default]
+    Aurora,
+    Explorer,
+}
+
 /// The photo mode: Aurora's viewfinder (the world full screen under a
 /// camera's overlay, `ui::viewfinder`), Aurora's panel anchored on the
 /// right, or the Legacy Viewer's floater (floater_snapshot.xml: a floating
@@ -1571,10 +1580,8 @@ pub struct Settings {
     /// Region / Estate as Firestorm's eight tabs (not ported yet: the
     /// Aurora window opens meanwhile) instead of Aurora's (`ui/region`).
     pub classic_region_estate: bool,
-    /// The inventory as the Legacy Viewer's single tree with its tabs and
-    /// footer instead of Aurora's window that widens from a compact tree to
-    /// an explorer (`ui/inventory/aurora`).
-    pub classic_inventory: bool,
+    /// Shared by the main inventory and its additional windows.
+    pub inventory_style: InventoryStyle,
     /// Appearance's outfit gallery as the Legacy Viewer's grid of small
     /// tiles instead of Aurora's showcase: collections, large pictures and
     /// a preview of the chosen outfit (`ui/appearance/showcase.rs`).
@@ -2797,7 +2804,7 @@ impl Default for Settings {
             classic_about_land: false,
             classic_search: false,
             classic_region_estate: false,
-            classic_inventory: false,
+            inventory_style: InventoryStyle::default(),
             classic_outfit_gallery: false,
             outfit_portrait: Default::default(),
             classic_places: false,
@@ -3199,11 +3206,30 @@ impl Settings {
         s.finished(newer)
     }
 
+    /// The old Classic switch overrode the Explorer switch. Stock Aurora only
+    /// wrote the Classic switch. Both settings files and backups use this reader.
+    fn read_values(value: serde_json::Value, file: &str) -> Option<crate::tolerant::Read<Settings>> {
+        let legacy_style = if value.get("inventory_style").is_some() {
+            None
+        } else if value["classic_inventory"].as_bool() == Some(true) {
+            Some(InventoryStyle::Classic)
+        } else if value["inventory"]["organized_explorer"].as_bool() == Some(true) {
+            Some(InventoryStyle::Explorer)
+        } else {
+            None
+        };
+        let mut read = crate::tolerant::from_value::<Settings>(value, file)?;
+        if let Some(style) = legacy_style {
+            read.value.inventory_style = style;
+        }
+        Some(read)
+    }
+
     /// Reads the parsed file, leaving out only what this build does not
     /// understand; for a newer build's file, also what to keep of it on save.
     fn read_document(value: serde_json::Value, path: &Path) -> Option<(Settings, Option<(serde_json::Value, Vec<String>)>)> {
         let version = value["settings_version"].as_u64().unwrap_or(0);
-        let Some(mut read) = crate::tolerant::from_value::<Settings>(value.clone(), "settings.json") else {
+        let Some(mut read) = Self::read_values(value.clone(), "settings.json") else {
             crate::tolerant::backup(path);
             return None;
         };
@@ -5131,6 +5157,49 @@ mod tests {
             assert_eq!(settings.inventory.notecard_view, view);
             assert!(!settings.inventory.search_library, "other saved preferences survive");
         }
+    }
+
+    #[test]
+    fn inventory_style_migrates_stock_and_explorer_settings_and_survives_restart() {
+        use super::InventoryStyle::{Aurora, Classic, Explorer};
+        use serde_json::json;
+
+        let path = scratch_settings_file();
+        assert_eq!(Settings::load_from(&path).inventory_style, Aurora);
+        for (classic, explorer, expected) in [
+            (None, None, Aurora),
+            (Some(false), None, Aurora),
+            (Some(true), None, Classic),
+            (Some(false), Some(false), Aurora),
+            (Some(false), Some(true), Explorer),
+            (Some(true), Some(false), Classic),
+            (Some(true), Some(true), Classic),
+        ] {
+            let mut old = json!({"inventory": {"search_library": false}});
+            if let Some(value) = classic {
+                old["classic_inventory"] = json!(value);
+            }
+            if let Some(value) = explorer {
+                old["inventory"]["organized_explorer"] = json!(value);
+            }
+            std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+            let settings = Settings::load_from(&path);
+            assert_eq!(settings.inventory_style, expected, "{old}");
+            assert!(!settings.inventory.search_library);
+            settings.save_to(&path);
+            let saved = read_back(&path);
+            assert_eq!(saved["inventory_style"], json!(expected));
+            assert!(saved.get("classic_inventory").is_none());
+            assert!(saved["inventory"].get("organized_explorer").is_none());
+            assert_eq!(Settings::load_from(&path).inventory_style, expected);
+        }
+
+        for style in [Classic, Aurora, Explorer] {
+            let mixed = json!({"inventory_style": style, "classic_inventory": true, "inventory": {"organized_explorer": true}});
+            std::fs::write(&path, serde_json::to_vec(&mixed).unwrap()).unwrap();
+            assert_eq!(Settings::load_from(&path).inventory_style, style);
+        }
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[test]

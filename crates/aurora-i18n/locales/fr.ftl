@@ -2,6 +2,179 @@ language-name = Français
 avatar-studio-title = Studio avatar
 avatar-studio-pose = Pose
 avatar-studio-pose-animated = AO / En monde
+
+## Inventory Explorer window
+organized-version = Cette disposition nécessite une version plus récente de l’explorateur d’inventaire.
+organized-conflict = La disposition d’origine est protégée. Cette session enregistre les modifications dans { $path }.
+explorer-input-moving = { $count ->
+    [one] Déplacer un élément dans l’explorateur
+   *[other] Déplacer { $count } éléments dans l’explorateur
+    }
+explorer-input-protected = Cette sélection contient un emplacement protégé.
+organized-new-tab = Nouvel onglet
+organized-close-tab = Fermer l’onglet
+organized-detach = Déplacer l’onglet vers une nouvelle fenêtre
+organized-dock = Rattacher l’onglet à la fenêtre principale
+organized-save-error = Disposition locale de l’inventaire : { $error }
+
+# Personal inventory Explorer panel
+explorer-change-folder-icon = Changer l’icône du dossier…
+explorer-restore-folder-icon = Rétablir l’icône par défaut
+explorer-set-parcel-environment = Définir comme environnement de la parcelle…
+explorer-set-parcel-unavailable = La parcelle actuelle doit autoriser les changements d’environnement et vous devez avoir le droit de les effectuer.
+explorer-parcel-env-title = Définir l’environnement de la parcelle ?
+explorer-parcel-env-warning = Appliquer « { $preset } » à la parcelle « { $parcel } » dans la région { $region } ? Cela remplacera l’environnement partagé pour toutes les personnes présentes sur cette parcelle.
+explorer-parcel-env-confirm = Définir l’environnement de la parcelle
+explorer-parcel-env-changed = La parcelle, vos droits ou le préréglage ont changé. Rouvrez le menu pour appliquer le préréglage.
+explorer-parcel-env-success = L’environnement de la parcelle « { $parcel } » a été mis à jour.
+explorer-parcel-env-failed = Impossible de mettre à jour l’environnement de la parcelle « { $parcel } ». { $reason }
+explorer-menu-copy-path = Copier le chemin du dossier
+explorer-menu-copy-containing-path = Copier le chemin du dossier parent
+explorer-address-edit = Modifier l’adresse (Ctrl+L)
+explorer-address-missing = Aucun dossier nommé « { $name } » à cet emplacement.
+explorer-address-ambiguous = Plusieurs dossiers portent le nom « { $name } ». Choisissez un dossier, puis appuyez sur Entrée.
+explorer-address-choose = Choisir un dossier
+explorer-address-loading = Chargement des dossiers…
+explorer-address-fetch-failed = Impossible de charger le dossier. Appuyez sur Entrée pour réessayer.
+explorer-address-open-containing = Ouvrir le dossier contenant cet élément
+
+explorer-file-actions = Actions
+explorer-real-move-hint = Change le dossier réel dans Second Life. Les emplacements choisis dans l’explorateur sont conservés.
+explorer-real-move = Déplacer dans Second Life…
+explorer-real-trash = Déplacer dans la corbeille
+explorer-real-unavailable = Cette sélection ou cette destination ne permet pas cette action.
+explorer-real-paste-in = Coller dans ce dossier de l’inventaire Second Life
+explorer-local-drop = Organiser dans l’explorateur → { $destination }
+explorer-denied-drop = Déplacement local impossible → { $destination }
+
+explorer-home-my-folders = Mes dossiers
+explorer-home-pinned = Accès rapide
+explorer-home-other-locations = Autres emplacements
+explorer-panel-stock = Bibliothèque Second Life
+explorer-panel-unavailable-folder = Dossier indisponible
+explorer-panel-unpin = Désépingler
+explorer-panel-pin-to-sidebar = Épingler à la barre latérale
+explorer-panel-updated = Organisation mise à jour
+explorer-panel-open-tab = Ouvrir dans un nouvel onglet
+explorer-panel-pin-up = Déplacer le raccourci vers le haut
+explorer-panel-pin-down = Déplacer le raccourci vers le bas
+explorer-panel-places = Tous les emplacements
+explorer-panel-pin = Épingler
+explorer-panel-original-tree = Arborescence d’origine
+explorer-panel-original-short = Arbre d’origine
+explorer-panel-back = Précédent (Alt+Gauche)
+explorer-panel-forward = Suivant (Alt+Droite)
+explorer-panel-up = Dossier parent (Alt+Haut)
+explorer-panel-search = Rechercher dans l’inventaire
+explorer-search-in-folder = Rechercher dans { $name }
+explorer-panel-clear = Effacer la recherche
+explorer-panel-remove-virtual = Supprimer le dossier virtuel
+explorer-panel-restore = Rétablir l’emplacement d’origine
+explorer-panel-show-original = Afficher dans le dossier d’origine
+explorer-panel-new-folder = Nouveau dossier virtuel
+explorer-panel-folder-name = Nom du dossier
+explorer-panel-create = Créer
+explorer-panel-choose-name = Choisissez un nom pour ce dossier virtuel
+explorer-panel-folder = Dossier
+explorer-panel-virtual-folder = Dossier virtuel
+explorer-panel-location = Emplacement
+explorer-panel-empty = Dossier vide
+explorer-panel-no-matches = Aucun résultat
+explorer-panel-loading = Chargement de l’inventaire
+explorer-panel-unavailable = Cet emplacement est indisponible.
+explorer-panel-home = Revenir à l’accueil
+explorer-panel-retry = Réessayer de charger le dossier
+explorer-resize-pins = Redimensionner le volet de navigation
+explorer-resize-columns = Redimensionner la colonne
+explorer-status-folders = { $count ->
+    [one] 1 dossier
+   *[other] { $count } dossiers
+    }
+explorer-status-loading = Inventaire en cours de chargement ou incomplet
+explorer-panel-incomplete-count = { $count ->
+    [one] { $count } résultat · Chargement en cours ou inventaire incomplet
+   *[other] { $count } résultats · Chargement en cours ou inventaire incomplet
+    }
+explorer-panel-entry-count = { $count ->
+    [one] { $count } entrée
+   *[other] { $count } entrées
+    }
+explorer-panel-selection-count = { $count ->
+    [one] Sélection : { $selected } · { $count } entrée
+   *[other] Sélection : { $selected } · { $count } entrées
+    }
+
+# Display names in the organized inventory explorer.
+explorer-model-appearance = Apparence
+explorer-model-textures-materials = Textures et matériaux
+explorer-model-motion-sound = Mouvements et sons
+explorer-model-objects-scripts = Objets et scripts
+explorer-model-places-people = Lieux et contacts
+explorer-model-system = Système
+explorer-model-current-outfit = Tenue actuelle
+explorer-model-saved-outfits = Tenues enregistrées
+explorer-model-clothing = Vêtements
+explorer-model-body-parts = Parties du corps
+explorer-model-textures = Textures
+explorer-model-materials = Matériaux
+explorer-model-animations = Animations
+explorer-model-gestures = Gestes
+explorer-model-sounds = Sons
+explorer-model-objects = Objets
+explorer-model-scripts = Scripts
+explorer-model-saved-places = Lieux enregistrés
+explorer-model-favorite-places = Lieux favoris
+explorer-model-contact-cards = Cartes de visite
+explorer-model-photos = Photos
+explorer-model-notecards = Notes
+explorer-model-environments = Environnements
+explorer-model-marketplace-deliveries = Livraisons du Marketplace
+explorer-model-marketplace-listings = Annonces du Marketplace
+explorer-model-lost-found = Objets trouvés
+explorer-model-trash = Corbeille
+explorer-model-all-inventory = Tout l’inventaire
+explorer-model-second-life-library = Bibliothèque de Second Life
+
+# Inventory Explorer folder views
+explorer-mode-view = Affichage
+explorer-mode-details = Détails
+explorer-mode-list = Liste
+explorer-mode-small = Petites icônes
+explorer-mode-medium = Icônes moyennes
+explorer-mode-large = Grandes icônes
+explorer-mode-extra-large = Très grandes icônes
+explorer-mode-date = Date de création
+explorer-mode-sort = Trier par
+explorer-mode-group = Regrouper par
+explorer-collapse-all-groups = Réduire tous les groupes
+explorer-expand-all-groups = Développer tous les groupes
+explorer-mode-ascending = Ordre croissant
+explorer-mode-descending = Ordre décroissant
+explorer-mode-pins = Dossiers épinglés
+explorer-pins-new-group = Nouveau groupe de raccourcis
+explorer-pins-name = Nom du groupe
+explorer-pins-rename-group = Renommer le groupe
+explorer-pins-remove-group = Supprimer le groupe
+explorer-pins-remove-hint = Déplacer ses raccourcis vers « Sans groupe »
+explorer-pins-move-group = Déplacer vers un groupe
+explorer-pins-up = Monter le groupe
+explorer-pins-down = Descendre le groupe
+explorer-pins-ungrouped = Sans groupe
+
+# Explorer inventory folder creation
+explorer-create-unavailable = Cet emplacement ne peut pas recevoir de nouveau dossier d’inventaire.
+explorer-create-length = Utilisez au maximum 63 caractères pour le nom du dossier.
+explorer-create-choose-parent = Choisir un dossier d’inventaire
+explorer-create-shortcut = Créer un dossier dans votre inventaire Second Life (Ctrl+Maj+N)
+explorer-create-pending = Création du dossier d’inventaire…
+explorer-create-location = Créer dans ce dossier de l’inventaire Second Life
+explorer-create-legacy = L’explorateur affichera aussi le nouveau dossier ici.
+explorer-create-in = Créer dans { $path }
+explorer-create-demo-done = « { $name } » a été créé dans la démo hors ligne.
+explorer-create-done = « { $name } » a été créé.
+explorer-create-offline = Connectez-vous pour créer un dossier dans votre inventaire.
+explorer-create-disconnected = Déconnexion avant confirmation. Après la reconnexion, vérifiez le dossier de destination avant de réessayer.
+
 avatar-studio-pose-t = Pose en T
 avatar-studio-pose-a = Pose en A
 avatar-studio-lighting = Éclairage
@@ -10964,7 +11137,8 @@ ui-options-aurora-about-land-classic = Fenêtre classique (Legacy)
 ui-options-aurora-search-help = Un seul champ, des puces par type et le détail à côté des résultats ; ou les 7 onglets du Legacy Viewer.
 ui-options-aurora-search-classic = Onglets (Legacy)
 ui-options-aurora-region-estate-help = Aperçu, gestion par intention et interventions regroupées, ou les 8 onglets du Legacy Viewer.
-ui-options-aurora-inventory-help = Une fenêtre qui s’élargit de l’arbre à un explorateur avec ses détails, ou l’arbre unique du Legacy Viewer.
+ui-options-aurora-inventory-explorer = Explorateur
+ui-options-aurora-inventory-help = La fenêtre classique affiche une arborescence. Aurora ajoute un volet de détails quand la fenêtre s’élargit. L’explorateur propose des onglets, des dossiers épinglés et des vues groupées.
 ui-options-aurora-outfit-gallery = Galerie des tenues
 ui-options-aurora-outfit-gallery-help = La galerie d’Apparence en vitrine, avec vos dossiers, de grandes images et un aperçu de la tenue choisie, ou la grille de petites vignettes du Legacy Viewer.
 ui-options-aurora-outfit-gallery-aurora = Vitrine
@@ -16052,3 +16226,41 @@ phototools-director-lens = L'objectif du Réalisateur est affiché tant que sa f
 phototools-view-angle-viewfinder = Le viseur gère l'angle de vue : le vôtre revient à sa fermeture.
 ui-options-dof-show-focus-point = Afficher le point de mise au point
 ui-options-dof-show-focus-point-help = Une petite croix sur le point où l'objectif fait la mise au point : jaune quand il est libre, rouge quand il est verrouillé.
+explorer-permissions-title = Modifier les droits du prochain propriétaire…
+explorer-permissions-keep = Conserver
+explorer-permissions-allow = Autoriser
+explorer-permissions-deny = Refuser
+explorer-permissions-modify = Modifier
+explorer-permissions-copy = Copier
+explorer-permissions-transfer = Transférer
+explorer-permissions-scope = Inclut le contenu réel des dossiers sélectionnés et de leurs sous-dossiers. Les liens d’inventaire et le contenu des objets sont exclus.
+explorer-permissions-rule = Chaque élément doit rester copiable ou transférable. Pour retirer la copie à un élément non transférable, autorisez le transfert.
+explorer-permissions-review = Vérifier la sélection
+explorer-permissions-counts = { $ready } à modifier · { $same } déjà réglés · { $skipped } éléments ignorés · { $folders } dossiers exclus ou illisibles
+explorer-permissions-results = { $verified } confirmés · { $unconfirmed } non confirmés · { $pending } en attente
+explorer-permissions-stop = Arrêter les modifications restantes
+explorer-permissions-edit = Modifier les choix
+explorer-permissions-selection = Sélection ({ $count }) · { $first }
+
+## Explorer 0.8 – home
+explorer-general-inventory = Inventaire général
+explorer-home-categories = Catégories de l’inventaire
+explorer-home-utilities = Bibliothèque et système
+explorer-home-pinned-folders = Dossiers épinglés
+explorer-home-no-dates = Les dossiers de Second Life n’ont pas de date de création.
+explorer-home-folders = Dossiers de l’accueil
+
+## Explorer 0.8 – creation
+explorer-new-home-container = Dossiers d’accueil
+explorer-new-home-loading = Le dossier racine de l’inventaire est en cours de chargement. Réessayez ensuite.
+explorer-new-unconfirmed-item = Le simulateur n’a pas confirmé cet élément dans le dossier prévu. Vérifiez le dossier avant de réessayer.
+
+explorer-group-symbols = Symboles
+explorer-group-older = Plus ancien
+explorer-group-last-year = L’année dernière
+explorer-group-this-year = Plus tôt cette année
+explorer-group-last-month = Le mois dernier
+explorer-group-this-month = Plus tôt ce mois-ci
+explorer-group-last-week = La semaine dernière
+explorer-group-this-week = Plus tôt cette semaine
+explorer-group-future = À venir

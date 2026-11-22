@@ -303,11 +303,11 @@ pub(super) fn show(
         ui.memory_mut(|m| m.surrender_focus(focus_id(object)));
     }
     ui.ctx().data_mut(|d| d.insert_temp(state_id(), selection));
-    if zone.response.contains_pointer()
-        && let Some(ids) = inventory::drag::carried_ids(ui.ctx())
+    if let Some(ids) = inventory::drag::carried_ids(ui.ctx())
+        && inventory::drag::pointer::over(ui.ctx(), zone.response.layer_id, zone.response.interact_rect)
         && let Some(idx) = world.objects.index_of_uuid(&object)
     {
-        let ctrl = ui.input(|i| i.modifiers.ctrl);
+        let ctrl = ui.input(inventory::drag::pointer::read).is_some_and(|p| p.modifiers.ctrl);
         let check_id = Id::unique("open_object_contents_drop");
         let allowed = ui.ctx().data_mut(|d| {
             d.get_temp_mut_or_default::<contents_drop::PlanCheck>(check_id)

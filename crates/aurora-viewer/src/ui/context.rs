@@ -483,6 +483,11 @@ pub enum CtxAction {
     InviteToGroup(Uuid),
     /// "Give my calling card" (LLAvatarGiveCard: OfferCallingCard).
     GiveCallingCard(Uuid),
+    /// A drop on a resident row opens the standard inventory Share confirmation.
+    ShareInventory {
+        to: Uuid,
+        items: Vec<Uuid>,
+    },
     /// "Create landmark" where the agent is (About Land's Landmark).
     CreateLandmark,
     /// "Report Abuse" on a resident, an object or nothing (LLFloaterReporter).

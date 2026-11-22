@@ -342,6 +342,9 @@ impl App {
             change.operations.len(),
             change.copies.len()
         );
+        if change.bulk_next_owner {
+            self.inventory_ui.next_owner.bind(request);
+        }
         self.inventory_ui.begin_mutation(request, &change);
         let delete = selection.is_some();
         if let Some(selection) = selection {
@@ -437,6 +440,61 @@ impl App {
         }
     }
 
+    fn create_inventory_entry(
+        &mut self,
+        parent: Uuid,
+        kind: aurora_net::inventory::operations::NewItem,
+        name: String,
+        explorer: Option<Uuid>,
+    ) {
+        let result = if !rules::destination(&self.world.inventory, parent) {
+            Err(aurora_i18n::tr!("explorer-real-unavailable").to_owned())
+        } else if let aurora_net::inventory::operations::NewItem::Wearable(wearable) = kind {
+            crate::world::inventory::wearable::create_with_permissions(
+                wearable,
+                &name,
+                self.world.agent_id,
+                self.settings.inventory.creation_permissions.wearables.permissions(),
+            )
+            .map(|data| NetCommand::CreateInventoryWearable {
+                explorer,
+                parent,
+                kind: wearable,
+                name,
+                data,
+                permissions: None,
+            })
+        } else {
+            Ok(NetCommand::CreateInventoryItem {
+                explorer,
+                parent,
+                kind,
+                name,
+                permissions: None,
+            })
+        };
+        match result {
+            Ok(cmd) if explorer.is_some() && !self.world.rlva_allows_command(&cmd, Uuid::nil()) => {
+                if let Some(origin) = explorer.and_then(|id| self.inventory_ui.explorer_items.remove(&id)) {
+                    self.inventory_ui.explorer_folder_result(
+                        &self.world.inventory,
+                        &origin,
+                        Err(aurora_i18n::tr!("rlva-blocked")),
+                        self.demo,
+                    );
+                }
+            }
+            Ok(cmd) => self.send(cmd),
+            Err(reason) => {
+                if let Some(origin) = explorer.and_then(|id| self.inventory_ui.explorer_items.remove(&id)) {
+                    self.inventory_ui
+                        .explorer_folder_result(&self.world.inventory, &origin, Err(&reason), self.demo);
+                }
+                self.inventory_ui.message = reason;
+            }
+        }
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         self.apply_inventory_action_from(Uuid::nil(), action);
     }
@@ -447,6 +505,57 @@ impl App {
         match action {
             InvAction::Panel { editor, action } => self.apply_inventory_action_from(editor, *action),
             InvAction::DualPanel => self.toggle_dual_inventory(),
+            InvAction::CreateExplorerFolder(mut origin) => {
+                let inv = &self.world.inventory;
+                if origin.home_child
+                    && origin.root == inv.root
+                    && self
+                        .inventory_ui
+                        .explorer_creation
+                        .as_ref()
+                        .is_some_and(|active| active.home_child && active.root == origin.root)
+                {
+                    self.inventory_ui.explorer_home_queue.push_back(origin);
+                    return;
+                }
+                if origin.create_backing
+                    && let Some(id) = self.inventory_ui.explorer_home_backing(inv)
+                {
+                    origin.parent = id;
+                    origin.create_backing = false;
+                }
+                let change = if !matches!(self.screen, Screen::World) || (!self.demo && self.world.login.is_none()) {
+                    Err(aurora_i18n::tr!("explorer-create-offline").to_owned())
+                } else if origin.home_child && !origin.create_backing && self.inventory_ui.explorer_home_backing(inv) != Some(origin.parent)
+                {
+                    Err(aurora_i18n::tr!("explorer-create-unavailable").to_owned())
+                } else if self.inventory_ui.pending.is_some() {
+                    Err(aurora_i18n::tr!("ui-inventory-wait-for-the-current-change-to-finish").to_owned())
+                } else if let Some(kind) = origin.item {
+                    if let Err(reason) = origin.validate(inv) {
+                        Err(reason)
+                    } else {
+                        let (parent, name, token) = (origin.parent, origin.name.clone(), origin.token);
+                        self.inventory_ui.explorer_items.insert(token, origin);
+                        self.create_inventory_entry(parent, kind, name, Some(token));
+                        return;
+                    }
+                } else {
+                    origin.change(inv)
+                };
+                match change {
+                    Ok(change) if self.world.rlva_inventory_mutation_allowed(&change, Uuid::nil()) => {
+                        self.inventory_ui.explorer_creation = Some(origin);
+                        // The demo transport can finish synchronously inside submit_inventory_change.
+                        self.submit_inventory_change(change);
+                    }
+                    outcome => {
+                        let reason = outcome.err().unwrap_or_else(|| aurora_i18n::tr!("rlva-blocked").to_owned());
+                        self.inventory_ui.explorer_folder_result(inv, &origin, Err(&reason), self.demo);
+                        self.inventory_ui.message = reason;
+                    }
+                }
+            }
             InvAction::DefaultPermissions => self.inventory_ui.default_permissions_open = true,
             InvAction::ExportMenuNotecard { name, text } => {
                 let inv = &self.world.inventory;
@@ -482,6 +591,7 @@ impl App {
                             self.settings.inventory.creation_permissions.wearables.permissions(),
                         ) {
                             Ok(data) => self.send(NetCommand::CreateInventoryWearable {
+                                explorer: None,
                                 parent,
                                 kind,
                                 name,
@@ -496,6 +606,7 @@ impl App {
                         }
                     } else {
                         self.send(NetCommand::CreateInventoryItem {
+                            explorer: None,
                             parent,
                             kind,
                             name,
@@ -658,10 +769,8 @@ impl App {
             } => {
                 self.open_notecard_attachment(editor, notecard, marker, copy, Uuid::nil());
             }
-            InvAction::Environment(asset, flags) => {
-                if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
-                    self.world.eep.request_local_item(asset, kind);
-                }
+            InvAction::Environment(asset, flags, item) => {
+                self.world.eep.request_inventory_item(&self.world.inventory, asset, flags, item);
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
             InvAction::Marketplace(item, command) => self.inventory_marketplace_command(item, command),
@@ -672,7 +781,11 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             InvAction::FindLinks(item) => {
-                self.inventory_pane(editor).find_links(item);
+                if self.settings.inventory_style == crate::settings::InventoryStyle::Explorer {
+                    self.inventory_ui.open_links_results(item);
+                } else {
+                    self.inventory_pane(editor).find_links(item);
+                }
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             InvAction::MarketplacePaste { to, ids, copy } => self.paste_marketplace_inventory(to, ids, copy),
@@ -796,6 +909,9 @@ impl App {
             return;
         }
         let editor = self.inventory_mutation_editor.unwrap_or_default();
+        let explorer_creation = self.inventory_ui.explorer_creation.take();
+        let mut child_request = None;
+        let mut backing_error = None;
         let thumbnail_upload = self.inventory_images.contains_request(request);
         let result = match result {
             Ok(reply) if !reply.copies.is_empty() => {
@@ -804,7 +920,9 @@ impl App {
                 self.world.inventory.created_folders(reply.folders.clone());
                 let inv = &self.world.inventory;
                 let pane = pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor);
-                if let Some(id) = pane.created_selection.and_then(|id| reply.created.get(&id)) {
+                if explorer_creation.is_none()
+                    && let Some(id) = pane.created_selection.and_then(|id| reply.created.get(&id))
+                {
                     pane.show_original(inv, *id);
                 }
                 self.inventory_ui.watch_copy(request, &reply);
@@ -813,6 +931,7 @@ impl App {
             }
             result => result,
         };
+        self.inventory_ui.next_owner.finish(request, result.as_ref().ok());
         self.inventory_ui.finish_bulk_permissions(result.as_ref().err().map(String::as_str));
         self.dual_inventory_ui
             .finish_bulk_permissions(result.as_ref().err().map(String::as_str));
@@ -848,12 +967,41 @@ impl App {
                         .outfit
                         .wear_when_known(sync.unknown, self.world.agent_id, std::time::Instant::now());
                 }
+                let created = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id).copied());
+                if let Some(origin) = &explorer_creation {
+                    let result = created.ok_or(aurora_i18n::tr!(
+                        "inventory-operations-the-server-did-not-confirm-the-new-folder-reload"
+                    ));
+                    if origin.create_backing && result.is_err() {
+                        backing_error = Some(aurora_i18n::tr!("explorer-create-unavailable").to_owned());
+                    }
+                    if let (true, Ok(id)) = (origin.create_backing, result) {
+                        if self.inventory_ui.bind_explorer_home(&self.world.inventory, origin.root, id) {
+                            let mut child = origin.clone();
+                            child.parent = id;
+                            child.create_backing = false;
+                            child_request = Some(child);
+                        } else {
+                            backing_error = Some(aurora_i18n::tr!("explorer-create-unavailable").to_owned());
+                            self.inventory_ui.explorer_folder_result(
+                                &self.world.inventory,
+                                origin,
+                                Err(aurora_i18n::tr!("explorer-create-unavailable")),
+                                self.demo,
+                            );
+                        }
+                    } else {
+                        self.inventory_ui
+                            .explorer_folder_result(&self.world.inventory, origin, result, self.demo);
+                    }
+                }
                 if self.inventory_ui.consume_clipboard {
                     self.inventory_ui.cancel_cut();
                 }
                 let inv = &self.world.inventory;
                 let pane = pane_of(&mut self.inventory_ui, &mut self.dual_inventory_ui, editor);
-                if let Some(id) = pane.created_selection.and_then(|id| reply.created.get(&id))
+                if explorer_creation.is_none()
+                    && let Some(id) = pane.created_selection.and_then(|id| reply.created.get(&id))
                     && !pane.select_created_listing(inv, *id)
                 {
                     pane.show_original(inv, *id);
@@ -862,6 +1010,13 @@ impl App {
                 pane.message.clear();
             }
             Err(reason) => {
+                if explorer_creation.as_ref().is_some_and(|origin| origin.create_backing) {
+                    backing_error = Some(reason.clone());
+                }
+                if let Some(origin) = &explorer_creation {
+                    self.inventory_ui
+                        .explorer_folder_result(&self.world.inventory, origin, Err(&reason), self.demo);
+                }
                 if !thumbnail_upload {
                     self.inventory_pane(editor).message = reason;
                 }
@@ -882,6 +1037,21 @@ impl App {
         self.inventory_mutation_editor = None;
         for w in &mut self.inventory_ui.windows {
             w.state.message.clone_from(&self.inventory_ui.message);
+        }
+        if let Some(reason) = backing_error {
+            for waiting in std::mem::take(&mut self.inventory_ui.explorer_home_queue) {
+                self.inventory_ui
+                    .explorer_folder_result(&self.world.inventory, &waiting, Err(&reason), self.demo);
+            }
+        }
+        if let Some(child) = child_request {
+            self.apply_inventory_action(InvAction::CreateExplorerFolder(child));
+        }
+        while self.inventory_ui.pending.is_none() {
+            let Some(next) = self.inventory_ui.explorer_home_queue.pop_front() else {
+                break;
+            };
+            self.apply_inventory_action(InvAction::CreateExplorerFolder(next));
         }
     }
 

@@ -6,7 +6,7 @@
 
 use super::super::cx::{Cx, F, field};
 use crate::build::MoveHologram;
-use crate::settings::{ChatStyle, DestinationsStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
+use crate::settings::{ChatStyle, DestinationsStyle, InventoryStyle, NotificationsStyle, PhotoWindowStyle, Settings, WorldMapStyle};
 use crate::theme::Palette;
 use crate::world::beams::Style as BeamStyle;
 use crate::world::lookat::{Aim, Style};
@@ -53,7 +53,7 @@ pub fn set_all(s: &mut Settings, look: Look) {
     s.classic_about_land = !aurora;
     s.classic_search = !aurora;
     s.classic_region_estate = !aurora;
-    s.classic_inventory = !aurora;
+    s.inventory_style = if aurora { InventoryStyle::Aurora } else { InventoryStyle::Classic };
     s.classic_outfit_gallery = !aurora;
     s.build.legacy_window = !aurora;
     s.classic_places = !aurora;
@@ -309,13 +309,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 classic,
                 &field!(classic_region_estate),
             );
-            look(
-                cx,
+            cx.wide().choice(
                 tr!("common-inventory"),
                 tr!("ui-options-aurora-inventory-help"),
-                aurora,
-                classic,
-                &field!(classic_inventory),
+                &field!(inventory_style),
+                &[
+                    (InventoryStyle::Classic, classic, false),
+                    (InventoryStyle::Aurora, aurora, true),
+                    (InventoryStyle::Explorer, tr!("ui-options-aurora-inventory-explorer"), true),
+                ],
             );
             look(
                 cx,
@@ -570,6 +572,7 @@ mod tests {
     fn the_two_buttons_set_every_look_and_leave_the_plates_alone() {
         let mut s = Settings {
             plates_friends_only_full: true,
+            inventory_style: InventoryStyle::Explorer,
             ..Settings::default()
         };
         set_all(&mut s, Look::Legacy);
@@ -586,7 +589,11 @@ mod tests {
         assert!(s.classic_about_land, "About Land opens the Legacy Viewer's nine tabs");
         assert!(s.classic_search, "Search opens the Legacy Viewer's tabs");
         assert!(s.classic_region_estate);
-        assert!(s.classic_inventory, "the Legacy Viewer's single inventory tree");
+        assert_eq!(
+            s.inventory_style,
+            InventoryStyle::Classic,
+            "the Legacy Viewer's single inventory tree"
+        );
         assert!(s.classic_outfit_gallery, "the Legacy Viewer's small outfit tiles");
         assert!(s.build.legacy_window, "the Legacy Viewer's build tools and tabs");
         assert!(s.classic_places, "Places opens the Legacy Viewer's three tabs");
@@ -623,10 +630,8 @@ mod tests {
         assert!(!fresh.classic_about_land, "the Aurora About Land is the default");
         assert!(!s.classic_search && !fresh.classic_search, "the Aurora Search is the default");
         assert!(!s.classic_region_estate && !fresh.classic_region_estate);
-        assert!(
-            !s.classic_inventory && !fresh.classic_inventory,
-            "the Aurora inventory is the default"
-        );
+        assert_eq!(s.inventory_style, InventoryStyle::Aurora);
+        assert_eq!(fresh.inventory_style, InventoryStyle::Aurora, "the Aurora inventory is the default");
         assert!(!s.classic_places && !fresh.classic_places, "Aurora's Places is the default");
         assert_eq!(s.destinations_style, DestinationsStyle::Aurora);
         assert_eq!(

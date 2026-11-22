@@ -410,7 +410,7 @@ pub(super) fn show(
                 let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
                 two.note(picked.resp.rect);
                 super::conv_menu::demo_mark(ui.ctx(), world, st, None, picked.resp.rect);
-                super::conv_menu::attach(&picked.resp, p, world, actions, None);
+                super::conv_menu::conversation_row(&picked.resp, p, world, actions, None);
                 st.reorder.local_row(&picked.resp);
                 if st.reorder.dragging(None) {
                     ghost(ui.ctx(), p, st, e, rail, Pinned::Local);
@@ -501,7 +501,7 @@ pub(super) fn show(
                         st.reveal = None;
                     }
                     super::conv_menu::demo_mark(ui.ctx(), world, st, Some(id), picked.resp.rect);
-                    super::conv_menu::attach(&picked.resp, p, world, actions, Some(id));
+                    super::conv_menu::conversation_row(&picked.resp, p, world, actions, Some(id));
                     st.reorder.row(world, id, &picked.resp);
                     if st.reorder.dragging(Some(id)) {
                         ghost(ui.ctx(), p, st, e, rail, Pinned::Conversation(id));
@@ -550,6 +550,9 @@ pub(super) fn show(
                         };
                         let picked = entry(ui, p, &e, rail, egui::Id::unique(("conversation_start", id)));
                         two.note(picked.resp.rect);
+                        if let Some(items) = crate::ui::give_drop::row(&picked.resp, p, world.agent_id, id) {
+                            actions.push(ConvAction::GiveItems { to: id, items });
+                        }
                         if picked.resp.clicked() {
                             st.side_filter.clear();
                             actions.push(ConvAction::OpenIm(id));

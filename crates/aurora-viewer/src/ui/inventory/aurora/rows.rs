@@ -132,51 +132,111 @@ pub fn kind_name(inv: &Inventory, id: Uuid) -> String {
             aurora_i18n::tr!("inventory-kind-folder").to_owned()
         };
     }
-    let Some(it) = inv.items.get(&id) else {
-        return String::new();
-    };
-    let linked = matches!(it.asset_type, 24 | 25);
-    if it.asset_type == 25 {
-        return aurora_i18n::tr!("inventory-kind-folder-link").to_owned();
+    item_type(inv, id).map(ItemType::label).unwrap_or_default()
+}
+
+/// Canonical inventory type behind the localized Type column and Explorer groups.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Serialize, serde::Deserialize)]
+pub(in crate::ui::inventory) enum ItemType {
+    Asset(AssetClass),
+    Link(AssetClass),
+    FolderLink,
+    BrokenLink,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, serde::Serialize, serde::Deserialize)]
+pub(in crate::ui::inventory) enum AssetClass {
+    Clothing(Option<u8>),
+    BodyPart(Option<u8>),
+    Snapshot,
+    Texture,
+    Sound,
+    CallingCard,
+    Landmark,
+    Object,
+    Notecard,
+    Script,
+    Animation,
+    Gesture,
+    Mesh,
+    Settings,
+    Material,
+    Other,
+}
+
+impl AssetClass {
+    pub(in crate::ui::inventory) fn new(asset: i32, inv_type: i32, subtype: u8) -> Self {
+        let wearable = || (usize::from(subtype) < crate::world::appearance::wearables().len()).then_some(subtype);
+        match (asset, inv_type) {
+            (5, _) => Self::Clothing(wearable()),
+            (13, _) => Self::BodyPart(wearable()),
+            (_, 15) => Self::Snapshot,
+            (0, _) => Self::Texture,
+            (1, _) => Self::Sound,
+            (2, _) => Self::CallingCard,
+            (3, _) => Self::Landmark,
+            (6, _) => Self::Object,
+            (7, _) => Self::Notecard,
+            (10, _) => Self::Script,
+            (20, _) => Self::Animation,
+            (21, _) => Self::Gesture,
+            (49, _) => Self::Mesh,
+            (56, _) => Self::Settings,
+            (57, _) => Self::Material,
+            _ => Self::Other,
+        }
     }
-    let original = rules::original(inv, id).and_then(|id| inv.items.get(&id));
-    let kind = match original {
-        Some(original) => item_kind(original),
-        None => aurora_i18n::tr!("inventory-kind-broken-link").to_owned(),
-    };
-    if linked && original.is_some() {
-        aurora_i18n::tr!("inventory-kind-link-to", kind = kind)
-    } else {
-        kind
+
+    fn label(self) -> String {
+        use aurora_i18n::tr;
+        let wearable = |index: Option<u8>| {
+            index
+                .and_then(|n| crate::world::appearance::wearables().get(usize::from(n)).copied())
+                .unwrap_or_default()
+        };
+        match self {
+            Self::Clothing(index) => tr!("inventory-kind-clothing-of", kind = wearable(index)),
+            Self::BodyPart(index) => tr!("inventory-kind-body-part-of", kind = wearable(index)),
+            Self::Snapshot => tr!("inventory-kind-snapshot").into(),
+            Self::Texture => tr!("common-texture").into(),
+            Self::Sound => tr!("common-sound").into(),
+            Self::CallingCard => tr!("inventory-kind-calling-card").into(),
+            Self::Landmark => tr!("common-landmark").into(),
+            Self::Object => tr!("common-object").into(),
+            Self::Notecard => tr!("inventory-kind-notecard").into(),
+            Self::Script => tr!("inventory-kind-script").into(),
+            Self::Animation => tr!("inventory-kind-animation").into(),
+            Self::Gesture => tr!("inventory-kind-gesture").into(),
+            Self::Mesh => tr!("inventory-kind-mesh").into(),
+            Self::Settings => tr!("inventory-kind-settings").into(),
+            Self::Material => tr!("inventory-kind-material").into(),
+            Self::Other => tr!("inventory-kind-other").into(),
+        }
     }
 }
 
-fn item_kind(it: &aurora_net::inventory::InvItem) -> String {
-    let wearable = || {
-        crate::world::appearance::wearables()
-            .get((it.flags & 0xff) as usize)
-            .copied()
-            .unwrap_or_default()
-    };
-    let simple = match (it.asset_type, it.inv_type) {
-        (5, _) => return aurora_i18n::tr!("inventory-kind-clothing-of", kind = wearable()),
-        (13, _) => return aurora_i18n::tr!("inventory-kind-body-part-of", kind = wearable()),
-        (_, 15) => aurora_i18n::tr!("inventory-kind-snapshot"),
-        (0, _) => aurora_i18n::tr!("common-texture"),
-        (1, _) => aurora_i18n::tr!("common-sound"),
-        (2, _) => aurora_i18n::tr!("inventory-kind-calling-card"),
-        (3, _) => aurora_i18n::tr!("common-landmark"),
-        (6, _) => aurora_i18n::tr!("common-object"),
-        (7, _) => aurora_i18n::tr!("inventory-kind-notecard"),
-        (10, _) => aurora_i18n::tr!("inventory-kind-script"),
-        (20, _) => aurora_i18n::tr!("inventory-kind-animation"),
-        (21, _) => aurora_i18n::tr!("inventory-kind-gesture"),
-        (49, _) => aurora_i18n::tr!("inventory-kind-mesh"),
-        (56, _) => aurora_i18n::tr!("inventory-kind-settings"),
-        (57, _) => aurora_i18n::tr!("inventory-kind-material"),
-        _ => aurora_i18n::tr!("inventory-kind-other"),
-    };
-    simple.to_owned()
+impl ItemType {
+    pub(in crate::ui::inventory) fn label(self) -> String {
+        match self {
+            Self::Asset(class) => class.label(),
+            Self::Link(class) => aurora_i18n::tr!("inventory-kind-link-to", kind = class.label()),
+            Self::FolderLink => aurora_i18n::tr!("inventory-kind-folder-link").into(),
+            Self::BrokenLink => aurora_i18n::tr!("inventory-kind-broken-link").into(),
+        }
+    }
+}
+
+pub(in crate::ui::inventory) fn item_type(inv: &Inventory, id: Uuid) -> Option<ItemType> {
+    let item = inv.items.get(&id)?;
+    let class = |it: &aurora_net::inventory::InvItem| AssetClass::new(it.asset_type, it.inv_type, it.flags as u8);
+    Some(match item.asset_type {
+        25 => ItemType::FolderLink,
+        24 => match rules::original(inv, id).and_then(|id| inv.items.get(&id)) {
+            Some(original) => ItemType::Link(class(original)),
+            None => ItemType::BrokenLink,
+        },
+        _ => ItemType::Asset(class(item)),
+    })
 }
 
 /// What a hovered row offers in place.
@@ -488,7 +548,7 @@ pub(in super::super) fn folder(
         Pos2::new(caret_center.x + CARET / 2.0 + 4.0 + ICON / 2.0, rect.center().y)
     };
     let name_left = icon_center.x + ICON / 2.0 + 8.0;
-    let tint = folder_colors::tint(prefs, id).unwrap_or(if selected { p.violet_pale } else { p.muted });
+    let tint = folder_colors::row_tint(prefs, id, selected, p);
     let icon = folder_icon(folder.info.type_default, *open && !frame.explorer);
     let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(2.0));
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(name_rect).id_salt(("inventory_rename_row", id)));

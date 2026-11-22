@@ -37,11 +37,30 @@ pub fn folder_icon(type_default: i32, open: bool) -> &'static str {
     }
 }
 
+/// Default foreground shared by Legacy tree rows and Explorer inventory glyphs.
+pub(super) fn default_icon_tint(name: &str, p: &Palette) -> egui::Color32 {
+    if name.starts_with("Inv_Folder") { p.violet_light } else { p.ink }
+}
+
+/// Resolve the tint from the Legacy folder glyph, including a resident's per-folder
+/// color. An alternate navigation symbol for the same folder inherits this tint.
+pub(super) fn folder_art(
+    prefs: &super::InventoryPreferences,
+    id: uuid::Uuid,
+    kind: i32,
+    open: bool,
+    p: &Palette,
+) -> (&'static str, egui::Color32) {
+    let name = folder_icon(kind, open);
+    let tint = super::folder_colors::tint(prefs, id).unwrap_or_else(|| default_icon_tint(name, p));
+    (name, tint)
+}
+
 /// The type icon of a row: folders in the light accent, items in ink, or
 /// `tint` when given (a state the row shows by its icon).
 pub fn icon(ui: &mut egui::Ui, icons: &Icons, name: &str, p: &Palette, tint: Option<egui::Color32>) {
     if let Some(t) = icons.get(name) {
-        let tint = tint.unwrap_or(if name.starts_with("Inv_Folder") { p.violet_light } else { p.ink });
+        let tint = tint.unwrap_or_else(|| default_icon_tint(name, p));
         ui.add(egui::Image::new(t).fit_to_exact_size(Vec2::splat(16.0)).tint(tint));
     } else {
         ui.add_space(16.0);

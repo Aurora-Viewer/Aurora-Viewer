@@ -186,6 +186,7 @@ mod tests {
         assert_ne!(settings.next_owner & perm::COPY, 0);
         assert_eq!((settings.group, settings.everyone), (0, perm::COPY));
         let mut command = NetCommand::CreateInventoryItem {
+            explorer: None,
             parent: uuid::Uuid::from_u128(1),
             kind: NewItem::Script,
             name: "Script".into(),
@@ -208,6 +209,7 @@ mod tests {
         defaults.wearables.transfer = false;
         let snapshot = defaults.wearables.permissions();
         let mut wearable = NetCommand::CreateInventoryWearable {
+            explorer: None,
             parent: uuid::Uuid::from_u128(1),
             kind: 0,
             name: "Shape".into(),

@@ -1229,6 +1229,7 @@ pub struct App {
     day_import: Option<std::sync::mpsc::Receiver<env_apply::DayImport>>,
     /// The ExtEnvironment update an editor sent and waits for.
     env_applying: Option<env_apply::Applying>,
+    inventory_env_prompt: Option<env_apply::InventoryEnvironment>,
     /// The sun and moon beacons when the first environment editor opened.
     env_beacons_saved: Option<[bool; 2]>,
     demo: bool,
@@ -1363,6 +1364,59 @@ fn exit_prompt_key(key: &winit::keyboard::Key, composing: bool) -> Option<egui::
         Key::Character(s) if s == " " => Some(egui::Key::Space),
         _ => None,
     }
+}
+
+fn explorer_accelerator(key: &winit::keyboard::Key, code: KeyCode, mods: Mods) -> Option<egui::Key> {
+    use egui::Key as E;
+    use winit::keyboard::{Key, NamedKey};
+    match key {
+        Key::Named(NamedKey::Tab) if mods.ctrl && !mods.alt => Some(E::Tab),
+        Key::Named(NamedKey::F3) if !mods.ctrl && !mods.alt && !mods.shift => Some(E::F3),
+        Key::Named(k) if mods.alt && !mods.ctrl && !mods.shift => match k {
+            NamedKey::ArrowLeft => Some(E::ArrowLeft),
+            NamedKey::ArrowRight => Some(E::ArrowRight),
+            NamedKey::ArrowUp => Some(E::ArrowUp),
+            _ => None,
+        },
+        Key::Character(letter) if mods.ctrl && !mods.alt => {
+            let key = E::from_name(letter).or(match code {
+                KeyCode::KeyT => Some(E::T),
+                KeyCode::KeyN => Some(E::N),
+                KeyCode::KeyL => Some(E::L),
+                KeyCode::KeyF => Some(E::F),
+                _ => None,
+            });
+            key.filter(|k| matches!((k, mods.shift), (E::T | E::L | E::F, false) | (E::N, true)))
+        }
+        _ => None,
+    }
+}
+
+fn explorer_file_accelerator(key: &winit::keyboard::Key, code: KeyCode, mods: Mods) -> Option<egui::Key> {
+    use egui::Key as E;
+    use winit::keyboard::{Key, NamedKey};
+    if mods.alt || mods.shift {
+        return None;
+    }
+    match key {
+        Key::Named(NamedKey::F2) if !mods.ctrl => Some(E::F2),
+        Key::Named(NamedKey::Delete) if !mods.ctrl => Some(E::Delete),
+        Key::Character(letter) if mods.ctrl => E::from_name(letter)
+            .or(match code {
+                KeyCode::KeyC => Some(E::C),
+                KeyCode::KeyX => Some(E::X),
+                KeyCode::KeyV => Some(E::V),
+                _ => None,
+            })
+            .filter(|key| matches!(key, E::C | E::X | E::V)),
+        _ => None,
+    }
+}
+
+// A bound viewer accelerator normally bypasses egui. Explorer's own bindings
+// must reach the tab that reserved them, even when the viewer has the same key.
+fn skip_viewer_accelerator(explorer_owned: bool, viewer_claim: bool) -> bool {
+    viewer_claim && !explorer_owned
 }
 
 /// The shortcut mask as egui reads it, for the prompt's own keys.
@@ -2373,6 +2427,7 @@ impl App {
             day_fetch: None,
             day_import: None,
             env_applying: None,
+            inventory_env_prompt: None,
             env_beacons_saved: None,
             demo: false,
             inventory_ui: Default::default(),
@@ -2980,6 +3035,7 @@ impl App {
                 return;
             }
             if let NetCommand::CreateInventoryWearable {
+                explorer,
                 parent,
                 kind,
                 name,
@@ -2988,6 +3044,7 @@ impl App {
             } = &cmd
             {
                 self.send(NetCommand::CreateInventoryItem {
+                    explorer: *explorer,
                     parent: *parent,
                     kind: aurora_net::inventory::operations::NewItem::Wearable(*kind),
                     name: name.clone(),
@@ -3157,6 +3214,7 @@ impl App {
                 return;
             }
             if let NetCommand::CreateInventoryItem {
+                explorer,
                 parent,
                 kind,
                 name,
@@ -3193,7 +3251,13 @@ impl App {
                     everyone_mask: permissions.map_or(0, |p| p.everyone),
                     ..Default::default()
                 };
-                self.on_app_event(NetEvent::InventoryCreated(item));
+                self.on_app_event(match explorer {
+                    Some(request) => NetEvent::ExplorerItemCreated {
+                        request: *request,
+                        result: Ok(item),
+                    },
+                    None => NetEvent::InventoryCreated(item),
+                });
                 return;
             }
             if let NetCommand::PreviewInventoryItem(it) = &cmd {
@@ -3739,6 +3803,7 @@ impl App {
         self.day_fetch = None;
         self.day_import = None;
         self.env_applying = None;
+        self.inventory_env_prompt = None;
         self.env_beacons_frame();
         self.world.eep.clear_edit();
         // the favourites as they are at the end of the session, for the
@@ -3962,6 +4027,31 @@ impl App {
                 self.world.inventory.add_items(vec![item]);
                 self.inventory_ui.show_original(&self.world.inventory, id);
             }
+            return;
+        }
+        if let NetEvent::ExplorerItemCreated { request, result } = ev {
+            let Some(origin) = self
+                .inventory_ui
+                .explorer_items
+                .remove(&request)
+                .filter(|r| r.root == self.world.inventory.root)
+            else {
+                return;
+            };
+            let confirmed = result.and_then(|item| {
+                if !origin.matches_item(&item, self.world.agent_id) {
+                    return Err(aurora_i18n::tr!("explorer-new-unconfirmed-item").to_owned());
+                }
+                let id = item.id;
+                self.world.inventory.add_items(vec![item]);
+                Ok(id)
+            });
+            self.inventory_ui.explorer_folder_result(
+                &self.world.inventory,
+                &origin,
+                confirmed.as_ref().copied().map_err(String::as_str),
+                self.demo,
+            );
             return;
         }
         if let NetEvent::InventoryCreated(item) = ev {
@@ -4499,6 +4589,7 @@ impl App {
                 // the saved smart searches of the inventory; the demo keeps
                 // them in memory
                 if !self.demo {
+                    self.inventory_ui.set_explorer_account(crate::settings::account_dir(&l.agent_id));
                     crate::ui::inventory::smart_store::load(
                         crate::settings::account_dir(&l.agent_id).join(crate::ui::inventory::smart_store::FILE),
                     );
@@ -5574,7 +5665,10 @@ impl App {
             Action::Groups => self.people_tab_shortcut(ui::people::TAB_GROUPS),
             Action::ContactSets => self.people_tab_shortcut(ui::people::TAB_SETS),
             Action::Inventory => ui::widgets::toggle_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
-            Action::NewInventoryWindow => self.inventory_ui.open_additional_window(&self.egui_ctx),
+            Action::NewInventoryWindow => {
+                self.inventory_ui
+                    .open_additional_window(&self.egui_ctx, self.settings.inventory_style, self.world.inventory.root)
+            }
             // The shortcut of Me › Appearance (menu_viewer.xml's "Outfits"),
             // which LLEditEnableCustomizeAvatar (indra/newview/llviewermenu.cpp)
             // greys while RlvActions::canStand refuses: a greyed entry's
@@ -13343,6 +13437,7 @@ impl App {
         let mut library_drop = None;
         let t_pass = Instant::now();
         let mut windows_ms = 0.0;
+        ui::inventory::explorer_key_debug::phase(&ctx, "before-ui", None, Some(&raw.events));
         let mut full = ctx.run_ui(raw, |ui| {
             self.sound_cues.pass_start(ui.ctx());
             // before any field reads its keys: Ctrl+W is the frontmost window's
@@ -13358,14 +13453,15 @@ impl App {
             self.studio_overlay(ui.ctx());
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_empty() {
-                inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
+                inventory_drop = self.inventory_drag_input(ui, &gfx.renderer);
                 if library_drop.is_none() {
-                    library_drop = self.texture_library_drag_input(ui.ctx(), &mut gfx.renderer);
+                    library_drop = self.texture_library_drag_input(ui, &mut gfx.renderer);
                 }
             }
             if library_drop.is_none() {
                 library_drop = self.no_copy_drop_prompt(ui.ctx());
             }
+            ui::inventory::drag::badge(ui.ctx(), &self.palette, &self.world.inventory);
             // after every window: their text fields have been drawn
             self.text_menu.after(ui.ctx(), &self.palette);
             // the glass blurs the world: there is none behind the login screen
@@ -20176,13 +20272,7 @@ impl App {
                     &self.inventory_hover_images.ready,
                     &self.avatar_pics,
                     &self.settings.script_editor,
-                    // the inventory scenarios were written for the Legacy window,
-                    // but for Aurora's own
-                    if self.demo && ui::inventory::aurora_demo_active() {
-                        false
-                    } else {
-                        self.settings.classic_inventory || (self.demo && ui::inventory::legacy_demo())
-                    },
+                    self.settings.inventory_style,
                 ) {
                     match ia {
                         ui::inventory::InvAction::TeleportLandmark(asset) => a.landmark = Some(asset),
@@ -21307,6 +21397,7 @@ impl App {
                         .chain(reset),
                 );
                 self.draw_env_editor(&ctx, &p);
+                self.draw_inventory_environment_confirm(&ctx);
                 self.draw_day_editor(&ctx, &p);
                 self.draw_options(&ctx, &p, &mut a);
                 self.startup_windows.remember(&self.panels, &mut self.settings);
@@ -23591,6 +23682,11 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                self.settings.inventory_style = ui::inventory::demo_style(&view);
+                if self.settings.inventory_style == crate::settings::InventoryStyle::Explorer {
+                    crate::world::inventory::demo::seed_explorer(&mut self.world.inventory, self.world.agent_id);
+                    self.panels.inventory = true;
+                }
                 if matches!(view.as_str(), "offer-unsent" | "offer-sent" | "offer-uncertain") {
                     let original = uuid::Uuid::from_u128(8109);
                     self.panels.inventory = true;
@@ -24860,6 +24956,19 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput { event: ke, .. } => self.key_mods(ke),
             _ => self.mods(),
         };
+        let accelerator = match (&event, bound_key) {
+            (WindowEvent::KeyboardInput { event: key, .. }, Some(code)) if !self.altgr_text_input(key) => {
+                explorer_accelerator(&key.logical_key, code, key_mods).or_else(|| {
+                    explorer_file_accelerator(&key.logical_key, code, key_mods)
+                        .filter(|_| ui::inventory::explorer_file_focus(&self.egui_ctx))
+                })
+            }
+            _ => None,
+        };
+        let explorer_owned = accelerator.is_some()
+            && self.options_ui.capture.is_none()
+            && !self.options_ui.joystick_capturing()
+            && ui::inventory::explorer_owns_keys(&self.egui_ctx);
         // Tab navigates the focused browser's fields. Giving the press to
         // egui as well would focus a viewer widget and steal the next key.
         let web_tab = bound_key == Some(KeyCode::Tab)
@@ -24942,16 +25051,42 @@ impl ApplicationHandler for App {
             return;
         };
         let first_event = g.egui_state.egui_input().events.len();
-        let resp =
-            if chat_pass || web_tab || lens_shortcut || held_pointer || stationary_hidden_pointer || altgr_shortcut || claim_over_focus {
-                egui_winit::EventResponse {
-                    consumed: false,
-                    repaint: true,
-                }
-            } else {
-                g.egui_state.on_window_event(&g.window, &event)
-            };
+        let viewer_claim = chat_pass || web_tab || lens_shortcut || claim_over_focus;
+        let skip_egui =
+            skip_viewer_accelerator(explorer_owned, viewer_claim) || held_pointer || stationary_hidden_pointer || altgr_shortcut;
+        let resp = if skip_egui {
+            egui_winit::EventResponse {
+                consumed: false,
+                repaint: true,
+            }
+        } else {
+            g.egui_state.on_window_event(&g.window, &event)
+        };
         let events = &mut g.egui_state.egui_input_mut().events;
+        if let Some(key) = accelerator
+            && ui::inventory::explorer_key_debug::enabled()
+        {
+            let physical = match bound_key {
+                Some(KeyCode::KeyN) => "N",
+                Some(KeyCode::KeyL) => "L",
+                Some(KeyCode::KeyF) => "F",
+                Some(KeyCode::KeyT) => "T",
+                Some(KeyCode::Tab) => "Tab",
+                Some(KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::ArrowUp) => "arrow",
+                Some(KeyCode::F3) => "F3",
+                _ => "remapped",
+            };
+            ui::inventory::explorer_key_debug::start(
+                &self.egui_ctx,
+                key,
+                physical,
+                [key_mods.ctrl, key_mods.shift, key_mods.alt],
+                explorer_owned,
+                claim_over_focus,
+                skip_egui,
+                &events[first_event..],
+            );
+        }
         if (self.alt_text.len() != pending_alt_chars || events[first_event..].iter().any(typing_pointer::inserts_text))
             && !self.cursor_hold.held()
             && !self.clicks.scripted()
@@ -25160,6 +25295,12 @@ impl ApplicationHandler for App {
                     // keep it held.
                     if pressed && ui::close_key::take_native_key(&ke.logical_key, code, mods, &mut self.down) {
                         self.check_temp_run();
+                        return;
+                    }
+                    // The focused Explorer handles these keys through egui. Let
+                    // Ctrl+T keep opening Conversations everywhere else.
+                    if explorer_owned {
+                        self.down.remove(&Input::key(code));
                         return;
                     }
                     // the photo reel's quick view reads its keys through egui
@@ -25746,6 +25887,112 @@ pub fn restart_with_vr(mode: crate::camera::VrView) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn explorer_owns_stock_bound_keys_at_egui_ingress() {
+        use crate::keybinds::{Action, Input, KeyBindings};
+        use winit::keyboard::{Key, KeyCode};
+        let ctx = egui::Context::default();
+        let bindings = KeyBindings::default();
+        for (letter, code, shift, action) in [
+            ("t", KeyCode::KeyT, false, Action::Conversations),
+            ("N", KeyCode::KeyN, true, Action::EnvSunset),
+        ] {
+            let key = Key::Character(letter.into());
+            let mods = Mods {
+                ctrl: true,
+                shift,
+                alt: false,
+            };
+            let binding = bindings.triggered(&Input::key(code), mods);
+            assert_eq!(binding, Some(action));
+            assert!(super::explorer_accelerator(&key, code, mods).is_some());
+            let stock = super::shortcut_claims_focus(&ctx, code, &key, mods, shift, false, binding.is_some());
+            assert!(stock);
+            assert!(
+                !super::skip_viewer_accelerator(true, stock),
+                "the native press must reach the Explorer via egui"
+            );
+            assert!(
+                super::skip_viewer_accelerator(false, stock),
+                "the stock viewer retains its accelerator elsewhere"
+            );
+        }
+    }
+
+    #[test]
+    fn explorer_file_chords_require_exact_modifiers_and_leave_other_keys_to_the_focused_widget() {
+        use crate::keybinds::Mods;
+        use winit::keyboard::{Key, KeyCode, NamedKey};
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        for (key, code, mods, expected) in [
+            (Key::Character("c".into()), KeyCode::KeyC, ctrl, Some(egui::Key::C)),
+            (Key::Character("x".into()), KeyCode::KeyX, ctrl, Some(egui::Key::X)),
+            (Key::Character("v".into()), KeyCode::KeyV, ctrl, Some(egui::Key::V)),
+            (Key::Character("v".into()), KeyCode::KeyV, Mods { shift: true, ..ctrl }, None),
+            (Key::Character("v".into()), KeyCode::KeyV, Mods { alt: true, ..ctrl }, None),
+            (Key::Character("a".into()), KeyCode::KeyC, ctrl, None),
+            (Key::Named(NamedKey::F2), KeyCode::F2, Default::default(), Some(egui::Key::F2)),
+            (
+                Key::Named(NamedKey::Delete),
+                KeyCode::Delete,
+                Default::default(),
+                Some(egui::Key::Delete),
+            ),
+            (
+                Key::Named(NamedKey::Delete),
+                KeyCode::Delete,
+                Mods {
+                    shift: true,
+                    ..Default::default()
+                },
+                None,
+            ),
+        ] {
+            assert_eq!(super::explorer_file_accelerator(&key, code, mods), expected);
+        }
+    }
+
+    #[test]
+    fn explorer_native_keys_preserve_close_find_typing_and_other_modified_chords() {
+        use crate::keybinds::Mods;
+        use winit::keyboard::{Key, KeyCode as C, NamedKey as N};
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        let shift = Mods { shift: true, ..ctrl };
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
+        for (key, code, mods, expected) in [
+            (Key::Character("t".into()), C::KeyT, ctrl, true),
+            (Key::Character("е".into()), C::KeyT, ctrl, true),
+            (Key::Character("y".into()), C::KeyT, ctrl, false),
+            (Key::Character("t".into()), C::KeyT, shift, false),
+            (Key::Character("t".into()), C::KeyT, Mods::default(), false),
+            (Key::Character("l".into()), C::KeyL, ctrl, true),
+            (Key::Character("l".into()), C::KeyL, shift, false),
+            (Key::Character("w".into()), C::KeyW, ctrl, false), // reserved by Close Window
+            (Key::Character("f".into()), C::KeyF, ctrl, true),  // active Explorer focuses its scoped search
+            (Key::Character("n".into()), C::KeyN, ctrl, false),
+            (Key::Character("n".into()), C::KeyN, shift, true),
+            (Key::Named(N::Tab), C::Tab, shift, true),
+            (Key::Named(N::ArrowLeft), C::ArrowLeft, alt, true),
+            (Key::Named(N::ArrowLeft), C::ArrowLeft, ctrl, false),
+            (Key::Named(N::F3), C::F3, Mods::default(), true),
+        ] {
+            assert_eq!(
+                super::explorer_accelerator(&key, code, mods).is_some(),
+                expected,
+                "{key:?} {mods:?}"
+            );
+        }
+    }
+
     use super::{
         RightGesture, UiActions, WindowedGeometry, capture_files, exit_prompt_key, exit_prompt_modifiers, frame_cap, fullscreen_shortcut,
     };

@@ -1206,6 +1206,12 @@ pub enum NetEvent {
     Frozen(bool),
     /// Who froze or released the agent (AvatarFrozen… alerts, freeze.rs).
     FreezeAlert(crate::freeze::Alert),
+    /// Dedicated response to a confirmed inventory write. An About Land GET cannot acknowledge it.
+    InventoryParcelEnvironment {
+        request: Uuid,
+        parcel: crate::land::ConfirmedEnvParcel,
+        result: Result<aurora_llsd::Llsd, String>,
+    },
     /// The parcel the agent stands on (main region).
     AgentParcel(Arc<ParcelInfo>),
     /// A pushed spatial voice change; other local parcel state stays intact.
@@ -1437,6 +1443,10 @@ pub enum NetEvent {
     },
     /// A locally requested creation, confirmed by its UDP callback.
     InventoryCreated(crate::inventory::InvItem),
+    ExplorerItemCreated {
+        request: Uuid,
+        result: Result<crate::inventory::InvItem, String>,
+    },
     InventoryItemsFailed {
         items: Vec<Uuid>,
     },
@@ -2348,6 +2358,8 @@ pub enum NetCommand {
         reply: crate::inventory::operations::Reply,
     },
     CreateInventoryItem {
+        /// An Explorer tab awaiting the confirmed server UUID.
+        explorer: Option<Uuid>,
         parent: Uuid,
         kind: crate::inventory::operations::NewItem,
         name: String,
@@ -2459,6 +2471,8 @@ pub enum NetCommand {
         copy_name: Option<String>,
     },
     CreateInventoryWearable {
+        /// An Explorer tab awaiting the confirmed server UUID.
+        explorer: Option<Uuid>,
         parent: Uuid,
         kind: u8,
         name: String,

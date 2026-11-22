@@ -99,7 +99,7 @@ impl State {
     }
 }
 
-fn asset(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+pub(super) fn asset(inv: &Inventory, id: Uuid) -> Option<Uuid> {
     if !inv.can_preview(0) {
         return None;
     }

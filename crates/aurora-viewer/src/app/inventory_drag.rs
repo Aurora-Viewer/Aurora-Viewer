@@ -363,9 +363,9 @@ impl App {
     /// Run inside the UI pass, after all windows: egui clears released cargo
     /// at end-pass. Wants-pointer stays true during a drag from a widget;
     /// only the actual destination area decides whether the world gets it.
-    pub(super) fn inventory_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Vec<InventoryDrop> {
+    pub(super) fn inventory_drag_input(&mut self, root: &egui::Ui, renderer: &Renderer) -> Vec<InventoryDrop> {
+        let ctx = root.ctx();
         self.inventory_drag.cursor = ui::inventory::task_drop::cursor(ctx).or_else(|| ui::inventory::drag::cursor(ctx));
-        ui::inventory::drag::badge(ctx, &self.palette);
         ui::places::drag::ghost(ctx, &self.palette);
         let place_drag = egui::DragAndDrop::has_payload_of_type::<ui::places::drag::PlaceDrag>(ctx);
         let task_drag = egui::DragAndDrop::has_payload_of_type::<TaskDrag>(ctx);
@@ -373,7 +373,7 @@ impl App {
         if ui::inventory::drag::carried_count(ctx).is_none() && !place_drag && !task_drag && !notecard_drag {
             self.inventory_drag.checked = None;
         }
-        let give = self.avatar_give_input(ctx, renderer);
+        let give = self.avatar_give_input(root, renderer);
         self.inventory_drag.giving = give.is_some();
         self.scene.mark_give_target(&self.world, give);
         if give.is_some() || !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
@@ -388,9 +388,9 @@ impl App {
         } else if notecard_drag {
             self.notecard_drag_input(ctx, renderer).into_iter().collect()
         } else if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) || place_drag {
-            self.item_drag_input(ctx, renderer).into_iter().collect()
+            self.item_drag_input(root, renderer).into_iter().collect()
         } else {
-            self.selection_drag_input(ctx, renderer)
+            self.selection_drag_input(root, renderer)
         }
     }
 
@@ -398,22 +398,15 @@ impl App {
     /// only an object's contents take it, with Ctrl when it holds objects,
     /// textures, materials or folders (LLToolDragAndDrop::dragOrDrop3D: rez
     /// and folders accept a single entry, contents accept many).
-    fn selection_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Vec<InventoryDrop> {
+    fn selection_drag_input(&mut self, root: &egui::Ui, renderer: &Renderer) -> Vec<InventoryDrop> {
+        let ctx = root.ctx();
         let Some(ids) = ui::inventory::drag::carried_ids(ctx) else {
             return Vec::new();
         };
-        if ctx.is_pointer_over_egui() {
-            return Vec::new();
-        }
-        let Some((pos, released, ctrl)) = ctx.input(|i| {
-            Some((
-                i.pointer.interact_pos()?,
-                i.pointer.button_released(egui::PointerButton::Primary),
-                i.modifiers.ctrl,
-            ))
-        }) else {
+        let Some(pointer) = ui::inventory::drag::pointer::world(root) else {
             return Vec::new();
         };
+        let (pos, released, ctrl) = (pointer.position, pointer.released, pointer.modifiers.ctrl);
         let ppp = ctx.pixels_per_point();
         let Some(ray) = renderer.cursor_ray(pos.x * ppp, pos.y * ppp) else {
             return Vec::new();
@@ -686,13 +679,14 @@ impl App {
 
     /// One inventory item dragged over the world: rezzed, put into an
     /// object's contents, or a landmark turned into a portal.
-    fn item_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
+    fn item_drag_input(&mut self, root: &egui::Ui, renderer: &Renderer) -> Option<InventoryDrop> {
+        let ctx = root.ctx();
         if egui::DragAndDrop::payload::<InvDrag>(ctx)
             .is_some_and(|drag| crate::ui::texture_library::catalogue::resource(&self.world.inventory, drag.0).is_some())
         {
             return None;
         }
-        let drag = ui::inventory::world_drag(ctx)?;
+        let drag = ui::inventory::world_drag(root)?;
         let (pos, released, ctrl) = (drag.position, drag.released, drag.ctrl);
         let ppp = ctx.pixels_per_point();
         let ray = renderer.cursor_ray(pos.x * ppp, pos.y * ppp)?;
@@ -822,12 +816,14 @@ impl App {
     /// texture library card included (DAD_TEXTURE / DAD_MATERIAL on
     /// DT_AVATAR → dad3dGiveInventory): `texture_library_drag_input` yields
     /// while they are the target.
-    fn avatar_give_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<usize> {
+    fn avatar_give_input(&mut self, root: &egui::Ui, renderer: &Renderer) -> Option<usize> {
+        let ctx = root.ctx();
         let ids = ui::inventory::drag::give_ids(ctx)?;
-        if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open || ctx.is_pointer_over_egui() {
+        if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
             return None;
         }
-        let (pos, released) = ctx.input(|i| Some((i.pointer.interact_pos()?, i.pointer.button_released(egui::PointerButton::Primary))))?;
+        let pointer = ui::inventory::drag::pointer::world(root)?;
+        let (pos, released) = (pointer.position, pointer.released);
         let ppp = ctx.pixels_per_point();
         let ray = renderer.cursor_ray(pos.x * ppp, pos.y * ppp)?;
         self.inventory_drag.refresh_surface(

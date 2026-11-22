@@ -258,6 +258,7 @@ impl CreateLandmarkUi {
         }
         self.quick += 1;
         Some(NetCommand::CreateInventoryItem {
+            explorer: None,
             parent,
             kind: NewItem::Landmark,
             name: default_title(&world.parcel_name, &world.region_name(), world.agent.position),
@@ -308,6 +309,7 @@ impl CreateLandmarkUi {
         }
         self.waiting = true;
         Some(NetCommand::CreateInventoryItem {
+            explorer: None,
             parent: self.folder,
             kind: NewItem::Landmark,
             name: world.parcel_name.clone(),

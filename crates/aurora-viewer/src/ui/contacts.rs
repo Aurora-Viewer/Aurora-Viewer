@@ -1183,6 +1183,9 @@ fn friend_table(
                         st.friends_sel = vec![r.id];
                         st.friends_anchor = Some(r.id);
                     }
+                    if let Some(items) = super::give_drop::row(&resp, p, world.agent_id, r.id) {
+                        context::request(ui.ctx(), context::CtxAction::ShareInventory { to: r.id, items });
+                    }
                     menu::context_menu(&resp, p, |ui| friend_menu(ui, p, world, st, settings, r.id, actions));
                 }
             });

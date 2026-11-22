@@ -673,6 +673,8 @@ pub struct World {
     /// ExtEnvironment answers of the frame (parcel local id, error), for the
     /// environment editors' "Apply To Parcel / Region" (drained by the app).
     pub environment_answers: Vec<(i32, Result<(), String>)>,
+    /// One outstanding confirmed inventory write per region/parcel, until its own readback completes.
+    inventory_env_writes: HashMap<(RegionHandle, i32), Uuid>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
     pub health: f32,
     /// The last LL_SIM_STAT_FPS of a SimStats, from any region: it paces
@@ -1158,6 +1160,7 @@ impl World {
             local_asset_order: HashMap::new(),
             local_asset_requests: Vec::new(),
             environment_answers: Vec::new(),
+            inventory_env_writes: HashMap::new(),
             health: 100.0,
             sim_fps: None,
             frozen: false,
@@ -4561,6 +4564,60 @@ impl World {
                     }
                 }
                 self.land_if_fly_blocked(handle);
+                None
+            }
+            NetEvent::InventoryParcelEnvironment { request, parcel, result } => {
+                if !self.finish_inventory_environment(&parcel, request) {
+                    return None;
+                }
+                let parcel_name = if parcel.name.is_empty() {
+                    format!("#{}", parcel.local_id)
+                } else {
+                    parcel.name
+                };
+                let (kind, message) = match result {
+                    Ok(env) => {
+                        if env["parcel_id"].as_i32() == parcel.local_id {
+                            if let Some(s) = self
+                                .land
+                                .sel
+                                .as_mut()
+                                .filter(|s| s.handle == parcel.region && s.local_id() == Some(parcel.local_id))
+                            {
+                                s.env = land::EnvState::Ready(land::EnvSummary::from_llsd(&env));
+                                s.revision += 1;
+                            }
+                            if self.main_region == Some(parcel.region)
+                                && self.parcel.as_ref().is_some_and(|p| p.local_id == parcel.local_id)
+                            {
+                                self.apply(NetEvent::Environment {
+                                    handle: parcel.region,
+                                    parcel_id: parcel.local_id,
+                                    environment: env,
+                                });
+                            }
+                        }
+                        (
+                            notifications::Kind::Info,
+                            aurora_i18n::tr!("explorer-parcel-env-success", parcel = parcel_name.as_str()),
+                        )
+                    }
+                    Err(reason) => (
+                        notifications::Kind::Alert,
+                        aurora_i18n::tr!(
+                            "explorer-parcel-env-failed",
+                            parcel = parcel_name.as_str(),
+                            reason = reason.as_str()
+                        ),
+                    ),
+                };
+                self.system_message(message.clone());
+                self.notifications.push(
+                    kind,
+                    aurora_i18n::tr!("ui-env-editor-apply-parcel"),
+                    message,
+                    notifications::Data::None,
+                );
                 None
             }
             NetEvent::Land(ev) => {

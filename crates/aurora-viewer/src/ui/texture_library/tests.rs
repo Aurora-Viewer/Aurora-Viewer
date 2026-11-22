@@ -453,7 +453,7 @@ fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
                         &mut preferences,
                         &mut true,
                     );
-                    if let Some(drag) = super::super::inventory::world_drag(host.ctx())
+                    if let Some(drag) = super::super::inventory::world_drag(host)
                         && drag.released
                     {
                         dropped = Some(drag.item);

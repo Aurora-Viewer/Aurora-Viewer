@@ -179,11 +179,11 @@ impl Session<'_> {
                     },
                 );
             }
+            if new && (!item.id.is_nil() || self.explorer_creations.contains_key(&callback)) {
+                created.push(self.created_item_event(callback, item.clone()));
+            }
             if item.id.is_nil() {
                 continue;
-            }
-            if new {
-                created.push(item.clone());
             }
             items.push(item);
         }
@@ -204,8 +204,8 @@ impl Session<'_> {
                 },
             );
         }
-        for item in created {
-            emit(self.sh, NetEvent::InventoryCreated(item));
+        for event in created {
+            emit(self.sh, event);
         }
     }
 }
@@ -419,6 +419,7 @@ mod tests {
             inventory_previews: Default::default(),
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
+            explorer_creations: HashMap::new(),
             inventory_copies: Default::default(),
             attach_queue: Default::default(),
             inventory_merchant_pending: false,
@@ -499,6 +500,38 @@ mod tests {
                 started.elapsed().as_micros()
             );
         }
+        // Identical item metadata can arrive for several create actions; only the exact
+        // simulator callback ID belongs to the initiating Explorer tab.
+        let explorer = Uuid::new_v4();
+        session.next_inventory_callback = 40;
+        assert_eq!(session.creation_callback(Some(explorer)), 41);
+        let plain = session.creation_callback(None);
+        let update = |callback, id| {
+            Ok(Update {
+                transaction: Uuid::nil(),
+                folders: vec![],
+                items: vec![(
+                    callback,
+                    InvItem {
+                        id,
+                        parent: folder,
+                        owner: agent,
+                        ..Default::default()
+                    },
+                )],
+            })
+        };
+        session.apply_generic_inventory_update(update(plain, Uuid::from_u128(103)));
+        assert!(!received.try_iter().any(|(_, e)| matches!(e, NetEvent::ExplorerItemCreated { .. })));
+        session.apply_generic_inventory_update(update(41, Uuid::nil()));
+        assert!(
+            received
+                .try_iter()
+                .any(|(_, e)| matches!(e,NetEvent::ExplorerItemCreated{request,result:Err(_)} if request==explorer))
+        );
+        session.apply_generic_inventory_update(update(41, Uuid::from_u128(103)));
+        assert!(!received.try_iter().any(|(_, e)| matches!(e, NetEvent::ExplorerItemCreated { .. })));
+
         let request = Uuid::from_u128(10);
         let mut bytes = [0; 2048];
         session.on_command(NetCommand::EditInventory {

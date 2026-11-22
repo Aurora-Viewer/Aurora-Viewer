@@ -6,7 +6,7 @@
 
 use super::{FolderContents, InvItem};
 use aurora_llsd::{Llsd, llsd_map};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -279,6 +279,9 @@ pub struct Mutation {
     /// Interactive inventory commands can display AIS-created folders before
     /// fetching their contents. Dependent construction jobs keep readback.
     pub defer_folder_contents: bool,
+    /// Independent next-owner edits. The caller inspects each item's returned
+    /// server mask. A refused PATCH must not block the other selected items.
+    pub bulk_next_owner: bool,
 }
 
 impl Mutation {
@@ -474,6 +477,15 @@ where
     if change.operations.len() > 2048 || change.copies.len() > 2048 || change.refresh.is_empty() {
         return Err(aurora_i18n::tr!("inventory-operations-the-selection-is-empty-or-too-large").into());
     }
+    let independent = change.bulk_next_owner;
+    if independent && (udp.is_some() || !change.copies.is_empty() || !change.removed.is_empty()
+        || change.operations.is_empty() || !change.operations.iter().all(|op| matches!(op,
+            Operation::Patch { folder: false, body, .. } if body.as_map().is_some_and(|map| map.keys().all(|key| key == "permissions" || key == "flags"))
+            && body["permissions"].as_map().is_some_and(|map| map.len() == 1 && map.contains_key("next_owner_mask"))
+        ))) {
+        return Err(not_on_this_grid());
+    }
+    let mut refused = HashSet::new();
     let cap = cap.trim_end_matches('/');
     let mut created = HashMap::new();
     let mut folders = Vec::new();
@@ -595,7 +607,12 @@ where
                 }
                 if !fields.is_empty() {
                     let kind = if *folder { "category" } else { "item" };
-                    ais(http.patch(format!("{cap}/{kind}/{id}")), &Llsd::Map(fields), step).await?;
+                    if let Err(error) = ais(http.patch(format!("{cap}/{kind}/{id}")), &Llsd::Map(fields), step).await {
+                        if !independent {
+                            return Err(error);
+                        }
+                        refused.insert(id);
+                    }
                 }
             }
             Operation::Links { parent, links } => {
@@ -659,7 +676,18 @@ where
         .iter()
         .any(|op| matches!(op, Operation::Patch { body, .. } if body.has("thumbnail")));
     // (no answer comes on the circuit: a read shows when a change landed)
-    let retries = if udp.is_some() || moved || !created.is_empty() || favorite_changed || thumbnail_changed {
+    let accepted: Vec<_> = if independent {
+        change
+            .operations
+            .iter()
+            .filter(|op| !matches!(op, Operation::Patch { id, .. } if refused.contains(id)))
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let verify = if independent { &accepted } else { &change.operations };
+    let retries = if udp.is_some() || moved || !created.is_empty() || favorite_changed || thumbnail_changed || independent {
         5
     } else {
         0
@@ -691,7 +719,9 @@ where
             complete &= chunk.iter().all(|id| fetched.iter().any(|c| c.folder_id == *id && c.version >= 0));
             contents.extend(fetched);
         }
-        if complete && confirmed(&change.operations, &created, &contents) {
+        if complete && (confirmed(verify, &created, &contents) || independent && attempt == retries) {
+            // Bulk callers compare every requested mask to these authoritative
+            // rows, including requests clamped or refused by the simulator.
             break;
         }
         if attempt == retries {
@@ -823,12 +853,18 @@ fn confirmed(operations: &[Operation], created: &HashMap<Uuid, Uuid>, contents: 
             };
             llsd_map! { "name" => it.name.clone(), "desc" => it.desc.clone(), "parent_id" => it.parent, "linked_id" => it.asset_id,
             "favorite" => metadata_favorite(it.favorite)["favorite"].clone(), "thumbnail" => metadata_thumbnail(it.thumbnail)["thumbnail"].clone(),
-            "permissions" => llsd_map! { "next_owner_mask" => it.next_owner_mask as i32, "group_mask" => it.group_mask as i32, "everyone_mask" => it.everyone_mask as i32 },
+            "flags" => it.flags as i32, "permissions" => llsd_map! { "next_owner_mask" => it.next_owner_mask as i32, "group_mask" => it.group_mask as i32, "everyone_mask" => it.everyone_mask as i32 },
             "sale_info" => llsd_map! { "sale_type" => i32::from(it.sale_type), "sale_price" => it.sale_price } }
         };
         for (key, value) in body.as_map().into_iter().flatten() {
             if key == "parent_id" {
                 if observed[key.as_str()].as_uuid() != resolve(value.as_uuid()) {
+                    return false;
+                }
+            } else if key == "flags" && !is_folder {
+                // LLInventoryItem::asLLSD writes flags as a network-order U32.
+                // FetchInventoryDescendents and AIS can represent it differently.
+                if observed["flags"].as_u32() != value.as_u32() {
                     return false;
                 }
             } else if key == "permissions" {
@@ -1521,6 +1557,38 @@ mod tests {
             "items" => Llsd::Array(if id == parent { vec![item.clone()] } else { Vec::new() }),
             "categories" => Llsd::Array(if id == parent { vec![folder.clone()] } else { Vec::new() }),
         }).collect()) }
+    }
+
+    #[tokio::test]
+    async fn bulk_next_owner_continues_after_refusal_and_reads_real_object_flags() {
+        let rights = llsd_map! { "next_owner_mask" => 0x2000 };
+        let change = Mutation {
+            operations: [id(3), id(8)]
+                .into_iter()
+                .map(|id| Operation::Patch {
+                    id,
+                    folder: false,
+                    body: llsd_map! { "permissions" => rights.clone(), "flags" => Llsd::Binary(0x120u32.to_be_bytes().to_vec()) },
+                })
+                .collect(),
+            refresh: vec![id(1)],
+            bulk_next_owner: true,
+            ..Default::default()
+        };
+        let item = |target, mask, flags| {
+            llsd_map! { "item_id" => target, "parent_id" => id(1),
+            "type" => 6, "inv_type" => 6, "name" => "Object", "permissions" => llsd_map! { "next_owner_mask" => mask }, "flags" => flags }
+        };
+        let readback = llsd_map! { "folders" => Llsd::Array(vec![llsd_map! { "folder_id" => id(1), "version" => 2,
+        "items" => Llsd::Array(vec![item(id(3), 0xe000, 0x20), item(id(8), 0x2000, 0x120)]) }]) };
+        let (url, requests) = server(vec![(403, Llsd::new_map()), (200, Llsd::new_map()), (200, readback)]).await;
+        let reply = mutate(&reqwest::Client::new(), &url, &url, id(2), change)
+            .await
+            .expect("return each actual inventory record");
+        assert_eq!(requests.await.unwrap().len(), 3);
+        let items = &reply.contents[0].items;
+        assert_eq!(items[0].next_owner_mask, 0xe000);
+        assert_eq!((items[1].next_owner_mask, items[1].flags), (0x2000, 0x120));
     }
 
     fn move_change() -> Mutation {

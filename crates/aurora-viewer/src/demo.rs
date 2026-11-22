@@ -6699,6 +6699,7 @@ pub fn events() -> Vec<NetEvent> {
             desc: aurora_i18n::tr!("demo-aurora-viewer-s-offline-demo-parcel").into(),
             // the environment editors' parcel scenarios: the avatar's own
             owner_id: if env::parcel_scenario() { DEMO_AGENT } else { u(100) },
+            status: aurora_net::land::OS_LEASED,
             area: 16384,
             bitmap,
             max_prims: 3750,

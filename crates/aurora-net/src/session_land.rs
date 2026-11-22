@@ -25,6 +25,8 @@ const LLTS_OK: i32 = 0;
 const LLTS_DONE: i32 = 1;
 /// Names asked per UUIDGroupNameRequest (the variable block holds 255).
 const MAX_NAME_BLOCKS: usize = 50;
+/// Bound each leg of a confirmed inventory write so even a silent capability releases the parcel.
+const INVENTORY_ENV_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The covenant notecard being received.
 #[derive(Debug)]
@@ -441,6 +443,28 @@ impl Session<'_> {
                 let body = land::environment_altitudes_body(day_length, day_offset, altitudes);
                 self.parcel_environment(local_id, None, EnvVerb::Put(body));
             }
+            LandCommand::InventoryEnvironment {
+                request,
+                parcel,
+                asset,
+                name,
+                flags,
+            } => {
+                let handle = self.main.map(|addr| self.handle_of(addr));
+                if !parcel.matches(handle, self.agent_parcel.as_deref()) || asset.is_nil() {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryParcelEnvironment {
+                            request,
+                            parcel,
+                            result: Err(aurora_i18n::tr!("explorer-parcel-env-changed").to_owned()),
+                        },
+                    );
+                    return;
+                }
+                let body = land::environment_apply_body(true, asset, &name, flags, -1, -1);
+                self.parcel_environment(parcel.local_id, None, EnvVerb::InventoryPut(body, request, parcel));
+            }
             LandCommand::EnvironmentApply {
                 local_id,
                 track,
@@ -607,25 +631,40 @@ impl Session<'_> {
     fn parcel_environment(&mut self, local_id: i32, track: Option<i32>, verb: EnvVerb) {
         let Some(url) = self.main_cap("ExtEnvironment") else {
             let result = Err(aurora_i18n::tr!("session-land-the-region-does-not-provide-the-extenvironment-capability").to_owned());
-            emit(self.sh, NetEvent::Land(LandEvent::Environment { local_id, result }));
+            let event = match verb {
+                EnvVerb::InventoryPut(_, request, parcel) => NetEvent::InventoryParcelEnvironment { request, parcel, result },
+                _ => NetEvent::Land(LandEvent::Environment { local_id, result }),
+            };
+            emit(self.sh, event);
             return;
         };
         let url = format!("{url}{}", land::environment_query(local_id, track));
         let http = self.sh.caps_http.clone();
         let events = self.sh.events.clone();
         tokio::spawn(async move {
-            let req = match verb {
+            let req = match &verb {
                 EnvVerb::Get => http.get(&url),
-                EnvVerb::Put(body) => http
+                EnvVerb::Put(body) | EnvVerb::InventoryPut(body, ..) => http
                     .put(&url)
                     .header("Content-Type", "application/llsd+xml")
-                    .body(aurora_llsd::to_xml(&body)),
+                    .body(aurora_llsd::to_xml(body)),
                 EnvVerb::Delete => http.delete(&url),
+            };
+            let req = if matches!(&verb, EnvVerb::InventoryPut(..)) {
+                req.timeout(INVENTORY_ENV_TIMEOUT)
+            } else {
+                req
             };
             let result = match req.header("Accept", "application/llsd+xml").send().await {
                 Ok(r) if r.status().is_success() => match r.bytes().await.ok().and_then(|b| aurora_llsd::from_xml(&b).ok()) {
                     // a refused change comes back as success = false with a message
                     Some(v) if v.has("success") && !v["success"].as_bool() => Err(v["message"].to_string_value()),
+                    Some(v)
+                        if matches!(&verb, EnvVerb::InventoryPut(..))
+                            && !matches!(v["success"], Llsd::Boolean(true) | Llsd::Integer(1)) =>
+                    {
+                        Err(aurora_i18n::tr!("session-land-unreadable-response").to_owned())
+                    }
                     Some(v) => Ok(v["environment"].clone()),
                     None => Err(aurora_i18n::tr!("session-land-unreadable-response").to_owned()),
                 },
@@ -635,7 +674,26 @@ impl Session<'_> {
             if let Err(e) = &result {
                 log::warn!("parcel {local_id} environment: {e}");
             }
-            let _ = events.send(NetEvent::Land(LandEvent::Environment { local_id, result }));
+            let event = match verb {
+                EnvVerb::InventoryPut(_, request, parcel) => {
+                    // Some simulators acknowledge a successful PUT without returning the day.
+                    // Refresh against the captured capability and parcel, even if the agent crosses.
+                    let mut result = result;
+                    if let Ok(env) = &mut result
+                        && (!env.has("day_cycle") || env["parcel_id"].as_i32() != local_id)
+                    {
+                        *env = Llsd::Undef;
+                        if let Ok(Ok(reply)) = tokio::time::timeout(INVENTORY_ENV_TIMEOUT, crate::caps::get_llsd(&http, &url)).await
+                            && reply["environment"]["parcel_id"].as_i32() == local_id
+                        {
+                            *env = reply["environment"].clone();
+                        }
+                    }
+                    NetEvent::InventoryParcelEnvironment { request, parcel, result }
+                }
+                _ => NetEvent::Land(LandEvent::Environment { local_id, result }),
+            };
+            let _ = events.send(event);
         });
     }
 
@@ -1046,6 +1104,7 @@ impl Session<'_> {
 }
 
 enum EnvVerb {
+    InventoryPut(Llsd, Uuid, land::ConfirmedEnvParcel),
     Get,
     Put(Llsd),
     Delete,

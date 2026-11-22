@@ -812,6 +812,18 @@ impl EnvSelector {
     /// so under `@setenv` the item still becomes the local environment, shown
     /// once the lock goes (setManualEnvironment(ENV_LOCAL); only
     /// setSelectedEnvironment is refused, indra/newview/llenvironment.cpp).
+    pub fn request_inventory_item(&mut self, inv: &super::inventory::Inventory, asset: Uuid, flags: u32, item: Uuid) -> bool {
+        let Some(it) = inv.items.get(&item).filter(|it| it.asset_id == asset && it.flags == flags) else {
+            return false;
+        };
+        let Some(kind) = super::env_select::inventory_settings_kind(it) else {
+            return false;
+        };
+        // Inventory applies queue under @setenv, unlike the environment window's picker.
+        self.request_local_item(asset, kind);
+        true
+    }
+
     pub fn request_local_item(&mut self, asset: Uuid, kind: SettingsKind) {
         self.photo_yield(kind);
         let mut preset_replaced = false;
@@ -2534,7 +2546,22 @@ mod tests {
         sel.rlva_locked = true;
         sel.request_local(SKY, SettingsKind::Sky);
         assert!(!sel.local_loading(), "the window's pick is refused");
-        sel.request_local_item(SKY, SettingsKind::Sky);
+        let item = Uuid::from_u128(99001);
+        let mut inv = super::super::inventory::Inventory::default();
+        inv.add_items(vec![aurora_net::inventory::InvItem {
+            id: item,
+            asset_id: SKY,
+            asset_type: 56,
+            inv_type: 25,
+            flags: 0,
+            ..Default::default()
+        }]);
+        assert!(!sel.request_inventory_item(&inv, SKY, 0, Uuid::nil()));
+        assert!(!sel.request_inventory_item(&inv, Uuid::new_v4(), 0, item));
+        assert!(!sel.request_inventory_item(&inv, SKY, 1, item));
+        assert!(!sel.local_loading(), "stale identity requests do not queue");
+        assert!(sel.request_inventory_item(&inv, SKY, 0, item));
+        assert!(sel.local_loading(), "the validated inventory request queues even under @setenv");
         sel.on_settings(SKY, Some(sky_asset(1.9)));
         sel.frame(&input(1.0));
         assert!(sel.has_local());
