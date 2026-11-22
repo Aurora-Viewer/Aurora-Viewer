@@ -8415,8 +8415,8 @@ failure. Grid validation and any paid upload are performed by the human.
     backup file would, and the chat says so.
   - the rows of the former filters, lit a moment and scrolled to:
     `0:tonemap` (Graphics › Image › Tone mapping), `0:occlusion` (Light ›
-    Indirect light, its cog opened), `graphics/1:ray-tracing` (Light › Ray
-    tracing), `0:bloom`, `name-tags`, `attention`
+    Indirect light, its cog opened), `graphics/7:ray-tracing` (the Ray
+    tracing tab), `0:bloom`, `name-tags`, `attention`
     (Chat › Notifications), `tip-toast` (Chat › Notifications, the online /
     offline toasts' duration, greyed with Aurora's center) and
     `tip-toast-legacy` (the same with the Legacy toasts for the session: the
