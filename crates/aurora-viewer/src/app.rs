@@ -57,9 +57,9 @@ mod chat_commands;
 mod chat_import;
 mod click_pick;
 mod color_picker;
+mod command_click;
 mod contents_copy;
 mod context_menu;
-mod control_click;
 mod controls;
 mod conversation_log;
 mod crash_state;
@@ -607,8 +607,8 @@ pub struct App {
     alt: bool,
     /// AltGr held: Ctrl + Alt for shortcuts and the mouse (app/alt_graph.rs).
     alt_graph: bool,
-    /// A Control-click of macOS, a right click (app/control_click.rs).
-    control_click: control_click::ControlClick,
+    /// A Command-click of macOS, a right click (app/command_click.rs).
+    command_click: command_click::CommandClick,
     left_down: bool,
     /// An unhandled world press may start steering when the right button joins.
     world_mouse_walk_pending: bool,
@@ -2015,7 +2015,7 @@ impl App {
             text_menu: Default::default(),
             alt: false,
             alt_graph: false,
-            control_click: Default::default(),
+            command_click: Default::default(),
             left_down: false,
             world_mouse_walk_pending: false,
             steer_by_right: false,
@@ -24855,7 +24855,7 @@ impl ApplicationHandler for App {
             return;
         }
         // before the windows and the world: both see the same button
-        let (event, control_click) = self.read_control_click(event);
+        let event = self.read_command_click(event);
         self.typing_pointer.window_event(&event);
         // The system's view of the keys when the focus comes back is no key
         // press: a key it wrongly reports as down (#2287) would stay held
@@ -25470,11 +25470,7 @@ impl ApplicationHandler for App {
                     self.press_while_typing();
                 }
                 // (in its turn behind a click that waits for its depth)
-                if control_click {
-                    self.control_click_input(pressed, over_ui);
-                } else {
-                    self.mouse_input(*button, pressed, over_ui);
-                }
+                self.mouse_input(*button, pressed, over_ui);
             }
             WindowEvent::MouseWheel { delta, .. } if !self.exit_prompt.open && !self.ui_takes_pointer() && self.in_world() => {
                 let steps = match delta {
