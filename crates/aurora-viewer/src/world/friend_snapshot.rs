@@ -29,20 +29,13 @@ pub fn save_before_exit() {
     OWED.finish();
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A friend as saved in the snapshot; a missing field reads as the nil id
+/// or an empty name, and a nil id is skipped on load.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SavedFriend {
     pub id: Uuid,
     pub name: String,
-}
-
-impl Default for SavedFriend {
-    fn default() -> Self {
-        Self {
-            id: Uuid::nil(),
-            name: String::new(),
-        }
-    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

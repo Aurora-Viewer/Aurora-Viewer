@@ -3774,6 +3774,7 @@ impl World {
                 if self.social.end_friendship(&id) {
                     log::info!("friendship ended by {id}");
                     let fallback = self
+                        .social
                         .known_roster_name(&id)
                         .or_else(|| self.friend_snapshot.saved_name(&id).map(str::to_owned))
                         .unwrap_or_default();
@@ -6483,11 +6484,6 @@ impl World {
         }
     }
 
-    /// Complete roster name of `id` when already cached (`avatar_names` or `names`).
-    pub fn known_roster_name(&self, id: &Uuid) -> Option<String> {
-        self.social.known_roster_name(id)
-    }
-
     /// Form a friendship and record it in the per-account friend snapshot.
     pub fn form_friendship(&mut self, id: Uuid, name_hint: Option<String>) {
         self.social.form_friendship(id);
@@ -6547,7 +6543,7 @@ impl World {
             if self.mutes.is_muted_id(&id) {
                 continue;
             }
-            let resolved = self.known_roster_name(&id).or_else(|| (!fallback.is_empty()).then_some(fallback));
+            let resolved = self.social.known_roster_name(&id).or_else(|| (!fallback.is_empty()).then_some(fallback));
             let from = resolved.clone().unwrap_or_else(|| aurora_i18n::tr!("world-mod-someone").to_owned());
             // Only the live TerminateFriendship says who ended it; a friend
             // missing at login may have been removed by this account from
