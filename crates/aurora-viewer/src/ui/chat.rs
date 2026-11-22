@@ -1165,7 +1165,13 @@ fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> C
     }
     let tone = history_tone(p, line.origin);
     if line.text.starts_with("/me ") || line.text.starts_with("/me'") {
-        return tone.unwrap_or(p.violet_pale);
+        return tone.unwrap_or_else(|| {
+            if line.kind.is_own() {
+                super::colors::chat_color(line, world)
+            } else {
+                p.violet_pale
+            }
+        });
     }
     tone.or_else(|| super::colors::keyword_color(line))
         .unwrap_or_else(|| match line.kind.volume() {
@@ -6694,6 +6700,33 @@ mod tests {
         let pill = job(&online, Some(&family));
         assert!(pill.sections.iter().all(|s| s.format.italics));
         assert!(!job(&online, None).sections.iter().any(|s| s.format.italics));
+    }
+
+    #[test]
+    fn own_emotes_use_the_personal_message_colour_in_chat_cards() {
+        let p = crate::theme::Theme::default().palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut line = crate::world::ChatLine {
+            time: std::time::UNIX_EPOCH,
+            from: "Resident".into(),
+            text: String::new(),
+            kind: ChatKind::OWN,
+            source: uuid::Uuid::nil(),
+            origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
+        };
+        let mine = message_color(&line, &p, &world);
+        for text in ["/me waves", "/me's hat"] {
+            line.text = text.into();
+            assert_eq!(message_color(&line, &p, &world), mine);
+        }
+        line.origin = Origin::Log;
+        assert_eq!(Some(message_color(&line, &p, &world)), history_tone(&p, Origin::Log));
+        line.origin = Origin::Live;
+        line.kind = ChatKind::Local(ChatType::Normal);
+        assert_eq!(message_color(&line, &p, &world), p.violet_pale);
     }
 
     /// The pills' sender names: a resident's profile (ours for our own
