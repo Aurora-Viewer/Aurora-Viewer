@@ -548,11 +548,11 @@ pub(super) fn pbr_surface(
     });
 }
 
-fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, sel: &[Sel], env: &Env) {
+fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, sel: &[Sel], env: &mut Env) {
     let (canvas, _) = ui.allocate_exact_size(vec2(ui.available_width(), 68.0), egui::Sense::hover());
     let mut left = child(ui, canvas, 0.0, 0.0, canvas.width() - 96.0, 68.0, "legacy-face-parameters");
     left.spacing_mut().interact_size.y = 16.0;
-    repeats_meter(&mut left, p, tool, world, sel);
+    repeats_meter(&mut left, p, tool, world, env, sel);
     if let Some(value) = check(
         &mut left,
         p,
