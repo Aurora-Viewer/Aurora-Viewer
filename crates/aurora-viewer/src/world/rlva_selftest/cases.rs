@@ -901,6 +901,23 @@ fn round_trips() -> Vec<Case> {
             ]),
         ),
         case(
+            "C2d",
+            "a replacing wear under a lock of its own refuses nothing (#3633)",
+            steps(vec![
+                vec![no_foreign_tail()],
+                take_off(&[It::Tagged]).into(),
+                wear(It::B, POINT_B).into(),
+                vec![
+                    // the HUD locks itself, as the tester's script does
+                    Step::Say(Who::Controller, "@detach=n"),
+                    Step::Say(Who::Controller, "@attach:{f}/tagged=force"),
+                    Step::Expect("the tagged object on Tail Tip, the former one off", tagged_replaced_b()),
+                    Step::Say(Who::Controller, "@detach=y"),
+                ],
+                take_off(&[It::Tagged]).into(),
+            ]),
+        ),
+        case(
             "C2c",
             "@attachall of an object with no known point replaces what its point holds (#3635)",
             steps(vec![

@@ -51,7 +51,7 @@ mod unread;
 mod volume;
 mod workspace;
 pub use color::color_button;
-pub use copy_on_click::copy_on_click;
+pub use copy_on_click::{copied_feedback, copy_on_click, show_copied};
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     chip_row, clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab,
@@ -65,14 +65,14 @@ pub use tracks::{
 };
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
+pub use workspace::{
+    FORM_LABEL_W, FORM_SLIDER_W, Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark,
+    form_row, glyph, navigation, navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+};
 pub(crate) use workspace::{
     INVENTORY_LABEL_PADDING, finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
     organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
     organization_typography, overlay, overlay_frame, paint_world_label,
-};
-pub use workspace::{
-    Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
-    navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize
@@ -572,13 +572,98 @@ pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i32 {
     step
 }
 
+/// Draft for an optional in-title document name editor. Other floaters do not use it.
+#[derive(Clone, Default)]
+struct FloaterTitleDraft {
+    text: String,
+    focus: bool,
+}
+
+fn clean_floater_title_name(input: &str) -> Option<String> {
+    crate::world::inventory::actions::clean_name(input).ok()
+}
+
+/// Label (or inline input) occupying only the visible document-name glyphs.
+/// The rest of the header remains the ordinary minimize double-click target.
+/// Decide title-edit completion without conflating a click in the field
+/// with an actual click away. Escape has priority over focus loss or Enter.
+fn floater_title_finish(focused: bool, escape: bool, enter: bool, lost_focus: bool) -> Option<bool> {
+    if (focused || lost_focus) && escape {
+        Some(false)
+    } else if focused && enter || lost_focus {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn floater_title_name(
+    ui: &mut egui::Ui,
+    title: RichText,
+    displayed: &str,
+    truncate: bool,
+    draft: &mut Option<FloaterTitleDraft>,
+    finished: &mut Option<bool>,
+    field: egui::Id,
+) -> egui::Rect {
+    if let Some(edit) = draft.as_mut() {
+        // Capture shortcuts before the TextEdit can use Escape to release focus.
+        // That focus loss must never be mistaken for an accepted rename.
+        let focused = ui.memory(|m| m.has_focus(field));
+        let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let response = restricted_text_field(ui, true, &mut edit.text, TextPolicy::PrintableNoPipe, |buffer, _| {
+            egui::TextEdit::singleline(buffer).id(field).char_limit(63).desired_width(225.0)
+        });
+        if edit.focus {
+            response.request_focus();
+            edit.focus = false;
+        }
+        let click_outside = ui.input(|i| {
+            i.pointer.button_pressed(egui::PointerButton::Primary)
+                && i.pointer.interact_pos().is_some_and(|pos| !response.rect.contains(pos))
+        });
+        if let Some(result) = floater_title_finish(focused, escape, enter, response.lost_focus() || focused && click_outside) {
+            *finished = Some(result);
+        }
+        response.rect
+    } else {
+        let label = egui::Label::new(title);
+        let response = ui.add(if truncate { label.truncate() } else { label });
+        // A truncating label may occupy a whole row; target only visible glyphs.
+        let text_width = ui
+            .painter()
+            .layout_no_wrap(
+                displayed.to_owned(),
+                egui::FontId::proportional(TITLE_SIZE),
+                ui.visuals().text_color(),
+            )
+            .size()
+            .x
+            + 8.0;
+        egui::Rect::from_min_size(
+            response.rect.min,
+            Vec2::new(text_width.min(response.rect.width()), response.rect.height()),
+        )
+    }
+}
+/// A completed title rename, requested by the document editor's own floater.
+/// Only the caller performs permission checks and sends a metadata update.
+pub fn take_title_rename(ctx: &egui::Context, window: &str) -> Option<String> {
+    ctx.data_mut(|d| d.remove_temp::<String>(egui::Id::unique(window).with("title_rename_result")))
+}
+
 pub struct Floater<'a> {
     pub id: &'a str,
     pub title: String,
+    /// Document name and permission gate for title double-click rename. Other
+    /// floaters leave this unset and retain ordinary double-click minimizing.
+    title_rename: Option<(String, bool)>,
     /// Optional compact state row within the title bar: glyph, label, theme role.
     pub header_status: Vec<(&'static str, String, Color32)>,
-    /// A text action at the right end of the secondary header row.
-    pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut bool)>,
+    /// A text action at the right end of the secondary header row; a click
+    /// writes the action's rect, for feedback drawn beside it.
+    pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut Option<egui::Rect>)>,
     /// A single-line detail row inside the expanded title section.
     pub header_summary: Option<egui::WidgetText>,
     pub header_summary_action: Option<&'a mut bool>,
@@ -644,6 +729,7 @@ impl<'a> Floater<'a> {
         Floater {
             id,
             title: title.into(),
+            title_rename: None,
             header_status: Vec::new(),
             header_status_action: None,
             header_summary: None,
@@ -674,6 +760,13 @@ impl<'a> Floater<'a> {
             partial_outside: false,
             chat: false,
         }
+    }
+
+    /// Only document editors opt in. A read-only document still reserves its
+    /// name as a non-minimizing double-click target, but cannot rename.
+    pub fn rename_title(mut self, name: impl Into<String>, can_rename: bool) -> Self {
+        self.title_rename = Some((name.into(), can_rename));
+        self
     }
 
     pub fn fixed(mut self) -> Self {
@@ -899,6 +992,13 @@ impl<'a> Floater<'a> {
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut out = None;
         let window_id = egui::Id::unique(self.id);
+        let title_draft_id = window_id.with("title_rename_draft");
+        let title_field_id = window_id.with("title_rename_field");
+        let mut title_draft = ctx.data_mut(|d| d.get_temp::<FloaterTitleDraft>(title_draft_id));
+        if !self.title_rename.as_ref().is_some_and(|(_, allowed)| *allowed) {
+            title_draft = None;
+        }
+        let mut title_finished: Option<bool> = None;
         let expanded_id = window_id.with("expanded_size");
         let restore_id = window_id.with("restore_size");
         let expanded = ctx.data_mut(|d| d.get_persisted::<Vec2>(expanded_id)).unwrap_or(self.default_size);
@@ -1078,6 +1178,7 @@ impl<'a> Floater<'a> {
             // title bar
             let mut buttons_left = f32::INFINITY;
             let mut note_rect = None;
+            let mut title_name_rect = None;
             let mut primary_title_rect = None;
             let framed_header = self.framed_header;
             if framed_header.is_some() {
@@ -1096,7 +1197,15 @@ impl<'a> Floater<'a> {
                     let truncate = self.resizable || (minimized && !compact) || self.auto_height;
                     if !truncate {
                         glyph(ui, workspace::window_icon(self.id), p.violet_light, 18.0);
-                        ui.label(title.clone());
+                        title_name_rect = Some(floater_title_name(
+                            ui,
+                            title.clone(),
+                            &self.title,
+                            false,
+                            &mut title_draft,
+                            &mut title_finished,
+                            title_field_id,
+                        ));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
@@ -1150,7 +1259,15 @@ impl<'a> Floater<'a> {
                                         );
                                     }
                                 }
-                                ui.add(egui::Label::new(title).truncate());
+                                title_name_rect = Some(floater_title_name(
+                                    ui,
+                                    title,
+                                    &self.title,
+                                    true,
+                                    &mut title_draft,
+                                    &mut title_finished,
+                                    title_field_id,
+                                ));
                                 if let Some(note) = &self.title_note {
                                     let response = ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
                                     note_rect = Some(response.rect);
@@ -1178,12 +1295,11 @@ impl<'a> Floater<'a> {
                             let width = (ui.available_width() - 65.0).max(1.0);
                             ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::top_down(egui::Align::Min), status);
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui
+                                let action = ui
                                     .add(egui::Label::new(RichText::new(*label).size(12.0).color(p.violet_light)).sense(Sense::click()))
-                                    .on_hover_text(*tip)
-                                    .clicked()
-                                {
-                                    **clicked = true;
+                                    .on_hover_text(*tip);
+                                if action.clicked() {
+                                    **clicked = Some(action.rect);
                                 }
                                 glyph(ui, icon, p.violet_light, 13.0);
                             });
@@ -1233,6 +1349,9 @@ impl<'a> Floater<'a> {
             } else {
                 header_content(ui).response
             };
+            // The header layout closure is no longer used; release its
+            // mutable borrow of the inline name editor before hit-testing.
+            drop(header_content);
             // Secondary header controls own their clicks; only the title row
             // is the window's double-click target.
             let mut title_rect = primary_title_rect.unwrap_or(header.rect);
@@ -1242,17 +1361,56 @@ impl<'a> Floater<'a> {
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
             // still owns dragging the bar, including when it is minimized.
-            let title_response = ui.interact(title_rect, window_id.with("title_double_click"), Sense::click());
-            if title_response.double_clicked() {
-                toggle_min = true;
-            }
-            // The double-click target owns title-bar hover. Keep its interaction
-            // and restrict the note's tooltip to the note's own rectangle.
-            if let Some(rect) = note_rect
-                && let Some(tooltip) = &self.title_note_tooltip
-                && ui.input(|input| input.pointer.hover_pos().is_some_and(|pos| rect.contains(pos)))
-            {
-                title_response.with_new_rect(rect).on_hover_text(tooltip);
+            // While renaming, do not place the title-bar's invisible click
+            // surface over the TextEdit: it steals caret-placement clicks.
+            // Both remaining bar segments keep double-click minimize/restore.
+            if let Some(field_rect) = title_name_rect.filter(|_| title_draft.is_some()) {
+                let before = egui::Rect::from_min_max(
+                    title_rect.min,
+                    egui::pos2(field_rect.left().clamp(title_rect.left(), title_rect.right()), title_rect.bottom()),
+                );
+                let after = egui::Rect::from_min_max(
+                    egui::pos2(field_rect.right().clamp(title_rect.left(), title_rect.right()), title_rect.top()),
+                    title_rect.max,
+                );
+                for (part, rect) in [
+                    ("title_double_click_before_rename", before),
+                    ("title_double_click_after_rename", after),
+                ] {
+                    if rect.width() > 1.0 && ui.interact(rect, window_id.with(part), Sense::click()).double_clicked() {
+                        toggle_min = true;
+                    }
+                }
+            } else {
+                let title_response = ui.interact(title_rect, window_id.with("title_double_click"), Sense::click());
+                if title_response.double_clicked() {
+                    let on_name = title_response
+                        .interact_pointer_pos()
+                        .is_some_and(|pos| title_name_rect.is_some_and(|rect: egui::Rect| rect.contains(pos)));
+                    if on_name && self.title_rename.is_some() {
+                        // A minimized document restores on double-click,
+                        // whether or not the item has Modify permission.
+                        if minimized || self.title_rename.as_ref().is_some_and(|(_, allowed)| !*allowed) {
+                            toggle_min = true;
+                        } else if title_draft.is_none()
+                            && let Some((name, true)) = &self.title_rename
+                        {
+                            title_draft = Some(FloaterTitleDraft {
+                                text: name.clone(),
+                                focus: true,
+                            });
+                            ctx.request_repaint();
+                        }
+                    } else {
+                        toggle_min = true;
+                    }
+                }
+                if let Some(rect) = note_rect
+                    && let Some(tooltip) = &self.title_note_tooltip
+                    && ui.input(|input| input.pointer.hover_pos().is_some_and(|pos| rect.contains(pos)))
+                {
+                    title_response.with_new_rect(rect).on_hover_text(tooltip);
+                }
             }
             if compact {
                 divider(ui, p);
@@ -1340,6 +1498,24 @@ impl<'a> Floater<'a> {
                 resize::handles_of(ctx, p, &response.response, self.height_only);
             }
         }
+        if let Some(save) = title_finished {
+            if save
+                && let Some(draft) = title_draft.as_ref()
+                && let Some((original, true)) = self.title_rename.as_ref()
+                && let Some(name) = clean_floater_title_name(&draft.text)
+                && name != original.as_str()
+            {
+                ctx.data_mut(|d| d.insert_temp(window_id.with("title_rename_result"), name));
+            }
+            title_draft = None;
+        }
+        ctx.data_mut(|d| {
+            if let Some(draft) = title_draft {
+                d.insert_temp(title_draft_id, draft);
+            } else {
+                d.remove_temp::<FloaterTitleDraft>(title_draft_id);
+            }
+        });
         if close {
             *open = false;
             // LLFloater::closeFloater: "Always unminimize before trying to
@@ -2327,6 +2503,34 @@ pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
     tabs_row(ui, p, selected, labels, false, false).0
 }
 
+/// Keep tab labels whole by starting another row when their measured
+/// widths do not fit. Selection still uses the original tab index.
+pub fn wrapping_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    let widths = tab_widths(ui, labels, &control_font(ui, 12.0));
+    let available = ui.available_width();
+    let mut changed = false;
+    let mut start = 0;
+    while start < labels.len() {
+        let mut end = start + 1;
+        let mut width = widths[start];
+        while end < labels.len() && width + TAB_GAP + widths[end] <= available {
+            width += TAB_GAP + widths[end];
+            end += 1;
+        }
+        let mut index = if (start..end).contains(selected) {
+            *selected - start
+        } else {
+            usize::MAX
+        };
+        if tabs(ui, p, &mut index, &labels[start..end]) {
+            *selected = start + index;
+            changed = true;
+        }
+        start = end;
+    }
+    changed
+}
+
 /// The flat tab strip, with the rect of each tab (a tab that opens when
 /// something is dragged over it).
 pub fn tabs_at(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> (bool, Vec<egui::Rect>) {
@@ -2348,6 +2552,15 @@ pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labe
     tabs_row(ui, p, selected, labels, true, false).0
 }
 
+const TAB_GAP: f32 = 4.0;
+
+fn tab_widths(ui: &egui::Ui, labels: &[(&str, bool)], font: &egui::FontId) -> Vec<f32> {
+    labels
+        .iter()
+        .map(|(label, _)| ui.fonts_mut(|f| f.layout_no_wrap((*label).to_owned(), font.clone(), Color32::PLACEHOLDER).size().x) + 18.0)
+        .collect()
+}
+
 fn tabs_row(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -2359,7 +2572,7 @@ fn tabs_row(
     let mut changed = false;
     let mut rects = Vec::with_capacity(labels.len());
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().item_spacing.x = TAB_GAP;
         let n = labels.len().max(1) as f32;
         let font = control_font(ui, 12.0);
         let minimum_height = if compact { 22.0 } else { 30.0 };
@@ -2368,10 +2581,7 @@ fn tabs_row(
         } else {
             minimum_height
         };
-        let text_w: Vec<f32> = labels
-            .iter()
-            .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::PLACEHOLDER).size().x) + 18.0)
-            .collect();
+        let text_w = tab_widths(ui, labels, &font);
         let gaps = (n - 1.0) * ui.spacing().item_spacing.x;
         let total: f32 = text_w.iter().sum::<f32>() + gaps;
         let compact = ((ui.available_width() - gaps) / (total - gaps)).clamp(0.0, 1.0);
@@ -3503,6 +3713,34 @@ pub fn ink_rect(galley: &egui::Galley) -> egui::Rect {
     if ink.is_positive() { ink } else { galley.rect }
 }
 
+/// A dashed outline in `rect`: a place to drop something or a card that
+/// adds one (the profile's Give zone, the photo filters' drop zones).
+pub fn dashed_outline(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
+    let r = rect.shrink(0.75);
+    let path = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+    painter.extend(egui::Shape::dashed_line(&path, egui::Stroke::new(1.5, color), 5.0, 4.0));
+}
+
+/// A place number that turns over in `rect` (the contact sets' tiles and
+/// the photo filters' cards while one is held): `before` slides up and
+/// fades as `now` rises in, `turn` going from 0 to 1, eased out with a
+/// touch of overshoot as it lands.
+pub fn turning_number(ui: &egui::Ui, rect: egui::Rect, now: usize, before: Option<usize>, turn: f32, color: Color32) {
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let font = crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), rect.height() * 0.5, color).font_id;
+    let k = turn.clamp(0.0, 1.0);
+    let e = 1.0 - (1.0 - k).powi(3);
+    let travel = rect.height() * 0.6;
+    if let Some(before) = before.filter(|_| k < 1.0) {
+        let g = painter.layout_no_wrap(aurora_i18n::integer(before as i64), font.clone(), color);
+        let at = rect.center() - Vec2::new(0.0, travel * e);
+        paint_ink_centered(&painter, g, at, color.gamma_multiply(1.0 - e));
+    }
+    let g = painter.layout_no_wrap(aurora_i18n::integer(now as i64), font, color);
+    let at = rect.center() + Vec2::new(0.0, travel * (1.0 - e));
+    paint_ink_centered(&painter, g, at, color.gamma_multiply(e.max(0.15)));
+}
+
 /// Paint a galley so that its visible ink (not egui's text row, which
 /// includes ascender / descender room) is centered on `center`: digits in
 /// round badges then sit exactly in the middle.
@@ -3959,6 +4197,40 @@ pub fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, content:
 }
 
 #[cfg(test)]
+mod floater_title_rename_tests {
+    use super::{clean_floater_title_name, floater_title_finish};
+
+    #[test]
+    fn title_rename_rejects_blank_pipes_controls_and_limits_name_length() {
+        assert_eq!(clean_floater_title_name("  "), None);
+        assert_eq!(clean_floater_title_name("  Hello|World  "), None);
+        assert_eq!(clean_floater_title_name("Bad\nName"), None);
+        assert_eq!(clean_floater_title_name("  Hello  ").as_deref(), Some("Hello"));
+        assert_eq!(clean_floater_title_name(&"x".repeat(70)).unwrap().len(), 63);
+    }
+
+    #[test]
+    fn title_escape_cancels_only_when_the_field_was_focused() {
+        assert_eq!(floater_title_finish(true, true, false, false), Some(false));
+        assert_eq!(floater_title_finish(true, true, true, true), Some(false));
+        assert_eq!(
+            floater_title_finish(false, true, false, true),
+            Some(false),
+            "Escape cancels even when TextEdit has already surrendered focus"
+        );
+        assert_eq!(floater_title_finish(false, true, false, false), None);
+    }
+
+    #[test]
+    fn title_rename_commits_on_focused_enter_or_lost_focus() {
+        assert_eq!(floater_title_finish(true, false, false, false), None);
+        assert_eq!(floater_title_finish(true, false, true, false), Some(true));
+        assert_eq!(floater_title_finish(false, false, true, false), None);
+        assert_eq!(floater_title_finish(true, false, false, true), Some(true));
+    }
+}
+
+#[cfg(test)]
 mod spin_arrow_tests {
     use super::arrow_hold_repeats;
 
@@ -4044,5 +4316,53 @@ mod segmented_disabled_tests {
             chosen.push((selected, clicks_work));
         }
         assert_eq!(chosen, vec![(0, false), (1, true)]);
+    }
+}
+
+#[cfg(test)]
+mod wrapping_tabs_tests {
+    use super::*;
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+
+    #[test]
+    fn wrapped_tab_labels_stay_whole_and_clicks_keep_their_index() {
+        let labels = ["Track", "Camera", "Look", "Output", "Filters", "Library"].map(|label| (label, true));
+        let p = crate::theme::Theme::default().palette();
+        for width in [220.0, 340.0] {
+            for font_size in [12.0, 24.0] {
+                let mut frames = Frames::new();
+                let mut selected = 0;
+                let draw = |frames: &mut Frames, events, selected: &mut usize| {
+                    frames.run(events, |ui| {
+                        ui.set_width(width);
+                        ui.style_mut().override_font_id = Some(egui::FontId::proportional(font_size));
+                        wrapping_tabs(ui, &p, selected, &labels);
+                    })
+                };
+                draw(&mut frames, Vec::new(), &mut selected);
+                let texts = draw(&mut frames, Vec::new(), &mut selected);
+                for (label, _) in &labels {
+                    assert!(!painted(&texts, label).cut, "{label} at width {width}, font {font_size}");
+                }
+                let last = painted(&texts, "Library").rect.center();
+                if width == 220.0 || font_size == 24.0 {
+                    assert!(last.y > painted(&texts, "Track").rect.center().y);
+                }
+                draw(&mut frames, vec![egui::Event::PointerMoved(last)], &mut selected);
+                for pressed in [true, false] {
+                    draw(
+                        &mut frames,
+                        vec![egui::Event::PointerButton {
+                            pos: last,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        }],
+                        &mut selected,
+                    );
+                }
+                assert_eq!(selected, 5);
+            }
+        }
     }
 }

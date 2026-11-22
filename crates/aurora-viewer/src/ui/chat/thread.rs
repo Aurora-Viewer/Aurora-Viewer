@@ -224,9 +224,10 @@ impl Who {
     }
 }
 
-/// The colour of an author's name: ours in the theme's teal, a moderator's
-/// in light violet, an object's in the colour of objects, a history line's
-/// greyed.
+/// The colour of an author's name: a moderator's in light violet, a
+/// history line's greyed, any other in the senders' colour of Preferences ›
+/// Emitter (Avatars, ours included, or Objects), as FSChatHistory::appendMessage
+/// (indra/newview/fschathistory.cpp) gives every resident ChatNameColor.
 fn name_color(env: &LineEnv, th: &Thread, line: &ChatLine, who: &Who) -> Color32 {
     let p = env.p;
     if let Some(color) = crate::ui::colors::contact_sender_color(line, env.world) {
@@ -235,20 +236,15 @@ fn name_color(env: &LineEnv, th: &Thread, line: &ChatLine, who: &Who) -> Color32
     if let Some(tone) = history_tone(p, line.origin) {
         return tone;
     }
-    if who.object {
-        return crate::ui::colors::sender_color(line);
-    }
-    if line.kind.is_own() {
-        return p.teal;
-    }
-    if th.moderators.is_some_and(|m| m.contains(&line.source)) {
+    if !who.object && th.moderators.is_some_and(|m| m.contains(&line.source)) {
         return p.violet_light;
     }
-    p.ink
+    crate::ui::colors::sender_color(line)
 }
 
-/// The text of a message and how it reads: an emote is the name in violet
-/// italics, a whisper in grey italics; the user's chat colours otherwise.
+/// The text of a message and how it reads: an emote is the name and its
+/// action in italics, a whisper in grey italics; the user's chat colours
+/// for all of them.
 /// The lines drawn pass `shown_name` ("(You)" with the option); a quote
 /// passes the real name, since it is pasted for others to read.
 fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {

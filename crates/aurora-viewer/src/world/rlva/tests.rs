@@ -4054,6 +4054,65 @@ fn build_escape_world() -> (crate::world::World, usize, usize) {
     (world, seat, other)
 }
 
+/// LLTaskInvFVBridge::renameItem through `BuildTool::rename_item`: the script
+/// editor's title rename and the Contents panel share one guard, so a locked
+/// attachment (@remattach) keeps the names of its contents.
+#[test]
+fn locked_attachment_prevents_script_rename() {
+    use crate::build::BuildTool;
+    use aurora_net::build::{BuildCmd, TaskItem, perm};
+
+    let (mut world, _, _) = build_escape_world();
+    let chest = worn_attachment(&mut world, 9101, 1);
+    let worn = world
+        .objects
+        .iter()
+        .find(|(_, o)| o.attachment_item_id() == Some(chest))
+        .map(|(i, _)| i)
+        .expect("worn attachment");
+
+    let object = world.objects.get(worn).unwrap().full_id;
+    let item_id = Uuid::from_u128(9102);
+    let mut tool = BuildTool::default();
+
+    tool.contents.objects.entry(object).or_default().items.push(TaskItem {
+        item_id,
+        name: "Original".into(),
+        owner_mask: perm::MODIFY,
+        ..Default::default()
+    });
+
+    // Object permissions must not obscure the RLVa restriction.
+    world.god_level = 1;
+    assert!(tool.contents_items_editable(&world, worn));
+
+    command(&mut world.rlva, A, "@remattach:chest=n");
+    assert!(world.rlva_locked_attachment(worn));
+    assert!(!tool.contents_items_editable(&world, worn));
+
+    tool.rename_item(&world, worn, item_id, "Blocked");
+
+    assert_eq!(tool.contents.objects[&object].items[0].name, "Original");
+    assert!(
+        !tool
+            .out
+            .iter()
+            .any(|command| matches!(command, NetCommand::Build(BuildCmd::UpdateTaskInventory { .. }))),
+        "a locked attachment must not send a rename"
+    );
+
+    command(&mut world.rlva, A, "@remattach:chest=y");
+    assert!(!world.rlva_locked_attachment(worn));
+
+    tool.rename_item(&world, worn, item_id, "Allowed");
+    assert_eq!(tool.contents.objects[&object].items[0].name, "Allowed");
+    assert!(tool.out.iter().any(|command| matches!(
+        command,
+        NetCommand::Build(BuildCmd::UpdateTaskInventory { item, .. })
+            if item.item_id == item_id && item.name == "Allowed"
+    )));
+}
+
 /// LLTaskInvFVBridge::isItemRemovable / isItemMovable, LLPanelContents::getState
 /// and willObjectAcceptInventory: the contents of an attachment that cannot be
 /// taken off, and of the seat under @unsit or @sittp, stay as they are; the

@@ -286,6 +286,8 @@ keybinds-render-water = Rendering type: Water
 keybinds-render-objects = Rendering type: Objects
 keybinds-render-grass = Rendering type: Grass
 keybinds-render-clouds = Rendering type: Clouds
+render-features-menu = Rendering features
+render-features-ui = UI
 owned-land-title = My land
 linden-home-menu = My Linden Home…
 owned-land-refresh = Refresh
@@ -1189,6 +1191,7 @@ import-preview-aurora = Aurora 3D
 import-no-map = None
 keybinds-import-files = Open the import window
 keybinds-hide-interface = Hide / show the interface
+keybinds-ui-feature = Show / hide the whole interface (Rendering features › UI)
 keybinds-teleport-home = Teleport home
 keybinds-show-huds = Show / hide HUDs
 keybinds-reset-camera-angles = Reset camera angles
@@ -1262,7 +1265,6 @@ import-mesh = Mesh
 import-bulk = Multiple
 import-choose-files = Add files…
 import-loading = Reading files…
-import-limit-bulk-1k = Limit textures to 1024 px
 import-files = Files
 import-destination = Destination
 import-no-folder = No folder available
@@ -1326,7 +1328,12 @@ import-degenerate-physics = { $count ->
     }
 import-physics-convex-repair = Create convex collision hulls
 import-physics-convex-help = Convex hulls approximate the collision shape and may fill openings. Visual LODs stay unchanged. Check the physics preview before requesting a quote.
-import-max-size = Limit size to 1024 × 1024
+import-image-size-limit = Maximum image size
+import-image-size-single = Maximum image size
+import-image-size-inherit = Global setting ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = Global setting follows the limit beside Import at the bottom. Its current value appears in parentheses. Larger images are automatically reduced to the selected limit.
+import-image-size-global-help = Maximum image size for imports. Individual image and material choices take priority. Larger images are reduced automatically.
 import-texture-size = Upload size: { $width } × { $height } px
 import-lossless = Lossless compression
 import-strip-alpha = Remove the almost opaque alpha channel
@@ -3367,6 +3374,8 @@ appearance-editor-camera = Camera
 ui-options-appearance-camera-hint = Automatically frame the edited body part when editing your shape or a layer. Off, keep your framing; orbit, zoom and pan still work.
 ui-options-customize-animation = A-Pose
 ui-options-customize-animation-hint = Editing your shape or a layer stands your avatar up and plays the A-pose animation. Off, your avatar keeps its pose and animations.
+ui-options-bento-idle = Fix Bento idle animation
+ui-options-bento-idle-hint = Plays a priority 0 Bento animation under all the others, so hands, mouth, wings and tail go back to a natural pose instead of staying stuck after an animation; others see it too
 ui-options-typing-in-name-tags = Show typing in name tags
 ui-options-typing-in-name-tags-hint = The name tag of a resident who types in the nearby chat says so.
 ui-options-typing-chevron = Chevron before "is typing"
@@ -3441,6 +3450,10 @@ common-copy-slurl = Copy SLurl
 inventory-landmark-location-unknown = This landmark's location could not be resolved. Please try again later.
 ui-options-commands-copy-camera = Copy camera
 build-ui-general-copy-object-keys-shift-all-parts = Copy object keys (Shift: all parts)
+build-ui-copied-object-uuids = { $count ->
+    [one] Object UUID copied
+   *[other] Object UUIDs copied
+    }
 ui-options-commands-copy-camera-position-to-clipboard = Copy camera position to clipboard
 build-ui-tools-copy-selection = Copy selection
 common-copy-slurl-2 = Copy SLurl
@@ -3488,7 +3501,6 @@ ui-sound-object-creation = Object creation
 session-inventory-upload-creation-denied-invalid-type-size-or-upload-count = Creation denied: invalid type, size or upload count.
 ui-contacts-create = Create
 build-ui-tools-create-ctrl-4 = Create (Ctrl+4)
-ui-bars-create-prims-ctrl-4 = Create prims (Ctrl+4)
 ui-places-create-folder = Create folder
 ui-inventory-context-create-folder-from-selection = Create folder from selection
 common-create-favorite = Create favorite
@@ -5586,19 +5598,18 @@ inventory-operations-change-sent-but-could-not-read-it-back-reload = Change sent
 build-ui-tools-linked-edit = Linked edit
 ui-appearance-unsaved-changes = Unsaved changes
 common-edit = Edit
+common-modify = Modify
 build-ui-tools-edit-ctrl-3 = Edit (Ctrl+3)
 ui-place-details-edit-this-landmark = Edit this landmark
 ui-appearance-edit-this-outfit = Edit this outfit
 ui-appearance-show-current-outfit = Show the current outfit in the list
 ui-appearance-current-outfit-not-in-my-outfits = The current outfit is not saved in My Outfits
-ui-bars-edit-objects-ctrl-3 = Edit objects (Ctrl+3)
 build-ui-tools-edit-parcel = Edit parcel
 ui-context-edit-shape = Edit shape
 ui-context-export-shape-xml = Export shape XML
 ui-context-edit-outfit = Edit outfit
 ui-context-edit-pbr-material = Edit PBR material
 ui-context-edit-land = Edit land
-ui-bars-edit-land-ctrl-5 = Edit land (Ctrl+5)
 ui-land-options-edit-land = Edit land:
 build-ui-tools-edit-selected-land = Edit selected land
 ui-profile-edit-text = Edit text
@@ -6636,6 +6647,9 @@ controls-shot-name = Name of this camera position
 controls-shot-save = Save
 controls-shot-save-tip = Save the camera position
 controls-shot-delete = Delete
+controls-position-tip = Camera position: set where the camera rests behind the avatar, exactly
+camera-position-hint = In meters from the avatar: X forward, Y left, Z up. Ctrl + wheel raises the camera, Shift + wheel the focus point.
+camera-position-save = Save as camera position…
 camera-presets = Camera presets
 camera-presets-tip = Camera presets: save the shot, use it again
 camera-presets-none = No preset yet: frame a shot, then save it below.
@@ -8010,6 +8024,7 @@ ui-options-magenta-where-a-light-reaches-a-pixel-the-sort-missed = Magenta where
 ui-options-sort-of-the-reflection-probes = Sort of the reflection probes
 ui-options-magenta-where-a-probe-covers-a-pixel-the-sort-missed = Magenta where a probe covers a pixel without being among those sorted for it: there must be none
 ui-context-show-in-inventory = Show in inventory
+ui-context-show-in-inventory-none = No object in your inventory has exactly this object's name.
 ui-place-details-show-the-corresponding-location-on-the-map = Show the corresponding location on the map
 common-view-conversation-history = View conversation history
 common-view-profile = View profile
@@ -8275,7 +8290,6 @@ photo-looks = Filters
 photo-looks-tip = Filters: the photo's look, shown live
 photo-look-none = No filter
 photo-look-strength = Strength
-photo-look-compare = Before / after
 photo-look-compare-tip = The scene as it is left of the line, with the filter on its right; drag the line to move it
 photo-look-before = Before
 photo-look-after = After
@@ -8309,24 +8323,47 @@ photo-look-spotlight = Spotlight
 photo-look-the-matrix = The Matrix
 photo-look-toy-camera = Toy Camera
 photo-look-video = Video
-photo-looks-replace = Replace the chosen one
-photo-looks-add = Add on top
-photo-looks-stack = Active looks ({ $count })
-photo-looks-empty = No look yet: choose one below.
-photo-looks-on-tip = Draw this look (unticked: kept in the list, not drawn)
-photo-looks-choose-tip = Show its settings; a click in the list replaces it
-photo-looks-remove = Take this look out
-photo-looks-up = Move up (drawn earlier)
-photo-looks-down = Move down (drawn later)
+photo-looks-replace = Replace
+photo-looks-empty = No effect yet. Point at a filter below to try it, then click it or drag it here.
 photo-looks-settings = Settings of { $name }
+photo-looks-active = Active
+photo-looks-count = { $count } of { $max }
+photo-looks-expand-all = Expand all
+photo-looks-collapse-all = Collapse all
+photo-looks-hint = Applied from top to bottom. Drag a card to reorder it, or press Alt + ↑ ↓ on it. Right-click a card to take it out.
+photo-looks-right-click-out = Right-click: take it out of the active effects
+photo-looks-drop = Drag an effect here, or click one below
+photo-looks-full = { $max } of { $max }: take one out, or turn on Replace to swap one.
+photo-looks-catalogue = Effects catalogue
+photo-looks-catalogue-tip = Point at an effect to try it on the photo; click it to add it, or drag it among the active ones
+photo-looks-catalogue-fold = Show or hide the catalogue
+photo-looks-replace-tip = Replace: a click in the catalogue swaps the chosen card instead of adding a new one
+photo-looks-replacing = A click swaps { $name }
+photo-looks-done = Done
+photo-looks-take-out-zone = Drop here to take it out
+photo-looks-hide = Hide { $name } (it keeps its place)
+photo-looks-show = Show { $name }
+photo-looks-more = More actions
+photo-looks-move-up = Move up
+photo-looks-move-down = Move down
+photo-looks-replace-one = Replace…
+photo-looks-take-out = Take out
+photo-looks-not-in-360-tag = Not in 360°
+photo-looks-all = All
+photo-looks-favorites = Favourites: every effect you starred
+photo-looks-favorites-empty = No favourite yet. Point at an effect and click its star: it shows first in its list, and here.
+photo-looks-favorite = Add to favourites
+photo-looks-unfavorite = Remove from favourites
+photo-looks-card = { $name }, { $place } of { $count }. Alt + arrow keys move it.
 photo-looks-reset = Default values
-photo-looks-legacy-note = The Legacy Viewer's filters have no settings, as in the Legacy Viewer: only their strength.
+photo-looks-legacy-note = Legacy Viewer filters have no additional settings.
 photo-looks-lut-note = A LUT is applied as it is: only its strength.
 photo-knob-amount = Amount
 photo-knob-grain-size = Grain size
 photo-knob-contrast = Contrast
 photo-knob-grain = Grain
-photo-knob-strength = Strength
+photo-knob-toning = Toning
+photo-knob-local-contrast = Local contrast
 photo-knob-shadows = Shadows
 photo-knob-lights = Lights
 photo-knob-middle = Middle tones
@@ -8654,6 +8691,7 @@ photo-vf-help-free-camera = Free camera: the movement keys, right button held to
 photo-vf-hints = Controls list
 photo-vf-shown = Shown
 photo-vf-hidden-one = Hidden
+photo-vf-keep-framing = Keep the framing
 photo-vf-dial-focal = focal length
 photo-vf-dial-aperture = aperture
 photo-vf-dial-exposure = exposure
@@ -9116,7 +9154,7 @@ common-for-sale = For sale:
 ui-land-general-for-sale-to = For sale to:
 ui-profile-coming-soon = Coming soon
 ui-profile-aurora-my-profile = My profile
-ui-profile-aurora-help = A resident's profile: who they are, what you can do with them, then their favorite places, classifieds, first life, web profile and your notes. Preferences › Aurora › Profiles brings back the Legacy Viewer's window.
+ui-profile-aurora-help = A resident's profile: who they are, what you can do with them, then their picks, classifieds, first life, web profile and your notes. Preferences › Aurora › Profiles brings back the Legacy Viewer's window.
 ui-profile-aurora-conversation = Conversation
 ui-profile-aurora-call = Call
 ui-profile-aurora-add-friend = Add as friend
@@ -9147,7 +9185,7 @@ ui-profile-aurora-their-map = Find them on the map
 ui-profile-aurora-their-objects = Modify, delete or take their objects
 ui-profile-aurora-received-tip = { $right }: { $state }
 ui-profile-aurora-tab-profile = Profile
-ui-profile-aurora-tab-picks = Favorite places
+ui-profile-aurora-tab-picks = Picks
 ui-profile-aurora-tab-classifieds = Classifieds
 ui-profile-aurora-tab-first-life = First life
 ui-profile-aurora-tab-web = Web
@@ -9181,11 +9219,11 @@ ui-profile-aurora-part-bio = bio
 ui-profile-aurora-part-first-life = first life
 ui-profile-aurora-part-notes = notes
 ui-profile-aurora-part-places = { $count ->
-    [one] { $count } place
-   *[other] { $count } places
+    [one] { $count } pick
+   *[other] { $count } picks
     }
 ui-profile-aurora-part-classified = classified
-ui-profile-aurora-snapshot = Picture of the place
+ui-profile-aurora-snapshot = Picture
 ui-profile-aurora-teleport = Teleport
 ui-profile-aurora-description = Description
 ui-profile-aurora-category = Category
@@ -9201,11 +9239,11 @@ ui-profile-aurora-copy-slurl = Copy the SLURL
 ui-profile-aurora-here = My position here
 ui-profile-aurora-add-here = Add the place where I am
 ui-profile-aurora-picks-count = { $count } of { $limit } (account limit)
-ui-profile-aurora-picks-empty = No favorite place yet
-ui-profile-aurora-picks-empty-text = { $name } has not shared any place.
-ui-profile-aurora-picks-empty-own = Share your favorite places
-ui-profile-aurora-picks-empty-own-text = Other residents see them on your profile and teleport there in one click.
-ui-profile-aurora-delete-pick = Delete the place "{ $name }"?
+ui-profile-aurora-picks-empty = No picks yet
+ui-profile-aurora-picks-empty-text = { $name } has not shared any picks.
+ui-profile-aurora-picks-empty-own = Share what matters to you
+ui-profile-aurora-picks-empty-own-text = Use picks to highlight places, people, and things you care about.
+ui-profile-aurora-delete-pick = Delete the pick "{ $name }"?
 ui-profile-aurora-classifieds-empty = No classifieds
 ui-profile-aurora-classifieds-empty-text = { $name } has no classified published.
 ui-profile-aurora-classifieds-empty-own = Make a place or a service known
@@ -10273,6 +10311,7 @@ script-search-query = Find
 script-search-replacement = Replace
 script-search-insensitive = Case insensitive
 script-search-up = Search upwards
+script-search-whole-words = Whole words
 script-search-find = Find
 script-search-replace = Replace
 script-search-replace-all = Replace all
@@ -10789,6 +10828,7 @@ people-groups-count-unlimited = { $count ->
 people-groups-none = No active group
 people-groups-none-sub = No title shown above your name
 people-groups-active-tag = active
+people-groups-deactivate = Deactivate
 people-groups-active = Active group
 people-groups-member = Member
 people-groups-title = Title: { $title }
@@ -14817,6 +14857,56 @@ blender-live-linkset-counts =
     }
 blender-object-linkset = { $name } — root #1 · { $prims } prims
 blender-object-linked-prim = #{ $number } · { $name }
+blender-live-tab-place = Place
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = The meshes Blender is sending. Select one to place it, or import it from its menu.
+blender-live-more = More
+blender-live-place = Place
+blender-live-linked-prims = Show or hide the linked prims
+blender-live-tag-rigged = Rigged
+blender-live-card-rigged = { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-card-static = Static · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-card-linkset = Static · { $prims ->
+        [one] { $prims } prim
+       *[other] { $prims } prims
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-triangles = { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-place-help = Where the selected static mesh is. Rigged meshes always follow your avatar.
+blender-live-place-none = Select a static object to place it.
+blender-live-where = Where
+blender-live-transform = Position, rotation and size
+blender-live-size-note = Size multiplies what Blender sends, so later edits in Blender keep it.
+blender-live-avatar-help = For rigged meshes: send your shape to Blender to model on it.
+blender-live-shape-section = Your shape in Blender
+blender-live-import-help = Freezes a snapshot of the object for the normal import: review, price, then confirm. Later edits in Blender do not change it.
+blender-live-from = From
+blender-live-plugins-help = Aurora installs the matching plug-in in each Blender, keeps a backup of the previous one and never installs an older version.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Time since Blender last changed this object
+blender-live-show-all = Show all
+blender-live-hide-all = Hide all
+blender-live-bend-section = Check the weights
+blender-live-elbows = Elbows
+blender-live-knees = Knees
+blender-live-bend-hold = Hold this pose instead of my animations
+blender-live-bend-note = Only you see the bend, on your avatar. Your animations, other residents' view and the import are unchanged.
+blender-live-levels = Levels of detail
+blender-live-levels-pending = Blender prepares the levels of detail when you click Import.
+blender-live-levels-note = Prepared in Blender from each object's LiveMesh settings.
 
 inventory-bulk-permissions = Bulk permissions
 inventory-bulk-adjust = Adjust item permissions
@@ -15599,6 +15689,14 @@ picker-pipette-no-texture = No copyable texture found in your inventory.
 picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
+
+# Menu commands can be added to or removed from a toolbar.
+toolbar-add-from-menu = Add to toolbar
+toolbar-remove-from-menu = Remove from toolbar
+# Build › Edit objects, Create prims and Edit land as toolbar buttons (the menu shows their Ctrl+3/4/5 keys apart)
+toolbar-command-build-edit = Edit objects
+toolbar-command-build-create = Create prims
+toolbar-command-build-land = Edit land
 
 # 360° snapshots: a format of the photo window (LLFloater360Capture, app/capture_360.rs)
 capture-360-quality-preview = Preview (fast)
