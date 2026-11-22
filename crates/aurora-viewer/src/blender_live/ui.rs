@@ -55,6 +55,9 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &Palette, can_upload
     floater.min_size = MIN_SIZE;
     floater.show(ctx, p, &mut open, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+        // the body keeps the window's width: a long label or a row of fields
+        // wraps instead of widening the window
+        ui.set_max_width(ui.available_width());
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         let labels = Tab::ALL.map(|tab| (tab.label(), true));
         let mut index = Tab::ALL.iter().position(|tab| *tab == live.tab).unwrap_or(0);
@@ -518,7 +521,8 @@ fn place(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
             ui.add_enabled_ui(present && (source.link.is_none() || live.edit_linked), |ui| {
                 let mut position = placement.position.to_array();
                 let (z, y, x) = placement.rotation.to_euler(EulerRot::ZYX);
-                let mut rotation = [x.to_degrees(), y.to_degrees(), z.to_degrees()];
+                // a level axis shows 0, never the "-0" a rounding leaves
+                let mut rotation = [x, y, z].map(|r| if r.to_degrees().abs() < 5e-4 { 0.0 } else { r.to_degrees() });
                 let mut size = (placement.size * placement.scale).to_array();
                 let mut changed = false;
                 for (label, values, speed, range) in [
