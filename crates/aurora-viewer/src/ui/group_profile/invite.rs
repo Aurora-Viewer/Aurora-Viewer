@@ -587,7 +587,7 @@ mod tests {
         events: Vec<egui::Event>,
     ) -> (Vec<(String, Rect)>, Option<Rect>) {
         *time += 1.0 / 60.0;
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
                 time: Some(*time),
@@ -596,6 +596,7 @@ mod tests {
             },
             |u| ui.group_picker(u.ctx(), p, world),
         );
+        output.textures_delta.clear();
         let mut texts = Vec::new();
         for clipped in &output.shapes {
             collect_texts(&clipped.shape, &mut texts);
