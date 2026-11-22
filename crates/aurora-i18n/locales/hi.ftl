@@ -15831,7 +15831,7 @@ ui-options-camera-still-while-posing = पोज़िंग के दौरा
 ui-options-camera-still-while-posing-tip = जब आप पोज करते हैं, कैमरा अवतार, इसका फोकस और शरीर के हिस्सों का अनुसरण करना बंद कर देता है, और चलना इसे रीसेट नहीं करता है. कक्षा, ज़ूम, पैन और पूर्वनिर्धारित अभी भी काम करते हैं.
 ui-options-group-emotes-hint = Aurora चैट शैली में “/me waves” जैसा इमोट उसी शीर्षक के नीचे दिखता है जो उसी व्यक्ति ने ठीक पहले या बाद में भेजे गए संदेशों के लिए इस्तेमाल किया है। इमोट का अलग शीर्षक नहीं बनता।
 content-perms-nested = वस्तुओं के भीतर वस्तुएँ शामिल करें
-content-perms-nested-help = यह नेस्टेड वस्तुओं की सामग्री को भी संपादित करता है, पांच स्तर तक गहराई तक. हर वस्तु को दुनिया में प्राथमिक के ऊपर दो मीटर में रखा जाता है जो इसे रखता है. इसके चलने वाले स्क्रिप्ट बंद हो जाते हैं, इसकी सामग्री बदल जाती है और इसकी स्क्रीप्ट फिर से शुरू होती है. वस्तु को फिर से कंटेनर में सहेजा जाता है. कंटेनरों में वस्तु की अनुमतियाँ सेट की जाती हैं और विश्व में अस्थाई प्रतिलिपि को मिटा देने से पहले जाँची जाती हैं. वस्तु जो आप नक़ल नहीं कर सकते, स्थानांतरित या परिवर्तित बंद रहती हैं. आपको स्थान पर निर्माण करने के लिए अनुमति चाहिए.
+content-perms-nested-help = यह 5 स्तर तक अंदर रखे ऑब्जेक्ट की सामग्री भी बदलता है। हर ऑब्जेक्ट को उस प्रिम से 2 मीटर ऊपर दुनिया में रखा जाता है जिसमें वह मौजूद है। चल रही स्क्रिप्ट रोकी जाती हैं, सामग्री बदली जाती है, स्क्रिप्ट फिर चलाई जाती हैं और ऑब्जेक्ट वापस सहेजा जाता है। अस्थायी प्रति दुनिया से हटाने से पहले वापस सहेजे गए ऑब्जेक्ट की अनुमतियाँ सेट और जाँची जाती हैं। जिन ऑब्जेक्ट को कॉपी करने, देने या बदलने की अनुमति नहीं है, वे बंद रहते हैं। ऑब्जेक्ट रखने की जगह पर निर्माण की अनुमति चाहिए।
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } विषयवस्तु में वस्तु खोला जाएगा, छोड़ा गया: { $skipped }.
@@ -15971,3 +15971,79 @@ phototools-director-lens = इस विंडो के ऊपरी भाग 
 phototools-view-angle-viewfinder = इसका अर्थ है - जब आपकी आँखें खुलती हैं, तो आप अपने आप को देख सकते हैं।
 ui-options-dof-show-focus-point = फोकस बिन्दु दिखाएँ
 ui-options-dof-show-focus-point-help = एक छोटा क्रॉसहेयर लेंस पर ध्यान केंद्रित करने वाले बिंदु पर: पीला जब यह मुक्त है, लाल जब यह ताला लगा हुआ है।
+
+### Updated release translations
+
+render-features-menu = रेंडरिंग विशेषताएँ
+render-features-ui = इंटरफ़ेस
+toolbar-command-ao-mini = छोटी AO विंडो
+keybinds-ui-feature = पूरा इंटरफेस दिखाएँ / छुपाएँ (रेंडरिंग फीचर्स › यूआई)
+import-image-size-limit = छवि आकार
+import-image-size-single = छवि आकार
+import-image-size-inherit = ग्लोबल सेटिंग ({ $size } पिक्सेल)
+import-image-size-pixels = { $size } पिक्सेल
+import-image-size-inherit-help = वैश्विक विन्यास नीचे आयात के बगल में सीमा का अनुसरण करता है. इसका वर्तमान मूल्य कोष्ठक में दिखाई देता है. बड़ी छवियाँ चयनित सीमा तक स्वचालित रूप से कम हो जाती हैं.
+import-image-size-global-help = आयात के लिए अधिकतम छवि आकार. व्यक्तिगत छवियों तथा सामग्री विकल्पों को प्राथमिकता दी जाती है. बड़ी छवियाँ स्वचालित रूप से कम हो जाती हैं.
+ui-chat-applink-preferences-tip = इस विन्यास को प्राथमिकताओं में खोलें
+ui-options-bento-idle = बेन्टो निष्क्रिय एनिमेशन को ठीक करें
+ui-options-bento-idle-hint = सभी अन्य के नीचे एक प्राथमिकता 0Bento एनिमेशन बजाता है, इसलिए हाथ, मुंह, पंख और पूंछ एक एनिमेटेशन के बाद फंसने के बजाय एक प्राकृतिक पोज़ में वापस जाते हैं; अन्य भी इसे देखते हैं
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] वस्तु UUID नक़ल किया गया
+       *[other] वस्तु UUIDs नक़ल किया गया
+    }
+ui-appearance-batch-choose-folder = फोटो खींचने के लिए आउटफिट्स { $folder }
+ui-appearance-batch-all = सभी आउटफिट्स
+ui-appearance-batch-chosen = { $chosen } का { $total }
+ui-appearance-batch-select-missing = छवि के बिना
+ui-inventory-dialogs-detach-and-delete = उतारें और हटाएँ
+ui-inventory-dialogs-detach-and-delete-body = इनमें से कुछ आइटम आपके अवतार ने पहन रखे हैं। पहले उन्हें उतारा जाएगा, फिर ट्रैश में भेजा जाएगा।
+ui-inventory-delete-detach-cannot = पहने हुए आइटम अब उतारे और हटाए नहीं जा सकते।
+ui-inventory-delete-detach-refused = इस वस्तु को हटाया और मिटाया नहीं जा सकता.
+ui-inventory-delete-detach-busy = एक अन्य सूची परिवर्तन प्रगति पर है. जब यह पूरा हो जाए तो फिर से कोशिश करें.
+ui-inventory-delete-detach-timeout = पहने हुए आइटम उतारे नहीं जा सके, इसलिए उन्हें हटाया नहीं गया।
+common-modify = परिवर्धित
+build-ui-contents-filters = विषय- वस्तु फ़िल्टर
+build-ui-contents-next-owner-permissions = अगले मालिक की अनुमतियाँ
+ui-options-voice-output = आवाज आउटपुट
+ui-options-voice-output-used-for-voice-chat = आवाज़ गपशप के लिए उपयोग में आता है; विश्व ध्वनि, संगीत तथा मीडिया ऑडियो आउटपुट का प्रयोग करते हैं
+ui-options-same-as-audio-output = ऑडियो आउटपुट के समान
+ui-options-copy-setting-link = विन्यास में लिंक की नक़ल लें
+ui-options-setting-unavailable = यह विन्यास उपलब्ध नहीं है.
+ui-context-show-in-inventory-none = आपके सूचीपत्र में कोई वस्तु इस वस्तु के नाम के साथ नहीं है.
+photo-vf-keep-framing = फ्रेमिंग बनाए रखें
+ui-profile-aurora-help = एक निवासी का प्रोफ़ाइल: वे कौन हैं, आप उनके साथ क्या कर सकते हैं, फिर उनके चयन, वर्गीकृत, पहला जीवन, वेब प्रोफाइल और आपके नोट्स. प्राथमिकताएँ › Aurora › प्रोफ़ाइलें लेगसी प्रदर्शक के विंडो को वापस लाता है.
+ui-profile-aurora-tab-picks = प्रोफ़ाइल की पसंद
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] प्रोफ़ाइल की पसंद: { $count }
+       *[other] प्रोफ़ाइल की पसंद: { $count }
+    }
+ui-profile-aurora-snapshot = छवि
+ui-profile-aurora-picks-empty = अभी कोई चुनौतियां नहीं
+ui-profile-aurora-picks-empty-text = { $name } ने कोई चयन साझा नहीं किया है।
+ui-profile-aurora-picks-empty-own = जो आपके लिए महत्वपूर्ण है उसे साझा करें
+ui-profile-aurora-picks-empty-own-text = इसका उपयोग स्थानों, लोगों और उन चीजों को उजागर करने के लिए किया जाता है जिनके बारे में आप चिंतित हैं।
+ui-profile-aurora-delete-pick = "{ $name }" चुनौति मिटाएँ?
+script-search-whole-words = पूर्ण शब्द
+people-groups-deactivate = निष्क्रिय
+ao-mini-title = छोटी AO विंडो
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: कोई एनिमेशन चुना नहीं गया
+ao-quick-pin = मिनी AO विंडो खोलें
+build-layout-button-icon = प्रतीक
+build-layout-button-label = लेबल
+build-layout-button-both = प्रतीक तथा लेबल
+build-detach-shown = अपने विंडो में: इसे छुपाने के लिए क्लिक करें. उस विंडो को वापस रखने के लिये उसके शीर्षक से निर्माण विंडो पर खींचें.
+build-detach-hidden = अपने विंडो में, छुपा: इसे दिखाने के लिए क्लिक करें.
+build-material-save-as = सामग्री इस रूप में सहेजें
+build-material-save-name = आपके सूचीपत्र में नए पदार्थ का नाम:
+build-material-new-material = नई सामग्री
+build-material-save-not-allowed = प्रत्येक चयनित चेहरे पर एक PBR सामग्री, वस्तु पर प्रतिलिपि और संशोधित अधिकारों की आवश्यकता होती है, और अपनी सूची में सामग्री की प्रतिलिपी के साथ प्रतिलिপি और संसोधित अधिकार हैं।
+build-material-saved = सामग्री "{ $name }" अपनी सूची में सहेजा.
+build-material-save-failed = सामग्री को आपके सूचीपत्र में सहेजा नहीं जा सका.
+toolbar-add-from-menu = औज़ार पट्टी में जोड़ें
+toolbar-remove-from-menu = औज़ार पट्टी से मिटाएँ
+toolbar-command-build-edit = वस्तुएँ संपादित करें
+toolbar-command-build-create = प्राइम बनाएँ
+toolbar-command-build-land = देश संपादन

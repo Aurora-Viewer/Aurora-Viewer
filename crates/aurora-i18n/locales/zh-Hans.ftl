@@ -15639,7 +15639,7 @@ ui-options-camera-still-while-posing-tip = 当您拍照时,相机会停止跟踪
 ui-options-group-emotes = 包含发件人的消息的群组表情
 ui-options-group-emotes-hint = 在 Aurora 聊天样式下，像“/me waves”这样的动作会和同一个人紧接着发送的前后消息共用标题，动作本身不另起标题。
 content-perms-nested = 在对象中包含对象
-content-perms-nested-help = 这也可以编辑嵌套对象的内容,最多可达五个层次深度。 每个对象都被放置在包含它的原始文件上方两米的世界中。 它的运行脚本将被停止,其内容将被更改,并且它的脚本会重新启动。 然后,对象将被保存回容器中。 在删除世界中的临时副本之前,容器中的对象权限将被设置和检查。 不能复制、转移或修改的对象仍然关闭。
+content-perms-nested-help = 也会修改容器中对象的内容，最多处理 5 层嵌套。每个对象都会在世界中生成在收纳它的基本体上方 2 米处。系统会停止正在运行的脚本，修改内容，再启动脚本并将对象存回原处。在删除世界中的临时副本之前，会先设置并核对存回对象的权限。没有复制、转让或修改权限的对象会保持关闭。您需要在对象生成的位置拥有建造权限。
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } 内容中的对象将被打开,跳过: { $skipped }.
@@ -15668,7 +15668,7 @@ content-perms-nested-scripts-warning = 每个对象都会先在世界中生成�
 content-perms-nested-original-kept = “{ $name }”已保存回来,但它的原始项目无法删除:两者都在内容中。
 content-perms-nested-copy-left = 世界中“{ $name }”的临时副本无法删除:手动删除。
 content-perms-nested-save-unconfirmed = 保存回来没有被确认
-content-perms-nested-saved-perms-unconfirmed = 停止:无法确认保存到容器中的对象的权限。 世界中的临时工作副本已被保留;在删除之前检查它们。
+content-perms-nested-saved-perms-unconfirmed = 操作已停止：无法确认存回容器中的对象权限。世界中的临时工作副本已保留，请先检查，再决定是否删除。
 content-perms-nested-timeout = 模拟器没有及时响应
 content-perms-nested-rez-refused = 停止: 模拟器拒绝放置在世界 “{ $name }” ({ $reason }).
 content-perms-nested-rez-timeout = 停止:“{ $name }”在15秒内没有出现,如果它后来出现在原始对象上方,请删除它。
@@ -15676,7 +15676,7 @@ content-perms-nested-not-ours = 停止:在世界中放置的“{ $name }”对�
 content-perms-nested-unverified = 停止:出现在“{ $name }”的对象无法从这些内容中检查是否放置在世界上,因此它被留在世界中。
 content-perms-nested-group-split = 停止 : “ { $name } ” ( 保存为一个的多个物体)作为单一物体返回,其放置在世界中的部分保留在世界中:选择它们并将它们重新组合。
 content-perms-nested-failed = “{ $name }” 保持不变： { $reason }.
-content-perms-nested-original-gone = “{ $name }”被保存在世界里:它的保存回来没有得到确认,它原来的物品已经不见了。
+content-perms-nested-original-gone = “{ $name }”已保留在世界中。系统未能确认它已存回，原始物品也已不在。
 content-perms-nested-gone = 物体离开了世界
 content-perms-nested-land-denied = 停止:您无法在这个原始对象上面建造,因为这些对象会被放置在世界中。
 content-perms-nested-parcel-full = 停止:包没有空间留给世界中的临时副本。
@@ -15786,3 +15786,77 @@ phototools-director-lens = 当 Director's Lens 窗口打开时,它会在下面�
 phototools-view-angle-viewfinder = 取景器拥有视角:当它关闭时,您的视角会回来。
 ui-options-dof-show-focus-point = 显示焦点
 ui-options-dof-show-focus-point-help = 镜头聚焦点上的小十字线:黄色是自由的,红色是锁定的。
+
+### Updated release translations
+
+render-features-menu = 渲染特性
+render-features-ui = 界面
+toolbar-command-ao-mini = 迷你 AO 窗口
+keybinds-ui-feature = 显示/隐藏整个界面 (渲染功能 › UI)
+import-image-size-limit = 最大图像大小
+import-image-size-single = 最大图像大小
+import-image-size-inherit = 全局设置（{ $size } 像素）
+import-image-size-pixels = { $size } 像素
+import-image-size-inherit-help = 全局设置遵循底部"导入"旁边的限制,其当前值显示在括号中。 较大的图像会自动缩小到选定的限度。
+import-image-size-global-help = 导入的最大图像大小。 个别图像和材料选择优先,较大的图像自动缩小。
+ui-chat-applink-preferences-tip = 在"首选项"中打开此设置
+ui-options-bento-idle = 修复Bento空闲动画
+ui-options-bento-idle-hint = 在所有其他动画下播放优先级 0 Bento 动画,因此手、嘴、翅膀和尾巴回到自然姿势而不是在动画后停留;其他人也会看到它
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] UUID号物体复制品
+       *[other] 复制的对象UUID
+    }
+ui-appearance-batch-choose-folder = 在{ $folder }拍摄的服装
+ui-appearance-batch-all = 所有装扮
+ui-appearance-batch-chosen = { $chosen } 2013年1月1日至 { $total }
+ui-appearance-batch-select-missing = 无照片
+ui-inventory-dialogs-detach-and-delete = 取下并删除
+ui-inventory-dialogs-detach-and-delete-body = 您的化身正在佩戴其中一些物品。系统会先取下这些物品，再将它们移入回收站。
+ui-inventory-delete-detach-cannot = 无法再取下并删除这些正在佩戴的物品。
+ui-inventory-delete-detach-refused = 此项目不能卸载和删除。
+ui-inventory-delete-detach-busy = 另一个库存变化正在进行中,一旦完成后再试一次。
+ui-inventory-delete-detach-timeout = 未能取下正在佩戴的物品，因此没有删除它们。
+common-modify = 修改
+build-ui-contents-filters = 内容过滤器
+build-ui-contents-next-owner-permissions = 下一个所有者的权限
+ui-options-voice-output = 语音输出
+ui-options-voice-output-used-for-voice-chat = 用于语音聊天;世界声音,音乐和媒体使用 音频输出
+ui-options-same-as-audio-output = 与音频输出相同
+ui-options-copy-setting-link = 复制链接到设置
+ui-options-setting-unavailable = 此设置不可用。
+ui-context-show-in-inventory-none = 您的库存中没有任何物品具有此物品的名称。
+ui-profile-aurora-help = 居民的个人资料:他们是谁,您可以用他们做什么,然后他们的选择,分类,第一次生活,网络个人资源和你的笔记。 Preferences › Aurora › Profiles 带回了旧版查看器窗口。
+ui-profile-aurora-tab-picks = 精选
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] 精选: { $count }
+       *[other] 精选: { $count }
+    }
+ui-profile-aurora-snapshot = 画面
+ui-profile-aurora-picks-empty = 还没有精选
+ui-profile-aurora-picks-empty-text = { $name } 尚未分享任何精选。
+ui-profile-aurora-picks-empty-own = 分享对您重要的内容
+ui-profile-aurora-picks-empty-own-text = 您可以在精选里展示自己在意的地点、人物或事物。
+ui-profile-aurora-delete-pick = 删除精选“{ $name }”？
+script-search-whole-words = 完整字
+ao-mini-title = 迷你 AO 窗口
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }:没有选择动画
+ao-quick-pin = 打开mini AO窗口
+build-layout-button-icon = 图标
+build-layout-button-label = 标签
+build-layout-button-both = 图标和标签
+build-detach-shown = 在它自己的窗口中:点击隐藏它。 将该窗口的标题拖到构建窗口上,以重新放置它。
+build-detach-hidden = 在自己的窗口中,隐藏:点击显示它。
+build-material-save-as = 保存材料为
+build-material-save-name = 库存中新材料的名称:
+build-material-new-material = 新材料
+build-material-save-not-allowed = 保存需要在每个选择的面上有一个 PBR 材料,对象上的复制和修改权限,以及库存中具有复制与修改 权限的材料副本。
+build-material-saved = 材料"{ $name }"已保存至您的库存。
+build-material-save-failed = 该材料无法保存到您的库存。
+toolbar-add-from-menu = 添加到工具栏
+toolbar-remove-from-menu = 从工具栏中删除
+toolbar-command-build-edit = 编辑对象
+toolbar-command-build-create = 创建基本体
+toolbar-command-build-land = 编辑土地

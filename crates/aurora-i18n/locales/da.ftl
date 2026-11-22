@@ -15859,7 +15859,7 @@ ui-options-camera-still-while-posing = Hold kameraet stille, mens du poserer
 ui-options-camera-still-while-posing-tip = Når du poser, stopper kameraet med at følge avataren, dens fokus og kropsdele, og det nulstilles ikke, når du går.Omløb, zoom, panorering og forudindstillinger fungerer stadig.
 ui-options-group-emotes-hint = I chatstilen Aurora vises en emote som »/me waves« under samme overskrift som beskeder fra den samme afsender lige før eller efter. Den får ingen egen overskrift.
 content-perms-nested = Medtag objekter i objekter
-content-perms-nested-help = Dette redigerer også indholdet af indlejrede objekter, op til fem niveauer dybt. Hvert objekt placeres i verden to meter over den primitive der indeholder det. Dets kørende scripts stoppes, dets indhold ændres og dets scripts genstartes. Objektet gemmes derefter tilbage i containeren. Tilladelserne for objektet i container er sat og kontrolleret før dets midlertidige kopi i verden slettes. Objekter du ikke kan kopiere, overføre eller ændre forbliver lukkede. Du skal have tilladelse til at bygge på placeringsstedet.
+content-perms-nested-help = Ændrer også indholdet i indlejrede objekter, op til 5 niveauer. Hvert objekt placeres i verdenen 2 m over den prim, det ligger i. Kørende scripts stoppes, indholdet ændres, scriptene startes igen, og objektet gemmes tilbage. Rettighederne på det gemte objekt indstilles og kontrolleres, før den midlertidige kopi i verdenen slettes. Objekter, du ikke må kopiere, overføre eller ændre, åbnes ikke. Du skal have byggerettigheder dér, hvor objekterne placeres.
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } objekt i indholdet vil blive åbnet, springet over: { $skipped }.
@@ -15999,3 +15999,79 @@ phototools-director-lens = Instruktørens linse vises, mens vinduet er åbent, o
 phototools-view-angle-viewfinder = Søgeren ejer synsvinklen: Din kommer tilbage, når den lukkes.
 ui-options-dof-show-focus-point = Vis fokuspunkt
 ui-options-dof-show-focus-point-help = Et lille trådkors på det punkt, som linsen fokuserer på: gult, når det er frit, rødt når det låses.
+
+### Updated release translations
+
+render-features-menu = Funktioner til rendering
+render-features-ui = Brugerflade
+toolbar-command-ao-mini = Lille AO-vindue
+keybinds-ui-feature = Vis / skjul hele grænsefladen (Gengivelsesfunktioner › UI)
+import-image-size-limit = Maksimal billedstørrelse
+import-image-size-single = Maksimal billedstørrelse
+import-image-size-inherit = Global indstilling ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = Den globale indstilling følger grænsen ved siden af Importer nederst, og dens aktuelle værdi vises i parentes. Større billeder reduceres automatisk til den valgte grænse.
+import-image-size-global-help = Maksimal billedstørrelse ved import. Individuelle billed- og materialevalg prioriteres, større billeder reduceres automatisk.
+ui-chat-applink-preferences-tip = Åbn denne indstilling i Indstillinger
+ui-options-bento-idle = Fix Bento inaktiv animation
+ui-options-bento-idle-hint = Afspiller en prioriteret 0 Bento animation under alle de andre, så hænder, mund, vinger og hale går tilbage til en naturlig pose i stedet for at sidde fast efter en animation; andre ser det også
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Objekt UUID kopieret
+       *[other] Objekt UUID' er kopieret
+    }
+ui-appearance-batch-choose-folder = Tøj til at fotografere i { $folder }
+ui-appearance-batch-all = Se alle outfits
+ui-appearance-batch-chosen = { $chosen } af { $total }
+ui-appearance-batch-select-missing = Uden billede
+ui-inventory-dialogs-detach-and-delete = Tag af og slet
+ui-inventory-dialogs-detach-and-delete-body = Din avatar bærer nogle af disse genstande. De bliver taget af og derefter flyttet til papirkurven.
+ui-inventory-delete-detach-cannot = De genstande, avataren bærer, kan ikke længere tages af og slettes.
+ui-inventory-delete-detach-refused = Dette element kan ikke tages af og slettes.
+ui-inventory-delete-detach-busy = En anden lagerændring er i gang. Prøv igen, når den er færdig.
+ui-inventory-delete-detach-timeout = De genstande, du bærer, blev ikke taget af og blev derfor ikke slettet.
+common-modify = Ændre
+build-ui-contents-filters = Filtre til indhold
+build-ui-contents-next-owner-permissions = Næste ejers tilladelser
+ui-options-voice-output = Stemmeudgang
+ui-options-voice-output-used-for-voice-chat = Bruges til stemmechat; verden lyder, musik og medier bruger lydudgang
+ui-options-same-as-audio-output = Samme som lydudgang
+ui-options-copy-setting-link = Kopier link til indstilling
+ui-options-setting-unavailable = Denne indstilling er ikke tilgængelig.
+ui-context-show-in-inventory-none = Ingen genstand i dit inventar har præcis dette objekts navn.
+photo-vf-keep-framing = Behold indramningen
+ui-profile-aurora-help = En beboers profil: hvem de er, hvad du kan gøre med dem, så deres picks, rubrikannoncer, første liv, webprofil og dine noter.Indstillinger › Aurora › Profiler bringer tilbage Legacy Viewer's vindue.
+ui-profile-aurora-tab-picks = Udvalgte
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Udvalgte: { $count }
+       *[other] Udvalgte: { $count }
+    }
+ui-profile-aurora-snapshot = Billede
+ui-profile-aurora-picks-empty = Ingen valg endnu
+ui-profile-aurora-picks-empty-text = { $name } har ikke delt nogen valg.
+ui-profile-aurora-picks-empty-own = Del det, der betyder noget for dig
+ui-profile-aurora-picks-empty-own-text = Brug picks til at fremhæve steder, mennesker og ting, du holder af.
+ui-profile-aurora-delete-pick = Slet pick "{ $name }"?
+script-search-whole-words = Hele ord
+people-groups-deactivate = Deaktiver
+ao-mini-title = Lille AO-vindue
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Ingen animation valgt
+ao-quick-pin = Åbn mini AO vindue
+build-layout-button-icon = Ikon
+build-layout-button-label = Etiket
+build-layout-button-both = Ikon og etiket
+build-detach-shown = I sit eget vindue: klik for at skjule det, og træk vinduet ved titlen til byggevinduet for at placere det igen.
+build-detach-hidden = I sit eget vindue, skjult: klik for at vise det.
+build-material-save-as = Gem materiale som
+build-material-save-name = Navn på det nye materiale i din beholdning:
+build-material-new-material = Nyt materiale
+build-material-save-not-allowed = Gemning kræver et PBR-materiale på hver valgt ansigt, kopiere og ændre rettigheder på objektet, og en kopi af materialet i din beholdning med kopiering og ændringsrettigheder.
+build-material-saved = Materiale "{ $name }" gemt til dit lager.
+build-material-save-failed = Materialet kunne ikke gemmes i din beholdning.
+toolbar-add-from-menu = Føj til værktøjslinjen
+toolbar-remove-from-menu = Fjern fra værktøjslinjen
+toolbar-command-build-edit = Rediger objekter
+toolbar-command-build-create = Opret prims
+toolbar-command-build-land = Rediger land

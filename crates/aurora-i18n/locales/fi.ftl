@@ -15848,7 +15848,7 @@ ui-options-camera-still-while-posing = Pidä kamera paikallaan poseeratessasi
 ui-options-camera-still-while-posing-tip = Poseeratessa kamera lakkaa seuraamasta avatar-hahmoa, sen tarkennusta ja kehon osia. Käveleminen ei nollaa sitä. Kiertorata, zoomaus, panorointi ja esiasetukset toimivat edelleen.
 ui-options-group-emotes-hint = Aurora-tyylisessä chatissa ele, kuten ”/me waves”, näytetään saman otsikon alla kuin saman lähettäjän juuri sitä ennen tai sen jälkeen lähettämät viestit. Eleelle ei luoda omaa otsikkoa.
 content-perms-nested = Objektien sisällyttäminen objektien sisään
-content-perms-nested-help = Tämä muokkaa myös sisäkkäisten objektien sisältöä, jopa viiden tason syvyyteen asti. Jokainen objekti sijoitetaan maailmaan kaksi metriä sen sisältävän primitiivin yläpuolelle. Sen käynnissä olevat skriptit pysäytetään, sen sisältö muuttuu ja sen skriptit käynnistetään uudelleen. Objekti tallennetaan sitten takaisin säiliöön. Säiliössä olevan objektin oikeudet asetetaan ja tarkistetaan ennen kuin sen väliaikainen kopio maailmassa poistetaan. Objektit, joita et voi kopioida, siirtää tai muokata, pysyvät suljettuina. Tarvitset oikeuden rakentaa sijoituspaikassa.
+content-perms-nested-help = Muokkaa myös sisäkkäisten esineiden sisältöä enintään 5 tasolla. Esine tuodaan maailmaan 2 m sen sisältävän primin yläpuolelle. Käynnissä olevat komentosarjat pysäytetään, sisältöä muutetaan, komentosarjat käynnistetään uudelleen ja esine tallennetaan takaisin. Palautetun esineen käyttöoikeudet asetetaan ja tarkistetaan ennen kuin väliaikainen kopio poistetaan maailmasta. Esineitä, joita et saa kopioida, siirtää tai muokata, ei avata. Tarvitset rakennusoikeuden esineiden sijoituspaikassa.
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } Sisällön objekti avataan, ohitetaan: { $skipped }.
@@ -15988,3 +15988,79 @@ phototools-director-lens = Ohjaajan linssi näkyy, kun sen ikkuna on auki, alla 
 phototools-view-angle-viewfinder = Etsin hallitsee kuvakulmaa: sinun kuvakulmasi palaa takaisin, kun etsin suljetaan.
 ui-options-dof-show-focus-point = Näytä tarkennuspiste
 ui-options-dof-show-focus-point-help = Linssin tarkennuspisteessä on pieni tähtäinristi: keltainen, kun se on vapaa, punainen, jos se on lukittu.
+
+### Updated release translations
+
+render-features-menu = Renderointiominaisuudet
+render-features-ui = Käyttöliittymä
+toolbar-command-ao-mini = Pieni AO-ikkuna
+keybinds-ui-feature = Koko käyttöliittymän näyttäminen / piilottaminen (Renderointiominaisuudet › Käyttöliittymä)
+import-image-size-limit = Kuvan enimmäiskoko
+import-image-size-single = Kuvan enimmäiskoko
+import-image-size-inherit = Yleinen asetus ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = Yleinen asetus seuraa Tuo-kohdan vieressä olevaa rajaa, jonka nykyinen arvo näkyy sulkeissa. Suuremmat kuvat pienennetään automaattisesti valittuun rajaan.
+import-image-size-global-help = Kuvan enimmäiskoko tuontia varten. Yksilölliset kuva- ja materiaalivalinnat ovat etusijalla. Suuremmat kuvat pienenevät automaattisesti.
+ui-chat-applink-preferences-tip = Avaa tämä asetus Asetuksissa
+ui-options-bento-idle = Korjaa Bento tyhjäkäynti animaatio
+ui-options-bento-idle-hint = Toistaa Bento-animaation kaikkien muiden animaatioiden alapuolella, joten kädet, suu, siivet ja häntä palaavat luonnolliseen asentoon sen sijaan, että pysyisivät jumissa animaation jälkeen; muutkin näkevät sen
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Objekti UUID kopioitu
+       *[other] Objektin UUID kopioitu
+    }
+ui-appearance-batch-choose-folder = Asuja kuvattavaksi paikassa { $folder }
+ui-appearance-batch-all = Kaikki asut
+ui-appearance-batch-chosen = { $chosen } tai { $total }
+ui-appearance-batch-select-missing = Ilman kuvaa
+ui-inventory-dialogs-detach-and-delete = Riisu ja poista
+ui-inventory-dialogs-detach-and-delete-body = Avatarillasi on joitakin näistä esineistä yllään. Ne riisutaan ensin ja siirretään sitten roskakoriin.
+ui-inventory-delete-detach-cannot = Yllä olevia esineitä ei voi enää riisua ja poistaa.
+ui-inventory-delete-detach-refused = Tätä tuotetta ei voi poistaa ja poistaa.
+ui-inventory-delete-detach-busy = Toinen varaston muutos on käynnissä. Yritä uudelleen, kun se on tehty.
+ui-inventory-delete-detach-timeout = Yllä olevia esineitä ei voitu riisua, joten niitä ei poistettu.
+common-modify = Muuta
+build-ui-contents-filters = Sisältösuodattimet
+build-ui-contents-next-owner-permissions = Seuraavan omistajan käyttöoikeudet
+ui-options-voice-output = Äänilähtö
+ui-options-voice-output-used-for-voice-chat = Käytetään äänikeskusteluun; maailman äänet, musiikki ja media käyttävät Äänilähtö
+ui-options-same-as-audio-output = Sama kuin äänilähtö
+ui-options-copy-setting-link = Kopioi linkki asetuksiin
+ui-options-setting-unavailable = Tämä asetus ei ole käytettävissä.
+ui-context-show-in-inventory-none = Mikään esine tavaraluettelossasi ei ole täsmälleen tämän esineen nimeä.
+photo-vf-keep-framing = Säilytä kehystys
+ui-profile-aurora-help = Asukkaan profiili: kuka he ovat, mitä voit tehdä heidän kanssaan, sitten heidän valintansa, ilmoitukset, ensimmäinen elämä, verkkoprofiili ja muistiinpanot.Asetukset › Aurora › Profiilit tuo takaisin Legacy Viewer -ikkunan.
+ui-profile-aurora-tab-picks = Poiminnat
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Poiminnat: { $count }
+       *[other] Poiminnat: { $count }
+    }
+ui-profile-aurora-snapshot = Kuva
+ui-profile-aurora-picks-empty = Ei valintoja vielä
+ui-profile-aurora-picks-empty-text = { $name } ei ole jakanut yhtään valintaa.
+ui-profile-aurora-picks-empty-own = Jaa sinulle tärkeät asiat
+ui-profile-aurora-picks-empty-own-text = Käytä valintoja korostaaksesi paikkoja, ihmisiä ja asioita, joista pidät.
+ui-profile-aurora-delete-pick = Poista valinta "{ $name }"?
+script-search-whole-words = Kokonaiset sanat
+people-groups-deactivate = Poista käytöstä
+ao-mini-title = Pieni AO-ikkuna
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Ei animaatiota valittu
+ao-quick-pin = Avaa mini AO ikkuna
+build-layout-button-icon = Kuvake
+build-layout-button-label = Etiketti
+build-layout-button-both = Kuvake ja etiketti
+build-detach-shown = Omassa ikkunassaan: napsauta piilottaaksesi sen. Vedä ikkuna sen otsikosta rakennusikkunaan, jotta se tulee takaisin näkyviin.
+build-detach-hidden = Omassa ikkunassaan, piilotettu: klikkaa näyttääksesi sen.
+build-material-save-as = Tallenna materiaali nimellä
+build-material-save-name = Varastossa olevan uuden materiaalin nimi:
+build-material-new-material = Uusi materiaali
+build-material-save-not-allowed = Tallennukseen tarvitaan PBR-materiaali jokaiselle valitulle pinnalle, objektin kopiointi- ja muokkausoikeudet sekä kopio materiaalista inventaariossasi, jolla on kopiointi ja muutosoikeudet.
+build-material-saved = Materiaali "{ $name }" on tallennettu varastoosi.
+build-material-save-failed = Materiaalia ei voitu tallentaa varastoon.
+toolbar-add-from-menu = Lisää työkalupalkkiin
+toolbar-remove-from-menu = Poista työkaluriviltä
+toolbar-command-build-edit = Objektien muokkaaminen
+toolbar-command-build-create = Luo prims
+toolbar-command-build-land = Muokkaa maata

@@ -15852,7 +15852,7 @@ ui-options-camera-still-while-posing = পোজ দেওয়ার সময় �
 ui-options-camera-still-while-posing-tip = আপনি যখন পোজ দিচ্ছেন, তখন ক্যামেরা আভাটার অনুসরণ বন্ধ করে দেয়, এর ফোকাস এবং শরীরের অংশগুলোর দিকে নজর রাখে, এবং হাঁটলে এটি পুনরায় সেট করা হয় না। কক্ষপথ, জুম, প্যান এবং প্রাক-নির্ধারিত মানগুলি এখনও কাজ করে।
 ui-options-group-emotes-hint = Aurora চ্যাট স্টাইলে /me waves-এর মতো কোনো ইমোট ঠিক আগে বা পরে একই ব্যক্তি যে বার্তা পাঠিয়েছেন, তার শিরোনামের নিচেই দেখানো হয়। ইমোটের জন্য আলাদা শিরোনাম হয় না।
 content-perms-nested = বস্তুর মধ্যে বস্তু অন্তর্ভুক্ত করো
-content-perms-nested-help = এটি ইনস্টলকৃত বস্তুর বিষয়বস্তুও সম্পাদন করে, সর্বোচ্চ পাঁচ স্তর গভীরে । প্রতিটি বস্তুকে প্রাথমিকের দু' মিটার উপরে রাখা হয় যেখানে এটি রয়েছে । এর চলমান স্ক্রিপ্ট বন্ধ করা হয়, এর বিষয়বস্থা পরিবর্তন করা হয় এবং তার স্ক্রিপ্ট পুনরায় আরম্ভ করা হয় । বস্তুটি তখন কন্টেইনার- এ সংরক্ষণ করা হয়। কনটেইনারের মধ্যে বস্তুর অনুমতি নির্ধারণ করা হয় ও পরীক্ষা করা হয় পৃথিবীতে এর অস্থায়ী কপি মুছে ফেলার পূর্বে । আপনি যে বস্তুগুলি কপি করতে পারবেন না, স্থানান্তর করতে পারেন না অথবা পরিবর্তন করতে পারেন তা বন্ধ অবস্থায় থাকে । আপনার অবস্থান নির্মাণ করার জন্য অনুমতি প্রয়োজন ।
+content-perms-nested-help = এতে সর্বোচ্চ 5 স্তর পর্যন্ত ভেতরের অবজেক্টের সামগ্রীও বদলায়। প্রতিটি অবজেক্টকে যে প্রিমে রাখা আছে, তার 2 মিটার ওপরে জগতে রাখা হয়। চলমান স্ক্রিপ্ট থামিয়ে সামগ্রী বদলানো হয়, স্ক্রিপ্ট আবার চালু করে অবজেক্টটি যথাস্থানে সংরক্ষণ করা হয়। জগতের অস্থায়ী কপি মুছবার আগে ফেরত রাখা অবজেক্টের অনুমতি সেট ও যাচাই করা হয়। যেগুলো কপি, হস্তান্তর বা বদলানোর অনুমতি নেই, সেগুলো না খুলেই রাখা হয়। যেখানে অবজেক্ট রাখা হবে সেখানে নির্মাণের অনুমতি চাই।
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } বিষয়বস্তুতে অবজেক্ট খোলা হবে, ছাড়ো: { $skipped }.
@@ -15992,3 +15992,79 @@ phototools-director-lens = উইন্ডোটি খোলা থাকলে
 phototools-view-angle-viewfinder = ভিউফাইন্ডারের নিজস্ব প্রদর্শন কোণ আছে: এটি বন্ধ করা হলে আপনার কোণ ফিরে আসবে।
 ui-options-dof-show-focus-point = ফোকাস বিন্দু দেখাও
 ui-options-dof-show-focus-point-help = লেন্সের ফোকাস পয়েন্টের উপর একটি ছোট ক্রসহায়ার: হলুদ যখন এটি মুক্ত, লাল যখন এটি বন্ধ করা হয়েছে।
+
+### Updated release translations
+
+render-features-menu = রেন্ডারিং বৈশিষ্ট্য
+render-features-ui = ইন্টারফেস
+toolbar-command-ao-mini = মিনি AO
+keybinds-ui-feature = পুরো ইন্টারফেস দেখাও / আড়াল করো (রেন্ডারিং বৈশিষ্ট্য › UI)
+import-image-size-limit = ছবির সর্বোচ্চ মাপ
+import-image-size-single = ছবির সর্বোচ্চ মাপ
+import-image-size-inherit = সামগ্রিক সেটিং ({ $size } পিক্সেল)
+import-image-size-pixels = { $size } পিক্সেল
+import-image-size-inherit-help = গ্লোবাল বৈশিষ্ট্য নীচের ইম্পোর্ট- এর পাশে সীমা অনুসরণ করে। বর্তমান মানটি কোটেশনে দেখানো হবে। বড় ছবি স্বয়ংক্রিয়ভাবে নির্বাচিত সীমা পর্যন্ত সংকুচিত করা হবে।
+import-image-size-global-help = ইমপোর্ট করার জন্য ছবির সর্বোচ্চ আকার । ব্যক্তিগত ছবি এবং উপাদান নির্বাচন অগ্রাধিকার গ্রহণ করে । বড় ছবি স্বয়ংক্রিয়ভাবে সংকুচিত করা হয় ।
+ui-chat-applink-preferences-tip = পছন্দসমূহ-এ এই বৈশিষ্ট্যটি খোলো
+ui-options-bento-idle = Bento নিষ্ক্রিয় অ্যানিমেশন নির্ধারণ করুন
+ui-options-bento-idle-hint = অন্য সবগুলোর নিচে একটি অগ্রাধিকার ০ Bento অ্যানিমেশন চালায়, তাই হাত, মুখ, ডানা এবং লেজ একটি অ্যানিমেশনের পরে আটকে থাকার পরিবর্তে প্রাকৃতিক অবস্থানে ফিরে যায়; অন্যরাও এটি দেখতে পাবে
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] অবজেক্ট UUID অনুলিপি করা হয়েছে
+       *[other] অবজেক্ট UUIDs অনুলিপি করা হয়েছে
+    }
+ui-appearance-batch-choose-folder = { $folder } এ ছবি তোলার পোশাক
+ui-appearance-batch-all = সব পোশাক
+ui-appearance-batch-chosen = { $chosen } এর { $total }
+ui-appearance-batch-select-missing = ছবি ছাড়া
+ui-inventory-dialogs-detach-and-delete = খুলে মুছুন
+ui-inventory-dialogs-detach-and-delete-body = এই আইটেমগুলোর কিছু আপনার অ্যাভাটারে পরা আছে। প্রথমে সেগুলো খুলে তারপর ট্র্যাশে সরানো হবে।
+ui-inventory-delete-detach-cannot = পরা আইটেমগুলো আর খুলে মুছে ফেলা যাবে না।
+ui-inventory-delete-detach-refused = এই আইটেমটি সরিয়ে মুছে ফেলা যাবে না।
+ui-inventory-delete-detach-busy = আরেকটি ইনভেস্টমেন্ট পরিবর্তনের কাজ চলছে। শেষ হলে আবার চেষ্টা করুন।
+ui-inventory-delete-detach-timeout = পরা আইটেমগুলো খোলা যায়নি, তাই সেগুলো মুছে ফেলা হয়নি।
+common-modify = পরিবর্তন
+build-ui-contents-filters = বিষয়বস্তু ফিল্টার
+build-ui-contents-next-owner-permissions = পরবর্তী মালিকের অনুমতি
+ui-options-voice-output = শব্দ আউটপুট
+ui-options-voice-output-used-for-voice-chat = ভয়েস চ্যাটের জন্য ব্যবহৃত; বিশ্বের শব্দ, সঙ্গীত এবং মিডিয়া অডিও আউটপুট ব্যবহার করে
+ui-options-same-as-audio-output = অডিও আউটপুটের সমান
+ui-options-copy-setting-link = সেটিংস-এ লিঙ্ক অনুলিপি করুন
+ui-options-setting-unavailable = এই বৈশিষ্ট্যটি উপলব্ধ নয় ।
+ui-context-show-in-inventory-none = আপনার তালিকায় কোন বস্তু নেই যার নাম এই বস্তুর সমান।
+photo-vf-keep-framing = ফ্রেম রাখো
+ui-profile-aurora-help = একটি বসবাসকারীর প্রোফাইল: তারা কে, তাদের সাথে আপনি কি করতে পারেন, তারপর তাদের পছন্দ, বিজ্ঞাপন, প্রথম জীবন, ওয়েব প্রোফাইলের এবং আপনার নোট। পছন্দে › Aurora › প্রোফাইলে পুনরায় Legacy প্রদর্শক উইন্ডোটি এনেছে।
+ui-profile-aurora-tab-picks = পছন্দের সংগ্রহ
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] পছন্দের সংগ্রহ: { $count }
+       *[other] পছন্দের সংগ্রহ: { $count }
+    }
+ui-profile-aurora-snapshot = ছবি
+ui-profile-aurora-picks-empty = এখনো কোন পছন্দ নেই
+ui-profile-aurora-picks-empty-text = { $name } কোন পছন্দ শেয়ার করেননি।
+ui-profile-aurora-picks-empty-own = আপনার জন্য যা গুরুত্বপূর্ণ তা শেয়ার করুন
+ui-profile-aurora-picks-empty-own-text = আপনার পছন্দের জায়গা, মানুষ এবং জিনিসপত্র চিহ্নিত করতে পিক ব্যবহার করুন।
+ui-profile-aurora-delete-pick = নির্বাচন মুছে ফেলো "{ $name }"?
+script-search-whole-words = পুরো শব্দ
+people-groups-deactivate = নিষ্ক্রিয়
+ao-mini-title = মিনি AO
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: কোন অ্যানিমেশন নির্বাচিত হয়নি
+ao-quick-pin = ছোট আকারের খোলো AO উইন্ডো
+build-layout-button-icon = আইকন
+build-layout-button-label = লেবেল
+build-layout-button-both = আইকন এবং লেবেল
+build-detach-shown = তার নিজের উইন্ডোতে: এটি আড়াল করতে ক্লিক করুন। উইণ্ডোর শিরোনামের সাহায্যে নির্মাণ উইଣ୍ଡোর উপর তা টেনে এনে পুনরায় স্থাপন করুন।
+build-detach-hidden = তার নিজের উইন্ডোতে, লুকানো: এটি দেখানোর জন্য ক্লিক করুন ।
+build-material-save-as = বস্তুকে নতুন নামে সংরক্ষণ করো
+build-material-save-name = আপনার ইনভেস্টমেন্টে নতুন পদার্থের নাম:
+build-material-new-material = নতুন পদার্থ
+build-material-save-not-allowed = সংরক্ষণের জন্য প্রতিটি নির্বাচিত মুখে একটি PBR উপাদান, বস্তুর অনুলিপি এবং পরিবর্তন করার অধিকার এবং আপনার ইনভেস্টমেন্টের উপাদানের অনুলিপী প্রয়োজন যা অনুলিপন এবং পরিবর্তনের অধিকার সহ।
+build-material-saved = "{ $name }" পদার্থটি আপনার ইনভেস্টমেন্টে সংরক্ষণ করা হয়েছে।
+build-material-save-failed = বস্তুটি আপনার ইনভেন্টরিতে সংরক্ষণ করা যায়নি।
+toolbar-add-from-menu = টুলবার- এ যোগ করো
+toolbar-remove-from-menu = টুলবার থেকে অপসারণ করো
+toolbar-command-build-edit = বস্তু সম্পাদন করো
+toolbar-command-build-create = প্রাইম তৈরি করো
+toolbar-command-build-land = দেশ সম্পাদন করো

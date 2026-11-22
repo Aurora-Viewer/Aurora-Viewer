@@ -15736,7 +15736,7 @@ ui-options-camera-still-while-posing-tip = Mientras poseas, la cámara deja de s
 ui-options-group-emotes = Emotes grupales con los mensajes del remitente
 ui-options-group-emotes-hint = En el estilo de chat Aurora, una acción como «/me waves» aparece bajo el mismo encabezado que los mensajes que esa persona envía justo antes o después. La acción no tiene encabezado propio.
 content-perms-nested = Incluir objetos dentro de objetos
-content-perms-nested-help = Esto también edita el contenido de los objetos anidados, hasta cinco niveles de profundidad. Cada objeto se coloca en el mundo dos metros por encima de la primitiva que lo contiene. Sus scripts en ejecución se detienen, su contenido se cambia y sus scripts se reinician. El objeto luego se guarda de nuevo en el contenedor. Los permisos del objeto en el container se establecen y se comprueban antes de que se elimine su copia temporal en el world. Los objetos que no puede copiar, transferir o modificar permanecen cerrados. Necesita permiso para construir en la ubicación de colocación.
+content-perms-nested-help = También modifica el contenido de objetos anidados, hasta 5 niveles. Cada objeto se materializa en el mundo 2 m por encima de la primitiva que lo contiene. Se detienen los scripts en ejecución, se cambia el contenido, se reinician los scripts y se vuelve a guardar el objeto. Se establecen y verifican los permisos del objeto guardado antes de eliminar su copia temporal del mundo. Los objetos sin permisos de copia, transferencia o modificación permanecen cerrados. Necesitas permiso para construir en el lugar donde se materializan.
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } Se abrirá un objeto en el contenido, saltado: { $skipped }.
@@ -15773,7 +15773,7 @@ content-perms-nested-not-ours = Detenida: el objeto colocado en el mundo para �
 content-perms-nested-unverified = Detenido: el objeto que apareció para “{ $name }” no se pudo verificar como colocado en el mundo a partir de estos contenidos, por lo que se dejó en mundo.
 content-perms-nested-group-split = Detenido: “{ $name }” (varios objetos guardados como uno) volvía como un único objeto, sus partes colocadas en el mundo se mantenían en mundo: seleccionarlos todos y tomarlos para hacer el grupo de nuevo.
 content-perms-nested-failed = “{ $name }” se dejó sin cambios: { $reason }.
-content-perms-nested-original-gone = “{ $name }” se mantiene en el mundo: su salvación no fue confirmada y su objeto original ha desaparecido.
+content-perms-nested-original-gone = «{ $name }» permanece en el mundo. No se pudo confirmar que se guardara de nuevo y ya no está el objeto original.
 content-perms-nested-gone = El objeto dejó el mundo
 content-perms-nested-land-denied = Detenido: no puedes construir sobre este objeto primitivo, donde los objetos se colocarían en el mundo.
 content-perms-nested-parcel-full = Detenido: el paquete no tiene espacio para las copias temporales en el mundo.
@@ -15883,3 +15883,77 @@ phototools-director-lens = La lente del director se muestra mientras su ventana 
 phototools-view-angle-viewfinder = El visor es el dueño del ángulo de visión: el tuyo vuelve cuando se cierra.
 ui-options-dof-show-focus-point = Mostrar punto de enfoque
 ui-options-dof-show-focus-point-help = Una pequeña cruz en el punto de enfoque de la lente: amarillo cuando está libre, rojo cuando está bloqueado.
+
+### Updated release translations
+
+render-features-menu = Características de renderizado
+render-features-ui = Interfaz
+toolbar-command-ao-mini = Ventana mini de AO
+keybinds-ui-feature = Mostrar / ocultar toda la interfaz (Funciones de renderizado › UI)
+import-image-size-limit = Tamaño máximo de imagen
+import-image-size-single = Tamaño máximo de imagen
+import-image-size-inherit = Ajuste global ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = El ajuste global sigue el límite junto a Importar en la parte inferior y su valor actual aparece entre paréntesis. Las imágenes más grandes se reducen automáticamente al límite seleccionado.
+import-image-size-global-help = Tamaño máximo de la imagen para importaciones. Las imágenes individuales y las opciones de material tienen prioridad, las imágenes grandes se reducen automáticamente.
+ui-chat-applink-preferences-tip = Abrir esta configuración en Preferencias
+ui-options-bento-idle = Fix Bento animación inactiva
+ui-options-bento-idle-hint = Reproduce una animación prioritaria 0 Bento debajo de todas las demás, por lo que las manos, la boca, las alas y la cola vuelven a una postura natural en lugar de quedarse atascadas después de la animación; otros también lo ven.
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Objeto UUID copiado
+       *[other] UUIDs de objeto copiados
+    }
+ui-appearance-batch-choose-folder = Outfits para fotografiar en { $folder }
+ui-appearance-batch-all = Todos los vestuarios
+ui-appearance-batch-chosen = { $chosen } de { $total }
+ui-appearance-batch-select-missing = Sin imagen
+ui-inventory-dialogs-detach-and-delete = Quitar y eliminar
+ui-inventory-dialogs-detach-and-delete-body = Tu avatar lleva puestos algunos de estos objetos. Primero se quitarán y luego se moverán a la papelera.
+ui-inventory-delete-detach-cannot = Ya no se pueden quitar y eliminar los objetos que lleva puestos el avatar.
+ui-inventory-delete-detach-refused = Este artículo no se puede quitar ni borrar.
+ui-inventory-delete-detach-busy = Otro cambio de inventario está en curso. Inténtelo de nuevo una vez que haya terminado.
+ui-inventory-delete-detach-timeout = Los objetos que llevas puestos no se pudieron quitar y por eso no se eliminaron.
+common-modify = Modificar
+build-ui-contents-filters = Filtros de contenidos
+build-ui-contents-next-owner-permissions = Permisos del próximo propietario
+ui-options-voice-output = Salida de voz
+ui-options-voice-output-used-for-voice-chat = Se utiliza para el chat de voz; sonido del mundo, música y medios de comunicación
+ui-options-same-as-audio-output = Igual que la salida de audio
+ui-options-copy-setting-link = Copiar enlace a la configuración
+ui-options-setting-unavailable = Esta configuración no está disponible.
+ui-context-show-in-inventory-none = Ningún objeto en tu inventario tiene exactamente el nombre de este objeto.
+ui-profile-aurora-help = El perfil de un residente: quién es, qué puedes hacer con él, luego sus selecciones, anuncios clasificados, primera vida, perfil web y tus Preferencias › Aurora › Perfiles devuelve la ventana del Visor Legado.
+ui-profile-aurora-tab-picks = Destacados
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Destacados: { $count }
+       *[other] Destacados: { $count }
+    }
+ui-profile-aurora-snapshot = Imagen
+ui-profile-aurora-picks-empty = No hay selecciones todavía
+ui-profile-aurora-picks-empty-text = { $name } no ha compartido ninguna selección.
+ui-profile-aurora-picks-empty-own = Comparte lo que te importa
+ui-profile-aurora-picks-empty-own-text = Usa selecciones para resaltar lugares, personas y cosas que te importan.
+ui-profile-aurora-delete-pick = ¿Eliminar la selección "{ $name }"?
+script-search-whole-words = Palabras enteras
+ao-mini-title = Ventana mini de AO
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Ninguna animación seleccionada
+ao-quick-pin = Abrir mini AO ventana
+build-layout-button-icon = Icono
+build-layout-button-label = Etiqueta
+build-layout-button-both = Icono y etiqueta
+build-detach-shown = En su propia ventana: haga clic para ocultarla, arrastre esa ventana por su título a la ventana de construcción para volver a colocarla.
+build-detach-hidden = En su propia ventana, oculta: haga clic para mostrarla.
+build-material-save-as = Guardar material como
+build-material-save-name = Nombre del nuevo material en tu inventario:
+build-material-new-material = Nuevo material
+build-material-save-not-allowed = Para guardar se necesita un material PBR en cada cara seleccionada, derechos de copia y modificación en el objeto y una copia del material en su inventario con derechos a copiar y modificar.
+build-material-saved = Se ha guardado el material "{ $name }" en tu inventario.
+build-material-save-failed = El material no se pudo guardar en tu inventario.
+toolbar-add-from-menu = Añadir a la barra de herramientas
+toolbar-remove-from-menu = Eliminar de la barra de herramientas
+toolbar-command-build-edit = Editar objetos
+toolbar-command-build-create = Crear prims
+toolbar-command-build-land = Editar el terreno

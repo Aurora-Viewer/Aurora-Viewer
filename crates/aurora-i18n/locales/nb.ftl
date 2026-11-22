@@ -15659,7 +15659,7 @@ ui-options-camera-still-while-posing-tip = Når du poserer, slutter kameraet å 
 ui-options-group-emotes = Gruppeemotes med avsenderens meldinger
 ui-options-group-emotes-hint = I chatstilen Aurora vises en emote som «/me waves» under samme overskrift som meldinger fra samme avsender rett før eller etter. Den får ingen egen overskrift.
 content-perms-nested = Ta med objekter i objekter
-content-perms-nested-help = Dette redigerer også innholdet i nestede objekter, opptil fem nivåer dypt. Hvert objekt blir plassert i verden to meter over primitiven som inneholder det. Skript som kjører for objektet stoppes, innholdet endres og skriptene startes på nytt. Objektet lagres så tilbake i beholderen. Rettighetene til objektet i behållaren settes og sjekkes før den midlertidige kopien i verden slettes. Objekter du ikke kan kopiere, overføre eller endre forblir lukket. Du trenger tillatelse til å bygge på plasseringsstedet.
+content-perms-nested-help = Endrer også innholdet i nøstede objekter, opptil 5 nivåer. Hvert objekt plasseres i verden 2 m over primen som inneholder det. Skript som kjører, stoppes, innholdet endres, skriptene startes igjen, og objektet lagres tilbake. Tillatelsene på det lagrede objektet settes og kontrolleres før den midlertidige kopien i verden slettes. Objekter du ikke kan kopiere, overføre eller endre, blir ikke åpnet. Du må ha byggerettigheter der objektene plasseres.
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } objekt i innholdet vil bli åpnet, hoppet over: { $skipped }.
@@ -15806,3 +15806,77 @@ phototools-director-lens = Direktørens linse vises mens vinduet er åpent, over
 phototools-view-angle-viewfinder = Søkeren eier synsvinkelen: Din kommer tilbake når den lukkes.
 ui-options-dof-show-focus-point = Vis fokuspunkt
 ui-options-dof-show-focus-point-help = Et lite trådkors på punktet linsen fokuserer på: gul når den er fri, rød når den låses.
+
+### Updated release translations
+
+render-features-menu = Gjengivelsesfunksjoner
+render-features-ui = Brukergrensesnitt
+toolbar-command-ao-mini = Lite AO-vindu
+keybinds-ui-feature = Vis / skjul hele grensesnittet (Gjengivelsesfunksjoner › UI)
+import-image-size-limit = Maksimal bildestørrelse
+import-image-size-single = Maksimal bildestørrelse
+import-image-size-inherit = Global innstilling ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = Global innstilling følger grensen ved Importer nederst. Den gjeldende verdien vises i parentes. Større bilder blir automatisk redusert til den valgte grensen.
+import-image-size-global-help = Maksimal bildestørrelse for import. Individuelle valg av bilder og materialer prioriteres. Større bilder reduseres automatisk.
+ui-chat-applink-preferences-tip = Åpne denne innstillingen i Innstillinger
+ui-options-bento-idle = Fix Bento inaktiv animasjon
+ui-options-bento-idle-hint = Spiller en prioritert 0 Bento animasjon under alle de andre, så hender, munn, vinger og hale går tilbake til en naturlig positur i stedet for å bli sittende fast etter en animasjon; andre ser det også
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Objekt UUID kopiert
+       *[other] Objektets UUID kopiert
+    }
+ui-appearance-batch-choose-folder = Antrekk å fotografere i { $folder }
+ui-appearance-batch-all = Alle antrekk
+ui-appearance-batch-chosen = { $chosen } av { $total }
+ui-appearance-batch-select-missing = Uten bilde
+ui-inventory-dialogs-detach-and-delete = Ta av og slett
+ui-inventory-dialogs-detach-and-delete-body = Avataren din har på seg noen av disse gjenstandene. De tas av først og flyttes deretter til papirkurven.
+ui-inventory-delete-detach-cannot = Gjenstandene avataren har på seg, kan ikke lenger tas av og slettes.
+ui-inventory-delete-detach-refused = Dette elementet kan ikke tas av og slettes.
+ui-inventory-delete-detach-busy = En annen lagerendring er i gang. Prøv igjen når den er ferdig.
+ui-inventory-delete-detach-timeout = Gjenstandene som var på, ble ikke tatt av og ble derfor ikke slettet.
+common-modify = Endre
+build-ui-contents-filters = Innholdsfiltre
+build-ui-contents-next-owner-permissions = Neste eiers tillatelser
+ui-options-voice-output = Taleutgang
+ui-options-voice-output-used-for-voice-chat = Brukes for talechat; verden lyder, musikk og medier bruker Lydutgang
+ui-options-same-as-audio-output = Samme som lydutgang
+ui-options-copy-setting-link = Kopier lenke til innstilling
+ui-options-setting-unavailable = Denne innstillingen er ikke tilgjengelig.
+ui-context-show-in-inventory-none = Ingen objekt i inventaret ditt har nøyaktig dette objektets navn.
+ui-profile-aurora-help = En beboers profil: hvem de er, hva du kan gjøre med dem, så deres valg, rubrikkannonser, første liv, nettprofil og notater.Preferences › Aurora › Profiler bringer tilbake Legacy Viewer vinduet.
+ui-profile-aurora-tab-picks = Utvalgte
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Utvalgte: { $count }
+       *[other] Utvalgte: { $count }
+    }
+ui-profile-aurora-snapshot = Bilde
+ui-profile-aurora-picks-empty = Ingen valg ennå
+ui-profile-aurora-picks-empty-text = { $name } har ikke delt noen valg.
+ui-profile-aurora-picks-empty-own = Del det som er viktig for deg
+ui-profile-aurora-picks-empty-own-text = Bruk utvalg til å markere steder, mennesker og ting du bryr deg om.
+ui-profile-aurora-delete-pick = Slette valget "{ $name }"?
+script-search-whole-words = Hele ord
+ao-mini-title = Lite AO-vindu
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Ingen animasjon valgt
+ao-quick-pin = Åpne mini AO vinduet
+build-layout-button-icon = Ikon
+build-layout-button-label = Etikett
+build-layout-button-both = Ikon og etikett
+build-detach-shown = I sitt eget vindu: klikk for å skjule det. Dra vinduet ved tittelen til byggevinduet for å sette det tilbake.
+build-detach-hidden = I eget vindu, skjult: klikk for å vise det.
+build-material-save-as = Lagre materiale som
+build-material-save-name = Navn på det nye materialet i lageret ditt:
+build-material-new-material = Nytt materiale
+build-material-save-not-allowed = Lagring trenger et PBR-materiale på hvert valgt ansikt, kopiere og endre rettigheter på objektet, og en kopi av materialet i beholdningen med kopiering og modifikasjonsrettigheter.
+build-material-saved = Materialet "{ $name }" er lagret i lagerbeholdningen din.
+build-material-save-failed = Materialet kunne ikke lagres i lageret ditt.
+toolbar-add-from-menu = Legg til verktøylinje
+toolbar-remove-from-menu = Fjern fra verktøylinjen
+toolbar-command-build-edit = Rediger objekter
+toolbar-command-build-create = Opprett primtall
+toolbar-command-build-land = Rediger land

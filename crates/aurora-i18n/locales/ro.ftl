@@ -15860,7 +15860,7 @@ ui-options-camera-still-while-posing = Păstraţi aparatul foto nemişcat în ti
 ui-options-camera-still-while-posing-tip = În timp ce pozați, camera nu mai urmărește avatar-ul, focalizarea și părțile corpului acestuia, iar mersul pe jos nu îl resetează.Orbita, zoomul, panoramarea și presetările funcționează în continuare.
 ui-options-group-emotes-hint = În stilul de chat Aurora, o acțiune precum „/me waves” apare sub același antet ca mesajele trimise de aceeași persoană imediat înainte sau după. Acțiunea nu primește un antet propriu.
 content-perms-nested = Includerea obiectelor în interiorul obiectelor
-content-perms-nested-help = Acest lucru editează și conținutul obiectelor imbricate, până la cinci niveluri adâncime. Fiecare obiect este plasat în lume la doi metri deasupra primitivei care îl conține. Scripturile sale rulante sunt oprite, conținatul său este schimbat și scripturile sale sunt repornite. Obiectul este apoi salvat înapoi în container. Permisiunile obiectului din container sunt setate și verificate înainte ca copia sa temporară din lume să fie ștearsă. Obiectivele pe care nu le puteți copia, transfera sau modifica rămân închise. Aveți nevoie de permisiunea de a construi în locația de plasare.
+content-perms-nested-help = Modifică și conținutul obiectelor imbricate, până la 5 niveluri. Fiecare obiect este plasat în lume la 2 m deasupra primului care îl conține. Scripturile în curs sunt oprite, conținutul este modificat, scripturile sunt repornite și obiectul este salvat la loc. Permisiunile obiectului întors sunt stabilite și verificate înainte de ștergerea copiei temporare din lume. Obiectele pe care nu ai voie să le copiezi, transferi sau modifici rămân închise. Ai nevoie de drept de construire acolo unde sunt plasate obiectele.
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } Obiectul din cuprins va fi deschis, sărit: { $skipped }.
@@ -16000,3 +16000,79 @@ phototools-director-lens = Obiectivul directorului este afișat în timp ce fere
 phototools-view-angle-viewfinder = Vizorul deţine unghiul de vizualizare: al tău revine când se închide.
 ui-options-dof-show-focus-point = Afişarea punctului de focalizare
 ui-options-dof-show-focus-point-help = O mică cruce pe punctul focalizat de lentilă: galben când este liber, roșu când este blocat.
+
+### Updated release translations
+
+render-features-menu = Caracteristici de redare
+render-features-ui = Interfață
+toolbar-command-ao-mini = Fereastra AO compactă
+keybinds-ui-feature = Afișează / ascunde întreaga interfață (Funcții de redare › UI)
+import-image-size-limit = Dimensiunea maximă a imaginii
+import-image-size-single = Dimensiunea maximă a imaginii
+import-image-size-inherit = Setare globală ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = Setarea globală urmează limita de lângă Import în partea de jos, valoarea sa curentă fiind afișată între paranteze. Imaginile mai mari sunt reduse automat la limita selectată.
+import-image-size-global-help = Dimensiunea maximă a imaginii pentru import. Alegerile individuale de imagine și material au prioritate. Imaginile mai mari sunt reduse automat.
+ui-chat-applink-preferences-tip = Deschideți această setare în Preferințe
+ui-options-bento-idle = Fixați animația inactivă Bento
+ui-options-bento-idle-hint = Joacă o animație Bento prioritară 0 sub toate celelalte, astfel încât mâinile, gura, aripile și coada revin la o postură naturală în loc să rămână blocate după o animaţie; ceilalți o văd și ei
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Obiectul UUID copiat
+       *[other] UUID-urile obiectelor copiate
+    }
+ui-appearance-batch-choose-folder = Tinute de fotografiat în { $folder }
+ui-appearance-batch-all = Vezi toate tinutele
+ui-appearance-batch-chosen = { $chosen } din { $total }
+ui-appearance-batch-select-missing = Fără imagine
+ui-inventory-dialogs-detach-and-delete = Scoate și șterge
+ui-inventory-dialogs-detach-and-delete-body = Avatarul tău poartă unele dintre aceste articole. Mai întâi vor fi scoase, apoi mutate la coș.
+ui-inventory-delete-detach-cannot = Articolele purtate de avatar nu mai pot fi scoase și șterse.
+ui-inventory-delete-detach-refused = Acest articol nu poate fi scos și șters.
+ui-inventory-delete-detach-busy = O altă schimbare a inventarului este în curs de desfășurare. Încercați din nou după ce s-a terminat.
+ui-inventory-delete-detach-timeout = Articolele purtate nu au putut fi scoase și, prin urmare, nu au fost șterse.
+common-modify = Modificare
+build-ui-contents-filters = Filtre de conținut
+build-ui-contents-next-owner-permissions = Permisiunile următorului proprietar
+ui-options-voice-output = Ieşire de voce
+ui-options-voice-output-used-for-voice-chat = Folosit pentru chat vocal; sunet mondial, muzică și media de utilizare Ieșire audio
+ui-options-same-as-audio-output = Aceeași ca ieșirea audio
+ui-options-copy-setting-link = Copiază linkul la setare
+ui-options-setting-unavailable = Această setare nu este disponibilă.
+ui-context-show-in-inventory-none = Nici un obiect din inventarul tău nu are exact numele acestui obiect.
+photo-vf-keep-framing = Păstrați încadrarea
+ui-profile-aurora-help = Profilul unui rezident: cine este, ce puteți face cu el, apoi alegerile sale, anunțurile, prima viață, profilul web și notele Preferințele › Aurora › Profiles aduce înapoi fereastra Legacy Viewer.
+ui-profile-aurora-tab-picks = Selecții de profil
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Selecții de profil: { $count }
+       *[other] Selecții de profil: { $count }
+    }
+ui-profile-aurora-snapshot = Imagine
+ui-profile-aurora-picks-empty = Nici o selecție încă
+ui-profile-aurora-picks-empty-text = { $name } nu a împărtășit niciun pronostic.
+ui-profile-aurora-picks-empty-own = Împărtășește ceea ce contează pentru tine
+ui-profile-aurora-picks-empty-own-text = Utilizați alegeri pentru a evidenția locuri, persoane și lucruri care vă interesează.
+ui-profile-aurora-delete-pick = Ștergeți alegerea "{ $name }"?
+script-search-whole-words = Cuvinte întregi
+people-groups-deactivate = Dezactivează
+ao-mini-title = Fereastra AO compactă
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Nici o animație selectată
+ao-quick-pin = Deschide fereastra mini AO
+build-layout-button-icon = Pictogramă
+build-layout-button-label = Eticheta
+build-layout-button-both = Pictogramă și etichetă
+build-detach-shown = În propria fereastră: faceți clic pentru a o ascunde, apoi trageți fereastra respectivă de titlu în ferestrele de construcție pentru a-l pune înapoi.
+build-detach-hidden = În propria fereastră, ascunsă: faceți clic pentru a o afișa.
+build-material-save-as = Salvează materialul ca
+build-material-save-name = Numele noului material din inventarul tău:
+build-material-new-material = Materiale noi
+build-material-save-not-allowed = Salvarea necesită un material PBR pe fiecare față selectată, drepturi de copiere și modificare asupra obiectului și o copie a materialului din inventarul dvs. cu drepturile de copierea și modificarea.
+build-material-saved = Materialul "{ $name }" a fost salvat în inventarul tău.
+build-material-save-failed = Materialul nu a putut fi salvat în inventar.
+toolbar-add-from-menu = Adaugă la bara de instrumente
+toolbar-remove-from-menu = Eliminați din bara de instrumente
+toolbar-command-build-edit = Editarea obiectelor
+toolbar-command-build-create = Creați prims
+toolbar-command-build-land = Editează terenul

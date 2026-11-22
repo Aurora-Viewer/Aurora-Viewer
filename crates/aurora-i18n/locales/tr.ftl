@@ -15676,7 +15676,7 @@ ui-options-camera-still-while-posing-tip = Poze ederken, kamera avatar'ı takip 
 ui-options-group-emotes = Göndericinin mesajlarıyla grup emojileri
 ui-options-group-emotes-hint = Aurora sohbet stilinde, “/me waves” gibi bir eylem, aynı kişinin hemen önce veya sonra gönderdiği mesajlarla aynı başlık altında gösterilir. Eyleme ayrı bir başlık açılmaz.
 content-perms-nested = Nesneleri nesnelerin içine dahil et
-content-perms-nested-help = Bu aynı zamanda, beş seviyeye kadar derinliğe sahip, yuvalanmış nesnelerin içeriğini de düzenler. Her nesnenin kendisini barındıran temelin iki metre üstünde yerleştirildiği dünyadır. Çalışan scriptleri durdurulur, içeriği değiştirilir ve scriptleri yeniden başlatılır. Nesne daha sonra konteynerin içine geri kaydedilir. Konteynerdeki nesneenin izinleri, dünyadaki geçici kopyası silinmeden önce ayarlanır ve kontrol edilir. Kopyalayamadığınız, taşıyamadığınız veya değiştiremediğiniz nesneler kapalı kalır. Yerleştirme yerinde inşa etmek için izin gerekiyor.
+content-perms-nested-help = İç içe nesnelerin içeriğini de 5 düzeye kadar değiştirir. Her nesne, onu içeren primin 2 m üstünde dünyaya yerleştirilir. Çalışan komut dosyaları durdurulur, içerik değiştirilir, dosyalar yeniden başlatılır ve nesne yerine kaydedilir. Dünyadaki geçici kopya silinmeden önce geri kaydedilen nesnenin izinleri ayarlanır ve denetlenir. Kopyalayamadığınız, devredemediğiniz veya değiştiremediğiniz nesneler açılmaz. Nesnelerin yerleştirildiği yerde inşa izni gerekir.
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } içerikteki nesne açılacak, atlatılacaktır: { $skipped }.
@@ -15823,3 +15823,77 @@ phototools-director-lens = Yönetmenin lensi, penceresi açıkken aşağıda yer
 phototools-view-angle-viewfinder = Gözlemci görüş açısına sahiptir: kapandığında sizinki geri gelir.
 ui-options-dof-show-focus-point = Odak noktasını göster
 ui-options-dof-show-focus-point-help = Lensin odaklandığı noktada küçük bir haç: serbest olduğunda sarı, kilitlendiği zaman kırmızıdır.
+
+### Updated release translations
+
+render-features-menu = Görüntüleme özellikleri
+render-features-ui = Arayüz
+toolbar-command-ao-mini = Mini AO penceresi
+keybinds-ui-feature = Tüm arayüzü göster / sakla (Renderleme özellikleri › UI)
+import-image-size-limit = Maksimum resim boyutu
+import-image-size-single = Maksimum resim boyutu
+import-image-size-inherit = Genel ayar ({ $size } piksel)
+import-image-size-pixels = { $size } piksel
+import-image-size-inherit-help = Küresel ayar, alttaki İthalat'ın yanındaki sınırı takip eder. Güncel değeri parantez içinde görüntülenir. Daha büyük resimler otomatik olarak seçilen sınıra küçültülür.
+import-image-size-global-help = İthalat için en büyük resim boyutu. Bireysel resim ve malzeme seçimleri önceliklidir. Daha büyük resimler otomatik olarak küçültülür.
+ui-chat-applink-preferences-tip = Bu ayarları Seçenekler'de aç
+ui-options-bento-idle = Bento'nun boşluk animasyonunu düzelt
+ui-options-bento-idle-hint = Bento animasyonunu diğerlerinin altında öncelikli 0 olarak oynatır, böylece el, ağız, kanat ve kuyruk bir animasyondan sonra sıkışmak yerine doğal bir pozisyona döner; diğerleri de bunu görür
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Nesne UUID kopyalandı.
+       *[other] Nesne UUID'leri kopyalandı
+    }
+ui-appearance-batch-choose-folder = { $folder }'de fotoğraf çekilecek kıyafetler
+ui-appearance-batch-all = Tüm dış görünümler
+ui-appearance-batch-chosen = { $chosen } ya da { $total }
+ui-appearance-batch-select-missing = Resimsiz
+ui-inventory-dialogs-detach-and-delete = Çıkar ve sil
+ui-inventory-dialogs-detach-and-delete-body = Avatarınız bu öğelerden bazılarını takıyor. Öğeler önce çıkarılır, ardından Çöp Kutusu’na taşınır.
+ui-inventory-delete-detach-cannot = Avatarın taktığı öğeler artık çıkarılıp silinemiyor.
+ui-inventory-delete-detach-refused = Bu öğe kaldırılamaz ve silinmez.
+ui-inventory-delete-detach-busy = Başka bir stok değişikliği devam ediyor. Bittiğinde tekrar deneyin.
+ui-inventory-delete-detach-timeout = Takılı öğeler çıkarılamadığı için silinmedi.
+common-modify = Değiştir
+build-ui-contents-filters = İçerik filtreleri
+build-ui-contents-next-owner-permissions = Bir sonraki sahibin izinleri
+ui-options-voice-output = Ses çıkışı
+ui-options-voice-output-used-for-voice-chat = Sesli sohbet için kullanılır; dünya sesleri, müzik ve medya kullanır Audio output
+ui-options-same-as-audio-output = Ses çıkışı ile aynı
+ui-options-copy-setting-link = Ayarlara bağlantıyı kopyala
+ui-options-setting-unavailable = Bu ayar kullanılamaz.
+ui-context-show-in-inventory-none = Envanterinizdeki hiçbir nesne tam olarak bu nesnenin adını taşımıyor.
+ui-profile-aurora-help = Bir sakinin profili: kimler, onlarla ne yapabilirsin, sonra seçimleri, ilanları, ilk hayatı, web profili ve notlarınız. Seçenekler › Aurora › Profiller Legacy Viewer penceresini geri getirir.
+ui-profile-aurora-tab-picks = Öne çıkarılanlar
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Öne çıkarılanlar: { $count }
+       *[other] Öne çıkarılanlar: { $count }
+    }
+ui-profile-aurora-snapshot = Resim
+ui-profile-aurora-picks-empty = Henüz seçim yapılmadı
+ui-profile-aurora-picks-empty-text = { $name } hiçbir seçim paylaşmadı.
+ui-profile-aurora-picks-empty-own = Senin için önemli olan şeyleri paylaş
+ui-profile-aurora-picks-empty-own-text = Yerleri, insanları ve önemsediğiniz şeyleri vurgulamak için seçicileri kullanın.
+ui-profile-aurora-delete-pick = "{ $name }" seçimini siliyor musun?
+script-search-whole-words = Tüm kelimeler
+ao-mini-title = Mini AO penceresi
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Animasyon seçilmedi
+ao-quick-pin = Mini AO penceresini aç
+build-layout-button-icon = İkon
+build-layout-button-label = Etiket
+build-layout-button-both = İkon ve etiket
+build-detach-shown = Kendi penceresinde: gizlemek için tıklayın. Geri koymak için bu pencereyi başlığından inşa penceresine çekin.
+build-detach-hidden = Kendi penceresinde, gizli: göstermek için tıklayın.
+build-material-save-as = Maddeyi Aynı Adla Kaydet
+build-material-save-name = Envanterinizdeki yeni maddenin adı:
+build-material-new-material = Yeni Madde
+build-material-save-not-allowed = Kaydetme, seçilen her yüz üzerinde bir PBR malzemesine, nesne üzerinde kopyalama ve değiştirme hakkına, ve envanterinizdeki materyalin kopyalanmasına ihtiyaç duyar. kopyalama, değiştirme hakkı ile.
+build-material-saved = "{ $name }" maddesi envanterine kaydedildi.
+build-material-save-failed = Madde envanterine kaydedilemedi.
+toolbar-add-from-menu = Araç çubuğuna ekle
+toolbar-remove-from-menu = Araç çubuğundan kaldır
+toolbar-command-build-edit = Nesneleri Düzenle
+toolbar-command-build-create = Primler oluştur
+toolbar-command-build-land = Araziyi Düzenle

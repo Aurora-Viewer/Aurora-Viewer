@@ -15823,7 +15823,7 @@ ui-options-camera-still-while-posing = 포즈를 취하는 동안 카메라를 �
 ui-options-camera-still-while-posing-tip = 포즈를 취하는 동안 카메라는 아바타, 초점 및 신체 부위를 추적하지 않으며 걷기로 인해 다시 설정되지 않습니다. 궤도, 확대/축소, 팬 및 사전 설정은 여전히 작동합니다.
 ui-options-group-emotes-hint = Aurora 채팅 스타일에서는 “/me waves”와 같은 이모트가 별도 머리글 없이, 같은 사람이 바로 앞이나 뒤에 보낸 메시지와 같은 머리글 아래에 표시됩니다.
 content-perms-nested = 개체 안에 개체 포함하기
-content-perms-nested-help = 이것은 또한 최대 5단계까지 내재된 개체의 내용을 편집합니다. 각 개체는 그것을 포함하는 프리미티브보다 2미터 위로 세계에 배치됩니다. 실행 중인 스크립트가 중지되고, 내용이 변경되며, 스크랩이 다시 시작됩니다. 그런 다음 개체가 컨테이너에 다시 저장됩니다. 세계에서 임시 복사본을 삭제하기 전에 콘테이널에 있는 개체에 대한 권한이 설정되고 확인됩니다. 복제, 전송, 수정할 수 없는 개체들은 닫혀 있습니다. 배치 위치에서 빌드하려면 권리가 필요합니다.
+content-perms-nested-help = 최대 5단계 깊이까지 중첩된 오브젝트의 내용물도 바꿉니다. 각 오브젝트는 그것을 담고 있는 프림의 2m 위에 생성됩니다. 실행 중인 스크립트를 중지하고 내용물을 바꾼 다음, 스크립트를 다시 시작하고 오브젝트를 원래 컨테이너에 저장합니다. 월드의 임시 복사본을 삭제하기 전에 되돌려 놓은 오브젝트의 권한을 설정하고 확인합니다. 복사, 양도 또는 수정 권한이 없는 오브젝트는 열지 않습니다. 오브젝트를 생성하는 위치에서 건설 권한이 필요합니다.
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } 내용에 있는 객체가 열립니다, 건너뜁니다: { $skipped }.
@@ -15963,3 +15963,79 @@ phototools-director-lens = 감독의 렌즈는 창이 열려 있을 때 아래 �
 phototools-view-angle-viewfinder = 뷰파인더는 시야각을 소유합니다: 그것이 닫히면 당신의 각도가 돌아옵니다.
 ui-options-dof-show-focus-point = 초점 지점 보이기
 ui-options-dof-show-focus-point-help = 렌즈가 초점을 맞추는 지점에 작은 십자선: 자유로울 때 노란색, 잠겨 있을 때 빨간색.
+
+### Updated release translations
+
+render-features-menu = 렌더링 기능
+render-features-ui = 인터페이스
+toolbar-command-ao-mini = 미니 AO 창
+keybinds-ui-feature = 전체 인터페이스 표시/숨기기 (렌더링 기능 › UI)
+import-image-size-limit = 최대 이미지 크기
+import-image-size-single = 최대 이미지 크기
+import-image-size-inherit = 전체 설정 ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = 전역 설정은 아래 가져오기 옆의 한계를 따릅니다. 현재 값은 괄호 안에 나타납니다. 더 큰 이미지는 선택한 한계로 자동으로 축소됩니다.
+import-image-size-global-help = 가져올 때의 최대 이미지 크기입니다. 개별 이미 지와 재료 선택은 우선 순위가 있습니다. 더 큰 이미지만 자동으로 축소됩니다.
+ui-chat-applink-preferences-tip = 환경설정에서 이 설정을 엽니다
+ui-options-bento-idle = Bento 유휴 애니메이션 수정
+ui-options-bento-idle-hint = 다른 모든 벤토 애니메이션 아래에서 우선순위 0 벤투 애너미제를 재생하므로, 손, 입, 날개 및 꼬리가 애널리틱스 후에 붙어 있지 않고 자연스러운 포즈로 돌아갑니다.
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] 물체 UUID 복사
+       *[other] 복사된 개체 UUID
+    }
+ui-appearance-batch-choose-folder = { $folder }에서 사진을 찍는 의상
+ui-appearance-batch-all = 모든 의상
+ui-appearance-batch-chosen = { $chosen } 다음 중 하나 { $total }
+ui-appearance-batch-select-missing = 그림 없음
+ui-inventory-dialogs-detach-and-delete = 벗기고 삭제
+ui-inventory-dialogs-detach-and-delete-body = 이 아이템 중 일부를 아바타가 착용 중입니다. 먼저 벗긴 다음 휴지통으로 이동합니다.
+ui-inventory-delete-detach-cannot = 착용 중인 아이템을 더 이상 벗기고 삭제할 수 없습니다.
+ui-inventory-delete-detach-refused = 이 항목은 삭제할 수 없습니다.
+ui-inventory-delete-detach-busy = 다른 재고 변경이 진행 중입니다. 완료되면 다시 시도하십시오.
+ui-inventory-delete-detach-timeout = 착용 중인 아이템을 벗기지 못해 삭제하지 않았습니다.
+common-modify = 수정
+build-ui-contents-filters = 내용 필터
+build-ui-contents-next-owner-permissions = 다음 소유자의 권한
+ui-options-voice-output = 음성 출력
+ui-options-voice-output-used-for-voice-chat = 음성 채팅에 사용; 세계 사운드, 음악 및 미디어 사용 오디오 출력
+ui-options-same-as-audio-output = 오디오 출력과 동일
+ui-options-copy-setting-link = 설정으로 링크 복사
+ui-options-setting-unavailable = 이 설정은 사용할 수 없습니다.
+ui-context-show-in-inventory-none = 귀하의 인벤토리에 있는 어떤 개체도 이 개체의 정확한 이름을 가지고 있지 않습니다.
+photo-vf-keep-framing = 프레임 유지
+ui-profile-aurora-help = 거주자의 프로필: 그들이 누구인지, 당신이 그들과 함께 할 수있는 일, 그리고 그들의 선택, 광고, 첫 번째 생활, 웹 프로필 및 당신의 노트. 환경 설정 › Aurora › 프로필은 레거시 뷰어의 창을 다시 가져옵니다.
+ui-profile-aurora-tab-picks = 추천 항목
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] 추천 항목: { $count }
+       *[other] 추천 항목: { $count }
+    }
+ui-profile-aurora-snapshot = 그림
+ui-profile-aurora-picks-empty = 아직 선택이 없습니다
+ui-profile-aurora-picks-empty-text = { $name } 님은 아직 선택을 공유하지 않았습니다.
+ui-profile-aurora-picks-empty-own = 중요한 사항 공유하기
+ui-profile-aurora-picks-empty-own-text = 픽스를 사용하여 장소, 사람 및 관심 있는 것들을 강조합니다.
+ui-profile-aurora-delete-pick = 픽 "{ $name }"을 삭제하시겠습니까?
+script-search-whole-words = 전체 단어
+people-groups-deactivate = 비활성화
+ao-mini-title = 미니 AO 창
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: 애니메이션 선택되지 않음
+ao-quick-pin = 미니 AO 창을 엽니다
+build-layout-button-icon = 아이콘
+build-layout-button-label = 레이블
+build-layout-button-both = 아이콘과 레이블
+build-detach-shown = 자체 창에서: 숨기려면 클릭하십시오. 제목을 따라 빌드 창으로 드래그하여 다시 배치합니다.
+build-detach-hidden = 자체 창에서, 숨겨진: 클릭하여 보여줍니다.
+build-material-save-as = 다른 이름으로 저장
+build-material-save-name = 인벤토리에 있는 새로운 재료의 이름:
+build-material-new-material = 새 재료
+build-material-save-not-allowed = 저장은 선택된 모든 면에 PBR 재료, 개체에 대한 복사 및 수정 권한, 복제 및 수 정 권리가 있는 인벤토리의 재료 사본이 필요합니다.
+build-material-saved = 재료 "{ $name }"이(가) 인벤토리에 저장되었습니다.
+build-material-save-failed = 재료를 인벤토리에 저장할 수 없습니다.
+toolbar-add-from-menu = 도구 모음에 추가
+toolbar-remove-from-menu = 도구 모음에서 제거
+toolbar-command-build-edit = 개체 편집
+toolbar-command-build-create = 초기값 만들기
+toolbar-command-build-land = 국가 편집

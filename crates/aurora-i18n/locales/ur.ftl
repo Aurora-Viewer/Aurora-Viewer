@@ -15859,7 +15859,7 @@ ui-options-camera-still-while-posing = پوزنگ کے دوران کيمرا س�
 ui-options-camera-still-while-posing-tip = جب آپ پو ز کر رہے هيں ، کيمرا آ ویٹر کو پيرو ں کر نے سے رک جاتا هے ، اسکے فوکس اور جسم کے حصوں کو ، اور چلنا اسکو ريسٹال نہیں کر تا orbit، zoom، pan اور preset اب بھی کام کر تا هے
 ui-options-group-emotes-hint = Aurora چیٹ انداز میں «/me waves» جیسا عمل اسی سرخی کے نیچے دکھائی دیتا ہے جس کے تحت اسی شخص کے فوراً پہلے یا بعد کے پیغامات آتے ہیں۔ عمل کی الگ سرخی نہیں بنتی۔
 content-perms-nested = چیزوں کو چیزوں کے اندر شامل کریں
-content-perms-nested-help = یہ نسٹڈ اشيا ں کے مواد کو بھی ايڈٹ کر تا هے ، پانچ ليول تک گہرا ہر شے کي دنيا ميں دو میٹر اوپر رکھا جاتا هے اسکے رو ننے والے سکيپٹس بند کر ديے جا تے هيں اسکے مواد ميں تبديلي آ تا هئے هيں اور اسکے سکيپٹس کو دوبارہ شروع کر دیا جا تا هے۔ اسکے بعد شيئ کو کنٹینر ميں واپس محفوظ کر دیا جاتا هے۔ کنٽينر مي میں شيئ کے حق مقرر کيے جاتے هيں او ر چيک کيے جا تا هيں قبل اسکے عالم ميں غير معين کاپي کو حذف کر نے سے ۔ آپکو ان اشياء کي نقل ، منتقلي يا ترميم نہیں کر سکي هيں وہ بند رہتا هے آپکو لگنے کے مقام پر بنا نے کے ليے اجازت گهريے
+content-perms-nested-help = یہ اندر موجود آبجیکٹس کے مواد کو بھی 5 سطحوں تک بدلتا ہے۔ ہر آبجیکٹ کو دنیا میں اس پرِم سے 2 میٹر اوپر رکھا جاتا ہے جس میں وہ موجود ہے۔ فعال اسکرپٹس روکے جاتے ہیں، مواد بدلتا ہے، اسکرپٹس دوبارہ چلائے جاتے ہیں اور آبجیکٹ واپس محفوظ ہوتا ہے۔ عارضی نقل دنیا سے حذف کرنے سے پہلے واپس محفوظ آبجیکٹ کی اجازتیں مقرر اور چیک کی جاتی ہیں۔ جن آبجیکٹس کو نقل، منتقل یا تبدیل کرنے کی اجازت نہیں، وہ بند رہتے ہیں۔ آبجیکٹس رکھنے کی جگہ پر تعمیر کی اجازت درکار ہے۔
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } مضامین میں چیز کھولی جائے گی، چھوڑ دی گئی: { $skipped }.
@@ -15999,3 +15999,79 @@ phototools-director-lens = ڈائرکٹر کا لینز اس وقت دکھایا
 phototools-view-angle-viewfinder = ويو فاينڈر کو وِيو اينج ملتا هے: آپ کا واپس آتا هئے جب اس کو بند کريں
 ui-options-dof-show-focus-point = فوکس پوائنٹ دکھائیں
 ui-options-dof-show-focus-point-help = لينز کے فوکسس پر يک چھوٹا سا کرس هير: پيلو جب آزاد هے ، سرخ جب تا لو ک هے
+
+### Updated release translations
+
+render-features-menu = خاصیتیں
+render-features-ui = انٹرفیس
+toolbar-command-ao-mini = چھوٹی AO ونڈو
+keybinds-ui-feature = پورے انٹرفیس کو دکھائیں / چھپائیں (ریڈرنگ خصوصیات › UI)
+import-image-size-limit = تصویر کا زیادہ تر سائز
+import-image-size-single = تصویر کا زیادہ تر سائز
+import-image-size-inherit = عمومی ترتیب ({ $size } پکسل)
+import-image-size-pixels = { $size } پکسل
+import-image-size-inherit-help = عالمی ترتیبات کم سے کم اندر آنے کے ساتھ حد کا پيرو ں رکھتا هے اسکا حالي قدر بریکٹس ميں دکھلا تا هے بڑے تصويروں کو خودکار طور پر منتخب شدہ حد تک کم کر دیا جاتا هے
+import-image-size-global-help = واردات کے لیے تصویر کا زیادہ سے زیادہ سایز انفرادی تصویر اور مواد کے انتخاب کو ترجیح دی جاتی ہے۔ بڑے تصاویر خودکار طور پر کم کی جاتی ہیں۔
+ui-chat-applink-preferences-tip = ترجیحات میں یہ ترتیبات کھولیں
+ui-options-bento-idle = بينٹو ايڈل اينيميشن کو فکس کريں
+ui-options-bento-idle-hint = تمام ديگروں کے نيچے 0 کي اهميت Bento اينيميشن چلا تا هے ، اس ليے ہاتھ ، منہ ، پر اور ٹانگي اي ايميشن کے بعد پھسکے ره نے کے بجاي طبيعي پو ز ميں واپس جا تے هيں
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] چیز UUID کاپی کی گئی
+       *[other] اوبجیکٹ UUIDs کاپی کی گئی
+    }
+ui-appearance-batch-choose-folder = { $folder } میں فوٹو گراف کرنے کے لئے لباس
+ui-appearance-batch-all = تمام لباس
+ui-appearance-batch-chosen = { $chosen } يا { $total }
+ui-appearance-batch-select-missing = تصویر کے بغیر
+ui-inventory-dialogs-detach-and-delete = اتاریں اور حذف کریں
+ui-inventory-dialogs-detach-and-delete-body = ان میں سے کچھ آئٹم آپ کے اوتار نے پہن رکھے ہیں۔ انہیں پہلے اتارا جائے گا، پھر ردی کی ٹوکری میں منتقل کیا جائے گا۔
+ui-inventory-delete-detach-cannot = اوتار کے پہنے ہوئے آئٹمز اب اتارے اور حذف نہیں کیے جا سکتے۔
+ui-inventory-delete-detach-refused = یہ آیٹم ختم اور حذف نہیں کی جاسکتی.
+ui-inventory-delete-detach-busy = ایک اور انسٹالمنٹ تبدیلی چل رہی ہے. جب یہ ختم ہو جائے تو دوبارہ کوشش کریں.
+ui-inventory-delete-detach-timeout = پہنے ہوئے آئٹم اتارے نہیں جا سکے، اس لیے انہیں حذف نہیں کیا گیا۔
+common-modify = تبدیل کریں
+build-ui-contents-filters = مضامین
+build-ui-contents-next-owner-permissions = اگلے مالک کی اجازتیں
+ui-options-voice-output = آواز کا اخراج
+ui-options-voice-output-used-for-voice-chat = آواز کی بات چیت کے ليے استعمال کيا جاتا هے ، عالمی آواز، موسیقی اور ميڈيا او ڊيو آ ئٹ پٹ استعمال کريں
+ui-options-same-as-audio-output = آڈیو خروجی کے طور پر ہی
+ui-options-copy-setting-link = ترتیبات میں لنک کاپی کریں
+ui-options-setting-unavailable = یہ ترتیبات دستیاب نہیں ہیں.
+ui-context-show-in-inventory-none = آپکے انسٹاليشن ميں کو ئي شيد نهيں هے اس شے کا صحيح نام هے
+photo-vf-keep-framing = فریمنگ محفوظ رکھیں
+ui-profile-aurora-help = ایک رہنے والے کا پروفائل: وہ کون ہیں، آپ ان کے ساتھ کیا کر سکتے ہیں، پھر ان کے انتخاب، درجہ بندی، پہلی زندگی، ویب پروفائل اور آپ کی یادداشتیں۔ ترجیحات › Aurora پروفا ئل ليگيسي ونڈو واپس لاتا هے
+ui-profile-aurora-tab-picks = پروفائل کے منتخب آئٹمز
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] پروفائل کے منتخب آئٹمز: { $count }
+       *[other] پروفائل کے منتخب آئٹمز: { $count }
+    }
+ui-profile-aurora-snapshot = تصویر
+ui-profile-aurora-picks-empty = ابھی تک کوئی انتخاب نہیں
+ui-profile-aurora-picks-empty-text = { $name } نے کوئی انتخاب شریک نہیں کیا.
+ui-profile-aurora-picks-empty-own = آپ کے لئے اہم چیزوں کو شریک کریں
+ui-profile-aurora-picks-empty-own-text = جگہوں، لوگوں اور چیزوں کو واضح کرنے کے ليے انتخاب استعمال کريں جو آپ کو اهميت ديتي هيں
+ui-profile-aurora-delete-pick = "{ $name }" کو حذف کریں؟
+script-search-whole-words = پورے لفظ
+people-groups-deactivate = غیر فعال
+ao-mini-title = چھوٹی AO ونڈو
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: کوئی متحرک انتخاب نہیں
+ao-quick-pin = ایک چھوٹی سی AO ونڈو کھولیں
+build-layout-button-icon = آئکن
+build-layout-button-label = ليبل
+build-layout-button-both = آئکن اور لیبل
+build-detach-shown = اپنے وينڈو ميں : اسے چھپا نے کے ليے کلک کريں اس وينڈوں کو اسکے عنوان سے بنا ئے وينڈ پر واپس رکھنے کے ليا کھينچیں
+build-detach-hidden = اپنے وينڈو ميں ، چھپا هے: اس کو دکھانے کے ليے کلک کريں
+build-material-save-as = مواد اس طرح محفوظ کریں
+build-material-save-name = آپ کے انسٹالمنٹ میں نئے مواد کا نام:
+build-material-new-material = نیا مواد
+build-material-save-not-allowed = محفوظ کر نے کے ليے هر منتخب شدہ چہرے پر PBR مواد کي ضرورت هے ، او جيکٹ پر کپي اور تبديلي حقايق ، اور آپکے انسٹال ميں کاپي اور تبديلی حقا يکوں کے ساتھ مواد کی کو پي
+build-material-saved = مواد "{ $name }" آپ کے انسٹالمنٹ میں محفوظ.
+build-material-save-failed = مواد آپ کے انسٹالیشن میں محفوظ نہیں کیا جاسکتا.
+toolbar-add-from-menu = اوزار پٹی میں شامل کریں
+toolbar-remove-from-menu = ٹول پٹی سے حذف کریں
+toolbar-command-build-edit = اشيا ں کا تغیر
+toolbar-command-build-create = پرائم بنا ئيں
+toolbar-command-build-land = ملک

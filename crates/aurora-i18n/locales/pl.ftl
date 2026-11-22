@@ -16037,7 +16037,7 @@ ui-options-camera-still-while-posing-tip = Podczas pozowania kamera przestaje ś
 ui-options-group-emotes = Emotikony grupowe z wiadomościami nadawcy
 ui-options-group-emotes-hint = W stylu czatu Aurora akcja taka jak „/me waves” jest wyświetlana pod tym samym nagłówkiem co wiadomości wysłane przez tę samą osobę tuż przed nią lub po niej. Akcja nie ma osobnego nagłówka.
 content-perms-nested = Dołączanie obiektów wewnątrz obiektu
-content-perms-nested-help = To również edytuje zawartość obiektów zagnieżdżonych, do pięciu poziomów głębokości. Każdy obiekt jest umieszczony w świecie dwa metry powyżej prymitywu, który go zawiera. Jego uruchomione skrypty są zatrzymywane, jego zawartości są zmieniane i jego skrypty zostają ponownie uruchomioną. Obiekt jest następnie zapisywany z powrotem do kontenera. Uprawnienia obiektu w kontenerze są ustawiane i sprawdzane przed usunięciem jego tymczasowej kopii w świecie. Obiekty, których nie można skopiować, przenieść lub zmodyfikować pozostają zamknięte. Potrzebujesz uprawnień do budowania w miejscu umieszczenia.
+content-perms-nested-help = Zmienia także zawartość zagnieżdżonych obiektów, do 5 poziomów. Każdy obiekt jest umieszczany w świecie 2 m nad primem, który go zawiera. Działające skrypty są zatrzymywane, zawartość jest zmieniana, skrypty są ponownie uruchamiane, a obiekt zostaje zapisany z powrotem. Uprawnienia zwróconego obiektu są ustawiane i sprawdzane przed usunięciem tymczasowej kopii ze świata. Obiekty bez uprawnień do kopiowania, przekazywania lub modyfikacji pozostają zamknięte. W miejscu umieszczenia obiektów musisz mieć prawo budowania.
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } Obiekt w spisie treści zostanie otwarty, pominięty: { $skipped }.
@@ -16184,3 +16184,77 @@ phototools-director-lens = Obiektyw reżysera jest wyświetlany, gdy jego okno j
 phototools-view-angle-viewfinder = Wizjer jest właścicielem kąta widzenia: Twój wraca, gdy się zamyka.
 ui-options-dof-show-focus-point = Pokaż punkt ostrości
 ui-options-dof-show-focus-point-help = Mały celownik na punkcie, na którym soczewka skupia się: żółty, gdy jest wolny, czerwony, gdy został zablokowany.
+
+### Updated release translations
+
+render-features-menu = Funkcje renderowania
+render-features-ui = Interfejs
+toolbar-command-ao-mini = Małe okno AO
+keybinds-ui-feature = Pokaż / ukryj cały interfejs (Funkcje renderowania › UI)
+import-image-size-limit = Maksymalny rozmiar obrazu
+import-image-size-single = Maksymalny rozmiar obrazu
+import-image-size-inherit = Ustawienie globalne ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = Ustawienie globalne jest zgodne z limitem obok Import na dole, jego aktualna wartość jest wyświetlana w nawiasach. Większe obrazy są automatycznie zmniejszane do wybranego limitu.
+import-image-size-global-help = Maksymalny rozmiar obrazu dla importu. Indywidualne wybory obrazów i materiałów mają pierwszeństwo. Większe obrazy są automatycznie zmniejszane.
+ui-chat-applink-preferences-tip = Otwórz to ustawienie w Preferencjach
+ui-options-bento-idle = Napraw animację Bento idle
+ui-options-bento-idle-hint = Odtwarza animację Bento z priorytetem 0 pod wszystkimi innymi, więc ręce, usta, skrzydła i ogon wracają do naturalnej postawy zamiast utknąć po animacji; inni też to widzą
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Obiekt UUID skopiowany
+       *[other] Skopiowano UUID obiektów
+    }
+ui-appearance-batch-choose-folder = Stroje do fotografowania w { $folder }
+ui-appearance-batch-all = Wszystkie stroje
+ui-appearance-batch-chosen = { $chosen } z { $total }
+ui-appearance-batch-select-missing = Bez zdjęcia
+ui-inventory-dialogs-detach-and-delete = Zdejmij i usuń
+ui-inventory-dialogs-detach-and-delete-body = Awatar ma na sobie niektóre z tych przedmiotów. Najpierw zostaną zdjęte, a potem przeniesione do kosza.
+ui-inventory-delete-detach-cannot = Nie można już zdjąć i usunąć przedmiotów noszonych przez awatara.
+ui-inventory-delete-detach-refused = Tego elementu nie można zdjąć i usunąć.
+ui-inventory-delete-detach-busy = Kolejna zmiana inwentaryzacji jest w toku. Spróbuj ponownie po jej zakończeniu.
+ui-inventory-delete-detach-timeout = Nie udało się zdjąć noszonych przedmiotów, dlatego nie zostały usunięte.
+common-modify = Modyfikacja
+build-ui-contents-filters = Filtry treści
+build-ui-contents-next-owner-permissions = Uprawnienia następnego właściciela
+ui-options-voice-output = Wyjście głosowe
+ui-options-voice-output-used-for-voice-chat = Używany do czatu głosowego; świat dźwięku, muzyki i mediów używa wyjścia audio
+ui-options-same-as-audio-output = Taki sam jak wyjście audio
+ui-options-copy-setting-link = Skopiuj link do ustawienia
+ui-options-setting-unavailable = To ustawienie jest niedostępne.
+ui-context-show-in-inventory-none = Żaden obiekt w twoim ekwipunku nie ma dokładnie tej samej nazwy.
+ui-profile-aurora-help = Profil mieszkańca: kim jest, co możesz z nim zrobić, a następnie jego wybory, ogłoszenia, pierwsze życie, profil internetowy i Twoje notatki.Preferencje › Aurora › Profile przywraca okno Legacy Viewer.
+ui-profile-aurora-tab-picks = Wyróżnione
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Wyróżnione: { $count }
+       *[other] Wyróżnione: { $count }
+    }
+ui-profile-aurora-snapshot = Obraz
+ui-profile-aurora-picks-empty = Brak wyborów jeszcze
+ui-profile-aurora-picks-empty-text = Osoba { $name } nie udostępniła żadnych wyborów.
+ui-profile-aurora-picks-empty-own = Podziel się tym, co jest dla Ciebie ważne
+ui-profile-aurora-picks-empty-own-text = Użyj wyborów, aby podświetlić miejsca, ludzi i rzeczy, które Cię obchodzą.
+ui-profile-aurora-delete-pick = Usuń wybór "{ $name }"?
+script-search-whole-words = Całe słowa
+ao-mini-title = Małe okno AO
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Brak wybranej animacji
+ao-quick-pin = Otwórz okno mini AO
+build-layout-button-icon = Ikona
+build-layout-button-label = Etykieta
+build-layout-button-both = Ikona i etykieta
+build-detach-shown = We własnym oknie: kliknij, aby je ukryć Przeciągnij okno za jego tytuł do okna kompilacji, aby umieścić je z powrotem.
+build-detach-hidden = We własnym oknie, ukryty: kliknij, aby go pokazać.
+build-material-save-as = Zapisz materiał jako
+build-material-save-name = Nazwa nowego materiału w twoim ekwipunku:
+build-material-new-material = Nowy materiał
+build-material-save-not-allowed = Zapisywanie wymaga materiału PBR na każdej wybranej płaszczyźnie, prawa kopiowania i modyfikowania obiektu oraz kopii materiału w inwentarzu z prawami do kopiowania.
+build-material-saved = Materiał "{ $name }" został dodany do twojego ekwipunku.
+build-material-save-failed = Materiał nie mógł zostać zapisany do twojego ekwipunku.
+toolbar-add-from-menu = Dodaj do koszyka
+toolbar-remove-from-menu = Usuń z paska narzędzi
+toolbar-command-build-edit = Edycja obiektów
+toolbar-command-build-create = Tworzenie pierwiastków
+toolbar-command-build-land = Edytuj teren

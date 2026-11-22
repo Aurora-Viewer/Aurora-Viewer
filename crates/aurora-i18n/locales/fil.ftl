@@ -15856,7 +15856,7 @@ ui-options-camera-still-while-posing = Panatilihin ang camera na tahimik habang 
 ui-options-camera-still-while-posing-tip = Habang nagpo-pose ka, tumitigil ang camera sa pagsunod sa avatar, ang focus nito at mga bahagi ng katawan nito, at hindi ito narereset sa paglalakad. Ang orbit, zoom, pan at presets ay gumagana pa rin.
 ui-options-group-emotes-hint = Sa chat style na Aurora, ang emote na tulad ng “/me waves” ay lilitaw sa ilalim ng header ng mga mensaheng ipinadala ng parehong tao kaagad bago o pagkatapos nito. Wala itong sariling header.
 content-perms-nested = Kasama ang mga bagay sa loob ng mga bagay
-content-perms-nested-help = Ito rin ay nag-eedit ng mga nilalaman ng mga nested na bagay, hanggang sa limang antas ng malalim. Ang bawat bagay ay inilagay sa mundo dalawang metro sa itaas ng primitive na naglalaman nito. Ang mga tumatakbo nitong script ay tumigil, ang mga nilalamang ito ay nagbago, at ang mga script nito ay muling sinimulan. Ang bagay ay pagkatapos ay nai-save pabalik sa lalagyan. Ang pahintulot ng bagay sa lalagyang ay naka-set at na-check bago ang kanyang pansamantalang kopya sa mundo ay tinanggal. Mga bagay na hindi mo maaaring kopyahin, ilipat o baguhin mananatiling sarado. Kailangan mo ng pahintulut upang bumuo sa placement location.
+content-perms-nested-help = Binabago rin ang laman ng mga object na nasa loob ng ibang object, hanggang 5 antas. Nire-rez ang bawat object 2 m sa ibabaw ng prim na naglalaman nito. Itinitigil ang mga tumatakbong script, inaayos ang laman, pinapatakbo ulit ang mga script at sine-save pabalik ang object. Itinatakda at sinusuri ang mga pahintulot nito bago burahin ang pansamantalang kopya sa mundo. Hindi binubuksan ang mga object na wala kang pahintulot na kopyahin, ilipat o baguhin. Kailangan mo ng pahintulot na magtayo kung saan ilalagay ang mga object.
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } bagay sa mga nilalaman ay bukas, skipped: { $skipped }.
@@ -15996,3 +15996,79 @@ phototools-director-lens = Ang lens ng Direktor ay ipinapakita habang ang window
 phototools-view-angle-viewfinder = Ang viewfinder nagmamay-ari ng view na anggulo: iyong bumalik kapag ito ay sarado.
 ui-options-dof-show-focus-point = Ipakita ang punto ng focus
 ui-options-dof-show-focus-point-help = Ang isang maliit na crosshair sa punto ng lens focuses sa: pula kapag ito ay libre, pulang kapag naka-lock.
+
+### Updated release translations
+
+render-features-menu = Pag-render tampok
+render-features-ui = Interface ng viewer
+toolbar-command-ao-mini = Mini window ng AO
+keybinds-ui-feature = Ipakita / itago ang buong interface (Rendering tampok › UI)
+import-image-size-limit = Maksimum na laki ng imahe
+import-image-size-single = Maksimum na laki ng imahe
+import-image-size-inherit = Pangkalahatang setting ({ $size } px)
+import-image-size-pixels = { $size } px
+import-image-size-inherit-help = Global na setting ay sumusunod sa limitasyon sa tabi Import sa ibaba. Kasalukuyang halaga nito ay lilitaw sa mga bracket. Mas malaki ang mga imahe ay awtomatikong binabawasan sa napiling limitasyon.
+import-image-size-global-help = Maksimum na laki ng imahe para sa mga import. Individual imahe at materyal na pagpili kumuha ng prayoridad. Mas malaki ang mga larawan ay nabawasan awtomatikong.
+ui-chat-applink-preferences-tip = Buksan ang setting na ito sa Mga Kagustuhan
+ui-options-bento-idle = Ayusin ang Bento idle animation
+ui-options-bento-idle-hint = Gumaganap ng isang prayoridad0Bento animation sa ilalim ng lahat ng iba, kaya kamay, bibig, pakpak at buntot bumalik sa isang natural na pose sa halip ng mananatiling nakatali pagkatapos ng isang animasyon; iba makita ito masyadong
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] Bagay UUID kopyahin
+       *[other] Object UUIDs na-copy
+    }
+ui-appearance-batch-choose-folder = Outfits upang kumuha ng litrato sa { $folder }
+ui-appearance-batch-all = Lahat ng mga outfits
+ui-appearance-batch-chosen = { $chosen } ng { $total }
+ui-appearance-batch-select-missing = Walang larawan
+ui-inventory-dialogs-detach-and-delete = Alisin sa avatar at burahin
+ui-inventory-dialogs-detach-and-delete-body = Suot ng avatar mo ang ilan sa mga item na ito. Tatanggalin muna ang mga ito sa avatar at saka ililipat sa Basurahan.
+ui-inventory-delete-detach-cannot = Hindi na maaaring alisin sa avatar at burahin ang mga suot na item.
+ui-inventory-delete-detach-refused = Ang item na ito ay hindi maaaring kinuha off at tinanggal.
+ui-inventory-delete-detach-busy = Ang isa pang pagbabago sa imbentaryo ay nasa daan. Subukan muli kapag ito ay tapos na.
+ui-inventory-delete-detach-timeout = Hindi natanggal sa avatar ang mga suot na item, kaya hindi binura ang mga ito.
+common-modify = Baguhin
+build-ui-contents-filters = Mga filter ng nilalaman
+build-ui-contents-next-owner-permissions = Mga pahintulot ng susunod na may-ari
+ui-options-voice-output = Output ng boses
+ui-options-voice-output-used-for-voice-chat = Ginagamit para sa boses chat; mundo ng tunog, musika at media gamitin Audio output
+ui-options-same-as-audio-output = Pareho sa audio output
+ui-options-copy-setting-link = Kopyahin ang link sa setting
+ui-options-setting-unavailable = Ang setting na ito ay hindi magagamit.
+ui-context-show-in-inventory-none = Walang bagay sa iyong imbentaryo ay eksaktong pangalan ng bagay na ito.
+photo-vf-keep-framing = Panatilihin ang pag-iimbak
+ui-profile-aurora-help = Ang profile ng isang residente: sino sila, kung ano ang maaari mong gawin sa kanila, pagkatapos ay ang kanilang mga picks, classifieds, unang buhay, web profile at ang iyong mga tala. Preferences › Aurora › Profile ay nagdadala pabalik ang Legacy Viewer window.
+ui-profile-aurora-tab-picks = Mga tampok sa profile
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] Mga tampok sa profile: { $count }
+       *[other] Mga tampok sa profile: { $count }
+    }
+ui-profile-aurora-snapshot = Larawan
+ui-profile-aurora-picks-empty = Walang mga pick pa
+ui-profile-aurora-picks-empty-text = Hindi ibinahagi ni { $name } ang anumang mga pick.
+ui-profile-aurora-picks-empty-own = Ibahagi ang mahalaga sa iyo
+ui-profile-aurora-picks-empty-own-text = Gamitin ang mga pick upang i-highlight ang mga lugar, tao, at bagay na mahalaga sa iyo.
+ui-profile-aurora-delete-pick = Alisin ang pick "{ $name }"?
+script-search-whole-words = Buong mga salita
+people-groups-deactivate = I-disable
+ao-mini-title = Mini window ng AO
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: Walang animasyon napili
+ao-quick-pin = Buksan ang mini AO window
+build-layout-button-icon = Simbolo
+build-layout-button-label = Teksto
+build-layout-button-both = Icon at label
+build-detach-shown = Sa sarili nitong window: i-click upang itago ito. I-drag na window sa pamamagitan ng kanyang pamagat sa build window upang ilagay ito pabalik.
+build-detach-hidden = Sa sarili nitong window, nakatago: i-click upang ipakita ito.
+build-material-save-as = I-save ang materyal bilang
+build-material-save-name = Pangalan ng bagong materyal sa iyong imbentaryo:
+build-material-new-material = Bagong Materyales
+build-material-save-not-allowed = Saving pangangailangan ng isang PBR materyal sa bawat napiling mukha, kopyahin at baguhin ang mga karapatan sa bagay, at isang kopya ng mga materyales sa iyong imbentaryo na may kopya at baguhan karapatan.
+build-material-saved = Nai-save ang Materyal "{ $name }" sa iyong imbentaryo.
+build-material-save-failed = Ang materyal ay hindi maaaring i-save sa iyong imbentaryo.
+toolbar-add-from-menu = Magdagdag sa toolbar
+toolbar-remove-from-menu = Alisin mula sa toolbar
+toolbar-command-build-edit = I-edit ang mga bagay
+toolbar-command-build-create = Lumikha ng mga prims
+toolbar-command-build-land = I-edit ang bansa

@@ -15873,7 +15873,7 @@ ui-options-camera-still-while-posing = إبقي الكاميرا ثابتة أث
 ui-options-camera-still-while-posing-tip = عندما تضع نفسك، تتوقف الكاميرا عن متابعة الصورة، وتركيزها وأجزاء جسمها، والمشي لا يعيدها. المدار، والتكبير، والدوران، والتعديلات المسبقة لا تزال تعمل.
 ui-options-group-emotes-hint = في نمط دردشة Aurora، يظهر وصف الحركة مثل «/me waves» تحت عنوان الرسائل التي أرسلها الشخص نفسه قبله أو بعده مباشرة، من دون عنوان مستقل.
 content-perms-nested = إدراج الأشياء داخل الأشياء
-content-perms-nested-help = هذا أيضاً يقوم بتعديل محتويات الأشياء المتداخلة، حتى خمسة مستويات عمقاً. كل كائن يتم وضعه في العالم مترين فوق البدائي الذي يحتوي عليه. النصوص التشغيلية الخاصة به تتوقف، ومحتوياته تتغير، ونصوصه تبدأ من جديد. ثم يتم حفظ الكائن مرة أخرى إلى الحاوية. الإذن للكائن في الحاوية يتم تحديدها والتحقق منها قبل حذف نسخته المؤقتة في العالم. الأشياء التي لا يمكنك نسخها أو نقلها أو تعديلها تبقى مغلقة. أنت بحاجة إلى إذن لبناء في موقع التوضيح.
+content-perms-nested-help = يشمل التعديل محتويات الكائنات المتداخلة حتى 5 مستويات. يوضع كل كائن في العالم على ارتفاع مترين فوق الجزء الأساسي (prim) الذي يحتويه. تتوقف برامجه النصية قيد التشغيل، ثم تتغير محتوياته وتُشغّل البرامج من جديد ويُحفظ الكائن في حاويته. تُضبط أذونات الكائن المعاد وتُفحص قبل حذف نسخته المؤقتة من العالم. تبقى الكائنات التي لا يمكنك نسخها أو نقلها أو تعديلها مغلقة. يلزم إذن البناء في موضع وضع الكائنات.
 content-perms-nested-preview =
     { $objects ->
         [one] { $objects } سيفتح الكائن في المحتويات، سيتخطى: { $skipped }.
@@ -16013,3 +16013,79 @@ phototools-director-lens = يتم عرض عدسة المدير بينما تكو
 phototools-view-angle-viewfinder = الباحث يملك زاوية الرؤية: زاويتك تعود عندما يغلق.
 ui-options-dof-show-focus-point = أظهر نقطة التركيز
 ui-options-dof-show-focus-point-help = صليب صغير على النقطة التي تركز عليها العدسة: أصفر عندما تكون حرة، أحمر عندما يكون مقفلاً.
+
+### Updated release translations
+
+render-features-menu = خصائص العرض
+render-features-ui = الواجهة
+toolbar-command-ao-mini = نافذة AO المصغّرة
+keybinds-ui-feature = عرض/ إخفاء الواجهة الكاملة (مميزات العرض › واجهة المستخدم)
+import-image-size-limit = الحد الأقصى لحجم الصورة
+import-image-size-single = الحد الأقصى لحجم الصورة
+import-image-size-inherit = الإعداد العام ({ $size } بكسل)
+import-image-size-pixels = { $size } بكسل
+import-image-size-inherit-help = يتبع الإعداد العالمي الحد بجانب الاستيراد في الأسفل. تظهر قيمته الحالية بين قوسين. يتم تقليص الصور الأكبر حجماً تلقائياً إلى الحد المختار.
+import-image-size-global-help = الحد الأقصى لحجم الصور المستوردة. تحظى اختيارات الصور والمواد الفردية بالأولوية، ويتم تقليص الصور الأكبر حجماً تلقائياً.
+ui-chat-applink-preferences-tip = افتح هذا الإعداد في الأفضليات
+ui-options-bento-idle = تصحيح الحركة غير النشطة لبنتو
+ui-options-bento-idle-hint = يلعب أولوية 0 بنتو الرسوم المتحركة تحت جميع الآخرين، لذلك الأيدي، الفم، الأجنحة والذيل تعود إلى وضع طبيعي بدلا من البقاء عالقة بعد الرسوم متحركة؛ الآخرون يرون ذلك أيضا
+build-ui-copied-object-uuids =
+    { $count ->
+        [one] نسخة من الجسم UUID
+       *[other] نسخت UUIDs الكائن
+    }
+ui-appearance-batch-choose-folder = ملابس للتصوير في { $folder }
+ui-appearance-batch-all = جميع المﻻبس
+ui-appearance-batch-chosen = { $chosen } من { $total }
+ui-appearance-batch-select-missing = بدون صورة
+ui-inventory-dialogs-detach-and-delete = فصل المرفقات وحذفها
+ui-inventory-dialogs-detach-and-delete-body = بعض هذه العناصر مرفق بشخصيتك. ستُفصل أولًا ثم تُنقل إلى سلة المهملات.
+ui-inventory-delete-detach-cannot = لم يعد بالإمكان فصل العناصر التي ترتديها وحذفها.
+ui-inventory-delete-detach-refused = تعذّر فصل هذا العنصر وحذفه.
+ui-inventory-delete-detach-busy = هناك تغيير آخر في المخزون قيد التنفيذ، حاول مرة أخرى بمجرد الانتهاء منه.
+ui-inventory-delete-detach-timeout = لم تُفصل العناصر المرفقة، لذلك لم تُحذف.
+common-modify = تعديل
+build-ui-contents-filters = مرشحات المحتوى
+build-ui-contents-next-owner-permissions = إجازة المالك التالي
+ui-options-voice-output = الناتج الصوتي
+ui-options-voice-output-used-for-voice-chat = يستخدم للدردشة الصوتية؛ ويستخدم الصوت العالمي والموسيقى ووسائط الإعلام
+ui-options-same-as-audio-output = نفس المخرجات الصوتية
+ui-options-copy-setting-link = نسخ الرابط إلى الإعداد
+ui-options-setting-unavailable = هذا الإعداد غير متاح.
+ui-context-show-in-inventory-none = لا شيء في مخزونك يحمل اسم هذا الشيء بالضبط
+photo-vf-keep-framing = إبقي على الإطار
+ui-profile-aurora-help = بيانات المقيم: من هم، ماذا يمكنك أن تفعل معهم، ثم اختياراتهم، الإعلانات، الحياة الأولى، بيانات الويب وملاحظاتك. Preferences › Aurora › Profiles يعيد نافذة Legacy Viewer.
+ui-profile-aurora-tab-picks = الاختيارات المميزة
+ui-profile-aurora-part-places =
+    { $count ->
+        [one] الاختيارات المميزة: { $count }
+       *[other] الاختيارات المميزة: { $count }
+    }
+ui-profile-aurora-snapshot = الصورة
+ui-profile-aurora-picks-empty = لا يوجد خيارات بعد
+ui-profile-aurora-picks-empty-text = لم يشارك { $name } أي اختيارات.
+ui-profile-aurora-picks-empty-own = شارك ما يهمك
+ui-profile-aurora-picks-empty-own-text = استخدم الخيارات لإبراز الأماكن والأشخاص والأشياء التي تهتم بها.
+ui-profile-aurora-delete-pick = حذف الاختيار "{ $name }"؟
+script-search-whole-words = الكلمات الكاملة
+people-groups-deactivate = تعطيل
+ao-mini-title = نافذة AO المصغّرة
+ao-now-playing = { $state }: { $name }
+ao-now-playing-none = { $state }: لم يتم اختيار أي حركة
+ao-quick-pin = فتح نافذة Mini AO
+build-layout-button-icon = أيقونة
+build-layout-button-label = علامة
+build-layout-button-both = الرمز والعلامة
+build-detach-shown = في نافذتها الخاصة: انقر لإخفائها. اسحب تلك النافذة من عنوانها إلى نافذه البناء لوضعها مرة أخرى.
+build-detach-hidden = في نافذته الخاصة، مخفية: انقر لعرضها.
+build-material-save-as = حفظ المادة باسم
+build-material-save-name = اسم المادة الجديدة في قائمة الجرد الخاصة بكم:
+build-material-new-material = مواد جديدة
+build-material-save-not-allowed = الحفظ يحتاج إلى مادة PBR على كل وجه مختار، نسخ وتعديل حقوق على الكائن، ونسخة من المادة في مخزونك مع نسخ وحقوق تعديل.
+build-material-saved = المادة "{ $name }" محفوظة في مخزونك
+build-material-save-failed = لم يكن من الممكن حفظ المادة في مخزونك.
+toolbar-add-from-menu = أضف إلى شريط الأدوات
+toolbar-remove-from-menu = إزالة من شريط الأدوات
+toolbar-command-build-edit = تحرير الأشياء
+toolbar-command-build-create = إنشاء أجزاء أساسية
+toolbar-command-build-land = تعديل الأراضي
