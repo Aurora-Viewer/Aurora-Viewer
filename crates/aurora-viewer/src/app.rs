@@ -12970,6 +12970,7 @@ impl App {
             hide_sky: self.settings.debug.hidden_types.sky,
             curvature: self.settings.planet_radius(),
             look: None,
+            look_thumbs: None,
             clouds: crate::world::env::clouds_frame(
                 self.settings.volumetric_clouds,
                 self.world.main_region,
@@ -13001,6 +13002,11 @@ impl App {
                 .live_look((w, h), focus)
                 .or_else(|| self.oiia.look(w, h))
                 .or_else(|| self.world_look((w, h), focus)),
+        };
+        // the filters catalogue's pictures, from the live view only
+        fp.look_thumbs = match &photo {
+            Some(_) => None,
+            None => self.look_thumbs_request((w, h), focus),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 

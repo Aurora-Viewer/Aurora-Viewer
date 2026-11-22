@@ -129,6 +129,8 @@ pub struct Looks<'a> {
     pub settings: &'a mut crate::snapshot::Settings,
     /// The user's LUTs, by file name.
     pub luts: &'a [String],
+    /// The catalogue's pictures: their slot by look id.
+    pub thumbs: &'a std::collections::HashMap<String, usize>,
     /// What the editor asks of the app (import, remove, open the folder).
     pub out: &'a mut Vec<super::snapshot::Action>,
 }
@@ -388,11 +390,15 @@ pub fn window(
                         // the Photo window's own looks and LUTs: one stack,
                         // the photos' and the films'
                         ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("director-filters-note")).size(12.0).color(p.muted)).wrap());
+                        let thumbs = looks.thumbs;
+                        let thumb = |id: &str| thumbs.get(id).copied();
                         let opts = super::looks_editor::Options {
                             list_height: 260.0,
+                            height: None,
                             compare: false,
                             luts: looks.luts,
                             pano: false,
+                            thumb: &thumb,
                         };
                         looks
                             .ui
