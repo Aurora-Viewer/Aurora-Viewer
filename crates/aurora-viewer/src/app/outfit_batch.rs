@@ -97,6 +97,13 @@ struct Entry {
     picture: Option<egui::TextureHandle>,
 }
 
+impl Entry {
+    /// RLVa locks and empty outfits are never ticked.
+    fn selectable(&self) -> bool {
+        !self.locked && !self.empty
+    }
+}
+
 /// Where putting the starting outfit back stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Restore {
@@ -122,6 +129,8 @@ pub(super) struct Batch {
     entries: Vec<Entry>,
     phase: Phase,
     settings: PortraitSettings,
+    /// The folder of My Outfits the showcase was filtered to.
+    folder: Option<Uuid>,
     /// The outfit worn at the start, put back at the end, and its body
     /// parts.
     start: Option<Uuid>,
@@ -204,6 +213,30 @@ fn order(outfits: &[Uuid], start: Option<Uuid>) -> Vec<Uuid> {
         .collect()
 }
 
+/// Whether the opening choice ticks this outfit: no picture yet, and one
+/// the batch can wear.
+fn chosen_by_default(e: &Entry) -> bool {
+    !e.had_picture && e.selectable()
+}
+
+/// "All outfits": every outfit the batch can wear ticked, or none.
+fn set_all(entries: &mut [Entry], on: bool) {
+    for e in entries.iter_mut().filter(|e| e.selectable()) {
+        e.chosen = on;
+    }
+}
+
+/// "Without picture": back to the opening choice.
+fn select_missing(entries: &mut [Entry]) {
+    for e in entries.iter_mut() {
+        e.chosen = chosen_by_default(e);
+    }
+}
+
+fn at_default(entries: &[Entry]) -> bool {
+    entries.iter().all(|e| e.chosen == chosen_by_default(e))
+}
+
 /// The next outfit to photograph.
 fn next(entries: &[Entry]) -> Option<usize> {
     entries.iter().position(|e| e.chosen && !e.state.finished())
@@ -234,8 +267,9 @@ fn wearables(inv: &crate::world::inventory::Inventory, outfit: Uuid) -> Vec<Uuid
 
 impl App {
     /// The batch portraits' window over these outfits (ours, in the
-    /// showcase's order); the one running is brought back.
-    pub(super) fn open_outfit_batch(&mut self, outfits: Vec<Uuid>) {
+    /// showcase's order), chosen from `folder` when the showcase was
+    /// filtered to one; the one running is brought back.
+    pub(super) fn open_outfit_batch(&mut self, outfits: Vec<Uuid>, folder: Option<Uuid>) {
         if let Some(b) = &mut self.outfit_batch
             && matches!(b.phase, Phase::Running { .. } | Phase::Restoring { .. })
         {
@@ -246,7 +280,7 @@ impl App {
         let inv = &self.world.inventory;
         let locks = self.world.rlva_wear_locks();
         let start = model::base(inv);
-        let entries: Vec<Entry> = order(&outfits, start)
+        let mut entries: Vec<Entry> = order(&outfits, start)
             .into_iter()
             .filter(|id| inv.folders.contains_key(id))
             .map(|outfit| {
@@ -255,7 +289,7 @@ impl App {
                 let empty = wearables(inv, outfit).is_empty() && model::complete(inv, outfit);
                 Entry {
                     outfit,
-                    chosen: !had_picture && !locked && !empty,
+                    chosen: false,
                     had_picture,
                     locked,
                     empty,
@@ -264,15 +298,19 @@ impl App {
                 }
             })
             .collect();
+        select_missing(&mut entries);
+        let folder = folder.filter(|id| crate::world::outfit_folders::is_group(inv, *id));
         log::info!(
-            "outfit batch: opened over {} outfits, {} without a picture",
+            "outfit batch: opened over {} outfits{}, {} without a picture",
             entries.len(),
+            folder.map(|id| format!(" of the folder {id}")).unwrap_or_default(),
             entries.iter().filter(|e| e.chosen).count()
         );
         self.outfit_batch = Some(Batch {
             entries,
             phase: Phase::Setup,
             settings: PortraitSettings::opening(&self.settings.outfit_portrait),
+            folder,
             start,
             start_parts: Vec::new(),
             last_wear: None,
@@ -682,6 +720,16 @@ impl App {
                     e.chosen = !e.chosen;
                 }
             }
+            // (the HD total to confirm changes with the outfits ticked)
+            window::Action::SetAll(on) if b.phase == Phase::Setup => {
+                set_all(&mut b.entries, on);
+                b.hd_confirm = None;
+            }
+            window::Action::SelectMissing if b.phase == Phase::Setup => {
+                select_missing(&mut b.entries);
+                b.hd_confirm = None;
+            }
+            window::Action::SetAll(_) | window::Action::SelectMissing => {}
             window::Action::Start => self.outfit_batch_start_paid(None),
             window::Action::ConfirmHd => {
                 let total = b.hd_confirm;
@@ -795,7 +843,17 @@ impl App {
             failed: tally.failed,
             error: tally.error.as_deref(),
         };
-        Some(window::View { phase, rows, hd })
+        let folder = b
+            .folder
+            .filter(|id| crate::world::outfit_folders::is_group(inv, *id))
+            .map(|id| crate::world::outfit_folders::path(inv, id));
+        Some(window::View {
+            phase,
+            rows,
+            hd,
+            folder,
+            at_default: at_default(&b.entries),
+        })
     }
 
     /// The batch portraits' window.
@@ -821,7 +879,7 @@ impl App {
     }
 }
 
-/// `AURORA_DEMO_APPEARANCE=batch|batch-run|batch-hd|batch-hd-poor`.
+/// `AURORA_DEMO_APPEARANCE=batch|batch-run|batch-hd|batch-hd-poor|batch-folder`.
 fn demo_mode() -> Option<&'static str> {
     static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     MODE.get_or_init(|| std::env::var("AURORA_DEMO_APPEARANCE").ok().filter(|m| m.starts_with("batch")))
@@ -835,7 +893,9 @@ impl App {
     /// 640 and starts it at frame 700. `batch-hd`: the HD pictures ticked
     /// at 1024 with a fictional L$ 500 balance (the demo's price is L$ 10
     /// each), the changes saved at 640, Start left to the user;
-    /// `batch-hd-poor`: a L$ 15 balance, short of the total.
+    /// `batch-hd-poor`: a L$ 15 balance, short of the total. `batch-folder`:
+    /// the window over the demo's "Beach" folder only, one of its outfits
+    /// unticked (the All box's dash).
     pub(super) fn outfit_batch_demo(&mut self) {
         if !self.demo {
             return;
@@ -854,7 +914,33 @@ impl App {
                     .collect();
                 outfits.sort_by_key(|id| inv.folders.get(id).map(|f| f.info.name.to_lowercase()));
                 log::info!("demo: outfit batch ({mode})");
-                self.open_outfit_batch(outfits);
+                if mode == "batch-folder" {
+                    // the demo's "Beach" group (`outfit_folders::seed_demo`),
+                    // its "Night" subgroup's outfit included, as the banner
+                    // hands them over with the showcase filtered to it
+                    let beach = Uuid::from_u128(741);
+                    let within = |id: &Uuid| {
+                        let mut at = inv.folders.get(id).map(|f| f.info.parent);
+                        for _ in 0..=crate::world::outfit_folders::MAX_DEPTH {
+                            match at {
+                                Some(parent) if parent == beach => return true,
+                                Some(parent) => at = inv.folders.get(&parent).map(|f| f.info.parent),
+                                None => return false,
+                            }
+                        }
+                        false
+                    };
+                    let outfits = outfits.into_iter().filter(within).collect();
+                    self.open_outfit_batch(outfits, Some(beach));
+                    // one outfit unticked: the All box shows its dash
+                    if let Some(b) = &mut self.outfit_batch
+                        && let Some(e) = b.entries.iter_mut().find(|e| e.chosen)
+                    {
+                        e.chosen = false;
+                    }
+                    return;
+                }
+                self.open_outfit_batch(outfits, None);
                 if mode == "batch-settings" {
                     self.panels.appearance = false;
                     window::demo_settings(&self.egui_ctx);
@@ -974,5 +1060,41 @@ mod tests {
         ];
         assert_eq!(next(&entries), Some(3), "a picture on its way holds the next outfit");
         assert_eq!(next(&entries[..3]), None);
+    }
+
+    /// All ticks every outfit the batch can wear, then none; Without
+    /// picture puts the opening choice back. Locked and empty outfits stay
+    /// unticked throughout.
+    #[test]
+    fn all_and_without_picture_tick_only_what_can_be_worn() {
+        let entry = |had_picture, locked, empty| Entry {
+            outfit: Uuid::nil(),
+            chosen: false,
+            had_picture,
+            locked,
+            empty,
+            state: State::Waiting,
+            picture: None,
+        };
+        let mut entries = vec![
+            entry(false, false, false),
+            entry(true, false, false),
+            entry(false, true, false),
+            entry(false, false, true),
+            entry(true, false, false),
+        ];
+        let ticked = |e: &[Entry]| e.iter().map(|e| e.chosen).collect::<Vec<_>>();
+        select_missing(&mut entries);
+        assert_eq!(ticked(&entries), [true, false, false, false, false], "the opening choice");
+        assert!(at_default(&entries));
+        // a partial choice of the user's, then All
+        entries[4].chosen = true;
+        assert!(!at_default(&entries));
+        set_all(&mut entries, true);
+        assert_eq!(ticked(&entries), [true, true, false, false, true]);
+        set_all(&mut entries, false);
+        assert_eq!(ticked(&entries), [false; 5]);
+        select_missing(&mut entries);
+        assert_eq!(ticked(&entries), [true, false, false, false, false]);
     }
 }
