@@ -284,7 +284,7 @@ pub(crate) fn control_height(ui: &egui::Ui) -> f32 {
 impl ControlsUi {
     /// The Aurora window (`camera` / `movement`: the toolbar's View and
     /// Movement, the World menu's entries; either opens it on its tab), or
-    /// Firestorm's two windows when `classic`. `compact` is the saved
+    /// the Legacy Viewer's two windows when `classic`. `compact` is the saved
     /// compact choice of each tab (`Compact`): the title bar's compact /
     /// full button (or a double-click on the title bar, as on every window)
     /// sets the shown tab's, and a tab shows that way.
