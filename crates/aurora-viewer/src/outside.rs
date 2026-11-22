@@ -822,6 +822,46 @@ impl Outside {
         }
     }
 
+    /// Where the windows outside are on the screen, `front` telling when
+    /// each last took the focus: none where the system does not tell.
+    pub fn placed(&self, front: impl Fn(WindowId) -> u64) -> Vec<carry::Placed> {
+        self.shared
+            .borrow()
+            .windows
+            .values()
+            .filter_map(|native| carry::Placed::of(&native.window, front(native.window.id())))
+            .collect()
+    }
+
+    /// What the window outside `id` reads at its next pass of a drag held
+    /// in another window over it (outside/carry.rs).
+    pub fn carried(&mut self, id: WindowId, events: Vec<egui::Event>) {
+        let mut shared = self.shared.borrow_mut();
+        if let Some(native) = shared.windows.values_mut().find(|native| native.window.id() == id) {
+            native.input.egui_input_mut().events.extend(events);
+            native.redraw = true;
+        }
+    }
+
+    /// The scale of the window outside `id`.
+    pub fn scale_of(&self, id: WindowId) -> Option<f64> {
+        self.shared
+            .borrow()
+            .windows
+            .values()
+            .find(|native| native.window.id() == id)
+            .map(|native| native.window.scale_factor())
+    }
+
+    /// The window outside `id` has the focus.
+    pub fn has_focus(&self, id: WindowId) -> bool {
+        self.shared
+            .borrow()
+            .windows
+            .values()
+            .any(|native| native.window.id() == id && native.focused)
+    }
+
     /// One of the windows outside has the focus.
     pub fn focused(&self) -> bool {
         self.shared.borrow().windows.values().any(|native| native.focused)

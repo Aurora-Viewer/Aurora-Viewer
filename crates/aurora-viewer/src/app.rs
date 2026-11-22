@@ -589,6 +589,12 @@ pub struct App {
     /// An item dragged out of one window, in hand until a click drops it
     /// in another (outside/carry.rs).
     carry: crate::outside::carry::Carry,
+    /// What the viewer's own window reads of a drag held in another window
+    /// over it, at the next pass (`carry_pointer`).
+    carry_own: Vec<egui::Event>,
+    /// The window such a drag is or was last over, and the keys held it
+    /// was given (`carry_keys`).
+    carry_keyed: Option<(WindowId, egui::Modifiers)>,
     /// AURORA_DEMO_OUTSIDE: the test window outside, until it is closed.
     outside_demo: Option<crate::outside::demo::Demo>,
     /// egui's textures kept on the CPU, for the renderer of a GPU recovery
@@ -2009,6 +2015,8 @@ impl App {
             egui_hand_over: EguiHandOver::default(),
             outside,
             carry: Default::default(),
+            carry_own: Vec::new(),
+            carry_keyed: None,
             outside_demo: None,
             egui_shadow: Default::default(),
             egui_replay: false,
@@ -13025,6 +13033,7 @@ impl App {
         self.outside_frame_start(event_loop, &gfx.window, &mut gfx.renderer);
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
+        self.carry_own_input(&mut raw);
         self.demo_script_input(&mut raw);
         // Synthetic preedit uses the ordinary focused Conversations editor.
         if self.demo && self.frame_count == 710 && std::env::var("AURORA_DEMO_CHAT_INPUT").is_ok_and(|mode| mode == "ime") {

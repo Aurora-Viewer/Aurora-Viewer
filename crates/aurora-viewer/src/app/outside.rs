@@ -34,6 +34,11 @@ impl App {
         if self.carry.frame_start(&self.egui_ctx) {
             log::info!("carry: nothing in hand any more");
         }
+        self.carry_keys(own_id);
+        if let Some((to, at)) = self.carry.take_drop() {
+            log::info!("carry: the item is dropped where its drag was let go of");
+            self.carry_pointer((own_id, own.scale_factor()), to, Some(at), true);
+        }
         for id in self.outside.answers(renderer, &self.egui_ctx) {
             if id == demo::id() {
                 self.outside_demo = None;
@@ -146,7 +151,124 @@ impl App {
             self.last_input = Instant::now();
             self.egui_ctx.request_repaint();
         }
+        if matches!(event, WindowEvent::CursorMoved { .. }) {
+            self.follow_held_drag(id, size);
+        }
         went == Event::Swallow
+    }
+
+    /// A drag held in the window `id` goes on over another window of the
+    /// viewer, where the system tells where the windows are: that window
+    /// reads the pointer as its own (outside/carry.rs).
+    fn follow_held_drag(&mut self, id: WindowId, size: winit::dpi::PhysicalSize<u32>) {
+        use crate::outside::carry::{Placed, under};
+        let at = self.carry.held_beyond(&self.egui_ctx, id, size);
+        if at.is_none() && self.carry.over().is_none() {
+            return;
+        }
+        let Some(own) = self.gfx.as_ref().map(|g| (g.window.id(), g.window.scale_factor())) else {
+            return;
+        };
+        let target = at.and_then(|at| {
+            let mut windows: Vec<Placed> = self
+                .gfx
+                .iter()
+                .filter_map(|g| Placed::of(&g.window, self.carry.front(own.0)))
+                .collect();
+            windows.extend(self.outside.placed(|id| self.carry.front(id)));
+            under(&windows, id, at)
+        });
+        if target.is_some() && self.carry.over().is_none() {
+            log::info!("carry: a held drag goes on over another window");
+        }
+        if let Some(left) = self.carry.set_over(target) {
+            self.carry_pointer(own, left, None, false);
+        }
+        if let Some((to, at)) = target {
+            self.carry_pointer(own, to, Some(at), false);
+        }
+    }
+
+    /// The keys held with a drag, as the window under it reads them: its
+    /// own are those of when it last had the keyboard.
+    fn carry_modifiers(&self) -> egui::Modifiers {
+        let mac = cfg!(target_os = "macos");
+        egui::Modifiers {
+            alt: self.alt,
+            ctrl: self.ctrl,
+            shift: self.shift,
+            mac_cmd: mac && self.command,
+            command: if mac { self.command } else { self.ctrl },
+        }
+    }
+
+    /// What the window `to` reads at its next pass of a drag held in
+    /// another window over it. `own`: the viewer's own window.
+    fn carry_send(&mut self, own: WindowId, to: WindowId, events: Vec<egui::Event>) {
+        if to == own {
+            self.carry_own.extend(events);
+        } else {
+            self.outside.carried(to, events);
+        }
+        self.egui_ctx.request_repaint();
+    }
+
+    /// The pointer of a drag held in another window, for the window `to`
+    /// under it: at `at` in its pixels (with the release that drops when
+    /// `released`), or gone. `own`: the viewer's own window and its scale.
+    fn carry_pointer(&mut self, own: (WindowId, f64), to: WindowId, at: Option<winit::dpi::PhysicalPosition<f64>>, released: bool) {
+        let scale = if to == own.0 { Some(own.1) } else { self.outside.scale_of(to) };
+        let Some(scale) = scale else {
+            return;
+        };
+        let scale = scale * f64::from(self.egui_ctx.zoom_factor());
+        let at = at.map(|at| egui::pos2((at.x / scale) as f32, (at.y / scale) as f32));
+        let events = crate::outside::carry::pointer_events(at, released, self.carry_modifiers());
+        if at.is_some() {
+            self.carry_keyed = Some((to, self.carry_modifiers()));
+        } else if self.carry_keyed.is_some_and(|(keyed, _)| keyed == to) {
+            self.carry_keyed = None;
+        }
+        self.carry_send(own.0, to, events);
+        self.last_input = Instant::now();
+    }
+
+    /// Each frame: the keys held with a drag over another window, when a
+    /// key pressed without a move of the pointer changed them; and, the
+    /// drag over, what it left in the window it was last over.
+    fn carry_keys(&mut self, own: WindowId) {
+        let Some((to, sent)) = self.carry_keyed else {
+            return;
+        };
+        if self.carry.over() == Some(to) {
+            let held = self.carry_modifiers();
+            if held != sent {
+                self.carry_keyed = Some((to, held));
+                self.carry_send(own, to, vec![egui::Event::ModifiersChanged(held)]);
+            }
+        } else if !self.carry.holds() {
+            // the pointer is gone unless the system says it is there, and
+            // no key is held unless the window has the keyboard and hears
+            // its own
+            self.carry_keyed = None;
+            let mut events = Vec::new();
+            if !self.carry.pointer_over(to) {
+                events.push(egui::Event::PointerGone);
+            }
+            let focused = if to == own { self.focused } else { self.outside.has_focus(to) };
+            if !focused {
+                events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+            }
+            if !events.is_empty() {
+                self.carry_send(own, to, events);
+            }
+        }
+    }
+
+    /// What the viewer's own window reads this frame of a drag held in
+    /// another window over it.
+    pub(super) fn carry_own_input(&mut self, raw: &mut egui::RawInput) {
+        raw.events.append(&mut self.carry_own);
     }
 
     /// A Windows Alt code typed in a field of the window outside `id`
