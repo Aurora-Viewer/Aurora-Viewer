@@ -1966,6 +1966,9 @@ pub(crate) struct Backend {
     /// history, made apart, in `taa_bytes`.
     target_bytes: Option<(u64, u64)>,
     taa_bytes: u64,
+    /// Since when `Targets::water_copy` has gone unused (the scene dry, no
+    /// water drawn): released after `WATER_COPY_IDLE`.
+    water_copy_idle: Option<Instant>,
     surface_srgb: bool,
     egui: EguiSlot,
     ui_blur: Option<crate::ui_blur::Blur>,
@@ -3220,6 +3223,10 @@ fn first_use(oom: &mut crate::gpu_alloc::Refusals, what: &str, required: bool, r
     }
     refused
 }
+
+/// How long `Targets::water_copy` is kept unused before it is let go: a
+/// shower that stops and starts again does not make it anew each time.
+const WATER_COPY_IDLE: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// An extra made on first use with `make`, checked: `None` while refused
 /// or waiting.
@@ -4555,6 +4562,7 @@ impl Backend {
             snapshot_window: None,
             target_bytes: None,
             taa_bytes: 0,
+            water_copy_idle: None,
             surface_srgb,
             egui,
             ui_blur: None,
@@ -10176,29 +10184,41 @@ impl Backend {
         // The moving water over the wet ground, ice or snow refracts a copy
         // of the scene taken after them (`Targets::water_copy`, #4565): a
         // crest above a floor just over the water showed it dry, a disc
-        // sweeping over it. Made on first use; refused or waiting (an extra,
-        // `extra`), the water reads `scene_copy` as before.
-        // Released once the water no longer moves.
+        // sweeping over it. Made on first use, with the bind group that
+        // reads it, both checked as an extra: refused or waiting, the water
+        // reads `scene_copy` as before. Released once the water no longer
+        // moves, or after `WATER_COPY_IDLE` unused (the scene dry again).
         let water_moves = self.settings.water_effects.flags() & (1 | 16) != 0;
-        if !water_moves && self.targets.water_copy.take().is_some() {
-            self.remake_frame_groups();
-        }
         let mut water_over_wet = water_moves && !f.cutout && self.rain_wet.active() && rg.water.1 > 0;
-        if water_over_wet && self.targets.water_copy.is_none() {
+        let now = Instant::now();
+        if water_over_wet {
+            self.water_copy_idle = None;
+        } else if self.targets.water_copy.is_some() {
+            let since = *self.water_copy_idle.get_or_insert(now);
+            if !water_moves || now.duration_since(since) >= WATER_COPY_IDLE {
+                self.targets.water_copy = None;
+                self.water_copy_idle = None;
+                self.remake_frame_groups();
+            }
+        }
+        if water_over_wet && self.targets.water_copy.is_none() && self.oom.extras_ready(now) {
             let size = self.targets.scene_copy_tex.size();
-            let made = extra(&mut self.oom, &self.device, self.lost.get(), "water's scene copy", |device| {
-                make_view(
-                    device,
+            let device = self.device.clone();
+            let ((), refused) = crate::gpu_alloc::scoped(&device, || {
+                self.targets.water_copy = Some(make_view(
+                    &device,
                     "water's scene copy",
                     size.width,
                     size.height,
                     HDR_FORMAT,
                     1,
                     wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                )
+                ));
+                self.remake_frame_groups();
             });
-            if let Some(copy) = made {
-                self.targets.water_copy = Some(copy);
+            // (a lost device's refusals are the device-loss path's)
+            if first_use(&mut self.oom, "water's scene copy", false, refused && !self.lost.get()) {
+                self.targets.water_copy = None;
                 self.remake_frame_groups();
             }
         }

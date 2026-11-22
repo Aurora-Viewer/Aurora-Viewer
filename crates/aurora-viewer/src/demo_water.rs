@@ -301,7 +301,7 @@ pub fn update(
         // deep part, as the low floor of a houseboat: the crests of the
         // swell rise above it (#4565).
         objects.push(super::prim(
-            99540,
+            99550,
             Vec3::new(40.0, 114.0, 20.0),
             Quat::IDENTITY,
             Vec3::new(8.0, 5.0, 0.3),
