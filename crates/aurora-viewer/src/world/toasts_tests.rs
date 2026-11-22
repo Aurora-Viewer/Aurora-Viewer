@@ -483,8 +483,10 @@ fn friendship_ended_notification_follows_preference_live_and_history() {
     assert!(!crate::settings::Settings::default().notify_friendship_ended);
     assert!(!ToastPrefs::default().friendship_ended);
 
-    // Off: live termination removes the friend without notifying.
+    // Off: live termination removes the friend without notifying. Each world
+    // has its block list loaded: notices wait for it.
     let mut w = world();
+    w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
     w.social.form_friendship(JANE);
     w.apply(aurora_net::NetEvent::FriendshipTerminated(JANE));
     w.flush_friendship_ended_notices();
@@ -494,6 +496,7 @@ fn friendship_ended_notification_follows_preference_live_and_history() {
     // On: live termination creates a Kind::Friendship card like "accepted your friendship",
     // asks for attention, links the resident's profile, and moves to history on dismiss.
     let mut w = world();
+    w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
     w.notifications.toasts.friendship_ended = true;
     w.social.form_friendship(JANE);
     w.apply(aurora_net::NetEvent::FriendshipTerminated(JANE));
@@ -525,6 +528,7 @@ fn friendship_ended_notification_follows_preference_live_and_history() {
 
     // Local removal and blocked residents do not emit notifications.
     let mut w = world();
+    w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
     w.notifications.toasts.friendship_ended = true;
     w.social.form_friendship(JANE);
     w.end_friendship_local(&JANE);
@@ -541,6 +545,7 @@ fn friendship_ended_offline_waits_for_world_and_name_resolution() {
     use super::friend_snapshot::SavedFriend;
 
     let mut w = world();
+    w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
     w.notifications.started = false;
     w.notifications.toasts.friendship_ended = true;
     w.login_had_buddy_list = true;
@@ -569,6 +574,7 @@ fn friendship_ended_offline_waits_for_world_and_name_resolution() {
 
     // If the login response lacked `buddy-list`, reconciliation does nothing.
     let mut w = world();
+    w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
     w.login_had_buddy_list = false;
     w.reconcile_friend_snapshot(
         None,
@@ -580,4 +586,32 @@ fn friendship_ended_offline_waits_for_world_and_name_resolution() {
     );
     w.flush_friendship_ended_notices();
     assert!(w.notifications.list.is_empty());
+}
+
+#[test]
+fn friendship_ended_waits_for_the_block_list() {
+    use super::friend_snapshot::SavedFriend;
+
+    // In world, the block list asked for but not answered yet; Jane and Tom
+    // ended the friendship while we were away, their names already cached.
+    let mut w = world();
+    w.mutes.reset(ME);
+    let _ = w.mutes.request(None);
+    assert!(!w.mutes.is_loaded());
+    w.notifications.toasts.friendship_ended = true;
+    w.login_had_buddy_list = true;
+    let saved = |id, name: &str| SavedFriend { id, name: name.into() };
+    w.reconcile_friend_snapshot(None, Some(vec![saved(JANE, "Jane Doe"), saved(TOM, "Tom Smith")]), true);
+    w.flush_friendship_ended_notices();
+    assert!(w.notifications.list.is_empty(), "waits for the block list");
+
+    // The list arrives and blocks Jane: only Tom is told, once.
+    w.apply(aurora_net::NetEvent::MuteList(aurora_net::MuteListSource::File(format!(
+        "1 {JANE} Jane Doe|0\n"
+    ))));
+    assert!(w.mutes.is_muted_id(&JANE));
+    w.flush_friendship_ended_notices();
+    w.flush_friendship_ended_notices();
+    let titles: Vec<&str> = w.notifications.list.iter().map(|n| n.title.as_str()).collect();
+    assert_eq!(titles, ["Tom Smith ended your friendship"]);
 }

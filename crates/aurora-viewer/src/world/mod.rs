@@ -6532,6 +6532,14 @@ impl World {
     /// Emit queued ended-friendship notifications once the world is shown and
     /// each resident's name has resolved (or timed out to the saved fallback).
     pub fn flush_friendship_ended_notices(&mut self) {
+        // A blocked resident gets no notice, so the block list must be known
+        // first: it is asked for once in world and may answer only after its
+        // 30 s timeout (then from the cached copy), well after the world is
+        // shown. Until then the queue stays as it is, like the offline
+        // messages (`request_offline_messages_once`).
+        if !self.mutes.is_loaded() {
+            return;
+        }
         let ready = self.friend_snapshot.take_ready(self.notifications.started, |id| {
             self.social.avatar_names.get(id).is_some() || self.social.names.contains_key(id)
         });
