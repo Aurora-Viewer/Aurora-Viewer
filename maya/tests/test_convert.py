@@ -430,6 +430,12 @@ class Groups(unittest.TestCase):
         whole = convert.ungroup(["b"], roots, overrides)
         self.assertEqual(set(convert.static_roots(convert.link_parents({"a", "b", "c", "d"}, {}, whole)).values()),
                          {"a", "b", "c", "d"})
+        # Grouped against Maya parenting, then the root removed and re-added:
+        # B -> A from the hierarchy meets A -> B from the list. The loop is
+        # cut instead of stopping every capture.
+        parents = convert.link_parents({"a", "b"}, {"b": "a"}, {"a": "b"})
+        roots = convert.static_roots(parents)
+        self.assertEqual(len(set(roots.values())), 1)
         text = convert.overrides_format({"c": "b", "d": None})
         self.assertEqual(convert.overrides_parse(text), {"c": "b", "d": None})
 

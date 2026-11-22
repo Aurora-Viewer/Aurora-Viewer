@@ -63,20 +63,37 @@ def rig_of_mesh(mesh):
     return None
 
 
+def _rigs_of(node):
+    """The rigs a selected node points to: a joint's rig, a skinned mesh's
+    rig, the rig of an Aurora controls group or control, or the rigs under a
+    selected group."""
+    if cmds.nodeType(node) == "joint":
+        top = top_joint(node)
+        return [top] if top and is_rig(top) else []
+    rig = rig_of_mesh(node) if capture.shape_of(node) else None
+    if rig:
+        return [rig]
+    parts = node.split("|")
+    for index in range(len(parts), 1, -1):
+        ancestor = "|".join(parts[:index])
+        if cmds.attributeQuery("auroraControlsFor", node=ancestor, exists=True):
+            root = cmds.getAttr(ancestor + ".auroraControlsFor")
+            return [root] if cmds.objExists(root) else []
+    tops = {top_joint(joint) for joint in cmds.listRelatives(node, allDescendents=True, type="joint",
+                                                             fullPath=True) or []}
+    return [top for top in tops if top and is_rig(top)]
+
+
 def resolve(selection=None):
     """The rig to work on: a selected joint's rig, a selected mesh's rig, or
     the scene's only rig. Raises when that is ambiguous."""
     selection = cmds.ls(selection=True, long=True) if selection is None else selection
     found = set()
     for node in selection or []:
-        if cmds.nodeType(node) == "joint":
-            top = top_joint(node)
-            if top and is_rig(top):
-                found.add(top)
-        else:
-            rig = rig_of_mesh(node)
-            if rig:
-                found.add(rig)
+        try:
+            found.update(_rigs_of(node))
+        except RuntimeError:
+            continue
     if len(found) == 1:
         return found.pop()
     if found:

@@ -901,7 +901,9 @@ now** sends at once and reloads the texture files.
   meshes skinned to it follows by their weights, and their skins re-bind at
   the new joint places (Go to Bind Pose follows). Joints, weights and
   orientations are kept; one undo reverts it. The rig should stand at the
-  origin. Meshes with blend shapes or other deformers before their skin are
+  origin and in its bind pose, with no Aurora controls (or other
+  constraints) driving its joints; its size is read from its own pelvis
+  height unless **Scene units** is set by hand. Meshes with blend shapes or other deformers before their skin are
   refused: use MayaStar or the Blender plug-in for them.
 - **Rig.** **Create SL avatar rig** adds the 133 Bento bones and 26 Fitted
   Mesh collision volumes at SL's standard rest, world-aligned in their own
@@ -928,9 +930,11 @@ now** sends at once and reloads the texture files.
   **Create IK controls** adds a target and a pole for each hand and foot
   (elbow poles behind the arms, knee poles ahead), off until you tick the
   limb; ticking snaps the target to the wrist or ankle, and rotating the
-  target turns the hand or foot. **Classic eyes +** and **Bento eyes +** add
-  a look-at target two metres ahead; **Focus** turns the eyes toward it,
-  **Recentre** puts it back in front. Controls are never skinned, so the
+  target turns the hand or foot; unticking leaves the limb as it stands, free
+  to pose in FK. **Classic eyes +** and **Bento eyes +** add
+  a look-at target two metres ahead; **Focus** turns the eyes toward it
+  (switching it off leaves them where they look), **Recentre** puts it back
+  in front. Controls are never skinned, so the
   preview ignores them; joints already driven by a constraint are refused.
   Aurora keeps playing its own animations on the rest mesh.
 - **Not in this version:** blend shapes before the skin when applying a shape

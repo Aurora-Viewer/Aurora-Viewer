@@ -64,6 +64,7 @@ class Session:
         self.listeners = []
         self.jobs = []
         self._rewatch_later = False
+        self._rows = None
         self.unit = None  # metres per Maya unit of the last capture
         self.load()
 
@@ -84,7 +85,9 @@ class Session:
 
     def save(self):
         self.paused &= set(self.sources)
-        self.overrides = {child: parent for child, parent in self.overrides.items() if child in self.sources}
+        self.overrides = {child: parent for child, parent in self.overrides.items()
+                          if child in self.sources and (parent is None or parent in self.sources)}
+        self._rows = None
         cmds.fileInfo(SOURCES_KEY, ",".join(self.sources))
         cmds.fileInfo(PAUSED_KEY, ",".join(sorted(self.paused)))
         cmds.fileInfo(GROUPS_KEY, convert.overrides_format(self.overrides))
@@ -202,7 +205,10 @@ class Session:
 
     def rows(self):
         """(id, display name, message) of each synchronized source, linkset
-        children right under their root and numbered like the build tools."""
+        children right under their root and numbered like the build tools;
+        kept until the list, the scene or a capture changes."""
+        if self._rows is not None:
+            return self._rows
         try:
             roots = self.roots()
         except (ValueError, RuntimeError):
@@ -220,6 +226,7 @@ class Session:
                 if member in self.paused:
                     name += " [paused]"
                 result.append((member, name, self.errors.get(member, "")))
+        self._rows = result
         return result
 
     # ------------------------------------------------------ connection
@@ -247,6 +254,7 @@ class Session:
     # ---------------------------------------------------------- tracking
 
     def touch(self):
+        self._rows = None
         self.dirty = True
         self.last_change = time.monotonic()
 
@@ -428,7 +436,8 @@ class Session:
                     rig = mayastar.apply(payload)
                     self.notice = "Shape applied with MayaStar to " + rig
                 else:
-                    unit = capture.scene_unit(self.units(), [self.node(key) for key in self.sources if self.node(key)])
+                    # The rig's own size, unless the scene's units are set by hand.
+                    unit = convert.UNITS.get(self.units())
                     rig = shape_apply.apply(payload, rigs.resolve(), capture.up_axis(), unit)
                     self.notice = "Shape applied to " + rig.rsplit("|", 1)[-1]
                 self.touch()
@@ -495,6 +504,8 @@ class Session:
             root = roots.get(identity)
             if root is not None and root != identity:
                 mesh["link"] = {"parent": _uuid_for(root), "offset": capture.link_offset(static[identity], static[root], base)}
+        if errors != self.errors:
+            self._rows = None
         self.errors = errors
         self.message = ""
         return {"protocol": 1, "revision": revision, "meshes": meshes, "images": images.images}

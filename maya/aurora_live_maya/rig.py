@@ -31,7 +31,7 @@ def sort_layers(root, visible=None):
             members.setdefault(layer_name(rig_rules.layer(definition[name])), []).append(joint)
     for layer, joints in members.items():
         if not cmds.objExists(layer):
-            cmds.createDisplayLayer(name=layer, empty=True, noRecurse=True)
+            cmds.createDisplayLayer(name=":" + layer, empty=True, noRecurse=True)
         cmds.editDisplayLayerMembers(layer, joints, noRecurse=True)
         if visible is not None:
             cmds.setAttr(layer + ".visibility", layer[3:] in visible)

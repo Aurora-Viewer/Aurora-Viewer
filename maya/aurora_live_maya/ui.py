@@ -2,8 +2,6 @@
 (connection and synchronized meshes), Import / LOD, Rig, Weights and
 Controls."""
 
-import time
-
 from maya import cmds
 
 from . import convert, rig_rules, session
@@ -44,9 +42,11 @@ class Window:
         cmds.showWindow(WINDOW)
         self.live.listeners.append(self.refresh)
         cmds.scriptJob(uiDeleted=(WINDOW, self.closed))
+        # The tool tabs follow the selection (which rig), not a timer.
+        cmds.scriptJob(event=("SelectionChanged", lambda: self.refresh(tools=True)), parent=WINDOW)
         self._rows = None
+        self._entries = None
         self._layers = None
-        self._tools_at = 0.0
         self.refresh(tools=True)
         self.load_lods()
 
@@ -220,9 +220,13 @@ class Window:
         """Run a tool; its error, if any, goes to the Live tab's message."""
         try:
             action()
+            self.refresh(tools=True)
         except Exception as error:  # A tool's failure is reported, never raised into Maya's UI.
             self.live.notice = str(error) or type(error).__name__
-        self.refresh(tools=True)
+            try:
+                self.refresh(tools=True)
+            except Exception:
+                pass
 
     def toggle(self):
         if self.live.client is None:
@@ -240,9 +244,11 @@ class Window:
         self.refresh()
 
     def _selected(self):
+        return self._selected_from(self._entries or self.live.rows())
+
+    def _selected_from(self, entries):
         indices = cmds.textScrollList(self.list, query=True, selectIndexedItem=True) or []
-        rows = self.live.rows()
-        return [rows[index - 1][0] for index in indices if 0 < index <= len(rows)]
+        return [entries[index - 1][0] for index in indices if 0 < index <= len(entries)]
 
     def _one(self):
         selected = self._selected()
@@ -307,10 +313,16 @@ class Window:
         rig.sort_layers(root, visible=rig_rules.VISIBLE_LAYERS)
         self.live.notice = "Sorted " + root.rsplit("|", 1)[-1] + " into SL layers"
 
-    def all_layers(self, visible):
-        from . import rig
-        for layer, _shown in rig.layers():
+    def show_layer(self, layer, visible):
+        from . import build, rig
+        with build.undoable("Aurora layer"):
             rig.show(layer, visible)
+
+    def all_layers(self, visible):
+        from . import build, rig
+        with build.undoable("Aurora layers"):
+            for layer, _shown in rig.layers():
+                rig.show(layer, visible)
 
     def _weighted(self, meshes):
         """Weighted meshes join the live list, paused entries stay paused."""
@@ -390,16 +402,19 @@ class Window:
         status = self.live.status()
         if cmds.text(self.status, query=True, label=True) != status:
             cmds.text(self.status, edit=True, label=status)
-        rows = [name + ("  —  " + message if message else "") for _identity, name, message in self.live.rows()]
+        entries = self.live.rows()
+        rows = [name + ("  —  " + message if message else "") for _identity, name, message in entries]
         if rows != self._rows:
-            selected = cmds.textScrollList(self.list, query=True, selectIndexedItem=True) or []
+            # Keep the selected entries, not their row numbers: grouping
+            # reorders the rows.
+            selected = set(self._selected_from(self._entries or []))
             cmds.textScrollList(self.list, edit=True, removeAll=True)
             for row in rows:
                 cmds.textScrollList(self.list, edit=True, append=row)
-            for index in selected:
-                if index <= len(rows):
+            for index, (identity, _name, _message) in enumerate(entries, 1):
+                if identity in selected:
                     cmds.textScrollList(self.list, edit=True, selectIndexedItem=index)
-            self._rows = rows
+            self._rows, self._entries = rows, entries
         unit = self.live.unit
         text = "" if unit is None else "1 Maya cm = {:g} m, {}-up".format(unit, capture_up())
         if cmds.text(self.unit_text, query=True, label=True) != text:
@@ -407,9 +422,7 @@ class Window:
         message = "\n".join(text for text in (self.live.message, self.live.notice) if text)
         if cmds.text(self.message, query=True, label=True) != message:
             cmds.text(self.message, edit=True, label=message)
-        # The tool tabs read the scene's rigs: every two seconds is enough.
-        if tools or time.monotonic() - self._tools_at > 2.0:
-            self._tools_at = time.monotonic()
+        if tools:
             self._refresh_tools()
 
     def _refresh_tools(self):
@@ -420,7 +433,7 @@ class Window:
                 cmds.deleteUI(child)
             for layer, visible in layers:
                 cmds.checkBox(parent=self.layer_box, label=layer[3:].replace("_", " "), value=visible,
-                              changeCommand=lambda value, layer=layer: self.run(lambda: rig.show(layer, bool(value))))
+                              changeCommand=lambda value, layer=layer: self.run(lambda: self.show_layer(layer, bool(value))))
             self._layers = layers
         try:
             root = rigs.resolve()

@@ -37,9 +37,14 @@ def from_ui(value):
 @contextlib.contextmanager
 def undoable(name):
     """One undo step; a failure undoes what the step had done, so a tool
-    never leaves half its work in the scene."""
+    never leaves half its work in the scene. The step always records one
+    command first, so undoing a failure can never reach the user's own
+    previous action."""
+    if not cmds.undoInfo(query=True, state=True):
+        raise ValueError("Turn Maya's undo on (Edit > Undo settings) before using this tool")
     cmds.undoInfo(openChunk=True, chunkName=name)
     try:
+        cmds.delete(cmds.createNode("network", name="auroraLiveStep", skipSelect=True))
         yield
     except Exception:
         cmds.undoInfo(closeChunk=True)
@@ -51,6 +56,46 @@ def undoable(name):
     cmds.undoInfo(closeChunk=True)
 
 
+# ------------------------------------------------ undoable OpenMaya edits
+
+PENDING = None  # the edit auroraLiveEdit runs next (aurora_live_command.py)
+
+
+def _command():
+    """Load the plug-in command that records OpenMaya edits for undo."""
+    import os
+    from . import aurora_live_command
+    if not cmds.pluginInfo(aurora_live_command.NAME, query=True, loaded=True) and not hasattr(cmds, aurora_live_command.NAME):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "aurora_live_command.py")
+        cmds.loadPlugin(path, quiet=True)
+    return getattr(cmds, aurora_live_command.NAME)
+
+
+def edit(apply):
+    """Run `apply` (which returns its revert function) as one undoable Maya
+    command, so a fast OpenMaya edit undoes and redoes like the rest."""
+    global PENDING
+    command = _command()
+    PENDING = apply
+    try:
+        command()
+    finally:
+        PENDING = None
+
+
+def check_rest(root):
+    """Refuse a rig posed away from its bind pose: tools that bind or
+    reshape would bake the pose in."""
+    poses = set()
+    for joint in [root] + (cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or []):
+        poses.update(cmds.listConnections(joint + ".bindPose", source=False, destination=True, type="dagPose") or [])
+    for pose in poses:
+        off = cmds.dagPose(pose, query=True, atPose=True) or []
+        if off:
+            raise ValueError("Put the rig in its bind pose first (Skin > Go to Bind Pose); "
+                             "{} joints are posed".format(len(off)))
+
+
 def namespace(base):
     """A new namespace, or an empty one an undone step left behind."""
     name, index = base, 1
@@ -59,7 +104,7 @@ def namespace(base):
             return name
         index += 1
         name = "{}{}".format(base, index)
-    cmds.namespace(add=name)
+    cmds.namespace(add=name, parent=":")
     return name
 
 
@@ -176,34 +221,63 @@ def get_weights(skin, mesh):
     count = om.MFnMesh(shape).numVertices
     component.addElements(list(range(count)))
     values, width = fn.getWeights(shape, vertices)
+    values = list(values)
     names = influences(skin)
-    return [[(names[column], values[row * width + column]) for column in range(width) if values[row * width + column] > 0]
-            for row in range(count)]
+    result = []
+    for row in range(count):
+        chunk = values[row * width:(row + 1) * width]
+        result.append([(names[column], value) for column, value in enumerate(chunk) if value > 0])
+    return result
 
 
 def set_weights(skin, mesh, weights):
     """Replace every vertex's weights with (influence path, weight) lists,
-    through undoable setAttr calls (one per vertex); influences not yet in
-    the skin are added first."""
+    in one undoable edit; influences not yet in the skin are added first."""
     names = influences(skin)
     missing = sorted({joint for groups in weights for joint, _weight in groups} - set(names))
     if missing:
         cmds.skinCluster(skin, edit=True, addInfluence=missing, weight=0.0)
         names = influences(skin)
-    # weightList columns are the influences' logical indices.
-    fn = _skin_fn(skin)
-    logical = {path.fullPathName(): fn.indexForInfluenceObject(path) for path in fn.influenceObjects()}
-    last = max(logical.values())
-    normalize = cmds.getAttr(skin + ".normalizeWeights")
-    cmds.setAttr(skin + ".normalizeWeights", 0)
-    try:
-        for row, groups in enumerate(weights):
-            values = [0.0] * (last + 1)
-            for joint, weight in groups:
-                values[logical[joint]] += float(weight)
-            cmds.setAttr("{}.weightList[{}].weights[0:{}]".format(skin, row, last), *values, size=last + 1)
-    finally:
-        cmds.setAttr(skin + ".normalizeWeights", normalize)
+    column = {name: index for index, name in enumerate(names)}
+    width = len(names)
+    values = om.MDoubleArray(len(weights) * width, 0.0)
+    for row, groups in enumerate(weights):
+        for joint, weight in groups:
+            values[row * width + column[joint]] += float(weight)
+    shape = _shape_path(mesh).fullPathName()
+
+    def apply():
+        fn = _skin_fn(skin)
+        path = _shape_path(shape)
+        component = om.MFnSingleIndexedComponent()
+        vertices = component.create(om.MFn.kMeshVertComponent)
+        component.addElements(list(range(len(weights))))
+        every = om.MIntArray(list(range(width)))
+        old = fn.setWeights(path, vertices, every, values, False, True)
+
+        def revert():
+            fn.setWeights(path, vertices, every, old, False)
+        return revert
+
+    edit(apply)
+
+
+def set_points(mesh, points):
+    """Replace a mesh's object-space points (internal centimetres) in one
+    undoable edit."""
+    shape = _shape_path(mesh).fullPathName()
+    new = om.MPointArray([om.MPoint(*point) for point in points])
+
+    def apply():
+        fn = om.MFnMesh(_shape_path(shape))
+        old = fn.getPoints(om.MSpace.kObject)
+        fn.setPoints(new, om.MSpace.kObject)
+
+        def revert():
+            fn.setPoints(old, om.MSpace.kObject)
+        return revert
+
+    edit(apply)
 
 
 def skin_of(mesh):

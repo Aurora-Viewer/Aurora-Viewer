@@ -19,18 +19,6 @@ from maya import cmds
 from . import build, convert, rig_rules, rigs
 
 
-def _check_rest(root):
-    """Refuse a rig posed away from its bind pose."""
-    poses = set()
-    for joint in [root] + (cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or []):
-        poses.update(cmds.listConnections(joint + ".bindPose", source=False, destination=True, type="dagPose") or [])
-    for pose in poses:
-        off = cmds.dagPose(pose, query=True, atPose=True) or []
-        if off:
-            raise ValueError("Put the rig in its bind pose first (Skin > Go to Bind Pose); "
-                             "{} joints are posed".format(len(off)))
-
-
 def _unbind(mesh):
     skin = build.skin_of(mesh)
     if skin:
@@ -42,6 +30,8 @@ def limit(skin, mesh, count=4):
     left without weight takes its nearest weighted neighbour's."""
     weights = build.get_weights(skin, mesh)
     names = sorted({joint for groups in weights for joint, _weight in groups})
+    if not names:
+        raise ValueError(mesh.rsplit("|", 1)[-1] + " has no weights to keep")
     index = {name: number for number, name in enumerate(names)}
     joints, values = [], []
     for groups in weights:
@@ -78,7 +68,7 @@ def automatic(meshes, root, mode="body"):
     joints = [mapping[name] for name in allowed if name in mapping]
     if len(joints) < 4:
         raise ValueError("This rig has too few SL joints for automatic weights")
-    _check_rest(root)
+    build.check_rest(root)
     with build.undoable("Aurora automatic weights"):
         for mesh in meshes:
             _unbind(mesh)
@@ -95,10 +85,15 @@ def automatic(meshes, root, mode="body"):
 
 
 def _distances(source, mesh):
-    """Each vertex's world distance to the source's surface."""
-    surface = om.MFnMesh(build._shape_path(source))
+    """Each vertex's world distance to the source's surface, through Maya's
+    mesh intersector (fast on large meshes)."""
+    source_path = build._shape_path(source)
+    intersector = om.MMeshIntersector()
+    intersector.create(source_path.node(), source_path.inclusiveMatrix())
+    to_world = source_path.inclusiveMatrix()
     points = om.MFnMesh(build._shape_path(mesh)).getPoints(om.MSpace.kWorld)
-    return [surface.getClosestPoint(point, om.MSpace.kWorld)[0].distanceTo(point) for point in points]
+    # The closest point comes back in the source's object space.
+    return [(om.MPoint(intersector.getClosestPoint(point).point) * to_world).distanceTo(point) for point in points]
 
 
 def transfer(source, targets, nearest_vertex=False, max_distance=0.0):
@@ -113,7 +108,7 @@ def transfer(source, targets, nearest_vertex=False, max_distance=0.0):
     joints = cmds.skinCluster(source_skin, query=True, influence=True) or []
     root = rigs.top_joint(joints[0]) if joints else None
     if root:
-        _check_rest(root)
+        build.check_rest(root)
     if max_distance > 0:
         limit_distance = build.from_ui(max_distance)  # the field is in the preferences' unit
         for target in targets:

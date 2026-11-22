@@ -29,28 +29,43 @@ def _previous(joint, payload_joint):
     return payload_joint["reference_bind"]
 
 
-def _orig(skin):
-    """The rest shape feeding a skin, refusing deformers before it."""
-    source = (cmds.listConnections(skin + ".input[0].inputGeometry", source=True, destination=False, shapes=True)
-              or [None])[0]
-    if source and cmds.nodeType(source) == "tweak":
-        source = (cmds.listConnections(source + ".input[0].inputGeometry", source=True, destination=False,
-                                       shapes=True) or [None])[0]
-    if not source or cmds.nodeType(source) != "mesh":
-        raise ValueError("{}: blend shapes or other deformers come before its skin; "
-                         "apply the shape with MayaStar or the Blender plug-in".format(skin))
-    return cmds.ls(source, long=True)[0]
+def _orig(skin, mesh):
+    """The rest shape feeding a skin. Maya's own plumbing (groupParts, tweak,
+    groupId) may sit between them; any other deformer before the skin (a
+    blend shape, a wrap...) is refused, as its shapes would need moving too."""
+    for node in cmds.listHistory(skin, pruneDagObjects=True) or []:
+        if node == skin or cmds.nodeType(node) in ("skinCluster", "tweak", "groupParts", "groupId"):
+            continue
+        if "geometryFilter" in (cmds.nodeType(node, inherited=True) or []):
+            raise ValueError("{}: a {} comes before its skin; apply the shape with MayaStar or the Blender "
+                             "plug-in".format(mesh.rsplit("|", 1)[-1], cmds.nodeType(node)))
+    found = cmds.deformableShape(mesh, originalGeometry=True) or []
+    orig = found[0].split(".")[0] if found and found[0] else ""
+    if not orig or not cmds.objExists(orig):
+        raise ValueError("{}: no rest shape found for its skin".format(mesh.rsplit("|", 1)[-1]))
+    return cmds.ls(orig, long=True)[0]
 
 
 def _skins(root):
-    """Every skinCluster whose influences belong to this rig."""
+    """Every skinCluster using one of this rig's joints; influences outside
+    the rig are left in place."""
     joints = set([root] + (cmds.listRelatives(root, allDescendents=True, type="joint", fullPath=True) or []))
     result = []
     for skin in cmds.ls(type="skinCluster") or []:
         influences = cmds.ls(cmds.skinCluster(skin, query=True, influence=True) or [], long=True)
-        if influences and set(influences) <= joints:
+        if set(influences) & joints:
             result.append(skin)
     return result
+
+
+def _driven(mapping):
+    """Refuse joints that controls or animation drive: moving their rest
+    under a constraint would fight it."""
+    for name, joint in mapping.items():
+        for attribute in ("translate", "translateX", "translateY", "translateZ", "rotate"):
+            if cmds.listConnections(joint + "." + attribute, source=True, destination=False, skipConversionNodes=True):
+                raise ValueError("{} is driven by a control, constraint or animation; remove the Aurora "
+                                 "controls (or that driver) before applying a shape".format(name))
 
 
 def deltas(payload, mapping, frame):
@@ -78,12 +93,23 @@ def _blend(groups, by_influence):
     return result
 
 
-def apply(payload, root, up_axis, unit):
-    """Reshape a plain SL rig and its skinned meshes; returns the rig."""
+def rig_unit(mapping, up_axis):
+    """Metres per Maya unit of this rig, from its pelvis height; real
+    centimetres when it cannot tell."""
+    heads = {name: build.world_position(path) for name, path in mapping.items()}
+    return convert.rig_unit(heads, up_axis) or convert.CM
+
+
+def apply(payload, root, up_axis, unit=None):
+    """Reshape a plain SL rig and its skinned meshes; returns the rig.
+    `unit` (metres per Maya unit) None reads it from the rig itself."""
     shape_rules.validate(payload, shape_rules.skeleton())
     mapping = rigs.joint_map(root)
     if not set(rigs.CORE).issubset(mapping):
         raise ValueError("The selected skeleton is not a Second Life rig")
+    _driven(mapping)
+    build.check_rest(root)
+    unit = unit or rig_unit(mapping, up_axis)
     heads = {name: build.world_position(path) for name, path in mapping.items()}
     base = convert.base_frame(up_axis, unit)
     frame = convert.multiply(convert.facing({name: convert.point(base, head) for name, head in heads.items()}), base)
@@ -93,54 +119,50 @@ def apply(payload, root, up_axis, unit):
     for name, path in mapping.items():
         current, matrix = path, None
         while current and matrix is None:
-            matrix = moves.get(rigs.sl_name(current)) if rigs.sl_name(current) in mapping else None
+            matrix = moves.get(rigs.sl_name(current))
             parent = cmds.listRelatives(current, parent=True, fullPath=True, type="joint")
             current = parent[0] if parent else None
         by_joint[path] = matrix or convert.identity()
-    skins = _skins(root)
     plans = []
-    for skin in skins:
-        orig = _orig(skin)
-        geometry = convert.from_maya(cmds.getAttr(skin + ".geomMatrix"))
+    for skin in _skins(root):
         mesh = (cmds.skinCluster(skin, query=True, geometry=True) or [None])[0]
+        orig = _orig(skin, mesh)
+        geometry = convert.from_maya(cmds.getAttr(skin + ".geomMatrix"))
         weights = build.get_weights(skin, mesh)
         points = om.MFnMesh(build._shape_path(orig)).getPoints(om.MSpace.kObject)
         if len(points) != len(weights):
-            raise ValueError("{}: its rest mesh and its weights disagree".format(skin))
-        moved = []
+            raise ValueError("{}: its rest mesh and its weights disagree".format(mesh.rsplit("|", 1)[-1]))
         geometry_inverse = convert.inverse(geometry)
-        for point, groups in zip(points, weights):
-            world = convert.point(geometry, (point.x, point.y, point.z))
-            target = convert.point(_blend(groups, by_joint), world)
-            moved.append(convert.point(geometry_inverse, target))
-        plans.append((skin, orig, points, moved))
+        moved = [convert.point(geometry_inverse, convert.point(_blend(groups, by_joint),
+                                                                convert.point(geometry, (p.x, p.y, p.z))))
+                 for p, groups in zip(points, weights)]
+        plans.append((skin, orig, moved))
+    joints = sorted(mapping.values(), key=lambda path: path.count("|"))
     with build.undoable("Aurora apply shape"):
         # Parents first: a child keeps its own new head after its parent moved.
-        for name, path in sorted(mapping.items(), key=lambda item: item[1].count("|")):
-            new_head = convert.point(by_joint[path], heads[name])
-            cmds.xform(path, worldSpace=True, translation=[build.to_ui(v) for v in new_head])
-        for skin, orig, points, moved in plans:
-            # Rest points through the orig shape's tweaks (pnts), undoable.
-            for index, (old, new) in enumerate(zip(points, moved)):
-                offset = (new[0] - old.x, new[1] - old.y, new[2] - old.z)
-                if max(abs(v) for v in offset) < 1e-9:
-                    continue
-                current = cmds.getAttr("{}.pnts[{}]".format(orig, index))[0]
-                cmds.setAttr("{}.pnts[{}]".format(orig, index),
-                             *[c + build.to_ui(o) for c, o in zip(current, offset)])
-            # The skin binds at the joints' new place.
-            fn_paths = build.influences(skin)
-            for path in fn_paths:
-                logical = _logical(skin, path)
-                cmds.setAttr("{}.bindPreMatrix[{}]".format(skin, logical),
-                             cmds.getAttr(path + ".worldInverseMatrix[0]"), type="matrix")
-            # Go to Bind Pose must return to the new rest, not the old one.
-            poses = set()
-            for path in fn_paths:
-                poses.update(cmds.listConnections(path + ".bindPose", source=False, destination=True,
-                                                  type="dagPose") or [])
-            for pose in poses:
-                cmds.dagPose(fn_paths, reset=True, name=pose)
+        for path in joints:
+            name = rigs.sl_name(path)
+            cmds.xform(path, worldSpace=True,
+                       translation=[build.to_ui(v) for v in convert.point(by_joint[path], heads[name])])
+        rig_joints = set(joints)
+        for skin, orig, moved in plans:
+            build.set_points(orig, moved)
+            # The skin binds at the rig joints' new place.
+            for path in build.influences(skin):
+                if path in rig_joints:
+                    cmds.setAttr("{}.bindPreMatrix[{}]".format(skin, _logical(skin, path)),
+                                 cmds.getAttr(path + ".worldInverseMatrix[0]"), type="matrix")
+        # Go to Bind Pose must return to the new rest: reset every rig joint
+        # its poses hold, not only the skins' influences.
+        poses = set()
+        for path in joints:
+            poses.update(cmds.listConnections(path + ".bindPose", source=False, destination=True,
+                                              type="dagPose") or [])
+        for pose in poses:
+            members = [path for path in joints if pose in (cmds.listConnections(
+                path + ".bindPose", source=False, destination=True, type="dagPose") or [])]
+            if members:
+                cmds.dagPose(members, reset=True, name=pose)
         bindinfo.remember(payload, mapping)
     return root
 

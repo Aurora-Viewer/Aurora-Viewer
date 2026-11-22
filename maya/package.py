@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 import zipfile
 
-FILES = ("__init__.py", "bindinfo.py", "build.py", "capture.py", "controls.py", "convert.py", "lods.py", "materials.py", "mayastar.py", "rig.py", "rig_rules.py", "rigs.py", "session.py", "shape.py", "shape_apply.py", "shape_rules.py", "ui.py", "weights.py")
+FILES = ("__init__.py", "aurora_live_command.py", "bindinfo.py", "build.py", "capture.py", "controls.py", "convert.py", "lods.py", "materials.py", "mayastar.py", "rig.py", "rig_rules.py", "rigs.py", "session.py", "shape.py", "shape_apply.py", "shape_rules.py", "ui.py", "weights.py")
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("output", type=Path, help="Destination ZIP file")

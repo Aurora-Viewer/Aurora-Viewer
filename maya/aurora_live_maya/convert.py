@@ -656,6 +656,21 @@ def slot_mapping(level_groups, high_groups):
 
 # ------------------------------------------------------------ explicit groups
 
+def break_cycles(parents):
+    """Cut any loop of parent links (explicit choices can meet Maya parenting
+    after entries come and go): the first member met keeps no parent."""
+    result = dict(parents)
+    for start in list(result):
+        seen, current = [], start
+        while result.get(current) is not None:
+            if current in seen:
+                result[current] = None
+                break
+            seen.append(current)
+            current = result[current]
+    return result
+
+
 def link_parents(static, hierarchy, overrides):
     """Each static source's linkset parent. `hierarchy` gives the nearest
     synchronized static Maya ancestor; `overrides` holds the list's explicit
@@ -669,7 +684,7 @@ def link_parents(static, hierarchy, overrides):
         else:
             parent = hierarchy.get(source)
             parents[source] = parent if parent in static else None
-    return parents
+    return break_cycles(parents)
 
 
 def group(selected, active, overrides):
