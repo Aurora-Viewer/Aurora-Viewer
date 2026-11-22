@@ -21,6 +21,13 @@ enum Selection {
 }
 
 pub(super) fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
+    if path.extension().is_some_and(|e| {
+        ["png", "jpg", "jpeg", "bmp", "tga", "j2c", "j2k", "jp2"]
+            .iter()
+            .any(|ext| e.eq_ignore_ascii_case(ext))
+    }) {
+        return read_image(path);
+    }
     if path
         .extension()
         .is_some_and(|e| ["dae", "gltf", "glb"].iter().any(|ext| e.eq_ignore_ascii_case(ext)))
@@ -36,6 +43,33 @@ pub(super) fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
         return Err(AssetError::TooLarge("import file"));
     }
     Ok(bytes)
+}
+
+fn read_image(path: &Path) -> Result<Vec<u8>, AssetError> {
+    // A large uncompressed local source is still a valid 1K/2K upload.
+    // Reserve fallibly, including when the file grows while being read;
+    // format and pixel-layout validation belongs to import_texture::decode.
+    let mut file = File::open(path).map_err(|_| AssetError::invalid("file cannot be opened"))?;
+    let size = file
+        .metadata()
+        .ok()
+        .and_then(|metadata| usize::try_from(metadata.len()).ok())
+        .ok_or_else(|| AssetError::invalid("image file size cannot be read"))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size)
+        .map_err(|_| AssetError::invalid("not enough memory to read image file"))?;
+    let mut block = [0_u8; 64 * 1024];
+    loop {
+        let length = file.read(&mut block).map_err(|_| AssetError::invalid("file read failed"))?;
+        if length == 0 {
+            return Ok(bytes);
+        }
+        bytes
+            .try_reserve(length)
+            .map_err(|_| AssetError::invalid("not enough memory to read image file"))?;
+        bytes.extend_from_slice(&block[..length]);
+    }
 }
 
 fn read_mesh(path: &Path) -> Result<Vec<u8>, AssetError> {
@@ -664,14 +698,18 @@ impl Imports {
         Some(entry_id)
     }
     pub fn map_file(&mut self, id: Uuid, slot: usize, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
-        let Some(entry) = self.entries.iter().find(|e| e.id == id) else {
+        let Some(request) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.id == id)
+            .and_then(|entry| entry.begin_map_file_request(slot))
+        else {
             return;
         };
-        let generation = entry.preview_generation;
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
-            if let Some(path) = rfd::FileDialog::new()
+            let result = if let Some(path) = rfd::FileDialog::new()
                 .set_title(aurora_i18n::tr!("import-choose-files"))
                 .add_filter(
                     aurora_i18n::tr!("import-texture"),
@@ -679,17 +717,19 @@ impl Imports {
                 )
                 .pick_file()
             {
-                let result = read(&path)
+                read(&path)
                     .and_then(|data| import_texture::decode_map(&data))
                     .map(|pixels| {
                         let mut image = local_image(pixels, path.file_stem().unwrap_or_default().to_string_lossy().into_owned());
                         image.path = Some(path);
-                        image
+                        Some(image)
                     })
-                    .map_err(|e| e.to_string());
-                let _ = tx.send(Worker::Map(id, generation, slot, result));
-                wake.request_repaint();
-            }
+                    .map_err(|e| e.to_string())
+            } else {
+                Ok(None)
+            };
+            let _ = tx.send(Worker::Map(id, request, slot, result));
+            wake.request_repaint();
         });
     }
     pub fn mesh_file(&mut self, id: Uuid, level: usize, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
@@ -737,6 +777,7 @@ impl Imports {
         else {
             return false;
         };
+        entry.material_map_requests = [None; 4];
         entry.reloading = true;
         entry.status = Status::Preparing;
         let path = entry.path.clone();
@@ -945,6 +986,37 @@ pub(super) fn load_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn import_uncompressed_image_over_256_mib_loads_and_resizes_before_upload() {
+        use std::io::Write;
+        let files = Files::new();
+        let path = files.0.join("large.TGA");
+        let mut header = [0_u8; 18];
+        header[2] = 2;
+        header[12..14].copy_from_slice(&8192_u16.to_le_bytes());
+        header[14..16].copy_from_slice(&8192_u16.to_le_bytes());
+        header[16] = 32;
+        header[17] = 0x28;
+        let mut file = File::create(&path).expect("large image fixture");
+        file.write_all(&header).expect("TGA header");
+        file.set_len(18 + 8192 * 8192 * 4).expect("zero-filled RGBA pixels");
+        drop(file);
+        let prefs = Preferences::default();
+        let entries = load(&path, Choice::Texture, prefs.texture(), 30, &prefs, false).expect("large file import");
+        let Some(Source::Texture(source)) = &entries[0].source else {
+            panic!("texture source")
+        };
+        assert_eq!((source.width, source.height, source.components), (8192, 8192, 4));
+        let options = import_texture::Options {
+            max_width: 1024,
+            max_height: 1024,
+            ..Default::default()
+        };
+        let pixels = import_texture::prepare(source, options).expect("resize large source");
+        assert_eq!((pixels.width, pixels.height, pixels.components), (1024, 1024, 4));
+        assert!(pixels.data.iter().all(|&value| value == 0));
+    }
 
     #[test]
     fn material_file_and_folder_imports_keep_more_than_256_files_and_512_entries() {

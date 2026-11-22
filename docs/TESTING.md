@@ -7085,15 +7085,25 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   alpha is retained, and 16-bit channels use their high byte, following
   `LLPngWrapper::normalizeImage`. Ordinary 8-bit RGB/RGBA files and material
   maps must still load with the same colours and transparency.
-  The texture inspector shows "Limit size to 1024 × 1024" only when the
-  unrestricted power-of-two width or height would exceed 1024. It is off by
-  default (2048 maximum). Each explicit change is saved; newly added textures
-  capture the latest choice when they join the list, while existing files
-  retain their own limit. Viewing a smaller image hides the switch without
-  replacing that remembered choice. With a 2048 × 1024 source opened
-  through `AURORA_DEMO_IMPORT_FILE`, check that toggling it changes the
-  upload size between 1024 × 512 and 2048 × 1024 and updates the fee. Only
-  the final power-of-two dimensions are shown, as in `LLFloaterImagePreview`.
+  The image-size selector beside Import sets a shared, remembered maximum
+  of 1024 or 2048 pixels (2048 by default). Every texture and material has
+  its own Default / 1024 / 2048 selector, including small source images.
+  Default follows the shared choice immediately; an explicit choice takes
+  priority even when it is larger than the shared maximum. Check both the
+  unified importer and the separate texture/material windows: changing the
+  shared choice updates inherited previews and fees, but leaves overrides
+  unchanged. Returning an entry to Default resumes inheritance.
+  Open a source larger than 2048 through `AURORA_DEMO_IMPORT_FILE`, including
+  an 8192 × 8192 PNG and a 16K image. It must load without a dimension-limit
+  warning and shrink automatically to the selected maximum. With a
+  4096 × 2048 source, check upload dimensions of 1024 × 512 and 2048 × 1024,
+  the corresponding fees, and switching back to 2048 without enlarging a
+  previously reduced 1024 image. Material maps follow the same limit;
+  existing inventory textures are reused without re-uploading their pixels.
+  Restore a saved local texture/material with an explicit choice, then one
+  on Default: the override stays explicit, while Default follows the current
+  shared setting. Final power-of-two dimensions are shown, as in
+  `LLFloaterImagePreview`.
   Every scenario uses the same window and queue. Clicking a row in the left queue opens Files, including the already active
   item from Folder preview or Permissions; checkbox/filter changes retain the tab. Files shows its
   asset inspector; Folder preview shows that file's destination and can edit its path.
