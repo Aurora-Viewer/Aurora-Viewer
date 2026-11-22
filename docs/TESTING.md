@@ -7085,9 +7085,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   alpha is retained, and 16-bit channels use their high byte, following
   `LLPngWrapper::normalizeImage`. Ordinary 8-bit RGB/RGBA files and material
   maps must still load with the same colours and transparency.
-  The image-size selector beside Import sets a shared, remembered maximum
+  The image-size selector after Import sets a shared, remembered maximum
   of 1024 or 2048 pixels (2048 by default). Every texture and material has
   its own Default / 1024 / 2048 selector, including small source images.
+  The footer shows a separate maximum-size label and selector, with spacing
+  after Import. In French, a texture's label refers to the singular image;
+  materials and the footer refer to images in the plural.
   Default follows the shared choice immediately; an explicit choice takes
   priority even when it is larger than the shared maximum. Check both the
   unified importer and the separate texture/material windows: changing the

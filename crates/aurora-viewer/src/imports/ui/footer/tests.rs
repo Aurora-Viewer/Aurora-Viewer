@@ -45,6 +45,9 @@ fn the_general_image_limit_stays_beside_import_and_cannot_change_during_confirma
                     .expect("general image size control")
             };
             let (global, clip, enabled) = global_state();
+            let label = ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("import_image_size_global_label")))
+                .expect("general image size label");
             let (upload, upload_clip, _) = ctx
                 .data(|data| data.get_temp::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_upload_action")))
                 .expect("import button");
@@ -54,9 +57,15 @@ fn the_general_image_limit_stays_beside_import_and_cannot_change_during_confirma
             );
             assert!(upload_clip.contains_rect(upload), "{choice:?}, width {width}: visible import");
             assert!(!global.intersects(upload), "controls must not overlap");
+            assert!(clip.contains_rect(label), "the label remains visible when the footer wraps");
+            assert!(global.left() >= label.right(), "the selector follows its label");
+            assert!(
+                (global.center().y - label.center().y).abs() < 1.0,
+                "keep label and selector together"
+            );
             if width == 820.0 {
                 assert!((global.center().y - upload.center().y).abs() < 1.0);
-                assert!(upload.left() >= global.right() && upload.left() - global.right() < 20.0);
+                assert!(label.left() - upload.right() >= 16.0, "leave space after Import");
             }
             imports.confirm = true;
             frame(&mut imports, &mut prefs, Vec::new());

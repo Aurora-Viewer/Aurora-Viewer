@@ -534,7 +534,11 @@ fn linear_color(color: [f32; 4]) -> [f32; 4] {
 fn image_size_limit(ui: &mut egui::Ui, entry: &mut Entry, prefs: &Preferences) {
     let old = entry.image_size_limit;
     ui.horizontal_wrapped(|ui| {
-        ui.label(aurora_i18n::tr!("import-image-size-limit"));
+        ui.label(if matches!(entry.source, Some(Source::Texture(_))) {
+            aurora_i18n::tr!("import-image-size-single")
+        } else {
+            aurora_i18n::tr!("import-image-size-limit")
+        });
         let label = |limit| match limit {
             ImageSizeLimit::Default => aurora_i18n::tr!("import-image-size-default").to_owned(),
             limit => aurora_i18n::tr!("import-image-size-pixels", size = limit.maximum(prefs.limit_texture_size)),

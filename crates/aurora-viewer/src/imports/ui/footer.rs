@@ -40,7 +40,6 @@ pub(super) fn show(
         // a wrapping row: the buttons stay in its layout
         let size = Vec2::new(0.0, ui.spacing().interact_size.y);
         if local {
-            image_size_global(ui, imports, prefs, busy);
             if let Some(entry) = imports.active.and_then(|id| imports.entries.iter().find(|e| e.id == id))
                 && action_button_if(
                     ui,
@@ -89,6 +88,7 @@ pub(super) fn show(
             if stage.clicked() {
                 actions.push(Action::StageLocalUploads);
             }
+            image_size_global(ui, imports, prefs, busy || stage.clicked());
         } else {
             if let Some(entry) = imports
                 .active
@@ -151,13 +151,6 @@ pub(super) fn show(
                     actions.push(Action::Quote(entry.id));
                 }
             }
-            if matches!(
-                imports.window_choice(),
-                Choice::Bulk | Choice::Texture | Choice::Material | Choice::Mesh
-            ) {
-                image_size_global(ui, imports, prefs, busy);
-            }
-            // Resolve the size before freezing the price or starting an upload.
             let total = imports.total(prices);
             let selected = imports
                 .entries
@@ -182,6 +175,13 @@ pub(super) fn show(
                     actions.push(start_action(imports.choice));
                 }
             }
+            if matches!(
+                imports.window_choice(),
+                Choice::Bulk | Choice::Texture | Choice::Material | Choice::Mesh
+            ) {
+                // Freeze the size on the frame that confirms or starts the upload.
+                image_size_global(ui, imports, prefs, busy || upload.clicked());
+            }
         }
         if busy {
             ui.spinner();
@@ -195,17 +195,38 @@ pub(super) fn show(
 
 fn image_size_global(ui: &mut egui::Ui, imports: &mut Imports, prefs: &mut Preferences, busy: bool) {
     let old = prefs.limit_texture_size;
-    // Reserve the button before entering its enabled scope so a narrow
-    // wrapping footer moves it onto the next line instead of clipping it.
+    let label = aurora_i18n::tr!("import-image-size-limit");
+    let label_width = ui
+        .painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            egui::TextStyle::Body.resolve(ui.style()),
+            ui.visuals().text_color(),
+        )
+        .size()
+        .x;
+    let gap = 16.0;
+    let selector_width = 100.0;
+    // Keep the label and selector together when the footer wraps, with extra
+    // space separating them from the import action on a wide row.
     ui.allocate_ui_with_layout(
-        Vec2::new(148.0, ui.spacing().interact_size.y),
+        Vec2::new(
+            gap + label_width + ui.spacing().item_spacing.x + selector_width,
+            ui.spacing().interact_size.y,
+        ),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
+            ui.add_space(gap);
             ui.add_enabled_ui(!busy, |ui| {
+                let label = ui.label(label);
+                #[cfg(test)]
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(egui::Id::unique("import_image_size_global_label"), label.rect));
+                let _ = label;
                 let response = egui::ComboBox::from_id_salt("import_image_size_global")
-                    .width(148.0)
+                    .width(selector_width)
                     .selected_text(aurora_i18n::tr!(
-                        "import-image-size-global",
+                        "import-image-size-pixels",
                         size = if prefs.limit_texture_size { 1024 } else { 2048 }
                     ))
                     .show_ui(ui, |ui| {

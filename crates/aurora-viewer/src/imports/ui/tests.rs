@@ -765,28 +765,68 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
         assert_eq!(pair[0].left(), pair[1].left(), "one column of maps");
         assert!(pair[1].top() > pair[0].bottom());
     }
-    drop(frame(
-        vec![
-            egui::Event::PointerMoved(cards[1].center()),
-            egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                delta: Vec2::new(0.0, -200.0),
-                phase: egui::TouchPhase::Move,
-                source: egui::MouseWheelSource::Unknown,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ],
-        &mut imports,
-    ));
-    for _ in 0..60 {
-        drop(frame(Vec::new(), &mut imports));
+    let slots = [0, 2, 3, 1];
+    let mut visible = [false; 4];
+    let mut output = frame(Vec::new(), &mut imports);
+    let viewport = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if slots.iter().any(|&slot| text.galley.text() == map_label(slot)) => Some(shape.clip_rect),
+            _ => None,
+        })
+        .expect("a material map heading identifies the scroll viewport");
+    // A wrapping footer leaves less room for the cards. Each heading must be
+    // reachable, without assuming that all four fit at the same scroll offset.
+    for step in 0..=12 {
+        for (index, slot) in slots.into_iter().enumerate() {
+            visible[index] |= output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(text)
+                if text.galley.text() == map_label(slot)
+                    && shape.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))
+            });
+        }
+        if visible.iter().all(|&seen| seen) || step == 12 {
+            break;
+        }
+        let pointer = slots
+            .iter()
+            .find_map(|&slot| {
+                let card = ctx
+                    .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("material_card", imports.entries[0].id, slot))))
+                    .expect("map card");
+                let shown = card.intersect(viewport);
+                (shown.width() > 1.0 && shown.height() > 1.0).then(|| shown.center())
+            })
+            .expect("wheel input must target a visible part of a material map card");
+        drop(frame(
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: Vec2::new(0.0, -120.0),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            &mut imports,
+        ));
+        for _ in 0..60 {
+            drop(frame(Vec::new(), &mut imports));
+        }
+        output = frame(Vec::new(), &mut imports);
     }
-    let output = frame(Vec::new(), &mut imports);
-    for slot in [0, 2, 3, 1] {
-        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, egui::Shape::Text(text)
-            if text.galley.text() == map_label(slot) && shape.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))),
-            "all four map headings remain reachable with enlarged thumbnails");
-    }
+    let missing: Vec<_> = slots
+        .into_iter()
+        .zip(visible)
+        .filter(|(_, seen)| !*seen)
+        .map(|(slot, _)| map_label(slot))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "material map headings remain unreachable after bounded scrolling: {missing:?}; viewport: {viewport:?}"
+    );
 }
 
 #[test]
