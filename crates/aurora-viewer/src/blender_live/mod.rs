@@ -133,6 +133,12 @@ pub struct Live {
     /// The source shown in Quick look, and its camera.
     quick_look: Option<Uuid>,
     quick_view: aurora_render::preview::View,
+    /// The last placement change, while its Undo toast shows.
+    pub undo: Option<objects::Undo>,
+    /// Set by the toast's Undo; applied with the frame's placement changes.
+    pub undo_requested: bool,
+    /// Reduce animations: the thumbnails' update sweep stands still.
+    pub still: bool,
 }
 impl Default for Live {
     fn default() -> Self {
@@ -176,6 +182,9 @@ impl Default for Live {
             thumbnails: Default::default(),
             quick_look: None,
             quick_view: Default::default(),
+            undo: None,
+            undo_requested: false,
+            still: false,
         }
     }
 }
@@ -349,6 +358,8 @@ impl Live {
         self.changed.clear();
         self.thumbnails.clear();
         self.quick_look = None;
+        self.undo = None;
+        self.undo_requested = false;
         self.start_requested = false;
         self.server = None;
         self.clear = true;

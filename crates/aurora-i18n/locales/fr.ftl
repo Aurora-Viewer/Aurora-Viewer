@@ -14902,6 +14902,11 @@ blender-live-levels-note = Préparés dans Blender d’après les réglages Live
 blender-live-quick-look-tip = Aperçu rapide : voir cet objet en plus grand
 blender-live-quick-look-drag = Faites glisser pour le tourner, double-cliquez pour le remettre de face.
 blender-live-quick-look-changed = Modifié dans Blender il y a { $ago }.
+blender-live-undo = Annuler
+blender-live-undo-derez = { $name } dérezzé · toujours dans la liste de Blender
+blender-live-undo-detach = { $name } détaché · toujours dans la liste de Blender
+blender-live-undo-drop = { $name } posé au sol
+blender-live-undo-attach = { $name } déplacé vers { $point }
 
 inventory-bulk-permissions = Permissions par lot
 inventory-bulk-adjust = Modifier les permissions des éléments

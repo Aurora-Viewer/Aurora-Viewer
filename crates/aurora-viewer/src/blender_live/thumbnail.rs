@@ -82,6 +82,8 @@ pub struct Thumbnails {
     models: HashMap<Uuid, (u64, Arc<Model>)>,
     /// By source: the digest a job is building.
     pending: HashMap<Uuid, u64>,
+    /// By card: the digest of its sources now (the last `update`).
+    current: HashMap<Uuid, u64>,
     tx: mpsc::Sender<Built>,
     rx: mpsc::Receiver<Built>,
 }
@@ -92,6 +94,7 @@ impl Default for Thumbnails {
         Self {
             models: HashMap::new(),
             pending: HashMap::new(),
+            current: HashMap::new(),
             tx,
             rx,
         }
@@ -110,7 +113,15 @@ impl Thumbnails {
         self.models.get(&source).is_none_or(|(built, _)| *built != digest)
     }
 
+    /// Whether a card's update is on its way: Blender sent a change its
+    /// picture does not show yet (settling or being built). The card's
+    /// sweep runs while it is.
+    pub fn updating(&self, card: Uuid) -> bool {
+        self.current.get(&card).is_some_and(|&digest| self.stale(card, digest))
+    }
+
     pub fn clear(&mut self) {
+        self.current.clear();
         self.models.clear();
         self.pending.clear();
         while self.rx.try_recv().is_ok() {}
@@ -136,6 +147,7 @@ impl Thumbnails {
                 self.models.insert(id, (digest, model));
             }
         }
+        self.current = groups.iter().map(|g| (g.id, g.digest)).collect();
         self.models.retain(|id, _| groups.iter().any(|g| g.id == *id));
         self.pending.retain(|id, _| groups.iter().any(|g| g.id == *id));
         let mut wait: Option<Duration> = None;
@@ -317,6 +329,7 @@ mod tests {
         thumbnails.update(&groups(&first, start), &first.images, start, inline);
         let model = thumbnails.get(id).expect("built");
         assert!(!model.parts.is_empty() && model.radius > 0.0);
+        assert!(!thumbnails.updating(id), "a card that shows its state has no sweep");
         // the same state: the same model, no new job
         let mut jobs = 0;
         thumbnails.update(&groups(&first, start), &first.images, start, |_| jobs += 1);
@@ -329,13 +342,16 @@ mod tests {
         assert_eq!(jobs, 0, "nothing is built during a drag");
         assert_eq!(wait, Some(SETTLE));
         assert!(Arc::ptr_eq(&model, &thumbnails.get(id).expect("kept while settling")));
+        assert!(thumbnails.updating(id), "the sweep runs while the update is on its way");
         let later = start + SETTLE;
         thumbnails.update(&groups(&second, start), &second.images, later, inline);
         thumbnails.update(&groups(&second, start), &second.images, later, inline);
         assert!(!Arc::ptr_eq(&model, &thumbnails.get(id).expect("rebuilt")));
+        assert!(!thumbnails.updating(id), "the sweep stops with the new picture");
         // a card that leaves is forgotten
         thumbnails.update(&[], &[], later, inline);
         assert!(thumbnails.get(id).is_none());
+        assert!(!thumbnails.updating(id));
     }
 
     #[test]

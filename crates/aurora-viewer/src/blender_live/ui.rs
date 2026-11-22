@@ -69,6 +69,7 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &Palette, can_upload
             live.tab = Tab::ALL[index.min(Tab::ALL.len() - 1)];
         }
         start = status(live, ui, p);
+        undo_toast(live, ui, p);
         // each tab keeps its own scroll position
         egui::ScrollArea::vertical()
             .id_salt(("blender_live_tab", index))
@@ -84,6 +85,67 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &Palette, can_upload
     });
     live.open = open;
     start
+}
+
+/// The toast of the last placement change (Derez, Detach, Drop, Attach),
+/// with its Undo, for `objects::Undo::SHOWN`. Placement is local to this
+/// viewer, so the change is made at once and the toast offers it back
+/// instead of asking first.
+fn undo_toast(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
+    use super::objects::Action;
+    let Some(undo) = &live.undo else { return };
+    let now = std::time::Instant::now();
+    if undo.expired(now) {
+        return;
+    }
+    ui.ctx()
+        .request_repaint_after(objects_undo_left(undo, now));
+    let name = live
+        .snapshot
+        .as_ref()
+        .and_then(|s| s.sources.iter().find(|s| s.id == undo.source))
+        .map_or_else(String::new, |s| s.name.clone());
+    let text = match undo.action {
+        Action::Derez => aurora_i18n::tr!("blender-live-undo-derez", name = name.as_str()),
+        Action::Detach => aurora_i18n::tr!("blender-live-undo-detach", name = name.as_str()),
+        Action::Drop => aurora_i18n::tr!("blender-live-undo-drop", name = name.as_str()),
+        Action::Attach(point) => {
+            let point = live
+                .attach_choices
+                .iter()
+                .find(|choice| choice.0 == point)
+                .map_or("", |choice| choice.2.as_str());
+            aurora_i18n::tr!("blender-live-undo-attach", name = name.as_str(), point = point)
+        }
+        _ => return,
+    };
+    egui::Frame::new()
+        .fill(p.field)
+        .stroke(Stroke::new(1.0, p.violet.gamma_multiply(0.45)))
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 4,
+            top: 4,
+            bottom: 4,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-undo")).clicked() {
+                        live.undo_requested = true;
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(RichText::new(text).size(12.5).color(p.ink)).wrap());
+                    });
+                });
+            });
+        });
+}
+
+fn objects_undo_left(undo: &super::objects::Undo, now: std::time::Instant) -> std::time::Duration {
+    super::objects::Undo::SHOWN.saturating_sub(now.saturating_duration_since(undo.at))
 }
 
 /// A short muted paragraph under the status line.
@@ -388,6 +450,9 @@ fn thumbnail(live: &mut Live, ui: &mut egui::Ui, p: &Palette, id: Uuid) {
             response
         }
     };
+    if live.thumbnails.updating(id) {
+        sweep(ui, p, response.rect, live.still);
+    }
     if response.on_hover_text(tip).clicked() {
         live.quick_look = if live.quick_look == Some(id) { None } else { Some(id) };
         live.quick_view = aurora_render::preview::View {
@@ -395,6 +460,41 @@ fn thumbnail(live: &mut Live, ui: &mut egui::Ui, p: &Palette, id: Uuid) {
             ..thumbnail_view(p)
         };
     }
+}
+
+/// How long the sweep takes to cross a thumbnail.
+const SWEEP: f64 = 1.6;
+
+/// The light that crosses a thumbnail while its update is on its way, so a
+/// change in Blender shows on its card before its new picture. With Reduce
+/// animations, a still wash in its place.
+fn sweep(ui: &egui::Ui, p: &Palette, rect: egui::Rect, still: bool) {
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let light = p.teal.gamma_multiply(0.3);
+    if still {
+        painter.rect_filled(rect, ui.visuals().window_corner_radius, p.teal.gamma_multiply(0.15));
+        return;
+    }
+    let t = ui.input(|i| i.time) % SWEEP / SWEEP;
+    // ease in and out, from fully left of the picture to fully right
+    let eased = (t * t * (3.0 - 2.0 * t)) as f32;
+    let width = rect.width();
+    let x = rect.left() - width + eased * 2.0 * width;
+    // a band slanted a little, clear at its edges and lit in its middle
+    let slant = rect.height() * 0.18;
+    let clear = egui::Color32::TRANSPARENT;
+    let mut mesh = egui::Mesh::default();
+    for (dx, color) in [(0.3, clear), (0.5, light), (0.7, clear)] {
+        let at = x + dx * width;
+        mesh.colored_vertex(egui::pos2(at + slant, rect.top()), color);
+        mesh.colored_vertex(egui::pos2(at - slant, rect.bottom()), color);
+    }
+    for i in [0, 2] {
+        mesh.add_triangle(i, i + 1, i + 2);
+        mesh.add_triangle(i + 1, i + 3, i + 2);
+    }
+    painter.add(mesh);
+    ui.ctx().request_repaint();
 }
 
 /// Quick look: the selected card's object larger, turned by a drag, with
