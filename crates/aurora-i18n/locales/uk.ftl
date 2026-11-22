@@ -10823,6 +10823,7 @@ people-groups-count-unlimited = { $count ->
 people-groups-none = Немає активної групи
 people-groups-none-sub = Над вашим ім'ям не показується звання
 people-groups-active-tag = активна
+people-groups-deactivate = Деактивувати
 people-groups-active = Активна група
 people-groups-member = Учасник
 people-groups-title = Звання: { $title }
