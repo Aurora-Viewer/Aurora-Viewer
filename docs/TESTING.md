@@ -12681,7 +12681,7 @@ What the inventory must show with these scenarios:
 | `AURORA_IMPOSTOR_POSES=every` or `alt` | Impostors posed at every frame, as before |
 | `AURORA_ANCHOR_CENTRES=every` | The centre of every worn object recomputed at every frame, as before |
 | `AURORA_NAME_TAGS=classic`, `plate` or `alt` | Style of the avatar name tags for this launch |
-| `AURORA_PLATE_STYLE=plates`, `icon` or `name` | Look of the name plates for this launch: complete, icon only or name only |
+| `AURORA_PLATE_STYLE=plates` (or `full`), `icon` or `name` | Look of the name plates for this launch: complete, icon only or name only |
 | `AURORA_LABEL_OCCLUSION=0` | Name tags and floating texts drawn over the scene, as before, instead of behind what is in front of them |
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 without its disk cache |
@@ -12900,9 +12900,13 @@ What the inventory must show with these scenarios:
   each change (losses, or the viewer falling behind).
 - **`AURORA_PLATE_STYLE`**: `icon` draws every name plate as the profile
   picture in a round plate with its status dot and voice ring, `name` as
-  the display name and group title in the compact pill without badges (the far pill
-  beyond 40 m), without touching Preferences › Aurora › "Plate style".
-  Hovering a plate still shows it complete. Use with
+  the display name and group title in the compact pill, without touching
+  Preferences › Aurora › "Plate style".
+  Both keep only the contact sets' badges, and beyond 40 m both are the
+  far pill. Like `AURORA_NAME_TAGS`, it overrides the setting for the
+  whole run (a change made in Preferences shows only after a launch
+  without it). With "Expand a plate on hover", the hovered plate shows
+  complete. Use with
   `AURORA_DEMO_TAGS=voice` to see the nine residents in both looks.
 - **`AURORA_NAME_TAGS`**: `classic` or `plate` imposes the style of the
   avatar name tags (classic or name plates) without touching the "Name tag

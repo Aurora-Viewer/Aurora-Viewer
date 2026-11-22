@@ -64,7 +64,7 @@ pub fn plate_style() -> Option<crate::settings::PlateStyle> {
     use crate::settings::PlateStyle;
     static STYLE: std::sync::OnceLock<Option<PlateStyle>> = std::sync::OnceLock::new();
     *STYLE.get_or_init(|| match std::env::var("AURORA_PLATE_STYLE").ok()?.trim() {
-        "plates" => Some(PlateStyle::Plates),
+        "plates" | "plate" | "full" => Some(PlateStyle::Plates),
         "icon" => Some(PlateStyle::Icon),
         "name" => Some(PlateStyle::Name),
         other => {

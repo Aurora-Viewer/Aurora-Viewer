@@ -45,11 +45,6 @@ pub enum BlockedChat {
     Greyed,
 }
 
-/// How the Conversations window looks (Preferences › Aurora): Aurora's
-/// workspace (the default: a column of conversations, messages grouped by
-/// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
-/// row per message, no pictures), a messenger's bubbles (`ui/chat/bubbles.rs`)
-/// or the lines of Firestorm's conversations (the legacy style).
 /// What an avatar's name plate shows at close range (`ui::nameplate`):
 /// the complete plate, the picture alone in a round plate, or the display
 /// name with its group title. The classic name tags (`classic_name_tags`) ignore it.
@@ -61,6 +56,11 @@ pub enum PlateStyle {
     Name,
 }
 
+/// How the Conversations window looks (Preferences › Aurora): Aurora's
+/// workspace (the default: a column of conversations, messages grouped by
+/// author with their picture, `ui/chat/aurora.rs`), its compact variant (one
+/// row per message, no pictures), a messenger's bubbles (`ui/chat/bubbles.rs`)
+/// or the lines of Firestorm's conversations (the legacy style).
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ChatStyle {
     #[default]

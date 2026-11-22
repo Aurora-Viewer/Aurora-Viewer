@@ -73,7 +73,7 @@ pub enum Level {
     /// The display name alone.
     Far,
     /// "Icon only" plates (`PlateStyle::Icon`): the picture in a round
-    /// plate, with its status dot, at every distance.
+    /// plate, with its status dot, up to the far distance.
     Icon,
     /// "Name only" plates (`PlateStyle::Name`): the display name and the
     /// group title in the compact pill, without badges, up to the far
@@ -83,14 +83,16 @@ pub enum Level {
 
 /// The plates' look at close range (Preferences › Aurora › "Plate
 /// style"), the human's request of 2026-11-21: the complete plate, the
-/// picture alone, or the name alone. Hovering any of them still shows the
-/// complete plate ("Expand a plate on hover").
+/// picture alone, or the name alone. Beyond the compact distance every
+/// style ends in the far pill, the name alone: a crowd at 60 m is not a
+/// wall of circles, nor dozens of pictures to load. With "Expand a plate on
+/// hover", the hovered one shows the complete plate.
 pub fn styled_level(style: crate::settings::PlateStyle, level: Level) -> Level {
     use crate::settings::PlateStyle;
     match style {
         PlateStyle::Plates => level,
+        _ if level == Level::Far => Level::Far,
         PlateStyle::Icon => Level::Icon,
-        PlateStyle::Name if level == Level::Far => Level::Far,
         PlateStyle::Name => Level::Name,
     }
 }
@@ -443,15 +445,17 @@ pub fn sub_lines(level: Level, c: &Content) -> [Option<SubLine<'_>>; 2] {
     }
 }
 
-/// The badges of a plate: none on the far pill nor on the icon and name
-/// only plates; a green microphone in the
+/// The badges of a plate: none on the far pill; only the contact sets'
+/// symbols on the icon and name only plates, where their markers land
+/// (`ui/contact_markers.rs`); a green microphone in the
 /// voice channel, always first, and nothing outside it (the human's choice
 /// of 2026-10-14, replacing the red struck-through microphone).
 pub fn badges(level: Level, c: &Content) -> Badges {
     let mut b = Badges::default();
-    if matches!(level, Level::Far | Level::Icon | Level::Name) {
+    if level == Level::Far {
         return b;
     }
+    let states = !matches!(level, Level::Icon | Level::Name);
     for (on, badge) in [
         (c.in_voice, Badge::Voice),
         (c.typing, Badge::Typing),
@@ -459,7 +463,7 @@ pub fn badges(level: Level, c: &Content) -> Badges {
         (c.too_complex, if c.render_never { Badge::RenderNever } else { Badge::TooComplex }),
         (c.blocked, Badge::Blocked),
     ] {
-        if on {
+        if on && states {
             b.push(badge);
         }
     }
@@ -509,8 +513,8 @@ impl Metrics {
             Level::Compact => (40.0, 15.0, 15.0, 8.0, 14.5, 0.0, 21.0, 12.0),
             Level::Far => (26.0, 12.0, 12.0, 0.0, 12.5, 0.0, 0.0, 0.0),
             // the full plate's picture with the same border around it
-            Level::Icon => (66.0, 6.0, 6.0, 0.0, MOCKUP_NAME_PX, 54.0, 0.0, 0.0),
-            Level::Name => (40.0, 15.0, 15.0, 0.0, 14.5, 0.0, 0.0, 0.0),
+            Level::Icon => (66.0, 6.0, 6.0, 0.0, MOCKUP_NAME_PX, 54.0, 25.0, 14.0),
+            Level::Name => (40.0, 15.0, 15.0, 8.0, 14.5, 0.0, 21.0, 12.0),
         };
         Metrics {
             // an even height: the pill's ends are exact half circles
@@ -574,7 +578,7 @@ pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layo
 /// least as wide, and on a full plate its floating badges start past it.
 pub fn layout_with(level: Level, m: &Metrics, text: &TextSize, badges: usize, lead: f32) -> Layout {
     if level == Level::Icon {
-        return icon_layout(m);
+        return icon_layout(m, badges);
     }
     let s = m.scale;
     let text_left = if m.photo > 0.0 { m.pad_left + m.photo + m.gap } else { m.pad_left };
@@ -584,7 +588,11 @@ pub fn layout_with(level: Level, m: &Metrics, text: &TextSize, badges: usize, le
     } else {
         0.0
     };
-    let inline = if level == Level::Compact && badges > 0 { m.gap + row } else { 0.0 };
+    let inline = if matches!(level, Level::Compact | Level::Name) && badges > 0 {
+        m.gap + row
+    } else {
+        0.0
+    };
     let mut width = text_left + text_w + inline + m.pad_right;
     if level == Level::Full {
         // room for the floating badges, which start right of the picture
@@ -646,8 +654,9 @@ pub fn layout_with(level: Level, m: &Metrics, text: &TextSize, badges: usize, le
 }
 
 /// The icon only plate: a circle (the pill's ends meet) around the picture,
-/// its status dot in the same corner as on the full plate.
-fn icon_layout(m: &Metrics) -> Layout {
+/// its status dot in the same corner as on the full plate, the contact
+/// sets' badges floating over the top edge as on the full plate.
+fn icon_layout(m: &Metrics, badges: usize) -> Layout {
     let h = m.height;
     let photo = Circle {
         center: Pos2::new(h * 0.5, h * 0.5),
@@ -657,15 +666,26 @@ fn icon_layout(m: &Metrics) -> Layout {
         center: photo.center + Vec2::splat(photo.radius - 7.5 * m.scale),
         radius: 7.5 * m.scale,
     };
+    let row = if badges > 0 {
+        badges as f32 * m.badge + (badges - 1) as f32 * m.badge_gap
+    } else {
+        0.0
+    };
+    let mut rects = [Rect::NOTHING; 14];
+    let mut x = (h - row) * 0.5;
+    for r in rects.iter_mut().take(badges) {
+        *r = Rect::from_min_size(Pos2::new(x, -14.0 * m.scale), Vec2::splat(m.badge));
+        x += m.badge + m.badge_gap;
+    }
     Layout {
         size: Vec2::splat(h),
         photo: Some(photo),
         dot: Some(dot),
         name: photo.center,
         subs: [None, None],
-        // the loading bar, if any, under the picture
-        text_x: (photo.center.x - photo.radius * 0.6, photo.center.x + photo.radius * 0.6),
-        badges: [Rect::NOTHING; 14],
+        // the loading bar, if any, short enough to stay inside the circle
+        text_x: (photo.center.x - photo.radius * 0.4, photo.center.x + photo.radius * 0.4),
+        badges: rects,
     }
 }
 
