@@ -100,11 +100,12 @@ pub enum Page {
     Commands,
     System,
     Network,
+    Extensions,
     Fun,
 }
 
 impl Page {
-    pub const ALL: [Page; 25] = [
+    pub const ALL: [Page; 26] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
@@ -129,6 +130,7 @@ impl Page {
         Page::Commands,
         Page::System,
         Page::Network,
+        Page::Extensions,
         Page::Fun,
     ];
 
@@ -159,6 +161,7 @@ impl Page {
             Page::Commands => "commands",
             Page::System => "system",
             Page::Network => "network",
+            Page::Extensions => "extensions",
             Page::Fun => "fun",
         }
     }
@@ -189,6 +192,7 @@ impl Page {
             Page::Commands => aurora_i18n::tr!("ui-options-commands"),
             Page::System => aurora_i18n::tr!("ui-options-page-system"),
             Page::Network => aurora_i18n::tr!("ui-options-network-and-cache"),
+            Page::Extensions => aurora_i18n::tr!("ui-options-extensions"),
             Page::Fun => aurora_i18n::tr!("ui-options-fun"),
         }
     }
@@ -220,6 +224,7 @@ impl Page {
             Page::Commands => aurora_i18n::tr!("ui-options-about-commands"),
             Page::System => aurora_i18n::tr!("ui-options-about-system"),
             Page::Network => aurora_i18n::tr!("ui-options-about-network"),
+            Page::Extensions => aurora_i18n::tr!("ui-options-about-extensions"),
             Page::Fun => aurora_i18n::tr!("ui-options-about-fun"),
         }
     }
@@ -253,6 +258,7 @@ impl Page {
             Page::Commands => "square-rounded-chevron-right-filled",
             Page::System => "world-filled",
             Page::Network => "cloud-data-connection-filled",
+            Page::Extensions => "package",
             Page::Fun => "confetti-filled",
         }
     }
@@ -456,8 +462,21 @@ pub struct OptionsUi {
     pub flycam_active: bool,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
     pub anti_spam_version: u64,
-    /// The page shown and its tab.
     pub page: Page,
+    /// Snapshot of the extension manager, refreshed by the app each frame.
+    pub extensions: crate::extension_host::Snapshot,
+    /// Permissions explicitly checked for the pending package review.
+    pub extension_grants: HashSet<String>,
+    /// ID whose pending review currently owns `extension_grants`.
+    pub extension_review_id: Option<String>,
+    /// Whether to enable a package immediately after install, if all requested grants are checked.
+    pub extension_enable_after_install: bool,
+    /// Explicit acknowledgement for an unsigned or untrusted publisher in package review.
+    pub extension_ack_unverified: bool,
+    /// Explicit acknowledgement when an update changes its signing key.
+    pub extension_ack_publisher_change: bool,
+    /// Per-extension unverified acknowledgements being made in the installed list.
+    pub extension_enable_acknowledgements: HashSet<String>,
     pub tab: usize,
     /// The search of the sidebar, and the view of the modified settings.
     pub query: String,
@@ -822,6 +841,8 @@ pub struct OptionsResult {
     pub pick_backup: bool,
     /// A restore confirmed: the app puts back what is not the settings.
     pub restored: Option<backup::Restored>,
+    /// A user-approved extension-manager operation, executed by the app's worker.
+    pub extension_command: Option<crate::extension_host::Command>,
 }
 
 /// A folder the user can choose (Preferences › Network and cache, Chat).

@@ -131,6 +131,8 @@ mod automated_chat_tests;
 #[cfg(test)]
 mod dialog_name_tests;
 #[cfg(test)]
+mod extension_chat_tests;
+#[cfg(test)]
 mod fee_permission_tests;
 #[cfg(test)]
 mod flash_tests;
@@ -151,6 +153,7 @@ use crate::agent::AgentState;
 use crate::scene::avatar::AvatarLibrary;
 use crate::scene::textures::TexSource;
 use crate::ui_sound::{ImKind, ImMessage, UiSound};
+use aurora_extension_api::{API_VERSION, ExtensionEvent, ExtensionRequest};
 use aurora_net::{
     AvatarAppearance, ChatMessage, ChatSourceType, ChatType, InstantMessage, LoginResponse, NetEvent, RegionHandle, RegionInfo, SunInfo,
 };
@@ -412,6 +415,20 @@ impl ChatLine {
     }
 }
 
+fn extension_safe_text(text: &str, max_bytes: usize) -> String {
+    let mut output = String::with_capacity(text.len().min(max_bytes));
+    for character in text.chars() {
+        if character.is_control() {
+            continue;
+        }
+        if output.len() + character.len_utf8() > max_bytes {
+            break;
+        }
+        output.push(character);
+    }
+    output
+}
+
 /// The name an object speaks under in the nearby chat. A name of nothing but
 /// spaces is an empty one, and with `mark` (FSMarkObjects) it becomes "(no
 /// name)": a script that clears its name can no longer write a line that
@@ -474,6 +491,14 @@ pub enum LocalAssetRequest {
 }
 
 pub struct World {
+    /// Bounded, transient events to the sandboxed extension worker.
+    extension_chat_events: VecDeque<ExtensionRequest>,
+    /// Recent nearby-chat IDs and their live line keys; old entries are dropped with the chat history.
+    extension_message_targets: HashMap<u64, (Uuid, SystemTime)>,
+    extension_message_order: VecDeque<u64>,
+    extension_message_ids: HashMap<(Uuid, SystemTime), u64>,
+    extension_annotations: HashMap<u64, Vec<(String, String)>>,
+    next_extension_message_id: u64,
     /// mScreen's Y scale (LLVOAvatarSelf::updateCharacter).
     pub hud_aspect: f32,
     /// Where the HUDs are laid out in the window (left, top, right, bottom
@@ -1056,6 +1081,12 @@ impl World {
 
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
         World {
+            extension_chat_events: VecDeque::new(),
+            extension_message_targets: HashMap::new(),
+            extension_message_order: VecDeque::new(),
+            extension_message_ids: HashMap::new(),
+            extension_annotations: HashMap::new(),
+            next_extension_message_id: 1,
             hud_aspect: 1.0,
             hud_area: None,
             hud_zoom: 1.0,
@@ -2491,6 +2522,90 @@ impl World {
     /// The origin kept with an object's chat line (owner, location).
     pub fn chat_object(&self, line: &ChatLine) -> Option<&crate::slapp::RemoteObject> {
         self.chat_objects.get(&(line.source, line.time))
+    }
+
+    /// Take accepted, sanitized nearby-chat events for the isolated extension worker.
+    pub fn take_extension_chat_events(&mut self) -> Vec<ExtensionRequest> {
+        self.extension_chat_events.drain(..).collect()
+    }
+
+    /// Attach a bounded extension annotation to the exact accepted nearby-chat line.
+    pub fn annotate_extension_chat(&mut self, message_id: u64, extension_id: String, text: String) -> bool {
+        let Some((source, time)) = self.extension_message_targets.get(&message_id).cloned() else {
+            return false;
+        };
+        if !self
+            .chat
+            .iter()
+            .any(|line| line.source == source && line.time == time && matches!(line.kind, ChatKind::Local(_)))
+        {
+            return false;
+        }
+        let annotations = self.extension_annotations.entry(message_id).or_default();
+        if annotations.len() >= 8 || text.is_empty() {
+            return false;
+        }
+        annotations.push((extension_id, text));
+        true
+    }
+
+    /// Read separately rendered extension annotations for a live nearby-chat line.
+    pub fn extension_annotations(&self, line: &ChatLine) -> &[(String, String)] {
+        if line.origin != Origin::Live || !matches!(line.kind, ChatKind::Local(_)) {
+            return &[];
+        }
+        self.extension_message_ids
+            .get(&(line.source, line.time))
+            .and_then(|id| self.extension_annotations.get(id))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn queue_extension_chat(&mut self, line: &ChatLine) {
+        const EVENT_LIMIT: usize = 128;
+        const TARGET_LIMIT: usize = 256;
+        let speaker = extension_safe_text(&line.from, 256);
+        let text = extension_safe_text(&line.text, aurora_extension_api::MAX_CHAT_TEXT_BYTES);
+        if text.is_empty() {
+            return;
+        }
+        let message_id = self.next_extension_message_id;
+        self.next_extension_message_id = self.next_extension_message_id.wrapping_add(1).max(1);
+        let request = ExtensionRequest {
+            api_version: API_VERSION,
+            request_id: message_id,
+            event: ExtensionEvent::NearbyChat { message_id, speaker, text },
+        };
+        if request.validate().is_err() {
+            return;
+        }
+        while self.extension_chat_events.len() >= EVENT_LIMIT {
+            if let Some(dropped) = self.extension_chat_events.pop_front() {
+                self.forget_extension_chat_target(dropped.request_id);
+            }
+        }
+        while self.extension_message_order.len() >= TARGET_LIMIT {
+            if let Some(oldest) = self.extension_message_order.pop_front() {
+                self.forget_extension_chat_target(oldest);
+            }
+        }
+        let key = (line.source, line.time);
+        if let Some(previous) = self.extension_message_ids.get(&key).copied() {
+            self.forget_extension_chat_target(previous);
+        }
+        self.extension_message_targets.insert(message_id, key);
+        self.extension_message_ids.insert(key, message_id);
+        self.extension_message_order.push_back(message_id);
+        self.extension_chat_events.push_back(request);
+    }
+
+    fn forget_extension_chat_target(&mut self, message_id: u64) {
+        if let Some(key) = self.extension_message_targets.remove(&message_id) {
+            self.extension_message_ids.remove(&key);
+        }
+        self.extension_annotations.remove(&message_id);
+        self.extension_message_order.retain(|queued| *queued != message_id);
+        self.extension_chat_events.retain(|request| request.request_id != message_id);
     }
 
     fn push_chat(&mut self, line: ChatLine) {
@@ -5384,6 +5499,7 @@ impl World {
             && c.region
                 .and_then(|h| self.region_offset(h))
                 .is_some_and(|offset| radar::beyond_say_range(c.position, offset, self.agent.position, radar::chat_ranges().say));
+        let extension_eligible = matches!(kind, ChatKind::Local(_));
         self.push_chat(ChatLine {
             time,
             from,
@@ -5395,6 +5511,9 @@ impl World {
             beyond_range,
             speaker,
         });
+        if extension_eligible && let Some(line) = self.chat.back().cloned() {
+            self.queue_extension_chat(&line);
+        }
     }
 
     fn on_im(&mut self, mut im: InstantMessage) {

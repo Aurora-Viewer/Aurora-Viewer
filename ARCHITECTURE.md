@@ -1,5 +1,7 @@
 # Aurora Viewer architecture
 
+
+
 `imports::ImageSizeLimit` separates a draft's Default/1024/2048 choice from
 the shared persisted image limit beside Import. Effective options feed previews,
 quotes, deduplication and encoding; changing the general limit updates inherited
@@ -22,6 +24,13 @@ one noncollapsed representative triangle where the source has one, preserving
 that material's vertex attributes. Error-threshold generation does not force the
 minimum, and empty source slots stay empty. Fast remains internal to collision
 reduction; the former Auto and Precise algorithms are removed.
+
+
+`docs/extension-platform/ADR-001.md` records the initial design and the Wasmi 2.0.2 runtime decision for the generic extension platform. `aurora-extension-api` defines the versioned guest/event contract, `aurora-extension-sdk` provides generic guest helpers, and `aurora-extension-runtime` validates bounded `.ext` archives, verifies optional Ed25519 signatures, persists lifecycle/grants and per-store trusted publisher keys, and enforces the import-free Wasmi sandbox. The viewer's worker in `crates/aurora-viewer/src/extension_host.rs` scopes package state and permissions to an opaque hash of the active grid login URI and agent UUID; `ui/options/pages/extensions.rs` renders the native Preferences manager. A valid signature from an unknown key remains unverified, and publisher labels are local aliases, not legal identity. The guest receives no WASI, filesystem, network, secrets, viewer pointers or raw renderer access. Broader network/auth, inventory, asset/upload, appearance, diagnostics and map/window capabilities remain proposals until their brokers, permissions, bounds and tests exist. The generic demo fixture registers a host-rendered panel and requests a notification only after its button click; it is not a production plugin.
+
+
+
+
 
 `imports/file_picker.rs` owns pending native selections and their import-window
 identity. Closing that window cancels and retires the request without discarding

@@ -407,6 +407,12 @@ impl<'a> Cx<'a> {
         }
     }
 
+    /// Whether an independent page UI is being drawn, rather than counted,
+    /// searched, collected, or borrowed as another page's setting row.
+    pub fn shows_independent_controls(&self) -> bool {
+        self.mode == Mode::Show && self.pick.is_none()
+    }
+
     /// The rows that follow belong to this page and tab.
     pub fn enter(&mut self, page: Page, tab: usize) {
         self.page = page;

@@ -1,0 +1,20 @@
+[package]
+name = "aurora-extension-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+aurora-extension-api = { version = "0.1.0", path = "../aurora-extension-api" }
+semver = "1.0.28"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+ring = "0.17.14"
+sha2 = "0.11.0"
+wasmi = { version = "2.0.2", default-features = false, features = ["std", "validate", "portable-dispatch", "extra-checks"] }
+zip = { version = "9.0.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[lints]
+workspace = true
