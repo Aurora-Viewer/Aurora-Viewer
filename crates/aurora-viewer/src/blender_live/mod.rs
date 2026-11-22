@@ -13,6 +13,7 @@ pub mod protocol;
 pub(crate) mod shape;
 #[cfg(test)]
 mod tests;
+mod thumbnail;
 mod token;
 mod transport;
 mod ui;
@@ -127,6 +128,17 @@ pub struct Live {
     /// the last snapshot came: the cards' and the status line's times.
     pub changed: HashMap<Uuid, (u64, std::time::Instant)>,
     pub received_at: Option<std::time::Instant>,
+    /// The cards' live thumbnails (`thumbnail.rs`).
+    thumbnails: thumbnail::Thumbnails,
+    /// The source shown in Quick look, and its camera.
+    quick_look: Option<Uuid>,
+    quick_view: aurora_render::preview::View,
+    /// The last placement change, while its Undo toast shows.
+    pub undo: Option<objects::Undo>,
+    /// Set by the toast's Undo; applied with the frame's placement changes.
+    pub undo_requested: bool,
+    /// Reduce animations: the thumbnails' update sweep stands still.
+    pub still: bool,
 }
 impl Default for Live {
     fn default() -> Self {
@@ -167,6 +179,12 @@ impl Default for Live {
             bend: Default::default(),
             changed: HashMap::new(),
             received_at: None,
+            thumbnails: Default::default(),
+            quick_look: None,
+            quick_view: Default::default(),
+            undo: None,
+            undo_requested: false,
+            still: false,
         }
     }
 }
@@ -338,9 +356,41 @@ impl Live {
         self.import = Default::default();
         self.received_at = None;
         self.changed.clear();
+        self.thumbnails.clear();
+        self.quick_look = None;
+        self.undo = None;
+        self.undo_requested = false;
         self.start_requested = false;
         self.server = None;
         self.clear = true;
+    }
+
+    /// Builds the thumbnails of the objects that changed, on the job pool;
+    /// only while the window is open (closed, nothing is drawn).
+    pub fn update_thumbnails(&mut self, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
+        if !self.open {
+            return;
+        }
+        let Some(snapshot) = &self.snapshot else {
+            self.thumbnails.clear();
+            return;
+        };
+        let groups = thumbnail::Group::of(&snapshot.sources, &self.changed, |id| self.state(id) != SourceState::Removed);
+        let wait = self.thumbnails.update(&groups, &snapshot.images, std::time::Instant::now(), |job| {
+            let ctx = ctx.clone();
+            jobs.execute(move || {
+                job();
+                ctx.request_repaint();
+            });
+        });
+        if let Some(wait) = wait {
+            ctx.request_repaint_after(wait);
+        }
+    }
+
+    /// Opens Quick look on `source` (the demo's `quick-look` tab).
+    pub fn open_quick_look(&mut self, source: Uuid) {
+        self.quick_look = Some(source);
     }
 
     pub fn take_latest(&mut self) -> Option<protocol::Prepared> {

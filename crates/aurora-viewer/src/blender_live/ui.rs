@@ -69,6 +69,7 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &Palette, can_upload
             live.tab = Tab::ALL[index.min(Tab::ALL.len() - 1)];
         }
         start = status(live, ui, p);
+        undo_toast(live, ui, p);
         // each tab keeps its own scroll position
         egui::ScrollArea::vertical()
             .id_salt(("blender_live_tab", index))
@@ -84,6 +85,66 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &Palette, can_upload
     });
     live.open = open;
     start
+}
+
+/// The toast of the last placement change (Derez, Detach, Drop, Attach),
+/// with its Undo, for `objects::Undo::SHOWN`. Placement is local to this
+/// viewer, so the change is made at once and the toast offers it back
+/// instead of asking first.
+fn undo_toast(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
+    use super::objects::Action;
+    let Some(undo) = &live.undo else { return };
+    let now = std::time::Instant::now();
+    if undo.expired(now) {
+        return;
+    }
+    ui.ctx().request_repaint_after(objects_undo_left(undo, now));
+    let name = live
+        .snapshot
+        .as_ref()
+        .and_then(|s| s.sources.iter().find(|s| s.id == undo.source))
+        .map_or_else(String::new, |s| s.name.clone());
+    let text = match undo.action {
+        Action::Derez => aurora_i18n::tr!("blender-live-undo-derez", name = name.as_str()),
+        Action::Detach => aurora_i18n::tr!("blender-live-undo-detach", name = name.as_str()),
+        Action::Drop => aurora_i18n::tr!("blender-live-undo-drop", name = name.as_str()),
+        Action::Attach(point) => {
+            let point = live
+                .attach_choices
+                .iter()
+                .find(|choice| choice.0 == point)
+                .map_or("", |choice| choice.2.as_str());
+            aurora_i18n::tr!("blender-live-undo-attach", name = name.as_str(), point = point)
+        }
+        _ => return,
+    };
+    egui::Frame::new()
+        .fill(p.field)
+        .stroke(Stroke::new(1.0, p.violet.gamma_multiply(0.45)))
+        .corner_radius(ui.visuals().window_corner_radius)
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 4,
+            top: 4,
+            bottom: 4,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-undo")).clicked() {
+                        live.undo_requested = true;
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(egui::Label::new(RichText::new(text).size(12.5).color(p.ink)).wrap());
+                    });
+                });
+            });
+        });
+}
+
+fn objects_undo_left(undo: &super::objects::Undo, now: std::time::Instant) -> std::time::Duration {
+    super::objects::Undo::SHOWN.saturating_sub(now.saturating_duration_since(undo.at))
 }
 
 /// A short muted paragraph under the status line.
@@ -289,6 +350,7 @@ fn objects(live: &mut Live, ui: &mut egui::Ui, p: &Palette, can_upload: bool) {
             }
         });
     }
+    quick_look(live, ui, p);
     ui.add_space(4.0);
     widgets::collapsing(
         ui,
@@ -349,6 +411,173 @@ fn eye(live: &mut Live, ui: &mut egui::Ui, p: &Palette, id: Uuid) {
         true,
     ) {
         live.set_state(id, if visible { SourceState::Hidden } else { SourceState::Visible });
+    }
+}
+
+/// The side of a card's thumbnail, and of Quick look's view.
+const THUMBNAIL: f32 = 40.0;
+const QUICK_LOOK: f32 = 150.0;
+
+/// A palette colour as the preview renderer takes it (sRGB, 0..1).
+fn preview_color(color: egui::Color32) -> [f32; 4] {
+    color.to_srgba_unmultiplied().map(|v| f32::from(v) / 255.0)
+}
+
+/// The camera of a thumbnail: the preview's three-quarter view, a little
+/// closer so that the object fills its square.
+fn thumbnail_view(p: &Palette) -> aurora_render::preview::View {
+    aurora_render::preview::View {
+        distance: 2.4,
+        background: preview_color(p.raised),
+        ambient: [0.25; 3],
+        ..Default::default()
+    }
+}
+
+/// A card's live thumbnail (`thumbnail.rs`), or its empty square while it
+/// is built. A click opens Quick look on it, or closes it.
+fn thumbnail(live: &mut Live, ui: &mut egui::Ui, p: &Palette, id: Uuid) {
+    let size = Vec2::splat(THUMBNAIL);
+    let tip = aurora_i18n::tr!("blender-live-quick-look-tip");
+    let response = match live.thumbnails.get(id) {
+        Some(model) => {
+            aurora_render::preview::paint_hint(ui, egui::Id::unique(("blender_live_thumbnail", id)), model, thumbnail_view(p), size)
+        }
+        None => {
+            let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+            response
+        }
+    };
+    if live.thumbnails.updating(id) {
+        sweep(ui, p, response.rect, live.still);
+    }
+    if response.on_hover_text(tip).clicked() {
+        live.quick_look = if live.quick_look == Some(id) { None } else { Some(id) };
+        live.quick_view = aurora_render::preview::View {
+            distance: 2.6,
+            ..thumbnail_view(p)
+        };
+    }
+}
+
+/// How long the sweep takes to cross a thumbnail.
+const SWEEP: f64 = 1.6;
+
+/// The light that crosses a thumbnail while its update is on its way, so a
+/// change in Blender shows on its card before its new picture. With Reduce
+/// animations, a still wash in its place.
+fn sweep(ui: &egui::Ui, p: &Palette, rect: egui::Rect, still: bool) {
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let light = p.teal.gamma_multiply(0.3);
+    if still {
+        painter.rect_filled(rect, ui.visuals().window_corner_radius, p.teal.gamma_multiply(0.15));
+        return;
+    }
+    let t = ui.input(|i| i.time) % SWEEP / SWEEP;
+    // ease in and out, from fully left of the picture to fully right
+    let eased = (t * t * (3.0 - 2.0 * t)) as f32;
+    let width = rect.width();
+    let x = rect.left() - width + eased * 2.0 * width;
+    // a band slanted a little, clear at its edges and lit in its middle
+    let slant = rect.height() * 0.18;
+    let clear = egui::Color32::TRANSPARENT;
+    let mut mesh = egui::Mesh::default();
+    for (dx, color) in [(0.3, clear), (0.5, light), (0.7, clear)] {
+        let at = x + dx * width;
+        mesh.colored_vertex(egui::pos2(at + slant, rect.top()), color);
+        mesh.colored_vertex(egui::pos2(at - slant, rect.bottom()), color);
+    }
+    for i in [0, 2] {
+        mesh.add_triangle(i, i + 1, i + 2);
+        mesh.add_triangle(i + 1, i + 3, i + 2);
+    }
+    painter.add(mesh);
+    ui.ctx().request_repaint();
+}
+
+/// Quick look: the selected card's object larger, turned by a drag, with
+/// what the card says of it. Under the cards, until Close or a second click
+/// on its thumbnail.
+fn quick_look(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
+    let Some(id) = live.quick_look else {
+        ui.ctx()
+            .data_mut(|d| d.remove_temp::<Uuid>(egui::Id::unique("blender_live_quick_look_shown")));
+        return;
+    };
+    let Some(source) = live
+        .snapshot
+        .as_ref()
+        .and_then(|s| s.sources.iter().find(|s| s.id == id))
+        .cloned()
+        .filter(|_| live.state(id) != SourceState::Removed)
+    else {
+        live.quick_look = None;
+        return;
+    };
+    let Some(model) = live.thumbnails.get(id) else { return };
+    // the colours follow the theme; the camera is the user's
+    live.quick_view.background = preview_color(p.raised);
+    live.quick_view.ambient = [0.25; 3];
+    let mut close = false;
+    let response = widgets::surface(ui, p, |ui| {
+        ui.horizontal_top(|ui| {
+            aurora_render::preview::paint_with_pose(
+                ui,
+                egui::Id::unique(("blender_live_quick_look", id)),
+                model,
+                &mut live.quick_view,
+                Vec2::splat(QUICK_LOOK),
+                None,
+            )
+            .on_hover_text(aurora_i18n::tr!("blender-live-quick-look-drag"));
+            ui.vertical(|ui| {
+                ui.label(RichText::new(&source.name).strong().size(13.0).color(p.ink));
+                // the card's line: the root with its prims
+                let rows = live.linkset_rows();
+                let row = rows.iter().find(|row| row.source.id == id);
+                let prims = row.map_or(1, |row| row.prims);
+                let tris = triangles(&source)
+                    + live.snapshot.as_ref().map_or(0, |s| {
+                        s.sources
+                            .iter()
+                            .filter(|kid| kid.link.is_some_and(|link| link.parent == id) && live.state(kid.id) != SourceState::Removed)
+                            .map(triangles)
+                            .sum()
+                    });
+                let detail = if source.rigged() {
+                    aurora_i18n::tr!("blender-live-card-rigged", triangles = tris)
+                } else if prims > 1 {
+                    aurora_i18n::tr!("blender-live-card-linkset", prims = prims, triangles = tris)
+                } else {
+                    aurora_i18n::tr!("blender-live-card-static", triangles = tris)
+                };
+                ui.label(RichText::new(detail).size(11.5).color(p.muted));
+                if let Some((_, at)) = live.changed.get(&id) {
+                    note(ui, p, &aurora_i18n::tr!("blender-live-quick-look-changed", ago = ago(*at).0));
+                }
+                note(ui, p, aurora_i18n::tr!("blender-live-quick-look-drag"));
+                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-close")).clicked() {
+                    close = true;
+                }
+            });
+        })
+        .response
+    });
+    if ui
+        .ctx()
+        .data(|d| d.get_temp::<Uuid>(egui::Id::unique("blender_live_quick_look_shown")))
+        != Some(id)
+    {
+        // just opened: bring it into view
+        response.scroll_to_me(None);
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique("blender_live_quick_look_shown"), id));
+    }
+    if close {
+        live.quick_look = None;
+        ui.ctx()
+            .data_mut(|d| d.remove_temp::<Uuid>(egui::Id::unique("blender_live_quick_look_shown")));
     }
 }
 
@@ -434,6 +663,7 @@ fn object_card(
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             eye(live, ui, p, source.id);
+            thumbnail(live, ui, p, source.id);
             // the time, the caret and the menu take their room from the right
             let time_w = changed.map_or(0.0, |at| time_width(ui, &ago(at).0) + 6.0);
             let buttons = 20.0 + if kids.is_some() { 20.0 + 6.0 } else { 0.0 } + 6.0 + time_w;
