@@ -1010,7 +1010,7 @@ pub struct Scene {
     geom_trash: jobs::Trash<Arc<GpuGeom>>,
     /// Bounds of the objects for the hover search, and its kept answer
     /// (hover.rs).
-    pick: hover::PickIndex,
+    pub(crate) pick: hover::PickIndex,
     pub hover: hover::HoverCache,
     /// Our own HUD objects with a geometry, in index order, as
     /// `build_huds` found them for the HUD view of the frame: what a HUD

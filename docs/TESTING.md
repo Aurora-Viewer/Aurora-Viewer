@@ -13148,6 +13148,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those opaque to the eye and the fainter ones lying on a solid surface (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
 | `AURORA_DEMO_RENDER_INFO=<overlimit>[/<reporting>]` | The demo's region answers the avatar render info with these counts (8 reporting by default): the "may not see you fully" notice; the report it would get goes to the log |
+| `AURORA_MCP=1` | Starts the local Model Context Protocol (MCP) server; see [MCP.md](MCP.md) for `AURORA_MCP_*` options |
 
 ### Details
 

@@ -133,8 +133,8 @@ impl App {
     /// carry of an item between two windows took it (outside/carry.rs).
     pub(super) fn carry_window_event(&mut self, id: WindowId, event: &WindowEvent) -> bool {
         use crate::outside::carry::{Event, Step};
-        let size = match &self.gfx {
-            Some(g) if g.window.id() == id => Some(g.window.inner_size()),
+        let size = match self.gfx.as_ref().and_then(|g| g.window.as_ref()) {
+            Some(w) if w.id() == id => Some(w.inner_size()),
             _ => self.outside.size_of(id),
         };
         let Some(size) = size else {
@@ -166,14 +166,21 @@ impl App {
         if at.is_none() && self.carry.over().is_none() {
             return;
         }
-        let Some(own) = self.gfx.as_ref().map(|g| (g.window.id(), g.window.scale_factor())) else {
+        let Some(own) = self
+            .gfx
+            .as_ref()
+            .and_then(|g| g.window.as_ref())
+            .map(|w| (w.id(), w.scale_factor()))
+        else {
             return;
         };
         let target = at.and_then(|at| {
             let mut windows: Vec<Placed> = self
                 .gfx
-                .iter()
-                .filter_map(|g| Placed::of(&g.window, self.carry.front(own.0)))
+                .as_ref()
+                .and_then(|g| g.window.as_ref())
+                .and_then(|w| Placed::of(w, self.carry.front(own.0)))
+                .into_iter()
                 .collect();
             windows.extend(self.outside.placed(|id| self.carry.front(id)));
             under(&windows, id, at)

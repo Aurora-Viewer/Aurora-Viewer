@@ -1183,6 +1183,11 @@ exe before publishing; the local build also writes it to `version.txt`.
 | `--language <code>` | Forces the language of this instance (`en`, `fr`, `ja`, or another language added to the catalogues), without changing the saved choice |
 | `--grid <name>` | Selects the login grid: `agni`, `aditi`, a saved grid name/nickname or a login URI (`--loginuri <uri>` too) |
 | `--login <first> <last> <password>` | Logs in with this account as soon as the login screen opens |
+| `--autologin` | Logs in immediately using the active remembered account |
+| `--mcp` | Starts the local Model Context Protocol (MCP) server (default port `3847`) |
+| `--mcp-port <port>` | Sets the port for the local MCP server (implies `--mcp`) |
+| `--headless` | Runs without a window or GPU renderer (implies `--mcp`) |
+| `--offscreen-gpu` | Runs headless with a windowless offscreen GPU renderer for captures (implies `--mcp`) |
 | `<slurl>`, `--url <slurl>` | Starts at this place, or hands it to the viewer already running; must come last |
 | `-h`, `--help` | Shows the help |
 | `-V`, `--version` | Prints the built version then exits, with no window, log or network |
@@ -1222,6 +1227,9 @@ exe before publishing; the local build also writes it to `version.txt`.
 - `--login`: the account follows the usual "remember" choices; a single
   user name is written `<name> Resident`. `--grid` alone selects the grid of
   a new account's form.
+- `--mcp`, `--mcp-port`, `--headless`, `--offscreen-gpu`: starts the loopback
+  MCP server and optionally runs without a window (`--headless` on CPU or
+  `--offscreen-gpu` with offscreen rendering); see [docs/MCP.md](docs/MCP.md).
 
 ### Demo mode and test switches
 

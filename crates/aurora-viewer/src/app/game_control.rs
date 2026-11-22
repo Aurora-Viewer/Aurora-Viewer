@@ -105,7 +105,7 @@ impl App {
             self.world.agent.is_sitting(),
         );
         let cursor = (mode == Mode::Cursor)
-            .then(|| self.gfx.as_ref().map(|g| g.window.inner_size()))
+            .then(|| self.gfx.as_ref().and_then(|g| g.window.as_ref()).map(|w| w.inner_size()))
             .flatten()
             .map(|size| {
                 let (w, h) = (size.width as i32, size.height as i32);
@@ -421,17 +421,17 @@ impl App {
         if a.mouse_dx == 0.0 && a.mouse_dy == 0.0 {
             return;
         }
-        let Some(g) = &self.gfx else { return };
-        let size = g.window.inner_size();
+        let Some(window) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) else {
+            return;
+        };
+        let size = window.inner_size();
         // round(DX · 1200 · dt); +DY is up on the stick, down on the screen
         let dx = (a.mouse_dx * CURSOR_SPEED * dt).round();
         let dy = (a.mouse_dy * CURSOR_SPEED * dt).round();
         let x = (self.cursor_pos.0 + dx).clamp(0.0, size.width as f32);
         let y = (self.cursor_pos.1 + dy).clamp(0.0, size.height as f32);
         if (x, y) != self.cursor_pos {
-            let _ = g
-                .window
-                .set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
+            let _ = window.set_cursor_position(winit::dpi::PhysicalPosition::new(f64::from(x), f64::from(y)));
             self.cursor_pos = (x, y);
             self.last_input = now;
         }
@@ -455,7 +455,7 @@ impl App {
         if self.game_control.synthetic.is_empty() {
             return;
         }
-        let Some(id) = self.gfx.as_ref().map(|g| g.window.id()) else {
+        let Some(id) = self.gfx.as_ref().and_then(|g| g.window.as_ref()).map(|w| w.id()) else {
             self.game_control.synthetic.clear();
             return;
         };
@@ -634,8 +634,8 @@ impl App {
         h.last_view = view;
         if hidden != h.hidden {
             h.hidden = hidden;
-            if let Some(g) = &self.gfx {
-                g.window.set_cursor_visible(!hidden);
+            if let Some(window) = self.gfx.as_ref().and_then(|g| g.window.as_ref()) {
+                window.set_cursor_visible(!hidden);
             }
         }
     }

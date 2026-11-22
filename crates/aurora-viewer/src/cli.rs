@@ -33,6 +33,16 @@ pub struct Cli {
     /// `--uninstall`: remove what the viewer registered on this computer,
     /// print what it did and exit, without a window (`uninstall.rs`).
     pub uninstall: bool,
+    /// `--mcp`: start the local Model Context Protocol (MCP) server.
+    pub mcp: bool,
+    /// `--mcp-port <port>`: port for the local MCP server (defaults to 3847).
+    pub mcp_port: Option<u16>,
+    /// `--autologin`: log in immediately using the active saved account.
+    pub autologin: bool,
+    /// `--headless`: run without a window or GPU renderer (implies `--mcp`).
+    pub headless: bool,
+    /// `--offscreen-gpu`: run headless with a windowless offscreen GPU renderer for screenshots.
+    pub offscreen_gpu: bool,
     help: bool,
     version: bool,
 }
@@ -122,6 +132,23 @@ fn parse(args: impl Iterator<Item = String>) -> Cli {
                 "flycam" => crate::camera::VrView::Flycam,
                 _ => crate::camera::VrView::FirstPerson,
             };
+        } else if a == "--mcp" {
+            cli.mcp = true;
+        } else if a == "--headless" {
+            cli.headless = true;
+            cli.mcp = true;
+        } else if a == "--offscreen-gpu" {
+            cli.headless = true;
+            cli.offscreen_gpu = true;
+            cli.mcp = true;
+        } else if a == "--autologin" || a == "-autologin" {
+            cli.autologin = true;
+        } else if let Some(v) = a.strip_prefix("--mcp-port=") {
+            cli.mcp_port = v.trim().parse::<u16>().ok();
+            cli.mcp = true;
+        } else if a == "--mcp-port" {
+            cli.mcp_port = args.next().and_then(|v| v.trim().parse::<u16>().ok());
+            cli.mcp = true;
         } else if let Some(v) = a.strip_prefix("--fps-limit=") {
             cli.fps_limit = parse_fps_limit(v);
         } else if a == "--fps-limit" {
