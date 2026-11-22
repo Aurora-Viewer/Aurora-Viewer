@@ -1628,8 +1628,7 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
 
 // What arrives of the point lights' and the projectors' red, green and
 // blue at a pixel of the main view: the traced lights' tint (rt_lights.wgsl, `.gba` of the traced
-// mask). 1 elsewhere: other views, blended faces, without the traced
-// lights.
+// mask). 1 elsewhere: other views, without the traced lights.
 fn local_share(frag: vec2<f32>) -> vec3<f32> {
     if (!local_traced(frag)) {
         return vec3<f32>(1.0);
@@ -1643,9 +1642,16 @@ fn local_share(frag: vec2<f32>) -> vec3<f32> {
 }
 
 // Whether `local_share` is traced at this pixel, the projectors' beams'
-// shadows with it (`projector_at`).
+// shadows with it (`projector_at`). On every face of the main view, a
+// blended one and the snow included: such a face, which the mask was not
+// traced for (`contact_share` 0), takes the share of the solid surface
+// behind it. Unshadowed, the hair and veils of an avatar in a closed room
+// took a lamp outside through the walls. The limit, chosen by the human
+// (2026-11-22): a lit veil in front of a wall in a lamp's shadow is
+// darkened with the wall. An Aurora difference: the Legacy Viewer shadows
+// no point light, on any face.
 fn local_traced(frag: vec2<f32>) -> bool {
-    return (frame.light_mode.z & LOCAL_TRACED) != 0u && contact_share > 0.0 && !in_reflection_pass();
+    return (frame.light_mode.z & LOCAL_TRACED) != 0u && !in_reflection_pass();
 }
 
 // Whether light `i` of the frame is one the traced share is of.
