@@ -120,7 +120,10 @@ pub fn sleeves_fixture(rig: &Rig) -> Result<protocol::Prepared, String> {
             vertices.push(serde_json::json!({ "position": p.to_array(), "normal": (p - center).normalize().to_array(), "uv": [0.0, 0.0], "joints": [index,0,0,0], "weights": [1.0,0.0,0.0,0.0] }));
         }
         indices.extend(
-            [0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5].map(|i| base + i),
+            [
+                0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5,
+            ]
+            .map(|i| base + i),
         );
     }
     let sleeves = serde_json::json!({
