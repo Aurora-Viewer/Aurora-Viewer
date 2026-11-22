@@ -137,6 +137,11 @@ Japanese, beyond the plural:
   the user types or compares with another text: key names (Ctrl, WASD), chat
   commands, file names and extensions, the identifiers of the Dev Toolbox
   tools (J2, L1).
+  A number that sits beside a placeable's value stays half width too, so
+  that the two match: the month names a date is built with (`10月`, then
+  `{ $day }日`) and the limit of a count (`{ $bytes }／65,536バイト`). So do
+  product names and versions (SOCKS 5, JPEG 2000, Blender 2.93), L$
+  amounts, channel numbers and negative values the user types.
 - Terms: アバター, インベントリ, フレンド, グループ, 区画 (parcel),
   リージョン, 不動産 (estate), オブジェクト, 装着 (attach), アウトフィット,
   外観 (an avatar's appearance), アピアランス (the Preferences page that
