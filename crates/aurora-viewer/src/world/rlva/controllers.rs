@@ -7,13 +7,12 @@ use aurora_net::{
     experience::ExperienceDetails,
     land::{LandCommand, ScriptAttachment},
 };
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-const LIMIT: usize = 256;
+/// A memory bound the Legacy Viewer does not have (RlvHandler::
+/// m_BlockedObjects), far above the experiences an avatar attaches.
+const LIMIT: usize = 4096;
 struct Waiting {
     experience: Uuid,
     name: String,
@@ -30,8 +29,6 @@ struct Blocked {
 pub struct Controllers {
     waiting: Vec<Waiting>,
     blocked: Vec<Blocked>,
-    bindings: BTreeMap<Uuid, Uuid>,
-    resources_pending: Option<Instant>,
 }
 
 fn allowed(preferences: &Preferences, details: &ExperienceDetails) -> bool {
@@ -58,17 +55,13 @@ impl Controllers {
             });
         }
     }
+    /// RlvHandler::isBlockedObject (rlvhandler.cpp): the very object the
+    /// region reported, not the other prims of its linkset.
     pub fn blocked(&self, source: Uuid) -> bool {
-        let root = self.bindings.get(&source).copied().unwrap_or(source);
-        self.blocked.iter().any(|entry| entry.root == Some(root))
+        self.blocked.iter().any(|entry| entry.root == Some(source))
     }
     pub fn accepts(&self, source: Uuid, param: Param) -> bool {
         matches!(param, Param::Remove | Param::Clear) || !self.blocked(source)
-    }
-    fn bind(&mut self, source: Uuid, root: Uuid) {
-        if self.bindings.len() < 1024 || self.bindings.contains_key(&source) {
-            self.bindings.insert(source, root);
-        }
     }
 }
 
@@ -157,22 +150,13 @@ impl World {
         Some((root, object.attachment_item_id() == Some(root)))
     }
 
-    pub(crate) fn rlva_bind_controller(&mut self, source: Uuid) {
-        if self.rlva.enabled()
-            && !self.rlva.controllers.blocked.is_empty()
-            && let Some((root, _)) = self.rlva_controller_root(source)
-        {
-            self.rlva.controllers.bind(source, root);
-        }
-    }
-
     pub(crate) fn rlva_controllers_tick(&mut self, now: Instant) {
         if !self.rlva.enabled() || (self.rlva.controllers.waiting.is_empty() && self.rlva.controllers.blocked.is_empty()) {
             return;
         }
         let mut controllers = std::mem::take(&mut self.rlva.controllers);
         let waiting = std::mem::take(&mut controllers.waiting);
-        let mut request = false;
+        let mut request = 0usize;
         for entry in waiting {
             if now.saturating_duration_since(entry.since) >= Duration::from_secs(300) {
                 continue;
@@ -185,7 +169,7 @@ impl World {
                         since: now,
                         seen: false,
                     });
-                    request = true;
+                    request += 1;
                 }
             } else {
                 controllers.waiting.push(entry);
@@ -209,25 +193,10 @@ impl World {
                 }
             });
         }
-        controllers
-            .bindings
-            .retain(|_, root| controllers.blocked.iter().any(|entry| entry.root == Some(*root)));
         self.rlva.controllers = controllers;
-        let sources = self.rlva_controller_sources();
-        for source in sources {
-            self.rlva_bind_controller(source);
-            if self.rlva.controllers.blocked(source) {
-                self.rlva.forget(source);
-            }
-        }
-        if request
-            && self
-                .rlva
-                .controllers
-                .resources_pending
-                .is_none_or(|at| now.saturating_duration_since(at) >= Duration::from_secs(30))
-        {
-            self.rlva.controllers.resources_pending = Some(now);
+        // RlvHandler::onExperienceAttach asks for the AttachmentResources
+        // of every experience it blocks, one request each.
+        for _ in 0..request {
             self.rlva.out.push(NetCommand::Land(LandCommand::AttachmentScripts));
         }
     }
@@ -236,20 +205,20 @@ impl World {
         if !self.rlva.enabled() {
             return;
         }
-        self.rlva.controllers.resources_pending = None;
-        let mut blocked = self
-            .rlva
-            .controllers
-            .blocked
-            .iter()
-            .filter_map(|entry| entry.root)
-            .collect::<BTreeSet<_>>();
+        // RlvHandler::getAttachmentResourcesCoro (rlvhandler.cpp): the first
+        // object, in the order of the reply, that is not known as anything
+        // but a temporary attachment and not blocked yet, whose name an
+        // unresolved entry waits for, is that entry's object; its rules are
+        // cleared (with a "/clear" notice) and the reply's other objects are
+        // left to the next request.
         for object in attachments.iter().flat_map(|attachment| &attachment.objects) {
-            if object.id.is_nil() || blocked.contains(&object.id) {
+            if object.id.is_nil() || self.rlva.controllers.blocked(object.id) {
                 continue;
             }
             if self.objects.index_of_uuid(&object.id).is_some()
-                && !self.rlva_controller_root(object.id).is_some_and(|(_, temporary)| temporary)
+                && !self
+                    .rlva_controller_root(object.id)
+                    .is_some_and(|(root, temporary)| root == object.id && temporary)
             {
                 continue;
             }
@@ -263,34 +232,10 @@ impl World {
             {
                 entry.root = Some(object.id);
                 entry.seen = seen;
-                blocked.insert(object.id);
+                self.rlva.clear_issuer(object.id);
+                return;
             }
         }
-        // Match sources before clearing: the object tree may already be gone
-        // when a later child detach packet arrives.
-        let sources = self.rlva_controller_sources();
-        for source in sources {
-            self.rlva_bind_controller(source);
-        }
-        for source in blocked
-            .into_iter()
-            .chain(self.rlva.controllers.bindings.keys().copied().collect::<Vec<_>>())
-        {
-            if self.rlva.controllers.blocked(source) {
-                self.rlva.forget(source);
-            }
-        }
-    }
-
-    fn rlva_controller_sources(&self) -> BTreeSet<Uuid> {
-        self.rlva
-            .rules
-            .keys()
-            .copied()
-            .chain(self.rlva.pending.iter().map(|(source, _)| *source))
-            .chain(self.rlva.appearance.iter().map(|(source, _)| *source))
-            .chain(self.rlva.viewer.iter().map(|(source, _)| *source))
-            .collect()
     }
 }
 
@@ -501,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn rlva_experience_controller_classification_clears_child_issuers_and_pending_force_actions() {
+    fn rlva_experience_controller_classification_clears_only_the_reported_object() {
         let mut world = fixture();
         let root = attachment(&mut world, true);
         let parent = world
@@ -528,8 +473,10 @@ mod tests {
         object.name_values.clear();
         object.parent_id = parent;
         world.objects.upsert(world.main_region.unwrap(), object);
-        say(&mut world, child, "@jump=n,tpto:1/2/3=force");
-        assert!(world.rlva.has("jump") && !world.rlva.pending.is_empty());
+        say(&mut world, child, "@jump=n");
+        say(&mut world, root, "@fly=n,tpto:1/2/3=force,notify:7=add");
+        assert!(world.rlva.has("jump") && world.rlva.has("fly") && !world.rlva.pending.is_empty());
+        world.rlva.out.clear();
         world.rlva.controllers.blocked.push(Blocked {
             root: None,
             name: "Temporary controller".into(),
@@ -537,10 +484,64 @@ mod tests {
             seen: false,
         });
         world.rlva_controller_resources(&resources(root));
-        assert!(!world.rlva.has("jump") && world.rlva.pending.is_empty());
-        assert!(world.rlva.controllers.blocked(child));
-        assert!(!world.rlva_allows_command(&NetCommand::TeleportHome, child));
-        say(&mut world, child, "@fly=n");
+        // RlvHandler::isBlockedObject is the reported object alone: its
+        // child prim's rules stay and it may still add some. Its queued
+        // force goes; the "/notify:7=add" line told before stays queued.
+        assert!(!world.rlva.has("fly") && world.rlva.pending.iter().all(|(id, _)| *id != root));
+        assert!(world.rlva.has("jump") && !world.rlva.controllers.blocked(child));
+        say(&mut world, child, "@unsit=n");
+        assert!(world.rlva.has("unsit"));
+        say(&mut world, root, "@fly=n");
         assert!(!world.rlva.has("fly"));
+    }
+
+    #[test]
+    fn rlva_blocked_experience_object_is_cleared_with_a_notice_one_match_per_reply_and_one_request_each() {
+        let mut world = fixture();
+        let first = attachment(&mut world, true);
+        let listener = Uuid::from_u128(0x6c69_7374);
+        say(&mut world, listener, "@notify:7=add");
+        world.rlva.out.clear();
+        let now = Instant::now();
+        for (n, name) in ["Temporary controller", "Temporary controller"].into_iter().enumerate() {
+            let experience = Uuid::from_u128(500 + n as u128);
+            world.apply(aurora_net::NetEvent::ExperienceInfo(vec![ExperienceDetails {
+                id: experience,
+                maturity: 13,
+                ..Default::default()
+            }]));
+            world.rlva.controllers.attachment(experience, name.into(), now);
+        }
+        world.rlva_controllers_tick(now);
+        let requests = world
+            .rlva
+            .out
+            .iter()
+            .filter(|command| matches!(command, NetCommand::Land(LandCommand::AttachmentScripts)))
+            .count();
+        assert_eq!(
+            requests, 2,
+            "RlvHandler::onExperienceAttach asks once per blocked experience, unthrottled"
+        );
+        world.rlva.out.clear();
+        let second = Uuid::from_u128(0x726c_7661_7365_636f);
+        let mut reply = resources(first);
+        let copy = aurora_net::land::ScriptObject {
+            id: second,
+            ..reply[0].objects[0].clone()
+        };
+        reply[0].objects.push(copy);
+        world.rlva_controller_resources(&reply);
+        assert!(world.rlva.controllers.blocked(first) && !world.rlva.controllers.blocked(second));
+        assert!(
+            world
+                .rlva
+                .out
+                .iter()
+                .any(|command| matches!(command, NetCommand::ChatReply { channel: 7, message } if message == "/clear")),
+            "the clear of a blocked object is heard even when it held nothing"
+        );
+        world.rlva_controller_resources(&reply);
+        assert!(world.rlva.controllers.blocked(second), "the next reply resolves the next entry");
     }
 }

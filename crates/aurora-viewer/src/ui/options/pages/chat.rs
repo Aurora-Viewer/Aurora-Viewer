@@ -105,6 +105,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-mark-unnamed-objects-hint"),
                     &field!(mark_unnamed_objects),
                 );
+                // emotes in their sender's group in the Aurora style, off.
+                // The Legacy Viewer groups them: a line from the same sender
+                // within 60 s shares the header, emotes included
+                // (LLChatHistory::appendMessage, FSChatHistory::appendMessage);
+                // the Classic layout here groups them too, within 5 minutes.
+                cx.conditional(cx.s.chat_style == crate::settings::ChatStyle::Aurora, |cx| {
+                    cx.toggle(
+                        tr!("ui-options-group-emotes"),
+                        tr!("ui-options-group-emotes-hint"),
+                        &field!(group_emotes),
+                    );
+                });
                 cx.toggle(
                     tr!("ui-options-chat-keep-focus"),
                     tr!("ui-options-chat-keep-focus-hint"),

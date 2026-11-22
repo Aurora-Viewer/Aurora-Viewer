@@ -219,7 +219,8 @@ pub fn nearby(world: &World) -> Vec<(Person, f32)> {
     if world.rlva.has("shownames") {
         return Vec::new();
     }
-    crate::ui::people::nearby(world)
+    // (and no @shownearby test there: `people::around`)
+    crate::ui::people::around(world)
         .into_iter()
         .filter(|(_, _, _, d)| *d <= NEAR_ME_RANGE)
         .filter_map(|(id, _, _, d)| person(world, id).map(|p| (p, d)))
@@ -645,3 +646,26 @@ fn draw(ui: &egui::Ui, p: &Palette, rect: egui::Rect, list: &List) -> Option<usi
 #[cfg(test)]
 #[path = "suggest_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+
+    /// FSNearbyChat::handleChatBarKeystroke (fsnearbychathub.cpp) tests
+    /// @shownames alone: the names around are still predicted under
+    /// @shownearby, none under @shownames.
+    #[test]
+    fn the_nearby_names_are_predicted_under_shownearby_but_not_under_shownames() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let around = nearby(&world).len();
+        assert!(around > 0, "fixture: residents around");
+        world.rlva.configure(true);
+        world.rlva_console_input("@shownearby=n");
+        assert_eq!(nearby(&world).len(), around);
+        world.rlva_console_input("@shownames=n");
+        assert!(nearby(&world).is_empty());
+    }
+}

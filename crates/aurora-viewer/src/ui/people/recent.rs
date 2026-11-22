@@ -19,12 +19,17 @@ pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &
     super::split(ui, c, data, st, "people-recent-list", list, super::person_sheet);
 }
 
-/// "12 min ago Â· Ahern".
-fn ago(met: &Met) -> String {
+/// "12 min ago Â· Ahern". Under RLVa @showloc a region the agent is
+/// connected to is "(Hidden region)", as every list names it
+/// (RlvUtil::isNearbyRegion, rlvcommon.cpp); one met there under the
+/// restriction was kept without its name (`World::met`).
+fn ago(met: &Met, world: &crate::world::World) -> String {
     let seconds = met.when.elapsed().map_or(0.0, |d| d.as_secs_f64());
     let when = aurora_i18n::tr!("people-recent-ago", when = super::nearby::seen_text(seconds));
     if met.region.is_empty() {
         when
+    } else if world.rlva_hides_region(&met.region) {
+        format!("{when} Â· {}", aurora_i18n::tr!("rlva-hidden-region"))
     } else {
         format!("{when} Â· {}", met.region)
     }
@@ -131,7 +136,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         end.names_right,
         name,
         crate::ui::colors::resident_name(world, &id, p.ink),
-        &ago(met),
+        &ago(met, world),
         None,
         None,
         crate::world::staff::mark(world, &id),
@@ -166,4 +171,24 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, id: Uuid, sl
         }
     }
     super::keep_row_menu(st, id, menu_open);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RLVa @showloc: a region the agent is connected to is "(Hidden
+    /// region)" in the list, another keeps its name.
+    #[test]
+    fn showloc_hides_a_connected_region_of_the_list() {
+        let world = crate::world::rlva_location_tests::showloc_world();
+        let met = |region: &str| Met {
+            id: Uuid::from_u128(5),
+            when: std::time::SystemTime::now(),
+            region: region.to_owned(),
+        };
+        let here = world.region_name();
+        assert!(ago(&met(&here), &world).ends_with(aurora_i18n::tr!("rlva-hidden-region")));
+        assert!(ago(&met("Far Away"), &world).ends_with("Far Away"));
+    }
 }

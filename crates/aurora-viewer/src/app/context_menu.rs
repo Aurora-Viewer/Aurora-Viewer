@@ -283,6 +283,7 @@ impl App {
         // what `toggle_fly` itself answers
         f.fly_blocked = !w.agent.flying && !crate::autopilot::can_takeoff(w);
         f.build_blocked = !self.build.open && !w.rlva_can_build();
+        f.show_original_blocked = w.rlva.has("showinv");
         if let Some(Target::Object { key, full_id, offset }) = self.context_menu.as_ref().map(|m| &m.target) {
             f.object_sit_blocked = refused(NetCommand::RequestSit {
                 handle: key.region,
@@ -399,7 +400,7 @@ impl App {
             && (w.rlva_within_fartouch(idx) || w.objects.get(root).is_some_and(|r| self.object_menu.near == Some(r.key)));
         f.id = o.full_id;
         f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
-        f.blocked = w.mutes.is_muted_id(&root_id);
+        f.blocked = w.object_block_entry(&o.full_id).is_some();
         f.name = props.map(|p| p.name.clone()).unwrap_or_default();
         if let Some(root) = w.hud_root(idx).and_then(|i| w.objects.get(i)) {
             f.local_hud_scale = Some(w.hud_scales.scale(root.full_id));
@@ -673,6 +674,30 @@ impl App {
                     self.apply_appearance_action(crate::world::appearance::Action::Remove(item));
                 }
             }
+            CtxAction::DetachDelete(key) => {
+                // the worn object's item, as Detach finds it; Inventory's
+                // "Detach and Delete" confirmation then asks about it without
+                // opening the Inventory window (refused under @showinv)
+                if let Some(idx) = self.world.objects.index_of(&key)
+                    && ui::context::wearer(&self.world, idx) == Some(self.world.agent_id)
+                    && let Some(item) = self
+                        .world
+                        .objects
+                        .get(linkset_root(&self.world, idx))
+                        .and_then(|o| o.attachment_item_id())
+                    && !self.world.rlva.has("showinv")
+                {
+                    // the same rules as Inventory's entry, checked before the
+                    // confirmation: its window may be closed to say why not
+                    let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+                    if let Err(reason) = self
+                        .inventory_ui
+                        .ask_detach_delete(&self.world.inventory, &self.settings.inventory, &facts, item)
+                    {
+                        self.world.system_message(reason);
+                    }
+                }
+            }
             CtxAction::Touch(local_id) => self.menu_touch(local_id),
             CtxAction::Sit { target, offset } => {
                 if let Some(idx) = self.world.objects.index_of_uuid(&target)
@@ -794,21 +819,7 @@ impl App {
             CtxAction::InviteToGroup(id) => self.group_profile_ui.invite.choose_group(vec![id]),
             CtxAction::GiveCallingCard(id) => self.world.offer_calling_card(id),
             CtxAction::ToggleBlockObject { id, name } => {
-                // the whole object is blocked: its root (LLMute of getRootEdit)
-                let root = self
-                    .world
-                    .objects
-                    .index_of_uuid(&id)
-                    .and_then(|i| self.world.objects.get(linkset_root(&self.world, i)))
-                    .map_or(id, |r| r.full_id);
-                let name = if name.is_empty() {
-                    aurora_i18n::tr!("common-object-2", value0 = root.to_string()[..8].to_string())
-                } else {
-                    name
-                };
-                if self.world.mutes.is_muted_id(&root) {
-                    self.world.unblock(root, &name, 0);
-                } else if let Err(e) = self.world.block(root, &name, crate::world::mutes::MuteType::Object) {
+                if let Err(e) = self.world.toggle_block_object(id, &name) {
                     self.world.system_message(e);
                 }
             }
@@ -962,7 +973,7 @@ impl App {
             }
             CtxAction::OfferTeleport(id) => {
                 if self.world.rlva_can_offer_teleport(id) {
-                    self.contacts_ui.ask_teleport_offer(vec![id], &self.world.rlva_region_label());
+                    self.contacts_ui.ask_teleport_offer(vec![id], &self.world.rlva_lure_region());
                 }
             }
             CtxAction::OpenPeople(tab) => {
@@ -1031,7 +1042,7 @@ impl App {
             }
             CtxAction::OfferTeleports(ids) => {
                 let ids = ids.into_iter().filter(|id| self.world.rlva_can_offer_teleport(*id)).collect();
-                self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_region_label());
+                self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_lure_region());
             }
             CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id, self.world.status.cfg.reject_teleports),
             CtxAction::ActivateGroup(id) => {
@@ -1039,6 +1050,14 @@ impl App {
                     self.send(NetCommand::ActivateGroup(id));
                 }
             }
+            // the menu greys Join otherwise (ui::context::GroupLinkItems):
+            // checked again for a click on a menu drawn before the change
+            CtxAction::JoinGroup(id) => {
+                if crate::ui::context::GroupLinkItems::of(&self.world, id, false).join {
+                    self.group_profile_ui.join(&self.world, id);
+                }
+            }
+            CtxAction::RequestGroupData(id) => self.world.search.request_group(id),
             CtxAction::PinGroup(id) => self.world.groups.toggle_favorite(id),
             CtxAction::LeaveGroup(id) => {
                 if self.world.rlva_can_leave_group(id) {

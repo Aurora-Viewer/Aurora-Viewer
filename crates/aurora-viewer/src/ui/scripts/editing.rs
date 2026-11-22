@@ -302,13 +302,13 @@ pub(super) fn keyboard(ui: &mut egui::Ui, id: Id, source: &mut String, scope: &d
     changed
 }
 
-pub(super) fn cursor(ctx: &egui::Context, id: Id) -> CCursorRange {
+pub(crate) fn cursor(ctx: &egui::Context, id: Id) -> CCursorRange {
     egui::TextEdit::load_state(ctx, id)
         .and_then(|s| s.cursor.char_range())
         .unwrap_or_default()
 }
 
-pub(super) fn select(ctx: &egui::Context, id: Id, range: Range<usize>, focus: bool) {
+pub(crate) fn select(ctx: &egui::Context, id: Id, range: Range<usize>, focus: bool) {
     let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
     state
         .cursor
@@ -319,7 +319,7 @@ pub(super) fn select(ctx: &egui::Context, id: Id, range: Range<usize>, focus: bo
     }
 }
 
-pub(super) fn bytes(source: &str, range: CCursorRange) -> Range<usize> {
+pub(crate) fn bytes(source: &str, range: CCursorRange) -> Range<usize> {
     let [start, end] = range.sorted_cursors();
     source.byte_index_from_char_index(start.index).0..source.byte_index_from_char_index(end.index).0
 }
@@ -330,6 +330,15 @@ pub(super) fn replace(ctx: &egui::Context, id: Id, source: &mut String, range: R
     if source.len() - (end - start) + text.len() > aurora_net::scripts::MAX_SOURCE {
         return false;
     }
+    replace_text(ctx, id, source, range, text);
+    true
+}
+
+/// Replace the characters `range` of the editor `id` as one undo step, the
+/// cursor after the new text. No size limit: the caller checks its own.
+pub(crate) fn replace_text(ctx: &egui::Context, id: Id, source: &mut String, range: Range<usize>, text: &str) {
+    let start = source.byte_index_from_char_index(CharIndex(range.start)).0;
+    let end = source.byte_index_from_char_index(CharIndex(range.end)).0;
     let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
     let mut undo = state.undoer();
     undo.add_undo(&(cursor(ctx, id), source.clone()));
@@ -340,10 +349,24 @@ pub(super) fn replace(ctx: &egui::Context, id: Id, source: &mut String, range: R
     state.set_undoer(undo);
     state.store(ctx, id);
     ctx.data_mut(|d| d.insert_temp(Id::unique((id, "history_dirty")), true));
-    true
 }
 
-pub(super) fn undo(ctx: &egui::Context, id: Id, source: &mut String, redo: bool) {
+/// `source` with every character range of `ranges` (in order, apart)
+/// replaced by `replacement`: LLTextEditor::replaceTextAll's result.
+pub(crate) fn replaced_all(source: &str, ranges: &[Range<usize>], replacement: &str) -> String {
+    let boundaries: Vec<_> = source.char_indices().map(|(i, _)| i).chain([source.len()]).collect();
+    let mut output = String::with_capacity(source.len());
+    let mut previous = 0;
+    for range in ranges {
+        output.push_str(&source[previous..boundaries[range.start]]);
+        output.push_str(replacement);
+        previous = boundaries[range.end];
+    }
+    output.push_str(&source[previous..]);
+    output
+}
+
+pub(crate) fn undo(ctx: &egui::Context, id: Id, source: &mut String, redo: bool) {
     let Some(mut state) = egui::TextEdit::load_state(ctx, id) else {
         return;
     };
@@ -402,7 +425,7 @@ pub(super) fn word(source: &str, at: usize, lua: bool) -> &str {
 }
 
 /// Unicode lowercase may change byte length: keep original character ranges.
-pub(super) fn matches(source: &str, needle: &str, insensitive: bool) -> Vec<Range<usize>> {
+pub(crate) fn matches(source: &str, needle: &str, insensitive: bool) -> Vec<Range<usize>> {
     if needle.is_empty() {
         return Vec::new();
     }
@@ -438,7 +461,64 @@ pub(super) fn matches(source: &str, needle: &str, insensitive: bool) -> Vec<Rang
         .collect()
 }
 
-pub(super) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: bool) -> Option<Range<usize>> {
+/// Optional whole-word filtering shared by script and notecard Find / Replace.
+/// Character offsets, not UTF-8 byte offsets, match TextEdit's cursor model.
+/// Underscores belong to identifiers; punctuation and whitespace delimit words.
+/// A rejected match must not hide an overlapping, valid whole-word match.
+pub(crate) fn matches_filtered(source: &str, needle: &str, insensitive: bool, whole_words: bool) -> Vec<Range<usize>> {
+    if !whole_words {
+        return matches(source, needle, insensitive);
+    }
+    if needle.is_empty() {
+        return Vec::new();
+    }
+
+    let chars: Vec<char> = source.chars().collect();
+    let word_char = |c: char| c.is_alphanumeric() || c == '_';
+
+    // Preserve original character boundaries even when Unicode lowercase
+    // expands a character into multiple characters.
+    let mut folded = String::new();
+    let mut boundaries = Vec::with_capacity(chars.len() + 1);
+    for c in &chars {
+        boundaries.push(folded.len());
+        if insensitive {
+            folded.extend(c.to_lowercase());
+        } else {
+            folded.push(*c);
+        }
+    }
+    boundaries.push(folded.len());
+    let needle = if insensitive { needle.to_lowercase() } else { needle.to_owned() };
+
+    let mut result = Vec::new();
+    let mut offset = 0;
+    while offset < folded.len() {
+        let Some(relative) = folded[offset..].find(&needle) else { break };
+        let byte = offset + relative;
+        let end_byte = byte + needle.len();
+
+        let candidate = boundaries
+            .binary_search(&byte)
+            .ok()
+            .zip(boundaries.binary_search(&end_byte).ok())
+            .map(|(start, end)| start..end);
+
+        if let Some(range) = candidate
+            && (range.start == 0 || !word_char(chars[range.start - 1]))
+            && (range.end == chars.len() || !word_char(chars[range.end]))
+        {
+            offset = end_byte;
+            result.push(range);
+        } else {
+            // Advance one character, not the rejected match's full length.
+            offset = byte + folded[byte..].chars().next().unwrap().len_utf8();
+        }
+    }
+    result
+}
+
+pub(crate) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: bool) -> Option<Range<usize>> {
     if up {
         ranges
             .iter()
@@ -458,6 +538,32 @@ pub(super) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whole_words_exclude_substrings_but_accept_punctuation_delimiters() {
+        let text = "This hi high hi_there hi-there (hi) \u{E9}hi hi\u{E9}";
+        let found = matches_filtered(text, "hi", true, true);
+        let substrings: Vec<String> = found
+            .iter()
+            .map(|range| text.chars().skip(range.start).take(range.len()).collect())
+            .collect();
+        assert_eq!(substrings, vec!["hi", "hi", "hi"]);
+        // The original partial-word search still includes "hi" inside "This".
+        assert!(matches_filtered(text, "hi", true, false).len() > found.len());
+        assert_eq!(matches_filtered("HI hi Hi", "hi", false, true), vec![3..5]);
+        assert_eq!(matches_filtered("HI hi Hi", "hi", true, true), vec![0..2, 3..5, 6..8]);
+    }
+
+    #[test]
+    fn whole_word_search_checks_overlapping_candidates_and_identifier_boundaries() {
+        assert_eq!(matches_filtered("xab ab ab", "ab ab", false, true), vec![4..9]);
+        assert_eq!(matches_filtered("xAB aB AB", "ab ab", true, true), vec![4..9]);
+        assert_eq!(matches_filtered("hi_there _hi hi_ hi", "hi", false, true), vec![17..19]);
+
+        // Unicode case expansion must still respect original character boundaries.
+        assert!(matches_filtered("İ", "i", true, true).is_empty());
+        assert_eq!(matches_filtered("İ", "i\u{307}", true, true), vec![0..1]);
+    }
 
     #[test]
     fn multiline_indent_keeps_backward_selection_and_excludes_the_final_line_at_column_zero() {

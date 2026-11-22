@@ -31,6 +31,10 @@ pub const PREVIEW_REGION: RegionHandle = u64::MAX;
 /// cyclic data, not a real linkset depth (a linkset is flat).
 pub const MAX_PARENT_DEPTH: u8 = 16;
 
+/// Every texture entry of a prim in a `blinn_phong_faces` mask.
+#[cfg(test)]
+const ALL_TES: u64 = (1u64 << aurora_prim::te::MAX_TES) - 1;
+
 mod local_appearance;
 pub use local_appearance::{LocalAppearance, LocalTextureSlot};
 mod local_duplicates;
@@ -47,8 +51,10 @@ pub struct RenderState {
     pub local_fit: Option<Vec3>,
     /// None applies to all faces, Some(face) overrides that face only.
     pub local_appearance: HashMap<Option<u8>, LocalAppearance>,
-    /// Temporary material-inspector display mode; no simulator state changes.
-    pub blinn_phong_preview: bool,
+    /// Temporary material-inspector display mode, one bit per face (no
+    /// simulator state changes). The Blinn-Phong tab hides only the faces it
+    /// edits, so the PBR faces of the same prim keep rendering (#4467).
+    pub blinn_phong_faces: u64,
     /// Geometry cache key currently bound (and its LOD).
     pub geom: Option<crate::scene::GeomKey>,
     /// Geometry requested but not ready yet.
@@ -200,8 +206,15 @@ impl Object {
         }
         value
     }
+    /// Whether the material inspector shows this face in Blinn-Phong. The
+    /// bits follow the faces the tab edits, so a Blinn-Phong face of a mixed
+    /// prim no longer hides the prim's PBR faces (#4467).
+    pub fn is_blinn_phong_preview(&self, face: usize) -> bool {
+        face < u64::BITS as usize && self.render.blinn_phong_faces & (1u64 << face) != 0
+    }
+
     pub fn visual_material(&self, face: usize) -> Option<Uuid> {
-        if self.render.blinn_phong_preview {
+        if self.is_blinn_phong_preview(face) {
             return None;
         }
         match self.local_appearance(face).and_then(LocalAppearance::surface) {
@@ -361,7 +374,7 @@ impl Object {
             self.render.local_scale = None;
             self.render.local_fit = None;
             self.render.local_appearance.clear();
-            self.render.blinn_phong_preview = false;
+            self.render.blinn_phong_faces = 0;
             self.foot_plane = None;
         }
         self.full_update_serial = self.full_update_serial.wrapping_add(1);
@@ -801,19 +814,34 @@ struct HeldPose {
 }
 
 impl ObjectStore {
+    /// The whole prim in Blinn-Phong (the tests' shorthand; the Texture tab
+    /// uses `set_blinn_phong_faces` with the faces it edits).
+    #[cfg(test)]
     pub fn set_blinn_phong_preview(&mut self, idx: usize, preview: bool) {
+        self.set_blinn_phong_faces(idx, ALL_TES, preview);
+    }
+
+    /// Show or hide the given faces (one bit per face) in Blinn-Phong for
+    /// the material inspector. The other faces keep their own choice: the
+    /// tab acts on the selected faces alone (#4467).
+    pub fn set_blinn_phong_faces(&mut self, idx: usize, faces: u64, preview: bool) {
         let Some(o) = self.get(idx) else { return };
-        if o.render.blinn_phong_preview == preview {
+        let next = if preview {
+            o.render.blinn_phong_faces | faces
+        } else {
+            o.render.blinn_phong_faces & !faces
+        };
+        if next == o.render.blinn_phong_faces {
             return;
         }
         let id = o.full_id;
-        if preview {
-            self.blinn_phong_previews.insert(id);
-        } else {
+        if next == 0 {
             self.blinn_phong_previews.remove(&id);
+        } else {
+            self.blinn_phong_previews.insert(id);
         }
         if let Some(o) = self.get_mut(idx) {
-            o.render.blinn_phong_preview = preview;
+            o.render.blinn_phong_faces = next;
             o.material_dirty = true;
         }
     }
@@ -825,7 +853,7 @@ impl ObjectStore {
             if let Some(idx) = self.index_of_uuid(&id)
                 && let Some(o) = self.get_mut(idx)
             {
-                o.render.blinn_phong_preview = false;
+                o.render.blinn_phong_faces = 0;
                 o.material_dirty = true;
             }
         }

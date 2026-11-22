@@ -1967,25 +1967,35 @@ fn material_previews_are_larger_above_their_options_and_open_the_correct_picker(
             .collect();
         for rect in &rects {
             assert!(window.contains_rect(*rect));
-            assert!((78.0..=82.1).contains(&rect.width()));
+            // PBR and Blinn-Phong swatches share one size
+            assert!((54.0..=58.1).contains(&rect.width()), "{rect:?}");
             assert!((rect.width() - rect.height()).abs() < 0.1);
         }
-        assert!((rects[0].top() - rects[1].top()).abs() < 0.1);
-        assert!(rects[0].right() < rects[1].left());
         if pbr {
-            assert!((rects[2].top() - rects[0].top()).abs() < 0.1);
-            assert!(rects[3].top() > rects[0].bottom());
-            assert!((rects[3].left() - rects[0].left()).abs() < 0.1);
-            assert!((rects[4].top() - rects[3].top()).abs() < 0.1);
+            // the material and its base colour, the normal and emissive
+            // maps under them, then the ORM map
+            assert!((rects[0].top() - rects[1].top()).abs() < 0.1);
+            assert!(rects[0].right() < rects[1].left());
+            assert!(rects[2].top() > rects[0].bottom());
+            assert!((rects[2].left() - rects[0].left()).abs() < 0.1);
+            assert!((rects[3].top() - rects[2].top()).abs() < 0.1);
+            assert!(rects[2].right() < rects[3].left());
+            assert!(rects[4].top() > rects[2].bottom());
+            assert!((rects[4].left() - rects[0].left()).abs() < 0.1);
         } else {
-            assert!((rects[2].top() - rects[0].top()).abs() < 0.1);
+            // one column: diffuse, normal, specular
+            for pair in rects.windows(2) {
+                assert!(pair[1].top() > pair[0].bottom());
+                assert!((pair[1].left() - pair[0].left()).abs() < 0.1);
+            }
         }
-        let surface = texts
+        // above the face options, which start with Occlude water
+        let options = texts
             .iter()
-            .find(|(text, _)| text == aurora_i18n::tr!("build-material-surface"))
+            .find(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-occlude-water"))
             .unwrap()
             .1;
-        assert!(rects.iter().all(|rect| rect.bottom() < surface.top()));
+        assert!(rects.iter().all(|rect| rect.bottom() < options.top()));
         let point = rects[1].center();
         inspector.show(vec![egui::Event::PointerMoved(point)]);
         for pressed in [true, false] {
@@ -2299,7 +2309,13 @@ fn material_update_keeps_controls_and_focus_until_the_new_material_loads() {
     );
     Arc::make_mut(inspector.world.objects.get_mut(idx).unwrap().te.as_mut().unwrap()).faces[0].material_id = uuid::Uuid::nil();
     let (_, texts) = inspector.show(vec![]);
-    assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-environment")));
+    // without a specular map, glossiness and environment stay in place,
+    // greyed, at their defaults: the controls under them do not move
+    assert!(texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-environment")));
+    assert!(
+        !texts.iter().any(|(text, _)| text == "46"),
+        "the cleared material's environment is gone"
+    );
 }
 
 #[test]
@@ -2776,7 +2792,7 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
             (rect.size() - expanded.size()).length() < 1.0,
             "Switching tool changed the chosen size: {tool:?}"
         );
-        assert_eq!(
+        assert!(
             inspector
                 .tool
                 .ui
@@ -2784,11 +2800,11 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
                 .targets
                 .iter()
                 .any(|(item, panel, _)| { *item == crate::build::layout::Item::Actions && *panel == crate::build::layout::Panel::Footer }),
-            tool == Tool::Create
+            "the options show with every tool, so the bars under them stay in place: {tool:?}"
         );
-        assert_eq!(
+        assert!(
             texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-linked")),
-            tool == Tool::Create
+            "the options show with every tool: {tool:?}"
         );
     }
 }

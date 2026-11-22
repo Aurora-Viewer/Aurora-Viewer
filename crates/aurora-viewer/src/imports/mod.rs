@@ -770,7 +770,7 @@ impl Imports {
     }
     // LLInventoryModel::findUserDefinedCategoryUUIDForType (llinventorymodel.cpp):
     // a user lock keeps the folder in place; it does not redirect uploads (#1981).
-    fn default_folder(world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences, kind: Kind) -> Uuid {
+    pub(crate) fn default_folder(world: &crate::world::World, prefs: &crate::ui::inventory::InventoryPreferences, kind: Kind) -> Uuid {
         use crate::world::inventory::actions;
         let folder = prefs.upload_folders[kind.folder_slot()];
         if actions::destination(&world.inventory, folder) {
@@ -1416,7 +1416,7 @@ impl Imports {
                                 draft.invalidate();
                                 if level == 3 {
                                     let triangles = scene.models.iter().map(aurora_assets::import_mesh::Model::triangles).sum::<usize>();
-                                    let targets = mesh::default_lod_targets(triangles);
+                                    let targets = mesh::default_lod_targets(triangles, mesh::minimum_lod_triangles(&scene));
                                     for (i, lod) in draft.lods.iter_mut().enumerate() {
                                         if lod.file.as_ref().is_some_and(|file| file.models.len() != scene.models.len()) {
                                             lod.file = None;

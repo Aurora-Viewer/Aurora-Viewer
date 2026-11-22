@@ -33,6 +33,8 @@ pub use pathfinding::PathfindingUi;
 mod pie;
 
 #[cfg(test)]
+mod group_link_tests;
+#[cfg(test)]
 mod radar_menu_tests;
 #[cfg(test)]
 mod search_menu_tests;
@@ -214,6 +216,9 @@ pub struct Facts {
     /// (object_selected_and_point_valid, indra/newview/llviewermenu.cpp).
     pub wear_default_blocked: bool,
     pub wear_blocked_points: Vec<u8>,
+    /// RLVa's @showinv: "Show in inventory" of our attachment is greyed
+    /// (enable_object_show_original, indra/newview/llviewermenu.cpp).
+    pub show_original_blocked: bool,
     /// RLVa is on for the session: Derender is greyed on our own
     /// attachments (enable_derender_object, indra/newview/llviewermenu.cpp).
     pub rlva_enabled: bool,
@@ -331,6 +336,9 @@ pub enum CtxAction {
     ForgetHudScale(ObjKey),
     SetHudMoveLock(ObjKey, bool),
     Detach(ObjKey),
+    /// Take a worn attachment off, then move its item to the Trash, after
+    /// Inventory's "Detach and Delete" confirmation.
+    DetachDelete(ObjKey),
     AttachmentInventory(Uuid),
     EditAttachment(ObjKey),
     /// "Touch" / "Edit" of a worn item in the inventory or the
@@ -616,6 +624,12 @@ pub enum CtxAction {
     GroupChat(Uuid),
     /// Make a group active (ActivateGroup), pin it in the lists, leave it.
     ActivateGroup(Uuid),
+    /// Join a group through the confirmation of LLGroupActions::join, from a
+    /// group link's menu (`group_link_menu`).
+    JoinGroup(Uuid),
+    /// Ask for a group's data (GroupProfileRequest) as a group link's menu
+    /// opens (FSCommon::requestGroupData).
+    RequestGroupData(Uuid),
     PinGroup(Uuid),
     LeaveGroup(Uuid),
     /// Block / unblock a group's chat (exoGroupMuteList).
@@ -1429,6 +1443,81 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     if menu::item_if(ui, p, "logout", aurora_i18n::tr!("common-quit"), world.rlva_can_leave_group(id)) {
         act(CtxAction::LeaveGroup(id));
     }
+}
+
+/// Which rows of a group link's menu ([`group_link_menu`]) are enabled.
+/// Port of the group cases of FSCommon::checkIsActionEnabled
+/// (indra/newview/fscommon.cpp, the `FSRegistrarUtils::checkIsEnabled`
+/// callbacks of menu_url_group.xml).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GroupLinkItems {
+    /// FS_RGSTR_CHK_GROUP_NOT_ACTIVE: one of ours, not the active one, and
+    /// RlvActions::canChangeActiveGroup.
+    pub activate: bool,
+    /// FS_RGSTR_CHK_CAN_JOIN_GROUP: LLAgent::canJoinGroups,
+    /// canChangeActiveGroup, the group's data known with open enrollment,
+    /// and not one of ours.
+    pub join: bool,
+    /// FS_RGSTR_CHK_CAN_LEAVE_GROUP: one of ours, and not the active group
+    /// under `@setgroup`.
+    pub leave: bool,
+    /// Url.CopyLabel copies the link's label: greyed while the name is
+    /// still the loading placeholder (stricter: the Legacy label is never
+    /// a placeholder).
+    pub copy_name: bool,
+}
+
+impl GroupLinkItems {
+    /// The states for group `id`, whose name is known when `name_known`.
+    pub fn of(world: &World, id: Uuid, name_known: bool) -> Self {
+        let member = world.groups.is_member(&id);
+        let can_change = world.rlva_can_change_group();
+        let open = world.search.groups.get(&id).is_some_and(|g| g.open_enrollment);
+        Self {
+            activate: member && world.groups.active != id && can_change,
+            join: !member && can_change && open && super::group_profile::create::can_join_groups(world),
+            leave: member && world.rlva_can_leave_group(id),
+            copy_name: name_known,
+        }
+    }
+}
+
+/// The right-click menu of a group's name link (menu_url_group.xml): View
+/// info, Activate, Join, Leave, Copy name, Copy SLurl. `name` is None while
+/// the name is unknown. As FSCommon::requestGroupData does when the menu
+/// opens, the group's data is asked for if missing: Join stays greyed until
+/// it is there.
+pub fn group_link_menu(resp: &egui::Response, p: &Palette, world: &World, id: Uuid, name: Option<&str>) {
+    if resp.secondary_clicked() && !world.search.groups.contains_key(&id) {
+        request(&resp.ctx, CtxAction::RequestGroupData(id));
+    }
+    menu::context_menu(resp, p, |ui| {
+        let items = GroupLinkItems::of(world, id, name.is_some());
+        let ctx = ui.ctx().clone();
+        let act = |a: CtxAction| request(&ctx, a);
+        if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-view-info")) {
+            super::group_profile::request_open(ui.ctx(), id);
+        }
+        menu::separator(ui, p);
+        if menu::item_if(ui, p, "circle-check-filled", aurora_i18n::tr!("common-activate"), items.activate) {
+            act(CtxAction::ActivateGroup(id));
+        }
+        if menu::item_if(ui, p, "users-plus", aurora_i18n::tr!("search-group-join"), items.join) {
+            act(CtxAction::JoinGroup(id));
+        }
+        if menu::item_if(ui, p, "logout", aurora_i18n::tr!("ui-contacts-leave-group"), items.leave) {
+            act(CtxAction::LeaveGroup(id));
+        }
+        menu::separator(ui, p);
+        if menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("search-group-copy-name"), items.copy_name)
+            && let Some(name) = name
+        {
+            ui.ctx().copy_text(name.to_owned());
+        }
+        if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl-2")) {
+            ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
+        }
+    });
 }
 
 /// The avatar wearing object `idx`, if it is an attachment.

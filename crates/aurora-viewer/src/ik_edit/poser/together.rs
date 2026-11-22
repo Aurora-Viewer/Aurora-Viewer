@@ -40,6 +40,11 @@ impl Editor {
             return;
         }
         self.poser.together.clear();
+        // an explicit click that selects another joint frames it (when the
+        // option is on); a drag start (`grab_pose_bone`) never does
+        if self.selected != Some(bone) {
+            self.request_poser_framing(bone, crate::camera::PoserFraming::Joint);
+        }
         self.select_pose_bone(bone, rig, frame);
     }
     /// A drag begun on a joint: on a joint of the selection it leads the
