@@ -22466,8 +22466,10 @@ impl ApplicationHandler for App {
                 if matches!(v.as_str(), "add" | "ajout") {
                     self.contacts_ui.pick_new_friend();
                 }
-                self.settings.friends_list.sheet_collapsed = v == "collapsed";
+                // only the sheet modes set it: the others keep what the demo
+                // profile saved
                 if matches!(v.as_str(), "sheet" | "collapsed") {
+                    self.settings.friends_list.sheet_collapsed = v == "collapsed";
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(900.0, 560.0));
                 }
                 if let Ok(filter) = std::env::var("AURORA_DEMO_CONTACTS_FILTER") {
