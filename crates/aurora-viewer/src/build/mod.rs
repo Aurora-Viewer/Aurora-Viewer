@@ -927,6 +927,12 @@ pub struct BuildTool {
     /// Number of faces of the selected prims (filled by the app from the
     /// meshes / volumes: the texture entry always carries all of them).
     pub face_counts: HashMap<uuid::Uuid, usize>,
+    /// The shape each count of `face_counts` was taken from: a prim whose
+    /// shape has changed since (hollow, cut, twist, another mesh) is counted
+    /// again, as LLPrimitive::setVolume sets the TE count to the new
+    /// volume's faces (indra/llprimitive/llprimitive.cpp). A count with no
+    /// shape (set by a test) holds whatever the shape.
+    pub face_count_shapes: HashMap<uuid::Uuid, aurora_prim::params::VolumeParams>,
     /// Objects used as the reference grid (LLSelectMgr::mGridObjects).
     pub grid_objects: Vec<ObjKey>,
     /// Physics shape and material values of selected prims
@@ -1021,6 +1027,7 @@ impl Default for BuildTool {
             faces: HashMap::new(),
             last_face: None,
             face_counts: HashMap::new(),
+            face_count_shapes: HashMap::new(),
             grid_objects: Vec::new(),
             physics: HashMap::new(),
             physics_materials_known: HashSet::new(),

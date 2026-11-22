@@ -71,7 +71,8 @@ fn tab(
     let count_w = count.as_ref().map_or(0.0, |g| 5.0 + g.size().x + pad * 2.0);
     let icon_w = if icon.is_empty() { 0.0 } else { 15.0 + 5.0 };
     let content = icon_w + galley.size().x + count_w;
-    let size = Vec2::new(width.unwrap_or(12.0 + content + 12.0), 28.0);
+    let height = galley.size().y.max(count.as_ref().map_or(0.0, |g| g.size().y)) + 8.0;
+    let size = Vec2::new(width.unwrap_or(12.0 + content + 12.0), height.max(28.0));
     let (rect, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
     let radius = ui.visuals().widgets.inactive.corner_radius;
     if selected {

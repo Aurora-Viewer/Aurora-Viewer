@@ -85,7 +85,12 @@ pub enum Request {
     /// Read a transform vector from the system clipboard (0 position, 1 size,
     /// 2 rotation); shared by Aurora's actions and the Legacy "p" button.
     PasteVector(usize),
-    CopyKeys,
+    /// The Legacy-style "Copy Keys" button: its copy feedback, shown beside
+    /// the button.
+    CopyKeys {
+        feedback: egui::Id,
+        anchor: egui::Rect,
+    },
     Script {
         object: Uuid,
         item: Uuid,
@@ -313,6 +318,18 @@ pub struct FloaterState {
 /// Width of the label column of the tabs.
 const LABEL_W: f32 = 112.0;
 pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
+
+/// The label of the copy feedback once "Copy UUID" or "Copy Keys" copied
+/// `count` object ids.
+pub(crate) fn copied_keys_label(count: usize) -> String {
+    aurora_i18n::tr!("build-ui-copied-object-uuids", count = count)
+}
+
+/// The build window's rect, which keeps its copy feedback inside it.
+pub(crate) fn window_rect(ctx: &egui::Context) -> egui::Rect {
+    ctx.memory(|m| m.area_rect(egui::Id::unique(INSPECTOR_ID)))
+        .unwrap_or_else(|| ctx.content_rect())
+}
 
 /// LLButton::handleMouseDown (indra/llui/llbutton.cpp) takes the keyboard
 /// focus on the press, so a field of the build window commits its typed
@@ -548,7 +565,7 @@ pub fn show(
     tool.ui.layout.footer_cells.clear();
     let mut open = true;
     let mut legacy_toggle_sections = false;
-    let mut copy_uuid = false;
+    let mut copy_uuid: Option<egui::Rect> = None;
     let mut summary_clicked = false;
     if s.legacy_window {
         tool.ui.layout.organizing = false;
@@ -606,8 +623,11 @@ pub fn show(
             .map_or(width, |size| size.x);
         floater = floater.auto_height();
     }
+    let uuid_feedback = egui::Id::unique(INSPECTOR_ID).with("copy_uuid");
     floater.show(ctx, p, &mut open, |ui| {
         common::typography(ui);
+        // (in the window's own pass: outside the viewer's, it is another window)
+        widgets::copied_feedback(ui.ctx(), p, uuid_feedback, window_rect(ui.ctx()));
         if s.legacy_window {
             legacy_toggle_sections = legacy::body(ui, p, tool, world, s, mods, env);
         } else {
@@ -627,8 +647,14 @@ pub fn show(
             Err(text) => world.system_notice(text, crate::world::notice_topics::Topic::Items),
         }
     }
-    if copy_uuid && !tool.selection.is_empty() {
-        ctx.copy_text(tool.copy_keys(world, s, mods.shift));
+    if let Some(anchor) = copy_uuid
+        && !tool.selection.is_empty()
+    {
+        let (keys, count) = tool.copy_keys_with_count(world, s, mods.shift);
+        if count > 0 {
+            ctx.copy_text(keys);
+            widgets::show_copied(ctx, uuid_feedback, anchor, copied_keys_label(count));
+        }
     }
     if !tool.ui.layout.open {
         tool.ui.layout.organizing = false;
@@ -854,15 +880,18 @@ impl BuildTool {
 
     /// "Copy UUID": the roots' ids, or every selected prim with
     /// Shift / "Linked edit" (LLFloaterTools::onClickBtnCopyKeys).
-    pub fn copy_keys(&self, world: &World, s: &BuildSettings, all_prims: bool) -> String {
+    /// Also returns how many ids it holds, for the copy feedback.
+    pub fn copy_keys_with_count(&self, world: &World, s: &BuildSettings, all_prims: bool) -> (String, usize) {
         let idxs = if all_prims || s.edit_linked {
             self.sel_prims(world)
         } else {
             self.roots(world)
         };
-        idxs.iter()
+        let ids: Vec<String> = idxs
+            .iter()
             .filter_map(|&i| world.objects.get(i).map(|o| o.full_id.to_string()))
-            .collect::<Vec<_>>()
-            .join(&s.copy_key_separator)
+            .collect();
+        let count = ids.len();
+        (ids.join(&s.copy_key_separator), count)
     }
 }

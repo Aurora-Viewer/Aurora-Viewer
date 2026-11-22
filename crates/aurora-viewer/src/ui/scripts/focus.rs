@@ -93,17 +93,13 @@ pub(super) fn find(ctx: &egui::Context, editors: &mut [Editor], search: &mut Sea
     {
         egui::Popup::close_all(ctx);
         crate::ui::widgets::expand_floater(ctx, &windows[index].0);
-        if search.owns(owner) && Search::focused(ctx) {
-            search.focus = true;
-        } else {
-            let e = &editors[index];
-            let id = if e.tools.processed { owner.with("processed") } else { owner };
-            search.begin(
-                ctx,
-                owner,
-                id,
-                if e.tools.processed { &e.tools.processed_source } else { &e.source },
-            );
-        }
+        let e = &editors[index];
+        let id = if e.tools.processed { owner.with("processed") } else { owner };
+        search.begin(
+            ctx,
+            owner,
+            id,
+            if e.tools.processed { &e.tools.processed_source } else { &e.source },
+        );
     }
 }

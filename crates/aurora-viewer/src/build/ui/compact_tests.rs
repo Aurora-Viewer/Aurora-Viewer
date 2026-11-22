@@ -3235,6 +3235,119 @@ fn a_pbr_uv_edit_keeps_the_other_component_inherited_from_the_material() {
     }
 }
 
+/// #3885: on the PBR tab, Repeats / meter shows the material's repeats
+/// (getSelectedGLTFMaterialMaxRepeats) and writes the override's texture
+/// transform scale of the picked channel, or all four under "All"
+/// (onCommitGLTFRepeatsPerMeter); the texture entry's repeats, which a PBR
+/// face ignores, stay as they were. The normal map has its own scale:
+/// under "All" the field shows the base color's alone and is not mixed,
+/// as the Legacy Viewer reads it. Both window styles.
+#[test]
+fn pbr_repeats_per_meter_edits_the_material_transforms() {
+    let asset = uuid::Uuid::from_u128(0x3885);
+    let base = aurora_assets::material::TextureTransform {
+        scale: [2.0, 3.0],
+        offset: [0.2, 0.3],
+        rotation: 0.0,
+    };
+    let normal = aurora_assets::material::TextureTransform { scale: [6.0, 6.0], ..base };
+    let transforms = [base, normal, base, base];
+    for legacy in [false, true] {
+        for channel in [0usize, 2] {
+            let case = format!("legacy={legacy} channel={channel}");
+            let mut inspector = material_inspector();
+            inspector.settings.legacy_window = legacy;
+            inspector.tool.tab = 3;
+            inspector.tool.ui.tex_tab = 1;
+            inspector.tool.ui.pbr_channel = channel;
+            let key_ = inspector.tool.selection[0];
+            let idx = inspector.world.objects.index_of(&key_).unwrap();
+            let n = inspector.tool.num_faces(&inspector.world, idx) as u8;
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            // the same size on every axis: each face shows max(2, 3) / 2
+            object.scale = glam::Vec3::splat(2.0);
+            object.extra.render_materials = vec![(u8::MAX, asset)];
+            let before: Vec<(f32, f32)> = object.te.as_ref().unwrap().faces[..usize::from(n)]
+                .iter()
+                .map(|f| (f.scale_s, f.scale_t))
+                .collect();
+            inspector.scene.materials.insert(
+                asset,
+                aurora_assets::PbrMaterial {
+                    transforms,
+                    ..Default::default()
+                },
+            );
+            inspector.list_contents(idx);
+            inspector.show(vec![]);
+            crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(390.0, 1500.0));
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (_, texts) = inspector.show(vec![]);
+            let caption = aurora_i18n::tr!("build-ui-texture-repeats-meter");
+            // max(2, 3) / 2 for the base color, 6 / 2 for the normal map
+            let want = if channel == 2 { 3.0 } else { 1.5 };
+            let (shown, rect) = row_field(&texts, caption).unwrap_or_else(|| panic!("{case}: no field beside {caption}"));
+            assert!(
+                aurora_i18n::parse_number(&shown).is_some_and(|v| (v as f32 - want).abs() < 1e-5),
+                "{case}: the field shows the material's repeats, not {shown}"
+            );
+            press(&mut inspector, rect.center());
+            inspector.tool.out.clear();
+            inspector.show(vec![egui::Event::Text(aurora_i18n::number_text("4"))]);
+            key(&mut inspector, egui::Key::Enter);
+            inspector.show(vec![]);
+            let edited: Vec<usize> = if channel == 0 { (0..4).collect() } else { vec![channel - 1] };
+            let object = inspector.world.objects.get(idx).unwrap();
+            for face in 0..n {
+                let mut material = aurora_assets::PbrMaterial {
+                    transforms,
+                    ..Default::default()
+                };
+                material.apply_override(&BuildTool::gltf_override(&inspector.world, idx, face));
+                for (c, t) in material.transforms.iter().enumerate() {
+                    let scale = if edited.contains(&c) { [8.0, 8.0] } else { transforms[c].scale };
+                    assert_eq!((t.scale, t.offset), (scale, base.offset), "{case}: face {face} channel {c}");
+                }
+                let f = object.te.as_ref().unwrap().face(usize::from(face));
+                assert_eq!(
+                    (f.scale_s, f.scale_t),
+                    before[usize::from(face)],
+                    "{case}: face {face} keeps its repeats"
+                );
+            }
+            assert!(
+                inspector.tool.out.iter().any(|command| matches!(
+                    command,
+                    aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Cap { cap, .. }) if cap == "ModifyMaterialParams"
+                )),
+                "{case}: the override is sent"
+            );
+        }
+    }
+}
+
+#[test]
+fn gltf_repeats_follow_the_faces_axes() {
+    let t = aurora_assets::material::TextureTransform {
+        scale: [4.0, 2.0],
+        offset: [0.0, 0.0],
+        rotation: 0.0,
+    };
+    let size = glam::Vec3::new(2.0, 4.0, 0.5);
+    // face 0 (top): s along x, t along y: max(4 / 2, 2 / 4)
+    assert_eq!(texture::gltf_max_repeats(&t, size, 0), 2.0);
+    // face 2: s along y, t along z: max(4 / 4, 2 / 0.5)
+    assert_eq!(texture::gltf_max_repeats(&t, size, 2), 4.0);
+    // face 1: s along x, t along z: max(4 / 2, 2 / 0.5)
+    assert_eq!(texture::gltf_max_repeats(&t, size, 1), 4.0);
+    assert_eq!(texture::gltf_repeats_scale(3.0, size, 0), [6.0, 12.0]);
+    assert_eq!(texture::gltf_repeats_scale(3.0, size, 2), [12.0, 1.5]);
+    // a flat axis does not divide by zero
+    assert!(texture::gltf_max_repeats(&t, glam::Vec3::ZERO, 0).is_finite());
+}
+
 /// The value under a row's caption: the first number or "—" to its right,
 /// on the same line.
 fn row_field(texts: &[(String, egui::Rect)], caption: &str) -> Option<(String, egui::Rect)> {

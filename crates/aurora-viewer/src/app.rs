@@ -720,7 +720,10 @@ pub struct App {
     look_at_privacy: Option<(bool, bool)>,
     /// What the simulator was told of the static eyes animation since the
     /// last arrival (FSStaticEyes).
-    static_eyes: crate::world::lookat::StaticEyes,
+    static_eyes: crate::world::lookat::SimAnimation,
+    /// What the simulator was asked about the Bento idle pose: the same
+    /// rule as the static eyes, asked again after every arrival.
+    bento_idle: crate::world::lookat::SimAnimation,
     /// The world point the cursor was over last frame, and the object it
     /// lies on (the hover pick of the cursor icon), for the look-at.
     look_hover: Option<(Option<usize>, Vec3)>,
@@ -2072,6 +2075,7 @@ impl App {
             cam_key_since: [None; 12],
             look_at_privacy: None,
             static_eyes: Default::default(),
+            bento_idle: Default::default(),
             look_hover: None,
             hover_tips: Default::default(),
             look_at_fades: Default::default(),
@@ -2507,8 +2511,18 @@ impl App {
             crate::world::rlva::Boundary::Send => {}
             crate::world::rlva::Boundary::Dropped => return,
             crate::world::rlva::Boundary::Refused => {
+                // (what a "restricted" notice stood for: the log names the
+                // command, never its content)
+                log::info!(
+                    "rlva: {} refused at the send boundary (actor {actor})",
+                    crate::world::rlva::command_name(&cmd)
+                );
                 let blocked = aurora_i18n::tr!("rlva-blocked");
-                self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                // the watchdog's own commands say nothing to the user, but
+                // whoever waits for their answer still gets it
+                if crate::world::rlva::refusal_shown(actor) {
+                    self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                }
                 // answered at once, as the demo answers a change it applies
                 if let Some(reply) = crate::world::rlva::refused_reply(&cmd, blocked) {
                     self.on_app_event(reply);
@@ -3794,6 +3808,7 @@ impl App {
         self.region_restart.put_demo(demo);
         self.move_complete_at = None;
         self.static_eyes.on_arrival();
+        self.bento_idle.on_arrival();
         self.set_mouselook_grab(false);
         self.camera = Camera::default();
     }
@@ -4325,6 +4340,8 @@ impl App {
                 self.scene.particles.on_properties(&props);
                 self.interactions.on_properties(&props);
                 self.object_profile.on_properties(&props);
+                // before the Area Search filter, which can drop the answer
+                self.ik_editor.update_poser_subject_names(&props);
                 let props = self.area_search_build_properties(props, &area_reads);
                 self.build.on_properties(&self.world, props);
             }
@@ -4667,6 +4684,7 @@ impl App {
                 self.move_complete_at = Some(Instant::now());
                 // the simulator we land in plays none of our animations yet
                 self.static_eyes.on_arrival();
+                self.bento_idle.on_arrival();
                 self.tp_checks = vec![10.0, 3.0];
                 // New region must learn walk/run again (LLAgent::sendWalkRun
                 // after RegionHandshake, llviewermessage.cpp). Without this
@@ -5613,6 +5631,7 @@ impl App {
             }
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings),
             Action::ToggleInterface => self.toggle_interface(),
+            Action::ToggleUiFeature => self.toggle_ui_feature(),
             Action::HoverTips => self.toggle_hover_tips(),
             Action::ShowHuds => self.set_show_huds(!self.settings.show_huds),
             Action::Import => self.imports.toggle_import(&self.egui_ctx, &self.settings.imports),
@@ -6337,7 +6356,7 @@ impl App {
     /// FSStaticEyes (update_static_eyes in llstartup.cpp, its setting's
     /// listener in llviewercontrol.cpp): the animation that holds the eyes
     /// still is started after every arrival, then started or stopped as the
-    /// setting changes (`StaticEyes`).
+    /// setting changes (`SimAnimation`).
     fn sync_static_eyes(&mut self) {
         if self.move_complete_at.is_none() {
             return;
@@ -6346,6 +6365,16 @@ impl App {
             log::info!("static eyes: {} asked of the simulator", if start { "start" } else { "stop" });
             self.send(NetCommand::AgentAnimation {
                 anim: crate::world::lookat::STATIC_EYES,
+                start,
+            });
+        }
+        // FSPlayDefaultBentoAnimation (LLAgent::setRegion and
+        // stopCurrentAnimations in llagent.cpp, the setting's listener
+        // handlePlayBentoIdleAnimationChanged in llviewercontrol.cpp)
+        if let Some(start) = self.bento_idle.request(self.settings.bento_idle) {
+            log::info!("bento idle pose: {} asked of the simulator", if start { "start" } else { "stop" });
+            self.send(NetCommand::AgentAnimation {
+                anim: reset_skeleton::ANIM_BENTO_IDLE,
                 start,
             });
         }
@@ -8088,9 +8117,13 @@ impl App {
                 let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
                 self.build.paste_vector(&mut self.world, &self.settings.build, which, &text);
             }
-            Request::CopyKeys => self
-                .egui_ctx
-                .copy_text(self.build.copy_keys(&self.world, &self.settings.build, self.shift)),
+            Request::CopyKeys { feedback, anchor } => {
+                let (keys, count) = self.build.copy_keys_with_count(&self.world, &self.settings.build, self.shift);
+                if count > 0 {
+                    self.egui_ctx.copy_text(keys);
+                    crate::ui::widgets::show_copied(&self.egui_ctx, feedback, anchor, crate::build::ui::copied_keys_label(count));
+                }
+            }
             Request::Script { object, item } => self.open_script(aurora_net::scripts::ScriptTarget { object, item }),
         }
         self.flush_build();
@@ -8375,8 +8408,12 @@ impl App {
             self.particle_target_pick();
             return true;
         }
+        // Object view takes the camera tool even while Build is open, as
+        // activate_camera_tool / LLToolMgr::getCurrentTool give the transient
+        // LLToolCamera priority (llfloatercamera.cpp / lltoolmgr.cpp, LGPL 2.1).
         if !self.build.open
             || self.alt
+            || self.object_view
             || (self.hud_drag_requested() && self.huds_shown() && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
         {
             return false;
@@ -11932,7 +11969,9 @@ impl App {
             );
             self.build.refresh_link_geometry(&self.world, &self.scene);
             // (nor while the Director's track plays or it films: the world alone)
-            let bare = self.photo_full_frame() || self.director_playing() || self.director_filming();
+            // (nor with the UI not drawn, Ctrl+Alt+F1: render_ui_3d's
+            // renderSelections goes with it in the Legacy Viewer)
+            let bare = self.photo_full_frame() || self.director_playing() || self.director_filming() || self.interface.ui_off;
             let mut selection_wire = if bare {
                 Default::default()
             } else {
@@ -13272,15 +13311,16 @@ impl App {
         self.build.sync_mesh_inspector(&mut self.world, &mut self.scene);
         if self.in_world() && self.build.open {
             for idx in self.build.sel_prims(&self.world) {
-                if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
-                    && !self.build.face_counts.contains_key(&id)
+                // counted again once the shape changes (a hollow adds a face)
+                if !self.build.face_count_known(&self.world, idx)
                     && let Some(n) = self.media.face_count(&self.world, &self.scene, idx)
                 {
-                    self.build.face_counts.insert(id, n);
+                    self.build.set_face_count(&self.world, idx, n);
                 }
             }
             if self.build.face_counts.len() > 1024 {
                 self.build.face_counts.clear();
+                self.build.face_count_shapes.clear();
             }
         }
         let mut actions = UiActions::default();
@@ -14662,6 +14702,16 @@ impl App {
         self.resolve_clicks();
         self.demo_action_steps();
         self.demo_click_steps();
+        // AURORA_DEMO_UI_FEATURE=off|cycle (#4092): Advanced › Rendering
+        // features › UI unticked at frame 600, as Ctrl+Alt+F1 does; `cycle`
+        // ticks it back at frame 900
+        if self.demo
+            && matches!(self.frame_count, 600 | 900)
+            && let Ok(mode) = std::env::var("AURORA_DEMO_UI_FEATURE")
+            && (self.frame_count == 600 || mode == "cycle")
+        {
+            self.toggle_ui_feature();
+        }
         // AURORA_DEMO_MAP=…,switch: the map's layout flips at frame 700 with
         // the map open, as Preferences › Aurora › World map does (#2669)
         if self.demo
@@ -16695,6 +16745,7 @@ impl App {
             }
             BarAction::Favorite(f) => self.favorite_action(f),
             BarAction::ToggleInterface => self.toggle_interface(),
+            BarAction::ToggleUiFeature => self.toggle_ui_feature(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
             BarAction::VrView(mode) => {
                 if self.vr_mode.is_some() {
@@ -16812,6 +16863,21 @@ impl App {
         } else {
             self.interface.set_hidden(&self.egui_ctx, true);
         }
+    }
+
+    /// Advanced › Rendering features › UI and Ctrl+Alt+F1 (#4092,
+    /// `ui::interface`): the whole interface drawn or not, in mouselook too,
+    /// as the Legacy Viewer's feature bit. Turned off, the chat lets the
+    /// keyboard go with the other fields.
+    fn toggle_ui_feature(&mut self) {
+        self.interface.toggle_ui(&self.egui_ctx);
+        if self.interface.ui_off {
+            self.chat_ui.let_keyboard_go();
+        }
+        log::info!(
+            "interface: UI rendering feature {}",
+            if self.interface.ui_off { "off" } else { "on" }
+        );
     }
 
     /// World › HUDs › Show HUDs and its Alt+Shift+H shortcut
@@ -18221,7 +18287,9 @@ impl App {
             ui.disable();
             ctx.memory_mut(|m| m.set_modal_layer(egui::Modal::default_area(egui::Id::unique("viewer_exit")).layer()));
         }
+        // the update card is interface too (Ctrl+Alt+F1)
         a.update_quit = !self.exit_prompt.open
+            && !self.interface.ui_off
             && ui::update::show_real(
                 &ctx,
                 &p,
@@ -18243,9 +18311,17 @@ impl App {
         if !matches!(self.screen, Screen::World) && self.interface.hidden {
             self.interface.set_hidden(&ctx, false);
         }
-        self.busy_pause_notice(&ctx, &p);
-        self.video_memory_notice(&ctx, &p);
-        self.media_pack_card(&ctx, &p);
+        // the UI rendering feature is the world's: the login and loading
+        // screens are always drawn
+        if !matches!(self.screen, Screen::World) && self.interface.ui_off {
+            self.interface.set_ui_off(&ctx, false);
+        }
+        // (none of the notices while the UI is not drawn: Ctrl+Alt+F1)
+        if !self.interface.ui_off {
+            self.busy_pause_notice(&ctx, &p);
+            self.video_memory_notice(&ctx, &p);
+            self.media_pack_card(&ctx, &p);
+        }
         match self.screen {
             Screen::Login => {
                 if let Some(demo) = &mut self.update_demo {
@@ -18429,6 +18505,68 @@ impl App {
                 // only pointed at on the live view and its film.
                 self.snapshots.ui.looks.hover = None;
                 self.snapshots.world_ui.looks.hover = None;
+                // the voice levels are the world's, not the interface's: the
+                // lips of the avatars follow them (lip sync is the avatars'
+                // update in the Legacy Viewer, whatever render_ui says) and
+                // the avatar menus' voice row too, also while the UI, the
+                // Director's playback or the full-frame photo view hide the
+                // rest
+                let voice_levels = if self.demo {
+                    static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+                    let mut levels = crate::demo::voice_levels(
+                        ctx.input(|i| i.time),
+                        self.world.agent_id,
+                        self.settings.audio.voice_enabled,
+                        self.talking(),
+                        self.voice.mic_level,
+                        VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
+                    );
+                    crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
+                    crate::demo::people::voice(&mut levels, ctx.input(|i| i.time));
+                    crate::demo::voice_controls::voice(&mut levels, ctx.input(|i| i.time));
+                    levels
+                } else {
+                    self.voice.levels(self.world.agent_id)
+                };
+                // who gets the voice row of the avatar menus
+                let me = self.world.agent_id;
+                self.world.calls.voice_peers.clear();
+                self.world.calls.voice_peers.extend(voice_levels.keys().filter(|id| **id != me));
+                let audio = &self.settings.audio;
+                self.scene.live_morphs.set_levels(
+                    &voice_levels,
+                    audio.lip_sync && (audio.voice_visualizers_in_calls || self.world.calls.active.is_none()),
+                    Instant::now(),
+                );
+                // Advanced › Rendering features › UI off (Ctrl+Alt+F1): the
+                // world alone, as the Legacy Viewer's render_ui skipping
+                // render_ui_3d, LLHUDObject::renderAll and render_ui_2d
+                // (display(), indra/newview/llviewerdisplay.cpp). No window,
+                // bar, menu, toast, chat line, name tag, floating text nor
+                // beacon; the HUD attachments and RLVa's overlay are the
+                // renderer's and stay. A menu of the world opened by a click
+                // meanwhile closes (the Legacy Viewer's is not drawn either).
+                if self.interface.ui_off {
+                    if self.context_menu.take().is_some() || self.build.menu_selection {
+                        self.build.release_menu_selection(&self.world);
+                        self.flush_build();
+                    }
+                    // no name tag is drawn, so none takes a click nor sets
+                    // the cursor (as the held photo's and the film's frames)
+                    self.name_tags.clear();
+                    self.name_tag_visibility.clear();
+                    self.plate_hover = None;
+                    self.plates.hovered = None;
+                    // the keyboard stays the world's every frame
+                    // (LLViewerWindow::updateKeyboardFocus while the feature is
+                    // off): a chat focus asked meanwhile (Enter) is dropped
+                    self.chat_ui.let_keyboard_go();
+                    ctx.memory_mut(|m| m.stop_text_input());
+                    // the exit's question still shows: closing the window
+                    // must not wait behind an interface nobody sees
+                    a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+                    return a;
+                }
                 // the Director's track plays: the world alone, and the
                 // countdown of its start delay
                 if self.director_playing() {
@@ -18493,33 +18631,6 @@ impl App {
                 let bare = held || filming;
                 // what belongs to the world first: the HUD attachments, the bars and
                 // every window cover the name tags, the floating texts and the beacon
-                let voice_levels = if self.demo {
-                    static VOICE_MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-                    let mut levels = crate::demo::voice_levels(
-                        ctx.input(|i| i.time),
-                        self.world.agent_id,
-                        self.settings.audio.voice_enabled,
-                        self.talking(),
-                        self.voice.mic_level,
-                        VOICE_MODE.get_or_init(|| std::env::var("AURORA_DEMO_VOICE").ok()).as_deref(),
-                    );
-                    crate::demo::tags::voice(&mut levels, ctx.input(|i| i.time));
-                    crate::demo::people::voice(&mut levels, ctx.input(|i| i.time));
-                    crate::demo::voice_controls::voice(&mut levels, ctx.input(|i| i.time));
-                    levels
-                } else {
-                    self.voice.levels(self.world.agent_id)
-                };
-                // who gets the voice row of the avatar menus
-                let me = self.world.agent_id;
-                self.world.calls.voice_peers.clear();
-                self.world.calls.voice_peers.extend(voice_levels.keys().filter(|id| **id != me));
-                let audio = &self.settings.audio;
-                self.scene.live_morphs.set_levels(
-                    &voice_levels,
-                    audio.lip_sync && (audio.voice_visualizers_in_calls || self.world.calls.active.is_none()),
-                    Instant::now(),
-                );
                 // the look-at crosshairs under the name tags (none over a held
                 // photo, nor the walk mark)
                 if !bare {
@@ -18763,6 +18874,10 @@ impl App {
                         a.and_then(|a| self.settings.keybinds.get(a)[0].as_ref().map(|b| b.label()))
                             .unwrap_or_default()
                     }),
+                    ui_feature_keys: self.settings.keybinds.get(Action::ToggleUiFeature)[0]
+                        .as_ref()
+                        .map(|b| b.label())
+                        .unwrap_or_default(),
                     conversation_thumbnails: self.chat_ui.thumbnails.top_count(),
                     region: if self.world.rlva.has("showloc") {
                         aurora_i18n::tr!("rlva-hidden-region")
@@ -18912,6 +19027,12 @@ impl App {
                     bottom_top: self.interface.last_room.map_or(screen_rect.bottom() - 56.0, |(_, bottom)| bottom),
                     menu_open: egui::Popup::is_any_open(&ctx),
                 });
+                // what the toolbar buttons of menu commands show, given before
+                // any bar is drawn: the bottom and side bars also show
+                // without the top bar (hidden interface, mouselook chat)
+                self.toolbar_ui.edit_particles = status.edit_particles;
+                self.toolbar_ui.fly_override_active = status.fly_override;
+                self.toolbar_ui.quickjump_active = status.quickjump;
                 if chrome.top {
                     let (bar, audio_action) = ui::bars::top_bars(
                         ui,
@@ -19243,8 +19364,9 @@ impl App {
                 }
                 ui::layout::set_window_edges(ui.ctx(), edges);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
+                ui::toolbar::show_command_context(ui.ctx(), &p, bar_layout, toolbar_settings);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
-                if self.toolbar_ui.commit(bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
+                if self.toolbar_ui.commit_with_menus(ui.ctx(), bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
                     self.settings.save();
                 }
                 // the Favorites button's right click: where the favourites live
