@@ -4008,8 +4008,7 @@ pub fn show(
         .chat()
         .attention(conversations_waiting(world))
         .attention_flash(st.button_flash.bar(ctx.input(|i| i.time)))
-        .steady_size()
-        .may_go_outside();
+        .steady_size();
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);

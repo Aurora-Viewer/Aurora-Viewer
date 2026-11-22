@@ -17,6 +17,8 @@ mod collapse_tests;
 mod field_centering_tests;
 #[cfg(test)]
 mod movement_tests;
+#[cfg(test)]
+mod outside_tests;
 pub(crate) use cascade::Group as CascadeGroup;
 #[cfg(test)]
 mod auto_height_tests;
@@ -637,9 +639,6 @@ pub struct Floater<'a> {
     partial_outside: bool,
     /// A chat window: it stays in immersive mode (`hide_windows`).
     chat: bool,
-    /// Its title bar has the button that sends it to a window of its own,
-    /// outside the viewer's (`may_go_outside`).
-    outside: bool,
 }
 
 impl<'a> Floater<'a> {
@@ -676,7 +675,6 @@ impl<'a> Floater<'a> {
             cascade: None,
             partial_outside: false,
             chat: false,
-            outside: false,
         }
     }
 
@@ -740,13 +738,25 @@ impl<'a> Floater<'a> {
     }
 
     /// The user may send this window to a window of the system, outside
-    /// the viewer's, and bring it back (outside.rs). Not in the Legacy
-    /// Viewer. A window opts in once its body is known to work there: what
-    /// it draws outside its body (a menu, a picker laid over the viewer)
-    /// stays in the viewer's window.
-    pub fn may_go_outside(mut self) -> Self {
-        self.outside = true;
-        self
+    /// the viewer's, and bring it back (outside.rs): its title bar has the
+    /// button for it. Not in the Legacy Viewer. Every window may, but those
+    /// of `STAYS_INSIDE` and those whose title bar or sizing the window
+    /// outside does not draw yet (`show_outside`): a state row or a summary
+    /// under the title, a framed header, a size that follows the content
+    /// or keeps a ratio, a compact body when minimized, a fixed size, a
+    /// layer over an overlay.
+    fn goes_outside(&self) -> bool {
+        !STAYS_INSIDE.contains(&self.id)
+            && self.header_status.is_empty()
+            && self.header_status_action.is_none()
+            && self.header_summary.is_none()
+            && self.framed_header.is_none()
+            && !self.auto_height
+            && !self.height_only
+            && self.resizable
+            && self.aspect.is_none()
+            && self.compact_minimized.is_none()
+            && self.order == egui::Order::Middle
     }
 
     pub fn framed_header(mut self, icon: &'a str) -> Self {
@@ -843,7 +853,7 @@ impl<'a> Floater<'a> {
             }
             return None;
         }
-        if self.outside && crate::outside::wanted(ctx, egui::Id::unique(self.id)) {
+        if self.goes_outside() && crate::outside::wanted(ctx, egui::Id::unique(self.id)) {
             let window_id = egui::Id::unique(self.id);
             if !super::layout::reset_pending(ctx, window_id) {
                 return self.show_outside(ctx, p, open, body);
@@ -1108,6 +1118,7 @@ impl<'a> Floater<'a> {
             if framed_header.is_some() {
                 ui.spacing_mut().item_spacing.y = 0.0;
             }
+            let goes_outside = self.goes_outside();
             let mut header_content = |ui: &mut egui::Ui| {
                 if framed_header.is_some() {
                     ui.spacing_mut().interact_size.y = 20.0;
@@ -1141,7 +1152,7 @@ impl<'a> Floater<'a> {
                         if title_button(ui, p, icon).on_hover_text(tip).clicked() {
                             toggle_min = true;
                         }
-                        if self.outside
+                        if goes_outside
                             && title_button(ui, p, OUTSIDE_ICON)
                                 .on_hover_text(aurora_i18n::tr!("common-window-outside"))
                                 .clicked()
@@ -1441,6 +1452,10 @@ impl<'a> Floater<'a> {
         let out = ctx.show_viewport_immediate(crate::outside::viewport(window_id), builder, |ui, _| {
             let size = ui.max_rect().size();
             ui.ctx().data_mut(|d| d.insert_persisted(window_id.with(OUTSIDE_SIZE), size));
+            // what follows the pointer during a drag, as the viewer's pass
+            // draws it in its own window (`App::inventory_drag_input`)
+            super::inventory::drag::badge(ui.ctx(), p);
+            super::places::drag::ghost(ui.ctx(), p);
             crate::outside::carry::hint(ui.ctx(), p);
             let margin = if flush {
                 egui::Margin {
@@ -1516,6 +1531,25 @@ const OUTSIDE_ICON: &str = "app-window-filled";
 const INSIDE_ICON: &str = "picture-in-picture-filled";
 /// The size a window had outside the viewer's, kept with the layout.
 const OUTSIDE_SIZE: &str = "outside_size";
+/// The windows that never leave the viewer's. The Dev Toolbox: its tools
+/// read the world under the pointer of the viewer's window and draw over
+/// it.
+const STAYS_INSIDE: &[&str] = &[super::dev_toolbox::WINDOW];
+
+/// The window `id` is drawn in its window outside the viewer's.
+fn floater_outside(ctx: &egui::Context, window_id: egui::Id) -> bool {
+    crate::outside::wanted(ctx, window_id) && crate::outside::native(ctx, window_id)
+}
+
+/// The size the window `id` was last drawn at, in the viewer's window or
+/// in its own outside.
+pub fn floater_size(ctx: &egui::Context, id: &str) -> Option<Vec2> {
+    let window_id = egui::Id::unique(id);
+    if floater_outside(ctx, window_id) {
+        return ctx.data_mut(|d| d.get_persisted::<Vec2>(window_id.with(OUTSIDE_SIZE)));
+    }
+    egui::AreaState::load(ctx, window_id).and_then(|state| state.size)
+}
 
 /// A window without a title bar, dragged by its whole surface (the
 /// mini-map): `frame` around `body`, which fills it. Like a floater it is
@@ -1838,6 +1872,10 @@ impl Footer {
 /// Set an expanded window's size once, preserving its independent position.
 pub fn size_floater(ctx: &egui::Context, id: &str, size: Vec2) {
     let window_id = egui::Id::unique(id);
+    if floater_outside(ctx, window_id) {
+        crate::outside::resize(ctx, window_id, size);
+        return;
+    }
     ctx.data_mut(|d| {
         d.insert_persisted(window_id.with("expanded_size"), size);
         d.insert_temp(window_id.with("restore_size"), true);

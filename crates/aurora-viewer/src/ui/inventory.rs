@@ -480,9 +480,7 @@ pub const DUAL_ICON: &str = "columns-2-filled";
 /// (each pane keeps the width of the single one), at least `DUAL_SIZE`;
 /// back to one pane, half of it. A size the user sets afterwards stays.
 pub fn resize_for_dual(ctx: &egui::Context, dual: bool) {
-    let size = egui::AreaState::load(ctx, egui::Id::unique("inventory"))
-        .and_then(|state| state.size)
-        .unwrap_or(DEFAULT_SIZE);
+    let size = super::widgets::floater_size(ctx, "inventory").unwrap_or(DEFAULT_SIZE);
     let size = if dual {
         Vec2::new((size.x * 2.0).max(DUAL_SIZE.x), size.y.max(DUAL_SIZE.y))
     } else {

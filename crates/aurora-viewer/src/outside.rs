@@ -23,8 +23,9 @@
 //! has the focus (`App::in_front`).
 //!
 //! A window of the interface goes outside when its title bar's button asks
-//! for it (`widgets::Floater::may_go_outside`: one window at a time opts
-//! in, none goes by itself). The wish is kept with the interface's layout
+//! for it (`widgets::Floater::goes_outside`: every window whose title bar
+//! the window outside draws, but the Dev Toolbox; none goes by itself).
+//! The wish is kept with the interface's layout
 //! ([`wanted`]); the window draws its body in its window outside once
 //! there is one ([`native`]), asks for it otherwise ([`ask`]), and says at
 //! each pass that it drew there ([`seen`]). [`Outside::reconcile`], before
@@ -118,7 +119,7 @@ pub(crate) fn native(ctx: &egui::Context, window: egui::Id) -> bool {
     ctx.data(|d| d.get_temp::<bool>(window.with("outside native"))).unwrap_or(false)
 }
 
-fn set_native(ctx: &egui::Context, window: egui::Id, native: bool) {
+pub(crate) fn set_native(ctx: &egui::Context, window: egui::Id, native: bool) {
     ctx.data_mut(|d| {
         if native {
             d.insert_temp(window.with("outside native"), true);
@@ -134,6 +135,21 @@ fn front_id() -> egui::Id {
 
 fn raises_id() -> egui::Id {
     egui::Id::unique("aurora outside raises")
+}
+
+fn sizes_id() -> egui::Id {
+    egui::Id::unique("aurora outside sizes")
+}
+
+/// Asks the system to give the window outside of `window` the size `size`
+/// (in the interface's points), at the next frame: what sizes a window
+/// inside by its name (`widgets::size_floater`). The last size asked wins.
+pub(crate) fn resize(ctx: &egui::Context, window: egui::Id, size: egui::Vec2) {
+    ctx.data_mut(|d| {
+        let sizes = d.get_temp_mut_or_default::<Vec<(egui::Id, egui::Vec2)>>(sizes_id());
+        sizes.retain(|(asked, _)| *asked != window);
+        sizes.push((window, size));
+    });
 }
 
 /// The window `window` is in its window outside and that one has the
@@ -153,6 +169,12 @@ pub(crate) fn raise(ctx: &egui::Context, window: egui::Id) {
             raises.push(window);
         }
     });
+}
+
+/// The sizes asked and not given yet.
+#[cfg(test)]
+pub(crate) fn resizes(ctx: &egui::Context) -> Vec<(egui::Id, egui::Vec2)> {
+    ctx.data(|d| d.get_temp(sizes_id())).unwrap_or_default()
 }
 
 /// Asks for a window outside, opened before the next pass.
@@ -402,13 +424,23 @@ impl Outside {
         ctx: &egui::Context,
         attributes: impl Fn(&Ask, Option<Was>) -> WindowAttributes,
     ) {
-        let (asks, seen, raises) = ctx.data_mut(|d| {
+        let (asks, seen, raises, sizes) = ctx.data_mut(|d| {
             (
                 d.remove_temp::<Vec<Ask>>(asks_id()).unwrap_or_default(),
                 d.remove_temp::<Vec<egui::Id>>(seen_id()).unwrap_or_default(),
                 d.remove_temp::<Vec<egui::Id>>(raises_id()).unwrap_or_default(),
+                d.remove_temp::<Vec<(egui::Id, egui::Vec2)>>(sizes_id()).unwrap_or_default(),
             )
         });
+        let zoom = ctx.zoom_factor();
+        for (window, size) in sizes {
+            if let Some(native) = self.shared.borrow().windows.get(&viewport(window)) {
+                // (the system answers with a resize of the window, or not at all)
+                let _ = native
+                    .window
+                    .request_inner_size(winit::dpi::LogicalSize::new(size.x * zoom, size.y * zoom));
+            }
+        }
         for window in raises {
             if let Some(native) = self.shared.borrow().windows.get(&viewport(window)) {
                 native.window.set_minimized(false);
@@ -790,6 +822,19 @@ mod tests {
         ctx.data_mut(|d| d.insert_temp(front_id(), chat));
         assert!(in_focus(&ctx, chat));
         assert!(!in_focus(&ctx, people));
+    }
+
+    #[test]
+    fn the_last_size_asked_of_a_window_outside_wins() {
+        let ctx = egui::Context::default();
+        let (inventory, people) = (egui::Id::unique("inventory"), egui::Id::unique("people"));
+        resize(&ctx, inventory, egui::vec2(600.0, 400.0));
+        resize(&ctx, people, egui::vec2(300.0, 500.0));
+        resize(&ctx, inventory, egui::vec2(1180.0, 400.0));
+        assert_eq!(
+            resizes(&ctx),
+            [(people, egui::vec2(300.0, 500.0)), (inventory, egui::vec2(1180.0, 400.0))]
+        );
     }
 
     /// A restart: the layout is written at exit and read at the next start.
