@@ -5466,7 +5466,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
-| `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, or a box filling the room |
+| `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box\|inner][,shiny]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, a box filling the room, or a box on its inner faces; `shiny` makes the room shiny |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 | `AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails, for the whole run or that long, from the start or `after` seconds |
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
@@ -5965,6 +5965,16 @@ both open states and the selection count. Capture at frame 620.
   reach the view: the list holds 64 of those (#1032: the 64 nearest all
   around the camera held only 50, and the pools of light halfway across
   the ground went out).
+- **`AURORA_DEMO_PROBE_ROOM=<ambiance>[,box|inner][,shiny]`**: a closed
+  room of 16 × 16 × 5 m (walls, floor and roof 0.2 m thick) with a warm
+  lamp, at `AURORA_DEMO_POS="100,100"`, and a manual probe of that
+  ambiance (#2217). Without an option the probe is a 4 m sphere crossing
+  the floor; `box`, a box through the middle of the walls, the floor and
+  the roof (their inner faces inside it); `inner`, a box whose faces are
+  the inner faces of the room, as a creator sizes one to a room's inside.
+  `shiny` gives the room a high shininess (legacy, no material): the
+  probe's image of the room shows in its walls. `1,inner,shiny` shows the
+  grain of `AURORA_PROBE_FACE=exact`.
 - **Probe selection (#446):** combine `AURORA_DEMO_PROBES=1` with
   `AURORA_DEMO_BUILD=move,0,0` and capture after frame 650. With no object
   selected, every inspector section must show "Select reflection probes"
@@ -12731,6 +12741,7 @@ What the inventory must show with these scenarios:
 | `AURORA_THROTTLE_MAX_KBPS=<n>` | Most bandwidth asked from the simulator for this launch (6,000 by default, up to 50,000) |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
+| `AURORA_PROBE_FACE=exact` or `alt` | Surfaces find their reflection probes from their own position, as before (grain on a wall lying on the face of a box probe), or one second in two |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
 | `AURORA_LEGACY_GLARE=0` | Transparent legacy materials without their glare (wet and shine layers invisible), as before #3259 |
 | `AURORA_BLEND_FACE_RANK=0` | Blended faces of one object lying on one another without their face order in the exact and stochastic orders, as before |
@@ -13342,6 +13353,22 @@ What the inventory must show with these scenarios:
     under MSAA too (`AURORA_AA=3`): a sample at the edge of a triangle seen
     edge-on is shaded at a position that can be behind the camera, which is
     why such positions walk the whole list.
+- **`AURORA_PROBE_FACE=exact|alt`**: by default a surface finds its
+  reflection probes 1 cm in front of it, along its normal (`probe_point` in
+  `common.wgsl`). A creator often sizes a box probe to the inside of a room,
+  its faces on those of the walls, the floor and the roof: whether a point
+  of such a face is in the box then turns on the rounding of its position,
+  pixel by pixel, and a shiny wall showed the box's image of the room and
+  the automatic probes' in speckles and streaks, as z-fighting does. The
+  Legacy Viewer tests the position itself (`shouldSampleProbe`,
+  reflectionProbeF.glsl), with no margin either.
+  - `exact`: the position itself, as before, in the main view.
+  - `alt`: `exact` one second in two.
+
+  Demo: `AURORA_DEMO_PROBE_ROOM=1,inner,shiny` with
+  `AURORA_DEMO_POS="100,100"` (the box's faces on the walls, the floor's
+  top and the roof's underside): the shiny room must be clean; with
+  `AURORA_PROBE_FACE=exact` its walls, floor and roof show the grain.
 - **`AURORA_LIGHT_TILES=0|alt|check`**: by default, a lit fragment only
   walks the local lights that cover at once its screen column, its row and
   its depth slice (32 of each; sets computed each frame on the render
