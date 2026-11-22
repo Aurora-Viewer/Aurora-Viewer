@@ -467,6 +467,7 @@ impl Imports {
         let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.local && !e.local_pending) else {
             return;
         };
+        entry.sync_image_size(self.load_preferences.limit_texture_size);
         let Some(source) = entry.source.clone() else {
             return;
         };

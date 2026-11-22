@@ -1281,7 +1281,6 @@ import-mesh = Mesz
 import-bulk = Wiele
 import-choose-files = Dodaj pliki…
 import-loading = Odczytywanie plików…
-import-limit-bulk-1k = Ogranicz tekstury do 1024 px
 import-files = Pliki
 import-destination = Miejsce docelowe
 import-no-folder = Brak dostępnego folderu
@@ -1347,7 +1346,6 @@ import-degenerate-physics = { $count ->
     }
 import-physics-convex-repair = Utwórz wypukłe powłoki kolizji
 import-physics-convex-help = Powłoki wypukłe przybliżają kształt kolizji i mogą wypełniać otwory. Wizualne poziomy LOD pozostają bez zmian. Przed poproszeniem o wycenę sprawdź podgląd fizyki.
-import-max-size = Ogranicz rozmiar do 1024 × 1024
 import-texture-size = Rozmiar przesyłania: { $width } × { $height } px
 import-lossless = Kompresja bezstratna
 import-strip-alpha = Usuń prawie nieprzezroczysty kanał alfa

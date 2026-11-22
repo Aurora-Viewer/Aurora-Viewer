@@ -1292,7 +1292,6 @@ import-mesh = Меш
 import-bulk = Несколько файлов
 import-choose-files = Добавить файлы…
 import-loading = Чтение файлов…
-import-limit-bulk-1k = Ограничить текстуры размером 1024 пикс.
 import-files = Файлы
 import-destination = Папка назначения
 import-no-folder = Нет доступных папок
@@ -1359,7 +1358,6 @@ import-degenerate-physics =
     }
 import-physics-convex-repair = Создать выпуклые оболочки для столкновений
 import-physics-convex-help = Выпуклые оболочки приближённо описывают форму столкновений и могут закрыть отверстия. Визуальные уровни детализации сохраняются. Проверьте форму столкновений в предпросмотре перед расчётом стоимости.
-import-max-size = Ограничить размер до 1024 × 1024
 import-texture-size = Размер при загрузке: { $width } × { $height } пикс.
 import-lossless = Сжатие без потерь
 import-strip-alpha = Удалить почти непрозрачный альфа-канал

@@ -1254,7 +1254,6 @@ import-mesh = 網格模型
 import-bulk = 多個
 import-choose-files = 新增檔案…
 import-loading = 正在讀取檔案…
-import-limit-bulk-1k = 將紋理限制為 1024 畫素
 import-files = 檔案
 import-destination = 目標位置
 import-no-folder = 無可用資料夾
@@ -1318,7 +1317,6 @@ import-degenerate-physics = { $count ->
     }
 import-physics-convex-repair = 建立凸形碰撞外殼
 import-physics-convex-help = 凸包會近似碰撞形狀，可能填滿開口。視覺 LOD 保持不變。請先檢視物理預覽再取得報價。
-import-max-size = 將尺寸限制為 1024 × 1024
 import-texture-size = 上傳尺寸：{ $width } × { $height } 畫素
 import-lossless = 無失真壓縮
 import-strip-alpha = 移除近乎不透明的透明度通道
