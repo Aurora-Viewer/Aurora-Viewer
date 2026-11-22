@@ -4468,7 +4468,8 @@ impl Scene {
                     legacy_glare = gloss > 0.0 || env > 0.0;
                     rec.spec_color = [lin(spec_rgb[0]), lin(spec_rgb[1]), lin(spec_rgb[2]), 1.0];
                     rec.params[3] = lm.alpha_cutoff as f32 / 255.0;
-                    if lm.diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE {
+                    // (the alpha `classify` reads too, so flag and pass agree)
+                    if emissive_mask_applies(lm.diffuse_alpha_mode, rec.base_color[3]) {
                         rec.flags[0] |= flags::EMISSIVE_MASK;
                     }
                     legacy_alpha = Some(lm.diffuse_alpha_mode);
@@ -6854,6 +6855,19 @@ fn te_invisible(o: &Object, face: usize) -> bool {
     o.visual_texture_face(face).color[3] < 0.004 && o.visual_material(face).is_none()
 }
 
+/// Whether a legacy material's "emissive mask" applies to a face whose
+/// texture-entry alpha is `te_alpha`. A transparent face (alpha below
+/// 0.999) takes the alpha pass with the blend shader whatever the
+/// material's mode, so its texture alpha is opacity again, not glow:
+/// LLVolumeGeometryManager::genDrawInfo (`blinn_phong_transparent` sends
+/// the face to PASS_ALPHA) and LLVolumeGeometryManager::registerFace (the
+/// shader mask of PASS_ALPHA is DIFFUSE_ALPHA_MODE_BLEND's), llvovolume.cpp.
+/// The click pick keeps the material's mode (`legacy_alpha`), as
+/// LLVOVolume::lineSegmentIntersect ignores the face's alpha there.
+fn emissive_mask_applies(diffuse_alpha_mode: u8, te_alpha: f32) -> bool {
+    diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE && te_alpha >= 0.999
+}
+
 fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
     // fully transparent face, or the transparent texture (unused layers of
     // mesh heads and bodies): nothing to draw. A blended legacy material
@@ -8196,6 +8210,21 @@ mod tests {
     /// legacy material still shows its reflections (alpha = max(texture
     /// alpha, glare)), the "wet" layers over mesh bodies (#1420). Without
     /// one, or not blended, the transparent texture stays hidden.
+    /// #4517: an emissive mask on a transparent face blends like any
+    /// transparent face (texture alpha = opacity), as in the Legacy Viewer;
+    /// on an opaque face it stays an emissive mask.
+    #[test]
+    fn emissive_mask_is_dropped_on_a_transparent_face() {
+        use legacy_mat::alpha_mode::{BLEND, EMISSIVE, MASK, NONE};
+        assert!(emissive_mask_applies(EMISSIVE, 1.0));
+        assert!(emissive_mask_applies(EMISSIVE, 0.999));
+        assert!(!emissive_mask_applies(EMISSIVE, 0.99));
+        assert!(!emissive_mask_applies(EMISSIVE, 0.5));
+        for other in [NONE, BLEND, MASK] {
+            assert!(!emissive_mask_applies(other, 1.0));
+        }
+    }
+
     #[test]
     fn transparent_texture_under_a_glaring_legacy_material_is_blended() {
         let face = |glare: bool, legacy: Option<u8>, te_alpha: f32| FaceDraw {
