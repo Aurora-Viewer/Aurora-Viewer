@@ -87,6 +87,13 @@ front window; Command+Shift+W and Control+Shift+W close every window).
 The mouse keeps the two keys apart: Control-click is not Command-click,
 and Command does not change the camera wheel.
 
+**Control-click is a right click**, as in every Mac application (the Legacy
+Viewer uses Command-click): it opens the menus, and Control-drag orbits the
+camera. Control keeps its own use where it has one: with the build tools
+open (over the world), the poser or the animation editor, in mouselook, in
+the photo viewfinder, on a HUD while Control is the key that moves HUDs, and
+on a name plate with an action chosen for Control-click.
+
 A few shortcuts are labeled with the Control key (⌃), the same list as the
 Legacy Viewer: Nearby Chat (⌃H), Conversations (⌃T), the World Map (⌃M),
 Highlight Transparent (⌃⌥T), Snapshot to Disk (⌃`). Command runs those too,

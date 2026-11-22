@@ -72,6 +72,11 @@ pub(super) enum Held {
         pressed: bool,
         over_ui: bool,
     },
+    /// The right click a macOS Control-click became (app/control_click.rs).
+    ControlClick {
+        pressed: bool,
+        over_ui: bool,
+    },
     /// Mouse motion (camera drags), summed while nothing comes between.
     Motion(f32, f32),
     Click(Click),
@@ -334,6 +339,27 @@ impl App {
         } else {
             self.with_mouse_mods(|app| app.mouse_button(button, pressed, over_ui));
         }
+    }
+
+    /// The right button of a macOS Control-click (app/control_click.rs), as
+    /// `mouse_input`.
+    pub(super) fn control_click_input(&mut self, pressed: bool, over_ui: bool) {
+        if self.studio_mouse(MouseButton::Right, pressed, over_ui) {
+            return;
+        }
+        if self.clicks.waiting() {
+            self.clicks.hold(Held::ControlClick { pressed, over_ui });
+        } else {
+            self.run_control_click(pressed, over_ui);
+        }
+    }
+
+    /// Control made the right click and modifies nothing more: otherwise the
+    /// menu would extend the selection (`BuildTool::menu_extends`).
+    fn run_control_click(&mut self, pressed: bool, over_ui: bool) {
+        let ctrl = std::mem::replace(&mut self.ctrl, false);
+        self.with_mouse_mods(|app| app.mouse_button(MouseButton::Right, pressed, over_ui));
+        self.ctrl = ctrl;
     }
 
     fn mouse_button(&mut self, button: MouseButton, pressed: bool, over_ui: bool) {
@@ -683,6 +709,7 @@ impl App {
             Held::Button { button, pressed, over_ui } => {
                 self.with_mouse_mods(|app| app.mouse_button(button, pressed, over_ui));
             }
+            Held::ControlClick { pressed, over_ui } => self.run_control_click(pressed, over_ui),
             Held::Motion(dx, dy) => self.camera_mouse_delta(dx, dy),
             Held::Click(click) => self.run_click(click),
             Held::LeftRelease => self.on_left_release(),
