@@ -1264,8 +1264,14 @@ impl Renderer {
     }
 
     /// Apply quality settings: pipelines and targets are rebuilt by the
-    /// backend with the next frame, only when needed.
+    /// backend with the next frame, only when needed. The lamps' quality
+    /// `AURORA_RT_LAMPS` forces is applied here, so that the settings the
+    /// frames report are the ones kept (`settings_applied`).
     pub fn apply_settings(&mut self, s: RenderSettings) {
+        let s = RenderSettings {
+            rt_tuning: crate::rt_shadows::forced_tuning(s.rt_tuning),
+            ..s
+        };
         if s.anisotropy != self.settings.anisotropy {
             self.textures.set_anisotropy(&self.device, s.anisotropy);
         }

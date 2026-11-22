@@ -7362,10 +7362,6 @@ impl Backend {
     /// Apply quality settings (rebuilds pipelines / targets only when
     /// needed). The anisotropy belongs to the scene's texture table.
     pub fn apply_settings(&mut self, s: RenderSettings) {
-        let s = RenderSettings {
-            rt_tuning: crate::rt_shadows::forced_tuning(s.rt_tuning),
-            ..s
-        };
         let samples = match s.aa {
             AntiAliasing::Msaa(n) => self.msaa_supported.iter().copied().filter(|&m| m <= n).max().unwrap_or(1),
             _ => 1,
