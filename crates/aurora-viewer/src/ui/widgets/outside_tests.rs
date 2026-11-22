@@ -142,8 +142,8 @@ fn a_close_asked_of_a_window_left_as_it_is_waits_for_it() {
     close_window(&ctx, window);
     for _ in 0..5 {
         frames.run(Vec::new(), |_| {});
-        keep_close_asked(&ctx, window);
-        keep_close_asked(&ctx, egui::Id::unique("another window"));
+        assert!(keep_close_asked(&ctx, window), "one waits: its window outside goes at once");
+        assert!(!keep_close_asked(&ctx, egui::Id::unique("another window")));
     }
     assert!(!close_asked(&ctx, "another window"));
     show(&mut frames, &mut open);

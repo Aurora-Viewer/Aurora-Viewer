@@ -56,6 +56,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::theme::Palette;
 use aurora_render::{EguiHandOver, OutsideEvent, OutsideFrame, Renderer};
 use egui::epaint::ClippedShape;
 use winit::event::WindowEvent;
@@ -120,12 +121,89 @@ fn kept_id() -> egui::Id {
     egui::Id::unique("aurora outside kept")
 }
 
+fn untold_id() -> egui::Id {
+    egui::Id::unique("aurora outside untold")
+}
+
+fn notice_id() -> egui::Id {
+    egui::Id::unique("aurora outside notice")
+}
+
+/// Why the interface's windows are not drawn at a pass (`keep`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kept {
+    /// The full-frame photo view.
+    Photo,
+    /// The Director's playback.
+    Director,
+    /// "UI off".
+    InterfaceOff,
+}
+
+impl Kept {
+    /// What the notice over a window left as it is says.
+    fn text(self) -> String {
+        match self {
+            Kept::Photo => aurora_i18n::tr!("common-window-paused-photo"),
+            Kept::Director => aurora_i18n::tr!("common-window-paused-director"),
+            Kept::InterfaceOff => aurora_i18n::tr!("common-window-paused-interface"),
+        }
+        .to_string()
+    }
+}
+
 /// The interface's windows are not drawn at this pass (the full-frame
 /// photo view, the Director's playback, "UI off"): those outside stay as
-/// they are, with the picture they have, until they are drawn again. They
-/// take no click and no key meanwhile; a close asked of one waits.
-pub(crate) fn keep(ctx: &egui::Context) {
-    ctx.data_mut(|d| d.insert_temp(kept_id(), true));
+/// they are, with the picture they have under a notice that says why
+/// (`notice`), until they are drawn again. They take no click and no key
+/// meanwhile; the cross of one closes it (`reconcile`). A window this pass drew in
+/// (Phototools over the photo view) is none of them. The notice is drawn
+/// once, and again when the system resizes or uncovers the window
+/// (`untold`): a window left as it is costs nothing at the other frames.
+pub(crate) fn keep(ctx: &egui::Context, p: &Palette, why: Kept) {
+    let (untold, seen) = ctx.data_mut(|d| {
+        d.insert_temp(kept_id(), true);
+        (
+            d.remove_temp::<Vec<egui::Id>>(untold_id()).unwrap_or_default(),
+            d.get_temp::<Vec<egui::Id>>(seen_id()).unwrap_or_default(),
+        )
+    });
+    for window in untold.into_iter().filter(|window| !seen.contains(window)) {
+        ctx.show_viewport_immediate(viewport(window), egui::ViewportBuilder::default(), |ui, _| {
+            ui.ctx().data_mut(|d| d.insert_temp(notice_id(), true));
+            notice(ui, p, &why.text());
+        });
+    }
+}
+
+/// The notice of a window left as it is (`keep`), alone in its pass: a
+/// shade over the picture the window has (`under_notice`), and why at its
+/// middle.
+fn notice(ui: &egui::Ui, p: &Palette, text: &str) {
+    const ICON: f32 = 14.0;
+    const GAP: f32 = 8.0;
+    const PAD: egui::Vec2 = egui::vec2(12.0, 8.0);
+    let room = ui.max_rect();
+    let painter = ui.painter();
+    painter.rect_filled(room, 0.0, p.panel.gamma_multiply(0.6));
+    let wrap = (room.width() - ICON - GAP - 4.0 * PAD.x).max(0.0);
+    let text = painter.layout(text.to_owned(), egui::FontId::proportional(13.0), p.ink, wrap);
+    let size = egui::vec2(ICON + GAP + text.size().x, text.size().y.max(ICON)) + 2.0 * PAD;
+    let card = egui::Rect::from_center_size(room.center(), size);
+    let radius = ui.visuals().window_corner_radius;
+    painter.rect_filled(card, radius, p.panel);
+    painter.rect_stroke(card, radius, egui::Stroke::new(1.0, p.violet_light), egui::StrokeKind::Inside);
+    let inner = card.shrink2(PAD);
+    if let Some(icon) = crate::ui::icons::global("player-pause-filled") {
+        painter.image(
+            icon.id(),
+            egui::Rect::from_center_size(egui::pos2(inner.left() + ICON / 2.0, inner.center().y), egui::Vec2::splat(ICON)),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            p.ink,
+        );
+    }
+    let at = egui::pos2(inner.left() + ICON + GAP, inner.center().y - text.size().y / 2.0);
+    painter.galley(at, text, p.ink);
 }
 
 /// The windows outside are kept as they are at this pass (`keep`).
@@ -325,6 +403,31 @@ fn on_wayland(window: &Window) -> bool {
         .is_ok_and(|handle| matches!(handle.as_raw(), RawWindowHandle::Wayland(_)))
 }
 
+/// Whether a window of the interface nothing drew in at the last pass is
+/// left as it is, the interface's windows not being drawn at all there
+/// (`kept`): not one that the pass before, without them too
+/// (`kept_before`), drew in (`drawn_before`). Phototools closed over the
+/// photo view goes as any window nothing draws in.
+fn left_as_it_is(kept: bool, drawn_before: bool, kept_before: bool) -> bool {
+    kept && !(drawn_before && kept_before)
+}
+
+/// Whether a window left as it is has its notice to draw: none yet at its
+/// size, or the system asked for its picture again. Never a minimized one.
+fn untold(told: Option<(u32, u32)>, size: (u32, u32), redraw: bool) -> bool {
+    size.0 > 0 && size.1 > 0 && (redraw || told != Some(size))
+}
+
+/// The picture of a window left as it is: the one it has, under `notice`
+/// in place of the `earlier` shapes of the notice it had. Returns how many
+/// shapes the notice is.
+fn under_notice(shown: &mut Vec<ClippedShape>, earlier: usize, notice: Vec<ClippedShape>) -> usize {
+    shown.truncate(shown.len().saturating_sub(earlier));
+    let count = notice.len();
+    shown.extend(notice);
+    count
+}
+
 /// The windows of the interface that none drew in at the last pass: let
 /// go of, unless the interface's windows were not drawn at all (`keep`).
 fn unseen(open: impl Iterator<Item = (egui::ViewportId, bool)>, seen: &[egui::Id]) -> Vec<egui::ViewportId> {
@@ -368,6 +471,11 @@ pub(crate) struct Outside {
     activation: activation::Activation,
     /// Keys given so far: one names a window for the renderer.
     keys: u64,
+    /// The pass before the last left the windows as they are (`keep`).
+    kept: bool,
+    /// Windows of the interface closed by their cross while left as they
+    /// are: gone at once, their close waits for their own code.
+    closed: Vec<egui::Id>,
 }
 
 #[derive(Default)]
@@ -406,6 +514,12 @@ struct Native {
     shown: Vec<ClippedShape>,
     shown_size: (u32, u32),
     shown_scale: f32,
+    /// How many shapes at the end of `shown` are the notice of a window
+    /// left as it is (`keep`), and the size the notice was drawn for.
+    notice: usize,
+    told: Option<(u32, u32)>,
+    /// A window of the interface drew in it at the pass before the last.
+    drawn: bool,
     /// Draw it again whatever it shows (a new window, one the system
     /// uncovered or resized).
     redraw: bool,
@@ -420,6 +534,8 @@ struct Native {
 struct Pass {
     shapes: Vec<ClippedShape>,
     pixels_per_point: f32,
+    /// The notice of a window left as it is, not the window's own picture.
+    notice: bool,
 }
 
 /// What the pass of a window outside starts from: the events `raw` of the
@@ -543,6 +659,7 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
         keys = reads_keys(ui.ctx());
     });
     ctx.options_mut(|o| o.max_passes = passes);
+    let notice = ctx.data_mut(|d| d.remove_temp::<bool>(notice_id())).unwrap_or(false);
     let mut shared = shared.borrow_mut();
     shared.textures.append(out.textures_delta);
     shared.commands.append(&mut out.platform_output.commands);
@@ -552,6 +669,7 @@ fn pass(shared: &Rc<RefCell<Shared>>, ctx: &egui::Context, viewport: egui::Immed
         native.pass = Some(Pass {
             shapes: out.shapes,
             pixels_per_point: out.pixels_per_point,
+            notice,
         });
     }
 }
@@ -571,6 +689,8 @@ impl Outside {
             activation: Default::default(),
             closing: Vec::new(),
             keys: 0,
+            kept: false,
+            closed: Vec::new(),
         }
     }
 
@@ -690,20 +810,53 @@ impl Outside {
             self.shared.borrow().windows.iter().map(|(id, native)| (*id, native.of_interface)),
             &seen,
         );
+        let kept_before = std::mem::replace(&mut self.kept, kept);
+        // (closed by their cross while left as they are: the close still
+        // waits for their code, which runs when the windows are drawn again)
+        if kept {
+            for window in &self.closed {
+                crate::ui::widgets::keep_close_asked(ctx, *window);
+            }
+        } else {
+            self.closed.clear();
+        }
         for id in gone {
-            if !kept {
+            let drawn_before = self.shared.borrow().windows.get(&id).is_some_and(|native| native.drawn);
+            if !left_as_it_is(kept, drawn_before, kept_before) {
                 self.close(renderer, ctx, id);
                 continue;
             }
             // left as it is (`keep`): what the system sent it is dropped,
-            // not kept for the day its code runs again; the keys go on to
-            // the viewer; and its cross is answered then
+            // not kept for the day its code runs again, and the keys go on
+            // to the viewer. Its cross closes it at once; its code, which
+            // alone says the window is closed, hears of it when it runs
+            // again
+            if crate::ui::widgets::keep_close_asked(ctx, id.0) {
+                self.close(renderer, ctx, id);
+                self.closed.push(id.0);
+                continue;
+            }
             if let Some(native) = self.shared.borrow_mut().windows.get_mut(&id) {
                 let _ = native.input.take_egui_input(&native.window);
                 native.reads_keys = false;
             }
-            crate::ui::widgets::keep_close_asked(ctx, id.0);
         }
+        let untold = {
+            let mut shared = self.shared.borrow_mut();
+            for (id, native) in &mut shared.windows {
+                native.drawn = seen.contains(&id.0);
+            }
+            shared
+                .windows
+                .iter()
+                .filter(|(_, native)| {
+                    let size = native.window.inner_size();
+                    native.of_interface && untold(native.told, (size.width, size.height), native.redraw)
+                })
+                .map(|(id, _)| id.0)
+                .collect::<Vec<_>>()
+        };
+        ctx.data_mut(|d| d.insert_temp(untold_id(), untold));
         for ask in asks {
             let id = viewport(ask.window);
             if self.is_open(id) {
@@ -780,6 +933,9 @@ impl Outside {
                 shown: Vec::new(),
                 shown_size: (0, 0),
                 shown_scale: 1.0,
+                notice: 0,
+                told: None,
+                drawn: false,
                 redraw: true,
                 asked_for: false,
             },
@@ -1039,6 +1195,26 @@ impl Outside {
                 }
                 continue;
             };
+            if pass.notice {
+                native.notice = under_notice(&mut native.shown, native.notice, pass.shapes);
+                native.told = Some(size);
+                if native.asked_for {
+                    native.shown_size = size;
+                    native.shown_scale = pass.pixels_per_point;
+                    native.redraw = false;
+                    renderer.draw_outside(
+                        native.key,
+                        OutsideFrame {
+                            width: size.0,
+                            height: size.1,
+                            clear,
+                            ui: hand_over.frame(ctx, native.shown.clone(), egui::TexturesDelta::default(), pass.pixels_per_point),
+                        },
+                    );
+                }
+                continue;
+            }
+            native.told = None;
             if !drawn_again(
                 native.asked_for,
                 native.redraw,
@@ -1051,6 +1227,7 @@ impl Outside {
                 continue;
             }
             native.shown.clone_from(&pass.shapes);
+            native.notice = 0;
             native.shown_size = size;
             native.shown_scale = pass.pixels_per_point;
             native.redraw = false;
@@ -1181,7 +1358,8 @@ mod tests {
     fn the_windows_outside_are_kept_for_the_pass_that_asked() {
         let ctx = egui::Context::default();
         assert!(!kept(&ctx));
-        keep(&ctx);
+        let p = crate::theme::Theme::default().palette();
+        keep(&ctx, &p, Kept::Photo);
         assert!(kept(&ctx));
         // (taken by the host with what the pass left: `reconcile`)
         assert_eq!(ctx.data_mut(|d| d.remove_temp::<bool>(kept_id())), Some(true));
@@ -1198,6 +1376,79 @@ mod tests {
         assert!(!shown_again(true, false, true, &picture));
         assert!(!shown_again(true, true, false, &picture));
         assert!(!shown_again(true, true, true, &[]));
+    }
+
+    fn shape(at: f32) -> ClippedShape {
+        ClippedShape {
+            clip_rect: egui::Rect::from_min_size(egui::pos2(at, 0.0), egui::Vec2::splat(1.0)),
+            shape: egui::Shape::Noop,
+            transform_after_tessellation: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a_window_left_as_it_is_has_its_notice_over_its_picture() {
+        let mut shown = vec![shape(1.0), shape(2.0)];
+        let notice = under_notice(&mut shown, 0, vec![shape(8.0), shape(9.0)]);
+        assert_eq!(notice, 2);
+        let at = |shown: &[ClippedShape]| shown.iter().map(|s| s.clip_rect.left()).collect::<Vec<_>>();
+        assert_eq!(at(&shown), [1.0, 2.0, 8.0, 9.0]);
+        // drawn again for another size: in place of the older notice
+        let notice = under_notice(&mut shown, notice, vec![shape(7.0)]);
+        assert_eq!(notice, 1);
+        assert_eq!(at(&shown), [1.0, 2.0, 7.0]);
+        // a window that had no picture yet
+        let mut shown = Vec::new();
+        assert_eq!(under_notice(&mut shown, 0, vec![shape(7.0)]), 1);
+        assert_eq!(at(&shown), [7.0]);
+    }
+
+    #[test]
+    fn the_notice_is_drawn_once_and_again_for_the_system() {
+        // none yet
+        assert!(untold(None, (640, 480), false));
+        // drawn at this size: nothing more at the frames that follow
+        assert!(!untold(Some((640, 480)), (640, 480), false));
+        // resized, or uncovered
+        assert!(untold(Some((640, 480)), (800, 480), false));
+        assert!(untold(Some((640, 480)), (640, 480), true));
+        // a minimized window has no picture
+        assert!(!untold(None, (0, 0), true));
+    }
+
+    #[test]
+    fn a_window_closed_where_the_windows_are_not_drawn_is_not_left() {
+        // the windows are not drawn any more (the photo view opens): left
+        assert!(left_as_it_is(true, true, false));
+        // and at the passes that follow
+        assert!(left_as_it_is(true, false, true));
+        // one that was drawn in there (Phototools), closed: it goes
+        assert!(!left_as_it_is(true, true, true));
+        // the windows are drawn: one nothing draws in goes
+        assert!(!left_as_it_is(false, true, false));
+        assert!(!left_as_it_is(false, false, true));
+    }
+
+    #[test]
+    fn the_notice_goes_to_the_windows_nothing_drew_in() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let (left, live) = (egui::Id::unique("left"), egui::Id::unique("live"));
+        let told = |ctx: &egui::Context| ctx.data_mut(|d| d.remove_temp::<bool>(notice_id())).unwrap_or(false);
+        // (no host here: egui runs a window outside inside the viewer's pass)
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let ctx = ui.ctx();
+            ctx.data_mut(|d| d.insert_temp(untold_id(), vec![live]));
+            seen(ctx, live);
+            keep(ctx, &p, Kept::Photo);
+            assert!(!told(ctx), "a window this pass drew in is not left as it is");
+            ctx.data_mut(|d| d.insert_temp(untold_id(), vec![left, live]));
+            keep(ctx, &p, Kept::Director);
+            assert!(told(ctx));
+            // told once: the host names it again when its notice is to draw
+            keep(ctx, &p, Kept::Director);
+            assert!(!told(ctx));
+        });
     }
 
     #[test]

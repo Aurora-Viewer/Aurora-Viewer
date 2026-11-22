@@ -18575,7 +18575,7 @@ impl App {
                     // must not wait behind an interface nobody sees
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
                     // (the windows outside the viewer's stay as they are)
-                    crate::outside::keep(&ctx);
+                    crate::outside::keep(&ctx, &p, crate::outside::Kept::InterfaceOff);
                     return a;
                 }
                 // the Director's track plays: the world alone, and the
@@ -18589,7 +18589,7 @@ impl App {
                     // the exit's question still shows over it
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
                     // (the windows outside the viewer's stay as they are)
-                    crate::outside::keep(&ctx);
+                    crate::outside::keep(&ctx, &p, crate::outside::Kept::Director);
                     return a;
                 }
                 // the full-frame photo view: the world and its own strip only
@@ -18634,7 +18634,7 @@ impl App {
                     // the exit's question still shows over the photo mode
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
                     // (the windows outside the viewer's stay as they are)
-                    crate::outside::keep(&ctx);
+                    crate::outside::keep(&ctx, &p, crate::outside::Kept::Photo);
                     return a;
                 }
                 // a held photo (freeze frame) instead of the world, under the windows

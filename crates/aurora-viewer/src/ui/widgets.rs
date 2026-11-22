@@ -2479,13 +2479,16 @@ pub(crate) fn close_window(ctx: &egui::Context, window: egui::Id) {
 /// A close asked of the window `window` still waits when its window is
 /// drawn again: for one whose code does not run for a while
 /// (`outside::keep`), where a request is otherwise dropped after a frame.
-pub(crate) fn keep_close_asked(ctx: &egui::Context, window: egui::Id) {
+/// True while one waits.
+pub(crate) fn keep_close_asked(ctx: &egui::Context, window: egui::Id) -> bool {
     let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
-        if d.get_temp::<u64>(window.with(CLOSE)).is_some() {
+        let waits = d.get_temp::<u64>(window.with(CLOSE)).is_some();
+        if waits {
             d.insert_temp(window.with(CLOSE), frame);
         }
-    });
+        waits
+    })
 }
 
 /// The floater `id` was asked to close ([`close_floater`]), once.
