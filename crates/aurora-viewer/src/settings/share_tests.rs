@@ -440,9 +440,7 @@ fn confirmations_shown_on_a_shared_page_are_never_shared_nor_accepted() {
         "{HEADER}\npages: graphics, inventory, media\n\
          confirm_no_transfer_settings = {}\ninventory.confirm_delete = {}\n\
          media.filter_trust_own_worn = {}\n",
-        !defaults.confirm_no_transfer_settings,
-        !defaults.inventory.confirm_delete,
-        !defaults.media.filter_trust_own_worn,
+        !defaults.confirm_no_transfer_settings, !defaults.inventory.confirm_delete, !defaults.media.filter_trust_own_worn,
     );
     let plan = Plan::new(&Code::parse(&code).unwrap(), &defaults, &catalog, &Locks::default(), false);
     assert!(

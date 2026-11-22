@@ -27,8 +27,8 @@
 //!   (`backup::is_this_pc`), with the settings Debug Settings hides
 //!   (`registry`);
 //! - the pages that guard the user ([`NEVER_SHARED`]): privacy, protections,
-//!   RLVa, network and proxy, language and updates, confirmations and chat
-//!   commands; and on the other pages the settings that protect the user or
+//!   RLVa, network and proxy, language and updates, confirmations, chat
+//!   commands and game controls; and on the other pages the settings that protect the user or
 //!   send something out ([`PROTECTIVE`]: auto-accepting inventory, media
 //!   that plays by itself or skips the site filter, announces on a chat
 //!   channel, the scripted bridge). A code from someone else never lowers a
@@ -83,8 +83,18 @@ pub const SHARED_PAGES: &[&str] = &[
 /// they guard the user, or belong to this PC and its network. Confirmations
 /// guard payments, deletions and teleports; Commands holds the chat command
 /// words, which a code could rename to an everyday word, and their
-/// announces on a chat channel.
-pub const NEVER_SHARED: &[&str] = &["privacy", "protections", "rlva", "network", "system", "confirmations", "commands"];
+/// announces on a chat channel. Game Controls sends a controller's input
+/// to the region's scripts and maps this PC's devices.
+pub const NEVER_SHARED: &[&str] = &[
+    "privacy",
+    "protections",
+    "rlva",
+    "network",
+    "system",
+    "confirmations",
+    "commands",
+    "game-controls",
+];
 
 /// The pages "Looks only" ticks: what the world and the windows look like.
 pub const LOOKS: &[&str] = &["graphics", "appearance", "layout", "camera"];

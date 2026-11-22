@@ -1337,9 +1337,10 @@ pub fn describe_settings() -> Vec<(String, String, String)> {
 
 /// The page of each setting a row of Preferences edits (`Page::key`), its
 /// path and the row's label after its group's title, in the interface's
-/// language: what a share
-/// code may carry (`settings/share.rs`). A setting a page only keeps in
-/// step (`Cx::track`) has its path for a label.
+/// language: what a share code may carry (`settings/share.rs`). A setting
+/// a page only keeps in step (`Cx::track`) has its path for a label; a
+/// setting another page shows too (`Cx::borrow`) comes again with that
+/// page, after every page's own rows.
 pub fn setting_pages() -> Vec<(&'static str, String, String)> {
     let ctx = egui::Context::default();
     let p = crate::theme::Theme::default().palette();
@@ -1365,8 +1366,12 @@ pub fn setting_pages() -> Vec<(&'static str, String, String)> {
                 (path.replace(' ', ""), label)
             })
             .collect();
+        // the rows a page borrows come after every page's own rows: the
+        // owner keeps the setting, unless the borrower is never shared
+        let borrowed = std::mem::take(&mut cx.borrowed);
         out = std::mem::take(&mut cx.collected)
             .into_iter()
+            .chain(borrowed)
             .map(|(page, path)| {
                 let path = path.replace(' ', "");
                 let label = labels.get(&path).cloned().unwrap_or_else(|| path.clone());
