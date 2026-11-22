@@ -59,6 +59,8 @@ pub struct Asset {
     material_index: usize,
     parameters: Option<Parameters>,
     size: [u32; 2],
+    #[serde(default)]
+    image_size_limit: Option<ImageSizeLimit>,
     lossless: bool,
     strip_alpha: bool,
     live: bool,
@@ -131,6 +133,7 @@ impl Asset {
             material_index: entry.material_index,
             parameters,
             size: [entry.options.max_width, entry.options.max_height],
+            image_size_limit: Some(entry.image_size_limit),
             lossless: entry.options.lossless_small,
             strip_alpha: entry.options.strip_alpha,
             live: entry.local_live,
@@ -151,6 +154,7 @@ impl Asset {
         entry.id = self.id;
         entry.name = self.name.clone();
         entry.material_index = self.material_index;
+        entry.image_size_limit = self.image_size_limit();
         entry.local = true;
         entry.local_live = self.live;
         entry.local_assume_meters = self.meters;
@@ -167,19 +171,29 @@ impl Asset {
         entry.watch = Some(local::Watch::new(paths.into_iter().chain(self.watched.iter().cloned()).collect()));
         entry.local_saved = Some(self.clone());
     }
+    fn image_size_limit(&self) -> ImageSizeLimit {
+        self.image_size_limit.unwrap_or_else(|| {
+            // Older materials used a fixed maximum rather than a user choice.
+            // Texture rows did remember an individual choice: preserve it.
+            if matches!(self.parameters, Some(Parameters::Texture)) {
+                if self.size[0].max(self.size[1]) <= 1024 {
+                    ImageSizeLimit::Size1024
+                } else {
+                    ImageSizeLimit::Size2048
+                }
+            } else {
+                ImageSizeLimit::Default
+            }
+        })
+    }
     pub fn restore(&self, prefs: &Preferences) -> Result<Entry, String> {
-        let mut options = import_texture::Options {
-            max_width: self.size[0],
-            max_height: self.size[1],
+        let maximum = self.image_size_limit().maximum(prefs.limit_texture_size);
+        let options = import_texture::Options {
+            max_width: maximum,
+            max_height: maximum,
             lossless_small: self.lossless,
             strip_alpha: self.strip_alpha,
         };
-        // A material saved before its maps kept 2K holds the 1024 default
-        // (#2425): restored, it takes the same maximum as a new row.
-        if matches!(self.parameters, Some(Parameters::Material { .. })) {
-            options.max_width = super::MATERIAL_MAP_MAX;
-            options.max_height = super::MATERIAL_MAP_MAX;
-        }
         let prefs = Preferences {
             local_assume_meters: self.meters,
             ..prefs.clone()
@@ -502,6 +516,9 @@ impl Imports {
                 }
                 restored.entries.append(&mut self.entries);
                 self.entries = restored.entries;
+                for entry in &mut self.entries {
+                    entry.sync_image_size(self.load_preferences.limit_texture_size);
+                }
                 if self.active.is_none() {
                     self.active = self.entries.iter().find(|entry| self.choice.accepts(entry)).map(|entry| entry.id);
                 }
@@ -555,6 +572,7 @@ impl Imports {
                     entry.options.max_height,
                     entry.options.strip_alpha,
                     entry.options.lossless_small,
+                    entry.image_size_limit,
                 ),
             )
                 .hash(&mut hash);
@@ -1046,6 +1064,65 @@ mod tests {
     }
 
     #[test]
+    fn saved_image_overrides_survive_restoration_and_defaults_follow_current_preferences() {
+        let files = Files::new();
+        for path in ["texture-demo.png", "material-demo.gltf"] {
+            for choice in [ImageSizeLimit::Default, ImageSizeLimit::Size1024, ImageSizeLimit::Size2048] {
+                let mut entry = files.entry(path);
+                entry.image_size_limit = choice;
+                entry.sync_image_size(false);
+                let bytes = serde_json::to_vec(&Asset::capture(&entry)).expect("save image override");
+                let saved: Asset = serde_json::from_slice(&bytes).expect("read image override");
+                for shared in [true, false] {
+                    let prefs = Preferences {
+                        limit_texture_size: shared,
+                        ..Default::default()
+                    };
+                    let restored = saved.restore(&prefs).expect("restore original file");
+                    let maximum = choice.maximum(shared);
+                    assert_eq!(restored.image_size_limit, choice);
+                    assert_eq!((restored.options.max_width, restored.options.max_height), (maximum, maximum));
+                    assert_eq!(restored.id, entry.id);
+                    let unavailable = saved.unavailable("Temporarily missing".into());
+                    assert_eq!(unavailable.image_size_limit, choice, "a missing source retains its future override");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_saved_textures_keep_their_choice_and_materials_take_the_shared_limit() {
+        let files = Files::new();
+        for path in ["texture-demo.png", "material-demo.gltf"] {
+            for old_size in [1024, 2048] {
+                let entry = files.entry(path);
+                let mut json = serde_json::to_value(Asset::capture(&entry)).expect("old saved entry");
+                json.as_object_mut().expect("object").remove("image_size_limit");
+                json["size"] = serde_json::json!([old_size, old_size]);
+                let saved: Asset = serde_json::from_value(json).expect("read old format");
+                for shared in [true, false] {
+                    let prefs = Preferences {
+                        limit_texture_size: shared,
+                        ..Default::default()
+                    };
+                    let restored = saved.restore(&prefs).expect("restore old entry");
+                    let expected = if path.ends_with(".png") {
+                        if old_size == 1024 {
+                            ImageSizeLimit::Size1024
+                        } else {
+                            ImageSizeLimit::Size2048
+                        }
+                    } else {
+                        ImageSizeLimit::Default
+                    };
+                    assert_eq!(restored.image_size_limit, expected);
+                    assert_eq!(restored.options.max_width, expected.maximum(shared));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn restart_preserves_all_types_settings_and_bindings_and_removal_never_deletes_sources() {
         let files = Files::new();
         let path = files.0.join(FILE);
@@ -1055,7 +1132,8 @@ mod tests {
         let mut imports = restored(path.clone(), &account, &jobs);
         let mut texture = files.entry("texture-demo.png");
         texture.name = "Remembered image".into();
-        texture.options.max_width = 128;
+        texture.image_size_limit = ImageSizeLimit::Size1024;
+        texture.sync_image_size(false);
         texture.options.strip_alpha = false;
         texture.local_live = false;
         texture.local_published = true;
@@ -1076,9 +1154,8 @@ mod tests {
         map.path = Some(custom.clone());
         images[0] = Some(map);
         material.local_published = true;
-        // saved by a build that gave material rows the 1024 texture default
-        material.options.max_width = 1024;
-        material.options.max_height = 1024;
+        material.image_size_limit = ImageSizeLimit::Size1024;
+        material.sync_image_size(false);
         let mut mesh = files.entry("mesh-demo.dae");
         mesh.local_published = true;
         mesh.local_use_scale = true;
@@ -1113,7 +1190,8 @@ mod tests {
                 .all(|entry| entry.local_restore_active && !entry.local_published)
         );
         assert_eq!(restarted.entries[0].name, "Remembered image");
-        assert_eq!(restarted.entries[0].options.max_width, 128);
+        assert_eq!(restarted.entries[0].options.max_width, 1024);
+        assert_eq!(restarted.entries[0].image_size_limit, ImageSizeLimit::Size1024);
         assert!(!restarted.entries[0].options.strip_alpha && !restarted.entries[0].local_live);
         assert_eq!(restarted.entries[0].view.yaw, 0.7);
         assert_eq!(restarted.entries[0].texture_target, 7);
@@ -1126,9 +1204,10 @@ mod tests {
         assert!(restarted.entries[1].watch.as_ref().expect("watch").paths.contains(&custom));
         assert_eq!(
             (restarted.entries[1].options.max_width, restarted.entries[1].options.max_height),
-            (super::super::MATERIAL_MAP_MAX, super::super::MATERIAL_MAP_MAX),
-            "a material saved with the old 1024 default uploads its maps at 2K once restored"
+            (1024, 1024),
+            "a saved material's explicit 1K choice survives a restart"
         );
+        assert_eq!(restarted.entries[1].image_size_limit, ImageSizeLimit::Size1024);
         let Some(Source::Mesh(draft)) = &restarted.entries[2].source else {
             panic!("restored mesh")
         };

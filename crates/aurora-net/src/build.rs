@@ -567,6 +567,7 @@ pub struct ObjectProps {
     pub sale_price: i32,
     pub category: u32,
     pub inventory_serial: i16,
+    pub item_id: Uuid,
     /// Inventory folder the object was rezzed from (full properties only;
     /// nil when unknown). Take sends it back there (handle_take).
     pub folder_id: Uuid,

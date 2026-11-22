@@ -821,7 +821,7 @@ mod ending {
 
 #[cfg(target_os = "linux")]
 mod platform {
-    pub use super::super::linux::{Thread, demo_exception, named_threads, out_of_memory, write_stack};
+    pub use super::super::linux::{Thread, demo_exception, named_threads, out_of_memory, reclaim, reclaim_lasting, write_stack};
     use std::path::Path;
     pub fn install(dir: &Path) -> anyhow::Result<()> {
         super::ending::install(dir)?;

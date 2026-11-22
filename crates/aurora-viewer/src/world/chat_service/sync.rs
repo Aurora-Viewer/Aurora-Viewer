@@ -8,7 +8,8 @@ use super::{Action, Context, Env, LIST_INTERVAL, Manager, PreparedArchive, RATE_
 use crate::world::chat_log::service::csv::{ArchiveScan, ArchiveState};
 use aurora_llsd::Llsd;
 use aurora_net::chat_service::{
-    HistoryRow, MAX_PASS_BYTES, MAX_PASS_ROWS, Page, TimeUuidKey, history_request_body, validate_conversation_list, validate_history_page,
+    HistoryRow, MAX_PASS_BYTES, MAX_PASS_ROWS, Page, TimeUuidKey, history_request_body, validate_conversation_list_checked,
+    validate_history_page_checked,
 };
 use std::collections::HashSet;
 use std::time::Instant;
@@ -120,6 +121,9 @@ impl Manager {
             self.rt.list_needed = true;
             return self.continue_at(Phase::Top);
         }
+        if success(status) && body.as_ref().is_none_or(Llsd::is_undef) {
+            log::warn!("Chat Service history: conversation-list refused: empty body");
+        }
         if let Some(body) = body.filter(|b| !b.is_undef() && success(status))
             && let Some(confirm) = self.process_list(&body)
         {
@@ -144,9 +148,17 @@ impl Manager {
 
     /// Port of processList (CS:1169-1232): `None` when the list is
     /// rejected (nothing changes), else whether an unknown conversation
-    /// needs its confirmation list.
+    /// needs its confirmation list. Either outcome is logged once, with the
+    /// refusal's reason: a refused list silently stops every history pass.
     fn process_list(&mut self, body: &Llsd) -> Option<bool> {
-        let entries = validate_conversation_list(body, self.rt.agent_id)?;
+        let list = match validate_conversation_list_checked(body, self.rt.agent_id) {
+            Ok(list) => list,
+            Err(refusal) => {
+                log::warn!("Chat Service history: conversation-list refused: {refusal}");
+                return None;
+            }
+        };
+        let entries = list.entries;
         let listed: HashSet<Uuid> = entries.iter().map(|e| e.resident_id).collect();
         let mut confirm = false;
 
@@ -170,6 +182,7 @@ impl Manager {
             self.clear_priority(id);
             self.set_work_active(id, false);
         }
+        let mut queued = 0usize;
         for entry in entries {
             let id = entry.resident_id;
             let placeholder = self.queued(id);
@@ -186,8 +199,17 @@ impl Manager {
             if !placeholder && (changed || r.covered_token != r.advertised_token) {
                 r.retry_used = false;
                 self.queue_resident(id, false);
+                queued += 1;
             }
         }
+        log::info!(
+            "Chat Service history: conversation-list accepted: entries={}, direct={}, group={}, adhoc={}, self={}, queued={queued}",
+            list.total,
+            list.direct,
+            list.group,
+            list.adhoc,
+            list.own
+        );
         Some(confirm)
     }
 
@@ -309,8 +331,12 @@ impl Manager {
         }
         // A rejected page is not retried.
         let body = body.unwrap_or_default();
-        let Some(page) = validate_history_page(&body, self.rt.agent_id, id, &pass.cursor, self.rt.deleted_before_ticks) else {
-            return self.finish_pass(id);
+        let page = match validate_history_page_checked(&body, self.rt.agent_id, id, &pass.cursor, self.rt.deleted_before_ticks) {
+            Ok(page) => page,
+            Err(refusal) => {
+                log::warn!("Chat Service history: history page refused: resident_id={id}, {refusal}");
+                return self.finish_pass(id);
+            }
         };
 
         // Priority changes apply only once the whole page validated.
