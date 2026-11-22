@@ -47,6 +47,7 @@
 //! (`App::exiting`: on Wayland an object destroyed after the connection is
 //! a crash).
 
+pub(crate) mod activation;
 pub(crate) mod carry;
 pub(crate) mod demo;
 
@@ -263,6 +264,8 @@ pub(crate) struct Outside {
     replaced: std::collections::HashMap<egui::ViewportId, (Was, u8)>,
     /// Closed windows whose surface the render thread still has, by key.
     closing: Vec<(u64, Arc<Window>)>,
+    /// Brings a window in front where winit cannot (Wayland).
+    activation: activation::Activation,
     /// Keys given so far: one names a window for the renderer.
     keys: u64,
 }
@@ -458,6 +461,7 @@ impl Outside {
         Outside {
             shared,
             replaced: Default::default(),
+            activation: Default::default(),
             closing: Vec::new(),
             keys: 0,
         }
@@ -500,6 +504,7 @@ impl Outside {
     pub fn reconcile(
         &mut self,
         event_loop: &ActiveEventLoop,
+        own: &Window,
         renderer: &mut Renderer,
         ctx: &egui::Context,
         attributes: impl Fn(&Ask, Option<Was>) -> WindowAttributes,
@@ -535,19 +540,34 @@ impl Outside {
                 }
             }
         }
+        // (the tokens the compositor gave for the raises of the last frames)
+        for (key, token) in self.activation.pump() {
+            if let Some(native) = self.shared.borrow().windows.values().find(|native| native.key == key) {
+                self.activation.activate(&token, &native.window);
+            }
+        }
         for window in raises {
-            if let Some(native) = self.shared.borrow().windows.get(&viewport(window)) {
+            let shared = self.shared.borrow();
+            let Some(native) = shared.windows.get(&viewport(window)) else {
+                continue;
+            };
+            if !on_wayland(&native.window) {
                 native.window.set_minimized(false);
-                if on_wayland(&native.window) {
-                    // winit's `focus_window` does nothing there: the system
-                    // is asked through an activation token, and signals the
-                    // window or brings it in front as it sees fit
-                    native
-                        .window
-                        .request_user_attention(Some(winit::window::UserAttentionType::Informational));
-                } else {
-                    native.window.focus_window();
-                }
+                native.window.focus_window();
+                continue;
+            }
+            // winit's `set_minimized(false)` and `focus_window` do nothing
+            // there. With the keyboard in one of the viewer's windows, the
+            // compositor is asked with the proof of it and brings the
+            // window in front (`activation`); without, winit asks and the
+            // compositor signals the window
+            let open: Vec<&Window> = std::iter::once(own)
+                .chain(shared.windows.values().map(|native| native.window.as_ref()))
+                .collect();
+            if !self.activation.ask(native.key, &open) {
+                native
+                    .window
+                    .request_user_attention(Some(winit::window::UserAttentionType::Informational));
             }
         }
         let front = self
@@ -612,6 +632,9 @@ impl Outside {
             return Ok(());
         }
         let window = Arc::new(event_loop.create_window(attributes).map_err(|e| e.to_string())?);
+        // (from the first window outside on: the keyboard's focus is known
+        // by the time one is to come in front)
+        self.activation.start(event_loop);
         // (its first picture waits for the system to ask for one)
         window.request_redraw();
         let size = window.inner_size();
@@ -856,6 +879,7 @@ impl Outside {
     pub fn exit(&mut self) {
         self.closing.clear();
         self.shared.borrow_mut().windows.clear();
+        self.activation = Default::default();
     }
 }
 

@@ -43,7 +43,7 @@ impl App {
         let icon = self.window_icon.clone();
         // (where the system tells a program where its window is: not Wayland)
         let origin = own.inner_position().ok().map(|at| (at, own.scale_factor()));
-        self.outside.reconcile(event_loop, renderer, &self.egui_ctx, |ask, was| {
+        self.outside.reconcile(event_loop, own, renderer, &self.egui_ctx, |ask, was| {
             let attributes = crate::cli::with_desktop_id(Window::default_attributes())
                 .with_title(ask.title.clone())
                 .with_inner_size(logical(ask.rect.size(), zoom))
