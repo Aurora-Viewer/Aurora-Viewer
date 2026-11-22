@@ -2607,6 +2607,40 @@ fn begin_scene_b<'a>(
     begin_scene_b_on(encoder, t, label, last, write_depth, t.depth_msaa.as_ref().unwrap_or(&t.depth_ss))
 }
 
+/// [`begin_scene_b`], not writing the depth, multisampled resolving into
+/// `into` when given (`Targets::water_copy`), whatever `last` says.
+fn begin_scene_b_into<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    t: &Targets,
+    label: &'static str,
+    last: bool,
+    into: Option<&'a wgpu::TextureView>,
+) -> wgpu::RenderPass<'a> {
+    match (&t.color_msaa, into) {
+        (Some(msaa), Some(into)) => encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: msaa,
+                depth_slice: None,
+                resolve_target: Some(into),
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: t.depth_msaa.as_ref().unwrap_or(&t.depth_ss),
+                depth_ops: None,
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        }),
+        _ => begin_scene_b(encoder, t, label, last, false),
+    }
+}
+
 /// [`begin_scene_b`] on another depth attachment of the same size and
 /// samples (`Targets::blend_layers`).
 fn begin_scene_b_on<'a>(
@@ -2866,6 +2900,13 @@ impl SnowTrail {
 }
 
 impl RainWet {
+    /// Whether the memory changes how the ground looks: wet, or snow lying
+    /// where it may settle ("Snow settles" off hides it, env.wgsl
+    /// `snow_hidden`).
+    fn on_ground(&self, snow_settles: bool) -> bool {
+        self.soak > RAIN_WET_DRY || self.level > RAIN_WET_DRY || (snow_settles && self.snow > RAIN_WET_DRY)
+    }
+
     fn active(&self) -> bool {
         // a fresh start (`step.z` -1: every cell new) is drawn even while
         // all is still dry: skipped, the next frame was no longer fresh and
@@ -10181,48 +10222,6 @@ impl Backend {
         ) {
             self.rebuild_bind_groups_checked("TAA history after a water effects change");
         }
-        // The moving water over the wet ground, ice or snow refracts a copy
-        // of the scene taken after them (`Targets::water_copy`, #4565): a
-        // crest above a floor just over the water showed it dry, a disc
-        // sweeping over it. Made on first use, with the bind group that
-        // reads it, both checked as an extra: refused or waiting, the water
-        // reads `scene_copy` as before. Released once the water no longer
-        // moves, or after `WATER_COPY_IDLE` unused (the scene dry again).
-        let water_moves = self.settings.water_effects.flags() & (1 | 16) != 0;
-        let mut water_over_wet = water_moves && !f.cutout && self.rain_wet.active() && rg.water.1 > 0;
-        let now = Instant::now();
-        if water_over_wet {
-            self.water_copy_idle = None;
-        } else if self.targets.water_copy.is_some() {
-            let since = *self.water_copy_idle.get_or_insert(now);
-            if !water_moves || now.duration_since(since) >= WATER_COPY_IDLE {
-                self.targets.water_copy = None;
-                self.water_copy_idle = None;
-                self.remake_frame_groups();
-            }
-        }
-        if water_over_wet && self.targets.water_copy.is_none() && self.oom.extras_ready(now) {
-            let size = self.targets.scene_copy_tex.size();
-            let device = self.device.clone();
-            let ((), refused) = crate::gpu_alloc::scoped(&device, || {
-                self.targets.water_copy = Some(make_view(
-                    &device,
-                    "water's scene copy",
-                    size.width,
-                    size.height,
-                    HDR_FORMAT,
-                    1,
-                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                ));
-                self.remake_frame_groups();
-            });
-            // (a lost device's refusals are the device-loss path's)
-            if first_use(&mut self.oom, "water's scene copy", false, refused && !self.lost.get()) {
-                self.targets.water_copy = None;
-                self.remake_frame_groups();
-            }
-        }
-        water_over_wet &= self.groups.b_water.is_some();
         stats.particles += self.water_effects.particles;
         prof.mark("lists");
         let mut encoder = self
@@ -11887,6 +11886,73 @@ impl Backend {
                 pass.draw(0..6, 0..n_particles);
             }
         };
+        // The moving water over the wet ground, ice or snow refracts a copy
+        // of the scene taken after them (`Targets::water_copy`, #4565): a
+        // crest above a floor just over the water showed it dry, a disc
+        // sweeping over it. Made on first use, with the bind group that
+        // reads it, both checked as an extra: refused or waiting, the water
+        // reads `scene_copy` as before. Made here, after the frame's required
+        // targets (a full video memory gives them the room first). Released
+        // once the water no longer moves, or after `WATER_COPY_IDLE` unused
+        // (the scene dry again).
+        let water_moves = self.settings.water_effects.flags() & (1 | 16) != 0;
+        let mut water_over_wet =
+            water_moves && !f.cutout && self.rain_wet.active() && self.rain_wet.on_ground(f.rain_look.snow_settles) && rg.water.1 > 0;
+        let now = Instant::now();
+        // (the frame's closures hold `self`: its groups made again by field)
+        let frame_groups = |targets: &Targets| {
+            Self::make_frame_groups(
+                &self.device,
+                &self.frame_layout,
+                &self.frame_buffer,
+                &self.refl_buffers,
+                &self.shadow_view,
+                &self.probe_shadow_view,
+                &self.shadow_sampler,
+                &self.lin_clamp,
+                &self.dummies,
+                targets,
+                &self.probes,
+                &self.water_effects,
+                &self.stars,
+                &self.milky_way,
+            )
+        };
+        if water_over_wet {
+            self.water_copy_idle = None;
+        } else if self.targets.water_copy.is_some() {
+            let since = *self.water_copy_idle.get_or_insert(now);
+            if !water_moves || now.duration_since(since) >= WATER_COPY_IDLE {
+                self.targets.water_copy = None;
+                self.water_copy_idle = None;
+                self.groups = frame_groups(&self.targets);
+            }
+        }
+        if water_over_wet && self.targets.water_copy.is_none() && self.oom.extras_ready(now) {
+            let size = self.targets.scene_copy_tex.size();
+            let device = self.device.clone();
+            let (copy, copy_refused) = crate::gpu_alloc::scoped(&device, || {
+                make_view(
+                    &device,
+                    "water's scene copy",
+                    size.width,
+                    size.height,
+                    HDR_FORMAT,
+                    1,
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                )
+            });
+            self.targets.water_copy = Some(copy);
+            let (groups, groups_refused) = crate::gpu_alloc::scoped(&device, || frame_groups(&self.targets));
+            self.groups = groups;
+            let refused = copy_refused || groups_refused;
+            // (a lost device's refusals are the device-loss path's)
+            if first_use(&mut self.oom, "water's scene copy", false, refused && !self.lost.get()) {
+                self.targets.water_copy = None;
+                self.groups = frame_groups(&self.targets);
+            }
+        }
+        water_over_wet &= self.groups.b_water.is_some();
         let exact_glow = glow_on && glow_skip & 8 == 0;
         {
             // deep snow: its surface, before the rest of pass B (what is
@@ -11909,7 +11975,9 @@ impl Backend {
                 .as_ref()
                 .zip(self.targets.water_copy.as_ref())
                 .filter(|_| water_over_wet && rain_wet && rg.water.1 > 0);
-            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", last && water_copy.is_none(), false);
+            // (multisampled, that part resolves straight into the copy)
+            let into = water_copy.map(|(_, (_, copy))| copy);
+            let mut pass = begin_scene_b_into(&mut encoder, &self.targets, "scene b", last && water_copy.is_none(), into);
             bind_mesh(&mut pass, &self.groups.b);
             if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, &self.pipelines.ssr, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
@@ -11929,36 +11997,20 @@ impl Backend {
                 }
                 pass.draw(0..3, 0..1);
             }
+            // (the wet ground's time ends here: the copy is the water's)
+            pass_mark(&mut pass, MARK_SSR_END);
             if let Some((water_group, (copy_tex, _))) = water_copy {
                 drop(pass);
-                // (multisampled: resolved first, the copy is of `color`)
-                if let Some(msaa) = &self.targets.color_msaa {
-                    let _resolve = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("resolve wet ground for the water"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: msaa,
-                            depth_slice: None,
-                            resolve_target: Some(&self.targets.color),
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
+                if self.targets.color_msaa.is_none() {
+                    encoder.copy_texture_to_texture(
+                        self.targets.color_tex.as_image_copy(),
+                        copy_tex.as_image_copy(),
+                        self.targets.scene_copy_tex.size(),
+                    );
                 }
-                encoder.copy_texture_to_texture(
-                    self.targets.color_tex.as_image_copy(),
-                    copy_tex.as_image_copy(),
-                    self.targets.scene_copy_tex.size(),
-                );
                 pass = begin_scene_b(&mut encoder, &self.targets, "scene b, water on", last, false);
                 bind_mesh(&mut pass, water_group);
             }
-            pass_mark(&mut pass, MARK_SSR_END);
             let water_pipe = self
                 .pipelines
                 .water_unclipped
