@@ -69,6 +69,9 @@ pub struct Settings {
     pub private_local: bool,
     /// PrivatePointAtTarget: suppress selection hints and the editing arm.
     pub private_point_at: bool,
+    /// Aurora only: hide our editing/grabbing beam locally and stop sending it;
+    /// selection target hints remain independent. The Legacy Viewer only
+    /// suppresses the beam with PrivatePointAtTarget.
     pub private_edit_beam: bool,
     /// FSLookAtTargetLimitDistance / FSLookAtTargetMaxDistance (m): a
     /// farther target is brought back to this distance from our head.
