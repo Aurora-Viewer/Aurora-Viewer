@@ -1,4 +1,4 @@
-//! Shared numeric pose controls for the selected source and native clip editor.
+//! Shared numeric pose controls for the selected bone and the native clip editor.
 use super::*;
 impl Editor {
     /// A released constraint retains calibration, but its next manual edit
@@ -14,17 +14,7 @@ impl Editor {
     }
     pub(super) fn pose_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame) {
         let rig = &world.avatar_lib.rig;
-        if self.graph.selected.is_some()
-            && let Some(bone) = self.selected
-        {
-            self.select(bone, rig, frame);
-        }
-
         let names: Vec<_> = rig.canonical_names.iter().enumerate().map(|(i, n)| (i, n.as_str())).collect();
-        if self.clip.active {
-            ui.strong(aurora_i18n::tr!("ik-edit-enable-limbs"));
-            self.limb_options_ui(ui, palette, world, frame, 2);
-        }
         if self.control == Control::Pole {
             ui.colored_label(palette.violet_light, aurora_i18n::tr!("ik-edit-pole-hint"));
         }
@@ -32,30 +22,8 @@ impl Editor {
             return;
         };
         let name = names.iter().find(|n| n.0 == bone).map_or("", |n| n.1);
-        if self.clip.active || self.control == Control::Pole {
-            ui.strong(if self.control == Control::Pole {
-                limbs(rig)
-                    .into_iter()
-                    .find(|l| l.end == bone)
-                    .map_or(name, |l| aurora_i18n::text(l.pole_label))
-            } else {
-                name
-            });
-        }
-        if self.clip.active {
-            let mut enabled = self.enabled(bone);
-            if widgets::switch_labeled(ui, palette, &mut enabled, aurora_i18n::tr!("ik-edit-enabled")).changed() {
-                self.enable(bone, enabled, rig, frame);
-            }
-            let mut percent = self.weight * 100.0;
-            ui.label(aurora_i18n::tr!("ik-edit-weight"));
-            if ui.add(egui::Slider::new(&mut percent, 0.0..=100.0).suffix(" %")).changed() {
-                self.weight = percent / 100.0;
-                self.commit();
-            }
-        }
-        if self.clip.active {
-            self.chain_ui(ui, palette, world, frame, bone);
+        if self.control == Control::Pole {
+            ui.strong(self.pole_label(rig, bone, name));
         }
         let mut changed = false;
         let mut rotate = false;
@@ -63,54 +31,38 @@ impl Editor {
             ui.label(aurora_i18n::tr!("ik-edit-pole-position"));
             changed |= vector_fields(ui, self.pole.get_or_insert(self.position), 0.005);
         } else {
-            let (moved, rotated) = if self.clip.active {
-                ui.label(aurora_i18n::tr!("ik-edit-position"));
-                let moved = vector_fields(ui, &mut self.position, 0.005);
-                ui.label(aurora_i18n::tr!("ik-edit-rotation"));
-                (moved, vector_fields(ui, &mut self.degrees, 0.5))
-            } else {
-                widgets::collapsing(
-                    ui,
-                    palette,
-                    ("ik-source-avatar", bone),
-                    aurora_i18n::tr!("ik-inspector-avatar-frame"),
-                    false,
-                    |ui| transform_fields(ui, "ik-source-pose", &mut self.position, Some(&mut self.degrees), 0.005),
-                )
-                .body
-                .unwrap_or((false, false))
-            };
+            let (moved, rotated) = widgets::collapsing(
+                ui,
+                palette,
+                ("ik-source-avatar", bone),
+                aurora_i18n::tr!("ik-inspector-avatar-frame"),
+                false,
+                |ui| transform_fields(ui, "ik-source-pose", &mut self.position, Some(&mut self.degrees), 0.005),
+            )
+            .body
+            .unwrap_or((false, false));
             changed |= moved;
             if rotated {
                 self.orient = true;
                 changed = true;
                 rotate = true;
             }
-            if self.clip.active {
-                changed |= widgets::switch_labeled(ui, palette, &mut self.orient, aurora_i18n::tr!("ik-edit-orient"))
-                    .on_hover_text(aurora_i18n::tr!("ik-edit-orient-hint"))
-                    .changed();
-                changed |= self.contact_ui(ui, palette, world, frame, bone);
-            }
         }
         if changed {
             self.commit_manipulation(rig, frame, rotate);
         }
-        if self.clip.active {
-            ui.horizontal(|ui| {
-                if ui.button(aurora_i18n::tr!("ik-edit-reset-bone")).clicked() {
-                    self.reset_bone(bone, rig);
-                }
-                if ui.button(aurora_i18n::tr!("ik-edit-reset-all")).clicked() {
-                    self.reset_pose();
-                }
-            });
-        }
-        let bound = (!self.clip.active)
-            .then(|| self.graph.binding.and_then(|index| self.graph.binding_goal(index, rig)))
-            .flatten();
+        self.goal_error_ui(ui, palette, frame, bone);
+    }
+    fn pole_label<'a>(&self, rig: &Rig, bone: usize, name: &'a str) -> &'a str {
+        limbs(rig)
+            .into_iter()
+            .find(|l| l.end == bone)
+            .map_or(name, |l| aurora_i18n::text(l.pole_label))
+    }
+    /// How far the solved joint stays from its goal, when it cannot reach it.
+    fn goal_error_ui(&self, ui: &mut egui::Ui, palette: &Palette, frame: &Frame, bone: usize) {
         if self.enabled(bone)
-            && let Some(goal) = bound.as_ref().or_else(|| self.goals.iter().find(|g| g.bone == bone))
+            && let Some(goal) = self.goals.iter().find(|g| g.bone == bone)
         {
             let actual = frame
                 .model
@@ -124,6 +76,208 @@ impl Editor {
                 );
             }
         }
+    }
+    /// The animation editor's Bone page: the picker, then the selected bone's
+    /// chain mode, pose, track and resets. The rarely used controls wait in
+    /// one folded Advanced section.
+    pub(super) fn clip_bone_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame) {
+        let rig = &world.avatar_lib.rig;
+        self.bone_picker_ui(ui, palette, world, frame);
+        let Some(bone) = self.selected else { return };
+        let name = rig.canonical_names.get(bone).map_or("", String::as_str);
+        ui.add_space(ui.spacing().item_spacing.y);
+        let pole = self.control == Control::Pole;
+        let title = if pole { self.pole_label(rig, bone, name) } else { name };
+        widgets::section_header(ui, palette, "bone-filled", title);
+        // the joints selected with it (Shift or Ctrl + click), as in the pose editor
+        let followers = self.clip_followers();
+        if !followers.is_empty() {
+            let names = followers
+                .iter()
+                .filter_map(|b| rig.canonical_names.get(*b).map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(", ");
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(aurora_i18n::tr!("poser-together", count = followers.len())).color(palette.teal))
+                    .on_hover_text(names);
+                if ui
+                    .button(aurora_i18n::text("poser-together-clear"))
+                    .on_hover_text(aurora_i18n::text("poser-together-clear-tip"))
+                    .clicked()
+                {
+                    self.clip.together.clear();
+                }
+            });
+        }
+        self.chain_mode_ui(ui, palette, rig, frame, bone);
+        if self.control == Control::Pole {
+            ui.colored_label(palette.violet_light, aurora_i18n::tr!("ik-edit-pole-hint"));
+            ui.label(aurora_i18n::tr!("ik-edit-pole-position"));
+            if vector_fields(ui, self.pole.get_or_insert(self.position), 0.005) {
+                self.commit_manipulation(rig, frame, false);
+            }
+        } else {
+            let (moved, rotated) = transform_fields(ui, "animation-bone-pose", &mut self.position, Some(&mut self.degrees), 0.005);
+            let mut changed = moved;
+            if rotated {
+                self.orient = true;
+                changed = true;
+            }
+            if bone == rig.pelvis {
+                let mut lift = self.position.z - rig.local_pos[bone].z;
+                ui.label(aurora_i18n::tr!("anim-edit-root-height"));
+                if ui
+                    .add(egui::Slider::new(&mut lift, -1.5..=1.5).suffix(" m"))
+                    .on_hover_text(aurora_i18n::tr!("anim-edit-root-height-hint"))
+                    .changed()
+                {
+                    self.position.z = rig.local_pos[bone].z + lift;
+                    changed = true;
+                }
+            }
+            if changed {
+                self.commit_manipulation(rig, frame, rotated);
+            }
+        }
+        // how to pick several joints, switch the tool and go finer
+        ui.label(
+            egui::RichText::new(aurora_i18n::tr!("anim-edit-fine-hint"))
+                .small()
+                .color(palette.muted),
+        );
+        ui.add_space(ui.spacing().item_spacing.y);
+        self.clip_bone_track_ui(ui, palette, bone);
+        ui.add_space(ui.spacing().item_spacing.y);
+        let width = clip::equal_width(
+            ui,
+            2,
+            &[
+                ("restore", aurora_i18n::tr!("ik-edit-reset-bone")),
+                ("refresh", aurora_i18n::tr!("ik-edit-reset-all")),
+            ],
+        );
+        let size = egui::vec2(width, ui.spacing().interact_size.y);
+        ui.horizontal_wrapped(|ui| {
+            if widgets::action_button(
+                ui,
+                palette,
+                "restore",
+                aurora_i18n::tr!("ik-edit-reset-bone"),
+                widgets::ActionKind::Flat,
+                size,
+            )
+            .clicked()
+            {
+                self.reset_bone(bone);
+            }
+            if widgets::action_button(
+                ui,
+                palette,
+                "refresh",
+                aurora_i18n::tr!("ik-edit-reset-all"),
+                widgets::ActionKind::FlatDanger,
+                size,
+            )
+            .clicked()
+            {
+                self.reset_pose();
+            }
+        });
+        widgets::collapsing(
+            ui,
+            palette,
+            "animation-bone-advanced",
+            aurora_i18n::tr!("anim-panel-advanced"),
+            false,
+            |ui| self.clip_bone_advanced_ui(ui, palette, world, frame, bone),
+        );
+        self.goal_error_ui(ui, palette, frame, bone);
+    }
+    /// IK moves the selected bone with its parent chain, whose root follows;
+    /// FK moves or rotates this bone alone. The skeleton root has no chain.
+    fn chain_mode_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, rig: &Rig, frame: &Frame, bone: usize) {
+        let has_parent = rig.parent[bone].is_some();
+        ui.horizontal_wrapped(|ui| {
+            let mut mode = usize::from(!has_parent || self.mode == Mode::Direct);
+            let choice = ui.add_enabled_ui(has_parent, |ui| {
+                widgets::segmented(
+                    ui,
+                    palette,
+                    &mut mode,
+                    &[(aurora_i18n::tr!("anim-panel-ik"), true), (aurora_i18n::tr!("anim-panel-fk"), true)],
+                )
+            });
+            choice.response.on_hover_text(aurora_i18n::tr!("anim-panel-ik-hint"));
+            if choice.inner {
+                self.set_chain_ik(mode == 0, rig, frame);
+            }
+            if self.mode == Mode::Direct {
+                self.pole = None;
+                self.control = Control::Bone;
+            } else {
+                self.chain_root_ui(ui, rig, frame, bone);
+            }
+        });
+    }
+    /// The bone that ends the selected IK chain, from the bone's own ancestors.
+    fn chain_root_ui(&mut self, ui: &mut egui::Ui, rig: &Rig, frame: &Frame, bone: usize) {
+        let mut ancestors = vec![bone];
+        while ancestors.len() < 12 {
+            let Some(parent) = rig.parent[*ancestors.last().unwrap_or(&bone)] else {
+                break;
+            };
+            ancestors.push(parent);
+        }
+        let label = rig.canonical_names.get(self.root).map_or("", String::as_str);
+        let mut changed = false;
+        ui.label(aurora_i18n::tr!("ik-edit-root"));
+        egui::ComboBox::from_id_salt("ik-root").selected_text(label).show_ui(ui, |ui| {
+            for root in ancestors {
+                if let Some(name) = rig.canonical_names.get(root) {
+                    changed |= ui.selectable_value(&mut self.root, root, name).changed();
+                }
+            }
+        });
+        if !ik::supports_pole(rig, bone, self.root) {
+            self.pole = None;
+            self.control = Control::Bone;
+        }
+        if changed {
+            self.drag = None;
+            self.gizmo.cancel();
+            self.commit_manipulation(rig, frame, false);
+        }
+    }
+    /// Constraint switch and strength, orientation, contact point, the limb
+    /// constraints, gizmo space and symmetry: set once, rarely changed.
+    fn clip_bone_advanced_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame, bone: usize) {
+        let rig = &world.avatar_lib.rig;
+        ui.label(egui::RichText::new(aurora_i18n::tr!("ik-edit-gizmo-hint")).color(palette.muted));
+        let mut enabled = self.enabled(bone);
+        if widgets::switch_labeled(ui, palette, &mut enabled, aurora_i18n::tr!("ik-edit-enabled")).changed() {
+            self.enable(bone, enabled, rig, frame);
+        }
+        let mut percent = self.weight * 100.0;
+        ui.label(aurora_i18n::tr!("ik-edit-weight"));
+        if ui.add(egui::Slider::new(&mut percent, 0.0..=100.0).suffix(" %")).changed() {
+            self.weight = percent / 100.0;
+            self.commit();
+        }
+        if self.control != Control::Pole {
+            let mut changed = widgets::switch_labeled(ui, palette, &mut self.orient, aurora_i18n::tr!("ik-edit-orient"))
+                .on_hover_text(aurora_i18n::tr!("ik-edit-orient-hint"))
+                .changed();
+            changed |= self.contact_ui(ui, palette, world, frame, bone);
+            if changed {
+                self.commit_manipulation(rig, frame, false);
+            }
+        }
+        ui.strong(aurora_i18n::tr!("ik-edit-enable-limbs"));
+        self.limb_options_ui(ui, palette, world, frame, 2);
+        ui.horizontal_wrapped(|ui| {
+            self.space_ui(ui, palette);
+            self.manipulation_options_ui(ui, palette);
+        });
     }
     fn contact_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame, bone: usize) -> bool {
         let mut changed = if self.clip.active {
@@ -154,91 +308,64 @@ impl Editor {
         }
         changed
     }
+    /// Switch the selected bone between its IK chain and a direct (FK) joint
+    /// edit, shared by the Pose page and the timeline's posing toggle.
+    pub(super) fn set_chain_ik(&mut self, ik: bool, rig: &Rig, frame: &Frame) {
+        let Some(bone) = self.selected else { return };
+        if rig.parent[bone].is_none() || (self.mode == Mode::Ik) == ik {
+            return;
+        }
+        self.mode = if ik { Mode::Ik } else { Mode::Direct };
+        if ik {
+            // Direct bindings resolve with root == bone. Returning to IK must
+            // restore an actual chain, otherwise translation has no joints.
+            if self.root == bone {
+                self.root = ik::extended_root(rig, bone).unwrap_or_else(|| ik::default_root(rig, bone));
+            }
+            if let Some(limb) = limbs(rig).into_iter().find(|l| l.end == bone)
+                && ik::supports_pole(rig, bone, self.root)
+            {
+                self.pole = Some(limb.pole(frame));
+            }
+        } else {
+            self.pole = None;
+            self.control = Control::Bone;
+        }
+        self.drag = None;
+        self.gizmo.cancel();
+        self.commit_manipulation(rig, frame, false);
+    }
     pub(super) fn chain_ui(&mut self, ui: &mut egui::Ui, palette: &Palette, world: &World, frame: &Frame, bone: usize) {
         ui.horizontal_wrapped(|ui| {
             let rig = &world.avatar_lib.rig;
             let has_parent = rig.parent[bone].is_some();
             let mut detached = has_parent && self.mode == Mode::Direct;
-            let mut changed = ui
+            let toggled = ui
                 .add_enabled_ui(has_parent, |ui| {
                     widgets::checkbox(ui, palette, &mut detached, aurora_i18n::tr!("ik-edit-detach"))
                         .on_hover_text(aurora_i18n::tr!("ik-edit-detach-hint"))
                         .changed()
                 })
                 .inner;
-            if has_parent {
-                self.mode = if detached { Mode::Direct } else { Mode::Ik };
-            }
-            if changed && !detached {
-                // Direct bindings resolve with root == bone. Returning to IK must
-                // restore an actual chain, otherwise translation has no joints.
-                if self.root == bone {
-                    self.root = ik::extended_root(rig, bone).unwrap_or_else(|| ik::default_root(rig, bone));
-                }
-                if let Some(limb) = limbs(rig).into_iter().find(|l| l.end == bone)
-                    && ik::supports_pole(rig, bone, self.root)
-                {
-                    self.pole = Some(limb.pole(frame));
-                }
+            if toggled {
+                self.set_chain_ik(!detached, rig, frame);
             }
             if self.mode == Mode::Direct {
                 self.pole = None;
                 self.control = Control::Bone;
             }
             if self.mode == Mode::Ik {
-                let mut ancestors = vec![bone];
-                while ancestors.len() < 12 {
-                    let Some(parent) = rig.parent[*ancestors.last().unwrap_or(&bone)] else {
-                        break;
-                    };
-                    ancestors.push(parent);
-                }
-                let label = rig.canonical_names.get(self.root).map_or("", String::as_str);
-                ui.label(aurora_i18n::tr!("ik-edit-root"));
-                egui::ComboBox::from_id_salt("ik-root").selected_text(label).show_ui(ui, |ui| {
-                    for root in ancestors {
-                        if let Some(name) = rig.canonical_names.get(root) {
-                            changed |= ui.selectable_value(&mut self.root, root, name).changed();
-                        }
-                    }
-                });
-                if !ik::supports_pole(rig, bone, self.root) {
-                    self.pole = None;
-                    self.control = Control::Bone;
-                }
-            }
-            if changed {
-                self.drag = None;
-                self.gizmo.cancel();
-                self.commit_manipulation(rig, frame, false);
+                self.chain_root_ui(ui, rig, frame, bone);
             }
         });
     }
-    pub(super) fn reset_bone(&mut self, bone: usize, rig: &Rig) {
+    pub(super) fn reset_bone(&mut self, bone: usize) {
         let counterpart = self.symmetry.then(|| self.mirrors.counterpart(bone)).flatten();
         self.authoring.remove(bone);
         if let Some(other) = counterpart {
             self.authoring.remove(other);
         }
         self.goals.retain(|g| g.bone != bone && Some(g.bone) != counterpart);
-        if !self.clip.active {
-            self.bindings.retain(|b| b.bone != bone && Some(b.bone) != counterpart);
-            let removed: Vec<_> = self
-                .graph
-                .definition
-                .bindings
-                .iter()
-                .enumerate()
-                .filter_map(|(i, b)| {
-                    (self.graph.visible_binding(i) && rig.names.get(&b.bone).is_some_and(|j| *j == bone || Some(*j) == counterpart))
-                        .then_some(i)
-                })
-                .collect();
-            for index in removed.into_iter().rev() {
-                self.graph.definition.remove_binding(index);
-            }
-            self.graph.binding = None;
-        }
         self.disabled.push(bone);
         if let Some(bone) = counterpart {
             self.disabled.push(bone);
@@ -249,24 +376,10 @@ impl Editor {
         self.authoring = authoring::State::default();
         self.disabled.extend(self.goals.iter().map(|g| g.bone));
         self.goals.clear();
-        if !self.clip.active {
-            self.bindings.clear();
-            let removed: Vec<_> = (0..self.graph.definition.bindings.len())
-                .filter(|&i| self.graph.visible_binding(i))
-                .collect();
-            for index in removed.into_iter().rev() {
-                self.graph.definition.remove_binding(index);
-            }
-            self.graph.binding = None;
-        }
         self.refresh = true;
     }
-    pub(super) fn manipulation_ui(&mut self, ui: &mut egui::Ui, palette: &Palette) {
+    pub(super) fn manipulation_ui(&self, ui: &mut egui::Ui) {
         ui.label(aurora_i18n::tr!("ik-edit-gizmo-hint"));
-        if self.clip.active {
-            self.manipulation_options_ui(ui, palette);
-            self.space_ui(ui, palette);
-        }
     }
     pub(super) fn space_ui(&mut self, ui: &mut egui::Ui, palette: &Palette) {
         let mut space = usize::from(self.space == Space::Local);
@@ -319,21 +432,20 @@ impl Editor {
                 && name.to_ascii_lowercase().contains(&filter)
                 && widgets::search_list_item(ui, self.selected == Some(bone), name).clicked()
             {
-                if self.links.bone_pick {
-                    self.picked_bone(
-                        world,
-                        frame,
-                        crate::world::rig_graph::Target::Bone {
-                            avatar: Uuid::nil(),
-                            bone: name.clone(),
-                        },
-                    );
-                } else {
-                    self.select(bone, &world.avatar_lib.rig, frame);
-                }
+                self.select(bone, &world.avatar_lib.rig, frame);
             }
         }
     }
+}
+
+/// The selected bone's card: its name over the controls that edit it.
+pub(super) fn selected_bone_ui(ui: &mut egui::Ui, palette: &Palette, name: &str, body: impl FnOnce(&mut egui::Ui)) {
+    widgets::surface(ui, palette, |ui| {
+        ui.set_min_width(ui.available_width());
+        widgets::section_header(ui, palette, "bone-filled", &aurora_i18n::tr!("ik-edit-selected", bone = name));
+        body(ui);
+    });
+    ui.add_space(ui.spacing().item_spacing.y);
 }
 
 pub(super) fn coordinate_heading(ui: &mut egui::Ui, palette: &Palette, title: &str, frame: &str, hint: &str) {

@@ -355,7 +355,7 @@ mod tests {
         let pending = pending();
         let (base, task) = server(vec![(200, Llsd::default()), (200, saved(pending.asset))]).await;
         let item = commit_asset(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &format!("{base}/ais"),
             &format!("{base}/fetch"),
             pending.item.owner,
@@ -396,7 +396,7 @@ mod tests {
         let pending = pending();
         // the first read still has the old asset
         let (base, task) = server(vec![(200, saved(Uuid::from_u128(6))), (200, saved(pending.asset))]).await;
-        let item = confirm_udp(&reqwest::Client::new(), &format!("{base}/fetch"), pending.item.owner, &pending)
+        let item = confirm_udp(&crate::test_http_client(), &format!("{base}/fetch"), pending.item.owner, &pending)
             .await
             .expect("confirmed on the second read");
         assert_eq!(item.asset_id, pending.asset);
@@ -409,7 +409,7 @@ mod tests {
         let (base, task) = server(vec![(200, Llsd::default()), (200, saved(Uuid::from_u128(6)))]).await;
         assert!(
             commit_asset(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &base,
                 &format!("{base}/fetch"),
                 pending.item.owner,
@@ -422,7 +422,7 @@ mod tests {
         let (base, task) = server(vec![(403, Llsd::default())]).await;
         assert!(
             commit_asset(
-                &reqwest::Client::new(),
+                &crate::test_http_client(),
                 &base,
                 &format!("{base}/fetch"),
                 pending.item.owner,

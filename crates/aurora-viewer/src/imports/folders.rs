@@ -359,7 +359,7 @@ impl Imports {
 
 /// Iterative, bounded discovery; links/reparse points are never traversed.
 /// Decoding is left to the existing loader, which retains visible error rows.
-pub(super) fn discover(root: &Path, limit: usize) -> Result<Vec<(PathBuf, Vec<String>)>, String> {
+pub(super) fn discover(root: &Path) -> Result<Vec<(PathBuf, Vec<String>)>, String> {
     let name = root
         .file_name()
         .ok_or_else(|| aurora_i18n::tr!("import-folders-invalid-path").to_owned())?
@@ -406,9 +406,6 @@ pub(super) fn discover(root: &Path, limit: usize) -> Result<Vec<(PathBuf, Vec<St
                 })
             {
                 files.push((child.path(), relative.clone()));
-                if files.len() > limit {
-                    return Err(aurora_i18n::tr!("import-batch-limit").into());
-                }
             }
         }
     }

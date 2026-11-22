@@ -38,6 +38,11 @@ const FILES: &[(&str, &str, &[u8])] = &[
         include_bytes!("../../../../assets/photo-luts/czar-fenris.bin"),
     ),
     (
+        "juicybomb",
+        "JuicyBomb",
+        include_bytes!("../../../../assets/photo-luts/juicybomb.bin"),
+    ),
+    (
         "nanner-pudding",
         "Nanner Pudding",
         include_bytes!("../../../../assets/photo-luts/nanner-pudding.bin"),
@@ -159,6 +164,9 @@ mod tests {
         let nanner = packs.iter().find(|p| p.id == "nanner-pudding").expect("Nanner Pudding's pack");
         assert_eq!(nanner.creator, "Nanner Pudding");
         assert_eq!(nanner.tables.len(), 45);
+        let juicy = packs.iter().find(|p| p.id == "juicybomb").expect("JuicyBomb's pack");
+        assert_eq!(juicy.creator, "JuicyBomb");
+        assert_eq!(juicy.tables.len(), 30);
         for pack in packs {
             assert!(!pack.tables.is_empty());
             for t in &pack.tables {
@@ -174,6 +182,7 @@ mod tests {
         assert!(find("czar-fenris/Nothing").is_none());
         assert!(find("nanner-pudding/Flip Phone").is_some());
         assert_eq!(find("nanner-pudding/Tis Autumn").map(|(_, t)| t.size), Some(65));
+        assert!(find("juicybomb/Muse - Velvet").is_some());
         assert!(find("nobody/Film look").is_none());
     }
 

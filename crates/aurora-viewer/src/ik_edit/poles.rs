@@ -35,8 +35,7 @@ impl Editor {
         rig: &Rig,
         gizmo_owns: bool,
     ) {
-        if self.clip.waiting_source() || !self.limb_controls || self.picking || self.prims.object_handles || ctx.input(|i| i.modifiers.alt)
-        {
+        if self.clip.waiting_source() || !self.limb_controls || self.object_handles || ctx.input(|i| i.modifiers.alt) {
             return;
         }
         for limb in limbs(rig) {
@@ -98,6 +97,8 @@ impl Editor {
                     response
                 })
                 .inner;
+            // a press on a pole is the editor's, not Avatar Studio's camera
+            self.manipulator_hovered |= response.contains_pointer() && !gizmo_owns;
             if response.clicked() || response.drag_started() {
                 if !selected {
                     self.select(limb.end, rig, frame);
@@ -127,7 +128,7 @@ impl Editor {
                     } else {
                         pointer
                     };
-                    self.start_drag(proj, frame, origin, rotate);
+                    self.start_drag(proj, frame, origin, rotate, self.fine_drag(ctx.input(|i| i.modifiers)));
                 }
                 self.drag_to(proj, frame, rig, pointer);
             }

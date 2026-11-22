@@ -16,6 +16,7 @@ mod controls;
 mod data;
 mod document;
 mod kinematics;
+mod legacy_pose;
 mod overlay;
 mod scale_gizmo;
 mod silhouette;
@@ -95,7 +96,7 @@ impl Default for Config {
             compact: false,
             natural: true,
             dof: false,
-            sensitivity: 0.5,
+            sensitivity: super::gizmo::DEFAULT_SENSITIVITY,
             also_bvh: false,
             unlock_pelvis: false,
             confirm_overwrite: false,
@@ -103,14 +104,13 @@ impl Default for Config {
         }
     }
 }
-/// What the poser window asks of the app, which owns the consent state and
-/// the Preferences: the subject menu lists the nearby avatars with their
+/// What the poser window asks of the app, which owns the consent state
+/// and the bridge: the subject menu lists the nearby avatars with their
 /// consent action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
     Ask(Uuid),
     Cancel(Uuid),
-    OpenPrivacy,
     /// The bridge's Repair, offered when its query service is silent or failed.
     RepairBridge,
 }
@@ -159,6 +159,12 @@ pub(super) struct State {
     /// A joint, shaft or gizmo handle was under the pointer, or dragged, in
     /// the last frame: the next press is the poser's, not a HUD's.
     pointer_owned: bool,
+    /// A framing asked by an explicit action (opening the poser, a click
+    /// that selects a joint), once. The app owns the camera and applies it
+    /// only with "Frame the avatar while posing" on (Aurora, #2477).
+    focus_requested: Option<(usize, crate::camera::PoserFraming)>,
+    /// The poser just opened: its first frame asks for the opening framing.
+    open_frame_pending: bool,
     /// This frame, the selected joint's handles were under the pointer (no
     /// drag), and a marker or shaft was: what `world_hint` may look under
     /// with Ctrl (the handles, never a marker).
@@ -167,6 +173,29 @@ pub(super) struct State {
     /// Last frame, Ctrl showed another part or avatar under the pointer:
     /// the handles let it through this frame (`poser_ctrl_picks`).
     ctrl_hint: bool,
+    /// The part the renderer draws on the subject's meshes this frame (its
+    /// joints as `world_hints::mask_joints`), when Ctrl hovers one the
+    /// meshes carry; None draws nothing (the bone outline, if any, is the
+    /// poser's own painting).
+    part_overlay: Option<(Uuid, [u32; 8])>,
+    /// Ctrl hovers the subject (an avatar) with the parts on: the renderer
+    /// is asked for its part under the cursor (part_pick.rs).
+    pick_wanted: bool,
+    /// Its newest answer: the subject it was asked for, the visible part
+    /// class (0 off the subject or an occluding accessory) and its window pixel,
+    /// trusted only there (`world_hints::fresh_pick`). None before the first
+    /// since Ctrl came.
+    mesh_pick: Option<(Uuid, u32, [f32; 2])>,
+    /// Whether the scene drew any of the subject's meshes last frame, when it
+    /// listed them (`set_poser_meshes_drawn`): an impostored, jelly-dolled or
+    /// first-person subject has none, and keeps the bone outline. None:
+    /// not known yet (taken as drawn).
+    meshes_drawn: Option<(Uuid, bool)>,
+    /// The subject the pick answers were last taken for, and how many
+    /// answers still in flight to drop after a switch (they were drawn from
+    /// the subject before).
+    pick_for: Uuid,
+    pick_drop: u8,
     /// The joints edited over every subject, counted as the window shows:
     /// what a close that stops the pose would lose.
     edited_total: usize,
@@ -266,7 +295,26 @@ pub(super) const COMPACT_WINDOW: &str = "poser-compact";
 pub(super) fn window_id(compact: bool) -> &'static str {
     if compact { COMPACT_WINDOW } else { FULL_WINDOW }
 }
+impl State {
+    pub(super) fn cancel_scale_gizmo(&mut self) {
+        self.scale_gizmo.cancel();
+    }
+}
 impl Editor {
+    pub fn take_poser_focus_request(&mut self) -> Option<(usize, crate::camera::PoserFraming)> {
+        self.poser.focus_requested.take()
+    }
+    pub fn take_poser_focus(&mut self, world: &World) -> Option<(Vec3, crate::camera::PoserFraming)> {
+        let (bone, framing) = self.take_poser_focus_request()?;
+        Some((self.editor_frame(world)?.joints.get(bone)?.w_axis.truncate(), framing))
+    }
+    /// Ask for a framing, except in the photo viewfinder, where the shot is
+    /// the user's.
+    pub(super) fn request_poser_framing(&mut self, bone: usize, framing: crate::camera::PoserFraming) {
+        if !self.over_viewfinder {
+            self.poser.focus_requested = Some((bone, framing));
+        }
+    }
     pub(super) fn poser_edited(&self, bone: usize) -> bool {
         self.poser.active && self.poser.sessions.get(&self.poser.subject).is_some_and(|s| s.edited(bone))
     }
@@ -335,9 +383,69 @@ impl Editor {
     pub(in crate::ik_edit) fn poser_ctrl_picks(&self, modifiers: egui::Modifiers) -> bool {
         self.poser.active && (modifiers.ctrl || modifiers.command) && self.poser.ctrl_hint
     }
+    /// The part the renderer draws on the subject's meshes (the avatar and
+    /// the joints mask of `aurora_render::FrameParams::part_joints`).
+    pub fn poser_part_overlay(&self) -> Option<(Uuid, [u32; 8])> {
+        self.poser.part_overlay.filter(|_| self.poser.active && self.open)
+    }
+    /// The subject whose part under the cursor the renderer reads this
+    /// frame (part_pick.rs), while Ctrl hovers it.
+    pub fn poser_pick_subject(&self) -> Option<Uuid> {
+        (self.poser.active && self.open && self.poser.pick_wanted).then_some(self.poser.subject)
+    }
+    /// Packed palette-joint part classes for the GPU's interpolated pick.
+    pub fn poser_pick_classes(&self, rig: &Rig) -> [u32; 32] {
+        if self.poser_pick_subject().is_some() {
+            world_hints::pick_classes(&rig.parent, &rig.canonical_names)
+        } else {
+            [0; 32]
+        }
+    }
+    /// The renderer's part pick (`Renderer::take_part_pick`): the newest
+    /// answer is kept while Ctrl is held, forgotten once it is let go.
+    pub fn set_poser_mesh_pick(&mut self, answer: Option<(u32, [u32; 2])>) {
+        // a switch of subject: the answers still in flight (at most one per
+        // readback slot) are the former subject's
+        if self.poser.pick_for != self.poser.subject {
+            self.poser.pick_for = self.poser.subject;
+            self.poser.mesh_pick = None;
+            self.poser.pick_drop = 3;
+        }
+        if !self.poser.pick_wanted {
+            self.poser.mesh_pick = None;
+        } else if let Some((joint, [x, y])) = answer {
+            if self.poser.pick_drop > 0 {
+                self.poser.pick_drop -= 1;
+            } else {
+                self.poser.mesh_pick = Some((self.poser.subject, joint, [x as f32, y as f32]));
+            }
+        }
+    }
+    /// Whether the scene listed any of the subject's meshes for the part
+    /// (None: it was not asked to).
+    pub fn set_poser_meshes_drawn(&mut self, drawn: Option<bool>) {
+        // kept while the scene is not asked (no Ctrl): the last known answer
+        // for that subject, so its outline does not flicker at an edge
+        if let Some(drawn) = drawn {
+            self.poser.meshes_drawn = Some((self.poser.subject, drawn));
+        }
+    }
+    /// Whether the subject's meshes are drawn, as last known (unknown:
+    /// taken as drawn).
+    pub(super) fn poser_meshes_drawn(&self) -> bool {
+        self.poser
+            .meshes_drawn
+            .filter(|(s, _)| *s == self.poser.subject)
+            .is_none_or(|(_, d)| d)
+    }
     /// The subject posed now (you, an animesh or a resident).
     pub fn poser_subject(&self) -> Uuid {
         self.poser.subject
+    }
+    /// The poser is open on our own avatar (a subject not chosen yet is us,
+    /// as in `editor_frame`).
+    pub fn posing_self(&self, world: &World) -> bool {
+        self.poser.active && (self.poser.subject.is_nil() || self.poser.subject == world.agent_id)
     }
     /// The joints the subject's rigged meshes use, from the scene.
     pub fn set_poser_rigged_joints(&mut self, joints: std::collections::HashSet<usize>) {
@@ -369,13 +477,25 @@ impl Editor {
     pub fn poser_owns_pointer(&self) -> bool {
         self.poser.active && self.poser.pointer_owned
     }
+    pub fn manipulator_owns_pointer(&self) -> bool {
+        self.poser_owns_pointer() || self.manipulator_hovered
+    }
     /// The consent and Preferences actions chosen in the window since the
     /// last call.
     pub fn take_poser_requests(&mut self) -> Vec<Request> {
         std::mem::take(&mut self.poser.requests)
     }
+    /// A consent action asked from another window (the animation editor's
+    /// couple mode), sent the poser's way.
+    pub(in crate::ik_edit) fn push_poser_request(&mut self, request: Request) {
+        self.poser.requests.push(request);
+    }
     pub fn set_poser_bridge(&mut self, state: crate::world::bridge::QueryState) {
         self.poser.bridge = state;
+    }
+    /// The bridge's request state, for the couple mode's Ask list.
+    pub(in crate::ik_edit) fn poser_bridge(&self) -> crate::world::bridge::QueryState {
+        self.poser.bridge
     }
     pub fn select_pose_subject(&mut self, world: &World, id: Uuid) {
         self.pick_subject(world, id);
@@ -389,7 +509,7 @@ impl Editor {
             self.poser.config.sensitivity = if config.sensitivity.is_finite() {
                 config.sensitivity.clamp(0.05, 2.0)
             } else {
-                0.5
+                super::gizmo::DEFAULT_SENSITIVITY
             };
             self.poser.settings_loaded = true;
             self.space = if self.poser.natural { Space::Local } else { Space::World };
@@ -401,6 +521,15 @@ impl Editor {
             false
         }
     }
+    pub(super) fn set_poser_sensitivity(&mut self, sensitivity: f32) {
+        let sensitivity = if sensitivity.is_finite() {
+            sensitivity.clamp(0.05, 2.0)
+        } else {
+            super::gizmo::DEFAULT_SENSITIVITY
+        };
+        self.poser.sensitivity = sensitivity;
+        self.poser.config.sensitivity = sensitivity;
+    }
     pub fn open_poser(&mut self) {
         if self.poser.active {
             self.open = true;
@@ -411,10 +540,9 @@ impl Editor {
         *self = Self {
             clip,
             open: true,
-            initialized: true,
-            ignore_script_ik: true,
             poser: State {
                 active: true,
+                open_frame_pending: true,
                 name: aurora_i18n::tr!("poser-new-name").to_string(),
                 priority: 4,
                 ..Default::default()
@@ -446,6 +574,12 @@ impl Editor {
     fn close_poser(&mut self) {
         self.poser.close_asked = false;
         self.open = false;
+        // the window no longer runs its hints: nothing stays lit nor picked
+        // (a pose kept by "stop when closed" off goes on without them)
+        self.poser.part_overlay = None;
+        self.poser.pick_wanted = false;
+        self.poser.mesh_pick = None;
+        self.poser.ctrl_hint = false;
         if self.poser.stop_on_close {
             self.poser.active = false;
         }
@@ -462,7 +596,6 @@ impl Editor {
         self.poser.active = false;
         self.leave_clip();
         self.open = false;
-        self.cancel_link_pick();
         self.drag = None;
         self.gizmo.cancel();
     }
@@ -497,6 +630,7 @@ impl Editor {
                     let sample = ik::animations::Sample {
                         animation: Arc::new(BoundAnim::bind(animation, &world.avatar_lib.rig)),
                         frame: 0,
+                        time_seconds: None,
                     };
                     ik::animations::apply(&world.avatar_lib.rig, &mut pose, Vec3::ZERO, &[sample]);
                     let selective = matches!(mode, document::LoadMode::Selective | document::LoadMode::SelectiveRotations);
@@ -552,11 +686,20 @@ impl Editor {
         if mode == "poser-compact-save" && frame == 480 {
             self.poser.name = "Demo pose".into();
         }
-        // compact-face: no joint selected, so that no gizmo covers the face
+        // compact-face: no joint selected, so that no gizmo covers the face;
+        // compact-body: the Hands posed, so the body is another group's part
         if mode == "poser-compact-face" && frame == 500 {
+            // as a click beside: the pelvis is not picked again
             self.selected = None;
             self.poser.unselected = true;
             self.clear_together();
+        }
+        if mode == "poser-compact-body"
+            && frame == 500
+            && let Some(pose) = self.editor_frame(world)
+        {
+            self.poser.group = 2;
+            self.select_pose_group(2, &world.avatar_lib.rig, &pose);
         }
         // the head edited at 450, then the window's cross: the confirmation
         if mode == "poser-close" && frame == 700 {
@@ -607,6 +750,15 @@ impl Editor {
             } else if mode == "poser-settings" {
                 self.poser.settings_open = true;
             }
+        }
+        // frame: a click selects the left wrist once the demo's camera is
+        // set (500); the app frames it, the option being on for this launch
+        if frame == 540
+            && mode == "poser-frame"
+            && let Some(pose) = self.editor_frame(world)
+        {
+            let rig = &world.avatar_lib.rig;
+            self.click_pose_bone(rig.names["mWristLeft"], rig, &pose, false);
         }
         if frame == 480
             && mode == "poser-connected"

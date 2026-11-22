@@ -288,9 +288,9 @@ mod tests {
         let addrs = simulators.each_ref().map(|s| s.local_addr().expect("address"));
         let (events, _received) = crossbeam_channel::unbounded();
         let sh = Shared {
-            http: reqwest::Client::new(),
-            login_http: reqwest::Client::new(),
-            caps_http: reqwest::Client::new(),
+            http: crate::test_http_client(),
+            login_http: crate::test_http_client(),
+            caps_http: crate::test_http_client(),
             events: crate::EventSender(events),
             controls: Arc::new(Mutex::new(AgentControls::default())),
             stats: Arc::new(NetStats::default()),
@@ -330,10 +330,11 @@ mod tests {
         let (object_cache, mut files) = ObjectCaches::new(Some(dir.clone()));
         let mut session = Session {
             sh: &sh,
-            sock,
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock)),
             login,
             sims: addrs.map(|addr| (addr, Sim::new(addr, 10))).into(),
             main: Some(addrs[0]),
+            last_run_sent: None,
             eq_tx,
             caps_tx,
             notecard_copy_tx,
@@ -343,6 +344,7 @@ mod tests {
             appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
+            offer_hosts: Default::default(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
@@ -350,6 +352,7 @@ mod tests {
             far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: crate::InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,

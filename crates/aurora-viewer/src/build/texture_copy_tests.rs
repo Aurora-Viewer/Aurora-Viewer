@@ -437,6 +437,7 @@ fn the_picker_apply_refuses_a_locked_attachment() {
         owner_id: agent,
         source_type: aurora_net::ChatSourceType::Object,
         chat_type: aurora_net::ChatType::OwnerSay,
+        region: None,
         position: glam::Vec3::ZERO,
         message: "@detach=n".to_owned(),
     }));
@@ -501,4 +502,177 @@ fn a_no_copy_item_is_refused_on_several_objects() {
         ..item(rules::COPY | rules::TRANSFER)
     };
     assert!(restricted(&material, agent), "a material needs modify too");
+}
+
+/// A material item of the agent's inventory for `material_save_allowed`.
+fn material_item(w: &mut World, n: u128, mask: u32) -> Uuid {
+    let id = give(w, n, ASSET, mask);
+    let item = w.inventory.items.get_mut(&id).expect("item");
+    item.asset_type = AT_MATERIAL;
+    item.next_owner_mask = rules::COPY;
+    item.group_mask = 0;
+    item.everyone_mask = 0;
+    id
+}
+
+/// LLMaterialEditor::canSaveObjectsMaterial: copy and modify on the object
+/// and on an inventory item of its material, the blank material always.
+#[test]
+fn a_material_saves_from_a_face_with_copy_and_modify_on_the_object_and_its_item() {
+    let (mut w, idx) = world();
+    let tool = BuildTool::default();
+    let face = [(idx, 0)];
+    assert_eq!(tool.material_save_allowed(&w, &face), None, "no material on the face");
+    w.objects.get_mut(idx).expect("object").extra.render_materials = vec![(0, ASSET)];
+    material_item(&mut w, 1, FULL);
+    assert_eq!(tool.material_save_allowed(&w, &face), None, "the object gives modify alone");
+    w.objects.get_mut(idx).expect("object").update_flags = OBJECT_COPY | OBJECT_MODIFY | OBJECT_YOU_OWNER;
+    // the owner's own full-rights item gives its masks to the new material
+    assert_eq!(
+        tool.material_save_allowed(&w, &face),
+        Some(MaterialSave {
+            next_owner: rules::COPY,
+            group: 0,
+            everyone: 0,
+        })
+    );
+    // the object may not be modified: its material is not the agent's to save
+    w.objects.get_mut(idx).expect("object").update_flags = OBJECT_COPY | OBJECT_YOU_OWNER;
+    assert_eq!(tool.material_save_allowed(&w, &face), None, "no modify on the object");
+    w.objects.get_mut(idx).expect("object").update_flags = OBJECT_COPY | OBJECT_MODIFY | OBJECT_YOU_OWNER;
+    // the blank material needs no item, and gives every right
+    w.inventory.items.clear();
+    w.objects.get_mut(idx).expect("object").extra.render_materials = vec![(0, crate::scene::meshes::BLANK_MATERIAL)];
+    let every = rules::FULL | aurora_net::build::perm::MOVE;
+    assert_eq!(
+        tool.material_save_allowed(&w, &face),
+        Some(MaterialSave {
+            next_owner: every,
+            group: every,
+            everyone: every,
+        })
+    );
+}
+
+#[test]
+fn a_material_saves_only_from_an_item_the_agent_may_copy_and_modify() {
+    let (mut w, idx) = world();
+    let mut tool = BuildTool::default();
+    let face = [(idx, 0)];
+    {
+        let o = w.objects.get_mut(idx).expect("object");
+        o.extra.render_materials = vec![(0, ASSET)];
+        o.update_flags = OBJECT_COPY | OBJECT_MODIFY | OBJECT_YOU_OWNER;
+    }
+    assert_eq!(tool.material_save_allowed(&w, &face), None, "not in the inventory");
+    let item = material_item(&mut w, 1, FULL & !rules::COPY);
+    assert_eq!(tool.material_save_allowed(&w, &face), None, "no copy");
+    w.inventory.items.get_mut(&item).expect("item").owner_mask = FULL & !rules::MODIFY;
+    assert_eq!(tool.material_save_allowed(&w, &face), None, "no modify");
+    w.inventory.items.get_mut(&item).expect("item").owner_mask = FULL & !rules::TRANSFER;
+    assert!(tool.material_save_allowed(&w, &face).is_some(), "no transfer is enough");
+    w.inventory.items.get_mut(&item).expect("item").owner_mask = FULL;
+    assert!(tool.material_save_allowed(&w, &face).is_some(), "full rights");
+    // someone else's item counts with its everyone rights
+    {
+        let it = w.inventory.items.get_mut(&item).expect("item");
+        it.owner = Uuid::from_u128(9);
+        it.everyone_mask = rules::COPY;
+    }
+    assert_eq!(tool.material_save_allowed(&w, &face), None, "someone else's, copy alone");
+    w.inventory.items.get_mut(&item).expect("item").everyone_mask = COPY_ONLY;
+    assert!(tool.material_save_allowed(&w, &face).is_some(), "someone else's, copy and modify");
+    // stricter than the Legacy Viewer: a group-owned item's group rights do not count
+    {
+        let it = w.inventory.items.get_mut(&item).expect("item");
+        it.group_owned = true;
+        it.group_mask = FULL;
+        it.everyone_mask = 0;
+    }
+    assert_eq!(tool.material_save_allowed(&w, &face), None, "group-owned");
+    // a Library item with copy and modify for everyone
+    library_folder(&mut w);
+    {
+        let it = w.inventory.items.get_mut(&item).expect("item");
+        it.group_owned = false;
+        it.parent = LIBRARY;
+        it.owner = Uuid::from_u128(0x11b0);
+        it.everyone_mask = COPY_ONLY;
+    }
+    // as its new owner, the agent holds the Library item's next owner rights
+    // (setOwnerAndGroup): copy without transfer shares nothing
+    assert_eq!(
+        tool.material_save_allowed(&w, &face),
+        Some(MaterialSave {
+            next_owner: rules::COPY,
+            group: 0,
+            everyone: 0,
+        }),
+        "Library item"
+    );
+    {
+        let it = w.inventory.items.get_mut(&item).expect("item");
+        it.next_owner_mask = FULL;
+        it.group_mask = FULL;
+    }
+    assert_eq!(
+        tool.material_save_allowed(&w, &face),
+        Some(MaterialSave {
+            next_owner: FULL,
+            group: FULL,
+            everyone: rules::COPY,
+        }),
+        "Library item giving every right: everyone never modifies"
+    );
+    w.inventory.items.get_mut(&item).expect("item").everyone_mask = rules::COPY;
+    assert_eq!(tool.material_save_allowed(&w, &face), None, "Library item without modify");
+    w.inventory.items.get_mut(&item).expect("item").everyone_mask = COPY_ONLY;
+    // the object's contents on their way
+    list(&mut tool, &w, idx);
+    let object = w.objects.get(idx).expect("object").full_id;
+    tool.contents.objects.get_mut(&object).expect("listing").loading = true;
+    assert_eq!(tool.material_save_allowed(&w, &face), None, "contents on their way");
+}
+
+/// The rights sent for a saved material are the ones the simulator keeps
+/// (LLPermissions::fix / fixFairUse): the item's read-back then matches.
+#[test]
+fn a_saved_materials_rights_are_the_ones_the_simulator_keeps() {
+    use aurora_net::build::perm;
+    use aurora_net::inventory::upload::Permissions;
+    let all = Permissions {
+        next_owner: rules::FULL | perm::MOVE,
+        group: rules::FULL | perm::MOVE,
+        everyone: rules::FULL | perm::MOVE,
+    };
+    let defaults = Permissions {
+        next_owner: rules::COPY | rules::TRANSFER,
+        group: rules::COPY | rules::MODIFY,
+        everyone: rules::COPY | rules::MODIFY,
+    };
+    assert_eq!(
+        material_save_masks(all, defaults),
+        Permissions {
+            next_owner: rules::COPY | rules::TRANSFER | perm::MOVE,
+            group: rules::COPY | rules::MODIFY,
+            everyone: rules::COPY,
+        }
+    );
+    // no right for the next owner stays none
+    let none = Permissions { next_owner: 0, ..all };
+    assert_eq!(material_save_masks(none, defaults).next_owner, 0);
+    // the source's rights narrow the defaults
+    let narrow = Permissions {
+        next_owner: rules::TRANSFER,
+        group: 0,
+        everyone: 0,
+    };
+    assert_eq!(
+        material_save_masks(narrow, defaults),
+        Permissions {
+            next_owner: rules::TRANSFER | perm::MOVE,
+            group: 0,
+            everyone: 0,
+        }
+    );
 }

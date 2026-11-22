@@ -309,7 +309,7 @@ fn describe_transport_error(e: &reqwest::Error) -> String {
 
 /// llcorehttp retries these transport failures (connect, timeouts,
 /// send/receive errors, short bodies); not redirect loops.
-fn transport_retryable(e: &reqwest::Error) -> bool {
+pub(crate) fn transport_retryable(e: &reqwest::Error) -> bool {
     !e.is_redirect() && !e.is_builder()
 }
 

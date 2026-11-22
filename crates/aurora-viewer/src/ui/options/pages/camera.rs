@@ -4,7 +4,7 @@
 //! live view back behind the avatar (`OptionsResult::reset_camera`).
 
 use super::super::COMBO_W;
-use super::super::cx::{Cx, Nothing, field, fields};
+use super::super::cx::{Custom, Cx, Nothing, field, fields};
 use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE};
 use egui::RichText;
 
@@ -171,19 +171,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     "",
                 );
             });
-            // the headset's starting viewpoint (app.rs, toggle_vr)
             cx.group(tr!("ui-options-camera-vr"), |cx| {
-                use crate::camera::VrView;
-                cx.unfolded().choice(
-                    tr!("ui-options-camera-vr-view"),
-                    tr!("ui-options-camera-vr-view-help"),
-                    &field!(camera.vr_view),
-                    &[
-                        (VrView::FirstPerson, tr!("ui-options-camera-vr-view-first-person"), false),
-                        (VrView::DesktopCamera, tr!("ui-options-camera-vr-view-desktop-camera"), false),
-                    ],
-                );
-                // read by open_renderer at the next start (#2309)
                 cx.toggle(
                     tr!("ui-options-camera-vr-at-start"),
                     tr!("ui-options-camera-vr-at-start-help"),
@@ -215,6 +203,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(camera.click_avatar_keeps_camera),
                 );
                 cx.toggle(
+                    tr!("ui-options-camera-frame-while-posing"),
+                    tr!("ui-options-camera-frame-while-posing-tip"),
+                    &field!(camera.frame_while_posing),
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-still-while-posing"),
+                    tr!("ui-options-camera-still-while-posing-tip"),
+                    &field!(camera.still_while_posing),
+                );
+                cx.toggle(
                     tr!("ui-options-camera-follow-the-targeted-object"),
                     tr!("ui-options-camera-the-camera-follows-the-object-it-is-focused-on"),
                     &field!(camera.track_focus_object),
@@ -224,6 +222,24 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-avatar-hover-height-also-moves-the-camera"),
                     &field!(camera.hover_affects_camera),
                 );
+                cx.combo(
+                    tr!("ui-options-camera-follow-joint"),
+                    tr!("ui-options-camera-follow-joint-tip"),
+                    &field!(camera.third_person_follow_joint),
+                    &crate::camera::CameraFollowJoint::choices(),
+                );
+                // The intensity sits behind the body part's cog, greyed while
+                // following is Disabled, like the other fine-tuning rows.
+                let off = cx.s.camera.third_person_follow_joint.is_none();
+                cx.subs(off, |cx| {
+                    cx.slider(
+                        tr!("ui-options-camera-follow-intensity"),
+                        tr!("ui-options-camera-follow-intensity-tip"),
+                        &field!(camera.third_person_follow_intensity),
+                        0..=500,
+                        "%",
+                    );
+                });
                 cx.toggle(
                     tr!("ui-options-camera-no-mouse-wheel-zoom"),
                     tr!("ui-options-camera-the-mouse-wheel-does-not-move-the-camera-closer"),
@@ -250,7 +266,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
     }
     // the rest of the camera's settings (written by its shortcuts, its
     // windows): the page's reset puts them back too, as "Reset camera" did
-    cx.track(&field!(camera));
+    cx.track(&Custom {
+        // Reset ownership excludes the independently tracked camera.vr group.
+        path: "camera.desktop",
+        modified: |s, d| {
+            let mut camera = s.camera.clone();
+            camera.vr = d.camera.vr.clone();
+            camera != d.camera
+        },
+        reset: |s, d| {
+            let vr = s.camera.vr.clone();
+            s.camera = d.camera.clone();
+            s.camera.vr = vr;
+        },
+    });
 }
 
 /// Preferences › Camera › Mouselook: the Legacy Viewer's mouselook rows.
@@ -292,6 +321,31 @@ fn mouselook(cx: &mut Cx) {
             tr!("ui-options-camera-show-interface-tip"),
             &field!(camera.show_interface_in_mouselook),
         );
+        // FSMouselookCombatFeatures, ExodusMouselookIFF and
+        // ExodusMouselookIFFRange (panel_preferences_move.xml)
+        cx.toggle(
+            tr!("ui-options-camera-combat"),
+            tr!("ui-options-camera-combat-tip"),
+            &field!(camera.mouselook_combat),
+        );
+        let off = !cx.s.camera.mouselook_combat;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-camera-combat-markers"),
+                tr!("ui-options-camera-combat-markers-tip"),
+                &field!(camera.mouselook_iff),
+            );
+            let off = !cx.s.camera.mouselook_iff;
+            cx.subs(off, |cx| {
+                cx.slider(
+                    tr!("ui-options-camera-combat-range"),
+                    "",
+                    &field!(camera.mouselook_iff_range),
+                    0.0..=500.0,
+                    " m",
+                );
+            });
+        });
     });
 }
 

@@ -8,7 +8,9 @@ pub mod bridge;
 pub mod build;
 pub mod caps;
 mod chat_reply;
+pub mod chat_service;
 pub mod circuit;
+mod circuit_socket;
 mod curl_url;
 pub mod currency;
 pub mod estate;
@@ -30,7 +32,9 @@ pub mod lsl_syntax;
 pub mod message_split;
 pub mod objcache;
 pub mod objects;
+mod offer_hosts;
 pub mod offline_im;
+pub mod open_region;
 pub mod outfits;
 mod packet_loss;
 pub mod pathfinding;
@@ -50,6 +54,7 @@ pub mod slm;
 pub mod social;
 pub mod stats;
 pub mod task_inventory;
+pub mod teleport_access;
 pub mod terrain;
 #[cfg(test)]
 mod test_http;
@@ -58,6 +63,7 @@ pub mod throttle;
 pub mod trans;
 pub mod transition;
 pub mod types;
+pub mod url_floater;
 pub mod user_info;
 pub mod viewer_stats;
 pub mod voice_moderation;
@@ -176,6 +182,16 @@ fn asset_limits(mode: AssetConnections, fixed: Option<usize>) -> (Option<usize>,
     }
 }
 
+/// The HTTP client of the tests that talk to a local `127.0.0.1` server.
+/// `reqwest::Client::new()` reads `http_proxy` / `https_proxy` from the
+/// environment and sends the loopback requests to that proxy: the tests then
+/// fail or wait for ever (#3903). The viewer's own clients (`NetClient::new`)
+/// keep the user's proxy.
+#[cfg(test)]
+pub(crate) fn test_http_client() -> reqwest::Client {
+    reqwest::Client::builder().no_proxy().build().expect("HTTP client")
+}
+
 impl NetClient {
     pub fn new(asset_connections: AssetConnections) -> Result<NetClient, NetError> {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -185,38 +201,39 @@ impl NetClient {
             .build()?;
         // Login (public host): standard verification, plus Linden Lab's own CA.
         let ll_ca = reqwest::Certificate::from_pem_bundle(include_bytes!("../lindenlab.pem")).unwrap_or_default();
-        let http = reqwest::Client::builder()
-            .user_agent(aurora_version::user_agent())
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .tls_certs_merge(ll_ca.clone())
-            .build()
-            .map_err(|e| NetError::Http(e.to_string()))?;
+        let http = aurora_proxy::http_client(|b| {
+            b.user_agent(aurora_version::user_agent())
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .tls_certs_merge(ll_ca.clone())
+        })
+        .map_err(|e| NetError::Http(e.to_string()))?;
         // The login request itself: the same, with redirects to the same
         // server only (login::next_server decides on the others).
-        let login_http = reqwest::Client::builder()
-            .user_agent(aurora_version::user_agent())
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .tls_certs_merge(ll_ca)
-            .redirect(login::redirect_policy())
-            .build()
-            .map_err(|e| NetError::Http(e.to_string()))?;
+        let login_http = aurora_proxy::http_client(|b| {
+            b.user_agent(aurora_version::user_agent())
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .tls_certs_merge(ll_ca)
+                .redirect(login::redirect_policy())
+        })
+        .map_err(|e| NetError::Http(e.to_string()))?;
         // Capabilities / assets: Linden Lab's CA for any simulator name (as
         // llcorehttp, mVerifyHost = false), public authorities only for the
         // host's own name (sim_tls.rs).
-        let caps_http = reqwest::Client::builder()
-            .user_agent(aurora_version::user_agent())
-            .pool_max_idle_per_host(32)
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .tls_backend_preconfigured(simulator_tls()?)
-            .build()
-            .map_err(|e| NetError::Http(e.to_string()))?;
+        let caps_tls = simulator_tls()?;
+        let caps_http = aurora_proxy::http_client(|b| {
+            b.user_agent(aurora_version::user_agent())
+                .pool_max_idle_per_host(32)
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .tls_backend_preconfigured(caps_tls)
+        })
+        .map_err(|e| NetError::Http(e.to_string()))?;
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<NetCommand>();
         let (ev_tx, ev_rx) = crossbeam_channel::unbounded();
         let controls = Arc::new(Mutex::new(AgentControls::default()));
         let stats = Arc::new(NetStats::default());
         let object_cache_dir = Arc::new(Mutex::new(None));
         let bandwidth_kbps = Arc::new(std::sync::atomic::AtomicU32::new(throttle::DEFAULT_KBPS as u32));
-        let agent_language = Arc::new(Mutex::new((aurora_i18n::language().to_owned(), true)));
+        let agent_language = Arc::new(Mutex::new((aurora_i18n::grid_language().to_owned(), true)));
         let viewer_stats = Arc::new(Mutex::new(viewer_stats::ViewerSide::default()));
         let viewer_stats_posts = Arc::new(viewer_stats::PostsInFlight::default());
         let seen_avatars = Arc::new(Mutex::new(Vec::new()));
@@ -231,15 +248,16 @@ impl NetClient {
             None => log::info!("asset fetch: adaptive (24 to {} requests at once)", fetch_pace::MAX),
             Some(n) => log::info!("asset fetch: limited to {n} requests at once, {idle_per_host} kept connections per host"),
         }
-        let asset_http = reqwest::Client::builder()
-            .user_agent(aurora_version::user_agent())
-            .pool_max_idle_per_host(idle_per_host)
-            .connect_timeout(std::time::Duration::from_secs(30))
-            .gzip(false)
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .tls_backend_preconfigured(simulator_tls()?)
-            .build()
-            .map_err(|e| NetError::Http(e.to_string()))?;
+        let asset_tls = simulator_tls()?;
+        let asset_http = aurora_proxy::http_client(|b| {
+            b.user_agent(aurora_version::user_agent())
+                .pool_max_idle_per_host(idle_per_host)
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .gzip(false)
+                .redirect(reqwest::redirect::Policy::limited(10))
+                .tls_backend_preconfigured(asset_tls)
+        })
+        .map_err(|e| NetError::Http(e.to_string()))?;
         let (fetcher, fetch_results) = Fetcher::paced(rt.handle(), asset_http, fetch_slots, stats.clone());
 
         let shared_caps_http = caps_http.clone();
@@ -263,8 +281,11 @@ impl NetClient {
                     NetCommand::Login(req) => {
                         session::run_session(&shared, *req, &mut cmd_rx).await;
                     }
+                    // Session-scoped offers cannot be submitted offline. Drop the receipt
+                    // without exposing a login session or inventory bucket in diagnostics.
+                    NetCommand::OfferInventory { .. } | NetCommand::CheckInventoryOffer { .. } => {}
                     // (the offline demo moves its agent every frame)
-                    NetCommand::AgentControls(_) => {}
+                    NetCommand::AgentControls(_) | NetCommand::ForceAgentUpdate => {}
                     other => log::debug!("ignoring command while offline: {other:?}"),
                 }
             }

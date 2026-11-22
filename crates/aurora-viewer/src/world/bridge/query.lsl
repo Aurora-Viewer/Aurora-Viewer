@@ -1,10 +1,10 @@
-// Aurora LSL Bridge query and posing-consent services v1.41: the Legacy Viewer's getZOffsets
+// Aurora LSL Bridge query and posing-consent services v1.44: the Legacy Viewer's getZOffsets
 // and getScriptInfo equivalents (fsradar.cpp, fs_resources/EBEDD1D2-*.lsltxt,
 // originally LGPL 2.1). A separate script beside the movement controller:
 // Mono gives each script its own 64 KB, and a query can never halt Movelock.
 // It has its own HTTP-in URL and token, and never touches physics.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.41";
+string VERSION = "1.44";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -12,13 +12,47 @@ key gOwner;
 integer DISCOVERY_CHANNEL;
 integer gListener;
 integer gPoseListener;
-integer gPortalListener;
-integer PORTAL_CHANNEL = -184735221;
-list gPortalPeers;
-integer POSE_CHANNEL = -184735220;
-list gPosePeers;
+// Posing consent is asked as any posing HUD asks it: a dialog to the resident,
+// answered with its buttons or with "stop" in local chat, whatever viewer they
+// use. Nothing goes to another viewer (Second Life's shared experience policy).
+integer POSE_DIALOG_CHANNEL;
+integer STOP_CHANNEL = 2525;
+integer gStopListener;
+list gAsked;
+list gGranted;
+string gYes;
+string gNo;
+string gStop;
+string gGrantedText;
+string gStopped;
 integer gPaired;
 float gNextHello;
+
+// Forget every consent: after a reset, a detach or a region change.
+forgetPoses() {
+    llListenRemove(gPoseListener);
+    llListenRemove(gStopListener);
+    gPoseListener = 0;
+    gStopListener = 0;
+    gAsked = [];
+    gGranted = [];
+}
+forgetPose(key resident) {
+    // [resident, nonce] pairs: a resident's key is never one of our nonces.
+    integer at = llListFindList(gAsked, [resident]);
+    if (at >= 0) gAsked = llDeleteSubList(gAsked, at, at + 1);
+    at = llListFindList(gGranted, [resident]);
+    if (at >= 0) gGranted = llDeleteSubList(gGranted, at, at + 1);
+}
+// Listen only while someone is asked or has accepted.
+poseListeners() {
+    integer granted = llGetListLength(gGranted);
+    integer any = llGetListLength(gAsked) + granted;
+    if (any && !gPoseListener) gPoseListener = llListen(POSE_DIALOG_CHANNEL, "", NULL_KEY, "");
+    if (!any && gPoseListener) { llListenRemove(gPoseListener); gPoseListener = 0; }
+    if (granted && !gStopListener) gStopListener = llListen(STOP_CHANNEL, "", NULL_KEY, "");
+    if (!granted && gStopListener) { llListenRemove(gStopListener); gStopListener = 0; }
+}
 
 // Keys have a validity test in conditions; LSL's ! operator requires an integer.
 integer validKey(key value) {
@@ -44,47 +78,35 @@ initialize() {
     // Same owner-filtered, root-addressed probe and channel as the movement controller.
     DISCOVERY_CHANNEL = -0x10000000 - (integer)("0x" + llGetSubString((string)llGetKey(), 0, 6));
     gListener = llListen(DISCOVERY_CHANNEL, "", gOwner, "auroraHello|" + (string)llGetKey());
-    llListenRemove(gPoseListener);
-    gPoseListener = llListen(POSE_CHANNEL, "", NULL_KEY, "");
-    gPosePeers = [];
-    llListenRemove(gPortalListener);
-    gPortalListener = llListen(PORTAL_CHANNEL, "", NULL_KEY, "");
-    gPortalPeers = [];
+    POSE_DIALOG_CHANNEL = -0x40000000 - (integer)("0x" + llGetSubString((string)llGetKey(), 0, 6));
+    forgetPoses();
     requestURL();
 }
 query(key request, string kind, string targets) {
-    if (kind == "portal") {
-        // The viewer validates the typed, base64 invitation. The script only
-        // authenticates its sender and relays bounded region-local data.
-        key target = (key)llGetSubString(targets, 0, 35);
-        string payload = llDeleteSubString(targets, 0, 36);
-        if (llStringLength(targets) < 41 || llStringLength(payload) > 640
-            || llGetSubString(targets, 36, 36) != ","
-            || (!validKey(target) && llGetSubString(targets, 0, 35) != (string)NULL_KEY)) {
-            llHTTPResponse(request, 400, "invalid"); return;
-        }
-        // Private detail requests/replies can never use the regional broadcast.
-        if (!validKey(target)) {
-            string decoded = llBase64ToString(payload);
-            if (llJsonValueType(decoded, ["Details"]) != JSON_INVALID
-                || llJsonValueType(decoded, ["Request"]) != JSON_INVALID) {
-                llHTTPResponse(request, 400, "invalid"); return;
-            }
-        }
-        if (target) llRegionSayTo(target, PORTAL_CHANNEL, "portal2|" + payload);
-        else llRegionSay(PORTAL_CHANNEL, "portal2|" + payload);
-        llHTTPResponse(request, 200, "[]");
-    } else if (kind == "pose") {
+    if (kind == "pose") {
+        // ask: the consent dialog, its texts in base64 in the poser's language;
+        // forget: the request or the consent ended on the viewer's side.
         list fields = llParseStringKeepNulls(targets, [","], []);
         string action = llList2String(fields, 0);
         key nonce = llList2Key(fields, 1);
         key target = llList2Key(fields, 2);
-        if (llGetListLength(fields) != 3 || !validKey(nonce) || !validKey(target) || target == gOwner
-            || llListFindList(["request", "accept", "refuse", "cancel", "withdraw"], [action]) < 0) {
+        integer count = llGetListLength(fields);
+        if (!validKey(nonce) || !validKey(target) || target == gOwner
+            || !((action == "ask" && count == 9) || (action == "forget" && count == 3))) {
             llHTTPResponse(request, 400, "invalid"); return;
         }
-        // Explicit commands only: no advertisement, discovery or viewer probe.
-        llRegionSayTo(target, POSE_CHANNEL, "pose1|" + (string)nonce + "|" + action + "|" + (string)target);
+        forgetPose(target);
+        if (action == "ask") {
+            gYes = llBase64ToString(llList2String(fields, 4));
+            gNo = llBase64ToString(llList2String(fields, 5));
+            gGrantedText = llBase64ToString(llList2String(fields, 6));
+            gStop = llBase64ToString(llList2String(fields, 7));
+            gStopped = llBase64ToString(llList2String(fields, 8));
+            if (llGetListLength(gAsked) >= 64) gAsked = llDeleteSubList(gAsked, 0, 1);
+            gAsked += [target, nonce];
+            llDialog(target, llBase64ToString(llList2String(fields, 3)), [gYes, gNo], POSE_DIALOG_CHANNEL);
+        }
+        poseListeners();
         llHTTPResponse(request, 200, "[]");
     } else if (kind == "altitudes") {
         // Comma-separated 36-character keys, read at a fixed stride.
@@ -141,12 +163,7 @@ default {
         else {
             gPaired = FALSE;
             llListenRemove(gListener);
-            llListenRemove(gPoseListener);
-            gPoseListener = 0;
-            gPosePeers = [];
-            llListenRemove(gPortalListener);
-            gPortalListener = 0;
-            gPortalPeers = [];
+            forgetPoses();
             gListener = 0;
             llSetTimerEvent(0.0);
             llReleaseURL(gURL);
@@ -159,51 +176,47 @@ default {
         else if (llGetAttached() && (change & (CHANGED_REGION | CHANGED_REGION_START | CHANGED_TELEPORT))) {
             // Answer the viewer's first probe in the new region at once.
             gNextHello = 0.0;
+            // A consent holds within one region.
+            forgetPoses();
             requestURL();
         }
     }
     listen(integer channel, string name, key sender, string message) {
-        if (channel == PORTAL_CHANNEL) {
-            if (!llGetAttached() || !gPaired || llStringLength(message) > 648
-                || llGetSubString(message, 0, 7) != "portal2|") return;
-            key peer = llGetOwnerKey(sender);
-            if (!validKey(peer) || peer == sender || peer == gOwner) return;
-            list attached = llGetObjectDetails(sender, [OBJECT_ATTACHED_POINT]);
-            if (llGetListLength(attached) != 1 || llList2Integer(attached, 0) <= 0) return;
-            integer at = llListFindList(gPortalPeers, [peer]);
-            float now = llGetTime();
-            if (at >= 0) {
-                if (now - llList2Float(gPortalPeers, at + 1) < 0.2) return;
-                gPortalPeers = llDeleteSubList(gPortalPeers, at, at + 1);
-            }
-            if (llGetListLength(gPortalPeers) >= 128) gPortalPeers = llDeleteSubList(gPortalPeers, 0, 1);
-            gPortalPeers += [peer, now];
-            llOwnerSay("<auroraPortal>" + (string)peer + "|" + llDeleteSubString(message, 0, 7) + "</auroraPortal>");
-            return;
-        }
-        if (channel == POSE_CHANNEL) {
-            if (!llGetAttached() || !gPaired || llStringLength(message) > 130) return;
-            list fields = llParseStringKeepNulls(message, ["|"], []);
-            if (llGetListLength(fields) != 4 || llList2String(fields, 0) != "pose1" || llList2Key(fields, 3) != gOwner) return;
-            key nonce = llList2Key(fields, 1);
-            string action = llList2String(fields, 2);
-            if (!validKey(nonce) || llListFindList(["request", "accept", "refuse", "cancel", "withdraw"], [action]) < 0) return;
-            key peer = llGetOwnerKey(sender);
-            if (!validKey(peer) || peer == sender || peer == gOwner) return;
-            list attached = llGetObjectDetails(sender, [OBJECT_ATTACHED_POINT]);
-            if (llGetListLength(attached) != 1 || llList2Integer(attached, 0) <= 0) return;
-            if (action == "request") {
-                integer at = llListFindList(gPosePeers, [peer]);
-                integer now = llGetUnixTime();
-                if (at >= 0) {
-                    if (now - llList2Integer(gPosePeers, at + 1) < 5) return;
-                    gPosePeers = llDeleteSubList(gPosePeers, at, at + 1);
+        if (channel == POSE_DIALOG_CHANNEL || channel == STOP_CHANNEL) {
+            // The resident's own answer: dialog buttons and local chat come
+            // from their avatar's key, which no object can speak as.
+            if (!llGetAttached() || !gPaired) return;
+            integer at = llListFindList(gAsked, [sender]);
+            if (channel == POSE_DIALOG_CHANNEL && at >= 0 && (message == gYes || message == gNo)) {
+                key asked = llList2Key(gAsked, at + 1);
+                gAsked = llDeleteSubList(gAsked, at, at + 1);
+                string answer = "refuse";
+                if (message == gYes) {
+                    answer = "accept";
+                    if (llGetListLength(gGranted) >= 64) gGranted = llDeleteSubList(gGranted, 0, 1);
+                    gGranted += [sender, asked];
                 }
-                if (llGetListLength(gPosePeers) >= 64) gPosePeers = llDeleteSubList(gPosePeers, 0, 1);
-                gPosePeers += [peer, now];
+                poseListeners();
+                llOwnerSay("<auroraPose>" + (string)asked + "|" + answer + "|" + (string)sender + "</auroraPose>");
+                if (answer == "accept") {
+                    // How to stop, with a Stop button for when chat is out of
+                    // range, and the same in an IM, kept in their history.
+                    // llInstantMessage sleeps the script 2 s: last, after the
+                    // viewer has its answer.
+                    llDialog(sender, gGrantedText, [gStop], POSE_DIALOG_CHANNEL);
+                    llInstantMessage(sender, gGrantedText);
+                }
+                return;
             }
-            // Authenticated owner identity, never a claimed avatar from the payload.
-            llOwnerSay("<auroraPose>" + (string)nonce + "|" + action + "|" + (string)peer + "</auroraPose>");
+            at = llListFindList(gGranted, [sender]);
+            if (at < 0) return;
+            if (channel == POSE_DIALOG_CHANNEL && message != gStop) return;
+            if (channel == STOP_CHANNEL && llToLower(llStringTrim(message, STRING_TRIM)) != "stop") return;
+            key granted = llList2Key(gGranted, at + 1);
+            gGranted = llDeleteSubList(gGranted, at, at + 1);
+            poseListeners();
+            if (gStopped != "") llRegionSayTo(sender, 0, gStopped);
+            llOwnerSay("<auroraPose>" + (string)granted + "|withdraw|" + (string)sender + "</auroraPose>");
             return;
         }
         if (!llGetAttached() || channel != DISCOVERY_CHANNEL || sender != gOwner
@@ -225,7 +238,7 @@ default {
             if (!gPaired) { llHTTPResponse(request, 403, "unpaired"); return; }
             // llGetHTTPHeader cannot read custom headers: authenticate the
             // bounded body, query|token|kind|targets, read in place.
-            if (llStringLength(body) > 768 || llGetSubString(body, 0, 42) != "query|" + (string)gToken + "|") {
+            if (llStringLength(body) > 1600 || llGetSubString(body, 0, 42) != "query|" + (string)gToken + "|") {
                 llHTTPResponse(request, 403, "denied"); return;
             }
             body = llDeleteSubString(body, 0, 42);

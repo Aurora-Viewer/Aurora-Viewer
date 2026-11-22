@@ -20,6 +20,12 @@ pub const OVER_LIMIT_UPDATE_DELAY: Duration = Duration::from_secs(70);
 /// ComplexityChangesPopUpDelay (settings.xml, a debug setting): the time
 /// between two "may not see you" notices.
 pub const POP_UP_DELAY: Duration = Duration::from_secs(300);
+/// The notices of our own complexity come in bursts (Aurora): the values of
+/// an outfit forming replace the notice still out for this long, then none
+/// shows before [`POP_UP_DELAY`] is over. The Legacy Viewer tells each
+/// change at once; a complexity moving on its own showed a notice every
+/// few seconds (#3381).
+pub const OWN_BURST: Duration = Duration::from_secs(30);
 
 /// The second line of AgentComplexityWithVisibility
 /// (LLAvatarRenderNotifier::overLimitMessage).
@@ -130,6 +136,10 @@ pub struct Notifier {
     last_cof_version: i32,
     last_outfit_rez_status: i32,
     pop_up_delay_until: Instant,
+    /// [`OWN_BURST`]: the end of the current burst of our complexity's
+    /// notices, and the time the next burst may start.
+    own_burst_until: Instant,
+    own_quiet_until: Instant,
     /// The notice still out (mNotificationPtr while active).
     shown: Option<Shown>,
 }
@@ -150,6 +160,8 @@ impl Notifier {
             last_cof_version: -1,
             last_outfit_rez_status: -1,
             pop_up_delay_until: now + OVER_LIMIT_UPDATE_DELAY,
+            own_burst_until: now,
+            own_quiet_until: now,
             shown: None,
         }
     }
@@ -240,7 +252,9 @@ impl Notifier {
     /// processComplexityCostChange → updateNotificationAgent: our
     /// complexity, after each refresh. A change shows AgentComplexity once
     /// the outfit changed since login, or while people already do not see
-    /// us; the counts then wait [`OVER_LIMIT_UPDATE_DELAY`].
+    /// us; the counts then wait [`OVER_LIMIT_UPDATE_DELAY`]. The changes
+    /// come in bursts ([`OWN_BURST`]); one held back by the quiet time
+    /// shows once it is over, with the complexity of then.
     pub fn own_avatar(&mut self, own: OwnAvatar, now: Instant, cx: Context) -> Option<Action> {
         // (LLVOAvatar::updateFullyLoaded runs updateNotificationState on its own)
         self.track_outfit(&own);
@@ -263,6 +277,14 @@ impl Notifier {
         }
         if self.agent_complexity == self.latest_agent_complexity {
             return None;
+        }
+        let in_burst = now < self.own_burst_until && self.visible(now) && !self.show_over_limit_agents;
+        if !in_burst {
+            if now < self.own_quiet_until {
+                return None;
+            }
+            self.own_burst_until = now + OWN_BURST;
+            self.own_quiet_until = now + POP_UP_DELAY;
         }
         let action = self.display(false, now, cx);
         self.pop_up_delay_until = now + OVER_LIMIT_UPDATE_DELAY;

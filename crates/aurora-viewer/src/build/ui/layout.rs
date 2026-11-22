@@ -86,6 +86,7 @@ pub(super) fn title(item: Item) -> &'static str {
         Item::Surrounding => aurora_i18n::tr!("build-compact-surrounding"),
         Item::LandGroup => aurora_i18n::tr!("rez-under-land-group"),
         Item::FollowEdit => aurora_i18n::tr!("build-ui-tools-follow-edit-object"),
+        Item::WheelOnHover => aurora_i18n::tr!("build-wheel-on-hover"),
         Item::General => aurora_i18n::tr!("build-compact-general"),
         Item::Shape => aurora_i18n::tr!("build-compact-shape"),
         Item::Materials => aurora_i18n::tr!("build-compact-materials"),
@@ -221,11 +222,39 @@ pub(super) fn row(
         child.disable();
     }
     if item.navigation() {
-        if panel == Panel::Navigation {
-            let active = section(item).is_some_and(|tab| tool.tool == Tool::Edit && tool.tab == tab)
-                || mode(item).is_some_and(|mode| tool.tool == mode);
-            if compact::navigation_button(&mut child, p, icon(item), title(item), active, height) {
-                if let Some(tab) = section(item) {
+        if panel.bar() {
+            let block = crate::build::layout::Block::of_item(item);
+            let detached = block.filter(|block| super::detach::is_detached(s, *block));
+            let (active, tip) = match detached {
+                Some(block) => {
+                    let shown = tool.tool == Tool::Edit && s.detached.get(&block).copied().unwrap_or(false);
+                    (shown, super::detach::toggle_hint(block, shown))
+                }
+                None => (
+                    section(item).is_some_and(|tab| tool.tool == Tool::Edit && tool.tab == tab)
+                        || mode(item).is_some_and(|mode| tool.tool == mode),
+                    title(item).to_owned(),
+                ),
+            };
+            let response = compact::navigation_button_marked(
+                &mut child,
+                p,
+                icon(item),
+                title(item),
+                &tip,
+                s.layout.display(item),
+                active,
+                detached.is_some(),
+                height,
+            );
+            display_menu(&response, p, s, item);
+            if detached.is_some() {
+                super::detach::mark(ui, p, rect);
+            }
+            if response.clicked() && child.is_enabled() {
+                if let Some(block) = detached {
+                    super::detach::toggle(tool, s, block);
+                } else if let Some(tab) = section(item) {
                     if tool.tool != Tool::Edit {
                         tool.set_tool(Tool::Edit);
                     }
@@ -235,6 +264,28 @@ pub(super) fn row(
                 {
                     tool.set_tool(mode);
                 }
+            }
+            // Inventory held over a section's button opens that section,
+            // unless it is in a window of its own (the build floater's
+            // open_tabs_on_drag_and_drop, floater_tools.xml).
+            if let Some(tab) = section(item)
+                && crate::ui::inventory::drag::navigation::tab_held_over(
+                    &child,
+                    response.rect,
+                    egui::Id::unique("build-drag-open").with(tab),
+                )
+                && detached.is_none()
+                && child.is_enabled()
+            {
+                if tool.tool != Tool::Edit {
+                    tool.set_tool(Tool::Edit);
+                }
+                tool.tab = tab;
+            }
+            if let Some(block) = block
+                && detached.is_none()
+            {
+                super::detach::source(ui, p, tool, s, block, "rail", rect);
             }
         } else {
             widgets::glyph(&mut child, icon(item), p.muted, 18.0);
@@ -279,7 +330,7 @@ pub(super) fn row(
                     response.id,
                     egui::EventFilter {
                         vertical_arrows: true,
-                        horizontal_arrows: panel == Panel::Navigation || (panel == Panel::Footer && item.footer_column_item()),
+                        horizontal_arrows: panel.bar() || (panel == Panel::Footer && item.footer_column_item()),
                         ..Default::default()
                     },
                 );
@@ -305,11 +356,11 @@ pub(super) fn row(
             }
             let direction = ui.input_mut(|i| {
                 if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
-                    || (panel == Panel::Navigation && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft))
+                    || (panel.bar() && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft))
                 {
                     -1
                 } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-                    || (panel == Panel::Navigation && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight))
+                    || (panel.bar() && i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight))
                 {
                     1
                 } else {
@@ -320,7 +371,6 @@ pub(super) fn row(
                 .layout
                 .in_panel(panel)
                 .into_iter()
-                .filter(|other| panel != Panel::Navigation || mode(*other).is_some() == mode(item).is_some())
                 .filter(|other| {
                     panel != Panel::Footer
                         || !item.footer_column_item()
@@ -347,7 +397,11 @@ pub(super) fn row(
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) || i.consume_key(egui::Modifiers::NONE, egui::Key::Space)
             }) {
                 let next = if item.navigation() {
-                    if panel == Panel::Hidden { Panel::Navigation } else { Panel::Hidden }
+                    if panel == Panel::Hidden {
+                        item.default_panel()
+                    } else {
+                        Panel::Hidden
+                    }
                 } else {
                     match panel {
                         Panel::Footer => Panel::Settings,
@@ -368,13 +422,13 @@ pub(super) fn row(
                 p,
                 rect.shrink(0.5),
                 None,
-                if panel == Panel::Navigation {
+                if panel.bar() {
                     None
                 } else {
                     pos.map(|pos| pos.y >= rect.center().y)
                 },
             );
-            if panel == Panel::Navigation
+            if panel.bar()
                 && let Some(pos) = pos
             {
                 let x = if pos.x < rect.center().x { rect.left() } else { rect.right() };
@@ -748,6 +802,7 @@ pub(super) fn control(
         Item::Surrounding => s.select_surrounding,
         Item::LandGroup => s.rez_under_land_group,
         Item::FollowEdit => s.follow_edit_object,
+        Item::WheelOnHover => s.wheel_on_hover,
         _ => return,
     };
     let compact_footer = panel == Panel::Footer && !s.legacy_window;
@@ -775,6 +830,7 @@ pub(super) fn control(
                 Item::Surrounding => s.select_surrounding = value,
                 Item::LandGroup => s.rez_under_land_group = value,
                 Item::FollowEdit => s.follow_edit_object = value,
+                Item::WheelOnHover => s.wheel_on_hover = value,
                 _ => {}
             }
         }
@@ -852,6 +908,27 @@ pub(super) fn selection_navigation(
     let _ = response;
 }
 
+/// The right-click menu of a bar button: its icon, its label or both.
+fn display_menu(response: &egui::Response, p: &Palette, s: &mut BuildSettings, item: Item) {
+    use crate::build::layout::ButtonDisplay;
+    crate::ui::menu::context_menu(response, p, |ui| {
+        let current = s.layout.display(item);
+        for (display, glyph, label) in [
+            (ButtonDisplay::Icon, "photo-filled", aurora_i18n::tr!("build-layout-button-icon")),
+            (ButtonDisplay::Label, "typography", aurora_i18n::tr!("build-layout-button-label")),
+            (
+                ButtonDisplay::Both,
+                "list-details-filled",
+                aurora_i18n::tr!("build-layout-button-both"),
+            ),
+        ] {
+            if crate::ui::menu::check(ui, p, glyph, label, current == display, true) {
+                s.layout.set_display(item, display);
+            }
+        }
+    });
+}
+
 pub(super) fn navigation(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -861,26 +938,67 @@ pub(super) fn navigation(
     mods: Mods,
     tools: bool,
 ) {
-    let items: Vec<_> = s
-        .layout
-        .in_panel(Panel::Navigation)
-        .into_iter()
-        .filter(|item| mode(*item).is_some() == tools)
-        .collect();
-    if items.is_empty() {
-        return;
-    }
+    let bar = if tools { Panel::Tools } else { Panel::Navigation };
+    let items = s.layout.in_panel(bar);
     let start = ui.cursor().min;
-    ui.columns(items.len(), |columns| {
-        for (column, item) in columns.iter_mut().zip(items) {
-            row(column, p, tool, world, s, mods, item, Panel::Navigation);
+    if items.is_empty() {
+        // An empty bar shows only while a button is carried, as the place
+        // it can be dropped.
+        if !bar_drop_open(tool, s, bar) {
+            return;
         }
-    });
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), egui::Sense::hover());
+        widgets::organization_drop_target(ui, p, rect.shrink(1.0), None, None);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            aurora_i18n::tr!("build-layout-drop-here"),
+            egui::FontId::proportional(common::SMALL),
+            p.muted,
+        );
+    } else {
+        // Each button takes the room its icon or label wants; what is left
+        // is shared evenly (icons alone: equal columns, as before), and a
+        // bar too narrow for its labels narrows each button in proportion.
+        let gap = ui.spacing().item_spacing.x;
+        let wants: Vec<f32> = items
+            .iter()
+            .map(|item| compact::navigation_button_width(ui, title(*item), s.layout.display(*item)))
+            .collect();
+        let room = (ui.available_width() - gap * (items.len() as f32 - 1.0)).max(1.0);
+        let total: f32 = wants.iter().sum();
+        let widths: Vec<f32> = if total >= room {
+            wants.iter().map(|want| want * room / total).collect()
+        } else {
+            let extra = (room - total) / items.len() as f32;
+            wants.iter().map(|want| want + extra).collect()
+        };
+        let (line, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), egui::Sense::hover());
+        let mut left = line.left();
+        for (item, width) in items.into_iter().zip(widths) {
+            let cell = Rect::from_min_size(egui::pos2(left, line.top()), Vec2::new(width, line.height()));
+            let mut column = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(("build-bar-button", item))
+                    .max_rect(cell)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            row(&mut column, p, tool, world, s, mods, item, bar);
+            left += width + gap;
+        }
+    }
     let end = ui.cursor().min.y.max(start.y + 30.0);
     tool.ui
         .layout
         .zones
-        .push((Panel::Navigation, Rect::from_min_max(start, egui::pos2(ui.max_rect().right(), end))));
+        .push((bar, Rect::from_min_max(start, egui::pos2(ui.max_rect().right(), end))));
+}
+
+/// Whether the bar `bar` is drawn: it has buttons, or one is carried while
+/// the window is being organized and it would take it.
+pub(super) fn bar_drop_open(tool: &BuildTool, s: &BuildSettings, bar: Panel) -> bool {
+    !s.layout.in_panel(bar).is_empty()
+        || (tool.ui.layout.organizing && tool.ui.layout.drag.is_some_and(|item| item.navigation() && item.accepts(bar)))
 }
 
 pub(super) fn panel(
@@ -892,9 +1010,8 @@ pub(super) fn panel(
     mods: Mods,
     panel: Panel,
 ) {
-    if panel == Panel::Navigation {
-        navigation(ui, p, tool, world, s, mods, false);
-        navigation(ui, p, tool, world, s, mods, true);
+    if panel.bar() {
+        navigation(ui, p, tool, world, s, mods, panel == Panel::Tools);
         return;
     }
     let start = ui.cursor().min;
@@ -1029,6 +1146,7 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                             Item::Surrounding,
                             Item::LandGroup,
                             Item::FollowEdit,
+                            Item::WheelOnHover,
                         ] {
                             control(ui, p, tool, world, s, mods, item, Panel::Settings);
                         }
@@ -1206,7 +1324,7 @@ pub(super) fn finish(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: 
                     .find(|(target, panel, rect)| *panel != Panel::Footer && *target != item && item.accepts(*panel) && rect.contains(pos))
                     .copied()
                 {
-                    let after = if panel == Panel::Navigation {
+                    let after = if panel.bar() {
                         pos.x >= rect.center().x
                     } else {
                         pos.y >= rect.center().y
