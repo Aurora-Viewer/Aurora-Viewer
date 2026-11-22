@@ -32,6 +32,8 @@ pub const WINDOW: &str = "camera_position";
 /// The narrowest the window gets; wider when its rows need it
 /// (`window_width`).
 pub const WIDTH: f32 = 330.0;
+/// The widest the window grows to keep its two buttons side by side.
+const SIDE_BY_SIDE_MAX: f32 = 420.0;
 /// The window's margins on both sides (`widgets::Floater`).
 const MARGINS: f32 = 24.0;
 /// The grid's room between the label column and the fields.
@@ -122,7 +124,15 @@ fn window_width(ctx: &egui::Context, c: &CameraSettings) -> f32 {
     let fields = |v: [f32; 3]| v.iter().map(|&x| axis + spacing + field(x) + spacing).sum::<f32>();
     let row = labels + COLUMN_GAP + fields(c.camera_offset).max(fields(c.focus_offset));
     let button = |label: &str| text(label, egui::TextStyle::Button.resolve(&style)) + 46.0;
-    let buttons = button(tr!("ui-options-camera-reset-angles")).max(button(tr!("camera-position-save")));
+    let (reset, save) = (button(tr!("ui-options-camera-reset-angles")), button(tr!("camera-position-save")));
+    // both buttons on one line when that keeps the window compact; a longer
+    // translation stacks them, each still whole
+    let side_by_side = reset + 4.0 + save;
+    let buttons = if side_by_side + MARGINS <= SIDE_BY_SIDE_MAX {
+        side_by_side
+    } else {
+        reset.max(save)
+    };
     WIDTH.max(row.max(buttons) + MARGINS).ceil()
 }
 
