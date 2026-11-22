@@ -1,7 +1,7 @@
 //! Preferences › Graphics (panel_preferences_graphics1.xml and its
 //! advanced floater): the level of the whole, then quality, light, the sky,
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
-//! depth of field), smoothness and parcel visibility.
+//! depth of field), smoothness, parcel visibility and ray tracing.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
@@ -21,6 +21,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
             overlays(cx);
         }
         6 => parcels(cx),
+        7 => ray_tracing(cx),
         _ => {}
     }
 }
@@ -468,12 +469,12 @@ fn quality(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-presets"), |cx| {
         let p = cx.p;
-        cx.wide().keywords(tr!("ui-options-preset-custom")).row(
+        cx.wide().keywords(tr!("ui-options-preset-custom")).row_with(
             tr!("ui-options-preset-level"),
             tr!("ui-options-preset-level-help"),
             // a level writes the page's settings: they are the rows below
             &Nothing,
-            |ui, s| preset_choice(ui, &p, s),
+            |ui, s, st, _| preset_choice(ui, &p, s, st.ray_tracing),
         );
         cx.below()
             .row_with(tr!("graphics-saved-title"), tr!("graphics-saved-help"), &Nothing, |ui, s, st, _| {
@@ -853,7 +854,6 @@ fn light(cx: &mut Cx) {
             );
         });
     });
-    ray_tracing(cx);
     cx.group(tr!("ui-options-ambient-occlusion"), |cx| {
         cx.stepped(
             tr!("ui-options-ambient-occlusion"),

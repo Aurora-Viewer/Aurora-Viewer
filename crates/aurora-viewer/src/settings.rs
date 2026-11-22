@@ -1920,6 +1920,10 @@ pub struct Settings {
     pub ssr: bool,
     /// Preferences › Graphics › Ray tracing.
     pub ray_tracing: RayTracingSettings,
+    /// The warning of Deluxe (RT) was shown and accepted once
+    /// (ui/options.rs `deluxe_rt_warning`): choosing the level again
+    /// applies it at once.
+    pub deluxe_rt_warned: bool,
     /// The traced sun's shadows' softness: 1 the real sun's, 0 sharp
     /// (aurora-render `RtTuning`). Apart from `ray_tracing`, which the
     /// graphics levels set.
@@ -2065,7 +2069,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 45;
+const SETTINGS_VERSION: u32 = 46;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2928,7 +2932,8 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
-            ray_tracing: RayTracingSettings::SHADOWS,
+            ray_tracing: RayTracingSettings::OFF,
+            deluxe_rt_warned: false,
             rt_sun_softness: 1.0,
             rt_gi_probes: true,
             rt_lamp_softness: 1.0,
@@ -3684,14 +3689,13 @@ impl Settings {
             // takes them, so that switching it on blows
             self.weather.upgrade_wind_defaults();
         }
-        if self.settings_version < 45 {
-            // the shadows are traced by default where the card can, in the
-            // shadow maps' place: every earlier file turns the sun's and
-            // the local lights' on once (the indirect light and the
-            // reflections keep their choice), Preferences › Graphics › Ray
-            // tracing goes back to the maps
-            self.ray_tracing.enabled = true;
-            self.ray_tracing.lights = true;
+        if self.settings_version < 46 {
+            // ray tracing is Deluxe (RT)'s alone (graphics_presets.rs):
+            // an earlier file, which traced the shadows by default since
+            // version 45, goes back to the shadow maps once, and a profile
+            // still exactly on the former Deluxe moves to High
+            self.ray_tracing = RayTracingSettings::OFF;
+            crate::graphics_presets::upgrade_deluxe_to_high(&mut self);
         }
         if !self.audio.enabled[VOICE_CHANNEL] {
             // this box used to switch a mixer channel of its own, leaving
@@ -4321,11 +4325,11 @@ pub const RT_SHADOW_LAMPS_MAX: u8 = 64;
 
 /// Preferences › Graphics › Ray tracing (aurora-render's rt_shadows.rs):
 /// only on a graphics card with ray queries
-/// (`aurora_render::RayTracingSupport`); elsewhere the shadow maps stay. The
-/// sun's and the local lights' shadows are traced by default
-/// (`RayTracingSettings::SHADOWS`), in the shadow maps' place, and turning
-/// them off here goes back to the maps; the indirect light and the
-/// reflections, experimental, stay off. The renderer adds what each needs:
+/// (`aurora_render::RayTracingSupport`); elsewhere the shadow maps stay. Off
+/// by default: the Deluxe (RT) level turns on the sun's and the local
+/// lights' shadows and the indirect light (`RayTracingSettings::DELUXE`),
+/// in the shadow maps' and the screen-space light's place; the reflections,
+/// experimental, stay off. The renderer adds what each needs:
 /// the sun's shadows only with the shadows, the reflections only with the
 /// screen-space ones. (`Default` is all off: what a saved graphics profile
 /// written before ray tracing reads.)
@@ -4351,13 +4355,19 @@ impl RayTracingSettings {
         reflections: false,
     };
 
-    /// The default where the card can: the shadows traced, the sun's and
-    /// the local lights', in the shadow maps' place.
+    /// The shadows traced, the sun's and the local lights', in the shadow
+    /// maps' place.
     pub const SHADOWS: RayTracingSettings = RayTracingSettings {
         enabled: true,
         lights: true,
         indirect: false,
         reflections: false,
+    };
+
+    /// Deluxe (RT)'s: the shadows and the indirect light traced.
+    pub const DELUXE: RayTracingSettings = RayTracingSettings {
+        indirect: true,
+        ..RayTracingSettings::SHADOWS
     };
 
     pub fn render(self) -> aurora_render::RayTracing {

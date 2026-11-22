@@ -21,6 +21,14 @@
 //! Potato and Low have none of these; outside the levels they are all off by
 //! default.
 //!
+//! Deluxe became "Deluxe (RT)" in settings version 46 (decided by the
+//! human on 2026-11-22): High's values, with the shadows of the sun and of
+//! the local lights and the indirect light traced by the graphics card
+//! (`RayTracingSettings::DELUXE`, aurora-render's rt_*.rs). No other level
+//! traces. The former Deluxe is kept as [`deluxe_v45`] for the migrations
+//! and the photo's maxima; a profile still exactly on it moves to High once
+//! ([`upgrade_deluxe_to_high`]). The Legacy Viewer has no traced level.
+//!
 //! The avatar physics detail follows the Legacy Viewer's lists too (0 in
 //! Potato, 0.75 in Low, 1 above); the physics switch itself is not a level's.
 //! So does the maximum texture resolution (RenderMaxTextureResolution: 512
@@ -216,45 +224,11 @@ impl Preset {
                 local_light_count: ALL_LIGHTS,
                 effects: Effects::HIGH,
             },
-            // "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
-            // projectors too (detail 2), the whole scene in the probes; the
-            // rest is "the most that stays reasonable": 192 m instead of
-            // Ultra's 256 (a busy place costs far less), the complexity of
-            // "HighUltra" (Ultra keeps the user's), the highest shadow
-            // quality, ambient occlusion by GTAO at Ultra quality (Aurora's
-            // method, beyond the Legacy Viewer's SSAO of Ultra), water
-            // reflection at half resolution (full costs a second scene),
-            // Aurora's mirrors as by default and 16x anisotropy;
-            // screen-space reflections stay off, as in every Legacy Viewer
-            // level; and Aurora's own effects (module comment)
+            // Deluxe (RT): High, with the shadows and the indirect light
+            // traced (module comment)
             Preset::Deluxe => Values {
-                draw_distance: 192.0,
-                lod_factor: 3.0,
-                tree_lod_factor: 1.0,
-                max_avatars: 16,
-                max_complexity: 350_000,
-                max_particles: 8192,
-                shadow_quality: 4,
-                projector_shadows: true,
-                projector_shadow_limit: 2,
-                ssao: 2,
-                ao_method: 1,
-                gtao_quality: 3,
-                water_reflections: 2,
-                mirrors: 1,
-                ssr: false,
-                reflection_probes: 3,
-                probe_count: 256,
-                antialiasing: 6,
-                blend_order: 4,
-                anisotropy: 16,
-                sharpen: 0.4,
-                glow: true,
-                avatar_physics_detail: 1.0,
-                hdr_emissive: true,
-                max_texture_resolution: MAX_TEXTURE_RESOLUTION,
-                local_light_count: ALL_LIGHTS,
                 effects: Effects::DELUXE,
+                ..Preset::High.values()
             },
         }
     }
@@ -406,6 +380,51 @@ pub(crate) mod mac_mid_high {
     }
 }
 
+/// The Deluxe of settings version 45, before it became Deluxe (RT):
+/// the Legacy Viewer's
+/// "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
+/// projectors too (detail 2), the whole scene in the probes; the
+/// rest is "the most that stays reasonable": 192 m instead of
+/// Ultra's 256 (a busy place costs far less), the complexity of
+/// "HighUltra" (Ultra keeps the user's), the highest shadow
+/// quality, ambient occlusion by GTAO at Ultra quality (Aurora's
+/// method, beyond the Legacy Viewer's SSAO of Ultra), water
+/// reflection at half resolution (full costs a second scene),
+/// Aurora's mirrors as by default and 16x anisotropy;
+/// screen-space reflections stay off, as in every Legacy Viewer
+/// level; and Aurora's own effects (module comment)
+pub(crate) fn deluxe_v45() -> Values {
+    Values {
+        draw_distance: 192.0,
+        lod_factor: 3.0,
+        tree_lod_factor: 1.0,
+        max_avatars: 16,
+        max_complexity: 350_000,
+        max_particles: 8192,
+        shadow_quality: 4,
+        projector_shadows: true,
+        projector_shadow_limit: 2,
+        ssao: 2,
+        ao_method: 1,
+        gtao_quality: 3,
+        water_reflections: 2,
+        mirrors: 1,
+        ssr: false,
+        reflection_probes: 3,
+        probe_count: 256,
+        antialiasing: 6,
+        blend_order: 4,
+        anisotropy: 16,
+        sharpen: 0.4,
+        glow: true,
+        avatar_physics_detail: 1.0,
+        hdr_emissive: true,
+        max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+        local_light_count: ALL_LIGHTS,
+        effects: Effects::DELUXE_V45,
+    }
+}
+
 /// The Deluxe of settings version 20: 256 m, GTAO at High and the contact
 /// shadows only. The older Deluxes below are written from it, so that they
 /// stay what those files hold whatever the levels of now become.
@@ -419,7 +438,24 @@ pub(crate) fn deluxe_v20() -> Values {
             contact_shadows: true,
             ..Effects::OFF
         },
-        ..Preset::Deluxe.values()
+        ..deluxe_v45()
+    }
+}
+
+/// Settings files written before Deluxe became Deluxe (RT) (version 46),
+/// once their ray tracing is off (`Settings::sanitized`): a profile still
+/// exactly on the former Deluxe moves to High, the level nearest to what
+/// it drew without ray tracing; any other keeps its values.
+pub(crate) fn upgrade_deluxe_to_high(s: &mut Settings) {
+    let former = Values {
+        effects: Effects {
+            ray_tracing: crate::settings::RayTracingSettings::OFF,
+            ..Effects::DELUXE_V45
+        },
+        ..deluxe_v45()
+    };
+    if Values::read(s).as_shown() == former.as_shown() {
+        Preset::High.apply(s);
     }
 }
 
@@ -671,11 +707,11 @@ pub struct Effects {
     pub shadow_softness: f32,
     pub screen_indirect_light: bool,
     pub screen_indirect_intensity: f32,
-    /// Ray tracing: the shadows traced in the levels with shadows (High and
-    /// Deluxe), where the card can; off in the others, so the safe graphics
-    /// turn it off. The indirect light and the reflections, experimental,
-    /// in none. A backup or a saved preset written before it holds none:
-    /// off, as it drew.
+    /// Ray tracing: the shadows and the indirect light traced in Deluxe
+    /// (RT) only, where the card can; off in the others, so the safe
+    /// graphics turn it off. The reflections, experimental, in none. A
+    /// backup or a saved preset written before it holds none: off, as it
+    /// drew.
     #[serde(default)]
     pub ray_tracing: crate::settings::RayTracingSettings,
 }
@@ -696,15 +732,22 @@ impl Effects {
         screen_indirect_intensity: crate::settings::SCREEN_INDIRECT_INTENSITY,
         ray_tracing: crate::settings::RayTracingSettings::OFF,
     };
-    /// High's: the contact shadows, and the shadows traced.
+    /// High's: the contact shadows.
     pub const HIGH: Effects = Effects {
         contact_shadows: true,
-        ray_tracing: crate::settings::RayTracingSettings::SHADOWS,
         ..Effects::OFF
     };
-    /// Deluxe's: the contact shadows, the indirect light at its default
-    /// intensity and the shadows traced; the bloom, experimental, stays off.
+    /// Deluxe (RT)'s: High's, with the shadows and the indirect light
+    /// traced (the traced indirect light takes the screen-space one's
+    /// place, which stays off).
     pub const DELUXE: Effects = Effects {
+        ray_tracing: crate::settings::RayTracingSettings::DELUXE,
+        ..Effects::HIGH
+    };
+    /// The Deluxe of settings version 45's: the contact shadows, the
+    /// screen-space indirect light at its default intensity and the
+    /// shadows traced.
+    pub const DELUXE_V45: Effects = Effects {
         contact_shadows: true,
         screen_indirect_light: true,
         ray_tracing: crate::settings::RayTracingSettings::SHADOWS,
