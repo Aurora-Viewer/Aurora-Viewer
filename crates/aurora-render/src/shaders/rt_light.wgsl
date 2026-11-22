@@ -84,68 +84,6 @@ fn unblocked(origin: vec3<f32>, dir: vec3<f32>, reach: f32, posed: bool) -> bool
     return rayQueryGetCommittedIntersection(&rp).kind == RAY_QUERY_INTERSECTION_NONE;
 }
 
-// How far along `dir` from `origin`, a pixel of the view, something stops
-// a shadow ray between `near` and `reach` (any of what does, not the
-// nearest), or -1 when nothing does: for the shadows that soften with that
-// distance (rt_lights.wgsl). `curved`: rt_common.wgsl `shadows`. `own`:
-// an object whose faces never stop it (rt_common.wgsl `shadows_but`), 0
-// for none; with one, or curved, every face is a candidate the shader
-// tests, which costs more than the opaque traversal: the lamps' rays ask
-// it only for their last stretch, inside the bounds of the lamp's own
-// prim. One query serves the scene's level then the posed one, and its
-// flags are constant where each starts: a pass pays for each ray query
-// its shader holds, run or not.
-fn blocked_at(origin: vec3<f32>, dir: vec3<f32>, near: f32, reach: f32, posed: bool, curved: bool, own: f32) -> f32 {
-    var rq: ray_query;
-    if (curved || own > 0.5) {
-        // (the curved pixel's own mesh is sorted by `shadows`, so its ray
-        // meets the faces from both sides)
-        let flags = RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_NO_OPAQUE | select(SHADOW_CULL, RAY_FLAG_NONE, curved);
-        let ray = RayDesc(flags, SOLID, near, reach, origin, dir);
-        rayQueryInitialize(&rq, scene_tlas, ray);
-        while (rayQueryProceed(&rq)) {
-            if (shadows_but(rayQueryGetCandidateIntersection(&rq), false, dir, curved, own)) {
-                rayQueryConfirmIntersection(&rq);
-            }
-        }
-        var hit = rayQueryGetCommittedIntersection(&rq);
-        if (hit.kind == RAY_QUERY_INTERSECTION_NONE && posed) {
-            rayQueryInitialize(&rq, posed_tlas, ray);
-            while (rayQueryProceed(&rq)) {
-                if (shadows_but(rayQueryGetCandidateIntersection(&rq), true, dir, curved, own)) {
-                    rayQueryConfirmIntersection(&rq);
-                }
-            }
-            hit = rayQueryGetCommittedIntersection(&rq);
-        }
-        if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
-            return hit.t;
-        }
-        return -1.0;
-    }
-    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | SHADOW_CULL, SOLID, near, reach, origin, dir);
-    rayQueryInitialize(&rq, scene_tlas, ray);
-    while (rayQueryProceed(&rq)) {
-        if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
-            rayQueryConfirmIntersection(&rq);
-        }
-    }
-    var hit = rayQueryGetCommittedIntersection(&rq);
-    if (hit.kind == RAY_QUERY_INTERSECTION_NONE && posed) {
-        rayQueryInitialize(&rq, posed_tlas, ray);
-        while (rayQueryProceed(&rq)) {
-            if (stops(rayQueryGetCandidateIntersection(&rq), true, dir)) {
-                rayQueryConfirmIntersection(&rq);
-            }
-        }
-        hit = rayQueryGetCommittedIntersection(&rq);
-    }
-    if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
-        return hit.t;
-    }
-    return -1.0;
-}
-
 // The diffuse light point light `i` gives a face at `p` turned to `n`,
 // unshadowed, before its base colour: common.wgsl's, over pi on a PBR face
 // (`shade_pbr`) and over 3.25 on a legacy one (`ll_local_diffuse`). None

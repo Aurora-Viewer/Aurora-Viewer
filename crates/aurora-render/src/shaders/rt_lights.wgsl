@@ -74,7 +74,7 @@
 // projector of the list casts, at any distance.
 //
 // Glass: a ray that nothing stops goes on through the blended faces on its
-// way (`glass_along`), and what they leave of the light's red, green and
+// way (`lamp_trace`), and what they leave of the light's red, green and
 // blue is the sample's visibility in place of its 1 (`mid`'s z, packed),
 // which the share takes by its luminance and the tint by colour: a lamp
 // behind a red pane lights red.
@@ -189,7 +189,7 @@ const MID_DRAWN: u32 = 0x200u;
 // with `MID_SEEN` when its ray found it and `MID_DRAWN` when there is one,
 // and its confidence, y its weight, z the width of the penumbra where its
 // ray was stopped (m; y and it f32 bits), where it was not what the glass
-// left of its light (pack4x8unorm, `glass_along`), or on a frame with no
+// left of its light (pack4x8unorm, `lamp_trace`), or on a frame with no
 // history what its rays found (`pack_reset`), w the normal
 // (rt_history.wgsl `pack_normal`, pack2x16snorm).
 @group(0) @binding(15) var out_mid: texture_storage_2d<rgba32uint, write>;
@@ -406,31 +406,118 @@ fn light_fresh(i: u32) -> f32 {
     return clamp(2.0 * lights[i].source.z / max(light_size(i), LIGHT_SIZE_MIN), 1.0 / HISTORY, 1.0);
 }
 
-// What the glass on the ray from `origin` up to `far` leaves of a light's
-// red, green and blue (rt_common.wgsl `glass_passes`, the rule of PR #3821),
-// the panes of the light's own prim aside (`own`, as rt_common.wgsl
-// `shadows_but`): a lamp's bulb is often a blended face. The still faces'
-// level and, with `posed`, the moving faces' (a pane being carried); worn
-// glass is not traced yet (rt_shadows.rs `look`). A pane met within
-// `lying` of the ray's way (m) lies on the surface (`lying_on`).
-fn glass_along(origin: vec3<f32>, dir: vec3<f32>, far: f32, own: f32, posed: bool, lying: f32) -> vec3<f32> {
+// The shadow ray of a lamp (`light_ray`) from `origin`, a pixel of the
+// view, along `dir`: xyz what the glass on its way leaves of the light's
+// red, green and blue (rt_common.wgsl `glass_passes`, the rule of PR
+// #3821), w how far something stopped it (any of what does, not the
+// nearest), or -1 when nothing did. Two stretches: up to `reach`, where it
+// enters the sphere about the lamp's prim, then with `past` on to `last`
+// past that prim, whose faces never stop it (`own`, rt_common.wgsl
+// `shadows_but`): every face of that stretch is a candidate the shader
+// tests, which costs more than the opaque traversal. `curved`: rt_common.wgsl
+// `shadows`. A pane met within `lying` of the ray's way (m) lies on the
+// surface (`lying_on`). The still faces' level and, with `posed`, the
+// moving faces' (a pane being carried); worn glass is not traced yet
+// (rt_shadows.rs `look`).
+//
+// The panes ride along with what stops the ray (`lamp_meets`): candidates
+// weighed and never committed, so what stops it is the same as with the
+// opaque faces alone, and a ray nothing stops has met every pane of its
+// way. One traversal of each level and stretch instead of two. Not for a
+// curved pixel, whose ray meets the faces from both sides where the panes
+// are met from their front (`SHADOW_CULL`): its glass keeps a ray of its
+// own. One query serves every trace: a pass pays for each ray query its
+// shader holds, run or not.
+fn lamp_trace(origin: vec3<f32>, dir: vec3<f32>, reach: f32, last: f32, past: bool, posed: bool, curved: bool, own: f32, lying: f32) -> vec4<f32> {
     var through = vec3<f32>(1.0);
-    if (far <= 0.0) {
-        return through;
-    }
-    let ray = RayDesc(SHADOW_CULL, GLASS, 0.0, far, origin, dir);
+    // (the light's own panes let it through wherever the ray meets them)
+    let own_pane = select(0.0, own, past);
+    let mask = select(SOLID | GLASS, SOLID, curved);
     var rq: ray_query;
-    rayQueryInitialize(&rq, scene_tlas, ray);
-    while (rayQueryProceed(&rq)) {
-        through *= pane_passes(rayQueryGetCandidateIntersection(&rq), false, dir, own, lying);
-    }
-    if (posed) {
-        rayQueryInitialize(&rq, posed_tlas, ray);
+    if (reach > 0.0) {
+        // (the curved pixel's own mesh is sorted by `shadows`, so its ray
+        // meets the faces from both sides)
+        let flags = select(RAY_FLAG_TERMINATE_ON_FIRST_HIT | SHADOW_CULL, RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_NO_OPAQUE, curved);
+        let ray = RayDesc(flags, mask, 0.0, reach, origin, dir);
+        rayQueryInitialize(&rq, scene_tlas, ray);
         while (rayQueryProceed(&rq)) {
-            through *= pane_passes(rayQueryGetCandidateIntersection(&rq), true, dir, own, lying);
+            if (lamp_meets(rayQueryGetCandidateIntersection(&rq), false, dir, curved, 0.0, own_pane, lying, &through)) {
+                rayQueryConfirmIntersection(&rq);
+            }
+        }
+        var hit = rayQueryGetCommittedIntersection(&rq);
+        if (hit.kind == RAY_QUERY_INTERSECTION_NONE && posed) {
+            rayQueryInitialize(&rq, posed_tlas, ray);
+            while (rayQueryProceed(&rq)) {
+                if (lamp_meets(rayQueryGetCandidateIntersection(&rq), true, dir, curved, 0.0, own_pane, lying, &through)) {
+                    rayQueryConfirmIntersection(&rq);
+                }
+            }
+            hit = rayQueryGetCommittedIntersection(&rq);
+        }
+        if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
+            return vec4<f32>(0.0, 0.0, 0.0, hit.t);
         }
     }
-    return through;
+    let near = max(reach, 0.0);
+    if (past) {
+        let flags = RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_NO_OPAQUE | select(SHADOW_CULL, RAY_FLAG_NONE, curved);
+        let ray = RayDesc(flags, mask, near, last, origin, dir);
+        rayQueryInitialize(&rq, scene_tlas, ray);
+        while (rayQueryProceed(&rq)) {
+            if (lamp_meets(rayQueryGetCandidateIntersection(&rq), false, dir, curved, own, own_pane, lying, &through)) {
+                rayQueryConfirmIntersection(&rq);
+            }
+        }
+        var hit = rayQueryGetCommittedIntersection(&rq);
+        if (hit.kind == RAY_QUERY_INTERSECTION_NONE && posed) {
+            rayQueryInitialize(&rq, posed_tlas, ray);
+            while (rayQueryProceed(&rq)) {
+                if (lamp_meets(rayQueryGetCandidateIntersection(&rq), true, dir, curved, own, own_pane, lying, &through)) {
+                    rayQueryConfirmIntersection(&rq);
+                }
+            }
+            hit = rayQueryGetCommittedIntersection(&rq);
+        }
+        if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
+            return vec4<f32>(0.0, 0.0, 0.0, hit.t);
+        }
+    }
+    // a curved pixel's glass, over the same way: every pane is a
+    // candidate, none is committed
+    let far = select(reach, last, past);
+    if (curved && far > 0.0) {
+        let ray = RayDesc(SHADOW_CULL, GLASS, 0.0, far, origin, dir);
+        rayQueryInitialize(&rq, scene_tlas, ray);
+        while (rayQueryProceed(&rq)) {
+            through *= pane_passes(rayQueryGetCandidateIntersection(&rq), false, dir, own_pane, lying);
+        }
+        if (posed) {
+            rayQueryInitialize(&rq, posed_tlas, ray);
+            while (rayQueryProceed(&rq)) {
+                through *= pane_passes(rayQueryGetCandidateIntersection(&rq), true, dir, own_pane, lying);
+            }
+        }
+    }
+    return vec4<f32>(through, -1.0);
+}
+
+// Whether a candidate of a lamp's ray stops it (rt_common.wgsl
+// `shadows_but`, `own` the prim it passes on its last stretch). A pane of
+// glass (a blended face: the `GLASS` instances, none of them posed or
+// merged, rt_shadows.rs `look`) never does: what it leaves of the light
+// multiplies `through` (`pane_passes`, `own_pane` the prim whose panes let
+// it through).
+fn lamp_meets(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool, own: f32, own_pane: f32, lying: f32, through: ptr<function, vec3<f32>>) -> bool {
+    if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
+        return false;
+    }
+    let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+    if ((record_vec(h.record, RECORD_FLAGS).x & FLAG_ALPHA_BLEND) != 0u) {
+        *through *= pane_passes(c, posed, dir, own_pane, lying);
+        return false;
+    }
+    return shadows_but(c, posed, dir, curved, own);
 }
 
 // `glass_passes`, 1 for a pane of the light's own prim (`own`) and for one
@@ -450,7 +537,7 @@ fn pane_passes(c: RayIntersection, posed: bool, dir: vec3<f32>, own: f32, lying:
 
 // The ray from `origin` to the point `u` (two numbers in 0..1) of the disc
 // light `i` shows it: w -1 when nothing stands in its way, xyz then what
-// the glass on its way leaves of the light (`glass_along`); else w the
+// the glass on its way leaves of the light (`lamp_trace`); else w the
 // width of the penumbra there (m): the light's width seen through what
 // stopped the ray, from as far behind it as the pixel is. `flat` is the
 // normal of the pixel's triangle.
@@ -480,23 +567,16 @@ fn light_ray(i: u32, origin: vec3<f32>, flat: vec3<f32>, u: vec2<f32>) -> vec4<f
     let reach = select(span, min(along - sqrt(max(inside, 0.0)), span), inside > 0.0);
     let posed = params.mode.y > 0.5;
     let curved = dot(flat, dir) <= 0.0;
-    var t = -1.0;
-    if (reach > 0.0) {
-        t = blocked_at(origin, dir, 0.0, reach, posed, curved, 0.0);
-    }
-    let near = max(reach, 0.0);
     let last = span - 0.01;
     let own = lt.source.w;
-    let past = !EMITTER_SPHERE && own > 0.5 && last > near;
-    if (t < 0.0 && past) {
-        t = blocked_at(origin, dir, near, last, posed, curved, own);
+    let past = !EMITTER_SPHERE && own > 0.5 && last > max(reach, 0.0);
+    // (the glass but the layers lying on the surface, `lying_on`)
+    let lying = lying_on(flat, dir, distance(origin, params.camera.xyz));
+    let traced = lamp_trace(origin, dir, reach, last, past, posed, curved, own, lying);
+    if (traced.w < 0.0) {
+        return traced;
     }
-    if (t < 0.0) {
-        // the glass over the same way as the opaque test's, but the layers
-        // lying on the surface (`lying_on`)
-        let lying = lying_on(flat, dir, distance(origin, params.camera.xyz));
-        return vec4<f32>(glass_along(origin, dir, select(reach, last, past), select(0.0, own, past), posed, lying), -1.0);
-    }
+    let t = traced.w;
     return vec4<f32>(vec3<f32>(0.0), min(2.0 * size * t / max(span - t, 0.05), 4.0));
 }
 

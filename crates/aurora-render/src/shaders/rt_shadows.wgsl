@@ -89,18 +89,25 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     // `SHADOW_CULL`), but on a curved pixel, whose own mesh `shadows` sorts
     let flags = select(SHADOW_CULL, RAY_FLAG_NONE, curved) | RAY_FLAG_TERMINATE_ON_FIRST_HIT
         | select(RAY_FLAG_NONE, RAY_FLAG_FORCE_NO_OPAQUE, curved);
-    let ray = RayDesc(flags, SOLID, 0.0, params.mode.z, origin, dir);
+    // The glass rides along (`sun_meets`): its panes are candidates the
+    // ray weighs and never commits, so what stops the ray is the same as
+    // with the opaque faces alone, and a ray that nothing stops has met
+    // every pane on its way. One traversal of each level instead of two.
+    // Not for a curved pixel, whose ray meets the faces from both sides
+    // where the panes are met from their front (`SHADOW_CULL`): its glass
+    // keeps a ray of its own.
+    let ray = RayDesc(flags, select(SOLID | GLASS, SOLID, curved), 0.0, params.mode.z, origin, dir);
     // the masked and blended layers lying on the pixel's surface cast
     // nothing on it, as in the shadow maps (rt_view.wgsl `lies_on`); none
     // for a curved pixel, turned from the sun
     let lying = lying_on(n, dir, dist);
     var shadow = 0.0;
+    var glass = vec3<f32>(1.0);
     // (one query for both levels: a pass pays for each query it holds)
     var rq: ray_query;
     rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
-        let c = rayQueryGetCandidateIntersection(&rq);
-        if (!lies_on(c, false, dir, n, lying) && shadows(c, false, dir, curved)) {
+        if (sun_meets(rayQueryGetCandidateIntersection(&rq), false, dir, n, lying, curved, &glass)) {
             rayQueryConfirmIntersection(&rq);
         }
     }
@@ -109,8 +116,7 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     } else if (params.mode.w > 0.5) {
         rayQueryInitialize(&rq, posed_tlas, ray);
         while (rayQueryProceed(&rq)) {
-            let c = rayQueryGetCandidateIntersection(&rq);
-            if (!lies_on(c, true, dir, n, lying) && shadows(c, true, dir, curved)) {
+            if (sun_meets(rayQueryGetCandidateIntersection(&rq), true, dir, n, lying, curved, &glass)) {
                 rayQueryConfirmIntersection(&rq);
             }
         }
@@ -118,10 +124,9 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
             shadow = 1.0;
         }
     }
-    // through the glass, where nothing stopped it: every pane is a
-    // candidate, none is committed
-    var glass = vec3<f32>(1.0);
-    if (shadow < 0.5) {
+    // a curved pixel's glass, where nothing stopped its ray: every pane is
+    // a candidate, none is committed
+    if (shadow < 0.5 && curved) {
         let pane = RayDesc(SHADOW_CULL, GLASS, 0.0, params.mode.z, origin, dir);
         rayQueryInitialize(&rq, scene_tlas, pane);
         while (rayQueryProceed(&rq)) {
@@ -145,4 +150,21 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     // (a stopped ray's 0: the average is over those that arrived)
     textureStore(out_glass, pixel, vec4<f32>(select(glass, vec3<f32>(0.0), shadow > 0.5), 1.0));
     textureStore(out_tex, pixel, vec4<f32>(select(max(shadow, contact), contact, soft), shadow, 0.0, 0.0));
+}
+
+// Whether a candidate of the sun's ray stops it: an opaque or masked face
+// as `shadows` says, but a layer lying on the pixel's surface
+// (`lies_on`). A pane of glass (a blended face: the `GLASS` instances,
+// none of them posed or merged, rt_shadows.rs `look`) never does: what it
+// leaves of the light multiplies `glass`, as the ray of its own did.
+fn sun_meets(c: RayIntersection, posed: bool, dir: vec3<f32>, flat: vec3<f32>, lying: f32, curved: bool, glass: ptr<function, vec3<f32>>) -> bool {
+    if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE || lies_on(c, posed, dir, flat, lying)) {
+        return false;
+    }
+    let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+    if ((record_vec(h.record, RECORD_FLAGS).x & FLAG_ALPHA_BLEND) != 0u) {
+        *glass *= glass_passes(c, posed, dir);
+        return false;
+    }
+    return shadows(c, posed, dir, curved);
 }

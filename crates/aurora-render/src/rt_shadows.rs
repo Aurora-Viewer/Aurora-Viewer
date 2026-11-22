@@ -5895,7 +5895,7 @@ mod tests {
             assert_eq!(block(rt, from, to), block(object, from, to), "{from}");
         }
         let common = include_str!("shaders/common.wgsl");
-        for flag in ["FLAG_PBR", "FLAG_PLANAR", "FLAG_TEX_ANIM"] {
+        for flag in ["FLAG_PBR", "FLAG_PLANAR", "FLAG_TEX_ANIM", "FLAG_ALPHA_BLEND"] {
             let line = format!("const {flag}: u32 = ");
             assert_eq!(block(rt, &line, ";"), block(common, &line, ";"), "{flag}");
         }

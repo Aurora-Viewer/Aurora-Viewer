@@ -15,6 +15,7 @@
 
 const FLAG_FULLBRIGHT: u32 = 1u;
 const FLAG_ALPHA_MASK: u32 = 2u;
+const FLAG_ALPHA_BLEND: u32 = 4u;
 const FLAG_PBR: u32 = 8u;
 const FLAG_PLANAR: u32 = 32u;
 const FLAG_TERRAIN: u32 = 64u;
@@ -593,7 +594,7 @@ fn shadows(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool) -> boo
 }
 
 // `shadows`, but a face of object `own` never does: the prim a lamp shines
-// from, on the last stretch of its rays (rt_light.wgsl `blocked_at`).
+// from, on the last stretch of its rays (rt_lights.wgsl `lamp_trace`).
 // `own` is the object's index plus one (`CullFace::object`, as a float:
 // rt_shadows.rs `traced_lights`), 0 for none.
 fn shadows_but(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool, own: f32) -> bool {
