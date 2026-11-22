@@ -1297,3 +1297,62 @@ fn blender_live_change_times_follow_each_source() {
     live.stop();
     assert!(live.changed.is_empty() && live.received_at.is_none(), "Stop forgets the times");
 }
+
+#[test]
+fn blender_live_placement_changes_are_undone_with_their_prims_and_states() {
+    use glam::Vec3;
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let root = Uuid::from_u128(1);
+    let child = Uuid::from_u128(2);
+    let snapshot = prepare(&linked_objects()).expect("snapshot");
+    let mut live = Live::default();
+    live.receive(snapshot.clone());
+    live.prepare_placements(&snapshot, &world);
+    live.place_object(root, objects::Action::Rez, &world);
+    assert!(live.undo.is_none(), "a Rez has no toast");
+    live.states.insert(child, SourceState::Hidden);
+    let (root_before, child_before) = (live.placements[&root], live.placements[&child]);
+    // Derez of a prim moves its whole linkset; Undo puts both back
+    live.place_object(child, objects::Action::Derez, &world);
+    let undo = live.undo.as_ref().expect("toast");
+    assert_eq!(undo.source, root);
+    assert!(matches!(undo.action, objects::Action::Derez));
+    assert_eq!(live.placements[&child].location, objects::Location::Detached);
+    live.revision = Some(4);
+    live.undo_placement();
+    assert!(live.undo.is_none());
+    assert_eq!(live.revision, None, "the preview is rebuilt");
+    assert!(live.placement_dirty.contains(&root));
+    for (id, before) in [(root, root_before), (child, child_before)] {
+        let after = live.placements[&id];
+        assert_eq!(after.location, objects::Location::World);
+        assert!(after.position.abs_diff_eq(before.position, 1e-6));
+    }
+    assert_eq!(live.state(child), SourceState::Hidden, "a hidden prim stays hidden");
+    // an Attach is undone to its place in the world
+    live.place_object(root, objects::Action::Attach(31), &world);
+    assert!(matches!(live.undo.as_ref().map(|u| u.action), Some(objects::Action::Attach(31))));
+    assert_eq!(live.placements[&root].position, Vec3::ZERO);
+    live.undo_placement();
+    assert_eq!(live.placements[&root].location, objects::Location::World);
+    assert!(live.placements[&root].position.abs_diff_eq(root_before.position, 1e-6));
+    // a move of the fields is not a placement change
+    let p = live.placements[&root];
+    live.place_object(
+        root,
+        objects::Action::Transform {
+            position: p.position + Vec3::X,
+            rotation: p.rotation,
+            scale: p.scale,
+        },
+        &world,
+    );
+    assert!(live.undo.is_none());
+    // the toast closes on its own, and Stop forgets it
+    live.place_object(root, objects::Action::Derez, &world);
+    let at = live.undo.as_ref().expect("toast").at;
+    assert!(!live.undo.as_ref().expect("toast").expired(at));
+    assert!(live.undo.as_ref().expect("toast").expired(at + objects::Undo::SHOWN));
+    live.stop();
+    assert!(live.undo.is_none());
+}
