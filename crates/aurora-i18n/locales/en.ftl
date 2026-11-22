@@ -6741,6 +6741,7 @@ ui-land-general-reclaim-land = Reclaim land
 common-collapse = Collapse
 common-window-outside = Move outside the viewer's window
 common-window-inside = Bring back into the viewer's window
+common-window-rename-name = Double-click to rename
 common-carry-hint = Click to drop it here, Esc to let go of it
 common-compact-view = Compact view
 common-full-view = Full view

@@ -1691,6 +1691,8 @@ impl<'a> Floater<'a> {
                                             && title_draft.is_none()
                                             && ui
                                                 .interact(rect, window_id.with("title_double_click"), Sense::click())
+                                                // (the title bar above holds the name too, and is the system's)
+                                                .on_hover_text(aurora_i18n::tr!("common-window-rename-name"))
                                                 .double_clicked()
                                         {
                                             title_draft = Some(FloaterTitleDraft {
