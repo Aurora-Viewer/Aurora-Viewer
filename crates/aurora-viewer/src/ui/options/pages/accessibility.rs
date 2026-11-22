@@ -122,8 +122,6 @@ pub fn page(cx: &mut Cx) {
                 (crate::cursors::PointerLook::Arrow, tr!("ui-options-pointer-arrow")),
                 (crate::cursors::PointerLook::Crosshair, tr!("ui-options-pointer-crosshair")),
                 (crate::cursors::PointerLook::Ring, tr!("ui-options-pointer-ring")),
-                (crate::cursors::PointerLook::Heart, tr!("ui-options-pointer-heart")),
-                (crate::cursors::PointerLook::Sparkle, tr!("ui-options-pointer-sparkle")),
                 (crate::cursors::PointerLook::System, tr!("ui-options-pointer-system")),
             ],
         );
@@ -144,8 +142,6 @@ pub fn page(cx: &mut Cx) {
                 (crate::cursors::TouchLook::Finger, tr!("ui-options-touch-finger")),
                 (crate::cursors::TouchLook::Click, tr!("ui-options-touch-click")),
                 (crate::cursors::TouchLook::Move, tr!("ui-options-touch-move")),
-                (crate::cursors::TouchLook::Heart, tr!("ui-options-touch-heart")),
-                (crate::cursors::TouchLook::Sparkle, tr!("ui-options-touch-sparkle")),
                 (crate::cursors::TouchLook::NormalPointer, tr!("ui-options-touch-pointer")),
             ],
         );

@@ -11,24 +11,26 @@ pub enum PointerLook {
     Arrow,
     Crosshair,
     Ring,
-    Heart,
-    Sparkle,
     /// The larger Tabler arrow in the active theme.
     Original,
     /// Defer to the operating system's native pointer and its size setting.
+    /// The decorative looks of the test builds (Bow, Heart, Sparkle) were
+    /// dropped: Accessibility keeps the sizes and the plain looks only, so a
+    /// saved one loads as the default.
     #[default]
-    #[serde(alias = "Bow")]
+    #[serde(alias = "Bow", alias = "Heart", alias = "Sparkle")]
     System,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TouchLook {
+    /// A saved decorative hand of the test builds (Heart, Sparkle) loads as
+    /// the default pointing hand.
     #[default]
+    #[serde(alias = "Heart", alias = "Sparkle")]
     Finger,
     Click,
     Move,
-    Heart,
-    Sparkle,
     NormalPointer,
 }
 
@@ -289,16 +291,6 @@ fn pointer_image(palette: &crate::theme::Palette, preferences: &Preferences) -> 
             )?;
             [(size / 2) as u16; 2]
         }
-        PointerLook::Heart => {
-            let hotspot = draw_arrow(&mut pixmap, palette, scale)?;
-            draw_pointer_badge(&mut pixmap, include_bytes!("../assets/icons/tabler/filled/heart.svg"), palette)?;
-            hotspot
-        }
-        PointerLook::Sparkle => {
-            let hotspot = draw_arrow(&mut pixmap, palette, scale)?;
-            draw_pointer_badge(&mut pixmap, include_bytes!("../assets/icons/tabler/filled/sparkles.svg"), palette)?;
-            hotspot
-        }
         PointerLook::Original => draw_arrow(&mut pixmap, palette, scale * THEME_ARROW_SCALE)?,
         PointerLook::System => return None,
     };
@@ -315,28 +307,13 @@ fn touch_image(palette: &crate::theme::Palette, preferences: &Preferences) -> Op
         return Some(finish(&pixmap, hotspot));
     }
     let hand: &[u8] = match preferences.touch_look {
-        Finger | Heart | Sparkle | NormalPointer => include_bytes!("../assets/icons/tabler/outline/hand-finger.svg"),
+        Finger | NormalPointer => include_bytes!("../assets/icons/tabler/outline/hand-finger.svg"),
         Click => include_bytes!("../assets/icons/tabler/outline/hand-click.svg"),
         Move => include_bytes!("../assets/icons/tabler/outline/hand-move.svg"),
     };
     draw_icon(&mut pixmap, hand, palette, size as f32 / 24.0, 0.0)?;
-    match preferences.touch_look {
-        Heart => draw_touch_badge(&mut pixmap, include_bytes!("../assets/icons/tabler/filled/heart.svg"), palette)?,
-        Sparkle => draw_touch_badge(&mut pixmap, include_bytes!("../assets/icons/tabler/filled/sparkles.svg"), palette)?,
-        Finger | Click | Move | NormalPointer => {}
-    }
     let hotspot = [((12 * size) / 32).min(size - 1) as u16, ((4 * size) / 32).min(size - 1) as u16];
     Some(finish(&pixmap, hotspot))
-}
-
-fn draw_touch_badge(pixmap: &mut resvg::tiny_skia::Pixmap, svg: &[u8], palette: &crate::theme::Palette) -> Option<()> {
-    let size = pixmap.width() as f32;
-    draw_icon(pixmap, svg, palette, size / 24.0 * 0.38, size * 0.58)
-}
-
-fn draw_pointer_badge(pixmap: &mut resvg::tiny_skia::Pixmap, svg: &[u8], palette: &crate::theme::Palette) -> Option<()> {
-    let scale = pixmap.width() as f32 / 32.0;
-    draw_icon(pixmap, svg, palette, 0.48 * scale, 14.0 * scale)
 }
 
 /// A Tabler outline icon alone as a 32 px cursor.
@@ -394,14 +371,7 @@ mod tests {
     fn pointer_preferences_resize_the_pointer_and_keep_each_look_hotspot_visible() {
         let palette = crate::theme::Theme::default().palette();
         for size in [16, 32, 48, 64] {
-            for look in [
-                PointerLook::Arrow,
-                PointerLook::Crosshair,
-                PointerLook::Ring,
-                PointerLook::Heart,
-                PointerLook::Sparkle,
-                PointerLook::Original,
-            ] {
+            for look in [PointerLook::Arrow, PointerLook::Crosshair, PointerLook::Ring, PointerLook::Original] {
                 let image = pointer_image(
                     &palette,
                     &Preferences {
@@ -446,28 +416,8 @@ mod tests {
             },
         )
         .unwrap();
-        let heart = pointer_image(
-            &palette,
-            &Preferences {
-                size: 32,
-                look: PointerLook::Heart,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let sparkle = pointer_image(
-            &palette,
-            &Preferences {
-                size: 32,
-                look: PointerLook::Sparkle,
-                ..Default::default()
-            },
-        )
-        .unwrap();
         assert_ne!(arrow.rgba, crosshair.rgba);
         assert_ne!(crosshair.rgba, ring.rgba);
-        assert_ne!(arrow.rgba, heart.rgba);
-        assert_ne!(heart.rgba, sparkle.rgba);
         let theme_arrow = pointer_image(
             &palette,
             &Preferences {
@@ -494,7 +444,6 @@ mod tests {
         .unwrap();
         assert_ne!(light_arrow.rgba, theme_arrow.rgba);
         assert_eq!(light_arrow.hotspot, theme_arrow.hotspot);
-        assert_eq!(serde_json::from_str::<PointerLook>(r#""Bow""#).unwrap(), PointerLook::System);
         assert!(
             pointer_image(
                 &palette,
@@ -504,6 +453,29 @@ mod tests {
                 }
             )
             .is_none()
+        );
+    }
+
+    #[test]
+    fn dropped_decorative_looks_load_as_the_defaults() {
+        for old in ["Bow", "Heart", "Sparkle"] {
+            let look = serde_json::from_str::<PointerLook>(&format!("\"{old}\"")).unwrap();
+            assert_eq!(look, PointerLook::System, "pointer {old}");
+        }
+        for old in ["Heart", "Sparkle"] {
+            let look = serde_json::from_str::<TouchLook>(&format!("\"{old}\"")).unwrap();
+            assert_eq!(look, TouchLook::Finger, "touch {old}");
+        }
+        let saved: Preferences = serde_json::from_str(r#"{"size":40,"look":"Heart","touch_size":48,"touch_look":"Sparkle"}"#).unwrap();
+        assert_eq!(
+            saved,
+            Preferences {
+                size: 40,
+                look: PointerLook::System,
+                touch_size: 48,
+                touch_look: TouchLook::Finger,
+            },
+            "the sizes stay, the looks fall back"
         );
     }
 
@@ -532,14 +504,7 @@ mod tests {
         let palette = crate::theme::Theme::default().palette();
         let mut images = Vec::new();
         for size in [16, 32, 48, 64] {
-            for look in [
-                TouchLook::Finger,
-                TouchLook::Click,
-                TouchLook::Move,
-                TouchLook::Heart,
-                TouchLook::Sparkle,
-                TouchLook::NormalPointer,
-            ] {
+            for look in [TouchLook::Finger, TouchLook::Click, TouchLook::Move, TouchLook::NormalPointer] {
                 let image = touch_image(
                     &palette,
                     &Preferences {
