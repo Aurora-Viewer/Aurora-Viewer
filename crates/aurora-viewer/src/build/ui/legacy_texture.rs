@@ -564,6 +564,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
         s.sync_materials = value;
     }
     let planar = sel.iter().all(|x| x.te.media_flags & TEM_TEX_GEN_MASK == TEX_GEN_PLANAR);
+    clear_planar_align(tool, planar);
     if let Some(value) = check(
         &mut left,
         p,
@@ -572,7 +573,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
         aurora_i18n::tr!("build-ui-texture-align-planar-faces"),
         planar,
     ) {
-        tool.ui.planar_align = value;
+        set_planar_align(tool, world, env, sel, value);
     }
     let mut right = child(ui, canvas, canvas.width() - 90.0, 0.0, 90.0, 68.0, "legacy-face-mapping");
     right.spacing_mut().interact_size.y = 16.0;
@@ -608,15 +609,15 @@ fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Worl
     ) {
         tool.edit_faces(world, |f, _, _| f.media_flags = (f.media_flags & !TEM_TEX_GEN_MASK) | value);
     }
-    let objects = sel.iter().map(|x| x.idx).collect::<std::collections::BTreeSet<_>>().len();
     if right
         .add_enabled(
-            planar && tool.ui.planar_align && objects > 1,
+            align_button_enabled(planar, sel),
             egui::Button::new(aurora_i18n::tr!("common-align")),
         )
+        .on_hover_text(aurora_i18n::tr!("build-ui-texture-aligns-the-available-texture-layers"))
         .clicked()
     {
-        tool.align_planar_faces(world, sel.iter().map(|x| (x.idx, x.face)).collect());
+        tool.align_planar_faces(world, env, sel, AlignLayer::of_tab(tool));
     }
 }
 

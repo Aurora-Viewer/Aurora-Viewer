@@ -38,6 +38,7 @@ mod new_defaults;
 mod object_snap;
 pub mod particle_editor;
 pub mod place;
+pub mod planar_align;
 mod property_query;
 pub mod replace;
 #[cfg(test)]
