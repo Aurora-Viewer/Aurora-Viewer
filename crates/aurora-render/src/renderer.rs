@@ -7124,7 +7124,10 @@ impl Backend {
         self.targets.blend_layers = None;
         self.targets.blend_exact = None;
         if self.targets.water_copy.take().is_some() {
-            self.remake_frame_groups();
+            self.groups.b_water = None;
+            // it may be what left a required target no room: the extras
+            // wait (`Refusals::extra`), so the next try makes those first
+            let _ = self.oom.extra(true, Instant::now());
         }
         self.rlva_spheres = None;
         self.rlva_scaled = None;
@@ -11899,7 +11902,8 @@ impl Backend {
         let mut water_over_wet =
             water_moves && !f.cutout && self.rain_wet.active() && self.rain_wet.on_ground(f.rain_look.snow_settles) && rg.water.1 > 0;
         let now = Instant::now();
-        // (the frame's closures hold `self`: its groups made again by field)
+        // (the frame's closures hold `self`: its groups made by field; only
+        // `b_water` is taken from them, the others stay as they are)
         let frame_groups = |targets: &Targets| {
             Self::make_frame_groups(
                 &self.device,
@@ -11924,8 +11928,8 @@ impl Backend {
             let since = *self.water_copy_idle.get_or_insert(now);
             if !water_moves || now.duration_since(since) >= WATER_COPY_IDLE {
                 self.targets.water_copy = None;
+                self.groups.b_water = None;
                 self.water_copy_idle = None;
-                self.groups = frame_groups(&self.targets);
             }
         }
         if water_over_wet && self.targets.water_copy.is_none() && self.oom.extras_ready(now) {
@@ -11943,13 +11947,13 @@ impl Backend {
                 )
             });
             self.targets.water_copy = Some(copy);
-            let (groups, groups_refused) = crate::gpu_alloc::scoped(&device, || frame_groups(&self.targets));
-            self.groups = groups;
+            let (groups, groups_refused) = crate::gpu_alloc::scoped(&device, || frame_groups(&self.targets).b_water);
             let refused = copy_refused || groups_refused;
             // (a lost device's refusals are the device-loss path's)
             if first_use(&mut self.oom, "water's scene copy", false, refused && !self.lost.get()) {
                 self.targets.water_copy = None;
-                self.groups = frame_groups(&self.targets);
+            } else {
+                self.groups.b_water = groups;
             }
         }
         water_over_wet &= self.groups.b_water.is_some();
