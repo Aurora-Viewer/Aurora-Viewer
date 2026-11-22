@@ -187,6 +187,24 @@ pub(crate) fn in_focus(ctx: &egui::Context, window: egui::Id) -> bool {
     ctx.data(|d| d.get_temp::<egui::Id>(front_id())) == Some(window)
 }
 
+/// The window of the viewer that has the system's focus: one of its
+/// windows outside, its own, or none when another program has it.
+pub(crate) fn focused_window(ctx: &egui::Context) -> Option<egui::ViewportId> {
+    ctx.data(|d| d.get_temp::<egui::Id>(front_id())).map(viewport).or_else(|| {
+        ctx.input_for(egui::ViewportId::ROOT, |i| i.focused)
+            .then_some(egui::ViewportId::ROOT)
+    })
+}
+
+/// The system's focus went from `was` to `now`, a window of the viewer
+/// that is not `mine`: what held the keyboard in `mine` lets go of it, as
+/// at a click elsewhere in its own window, which the pointer of `mine`
+/// never shows. Another program that takes the focus (`now` None) changes
+/// nothing, as with a single window.
+pub(crate) fn focus_went_elsewhere(mine: egui::ViewportId, was: Option<egui::ViewportId>, now: Option<egui::ViewportId>) -> bool {
+    now != was && now.is_some_and(|now| now != mine)
+}
+
 fn left_id() -> egui::Id {
     egui::Id::unique("aurora outside left")
 }
@@ -1060,6 +1078,46 @@ mod tests {
         ctx.data_mut(|d| d.insert_temp(front_id(), chat));
         assert!(in_focus(&ctx, chat));
         assert!(!in_focus(&ctx, people));
+    }
+
+    /// What has the keyboard in a window (a web page) lets go of it when
+    /// the focus arrives in another window of the viewer, not when another
+    /// program takes it nor when it comes back to its own window.
+    #[test]
+    fn the_keyboard_held_in_a_window_goes_with_the_focus_to_another_window_of_the_viewer() {
+        let own = egui::ViewportId::ROOT;
+        let (chat, search) = (viewport(egui::Id::unique("conversations")), viewport(egui::Id::unique("search")));
+        // a page outside, the viewer's own window clicked; a page inside,
+        // a window outside clicked; a page outside, another one clicked
+        assert!(focus_went_elsewhere(search, Some(search), Some(own)));
+        assert!(focus_went_elsewhere(own, Some(own), Some(chat)));
+        assert!(focus_went_elsewhere(search, Some(search), Some(chat)));
+        // another program in front, then the viewer's other window
+        assert!(!focus_went_elsewhere(search, Some(search), None));
+        assert!(focus_went_elsewhere(search, None, Some(own)));
+        // back to its own window, or nothing new: the page clicked keeps it
+        assert!(!focus_went_elsewhere(search, None, Some(search)));
+        assert!(!focus_went_elsewhere(search, Some(own), Some(search)));
+        assert!(!focus_went_elsewhere(search, Some(own), Some(own)));
+    }
+
+    #[test]
+    fn the_focused_window_is_the_one_outside_then_the_viewers_own() {
+        let ctx = egui::Context::default();
+        let chat = egui::Id::unique("conversations");
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        assert_eq!(focused_window(&ctx), Some(egui::ViewportId::ROOT));
+        publish_front(&ctx, Some(chat));
+        assert_eq!(focused_window(&ctx), Some(viewport(chat)));
+        publish_front(&ctx, None);
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                focused: false,
+                ..Default::default()
+            },
+            |_| {},
+        );
+        assert_eq!(focused_window(&ctx), None);
     }
 
     #[test]
