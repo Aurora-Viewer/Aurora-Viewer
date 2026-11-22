@@ -116,6 +116,29 @@ fn seen_id() -> egui::Id {
     egui::Id::unique("aurora outside seen")
 }
 
+fn kept_id() -> egui::Id {
+    egui::Id::unique("aurora outside kept")
+}
+
+/// The interface's windows are not drawn at this pass (the full-frame
+/// photo view, the Director's playback, "UI off"): those outside stay as
+/// they are, with the picture they have, until they are drawn again. They
+/// take no click and no key meanwhile; a close asked of one waits.
+pub(crate) fn keep(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.insert_temp(kept_id(), true));
+}
+
+/// The windows outside are kept as they are at this pass (`keep`).
+fn kept(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(kept_id())).unwrap_or(false)
+}
+
+/// The windows drawn in at this pass.
+#[cfg(test)]
+pub(crate) fn seen_now(ctx: &egui::Context) -> Vec<egui::Id> {
+    ctx.data(|d| d.get_temp(seen_id())).unwrap_or_default()
+}
+
 /// The user sent the window `window` outside: kept with the interface's
 /// layout, like its place inside.
 pub(crate) fn wanted(ctx: &egui::Context, window: egui::Id) -> bool {
@@ -302,8 +325,8 @@ fn on_wayland(window: &Window) -> bool {
         .is_ok_and(|handle| matches!(handle.as_raw(), RawWindowHandle::Wayland(_)))
 }
 
-/// The windows outside to let go of: those of the interface that none
-/// drew in at the last pass.
+/// The windows of the interface that none drew in at the last pass: let
+/// go of, unless the interface's windows were not drawn at all (`keep`).
 fn unseen(open: impl Iterator<Item = (egui::ViewportId, bool)>, seen: &[egui::Id]) -> Vec<egui::ViewportId> {
     open.filter(|(id, of_interface)| *of_interface && !seen.contains(&id.0))
         .map(|(id, _)| id)
@@ -379,9 +402,10 @@ struct Native {
     pass: Option<Pass>,
     /// What its pass asks of its own window: the cursor, the text input.
     output: Option<egui::PlatformOutput>,
-    /// What was handed to the renderer last, and at which size.
+    /// What was handed to the renderer last, at which size and scale.
     shown: Vec<ClippedShape>,
     shown_size: (u32, u32),
+    shown_scale: f32,
     /// Draw it again whatever it shows (a new window, one the system
     /// uncovered or resized).
     redraw: bool,
@@ -469,6 +493,12 @@ fn drawn_again(
     shown: &[ClippedShape],
 ) -> bool {
     asked_for && (redraw || textures_changed || size != shown_size || !aurora_render::same_picture(shapes, shown))
+}
+
+/// Whether a window nothing drew in at this frame shows its last picture
+/// again: only one left as it is (`keep`) that the system asked to draw.
+fn shown_again(kept: bool, asked_for: bool, redraw: bool, shown: &[ClippedShape]) -> bool {
+    kept && asked_for && redraw && !shown.is_empty()
 }
 
 /// egui's function for the passes outside: the pass of `viewport`, run at
@@ -586,12 +616,13 @@ impl Outside {
         ctx: &egui::Context,
         attributes: impl Fn(&Ask, Option<Was>) -> WindowAttributes,
     ) {
-        let (asks, seen, raises, sizes) = ctx.data_mut(|d| {
+        let (asks, seen, raises, sizes, kept) = ctx.data_mut(|d| {
             (
                 d.remove_temp::<Vec<Ask>>(asks_id()).unwrap_or_default(),
                 d.remove_temp::<Vec<egui::Id>>(seen_id()).unwrap_or_default(),
                 d.remove_temp::<Vec<egui::Id>>(raises_id()).unwrap_or_default(),
                 d.remove_temp::<Vec<Resize>>(sizes_id()).unwrap_or_default(),
+                d.remove_temp::<bool>(kept_id()).unwrap_or(false),
             )
         });
         let zoom = ctx.zoom_factor();
@@ -660,7 +691,18 @@ impl Outside {
             &seen,
         );
         for id in gone {
-            self.close(renderer, ctx, id);
+            if !kept {
+                self.close(renderer, ctx, id);
+                continue;
+            }
+            // left as it is (`keep`): what the system sent it is dropped,
+            // not kept for the day its code runs again; the keys go on to
+            // the viewer; and its cross is answered then
+            if let Some(native) = self.shared.borrow_mut().windows.get_mut(&id) {
+                let _ = native.input.take_egui_input(&native.window);
+                native.reads_keys = false;
+            }
+            crate::ui::widgets::keep_close_asked(ctx, id.0);
         }
         for ask in asks {
             let id = viewport(ask.window);
@@ -737,6 +779,7 @@ impl Outside {
                 output: None,
                 shown: Vec::new(),
                 shown_size: (0, 0),
+                shown_scale: 1.0,
                 redraw: true,
                 asked_for: false,
             },
@@ -969,16 +1012,33 @@ impl Outside {
         clear: egui::Color32,
         textures_changed: bool,
     ) {
+        let kept = kept(ctx);
         for native in self.shared.borrow_mut().windows.values_mut() {
-            let Some(pass) = native.pass.take() else {
-                continue;
-            };
             let size = native.window.inner_size();
             let size = (size.width, size.height);
             // (a minimized window has no picture)
             if size.0 == 0 || size.1 == 0 {
+                native.pass = None;
                 continue;
             }
+            let Some(pass) = native.pass.take() else {
+                // left as it is (`keep`), and uncovered or resized by the
+                // system meanwhile: its last picture again
+                if shown_again(kept, native.asked_for, native.redraw, &native.shown) {
+                    native.shown_size = size;
+                    native.redraw = false;
+                    renderer.draw_outside(
+                        native.key,
+                        OutsideFrame {
+                            width: size.0,
+                            height: size.1,
+                            clear,
+                            ui: hand_over.frame(ctx, native.shown.clone(), egui::TexturesDelta::default(), native.shown_scale),
+                        },
+                    );
+                }
+                continue;
+            };
             if !drawn_again(
                 native.asked_for,
                 native.redraw,
@@ -992,6 +1052,7 @@ impl Outside {
             }
             native.shown.clone_from(&pass.shapes);
             native.shown_size = size;
+            native.shown_scale = pass.pixels_per_point;
             native.redraw = false;
             renderer.draw_outside(
                 native.key,
@@ -1110,6 +1171,33 @@ mod tests {
         let seen = [window("conversations")];
         assert_eq!(unseen(open.into_iter(), &seen), [viewport(window("people"))]);
         assert_eq!(unseen(open.into_iter(), &[]).len(), 2);
+    }
+
+    /// The full-frame photo view, the Director's playback and "UI off"
+    /// draw none of the interface's windows: those outside are left as
+    /// they are for that pass, and only then show their last picture again
+    /// when the system asks.
+    #[test]
+    fn the_windows_outside_are_kept_for_the_pass_that_asked() {
+        let ctx = egui::Context::default();
+        assert!(!kept(&ctx));
+        keep(&ctx);
+        assert!(kept(&ctx));
+        // (taken by the host with what the pass left: `reconcile`)
+        assert_eq!(ctx.data_mut(|d| d.remove_temp::<bool>(kept_id())), Some(true));
+        assert!(!kept(&ctx));
+        let picture = vec![ClippedShape {
+            clip_rect: egui::Rect::EVERYTHING,
+            shape: egui::Shape::Noop,
+            transform_after_tessellation: Default::default(),
+        }];
+        assert!(shown_again(true, true, true, &picture));
+        // not one closed or brought inside, which goes at the next frame
+        assert!(!shown_again(false, true, true, &picture));
+        // nor before the system asked, without a reason, or with nothing shown
+        assert!(!shown_again(true, false, true, &picture));
+        assert!(!shown_again(true, true, false, &picture));
+        assert!(!shown_again(true, true, true, &[]));
     }
 
     #[test]

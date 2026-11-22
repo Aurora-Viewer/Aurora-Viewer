@@ -952,7 +952,17 @@ impl<'a> Floater<'a> {
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
         let role = if self.chat { HideKeep::Chat } else { HideKeep::None };
-        if window_hidden(ctx, egui::Id::unique(self.id), *open, role) {
+        let hidden = window_hidden(ctx, egui::Id::unique(self.id), *open, role);
+        // A window outside the viewer's stays up while the interface is
+        // hidden (mouselook, immersive mode, "Hide the interface"): it
+        // covers nothing of the world. It is still counted with the hidden
+        // ones (`window_hidden`, above): brought back inside meanwhile, it
+        // is hidden with them and comes back with the interface.
+        let stays_outside = *open && self.goes_outside() && {
+            let window_id = egui::Id::unique(self.id);
+            crate::outside::wanted(ctx, window_id) && !super::layout::reset_pending(ctx, window_id)
+        };
+        if hidden && !stays_outside {
             // its toolbar button still closes it with the interface hidden,
             // as it does the windows it toggles itself
             if close_asked(ctx, self.id) {
@@ -1351,6 +1361,7 @@ impl<'a> Floater<'a> {
                         &mut self.header_status_action,
                         self.header_summary.as_ref(),
                         &mut self.header_summary_action,
+                        None,
                     );
                 }
                 title_row
@@ -1654,83 +1665,94 @@ impl<'a> Floater<'a> {
                     if !content_sized {
                         ui.set_min_size(ui.available_size());
                     }
+                    // An inspector's header (`framed_header`) has a row of
+                    // states under its title inside. Outside the title is
+                    // the system's: its buttons end the row of the states,
+                    // where a row of their own is a dark band that holds
+                    // nothing else.
+                    let on_states_row = framed
+                        && (!self.header_status.is_empty() || self.header_status_action.is_some())
+                        && self.title_state.is_none()
+                        && self.title_rename.is_none()
+                        && self.title_note.is_none();
+                    // (from the right, in a row laid out that way)
                     let mut buttons = |ui: &mut egui::Ui| {
-                        ui.horizontal(|ui| {
-                            ui.set_min_height(if framed { 20.0 } else { TITLE_ROW_MIN });
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                if title_button(ui, p, INSIDE_ICON)
-                                    .on_hover_text(aurora_i18n::tr!("common-window-inside"))
-                                    .clicked()
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        if title_button(ui, p, INSIDE_ICON)
+                            .on_hover_text(aurora_i18n::tr!("common-window-inside"))
+                            .clicked()
+                        {
+                            back = true;
+                        }
+                        if self.compact_minimized.is_some() {
+                            let tip = if compact.is_some() {
+                                aurora_i18n::tr!("common-full-view")
+                            } else {
+                                aurora_i18n::tr!("common-compact-view")
+                            };
+                            if title_button(ui, p, minimize_title_icon(true, compact.is_some()))
+                                .on_hover_text(tip)
+                                .clicked()
+                            {
+                                toggle_compact = true;
+                            }
+                        }
+                        for (icon, tip, clicked) in &mut self.actions {
+                            if title_button(ui, p, icon).on_hover_text(*tip).clicked() {
+                                **clicked = true;
+                            }
+                        }
+                        if let Some(h) = self.help {
+                            title_button(ui, p, "help-circle-filled").on_hover_text(h);
+                        }
+                        if let Some((dot, text)) = &self.title_state {
+                            ui.add_space(4.0);
+                            ui.label(RichText::new(text).size(12.0).color(p.muted));
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            status_dot(ui, *dot);
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                        }
+                        if self.title_rename.is_none() && self.title_note.is_none() {
+                            return;
+                        }
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            if let Some((name, allowed)) = &self.title_rename {
+                                let rect = floater_title_name(
+                                    ui,
+                                    RichText::new(name).size(TITLE_SIZE).strong().color(p.ink),
+                                    name,
+                                    true,
+                                    &mut title_draft,
+                                    &mut title_finished,
+                                    title_field_id,
+                                );
+                                if *allowed
+                                    && title_draft.is_none()
+                                    && ui
+                                        .interact(rect, window_id.with("title_double_click"), Sense::click())
+                                        // (the title bar above holds the name too, and is the system's)
+                                        .on_hover_text(aurora_i18n::tr!("common-window-rename-name"))
+                                        .double_clicked()
                                 {
-                                    back = true;
+                                    title_draft = Some(FloaterTitleDraft {
+                                        text: name.clone(),
+                                        focus: true,
+                                    });
+                                    ui.ctx().request_repaint();
                                 }
-                                if self.compact_minimized.is_some() {
-                                    let tip = if compact.is_some() {
-                                        aurora_i18n::tr!("common-full-view")
-                                    } else {
-                                        aurora_i18n::tr!("common-compact-view")
-                                    };
-                                    if title_button(ui, p, minimize_title_icon(true, compact.is_some()))
-                                        .on_hover_text(tip)
-                                        .clicked()
-                                    {
-                                        toggle_compact = true;
-                                    }
-                                }
-                                for (icon, tip, clicked) in &mut self.actions {
-                                    if title_button(ui, p, icon).on_hover_text(*tip).clicked() {
-                                        **clicked = true;
-                                    }
-                                }
-                                if let Some(h) = self.help {
-                                    title_button(ui, p, "help-circle-filled").on_hover_text(h);
-                                }
-                                if let Some((dot, text)) = &self.title_state {
-                                    ui.add_space(4.0);
-                                    ui.label(RichText::new(text).size(12.0).color(p.muted));
-                                    ui.spacing_mut().item_spacing.x = 0.0;
-                                    status_dot(ui, *dot);
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-                                }
-                                if self.title_rename.is_none() && self.title_note.is_none() {
-                                    return;
-                                }
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    if let Some((name, allowed)) = &self.title_rename {
-                                        let rect = floater_title_name(
-                                            ui,
-                                            RichText::new(name).size(TITLE_SIZE).strong().color(p.ink),
-                                            name,
-                                            true,
-                                            &mut title_draft,
-                                            &mut title_finished,
-                                            title_field_id,
-                                        );
-                                        if *allowed
-                                            && title_draft.is_none()
-                                            && ui
-                                                .interact(rect, window_id.with("title_double_click"), Sense::click())
-                                                // (the title bar above holds the name too, and is the system's)
-                                                .on_hover_text(aurora_i18n::tr!("common-window-rename-name"))
-                                                .double_clicked()
-                                        {
-                                            title_draft = Some(FloaterTitleDraft {
-                                                text: name.clone(),
-                                                focus: true,
-                                            });
-                                            ui.ctx().request_repaint();
-                                        }
-                                    }
-                                    if let Some(note) = &self.title_note {
-                                        ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
-                                    }
-                                });
-                            });
+                            }
+                            if let Some(note) = &self.title_note {
+                                ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
+                            }
                         });
                     };
                     let mut header = |ui: &mut egui::Ui| {
-                        buttons(ui);
+                        if !on_states_row {
+                            ui.horizontal(|ui| {
+                                ui.set_min_height(if framed { 20.0 } else { TITLE_ROW_MIN });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), &mut buttons);
+                            });
+                        }
                         header_rows(
                             ui,
                             p,
@@ -1738,6 +1760,7 @@ impl<'a> Floater<'a> {
                             &mut self.header_status_action,
                             self.header_summary.as_ref(),
                             &mut self.header_summary_action,
+                            on_states_row.then_some(&mut buttons as &mut dyn FnMut(&mut egui::Ui)),
                         );
                     };
                     if framed {
@@ -1867,8 +1890,18 @@ fn header_rows<'a>(
     action: &mut Option<(&'a str, &'a str, &'a str, &'a mut Option<egui::Rect>)>,
     summary: Option<&egui::WidgetText>,
     summary_action: &mut Option<&'a mut bool>,
+    buttons: Option<&mut dyn FnMut(&mut egui::Ui)>,
 ) {
-    if !states.is_empty() || action.is_some() {
+    let act = |ui: &mut egui::Ui, (icon, label, tip, clicked): &mut (&str, &str, &str, &mut Option<egui::Rect>)| {
+        let action = ui
+            .add(egui::Label::new(RichText::new(*label).size(12.0).color(p.violet_light)).sense(Sense::click()))
+            .on_hover_text(*tip);
+        if action.clicked() {
+            **clicked = Some(action.rect);
+        }
+        glyph(ui, icon, p.violet_light, 13.0);
+    };
+    if !states.is_empty() || action.is_some() || buttons.is_some() {
         let status = |ui: &mut egui::Ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(7.0, 2.0);
@@ -1881,19 +1914,33 @@ fn header_rows<'a>(
                 }
             });
         };
-        if let Some((icon, label, tip, clicked)) = action {
+        if let Some(buttons) = buttons {
+            // a window outside the viewer's (`Floater::show_outside`): its
+            // title bar's buttons end the row, then the action, and the
+            // states take the room left
+            const ROW: f32 = 20.0;
+            ui.horizontal(|ui| {
+                ui.set_min_height(ROW);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // (the buttons set their own spacing)
+                    let spacing = ui.spacing().item_spacing;
+                    buttons(ui);
+                    ui.spacing_mut().item_spacing = spacing;
+                    if let Some(action) = action {
+                        ui.add_space(4.0);
+                        act(ui, action);
+                    }
+                    // (as tall as the row: centred in it at a lesser height,
+                    // a line of states taller than asked would grow under it)
+                    let size = Vec2::new(ui.available_width().max(1.0), ROW);
+                    ui.allocate_ui_with_layout(size, egui::Layout::top_down(egui::Align::Min), status);
+                });
+            });
+        } else if let Some(action) = action {
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 65.0).max(1.0);
                 ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::top_down(egui::Align::Min), status);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let action = ui
-                        .add(egui::Label::new(RichText::new(*label).size(12.0).color(p.violet_light)).sense(Sense::click()))
-                        .on_hover_text(*tip);
-                    if action.clicked() {
-                        **clicked = Some(action.rect);
-                    }
-                    glyph(ui, icon, p.violet_light, 13.0);
-                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| act(ui, action));
             });
         } else {
             status(ui);
@@ -1918,14 +1965,14 @@ fn header_rows<'a>(
 const OUTSIDE_ICON: &str = "app-window-filled";
 const INSIDE_ICON: &str = "picture-in-picture-filled";
 /// The size a window had outside the viewer's, kept with the layout.
-const OUTSIDE_SIZE: &str = "outside_size";
+pub(crate) const OUTSIDE_SIZE: &str = "outside_size";
 /// The windows that never leave the viewer's. The Dev Toolbox: its tools
 /// read the world under the pointer of the viewer's window and draw over
 /// it.
 const STAYS_INSIDE: &[&str] = &[super::dev_toolbox::WINDOW];
 
 /// The window `id` is drawn in its window outside the viewer's.
-fn floater_outside(ctx: &egui::Context, window_id: egui::Id) -> bool {
+pub(crate) fn floater_outside(ctx: &egui::Context, window_id: egui::Id) -> bool {
     crate::outside::wanted(ctx, window_id) && crate::outside::native(ctx, window_id)
 }
 
@@ -2427,6 +2474,18 @@ pub fn close_floater(ctx: &egui::Context, id: &str) {
 pub(crate) fn close_window(ctx: &egui::Context, window: egui::Id) {
     let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(window.with(CLOSE), frame));
+}
+
+/// A close asked of the window `window` still waits when its window is
+/// drawn again: for one whose code does not run for a while
+/// (`outside::keep`), where a request is otherwise dropped after a frame.
+pub(crate) fn keep_close_asked(ctx: &egui::Context, window: egui::Id) {
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    ctx.data_mut(|d| {
+        if d.get_temp::<u64>(window.with(CLOSE)).is_some() {
+            d.insert_temp(window.with(CLOSE), frame);
+        }
+    });
 }
 
 /// The floater `id` was asked to close ([`close_floater`]), once.

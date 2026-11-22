@@ -73,6 +73,133 @@ fn a_compact_view_is_kept_and_changed_outside() {
     );
 }
 
+/// Hiding the interface (mouselook, immersive mode, "Hide the interface")
+/// leaves a window outside up: it covers nothing of the world. Brought
+/// back inside meanwhile, it is hidden with the others and comes back with
+/// the interface.
+#[test]
+fn a_window_outside_stays_up_while_the_interface_is_hidden() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let name = "test outside hidden";
+    let window = egui::Id::unique(name);
+    let ctx = frames.ctx.clone();
+    crate::outside::want(&ctx, window, true);
+    crate::outside::set_native(&ctx, window, true);
+    let mut open = true;
+    // one frame: whether the window's body ran, and whether it drew outside
+    let mut frame = |open: &mut bool| {
+        let mut drawn = false;
+        frames.run(Vec::new(), |ui| {
+            Floater::new(name, "Window", egui::pos2(10.0, 10.0), Vec2::new(300.0, 200.0))
+                .silent()
+                .show(ui.ctx(), &p, open, |_| drawn = true);
+        });
+        let outside = crate::outside::seen_now(&frames.ctx).contains(&window);
+        frames
+            .ctx
+            .data_mut(|d| d.remove_temp::<Vec<egui::Id>>(egui::Id::unique("aurora outside seen")));
+        (drawn, outside)
+    };
+    assert_eq!(frame(&mut open), (true, true));
+    hide_windows(&ctx, true, HideKeep::None);
+    assert_eq!(frame(&mut open), (true, true), "the frame the interface is hidden");
+    assert_eq!(frame(&mut open), (true, true), "and after");
+    // brought back inside with the interface still hidden
+    crate::outside::want(&ctx, window, false);
+    assert_eq!(frame(&mut open), (false, false), "hidden with the windows inside");
+    assert!(open);
+    hide_windows(&ctx, false, HideKeep::None);
+    assert_eq!(frame(&mut open), (true, false), "back with the interface, inside");
+    // a window inside is hidden as before
+    hide_windows(&ctx, true, HideKeep::None);
+    assert_eq!(frame(&mut open), (false, false));
+}
+
+/// A close asked of a window whose code does not run (the interface's
+/// windows are not drawn: `outside::keep`) waits for it, where a request
+/// is otherwise dropped after a frame.
+#[test]
+fn a_close_asked_of_a_window_left_as_it_is_waits_for_it() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let name = "test outside close waits";
+    let window = egui::Id::unique(name);
+    let ctx = frames.ctx.clone();
+    crate::outside::want(&ctx, window, true);
+    crate::outside::set_native(&ctx, window, true);
+    let mut open = true;
+    let show = |frames: &mut elide_tests::Frames, open: &mut bool| {
+        frames.run(Vec::new(), |ui| {
+            Floater::new(name, "Window", egui::pos2(10.0, 10.0), Vec2::new(300.0, 200.0))
+                .silent()
+                .show(ui.ctx(), &p, open, |_| {});
+        });
+    };
+    show(&mut frames, &mut open);
+    // its cross, then frames that draw no window; nothing was asked of
+    // another window meanwhile
+    close_window(&ctx, window);
+    for _ in 0..5 {
+        frames.run(Vec::new(), |_| {});
+        keep_close_asked(&ctx, window);
+        keep_close_asked(&ctx, egui::Id::unique("another window"));
+    }
+    assert!(!close_asked(&ctx, "another window"));
+    show(&mut frames, &mut open);
+    assert!(!open, "closed when its code ran again");
+    // without it, the request is dropped
+    open = true;
+    show(&mut frames, &mut open);
+    close_window(&ctx, window);
+    for _ in 0..5 {
+        frames.run(Vec::new(), |_| {});
+    }
+    show(&mut frames, &mut open);
+    assert!(open);
+}
+
+/// An inspector outside has no title row of its own (the system's bar
+/// names it): its buttons end the row of its states, instead of a dark
+/// band that holds nothing else. Its summary keeps its room, blank or not,
+/// so the tools' bar does not move between tools, as inside.
+#[test]
+fn an_inspector_outside_has_its_buttons_on_the_row_of_its_states() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let name = "test outside inspector";
+    let window = egui::Id::unique(name);
+    crate::outside::want(&frames.ctx, window, true);
+    crate::outside::set_native(&frames.ctx, window, true);
+    // where the window's body starts, under its header
+    let body_top = |frames: &mut elide_tests::Frames, summary: &str, states: bool| {
+        let (mut open, mut copy) = (true, None);
+        let mut top = 0.0;
+        frames.run(Vec::new(), |ui| {
+            let mut floater = Floater::new(name, "Build", egui::pos2(10.0, 10.0), Vec2::new(360.0, 400.0))
+                .silent()
+                .help("Help")
+                .framed_header("tool-filled");
+            if states {
+                floater
+                    .header_status
+                    .push(("circle-filled", "State".to_owned(), Color32::TRANSPARENT));
+                floater.header_status_action = Some(("clipboard-text-filled", "UUID", "Copy", &mut copy));
+            }
+            floater.header_summary = Some(summary.into());
+            floater.show(ui.ctx(), &p, &mut open, |ui| top = ui.cursor().top());
+        });
+        top
+    };
+    // the header is as tall with the states as with the buttons alone
+    let alone = body_top(&mut frames, " ", false);
+    let with_states = body_top(&mut frames, " ", true);
+    assert!(alone > 0.0);
+    assert_eq!(with_states, alone);
+    // a summary takes the room the blank one keeps
+    assert_eq!(body_top(&mut frames, "1 object", true), alone);
+}
+
 #[test]
 fn a_window_outside_is_read_and_sized_at_its_size_there() {
     let ctx = egui::Context::default();

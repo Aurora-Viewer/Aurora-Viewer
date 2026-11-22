@@ -6438,7 +6438,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
-| `AURORA_DEMO_OUTSIDE=still\|busy[,sync][,click]\|conversations` | A test window of the interface outside the viewer's window (its cost, its pointer and its keyboard), or the Conversations window sent outside |
+| `AURORA_DEMO_OUTSIDE=still\|busy[,sync][,click]\|conversations\|build` | A test window of the interface outside the viewer's window (its cost, its pointer and its keyboard), or the Conversations or the Build window sent outside |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
@@ -8110,6 +8110,21 @@ failure. Grid validation and any paid upload are performed by the human.
   outside as it replaces the viewer's: the log has a second
   `window outside 2: …` line of the same size after
   `GPU recovery: new window and renderer`, and the first window is gone.
+  `build` sends the Build window outside; open it with
+  `AURORA_DEMO_BUILD=create-preview,640,430,0`. By hand: the Create
+  tool's grid shows the shapes' pictures as inside (they are drawn by the
+  renderer into pictures of their own, like every 3D preview of a window);
+  its header is one dark row (the states, "UUID", the buttons) above the
+  line of the selection, with no empty band over it. With
+  `AURORA_PROFILE=1`, `out_draws` stays near 0 while nothing changes in
+  the window: a preview does not have it drawn again at every frame. With
+  `AURORA_DEMO_UI_FEATURE=cycle` (the interface off at frame 600, back at
+  900), the window stays up with its last picture and the log has one
+  `window outside 1: …` line only: it is not closed and opened again. The
+  same holds by hand for mouselook, immersive mode, "Hide the interface",
+  the Director's playback and the photo mode's full frame; in the first
+  three the window stays live, in the others it takes no click until the
+  interface is back.
 - **`AURORA_DEMO_TOOLBOX`**: `1` opens the Dev Toolbox (Advanced › Dev
   Toolbox, Ctrl+Alt+D); `edit` opens it in Customize (grips, "+ Add a
   tool"); `<target>:<tool>` chooses the target (0 nearest avatar, 1

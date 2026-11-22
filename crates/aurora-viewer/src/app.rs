@@ -18574,6 +18574,8 @@ impl App {
                     // the exit's question still shows: closing the window
                     // must not wait behind an interface nobody sees
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+                    // (the windows outside the viewer's stay as they are)
+                    crate::outside::keep(&ctx);
                     return a;
                 }
                 // the Director's track plays: the world alone, and the
@@ -18586,6 +18588,8 @@ impl App {
                     self.director_playing_ui(&ctx, &p);
                     // the exit's question still shows over it
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+                    // (the windows outside the viewer's stay as they are)
+                    crate::outside::keep(&ctx);
                     return a;
                 }
                 // the full-frame photo view: the world and its own strip only
@@ -18629,6 +18633,8 @@ impl App {
                     }
                     // the exit's question still shows over the photo mode
                     a.exit = self.exit_prompt.show(&ctx, &p, self.in_world());
+                    // (the windows outside the viewer's stay as they are)
+                    crate::outside::keep(&ctx);
                     return a;
                 }
                 // a held photo (freeze frame) instead of the world, under the windows
@@ -21851,17 +21857,25 @@ impl ApplicationHandler for App {
                 return;
             }
             // AURORA_DEMO_OUTSIDE=still|busy[,sync][,click]: a test window outside
-            // the viewer's (outside/demo.rs); conversations: the Conversations
-            // window sent outside, as its title bar's button sends it
+            // the viewer's (outside/demo.rs); conversations, build: that
+            // window sent outside, as its title bar's button sends it (the
+            // build window is opened by AURORA_DEMO_BUILD)
             if let Ok(v) = std::env::var("AURORA_DEMO_OUTSIDE") {
-                if v == "conversations" {
-                    self.panels.chat = true;
-                    crate::outside::want(&self.egui_ctx, egui::Id::unique("conversations"), true);
+                let window = match v.as_str() {
+                    "conversations" => {
+                        self.panels.chat = true;
+                        Some("conversations")
+                    }
+                    "build" => Some(crate::build::ui::INSPECTOR_ID),
+                    _ => None,
+                };
+                if let Some(window) = window {
+                    crate::outside::want(&self.egui_ctx, egui::Id::unique(window), true);
                 } else {
                     self.outside_demo = crate::outside::demo::parse(&v).map(crate::outside::demo::Demo::new);
                 }
-                if self.outside_demo.is_none() && v != "conversations" {
-                    log::warn!("AURORA_DEMO_OUTSIDE={v}: conversations, or still or busy then \",sync\" and \",click\"");
+                if self.outside_demo.is_none() && window.is_none() {
+                    log::warn!("AURORA_DEMO_OUTSIDE={v}: conversations, build, or still or busy then \",sync\" and \",click\"");
                 }
             }
             // AURORA_DEMO_TOOLBOX=1, or "target:tool" (target 0 nearest, 1
