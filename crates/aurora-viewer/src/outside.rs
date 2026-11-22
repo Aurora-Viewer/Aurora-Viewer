@@ -468,7 +468,7 @@ fn drawn_again(
     shapes: &[ClippedShape],
     shown: &[ClippedShape],
 ) -> bool {
-    asked_for && (redraw || textures_changed || size != shown_size || shapes != shown)
+    asked_for && (redraw || textures_changed || size != shown_size || !aurora_render::same_picture(shapes, shown))
 }
 
 /// egui's function for the passes outside: the pass of `viewport`, run at

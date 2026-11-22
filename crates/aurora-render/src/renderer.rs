@@ -7934,6 +7934,7 @@ impl Backend {
             // egui-wgpu gets meshes, not callbacks it does not know
             crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
             self.previews.render(
+                crate::preview::Shower::Viewer,
                 &self.device,
                 &self.queue,
                 &mut encoder,
@@ -8384,7 +8385,16 @@ impl Backend {
             return;
         }
         self.outside.take(&self.device, &self.st_init.adapter, self.config.format, packet);
-        let drawn = self.outside.draw(&self.device, &self.queue, &self.lost, &mut self.egui, index);
+        let second_view = self.second_view_texture();
+        let drawn = self.outside.draw(
+            &self.device,
+            &self.queue,
+            &self.lost,
+            &mut self.egui,
+            &mut self.previews,
+            second_view,
+            index,
+        );
         result.stats.outside_windows = drawn.windows;
         result.stats.outside_ms = drawn.ms;
         result.outside = self.outside.take_events();
@@ -12814,8 +12824,15 @@ impl Backend {
                 crate::label_depth::skip(labels);
             }
             crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
-            self.previews
-                .render(&self.device, &self.queue, &mut encoder, &mut self.egui, &mut ui.primitives, scale);
+            self.previews.render(
+                crate::preview::Shower::Viewer,
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &mut self.egui,
+                &mut ui.primitives,
+                scale,
+            );
             extra_cmds = self
                 .egui
                 .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);

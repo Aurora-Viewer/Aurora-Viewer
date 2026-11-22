@@ -17,6 +17,12 @@
 //! drawn only when a frame was handed for it, and a surface that held the
 //! render thread all the same (a hidden window under `Fifo`, where the
 //! compositor stops answering) is left alone for a while ([`REST`]).
+//!
+//! What the interface paints into a target of its own shows outside as it
+//! does inside: the previews (preview.rs, whose cache the windows share)
+//! and the second camera's picture. What it paints through the viewer's
+//! frame (the glass, the labels in the world) has nothing to read here and
+//! is left out ([`drawable`]).
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -230,23 +236,29 @@ impl Surfaces {
 
     /// Draws and presents every window a frame waits for. The viewer's own
     /// frame is submitted: egui's buffers are free to be written again.
+    /// `second_view`: the second camera's picture, when it has one.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         lost: &crate::device_lost::DeviceLost,
         egui: &mut egui_wgpu::Renderer,
+        previews: &mut crate::preview::Cache,
+        second_view: Option<egui::TextureId>,
         index: u64,
     ) -> Drawn {
         let mut drawn = Drawn::default();
         let started = Instant::now();
+        // (the previews of a window that closed go with it)
+        previews.keep_outside(|key| self.entries.contains_key(&key), egui);
         for (key, entry) in &mut self.entries {
             let now = Instant::now();
             if entry.pending.is_none() || entry.rest_until.is_some_and(|until| now < until) {
                 continue;
             }
             entry.rest_until = None;
-            if entry.draw(device, queue, lost, egui, index) {
+            if entry.draw(*key, device, queue, lost, egui, previews, second_view, index) {
                 drawn.windows += 1;
             }
             let took = now.elapsed();
@@ -283,12 +295,16 @@ impl Surfaces {
 impl Entry {
     /// Draws the frame waiting, if the surface gives an image; the frame
     /// stays for the next try otherwise.
+    #[allow(clippy::too_many_arguments)]
     fn draw(
         &mut self,
+        key: u64,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         lost: &crate::device_lost::DeviceLost,
         egui: &mut egui_wgpu::Renderer,
+        previews: &mut crate::preview::Cache,
+        second_view: Option<egui::TextureId>,
         index: u64,
     ) -> bool {
         let Some((width, height)) = self.pending.as_ref().map(|f| (f.width.max(1), f.height.max(1))) else {
@@ -312,9 +328,6 @@ impl Entry {
         };
         let clear = clear_value(frame.clear, self.config.format);
         let mut ui = frame.ui.tessellate();
-        // what the interface paints through the viewer's frame (the glass,
-        // the previews, the labels) has nothing to read here
-        ui.primitives.retain(|p| matches!(p.primitive, Primitive::Mesh(_)));
         let sd = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [width, height],
             pixels_per_point: ui.pixels_per_point,
@@ -323,6 +336,17 @@ impl Entry {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("window outside"),
         });
+        drawable(
+            &mut ui.primitives,
+            ui.pixels_per_point,
+            key,
+            device,
+            queue,
+            &mut encoder,
+            egui,
+            previews,
+            second_view,
+        );
         let mut cmds = egui.update_buffers(device, queue, &mut encoder, &ui.primitives, &sd);
         {
             let mut pass = encoder
@@ -350,6 +374,72 @@ impl Entry {
         queue.present(target);
         true
     }
+}
+
+/// What a window outside draws of its pass: the previews and the second
+/// camera's picture become meshes of their targets (drawn into `encoder`
+/// first when they changed), as in the viewer's frame; what is painted
+/// through the viewer's frame (the glass, the labels in the world, the
+/// markers of its passes) has nothing to read here and goes. egui-wgpu
+/// gets meshes only.
+#[allow(clippy::too_many_arguments)]
+fn drawable(
+    primitives: &mut Vec<egui::ClippedPrimitive>,
+    pixels_per_point: f32,
+    key: u64,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    encoder: &mut wgpu::CommandEncoder,
+    egui: &mut egui_wgpu::Renderer,
+    previews: &mut crate::preview::Cache,
+    second_view: Option<egui::TextureId>,
+) {
+    crate::second_view::replace(primitives, second_view);
+    previews.render(
+        crate::preview::Shower::Outside(key),
+        device,
+        queue,
+        encoder,
+        egui,
+        primitives,
+        pixels_per_point,
+    );
+    primitives.retain(|p| matches!(p.primitive, Primitive::Mesh(_)));
+}
+
+/// Whether the shapes of two passes of a window outside draw the same
+/// picture. egui compares two paint callbacks by their address, and each
+/// pass makes new ones: a window that shows a preview would be drawn again
+/// at every frame. Two callbacks of one place are the same when they show
+/// the same preview; the second camera's picture never is (it changes with
+/// every frame of the viewer); and those a window outside does not draw
+/// (`drawable`) are the same when they are of one kind.
+pub fn same_picture(a: &[egui::epaint::ClippedShape], b: &[egui::epaint::ClippedShape]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(a, b)| a.clip_rect == b.clip_rect && same_shape(&a.shape, &b.shape))
+}
+
+fn same_shape(a: &egui::Shape, b: &egui::Shape) -> bool {
+    match (a, b) {
+        (egui::Shape::Vec(a), egui::Shape::Vec(b)) => a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_shape(a, b)),
+        (egui::Shape::Callback(a), egui::Shape::Callback(b)) => a.rect == b.rect && same_callback(a, b),
+        _ => a == b,
+    }
+}
+
+fn same_callback(a: &egui::PaintCallback, b: &egui::PaintCallback) -> bool {
+    if crate::second_view::is(a) || crate::second_view::is(b) {
+        return false;
+    }
+    crate::preview_mesh::same(a, b)
+        .or_else(|| crate::preview::same(a, b))
+        .or_else(|| crate::panorama::same(a, b))
+        .unwrap_or_else(|| {
+            let kind = |c: &egui::PaintCallback| std::any::Any::type_id(&*c.callback);
+            kind(a) == kind(b)
+        })
 }
 
 #[cfg(test)]
@@ -409,6 +499,157 @@ mod tests {
         assert_eq!(rest_after(Duration::from_millis(2), now), None);
         assert_eq!(rest_after(HELD, now), Some(now + REST));
         assert_eq!(rest_after(Duration::from_secs(1), now), Some(now + REST));
+    }
+
+    /// One pass of a window that shows what `add` paints.
+    fn pass(ctx: &egui::Context, add: impl FnMut(&mut egui::Ui)) -> egui::FullOutput {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
+            ..Default::default()
+        };
+        ctx.run_ui(input, add)
+    }
+
+    fn triangle() -> std::sync::Arc<egui::Mesh> {
+        let mut mesh = egui::Mesh::default();
+        for point in [egui::pos2(12.0, 12.0), egui::pos2(70.0, 20.0), egui::pos2(20.0, 70.0)] {
+            mesh.colored_vertex(point, egui::Color32::from_rgb(200, 125, 70));
+        }
+        mesh.add_triangle(0, 1, 2);
+        std::sync::Arc::new(mesh)
+    }
+
+    const TILE: egui::Rect = egui::Rect::from_min_max(egui::pos2(8.0, 8.0), egui::pos2(72.0, 72.0));
+
+    /// A callback of the viewer's frame, which a window outside leaves out.
+    struct Marker;
+
+    fn marker(ui: &egui::Ui) {
+        ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
+            rect: TILE,
+            callback: std::sync::Arc::new(Marker),
+        }));
+    }
+
+    #[test]
+    fn a_preview_shown_again_is_the_same_picture() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique("tile");
+        let mesh = triangle();
+        let tile = |mesh: &std::sync::Arc<egui::Mesh>| {
+            let mesh = mesh.clone();
+            pass(&ctx, move |ui| {
+                marker(ui);
+                crate::preview_mesh::paint(ui, id, TILE, mesh.clone());
+            })
+            .shapes
+        };
+        let (first, again) = (tile(&mesh), tile(&mesh));
+        // egui compares the callbacks by their address: new ones each pass
+        assert!(first != again);
+        assert!(same_picture(&first, &again));
+        // another mesh, another place, one shape less: another picture
+        assert!(!same_picture(&first, &tile(&triangle())));
+        let mut moved = again.clone();
+        moved[0].clip_rect = moved[0].clip_rect.translate(egui::vec2(1.0, 0.0));
+        assert!(!same_picture(&first, &moved));
+        assert!(!same_picture(&first, &again[1..]));
+        // inside a group of shapes too
+        let group = |shapes: &[egui::epaint::ClippedShape]| {
+            vec![egui::epaint::ClippedShape {
+                shape: egui::Shape::Vec(shapes.iter().map(|s| s.shape.clone()).collect()),
+                ..shapes[0].clone()
+            }]
+        };
+        assert!(same_picture(&group(&first), &group(&again)));
+        assert!(!same_picture(&group(&first), &group(&tile(&triangle()))));
+    }
+
+    #[test]
+    fn the_second_camera_is_never_the_same_picture() {
+        let ctx = egui::Context::default();
+        let live = || pass(&ctx, |ui| crate::second_view::paint(ui, TILE)).shapes;
+        assert!(!same_picture(&live(), &live()));
+        // and a preview is not the marker that stood there
+        let preview = pass(&ctx, |ui| {
+            crate::preview_mesh::paint(ui, egui::Id::unique("tile"), TILE, triangle())
+        })
+        .shapes;
+        let marked = pass(&ctx, |ui| marker(ui)).shapes;
+        assert!(!same_picture(&preview, &marked));
+        assert!(same_picture(&marked, &pass(&ctx, |ui| marker(ui)).shapes));
+    }
+
+    /// The Build tools' shapes outside (#925): a preview is drawn in a
+    /// window outside, kept while that window shows it whatever the viewer's
+    /// own frames show, and let go with the window.
+    #[test]
+    fn a_preview_outside_is_drawn_and_kept_while_its_window_shows_it() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("test GPU");
+        let mut egui = egui_wgpu::Renderer::new(&device, wgpu::TextureFormat::Rgba8Unorm, Default::default());
+        let mut previews = crate::preview::Cache::default();
+        let ctx = egui::Context::default();
+        let mesh = triangle();
+        let shown = |previews: &mut crate::preview::Cache, egui: &mut egui_wgpu::Renderer| {
+            let mesh = mesh.clone();
+            let out = pass(&ctx, move |ui| {
+                marker(ui);
+                crate::preview_mesh::paint(ui, egui::Id::unique("tile"), TILE, mesh.clone());
+            });
+            let mut primitives = ctx.tessellate(out.shapes, out.pixels_per_point);
+            assert!(primitives.iter().any(|p| matches!(p.primitive, Primitive::Callback(_))));
+            let mut encoder = device.create_command_encoder(&Default::default());
+            drawable(
+                &mut primitives,
+                out.pixels_per_point,
+                7,
+                &device,
+                &queue,
+                &mut encoder,
+                egui,
+                previews,
+                None,
+            );
+            queue.submit([encoder.finish()]);
+            // meshes only, and the preview is one of a texture of its own
+            let textures: Vec<egui::TextureId> = primitives
+                .iter()
+                .map(|p| match &p.primitive {
+                    Primitive::Mesh(mesh) => mesh.texture_id,
+                    Primitive::Callback(_) => panic!("a callback is left for egui-wgpu"),
+                })
+                .filter(|texture| matches!(texture, egui::TextureId::User(_)))
+                .collect();
+            assert_eq!(textures.len(), 1, "the preview's mesh");
+            textures[0]
+        };
+        let first = shown(&mut previews, &mut egui);
+        // frames of the viewer that show no preview: the window's stays
+        for _ in 0..3 {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            previews.render(
+                crate::preview::Shower::Viewer,
+                &device,
+                &queue,
+                &mut encoder,
+                &mut egui,
+                &mut [],
+                1.0,
+            );
+            queue.submit([encoder.finish()]);
+        }
+        assert_eq!(shown(&mut previews, &mut egui), first, "kept, not made again");
+        // another window outside closes: nothing changes for this one
+        previews.keep_outside(|key| key == 7, &mut egui);
+        assert_eq!(shown(&mut previews, &mut egui), first);
+        // its own window closes: the preview goes, and a new one is made
+        previews.keep_outside(|_| false, &mut egui);
+        assert_ne!(shown(&mut previews, &mut egui), first, "let go with its window");
     }
 
     #[test]

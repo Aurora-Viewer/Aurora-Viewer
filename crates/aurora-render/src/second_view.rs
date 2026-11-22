@@ -64,6 +64,12 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect) {
     }));
 }
 
+/// Whether `callback` is the second view's: a picture that changes at
+/// every frame, whatever its shapes say.
+pub(crate) fn is(callback: &egui::PaintCallback) -> bool {
+    callback.callback.downcast_ref::<Region>().is_some()
+}
+
 /// Replace the second view's callbacks with meshes of its texture, or with
 /// nothing while it has none (egui-wgpu only knows meshes).
 pub(crate) fn replace(primitives: &mut [egui::ClippedPrimitive], texture: Option<egui::TextureId>) {
