@@ -24,7 +24,9 @@
 //! Deluxe became "Deluxe (RT)" in settings version 46 (decided by the
 //! human on 2026-11-22): High's values, with the shadows of the sun and of
 //! the local lights and the indirect light traced by the graphics card
-//! (`RayTracingSettings::DELUXE`, aurora-render's rt_*.rs). No other level
+//! (`RayTracingSettings::DELUXE`, aurora-render's rt_*.rs), and the
+//! projectors' shadows on as in the former Deluxe (a tester's report: the
+//! rays skip a projector whose shadows are off). No other level
 //! traces. The former Deluxe is kept as [`deluxe_v45`] for the migrations
 //! and the photo's maxima; a profile still exactly on it moves to High once
 //! ([`upgrade_deluxe_to_high`]). The Legacy Viewer has no traced level.
@@ -225,9 +227,12 @@ impl Preset {
                 effects: Effects::HIGH,
             },
             // Deluxe (RT): High, with the shadows and the indirect light
-            // traced (module comment)
+            // traced (module comment), and the projectors' shadows on as
+            // the former Deluxe had them: the rays trace a projector only
+            // when they are (aurora-render rt_shadows.rs `traced_lights`)
             Preset::Deluxe => Values {
                 effects: Effects::DELUXE,
+                projector_shadows: true,
                 ..Preset::High.values()
             },
         }
@@ -1563,9 +1568,14 @@ mod tests {
             Preset::Deluxe.values(),
             Values {
                 effects: Effects::DELUXE,
+                projector_shadows: true,
                 ..Preset::High.values()
             }
         );
+        // the projectors cast, as in the former Deluxe: the rays trace a
+        // projector only with its shadows on
+        assert!(s.projector_shadows && s.shadow_quality > 0);
+        assert!(deluxe_v45().projector_shadows && !Preset::High.values().projector_shadows);
         // the former Deluxe: contact shadows and the screen-space indirect light
         deluxe_v45().write(&mut s);
         assert!(s.contact_shadows && !s.bloom && s.screen_indirect_light);
@@ -1620,13 +1630,17 @@ mod tests {
         assert_eq!(Preset::matching(&s), Some(Preset::High));
         s.ray_tracing = RayTracingSettings::SHADOWS;
         assert_eq!(Preset::matching(&s), None);
-        // Deluxe (RT): back to the shadow maps is High (nothing else tells
-        // them apart); the local lights or the indirect light off is custom;
-        // the reflections, without the screen-space ones there, do not count
+        // Deluxe (RT): back to the shadow maps is custom (High with the
+        // projectors' shadows), and High once they are off too; the local
+        // lights or the indirect light off is custom; the reflections,
+        // without the screen-space ones there, do not count
         Preset::Deluxe.apply(&mut s);
         assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
         s.ray_tracing = RayTracingSettings { enabled: false, ..all };
+        assert_eq!(Preset::matching(&s), None);
+        s.projector_shadows = false;
         assert_eq!(Preset::matching(&s), Some(Preset::High));
+        s.projector_shadows = true;
         for changed in [
             RayTracingSettings {
                 lights: false,
