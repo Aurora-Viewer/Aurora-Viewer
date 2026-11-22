@@ -34,6 +34,39 @@ pub fn refused_reply(command: &NetCommand, reason: &str) -> Option<NetEvent> {
     }
 }
 
+/// The name of a command (its variant), for the log: the command is written
+/// only up to its first word, not whole (a chat line, a full outfit write).
+pub fn command_name(command: &NetCommand) -> String {
+    use std::fmt::Write;
+    /// Takes the characters up to the end of the name, then refuses the rest:
+    /// the formatting stops there.
+    struct Name(String);
+    impl Write for Name {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            for c in text.chars() {
+                if matches!(c, '(' | ' ' | '{') {
+                    return Err(std::fmt::Error);
+                }
+                self.0.push(c);
+            }
+            Ok(())
+        }
+    }
+    let mut name = Name(String::new());
+    // (the error is the stop, not a failure)
+    let _ = write!(name, "{command:?}");
+    name.0
+}
+
+/// Whether a refused command is told to the user ("This action is restricted
+/// by RLVa."): what they or a script asked for is. What the lock watchdog
+/// sends to put a lock back is the viewer's own work, as
+/// RlvAttachmentLockWatchdog's (indra/newview/rlvlocks.cpp), which never says
+/// anything of it to the user (#3633).
+pub fn refusal_shown(actor: Uuid) -> bool {
+    actor != super::watchdog::ACTOR
+}
+
 impl World {
     /// Reduces `command` to what the restrictions leave of it, then asks
     /// whether it may leave. `actor` is nil for the user.
@@ -94,5 +127,28 @@ impl World {
                 item.add = true;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_command_is_named_by_its_variant_alone() {
+        let chat = NetCommand::Chat {
+            message: "a long line that must not be formatted".repeat(50),
+            channel: 0,
+            chat_type: aurora_net::ChatType::Normal,
+        };
+        assert_eq!(command_name(&chat), "Chat");
+        assert_eq!(command_name(&NetCommand::DetachAttachments(vec![Uuid::nil()])), "DetachAttachments");
+    }
+
+    #[test]
+    fn only_the_watchdogs_own_refusals_are_kept_from_the_user() {
+        assert!(refusal_shown(Uuid::nil()));
+        assert!(refusal_shown(Uuid::from_u128(7)));
+        assert!(!refusal_shown(super::super::watchdog::ACTOR));
     }
 }

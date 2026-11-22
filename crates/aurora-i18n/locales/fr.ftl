@@ -3370,6 +3370,8 @@ appearance-editor-camera = Caméra
 ui-options-appearance-camera-hint = Recadrer automatiquement la partie du corps sélectionnée pendant la modification de la silhouette ou d’un layer. Désactivé, conserver votre cadrage ; les commandes de caméra restent disponibles.
 ui-options-customize-animation = A-Pose
 ui-options-customize-animation-hint = Modifier votre silhouette ou un layer met votre avatar debout et joue l’animation de pose en A. Désactivé, votre avatar garde sa pose et ses animations.
+ui-options-bento-idle = Corriger l'animation Bento au repos
+ui-options-bento-idle-hint = Joue une animation Bento de priorité 0 sous toutes les autres : les mains, la bouche, les ailes et la queue reprennent une pose naturelle au lieu de rester figées après une animation ; les autres la voient aussi
 ui-options-typing-in-name-tags = Afficher la frappe dans les étiquettes de nom
 ui-options-typing-in-name-tags-hint = L'étiquette d'un résident qui écrit dans le chat local l'indique.
 ui-options-typing-chevron = Chevron devant « écrit »
@@ -3444,6 +3446,10 @@ common-copy-slurl = Copier la SLurl
 inventory-landmark-location-unknown = Impossible de déterminer la destination de ce landmark. Réessayez plus tard.
 ui-options-commands-copy-camera = Copier la caméra
 build-ui-general-copy-object-keys-shift-all-parts = Copier la clé des objets (Maj : de toutes les parties)
+build-ui-copied-object-uuids = { $count ->
+    [one] UUID de l’objet copié
+   *[other] UUID des objets copiés
+    }
 ui-options-commands-copy-camera-position-to-clipboard = Copier la position de la caméra dans le presse-papiers
 build-ui-tools-copy-selection = Copier la sélection
 common-copy-slurl-2 = Copier le SLurl
@@ -3491,7 +3497,6 @@ ui-sound-object-creation = Création d'un objet
 session-inventory-upload-creation-denied-invalid-type-size-or-upload-count = Création refusée : type, taille ou nombre de chargements invalide.
 ui-contacts-create = Créer
 build-ui-tools-create-ctrl-4 = Créer (Ctrl+4)
-ui-bars-create-prims-ctrl-4 = Créer des prims (Ctrl+4)
 ui-places-create-folder = Créer un dossier
 ui-inventory-context-create-folder-from-selection = Créer un dossier à partir de la sélection
 common-create-favorite = Créer un favori
@@ -5592,19 +5597,18 @@ inventory-operations-change-sent-but-could-not-read-it-back-reload = Modificatio
 build-ui-tools-linked-edit = Modification liée
 ui-appearance-unsaved-changes = Modifications non enregistrées
 common-edit = Modifier
+common-modify = Modifier
 build-ui-tools-edit-ctrl-3 = Modifier (Ctrl+3)
 ui-place-details-edit-this-landmark = Modifier ce repère
 ui-appearance-edit-this-outfit = Modifier cette tenue
 ui-appearance-show-current-outfit = Afficher la tenue actuelle dans la liste
 ui-appearance-current-outfit-not-in-my-outfits = La tenue actuelle n’est pas enregistrée dans Mes tenues
-ui-bars-edit-objects-ctrl-3 = Modifier des objets (Ctrl+3)
 build-ui-tools-edit-parcel = Modifier la parcelle
 ui-context-edit-shape = Modifier la silhouette
 ui-context-export-shape-xml = Exporter la silhouette (XML)
 ui-context-edit-outfit = Modifier la tenue
 ui-context-edit-pbr-material = Modifier le matériau PBR
 ui-context-edit-land = Modifier le terrain
-ui-bars-edit-land-ctrl-5 = Modifier le terrain (Ctrl+5)
 ui-land-options-edit-land = Modifier le terrain :
 build-ui-tools-edit-selected-land = Modifier le terrain sélectionné
 ui-profile-edit-text = Modifier le texte
@@ -8005,6 +8009,7 @@ ui-options-magenta-where-a-light-reaches-a-pixel-the-sort-missed = Magenta là o
 ui-options-sort-of-the-reflection-probes = Tri des sondes de réflexion
 ui-options-magenta-where-a-probe-covers-a-pixel-the-sort-missed = Magenta là où une sonde couvre un pixel sans figurer parmi celles triées pour lui : il ne doit pas y en avoir
 ui-context-show-in-inventory = Voir dans l'inventaire
+ui-context-show-in-inventory-none = Aucun objet de votre inventaire ne porte exactement le nom de cet objet.
 ui-place-details-show-the-corresponding-location-on-the-map = Voir l'emplacement correspondant sur la carte
 common-view-conversation-history = Voir l'historique de conversations
 common-view-profile = Voir le profil
@@ -9108,7 +9113,7 @@ common-for-sale = À vendre :
 ui-land-general-for-sale-to = À vendre à :
 ui-profile-coming-soon = À venir
 ui-profile-aurora-my-profile = Mon profil
-ui-profile-aurora-help = Le profil d'un résident : qui c'est, ce que vous pouvez faire avec lui, puis ses lieux préférés, ses annonces, sa première vie, son profil web et vos notes. Préférences › Aurora › Profils ramène la fenêtre du Legacy Viewer.
+ui-profile-aurora-help = Le profil d'un résident : qui c'est, ce que vous pouvez faire avec lui, puis ses favoris, ses annonces, sa première vie, son profil web et vos notes. Préférences › Aurora › Profils ramène la fenêtre du Legacy Viewer.
 ui-profile-aurora-conversation = Conversation
 ui-profile-aurora-call = Appel
 ui-profile-aurora-add-friend = Ajouter en ami
@@ -9139,7 +9144,7 @@ ui-profile-aurora-their-map = La trouver sur la carte
 ui-profile-aurora-their-objects = Modifier, supprimer ou prendre ses objets
 ui-profile-aurora-received-tip = { $right } : { $state }
 ui-profile-aurora-tab-profile = Profil
-ui-profile-aurora-tab-picks = Lieux préférés
+ui-profile-aurora-tab-picks = Favoris
 ui-profile-aurora-tab-classifieds = Petites annonces
 ui-profile-aurora-tab-first-life = Première vie
 ui-profile-aurora-tab-web = Web
@@ -9173,11 +9178,11 @@ ui-profile-aurora-part-bio = bio
 ui-profile-aurora-part-first-life = première vie
 ui-profile-aurora-part-notes = notes
 ui-profile-aurora-part-places = { $count ->
-    [one] { $count } lieu
-   *[other] { $count } lieux
+    [one] { $count } favori
+   *[other] { $count } favoris
     }
 ui-profile-aurora-part-classified = annonce
-ui-profile-aurora-snapshot = Image du lieu
+ui-profile-aurora-snapshot = Image
 ui-profile-aurora-teleport = Téléporter
 ui-profile-aurora-description = Description
 ui-profile-aurora-category = Catégorie
@@ -9193,11 +9198,11 @@ ui-profile-aurora-copy-slurl = Copier la SLURL
 ui-profile-aurora-here = Ma position ici
 ui-profile-aurora-add-here = Ajouter l'endroit où je suis
 ui-profile-aurora-picks-count = { $count } sur { $limit } (limite du compte)
-ui-profile-aurora-picks-empty = Pas encore de lieu préféré
-ui-profile-aurora-picks-empty-text = { $name } n'a partagé aucun lieu.
-ui-profile-aurora-picks-empty-own = Partagez vos endroits préférés
-ui-profile-aurora-picks-empty-own-text = Les autres résidents les voient sur votre profil et s'y téléportent en un clic.
-ui-profile-aurora-delete-pick = Supprimer le lieu « { $name } » ?
+ui-profile-aurora-picks-empty = Aucun favori pour le moment
+ui-profile-aurora-picks-empty-text = { $name } n'a partagé aucun favori.
+ui-profile-aurora-picks-empty-own = Partagez ce qui vous tient à cœur
+ui-profile-aurora-picks-empty-own-text = Utilisez vos favoris pour présenter les lieux, les personnes et les choses qui comptent pour vous.
+ui-profile-aurora-delete-pick = Supprimer le favori « { $name } » ?
 ui-profile-aurora-classifieds-empty = Aucune petite annonce
 ui-profile-aurora-classifieds-empty-text = { $name } n'a pas d'annonce publiée.
 ui-profile-aurora-classifieds-empty-own = Faites connaître un lieu, un service
@@ -10256,6 +10261,7 @@ script-search-query = Rechercher
 script-search-replacement = Remplacer
 script-search-insensitive = Insensible à la casse
 script-search-up = Remonter
+script-search-whole-words = Mots entiers
 script-search-find = Rechercher
 script-search-replace = Remplacer
 script-search-replace-all = Tout remplacer
@@ -15600,6 +15606,14 @@ picker-pipette-no-texture = Aucune texture copiable trouvée dans votre inventai
 picker-pipette-no-material = Aucun matériau copiable trouvé dans votre inventaire.
 
 local-texture-preview-hint = Texture locale — aperçu d’un fichier de cet ordinateur.
+
+# Menu commands can be added to or removed from a toolbar.
+toolbar-add-from-menu = Ajouter à la barre d’outils
+toolbar-remove-from-menu = Retirer de la barre d’outils
+# Build › Edit objects, Create prims and Edit land as toolbar buttons (the menu shows their Ctrl+3/4/5 keys apart)
+toolbar-command-build-edit = Modifier des objets
+toolbar-command-build-create = Créer des prims
+toolbar-command-build-land = Modifier le terrain
 
 # La fenêtre Photo 360° (LLFloater360Capture, floater_360capture.xml)
 capture-360-quality-preview = Aperçu (rapide)

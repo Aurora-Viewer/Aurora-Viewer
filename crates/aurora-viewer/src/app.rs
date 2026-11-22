@@ -712,7 +712,10 @@ pub struct App {
     look_at_privacy: Option<(bool, bool)>,
     /// What the simulator was told of the static eyes animation since the
     /// last arrival (FSStaticEyes).
-    static_eyes: crate::world::lookat::StaticEyes,
+    static_eyes: crate::world::lookat::SimAnimation,
+    /// What the simulator was asked about the Bento idle pose: the same
+    /// rule as the static eyes, asked again after every arrival.
+    bento_idle: crate::world::lookat::SimAnimation,
     /// The world point the cursor was over last frame, and the object it
     /// lies on (the hover pick of the cursor icon), for the look-at.
     look_hover: Option<(Option<usize>, Vec3)>,
@@ -2060,6 +2063,7 @@ impl App {
             cam_key_since: [None; 12],
             look_at_privacy: None,
             static_eyes: Default::default(),
+            bento_idle: Default::default(),
             look_hover: None,
             hover_tips: Default::default(),
             look_at_fades: Default::default(),
@@ -2495,8 +2499,18 @@ impl App {
             crate::world::rlva::Boundary::Send => {}
             crate::world::rlva::Boundary::Dropped => return,
             crate::world::rlva::Boundary::Refused => {
+                // (what a "restricted" notice stood for: the log names the
+                // command, never its content)
+                log::info!(
+                    "rlva: {} refused at the send boundary (actor {actor})",
+                    crate::world::rlva::command_name(&cmd)
+                );
                 let blocked = aurora_i18n::tr!("rlva-blocked");
-                self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                // the watchdog's own commands say nothing to the user, but
+                // whoever waits for their answer still gets it
+                if crate::world::rlva::refusal_shown(actor) {
+                    self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                }
                 // answered at once, as the demo answers a change it applies
                 if let Some(reply) = crate::world::rlva::refused_reply(&cmd, blocked) {
                     self.on_app_event(reply);
@@ -3782,6 +3796,7 @@ impl App {
         self.region_restart.put_demo(demo);
         self.move_complete_at = None;
         self.static_eyes.on_arrival();
+        self.bento_idle.on_arrival();
         self.set_mouselook_grab(false);
         self.camera = Camera::default();
     }
@@ -4655,6 +4670,7 @@ impl App {
                 self.move_complete_at = Some(Instant::now());
                 // the simulator we land in plays none of our animations yet
                 self.static_eyes.on_arrival();
+                self.bento_idle.on_arrival();
                 self.tp_checks = vec![10.0, 3.0];
                 // New region must learn walk/run again (LLAgent::sendWalkRun
                 // after RegionHandshake, llviewermessage.cpp). Without this
@@ -6325,7 +6341,7 @@ impl App {
     /// FSStaticEyes (update_static_eyes in llstartup.cpp, its setting's
     /// listener in llviewercontrol.cpp): the animation that holds the eyes
     /// still is started after every arrival, then started or stopped as the
-    /// setting changes (`StaticEyes`).
+    /// setting changes (`SimAnimation`).
     fn sync_static_eyes(&mut self) {
         if self.move_complete_at.is_none() {
             return;
@@ -6334,6 +6350,16 @@ impl App {
             log::info!("static eyes: {} asked of the simulator", if start { "start" } else { "stop" });
             self.send(NetCommand::AgentAnimation {
                 anim: crate::world::lookat::STATIC_EYES,
+                start,
+            });
+        }
+        // FSPlayDefaultBentoAnimation (LLAgent::setRegion and
+        // stopCurrentAnimations in llagent.cpp, the setting's listener
+        // handlePlayBentoIdleAnimationChanged in llviewercontrol.cpp)
+        if let Some(start) = self.bento_idle.request(self.settings.bento_idle) {
+            log::info!("bento idle pose: {} asked of the simulator", if start { "start" } else { "stop" });
+            self.send(NetCommand::AgentAnimation {
+                anim: reset_skeleton::ANIM_BENTO_IDLE,
                 start,
             });
         }
@@ -8074,9 +8100,13 @@ impl App {
                 let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
                 self.build.paste_vector(&mut self.world, &self.settings.build, which, &text);
             }
-            Request::CopyKeys => self
-                .egui_ctx
-                .copy_text(self.build.copy_keys(&self.world, &self.settings.build, self.shift)),
+            Request::CopyKeys { feedback, anchor } => {
+                let (keys, count) = self.build.copy_keys_with_count(&self.world, &self.settings.build, self.shift);
+                if count > 0 {
+                    self.egui_ctx.copy_text(keys);
+                    crate::ui::widgets::show_copied(&self.egui_ctx, feedback, anchor, crate::build::ui::copied_keys_label(count));
+                }
+            }
             Request::Script { object, item } => self.open_script(aurora_net::scripts::ScriptTarget { object, item }),
         }
         self.flush_build();
@@ -18879,6 +18909,12 @@ impl App {
                     bottom_top: self.interface.last_room.map_or(screen_rect.bottom() - 56.0, |(_, bottom)| bottom),
                     menu_open: egui::Popup::is_any_open(&ctx),
                 });
+                // what the toolbar buttons of menu commands show, given before
+                // any bar is drawn: the bottom and side bars also show
+                // without the top bar (hidden interface, mouselook chat)
+                self.toolbar_ui.edit_particles = status.edit_particles;
+                self.toolbar_ui.fly_override_active = status.fly_override;
+                self.toolbar_ui.quickjump_active = status.quickjump;
                 if chrome.top {
                     let (bar, audio_action) = ui::bars::top_bars(
                         ui,
@@ -19210,8 +19246,9 @@ impl App {
                 }
                 ui::layout::set_window_edges(ui.ctx(), edges);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
+                ui::toolbar::show_command_context(ui.ctx(), &p, bar_layout, toolbar_settings);
                 self.toolbar_ui.show(ui.ctx(), &p, bar_layout, toolbar_settings);
-                if self.toolbar_ui.commit(bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
+                if self.toolbar_ui.commit_with_menus(ui.ctx(), bar_layout, toolbar_settings) || chat_width_set || toolbar_migrated {
                     self.settings.save();
                 }
                 // the Favorites button's right click: where the favourites live
