@@ -1222,8 +1222,9 @@ pub struct Settings {
     /// The same notices as a line of nearby chat (OnlineOfflinetoNearbyChat;
     /// off here, on in the Legacy Viewer's own settings).
     pub friends_online_in_chat: bool,
-    /// Show a notification when someone ends a friendship with us, live or
-    /// since our previous login (Aurora addition, off by default).
+    /// Show a notification when someone ends a friendship with us while we
+    /// are online, or when a friend is no longer on the list at the next
+    /// login (Aurora addition, off by default).
     pub notify_friendship_ended: bool,
     /// Where those toasts stand with Aurora's notification center.
     pub presence_position: PresencePosition,

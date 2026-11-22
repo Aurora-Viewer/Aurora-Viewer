@@ -20,8 +20,8 @@
 //! in the middle of the window, with a wider gap between the toasts
 //! (`PIE_TOASTS_GAP`) and a more transparent pie (`PIE_TOASTS_OPACITY`).
 //! `friendship-ended`, `legacy-friendship-ended`, `friendship-ended-history`
-//! and `friendship-ended-offline` show the ended-friendship notice live or
-//! detected on login.
+//! and `friendship-ended-offline` show the ended-friendship notice live, or
+//! the neutral "no longer on your friends list" of a friend missing at login.
 
 use aurora_net::NetEvent;
 use uuid::Uuid;

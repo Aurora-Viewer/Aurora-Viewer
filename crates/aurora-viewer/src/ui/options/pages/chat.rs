@@ -942,7 +942,7 @@ fn notifications(cx: &mut Cx) {
         // Aurora-only: notification when someone ends a friendship
         cx.toggle(
             tr!("ui-options-notify-friendship-ended"),
-            tr!("ui-options-notify-friendship-ended-hint"),
+            tr!("ui-options-notify-friendship-ended-or-missing-hint"),
             &field!(notify_friendship_ended),
         );
         // PaymentReceived's toast (NotifyMoneyReceived, #2675): a direct

@@ -6543,18 +6543,20 @@ impl World {
         let ready = self.friend_snapshot.take_ready(self.notifications.started, |id| {
             self.social.avatar_names.get(id).is_some() || self.social.names.contains_key(id)
         });
-        for (id, fallback) in ready {
+        for (id, fallback, how) in ready {
             if self.mutes.is_muted_id(&id) {
                 continue;
             }
             let resolved = self.known_roster_name(&id).or_else(|| (!fallback.is_empty()).then_some(fallback));
             let from = resolved.clone().unwrap_or_else(|| aurora_i18n::tr!("world-mod-someone").to_owned());
-            let nid = self.notifications.push(
-                notifications::Kind::Friendship,
-                aurora_i18n::tr!("world-mod-ended-your-friendship", from = from),
-                String::new(),
-                notifications::Data::None,
-            );
+            // Only the live TerminateFriendship says who ended it; a friend
+            // missing at login may have been removed by this account from
+            // another viewer, or their account may be gone
+            let title = match how {
+                friend_snapshot::Ended::Live => aurora_i18n::tr!("world-mod-ended-your-friendship", from = from),
+                friend_snapshot::Ended::AtLogin => aurora_i18n::tr!("world-mod-no-longer-on-your-friends-list", from = from),
+            };
+            let nid = self.notifications.push(notifications::Kind::Friendship, title, String::new(), notifications::Data::None);
             if let Some(name) = resolved {
                 self.notifications.link_name(nid, name, notifications::NameTarget::Avatar(id));
             }

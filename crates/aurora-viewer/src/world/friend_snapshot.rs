@@ -1,7 +1,9 @@
 //! Per-(account, grid) snapshot of the agent's friends list so Aurora can
-//! announce when a resident ends a friendship, both live (`TerminateFriendship`)
-//! and since the previous login (`buddy-list` diff). Aurora-only addition: the
-//! Legacy Viewer does not announce ended friendships.
+//! announce when a resident ends a friendship live (`TerminateFriendship`),
+//! and which friends are no longer on the list since the previous login
+//! (`buddy-list` diff; who removed them is unknown then, see [`Ended`]).
+//! Aurora-only addition: the Legacy Viewer does not announce ended
+//! friendships.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -49,10 +51,23 @@ struct Saved {
     friends: Vec<SavedFriend>,
 }
 
+/// How an ended friendship was found, which decides what its notice says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ended {
+    /// The simulator's `TerminateFriendship`: the other resident ended it
+    /// ("X ended your friendship").
+    Live,
+    /// Missing from the login `buddy-list`: the other resident may have
+    /// ended it, but so may this account from another viewer or device, or
+    /// the account may be gone ("X is no longer on your friends list").
+    AtLogin,
+}
+
 #[derive(Debug, Clone)]
 struct PendingEnded {
     id: Uuid,
     fallback: String,
+    how: Ended,
     queued_at: Option<Instant>,
 }
 
@@ -101,7 +116,8 @@ impl FriendSnapshot {
 
     /// Reconcile the login `buddy-list` against `previous`. When `previous` is
     /// `Some` and `notify` is enabled, any friend missing from `current` is
-    /// queued for notification and its UUID is returned for name lookup.
+    /// queued for an [`Ended::AtLogin`] notice and its UUID is returned for
+    /// name lookup.
     pub fn reconcile(
         &mut self,
         path: Option<PathBuf>,
@@ -133,7 +149,7 @@ impl FriendSnapshot {
         {
             for (id, fallback) in prev {
                 if !next_friends.contains_key(id) {
-                    self.push_pending(*id, fallback.clone());
+                    self.push_pending(*id, fallback.clone(), Ended::AtLogin);
                     missing.push(*id);
                 }
             }
@@ -185,7 +201,7 @@ impl FriendSnapshot {
             return;
         }
         self.on_removed(&id);
-        self.push_pending(id, fallback);
+        self.push_pending(id, fallback, Ended::Live);
     }
 
     /// Refresh stored fallback names from the name cache and save if changed.
@@ -205,12 +221,13 @@ impl FriendSnapshot {
     }
 
     /// Drain pending ended-friendship notices whose name is resolved or whose
-    /// wait timed out, once the world is shown (`started`).
-    pub fn take_ready(&mut self, started: bool, name_known: impl Fn(&Uuid) -> bool) -> Vec<(Uuid, String)> {
+    /// wait timed out, once the world is shown (`started`): the resident, the
+    /// saved fallback name and how the end was found.
+    pub fn take_ready(&mut self, started: bool, name_known: impl Fn(&Uuid) -> bool) -> Vec<(Uuid, String, Ended)> {
         self.take_ready_at(started, Instant::now(), name_known)
     }
 
-    fn take_ready_at(&mut self, started: bool, now: Instant, name_known: impl Fn(&Uuid) -> bool) -> Vec<(Uuid, String)> {
+    fn take_ready_at(&mut self, started: bool, now: Instant, name_known: impl Fn(&Uuid) -> bool) -> Vec<(Uuid, String, Ended)> {
         if !started {
             return Vec::new();
         }
@@ -221,7 +238,7 @@ impl FriendSnapshot {
             let id = self.pending[i].id;
             if name_known(&id) || now.saturating_duration_since(queued_at) >= NAME_WAIT {
                 let item = self.pending.remove(i);
-                ready.push((item.id, item.fallback));
+                ready.push((item.id, item.fallback, item.how));
             } else {
                 i += 1;
             }
@@ -229,11 +246,12 @@ impl FriendSnapshot {
         ready
     }
 
-    fn push_pending(&mut self, id: Uuid, fallback: String) {
+    fn push_pending(&mut self, id: Uuid, fallback: String, how: Ended) {
         if !self.pending.iter().any(|p| p.id == id) {
             self.pending.push(PendingEnded {
                 id,
                 fallback,
+                how,
                 queued_at: None,
             });
         }
@@ -357,7 +375,7 @@ mod tests {
         let missing = snap2.reconcile(Some(path.clone()), previous, &[id(1)], |_| None, true);
         assert_eq!(missing, vec![id(3)]);
         let ready = snap2.take_ready(true, |_| true);
-        assert_eq!(ready, vec![(id(3), "Alice".into())]);
+        assert_eq!(ready, vec![(id(3), "Alice".into(), Ended::AtLogin)]);
 
         // With notify = false, missing friend is silently dropped from snapshot without queueing.
         let mut snap3 = FriendSnapshot::default();
@@ -388,6 +406,6 @@ mod tests {
         assert!(snap.take_ready_at(true, t0, |_| false).is_empty());
         assert!(snap.take_ready_at(true, t0 + Duration::from_secs(9), |_| false).is_empty());
         let ready = snap.take_ready_at(true, t0 + NAME_WAIT, |_| false);
-        assert_eq!(ready, vec![(id(5), "Saved Name".into())]);
+        assert_eq!(ready, vec![(id(5), "Saved Name".into(), Ended::Live)]);
     }
 }

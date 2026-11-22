@@ -566,11 +566,24 @@ fn friendship_ended_offline_waits_for_world_and_name_resolution() {
     w.flush_friendship_ended_notices();
     assert!(w.notifications.list.is_empty(), "waits for fresh name resolution");
 
-    // Once the name arrives, the notice uses the resolved name.
+    // Once the name arrives, the notice uses the resolved name. Found at
+    // login, it does not say who ended the friendship: this account may have
+    // removed the friend from another viewer, or the account may be gone.
     w.apply(aurora_net::NetEvent::Names(vec![(missing_id, "Fresh".into(), "Name".into())]));
     w.flush_friendship_ended_notices();
     assert_eq!(w.notifications.list.len(), 1);
-    assert_eq!(w.notifications.list[0].title, "Fresh Name ended your friendship");
+    let n = &w.notifications.list[0];
+    assert_eq!(n.kind, Kind::Friendship);
+    assert_eq!(n.title, "Fresh Name is no longer on your friends list");
+    assert_eq!(n.name_links.len(), 1);
+    assert_eq!(n.name_links[0].target, super::notification_history::NameTarget::Avatar(missing_id));
+    let nid = n.id;
+    w.record_notification_history();
+    let _ = w.respond_notification(nid, super::notifications::Response::Dismiss);
+    w.record_notification_history();
+    let hist = super::notification_history::search(&w.notification_history, "no longer on your friends list");
+    assert_eq!(hist.len(), 1);
+    assert!(super::notification_history::search(&w.notification_history, "ended your friendship").is_empty());
 
     // If the login response lacked `buddy-list`, reconciliation does nothing.
     let mut w = world();
@@ -613,5 +626,5 @@ fn friendship_ended_waits_for_the_block_list() {
     w.flush_friendship_ended_notices();
     w.flush_friendship_ended_notices();
     let titles: Vec<&str> = w.notifications.list.iter().map(|n| n.title.as_str()).collect();
-    assert_eq!(titles, ["Tom Smith ended your friendship"]);
+    assert_eq!(titles, ["Tom Smith is no longer on your friends list"]);
 }

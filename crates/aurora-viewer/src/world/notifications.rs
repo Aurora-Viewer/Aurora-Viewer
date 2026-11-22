@@ -597,8 +597,9 @@ pub struct ToastPrefs {
     /// is read. Off by default: the Legacy Viewer's notification well never
     /// lists IMs, the Conversations window has them (#752).
     pub im_in_bell: bool,
-    /// Notification when a resident ends a friendship, live or since last
-    /// login (Aurora-only, off by default).
+    /// Notification when a resident ends a friendship while we are online,
+    /// or a friend is no longer on the list at login (Aurora-only, off by
+    /// default).
     pub friendship_ended: bool,
 }
 
