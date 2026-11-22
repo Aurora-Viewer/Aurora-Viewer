@@ -1050,6 +1050,14 @@ impl App {
                     self.send(NetCommand::ActivateGroup(id));
                 }
             }
+            // the menu greys Join otherwise (ui::context::GroupLinkItems):
+            // checked again for a click on a menu drawn before the change
+            CtxAction::JoinGroup(id) => {
+                if crate::ui::context::GroupLinkItems::of(&self.world, id, false).join {
+                    self.group_profile_ui.join(&self.world, id);
+                }
+            }
+            CtxAction::RequestGroupData(id) => self.world.search.request_group(id),
             CtxAction::PinGroup(id) => self.world.groups.toggle_favorite(id),
             CtxAction::LeaveGroup(id) => {
                 if self.world.rlva_can_leave_group(id) {
