@@ -29,6 +29,8 @@ impl App {
     /// let go of, and the scenario's scripted pointer. `own`: the viewer's
     /// own window.
     pub(super) fn outside_frame_start(&mut self, event_loop: &ActiveEventLoop, own: &Window, renderer: &mut Renderer) {
+        let own_id = own.id();
+        self.carry.keep(|id| id == own_id || self.outside.size_of(id).is_some());
         if self.carry.frame_start(&self.egui_ctx) {
             log::info!("carry: nothing in hand any more");
         }

@@ -133,16 +133,38 @@ impl Carry {
             }
             WindowEvent::MouseInput { state, button, .. } => return self.button(ctx, id, size, *state, *button),
             WindowEvent::KeyboardInput { event, .. } if event.logical_key == Key::Named(NamedKey::Escape) => {
-                if event.state == ElementState::Pressed && self.holds() {
-                    self.let_go(ctx);
-                    self.escape = true;
-                    return (Event::Swallow, Step::LetGo);
-                }
-                if event.state == ElementState::Released && std::mem::take(&mut self.escape) {
-                    return (Event::Swallow, Step::Nothing);
-                }
+                return self.escape_key(ctx, event.state == ElementState::Pressed, event.repeat);
             }
+            // (the release of a key goes to the program that has the focus)
+            WindowEvent::Focused(false) => self.escape = false,
             _ => {}
+        }
+        (Event::Pass, Step::Nothing)
+    }
+
+    /// The windows of the viewer are those `open` says: the pointer of one
+    /// that closed goes with it, whose leaving no event tells.
+    pub fn keep(&mut self, open: impl Fn(WindowId) -> bool) {
+        self.pointers.retain(|id, _| open(*id));
+    }
+
+    /// Escape lets go of the item in hand, and goes with it to its release:
+    /// neither the press, nor what the held key repeats, closes a menu or a
+    /// window under it.
+    fn escape_key(&mut self, ctx: &egui::Context, pressed: bool, repeat: bool) -> (Event, Step) {
+        if pressed {
+            if self.holds() {
+                self.let_go(ctx);
+                self.escape = true;
+                return (Event::Swallow, Step::LetGo);
+            }
+            if self.escape && repeat {
+                return (Event::Swallow, Step::Nothing);
+            }
+            // (a new press: the release of the last one was not ours to read)
+            self.escape = false;
+        } else if std::mem::take(&mut self.escape) {
+            return (Event::Swallow, Step::Nothing);
         }
         (Event::Pass, Step::Nothing)
     }
@@ -156,9 +178,13 @@ impl Carry {
         button: MouseButton,
     ) -> (Event, Step) {
         let pressed = state == ElementState::Pressed;
-        if !pressed && self.swallowed == Some(button) {
+        if self.swallowed == Some(button) {
             self.swallowed = None;
-            return (Event::Swallow, Step::Nothing);
+            // (pressed again: its release went to another program, and
+            // this press is an ordinary one)
+            if !pressed {
+                return (Event::Swallow, Step::Nothing);
+            }
         }
         if let Some(in_hand) = &mut self.in_hand {
             return match (button, pressed) {
@@ -388,6 +414,63 @@ mod tests {
         assert!(!holding(&ctx));
         let again = carry.window_event(&ctx, target, size(), &button(MouseButton::Right, ElementState::Pressed));
         assert_eq!(again, (Event::Pass, Step::Nothing));
+    }
+
+    #[test]
+    fn escape_lets_go_of_it_and_goes_with_it_to_its_release() {
+        let ctx = egui::Context::default();
+        let mut carry = Carry::default();
+        carried(&ctx, &mut carry);
+        assert_eq!(carry.escape_key(&ctx, true, false), (Event::Swallow, Step::LetGo));
+        assert!(!carry.holds());
+        assert!(!egui::DragAndDrop::has_any_payload(&ctx));
+        // the key is held: what it repeats closes nothing under the pointer
+        assert_eq!(carry.escape_key(&ctx, true, true), (Event::Swallow, Step::Nothing));
+        assert_eq!(carry.escape_key(&ctx, false, false), (Event::Swallow, Step::Nothing));
+        // the next Escape is an ordinary one
+        assert_eq!(carry.escape_key(&ctx, true, false), (Event::Pass, Step::Nothing));
+        assert_eq!(carry.escape_key(&ctx, false, false), (Event::Pass, Step::Nothing));
+    }
+
+    /// The release went to the program that took the focus: the next press
+    /// and its release are both the window's.
+    #[test]
+    fn a_release_read_by_another_program_holds_no_later_one_back() {
+        let ctx = egui::Context::default();
+        let mut carry = Carry::default();
+        carried(&ctx, &mut carry);
+        let target = window(2);
+        carry.window_event(&ctx, target, size(), &button(MouseButton::Right, ElementState::Pressed));
+        let press = carry.window_event(&ctx, target, size(), &button(MouseButton::Right, ElementState::Pressed));
+        assert_eq!(press, (Event::Pass, Step::Nothing));
+        let release = carry.window_event(&ctx, target, size(), &button(MouseButton::Right, ElementState::Released));
+        assert_eq!(release, (Event::Pass, Step::Nothing));
+
+        carried(&ctx, &mut carry);
+        assert_eq!(carry.escape_key(&ctx, true, false), (Event::Swallow, Step::LetGo));
+        carry.window_event(&ctx, target, size(), &WindowEvent::Focused(false));
+        assert_eq!(carry.escape_key(&ctx, true, false), (Event::Pass, Step::Nothing));
+        assert_eq!(carry.escape_key(&ctx, false, false), (Event::Pass, Step::Nothing));
+    }
+
+    /// A window closed under the pointer tells no leaving: the item let go
+    /// of over another program afterwards is not kept in hand for it.
+    #[test]
+    fn the_pointer_of_a_window_that_closed_goes_with_it() {
+        let ctx = egui::Context::default();
+        let mut carry = Carry::default();
+        let (source, closed) = (window(1), window(2));
+        carry.window_event(&ctx, closed, size(), &entered());
+        carry.keep(|id| id == source);
+        egui::DragAndDrop::set_payload(&ctx, Item(7));
+        carry.window_event(&ctx, source, size(), &entered());
+        carry.window_event(&ctx, source, size(), &moved(-40.0, 300.0));
+        carry.window_event(&ctx, source, size(), &button(MouseButton::Left, ElementState::Released));
+        carry.window_event(&ctx, source, size(), &left());
+        assert!(!carry.frame_start(&ctx));
+        pass_with_release(&ctx);
+        assert!(carry.frame_start(&ctx));
+        assert!(!carry.holds());
     }
 
     #[test]
