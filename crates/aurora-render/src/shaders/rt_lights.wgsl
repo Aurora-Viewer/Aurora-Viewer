@@ -125,6 +125,10 @@ const CONFIDENCE_MAX: f32 = 20.0;
 // its own, whose shadows sweep over it, fewer.
 const HISTORY: f32 = 12.0;
 const HISTORY_MOVING: f32 = 4.0;
+// The least cosine between a pixel's normal and its history's
+// (`history_pixel`): a curve's turn over a frame of motion stays above it,
+// the other wall of a corner does not.
+const HISTORY_FACING: f32 = 0.7;
 const MAX_LIGHTS: u32 = 64u;
 // Rays a pixel traces on a frame with no history (cs_lights).
 const RESET_RAYS: u32 = 8u;
@@ -499,13 +503,19 @@ fn unpack_normal(e: vec2<f32>) -> vec3<f32> {
     return normalize(n);
 }
 
-// Last frame's pixel of the same surface, or -1.
-fn history_pixel(pixel: vec2<i32>, world: vec3<f32>, dist: f32) -> vec3<i32> {
+// Last frame's pixel of the same surface, or -1: as far from last frame's
+// eye as this point was, and turned the same way as `n`. On distance
+// alone, the pixel by a room's corner took the other wall's history, which
+// is as far: its light slid along the corner as the view moved (2026-11-22,
+// grid report), and the anti-aliasing's history spread it further.
+fn history_pixel(pixel: vec2<i32>, world: vec3<f32>, dist: f32, n: vec3<f32>) -> vec3<i32> {
     let came = back_of(pixel, world, dist);
     if (params.mode.w > 0.5 && came.at.x >= 0.0) {
         let b = clamp(vec2<i32>(came.at), vec2<i32>(0), vec2<i32>(params.screen.xy) - vec2<i32>(1));
-        let was = textureLoad(prev_guide, b, 0).z;
-        if (was > 0.0 && abs(was - came.expected) < came.tolerance) {
+        let guide = textureLoad(prev_guide, b, 0);
+        let was = guide.z;
+        if (was > 0.0 && abs(was - came.expected) < came.tolerance
+            && dot(unpack_normal(guide.xy), n) > HISTORY_FACING) {
             return vec3<i32>(b, select(0, 1, came.moving));
         }
     }
@@ -588,7 +598,7 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // last frame's choice, of the same lights (ReSTIR's temporal reuse),
     // where the lights are too many to draw among them all
-    let back = history_pixel(pixel, world, dist);
+    let back = history_pixel(pixel, world, dist, n);
     if (!few && params.mode.w > 2.5 && back.x >= 0) {
         let prev = textureLoad(prev_choice, back.xy, 0);
         let row = u32(prev.x);
@@ -840,7 +850,7 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     var sun_frames = 1.0;
     // and the colour the glass gives it, the same way (`glass_history`)
     var glass = vec4<f32>(textureLoad(sun_glass_now, pixel, 0).rgb, sun_now);
-    let back = history_pixel(pixel, world, dist);
+    let back = history_pixel(pixel, world, dist, n);
     if (back.x >= 0) {
         let h = textureLoad(prev_share, back.xy, 0);
         let longest = select(HISTORY, HISTORY_MOVING, back.z > 0);
