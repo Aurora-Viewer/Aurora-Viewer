@@ -6577,6 +6577,9 @@ controls-shot-name = このカメラ位置の名前
 controls-shot-save = 保存
 controls-shot-save-tip = カメラ位置を保存
 controls-shot-delete = 削除
+controls-position-tip = カメラの位置：アバターの後ろでカメラが止まる位置を正確に設定します
+camera-position-hint = アバターからの距離（メートル）：Ｘは前、Ｙは左、Ｚは上。Ctrl＋ホイールでカメラを上げ、Shift＋ホイールで注視点を上げます。
+camera-position-save = カメラ位置として保存…
 camera-presets = カメラのプリセット
 camera-presets-tip = カメラのプリセット：ショットを保存して再利用
 camera-presets-none = プリセットはまだありません：ショットを構図に収めて、下で保存してください。
@@ -8204,7 +8207,6 @@ photo-looks = フィルタ
 photo-looks-tip = フィルタ：写真の見た目をリアルタイムで表示
 photo-look-none = フィルタなし
 photo-look-strength = 強度
-photo-look-compare = 施行前／施行後
 photo-look-compare-tip = 線の左側はそのままのシーン、右側はフィルタ適用後です。線をドラッグして動かせます
 photo-look-before = 施行前
 photo-look-after = 施行後
@@ -8238,24 +8240,47 @@ photo-look-spotlight = スポットライト
 photo-look-the-matrix = マトリックス
 photo-look-toy-camera = トイカメラ
 photo-look-video = ビデオ
-photo-looks-replace = 選択したものを置き換え
-photo-looks-add = 上に追加
-photo-looks-stack = 有効なルック（{ $count }）
-photo-looks-empty = ルックはまだありません：下から選択してください。
-photo-looks-on-tip = このルックを描画（オフ：リストに残すが描画しない）
-photo-looks-choose-tip = 設定を表示。リストでクリックすると置き換えます
-photo-looks-remove = このルックを外す
-photo-looks-up = 上へ移動（先に描画）
-photo-looks-down = 下へ移動（後に描画）
+photo-looks-replace = 置き換え
+photo-looks-empty = エフェクトはまだありません。下のフィルタにポインタを合わせて試し、クリックするかここへドラッグしてください。
 photo-looks-settings = { $name }の設定
+photo-looks-active = 有効
+photo-looks-count = { $count }／{ $max }
+photo-looks-expand-all = すべて展開
+photo-looks-collapse-all = すべて折りたたむ
+photo-looks-hint = 上から順に適用されます。カードをドラッグするか、カード上でAlt＋↑↓を押すと並べ替えられます。カードを右クリックすると外せます。
+photo-looks-right-click-out = 右クリック：有効なエフェクトから外す
+photo-looks-drop = ここにエフェクトをドラッグするか、下から選んでクリック
+photo-looks-full = { $max }／{ $max }：１つ外すか、「置き換え」をオンにして入れ替えてください。
+photo-looks-catalogue = エフェクトカタログ
+photo-looks-catalogue-tip = エフェクトにポインタを合わせると写真で試せます。クリックで追加、または有効なエフェクトの間へドラッグします
+photo-looks-catalogue-fold = カタログの表示／非表示
+photo-looks-replace-tip = 置き換え：カタログでクリックすると、新しく追加せずに選択中のカードを入れ替えます
+photo-looks-replacing = クリックで{ $name }を入れ替え
+photo-looks-done = 完了
+photo-looks-take-out-zone = ここにドロップして外す
+photo-looks-hide = { $name }を非表示（位置はそのまま）
+photo-looks-show = { $name }を表示
+photo-looks-more = その他の操作
+photo-looks-move-up = 上へ移動
+photo-looks-move-down = 下へ移動
+photo-looks-replace-one = 置き換え…
+photo-looks-take-out = 外す
+photo-looks-not-in-360-tag = ３６０°非対応
+photo-looks-all = すべて
+photo-looks-favorites = お気に入り：星を付けたすべてのエフェクト
+photo-looks-favorites-empty = お気に入りはまだありません。エフェクトにポインタを合わせて星をクリックすると、そのリストの先頭とここに表示されます。
+photo-looks-favorite = お気に入りに追加
+photo-looks-unfavorite = お気に入りから削除
+photo-looks-card = { $name }、{ $count }件中{ $place }番目。Alt＋矢印キーで移動します。
 photo-looks-reset = デフォルト値
-photo-looks-legacy-note = レガシービューアのフィルタには、レガシービューアと同様に強さ以外の設定はありません。
+photo-looks-legacy-note = レガシービューアのフィルタには追加の設定はありません。
 photo-looks-lut-note = ＬＵＴはそのまま適用されます：設定できるのは強さのみです。
 photo-knob-amount = 量
 photo-knob-grain-size = 粒子のサイズ
 photo-knob-contrast = コントラスト
 photo-knob-grain = 粒子
-photo-knob-strength = 強度
+photo-knob-toning = 調色
+photo-knob-local-contrast = ローカルコントラスト
 photo-knob-shadows = 影
 photo-knob-lights = 光源
 photo-knob-middle = 中間調
@@ -14685,6 +14710,56 @@ blender-live-linkset-counts =
     }
 blender-object-linkset = { $name }‐ルート#1・{ $prims }個のプリム
 blender-object-linked-prim = #{ $number }個・{ $name }
+blender-live-tab-place = 配置
+blender-live-tab-avatar = アバター
+blender-live-objects-help = Blenderが送信しているメッシュです。選択すると配置でき、メニューからインポートできます。
+blender-live-more = その他
+blender-live-place = 配置
+blender-live-linked-prims = リンクされたプリムを表示または非表示
+blender-live-tag-rigged = リグ付き
+blender-live-card-rigged = { $triangles ->
+        [one] { $triangles }個の三角形
+       *[other] { $triangles }個の三角形
+    }
+blender-live-card-static = 静的・{ $triangles ->
+        [one] { $triangles }個の三角形
+       *[other] { $triangles }個の三角形
+    }
+blender-live-card-linkset = 静的・{ $prims ->
+        [one] { $prims }個のプリム
+       *[other] { $prims }個のプリム
+    }・{ $triangles ->
+        [one] { $triangles }個の三角形
+       *[other] { $triangles }個の三角形
+    }
+blender-live-triangles = { $triangles ->
+        [one] { $triangles }個の三角形
+       *[other] { $triangles }個の三角形
+    }
+blender-live-place-help = 選択した静的メッシュの場所です。リグ付きメッシュは常にアバターに追従します。
+blender-live-place-none = 配置する静的オブジェクトを選択してください。
+blender-live-where = 場所
+blender-live-transform = 位置、回転、サイズ
+blender-live-size-note = サイズはBlenderから送られる寸法に掛けられるため、Blenderでの後の編集でも保持されます。
+blender-live-avatar-help = リグ付きメッシュ用：シェイプをBlenderに送り、それに合わせてモデリングします。
+blender-live-shape-section = Blender内のシェイプ
+blender-live-import-help = 通常のインポート用にオブジェクトのスナップショットを固定します：確認、料金、そして確定。Blenderでの後の編集は反映されません。
+blender-live-from = 元
+blender-live-plugins-help = Auroraは各Blenderに対応するプラグインをインストールし、以前のものをバックアップし、古いバージョンをインストールすることはありません。
+blender-live-ago-seconds = { $count }秒
+blender-live-ago-minutes = { $count }分
+blender-live-ago-hours = { $count }時間
+blender-live-changed-tip = Blenderでこのオブジェクトが最後に変更されてからの時間
+blender-live-show-all = すべて表示
+blender-live-hide-all = すべて非表示
+blender-live-bend-section = ウェイトを確認
+blender-live-elbows = 肘
+blender-live-knees = 膝
+blender-live-bend-hold = アニメーションの代わりにこのポーズを保持
+blender-live-bend-note = 曲げはあなたのアバター上で、あなたにだけ見えます。アニメーション、他の住人からの見え方、インポートは変わりません。
+blender-live-levels = 詳細レベル
+blender-live-levels-pending = インポートをクリックすると、Blenderが詳細レベルを準備します。
+blender-live-levels-note = 各オブジェクトのLiveMesh設定に基づいてBlenderで準備されます。
 
 inventory-bulk-permissions = 権限の一括変更
 inventory-bulk-adjust = アイテムの権限を調整
