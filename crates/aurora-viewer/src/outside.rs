@@ -232,6 +232,19 @@ fn unseen(open: impl Iterator<Item = (egui::ViewportId, bool)>, seen: &[egui::Id
         .collect()
 }
 
+/// Frames a window whose renderer was replaced has to ask for its new
+/// window: its next pass asks, the frame after opens it. One closed or
+/// hidden meanwhile is a new window when it goes outside again, at a new
+/// place and with the focus.
+const ASKS_WITHIN: u8 = 3;
+
+/// A frame went by for a window that waits for the one that replaces it:
+/// whether it still waits.
+fn still_waited(frames_left: &mut u8) -> bool {
+    *frames_left = frames_left.saturating_sub(1);
+    *frames_left > 0
+}
+
 /// What a window outside was when the renderer was replaced, for the one
 /// that takes its place.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -245,8 +258,9 @@ pub(crate) struct Outside {
     /// Shared with egui's function for the passes of this thread.
     shared: Rc<RefCell<Shared>>,
     /// The windows of the interface a replaced renderer left without a
-    /// surface (`renderer_replaced`), until each asks for its new window.
-    replaced: std::collections::HashMap<egui::ViewportId, Was>,
+    /// surface (`renderer_replaced`), until each asks for its new window,
+    /// which it does within `ASKS_WITHIN` frames or not at all.
+    replaced: std::collections::HashMap<egui::ViewportId, (Was, u8)>,
     /// Closed windows whose surface the render thread still has, by key.
     closing: Vec<(u64, Arc<Window>)>,
     /// Keys given so far: one names a window for the renderer.
@@ -467,10 +481,13 @@ impl Outside {
             if native.of_interface {
                 self.replaced.insert(
                     id,
-                    Was {
-                        at: native.window.outer_position().ok(),
-                        focused: native.focused,
-                    },
+                    (
+                        Was {
+                            at: native.window.outer_position().ok(),
+                            focused: native.focused,
+                        },
+                        ASKS_WITHIN,
+                    ),
                 );
             }
         }
@@ -560,7 +577,7 @@ impl Outside {
             if self.is_open(id) {
                 continue;
             }
-            let was = self.replaced.remove(&id);
+            let was = self.replaced.remove(&id).map(|(was, _)| was);
             match self.open(event_loop, renderer, ctx, id, attributes(&ask, was), false) {
                 Ok(()) => {
                     if let Some(native) = self.shared.borrow_mut().windows.get_mut(&id) {
@@ -576,6 +593,7 @@ impl Outside {
                 }
             }
         }
+        self.replaced.retain(|_, (_, frames_left)| still_waited(frames_left));
     }
 
     /// A native window for `id`, drawn by `renderer` from the next frame
@@ -874,6 +892,16 @@ mod tests {
         assert_eq!(input.max_texture_side, Some(8192));
         // the window's own events, and no other
         assert_eq!(input.events, [egui::Event::PointerMoved(egui::pos2(10.0, 20.0))]);
+    }
+
+    #[test]
+    fn a_window_replaced_with_the_renderer_is_awaited_a_few_frames_only() {
+        let mut left = ASKS_WITHIN;
+        // the pass that asks, then the frame that opens it
+        assert!(still_waited(&mut left));
+        assert!(still_waited(&mut left));
+        assert!(!still_waited(&mut left));
+        assert!(!still_waited(&mut left));
     }
 
     fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {

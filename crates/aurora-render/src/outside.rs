@@ -202,6 +202,10 @@ impl Surfaces {
                         }
                         Err(why) => {
                             log::warn!("window outside {key:x}: {why}");
+                            // (the surface before its window, as an entry
+                            // drops them)
+                            drop(surface);
+                            drop(keep);
                             self.events.push(OutsideEvent::Failed(key, why));
                         }
                     }
