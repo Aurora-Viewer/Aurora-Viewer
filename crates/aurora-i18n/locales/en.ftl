@@ -6634,6 +6634,9 @@ controls-shot-name = Name of this camera position
 controls-shot-save = Save
 controls-shot-save-tip = Save the camera position
 controls-shot-delete = Delete
+controls-position-tip = Camera position: set where the camera rests behind the avatar, exactly
+camera-position-hint = In meters from the avatar: X forward, Y left, Z up. Ctrl + wheel raises the camera, Shift + wheel the focus point.
+camera-position-save = Save as camera position…
 camera-presets = Camera presets
 camera-presets-tip = Camera presets: save the shot, use it again
 camera-presets-none = No preset yet: frame a shot, then save it below.
@@ -8274,7 +8277,6 @@ photo-looks = Filters
 photo-looks-tip = Filters: the photo's look, shown live
 photo-look-none = No filter
 photo-look-strength = Strength
-photo-look-compare = Before / after
 photo-look-compare-tip = The scene as it is left of the line, with the filter on its right; drag the line to move it
 photo-look-before = Before
 photo-look-after = After
@@ -8308,24 +8310,47 @@ photo-look-spotlight = Spotlight
 photo-look-the-matrix = The Matrix
 photo-look-toy-camera = Toy Camera
 photo-look-video = Video
-photo-looks-replace = Replace the chosen one
-photo-looks-add = Add on top
-photo-looks-stack = Active looks ({ $count })
-photo-looks-empty = No look yet: choose one below.
-photo-looks-on-tip = Draw this look (unticked: kept in the list, not drawn)
-photo-looks-choose-tip = Show its settings; a click in the list replaces it
-photo-looks-remove = Take this look out
-photo-looks-up = Move up (drawn earlier)
-photo-looks-down = Move down (drawn later)
+photo-looks-replace = Replace
+photo-looks-empty = No effect yet. Point at a filter below to try it, then click it or drag it here.
 photo-looks-settings = Settings of { $name }
+photo-looks-active = Active
+photo-looks-count = { $count } of { $max }
+photo-looks-expand-all = Expand all
+photo-looks-collapse-all = Collapse all
+photo-looks-hint = Applied from top to bottom. Drag a card to reorder it, or press Alt + ↑ ↓ on it. Right-click a card to take it out.
+photo-looks-right-click-out = Right-click: take it out of the active effects
+photo-looks-drop = Drag an effect here, or click one below
+photo-looks-full = { $max } of { $max }: take one out, or turn on Replace to swap one.
+photo-looks-catalogue = Effects catalogue
+photo-looks-catalogue-tip = Point at an effect to try it on the photo; click it to add it, or drag it among the active ones
+photo-looks-catalogue-fold = Show or hide the catalogue
+photo-looks-replace-tip = Replace: a click in the catalogue swaps the chosen card instead of adding a new one
+photo-looks-replacing = A click swaps { $name }
+photo-looks-done = Done
+photo-looks-take-out-zone = Drop here to take it out
+photo-looks-hide = Hide { $name } (it keeps its place)
+photo-looks-show = Show { $name }
+photo-looks-more = More actions
+photo-looks-move-up = Move up
+photo-looks-move-down = Move down
+photo-looks-replace-one = Replace…
+photo-looks-take-out = Take out
+photo-looks-not-in-360-tag = Not in 360°
+photo-looks-all = All
+photo-looks-favorites = Favourites: every effect you starred
+photo-looks-favorites-empty = No favourite yet. Point at an effect and click its star: it shows first in its list, and here.
+photo-looks-favorite = Add to favourites
+photo-looks-unfavorite = Remove from favourites
+photo-looks-card = { $name }, { $place } of { $count }. Alt + arrow keys move it.
 photo-looks-reset = Default values
-photo-looks-legacy-note = The Legacy Viewer's filters have no settings, as in the Legacy Viewer: only their strength.
+photo-looks-legacy-note = Legacy Viewer filters have no additional settings.
 photo-looks-lut-note = A LUT is applied as it is: only its strength.
 photo-knob-amount = Amount
 photo-knob-grain-size = Grain size
 photo-knob-contrast = Contrast
 photo-knob-grain = Grain
-photo-knob-strength = Strength
+photo-knob-toning = Toning
+photo-knob-local-contrast = Local contrast
 photo-knob-shadows = Shadows
 photo-knob-lights = Lights
 photo-knob-middle = Middle tones
@@ -14819,6 +14844,59 @@ blender-live-linkset-counts =
     }
 blender-object-linkset = { $name } — root #1 · { $prims } prims
 blender-object-linked-prim = #{ $number } · { $name }
+blender-live-tab-place = Place
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = The meshes Blender is sending. Select one to place it, or import it from its menu.
+blender-live-more = More
+blender-live-place = Place
+blender-live-linked-prims = Show or hide the linked prims
+blender-live-tag-rigged = Rigged
+blender-live-card-rigged = { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-card-static = Static · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-card-linkset = Static · { $prims ->
+        [one] { $prims } prim
+       *[other] { $prims } prims
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-triangles = { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-place-help = Where the selected static mesh is. Rigged meshes always follow your avatar.
+blender-live-place-none = Select a static object to place it.
+blender-live-where = Where
+blender-live-transform = Position, rotation and size
+blender-live-size-note = Size multiplies what Blender sends, so later edits in Blender keep it.
+blender-live-avatar-help = For rigged meshes: send your shape to Blender to model on it.
+blender-live-shape-section = Your shape in Blender
+blender-live-import-help = Freezes a snapshot of the object for the normal import: review, price, then confirm. Later edits in Blender do not change it.
+blender-live-from = From
+blender-live-plugins-help = Aurora installs the matching plug-in in each Blender, keeps a backup of the previous one and never installs an older version.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Time since Blender last changed this object
+blender-live-show-all = Show all
+blender-live-hide-all = Hide all
+blender-live-bend-section = Check the weights
+blender-live-elbows = Elbows
+blender-live-knees = Knees
+blender-live-bend-hold = Hold this pose instead of my animations
+blender-live-bend-note = Only you see the bend, on your avatar. Your animations, other residents' view and the import are unchanged.
+blender-live-levels = Levels of detail
+blender-live-levels-pending = Blender prepares the levels of detail when you click Import.
+blender-live-levels-note = Prepared in Blender from each object's LiveMesh settings.
+blender-live-quick-look-tip = Quick look: see this object larger
+blender-live-quick-look-drag = Drag to turn it, double-click to face it again.
+blender-live-quick-look-changed = Changed in Blender { $ago } ago.
 
 inventory-bulk-permissions = Bulk permissions
 inventory-bulk-adjust = Adjust item permissions

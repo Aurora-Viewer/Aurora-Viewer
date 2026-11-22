@@ -6642,6 +6642,9 @@ controls-shot-name = Nom de cette position de caméra
 controls-shot-save = Enregistrer
 controls-shot-save-tip = Enregistrer la position de la caméra
 controls-shot-delete = Supprimer
+controls-position-tip = Position de la caméra : régler précisément où la caméra se place derrière l'avatar
+camera-position-hint = En mètres depuis l'avatar : X devant, Y à gauche, Z en haut. Ctrl + molette monte la caméra, Maj + molette le point visé.
+camera-position-save = Enregistrer comme position de caméra…
 camera-presets = Presets caméra
 camera-presets-tip = Presets caméra : enregistrer le cadrage, le reprendre
 camera-presets-none = Aucun preset pour l'instant : cadrez, puis enregistrez ci-dessous.
@@ -8282,7 +8285,6 @@ photo-looks = Filtres
 photo-looks-tip = Filtres : le rendu de la photo, visible en direct
 photo-look-none = Aucun filtre
 photo-look-strength = Intensité
-photo-look-compare = Avant / après
 photo-look-compare-tip = La scène telle quelle à gauche de la ligne, avec le filtre à sa droite ; faites glisser la ligne pour la déplacer
 photo-look-before = Avant
 photo-look-after = Après
@@ -8316,24 +8318,47 @@ photo-look-spotlight = Projecteur
 photo-look-the-matrix = Matrix
 photo-look-toy-camera = Toy Camera
 photo-look-video = Vidéo
-photo-looks-replace = Remplacer l'effet choisi
-photo-looks-add = Ajouter par-dessus
-photo-looks-stack = Effets actifs ({ $count })
-photo-looks-empty = Aucun effet pour l'instant : choisissez-en un ci-dessous.
-photo-looks-on-tip = Dessiner cet effet (décoché : gardé dans la liste, pas dessiné)
-photo-looks-choose-tip = Afficher ses réglages ; un clic dans la liste le remplace
-photo-looks-remove = Retirer cet effet
-photo-looks-up = Monter (dessiné plus tôt)
-photo-looks-down = Descendre (dessiné plus tard)
+photo-looks-replace = Remplacer
+photo-looks-empty = Aucun effet pour l'instant. Pointez un filtre ci-dessous pour l'essayer, puis cliquez dessus ou faites-le glisser ici.
 photo-looks-settings = Réglages de { $name }
+photo-looks-active = Actifs
+photo-looks-count = { $count } sur { $max }
+photo-looks-expand-all = Tout déplier
+photo-looks-collapse-all = Tout replier
+photo-looks-hint = Appliqués de haut en bas. Faites glisser une carte pour la déplacer, ou appuyez sur Alt + ↑ ↓ dessus. Un clic droit sur une carte la retire.
+photo-looks-right-click-out = Clic droit : le retirer des effets actifs
+photo-looks-drop = Faites glisser un effet ici, ou cliquez-en un ci-dessous
+photo-looks-full = { $max } sur { $max } : retirez-en un, ou activez Remplacer pour en échanger un.
+photo-looks-catalogue = Catalogue d'effets
+photo-looks-catalogue-tip = Pointez un effet pour l'essayer sur la photo ; cliquez pour l'ajouter, ou faites-le glisser parmi les effets actifs
+photo-looks-catalogue-fold = Afficher ou masquer le catalogue
+photo-looks-replace-tip = Remplacer : un clic dans le catalogue échange la carte choisie au lieu d'en ajouter une
+photo-looks-replacing = Un clic échange { $name }
+photo-looks-done = Terminé
+photo-looks-take-out-zone = Déposez ici pour le retirer
+photo-looks-hide = Masquer { $name } (il garde sa place)
+photo-looks-show = Afficher { $name }
+photo-looks-more = Plus d'actions
+photo-looks-move-up = Monter
+photo-looks-move-down = Descendre
+photo-looks-replace-one = Remplacer…
+photo-looks-take-out = Retirer
+photo-looks-not-in-360-tag = Pas en 360°
+photo-looks-all = Tous
+photo-looks-favorites = Favoris : tous les effets que vous avez étoilés
+photo-looks-favorites-empty = Aucun favori pour l'instant. Pointez un effet et cliquez sur son étoile : il s'affiche en premier dans sa liste, et ici.
+photo-looks-favorite = Ajouter aux favoris
+photo-looks-unfavorite = Retirer des favoris
+photo-looks-card = { $name }, { $place } sur { $count }. Alt + flèches pour le déplacer.
 photo-looks-reset = Valeurs par défaut
-photo-looks-legacy-note = Les filtres Legacy n'ont pas de réglages, comme dans le Legacy Viewer : seulement leur intensité.
+photo-looks-legacy-note = Les filtres du Legacy Viewer n'ont pas d'autres réglages.
 photo-looks-lut-note = Une LUT s'applique telle quelle : seulement son intensité.
 photo-knob-amount = Quantité
 photo-knob-grain-size = Taille du grain
 photo-knob-contrast = Contraste
 photo-knob-grain = Grain
-photo-knob-strength = Force
+photo-knob-toning = Virage
+photo-knob-local-contrast = Contraste local
 photo-knob-shadows = Ombres
 photo-knob-lights = Lumières
 photo-knob-middle = Tons moyens
@@ -14824,6 +14849,59 @@ blender-live-linkset-counts =
     }
 blender-object-linkset = { $name } — root #1 · { $prims } prims
 blender-object-linked-prim = #{ $number } · { $name }
+blender-live-tab-place = Placer
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = Les maillages que Blender envoie. Sélectionnez-en un pour le placer, ou importez-le depuis son menu.
+blender-live-more = Plus
+blender-live-place = Placer
+blender-live-linked-prims = Afficher ou masquer les prims liées
+blender-live-tag-rigged = Riggé
+blender-live-card-rigged = { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-card-static = Statique · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-card-linkset = Statique · { $prims ->
+        [one] { $prims } prim
+       *[other] { $prims } prims
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-triangles = { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-place-help = L’emplacement du maillage statique sélectionné. Les maillages riggés suivent toujours votre avatar.
+blender-live-place-none = Sélectionnez un objet statique pour le placer.
+blender-live-where = Emplacement
+blender-live-transform = Position, rotation et taille
+blender-live-size-note = La taille multiplie ce que Blender envoie : les modifications suivantes dans Blender la conservent.
+blender-live-avatar-help = Pour les maillages riggés : envoyez votre silhouette à Blender pour modéliser dessus.
+blender-live-shape-section = Votre silhouette dans Blender
+blender-live-import-help = Fige un instantané de l’objet pour l’import normal : vérification, prix, puis confirmation. Les modifications suivantes dans Blender ne le changent pas.
+blender-live-from = Source
+blender-live-plugins-help = Aurora installe le plug-in correspondant dans chaque Blender, garde une sauvegarde du précédent et n’installe jamais une version plus ancienne.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Temps écoulé depuis la dernière modification de cet objet dans Blender
+blender-live-show-all = Tout afficher
+blender-live-hide-all = Tout masquer
+blender-live-bend-section = Vérifier les poids
+blender-live-elbows = Coudes
+blender-live-knees = Genoux
+blender-live-bend-hold = Garder cette pose au lieu de mes animations
+blender-live-bend-note = Vous seul voyez la flexion, sur votre avatar. Vos animations, ce que voient les autres résidents et l’import ne changent pas.
+blender-live-levels = Niveaux de détail
+blender-live-levels-pending = Blender prépare les niveaux de détail quand vous cliquez sur Importer.
+blender-live-levels-note = Préparés dans Blender d’après les réglages LiveMesh de chaque objet.
+blender-live-quick-look-tip = Aperçu rapide : voir cet objet en plus grand
+blender-live-quick-look-drag = Faites glisser pour le tourner, double-cliquez pour le remettre de face.
+blender-live-quick-look-changed = Modifié dans Blender il y a { $ago }.
 
 inventory-bulk-permissions = Permissions par lot
 inventory-bulk-adjust = Modifier les permissions des éléments

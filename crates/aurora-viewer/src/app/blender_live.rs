@@ -59,6 +59,7 @@ impl App {
             && self.imports.pending_files.is_none()
             && self.imports.entries.len() < 512
             && !self.blender_live.import.busy();
+        self.blender_live.update_thumbnails(&self.scene.jobs, ctx);
         if self.blender_live.show(ctx, palette, can_upload) {
             self.blender_live.start_requested = true;
         }
@@ -109,6 +110,12 @@ impl App {
     }
 
     pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
+        // the Avatar tab's bend shows on our avatar while the preview runs
+        self.scene.preview_bend = if self.blender_live.running() {
+            self.blender_live.bend
+        } else {
+            Default::default()
+        };
         self.blender_live.capture_placements(&mut self.world);
         if let Some((source, action)) = self.blender_live.object_action.take() {
             let source = if matches!(
@@ -216,6 +223,16 @@ impl App {
             if mode == "plugins" || mode.starts_with("installer-") {
                 self.blender_live.tab = crate::blender_live::Tab::Plugins;
             }
+            // the window's other tabs, for the captures
+            use crate::blender_live::Tab;
+            match std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").unwrap_or_default().as_str() {
+                "place" => self.blender_live.tab = Tab::Place,
+                "avatar" => self.blender_live.tab = Tab::Avatar,
+                "import" => self.blender_live.tab = Tab::Import,
+                "plugins" => self.blender_live.tab = Tab::Plugins,
+                _ => {}
+            }
+            let quick_look = std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look");
             self.blender_live.installer.demo(&mode);
             if mode.starts_with("shape") {
                 self.demo_blender_shape(mode == "shape-readonly");
@@ -229,6 +246,9 @@ impl App {
                 Ok(snapshot) if !mode.starts_with("shape") && mode != "lods" => {
                     self.blender_live.receive(snapshot);
                     self.blender_live.owner = Some(self.world.agent_id);
+                    if quick_look && let Some(source) = self.blender_live.selected {
+                        self.blender_live.open_quick_look(source);
+                    }
                     if mode == "objects" {
                         let ids: Vec<_> = self
                             .blender_live

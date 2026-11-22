@@ -49,11 +49,12 @@ independent previews and preserves their current placement. Paused or absent
 roots are not referenced. Linksets require the viewer's `object-links` capability.
 
 Static objects initially appear on the floor two metres in front of your
-avatar. Select the source in Aurora's **LiveMesh** window to **Edit**, **Drop
+avatar. Select the source in Aurora's **LiveMesh** window, then open its
+**Place** tab (or **Place** in the card's **…** menu) to **Edit**, **Drop
 to ground**, **Derez**, **Attach to** a body point or **Attach to HUD**. **Detach**
 removes a worn preview; **Rez** brings it back. Derez/detach keep the source in
-the list and subsequent Blender edits never rez it automatically. The visible
-checkbox remains independent. **Stop** clears all session previews and placement.
+the list and subsequent Blender edits never rez it automatically. The card's
+eye remains independent. **Stop** clears all session previews and placement.
 
 **Edit** uses the normal Aurora translation, rotation and size tools, with the
 same controls for body attachments and HUDs. Right-clicking any prim opens the
@@ -112,7 +113,7 @@ script is started. Rigged sources continue to follow the avatar as before.
    - **Blender 2.93–4.1:** choose the **classic add-on** package in Aurora.
      In Blender, open Preferences → Add-ons → Install, select the ZIP,
      then enable **3D View: Aurora LiveMesh**. Keep the ZIP intact.
-3. In Aurora's **LiveMesh** window, open the **Connection** tab and click **Enable preview**.
+3. In Aurora's **LiveMesh** window, click **Enable preview** on the status line above the tabs.
    The plug-in finds the preview's key by itself (see "Wire protocol v1").
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
@@ -222,19 +223,46 @@ to publish additions, pauses, resumptions, removals or grouping changes.
 The add-on reconnects automatically when Aurora becomes available again,
 resending its latest snapshot. Disconnecting Blender leaves the last good
 preview visible. Aurora's **Stop and remove** closes the listener and removes
-the preview; **Remove meshes** withdraws all current objects until restored.
+the preview; **Remove meshes** (in the folded **Connection** section of the
+**Objects** tab) withdraws all current objects until restored.
 Closing the window keeps the bridge active. The listener is
 off on each viewer launch, and changing accounts stops it.
 
 ## Manage objects and upload in Aurora
 
-Aurora's **Build → LiveMesh** lists each source object by its Blender
-name, even if it spans several render batches. The window separates
-**Connection**, **Objects** and **Plugins** with horizontal lines and plain headings.
-Connection status appears beside the section title; port, loopback address and
-the start/stop button share a single line below it.
-Uncheck an object to hide it
-temporarily; rechecking displays its latest geometry and materials.
+Aurora's **Build → LiveMesh** window follows the Director's layout: a status
+line (link, revision, time since the last snapshot, **Enable preview** or
+**Stop and remove**) above five tabs.
+
+- **Objects**: one card per source object, by its Blender name, even if it
+  spans several render batches. A small live thumbnail shows the object as
+  Blender last sent it, in its rest pose; it is rebuilt in the background
+  once an object stops changing for 0.4 s, so a drag in Blender does not
+  rebuild it at each revision. Click it for **Quick look**, a larger view
+  under the cards: drag to turn it, double-click to face it again. The line under the name says whether it is
+  static or rigged (a **Rigged** tag), its prims and its triangles. A linkset's
+  card unfolds to its prims (`#2 · Frame`). On the right, the time since
+  Blender last changed that object (teal for the first five seconds): a
+  revision that leaves an object as it was does not reset its time.
+  Clicking a name selects the object; the **…** menu imports it or opens
+  **Place**. **Show all** and **Hide all** act on every object not removed. The folded
+  **Connection** section holds the port, the loopback address and **Remove
+  meshes**.
+- **Place**: where the selected static object is, its placement actions, and
+  its position, rotation and size.
+- **Avatar**: **Check the weights** bends your avatar's **Elbows** and
+  **Knees** (0–150°) on top of what it plays, or of its rest pose with
+  **Hold this pose instead of my animations**, to see how a rigged mesh in
+  progress deforms. The bend is drawn for you only, while the preview runs:
+  nothing is sent, and your animations, other residents' view and the import
+  are unchanged. The axes are those of the mesh importer's test bend. Then
+  the shape transfer (below).
+- **Import**: the selected object frozen into the mesh importer, with the
+  triangles of its four levels of detail once Blender has prepared them.
+- **Plugins**: the plug-in in each Blender found, and the manual ZIP.
+
+Click an object's eye to hide it temporarily; showing it again displays its
+latest geometry and materials.
 **Remove meshes** withdraws all sources from the list and avatar preview.
 Subsequent live revisions keep them removed. To bring them back, restart the
 preview and use **Update now** in Blender. These controls affect Aurora's
@@ -246,7 +274,8 @@ reordering. Settings reset when a source stops being sent (for example, when
 disabled/removed in Blender), when stopping the bridge or changing accounts.
 Older plug-ins use names as their identity, so renaming starts a new entry.
 
-Each object has its own **Import** button on its row, with no selection required.
+**Import** (the **Import** tab's button, or the card's **…** menu) takes the
+selected object.
 With plug-in 0.11.0+, it asks Blender to prepare the current object and all
 three lower LODs, then opens them in the normal mesh importer. All four levels
 are assigned automatically. All parts, weights, inverse binds, UVs, colors and
@@ -640,7 +669,7 @@ externally edited image in Blender; **Update now** also refreshes image caches.
 
 ### Send your shape to Blender
 
-With plug-in **0.10.0+** connected, Aurora's LiveMesh **Connection** section
+With plug-in **0.10.0+** connected, Aurora's LiveMesh **Avatar** tab
 offers **Add a skeleton with my shape** and **Apply my shape to the selected
 skeleton**. Aurora requires the worn shape's resolved inventory item
 to belong to you and grant **Modify**. Missing inventory data or a no-modify

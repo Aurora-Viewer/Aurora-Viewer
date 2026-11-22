@@ -231,6 +231,10 @@ pub struct Prefs {
     /// camera as it is, level, as before the framing was kept (the human's
     /// request, 2026-11-22).
     pub keep_framing: bool,
+    /// Where the filters panel was moved: its top left in fractions of the
+    /// screen (None: left of the dock). Its top stays there: it grows and
+    /// shrinks from its bottom.
+    pub filters_at: Option<[f32; 2]>,
 }
 
 impl Default for Prefs {
@@ -247,6 +251,7 @@ impl Default for Prefs {
             dof_defaulted: false,
             reel_at: None,
             keep_framing: true,
+            filters_at: None,
         }
     }
 }
