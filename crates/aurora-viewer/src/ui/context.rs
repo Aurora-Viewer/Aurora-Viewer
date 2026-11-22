@@ -769,7 +769,7 @@ pub fn show(
     // eight slices of Firestorm's default pie menu, PieMenu::draw)
     let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::unique(HOVERED)).flatten());
     if hovered != before {
-        if let Some(i) = hovered.filter(|i| *i < 8) {
+        if let Some(i) = hovered.filter(|i| use_pie && !customization.force_list() && *i < 8) {
             super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i as u8));
         }
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique(HOVERED), hovered));
