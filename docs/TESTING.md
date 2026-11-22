@@ -12859,6 +12859,7 @@ What the inventory must show with these scenarios:
 | `AURORA_RT_REFLECTIONS=1` or `0` | Ray-traced reflections forced on or off for this launch |
 | `AURORA_RT_EMITTER=sphere` | A lamp's traced rays stop at the sphere around its prim instead of passing that prim alone |
 | `AURORA_RT_LAMPS=low`, `medium` or `high` | The traced lamps' quality for this launch, whatever the settings say (to measure each) |
+| `AURORA_RT_POSED_BUILD=trace` or `build` | The avatars' traced levels built for a fast trace instead of a fast build (the default), to measure both; the picture is the same |
 | `AURORA_SOFT_SHADOWS=0`, `1` or `alt` | Soft sun shadows off, on or one second in two for this launch |
 | `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across; the real sun, 0.53 degrees, is a softness of 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
 | `AURORA_SOFT_PROJECTORS=0` | With the soft shadows, the projectors keep their 5-tap shadows (to measure their cost apart) |

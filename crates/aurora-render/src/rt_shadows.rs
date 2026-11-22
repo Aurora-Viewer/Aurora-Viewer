@@ -3099,7 +3099,7 @@ impl Poser {
             let blas = device.create_blas(
                 &wgpu::CreateBlasDescriptor {
                     label: Some("rt shadows skeleton"),
-                    flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
+                    flags: posed_build_flags(),
                     update_mode: wgpu::AccelerationStructureUpdateMode::Build,
                 },
                 wgpu::BlasGeometrySizeDescriptors::Triangles {
@@ -4848,6 +4848,25 @@ pub(crate) fn forced_tuning(tuning: crate::RtTuning) -> crate::RtTuning {
     static FORCED: OnceLock<Option<LampQuality>> = OnceLock::new();
     let forced = FORCED.get_or_init(|| std::env::var("AURORA_RT_LAMPS").ok().as_deref().and_then(LampQuality::named));
     forced.map_or(tuning, |q| q.apply(tuning))
+}
+
+/// The build flags of the skeletons' bottom levels: `PREFER_FAST_BUILD`, as
+/// they are built again whenever their pose drifts, or `PREFER_FAST_TRACE`
+/// with `AURORA_RT_POSED_BUILD=trace`, to measure on the grid what every
+/// ray near people gains against what each build costs. The same
+/// triangles either way: the picture does not change.
+fn posed_build_flags() -> wgpu::AccelerationStructureFlags {
+    static FLAGS: OnceLock<wgpu::AccelerationStructureFlags> = OnceLock::new();
+    *FLAGS.get_or_init(|| posed_build_named(std::env::var("AURORA_RT_POSED_BUILD").ok().as_deref()))
+}
+
+/// [`posed_build_flags`] from the variable's value: `trace` the fast
+/// trace, anything else (`build`, unset) the fast build.
+fn posed_build_named(value: Option<&str>) -> wgpu::AccelerationStructureFlags {
+    match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("trace") => wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
+        _ => wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
+    }
 }
 
 /// How many of the frame's first lights cast traced shadows, as
@@ -7298,6 +7317,17 @@ mod tests {
                 count
             );
         }
+    }
+
+    /// `AURORA_RT_POSED_BUILD`: `trace` alone asks the fast trace.
+    #[test]
+    fn rt_shadows_posed_build_flags_by_name() {
+        use wgpu::AccelerationStructureFlags as F;
+        assert_eq!(posed_build_named(None), F::PREFER_FAST_BUILD);
+        assert_eq!(posed_build_named(Some("build")), F::PREFER_FAST_BUILD);
+        assert_eq!(posed_build_named(Some(" Trace ")), F::PREFER_FAST_TRACE);
+        assert_eq!(posed_build_named(Some("")), F::PREFER_FAST_BUILD);
+        assert_eq!(posed_build_named(Some("fast")), F::PREFER_FAST_BUILD);
     }
 
     /// High is the lamps' pass as it was: the defaults, and the shader's
