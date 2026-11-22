@@ -1740,6 +1740,56 @@ fn poser_poses_and_exports_a_shape_that_leaves_a_joint_almost_flat() {
     );
 }
 
+#[test]
+fn poser_upload_keeps_both_subjects_and_prepares_the_next_without_restarting() {
+    let (mut world, mut editor) = fixture();
+    let peer = demo::poser::PEER;
+    world.avatar_poses.insert(peer, world.avatar_poses[&world.agent_id].clone());
+    let mut consent = std::mem::take(&mut world.poser_consent);
+    consent.request(&world, peer, Instant::now());
+    consent.demo_accept(&world, peer, std::time::Duration::ZERO);
+    world.poser_consent = consent;
+    let rig = world.avatar_lib.rig.clone();
+    let head = rig.names["mHead"];
+    let mut expected = Vec::new();
+    for (subject, angle) in [(world.agent_id, 0.4), (peer, -0.6)] {
+        editor.pick_subject(&world, subject);
+        let session = editor.poser.sessions.get_mut(&subject).unwrap();
+        session.checkpoint();
+        Arc::make_mut(&mut session.pose).rotations[head] = Quat::from_rotation_z(angle) * rig.local_rot[head];
+        expected.push((subject, session.pose.clone(), session.undo.len()));
+    }
+    let (jobs, _) = Jobs::new();
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let ctx = egui::Context::default();
+    editor.poser.storage.ready = true;
+    // The import preview may be cancelled, or stay open while the second
+    // subject is prepared. Neither case should release either pose.
+    for (subject, name) in [(world.agent_id, "Our pose"), (peer, "Their pose")] {
+        editor.pick_subject(&world, subject);
+        editor.poser.name = name.into();
+        let frame = editor.editor_frame(&world).unwrap();
+        editor.import_pose(&rig, &frame);
+        editor.tick_pose_storage(&jobs, &ctx, &world);
+        editor.tick_pose_storage(&jobs, &ctx, &world);
+        let prepared = editor.take_clip_imports();
+        assert_eq!(prepared.len(), 1, "the selected subject reaches the import preview");
+        assert_eq!(prepared[0].name, name);
+        assert!(!prepared[0].bytes.is_empty());
+        assert!(editor.open && editor.poser.active, "the Poser stays open and active");
+        assert!(!editor.animation_editor_return_pending(), "a pose export needs no Studio return");
+        assert_eq!(editor.poser.subject, subject);
+        let layers = editor.pose_layers(&world);
+        assert_eq!(layers.len(), 2, "both avatars keep their poses");
+        for (id, pose, undo_len) in &expected {
+            assert!(Arc::ptr_eq(&layers[id], pose), "the displayed pose is unchanged");
+            assert_eq!(editor.poser.sessions[id].undo.len(), *undo_len);
+        }
+        assert!(editor.take_clip_imports().is_empty(), "each prepared pose is handed over once");
+        assert!(editor.open && editor.poser.active);
+    }
+}
+
 /// The fixture on a pose it did not make: an animation plays on the avatar
 /// when the poser captures it.
 fn captured_animation() -> (World, Editor, usize, usize, Quat) {

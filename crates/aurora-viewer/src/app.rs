@@ -8394,8 +8394,12 @@ impl App {
             self.particle_target_pick();
             return true;
         }
+        // Object view takes the camera tool even while Build is open, as
+        // activate_camera_tool / LLToolMgr::getCurrentTool give the transient
+        // LLToolCamera priority (llfloatercamera.cpp / lltoolmgr.cpp, LGPL 2.1).
         if !self.build.open
             || self.alt
+            || self.object_view
             || (self.hud_drag_requested() && self.huds_shown() && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
         {
             return false;
