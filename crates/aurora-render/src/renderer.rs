@@ -7125,9 +7125,6 @@ impl Backend {
         self.targets.blend_exact = None;
         if self.targets.water_copy.take().is_some() {
             self.groups.b_water = None;
-            // it may be what left a required target no room: the extras
-            // wait (`Refusals::extra`), so the next try makes those first
-            let _ = self.oom.extra(true, Instant::now());
         }
         self.rlva_spheres = None;
         self.rlva_scaled = None;
@@ -11894,8 +11891,8 @@ impl Backend {
         // crest above a floor just over the water showed it dry, a disc
         // sweeping over it. Made on first use, with the bind group that
         // reads it, both checked as an extra: refused or waiting, the water
-        // reads `scene_copy` as before. Made here, after the frame's required
-        // targets (a full video memory gives them the room first). Released
+        // reads `scene_copy` as before. Made here, after the blend targets,
+        // and not soon after a required target was refused. Released
         // once the water no longer moves, or after `WATER_COPY_IDLE` unused
         // (the scene dry again).
         let water_moves = self.settings.water_effects.flags() & (1 | 16) != 0;
@@ -11932,7 +11929,13 @@ impl Backend {
                 self.water_copy_idle = None;
             }
         }
-        if water_over_wet && self.targets.water_copy.is_none() && self.oom.extras_ready(now) {
+        // (not for `WATER_COPY_IDLE` after a required target was refused:
+        // the copy may have been what left it no room)
+        if water_over_wet
+            && self.targets.water_copy.is_none()
+            && self.oom.extras_ready(now)
+            && self.oom.required_quiet(now, WATER_COPY_IDLE)
+        {
             let size = self.targets.scene_copy_tex.size();
             let device = self.device.clone();
             let (copy, copy_refused) = crate::gpu_alloc::scoped(&device, || {

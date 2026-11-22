@@ -489,6 +489,9 @@ pub struct Refusals {
     /// targets are remade, since a required target can refuse right after.
     said: bool,
     extras: Backoff,
+    /// When a render target or a required target was last refused
+    /// ([`Self::required_quiet`]).
+    required_refused: Option<Instant>,
 }
 
 impl Refusals {
@@ -499,6 +502,7 @@ impl Refusals {
 
     /// The render targets were refused; true the first time (to say so).
     pub fn targets_failed(&mut self, now: Instant) -> bool {
+        self.required_refused = Some(now);
         let first = !self.said;
         self.said = true;
         self.targets = true;
@@ -523,6 +527,7 @@ impl Refusals {
         if !refused {
             return false;
         }
+        self.required_refused = Some(now);
         let first = !self.said;
         self.said = true;
         self.targets = true;
@@ -539,6 +544,13 @@ impl Refusals {
             self.said = false;
         }
         back
+    }
+
+    /// No render target or required target refused for `quiet`: a large
+    /// extra that may be what left them no room waits that long after
+    /// (`Targets::water_copy`), so they are made first.
+    pub fn required_quiet(&self, now: Instant, quiet: std::time::Duration) -> bool {
+        self.required_refused.is_none_or(|at| now.duration_since(at) >= quiet)
     }
 
     /// An extra may be made now.
@@ -908,6 +920,26 @@ mod tests {
         assert!(r.targets_failed(t6));
         assert!(r.targets_due(t6 + s(2)));
         assert!(!r.targets_failed(t6 + s(1)));
+    }
+
+    #[test]
+    fn a_large_extra_waits_after_a_required_refusal() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut r = Refusals::default();
+        assert!(r.required_quiet(t0, s(60)), "nothing refused yet");
+        // a required target refused, then made: the quiet runs from the refusal
+        r.first_use(true, t0);
+        r.targets_made();
+        assert!(!r.required_quiet(t0 + s(59), s(60)));
+        assert!(r.required_quiet(t0 + s(60), s(60)));
+        // the render targets refused (a resize) start it again
+        r.targets_failed(t0 + s(70));
+        assert!(!r.required_quiet(t0 + s(100), s(60)));
+        assert!(r.required_quiet(t0 + s(130), s(60)));
+        // an extra's refusal does not
+        r.extra(true, t0 + s(140));
+        assert!(r.required_quiet(t0 + s(140), s(60)));
     }
 
     #[test]
