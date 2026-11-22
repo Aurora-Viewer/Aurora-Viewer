@@ -540,11 +540,11 @@ fn image_size_limit(ui: &mut egui::Ui, entry: &mut Entry, prefs: &Preferences) {
             aurora_i18n::tr!("import-image-size-limit")
         });
         let label = |limit| match limit {
-            ImageSizeLimit::Default => aurora_i18n::tr!("import-image-size-default").to_owned(),
+            ImageSizeLimit::Default => aurora_i18n::tr!("import-image-size-inherit", size = limit.maximum(prefs.limit_texture_size)),
             limit => aurora_i18n::tr!("import-image-size-pixels", size = limit.maximum(prefs.limit_texture_size)),
         };
         let response = egui::ComboBox::from_id_salt(("import_image_size_limit", entry.id))
-            .width(130.0)
+            .width(210.0)
             .selected_text(label(entry.image_size_limit))
             .show_ui(ui, |ui| {
                 for limit in [ImageSizeLimit::Default, ImageSizeLimit::Size1024, ImageSizeLimit::Size2048] {
@@ -557,7 +557,7 @@ fn image_size_limit(ui: &mut egui::Ui, entry: &mut Entry, prefs: &Preferences) {
                 }
             })
             .response
-            .on_hover_text(aurora_i18n::tr!("import-image-size-help"));
+            .on_hover_text(aurora_i18n::tr!("import-image-size-inherit-help"));
         #[cfg(test)]
         ui.ctx().data_mut(|data| {
             data.insert_temp(egui::Id::unique(("import_image_size_limit", entry.id)), response.rect);

@@ -113,12 +113,24 @@ impl ImageLimitFixture {
             .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("import_image_size_limit", id))))
             .expect("individual size control");
         self.click(rect);
+        self.assert_global_choice_label(if self.prefs.limit_texture_size { 1024 } else { 2048 });
         let choice = self
             .ctx
             .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("import_image_size_choice", id, limit))))
             .expect("individual size choice");
         self.click(choice);
         assert_eq!(self.imports.entries[0].image_size_limit, limit);
+    }
+
+    fn assert_global_choice_label(&mut self, maximum: u32) {
+        let label = aurora_i18n::tr!("import-image-size-inherit", size = maximum);
+        let output = self.frame(Vec::new());
+        assert!(
+            output.shapes.iter().any(|shape| matches!(&shape.shape,
+            egui::Shape::Text(text) if text.galley.text() == label
+                && shape.clip_rect.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())))),
+            "the inherited choice visibly names the current global limit: {label}"
+        );
     }
 
     fn assert_upload(&self, maximum: u32, cost: i32) {
@@ -152,9 +164,11 @@ fn image_size_menus_share_the_general_limit_and_keep_texture_and_material_overri
             let mut f = ImageLimitFixture::new(material, separate);
             f.settle();
             assert_eq!(f.imports.entries[0].image_size_limit, ImageSizeLimit::Default);
+            f.assert_global_choice_label(2048);
             f.assert_upload(2048, 50);
             let generation = f.imports.entries[0].preview_generation;
             f.global(true);
+            f.assert_global_choice_label(1024);
             f.assert_upload(1024, 10);
             assert!(f.imports.entries[0].preview_generation > generation);
 
@@ -173,8 +187,10 @@ fn image_size_menus_share_the_general_limit_and_keep_texture_and_material_overri
             f.assert_upload(1024, 10);
 
             f.individual(ImageSizeLimit::Default);
+            f.assert_global_choice_label(2048);
             f.assert_upload(2048, 50);
             f.global(true);
+            f.assert_global_choice_label(1024);
             f.assert_upload(1024, 10);
         }
     }
@@ -188,7 +204,7 @@ fn a_small_image_keeps_the_individual_size_choice_visible_without_changing_the_g
     f.imports.entries[0].source = Some(Source::Texture(f.pixels.clone()));
     let output = f.settle();
     assert!(output.shapes.iter().any(|shape| matches!(&shape.shape,
-        egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-image-size-limit"))));
+        egui::Shape::Text(text) if text.galley.text() == aurora_i18n::tr!("import-image-size-single"))));
     f.individual(ImageSizeLimit::Size2048);
     assert!(f.prefs.limit_texture_size);
     let entry = &f.imports.entries[0];
