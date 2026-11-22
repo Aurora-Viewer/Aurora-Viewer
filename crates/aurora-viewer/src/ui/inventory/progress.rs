@@ -410,6 +410,9 @@ mod tests {
     fn outstanding_copies_leave_commands_available_and_track_multiple_jobs() {
         let mut st = InventoryUi::default();
         let reply = Reply {
+            moved_items: Vec::new(),
+            moved_folders: Vec::new(),
+            unconfirmed: Vec::new(),
             contents: Vec::new(),
             folders: Vec::new(),
             moves_queued: false,

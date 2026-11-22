@@ -808,7 +808,10 @@ impl App {
                     pane.show_original(inv, *id);
                 }
                 self.inventory_ui.watch_copy(request, &reply);
-                self.send(NetCommand::FinishInventoryCopies { request, reply });
+                self.send(NetCommand::FinishInventoryCopies {
+                    request,
+                    reply: Box::new(reply),
+                });
                 return;
             }
             result => result,
