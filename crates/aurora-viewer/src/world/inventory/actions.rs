@@ -473,12 +473,16 @@ pub fn patch(inv: &Inventory, id: Uuid, body: Llsd) -> Result<Mutation, String> 
         ..Default::default()
     })
 }
-pub fn name(inv: &Inventory, id: Uuid) -> String {
+/// The stored name of an item or a folder, borrowed for callers that only read
+/// it (the inventory type-ahead walks every displayed row on each keystroke).
+pub fn name_ref(inv: &Inventory, id: Uuid) -> Option<&str> {
     inv.items
         .get(&id)
-        .map(|it| it.name.clone())
-        .or_else(|| inv.folders.get(&id).map(|f| f.info.name.clone()))
-        .unwrap_or_default()
+        .map(|it| it.name.as_str())
+        .or_else(|| inv.folders.get(&id).map(|f| f.info.name.as_str()))
+}
+pub fn name(inv: &Inventory, id: Uuid) -> String {
+    name_ref(inv, id).unwrap_or_default().to_owned()
 }
 pub fn clean_name(name: &str) -> Result<String, String> {
     // Shared with received names and RLVa paths: character prevalidation

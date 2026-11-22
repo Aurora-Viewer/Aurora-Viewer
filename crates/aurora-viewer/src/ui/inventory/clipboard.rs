@@ -212,6 +212,21 @@ pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     if response.clicked() || response.has_focus() || restore {
         request_focus(ui, st);
     }
+    if response.has_focus() {
+        // Offer native composition at the list, as the residents' list does
+        // (ui/people/type_ahead.rs): the type-ahead accepts IME commits too,
+        // so a name outside ASCII can be typed.
+        let to_global = ui.ctx().layer_transform_to_global(ui.layer_id()).unwrap_or_default();
+        let cursor = egui::Rect::from_min_size(rect.min, egui::vec2(1.0, ui.spacing().interact_size.y));
+        ui.output_mut(|out| {
+            out.ime = Some(egui::output::IMEOutput {
+                purpose: egui::IMEPurpose::Normal,
+                rect: to_global * rect,
+                cursor_rect: to_global * cursor,
+                should_interrupt_composition: false,
+            });
+        });
+    }
 }
 
 pub(super) fn copy_allowed(inv: &Inventory, ids: &[Uuid]) -> bool {
@@ -468,6 +483,8 @@ fn demo_mode() -> Option<&'static str> {
                 || mode.starts_with("search-selection")
                 || mode.starts_with("keyboard")
                 || mode.starts_with("aurora-keyboard")
+                || mode.starts_with("type-ahead")
+                || mode.starts_with("aurora-type-ahead")
                 || mode.starts_with("enter")
                 || mode.contains("rename-focus")
                 || mode.contains("rename-window")
@@ -609,6 +626,42 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
                 target.rename.is_some(),
                 ctx.memory(|m| m.has_focus(focus_id(target))),
                 target.selected
+            );
+        }
+        return Vec::new();
+    }
+    if mode == "type-ahead" {
+        // Click Materials in the root, then type "tex": Textures is before it
+        // in the root, so the nearest match wraps around the list.
+        if matches!(frame, 650 | 651)
+            && let Some(pos) =
+                ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, crate::demo::u(19)))))
+        {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        let text = match frame {
+            665 => "t",
+            666 => "e",
+            667 => "x",
+            _ => "",
+        };
+        if !text.is_empty() {
+            return vec![egui::Event::Text(text.into())];
+        }
+        if frame == 700 {
+            log::info!(
+                "demo inventory type-ahead: frame={frame}, selected={:?}, prefix={:?}, list_focus={}",
+                st.selected,
+                st.type_ahead.text,
+                ctx.memory(|m| m.has_focus(focus_id(st)))
             );
         }
         return Vec::new();
@@ -2429,5 +2482,45 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "failed inventory layouts: {failures:#?}");
+    }
+
+    #[test]
+    fn typing_on_the_focused_inventory_jumps_to_the_nearest_name_without_filtering() {
+        let mut h = Harness::new();
+        h.world.inventory.items.get_mut(&id(8108)).expect("item 8108").name = "Tarte".into();
+        h.world.inventory.items.get_mut(&id(8109)).expect("item 8109").name = "Tartuffe".into();
+        h.world.inventory.generation += 1;
+        h.frame(Vec::new());
+        h.select(id(8100), false);
+        h.frame(Vec::new());
+        assert!(
+            h.ctx.memory(|m| m.has_focus(focus_id(&h.st))),
+            "the click focused the list: focused={:?}, wanted={:?}, text_edit={}, popup={}",
+            h.ctx.memory(|m| m.focused()),
+            focus_id(&h.st),
+            h.ctx.text_edit_focused(),
+            egui::Popup::is_any_open(&h.ctx)
+        );
+
+        h.frame(vec![Event::Text("tar".into())]);
+        assert_eq!(h.st.selected, Some(id(8108)), "the nearest Tarte from the clicked row");
+        assert!(h.st.selection.contains(&id(8108)));
+        assert!(h.st.search.is_empty(), "the filter field is untouched");
+        assert_eq!(h.st.type_ahead.text, "tar");
+
+        // TypeAheadTimeout: the next text starts a new search.
+        for _ in 0..6 {
+            h.frame(Vec::new());
+        }
+        h.frame(vec![Event::Ime(egui::ImeEvent::Commit("demo o".into()))]);
+        assert_eq!(h.st.selected, Some(id(8100)), "a new prefix after 1.5 s, from an IME commit");
+
+        // The filter field keeps its own typing: the list does not type ahead.
+        let field = h.text("Filter inventory");
+        h.click(field.center(), Default::default());
+        assert!(h.st.type_ahead.text.is_empty(), "a click starts a new prefix");
+        h.frame(vec![Event::Text("tart".into())]);
+        assert_eq!(h.st.search, "tart");
+        assert!(h.st.type_ahead.text.is_empty(), "the field, not the list, took the text");
     }
 }

@@ -2639,6 +2639,11 @@ thread.
 inventory list, following `LLFolderView::handleKeyHere`. It uses the current
 cached displayed order in both layouts, searches and folder windows; Shift
 grows or shrinks sibling selections, skipping open folders' descendants.
+Typing on the same list is the Legacy Viewer's type-ahead
+(`LLFolderView::handleUnicodeCharHere` / `search`): the nearest visible row
+whose name starts with the typed prefix is selected and scrolled into view,
+from the selected row and wrapping once, without filtering the inventory; the
+prefix is forgotten after 1.5 s or a click, and folders and items match alike.
 Navigation runs before viewport layout so virtualized rows remain in sight.
 Its shared clipboard focus survives a discarded sizing pass for one frame,
 without reclaiming another field, an outside click, Tab, Escape or a modal.

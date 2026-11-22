@@ -688,6 +688,8 @@ pub struct InventoryUi {
     list_focus_frame: Option<u64>,
     /// Which row order the list drew last, for the work done outside it.
     shown_order: keyboard::ShownOrder,
+    /// The prefix typed on the focused list (LLFolderView's type-ahead).
+    type_ahead: keyboard::TypeAhead,
     /// The list's focus target that opened this document window, so closing
     /// it hands the keyboard back there (see `clipboard::return_focus_to`).
     document_owner: Option<egui::Id>,
@@ -1581,14 +1583,20 @@ fn folder_response(
 }
 
 pub(crate) fn folder_name(inv: &Inventory, id: Uuid) -> String {
+    folder_label(inv, id).into_owned()
+}
+
+/// The label a folder shows, borrowed except for the folders the viewer names
+/// itself (My Inventory, the Library, the Marketplace deliveries).
+pub(crate) fn folder_label(inv: &Inventory, id: Uuid) -> std::borrow::Cow<'_, str> {
     if id == inv.root {
-        aurora_i18n::tr!("common-my-inventory").to_owned()
+        std::borrow::Cow::Owned(aurora_i18n::tr!("common-my-inventory").to_owned())
     } else if id == inv.lib_root {
-        aurora_i18n::tr!("common-library").to_owned()
+        std::borrow::Cow::Owned(aurora_i18n::tr!("common-library").to_owned())
     } else if inv.folders.get(&id).is_some_and(|f| f.info.type_default == 50) {
-        aurora_i18n::tr!("received-marketplace-folder").to_owned()
+        std::borrow::Cow::Owned(aurora_i18n::tr!("received-marketplace-folder").to_owned())
     } else {
-        rules::name(inv, id)
+        std::borrow::Cow::Borrowed(rules::name_ref(inv, id).unwrap_or_default())
     }
 }
 

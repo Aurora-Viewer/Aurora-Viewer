@@ -3,8 +3,25 @@
 //! sibling selections without selecting an open folder's children as well.
 //! Right opens the current folder; Left closes it, or from an item or a
 //! closed folder selects the parent row (a second Left then closes it).
+//! Typing on the focused list is LLFolderView::handleUnicodeCharHere and
+//! LLFolderView::search: the nearest row whose name starts with the typed
+//! text is selected in place, without filtering the inventory.
 
 use super::*;
+
+/// The prefix typed on the focused list (LLFolderView::mSearchString) and when
+/// its last character came in. It is per window, like the open folders.
+#[derive(Default)]
+pub(super) struct TypeAhead {
+    pub(super) text: String,
+    at: f64,
+}
+
+/// `TypeAheadTimeout` (indra/newview/app_settings/settings.xml): the typed
+/// prefix is forgotten after this many seconds of silence.
+const TYPE_AHEAD_TIMEOUT: f64 = 1.5;
+/// The cap of LLFolderView::handleUnicodeCharHere.
+const TYPE_AHEAD_MAX: usize = 128;
 
 /// Run after rebuilding the displayed order and before laying out its viewport,
 /// including while Aurora's explorer has swapped its flat tree into `plain`.
@@ -20,9 +37,15 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
         ShownOrder::Plain
     };
     let selected_after_delete = delete::reconcile_selection(inv, st);
+    // A click starts a new prefix, as LLFolderView::handleMouseDown clears
+    // mSearchString, even when the click gives the keyboard to another field.
+    if ui.input(|i| i.pointer.any_pressed()) {
+        st.type_ahead.text.clear();
+    }
     if !clipboard::list_has_focus(ui, st) || st.rename.is_some() {
         return selected_after_delete;
     }
+    let typed = type_ahead(ui, inv, st, filtered);
     let mut keys = Vec::new();
     ui.input_mut(|input| {
         input.events.retain(|event| {
@@ -57,7 +80,93 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
             Arrow::Left | Arrow::Right => fold(inv, st, filtered, arrow == Arrow::Right),
         }
     }
-    navigated || selected_after_delete
+    typed || navigated || selected_after_delete
+}
+
+/// LLFolderView::handleUnicodeCharHere and LLFolderView::search: append the
+/// typed text to the window's prefix, forget it after the timeout or a click,
+/// and select the nearest visible row that starts with it.
+fn type_ahead(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, filtered: bool) -> bool {
+    let mut typed = String::new();
+    ui.input_mut(|input| {
+        input.events.retain(|event| match event {
+            egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text)) if !text.is_empty() => {
+                typed.push_str(text);
+                false
+            }
+            _ => true,
+        });
+    });
+    if typed.is_empty() {
+        return false;
+    }
+    let now = ui.input(|i| i.time);
+    if now - st.type_ahead.at > TYPE_AHEAD_TIMEOUT {
+        st.type_ahead.text.clear();
+    }
+    st.type_ahead.at = now;
+    let room = TYPE_AHEAD_MAX.saturating_sub(st.type_ahead.text.chars().count());
+    st.type_ahead.text.extend(typed.chars().take(room));
+    search(inv, st, filtered)
+}
+
+/// The nearest match from the selected row, wrapping once, as
+/// LLFolderView::search walks the open nodes from `getCurSelectedItem`.
+fn search(inv: &Inventory, st: &mut InventoryUi, filtered: bool) -> bool {
+    let typed = st.type_ahead.text.clone();
+    if typed.is_empty() {
+        return false;
+    }
+    let order = if filtered { &st.result_tree.order } else { &st.plain.order };
+    if order.is_empty() {
+        return false;
+    }
+    let start = st.selected.and_then(|id| order.iter().position(|row| *row == id)).unwrap_or(0);
+    let found = (0..order.len())
+        .map(|offset| order[(start + offset) % order.len()])
+        .find(|id| matches(row_label(inv, *id).as_ref(), &typed));
+    let Some(id) = found else {
+        return false;
+    };
+    st.selection.clear();
+    st.selection.insert(id);
+    st.anchor = Some(id);
+    st.selected = Some(id);
+    st.keyboard_selection = true;
+    true
+}
+
+/// The name a row shows: a folder's label (the special folders included) or an
+/// item's stored name, borrowed so a keystroke does not copy every row.
+fn row_label<'a>(inv: &'a Inventory, id: Uuid) -> std::borrow::Cow<'a, str> {
+    if inv.folders.contains_key(&id) {
+        super::folder_label(inv, id)
+    } else {
+        std::borrow::Cow::Borrowed(rules::name_ref(inv, id).unwrap_or_default())
+    }
+}
+
+/// LLFolderView::search compares the name and the typed text up to the shorter
+/// of the two (so typing past the end of a matching name keeps it selected),
+/// case-insensitively. ASCII takes the fast byte path; a name or a typed letter
+/// outside ASCII is lowercased character by character instead.
+fn matches(name: &str, typed: &str) -> bool {
+    if name.is_empty() || typed.is_empty() {
+        return false;
+    }
+    if name.is_ascii() && typed.is_ascii() {
+        let len = name.len().min(typed.len());
+        return name.as_bytes()[..len].eq_ignore_ascii_case(&typed.as_bytes()[..len]);
+    }
+    let mut name = name.chars().flat_map(char::to_lowercase);
+    let mut typed = typed.chars().flat_map(char::to_lowercase);
+    loop {
+        match (name.next(), typed.next()) {
+            (Some(a), Some(b)) if a == b => {}
+            (None, _) | (_, None) => return true,
+            _ => return false,
+        }
+    }
 }
 
 /// The rows the list drew last: the plain tree, Aurora's explorer folder or
@@ -538,5 +647,125 @@ mod tests {
         let mut actions = Vec::new();
         open_selected(&inv, &mut st, &prefs, &facts, &mut actions);
         assert!(!st.plain.is_open(id(10)), "a second Enter folds it closed");
+    }
+
+    #[test]
+    fn type_ahead_matches_a_prefix_case_insensitively_and_past_the_name() {
+        assert!(matches("Tarte", "tar"));
+        assert!(matches("Tarte", "TAR"));
+        assert!(matches("Tarte", "tart"));
+        assert!(matches("Tarte", "tartes"), "typing past the name keeps it");
+        assert!(!matches("Tarte", "tarz"));
+        assert!(!matches("Tarte", ""));
+        assert!(!matches("", "tar"));
+        // The Legacy Viewer ignores non-ASCII typed text; Aurora matches it.
+        assert!(matches("Élodie", "él"));
+        assert!(matches("élodie", "ÉL"));
+        assert!(!matches("Élodie", "el"));
+    }
+
+    #[test]
+    fn type_ahead_selects_items_and_folders_from_the_selection_and_wraps() {
+        use aurora_net::inventory::{InvFolder, InvItem};
+        let id = Uuid::from_u128;
+        let mut inv = Inventory {
+            root: id(1),
+            ..Default::default()
+        };
+        inv.created_folders(vec![
+            InvFolder {
+                id: id(1),
+                type_default: 8,
+                ..Default::default()
+            },
+            InvFolder {
+                id: id(10),
+                parent: id(1),
+                name: "Objects".into(),
+                ..Default::default()
+            },
+            InvFolder {
+                id: id(20),
+                parent: id(1),
+                name: "Scripts".into(),
+                ..Default::default()
+            },
+            InvFolder {
+                id: id(30),
+                parent: id(1),
+                name: "Textures".into(),
+                ..Default::default()
+            },
+            InvFolder {
+                id: id(40),
+                parent: id(1),
+                name: "Tarte".into(),
+                ..Default::default()
+            },
+        ]);
+        inv.add_items(vec![InvItem {
+            id: id(100),
+            parent: id(1),
+            name: "Tartan".into(),
+            ..Default::default()
+        }]);
+        let mut st = InventoryUi {
+            selected: Some(id(40)),
+            selection: HashSet::from([id(40)]),
+            ..Default::default()
+        };
+        st.plain.order = vec![id(10), id(20), id(30), id(40), id(100)];
+
+        st.type_ahead.text = "scr".into();
+        assert!(search(&inv, &mut st, false), "a folder after the selection");
+        assert_eq!(st.selected, Some(id(20)));
+        assert_eq!(st.selection, HashSet::from([id(20)]));
+
+        st.type_ahead.text = "tex".into();
+        assert!(search(&inv, &mut st, false), "the search wraps around the list");
+        assert_eq!(st.selected, Some(id(30)));
+
+        st.type_ahead.text = "tar".into();
+        assert!(search(&inv, &mut st, false), "items match as well as folders");
+        assert_eq!(st.selected, Some(id(40)), "the nearest match from the selection");
+
+        st.type_ahead.text = "tart".into();
+        assert!(search(&inv, &mut st, false));
+        assert_eq!(st.selected, Some(id(40)), "Tarte still starts with 'tart'");
+
+        let before = st.selected;
+        st.type_ahead.text = "zz".into();
+        assert!(!search(&inv, &mut st, false));
+        assert_eq!(st.selected, before, "no match leaves the selection alone");
+    }
+
+    #[test]
+    fn type_ahead_searches_the_result_tree_when_filtered() {
+        use aurora_net::inventory::InvItem;
+        let id = Uuid::from_u128;
+        let mut inv = Inventory::default();
+        inv.add_items(vec![
+            InvItem {
+                id: id(100),
+                name: "Tarte".into(),
+                ..Default::default()
+            },
+            InvItem {
+                id: id(101),
+                name: "Tartan".into(),
+                ..Default::default()
+            },
+        ]);
+        let mut st = InventoryUi::default();
+        st.plain.order = vec![id(100)];
+        st.result_tree.order = vec![id(100), id(101)];
+        st.selected = Some(id(100));
+        st.type_ahead.text = "tartan".into();
+        assert!(search(&inv, &mut st, true));
+        assert_eq!(st.selected, Some(id(101)), "the result tree, not the plain one");
+        let mut plain = InventoryUi::default();
+        plain.plain.order = vec![id(100)];
+        plain.type_ahead.text = "tartan".into();
+        assert!(!search(&inv, &mut plain, false), "the plain tree has no Tartan row");
     }
 }
