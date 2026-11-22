@@ -1712,24 +1712,26 @@ fn pbr_repeats_meter(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world
     let has_all = sel.iter().all(|x| BuildTool::gltf_asset(world, x.idx, x.face).is_some());
     let faces: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
     // The placement fields' rule (LLMaterialEditor::canModifyObjectsMaterial),
-    // and a material still loading has no value to show yet.
+    // and a material still loading has no value to show yet. Deliberately
+    // stricter than LLPanelFace, which enables it on a modifiable object with
+    // any PBR face: every face must have PBR and the material may be edited.
     let loaded = sel.iter().all(|x| face_server_pbr_transforms(world, env, x).is_some());
     let editable = has_all && loaded && tool.material_edit_allowed(world, &faces);
     let channels = pbr_placement_channels(tool.ui.pbr_channel);
+    // getSelectedGLTFMaterialMaxRepeats reads the base color under "All".
+    let shown_channel = channels.start;
     let scales: Vec<glam::Vec3> = sel
         .iter()
         .map(|x| world.objects.get(x.idx).map_or(glam::Vec3::ONE, |o| o.scale))
         .collect();
     let face_transforms: Vec<[TextureTransform; 4]> = sel.iter().map(|x| face_pbr_transforms(world, env, x)).collect();
     let rounded = |r: f32| (r * 10.0).round() / 10.0;
-    // Mixed when a face differs, or under "All" when a channel differs
-    // (setMaterialOverridesFromSelection: !identical || !scale_u_same || !scale_v_same).
+    // Mixed when a face differs (getSelectedTEValue over the faces).
     let (rpm, rpm_mixed) = same(
         sel.iter()
             .zip(&scales)
             .zip(&face_transforms)
-            .flat_map(|((x, size), t)| channels.clone().map(move |c| (x.face, *size, t[c])))
-            .map(|(face, size, t)| rounded(gltf_max_repeats(&t, size, face))),
+            .map(|((x, size), t)| rounded(gltf_max_repeats(&t[shown_channel], *size, x.face))),
     );
     // A face that cannot be edited shows 1 (repeats_spin_ctrl->setValue(editable ? repeats : 1.0f)).
     let mut r = rpm.filter(|_| editable).unwrap_or(1.0);
@@ -1741,6 +1743,9 @@ fn pbr_repeats_meter(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world
                 if spin(ui, &mut r, 0.1, -100.0..=100.0, 1, W, rpm_mixed).commit {
                     // updateGLTFTextureTransformWithScale: the picked channel,
                     // or all four under "All"; the offset and rotation stay.
+                    // Like LLPanelFace, the override's scale is written as it
+                    // is: a scale of exactly 1 1 is "no override" to
+                    // applyOverride, so the material's own scale shows then.
                     tool.edit_gltf_faces(world, sel, |k, o| {
                         let scale = gltf_repeats_scale(r, scales[k], sel[k].face);
                         for channel in channels.clone() {
