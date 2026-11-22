@@ -2069,7 +2069,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 46;
+const SETTINGS_VERSION: u32 = 47;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2934,9 +2934,9 @@ impl Default for Settings {
             ssr: false,
             ray_tracing: RayTracingSettings::OFF,
             deluxe_rt_warned: false,
-            rt_sun_softness: 1.0,
+            rt_sun_softness: RT_SOFTNESS,
             rt_gi_probes: true,
-            rt_lamp_softness: 1.0,
+            rt_lamp_softness: RT_SOFTNESS,
             rt_shadow_lamps: RT_SHADOW_LAMPS_MAX,
             // an opt-in: the Legacy Viewer sorts its blended faces, and the
             // method's targets take video memory while it is on
@@ -3697,6 +3697,17 @@ impl Settings {
             self.ray_tracing = RayTracingSettings::OFF;
             crate::graphics_presets::upgrade_deluxe_to_high(&mut self);
         }
+        if self.settings_version < 47 {
+            // the traced shadows' softness moved from 1 to `RT_SOFTNESS`:
+            // a file still on the former default takes the new one once, a
+            // softness chosen by hand stays
+            if self.rt_sun_softness == 1.0 {
+                self.rt_sun_softness = RT_SOFTNESS;
+            }
+            if self.rt_lamp_softness == 1.0 {
+                self.rt_lamp_softness = RT_SOFTNESS;
+            }
+        }
         if !self.audio.enabled[VOICE_CHANNEL] {
             // this box used to switch a mixer channel of its own, leaving
             // voice connected and the microphone open: whoever unticked it
@@ -4319,6 +4330,10 @@ impl Default for MapSettings {
 
 /// The most the traced shadows' softness goes to (Preferences' sliders).
 pub const RT_SOFTNESS_MAX: f32 = 4.0;
+/// The traced shadows' default softness, the sun's and the lamps' (decided
+/// by the human on 2026-11-22 after the grid tests: crisper and prettier
+/// than 1, the size measured, which version 47 moves to it once).
+pub const RT_SOFTNESS: f32 = 0.2;
 /// The most lamps that cast traced shadows (aurora-render's
 /// `MAX_TRACED_LIGHTS`).
 pub const RT_SHADOW_LAMPS_MAX: u8 = 64;
@@ -5528,6 +5543,40 @@ mod tests {
     }
 
     #[test]
+    fn the_traced_shadows_softness_moves_from_the_former_default_once() {
+        assert_eq!(
+            (Settings::default().rt_sun_softness, Settings::default().rt_lamp_softness),
+            (RT_SOFTNESS, RT_SOFTNESS)
+        );
+        // a file of version 46 still on the former default, 1: the new one
+        let old = Settings {
+            settings_version: 46,
+            rt_sun_softness: 1.0,
+            rt_lamp_softness: 1.0,
+            ..Settings::default()
+        };
+        let now = old.sanitized();
+        assert_eq!((now.rt_sun_softness, now.rt_lamp_softness), (RT_SOFTNESS, RT_SOFTNESS));
+        // a softness chosen by hand stays, the other follows
+        let mine = Settings {
+            settings_version: 46,
+            rt_sun_softness: 0.5,
+            rt_lamp_softness: 1.0,
+            ..Settings::default()
+        };
+        let now = mine.sanitized();
+        assert_eq!((now.rt_sun_softness, now.rt_lamp_softness), (0.5, RT_SOFTNESS));
+        // once migrated, 1 chosen again stays
+        let again = Settings {
+            rt_sun_softness: 1.0,
+            rt_lamp_softness: 1.0,
+            ..Settings::default()
+        };
+        let now = again.sanitized();
+        assert_eq!((now.rt_sun_softness, now.rt_lamp_softness), (1.0, 1.0));
+    }
+
+    #[test]
     fn chat_bar_keeps_focus_by_default_and_once_for_earlier_files() {
         assert!(Settings::default().sanitized().chat_keep_focus);
         let old = Settings {
@@ -6410,9 +6459,10 @@ mod tests {
             let read = old.sanitized();
             assert_eq!(read.blend_order, order, "{level:?}");
             // (Deluxe (RT)'s values in a file of then: its ray tracing goes
-            // off once with version 46, which leaves High's)
-            let shown = if level == Preset::Deluxe { Preset::High } else { level };
-            assert_eq!(Preset::matching(&read), Some(shown));
+            // off once with version 46, which leaves High's with the
+            // projectors' shadows, a custom profile)
+            let shown = if level == Preset::Deluxe { None } else { Some(level) };
+            assert_eq!(Preset::matching(&read), shown, "{level:?}");
             // and the level itself, chosen now
             let mut new = Settings::default();
             level.apply(&mut new);
