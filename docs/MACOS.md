@@ -87,6 +87,11 @@ front window; Command+Shift+W and Control+Shift+W close every window).
 The mouse keeps the two keys apart: Control-click is not Command-click,
 and Command does not change the camera wheel.
 
+**Command-click on the world is a right click**, as in the Legacy Viewer: it
+opens the menus, and Command-drag orbits the camera. In the windows
+Command-click picks several rows of a list, and the poser and the animation
+editor keep it too. A two-finger click is a right click everywhere.
+
 A few shortcuts are labeled with the Control key (⌃), the same list as the
 Legacy Viewer: Nearby Chat (⌃H), Conversations (⌃T), the World Map (⌃M),
 Highlight Transparent (⌃⌥T), Snapshot to Disk (⌃`). Command runs those too,

@@ -57,6 +57,7 @@ mod chat_commands;
 mod chat_import;
 mod click_pick;
 mod color_picker;
+mod command_click;
 mod contents_copy;
 mod context_menu;
 mod controls;
@@ -606,6 +607,8 @@ pub struct App {
     alt: bool,
     /// AltGr held: Ctrl + Alt for shortcuts and the mouse (app/alt_graph.rs).
     alt_graph: bool,
+    /// A Command-click of macOS, a right click (app/command_click.rs).
+    command_click: command_click::CommandClick,
     left_down: bool,
     /// An unhandled world press may start steering when the right button joins.
     world_mouse_walk_pending: bool,
@@ -2012,6 +2015,7 @@ impl App {
             text_menu: Default::default(),
             alt: false,
             alt_graph: false,
+            command_click: Default::default(),
             left_down: false,
             world_mouse_walk_pending: false,
             steer_by_right: false,
@@ -24850,6 +24854,8 @@ impl ApplicationHandler for App {
         if self.retired_window.as_ref().is_some_and(|w| w.id() == id) && !matches!(event, WindowEvent::CloseRequested) {
             return;
         }
+        // before the windows and the world: both see the same button
+        let event = self.read_command_click(event);
         self.typing_pointer.window_event(&event);
         // The system's view of the keys when the focus comes back is no key
         // press: a key it wrongly reports as down (#2287) would stay held
