@@ -95,17 +95,13 @@ pub fn expand(text: &str) -> String {
 /// shortest codes first: (code, emoji). The picker's names, skin tones and
 /// emoji: those drawn as one picture (not flags nor sequences yet).
 ///
-/// Leading `-` prefixes only match at the start (`:-1:`) or known `:-P`
-/// emoticon so `:-P` does not suggest `:non-potable_water:`.
+/// Letters that start with `-` match the start of a code only (`:-1:`), so
+/// the emoticon `:-P` (`-p` is inside `non-potable_water`) opens no list and
+/// is sent as typed. A deliberate difference (maintainers' decision, #4579):
+/// LLEmojiDictionary::searchInShortCode (indra/llui/llemojidictionary.cpp)
+/// also matches inside a code and suggests `:non-potable_water:` for `:-P`.
 pub fn suggestions(prefix: &str, max: usize) -> Vec<(&'static str, &'static str)> {
     let prefix = prefix.to_ascii_lowercase();
-    if prefix == "-p" {
-        return emojis::get_by_shortcode("stuck_out_tongue")
-            .map(|e| ("stuck_out_tongue", e.as_str()))
-            .into_iter()
-            .take(max)
-            .collect();
-    }
     let allow_contains = !prefix.starts_with('-');
     let mut found: Vec<(u8, &'static str, &'static str)> = Vec::new();
     for e in emojis::iter()
@@ -465,19 +461,19 @@ mod tests {
     }
 
     #[test]
-    fn colon_dash_p_suggests_tongue_out_not_non_potable_water() {
-        for prefix in ["-P", "-p"] {
-            assert_eq!(suggestions(prefix, 8), vec![("stuck_out_tongue", "😛")]);
+    fn letters_that_start_with_a_dash_match_the_start_of_a_code_only() {
+        // `-p` is inside `non-potable_water`, `-r` inside `t-rex`
+        for prefix in ["-P", "-p", "-r"] {
+            assert!(suggestions(prefix, 8).is_empty(), "{prefix}");
         }
         assert!(suggestions("-1", 8).iter().any(|(code, e)| *code == "-1" && *e == "👎"));
         assert!(suggestions("potable", 8).iter().any(|(code, _)| *code == "non-potable_water"));
 
+        // `:-P` opens no list: one Enter sends it as typed
         let mut f = Field::new();
         f.type_text(":-P");
-        let list = f.list();
-        assert!(list.shown());
-        assert_eq!(list.items, vec![("stuck_out_tongue", "😛")]);
-        assert!(!f.key(egui::Key::Enter));
-        assert_eq!(f.text, "😛");
+        assert!(!f.list().shown());
+        assert!(f.key(egui::Key::Enter), "Enter must reach the send");
+        assert_eq!(f.text, ":-P");
     }
 }
