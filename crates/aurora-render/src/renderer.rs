@@ -8268,6 +8268,7 @@ impl Backend {
             hover: None,
             picks: Vec::new(),
             drawn: Vec::new(),
+            drawn_forgotten: Vec::new(),
             capture: None,
             equirect: None,
             histogram: None,
@@ -8615,6 +8616,7 @@ impl Backend {
             hover,
             picks,
             drawn,
+            drawn_forgotten,
             capture: wanted,
             // (taken by `render` before the frame)
             equirect: _,
@@ -8643,7 +8645,7 @@ impl Backend {
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
         self.part_pick.harvest();
-        self.drawn_pick.ask(drawn);
+        self.drawn_pick.ask(drawn, &drawn_forgotten);
         let previous_scene = self.scene_size();
         let picks = picks
             .into_iter()
