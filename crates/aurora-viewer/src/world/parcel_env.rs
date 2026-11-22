@@ -175,6 +175,7 @@ impl Saves {
         }
     }
 
+    #[cfg(test)]
     pub fn entries(&self) -> &[Entry] {
         &self.entries
     }
