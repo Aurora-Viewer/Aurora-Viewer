@@ -6950,6 +6950,7 @@ mod tests {
             blocked: false,
             beyond_range: false,
             speaker: Default::default(),
+            private_history: false,
         };
         let mine = message_color(&line, &p, &world);
         for text in ["/me waves", "/me's hat"] {
