@@ -838,6 +838,7 @@ impl Scene {
             }
         }
         renderer.set_palette_slots(&self.palettes, &posed, PALETTE_JOINTS);
+        renderer.set_rt_own_palette(self.palette_slots.get(&world.agent_id).map(|s| *s * PALETTE_JOINTS as u32));
         for range in moved {
             renderer.set_palette_range(&self.palettes, range);
         }

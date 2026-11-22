@@ -205,6 +205,10 @@ pub struct PosedGroup {
     /// A hash of its faces: another set makes its bottom level again.
     pub faces: u64,
     pub rebuild: bool,
+    /// Where its level stands in the top level (3×4, row-major): from
+    /// where it was posed to where its anchor is now ([`Skeleton::follow`]),
+    /// the identity on the frame it is built again.
+    pub place: [f32; 12],
 }
 
 /// The small still faces of a cell of the world ([`CELL`]), merged into one
@@ -257,8 +261,9 @@ pub struct Faces {
     pub posed: Vec<Posed>,
     pub groups: Vec<PosedGroup>,
     /// The skeletons that had to be built again and wait for a later frame,
-    /// and the farthest one of them stands from where its level was built
-    /// (m): how far behind it its shadow is.
+    /// and the farthest one of them stands from where its level shows it
+    /// (m, its level followed: [`Skeleton::follow`]): how far behind it its
+    /// shadow is.
     pub waiting: u32,
     pub behind: f32,
 }
@@ -1084,6 +1089,9 @@ fn shape_of(face: &CullFace) -> u32 {
 /// ([`Skeleton`]).
 #[derive(Default)]
 pub(crate) struct PoseTracker {
+    /// Our avatar's palette (its first entry), whose levels are built first
+    /// ([`choose_rebuilds`]).
+    pub(crate) own: Option<u32>,
     frame: u64,
     placed: StillTracker,
     by_object: ByObject,
@@ -1111,7 +1119,17 @@ pub(crate) struct PoseTracker {
 /// A skeleton's faces, and the pose its bottom level was last built in: a
 /// skeleton whose vertices moved less than a shadow ray's start can tell
 /// keeps its level (wgpu has no refit: a level is only built again from
-/// scratch), the nearest skeletons first within a frame's budget.
+/// scratch, wgpu-core 30 `build_acceleration_structures`), the nearest
+/// skeletons first within a frame's budget.
+///
+/// An anchored skeleton's level follows its anchor each frame
+/// ([`Skeleton::follow`]): an avatar that walks or turns moves its level in
+/// the top level, and only a change of its pose (its joints in its own
+/// space) waits for a build. A worn rigid object follows its attachment
+/// point so, and never waits for its wearer's steps. With a crowd's levels
+/// built a few each frame, every avatar's shadow, our own's too, stood
+/// where its level was last built and jumped to it at the next (2026-11-22,
+/// grid report of beta8: 225 skeletons, 165 waiting, up to 2.4 m behind).
 #[derive(Default)]
 struct Skeleton {
     /// Its faces' records, in order.
@@ -1136,8 +1154,10 @@ struct Skeleton {
     drifted: f32,
     /// Frames it had to be built again and was left waiting.
     waited: u32,
-    /// Where it stood when its level was built ([`Skeleton::origin`]).
+    /// Where it stood when its level was built ([`Skeleton::origin`]), and
+    /// its anchor then ([`Skeleton::anchor`]).
     built_at: glam::Vec3,
+    built_anchor: Option<glam::Mat4>,
 }
 
 impl Skeleton {
@@ -1184,6 +1204,55 @@ impl Skeleton {
         }
         .unwrap_or(model[3]);
         glam::Vec3::new(at[0], at[1], at[2])
+    }
+
+    /// The matrix its faces are placed from, which its level follows: a
+    /// skinned skeleton's own anchor (skeleton space to the world, its
+    /// joints being in skeleton space), a worn rigid object's attachment
+    /// point (in the world, its models relative to it). None for faces
+    /// placed in the world by their models.
+    fn anchor(&self, key: u32, palettes: &[[[f32; 4]; 4]]) -> Option<glam::Mat4> {
+        if self.first & flags::ANCHORED == 0 {
+            return None;
+        }
+        let at = if self.first & flags::SKINNED != 0 {
+            key + crate::types::SKELETON_ANCHOR
+        } else {
+            key
+        };
+        palettes.get(at as usize).map(glam::Mat4::from_cols_array_2d)
+    }
+
+    /// Where its level stands now: moved from its anchor when it was built
+    /// to its anchor now (the identity when it has none, or none was kept).
+    fn follow(&self, key: u32, palettes: &[[[f32; 4]; 4]]) -> glam::Mat4 {
+        match (self.built_anchor, self.anchor(key, palettes)) {
+            (Some(then), Some(now)) if then.determinant().abs() > 1e-12 => now * then.inverse(),
+            _ => glam::Mat4::IDENTITY,
+        }
+    }
+
+    /// The entries of its palette that move its vertices, besides the
+    /// anchor its level follows (as offsets from `key`, within `len`): a
+    /// skinned skeleton's joints and live morphs (its anchors, the
+    /// attachment points', place none of its vertices); none for a worn
+    /// rigid object, whose models are read with its faces. A skeleton
+    /// placed in the world reads them all.
+    fn posing(&self, len: usize) -> [std::ops::Range<usize>; 2] {
+        let anchor = crate::types::SKELETON_ANCHOR as usize;
+        let morphs = crate::types::LIVE_MORPH_WEIGHTS as usize;
+        match (self.first & flags::ANCHORED != 0, self.first & flags::SKINNED != 0) {
+            (true, true) => [0..anchor.min(len), morphs.min(len)..len],
+            (true, false) => [0..0, 0..0],
+            _ => [0..len, len..len],
+        }
+    }
+
+    /// How far it stands from where its level puts it (m): its level built,
+    /// and followed since ([`Skeleton::follow`]).
+    fn lag(&self, key: u32, palettes: &[[[f32; 4]; 4]]) -> f32 {
+        let shown = self.follow(key, palettes).transform_point3(self.built_at);
+        self.origin(key, palettes).distance(shown)
     }
 }
 
@@ -1606,7 +1675,7 @@ pub(crate) fn gather(
     }
     out.posed.clear();
     out.groups.clear();
-    choose_rebuilds(palettes, written, camera, &mut tracker.skeletons, out);
+    choose_rebuilds(palettes, written, camera, tracker.own, &mut tracker.skeletons, out);
     written.clear();
     tracker.spent[0] += started.elapsed().as_micros() as u64;
     out.spent = tracker.spent;
@@ -1620,13 +1689,7 @@ impl PoseTracker {
         self.skeletons
             .range(base..base + crate::types::PALETTE_STRIDE)
             .filter(|(_, s)| s.waited > 0)
-            .map(|(&key, s)| {
-                if s.built {
-                    s.origin(key, palettes).distance(s.built_at)
-                } else {
-                    f32::INFINITY
-                }
-            })
+            .map(|(&key, s)| if s.built { s.lag(key, palettes) } else { f32::INFINITY })
             .fold(0.0, f32::max)
     }
 }
@@ -1668,8 +1731,12 @@ struct Unit {
 
 /// Picks the skeletons built again this frame: new ones, those whose faces
 /// changed, and those whose vertices drifted past what a shadow shows, by
-/// avatar ([`Unit`]). The nearest always, then the most pressing within
-/// [`REBUILD_TRIANGLES`], the first of them whatever its size: taken
+/// avatar ([`Unit`]). Ours always (`own`, its palette's first entry), or
+/// the nearest when ours has none to build, then the most pressing within
+/// [`REBUILD_TRIANGLES`], the first of them whatever its size. In a crowd
+/// the nearest to the eye was often another (one walking by, one standing
+/// between the eye and us), and our own shadow's pose waited its turn
+/// (beta8). Taken
 /// nearest first within the budget, an avatar of more triangles than it
 /// that walked behind anything that moved too (the hat it wore, nearer the
 /// eye) was left out at every frame, and its shadow stayed where it had
@@ -1682,6 +1749,7 @@ fn choose_rebuilds(
     palettes: &[[[f32; 4]; 4]],
     written: &[std::ops::Range<usize>],
     camera: glam::Vec3,
+    own: Option<u32>,
     skeletons: &mut BTreeMap<u32, Skeleton>,
     out: &mut Faces,
 ) {
@@ -1708,12 +1776,19 @@ fn choose_rebuilds(
         if s.joints.len() != joints.len() {
             s.drifted = f32::INFINITY;
         }
+        // (its anchor's moves are followed, [`Skeleton::follow`])
+        let posing = s.posing(joints.len());
         let mut at = next;
         while s.drifted <= allowed
             && let Some(w) = written.get(at).filter(|w| w.start < first + joints.len())
         {
             let (a, b) = (w.start.max(first) - first, w.end.min(first + joints.len()) - first);
-            s.drifted = s.drifted.max(joint_drift(&s.joints[a..b], &joints[a..b], allowed));
+            for part in &posing {
+                let (a, b) = (a.max(part.start), b.min(part.end));
+                if a < b {
+                    s.drifted = s.drifted.max(joint_drift(&s.joints[a..b], &joints[a..b], allowed));
+                }
+            }
             at += 1;
         }
         if !s.built || s.moved > allowed || s.drifted > allowed {
@@ -1736,6 +1811,10 @@ fn choose_rebuilds(
         }
     }
     units.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    // ours first, whoever stands nearer the eye (a passer-by, a pet)
+    if let Some(at) = own.and_then(|base| units.iter().position(|u| u.slot == base / stride as u32)) {
+        units[..=at].rotate_right(1);
+    }
     let mut slots: Vec<u32> = Vec::new();
     if let Some((nearest, rest)) = units.split_first_mut() {
         slots.push(nearest.slot);
@@ -1771,7 +1850,7 @@ fn choose_rebuilds(
         s.waited += 1;
         out.waiting += 1;
         if s.built {
-            out.behind = out.behind.max(s.origin(key, palettes).distance(s.built_at));
+            out.behind = out.behind.max(s.lag(key, palettes));
         }
     }
     for (&key, s) in skeletons.iter_mut() {
@@ -1784,6 +1863,7 @@ fn choose_rebuilds(
             s.joints.extend_from_slice(joints_of(key));
             s.built_models.clone_from(&s.models);
             s.built_at = s.origin(key, palettes);
+            s.built_anchor = s.anchor(key, palettes);
             (s.moved, s.drifted) = (0.0, 0.0);
         }
         out.groups.push(PosedGroup {
@@ -1793,6 +1873,11 @@ fn choose_rebuilds(
             vertices: s.vertices,
             faces: s.hash,
             rebuild,
+            place: if rebuild {
+                IDENTITY
+            } else {
+                row_major(&s.follow(key, palettes).to_cols_array_2d())
+            },
         });
     }
 }
@@ -1929,9 +2014,10 @@ struct Poser {
     /// A top level of its own: built again on the frames a skeleton was,
     /// while the scene's stands as long as nothing in it moves.
     tlas: Option<wgpu::Tlas>,
-    /// The skeletons the top level holds, in its order, and the moving
-    /// placed faces after them.
-    placed: Vec<u32>,
+    /// The skeletons the top level holds, in its order, where it places
+    /// their levels ([`PosedGroup::place`]), and the moving placed faces
+    /// after them.
+    placed: Vec<(u32, [f32; 12])>,
     movers: usize,
     /// The slots of the top level its last build filled.
     filled: usize,
@@ -3034,9 +3120,14 @@ impl Poser {
             }
         }
         self.levels.retain(|_, l| l.used == frame);
-        let placed: Vec<u32> = faces.groups.iter().map(|g| g.key).filter(|k| self.levels.contains_key(k)).collect();
-        // nothing posed, the same skeletons, no face that moves (nor one
-        // to take out): the top level stands
+        let placed: Vec<(u32, [f32; 12])> = faces
+            .groups
+            .iter()
+            .filter(|g| self.levels.contains_key(&g.key))
+            .map(|g| (g.key, g.place))
+            .collect();
+        // nothing posed, the same skeletons where they were, no face that
+        // moves (nor one to take out): the top level stands
         if self.offsets.is_empty() && placed == self.placed && movers.is_empty() && self.movers == 0 {
             return (0, placed.len());
         }
@@ -3054,7 +3145,7 @@ impl Poser {
         // then each moving face's own
         self.record_list.clear();
         let mut starts = Vec::with_capacity(placed.len());
-        for key in &placed {
+        for (key, _) in &placed {
             starts.push(self.record_list.len() as u32);
             if let Some(level) = self.levels.get(key) {
                 self.record_list.extend_from_slice(&level.records);
@@ -3080,14 +3171,15 @@ impl Poser {
                 *slot = match n.checked_sub(placed.len()) {
                     None => self
                         .levels
-                        .get(&placed[n])
+                        .get(&placed[n].0)
                         // a skeleton's faces are met from both sides: its
                         // level is posed in the world, all its faces
                         // together (an Aurora difference: the Legacy
                         // Viewer's maps cull an avatar's backs too, which a
-                        // closed body does not show)
+                        // closed body does not show), and placed where its
+                        // anchor took it since
                         .map(|l| {
-                            wgpu::TlasInstance::new(&l.blas, IDENTITY, starts[n] & 0xff_ffff, SOLID as u8)
+                            wgpu::TlasInstance::new(&l.blas, placed[n].1, starts[n] & 0xff_ffff, SOLID as u8)
                                 .with_flags(wgpu::TlasInstanceFlags::TRIANGLE_FACING_CULL_DISABLE)
                         }),
                     Some(m) => movers.get(m).map(|mover| {
@@ -5926,7 +6018,7 @@ mod tests {
 
     fn choose(t: &mut BTreeMap<u32, Skeleton>) -> Vec<(u32, bool)> {
         let mut out = Faces::default();
-        choose_rebuilds(&[], &[], glam::Vec3::ZERO, t, &mut out);
+        choose_rebuilds(&[], &[], glam::Vec3::ZERO, None, t, &mut out);
         out.groups.iter().map(|g| (g.key, g.rebuild)).collect()
     }
 
@@ -6005,7 +6097,7 @@ mod tests {
         let (large, larger) = ((POSED_VERTICES / 2) as u32, (POSED_VERTICES * 3 / 4) as u32);
         let choose_waiting = |t: &mut BTreeMap<u32, Skeleton>| {
             let mut out = Faces::default();
-            choose_rebuilds(&[], &[], glam::Vec3::ZERO, t, &mut out);
+            choose_rebuilds(&[], &[], glam::Vec3::ZERO, None, t, &mut out);
             let posed: u64 = out.groups.iter().filter(|g| g.rebuild).map(|g| g.vertices as u64).sum();
             assert!(posed <= POSED_VERTICES, "{posed} vertices to pose");
             (out.groups.iter().map(|g| (g.key, g.rebuild)).collect::<Vec<_>>(), out.waiting)
@@ -6062,7 +6154,7 @@ mod tests {
         read(&mut t, stride as u32, &[2], 300, 5.0);
         let mut choose = |palettes: &[[[f32; 4]; 4]], written: &[std::ops::Range<usize>]| {
             let mut out = Faces::default();
-            choose_rebuilds(palettes, written, glam::Vec3::ZERO, &mut t, &mut out);
+            choose_rebuilds(palettes, written, glam::Vec3::ZERO, None, &mut t, &mut out);
             out.groups.iter().map(|g| g.rebuild).collect::<Vec<_>>()
         };
         assert_eq!(choose(&palettes, &[]), [true, true]);
@@ -6097,6 +6189,124 @@ mod tests {
         let d = drift(&a, &b);
         assert!((d - 0.01 * JOINT_REACH).abs() < 1e-3, "{d}");
         assert_eq!(drift(&a, &a), 0.0);
+    }
+
+    /// Reads skeleton `key`'s one face, of `record`, placed by `model` and
+    /// as the record flags `rf` say.
+    fn read_placed(t: &mut BTreeMap<u32, Skeleton>, key: u32, record: u32, model: glam::Mat4, rf: u32) {
+        let face = Posed {
+            record,
+            base_vertex: 0,
+            first_index: 0,
+            index_count: 300,
+            opaque: true,
+        };
+        t.entry(key)
+            .or_default()
+            .read(std::iter::once((face, model.to_cols_array_2d(), rf)));
+    }
+
+    fn choose_placed(
+        t: &mut BTreeMap<u32, Skeleton>,
+        palettes: &[[[f32; 4]; 4]],
+        written: Option<std::ops::Range<usize>>,
+    ) -> Vec<(u32, bool, [f32; 12])> {
+        let mut out = Faces::default();
+        let written: Vec<_> = written.into_iter().collect();
+        choose_rebuilds(palettes, &written, glam::Vec3::ZERO, None, t, &mut out);
+        out.groups.iter().map(|g| (g.key, g.rebuild, g.place)).collect()
+    }
+
+    /// A skinned avatar that walks and turns, its pose unchanged: its level
+    /// is not built again but follows its anchor, and its shadow stands
+    /// where it does. A change of its pose builds it again.
+    #[test]
+    fn rt_shadows_an_avatar_s_level_follows_its_anchor() {
+        let stride = crate::types::PALETTE_STRIDE as usize;
+        let anchor = crate::types::SKELETON_ANCHOR as usize;
+        let mut palettes = vec![glam::Mat4::IDENTITY.to_cols_array_2d(); 2 * stride];
+        let key = stride as u32;
+        let rf = flags::SKINNED | flags::ANCHORED;
+        let then = glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0));
+        palettes[stride + anchor] = then.to_cols_array_2d();
+        let mut t = BTreeMap::new();
+        read_placed(&mut t, key, 1, glam::Mat4::IDENTITY, rf);
+        assert_eq!(choose_placed(&mut t, &palettes, None), [(key, true, IDENTITY)]);
+        // it walks a metre and turns: followed, not built
+        let now = glam::Mat4::from_rotation_translation(glam::Quat::from_rotation_z(1.0), glam::Vec3::new(6.0, 0.5, 0.0));
+        palettes[stride + anchor] = now.to_cols_array_2d();
+        let written = Some(stride + anchor..stride + anchor + 1);
+        let follow = row_major(&(now * then.inverse()).to_cols_array_2d());
+        assert_eq!(choose_placed(&mut t, &palettes, written.clone()), [(key, false, follow)]);
+        assert!(t[&key].lag(key, &palettes) < 1e-4);
+        // its attachment points move with it, and place none of its faces
+        palettes[stride + anchor + 5][3][0] = 7.0;
+        let written = Some(stride + anchor + 5..stride + anchor + 6);
+        assert_eq!(choose_placed(&mut t, &palettes, written.clone()), [(key, false, follow)]);
+        // a joint moves in its own space: built again, where it stands
+        palettes[stride + 7][3][0] = 0.3;
+        let written = Some(stride + 7..stride + 8);
+        assert_eq!(choose_placed(&mut t, &palettes, written.clone()), [(key, true, IDENTITY)]);
+        // (built where its anchor is: it follows from there)
+        assert!(!choose_placed(&mut t, &palettes, None)[0].1);
+    }
+
+    /// A worn rigid object follows its attachment point and is built again
+    /// only when its own model changes; the next avatar's joints, after its
+    /// point in the palettes, are not its own.
+    #[test]
+    fn rt_shadows_a_worn_object_follows_its_attachment_point() {
+        let stride = crate::types::PALETTE_STRIDE as usize;
+        let point = stride + crate::types::SKELETON_ANCHOR as usize + 3;
+        let mut palettes = vec![glam::Mat4::IDENTITY.to_cols_array_2d(); 3 * stride];
+        let then = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 1.5));
+        palettes[point] = then.to_cols_array_2d();
+        let model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.1));
+        let key = point as u32;
+        let mut t = BTreeMap::new();
+        read_placed(&mut t, key, 1, model, flags::ANCHORED);
+        assert_eq!(choose_placed(&mut t, &palettes, None), [(key, true, IDENTITY)]);
+        let now = glam::Mat4::from_translation(glam::Vec3::new(4.0, 2.0, 1.5));
+        palettes[point] = now.to_cols_array_2d();
+        let follow = row_major(&(now * then.inverse()).to_cols_array_2d());
+        assert_eq!(choose_placed(&mut t, &palettes, Some(point..point + 1)), [(key, false, follow)]);
+        // the next avatar walks
+        palettes[2 * stride + 9][3][0] = 3.0;
+        let written = Some(2 * stride + 9..2 * stride + 10);
+        assert_eq!(choose_placed(&mut t, &palettes, written.clone()), [(key, false, follow)]);
+        // its own model moves on the point: built again
+        read_placed(
+            &mut t,
+            key,
+            1,
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.3, 0.1)),
+            flags::ANCHORED,
+        );
+        assert_eq!(choose_placed(&mut t, &palettes, None), [(key, true, IDENTITY)]);
+    }
+
+    /// Two heavy avatars walk, each over what a frame builds beside
+    /// another: ours is built at every frame, though the other stands
+    /// nearer the eye.
+    #[test]
+    fn rt_shadows_our_avatar_is_built_first() {
+        let stride = crate::types::PALETTE_STRIDE;
+        let heavy = (REBUILD_TRIANGLES * 6) as u32;
+        let (other, ours) = (stride, 2 * stride);
+        let mut t = BTreeMap::new();
+        for step in 0..4 {
+            let walked = step as f32 * 0.5;
+            read(&mut t, other, &[1], heavy, 3.0 + walked);
+            read(&mut t, ours, &[2], heavy, 5.0 + walked);
+            let mut out = Faces::default();
+            choose_rebuilds(&[], &[], glam::Vec3::ZERO, Some(ours), &mut t, &mut out);
+            let built: Vec<_> = out.groups.iter().map(|g| (g.key, g.rebuild)).collect();
+            assert_eq!(built, [(other, false), (ours, true)], "frame {step}");
+        }
+        // without it, the nearest
+        read(&mut t, other, &[1], heavy, 6.0);
+        read(&mut t, ours, &[2], heavy, 8.0);
+        assert_eq!(choose(&mut t), [(other, true), (ours, false)]);
     }
 
     /// A face of a test frame: its id, place, shape, traced or not, near
