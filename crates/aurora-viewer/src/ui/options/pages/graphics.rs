@@ -382,11 +382,18 @@ fn anti_aliasing(cx: &mut Cx) {
         return;
     };
     let mut choices: Vec<(u8, &str, Option<&str>)> = base.iter().map(|&(v, l)| (v, l, None)).collect();
-    let greyed = if dlss_choosable(cx) { None } else { blocked.as_deref() };
+    // without the files, choosing DLSS offers to install them (Windows)
+    let installable = cfg!(any(windows, target_os = "linux")) && cx.st.dlss == aurora_render::DlssSupport::NoFiles;
+    let greyed = if dlss_choosable(cx) || installable {
+        None
+    } else {
+        blocked.as_deref()
+    };
     let name = tr!("ui-options-dlss");
     choices.push((DLSS, name, greyed));
     let words: Vec<&str> = choices.iter().map(|(_, l, _)| *l).collect();
     cx.keywords(&words.join(" "));
+    let install = std::cell::Cell::new(false);
     cx.row(label, hint, &fields!(antialiasing, dlss), |ui, s| {
         // (`AURORA_DLSS` for a test overrides the setting: the list shows
         // what draws, aurora_render::dlss_wanted)
@@ -395,12 +402,19 @@ fn anti_aliasing(cx: &mut Cx) {
         } else {
             s.antialiasing
         };
-        let changed = crate::ui::options::combo_blocked(ui, &mut v, &choices);
-        if changed {
+        let mut changed = crate::ui::options::combo_blocked(ui, &mut v, &choices);
+        if changed && v == DLSS && installable {
+            install.set(true);
+            changed = false;
+        } else if changed {
             (s.antialiasing, s.dlss) = if v == DLSS { (7, true) } else { (v, false) };
         }
         changed
     });
+    #[cfg(any(windows, target_os = "linux"))]
+    if install.get() {
+        cx.st.dlss_install.ask();
+    }
     // (DLSS saved but kept out by `AURORA_DLSS=0`: the list shows FSR, which
     // draws, and the note still says why)
     if let Some(why) = &blocked
@@ -408,6 +422,25 @@ fn anti_aliasing(cx: &mut Cx) {
         && (cx.s.dlss || aurora_render::dlss_wanted(cx.s.dlss))
     {
         cx.note(&tr!("ui-options-dlss-fallback", why = why.as_str()));
+        // chosen before its files were there: installed from here (Windows)
+        #[cfg(any(windows, target_os = "linux"))]
+        if installable {
+            let p = cx.p;
+            let ask = std::cell::Cell::new(false);
+            cx.row_with(
+                "Install NVIDIA DLSS",
+                "Downloads DLSS from NVIDIA and sets it up, after you accept NVIDIA's licence.",
+                &Nothing,
+                |ui, _, _, _| {
+                    use crate::ui::widgets::{ActionKind, action_button};
+                    ask.set(action_button(ui, &p, "download", "Install…", ActionKind::Flat, egui::Vec2::new(0.0, 24.0)).clicked());
+                    false
+                },
+            );
+            if ask.get() {
+                cx.st.dlss_install.ask();
+            }
+        }
         // NVIDIA's library refused it while the viewer runs: asked again
         // on demand (a refused start is not asked again by itself,
         // aurora-render's dlss.rs)
@@ -1705,4 +1738,100 @@ fn parcel_rows<'a, T, K: egui::AsIdSalt>(
             }
         });
     remove
+}
+
+/// The DLSS installation started by choosing NVIDIA DLSS without its files
+/// (dlss_install): NVIDIA's licence, the progress, then the restart.
+#[cfg(any(windows, target_os = "linux"))]
+pub(in crate::ui::options) fn dlss_install_modal(
+    ctx: &egui::Context,
+    p: &crate::theme::Palette,
+    s: &mut crate::settings::Settings,
+    st: &mut super::super::OptionsUi,
+    r: &mut super::super::OptionsResult,
+) {
+    use crate::dlss_install::State;
+    use crate::ui::widgets;
+    use aurora_i18n::tr;
+    use egui::Vec2;
+    if !st.dlss_install.active() {
+        return;
+    }
+    let state = st.dlss_install.state();
+    let folder = st.dlss_folder.clone().map(std::path::PathBuf::from);
+    let (mut accept, mut cancel, mut restart) = (false, false, false);
+    let modal = widgets::Modal::new(egui::Id::unique("dlss_install")).show(ctx, |ui| {
+        ui.set_width(560.0);
+        ui.label(RichText::new("Install NVIDIA DLSS").strong().size(16.0));
+        ui.add_space(6.0);
+        match &state {
+            State::Idle => {}
+            State::Fetching => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Getting NVIDIA's licence…");
+                });
+            }
+            State::Licence(text) => {
+                ui.label(
+                    if cfg!(windows) {
+                        "DLSS is made by NVIDIA and is not part of Aurora. The viewer downloads it from \
+                         NVIDIA (about 32 MB) and sets it up. Please read and accept NVIDIA's licence first:"
+                    } else {
+                        "DLSS is made by NVIDIA and is not part of Aurora. The viewer downloads it from \
+                         NVIDIA (about 62 MB) and builds its library with g++. Please read and accept \
+                         NVIDIA's licence first:"
+                    },
+                );
+                ui.add_space(4.0);
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new(text.as_str()).small());
+                    });
+                });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    accept = widgets::primary_button_sized(ui, p, "Accept and install", Vec2::new(150.0, 26.0)).clicked();
+                    cancel = ui.button(tr!("common-cancel")).clicked();
+                });
+            }
+            State::Working(what, f) => {
+                ui.label(what.as_str());
+                ui.add(egui::ProgressBar::new(*f).show_percentage());
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            }
+            State::Done => {
+                ui.label("NVIDIA DLSS is installed. Restart the viewer to turn it on.");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    restart = widgets::primary_button_sized(ui, p, "Restart now", Vec2::new(130.0, 26.0)).clicked();
+                    cancel = ui.button("Later").clicked();
+                });
+            }
+            State::Failed(why) => {
+                ui.label(format!("DLSS could not be installed: {why}"));
+                ui.add_space(8.0);
+                cancel = ui.button(tr!("common-close")).clicked();
+            }
+        }
+    });
+    if matches!(state, State::Fetching | State::Working(..)) {
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    if accept {
+        match folder {
+            Some(folder) => st.dlss_install.install(folder),
+            None => log::warn!("DLSS install: no folder for the files"),
+        }
+    }
+    if matches!(state, State::Done) && (restart || cancel) {
+        // DLSS is the choice from the next start
+        (s.antialiasing, s.dlss) = (7, true);
+        r.changed = true;
+        r.restart_for_dlss = restart;
+        st.dlss_install.close();
+    } else if cancel || (modal.should_close() && !matches!(state, State::Working(..) | State::Fetching)) {
+        st.dlss_install.close();
+    }
 }
