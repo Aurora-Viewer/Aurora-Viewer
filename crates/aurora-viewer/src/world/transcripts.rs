@@ -656,13 +656,19 @@ impl World {
             .collect()
     }
 
+    /// The other resident of a conversation when it is a private one: a
+    /// private conversation is keyed by the other resident; a group's or a
+    /// conference's is not one, by its session or by our membership (as
+    /// `transcript_stem` names its file), nor the nearby chat (nil). Its
+    /// history lines resolve their names when drawn (`history_lines`).
+    pub fn private_peer(&self, conversation: Uuid) -> Option<Uuid> {
+        let id = conversation;
+        (!id.is_nil() && !self.is_group_session(&id) && self.groups.group(&id).is_none()).then_some(id)
+    }
+
     fn apply_history(&mut self, loaded: Loaded) {
         let nearby = loaded.conversation.is_nil();
-        // a private conversation is keyed by the other resident; a group's
-        // or a conference's is not one, by its session or by our membership
-        // (as `transcript_stem` names its file)
-        let id = loaded.conversation;
-        let peer = (!nearby && !self.is_group_session(&id) && self.groups.group(&id).is_none()).then_some(id);
+        let peer = self.private_peer(loaded.conversation);
         let lines = self.history_lines(loaded.entries, nearby, false, peer);
         if nearby {
             self.nearby_history = HistoryState::Done;
