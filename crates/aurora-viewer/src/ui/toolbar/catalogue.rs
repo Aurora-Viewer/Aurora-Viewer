@@ -84,6 +84,22 @@ pub const COMMANDS: &[Command] = commands![
     "huds", "device-desktop-filled", "ui-bars-immersive-hide-huds", true;
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
+    // Build and Me menu commands that can be added directly to a toolbar.
+    "ik_edit", "bone-filled", "ik-edit-title", true;
+    "build_edit", "pencil-filled", "toolbar-command-build-edit", true;
+    "build_create", "circle-plus-filled", "toolbar-command-build-create", true;
+    "build_land", "mountain-filled", "toolbar-command-build-land", true;
+    "edit_particles", "sparkles-filled", "ui-bars-edit-particles", true;
+    "import", "file-upload-filled", "import-menu", true;
+    "blender_live", "cube-3d-sphere", "blender-live-title", true;
+    "buy_currency", "coin-filled", "currency-menu", true;
+    "money_tracker", "receipt-filled", "money-tracker-title", true;
+    "experiences", "flask-filled", "ui-experiences-title", true;
+    "stand_up", "man-filled", "common-stand-up", true;
+    "fly_override", "plane-departure-filled", "ui-bars-fly-override", true;
+    "movelock_options", "lock-cog", "movelock-options", true;
+    "quickjump", "arrow-big-up-lines-filled", "ui-bars-quickjump", true;
+    "movement_enhancer", "steering-wheel-filled", "movement-title", true;
     // Aurora's own: the Director, a camera track to film with
     "director", "movie", "toolbar-command-director", true;
     // Aurora's own: our avatar seen by a camera of its own
