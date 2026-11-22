@@ -737,6 +737,16 @@ impl Outside {
         }
     }
 
+    /// What each window outside drew at this frame's pass, before it is
+    /// handed to the renderer (`hand`).
+    pub fn passes(&self, mut each: impl FnMut(&[ClippedShape])) {
+        for native in self.shared.borrow().windows.values() {
+            if let Some(pass) = &native.pass {
+                each(&pass.shapes);
+            }
+        }
+    }
+
     /// The texture changes of this frame's passes outside, to put before
     /// those of the viewer's own pass.
     pub fn take_textures(&mut self) -> egui::TexturesDelta {

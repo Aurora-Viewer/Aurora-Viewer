@@ -9954,6 +9954,9 @@ impl App {
         if !self.ui_image_cache.look(self.frame_count, shapes, now) {
             return;
         }
+        // (a picture shown in a window outside only is in use as well)
+        let cache = &mut self.ui_image_cache;
+        self.outside.passes(|shapes| cache.drawn_in(shapes, now));
         if let Some(own) = self.world.profiles.get(&self.world.agent_id) {
             self.ui_image_cache.used(&own.sl_image, now);
         }
