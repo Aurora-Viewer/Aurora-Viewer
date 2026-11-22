@@ -59,6 +59,7 @@ impl App {
             && self.imports.pending_files.is_none()
             && self.imports.entries.len() < 512
             && !self.blender_live.import.busy();
+        self.blender_live.update_thumbnails(&self.scene.jobs, ctx);
         if self.blender_live.show(ctx, palette, can_upload) {
             self.blender_live.start_requested = true;
         }
@@ -231,6 +232,7 @@ impl App {
                 "plugins" => self.blender_live.tab = Tab::Plugins,
                 _ => {}
             }
+            let quick_look = std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look");
             self.blender_live.installer.demo(&mode);
             if mode.starts_with("shape") {
                 self.demo_blender_shape(mode == "shape-readonly");
@@ -244,6 +246,9 @@ impl App {
                 Ok(snapshot) if !mode.starts_with("shape") && mode != "lods" => {
                     self.blender_live.receive(snapshot);
                     self.blender_live.owner = Some(self.world.agent_id);
+                    if quick_look && let Some(source) = self.blender_live.selected {
+                        self.blender_live.open_quick_look(source);
+                    }
                     if mode == "objects" {
                         let ids: Vec<_> = self
                             .blender_live

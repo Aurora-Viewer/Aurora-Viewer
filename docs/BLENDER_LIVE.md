@@ -235,7 +235,11 @@ line (link, revision, time since the last snapshot, **Enable preview** or
 **Stop and remove**) above five tabs.
 
 - **Objects**: one card per source object, by its Blender name, even if it
-  spans several render batches. The line under the name says whether it is
+  spans several render batches. A small live thumbnail shows the object as
+  Blender last sent it, in its rest pose; it is rebuilt in the background
+  once an object stops changing for 0.4 s, so a drag in Blender does not
+  rebuild it at each revision. Click it for **Quick look**, a larger view
+  under the cards: drag to turn it, double-click to face it again. The line under the name says whether it is
   static or rigged (a **Rigged** tag), its prims and its triangles. A linkset's
   card unfolds to its prims (`#2 · Frame`). On the right, the time since
   Blender last changed that object (teal for the first five seconds): a
