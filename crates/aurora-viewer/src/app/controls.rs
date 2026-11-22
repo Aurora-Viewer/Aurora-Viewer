@@ -36,12 +36,21 @@ impl App {
                 no_collisions: flight.no_collisions,
             }),
         };
-        // AURORA_DEMO_CONTROLS=compact…: the camera's form for the run,
-        // compact first, its title button switching it, never saved
-        let demo = (self.demo && demo_compact()).then(|| *self.demo_compact_camera.get_or_insert(true));
-        let before = crate::ui::controls::Compact {
-            camera: demo.unwrap_or(self.settings.compact_controls),
+        let saved = crate::ui::controls::Compact {
+            camera: self.settings.compact_controls,
             movement: self.settings.compact_movement_controls,
+        };
+        // AURORA_DEMO_CONTROLS=compact… and movement-compact: the forms of
+        // the run, never saved (`DemoCompact`)
+        if self.demo
+            && self.demo_compact.is_none()
+            && let Some(camera) = demo_compact()
+        {
+            self.demo_compact = Some(DemoCompact::start(saved, camera));
+        }
+        let before = match self.demo_compact.as_mut() {
+            Some(run) => run.shown(saved),
+            None => saved,
         };
         let mut compact = before;
         let out = self.controls_ui.show(
@@ -53,17 +62,14 @@ impl App {
             self.settings.classic_controls,
             &view,
         );
-        if compact.camera != before.camera {
-            if demo.is_some() {
-                self.demo_compact_camera = Some(compact.camera);
+        if compact != before {
+            if let Some(run) = self.demo_compact.as_mut() {
+                run.run = compact;
             } else {
                 self.settings.compact_controls = compact.camera;
+                self.settings.compact_movement_controls = compact.movement;
                 self.settings.save();
             }
-        }
-        if compact.movement != before.movement {
-            self.settings.compact_movement_controls = compact.movement;
-            self.settings.save();
         }
         self.controls_held = out.held;
         self.controls_free = (out.free_move, out.free_look);
@@ -76,7 +82,7 @@ impl App {
         }
     }
 
-    /// The toolbar's Move and View, the View menu, the shortcut
+    /// The toolbar's Move and View, the World menu, the shortcut
     /// (`ui::controls::request`; the free camera keeps Aurora's window).
     pub(super) fn request_controls(&mut self, movement: bool, toggle: bool) {
         let classic = self.settings.classic_controls && self.camera.free().is_none();
@@ -241,8 +247,9 @@ impl App {
     /// pressed at 640, which closes it, and again at 680, which opens it
     /// compact, #3904; `compact-move-back` Move pressed at 640, then the
     /// window's Camera tab at 660: compact again, logged at 680, #3904;
-    /// `movement-compact` the Movement tab shown compact at 640, for the
-    /// run, its saved choice left as it is: the movement pad); `free` the
+    /// `movement-compact` the Movement tab shown compact at 640, the run's
+    /// form, its saved choice left as it is: the movement pad and walk / run
+    /// / fly); `free` the
     /// photo window's free camera on, which opens it, `free-compact` the
     /// same minimized; 40 frames later the free camera has flown 2 m to the
     /// left and 1 m up and turned toward the avatar, which stayed.
@@ -304,8 +311,12 @@ impl App {
             }
         }
         if self.frame_count == 640 && std::env::var("AURORA_DEMO_CONTROLS").as_deref() == Ok("movement-compact") {
-            crate::ui::widgets::minimize_floater(&self.egui_ctx, crate::ui::controls::WINDOW);
-            log::info!("demo controls: the Movement tab made compact");
+            // the run's Movement form, applied to the open tab at once
+            // as a Preferences switch is; nothing saved
+            if let Some(run) = self.demo_compact.as_mut() {
+                run.run.movement = true;
+            }
+            log::info!("demo controls: the Movement tab shown compact");
         }
         if std::env::var("AURORA_DEMO_CONTROLS").as_deref() == Ok("compact-close") {
             let compact = || crate::ui::widgets::floater_minimized(&self.egui_ctx, crate::ui::controls::WINDOW);
@@ -344,7 +355,7 @@ impl App {
                 self.camera.roll = 15.0_f32.to_radians();
             }
             Ok("movement" | "movement-compact") => self.panels.movement_controls = true,
-            // compact for this run only (`demo_compact`, AGENTS.md section 4)
+            // compact for this run only (`DemoCompact`, AGENTS.md section 4)
             Ok("compact" | "compact-move" | "compact-move-back" | "compact-close") => self.panels.camera_controls = true,
             Ok("classic") => {
                 self.settings.classic_controls = true;
@@ -362,15 +373,119 @@ impl App {
 }
 
 /// AURORA_DEMO_CONTROLS=compact | compact-move | compact-move-back |
-/// compact-close: the camera's form compact for the run, whatever the saved
-/// choice (`Settings::compact_controls` is left as it is, its title button
-/// switches `App::demo_compact_camera`).
-fn demo_compact() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        matches!(
-            std::env::var("AURORA_DEMO_CONTROLS").as_deref(),
-            Ok("compact" | "compact-move" | "compact-move-back" | "compact-close")
-        )
+/// compact-close | movement-compact: the run keeps its own compact forms
+/// (`DemoCompact`), whatever the saved choices; `Some(true)` when the camera
+/// starts compact, `Some(false)` for `movement-compact` (its Movement tab
+/// made compact at 640).
+fn demo_compact() -> Option<bool> {
+    static ON: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| match std::env::var("AURORA_DEMO_CONTROLS").as_deref() {
+        Ok("compact" | "compact-move" | "compact-move-back" | "compact-close") => Some(true),
+        Ok("movement-compact") => Some(false),
+        _ => None,
     })
+}
+
+/// The compact forms of a demo run (AGENTS.md section 4: a test never
+/// changes the shared settings). The window's title button switches the
+/// run's form, never the saved one; a Preferences switch (the saved choice
+/// changing) still takes over its tab, as it does outside the demo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct DemoCompact {
+    /// The forms the window shows for the run.
+    pub run: crate::ui::controls::Compact,
+    /// The saved choices of the last frame, to see a Preferences switch.
+    saved: crate::ui::controls::Compact,
+}
+
+impl DemoCompact {
+    /// The run's start: the camera compact or not, the movement full.
+    fn start(saved: crate::ui::controls::Compact, camera: bool) -> Self {
+        Self {
+            run: crate::ui::controls::Compact { camera, movement: false },
+            saved,
+        }
+    }
+
+    /// The forms to show this frame: a saved choice changed since the last
+    /// frame (Preferences) replaces the run's form of its tab.
+    fn shown(&mut self, saved: crate::ui::controls::Compact) -> crate::ui::controls::Compact {
+        if saved.camera != self.saved.camera {
+            self.run.camera = saved.camera;
+        }
+        if saved.movement != self.saved.movement {
+            self.run.movement = saved.movement;
+        }
+        self.saved = saved;
+        self.run
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DemoCompact;
+    use crate::ui::controls::Compact;
+
+    /// #3904: a demo run keeps its own compact forms (AGENTS.md section 4),
+    /// and a Preferences switch of a saved choice takes over that tab.
+    #[test]
+    fn a_demo_run_keeps_its_forms_until_preferences_switch_one() {
+        let saved = Compact {
+            camera: false,
+            movement: true,
+        };
+        let mut run = DemoCompact::start(saved, true);
+        assert_eq!(
+            run.shown(saved),
+            Compact {
+                camera: true,
+                movement: false
+            },
+            "the run's start"
+        );
+        // the title button switched the run's camera to full
+        run.run.camera = false;
+        assert_eq!(
+            run.shown(saved),
+            Compact {
+                camera: false,
+                movement: false
+            },
+            "kept, the saved choices unchanged"
+        );
+        // Preferences turns compact movement off, then compact camera on
+        let saved = Compact {
+            camera: false,
+            movement: false,
+        };
+        assert_eq!(
+            run.shown(saved),
+            Compact {
+                camera: false,
+                movement: false
+            },
+            "movement as saved"
+        );
+        let saved = Compact {
+            camera: true,
+            movement: false,
+        };
+        assert_eq!(
+            run.shown(saved),
+            Compact {
+                camera: true,
+                movement: false
+            },
+            "camera as saved"
+        );
+        run.run.movement = true;
+        assert_eq!(
+            run.shown(saved),
+            Compact {
+                camera: true,
+                movement: true
+            },
+            "the title button again"
+        );
+    }
 }

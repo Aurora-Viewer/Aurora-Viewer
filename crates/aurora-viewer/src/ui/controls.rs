@@ -286,7 +286,8 @@ impl ControlsUi {
     /// Movement, the World menu's entries; either opens it on its tab), or
     /// Firestorm's two windows when `classic`. `compact` is the saved
     /// compact choice of each tab (`Compact`): the title bar's compact /
-    /// full button sets the shown tab's, and a tab shows that way.
+    /// full button (or a double-click on the title bar, as on every window)
+    /// sets the shown tab's, and a tab shows that way.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -403,8 +404,9 @@ impl ControlsUi {
                     self.body(ui, p, view, &mut out);
                 }
             });
-            // the title button switched it: the one change kept as the
-            // choice (a close expands it too; an expand asked for elsewhere
+            // the title button switched it (or a double-click on the title
+            // bar, which every window takes as its button): the one change
+            // kept as the choice (a close expands it too; an expand asked for elsewhere
             // and the free camera's own compact window are not choices of
             // the camera's form)
             let now = widgets::floater_minimized(ctx, WINDOW);
@@ -780,7 +782,8 @@ fn compact_choice(by_title: bool, now: bool, free: bool) -> Option<bool> {
 /// A flag just raised opens the window on its tab; otherwise it stays.
 /// The camera (`movement` false) or movement controls asked for by a
 /// toolbar button or a shortcut (`toggle`, LLFloaterReg::toggleInstance) or
-/// a menu item (LLFloaterReg::showInstance). Compact, the window shows
+/// a menu item that only opens (`toggle` false, LLFloaterReg::showInstance:
+/// the camera presets' Camera controls). Compact, the window shows
 /// the tab it is on (#3904): the button of that tab closes it with
 /// `toggle`, as it closes the full window; the other tab's button turns
 /// to it (#1815), in that tab's saved form (`ControlsUi::show`). `classic`: Legacy's two windows, each its own.
@@ -2216,7 +2219,8 @@ mod tests {
     }
 
     /// #3904: the compact window is the camera shown, so its button
-    /// closes it; a menu item leaves it compact.
+    /// closes it; a request that only opens (`toggle` false) leaves it
+    /// compact.
     #[test]
     fn the_camera_button_closes_the_compact_window() {
         let ctx = egui::Context::default();
@@ -2235,8 +2239,10 @@ mod tests {
         assert!(camera && !movement && expand.is_none() && widgets::floater_minimized(&ctx, WINDOW));
     }
 
-    /// #3904: the compact form is kept across closing and reopening; the
-    /// title button changes the saved choice, the Movement button does not.
+    /// #3904: the compact form is kept across closing and reopening, and
+    /// follows the saved choice when it changes (set here by hand, as the
+    /// title button or Preferences would); the Movement button and a window
+    /// reset do not change it.
     #[test]
     fn the_compact_window_opens_again_compact() {
         let ctx = egui::Context::default();
@@ -2318,8 +2324,7 @@ mod tests {
         crate::ui::layout::reset_windows(&ctx);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && !minimized() && compact.camera, "a reset is no choice");
-        // the title button's full view (`compact_choice`), then closed and
-        // opened again: full
+        // the choice made full, then closed and opened again: full
         compact.camera = false;
         request(&ctx, &mut camera, &mut movement, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
@@ -2456,13 +2461,33 @@ mod tests {
             self.settle();
         }
 
+        /// A double-click on the title bar, left of its buttons.
+        fn double_click_title(&mut self) {
+            let rect = self
+                .ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("floater_minimize", WINDOW))))
+                .expect("the title button drawn");
+            let at = rect.center() - Vec2::new(rect.width() * 3.0, 0.0);
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            };
+            self.frame(vec![egui::Event::PointerMoved(at)]);
+            self.frame(vec![button(true), button(false)]);
+            self.frame(vec![button(true), button(false)]);
+            self.settle();
+        }
+
         fn minimized(&self) -> bool {
             widgets::floater_minimized(&self.ctx, WINDOW)
         }
     }
 
-    /// #3904: the title button's compact / full is the shown tab's saved
-    /// choice; in the free camera it is the free camera's own window.
+    /// #3904: the title button's compact / full, or a double-click on the
+    /// title bar, is the shown tab's saved choice; in the free camera it is
+    /// the free camera's own window.
     #[test]
     fn the_title_button_sets_the_compact_choice() {
         let mut h = Harness::new(Compact::default());
@@ -2485,6 +2510,9 @@ mod tests {
             h.minimized() && h.compact.movement && !h.compact.camera,
             "compact, saved for Movement"
         );
+        // a double-click on the title bar is the same choice
+        h.double_click_title();
+        assert!(!h.minimized() && !h.compact.movement, "full by a double-click, saved");
         // the free camera's compact window is no choice of the camera's
         let mut h = Harness::new(Compact::default());
         h.free = Some(FreeView {

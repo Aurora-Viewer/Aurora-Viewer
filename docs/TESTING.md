@@ -1066,8 +1066,8 @@ closes, logged at 660) and again at 680 (it opens compact, logged and captured
 at 700; #3904),
 `compact-move-back` the same as `compact-move`, then the window's Camera tab
 clicked at 660 (the camera compact again, as saved, logged at 680; #3904),
-`movement-compact` the Movement tab shown compact at 640, for the run, its
-saved choice left as it is (the movement pad and walk / run / fly; #3904,
+`movement-compact` the Movement tab shown compact at 640, the run's form,
+its saved choice left as it is (the movement pad and walk / run / fly; #3904,
 capture at 700),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
 not saved). `views` (Aurora's window) and `classic-views` (the Legacy
