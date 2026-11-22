@@ -122,8 +122,17 @@ fn feedback_id() -> egui::Id {
 /// there, and what is let go of there is carried to the viewer's other
 /// windows (`outside::carry`), not dropped.
 pub(crate) fn over_world(ctx: &egui::Context) -> bool {
-    let window = ctx.content_rect();
-    !ctx.is_pointer_over_egui() && ctx.input(|i| i.pointer.interact_pos().is_none_or(|at| window.contains(at)))
+    in_world(
+        ctx.is_pointer_over_egui(),
+        ctx.input(|i| i.pointer.interact_pos()),
+        ctx.content_rect(),
+    )
+}
+
+/// `over_world`, from what the interface says: a window of the interface
+/// is under the pointer, where the pointer is, and the viewer's window.
+pub(crate) fn in_world(over_interface: bool, at: Option<egui::Pos2>, window: egui::Rect) -> bool {
+    !over_interface && at.is_none_or(|at| window.contains(at))
 }
 
 /// How many entries a drag of inventory carries while one is in progress (a

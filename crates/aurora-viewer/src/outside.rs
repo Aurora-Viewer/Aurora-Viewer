@@ -1212,8 +1212,12 @@ mod tests {
         let kept: Rc<RefCell<Option<(u64, u64)>>> = Rc::default();
         let for_pass = kept.clone();
         egui::Context::set_immediate_viewport_renderer(move |ctx, viewport| {
-            let egui::ImmediateViewport { mut viewport_ui_cb, .. } = viewport;
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let egui::ImmediateViewport {
+                ids, mut viewport_ui_cb, ..
+            } = viewport;
+            let clock = ctx.input(|i| (i.time, i.predicted_dt, i.max_texture_side));
+            let input = pass_input(egui::RawInput::default(), ids, (600, 400), 1.0, 1.0, false, clock);
+            let _ = ctx.run_ui(input, |ui| {
                 *for_pass.borrow_mut() = Some((
                     ui.ctx().cumulative_frame_nr_for(ui.ctx().viewport_id()),
                     ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),

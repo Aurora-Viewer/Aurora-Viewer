@@ -79,10 +79,10 @@ fn close_all_windows_closes_a_window_outside_too() {
     let window = egui::Id::unique("test outside closes");
     crate::outside::want(&frames.ctx, window, true);
     crate::outside::set_native(&frames.ctx, window, true);
-    let key = |modifiers: egui::Modifiers| egui::Event::Key {
+    let key = |pressed: bool, modifiers: egui::Modifiers| egui::Event::Key {
         key: egui::Key::W,
         physical_key: None,
-        pressed: true,
+        pressed,
         repeat: false,
         modifiers,
     };
@@ -96,9 +96,10 @@ fn close_all_windows_closes_a_window_outside_too() {
         });
     };
     frame(&mut open, Vec::new());
-    frame(&mut open, vec![key(egui::Modifiers::COMMAND)]);
+    let (command, all) = (egui::Modifiers::COMMAND, egui::Modifiers::COMMAND | egui::Modifiers::SHIFT);
+    frame(&mut open, vec![key(true, command)]);
     assert!(open, "Ctrl+W is for the front window inside");
-    frame(&mut open, vec![key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT)]);
+    frame(&mut open, vec![key(false, command), key(true, all)]);
     assert!(!open);
 }
 
