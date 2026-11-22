@@ -2977,6 +2977,8 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Interface
 
+- ✅ A texture opened from a notecard scales with its window (a tester's report, 2026-11-22; task `notecard-texture-scale`; no issue). The notecard's image window drew the picture at most at the texture's own pixel size, so enlarging the window left it small; it now uses the inventory texture preview's picture (`texture_view::picture`): it fills the window and keeps its ratio, as LLPreviewTexture does (indra/newview/llpreviewtexture.cpp). The description heads the window, as in floater_preview_texture.xml. Scenario `AURORA_DEMO_INVENTORY=note-image`. Validated by the human in demo mode on 2026-11-22.
+
 - ✅ Object Contents uses the inventory text matcher for plus-separated terms and quoted words in both Build styles ([#4419](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4419), [PR #4575](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4575)). Validated in the Windows test viewer on 2026-11-22.
 
 - ✅ Menu commands on toolbars ([#2341](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/2341); [PR #2623](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/2623); validated by the human on the grid on 2026-11-06): add or remove 15 Build and Me commands from the menu row’s context menu; append new buttons to the bottom toolbar using the shared saved layout and live translated labels.
