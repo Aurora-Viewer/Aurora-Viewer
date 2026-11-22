@@ -14761,6 +14761,7 @@ blender-live-levels-note = 各オブジェクトのLiveMesh設定に基づいて
 blender-live-quick-look-tip = クイックルック：このオブジェクトを大きく表示
 blender-live-quick-look-drag = ドラッグで回転、ダブルクリックで元の向きに戻ります。
 blender-live-quick-look-changed = { $ago }前にBlenderで変更されました。
+blender-live-quick-look-bend = アバタータブと同じ曲げ：肘 { $elbows }°、膝 { $knees }°
 blender-live-undo = 元に戻す
 blender-live-undo-derez = { $name }をRez解除しました（Blenderのリストには残っています）
 blender-live-undo-detach = { $name }を取り外しました（Blenderのリストには残っています）

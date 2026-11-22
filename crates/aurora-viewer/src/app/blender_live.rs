@@ -59,7 +59,7 @@ impl App {
             && self.imports.pending_files.is_none()
             && self.imports.entries.len() < 512
             && !self.blender_live.import.busy();
-        self.blender_live.update_thumbnails(&self.scene.jobs, ctx);
+        self.blender_live.update_thumbnails(&self.scene.jobs, &self.world.avatar_lib, ctx);
         if self.blender_live.show(ctx, palette, can_upload) {
             self.blender_live.start_requested = true;
         }
@@ -245,7 +245,12 @@ impl App {
             if mode.starts_with("shape") {
                 self.demo_blender_shape(mode == "shape-readonly");
             }
-            let fixture = if mode.starts_with("static") {
+            let fixture = if mode == "sleeves" {
+                // the Avatar tab's bend, set, so it shows on the avatar and in Quick look
+                self.blender_live.bend.elbows = 90.0;
+                self.blender_live.bend.knees = 60.0;
+                crate::blender_live::demo_sleeves_fixture(&self.world.avatar_lib.rig)
+            } else if mode.starts_with("static") {
                 crate::blender_live::demo_static_fixture(&self.world.avatar_lib.rig, mode.starts_with("static-linked"))
             } else {
                 crate::blender_live::demo_fixture(&self.world.avatar_lib.rig, mode != "1")

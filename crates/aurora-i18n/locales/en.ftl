@@ -14897,6 +14897,7 @@ blender-live-levels-note = Prepared in Blender from each object's LiveMesh setti
 blender-live-quick-look-tip = Quick look: see this object larger
 blender-live-quick-look-drag = Drag to turn it, double-click to face it again.
 blender-live-quick-look-changed = Changed in Blender { $ago } ago.
+blender-live-quick-look-bend = Bent as in the Avatar tab: elbows { $elbows }°, knees { $knees }°.
 blender-live-undo = Undo
 blender-live-undo-derez = Derezzed { $name } · still in Blender’s list
 blender-live-undo-detach = Detached { $name } · still in Blender’s list

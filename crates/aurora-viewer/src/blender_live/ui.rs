@@ -528,7 +528,7 @@ fn quick_look(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
                 model,
                 &mut live.quick_view,
                 Vec2::splat(QUICK_LOOK),
-                None,
+                live.quick_pose.1.clone(),
             )
             .on_hover_text(aurora_i18n::tr!("blender-live-quick-look-drag"));
             ui.vertical(|ui| {
@@ -555,6 +555,14 @@ fn quick_look(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
                 ui.label(RichText::new(detail).size(11.5).color(p.muted));
                 if let Some((_, at)) = live.changed.get(&id) {
                     note(ui, p, &aurora_i18n::tr!("blender-live-quick-look-changed", ago = ago(*at).0));
+                }
+                if source.rigged() && live.quick_pose.1.is_some() {
+                    let bend = aurora_i18n::tr!(
+                        "blender-live-quick-look-bend",
+                        elbows = live.bend.elbows.round() as i64,
+                        knees = live.bend.knees.round() as i64
+                    );
+                    ui.label(RichText::new(bend).size(11.5).color(p.teal));
                 }
                 note(ui, p, aurora_i18n::tr!("blender-live-quick-look-drag"));
                 if widgets::flat_button(ui, p, aurora_i18n::tr!("common-close")).clicked() {
