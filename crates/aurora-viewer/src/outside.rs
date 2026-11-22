@@ -635,6 +635,7 @@ impl Outside {
         // (from the first window outside on: the keyboard's focus is known
         // by the time one is to come in front)
         self.activation.start(event_loop);
+        crate::window_hold::follow(&window);
         // (its first picture waits for the system to ask for one)
         window.request_redraw();
         let size = window.inner_size();
