@@ -119,6 +119,7 @@ pub const EFFECT_WORDS: &[&str] = &[
     "projector-shadows",
     "contact-shadows",
     "soft-shadows",
+    "point-shadows",
     "ray-tracing",
     "rt-lights",
     "rt-indirect",
