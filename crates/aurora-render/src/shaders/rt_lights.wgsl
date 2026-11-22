@@ -247,13 +247,23 @@ fn light_target(i: u32, world: vec3<f32>, n: vec3<f32>) -> f32 {
         }
         l = normalize(lt.apex.xyz - world);
     }
-    let nl = dot(n, l);
-    if (nl <= 0.0) {
-        return 0.0;
-    }
+    // A light behind the surface still counts, by `BEHIND`: the rays' normal
+    // is the mesh's, or the depth's on an edge (rt_history.wgsl
+    // `smooth_normal`), and the shading's own normal map or an edge's real
+    // normal may still face a light it turns from. A pixel no light reached
+    // was not shadowed at all (`cs_lights_reuse`: nothing to shadow), so a
+    // lamp behind a wall lit the rims of an avatar and the edges of the
+    // room in its colour (2026-11-22, grid report). Its ray is traced now,
+    // and the wall stops it.
+    let nl = max(dot(n, l), BEHIND);
     let lum = dot(lt.color_falloff.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
     return lum * light_atten(dist / radius, lt.color_falloff.w) * nl;
 }
+
+// The weight of a light behind the surface (`light_target`), as if it
+// came at 87°: small, so that its visibility weighs little in the share of
+// the lights the surface faces.
+const BEHIND: f32 = 0.05;
 
 // Point light `i`'s colour over its luminance: `light_target` times it is
 // the red, green and blue the light gives.
