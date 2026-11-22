@@ -1255,7 +1255,6 @@ import-mesh = Mesh
 import-bulk = Flere
 import-choose-files = Legg til filer…
 import-loading = Leser filer…
-import-limit-bulk-1k = Begrens teksturer til 1024 px
 import-files = Filer
 import-destination = Mål
 import-no-folder = Ingen mappe tilgjengelig
@@ -1319,7 +1318,6 @@ import-degenerate-physics = { $count ->
     }
 import-physics-convex-repair = Opprett konvekse kollisjonshylstre
 import-physics-convex-help = Konvekse hylstre tilnærmer kollisjonsformen og kan fylle åpninger. De visuelle detaljnivåene forblir uendret. Kontroller fysikkforhåndsvisningen før du ber om et pristilbud.
-import-max-size = Begrens størrelsen til 1024 × 1024
 import-texture-size = Opplastingsstørrelse: { $width } × { $height } px
 import-lossless = Tapsfri komprimering
 import-strip-alpha = Fjern den nesten ugjennomsiktige alfakanalen
