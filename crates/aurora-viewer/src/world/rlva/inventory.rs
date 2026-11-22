@@ -572,6 +572,17 @@ impl World {
         self.rlva_folder_signature_in(locks, folder, add, Uuid::nil()).is_empty()
     }
 
+    /// RlvFolderLocks::isLockedFolder(folder, RLV_LOCK_ANY, ST_MASK_ANY &
+    /// ~ST_ROOTFOLDER) (rlvlocks.cpp): a lock reaches the folder, other than
+    /// the inventory root's (@unsharedwear, @unsharedunwear).
+    pub(super) fn rlva_folder_locked_below_root(&self, locks: &FolderLocks, folder: Uuid) -> bool {
+        [false, true].into_iter().any(|add| {
+            self.rlva_folder_signature_in(locks, folder, add, Uuid::nil())
+                .iter()
+                .any(|(_, name, _)| !root_lock(name))
+        })
+    }
+
     fn rlva_folder_signature(&self, folder: Uuid, add: bool, _actor: Uuid) -> std::collections::BTreeSet<(Uuid, String, String)> {
         self.rlva_folder_signature_except(folder, add, Uuid::nil())
     }
@@ -756,11 +767,14 @@ impl World {
             let Some(f) = self.inventory.folders.get(&id) else {
                 return false;
             };
+            // RlvFolderLocks::canRemoveFolder (rlvlocks.h) counts every lock
+            // but the inventory root's (ST_ROOTFOLDER): @sharedwear and
+            // @sharedunwear, held on #RLV, keep it and its folders as well.
             if !appearance::loaded(&self.inventory, id)
                 || [false, true].into_iter().any(|add| {
                     self.rlva_folder_signature_in(&locks, id, add, Uuid::nil())
                         .iter()
-                        .any(|(_, name, _)| name.contains("this"))
+                        .any(|(_, name, _)| name.contains("this") || matches!(name.as_str(), "sharedwear" | "sharedunwear"))
                 })
             {
                 return false;
@@ -777,10 +791,25 @@ impl World {
     }
 
     pub fn rlva_inventory_mutation_allowed(&self, change: &aurora_net::inventory::operations::Mutation, actor: Uuid) -> bool {
+        self.rlva_inventory_change_allowed(change, actor, false)
+    }
+
+    /// The inventory's Delete: a move to the Trash is a removal, which
+    /// LLFolderBridge::removeItem and LLItemBridge::removeItem
+    /// (llinventorybridge.cpp) allow by isItemRemovable alone, that is
+    /// RlvFolderLocks::canRemoveFolder and canRemoveItem (rlvlocks.h), never
+    /// by the move rule a drop on the Trash follows (canMoveFolder): under
+    /// @unsharedwear a folder of #RLV is deleted, not dropped on the Trash.
+    pub fn rlva_inventory_delete_allowed(&self, change: &aurora_net::inventory::operations::Mutation, actor: Uuid) -> bool {
+        self.rlva_inventory_change_allowed(change, actor, true)
+    }
+
+    fn rlva_inventory_change_allowed(&self, change: &aurora_net::inventory::operations::Mutation, actor: Uuid, delete: bool) -> bool {
         use aurora_net::inventory::operations::Operation;
         if !self.rlva.enabled() || !self.rlva.inventory_locked() {
             return true;
         }
+        let removal_locks = delete.then(|| self.rlva_wear_locks());
         change
             .copies
             .iter()
@@ -789,11 +818,17 @@ impl World {
                 Operation::Patch { id, folder, body } => {
                     let moved = body.as_map().is_some_and(|m| m.contains_key("parent_id"));
                     let renamed = body.as_map().is_some_and(|m| m.contains_key("name"));
+                    let to = body["parent_id"].as_uuid();
+                    let removal = removal_locks.as_ref().filter(|_| self.inventory.in_folder_type(to, 14));
                     // RlvFolderLocks::canRenameFolder (rlvlocks.h): #RLV
                     // carries the shared path lock of the four placement
                     // rules (their deny, or the exception of the unshared
                     // twins), so it keeps its name while one is set.
-                    (!moved || self.rlva_inventory_move_allowed(*id, body["parent_id"].as_uuid(), actor))
+                    (!moved
+                        || removal.map_or_else(
+                            || self.rlva_inventory_move_allowed(*id, to, actor),
+                            |locks| locks.removable(&self.inventory, *id),
+                        ))
                         && (!renamed
                             || !*folder
                             || (!self.rlva_explicit_folder_descendant(&FolderLocks::default(), *id, actor)

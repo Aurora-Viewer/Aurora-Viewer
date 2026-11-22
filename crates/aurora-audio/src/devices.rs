@@ -210,6 +210,15 @@ pub(crate) struct Picked {
     pub fallback: bool,
 }
 
+/// Finds a named device without falling back to the system default.
+pub(crate) fn find(dir: Direction, name: &str) -> Option<cpal::Device> {
+    let host = cpal::default_host();
+    match dir {
+        Direction::Output => host.output_devices().ok()?.find(|d| device_name(d) == name),
+        Direction::Input => host.input_devices().ok()?.find(|d| device_name(d) == name),
+    }
+}
+
 /// Finds the device called `name`, or the system default (`None`, or when
 /// the named device is missing; that case is logged).
 pub(crate) fn pick(dir: Direction, name: Option<&str>) -> Option<Picked> {
