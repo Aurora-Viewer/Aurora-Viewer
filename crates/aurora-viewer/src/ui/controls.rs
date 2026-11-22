@@ -42,8 +42,9 @@ const ZOOM_BUTTON: f32 = 18.0;
 /// Room between two items of a row of buttons.
 const ROW_GAP: f32 = 4.0;
 const BUTTON_H: f32 = 26.0;
-/// Width of `widgets::icon_button`, the delete button of a saved position.
-const SHOT_DELETE_W: f32 = 20.0;
+/// Width of `widgets::icon_button` (the delete button of a saved position,
+/// the classic window's buttons after its preset list).
+const ICON_BUTTON_W: f32 = 20.0;
 /// Room between the body's rows.
 const BODY_GAP: f32 = 8.0;
 /// The camera position window's button, in both styles.
@@ -239,7 +240,9 @@ fn tab_min_width(ctx: &egui::Context, free: bool) -> f32 {
         .fold(0.0_f32, f32::max)
 }
 
-fn control_height(ui: &egui::Ui) -> f32 {
+/// A button's height at the interface's text size (also the camera
+/// position window's).
+pub(crate) fn control_height(ui: &egui::Ui) -> f32 {
     (ui.painter()
         .layout_no_wrap("Ag".into(), widgets::control_font(ui, 12.5), egui::Color32::PLACEHOLDER)
         .size()
@@ -485,7 +488,7 @@ impl ControlsUi {
                         // the row takes the menu's width less the delete
                         // button: a full-width row pushed the button out and
                         // the menu widened by that much every frame (#718)
-                        let room = ui.available_width() - SHOT_DELETE_W - ui.spacing().item_spacing.x;
+                        let room = ui.available_width() - ICON_BUTTON_W - ui.spacing().item_spacing.x;
                         let used = ui.scope(|ui| {
                             ui.set_max_width(room);
                             // the icon tells what holds the preset's camera
@@ -1228,7 +1231,8 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: &mut Shot
             return;
         }
         egui::ComboBox::from_id_salt("camera_shots_classic")
-            .width(ui.available_width() - 76.0 - SHOT_DELETE_W - 4.0)
+            // room for the Position, save and reset buttons after it
+            .width(ui.available_width() - 76.0 - ICON_BUTTON_W - 4.0)
             .selected_text(aurora_i18n::tr!("controls-use-preset"))
             .show_ui(ui, |ui| {
                 for (i, shot) in view.shots.iter().enumerate() {
@@ -1296,7 +1300,9 @@ fn classic_movement(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Outpu
 /// (`CameraPreset::from_preset_name`, in the app). The field takes the
 /// keyboard once as it opens, like the dialog's line editor; a click
 /// elsewhere then keeps it.
-/// The name typed when it is saved (also the camera position window's).
+///
+/// Gives the name typed when it is saved (also the camera position
+/// window's).
 pub(crate) fn name_row(ui: &mut egui::Ui, p: &Palette, naming: &mut ShotNaming, width: f32) -> Option<String> {
     let edit = ui.add_sized(
         Vec2::new(width, control_height(ui)),

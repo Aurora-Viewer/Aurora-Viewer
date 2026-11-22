@@ -152,17 +152,23 @@ impl App {
         }
     }
 
-    /// The camera position window (#4587): the live offsets and distance,
-    /// applied and saved like a change of Preferences by the frame's
-    /// settings pass; its save goes the Controls window's way.
+    /// The camera position window (#4587): the live offsets and distance.
+    /// The camera reads them each frame; RLVa keeps them under its lock, and
+    /// an edit ends the offsets a force put in place, as an edit in
+    /// Preferences does (`preserve_camera_settings`). Saved once the
+    /// pointer is released; its save goes the Controls window's way.
     pub(super) fn camera_position_window(&mut self, ctx: &egui::Context, p: &Palette) {
         self.camera_position_demo();
         let locked = self.world.rlva.camera_preset_locked(uuid::Uuid::nil());
         let mut open = self.panels.camera_position;
+        let before = self.settings.camera.clone();
         let out = self.camera_position_ui.show(ctx, p, &mut open, &mut self.settings, locked);
         self.panels.camera_position = open;
         if out.changed {
-            self.folders.settings_changed = true;
+            self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before);
+        }
+        if out.save_settings {
+            self.settings.save();
         }
         if let Some(name) = out.save {
             self.control_action(ControlAction::SaveShot(name));
@@ -191,7 +197,7 @@ impl App {
                     &self.egui_ctx,
                     crate::ui::camera_position::WINDOW,
                     egui::pos2(360.0, 120.0),
-                    egui::vec2(330.0, 200.0),
+                    egui::vec2(crate::ui::camera_position::WIDTH, 200.0),
                 );
                 self.panels.camera_position = true;
                 log::info!("demo camera position: camera offset {:?}", self.settings.camera.camera_offset);

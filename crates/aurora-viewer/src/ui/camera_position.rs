@@ -13,9 +13,12 @@
 //! distance keeps Preferences' range (0.5 to 3) where this window of the
 //! Legacy Viewer offered -3 to 5, and the save names the camera position in
 //! the window instead of opening another one. RLVa's camera preset lock
-//! greys the whole window, as it greys Preferences' rows.
+//! greys the whole window, as it greys Preferences' rows (stricter: the
+//! Legacy window has no RLVa check), and the fields show the user's own
+//! offsets, not those an RLVa force puts in place (the Legacy window reads
+//! LLAgentCamera::getCameraOffsetInitial, which returns RLVa's).
 
-use super::controls::{ShotNaming, name_row};
+use super::controls::{ShotNaming, control_height, name_row};
 use super::widgets::{self, ActionKind, Floater};
 use crate::camera::{CameraPreset, CameraSettings};
 use crate::settings::Settings;
@@ -26,8 +29,13 @@ use egui::{Pos2, RichText, Vec2};
 /// The window's id.
 pub const WINDOW: &str = "camera_position";
 
-const WIDTH: f32 = 330.0;
-const BUTTON_H: f32 = 26.0;
+/// The narrowest the window gets; wider when its rows need it
+/// (`window_width`).
+pub const WIDTH: f32 = 330.0;
+/// The window's margins on both sides (`widgets::Floater`).
+const MARGINS: f32 = 24.0;
+/// The grid's room between the label column and the fields.
+const COLUMN_GAP: f32 = 10.0;
 
 /// The offsets' bounds: the Legacy Viewer's spinners (min_val / max_val of
 /// floater_preferences_view_advanced.xml), so a value it accepts is kept.
@@ -36,13 +44,18 @@ pub const OFFSET_LIMIT: f32 = 1e7;
 #[derive(Default)]
 pub struct CameraPositionUi {
     naming: ShotNaming,
+    /// Changed and not saved yet: saved once the pointer is released, not
+    /// at every frame of a drag (as Quick preferences).
+    unsaved: bool,
 }
 
 /// What the window did this frame.
 #[derive(Debug, Default, PartialEq)]
 pub struct Output {
-    /// A setting changed: the app applies and saves it.
+    /// The camera settings changed this frame (the camera reads them live).
     pub changed: bool,
+    /// Time to save the settings: something changed and the pointer is up.
+    pub save_settings: bool,
     /// "Save as camera position", with its name.
     pub save: Option<String>,
 }
@@ -87,18 +100,46 @@ pub fn reset_angles(s: &mut Settings) {
     s.camera.apply_view(preset, &s.camera_views);
 }
 
+/// The window's width: `WIDTH`, or what its widest row needs at the
+/// interface's text size (a long translation, double text size, an offset
+/// with many digits). The buttons' row wraps instead.
+fn window_width(ctx: &egui::Context, c: &CameraSettings) -> f32 {
+    let style = ctx.global_style();
+    let text =
+        |label: &str, font: egui::FontId| ctx.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font, egui::Color32::PLACEHOLDER).size().x);
+    let body = egui::TextStyle::Body.resolve(&style);
+    let labels = [tr!("common-camera"), tr!("ui-options-camera-focus-point"), tr!("common-distance")]
+        .into_iter()
+        .map(|label| text(label, body.clone()))
+        .fold(0.0_f32, f32::max);
+    let spacing = style.spacing.item_spacing.x;
+    let field = |v: f32| {
+        // DragValue: its text with the button's padding, or the interact size
+        let shown = text(&format!("{v:.2}"), body.clone()) + 2.0 * style.spacing.button_padding.x;
+        shown.max(style.spacing.interact_size.x)
+    };
+    let axis = text("X", egui::FontId::proportional(12.0));
+    let fields = |v: [f32; 3]| v.iter().map(|&x| axis + spacing + field(x) + spacing).sum::<f32>();
+    let row = labels + COLUMN_GAP + fields(c.camera_offset).max(fields(c.focus_offset));
+    let button = |label: &str| text(label, egui::TextStyle::Button.resolve(&style)) + 46.0;
+    let buttons = button(tr!("ui-options-camera-reset-angles")).max(button(tr!("camera-position-save")));
+    WIDTH.max(row.max(buttons) + MARGINS).ceil()
+}
+
 impl CameraPositionUi {
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, s: &mut Settings, locked: bool) -> Output {
         let mut out = Output::default();
         if !*open {
             self.naming = ShotNaming::default();
+            out.save_settings = std::mem::take(&mut self.unsaved);
             return out;
         }
+        let width = window_width(ctx, &s.camera);
         Floater::new(
             WINDOW,
             tr!("ui-options-camera-camera-position"),
             Pos2::new(340.0, 200.0),
-            Vec2::new(WIDTH, 200.0),
+            Vec2::new(width, 200.0),
         )
         .auto_height()
         .show(ctx, p, open, |ui| {
@@ -108,6 +149,11 @@ impl CameraPositionUi {
                 body.response.on_disabled_hover_text(tr!("camera-preset-locked"));
             }
         });
+        self.unsaved |= out.changed;
+        if self.unsaved && (!*open || !ctx.input(|i| i.pointer.any_down())) {
+            self.unsaved = false;
+            out.save_settings = true;
+        }
         out
     }
 
@@ -118,13 +164,13 @@ impl CameraPositionUi {
             .spacing(Vec2::new(10.0, 8.0))
             .show(ui, |ui| {
                 ui.label(tr!("common-camera"));
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let ch = offset_fields(ui, &mut s.camera.camera_offset);
                     out.changed |= mark_custom(ch, &mut s.camera);
                 });
                 ui.end_row();
                 ui.label(tr!("ui-options-camera-focus-point"));
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     let ch = offset_fields(ui, &mut s.camera.focus_offset);
                     out.changed |= mark_custom(ch, &mut s.camera);
                 });
@@ -140,19 +186,24 @@ impl CameraPositionUi {
                         widgets::TextPolicy::Decimal,
                     ))
                     .on_hover_text(tr!("ui-options-camera-camera-distance-behind-avatar-1-by-default"));
-                out.changed |= mark_custom(distance.changed(), &mut s.camera);
+                // the preset stays, as Preferences' Distance slider keeps it
+                out.changed |= distance.changed();
                 ui.end_row();
             });
-        let height = BUTTON_H;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            if self.naming.open {
+        let height = control_height(ui);
+        if self.naming.open {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
                 let width = ui.available_width() - height - 4.0;
                 if let Some(name) = name_row(ui, p, &mut self.naming, width) {
                     out.save = Some(name);
                 }
-                return;
-            }
+            });
+            return;
+        }
+        // the two buttons stack when a translation makes them too wide
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::splat(4.0);
             let reset = widgets::action_button(
                 ui,
                 p,
@@ -234,12 +285,6 @@ mod tests {
     }
 
     #[test]
-    fn the_fields_take_the_legacy_viewers_range() {
-        // floater_preferences_view_advanced.xml: min_val -1e7, max_val 1e7
-        assert_eq!(OFFSET_LIMIT, 1e7);
-    }
-
-    #[test]
     fn an_offset_moved_by_hand_makes_the_preset_custom() {
         let mut c = CameraSettings::default();
         assert!(!mark_custom(false, &mut c));
@@ -283,6 +328,83 @@ mod tests {
         let out = outs.last().expect("frames");
         assert_eq!(*out, Output::default());
         assert!(!w.naming.open && w.naming.name.is_empty());
+    }
+
+    #[test]
+    fn a_change_not_saved_yet_is_saved_when_the_window_closes() {
+        let mut w = CameraPositionUi {
+            unsaved: true,
+            ..Default::default()
+        };
+        let mut s = Settings::default();
+        let outs = window(&mut w, &mut false, &mut s, false);
+        assert!(outs[0].save_settings, "closing saves what the user changed");
+        assert!(!outs[1].save_settings, "once");
+    }
+
+    /// Every text of the window inside its clip rect: nothing cut off, at
+    /// normal and double text size, with long offsets.
+    #[test]
+    fn the_window_fits_its_text_at_double_text_size() {
+        for scale in [1.0, 2.0] {
+            for offset in [[-3.0, 0.0, 0.75], [-1234.5, -999.25, 10000.0]] {
+                let ctx = egui::Context::default();
+                let theme = crate::theme::Theme::default();
+                theme.apply(&ctx, scale);
+                let p = theme.palette();
+                let mut s = Settings::default();
+                s.camera.camera_offset = offset;
+                let mut w = CameraPositionUi::default();
+                let mut open = true;
+                let mut last = None;
+                for frame in 0..4 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                            time: Some(f64::from(frame) * 0.1),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            w.show(ui.ctx(), &p, &mut open, &mut s, false);
+                        },
+                    );
+                    output.textures_delta.clear();
+                    last = Some(output);
+                }
+                let output = last.expect("frames");
+                let mut texts = 0;
+                for clipped in &output.shapes {
+                    if let egui::Shape::Text(text) = &clipped.shape {
+                        texts += 1;
+                        let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                        assert!(
+                            clipped.clip_rect.expand(1.0).contains_rect(rect),
+                            "{:?} cut off: {rect:?} in {:?}, scale={scale}",
+                            text.galley.text(),
+                            clipped.clip_rect
+                        );
+                    }
+                }
+                assert!(texts > 8, "the window was drawn");
+                // the window is wide enough for each row's X, Y and Z on one
+                // line (`window_width`), not stacked by the wrap
+                let axes: Vec<f32> = output
+                    .shapes
+                    .iter()
+                    .filter_map(|c| match &c.shape {
+                        egui::Shape::Text(t) if ["X", "Y", "Z"].contains(&t.galley.text()) => Some(t.pos.y),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(axes.len(), 6, "two rows of X, Y, Z");
+                for row in axes.chunks(3) {
+                    assert!(
+                        row.iter().all(|y| (y - row[0]).abs() < 2.0),
+                        "{row:?} not on one line, scale={scale}, offset={offset:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
