@@ -12,8 +12,15 @@
 //! in: it has lean variants of its own (3, 4), and the lean variants
 //! without it (1, 2) draw once nothing rezzes and every texture arrived.
 //!
-//! `AURORA_SCENE_VARIANT=full` keeps the full variant, `lean` takes the lean
-//! one whenever allowed (the default), for a comparison.
+//! Within a lean variant, each face's pipeline is also specialised to its
+//! material class (`material_class`: a legacy material, a PBR one, neither),
+//! in the blended pass and in the scene pass's CPU lists. The draws keep
+//! their order, in runs of one class: a face never changes place, so what
+//! covers what (and the order of the blended faces) is unchanged.
+//!
+//! `AURORA_SCENE_VARIANT=full` keeps the full variant and the generic
+//! pipelines, `lean` takes the lean ones whenever allowed (the default), for a
+//! comparison.
 
 /// Debug views (`debug_view`, common.wgsl): the low byte of
 /// `frame.light_mode.z`.
@@ -61,6 +68,36 @@ fn variant(s: FrameState) -> u32 {
     if s.rez { sky + 2 } else { sky }
 }
 
+/// The material class of a blended face (`MATERIAL_CLASS`, object.wgsl): 0
+/// any (the generic pipeline), 1 a legacy material (LLMaterial), 2 a PBR
+/// material, 3 neither. A fullbright face or a portal surface takes the
+/// generic pipeline. Each
+/// class's pipeline leaves out the paths its faces never take, so that the
+/// blended pass holds fewer registers; the light is the same.
+pub(crate) fn material_class(flags: u32) -> u8 {
+    use crate::types::flags;
+    if flags & (flags::FULLBRIGHT | flags::PORTAL_EFFECT) != 0 || forced_full() {
+        0
+    } else if flags & flags::PBR != 0 {
+        2
+    } else if flags & flags::LEGACY_MAT != 0 {
+        1
+    } else {
+        3
+    }
+}
+
+/// `material_class` of each blended face, from its draw record (0 for a
+/// record not in the store).
+pub(crate) fn material_classes(blend: &[crate::types::DrawCmd], records: &crate::arena::RecordStore, out: &mut Vec<u8>) {
+    out.clear();
+    out.extend(
+        blend
+            .iter()
+            .map(|c| records.get(c.record).map_or(0, |r| material_class(r.flags[0]))),
+    );
+}
+
 fn forced_full() -> bool {
     static FULL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FULL.get_or_init(|| std::env::var("AURORA_SCENE_VARIANT").is_ok_and(|v| v.trim() == "full"))
@@ -69,6 +106,18 @@ fn forced_full() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blended_faces_take_the_pipeline_of_their_material() {
+        use crate::types::flags;
+        assert_eq!(material_class(flags::ALPHA_BLEND), 3);
+        assert_eq!(material_class(flags::LEGACY_MAT | flags::ALPHA_BLEND), 1);
+        assert_eq!(material_class(flags::PBR | flags::ALPHA_BLEND), 2);
+        // the generic pipeline for the paths no class keeps
+        assert_eq!(material_class(flags::PBR | flags::FULLBRIGHT), 0);
+        assert_eq!(material_class(flags::FULLBRIGHT), 0);
+        assert_eq!(material_class(flags::PORTAL_EFFECT), 0);
+    }
 
     #[test]
     fn a_plain_frame_draws_lean_with_its_sky() {

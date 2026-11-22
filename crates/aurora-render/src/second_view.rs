@@ -110,14 +110,15 @@ pub(crate) fn resort_blend(lists: &mut DrawLists, eye: Vec3) {
     let distance = |c: &DrawCmd| eye.distance_squared(Vec3::new(c.bounds[0], c.bounds[1], c.bounds[2]));
     let mut order: Vec<usize> = (start..n).collect();
     order.sort_by(|&a, &b| distance(&lists.blend[b]).total_cmp(&distance(&lists.blend[a])));
-    let permute = |v: &mut Vec<bool>| {
+    fn permute<T: Copy>(v: &mut [T], order: &[usize], start: usize, n: usize) {
         if v.len() == n {
-            let sorted: Vec<bool> = order.iter().map(|&i| v[i]).collect();
+            let sorted: Vec<T> = order.iter().map(|&i| v[i]).collect();
             v[start..].copy_from_slice(&sorted);
         }
-    };
-    permute(&mut lists.blend_glow);
-    permute(&mut lists.blend_double_sided);
+    }
+    permute(&mut lists.blend_glow, &order, start, n);
+    permute(&mut lists.blend_double_sided, &order, start, n);
+    permute(&mut lists.blend_material, &order, start, n);
     let sorted: Vec<DrawCmd> = order.iter().map(|&i| lists.blend[i]).collect();
     lists.blend[start..].copy_from_slice(&sorted);
 }

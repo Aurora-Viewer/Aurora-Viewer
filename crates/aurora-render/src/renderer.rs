@@ -1041,6 +1041,25 @@ fn blend_runs(sided: &[bool], range: std::ops::Range<u32>) -> impl Iterator<Item
     })
 }
 
+/// `range` of the blended faces in runs of one material class
+/// (`DrawLists::blend_material`; class 0 past its end), in order.
+fn material_runs(classes: &[u8], range: std::ops::Range<u32>) -> impl Iterator<Item = (std::ops::Range<u32>, u8)> + '_ {
+    let class = |i: u32| classes.get(i as usize).copied().unwrap_or(0);
+    let mut start = range.start;
+    std::iter::from_fn(move || {
+        if start >= range.end {
+            return None;
+        }
+        let c = class(start);
+        let from = start;
+        start += 1;
+        while start < range.end && class(start) == c {
+            start += 1;
+        }
+        Some((from..start, c))
+    })
+}
+
 struct Pipelines {
     hud_opaque: wgpu::RenderPipeline,
     hud_blend: wgpu::RenderPipeline,
@@ -1065,6 +1084,14 @@ struct Pipelines {
     /// `blend`, `blend_depth` and `blend_depth_color` in the same lean
     /// variants.
     lean_blend: [[SidedPipelines; 3]; 4],
+    /// `blend` lean, specialised to a material class
+    /// (`scene_variant::material_class`): [legacy material, PBR, neither] in
+    /// each variant.
+    lean_blend_material: [[SidedPipelines; 3]; 4],
+    /// `lean` specialised to the material classes 1 to 3 (as
+    /// `lean_blend_material`): [variant][class - 1][opaque, opaque 2s, mask,
+    /// mask 2s].
+    lean_material: [[[wgpu::RenderPipeline; 4]; 3]; 4],
     water: wgpu::RenderPipeline,
     water_unclipped: Option<wgpu::RenderPipeline>,
     water_mask: wgpu::RenderPipeline,
@@ -5176,6 +5203,40 @@ impl Backend {
                 }),
             ]
         });
+        // and specialised to the material classes 1 to 3
+        let lean_opaque_material = [1.0, 2.0, 3.0, 4.0].map(|v| [1.0, 2.0, 3.0].map(|c| [("SCENE_VARIANT", v), ("MATERIAL_CLASS", c)]));
+        let lean_mask_material =
+            [1.0, 2.0, 3.0, 4.0].map(|v| [1.0, 2.0, 3.0].map(|c| [a2c[0], ("SCENE_VARIANT", v), ("MATERIAL_CLASS", c)]));
+        let lean_material = [0, 1, 2, 3].map(|v| {
+            [0, 1, 2].map(|c| {
+                [
+                    pipe(PipeDesc {
+                        gbuf: ssr,
+                        constants: &lean_opaque_material[v][c],
+                        ..base("opaque lean material", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                    }),
+                    pipe(PipeDesc {
+                        cull: None,
+                        gbuf: ssr,
+                        constants: &lean_opaque_material[v][c],
+                        ..base("opaque 2s lean material", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                    }),
+                    pipe(PipeDesc {
+                        a2c: samples > 1,
+                        gbuf: ssr,
+                        constants: &lean_mask_material[v][c],
+                        ..base("mask lean material", "vs_main", g("fs_mask", "fs_mask_g"))
+                    }),
+                    pipe(PipeDesc {
+                        a2c: samples > 1,
+                        cull: None,
+                        gbuf: ssr,
+                        constants: &lean_mask_material[v][c],
+                        ..base("mask 2s lean material", "vs_main", g("fs_mask", "fs_mask_g"))
+                    }),
+                ]
+            })
+        });
         // pass B
         let hardware_water_depth = device.features().contains(wgpu::Features::DEPTH_CLIP_CONTROL);
         log::info!(
@@ -5341,6 +5402,29 @@ impl Backend {
                     ..base("blend rigged colour lean", "vs_main", "fs_blend")
                 }),
             ]
+        });
+        // and the plain one specialised to the material classes 1 to 3
+        let lean_blend_material_constants = [1.0, 2.0, 3.0, 4.0].map(|v| {
+            [1.0, 2.0, 3.0].map(|class| {
+                [
+                    ("BLEND_EARLY_DISCARD", if blend_discard != BlendDiscard::Late { 1.0 } else { 0.0 }),
+                    ("WATER_CLIP", 1.0),
+                    ("SCENE_VARIANT", v),
+                    ("MATERIAL_CLASS", class),
+                ]
+            })
+        });
+        let lean_blend_material = [0, 1, 2, 3].map(|v| {
+            [0, 1, 2].map(|class| {
+                sided_pipe(PipeDesc {
+                    blend: Some(suppress),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    depth_write: false,
+                    depth_compare: static_compare,
+                    constants: &lean_blend_material_constants[v][class],
+                    ..base("blend lean material", "vs_main", "fs_blend")
+                })
+            })
         });
         // `RiggedBlendDepth::Split` (#935): first the texels at least half
         // covered, each writing its depth as it is drawn, as the Legacy
@@ -6213,6 +6297,8 @@ impl Backend {
             mask_2s: mask_2s.resolve(&mut done),
             lean: lean.resolve(&mut done),
             lean_blend: lean_blend.resolve(&mut done),
+            lean_blend_material: lean_blend_material.resolve(&mut done),
+            lean_material: lean_material.resolve(&mut done),
             water: water.resolve(&mut done),
             water_unclipped: water_unclipped.resolve(&mut done),
             water_mask: water_mask.resolve(&mut done),
@@ -11452,8 +11538,23 @@ impl Backend {
                 (mask, rg.mask),
                 (mask_2s, rg.mask_2s),
             ];
+            let stride = std::mem::size_of::<DrawIndexedIndirect>() as u64;
             for (b, (pipe, r)) in scene_pipes.into_iter().enumerate() {
-                draw(&mut pass, pipe, r);
+                // the CPU lists in runs of one material class, each with its
+                // class's pipeline (`scene_variant::material_class`); the GPU
+                // bins stay generic
+                if variant == 0 || r.1 == 0 {
+                    draw(&mut pass, pipe, r);
+                } else {
+                    let mats = &self.pipelines.lean_material[variant as usize - 1];
+                    for (run, class) in material_runs(&lists.scene_material[b], 0..r.1) {
+                        let p = match class {
+                            1..=3 => &mats[usize::from(class - 1)][b],
+                            _ => pipe,
+                        };
+                        draw(&mut pass, p, (r.0 + u64::from(run.start) * stride, run.end - run.start));
+                    }
+                }
                 draw_bin(&mut pass, Some(pipe), b, b);
             }
             pass_mark(&mut pass, MARK_OBJECTS_END);
@@ -11837,12 +11938,35 @@ impl Backend {
                 [&l[0], &l[1], &l[2]]
             }
         };
-        let blend_pipe = self
-            .pipelines
-            .blend_late
-            .as_ref()
-            .filter(|_| f.blend_late_discard)
-            .unwrap_or(blend_lean);
+        let late = self.pipelines.blend_late.as_ref().filter(|_| f.blend_late_discard);
+        let blend_pipe = late.unwrap_or(blend_lean);
+        // the lean pipelines specialised to the faces' material classes
+        // (`scene_variant::material_class`; not the comparison of `late`)
+        let blend_material = match variant {
+            0 => None,
+            _ if late.is_some() => None,
+            v => Some(&self.pipelines.lean_blend_material[v as usize - 1]),
+        };
+        // a range of blended faces in runs of one material class, each with
+        // its class's pipelines (the generic `pipe` for class 0)
+        let draw_classes = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, r: (u64, u32), first: u32| {
+            let Some(mats) = blend_material else {
+                draw_sided(pass, pipe, r, first);
+                return;
+            };
+            for (run, class) in material_runs(&lists.blend_material, first..first + r.1) {
+                let pipes = match class {
+                    1..=3 => &mats[usize::from(class - 1)],
+                    _ => pipe,
+                };
+                draw_sided(
+                    pass,
+                    pipes,
+                    (r.0 + u64::from(run.start - first) * stride, run.end - run.start),
+                    run.start,
+                );
+            }
+        };
         // blended faces `from..to`, back to front; a glowing one adds its glow
         // right after itself, so later layers in front dim it (LLDrawPoolAlpha)
         let blended = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, from: u32, to: u32| {
@@ -11851,11 +11975,11 @@ impl Backend {
                 if !(glow_on && glow_skip & 8 == 0 && lists.blend_glow.get(i as usize).copied().unwrap_or(false)) {
                     continue;
                 }
-                draw_sided(pass, pipe, (b0 + start as u64 * stride, i + 1 - start), start);
+                draw_classes(pass, pipe, (b0 + start as u64 * stride, i + 1 - start), start);
                 draw(pass, &self.pipelines.glow_water, (b0 + i as u64 * stride, 1));
                 start = i + 1;
             }
-            draw_sided(pass, pipe, (b0 + start as u64 * stride, to - start), start);
+            draw_classes(pass, pipe, (b0 + start as u64 * stride, to - start), start);
         };
         // the other blended faces, the overlays and the particles
         let rest = |pass: &mut wgpu::RenderPass| {
@@ -13905,6 +14029,19 @@ mod tests {
         // the lights of the frame's list, their falloff kept
         assert_eq!(u.lights[0].color_falloff, [0.1, 0.05, 0.025, 0.75]);
         assert_eq!(u.lights[1].color_falloff, [1.0, 1.0, 1.0, 0.5]);
+    }
+
+    #[test]
+    fn material_runs_keep_the_order_of_the_blended_faces() {
+        let classes = [1, 1, 2, 0, 0, 1];
+        assert_eq!(
+            material_runs(&classes, 0..6).collect::<Vec<_>>(),
+            [(0..2, 1), (2..3, 2), (3..5, 0), (5..6, 1)]
+        );
+        assert_eq!(material_runs(&classes, 1..4).collect::<Vec<_>>(), [(1..2, 1), (2..3, 2), (3..4, 0)]);
+        // past the list: the generic pipeline
+        assert_eq!(material_runs(&[], 0..2).collect::<Vec<_>>(), [(0..2, 0)]);
+        assert_eq!(material_runs(&classes, 3..3).count(), 0);
     }
 
     #[test]

@@ -1046,6 +1046,43 @@ fn avatar_snow_on(m_in: Material, in: VsOut) -> Material {
     return m;
 }
 
+// The material class a pipeline of the blended faces is specialised to
+// (`scene_variant::material_class`): 0 any face; 1 a face with a legacy
+// material (LLMaterial), 2 a PBR face, 3 a face with neither; none of them
+// fullbright nor a portal surface. The
+// tests below then fold to constants and the paths a class never takes
+// leave the shader, which holds fewer registers: the same light, more
+// fragments in flight on the GPU.
+override MATERIAL_CLASS: u32 = 0u;
+
+fn rec_pbr(flags: u32) -> bool {
+    if (MATERIAL_CLASS == 1u || MATERIAL_CLASS == 3u) {
+        return false;
+    }
+    if (MATERIAL_CLASS == 2u) {
+        return true;
+    }
+    return (flags & FLAG_PBR) != 0u;
+}
+
+fn rec_legacy_mat(flags: u32) -> bool {
+    if (MATERIAL_CLASS == 1u) {
+        return true;
+    }
+    if (MATERIAL_CLASS == 3u) {
+        return false;
+    }
+    return (flags & FLAG_LEGACY_MAT) != 0u;
+}
+
+fn rec_fullbright(flags: u32) -> bool {
+    return MATERIAL_CLASS == 0u && (flags & FLAG_FULLBRIGHT) != 0u;
+}
+
+fn rec_portal_effect(flags: u32) -> bool {
+    return MATERIAL_CLASS == 0u && (flags & FLAG_PORTAL_EFFECT) != 0u;
+}
+
 fn eval_material(in: VsOut, front: bool) -> Material {
     return avatar_snow_on(eval_material_base(in, front), in);
 }
@@ -1068,7 +1105,7 @@ fn eval_material_base(in: VsOut, front: bool) -> Material {
     if (!front) {
         n = -n;
     }
-    if ((rec.flags.x & FLAG_PBR) != 0u) {
+    if (rec_pbr(rec.flags.x)) {
         m.color = vec4<f32>(srgb_to_linear(base_s.rgb), base_s.a) * rec.base_color;
     } else {
         // SL multiplies texture and face color in sRGB, then linearizes
@@ -1085,15 +1122,15 @@ fn eval_material_base(in: VsOut, front: bool) -> Material {
     m.roughness = clamp(rec.params.z * mr_s.g, 0.03, 1.0);
     // a PBR face without a metallic-roughness map reads the white texture:
     // no occlusion. AURORA_PBR_OCCLUSION=0 (sky_ll.z = 0) leaves it out.
-    m.ao = select(1.0, mr_s.r, (rec.flags.x & FLAG_PBR) != 0u && frame.sky_ll.z > 0.5);
+    m.ao = select(1.0, mr_s.r, rec_pbr(rec.flags.x) && frame.sky_ll.z > 0.5);
     // TE glow is not emissive: it only feeds the glow pass (fs_glow)
     m.emissive = rec.emissive.rgb * srgb_to_linear(em_s.rgb);
-    if (deferred_emissive_off() && !hud_pass && (rec.flags.x & (FLAG_PBR | FLAG_ALPHA_BLEND)) == FLAG_PBR) {
+    if (deferred_emissive_off() && !hud_pass && rec_pbr(rec.flags.x) && (rec.flags.x & FLAG_ALPHA_BLEND) == 0u) {
         m.emissive = vec3<f32>(0.0);
     }
     m.legacy_spec = vec4<f32>(0.0);
     m.legacy_env = 0.0;
-    if ((rec.flags.x & FLAG_LEGACY_MAT) != 0u) {
+    if (rec_legacy_mat(rec.flags.x)) {
         // LLMaterial as materialF.glsl: specular = specular map x specular
         // color, glossiness = exponent x normal map alpha, environment =
         // intensity x specular map alpha; lit with Blinn-Phong (legacy_light)
@@ -1108,7 +1145,7 @@ fn eval_material_base(in: VsOut, front: bool) -> Material {
     // variance read here, where the derivatives are still allowed
     let n_var = normal_variance(m.n) + toksvig_variance(select(length(nrm_s.xyz * 2.0 - 1.0), 1.0, rec.tex.y == 1u));
     if ((frame.light_mode.z & SPECULAR_AA) != 0u) {
-        if ((rec.flags.x & FLAG_LEGACY_MAT) != 0u) {
+        if (rec_legacy_mat(rec.flags.x)) {
             if (m.legacy_spec.a > 0.0) {
                 m.legacy_spec.a = specular_aa_gloss(m.legacy_spec.a, n_var);
             }
@@ -1302,7 +1339,7 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
 // projector over it (the sun's highlight never glares). A glossy hair far
 // from any local light keeps leaving before the lighting (fs_blend).
 fn legacy_may_glare(rec: DrawRecord, m: Material, world_pos: vec3<f32>, frag: vec2<f32>) -> bool {
-    if ((rec.flags.x & FLAG_LEGACY_MAT) == 0u || !legacy_glare_on()) {
+    if (!rec_legacy_mat(rec.flags.x) || !legacy_glare_on()) {
         return false;
     }
     if (m.legacy_env > 0.0) {
@@ -1377,6 +1414,67 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         }
     }
     return col;
+}
+
+// ll_local_diffuse and legacy_local_spec in one walk of the fragment's
+// lights: [diffuse with its final_scale, specular and environment before
+// it]. Each sum keeps its own order, so the light is the same as the two
+// walks gave; one walk keeps fewer registers live and reads each light once.
+fn ll_local_legacy(base: vec3<f32>, spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, world_pos: vec3<f32>, frag: vec2<f32>) -> mat2x3<f32> {
+    var diffuse = vec3<f32>(0.0);
+    var col = vec3<f32>(0.0);
+    var lights = light_walk(world_pos, frag);
+    var spots = projector_walk(lights);
+    let shiny = spec.a > 0.0;
+    for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
+        let lt = frame.lights[i];
+        let to_l = lt.pos_radius.xyz - world_pos;
+        let dist = length(to_l);
+        let radius = lt.pos_radius.w;
+        if (dist < radius) {
+            let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
+            let l = to_l / max(dist, 1e-4);
+            let nl = dot(n, l);
+            if (nl > 0.0) {
+                diffuse += lt.color_falloff.rgb / 3.25 * nl * atten * base;
+            }
+            if (shiny) {
+                let s = ll_spec(n, v, l, spec.a) * atten;
+                let sc = clamp(s * lt.color_falloff.rgb / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+                col += sc;
+                add_light_glare(sc);
+            }
+        }
+    }
+    for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
+        let at = projector_at(i, world_pos, n);
+        diffuse += ll_diffuse_light(at, n, base);
+        if (at.atten <= 0.0 || (!shiny && env <= 0.0)) {
+            continue;
+        }
+        if (shiny) {
+            let s = ll_spec(n, v, at.l, spec.a) * at.atten;
+            let sc = clamp(s * at.color / 3.25 * spec.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+            col += sc;
+            add_light_glare(sc);
+        }
+        if (env > 0.0) {
+            let pj = frame.projectors[i];
+            let ref_dir = reflect(-v, n);
+            let ds = dot(ref_dir, pj.dir.xyz);
+            if (ds < 0.0) {
+                let plane = pj.origin.xyz + pj.dir.xyz * (pj.params.x + 0.01);
+                let hit = world_pos + ref_dir * dot(plane - world_pos, pj.dir.xyz) / ds;
+                let stc = pj.matrix * vec4<f32>(hit, 1.0);
+                let uv = stc.xy / stc.w;
+                if (stc.z > 0.0 && uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0) {
+                    let image = projector_specular(pj.tex.x, uv, (1.0 - spec.a) * 0.6);
+                    col += frame.lights[i].color_falloff.rgb / 3.25 * image.rgb * at.shadow * env;
+                }
+            }
+        }
+    }
+    return mat2x3<f32>(diffuse * ll_local_scale(), col);
 }
 
 struct Shaded {
@@ -1689,7 +1787,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     // Share this calculation across both lighting branches: duplicating its
     // wave/shadow code crashes Apple's Metal pipeline compiler.
     var caustic_light = vec3<f32>(0.0);
-    if (!scene_lean() && (rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
+    if (!scene_lean() && !rec_fullbright(rec.flags.x)) {
         caustic_light = m.color.rgb * (1.0-m.unlit) * water_caustics(in.world_pos,m.n);
     }
     var col: vec3<f32>;
@@ -1698,26 +1796,33 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     var own = m.emissive;
     let classic = is_classic_sky();
     var hazed = false;
-    if ((rec.flags.x & FLAG_FULLBRIGHT) != 0u) {
+    if (rec_fullbright(rec.flags.x)) {
         col = m.color.rgb + m.emissive;
         // opaque fullbright faces are not hazed on classic skies
         hazed = classic;
     } else if (scene_classic(classic)) {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
-        // softenLightF: scol = max(shadow, emissive)
-        let sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
+        // softenLightF: scol = max(shadow, emissive). The sun lights only
+        // faces turned to it (min(n.l^1.2, shadow), the PBR sun under n.l >
+        // 0): turned away, the shadow changes nothing but a legacy
+        // material's environment and highlights, and its taps are skipped
+        var sh = 1.0;
+        if (dot(m.n, frame.sun_dir.xyz) > 0.0 || (!rec_pbr(rec.flags.x) && (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0))) {
+            sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
+        }
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         // softenLightF: (sun + sky + specular + environment + emissive) x
         // final_scale, then the local lights pass, then hazeF
         var local: vec3<f32>;
-        if ((rec.flags.x & FLAG_PBR) != 0u) {
+        if (rec_pbr(rec.flags.x)) {
             col = ll_classic_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy, a);
             local = ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, in.clip.xy);
         } else {
             col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
             col = legacy_light(col, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, shadow_lift(sh), ll_sun_linear(a), 1.0);
-            local = ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
-                + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
+            // ll_local_diffuse + legacy_local_spec x ll_local_scale, in one walk
+            let both = ll_local_legacy(m.color.rgb, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy);
+            local = both[0] + both[1] * ll_local_scale();
         }
         col = (col + m.emissive) * ll_final_scale() + local;
         // (ll_haze scales what it is given by a.atten, then adds its glow)
@@ -1729,7 +1834,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         let sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
         // a sky with a probe ambiance: softenLightF's non-classic branch, a
         // face without a PBR material lit as a legacy one
-        let legacy = (rec.flags.x & FLAG_PBR) == 0u;
+        let legacy = !rec_pbr(rec.flags.x);
         col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy, legacy) + m.emissive;
         own += shade_pbr_local;
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
@@ -1750,7 +1855,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         col = mix(col, vec3<f32>(0.55, 0.36, 0.96), 0.35);
         own *= 0.65;
     }
-    if(!scene_lean() && water_fx_on(256u) && in.world_pos.z<frame.params.y && (rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
+    if(!scene_lean() && water_fx_on(256u) && in.world_pos.z<frame.params.y && !rec_fullbright(rec.flags.x)) {
         col = water_scene_lit(col, own, in.world_pos);
     }
     if (scene_rez()) {
@@ -1773,7 +1878,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     // the vertex alpha being the face color's (a fullbright face takes the
     // other branch and has no glare, as emissive_brightness 1 there)
     var alpha = m.color.a;
-    if ((rec.flags.x & (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) == (FLAG_LEGACY_MAT | FLAG_ALPHA_BLEND)) {
+    if (rec_legacy_mat(rec.flags.x) && (rec.flags.x & FLAG_ALPHA_BLEND) != 0u) {
         alpha = max(alpha, legacy_glare_alpha(m.unlit) * rec.base_color.a);
     }
     s.color = vec4<f32>(finite_hdr(light_tiles_checked(col, in.world_pos, in.clip.xy)), alpha);
@@ -1789,7 +1894,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     s.n = m.n;
     s.roughness = m.roughness;
     s.metallic = m.metallic;
-    if ((rec.flags.x & FLAG_FULLBRIGHT) != 0u) {
+    if (rec_fullbright(rec.flags.x)) {
         s.roughness = 1.0;
     }
     s.roughness = mix(s.roughness, 1.0, white);
@@ -1944,7 +2049,7 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     // texture samples, keeping glTF doubleSided backs and their flipped normals.
     if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     let portal_aa = max(length(fwidth(in.uv)) * 2.0 * PORTAL_SURFACE_SCALE, 0.001);
-    if ((records[in.record].flags.x & FLAG_PORTAL_EFFECT) != 0u) {
+    if (rec_portal_effect(records[in.record].flags.x)) {
         let surface = portal_surface(records[in.record], in.uv, portal_aa);
         if (surface.alpha < 0.004) { discard; }
         let color = apply_fog(surface.color * frame.sky_cloud_pd2.w, in.world_pos);

@@ -1556,6 +1556,19 @@ impl Renderer {
         let mut spent = self.spare.pop().unwrap_or_default();
         std::mem::swap(&mut self.writes, &mut spent.writes);
         spent.lists.copy_from(lists);
+        crate::scene_variant::material_classes(&spent.lists.blend, &self.records, &mut spent.lists.blend_material);
+        {
+            let l = &mut spent.lists;
+            let [opaque, opaque_2s, mask, mask_2s] = &mut l.scene_material;
+            for (list, out) in [
+                (&l.opaque, opaque),
+                (&l.opaque_two_sided, opaque_2s),
+                (&l.mask, mask),
+                (&l.mask_two_sided, mask_2s),
+            ] {
+                crate::scene_variant::material_classes(list, &self.records, out);
+            }
+        }
         // a photo first: the other captures wait for the next frame (and
         // for the answer of a photo still on the GPU)
         let capture = match self.snapshot_request {

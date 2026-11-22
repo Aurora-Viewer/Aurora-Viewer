@@ -696,6 +696,14 @@ pub struct DrawLists {
     pub blend_double_sided: Vec<bool>,
     /// Per `blend_under_water` entry: the same sidedness rule before water.
     pub blend_under_double_sided: Vec<bool>,
+    /// Per `blend` entry: the material class its pipeline is specialised to
+    /// (`scene_variant::material_class`). Filled by the renderer's main
+    /// thread from the draw records, not by the scene.
+    pub blend_material: Vec<u8>,
+    /// Per entry of `opaque`, `opaque_two_sided`, `mask` and
+    /// `mask_two_sided`: the material class of its pipeline in the scene
+    /// pass, as `blend_material`.
+    pub scene_material: [Vec<u8>; 4],
     pub shadow_casters: Vec<ShadowCaster>,
     /// Aurora Weather, CPU lists only: what the rain's shelter map takes in
     /// its square around the camera, shadows or not: what stands still
@@ -863,6 +871,8 @@ impl DrawLists {
         self.blend_glow.clone_from(&src.blend_glow);
         self.blend_double_sided.clone_from(&src.blend_double_sided);
         self.blend_under_double_sided.clone_from(&src.blend_under_double_sided);
+        self.blend_material.clone_from(&src.blend_material);
+        self.scene_material.clone_from(&src.scene_material);
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
         self.blend_precision = src.blend_precision;
@@ -944,6 +954,8 @@ impl DrawLists {
         self.blend_glow.clear();
         self.blend_double_sided.clear();
         self.blend_under_double_sided.clear();
+        self.blend_material.clear();
+        self.scene_material.iter_mut().for_each(Vec::clear);
         self.glow_alpha.clear();
         self.debug_red.clear();
         self.debug_blue.clear();
