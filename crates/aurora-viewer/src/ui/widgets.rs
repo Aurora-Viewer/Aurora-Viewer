@@ -1040,7 +1040,6 @@ impl<'a> Floater<'a> {
             }
             return None;
         }
-        pills::note_window_drawn(ctx, egui::Id::unique(self.id));
         if self.goes_outside() && crate::outside::wanted(ctx, egui::Id::unique(self.id)) {
             let window_id = egui::Id::unique(self.id);
             if !super::layout::reset_pending(ctx, window_id) {
@@ -2367,7 +2366,6 @@ pub(crate) fn bare_window(
     if window_hidden(ctx, window_id, true, role) {
         return;
     }
-    pills::note_window_drawn(ctx, window_id);
     let drag = if locked {
         None
     } else {
