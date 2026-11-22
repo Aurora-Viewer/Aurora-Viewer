@@ -116,6 +116,16 @@ fn feedback_id() -> egui::Id {
     egui::Id::unique("inventory_move_drag_feedback")
 }
 
+/// The pointer is over the world: inside the viewer's window, and over no
+/// window of the interface. A held drag still tells where the pointer is
+/// beyond the edges of the window it began in; nothing of the world is
+/// there, and what is let go of there is carried to the viewer's other
+/// windows (`outside::carry`), not dropped.
+pub(crate) fn over_world(ctx: &egui::Context) -> bool {
+    let window = ctx.content_rect();
+    !ctx.is_pointer_over_egui() && ctx.input(|i| i.pointer.interact_pos().is_none_or(|at| window.contains(at)))
+}
+
 /// How many entries a drag of inventory carries while one is in progress (a
 /// folder counts as one). Used by drop targets that take inventory cargo.
 pub(crate) fn carried_count(ctx: &egui::Context) -> Option<usize> {
