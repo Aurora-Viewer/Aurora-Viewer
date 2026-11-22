@@ -1057,8 +1057,12 @@ reset, saved positions), `roll` on the same tab with a 15° camera roll
 (the hold-to-roll buttons and the angle button that levels the camera), `movement` on its Movement tab
 (the eight buttons with the keys of the keyboard's layout, walk / run / fly),
 `compact` the window in its compact view (its joysticks, zoom and roll controls),
+with "Compact camera controls" on for that run (not saved; #3904),
 `compact-move` the same, then at frame 640 the toolbar's Move pressed on it
-(#1815: it expands on its Movement tab; capture at 700),
+(#1815: it expands on its Movement tab, the compact choice kept; capture at 700),
+`compact-close` the same, then the toolbar's camera button pressed at 640 (it
+closes, logged at 660) and again at 680 (it opens compact, logged and captured
+at 700; #3904),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
 not saved). `views` (Aurora's window) and `classic-views` (the Legacy
 Viewer's camera window) save a view (#2755): the camera turned away at 610

@@ -445,6 +445,7 @@ const BEFORE: &[&str] = &[
     "classic_pay_window",
     "legacy_money_tracker",
     "classic_controls",
+    "compact_controls",
     "classic_restart_alert",
     "classic_rez_effect",
     "classic_hover_tips",

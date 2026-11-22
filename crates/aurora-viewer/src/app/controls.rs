@@ -36,14 +36,19 @@ impl App {
                 no_collisions: flight.no_collisions,
             }),
         };
+        let compact = self.settings.compact_controls;
         let out = self.controls_ui.show(
             ctx,
             p,
             &mut self.panels.camera_controls,
             &mut self.panels.movement_controls,
+            &mut self.settings.compact_controls,
             self.settings.classic_controls,
             &view,
         );
+        if self.settings.compact_controls != compact {
+            self.settings.save();
+        }
         self.controls_held = out.held;
         self.controls_free = (out.free_move, out.free_look);
         // the object view ends with the window (LLFloaterCamera::onClose)
@@ -215,7 +220,9 @@ impl App {
     /// AURORA_DEMO_CONTROLS=camera | movement | compact | compact-move |
     /// classic | free | free-compact: the window open (minimized for
     /// `compact`; `compact-move` also, then Move pressed 40 frames later as
-    /// the toolbar does, #1815); `free` the
+    /// the toolbar does, #1815; `compact-close` the camera's toolbar button
+    /// pressed at 640, which closes it, and again at 680, which opens it
+    /// compact, #3904); `free` the
     /// photo window's free camera on, which opens it, `free-compact` the
     /// same minimized; 40 frames later the free camera has flown 2 m to the
     /// left and 1 m up and turned toward the avatar, which stayed.
@@ -259,6 +266,23 @@ impl App {
             self.request_controls(true, true);
             log::info!("demo controls: Move pressed on the minimized window");
         }
+        if std::env::var("AURORA_DEMO_CONTROLS").as_deref() == Ok("compact-close") {
+            let compact = || crate::ui::widgets::floater_minimized(&self.egui_ctx, crate::ui::controls::WINDOW);
+            match self.frame_count {
+                640 => {
+                    self.request_controls(false, true);
+                    log::info!("demo controls: camera pressed on the compact window");
+                }
+                660 => log::info!("demo controls: open {} after the press", self.panels.camera_controls),
+                680 => self.request_controls(false, true),
+                700 => log::info!(
+                    "demo controls: open {}, compact {} when pressed again",
+                    self.panels.camera_controls,
+                    compact()
+                ),
+                _ => {}
+            }
+        }
         self.controls_views_demo();
         if self.frame_count != 600 {
             return;
@@ -279,9 +303,10 @@ impl App {
                 self.camera.roll = 15.0_f32.to_radians();
             }
             Ok("movement") => self.panels.movement_controls = true,
-            Ok("compact" | "compact-move") => {
+            // the saved choice for this run only (AGENTS.md section 4)
+            Ok("compact" | "compact-move" | "compact-close") => {
+                self.settings.compact_controls = true;
                 self.panels.camera_controls = true;
-                crate::ui::widgets::minimize_floater(&self.egui_ctx, crate::ui::controls::WINDOW);
             }
             Ok("classic") => {
                 self.settings.classic_controls = true;
