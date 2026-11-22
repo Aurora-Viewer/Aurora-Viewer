@@ -553,6 +553,12 @@ impl Refusals {
         self.required_refused.is_none_or(|at| now.duration_since(at) >= quiet)
     }
 
+    /// The last refusal of a render target or required target `old` knew
+    /// of, kept by these refusals of a renderer made in its place.
+    pub fn keep_required(&mut self, old: &Refusals) {
+        self.required_refused = self.required_refused.max(old.required_refused);
+    }
+
     /// An extra may be made now.
     pub fn extras_ready(&self, now: Instant) -> bool {
         self.extras.ready(now)
@@ -940,6 +946,11 @@ mod tests {
         // an extra's refusal does not
         r.extra(true, t0 + s(140));
         assert!(r.required_quiet(t0 + s(140), s(60)));
+        // a renderer made in its place keeps the last one
+        let mut fresh = Refusals::default();
+        fresh.keep_required(&r);
+        assert!(!fresh.required_quiet(t0 + s(100), s(60)));
+        assert!(fresh.required_quiet(t0 + s(130), s(60)));
     }
 
     #[test]

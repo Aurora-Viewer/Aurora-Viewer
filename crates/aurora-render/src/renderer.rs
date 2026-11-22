@@ -8640,6 +8640,9 @@ impl Backend {
                 // (a set still compiling is the new one's to wait for: the
                 // old one's drop would hold this frame for it)
                 fresh.adopt_pipeline_workers(self);
+                // (what was refused before stays remembered: the water's
+                // copy still waits on it, `Refusals::required_quiet`)
+                fresh.oom.keep_required(&self.oom);
                 *self = fresh;
             }
             Ok(mut refused) => {
@@ -11950,7 +11953,13 @@ impl Backend {
                 )
             });
             self.targets.water_copy = Some(copy);
-            let (groups, groups_refused) = crate::gpu_alloc::scoped(&device, || frame_groups(&self.targets).b_water);
+            // (a refused copy is bound by nothing: its groups would only
+            // fail again)
+            let (groups, groups_refused) = if copy_refused {
+                (None, false)
+            } else {
+                crate::gpu_alloc::scoped(&device, || frame_groups(&self.targets).b_water)
+            };
             let refused = copy_refused || groups_refused;
             // (a lost device's refusals are the device-loss path's)
             if first_use(&mut self.oom, "water's scene copy", false, refused && !self.lost.get()) {
