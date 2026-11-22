@@ -310,11 +310,6 @@ pub fn update(
             Default::default(),
             "",
         ));
-        if frame.is_multiple_of(30) {
-            let level =
-                aurora_render::water_effects::surface_level(glam::Vec2::new(40.0, 114.0), time, settings.water_effects.render(), 20.0, 0.0);
-            log::info!("deck fixture: time={time:.2} swell_level={level:.3} deck_top=20.15");
-        }
     }
     if mode.contains("deep-lights") {
         // A floor 48 m under the water line (region water at 20 m) with a

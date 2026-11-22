@@ -983,6 +983,11 @@ struct Targets {
     water_mask: wgpu::TextureView,
     scene_copy_tex: wgpu::Texture,
     scene_copy: wgpu::TextureView,
+    /// The scene again after the wet ground, ice and snow of pass B, for the
+    /// moving water alone: a crest that rises over a low floor refracts the
+    /// floor as wet as around it, not as `scene_copy` has it, dry (#4565).
+    /// Made on its first use (while it rains or snow lies, with waves).
+    water_copy: Option<(wgpu::Texture, wgpu::TextureView)>,
     /// G-buffer (normal, roughness, metallic) for SSR.
     gbuf_msaa: Option<wgpu::TextureView>,
     gbuf: Option<wgpu::TextureView>,
@@ -1880,6 +1885,9 @@ struct FrameGroups {
     a: wgpu::BindGroup,
     /// Scene pass B: everything.
     b: wgpu::BindGroup,
+    /// `b` with `Targets::water_copy` as the scene: the water drawn over
+    /// the wet ground (there while that copy is).
+    b_water: Option<wgpu::BindGroup>,
     /// The blended faces that write the scene depth as they are drawn: `a`
     /// with the occlusion's depth, which their faint texels read to know
     /// whether they lie on the surface it was made for (common.wgsl
@@ -6452,6 +6460,7 @@ impl Backend {
             water_mask,
             scene_copy_tex,
             scene_copy,
+            water_copy: None,
             gbuf_msaa,
             gbuf,
             ao,
@@ -6727,6 +6736,23 @@ impl Backend {
                 true,
                 soft,
             ),
+            b_water: t.water_copy.as_ref().map(|(_, copy)| {
+                mk(
+                    "frame b, water over the wet ground",
+                    frame_buffer,
+                    ao,
+                    water,
+                    mirror,
+                    copy,
+                    &t.depth_ss,
+                    occlusion,
+                    contact,
+                    il,
+                    true,
+                    true,
+                    soft,
+                )
+            }),
             refl: [
                 mk(
                     "frame water reflection",
@@ -7048,6 +7074,9 @@ impl Backend {
     fn drop_first_use_targets(&mut self) {
         self.targets.blend_layers = None;
         self.targets.blend_exact = None;
+        if self.targets.water_copy.take().is_some() {
+            self.remake_frame_groups();
+        }
         self.rlva_spheres = None;
         self.rlva_scaled = None;
         self.selection = None;
@@ -10144,6 +10173,36 @@ impl Backend {
         ) {
             self.rebuild_bind_groups_checked("TAA history after a water effects change");
         }
+        // The moving water over the wet ground, ice or snow refracts a copy
+        // of the scene taken after them (`Targets::water_copy`, #4565): a
+        // crest above a floor just over the water showed it dry, a disc
+        // sweeping over it. Made on first use; refused or waiting (an extra,
+        // `extra`), the water reads `scene_copy` as before.
+        // Released once the water no longer moves.
+        let water_moves = self.settings.water_effects.flags() & (1 | 16) != 0;
+        if !water_moves && self.targets.water_copy.take().is_some() {
+            self.remake_frame_groups();
+        }
+        let mut water_over_wet = water_moves && !f.cutout && self.rain_wet.active() && rg.water.1 > 0;
+        if water_over_wet && self.targets.water_copy.is_none() {
+            let size = self.targets.scene_copy_tex.size();
+            let made = extra(&mut self.oom, &self.device, self.lost.get(), "water's scene copy", |device| {
+                make_view(
+                    device,
+                    "water's scene copy",
+                    size.width,
+                    size.height,
+                    HDR_FORMAT,
+                    1,
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                )
+            });
+            if let Some(copy) = made {
+                self.targets.water_copy = Some(copy);
+                self.remake_frame_groups();
+            }
+        }
+        water_over_wet &= self.groups.b_water.is_some();
         stats.particles += self.water_effects.particles;
         prof.mark("lists");
         let mut encoder = self
@@ -11821,7 +11880,16 @@ impl Backend {
                 pass.set_pipeline(&self.pipelines.snow_mesh);
                 pass.draw(0..mesh.vertices(), 0..1);
             }
-            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split && !st_on, false);
+            let last = !split && !st_on;
+            // the water over the wet ground: the reflections and the wet
+            // pass in a part of their own, then the water's copy of them
+            let water_copy = self
+                .groups
+                .b_water
+                .as_ref()
+                .zip(self.targets.water_copy.as_ref())
+                .filter(|_| water_over_wet && rain_wet && rg.water.1 > 0);
+            let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", last && water_copy.is_none(), false);
             bind_mesh(&mut pass, &self.groups.b);
             if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, &self.pipelines.ssr, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
@@ -11841,6 +11909,35 @@ impl Backend {
                 }
                 pass.draw(0..3, 0..1);
             }
+            if let Some((water_group, (copy_tex, _))) = water_copy {
+                drop(pass);
+                // (multisampled: resolved first, the copy is of `color`)
+                if let Some(msaa) = &self.targets.color_msaa {
+                    let _resolve = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("resolve wet ground for the water"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: msaa,
+                            depth_slice: None,
+                            resolve_target: Some(&self.targets.color),
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                }
+                encoder.copy_texture_to_texture(
+                    self.targets.color_tex.as_image_copy(),
+                    copy_tex.as_image_copy(),
+                    self.targets.scene_copy_tex.size(),
+                );
+                pass = begin_scene_b(&mut encoder, &self.targets, "scene b, water on", last, false);
+                bind_mesh(&mut pass, water_group);
+            }
             pass_mark(&mut pass, MARK_SSR_END);
             let water_pipe = self
                 .pipelines
@@ -11849,6 +11946,10 @@ impl Backend {
                 .filter(|_| water_near)
                 .unwrap_or(&self.pipelines.water);
             draw(&mut pass, water_pipe, rg.water);
+            if water_copy.is_some() {
+                // what follows reads the scene copy of before, as ever
+                pass.set_bind_group(0, &self.groups.b, &[]);
+            }
             pass_mark(&mut pass, MARK_WATER_END);
             if glow_on {
                 draw(&mut pass, &self.pipelines.glow_max, rg.creation_preview);
@@ -13123,7 +13224,13 @@ impl Backend {
         stats.target_bytes_per_pixel = self
             .target_bytes
             .filter(|&(bytes, pixels)| bytes > 0 && pixels > 0)
-            .map(|(bytes, pixels)| (bytes + self.taa_bytes) as f32 / pixels as f32);
+            .map(|(bytes, pixels)| {
+                // the water's copy, made on first use, which a photo makes again
+                let water_copy = self.targets.water_copy.as_ref().map_or(0, |(t, _)| {
+                    u64::from(t.width()) * u64::from(t.height()) * u64::from(HDR_FORMAT.block_copy_size(None).unwrap_or(8))
+                });
+                (bytes + self.taa_bytes + water_copy) as f32 / pixels as f32
+            });
         stats.gpu_elements = self.timer.as_ref().and_then(|t| t.last_elements);
         stats.shadow.gpu_ms = self.timer.as_ref().and_then(|t| t.last_shadow_parts);
         stats.gpu_depth = self.timer.as_ref().and_then(|t| t.last_depth);
