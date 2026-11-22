@@ -3441,6 +3441,10 @@ common-copy-slurl = Copy SLurl
 inventory-landmark-location-unknown = This landmark's location could not be resolved. Please try again later.
 ui-options-commands-copy-camera = Copy camera
 build-ui-general-copy-object-keys-shift-all-parts = Copy object keys (Shift: all parts)
+build-ui-copied-object-uuids = { $count ->
+    [one] Object UUID copied
+   *[other] Object UUIDs copied
+    }
 ui-options-commands-copy-camera-position-to-clipboard = Copy camera position to clipboard
 build-ui-tools-copy-selection = Copy selection
 common-copy-slurl-2 = Copy SLurl

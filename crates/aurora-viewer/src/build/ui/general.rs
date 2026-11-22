@@ -687,8 +687,15 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             crate::ui::widgets::divider(ui, p);
         }
         ui.horizontal(|ui| {
-            if legacy && ui.button(aurora_i18n::tr!("build-legacy-copy-keys")).clicked() {
-                tool.ui.requests.push(Request::CopyKeys);
+            if legacy {
+                let copy = ui.button(aurora_i18n::tr!("build-legacy-copy-keys"));
+                if copy.clicked() {
+                    tool.ui.requests.push(Request::CopyKeys {
+                        feedback: copy.id,
+                        anchor: copy.rect,
+                    });
+                }
+                crate::ui::widgets::copied_feedback(ui.ctx(), p, copy.id, super::window_rect(ui.ctx()));
             }
             let roots = tool.roots(world);
             let (search, search_mixed) = super::common::same(

@@ -8074,9 +8074,13 @@ impl App {
                 let text = self.gfx.as_mut().and_then(|g| g.egui_state.clipboard_text()).unwrap_or_default();
                 self.build.paste_vector(&mut self.world, &self.settings.build, which, &text);
             }
-            Request::CopyKeys => self
-                .egui_ctx
-                .copy_text(self.build.copy_keys(&self.world, &self.settings.build, self.shift)),
+            Request::CopyKeys { feedback, anchor } => {
+                let (keys, count) = self.build.copy_keys_with_count(&self.world, &self.settings.build, self.shift);
+                if count > 0 {
+                    self.egui_ctx.copy_text(keys);
+                    crate::ui::widgets::show_copied(&self.egui_ctx, feedback, anchor, crate::build::ui::copied_keys_label(count));
+                }
+            }
             Request::Script { object, item } => self.open_script(aurora_net::scripts::ScriptTarget { object, item }),
         }
         self.flush_build();

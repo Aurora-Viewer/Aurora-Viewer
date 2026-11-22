@@ -51,7 +51,7 @@ mod unread;
 mod volume;
 mod workspace;
 pub use color::color_button;
-pub use copy_on_click::copy_on_click;
+pub use copy_on_click::{copied_feedback, copy_on_click, show_copied};
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
     chip_row, clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab,
@@ -661,8 +661,9 @@ pub struct Floater<'a> {
     title_rename: Option<(String, bool)>,
     /// Optional compact state row within the title bar: glyph, label, theme role.
     pub header_status: Vec<(&'static str, String, Color32)>,
-    /// A text action at the right end of the secondary header row.
-    pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut bool)>,
+    /// A text action at the right end of the secondary header row; a click
+    /// writes the action's rect, for feedback drawn beside it.
+    pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut Option<egui::Rect>)>,
     /// A single-line detail row inside the expanded title section.
     pub header_summary: Option<egui::WidgetText>,
     pub header_summary_action: Option<&'a mut bool>,
@@ -1294,12 +1295,11 @@ impl<'a> Floater<'a> {
                             let width = (ui.available_width() - 65.0).max(1.0);
                             ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::top_down(egui::Align::Min), status);
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui
+                                let action = ui
                                     .add(egui::Label::new(RichText::new(*label).size(12.0).color(p.violet_light)).sense(Sense::click()))
-                                    .on_hover_text(*tip)
-                                    .clicked()
-                                {
-                                    **clicked = true;
+                                    .on_hover_text(*tip);
+                                if action.clicked() {
+                                    **clicked = Some(action.rect);
                                 }
                                 glyph(ui, icon, p.violet_light, 13.0);
                             });
