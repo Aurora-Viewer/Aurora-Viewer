@@ -117,7 +117,8 @@ impl FriendSnapshot {
     /// Reconcile the login `buddy-list` against `previous`. When `previous` is
     /// `Some` and `notify` is enabled, any friend missing from `current` is
     /// queued for an [`Ended::AtLogin`] notice and its UUID is returned for
-    /// name lookup.
+    /// name lookup, both sorted by saved name (ignoring case), then id, so
+    /// that several notices always come in the same order.
     pub fn reconcile(
         &mut self,
         path: Option<PathBuf>,
@@ -147,11 +148,12 @@ impl FriendSnapshot {
         if let Some(prev) = &prev_map
             && notify
         {
-            for (id, fallback) in prev {
-                if !next_friends.contains_key(id) {
-                    self.push_pending(*id, fallback.clone(), Ended::AtLogin);
-                    missing.push(*id);
-                }
+            // `prev` is a HashMap, whose order changes from run to run
+            let mut gone: Vec<(&Uuid, &String)> = prev.iter().filter(|(id, _)| !next_friends.contains_key(id)).collect();
+            gone.sort_by_cached_key(|(id, name)| (name.to_lowercase(), **id));
+            for (id, fallback) in gone {
+                self.push_pending(*id, fallback.clone(), Ended::AtLogin);
+                missing.push(*id);
             }
         }
 
@@ -393,6 +395,36 @@ mod tests {
         assert!(snap3.take_ready(true, |_| true).is_empty());
         assert_eq!(load(&path), Some(vec![]));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn friends_missing_at_login_come_sorted_by_name_then_id() {
+        let saved = |n: u128, name: &str| SavedFriend {
+            id: id(n),
+            name: name.into(),
+        };
+        // Two "Bob"s with different ids, a name in lower case, a nameless one
+        // and one still a friend.
+        let previous = vec![
+            saved(7, "Zoe"),
+            saved(9, "Bob"),
+            saved(3, "Mia"),
+            saved(2, "Bob"),
+            saved(8, ""),
+            saved(5, "kai"),
+            saved(6, "Ada"),
+            saved(4, "Lou"),
+        ];
+        let order = [id(8), id(6), id(2), id(9), id(5), id(3), id(7)];
+        // The saved list goes through a HashMap: repeat so that a missing
+        // sort would show
+        for _ in 0..8 {
+            let mut snap = FriendSnapshot::default();
+            let missing = snap.reconcile(None, Some(previous.clone()), &[id(4)], |_| None, true);
+            assert_eq!(missing, order);
+            let ready: Vec<Uuid> = snap.take_ready(true, |_| true).into_iter().map(|(id, _, _)| id).collect();
+            assert_eq!(ready, order);
+        }
     }
 
     #[test]
