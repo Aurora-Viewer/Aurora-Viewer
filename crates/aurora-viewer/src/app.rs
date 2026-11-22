@@ -13284,15 +13284,16 @@ impl App {
         self.build.sync_mesh_inspector(&mut self.world, &mut self.scene);
         if self.in_world() && self.build.open {
             for idx in self.build.sel_prims(&self.world) {
-                if let Some(id) = self.world.objects.get(idx).map(|o| o.full_id)
-                    && !self.build.face_counts.contains_key(&id)
+                // counted again once the shape changes (a hollow adds a face)
+                if !self.build.face_count_known(&self.world, idx)
                     && let Some(n) = self.media.face_count(&self.world, &self.scene, idx)
                 {
-                    self.build.face_counts.insert(id, n);
+                    self.build.set_face_count(&self.world, idx, n);
                 }
             }
             if self.build.face_counts.len() > 1024 {
                 self.build.face_counts.clear();
+                self.build.face_count_shapes.clear();
             }
         }
         let mut actions = UiActions::default();
