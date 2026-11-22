@@ -33,8 +33,9 @@ pub(crate) fn tab_held_over(ui: &egui::Ui, rect: egui::Rect, id: egui::Id) -> bo
     true
 }
 
-/// The top of the inventory window `editor`'s search row, this frame: a
-/// drag above it no longer scrolls the list up.
+/// The highest row of the inventory window `editor` a drag still scrolls
+/// the list up from, this frame: the search row in Aurora's layout, the
+/// next owner row under the tabs in the Legacy one. Above it, no scroll.
 pub(crate) fn search_top(ctx: &egui::Context, editor: Uuid, top: f32) {
     ctx.data_mut(|d| d.insert_temp(search_top_id(editor), top));
 }

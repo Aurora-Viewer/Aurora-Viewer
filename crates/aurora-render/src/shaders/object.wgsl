@@ -1236,7 +1236,7 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     if (probes_on()) {
         // (both in one walk of the probes)
         let both = sample_probes_pair(
-            world_pos,
+            probe_point(world_pos, n),
             frag,
             ProbeLookup(r, (1.0 - spec.a) * probe_max_lod(), false),
             ProbeLookup(r, 0.0, false),

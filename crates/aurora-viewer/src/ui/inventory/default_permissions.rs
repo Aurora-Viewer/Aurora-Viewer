@@ -40,7 +40,7 @@ pub(crate) fn show(ctx: &egui::Context, p: &Palette, open: &mut bool, creation: 
 
 fn creation_rows(ui: &mut egui::Ui, p: &Palette, defaults: &mut Defaults) {
     let columns = [
-        (64.0, aurora_i18n::tr!("common-edit")),
+        (64.0, aurora_i18n::tr!("common-modify")),
         (64.0, aurora_i18n::tr!("common-copy-2")),
         (70.0, aurora_i18n::tr!("common-transfer")),
         (72.0, aurora_i18n::tr!("import-permissions-group")),

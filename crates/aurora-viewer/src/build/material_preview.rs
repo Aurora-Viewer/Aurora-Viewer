@@ -1,18 +1,23 @@
-//! Selected-object preview from FSPanelFace::onMatTabChange and
+//! Selected-face preview from FSPanelFace::onMatTabChange and
 //! LLSelectMgr::hideGLTFMaterial/showGLTFMaterial (indra/newview). Keep the
 //! authoritative materials intact: only the effective local render mode changes.
-//! User-requested lifetime: retain each object's last mode until region exit or
+//! User-requested lifetime: retain each face's last mode until region exit or
 //! logout, including after deselection and closing the inspector.
 //!
 //! The tab a new selection opens on follows LLPanelFace::updateUI
 //! (indra/newview/llpanelface.cpp): PBR when a selected face shows a PBR
 //! material, Blinn-Phong when none does. So a Blinn-Phong tab left open never
 //! hides the PBR of the next object selected (issue #1945).
+//!
+//! Deliberate difference, better for the user: the Legacy Viewer hides every
+//! PBR material of the selected prims (`hideGLTFMaterial`), even the faces
+//! the tab does not edit. Aurora hides the faces it shows only, so selecting
+//! a Blinn-Phong face of a mixed prim leaves its PBR faces rendering (#4467).
 
 use super::materials::MF_HAS_MEDIA;
 use super::{BuildSettings, BuildTool, EditMode, Tool};
 use crate::world::World;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// What the Texture tab was last chosen for: the selected modifiable prims,
@@ -34,10 +39,10 @@ impl BuildTool {
 
     /// LLPanelFace::updateUI's tab choice, run when the selection changes
     /// while the Texture tab shows. A face counts as PBR only while it shows
-    /// its PBR material: an object still previewed in Blinn-Phong keeps that
-    /// tab when it is selected again. With one face picked, the Media tab
-    /// opens for a face with media and no PBR, as in the Legacy Viewer; a
-    /// selection of whole prims leaves the Media tab alone.
+    /// its PBR material: a face still previewed in Blinn-Phong keeps that tab
+    /// when it is selected again. With one face picked, the Media tab opens
+    /// for a face with media and no PBR, as in the Legacy Viewer; a selection
+    /// of whole prims leaves the Media tab alone.
     fn choose_material_tab(&mut self, world: &World, settings: &BuildSettings, prims: &HashSet<Uuid>) {
         let single = if self.edit_mode == EditMode::Face {
             let mut faces = self.sel_te(world).into_iter().filter(|&(idx, _)| self.can_modify(world, idx));
@@ -62,7 +67,8 @@ impl BuildTool {
             return;
         }
         let shows_pbr = |idx: usize, face: u8| {
-            BuildTool::gltf_asset(world, idx, face).is_some() && !world.objects.get(idx).is_some_and(|o| o.render.blinn_phong_preview)
+            BuildTool::gltf_asset(world, idx, face).is_some()
+                && !world.objects.get(idx).is_some_and(|o| o.is_blinn_phong_preview(face as usize))
         };
         let tab = self.ui.tex_tab;
         self.ui.tex_tab = if let Some((idx, face)) = single {
@@ -98,30 +104,37 @@ impl BuildTool {
             && self.section_visible(3)
             && !self.replacement_active();
         if !active {
-            self.material_preview_selection.clear();
+            self.material_preview_faces.clear();
             self.material_preview_mode = None;
             return;
         }
-        let selected: HashSet<_> = self
-            .sel_prims(world)
-            .into_iter()
-            .filter(|&idx| self.can_modify(world, idx))
-            .filter_map(|idx| world.objects.get(idx).map(|o| o.full_id))
-            .collect();
-        self.choose_material_tab(world, settings, &selected);
+        // One mask per prim of the faces the tab edits: the picked faces in
+        // Face mode, every face of the prims otherwise. Only those are hidden
+        // or shown, so a Blinn-Phong face no longer hides the PBR faces of its
+        // prim (#4467); each face keeps its choice after deselection.
+        let mut selected: HashMap<Uuid, u64> = HashMap::new();
+        for (idx, face) in self.sel_te(world) {
+            if !self.can_modify(world, idx) {
+                continue;
+            }
+            let Some(o) = world.objects.get(idx) else { continue };
+            *selected.entry(o.full_id).or_default() |= 1u64 << face.min(63);
+        }
+        let prims: HashSet<Uuid> = selected.keys().copied().collect();
+        self.choose_material_tab(world, settings, &prims);
         let preview = self.ui.tex_tab == 0;
         // Apply only a new inspection choice. In particular, a region change
         // clears the world's overrides without a still-open inspector applying
         // its unchanged selection again on the next frame.
-        if self.material_preview_mode == Some(preview) && self.material_preview_selection == selected {
+        if self.material_preview_mode == Some(preview) && self.material_preview_faces == selected {
             return;
         }
-        for id in &selected {
+        for (id, faces) in &selected {
             if let Some(idx) = world.objects.index_of_uuid(id) {
-                world.objects.set_blinn_phong_preview(idx, preview);
+                world.objects.set_blinn_phong_faces(idx, *faces, preview);
             }
         }
-        self.material_preview_selection = selected;
+        self.material_preview_faces = selected;
         self.material_preview_mode = Some(preview);
     }
 }
@@ -197,8 +210,6 @@ mod tests {
                 (o.te.clone(), o.extra.clone(), world.gltf_overrides[&o.key].clone())
             })
             .into();
-        tool.edit_mode = EditMode::Face;
-        tool.faces.insert(world.objects.get(root).unwrap().key, vec![0]);
         tick(&mut tool, &mut world, &settings);
         for idx in [root, child] {
             let o = world.objects.get(idx).unwrap();
@@ -243,7 +254,7 @@ mod tests {
             }
             tick(&mut tool, &mut world, &settings);
             for idx in [root, child] {
-                assert!(world.objects.get(idx).unwrap().render.blinn_phong_preview);
+                assert!(world.objects.get(idx).unwrap().is_blinn_phong_preview(0));
                 assert!(world.objects.get(idx).unwrap().visual_material(0).is_none());
             }
         }
@@ -283,7 +294,7 @@ mod tests {
         assert!(world.objects.get(other).unwrap().visual_material(0).is_none());
         tool.selection.clear();
         tick(&mut tool, &mut world, &settings);
-        assert!(tool.material_preview_selection.is_empty());
+        assert!(tool.material_preview_faces.is_empty());
         assert!(world.objects.get(other).unwrap().visual_material(0).is_none());
         assert!(world.objects.get(root).unwrap().visual_material(0).is_none());
     }
@@ -310,12 +321,12 @@ mod tests {
         update.local_id = 99999;
         world.objects.upsert(42, update);
         let moved = world.objects.index_of_uuid(&id).unwrap();
-        assert!(world.objects.get(moved).unwrap().render.blinn_phong_preview);
+        assert!(world.objects.get(moved).unwrap().is_blinn_phong_preview(0));
         tick(&mut tool, &mut world, &settings);
-        assert!(world.objects.get(moved).unwrap().render.blinn_phong_preview);
+        assert!(world.objects.get(moved).unwrap().is_blinn_phong_preview(0));
         world.apply(aurora_net::NetEvent::MainRegionChanged { handle: 42 });
         tick(&mut tool, &mut world, &settings);
-        assert!(!world.objects.get(moved).unwrap().render.blinn_phong_preview);
+        assert!(!world.objects.get(moved).unwrap().is_blinn_phong_preview(0));
         assert!(world.objects.get(moved).unwrap().visual_material(0).is_some());
     }
 
@@ -367,7 +378,7 @@ mod tests {
         let idx = world.objects.index_of_uuid(&id).unwrap();
         world.objects.get_mut(idx).unwrap().extra.render_materials = vec![(0, Uuid::from_u128(0xabc))];
         tick(&mut tool, &mut world, &settings);
-        assert!(!world.objects.get(idx).unwrap().render.blinn_phong_preview);
+        assert!(!world.objects.get(idx).unwrap().is_blinn_phong_preview(0));
         assert!(world.objects.get(idx).unwrap().visual_material(0).is_some());
     }
 
@@ -386,6 +397,39 @@ mod tests {
     }
 
     #[test]
+    fn a_blinn_phong_face_only_hides_its_own_face_of_a_mixed_prim() {
+        // Issue #4467: a prim with PBR on some faces and Blinn-Phong on the
+        // others. Selecting a Blinn-Phong face opens that tab and hides that
+        // face alone; the Legacy Viewer would hide every PBR face of the prim.
+        let (mut world, mut tool, settings, [root, _, _]) = auto();
+        let key = world.objects.get(root).unwrap().key;
+        world.objects.get_mut(root).unwrap().extra.render_materials = vec![(1, Uuid::from_u128(0xabc)), (2, Uuid::from_u128(0xabc))];
+        tool.selection = vec![key];
+        tool.selection_linked = true;
+        tool.edit_mode = EditMode::Face;
+        tool.faces.insert(key, vec![4]);
+        tick(&mut tool, &mut world, &settings);
+        assert_eq!(tool.ui.tex_tab, 0);
+        assert!(world.objects.get(root).unwrap().visual_material(4).is_none());
+        assert!(
+            world.objects.get(root).unwrap().visual_material(1).is_some(),
+            "face 1 keeps its PBR"
+        );
+        assert!(
+            world.objects.get(root).unwrap().visual_material(2).is_some(),
+            "face 2 keeps its PBR"
+        );
+        // A picked PBR face opens the PBR tab; the face left in Blinn-Phong
+        // keeps that choice, as each face's last mode survives deselection.
+        tool.faces.insert(key, vec![1]);
+        tick(&mut tool, &mut world, &settings);
+        assert_eq!(tool.ui.tex_tab, 1);
+        assert!(world.objects.get(root).unwrap().visual_material(1).is_some());
+        assert!(world.objects.get(root).unwrap().visual_material(2).is_some());
+        assert!(world.objects.get(root).unwrap().is_blinn_phong_preview(4));
+    }
+
+    #[test]
     fn a_blinn_phong_tab_left_open_never_hides_the_pbr_of_the_next_object() {
         // Issue #1945: a mixed linkset (one PBR prim, one Blinn-Phong prim)
         // selected while the Blinn-Phong tab was open.
@@ -395,7 +439,7 @@ mod tests {
         tick(&mut tool, &mut world, &settings);
         assert_eq!(tool.ui.tex_tab, 1, "LLPanelFace::updateUI opens PBR when a selected face has PBR");
         assert!(world.objects.get(root).unwrap().visual_material(0).is_some());
-        assert!(!world.objects.get(root).unwrap().render.blinn_phong_preview);
+        assert!(!world.objects.get(root).unwrap().is_blinn_phong_preview(0));
         // The user may still preview it in Blinn-Phong: the same selection
         // keeps that choice, frame after frame.
         tool.ui.tex_tab = 0;
