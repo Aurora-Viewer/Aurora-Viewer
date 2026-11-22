@@ -10495,7 +10495,6 @@ build-compact-summary-details = { " - " }{ $capacity }    { $counts }
 build-compact-link-action = Scal
 build-compact-unlink-action = Rozłącz
 build-compact-link-value = Część { $number }
-build-compact-face-value = Strona { $number }
 build-compact-move = Przesuwanie
 build-compact-rotate = Obracanie (Ctrl)
 build-compact-stretch = Rozciąganie (Ctrl+Shift)

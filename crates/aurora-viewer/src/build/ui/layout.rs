@@ -861,19 +861,18 @@ pub(super) fn selection_navigation(
         ui.spacing_mut().item_spacing.x = 2.0;
         ui.spacing_mut().interact_size.y = widgets::TEXT_BUTTON_HEIGHT;
         let enabled = number.is_some() && !tool.selection.is_empty();
-        let label = if item == Item::Linked {
-            aurora_i18n::tr!("build-compact-link-value", number = number.as_deref().unwrap_or("-"))
-        } else {
-            aurora_i18n::tr!("build-compact-face-value", number = number.as_deref().unwrap_or("-"))
-        };
+        let label = aurora_i18n::tr!("build-compact-link-value", number = number.as_deref().unwrap_or("-"));
         for next in [false, true] {
-            if next {
+            let middle = Vec2::new((width - 40.0).max(1.0), widgets::TEXT_BUTTON_HEIGHT);
+            if next && item == Item::Face {
+                face_buttons(ui, p, tool, world, mods, middle);
+            } else if next {
                 widgets::readout_sized(
                     ui,
                     RichText::new(&label)
                         .size(common::SMALL)
                         .color(if number.is_some() { p.violet_pale } else { p.muted }),
-                    Vec2::new((width - 40.0).max(1.0), widgets::TEXT_BUTTON_HEIGHT),
+                    middle,
                 )
                 .on_hover_text(&label);
             }
@@ -906,6 +905,31 @@ pub(super) fn selection_navigation(
         .data_mut(|d| d.insert_temp(egui::Id::unique(("build_part_navigation", item)), response.response.rect));
     #[cfg(not(test))]
     let _ = response;
+}
+
+/// The face buttons 0 to 8 (`build::face_buttons`), in place of the face
+/// number between ◄ ►, in both window styles: greyed outside the face tool
+/// and for a face no selected prim has.
+pub(super) fn face_buttons(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, mods: Mods, size: Vec2) {
+    use crate::build::face_buttons::FaceButton;
+    let active = tool.face_mode() && !tool.selection.is_empty();
+    let states = tool.face_buttons(world).map(|state| match state {
+        _ if !active => widgets::IndexState::Disabled,
+        FaceButton::Absent => widgets::IndexState::Disabled,
+        FaceButton::Off => widgets::IndexState::Off,
+        FaceButton::Mixed => widgets::IndexState::Mixed,
+        FaceButton::On => widgets::IndexState::On,
+    });
+    let (clicked, rects) = widgets::index_buttons(ui, p, size, &states, |face| {
+        aurora_i18n::tr!("build-face-button", number = face.to_string())
+    });
+    if let Some(face) = clicked {
+        tool.pick_face_button(world, face as u8, mods.shift);
+    }
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("build_face_buttons"), rects));
+    #[cfg(not(test))]
+    let _ = rects;
 }
 
 /// The right-click menu of a bar button: its icon, its label or both.

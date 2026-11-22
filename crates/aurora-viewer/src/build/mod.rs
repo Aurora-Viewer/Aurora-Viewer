@@ -24,6 +24,7 @@ pub mod draw;
 mod edge_pan;
 pub mod edits;
 pub mod export;
+pub mod face_buttons;
 pub mod geom;
 pub mod grab;
 pub mod hud_drag;
@@ -2548,6 +2549,26 @@ impl BuildTool {
         })
     }
 
+    /// Entering face selection from a whole linkset keeps all its selected
+    /// prims and faces (LLToolFace::pickCallback): each prim becomes a
+    /// selection unit of its own, so that its faces can be chosen apart.
+    fn select_prims_individually(&mut self, world: &mut World) {
+        if self.selection_linked {
+            return;
+        }
+        let prims: Vec<_> = self
+            .sel_prims(world)
+            .into_iter()
+            .filter_map(|i| Self::unit_of(world, i, true))
+            .collect();
+        self.deselect_all(world);
+        self.faces.clear();
+        self.selection_linked = true;
+        for prim in prims {
+            self.add(world, prim);
+        }
+    }
+
     /// LLToolFace::pickCallback: a click selects that face of that prim
     /// alone; Shift adds it or takes it out.
     fn face_click(&mut self, world: &mut World, target: Option<usize>, face: Option<u8>, shift: bool) {
@@ -2577,21 +2598,7 @@ impl BuildTool {
             self.faces.clear();
             self.faces.insert(unit, vec![face]);
         } else {
-            if !self.selection_linked {
-                // Entering face selection from a whole linkset keeps all its
-                // selected prims and faces (LLToolFace::pickCallback).
-                let prims: Vec<_> = self
-                    .sel_prims(world)
-                    .into_iter()
-                    .filter_map(|i| Self::unit_of(world, i, true))
-                    .collect();
-                self.deselect_all(world);
-                self.faces.clear();
-                self.selection_linked = true;
-                for prim in prims {
-                    self.add(world, prim);
-                }
-            }
+            self.select_prims_individually(world);
             if !self.is_selected(&unit) {
                 self.add(world, unit);
                 self.faces.insert(unit, vec![face]);

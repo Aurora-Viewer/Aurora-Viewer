@@ -10368,7 +10368,6 @@ build-compact-summary-details = { " - " }{ $capacity }    { $counts }
 build-compact-link-action = Enlazar
 build-compact-unlink-action = Desenlazar
 build-compact-link-value = Enlace { $number }
-build-compact-face-value = Cara { $number }
 build-compact-move = Mover
 build-compact-rotate = Girar (Ctrl)
 build-compact-stretch = Estirar (Ctrl+Mayús)

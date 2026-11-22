@@ -534,11 +534,28 @@ fn mesh_inspector_is_interactive_without_modify_and_selection_numbers_stay_with_
             .ctx
             .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
             .unwrap();
-        let label = if item == Item::Face {
-            aurora_i18n::tr!("build-compact-face-value", number = number)
-        } else {
-            aurora_i18n::tr!("build-compact-link-value", number = number)
-        };
+        if item == Item::Face {
+            // the face buttons 0 to 8, those three on
+            assert!((0..9).all(|face| {
+                texts
+                    .iter()
+                    .any(|(text, rect)| text == &face.to_string() && target.contains_rect(*rect))
+            }));
+            let on = inspector
+                .tool
+                .face_buttons(&inspector.world)
+                .map(|state| state == crate::build::face_buttons::FaceButton::On);
+            assert_eq!(
+                on.iter()
+                    .enumerate()
+                    .filter(|(_, on)| **on)
+                    .map(|(face, _)| face)
+                    .collect::<Vec<_>>(),
+                number.split(", ").map(|n| n.parse::<usize>().unwrap()).collect::<Vec<_>>()
+            );
+            continue;
+        }
+        let label = aurora_i18n::tr!("build-compact-link-value", number = number);
         assert!(texts.iter().any(|(text, rect)| text == &label && target.contains_rect(*rect)));
     }
     for _ in 0..12 {

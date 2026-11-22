@@ -164,13 +164,17 @@ impl BuildTool {
     }
 
     /// Selected faces of a selected prim (all of them outside face mode).
+    /// A prim with no entry has all its faces selected; an empty entry keeps
+    /// it selected with none of them (the face buttons 0 to 8 on a prim
+    /// without that face, as LLSelectNode keeps a node whose TEs are all
+    /// unselected).
     pub fn sel_faces(&self, world: &World, idx: usize) -> Vec<u8> {
         let Some(o) = world.objects.get(idx) else {
             return Vec::new();
         };
         match self.faces.get(&o.key) {
-            Some(f) if !f.is_empty() => f.clone(),
-            _ => (0..self.num_faces(world, idx) as u8).collect(),
+            Some(f) => f.clone(),
+            None => (0..self.num_faces(world, idx) as u8).collect(),
         }
     }
 

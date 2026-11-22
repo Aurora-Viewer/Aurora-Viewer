@@ -141,11 +141,13 @@ fn action_drag_and_keyboard_placement_only_offer_complete_column_block_edges() {
     assert_eq!(i.settings, original, "Organization must not change option values");
 }
 
-fn part_value(item: Item, number: &str) -> String {
+/// The link selector shows its number; the face selector, its buttons 0 to 8.
+fn part_shown(item: Item, number: &str, texts: &[(String, egui::Rect)], rect: egui::Rect) -> bool {
+    let shown = |label: &str| texts.iter().any(|(text, at)| text == label && rect.contains(at.center()));
     if item == Item::Face {
-        aurora_i18n::tr!("build-compact-face-value", number = number)
+        (0..crate::build::face_buttons::FACE_BUTTONS).all(|face| shown(&face.to_string()))
     } else {
-        aurora_i18n::tr!("build-compact-link-value", number = number)
+        shown(&aurora_i18n::tr!("build-compact-link-value", number = number))
     }
 }
 
@@ -165,9 +167,7 @@ fn part_selectors_keep_visible_values_in_the_shared_reference_row() {
                 .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
                 .unwrap();
             assert!(
-                texts
-                    .iter()
-                    .any(|(text, label)| text == &part_value(item, "-") && rect.contains(label.center())),
+                part_shown(item, "-", &texts, rect),
                 "Inactive {item:?} must reserve a visible shared value, organizing={organizing}"
             );
         }
@@ -184,9 +184,7 @@ fn part_selectors_keep_visible_values_in_the_shared_reference_row() {
                 .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
                 .unwrap();
             assert!(
-                texts
-                    .iter()
-                    .any(|(text, label)| text == &part_value(item, &value) && rect.contains(label.center())),
+                part_shown(item, &value, &texts, rect),
                 "Active {item:?} must show its value, organizing={organizing}"
             );
         }
@@ -202,13 +200,44 @@ fn part_selectors_keep_visible_values_in_the_shared_reference_row() {
                 .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
                 .unwrap();
             assert!(
-                texts
-                    .iter()
-                    .any(|(text, label)| text == &part_value(item, "-") && rect.contains(label.center())),
+                part_shown(item, "-", &texts, rect),
                 "Unavailable {item:?} must keep its shared placeholder, organizing={organizing}"
             );
         }
     }
+}
+
+#[test]
+fn a_face_button_click_selects_that_face_and_a_missing_face_stays_greyed() {
+    let mut i = Inspector::new();
+    let idx = i.tool.sel_prims(&i.world)[0];
+    let faces = i.tool.num_faces(&i.world, idx);
+    assert!(
+        (3..crate::build::face_buttons::FACE_BUTTONS).contains(&faces),
+        "a demo prim with 3 to 8 faces"
+    );
+    i.tool.edit_mode = EditMode::Face;
+    settle(&mut i);
+    let rects = i
+        .ctx
+        .data(|d| d.get_temp::<Vec<egui::Rect>>(egui::Id::unique("build_face_buttons")))
+        .unwrap();
+    assert_eq!(rects.len(), crate::build::face_buttons::FACE_BUTTONS);
+    let footer = i
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", Item::Face))))
+        .unwrap();
+    assert!(rects.iter().all(|rect| footer.contains_rect(*rect) && rect.width() > 4.0));
+    click(&mut i, rects[2].center());
+    assert_eq!(i.tool.sel_faces(&i.world, idx), [2]);
+    click(&mut i, rects[faces].center());
+    assert_eq!(i.tool.sel_faces(&i.world, idx), [2]);
+    // outside the face tool, greyed too
+    i.tool.edit_mode = EditMode::Move;
+    i.tool.faces.clear();
+    settle(&mut i);
+    click(&mut i, rects[1].center());
+    assert!(i.tool.faces.is_empty());
 }
 
 #[test]

@@ -205,14 +205,20 @@ fn edit_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
     });
 }
 
-fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &BuildSettings, mods: Mods) {
+fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &BuildSettings, mods: Mods) {
     if tool.selection.is_empty() {
         common::small(ui, p, aurora_i18n::tr!("build-compact-select-hint"));
         return;
     }
-    // The row stays when it is empty: the counts do not move with the mode.
-    let part = tool.legacy_part_line(world, s, mods).unwrap_or_else(|| " ".into());
-    ui.add(egui::Label::new(RichText::new(part).size(11.0).color(p.ink)).truncate());
+    if tool.face_mode() {
+        // the face buttons 0 to 8 replace the "Faces:" line under the face tool
+        let size = vec2(ui.available_width().min(9.0 * 17.0), 14.0 * common::font_scale(ui));
+        super::layout::face_buttons(ui, p, tool, world, mods, size);
+    } else {
+        // The row stays when it is empty: the counts do not move with the mode.
+        let part = tool.legacy_part_line(world, s, mods).unwrap_or_else(|| " ".into());
+        ui.add(egui::Label::new(RichText::new(part).size(11.0).color(p.ink)).truncate());
+    }
     let impact = tool
         .land_impact(world)
         .map(|v| aurora_i18n::integer(v.round() as i64))
