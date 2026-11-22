@@ -357,8 +357,9 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-aurora-controls-classic"),
                 &field!(classic_controls),
             );
-            let aurora_controls = !cx.s.classic_controls;
-            cx.subs(aurora_controls, |cx| {
+            // the compact window is Aurora's: greyed in the Classic style
+            let classic_controls = cx.s.classic_controls;
+            cx.subs(classic_controls, |cx| {
                 cx.toggle(
                     tr!("ui-options-aurora-controls-compact"),
                     tr!("ui-options-aurora-controls-compact-help"),

@@ -36,17 +36,20 @@ impl App {
                 no_collisions: flight.no_collisions,
             }),
         };
-        let compact = self.settings.compact_controls;
+        // AURORA_DEMO_CONTROLS=compact…: compact for the run, not saved
+        let before = self.settings.compact_controls || (self.demo && demo_compact());
+        let mut compact = before;
         let out = self.controls_ui.show(
             ctx,
             p,
             &mut self.panels.camera_controls,
             &mut self.panels.movement_controls,
-            &mut self.settings.compact_controls,
+            &mut compact,
             self.settings.classic_controls,
             &view,
         );
-        if self.settings.compact_controls != compact {
+        if compact != before {
+            self.settings.compact_controls = compact;
             self.settings.save();
         }
         self.controls_held = out.held;
@@ -303,11 +306,8 @@ impl App {
                 self.camera.roll = 15.0_f32.to_radians();
             }
             Ok("movement") => self.panels.movement_controls = true,
-            // the saved choice for this run only (AGENTS.md section 4)
-            Ok("compact" | "compact-move" | "compact-close") => {
-                self.settings.compact_controls = true;
-                self.panels.camera_controls = true;
-            }
+            // compact for this run only (`demo_compact`, AGENTS.md section 4)
+            Ok("compact" | "compact-move" | "compact-close") => self.panels.camera_controls = true,
             Ok("classic") => {
                 self.settings.classic_controls = true;
                 self.panels.camera_controls = true;
@@ -321,4 +321,17 @@ impl App {
             _ => {}
         }
     }
+}
+
+/// AURORA_DEMO_CONTROLS=compact | compact-move | compact-close: the
+/// Controls window compact for the run, whatever the saved choice
+/// (`Settings::compact_controls` is left as it is).
+fn demo_compact() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        matches!(
+            std::env::var("AURORA_DEMO_CONTROLS").as_deref(),
+            Ok("compact" | "compact-move" | "compact-close")
+        )
+    })
 }

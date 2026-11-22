@@ -1953,6 +1953,15 @@ pub fn expand_floater(ctx: &egui::Context, id: &str) {
     ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
 }
 
+/// Will the floater `id` change its minimized state at its next frame for a
+/// reason other than its title button: an expand asked for
+/// (`expand_floater`) or a "Reset window positions and sizes" not yet
+/// applied to it.
+pub fn floater_expand_pending(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(id).with(EXPAND))).unwrap_or(false)
+        || super::layout::reset_pending(ctx, egui::Id::unique(id))
+}
+
 /// The toolbar button, menu entry or shortcut of the floater `id`
 /// (LLFloaterReg::toggleInstance): a floater shown closes, a minimized one
 /// expands, a closed one opens expanded. LLFloater::openFloater and

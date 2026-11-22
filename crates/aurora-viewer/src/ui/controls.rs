@@ -315,6 +315,9 @@ impl ControlsUi {
             }
             let screen = ctx.content_rect();
             let minimized = widgets::floater_minimized(ctx, WINDOW);
+            // an expand asked for elsewhere (the Movement button, the photo
+            // window's Controls, a window reset) is not the title button
+            let asked = widgets::floater_expand_pending(ctx, WINDOW);
             // minimized, the free camera names the window
             let title = match view.free {
                 Some(_) if minimized => aurora_i18n::tr!("controls-free-title"),
@@ -345,18 +348,18 @@ impl ControlsUi {
                     self.body(ui, p, view, &mut out);
                 }
             });
-            // the title button switched it (a close expands it too, and the
-            // Movement button expands it on its own tab: neither is a choice
-            // of the camera's form)
+            // the title button switched it: the one change kept as the
+            // choice (a close expands it too; an expand asked for elsewhere
+            // and the free camera's own compact window are not choices of
+            // the camera's form)
             let now = widgets::floater_minimized(ctx, WINDOW);
-            if open && now != minimized {
-                // compact, the window shows the camera
-                if now {
-                    self.tab = Tab::Camera;
-                }
-                if self.tab == Tab::Camera {
-                    *compact = now;
-                }
+            let by_title = open && now != minimized && !asked;
+            // compact, the window shows the camera
+            if by_title && now {
+                self.tab = Tab::Camera;
+            }
+            if let Some(chosen) = compact_choice(by_title, now, self.tab, view.free.is_some()) {
+                *compact = chosen;
             }
         }
         if open {
@@ -707,6 +710,14 @@ fn parse_speed(text: &str) -> Option<f64> {
         text.trim()
             .trim_end_matches(|c: char| c.is_alphabetic() || c == '/' || c.is_whitespace()),
     )
+}
+
+/// The compact choice the title button just made (`by_title`: the window
+/// went `now` compact or full by its title button), kept only on the
+/// camera's tab and outside the free camera, whose compact window is its
+/// own (#3904).
+fn compact_choice(by_title: bool, now: bool, tab: Tab, free: bool) -> Option<bool> {
+    (by_title && tab == Tab::Camera && !free).then_some(now)
 }
 
 /// A flag just raised opens the window on its tab; otherwise it stays.
@@ -2237,16 +2248,39 @@ mod tests {
         request(&ctx, &mut camera, &mut movement, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && minimized());
-        // the title button's full view (`expand_floater` does what it does)
+        // the photo window's Controls asks for it full: the choice kept
         widgets::expand_floater(&ctx, WINDOW);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
-        assert!(camera && !minimized() && !compact, "the choice follows the title button");
-        // closed and opened again: full
+        assert!(camera && !minimized() && compact, "an expand asked for is no choice");
+        // closed and opened again: compact
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && minimized());
+        // "Reset window positions and sizes" expands it: the choice kept
+        crate::ui::layout::reset_windows(&ctx);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && !minimized() && compact, "a reset is no choice");
+        // the title button's full view (`compact_choice`), then closed and
+        // opened again: full
+        compact = false;
         request(&ctx, &mut camera, &mut movement, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         request(&ctx, &mut camera, &mut movement, false, false, true);
         run(&mut controls, &mut camera, &mut movement, &mut compact);
         assert!(camera && !minimized());
+    }
+
+    #[test]
+    fn only_the_title_button_on_the_camera_sets_the_compact_choice() {
+        // the title button, on the camera: compact, then full
+        assert_eq!(compact_choice(true, true, Tab::Camera, false), Some(true));
+        assert_eq!(compact_choice(true, false, Tab::Camera, false), Some(false));
+        // on the Movement tab, in the free camera, or not by the title button
+        assert_eq!(compact_choice(true, false, Tab::Movement, false), None);
+        assert_eq!(compact_choice(true, true, Tab::Camera, true), None);
+        assert_eq!(compact_choice(false, false, Tab::Camera, false), None);
     }
 
     #[test]
