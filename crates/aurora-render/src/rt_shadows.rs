@@ -5698,6 +5698,100 @@ mod tests {
         assert_eq!(block(RT_PROBES, from, to), block(include_str!("shaders/common.wgsl"), from, to));
     }
 
+    /// No traced pass's SPIR-V gives a ray query a null value. naga 30
+    /// writes a store of its zero value for a variable declared in a loop's
+    /// body, an `OpConstantNull` of `OpTypeRayQueryKHR` for a ray query:
+    /// SPIR-V forbids it (an opaque type has no null), and AMD's compiler
+    /// (LLPC) crashed on it in vkCreateComputePipelines (#4596, rt_gi.wgsl
+    /// `cs_gi`). Each entry point is written as wgpu-hal writes it for a
+    /// Vulkan 1.4 device with ray queries (`spirv_fix::writer_options`).
+    #[test]
+    fn rt_shaders_have_no_null_ray_query() {
+        const OP_CONSTANT_NULL: u32 = 46;
+        const OP_TYPE_RAY_QUERY: u32 = 4472;
+        let vulkan_1_4 = (1 << 22) | (4 << 12);
+        let facts = crate::spirv_fix::VulkanFacts {
+            device_api_version: vulkan_1_4,
+            instance_api_version: vulkan_1_4,
+            vendor_id: 0x1002,
+            instance_flags: wgpu::InstanceFlags::empty(),
+            features: wgpu::Features::EXPERIMENTAL_RAY_QUERY
+                | wgpu::Features::TEXTURE_BINDING_ARRAY
+                | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+            downlevel: wgpu::DownlevelFlags::all(),
+            max_mesh_workgroups_per_dimension: 0,
+            max_mesh_workgroup_total_count: 0,
+            non_semantic_info: false,
+            robust_buffer_access2: true,
+            robust_image_access: true,
+            zero_initialize_workgroup_memory: true,
+            storage_input_output_16: false,
+            shader_integer_dot_product: false,
+            shader_int8: false,
+        };
+        for (name, src) in [
+            ("rt_shadows", source(&[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")])),
+            ("rt_pose", source(&[include_str!("shaders/rt_pose.wgsl")])),
+            (
+                "rt_lights",
+                source(&[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_lights.wgsl")]),
+            ),
+            (
+                "rt_reflect",
+                source(&[RT_VIEW, RT_LIGHT, RT_PROBES, RT_HISTORY, include_str!("shaders/rt_reflect.wgsl")]),
+            ),
+            (
+                "rt_gi",
+                source(&[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_gi.wgsl")]),
+            ),
+        ] {
+            let module = naga::front::wgsl::parse_str(&src).expect("the traced passes parse");
+            let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all());
+            let info = v.validate(&module).expect("the traced passes are valid");
+            // every resource at its own number, the texture pages' array at
+            // a size (the writer refuses a resource the map does not have)
+            let mut map = naga::back::spv::BindingMap::default();
+            for (_, g) in module.global_variables.iter() {
+                if let Some(b) = g.binding {
+                    let array = matches!(module.types[g.ty].inner, naga::TypeInner::BindingArray { .. });
+                    map.insert(
+                        b,
+                        naga::back::spv::BindingInfo {
+                            descriptor_set: b.group,
+                            binding: b.binding,
+                            binding_array_size: array.then_some(16384),
+                        },
+                    );
+                }
+            }
+            for entry in &module.entry_points {
+                let options = crate::spirv_fix::writer_options(&facts, map.clone(), None);
+                let pipeline = naga::back::spv::PipelineOptions {
+                    shader_stage: entry.stage,
+                    entry_point: entry.name.clone(),
+                };
+                let words = naga::back::spv::write_vec(&module, &info, &options, Some(&pipeline))
+                    .unwrap_or_else(|e| panic!("{name} {}: {e}", entry.name));
+                // the instructions after the 5-word header: word count in the
+                // high half of their first word, opcode in the low half
+                let (mut ray_query, mut at) = (None, 5);
+                while at < words.len() {
+                    let (count, op) = ((words[at] >> 16) as usize, words[at] & 0xffff);
+                    assert!(count > 0, "{name} {}: a broken instruction", entry.name);
+                    if op == OP_TYPE_RAY_QUERY {
+                        ray_query = Some(words[at + 1]);
+                    }
+                    assert!(
+                        !(op == OP_CONSTANT_NULL && Some(words[at + 1]) == ray_query),
+                        "{name} {}: a null ray query (a `var` of type ray_query in a loop's body)",
+                        entry.name
+                    );
+                    at += count;
+                }
+            }
+        }
+    }
+
     #[test]
     fn rt_shadows_shaders_are_valid() {
         for (name, parts) in [

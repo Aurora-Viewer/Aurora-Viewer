@@ -516,6 +516,15 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     var pick = no_pick();
     // the worths weighed so far, each over how likely its hit was drawn
     var sum = 0.0;
+    // The ray queries are declared out of the loop and initialised again at
+    // each ray. naga 30 gives a variable declared in a loop's body a store of
+    // its zero value at each turn, and a ray query's is an `OpConstantNull`
+    // of `OpTypeRayQueryKHR`, which SPIR-V forbids (an opaque type has no
+    // null): AMD's compiler (LLPC, an RX 9070 XT) crashed on it in
+    // vkCreateComputePipelines (#4596). `rt_shaders_have_no_null_ray_query`
+    // checks every traced pass.
+    var rq: ray_query;
+    var rp: ray_query;
     for (var ray = 0u; ray < rays; ray++) {
         let dir = cosine_dir(n, random2(vec2<u32>(id.xy), frame * RESET_RAYS + ray));
 
@@ -523,7 +532,6 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
         var record = 0u;
         var primitive = 0u;
         var bary = vec2<f32>(0.0);
-        var rq: ray_query;
         rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, SOLID, 0.0, params.mode.x, origin, dir));
         while (rayQueryProceed(&rq)) {
             if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
@@ -540,7 +548,6 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         if (posed) {
             let reach = select(params.mode.x, t, t >= 0.0);
-            var rp: ray_query;
             rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, SOLID, 0.0, reach, origin, dir));
             while (rayQueryProceed(&rp)) {
                 if (stops(rayQueryGetCandidateIntersection(&rp), true, dir)) {
