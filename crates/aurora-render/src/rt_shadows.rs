@@ -4829,6 +4829,25 @@ impl LampQuality {
             ..tuning
         }
     }
+
+    /// The quality `AURORA_RT_LAMPS` names: `low`, `medium` or `high`.
+    fn named(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "low" => Some(Self::LOW),
+            "medium" => Some(Self::MEDIUM),
+            "high" => Some(Self::HIGH),
+            _ => None,
+        }
+    }
+}
+
+/// `tuning` with the lamps' quality `AURORA_RT_LAMPS` forces for a launch
+/// (a measurement of each quality, whatever the settings and without
+/// changing them); as it is when the variable is unset or names none.
+pub(crate) fn forced_tuning(tuning: crate::RtTuning) -> crate::RtTuning {
+    static FORCED: OnceLock<Option<LampQuality>> = OnceLock::new();
+    let forced = FORCED.get_or_init(|| std::env::var("AURORA_RT_LAMPS").ok().as_deref().and_then(LampQuality::named));
+    forced.map_or(tuning, |q| q.apply(tuning))
 }
 
 /// How many of the frame's first lights cast traced shadows, as
@@ -7299,6 +7318,12 @@ mod tests {
             assert!(worse.reuse < better.reuse && worse.denoise < better.denoise, "{worse:?}");
             assert_eq!(LampQuality::of(worse.apply(default)), worse);
         }
+        // AURORA_RT_LAMPS's names
+        assert_eq!(LampQuality::named("low"), Some(LampQuality::LOW));
+        assert_eq!(LampQuality::named(" Medium "), Some(LampQuality::MEDIUM));
+        assert_eq!(LampQuality::named("HIGH"), Some(LampQuality::HIGH));
+        assert_eq!(LampQuality::named(""), None);
+        assert_eq!(LampQuality::named("ultra"), None);
         let asked = crate::RtTuning {
             lamps: 0,
             lamp_candidates: 0,
