@@ -8009,6 +8009,7 @@ ui-options-magenta-where-a-light-reaches-a-pixel-the-sort-missed = Magenta là o
 ui-options-sort-of-the-reflection-probes = Tri des sondes de réflexion
 ui-options-magenta-where-a-probe-covers-a-pixel-the-sort-missed = Magenta là où une sonde couvre un pixel sans figurer parmi celles triées pour lui : il ne doit pas y en avoir
 ui-context-show-in-inventory = Voir dans l'inventaire
+ui-context-show-in-inventory-none = Aucun objet de votre inventaire ne porte exactement le nom de cet objet.
 ui-place-details-show-the-corresponding-location-on-the-map = Voir l'emplacement correspondant sur la carte
 common-view-conversation-history = Voir l'historique de conversations
 common-view-profile = Voir le profil

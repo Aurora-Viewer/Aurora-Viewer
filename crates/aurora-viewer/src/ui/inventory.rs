@@ -82,6 +82,49 @@ pub fn aurora_demo_active() -> bool {
 pub use clipboard::appearance_request as appearance_clipboard;
 pub use view::InventoryPreferences;
 
+/// Where "Show in inventory" of a rezzed object leads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RezzedOrigin {
+    /// The one item it came from.
+    Item(Uuid),
+    /// Several object items with exactly its name: shown together.
+    Items(Vec<Uuid>),
+    /// Nothing in inventory has exactly its name (a no-copy object rezzed
+    /// out of it, a renamed one): nothing is shown in its place.
+    None,
+}
+
+/// The inventory item of a rezzed object: the ItemID its full properties
+/// carry (LLSelectNode::mItemID, read in LLSelectMgr::processObjectProperties)
+/// when inventory still holds it, else the object items whose name has the
+/// same stem ("Chair 2" for "Chair", never "Armchair") and, when the
+/// properties name one, the same creator. Links are left out: their
+/// original is the item.
+pub(crate) fn rezzed_origin(inv: &Inventory, item_id: Uuid, name: &str, creator: Uuid) -> RezzedOrigin {
+    if !item_id.is_nil() && inv.items.contains_key(&item_id) {
+        return RezzedOrigin::Item(item_id);
+    }
+    let stem = smart::name_stem(name);
+    if stem.is_empty() {
+        return RezzedOrigin::None;
+    }
+    // LLAssetType::AT_LINK / AT_LINK_FOLDER, LLInventoryType::IT_OBJECT
+    let mut ids: Vec<Uuid> = inv
+        .items
+        .values()
+        .filter(|it| it.inv_type == 6 && !matches!(it.asset_type, 24 | 25))
+        .filter(|it| creator.is_nil() || it.creator == creator)
+        .filter(|it| smart::name_stem(&it.name) == stem)
+        .map(|it| it.id)
+        .collect();
+    ids.sort_unstable();
+    match ids.len() {
+        0 => RezzedOrigin::None,
+        1 => RezzedOrigin::Item(ids[0]),
+        _ => RezzedOrigin::Items(ids),
+    }
+}
+
 // Keep the existing tab indices: slot 1 was unused after the single-tree layout.
 const RECEIVED_TAB: usize = 1;
 const RECENT_TAB: usize = 2;
@@ -1089,6 +1132,7 @@ impl InventoryUi {
         self.active_smart = id;
         self.fetch_all = true;
     }
+
     /// Find similar: like Find all links, the filters in place come back
     /// when its chip is removed.
     pub(crate) fn find_similar(&mut self, query: smart::SmartQuery) {
@@ -4142,6 +4186,59 @@ mod tests {
             &Default::default(),
         )
         .expect("replacement can be planned without opening Appearance");
+    }
+
+    /// "Show in inventory" of a rezzed object: the ItemID first, else an
+    /// exact name stem and creator, else nothing in its place.
+    #[test]
+    fn rezzed_origin_prefers_the_item_id_then_an_exact_name() {
+        use aurora_net::inventory::InvItem;
+        let id = Uuid::from_u128;
+        let (me, other) = (id(100), id(101));
+        let object = |n: u128, name: &str, creator| InvItem {
+            id: id(n),
+            name: name.into(),
+            asset_type: 6,
+            inv_type: 6,
+            creator,
+            ..Default::default()
+        };
+        let mut inv = Inventory::default();
+        for it in [
+            object(1, "Chair", me),
+            object(2, "Armchair", me),
+            object(3, "Chair cushion", me),
+            object(4, "Table v2", me),
+            object(5, "Table 3", me),
+            object(6, "Lamp", other),
+            InvItem {
+                asset_type: 24,
+                ..object(7, "Chair", me)
+            },
+            InvItem {
+                inv_type: 0,
+                asset_type: 0,
+                ..object(8, "Lamp", me)
+            },
+        ] {
+            inv.items.insert(it.id, it);
+        }
+        // the exact item, whatever its name now
+        assert_eq!(rezzed_origin(&inv, id(2), "Renamed", me), RezzedOrigin::Item(id(2)));
+        // an ItemID inventory no longer holds (no copy): the name decides,
+        // and "Chair" is neither "Armchair", "Chair cushion" nor a link
+        assert_eq!(rezzed_origin(&inv, id(99), "Chair", me), RezzedOrigin::Item(id(1)));
+        assert_eq!(rezzed_origin(&inv, Uuid::nil(), "chair", Uuid::nil()), RezzedOrigin::Item(id(1)));
+        // versions of one object are the same stem
+        assert_eq!(
+            rezzed_origin(&inv, Uuid::nil(), "Table 1", me),
+            RezzedOrigin::Items(vec![id(4), id(5)])
+        );
+        // the creator, when known, must match; a texture is not an object
+        assert_eq!(rezzed_origin(&inv, Uuid::nil(), "Lamp", me), RezzedOrigin::None);
+        assert_eq!(rezzed_origin(&inv, Uuid::nil(), "Lamp", other), RezzedOrigin::Item(id(6)));
+        assert_eq!(rezzed_origin(&inv, Uuid::nil(), "Sofa", me), RezzedOrigin::None);
+        assert_eq!(rezzed_origin(&inv, Uuid::nil(), "  ", me), RezzedOrigin::None);
     }
 
     #[test]

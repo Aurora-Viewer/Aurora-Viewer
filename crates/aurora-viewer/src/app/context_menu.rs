@@ -399,6 +399,11 @@ impl App {
         f.edit = crate::build::selectable_within(w, idx)
             && (w.rlva_within_fartouch(idx) || w.objects.get(root).is_some_and(|r| self.object_menu.near == Some(r.key)));
         f.id = o.full_id;
+        f.owned = w
+            .objects
+            .get(root)
+            .is_some_and(|root| crate::ui::context::owns_rezzed(root.owner_id, w.agent_id));
+        f.inventory_hidden = w.rlva.has("showinv");
         f.attachment_item = w.objects.get(root).and_then(|o| o.attachment_item_id());
         f.blocked = w.object_block_entry(&o.full_id).is_some();
         f.name = props.map(|p| p.name.clone()).unwrap_or_default();
@@ -443,6 +448,54 @@ impl App {
             w.place_details.open_panel(source, &w.map, &mut w.landmarks, now);
             self.panels.places = true;
             self.places_ui.show_profile();
+        }
+    }
+
+    /// "Show in inventory" of a rezzed object the agent owns. The Legacy
+    /// Viewer has it on attachments only (handle_object_show_original,
+    /// menu_attachment_self.xml), its closest model: the item goes through
+    /// the same Show original path (show_item_original refuses @showinv,
+    /// a minimised Inventory is restored).
+    fn show_rezzed_in_inventory(&mut self, id: Uuid) {
+        // enable_object_show_original greys the entry; refuse it here too,
+        // before the inventory selection or filters change
+        if self.world.rlva.has("showinv") {
+            return;
+        }
+        let w = &self.world;
+        let Some(root) = w
+            .objects
+            .index_of_uuid(&id)
+            .and_then(|idx| w.objects.get(linkset_root(w, idx)))
+            .filter(|root| crate::ui::context::owns_rezzed(root.owner_id, w.agent_id))
+        else {
+            return;
+        };
+        let Some(props) = self
+            .build
+            .props
+            .get(&root.full_id)
+            .or_else(|| self.interactions.props.get(&root.full_id))
+        else {
+            return;
+        };
+        // ItemID and CreatorID come with full properties only; family ones
+        // leave them nil, and the name alone decides
+        let origin = crate::ui::inventory::rezzed_origin(&w.inventory, props.item_id, &props.name, props.creator_id);
+        match origin {
+            crate::ui::inventory::RezzedOrigin::Item(item) => {
+                self.apply_appearance_action(crate::world::appearance::Action::ShowOriginal(item));
+            }
+            crate::ui::inventory::RezzedOrigin::Items(items) => {
+                ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+                self.inventory_ui
+                    .find_similar(crate::ui::inventory::smart::SmartQuery::items(&items));
+            }
+            // a no-copy object rezzed out of inventory, or a renamed one:
+            // say so rather than show other items as if one were it
+            crate::ui::inventory::RezzedOrigin::None => {
+                self.world.system_message(aurora_i18n::tr!("ui-context-show-in-inventory-none"));
+            }
         }
     }
 
@@ -514,6 +567,7 @@ impl App {
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
             CtxAction::ObjectProfile(id) => self.open_object_profile(id),
+            CtxAction::FindInInventory(id) => self.show_rezzed_in_inventory(id),
             CtxAction::SaveAs(id, format) => self.open_object_export(id, format),
             CtxAction::Pathfinding { id, characters } => {
                 if let Some(index) = self.world.objects.index_of_uuid(&id)

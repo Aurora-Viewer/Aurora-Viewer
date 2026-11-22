@@ -7929,6 +7929,7 @@ ui-options-magenta-where-a-light-reaches-a-pixel-the-sort-missed = ライトが�
 ui-options-sort-of-the-reflection-probes = 反射プローブの並べ替え
 ui-options-magenta-where-a-probe-covers-a-pixel-the-sort-missed = プローブがピクセルを覆っているのに、そのピクセル用に並べ替えられたプローブに含まれていない部分をマゼンタで表示：１つもないはずです
 ui-context-show-in-inventory = インベントリに表示
+ui-context-show-in-inventory-none = このオブジェクトと完全に同じ名前のオブジェクトはインベントリにありません。
 ui-place-details-show-the-corresponding-location-on-the-map = 対応する場所をマップに表示
 common-view-conversation-history = 会話の履歴を表示
 common-view-profile = プロフィールを表示
