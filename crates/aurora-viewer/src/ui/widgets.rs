@@ -740,17 +740,12 @@ impl<'a> Floater<'a> {
     /// The user may send this window to a window of the system, outside
     /// the viewer's, and bring it back (outside.rs): its title bar has the
     /// button for it. Not in the Legacy Viewer. Every window may, but those
-    /// of `STAYS_INSIDE` and those whose title bar or sizing the window
-    /// outside does not draw yet (`show_outside`): a state row or a summary
-    /// under the title, a framed header, a size that follows the content
-    /// or keeps a ratio, a compact body when minimized, a fixed size, a
-    /// layer over an overlay.
+    /// of `STAYS_INSIDE` and those whose sizing the window outside does not
+    /// follow yet (`show_outside`): a size that follows the content or
+    /// keeps a ratio, a compact body when minimized, a fixed size, a layer
+    /// over an overlay.
     fn goes_outside(&self) -> bool {
         !STAYS_INSIDE.contains(&self.id)
-            && self.header_status.is_empty()
-            && self.header_status_action.is_none()
-            && self.header_summary.is_none()
-            && self.framed_header.is_none()
             && !self.auto_height
             && !self.height_only
             && self.resizable
@@ -1203,55 +1198,15 @@ impl<'a> Floater<'a> {
                     });
                 });
                 primary_title_rect = Some(title_row.response.rect);
-                if (!minimized || compact) && (!self.header_status.is_empty() || self.header_status_action.is_some()) {
-                    let status = |ui: &mut egui::Ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = Vec2::new(7.0, 2.0);
-                            for (name, label, color) in &self.header_status {
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 3.0;
-                                    glyph(ui, name, *color, 11.0);
-                                    ui.label(RichText::new(label).size(11.0).color(*color));
-                                });
-                            }
-                        });
-                    };
-                    if let Some((icon, label, tip, clicked)) = &mut self.header_status_action {
-                        ui.horizontal(|ui| {
-                            let width = (ui.available_width() - 65.0).max(1.0);
-                            ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::top_down(egui::Align::Min), status);
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui
-                                    .add(egui::Label::new(RichText::new(*label).size(12.0).color(p.violet_light)).sense(Sense::click()))
-                                    .on_hover_text(*tip)
-                                    .clicked()
-                                {
-                                    **clicked = true;
-                                }
-                                glyph(ui, icon, p.violet_light, 13.0);
-                            });
-                        });
-                    } else {
-                        status(ui);
-                    }
-                }
-                if (!minimized || compact)
-                    && let Some(summary) = &self.header_summary
-                {
-                    let full_text = summary.text().to_owned();
-                    let sense = if self.header_summary_action.is_some() {
-                        Sense::click()
-                    } else {
-                        Sense::hover()
-                    };
-                    if ui
-                        .add(egui::Label::new(summary.clone()).truncate().sense(sense))
-                        .on_hover_text(full_text)
-                        .clicked()
-                        && let Some(clicked) = &mut self.header_summary_action
-                    {
-                        **clicked = true;
-                    }
+                if !minimized || compact {
+                    header_rows(
+                        ui,
+                        p,
+                        &self.header_status,
+                        &mut self.header_status_action,
+                        self.header_summary.as_ref(),
+                        &mut self.header_summary_action,
+                    );
                 }
                 title_row
             };
@@ -1446,6 +1401,7 @@ impl<'a> Floater<'a> {
         }
         crate::outside::seen(ctx, window_id);
         let flush = self.flush_body;
+        let framed = self.framed_header.is_some();
         let mut body = Some(body);
         let mut back = false;
         let builder = egui::ViewportBuilder::default().with_title(self.title.clone());
@@ -1457,7 +1413,9 @@ impl<'a> Floater<'a> {
             super::inventory::drag::badge(ui.ctx(), p);
             super::places::drag::ghost(ui.ctx(), p);
             crate::outside::carry::hint(ui.ctx(), p);
-            let margin = if flush {
+            let margin = if framed {
+                egui::Margin::ZERO
+            } else if flush {
                 egui::Margin {
                     left: 0,
                     right: 0,
@@ -1473,7 +1431,7 @@ impl<'a> Floater<'a> {
                     ui.set_min_size(ui.available_size());
                     let mut buttons = |ui: &mut egui::Ui| {
                         ui.horizontal(|ui| {
-                            ui.set_min_height(TITLE_ROW_MIN);
+                            ui.set_min_height(if framed { 20.0 } else { TITLE_ROW_MIN });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.spacing_mut().item_spacing.x = 6.0;
                                 if title_button(ui, p, INSIDE_ICON)
@@ -1505,12 +1463,36 @@ impl<'a> Floater<'a> {
                             });
                         });
                     };
-                    if flush {
+                    let mut header = |ui: &mut egui::Ui| {
+                        buttons(ui);
+                        header_rows(
+                            ui,
+                            p,
+                            &self.header_status,
+                            &mut self.header_status_action,
+                            self.header_summary.as_ref(),
+                            &mut self.header_summary_action,
+                        );
+                    };
+                    if framed {
+                        // an inspector's dark bar, from edge to edge as inside
+                        let bar = egui::Frame::new()
+                            .fill(p.bar)
+                            .inner_margin(egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 10,
+                                bottom: 10,
+                            })
+                            .show(ui, header)
+                            .response;
+                        ui.painter().hline(bar.rect.x_range(), bar.rect.bottom(), divider_stroke(p));
+                    } else if flush {
                         // the row keeps the margins the body gives up
-                        egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 0)).show(ui, buttons);
+                        egui::Frame::new().inner_margin(egui::Margin::symmetric(10, 0)).show(ui, header);
                         ui.add_space(5.0);
                     } else {
-                        buttons(ui);
+                        header(ui);
                         divider(ui, p);
                         ui.add_space(UNDER_DIVIDER);
                     }
@@ -1522,6 +1504,63 @@ impl<'a> Floater<'a> {
             crate::outside::want(ctx, window_id, false);
         }
         out
+    }
+}
+
+/// The rows under a window's title: its states, with the text action at
+/// their right end, then its one-line summary. In the viewer's window and
+/// in the window outside alike.
+fn header_rows<'a>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    states: &[(&'static str, String, Color32)],
+    action: &mut Option<(&'a str, &'a str, &'a str, &'a mut bool)>,
+    summary: Option<&egui::WidgetText>,
+    summary_action: &mut Option<&'a mut bool>,
+) {
+    if !states.is_empty() || action.is_some() {
+        let status = |ui: &mut egui::Ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(7.0, 2.0);
+                for (name, label, color) in states {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 3.0;
+                        glyph(ui, name, *color, 11.0);
+                        ui.label(RichText::new(label).size(11.0).color(*color));
+                    });
+                }
+            });
+        };
+        if let Some((icon, label, tip, clicked)) = action {
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 65.0).max(1.0);
+                ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::top_down(egui::Align::Min), status);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(egui::Label::new(RichText::new(*label).size(12.0).color(p.violet_light)).sense(Sense::click()))
+                        .on_hover_text(*tip)
+                        .clicked()
+                    {
+                        **clicked = true;
+                    }
+                    glyph(ui, icon, p.violet_light, 13.0);
+                });
+            });
+        } else {
+            status(ui);
+        }
+    }
+    if let Some(summary) = summary {
+        let full_text = summary.text().to_owned();
+        let sense = if summary_action.is_some() { Sense::click() } else { Sense::hover() };
+        if ui
+            .add(egui::Label::new(summary.clone()).truncate().sense(sense))
+            .on_hover_text(full_text)
+            .clicked()
+            && let Some(clicked) = summary_action
+        {
+            **clicked = true;
+        }
     }
 }
 

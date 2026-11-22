@@ -11,25 +11,26 @@ fn every_plain_window_may_go_outside_but_the_dev_toolbox() {
     assert!(window("inventory").goes_outside());
     assert!(window("conversations").chat().steady_size().attention(true).goes_outside());
     assert!(window("note_1234").compact_header().help("Help").goes_outside());
+    // an inspector's framed header, its states and its summary are drawn outside
+    let mut inspector = window("build_inspector").framed_header("tool-filled");
+    inspector
+        .header_status
+        .push(("circle-filled", "State".to_owned(), Color32::TRANSPARENT));
+    inspector.header_summary = Some("1 object".into());
+    assert!(inspector.goes_outside());
     // its tools read the world under the viewer's pointer
     assert!(!window(crate::ui::dev_toolbox::WINDOW).goes_outside());
 }
 
 #[test]
-fn a_window_whose_title_bar_or_sizing_is_not_drawn_outside_stays_inside() {
+fn a_window_whose_sizing_is_not_followed_outside_stays_inside() {
     assert!(!window("a").fixed().goes_outside());
     assert!(!window("b").auto_height().goes_outside());
-    assert!(!window("c").framed_header("tool-filled").goes_outside());
     assert!(!window("d").compact_when_minimized(240.0).goes_outside());
     assert!(!window("e").keep_aspect(1.5, Vec2::ZERO).goes_outside());
     let mut over = window("f");
     over.order = egui::Order::Foreground;
     assert!(!over.goes_outside());
-    let mut state = window("g");
-    state
-        .header_status
-        .push(("circle-filled", "State".to_owned(), Color32::TRANSPARENT));
-    assert!(!state.goes_outside());
 }
 
 #[test]
