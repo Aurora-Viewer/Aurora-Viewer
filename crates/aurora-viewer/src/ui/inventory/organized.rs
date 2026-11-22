@@ -12,7 +12,7 @@ pub(super) mod folder;
 mod folder_icons;
 #[path = "organized_icons.rs"]
 mod item_art;
-pub(super) use item_art::{Glyph, RowStyle};
+pub(super) use item_art::{Glyph, RowStyle, paint_tabler};
 #[path = "organized_drag_preview.rs"]
 pub(super) mod drag_preview;
 #[path = "organized_input.rs"]
@@ -789,10 +789,18 @@ fn nav_button(ui: &mut Ui, direction: egui::Vec2, tip: &str, enabled: bool) -> b
     } else {
         ui.visuals().weak_text_color()
     };
-    ui.painter().arrow(
-        response.rect.center() - direction * 5.5,
-        direction * 11.0,
-        egui::Stroke::new(1.5, color),
+    let name = if direction.x < 0.0 {
+        "arrow-left"
+    } else if direction.x > 0.0 {
+        "arrow-right"
+    } else {
+        "arrow-up"
+    };
+    item_art::paint_tabler(
+        ui.painter(),
+        name,
+        Rect::from_center_size(response.rect.center(), vec2(16.0, 16.0)),
+        color,
     );
     response.on_hover_text(tip).on_disabled_hover_text(tip).clicked()
 }
@@ -870,7 +878,17 @@ fn breadcrumbs(ui: &mut Ui, inv: &mut Inventory, layout: &mut Preferences, state
     let crumbs = path(inv, layout, state.here.location, state.here.raw);
     let skip = crumbs.len().saturating_sub(if ui.available_width() < 320.0 { 2 } else { 4 });
     if skip > 0 {
-        ui.menu_button("…", |ui| {
+        let (response, _) = egui::containers::menu::MenuButton::from_button(
+            egui::Button::new(item_art::glyph_image(
+                ui,
+                "…",
+                "dots-filled",
+                false,
+                crate::ui::widgets::PICTURE_TINT,
+            ))
+            .image_tint_follows_text_color(true),
+        )
+        .ui(ui, |ui| {
             for &loc in &crumbs[..skip] {
                 if ui.button(place_name(inv, layout, loc, state.here.raw, avatar)).clicked() {
                     state.visit(loc, state.here.raw);
@@ -878,10 +896,17 @@ fn breadcrumbs(ui: &mut Ui, inv: &mut Inventory, layout: &mut Preferences, state
                 }
             }
         });
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "…"));
     }
     for (index, &loc) in crumbs[skip..].iter().enumerate() {
         if index > 0 {
-            ui.weak("›");
+            ui.add(item_art::glyph_image(
+                ui,
+                "›",
+                "chevron-right",
+                false,
+                ui.visuals().weak_text_color(),
+            ));
         }
         let name = place_name(inv, layout, loc, state.here.raw, avatar);
         let left = crumbs.len() - skip - index;
@@ -951,14 +976,17 @@ fn search_field(ui: &mut Ui, inv: &Inventory, layout: &Preferences, state: &mut 
             edit.store(ui.ctx(), field.id);
         }
     }
-    if !state.here.query.is_empty()
-        && ui
-            .small_button("×")
-            .on_hover_text(aurora_i18n::tr!("explorer-panel-clear"))
-            .clicked()
-    {
-        state.here.query.clear();
-        field.request_focus();
+    if !state.here.query.is_empty() {
+        let clear = ui.add(
+            egui::Button::new(item_art::glyph_image(ui, "×", "x", false, crate::ui::widgets::PICTURE_TINT))
+                .small()
+                .image_tint_follows_text_color(true),
+        );
+        clear.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "×"));
+        if clear.on_hover_text(aurora_i18n::tr!("explorer-panel-clear")).clicked() {
+            state.here.query.clear();
+            field.request_focus();
+        }
     }
 }
 
@@ -1449,6 +1477,22 @@ mod tests {
             }
         }
         fn text_pos(&self, name: &str) -> egui::Pos2 {
+            if name == "…" {
+                let texture = Icons::tabler(&self.ctx, "dots-filled");
+                return self
+                    .output
+                    .shapes
+                    .iter()
+                    .rev()
+                    .find_map(|s| match &s.shape {
+                        egui::Shape::Rect(r) if r.brush.as_ref().is_some_and(|b| b.fill_texture_id == texture.id()) => {
+                            Some(r.rect.center())
+                        }
+                        egui::Shape::Mesh(m) if m.texture_id == texture.id() => Some(m.calc_bounds().center()),
+                        _ => None,
+                    })
+                    .expect("missing Tabler overflow");
+            }
             fn locate(shape: &egui::Shape, name: &str) -> Option<egui::Pos2> {
                 match shape {
                     egui::Shape::Text(t) if t.galley.text() == name => Some(t.pos + t.galley.size() * 0.5),

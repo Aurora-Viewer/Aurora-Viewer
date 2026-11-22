@@ -676,9 +676,7 @@ fn tab_buttons(
         } else {
             text
         };
-        let stroke = egui::Stroke::new(1.35, close_ink);
-        painter.line_segment([center - vec2(3.4, 3.4), center + vec2(3.4, 3.4)], stroke);
-        painter.line_segment([center - vec2(3.4, -3.4), center + vec2(3.4, -3.4)], stroke);
+        organized::paint_tabler(&painter, "x", Rect::from_center_size(center, vec2(12.0, 12.0)), close_ink);
     }
     (rect, body.on_hover_text(title), close.on_hover_text(tr!("organized-close-tab")))
 }
@@ -883,11 +881,7 @@ fn tabs(
                 ui.painter()
                     .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, palette.ink.gamma_multiply(0.09));
             }
-            let stroke = (1.5, palette.ink);
-            ui.painter()
-                .line_segment([center - vec2(5.0, 0.0), center + vec2(5.0, 0.0)], stroke);
-            ui.painter()
-                .line_segment([center - vec2(0.0, 5.0), center + vec2(0.0, 5.0)], stroke);
+            organized::paint_tabler(ui.painter(), "plus", Rect::from_center_size(center, vec2(15.0, 15.0)), palette.ink);
             if plus.on_hover_text(tr!("organized-new-tab")).clicked() {
                 add = true;
             }

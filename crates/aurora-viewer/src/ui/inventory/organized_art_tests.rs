@@ -278,14 +278,9 @@ fn organized_thumbnail_type_and_shortcut_marks_follow_actual_images_and_permissi
     let without_icons = RowStyle { icons: &empty, ..art };
     let fallback = rows(&ctx, &without_icons, &inv, link, large, true, &images, None);
     assert!(has_image(&fallback, &thumb, Color32::WHITE));
-    assert!(fallback.shapes.iter().any(|s| matches!(s.shape, egui::Shape::LineSegment { .. })));
+    assert!(has_image(&fallback, &Icons::tabler(&ctx, "link-filled"), p.ink));
     let without_image = rows(&ctx, &without_icons, &inv, link, large, true, &HashMap::new(), None);
-    assert!(
-        without_image
-            .shapes
-            .iter()
-            .any(|s| matches!(s.shape, egui::Shape::LineSegment { .. }))
-    );
+    assert!(has_image(&without_image, &Icons::tabler(&ctx, "link-filled"), p.ink));
     inv.rlva_preview_mask = 1;
     let hidden = rows(&ctx, &art, &inv, link, large, true, &images, None);
     assert!(!has_image(&hidden, &thumb, Color32::WHITE));
@@ -401,4 +396,67 @@ fn organized_previews_prefer_assigned_images_and_only_fetch_real_material_base_c
         assert!(!visible && wanted.is_empty());
     }
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn organized_tabler_artwork_keeps_exact_paint_rects_and_palette_tints() {
+    let ctx = egui::Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(18.0, 14.0));
+    for name in [
+        "x",
+        "plus",
+        "arrow-left",
+        "arrow-right",
+        "arrow-up",
+        "arrow-down",
+        "chevron-right",
+        "chevron-down",
+        "dots-filled",
+        "link-filled",
+        "help-circle-filled",
+    ] {
+        assert!(crate::ui::icons::embedded(name), "{name} must be a shipped Tabler resource");
+        let texture = Icons::tabler(&ctx, name);
+        assert_eq!(texture.id(), Icons::tabler(&ctx, name).id());
+        for tint in [p.ink, p.muted_dim, p.violet_light, p.violet_pale, p.warn] {
+            let out = ctx.run_ui(Default::default(), |ui| item_art::paint_tabler(ui.painter(), name, rect, tint));
+            assert!(has_image(&out, &texture, tint), "{name}");
+            assert!(
+                out.shapes
+                    .iter()
+                    .any(|s| matches!(&s.shape, egui::Shape::Mesh(m) if m.texture_id == texture.id() && m.calc_bounds() == rect))
+            );
+        }
+    }
+    let out = ctx.run_ui(Default::default(), |ui| {
+        Glyph::navigation("missing", p.warn).paint(ui.painter(), None, p.ink, rect)
+    });
+    assert!(has_image(&out, &Icons::tabler(&ctx, "help-circle-filled"), p.warn));
+}
+
+#[test]
+fn organized_tabler_replacement_buttons_keep_text_glyph_hit_targets() {
+    let ctx = egui::Context::default();
+    for (old, name, small) in [
+        ("…", "dots-filled", false),
+        ("×", "x", true),
+        ("✂", "cut", false),
+        ("⧉", "copy-filled", false),
+        ("✎", "pencil-filled", false),
+        ("▤", "clipboard-text-filled", false),
+    ] {
+        let mut before = Rect::NOTHING;
+        let mut after = Rect::NOTHING;
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let b = egui::Button::new(old);
+            before = ui.add(if small { b.small() } else { b }).rect;
+        });
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let b = egui::Button::new(item_art::glyph_image(ui, old, name, false, crate::ui::widgets::PICTURE_TINT))
+                .image_tint_follows_text_color(true);
+            after = ui.add(if small { b.small() } else { b }).rect;
+        });
+        assert_eq!(before, after, "{old}");
+    }
 }

@@ -32,28 +32,19 @@ impl Glyph {
     }
 
     pub(super) fn paint(self, painter: &egui::Painter, handle: Option<&egui::TextureHandle>, ink: Color32, rect: Rect) {
-        if handle.is_none() && self.link.is_some() {
-            // A missing skin resource must still distinguish links from originals.
-            let size = rect.width().min(rect.height());
-            painter.arrow(
-                rect.left_bottom() + vec2(size * 0.2, -size * 0.2),
-                vec2(size * 0.6, -size * 0.6),
-                egui::Stroke::new((size * 0.11).clamp(1.4, 3.0), ink),
-            );
-        } else if let Some(handle) = handle {
-            painter.image(handle.id(), rect, Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0)), self.tint);
+        let fallback;
+        let (handle, tint) = if let Some(handle) = handle {
+            (handle, self.tint)
         } else {
-            // A partially loaded skin still leaves a visible, neutral marker.
-            painter.text(
-                rect.center(),
-                Align2::CENTER_CENTER,
-                "?",
-                FontId::proportional(rect.height().clamp(10.0, 28.0)),
-                self.tint,
+            // Preserve the old link fallback's ink, and the unknown marker's tint.
+            fallback = Icons::tabler(
+                painter.ctx(),
+                if self.link.is_some() { "link-filled" } else { "help-circle-filled" },
             );
-        }
+            (&fallback, if self.link.is_some() { ink } else { self.tint })
+        };
+        painter.image(handle.id(), rect, Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0)), tint);
     }
-
     pub(super) fn tint(self) -> Color32 {
         self.tint
     }
@@ -142,4 +133,18 @@ impl RowStyle<'_> {
         };
         self.glyph(painter, badge_glyph, badge.shrink(1.5));
     }
+}
+
+/// Paint only artwork, without allocating or changing interaction geometry.
+pub(in crate::ui::inventory) fn paint_tabler(painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
+    let texture = Icons::tabler(painter.ctx(), name);
+    painter.image(texture.id(), rect, Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, 1.0)), tint);
+}
+
+/// Replace a text glyph's artwork while preserving its original measured slot.
+pub(super) fn glyph_image(ui: &Ui, old: &str, name: &str, small: bool, tint: Color32) -> egui::Image<'static> {
+    let font = if small { egui::TextStyle::Small } else { egui::TextStyle::Button }.resolve(ui.style());
+    let size = ui.painter().layout_no_wrap(old.to_owned(), font, tint).size();
+    let texture = Icons::tabler(ui.ctx(), name);
+    egui::Image::new((texture.id(), size)).tint(tint)
 }

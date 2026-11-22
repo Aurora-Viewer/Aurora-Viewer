@@ -195,11 +195,11 @@ pub(super) fn header(ui: &mut Ui, prefs: &mut Preferences, state: &ExplorerState
             view.sort
         };
         if key == Some(visible_sort) {
-            let dy = if view.descending { 9.0 } else { -9.0 };
-            p.arrow(
-                pos2(title_end + 10.0, rect.center().y - dy / 2.0),
-                vec2(0.0, dy),
-                egui::Stroke::new(1.2, color),
+            super::item_art::paint_tabler(
+                &p,
+                if view.descending { "arrow-down" } else { "arrow-up" },
+                Rect::from_center_size(pos2(title_end + 10.0, rect.center().y), vec2(12.0, 12.0)),
+                color,
             );
         }
         if let Some(key) = key

@@ -155,19 +155,27 @@ fn paste_allowed(inv: &Inventory, layout: &Preferences, state: &mut ExplorerStat
     allowed
 }
 
-fn button(icon: &str, fallback: &'static str, label: Option<&'static str>, color: Color32) -> Button<'static> {
+fn button(ui: &Ui, icon: &str, fallback: &'static str, label: Option<&'static str>, color: Color32) -> Button<'static> {
     let image = crate::ui::icons::global(icon).map(|texture| Image::new((texture.id(), Vec2::splat(15.0))).tint(color));
     match (image, label) {
         (Some(image), Some(label)) => Button::image_and_text(image, label),
         (Some(image), None) => Button::image(image),
-        (None, label) => Button::new(label.unwrap_or(fallback)),
+        (None, Some(label)) => Button::new(label),
+        (None, None) => Button::new(super::item_art::glyph_image(
+            ui,
+            fallback,
+            icon,
+            false,
+            crate::ui::widgets::PICTURE_TINT,
+        ))
+        .image_tint_follows_text_color(true),
     }
     .frame_when_inactive(false)
     .min_size(vec2(TOOL_WIDTH, TOOL_HEIGHT))
 }
 
 fn tool(ui: &mut Ui, p: &Palette, icon: &str, label: &'static str, fallback: &'static str, enabled: bool) -> bool {
-    let b = button(icon, fallback, None, if enabled { p.ink } else { p.muted_dim });
+    let b = button(ui, icon, fallback, None, if enabled { p.ink } else { p.muted_dim });
     let r = ui.add_enabled(enabled, b);
     r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     r.on_hover_text(label).on_disabled_hover_text(label).clicked()
@@ -181,11 +189,18 @@ fn dropdown(ui: &mut Ui, p: &Palette, icon: &str, label: &'static str, enabled: 
     } else {
         p.muted_dim
     };
-    let b = button(icon, label, Some(label), ink).selected(active);
+    let b = button(ui, icon, label, Some(label), ink).selected(active);
     let b = if let Some(arrow) = crate::ui::icons::global("chevron-down") {
         b.right_text(Image::new((arrow.id(), Vec2::splat(10.0))).tint(ink))
     } else {
-        b.right_text(egui::RichText::new("▾").small())
+        b.right_text(super::item_art::glyph_image(
+            ui,
+            "▾",
+            "chevron-down",
+            true,
+            crate::ui::widgets::PICTURE_TINT,
+        ))
+        .image_tint_follows_text_color(true)
     };
     ui.add_enabled_ui(enabled, |ui| {
         egui::containers::menu::MenuButton::from_button(b).ui(ui, body);
@@ -313,7 +328,16 @@ pub(super) fn bar(
             presentation(ui, p, inv, layout, state, false);
         }
         let (more, _) = egui::containers::menu::MenuButton::from_button(
-            Button::new("…").frame_when_inactive(false).min_size(vec2(TOOL_HEIGHT, TOOL_HEIGHT)),
+            Button::new(super::item_art::glyph_image(
+                ui,
+                "…",
+                "dots-filled",
+                false,
+                crate::ui::widgets::PICTURE_TINT,
+            ))
+            .image_tint_follows_text_color(true)
+            .frame_when_inactive(false)
+            .min_size(vec2(TOOL_HEIGHT, TOOL_HEIGHT)),
         )
         .ui(ui, |ui| {
             if !full_edit {

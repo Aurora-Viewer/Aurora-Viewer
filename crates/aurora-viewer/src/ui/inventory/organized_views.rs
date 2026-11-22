@@ -765,8 +765,12 @@ fn section_heading(
         );
     }
     let caret = Rect::from_center_size(pos2(rect.left() + 11.0, rect.center().y), vec2(9.0, 7.0));
-    let rotation = if collapsed { -std::f32::consts::FRAC_PI_2 } else { 0.0 };
-    painter.add(egui::Shape::rotated_triangle(caret, rotation, palette.ink));
+    super::item_art::paint_tabler(
+        &painter,
+        if collapsed { "chevron-right" } else { "chevron-down" },
+        caret,
+        palette.ink,
+    );
     let count_width = painter
         .layout_no_wrap(count.clone(), FontId::proportional(13.0), palette.muted)
         .size()
