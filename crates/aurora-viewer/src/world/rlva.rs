@@ -51,7 +51,7 @@ mod wardrobe;
 pub mod watchdog;
 mod wear_locks;
 
-pub use boundary::Boundary;
+pub use boundary::{Boundary, command_name, refusal_shown, refused_reply};
 pub(crate) use inventory::shared_folder_exists;
 pub use inventory::{LAYERS, POINTS};
 use numeric::option_bool;
@@ -571,6 +571,9 @@ fn valid_option(c: &Command) -> bool {
             uuid_set(option).is_some()
         }
         "showhovertext" => uuid_set(option).is_some(),
+        // RlvBehaviourHandler<RLV_BHVR_SETOVERLAY_TOUCH>::onCommand
+        // (rlvhandler.cpp) never reads its option: any one is accepted.
+        "setoverlay_touch" => true,
         // (the same null key, naming no one; @sendimto's mere presence
         // still makes `rlva_can_send_session` check every session, as
         // FSFloaterIM::sendMsgFromInputEditor does)
@@ -590,6 +593,9 @@ pub struct Rlva {
     pub preferences: preferences::Preferences,
     pub rename: rename::RenameOnWear,
     pub offers: offers::Offers,
+    /// The inventory's Delete being sent: its moves to the Trash are
+    /// removals, judged by the remove rule (`rlva_inventory_delete_allowed`).
+    pub deletes: std::collections::HashSet<Uuid>,
     pub controllers: controllers::Controllers,
     pub relative: relative::RelativeWear,
     pub version: version::Version,

@@ -37,6 +37,12 @@ struct FolderSets {
     no_add: HashSet<Uuid>,
     /// Folders whose items cannot be taken off (RLV_LOCK_REMOVE).
     no_remove: HashSet<Uuid>,
+    /// Folders a lock reaches, the inventory root's left out: their items
+    /// are not deleted (RlvFolderLocks::canRemoveItem).
+    holds: HashSet<Uuid>,
+    /// Folders not deleted: those of `holds`, and every folder holding one
+    /// that a "…this" lock names (RlvFolderLocks::canRemoveFolder).
+    kept: HashSet<Uuid>,
 }
 
 /// The last snapshot and what it was built from.
@@ -67,6 +73,16 @@ pub struct WearLocks {
 }
 
 impl WearLocks {
+    /// RLVa on, with `items` kept on: for the tests of the rules that ask.
+    #[cfg(test)]
+    pub(crate) fn keeping_on(items: impl IntoIterator<Item = Uuid>) -> Self {
+        Self {
+            active: true,
+            fixed: items.into_iter().collect(),
+            ..Default::default()
+        }
+    }
+
     /// Whether the worn item `item` (an original, not a link) can be taken off.
     pub fn can_remove(&self, item: Uuid) -> bool {
         !self.active || !self.fixed.contains(&item)
@@ -81,6 +97,24 @@ impl WearLocks {
             } else {
                 self.folders.no_remove.contains(&folder)
             }
+    }
+
+    /// Whether `entry` may be deleted or cut as far as the folder locks go:
+    /// RlvFolderLocks::canRemoveItem and canRemoveFolder (rlvlocks.h), which
+    /// get_is_item_removable and get_is_category_removable
+    /// (llinventoryfunctions.cpp) ask for the inventory's Delete, Purge and
+    /// Cut (LLInvFVBridge::canMenuDelete, canMenuCut). A folder of #RLV under
+    /// @sharedwear or @sharedunwear is kept; under their unshared twins it is
+    /// not.
+    pub fn removable(&self, inv: &Inventory, entry: Uuid) -> bool {
+        if !self.active {
+            return true;
+        }
+        if inv.folders.contains_key(&entry) {
+            !self.folders.kept.contains(&entry)
+        } else {
+            inv.items.get(&entry).is_none_or(|it| !self.folders.holds.contains(&it.parent))
+        }
     }
 
     /// Wearing `entry` (an item, or a link to it) at `point` (0: its own
@@ -205,24 +239,41 @@ impl World {
             if !self.rlva_folder_allowed_in(&shared, id, false, Uuid::nil()) {
                 sets.no_remove.insert(id);
             }
+            if self.rlva_folder_locked_below_root(&shared, id) {
+                sets.holds.insert(id);
+            }
         };
+        let roots = shared.roots(self);
         if self.rlva_has_placement_rule() {
             for (id, _) in self.inventory.folders.iter().filter(|(_, f)| !f.library) {
                 check(*id);
             }
-            return sets;
-        }
-        let mut seen = HashSet::new();
-        let mut stack = shared.roots(self);
-        while let Some(id) = stack.pop() {
-            if !seen.insert(id) {
-                continue;
+        } else {
+            let mut seen = HashSet::new();
+            let mut stack = roots.clone();
+            while let Some(id) = stack.pop() {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let Some(f) = self.inventory.folders.get(&id).filter(|f| !f.library) else {
+                    continue;
+                };
+                stack.extend(f.children.iter().copied());
+                check(id);
             }
-            let Some(f) = self.inventory.folders.get(&id).filter(|f| !f.library) else {
-                continue;
-            };
-            stack.extend(f.children.iter().copied());
-            check(id);
+        }
+        // hasLockedFolderDescendent(folder, …, bCheckExplicit): a folder that
+        // a "…this" lock names keeps every folder above it
+        sets.kept.clone_from(&sets.holds);
+        for mut id in roots {
+            let mut seen = HashSet::new();
+            while seen.insert(id) {
+                sets.kept.insert(id);
+                match self.inventory.folders.get(&id) {
+                    Some(f) if !f.info.parent.is_nil() => id = f.info.parent,
+                    _ => break,
+                }
+            }
         }
         sets
     }

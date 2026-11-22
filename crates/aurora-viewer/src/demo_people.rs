@@ -58,7 +58,7 @@ pub fn mode() -> Option<Mode> {
             "sheet" | "fiche" => Some(Mode::Sheet),
             "legacy" => Some(Mode::Legacy),
             "friends" | "amis" | "friends-symbols" => Some(Mode::Friends),
-            "groups" | "groupes" => Some(Mode::Groups),
+            "groups" | "groupes" | "groups-hover" | "groups-hover-active" => Some(Mode::Groups),
             "sets" | "sets-import" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
             "recent" | "récent" => Some(Mode::Recent),
             "blocked" | "bloqué" | "blocked-empty" => Some(Mode::Blocked),
@@ -648,6 +648,17 @@ pub fn hovered() -> Option<Uuid> {
         Mode::CrowdHover => Some(id(100)),
         Mode::Sets => Some(NOVA),
         Mode::Blocked => Some(ZED),
+        Mode::Groups => groups_hover(),
+        _ => None,
+    }
+}
+
+/// `groups-hover`: the Northern Wolves under the pointer, its Activate out;
+/// `groups-hover-active`: the active Aurora Builders, its Deactivate.
+fn groups_hover() -> Option<Uuid> {
+    match std::env::var("AURORA_DEMO_PEOPLE").ok()?.split(':').next()?.trim() {
+        "groups-hover" => Some(super::DEMO_GROUP2),
+        "groups-hover-active" => Some(super::DEMO_GROUP1),
         _ => None,
     }
 }

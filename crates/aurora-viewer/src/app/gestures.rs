@@ -476,6 +476,23 @@ impl App {
 
     pub(super) fn update_gestures(&mut self) {
         self.seed_gesture_demo();
+        if self.demo && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "delete") {
+            static STEP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            const FRAMES: [u64; 4] = [600, 650, 700, 900];
+            let step = STEP.load(std::sync::atomic::Ordering::Relaxed);
+            if step < FRAMES.len() && self.frame_count >= FRAMES[step] {
+                STEP.store(step + 1, std::sync::atomic::Ordering::Relaxed);
+                let item = Uuid::from_u128(8106);
+                if step == 1 {
+                    let facts = crate::ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+                    let asked = self
+                        .inventory_ui
+                        .ask_detach_delete(&self.world.inventory, &self.settings.inventory, &facts, item);
+                    log::info!("demo gesture delete: Detach and Delete asked: {asked:?}");
+                }
+                self.demo_detach_delete_steps("gesture delete", item, step == 2, step != 1);
+            }
+        }
         if self.demo
             && !self.gesture_state.demo_played
             && self.frame_count >= 650

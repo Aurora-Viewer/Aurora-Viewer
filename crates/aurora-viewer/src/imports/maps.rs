@@ -17,8 +17,24 @@ pub fn set(value: &mut PbrMaterial, slot: usize, asset: Option<Uuid>) {
         _ => value.emissive_texture = asset,
     }
 }
+impl Entry {
+    /// File selection belongs to one map slot, not to its preview resolution.
+    /// A later choice for that slot supersedes even an open native dialog.
+    pub(super) fn begin_map_file_request(&mut self, slot: usize) -> Option<Uuid> {
+        if self.reloading || !matches!(self.source, Some(Source::Material { .. })) {
+            return None;
+        }
+        let pending = self.material_map_requests.get_mut(slot)?;
+        let request = Uuid::new_v4();
+        *pending = Some(request);
+        Some(request)
+    }
+}
 impl Imports {
     pub fn open_map_picker(&mut self, id: Uuid, slot: usize) {
+        if slot >= 4 {
+            return;
+        }
         let Some(Source::Material { value, images }) = self.entries.iter().find(|e| e.id == id).and_then(|e| e.source.as_ref()) else {
             return;
         };
@@ -34,6 +50,9 @@ impl Imports {
             })
         });
         self.map_before = Some((asset, images[slot].clone()));
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) {
+            entry.material_map_requests[slot] = None;
+        }
         self.map_target = Some((id, slot));
         self.map_picker
             .open_with_defaults(aurora_i18n::tr!("import-texture"), current.unwrap_or_default(), None, true);
@@ -64,6 +83,7 @@ impl Imports {
                 {
                     set(value, slot, *asset);
                     images[slot] = image.clone();
+                    entry.material_map_requests[slot] = None;
                     entry.preview_generation += 1;
                     entry.model = None;
                     entry.preview_error = None;
@@ -121,6 +141,7 @@ impl Imports {
                 entry.watch = Some(local::Watch::new(paths));
             }
             images[slot] = local;
+            entry.material_map_requests[slot] = None;
             entry.preview_generation += 1;
             entry.model = None;
             entry.preview_error = None;

@@ -41,6 +41,7 @@ impl Imports {
             }
             let kind = source.kind();
             let mut copy = Entry::with_cached_alpha(original.path.clone(), Ok(source), original.options, Some(original.empty_alpha));
+            copy.image_size_limit = original.image_size_limit;
             copy.name.clone_from(&original.name);
             copy.description.clone_from(&original.description);
             copy.source_folders.clone_from(&original.source_folders);

@@ -5,7 +5,7 @@
 
 use super::contents_selection;
 use crate::build::BuildTool;
-use crate::build::contents::{AT_LSL_TEXT, AT_NOTECARD};
+use crate::build::contents::{AT_LSL_TEXT, AT_NOTECARD, item_renameable};
 use crate::build::contents_drop;
 use crate::theme::Palette;
 use crate::ui::inventory::item_icon;
@@ -92,6 +92,16 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         {
             tool.request_contents(world, idx, true);
         }
+        let lit = tool.ui.contents_filters_open || tool.ui.contents_filters.active();
+        if crate::ui::widgets::icon_toggle(
+            ui,
+            p,
+            "adjustments-horizontal-filled",
+            aurora_i18n::tr!("build-ui-contents-filters"),
+            lit,
+        ) {
+            tool.ui.contents_filters_open = !tool.ui.contents_filters_open;
+        }
     });
     ui.horizontal(|ui| {
         // under New script, as floater_tools.xml stacks them; LLPanelContents::getState:
@@ -132,8 +142,10 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();
     let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
     let filter = tool.ui.contents_filter.trim().to_uppercase();
+    let filters = tool.ui.contents_filters;
     let mut list: Vec<&TaskItem> = items
         .iter()
+        .filter(|i| filters.matches(i))
         .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
         .collect();
     list.sort_by_key(|i| crate::natural_order::key(&i.name));
@@ -331,7 +343,7 @@ fn item_row(
         if r.drag_started() && !selected {
             tool.ui.contents_selection.select(ui, object_id, item.item_id, false);
         }
-        let item_modify = item.owner_mask & perm::MODIFY != 0;
+        let item_modify = item_renameable(world, item);
         // A selected row carries the whole selection (LLFolderView::startDrag).
         let dragged = if r.hovered() || r.drag_started() || r.dragged() {
             contents_selection::acted_on(tool, object_id, item)
@@ -348,14 +360,14 @@ fn item_row(
         );
         let script = item.asset_type == AT_LSL_TEXT;
         let preview =
-            matches!(item.asset_type, 0 | 1 | 20) && item.to_inv_item().is_some_and(|it| tool.task_preview_allowed(world, idx, &it));
+            matches!(item.asset_type, 0 | 1 | 20) && item.to_inv_item().is_some_and(|it| tool.task_preview_offered(world, idx, &it));
         menu::context_menu(&r, p, |ui| {
             let taken = contents_selection::acted_on(tool, object_id, item);
             let transfers: Result<Vec<_>, _> = taken.iter().map(|it| tool.task_transfer_kind(world, object_id, it)).collect();
             let can_take = transfers.is_ok();
-            // LLTaskInvFVBridge::buildContextMenu: the scripts and notecards
-            // of an attachment that cannot be taken off stay closed.
-            let closed = (script || item.asset_type == 7) && world.rlva_locked_attachment(idx);
+            // LLTaskInvFVBridge::buildContextMenu: RLVa keeps the item closed
+            // (@viewnote, @viewscript, @viewtexture, a locked attachment).
+            let closed = (script || item.asset_type == 7 || preview) && world.rlva_task_open_blocked(idx, i32::from(item.asset_type));
             let can_open = (script || item.asset_type == 7 || preview) && !closed;
             let no_open = if closed {
                 aurora_i18n::tr!("rlva-blocked")
