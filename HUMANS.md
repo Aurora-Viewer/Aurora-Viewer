@@ -181,8 +181,11 @@ below). They check that `main` is green, suggest the number from the labels
 of the PRs merged since the last version, show these PRs, create the tag and
 follow the publication up to the release link. They are also used to
 **delete** a release (you have to type its tag to confirm; `assets-1`, which
-holds the 3D emoji font older commits download, is protected). Write access to the repository is
-required.
+holds the 3D emoji font older commits download, is protected). Only an
+admin of the repository publishes a release, stable or beta: the ruleset of
+the version tags refuses anyone else's stable tag, and the Release and
+Nightly workflows stop a beta tag pushed, or a Nightly run started, by
+anyone else. Deleting a release needs write access.
 
 Before the creation is confirmed, two choices set the effect of the update
 for users: **keep or invalidate the cache**, then **keep and migrate the

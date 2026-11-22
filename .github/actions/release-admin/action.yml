@@ -1,0 +1,40 @@
+name: Release by an admin
+description: >
+  Fails the job unless the person who started the run (or re-ran it) is an
+  admin of the repository: only the admins publish a release, stable or
+  beta, as the ruleset of the stable tags already requires. The Nightly's
+  own schedule needs nobody; a re-run of a scheduled run is checked like a
+  manual one. A guard for the workflows only: anyone with write access can
+  still create a release by hand on GitHub, which the updater must refuse on
+  its own (TASKS.md, signed updates).
+inputs:
+  enforce:
+    description: "'false' only checks that the permission can be read (the pull request test)"
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        ACTOR: ${{ github.triggering_actor }}
+        ENFORCE: ${{ inputs.enforce }}
+      run: |
+        if [ "$ENFORCE" = true ] && [ "$GITHUB_EVENT_NAME" = schedule ] && [ "$GITHUB_RUN_ATTEMPT" = 1 ]; then
+          echo "Scheduled run: no one to check."
+          exit 0
+        fi
+        # admin, write (maintain included), triage, read or none
+        if ! perm=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$ACTOR/permission" --jq .permission); then
+          echo "::error::Could not read the permission of $ACTOR."
+          exit 1
+        fi
+        case "$perm" in
+          admin|write|triage|read|none) ;;
+          *) echo "::error::Unexpected permission '$perm' for $ACTOR."; exit 1 ;;
+        esac
+        echo "$ACTOR: $perm"
+        if [ "$ENFORCE" = true ] && [ "$perm" != admin ]; then
+          echo "::error::Only an admin of the repository publishes a release (HUMANS.md, \"Publishing a release\"); $ACTOR has $perm access."
+          exit 1
+        fi

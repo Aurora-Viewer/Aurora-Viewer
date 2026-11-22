@@ -1,6 +1,6 @@
 name: Release
 
-# A version tag (SemVer: v0.2.0, v0.2.1…) pushed by a human builds the
+# A version tag (SemVer: v0.2.0, v0.2.1…) pushed by an admin builds the
 # viewer and publishes the release with notes grouped by PR label: the
 # Windows zip (the one the updater installs) and its crash symbols, then the
 # Linux archive and the macOS application. A pull request that changes these
@@ -44,7 +44,23 @@ permissions:
   contents: read
 
 jobs:
+  # Only an admin publishes: a beta tag pushed by hand, the Nightly run by
+  # hand or a run started again by someone else stops here (the stable tags'
+  # ruleset already refuses the others). A re-run of the failed jobs alone
+  # keeps this job's result: it only publishes what the run already built.
+  authorize:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - uses: ./.github/actions/release-admin
+
   windows:
+    needs: authorize
+    if: ${{ !cancelled() && (needs.authorize.result == 'success' || github.event_name == 'pull_request') }}
     runs-on: windows-latest
     permissions:
       contents: read
