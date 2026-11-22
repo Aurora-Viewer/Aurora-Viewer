@@ -1158,23 +1158,24 @@ fn message_emphasis(kind: ChatKind, italics: bool) -> super::fonts::TextEmphasis
     }
 }
 
-/// The same message tone in the conversation thread and its nearby-chat card.
+/// Precedence: history tone, keyword colour, then default emote colour.
 fn message_color_override(tone: Option<Color32>, keyword: Option<Color32>, emote: bool, emote_color: Color32) -> Option<Color32> {
     tone.or(keyword).or_else(|| emote.then_some(emote_color))
 }
 
+/// The same message tone in the conversation thread and its nearby-chat card.
 fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> Color32 {
     if let Some(color) = super::colors::contact_chat_color(line, world) {
         return color;
     }
     let tone = history_tone(p, line.origin);
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
-    message_color_override(tone, super::colors::keyword_color(line), emote, p.violet_pale)
-        .unwrap_or_else(|| match line.kind.volume() {
-            Some(ChatType::Whisper) => p.muted,
-            Some(ChatType::Shout) => p.ink,
-            _ => super::colors::chat_color(line, world),
-        })
+
+    message_color_override(tone, super::colors::keyword_color(line), emote, p.violet_pale).unwrap_or_else(|| match line.kind.volume() {
+        Some(ChatType::Whisper) => p.muted,
+        Some(ChatType::Shout) => p.ink,
+        _ => super::colors::chat_color(line, world),
+    })
 }
 
 /// Time of a chat line, in Second Life time as the Legacy Viewer shows it
@@ -5393,7 +5394,10 @@ mod tests {
         assert_eq!(super::message_color_override(None, None, true, emote), Some(emote));
         assert_eq!(super::message_color_override(None, Some(keyword), false, emote), Some(keyword));
         assert_eq!(super::message_color_override(None, None, false, emote), None);
-        assert_eq!(super::message_color_override(Some(history), Some(keyword), true, emote), Some(history));
+        assert_eq!(
+            super::message_color_override(Some(history), Some(keyword), true, emote),
+            Some(history)
+        );
     }
 
     #[test]
