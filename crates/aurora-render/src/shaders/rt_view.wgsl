@@ -41,23 +41,39 @@ fn depth_at(pixel: vec2<i32>) -> f32 {
     return textureLoad(depth_tex, clamp(pixel, vec2<i32>(0), size - vec2<i32>(1)), 0);
 }
 
-// The surface's normal from depth: of the two neighbours on each axis, the
-// one nearer in depth, so an edge does not bend the normal of the surface
-// in front of it. Their places are taken from the eye (`from_eye`).
+// The surface's normal from depth: on each axis, the side whose two
+// neighbours lie on the pixel's own plane. Depth is affine across the
+// pixels of a plane (it goes as 1 / distance), so the two neighbours of a
+// side on the same plane carry it on to the pixel, 2·d1 − d2 = depth,
+// while a side across an edge or a crease does not. Taking the neighbour
+// nearer in depth instead held at an edge, but not at a crease: where a
+// floor meets a wall that faces the eye, the wall's pixel above a floor
+// pixel is nearer in depth than the floor's below it, which recedes
+// faster. The floor pixels along the seam then took a normal half the
+// wall's, every few pixels where the seam passed near their centre, and
+// their lamps were weighed and their rays tested for that surface: red
+// dots along the seams of a closed room under a lamp outside (2026-11-22,
+// grid report). (The test of atyuwen's "Accurate normal reconstruction
+// from depth buffer", 2021.) The places are taken from the eye
+// (`from_eye`).
 fn normal_at(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
     let here = from_eye(pixel, depth);
     let dl = depth_at(pixel - vec2<i32>(1, 0));
     let dr = depth_at(pixel + vec2<i32>(1, 0));
     let du = depth_at(pixel - vec2<i32>(0, 1));
     let dd = depth_at(pixel + vec2<i32>(0, 1));
+    let dl2 = depth_at(pixel - vec2<i32>(2, 0));
+    let dr2 = depth_at(pixel + vec2<i32>(2, 0));
+    let du2 = depth_at(pixel - vec2<i32>(0, 2));
+    let dd2 = depth_at(pixel + vec2<i32>(0, 2));
     var dx: vec3<f32>;
-    if (abs(dr - depth) < abs(dl - depth)) {
+    if (abs(2.0 * dr - dr2 - depth) < abs(2.0 * dl - dl2 - depth)) {
         dx = from_eye(pixel + vec2<i32>(1, 0), dr) - here;
     } else {
         dx = here - from_eye(pixel - vec2<i32>(1, 0), dl);
     }
     var dy: vec3<f32>;
-    if (abs(dd - depth) < abs(du - depth)) {
+    if (abs(2.0 * dd - dd2 - depth) < abs(2.0 * du - du2 - depth)) {
         dy = from_eye(pixel + vec2<i32>(0, 1), dd) - here;
     } else {
         dy = here - from_eye(pixel - vec2<i32>(0, 1), du);
