@@ -2155,7 +2155,7 @@ mod tests {
                 let (mut camera, mut movement) = (true, false);
                 let mut output = None;
                 for frame in 0..4 {
-                    output = Some(ctx.run_ui(
+                    let mut frame_output = ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1000.0))),
                             time: Some(f64::from(frame) * 0.1),
@@ -2164,7 +2164,9 @@ mod tests {
                         |ui| {
                             controls.show(ui.ctx(), &p, &mut camera, &mut movement, classic, &view);
                         },
-                    ));
+                    );
+                    frame_output.textures_delta.clear();
+                    output = Some(frame_output);
                 }
                 let mut labels = vec![
                     aurora_i18n::tr!("controls-orbit"),
@@ -2223,9 +2225,10 @@ mod tests {
         let p = theme.palette();
         let row = Rect::from_min_size(egui::pos2(10.0, 10.0), Vec2::new(414.0, STICK));
         let at = SticksRow::new(row);
-        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             stick_captions(ui, &p, &at, row.bottom(), ["Orbite", "Panoramique"]);
         });
+        output.textures_delta.clear();
         for (name, left, right) in [
             ("Orbite", row.left(), at.zoom.left()),
             ("Panoramique", at.zoom.right(), row.right()),
@@ -2255,9 +2258,10 @@ mod tests {
         let p = theme.palette();
         let label = aurora_i18n::tr!("controls-tab-movement");
         let mut rect = Rect::NOTHING;
-        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             rect = widgets::pill_tab_wide(ui, &p, "walk", label, true, tab_min_width(ui.ctx(), false), true, "").rect;
         });
+        output.textures_delta.clear();
         let text = output
             .shapes
             .iter()
