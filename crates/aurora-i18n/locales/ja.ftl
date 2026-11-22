@@ -14760,6 +14760,14 @@ blender-live-bend-note = 曲げはあなたのアバター上で、あなたに�
 blender-live-levels = 詳細レベル
 blender-live-levels-pending = インポートをクリックすると、Blenderが詳細レベルを準備します。
 blender-live-levels-note = 各オブジェクトのLiveMesh設定に基づいてBlenderで準備されます。
+blender-live-quick-look-tip = クイックルック：このオブジェクトを大きく表示
+blender-live-quick-look-drag = ドラッグで回転、ダブルクリックで元の向きに戻ります。
+blender-live-quick-look-changed = { $ago }前にBlenderで変更されました。
+blender-live-undo = 元に戻す
+blender-live-undo-derez = { $name }をRez解除しました（Blenderのリストには残っています）
+blender-live-undo-detach = { $name }を取り外しました（Blenderのリストには残っています）
+blender-live-undo-drop = { $name }を地面に置きました
+blender-live-undo-attach = { $name }を{ $point }に移動しました
 
 inventory-bulk-permissions = 権限の一括変更
 inventory-bulk-adjust = アイテムの権限を調整

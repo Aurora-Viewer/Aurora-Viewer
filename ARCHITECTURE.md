@@ -1359,8 +1359,13 @@ window, with its widgets (`widgets::wrapping_tabs`, `collapsing`, `form_row`):
 a status line above five tabs, retained across reopening with separate scroll
 positions. Objects holds one card per source (linksets unfold to their prims;
 each card's time comes from a per-source digest made on the transport thread,
-`PreparedSource::digest`) and the folded Connection section; Place the
-selected static object's placement; Avatar the elbow and knee bend
+`PreparedSource::digest`; its live thumbnail, `blender_live/thumbnail.rs`, is
+an unskinned `aurora_render::preview::Model` capped at 20,000 triangles and
+128-pixel textures, built on the job pool once the digest has settled, and
+shown larger in Quick look, with a sweep while `Thumbnails::updating`) and
+the folded Connection section; Place the selected static object's placement
+(a Derez, Detach, Drop or Attach keeps the previous placements of the root
+and its prims in `objects::Undo`, for the Undo toast under the status line); Avatar the elbow and knee bend
 (`scene::anim::PreviewBend`, applied to our avatar's local pose after the
 animations, drawn only) and the shape transfer; Import the frozen import and
 its prepared LOD triangles; Plugins the installation, progress, completion and

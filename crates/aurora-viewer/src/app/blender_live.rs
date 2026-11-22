@@ -59,6 +59,7 @@ impl App {
             && self.imports.pending_files.is_none()
             && self.imports.entries.len() < 512
             && !self.blender_live.import.busy();
+        self.blender_live.update_thumbnails(&self.scene.jobs, ctx);
         if self.blender_live.show(ctx, palette, can_upload) {
             self.blender_live.start_requested = true;
         }
@@ -116,6 +117,13 @@ impl App {
             Default::default()
         };
         self.blender_live.capture_placements(&mut self.world);
+        self.blender_live.still = self.settings.reduce_motion;
+        if std::mem::take(&mut self.blender_live.undo_requested) {
+            self.blender_live.undo_placement();
+        }
+        if self.blender_live.undo.as_ref().is_some_and(|undo| undo.expired(Instant::now())) {
+            self.blender_live.undo = None;
+        }
         if let Some((source, action)) = self.blender_live.object_action.take() {
             let source = if matches!(
                 action,
@@ -194,6 +202,7 @@ impl App {
             self.blender_live.placements.clear();
             self.blender_live.placement_dirty.clear();
             self.blender_live.object_action = None;
+            self.blender_live.undo = None;
             self.blender_live.world_origin = None;
             self.clear_blender_preview();
         }
@@ -231,6 +240,7 @@ impl App {
                 "plugins" => self.blender_live.tab = Tab::Plugins,
                 _ => {}
             }
+            let quick_look = std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look");
             self.blender_live.installer.demo(&mode);
             if mode.starts_with("shape") {
                 self.demo_blender_shape(mode == "shape-readonly");
@@ -244,6 +254,9 @@ impl App {
                 Ok(snapshot) if !mode.starts_with("shape") && mode != "lods" => {
                     self.blender_live.receive(snapshot);
                     self.blender_live.owner = Some(self.world.agent_id);
+                    if quick_look && let Some(source) = self.blender_live.selected {
+                        self.blender_live.open_quick_look(source);
+                    }
                     if mode == "objects" {
                         let ids: Vec<_> = self
                             .blender_live
@@ -271,6 +284,23 @@ impl App {
                 self.scene.jobs.discard(old);
             }
             self.blender_live.owner = Some(self.world.agent_id);
+        }
+        // the `sweep` tab: Blender sends the selected object again every few
+        // frames, as during a drag, so its card's update sweep keeps running
+        if self.demo
+            && self.frame_count >= 400
+            && self.frame_count.is_multiple_of(8)
+            && std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "sweep")
+            && let Some(source) = self.blender_live.selected
+            && let Some(mut snapshot) = self.blender_live.snapshot.clone()
+        {
+            snapshot.revision += 1;
+            for prepared in snapshot.sources.iter_mut().filter(|s| s.id == source) {
+                prepared.digest = prepared.digest.wrapping_add(1);
+            }
+            if let Some(old) = self.blender_live.receive(snapshot) {
+                self.scene.jobs.discard(old);
+            }
         }
         if self.demo
             && self.frame_count == 450
