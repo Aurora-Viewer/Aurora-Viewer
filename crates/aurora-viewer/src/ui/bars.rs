@@ -21,6 +21,7 @@ use super::icons::Icons;
 use super::menu;
 use super::skin::Layout;
 use crate::theme::Palette;
+use crate::world::tphistory::HistoryItem;
 use egui::{Color32, RichText, Vec2};
 
 /// Advanced › Admin's entries (menu_viewer.xml, the Admin menu).
@@ -149,10 +150,8 @@ pub enum BarAction {
         handle: aurora_net::RegionHandle,
         position: glam::Vec3,
     },
-    /// A place of the saved teleport history (the place menu's Recent
-    /// rows), by its global position, as the Places window teleports
-    /// (LLTeleportHistoryStorage::goToItem).
-    TeleportSavedPlace(glam::DVec3),
+    /// The exact visit selected in the place menu, including its grid.
+    TeleportSavedPlace(HistoryItem),
     /// Communicate > Online status changed.
     SetStatus(crate::world::status::StatusModes),
     /// Open the chat preferences (automatic responses).
@@ -259,17 +258,6 @@ pub struct IslandsLook {
     pub stretch: bool,
     /// The parcel rights are named when there is room.
     pub rights_text: bool,
-}
-
-/// A place of the teleport history, in the place menu.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RecentPlace {
-    pub name: String,
-    pub region: String,
-    /// The saved global position: on Second Life the history keeps no
-    /// SLURL (only OpenSim's Hypergrid places have one), so the row
-    /// teleports by this, like the Places window (#4370).
-    pub global: glam::DVec3,
 }
 
 pub struct StatusInfo<'a> {
@@ -388,7 +376,7 @@ pub struct StatusInfo<'a> {
     pub own_pic: Option<&'a egui::TextureHandle>,
     /// The last places of the teleport history, newest first, without the
     /// one we are in (the place menu).
-    pub recent: Vec<RecentPlace>,
+    pub recent: Vec<HistoryItem>,
     /// The favourites and where they live.
     pub favorites: &'a favorites::View,
     /// What the system island shows, the traffic indicator, the

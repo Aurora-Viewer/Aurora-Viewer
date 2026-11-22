@@ -8950,12 +8950,18 @@ impl App {
     /// global position: on another grid through its SLURL, else by its
     /// position on this grid (LLTeleportHistoryStorage::goToItem).
     fn teleport_saved_place(&mut self, global: glam::DVec3) {
-        let saved = self.world.tp_storage.items.iter().rev().find(|item| item.global == global).cloned();
-        let other = saved
-            .as_ref()
-            .filter(|item| !item.slurl.is_empty())
-            .and_then(|item| crate::slurl::parse_hypergrid(&item.slurl));
-        if let Some(place) = other
+        if let Some(item) = self.world.tp_storage.items.iter().rev().find(|item| item.global == global).cloned() {
+            self.teleport_history_item(item);
+        } else {
+            self.world.map.track_location(global.x, global.y, global.z as f32, true);
+        }
+    }
+
+    /// The clicked visit identifies the grid even when two visits share coordinates
+    /// (LLTeleportHistoryStorage::goToItem uses the selected history entry).
+    fn teleport_history_item(&mut self, item: crate::world::tphistory::HistoryItem) {
+        if !item.slurl.is_empty()
+            && let Some(place) = crate::slurl::parse_hypergrid(&item.slurl)
             && let Some(grid) = place.grid.as_deref()
             && self.teleport_other_grid(grid, &place.region, place.pos).is_some()
         {
@@ -8963,10 +8969,9 @@ impl App {
             self.world.map.track = None;
             return;
         }
+        let global = item.global;
         self.world.map.track_location(global.x, global.y, global.z as f32, true);
-        if let Some(item) = saved
-            && let Some(track) = self.world.map.track.as_mut()
-        {
+        if let Some(track) = self.world.map.track.as_mut() {
             track.label = item.title;
         }
     }
@@ -16582,7 +16587,7 @@ impl App {
                     Some(handle) != self.world.main_region,
                 );
             }
-            BarAction::TeleportSavedPlace(global) => self.teleport_saved_place(global),
+            BarAction::TeleportSavedPlace(item) => self.teleport_history_item(item),
             BarAction::SetStatus(m) => {
                 self.world.set_away(m.away);
                 self.auto_away = false;
@@ -17211,7 +17216,7 @@ impl App {
     }
 
     /// The place menu's Recent rows (`place::recent`).
-    fn recent_places(&self) -> Vec<ui::bars::RecentPlace> {
+    fn recent_places(&self) -> Vec<crate::world::tphistory::HistoryItem> {
         ui::bars::place::recent(&self.world.tp_storage.items)
     }
 
