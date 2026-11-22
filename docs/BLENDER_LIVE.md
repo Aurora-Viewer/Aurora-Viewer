@@ -53,7 +53,10 @@ avatar. Select the source in Aurora's **LiveMesh** window, then open its
 **Place** tab (or **Place** in the card's **…** menu) to **Edit**, **Drop
 to ground**, **Derez**, **Attach to** a body point or **Attach to HUD**. **Detach**
 removes a worn preview; **Rez** brings it back. Derez/detach keep the source in
-the list and subsequent Blender edits never rez it automatically. The card's
+the list and subsequent Blender edits never rez it automatically. A Derez,
+Detach, Drop or Attach happens at once and shows a toast under the status
+line for 8 seconds, whose **Undo** puts the object and its prims back where
+they were. The card's
 eye remains independent. **Stop** clears all session previews and placement.
 
 **Edit** uses the normal Aurora translation, rotation and size tools, with the
@@ -238,7 +241,9 @@ line (link, revision, time since the last snapshot, **Enable preview** or
   spans several render batches. A small live thumbnail shows the object as
   Blender last sent it, in its rest pose; it is rebuilt in the background
   once an object stops changing for 0.4 s, so a drag in Blender does not
-  rebuild it at each revision. Click it for **Quick look**, a larger view
+  rebuild it at each revision. While a change is on its way (sent by
+  Blender, not yet in the picture), a light sweeps over the thumbnail; with
+  **Reduce animations**, the thumbnail is tinted instead. Click it for **Quick look**, a larger view
   under the cards: drag to turn it, double-click to face it again. The line under the name says whether it is
   static or rigged (a **Rigged** tag), its prims and its triangles. A linkset's
   card unfolds to its prims (`#2 · Frame`). On the right, the time since
