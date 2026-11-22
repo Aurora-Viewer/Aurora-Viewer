@@ -5382,7 +5382,13 @@ both open states and the selection count. Capture at frame 620.
   the Precipitation or Wind switch greys its own card (Precipitation
   greys On the ground and Thunder too). Capture after frame 300 at `AURORA_TEXT_SIZE=1`
   and `1.5`, with `--language fr`, `en` and `ja`: no label runs under its
-  switch or value.
+  switch or value. Resize the window by its edges and corners: the summary
+  stays on top and Quality, Clean up and Fill with snow at the bottom, the
+  cards scrolling between them; narrowed, the right columns go under the
+  left ones down to one (360 × 320 at least), the summary compacts and the
+  foot's buttons take a row of their own when they no longer fit beside
+  Quality; widened, up to five columns. The window follows the pointer both
+  ways, at 127 % too, and never holds a width or a height of its own.
 - **`AURORA_DEMO_ENV_EDITOR=sky|clouds|clouds-picker|sun|beacons|water|item|item-save|day|day-play|day-edit|day-notrans|parcel|region|custom|custom-follow`**: sky,
   water and day cycle editors (`app/env_editor.rs`, `app/env_day_editor.rs`).
   `day`: the day cycle editor opens on the user's "my day cycle" (frame
