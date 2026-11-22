@@ -1,8 +1,7 @@
-//! The tabs of the Aurora profile after Profile (the tabs mock-up, variant A
-//! of each, human choice of 2026-10-14): Favorite places as a featured
-//! place over thumbnails, Classifieds as cards that unfold, First life as a
+//! The Aurora profile tabs show the featured pick above its thumbnails,
+//! classifieds as cards that unfold, First life as a
 //! portrait beside its text, Web in a browser card, Notes in the turquoise
-//! card of the Profile tab. The data and the actions are Firestorm's
+//! card of the Profile tab. The data and the actions follow the Legacy Viewer
 //! (LLPanelProfilePicks / LLPanelProfilePick, LLPanelProfileClassifieds /
 //! LLPanelProfileClassified with LLPublishClassifiedFloater,
 //! LLPanelProfileFirstLife, LLPanelProfileWeb, LLPanelProfileNotes in
@@ -27,7 +26,7 @@ use egui::{Color32, FontId, Rect, RichText, Sense, Vec2, pos2};
 use glam::DVec3;
 use uuid::Uuid;
 
-/// Heights of the featured place's picture and of a thumbnail's.
+/// Heights of the featured pick's picture and of a thumbnail's.
 const FEATURE_H: f32 = 196.0;
 const FEATURE_W: f32 = 300.0;
 const THUMB_IMG_H: f32 = 62.0;
@@ -250,9 +249,9 @@ fn strip(ui: &mut egui::Ui, p: &Palette, color: Color32, body: impl FnOnce(&mut 
     let _ = p;
 }
 
-// ------------------------------------------------------------- favorite places
+// ------------------------------------------------------------- picks
 
-/// What the featured place shows.
+/// What the featured pick shows.
 struct PickView {
     name: String,
     desc: String,
@@ -326,7 +325,7 @@ fn start_new_pick(w: &mut Window, world: &World) {
     w.confirm_delete = false;
 }
 
-/// Favorite places: the chosen one featured, the others as thumbnails under
+/// Picks: the chosen one featured, the others as thumbnails under
 /// it; our own edited in place (name, description, snapshot, our position
 /// here, delete), with the account's limit on the card that adds one.
 pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool) {
@@ -415,7 +414,7 @@ pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, 
     thumbs(ui, env, w, &items, add.then_some((pr.picks.len(), limit)), compact);
 }
 
-/// The featured place: its snapshot and rating, name, place, description
+/// The featured pick: its snapshot and rating, name, place, description
 /// and actions; the edit form on our own when editing.
 fn feature(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView, editing: bool, compact: bool) {
     let p = env.p;
@@ -652,7 +651,7 @@ fn pick_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView) {
     });
 }
 
-/// The other places as thumbnails; the card that adds one, with the
+/// The other picks as thumbnails; the card that adds one, with the
 /// account's limit (LLAgentBenefitsMgr picks_limit).
 fn thumbs(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, items: &[(Uuid, String)], add: Option<(usize, usize)>, compact: bool) {
     let p = env.p;

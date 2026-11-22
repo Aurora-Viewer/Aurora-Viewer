@@ -3367,6 +3367,8 @@ appearance-editor-camera = Camera
 ui-options-appearance-camera-hint = Automatically frame the edited body part when editing your shape or a layer. Off, keep your framing; orbit, zoom and pan still work.
 ui-options-customize-animation = A-Pose
 ui-options-customize-animation-hint = Editing your shape or a layer stands your avatar up and plays the A-pose animation. Off, your avatar keeps its pose and animations.
+ui-options-bento-idle = Fix Bento idle animation
+ui-options-bento-idle-hint = Plays a priority 0 Bento animation under all the others, so hands, mouth, wings and tail go back to a natural pose instead of staying stuck after an animation; others see it too
 ui-options-typing-in-name-tags = Show typing in name tags
 ui-options-typing-in-name-tags-hint = The name tag of a resident who types in the nearby chat says so.
 ui-options-typing-chevron = Chevron before "is typing"
@@ -3441,6 +3443,10 @@ common-copy-slurl = Copy SLurl
 inventory-landmark-location-unknown = This landmark's location could not be resolved. Please try again later.
 ui-options-commands-copy-camera = Copy camera
 build-ui-general-copy-object-keys-shift-all-parts = Copy object keys (Shift: all parts)
+build-ui-copied-object-uuids = { $count ->
+    [one] Object UUID copied
+   *[other] Object UUIDs copied
+    }
 ui-options-commands-copy-camera-position-to-clipboard = Copy camera position to clipboard
 build-ui-tools-copy-selection = Copy selection
 common-copy-slurl-2 = Copy SLurl
@@ -3488,7 +3494,6 @@ ui-sound-object-creation = Object creation
 session-inventory-upload-creation-denied-invalid-type-size-or-upload-count = Creation denied: invalid type, size or upload count.
 ui-contacts-create = Create
 build-ui-tools-create-ctrl-4 = Create (Ctrl+4)
-ui-bars-create-prims-ctrl-4 = Create prims (Ctrl+4)
 ui-places-create-folder = Create folder
 ui-inventory-context-create-folder-from-selection = Create folder from selection
 common-create-favorite = Create favorite
@@ -5586,19 +5591,18 @@ inventory-operations-change-sent-but-could-not-read-it-back-reload = Change sent
 build-ui-tools-linked-edit = Linked edit
 ui-appearance-unsaved-changes = Unsaved changes
 common-edit = Edit
+common-modify = Modify
 build-ui-tools-edit-ctrl-3 = Edit (Ctrl+3)
 ui-place-details-edit-this-landmark = Edit this landmark
 ui-appearance-edit-this-outfit = Edit this outfit
 ui-appearance-show-current-outfit = Show the current outfit in the list
 ui-appearance-current-outfit-not-in-my-outfits = The current outfit is not saved in My Outfits
-ui-bars-edit-objects-ctrl-3 = Edit objects (Ctrl+3)
 build-ui-tools-edit-parcel = Edit parcel
 ui-context-edit-shape = Edit shape
 ui-context-export-shape-xml = Export shape XML
 ui-context-edit-outfit = Edit outfit
 ui-context-edit-pbr-material = Edit PBR material
 ui-context-edit-land = Edit land
-ui-bars-edit-land-ctrl-5 = Edit land (Ctrl+5)
 ui-land-options-edit-land = Edit land:
 build-ui-tools-edit-selected-land = Edit selected land
 ui-profile-edit-text = Edit text
@@ -7997,6 +8001,7 @@ ui-options-magenta-where-a-light-reaches-a-pixel-the-sort-missed = Magenta where
 ui-options-sort-of-the-reflection-probes = Sort of the reflection probes
 ui-options-magenta-where-a-probe-covers-a-pixel-the-sort-missed = Magenta where a probe covers a pixel without being among those sorted for it: there must be none
 ui-context-show-in-inventory = Show in inventory
+ui-context-show-in-inventory-none = No object in your inventory has exactly this object's name.
 ui-place-details-show-the-corresponding-location-on-the-map = Show the corresponding location on the map
 common-view-conversation-history = View conversation history
 common-view-profile = View profile
@@ -9103,7 +9108,7 @@ common-for-sale = For sale:
 ui-land-general-for-sale-to = For sale to:
 ui-profile-coming-soon = Coming soon
 ui-profile-aurora-my-profile = My profile
-ui-profile-aurora-help = A resident's profile: who they are, what you can do with them, then their favorite places, classifieds, first life, web profile and your notes. Preferences › Aurora › Profiles brings back the Legacy Viewer's window.
+ui-profile-aurora-help = A resident's profile: who they are, what you can do with them, then their picks, classifieds, first life, web profile and your notes. Preferences › Aurora › Profiles brings back the Legacy Viewer's window.
 ui-profile-aurora-conversation = Conversation
 ui-profile-aurora-call = Call
 ui-profile-aurora-add-friend = Add as friend
@@ -9134,7 +9139,7 @@ ui-profile-aurora-their-map = Find them on the map
 ui-profile-aurora-their-objects = Modify, delete or take their objects
 ui-profile-aurora-received-tip = { $right }: { $state }
 ui-profile-aurora-tab-profile = Profile
-ui-profile-aurora-tab-picks = Favorite places
+ui-profile-aurora-tab-picks = Picks
 ui-profile-aurora-tab-classifieds = Classifieds
 ui-profile-aurora-tab-first-life = First life
 ui-profile-aurora-tab-web = Web
@@ -9168,11 +9173,11 @@ ui-profile-aurora-part-bio = bio
 ui-profile-aurora-part-first-life = first life
 ui-profile-aurora-part-notes = notes
 ui-profile-aurora-part-places = { $count ->
-    [one] { $count } place
-   *[other] { $count } places
+    [one] { $count } pick
+   *[other] { $count } picks
     }
 ui-profile-aurora-part-classified = classified
-ui-profile-aurora-snapshot = Picture of the place
+ui-profile-aurora-snapshot = Picture
 ui-profile-aurora-teleport = Teleport
 ui-profile-aurora-description = Description
 ui-profile-aurora-category = Category
@@ -9188,11 +9193,11 @@ ui-profile-aurora-copy-slurl = Copy the SLURL
 ui-profile-aurora-here = My position here
 ui-profile-aurora-add-here = Add the place where I am
 ui-profile-aurora-picks-count = { $count } of { $limit } (account limit)
-ui-profile-aurora-picks-empty = No favorite place yet
-ui-profile-aurora-picks-empty-text = { $name } has not shared any place.
-ui-profile-aurora-picks-empty-own = Share your favorite places
-ui-profile-aurora-picks-empty-own-text = Other residents see them on your profile and teleport there in one click.
-ui-profile-aurora-delete-pick = Delete the place "{ $name }"?
+ui-profile-aurora-picks-empty = No picks yet
+ui-profile-aurora-picks-empty-text = { $name } has not shared any picks.
+ui-profile-aurora-picks-empty-own = Share what matters to you
+ui-profile-aurora-picks-empty-own-text = Use picks to highlight places, people, and things you care about.
+ui-profile-aurora-delete-pick = Delete the pick "{ $name }"?
 ui-profile-aurora-classifieds-empty = No classifieds
 ui-profile-aurora-classifieds-empty-text = { $name } has no classified published.
 ui-profile-aurora-classifieds-empty-own = Make a place or a service known
@@ -10260,6 +10265,7 @@ script-search-query = Find
 script-search-replacement = Replace
 script-search-insensitive = Case insensitive
 script-search-up = Search upwards
+script-search-whole-words = Whole words
 script-search-find = Find
 script-search-replace = Replace
 script-search-replace-all = Replace all
@@ -15586,6 +15592,14 @@ picker-pipette-no-texture = No copyable texture found in your inventory.
 picker-pipette-no-material = No copyable material found in your inventory.
 
 local-texture-preview-hint = Local texture — preview from a file on this computer.
+
+# Menu commands can be added to or removed from a toolbar.
+toolbar-add-from-menu = Add to toolbar
+toolbar-remove-from-menu = Remove from toolbar
+# Build › Edit objects, Create prims and Edit land as toolbar buttons (the menu shows their Ctrl+3/4/5 keys apart)
+toolbar-command-build-edit = Edit objects
+toolbar-command-build-create = Create prims
+toolbar-command-build-land = Edit land
 
 # 360° snapshots: a format of the photo window (LLFloater360Capture, app/capture_360.rs)
 capture-360-quality-preview = Preview (fast)
