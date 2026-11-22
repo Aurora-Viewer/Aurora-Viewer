@@ -802,6 +802,26 @@ impl Outside {
             .map(|native| native.window.inner_size())
     }
 
+    /// A field or a menu of the window outside `id` reads the keyboard, as
+    /// its last pass said.
+    pub fn reads_keys(&self, id: WindowId) -> bool {
+        self.shared
+            .borrow()
+            .windows
+            .values()
+            .any(|native| native.window.id() == id && native.reads_keys)
+    }
+
+    /// Text for the window outside `id`, read by its next pass as typed in
+    /// it: the character of an Alt code (alt_codes.rs).
+    pub fn text(&mut self, id: WindowId, text: String) {
+        let mut shared = self.shared.borrow_mut();
+        if let Some(native) = shared.windows.values_mut().find(|native| native.window.id() == id) {
+            native.input.egui_input_mut().events.push(egui::Event::Text(text));
+            native.redraw = true;
+        }
+    }
+
     /// One of the windows outside has the focus.
     pub fn focused(&self) -> bool {
         self.shared.borrow().windows.values().any(|native| native.focused)

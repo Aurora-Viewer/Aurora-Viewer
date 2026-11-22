@@ -149,9 +149,49 @@ impl App {
         went == Event::Swallow
     }
 
+    /// A Windows Alt code typed in a field of the window outside `id`
+    /// (alt_codes.rs), as `alt_code_key` reads it in the viewer's own
+    /// window: true for one of its digits, which neither the field nor the
+    /// viewer sees. Left Alt's release hands the character to the window's
+    /// next pass.
+    fn outside_alt_code_key(&mut self, id: WindowId, event: &WindowEvent) -> bool {
+        if self.outside.size_of(id).is_none() {
+            return false;
+        }
+        let ke = match event {
+            WindowEvent::KeyboardInput { event: ke, .. } => ke,
+            WindowEvent::Focused(false) => {
+                self.alt_codes.reset();
+                return false;
+            }
+            _ => return false,
+        };
+        let PhysicalKey::Code(code) = ke.physical_key else {
+            return false;
+        };
+        let pressed = ke.state == ElementState::Pressed;
+        let reads = self.outside.reads_keys(id);
+        if code == KeyCode::AltLeft {
+            if pressed {
+                if !ke.repeat {
+                    self.alt_codes.alt_pressed();
+                }
+            } else if let Some(text) = self.alt_codes.alt_released(ke.text.as_deref())
+                && reads
+            {
+                self.outside.text(id, text);
+            }
+            return false;
+        }
+        pressed && self.alt_codes.active() && reads && self.alt_codes.key_pressed(code, ke.repeat)
+    }
+
     /// An event of the system, first: a window outside reads its own, and
     /// says whether the viewer's handling takes it too.
     pub(super) fn outside_window_event(&mut self, id: WindowId, event: &WindowEvent) -> Went {
+        if self.outside_alt_code_key(id, event) {
+            return Went::Outside;
+        }
         let Some(asked) = self.outside.window_event(id, event) else {
             return Went::Own;
         };

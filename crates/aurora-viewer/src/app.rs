@@ -24988,8 +24988,9 @@ impl ApplicationHandler for App {
 
         // the digits of a Windows Alt code typed in a text field are kept
         // from it (alt_codes.rs); the character comes at Alt's release
+        // (typed in a window outside: `outside_alt_code_key` read it there)
         let pending_alt_chars = self.alt_text.len();
-        if self.alt_code_key(&event) {
+        if !from_outside && self.alt_code_key(&event) {
             return;
         }
         // the key a press counts as for the shortcuts: the keypad with
