@@ -289,7 +289,7 @@ impl App {
         // frames, as during a drag, so its card's update sweep keeps running
         if self.demo
             && self.frame_count >= 400
-            && self.frame_count % 8 == 0
+            && self.frame_count.is_multiple_of(8)
             && std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "sweep")
             && let Some(source) = self.blender_live.selected
             && let Some(mut snapshot) = self.blender_live.snapshot.clone()

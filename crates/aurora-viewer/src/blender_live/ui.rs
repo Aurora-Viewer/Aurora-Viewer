@@ -98,8 +98,7 @@ fn undo_toast(live: &mut Live, ui: &mut egui::Ui, p: &Palette) {
     if undo.expired(now) {
         return;
     }
-    ui.ctx()
-        .request_repaint_after(objects_undo_left(undo, now));
+    ui.ctx().request_repaint_after(objects_undo_left(undo, now));
     let name = live
         .snapshot
         .as_ref()
