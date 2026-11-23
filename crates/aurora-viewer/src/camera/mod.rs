@@ -1617,10 +1617,11 @@ impl Camera {
 
     // ------------------------------------------------------------------ input
 
-    /// LLAgentCamera::cameraOrbitAround.
+    /// LLAgentCamera::cameraOrbitAround. Around the avatar it is
+    /// LLAgent::yaw, which a script's hold on yaw blocks (rotateGrabbed).
     fn orbit_around(&mut self, radians: f32, agent: &mut AgentState) {
         if self.focus_on_avatar && !self.mouselook() {
-            agent.yaw += radians;
+            agent.yaw_by(radians);
         } else {
             self.focus_offset_target = Quat::from_rotation_z(radians) * self.focus_offset_target;
             self.zoom_in(1.0);
@@ -2001,7 +2002,7 @@ impl Camera {
                     // the agent in avatar follow. Keep that steering turn
                     // when ClickOnAvatarKeepsCamera retains a detached focus.
                     if steering && !self.focus_on_avatar {
-                        agent.yaw -= dx * k;
+                        agent.yaw_by(-dx * k);
                     }
                     self.orbit_around(-dx * k, agent);
                 }
@@ -6597,7 +6598,7 @@ mod tests {
                         let before = world.agent.predicted_position();
                         world.agent.simulate_locally(&input, mode == VrView::FirstPerson, None, 0.016, true);
                         let displacement = (world.agent.predicted_position() - before).truncate().normalize();
-                        world.agent.update(&input, mode == VrView::FirstPerson, 0.016, 5.0, false);
+                        world.agent.update(&input, mode == VrView::FirstPerson, 0.016, 5.0);
                         camera.update_vr(&mut world, &settings, &frame(0.016), rig_yaw);
                         anchor.follow(camera.vr_view(rig_yaw)).expect("rig");
                         let eye = anchor
@@ -7095,7 +7096,7 @@ mod tests {
                 MoveInput::default()
             };
             world.agent.simulate_locally(&input, true, None, 0.016, true);
-            world.agent.update(&input, true, 0.016, 1.0, false);
+            world.agent.update(&input, true, 0.016, 1.0);
             camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
             camera.vr_body_offset(follow.accepted_root(camera.vr_body_root()));
             anchor.follow_head(camera.vr_view(0.0), head, RigMode::FirstPerson).expect("follow");
@@ -7118,7 +7119,7 @@ mod tests {
             ..Default::default()
         };
         world.agent.simulate_locally(&input, true, None, 0.016, true);
-        world.agent.update(&input, true, 0.016, 1.0, false);
+        world.agent.update(&input, true, 0.016, 1.0);
         camera.update_vr(&mut world, &settings, &frame(0.016), 0.0);
         camera.vr_body_offset(follow.accepted_root(camera.vr_body_root()));
         anchor.follow_head(camera.vr_view(0.0), head, RigMode::FirstPerson).expect("manual");
@@ -7813,6 +7814,36 @@ mod tests {
                 assert!((w.agent.yaw - expected).abs() < 1e-5, "release ends steering");
             }
         }
+    }
+
+    /// LLToolPie mouse steering and LLAgentCamera::cameraOrbitAround around
+    /// the avatar turn it with LLAgent::yaw, which rotateGrabbed blocks: a
+    /// vehicle that took left/right keeps its heading (#3450).
+    #[test]
+    fn a_grabbed_yaw_stops_mouse_steering_and_orbiting_around_the_avatar() {
+        for follow in [true, false] {
+            let (mut w, mut cam, s, _) = focused_object();
+            w.agent.yaw = 0.0;
+            if follow {
+                cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+                settle(&mut cam, &mut w, &s);
+            }
+            w.agent.rotate_grabbed = true;
+            cam.begin_drag(true);
+            cam.drag(ToolMode::Zoom, 256.0, 0.0, 1280.0, &mut w.agent);
+            assert_eq!(w.agent.yaw, 0.0, "steering, follow={follow}");
+            cam.end_drag();
+        }
+        let (mut w, mut cam, s, _) = focused_object();
+        cam.set_focus_on_avatar(true, false, false, &mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        w.agent.yaw = 0.0;
+        w.agent.rotate_grabbed = true;
+        cam.orbit_around(0.5, &mut w.agent);
+        assert_eq!(w.agent.yaw, 0.0, "orbit around the avatar");
+        w.agent.rotate_grabbed = false;
+        cam.orbit_around(0.5, &mut w.agent);
+        assert!((w.agent.yaw - 0.5).abs() < 1e-6, "released: it turns again");
     }
 
     #[test]

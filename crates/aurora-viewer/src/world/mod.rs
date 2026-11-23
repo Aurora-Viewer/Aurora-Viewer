@@ -3272,6 +3272,7 @@ impl World {
                 self.anti_spam.reset();
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
+                self.agent.rotate_grabbed = false;
                 // the account is known: its transcripts open
                 self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
                 // LLChatServiceHistory::start, in the account's own folder
@@ -4037,6 +4038,8 @@ impl World {
                 for (take, controls, pass_on) in blocks {
                     self.script_controls.apply(take, controls, pass_on);
                 }
+                // LLAgent::rotateGrabbed, read by AgentState::yaw_by
+                self.agent.rotate_grabbed = self.script_controls.rotate_grabbed();
                 None
             }
             NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
@@ -10438,7 +10441,7 @@ mod motion_tests {
         world.agent.position -= Vec3::X * 0.2;
         assert!(world.own_motion_moving(), "a zero-velocity report does not finish visual smoothing");
         for _ in 0..60 {
-            world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0, false);
+            world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0);
         }
         assert!(!world.own_motion_moving());
         world.agent.velocity = Vec3::Z * 2.0;
@@ -10450,10 +10453,10 @@ mod motion_tests {
 
         world.agent.set_predicting(true);
         world.agent.position -= Vec3::X * 0.2;
-        world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0, false);
+        world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0);
         assert!(world.own_motion_moving(), "Aurora's drawn glide must settle too");
         for _ in 0..180 {
-            world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0, false);
+            world.agent.update(&Default::default(), false, 1.0 / 60.0, 3.0);
         }
         assert!(!world.own_motion_moving());
     }
