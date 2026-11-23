@@ -278,7 +278,12 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, g: &GroupMembership) {
     let end = rows::end(rect, left + reserved, &widths, PART_GAP, true);
     let switch = switch_w.filter(|_| hot);
     let names_right = end.names_right - if switch.is_some() { reserved } else { 0.0 };
-    let tips: Vec<String> = parts.iter().map(|(_, part)| part.tip(world, g)).collect();
+    // the tooltips show under the pointer only: formatted for the hot row
+    let tips: Vec<String> = if hot {
+        parts.iter().map(|(_, part)| part.tip(world, g)).collect()
+    } else {
+        vec![String::new(); parts.len()]
+    };
     let pointer = resp.hover_pos();
     let mut tip = None;
     let mut switched = false;
