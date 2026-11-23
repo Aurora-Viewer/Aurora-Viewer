@@ -5634,6 +5634,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_LEGACY_BUMP=1` or `matrix` | Legacy bump presets and normal-map precedence; `matrix` covers all four Shininess levels |
 | `AURORA_DEMO_MASK_ZERO=1` | The holed test panel with a Mask legacy material whose cutoff is 0: drawn whole |
+| `AURORA_DEMO_PANEL_ALPHA=<0..1>` | The face alpha of the plaza's alpha-mode test panels (0.98: 2 % transparency); a transparent emissive mask blends (#4517) |
 | `AURORA_DEMO_MASK_255=<alpha>` | A texture of flat alpha 250-254 on two panels; the one with a Mask of cutoff 255 is hidden; 255: no alpha channel, shown whole (#2276) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_COPLANAR_LAYERS=1` | A worn dark layer lying exactly on a worn skin, in eight strips beside our avatar |
@@ -5832,6 +5833,14 @@ both open states and the selection count. Capture at frame 620.
   pbropaqueF.glsl), so the panel is drawn whole, its holes in the teal of
   the texture: creators use it to show opaque a texture whose alpha channel
   holds something else. Before the fix the holes stayed cut out.
+- **`AURORA_DEMO_PANEL_ALPHA=<0..1>`**: the six alpha-mode test panels of
+  the plaza take that face alpha (opaque without the variable; 0.98 is the
+  build floater's 2 % transparency). The Legacy Viewer draws a transparent
+  face with a legacy material in the alpha pass with the blend shader,
+  whatever the material's alpha mode (`blinn_phong_transparent` in
+  LLVolumeGeometryManager::genDrawInfo, llvovolume.cpp): the "Emissive
+  mask" panel then shows its gradient as opacity, fading out like the
+  "Alpha blending" ones, not as a solid, partly unlit panel (#4517).
 - **`AURORA_DEMO_MASK_255=<alpha>`** (250 to 255, 250 otherwise): two
   panels of colour waves ahead of the avatar wear the same texture, of that
   alpha on every texel. The left one, with no material, is drawn whole; the

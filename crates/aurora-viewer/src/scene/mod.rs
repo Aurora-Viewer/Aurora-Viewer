@@ -4468,7 +4468,8 @@ impl Scene {
                     legacy_glare = gloss > 0.0 || env > 0.0;
                     rec.spec_color = [lin(spec_rgb[0]), lin(spec_rgb[1]), lin(spec_rgb[2]), 1.0];
                     rec.params[3] = lm.alpha_cutoff as f32 / 255.0;
-                    if lm.diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE {
+                    // (the alpha `classify` reads too, so flag and pass agree)
+                    if emissive_mask_applies(lm.diffuse_alpha_mode, rec.base_color[3]) {
                         rec.flags[0] |= flags::EMISSIVE_MASK;
                     }
                     legacy_alpha = Some(lm.diffuse_alpha_mode);
@@ -4561,6 +4562,12 @@ impl Scene {
             rec.set_hud_zoom(hud_zoom);
             if !g.hud {
                 rec.flags[3] |= flags::OBJECT_MASK_PICK;
+            }
+            // Alt-focus keeps an emissive mask's clear texels whatever the
+            // face's alpha, also where EMISSIVE_MASK is dropped above
+            // (LLVOVolume::lineSegmentIntersect's `ignore_alpha`).
+            if legacy_alpha == Some(legacy_mat::alpha_mode::EMISSIVE) {
+                rec.flags[3] |= flags::PICK_IGNORES_ALPHA;
             }
             rec.set_world_blend_pick(
                 !g.hud
@@ -6854,6 +6861,20 @@ fn te_invisible(o: &Object, face: usize) -> bool {
     o.visual_texture_face(face).color[3] < 0.004 && o.visual_material(face).is_none()
 }
 
+/// Whether a legacy material's "emissive mask" applies to a face whose
+/// texture-entry alpha is `te_alpha`. A transparent face (alpha below
+/// 0.999) takes the alpha pass with the blend shader whatever the
+/// material's mode, so its texture alpha is opacity again, not glow:
+/// LLVolumeGeometryManager::genDrawInfo (`blinn_phong_transparent` sends
+/// the face to PASS_ALPHA) and LLVolumeGeometryManager::registerFace (the
+/// shader mask of PASS_ALPHA is DIFFUSE_ALPHA_MODE_BLEND's), llvovolume.cpp.
+/// The click pick keeps the material's mode (`legacy_alpha`) and Alt-focus
+/// keeps the face's clear texels (`flags::PICK_IGNORES_ALPHA`), as
+/// LLVOVolume::lineSegmentIntersect ignores the face's alpha there.
+fn emissive_mask_applies(diffuse_alpha_mode: u8, te_alpha: f32) -> bool {
+    diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE && te_alpha >= 0.999
+}
+
 fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
     // fully transparent face, or the transparent texture (unused layers of
     // mesh heads and bodies): nothing to draw. A blended legacy material
@@ -8190,6 +8211,21 @@ mod tests {
         let mut usage = Vec::new();
         note_face_usage(&mut usage, &face, 256.0, true);
         assert!(usage.contains(&(source, texture_importance::per_repeats(256.0, 2.0), true)));
+    }
+
+    /// #4517: an emissive mask on a transparent face blends like any
+    /// transparent face (texture alpha = opacity), as in the Legacy Viewer;
+    /// on an opaque face it stays an emissive mask.
+    #[test]
+    fn emissive_mask_is_dropped_on_a_transparent_face() {
+        use legacy_mat::alpha_mode::{BLEND, EMISSIVE, MASK, NONE};
+        assert!(emissive_mask_applies(EMISSIVE, 1.0));
+        assert!(emissive_mask_applies(EMISSIVE, 0.999));
+        assert!(!emissive_mask_applies(EMISSIVE, 0.99));
+        assert!(!emissive_mask_applies(EMISSIVE, 0.5));
+        for other in [NONE, BLEND, MASK] {
+            assert!(!emissive_mask_applies(other, 1.0));
+        }
     }
 
     /// materialF.glsl (blend): a transparent texture under a glossy or shiny

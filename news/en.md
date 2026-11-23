@@ -26,6 +26,16 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-11-23 — Aurora 0.9.13: ray tracing, windows outside the viewer and faster textures
+Deluxe (RT) is a new graphics level for cards with ray tracing: the shadows of the sun, the moon and the lamps are traced, exact where things touch, coloured glass tints the light and the light bounces into rooms. Any window can go outside the viewer, to another screen. Textures decode faster with aurora-j2k, Aurora's own JPEG 2000 decoder. Versions before 0.9.13 must update, within 12 hours. The cache is cleared once at the first start and fills again by itself; your settings are kept.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.13)
+
+## 2026-11-23 — Building, photos and avatars
+LiveMesh is rebuilt, with live thumbnails, Quick look, a weight bend test and an Undo button. Photo filters become cards you drag, with a catalogue that previews each effect, and Phototools gets its Light and DoF & glow tabs. A Mini AO window stays open and shows what is playing, voice chat can use its own output device, and your own environment can stay on a parcel. Soft sun shadows and planet curvature are new experimental options.
+
+## 2026-11-23 — More like the Legacy Viewer
+Show in inventory for the objects you rezzed, Delete on worn items, groups beside your friends in Contacts, Rendering features › UI, the small camera window, the Bento idle pose, and RLVa checked again in every domain. Updates now install only when signed by the Release workflow. Thanks to AiAiCaptainn, anakima, anne-skydancer, baddawge, circuskid, ClifHofmann, Diviniity, etherealkeshii, Gaalrauch, Glychd, iGao, Izusl, KanikaBreed, KuraiKitsune, Marakiinfinity, Memekiller, MrBollie, Nowalski, Odessa-Draekavik, p1u3o, PumpkinSpicePanda, Ramius1701, RheaMercury.
+
 ## 2026-11-21 — Aurora 0.9.12: fifteen languages, Game Controls and a look for the world
 Aurora now speaks fifteen languages: German, Spanish, Italian, Polish, Turkish, Russian, Ukrainian, Norwegian, Portuguese and Chinese join English, French and Japanese, built on the community's translations. Game Controls let a game controller drive the avatar, the camera and scripts, like the LL viewer 26.5. Photo looks and LUTs can stay on the world, with 30 new looks by JuicyBomb. Versions before 0.9.12 must update, within 12 hours. The cache is cleared once at the first start and fills again by itself; your settings are kept.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.9.12)

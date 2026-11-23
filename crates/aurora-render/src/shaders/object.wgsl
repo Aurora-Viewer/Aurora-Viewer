@@ -3566,10 +3566,12 @@ fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
 fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    // An emissive mask uses texture alpha for lighting, not opacity
-    // (eval_material): its visible surface must remain a camera target.
+    // A legacy material in emissive mask mode stays a camera target on its
+    // clear texels, whatever the face's alpha: LLVOVolume::
+    // lineSegmentIntersect ignores texture alpha there, even on a
+    // transparent face that is drawn blended (types.rs PICK_IGNORES_ALPHA).
     let terrain_pbr = (rec.flags.x & (FLAG_TERRAIN | FLAG_PBR)) == (FLAG_TERRAIN | FLAG_PBR);
-    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= PICK_ALPHA_CUTOFF;
+    let hidden_texel = (rec.flags.w & FLAG_PICK_IGNORES_ALPHA) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= PICK_ALPHA_CUTOFF;
     // An opaque glTF material ignores its base color alpha (FaceDraw::
     // fully_transparent): drawn, it stays a target.
     let gltf_opaque = (rec.flags.x & FLAG_PBR) != 0u && (rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) == 0u;
