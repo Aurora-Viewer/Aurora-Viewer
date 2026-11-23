@@ -64,7 +64,12 @@ impl DebrisTextures {
                     self.slots.insert(path, slot);
                 }
                 None => {
-                    log::warn!("debris pictures: {} could not be read", path.display());
+                    // (the file's name only: the folders can hold the
+                    // account's name, and testers attach the log)
+                    log::warn!(
+                        "debris pictures: {} could not be read",
+                        path.file_name().map_or_else(|| "?".into(), |n| n.to_string_lossy())
+                    );
                     self.failed.push(path);
                 }
             }

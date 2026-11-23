@@ -136,16 +136,20 @@ fn ds_canopy(xy: vec2<f32>) -> vec2<f32> {
 }
 
 // The ground for a particle at height `z` over `xy`: the shelter map's top
-// surface where it is open above; where something is above it, the floor
-// (the topmost surface that is not foliage) if that is below it: only
-// foliage was above, and it falls through the crown to the ground under
-// it. A roof or a wall above it stays the top (it stops against it).
+// surface where it is open above; under foliage (the canopy map: foliage
+// alone is drawn in it, so a crown's every texel), the floor beneath it
+// (the topmost surface that is not foliage) when that is below: it falls
+// through the crown to the ground. Anywhere else a top above it is a roof
+// or a wall, and stays the top (it stops against it): the floor map is too
+// coarse (31 cm) to find a thin wall, the shelter map is not.
 fn ds_ground(xy: vec2<f32>, z: f32) -> f32 {
     let top = ds_surface(xy);
     if (top <= z + 0.05 || (dp.look.w & FLAG_CANOPY) == 0u || !ds_on()) { return top; }
     let uv = ds_uv(xy);
     if (any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) { return top; }
-    let d = textureLoad(debris_floor, vec2<i32>(uv * vec2<f32>(textureDimensions(debris_floor))), 0);
+    let at = vec2<i32>(uv * vec2<f32>(textureDimensions(debris_canopy)));
+    if (textureLoad(debris_canopy, at, 0).x < 0.5) { return top; }
+    let d = textureLoad(debris_floor, at, 0);
     if (d >= 0.999) { return top; }
     let m = ds_vp();
     let floor = (d - m[3].z) / m[2].z;
@@ -306,7 +310,10 @@ fn ds_spawn(i: u32, seed: u32) {
         // dust hangs around the eye's height, indoors as well as out (a
         // stale room): no cover rule, only above what is under it
         z = cam.z + (dr(seed + 4u) - 0.4) * 3.0;
-        if (z < ds_ground(xy, z) + 0.2) { return; }
+        // (with the camera under a roof the room's floor is unknown, the
+        // map seeing the roof: around the eye is in the room)
+        let indoors = ds_surface(cam.xy) > cam.z + 0.5;
+        if (!indoors && z < ds_ground(xy, z) + 0.2) { return; }
     }
     if (kind == DK_LEAVES) {
         // look for foliage at a few places in the ring: leaves come from
@@ -365,7 +372,9 @@ fn ds_spawn(i: u32, seed: u32) {
     // rest with the air
     var v0 = ds_air(vec3<f32>(xy, z), z - ground) * 0.5;
     if (kind == DK_SAND) {
-        v0 = vec3<f32>(dp.wind.xy * (0.4 + 0.3 * dr(seed + 11u)), 1.5 + 2.0 * dr(seed + 12u) * (0.5 + dp.wind.z));
+        // (a hop as high as the wind is strong: in still air hardly any)
+        let blown = clamp(length(dp.wind.xy) / 4.0, 0.1, 1.0);
+        v0 = vec3<f32>(dp.wind.xy * (0.4 + 0.3 * dr(seed + 11u)), (1.5 + 2.0 * dr(seed + 12u) * (0.5 + dp.wind.z)) * blown);
     }
     debris[b + 1u] = vec4<f32>(v0, bitcast<f32>(state));
     debris[b + 2u] = ds_quat_facing(vec3<f32>(0.0, 0.0, 1.0), yaw);
@@ -520,8 +529,10 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
         } else if (kind == DK_EMBERS) {
             // hot, it rises (more in the gusts) and flickers about; as it
             // cools its lift fades, and a dying ember drifts back down
+            // (`gravity` here is its buoyancy, upward: cooling turns it
+            // into a fall, the drag holding it to a slow drift down)
             let heat = clamp(1.0 - s.z / k.life, 0.0, 1.0);
-            acc += vec3<f32>(0.0, 0.0, (1.2 * dp.wind.z + 0.8) * heat * heat - 2.2 * (1.0 - heat));
+            acc += vec3<f32>(0.0, 0.0, (1.2 * dp.wind.z + 0.8) * heat * heat - 2.0 * 9.81 * (1.0 - heat) * (1.0 - heat));
             s.x += dt * 9.0 * rate;
 
         } else {

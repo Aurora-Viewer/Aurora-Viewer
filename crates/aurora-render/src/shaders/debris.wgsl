@@ -252,7 +252,7 @@ fn fs_debris(in: DebrisOut, @builtin(front_facing) front: bool) -> @location(0) 
         let r = length(in.uv);
         cover = 1.0 - smoothstep(0.2, 1.0, r);
         let toward_sun = max(dot(-view, frame.sun_dir.xyz), 0.0);
-        let beam = frame.sun_color.rgb * frame.sun_dir.w * (0.1 + 3.0 * pow(toward_sun, 8.0)) * shadow_factor(in.world, view, in.clip.w);
+        let beam = frame.sun_color.rgb * frame.sun_dir.w * (0.1 + 3.0 * pow(toward_sun, 8.0)) * shadow_factor(in.world, view, 1.0 / max(in.clip.w, 1e-6));
         let lamps = rain_lamps(in.world, in.clip.xy, view);
         let sky_light = frame.sky_zenith.rgb * 0.55 + frame.sky_horizon.rgb * 0.45;
         let own = 0.35 + 1.3 * fract(f32(variant) * 0.618034);
@@ -272,7 +272,7 @@ fn fs_debris(in: DebrisOut, @builtin(front_facing) front: bool) -> @location(0) 
     if (dot(n, view) < 0.0) { n = -n; }
     let sun_dir = frame.sun_dir.xyz;
     let sun = frame.sun_color.rgb * frame.sun_dir.w;
-    let shadow = shadow_factor(in.world, n, in.clip.w);
+    let shadow = shadow_factor(in.world, n, 1.0 / max(in.clip.w, 1e-6));
     let lit_face = max(dot(n, sun_dir), 0.0);
     // the sun through it, seen against the sun (a leaf glows)
     let behind = pow(max(dot(-view, sun_dir), 0.0), 3.0) * max(-dot(n, sun_dir) * 0.5 + 0.5, 0.0);

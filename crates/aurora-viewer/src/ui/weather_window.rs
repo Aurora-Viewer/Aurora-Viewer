@@ -1157,23 +1157,28 @@ enum PictureSet {
     Paper,
 }
 
-/// The files picked in the chooser (its own thread), for the next frame.
-static PICKED: std::sync::Mutex<Option<(PictureSet, Vec<std::path::PathBuf>)>> = std::sync::Mutex::new(None);
+/// The files picked in the chooser (its own thread), for their list.
+static PICKED: std::sync::Mutex<Vec<(PictureSet, Vec<std::path::PathBuf>)>> = std::sync::Mutex::new(Vec::new());
+/// A chooser is open: one at a time.
+static CHOOSING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The debris' own pictures (leaves or paper): their file names, each with
 /// a button to take it out, and one to add more (a file chooser, off the
 /// frame); none: the drawn shapes.
 fn pictures_rows(ui: &mut egui::Ui, p: &Palette, list: &mut Vec<std::path::PathBuf>, set: PictureSet) {
     use crate::scene::debris_textures::MAX;
-    if let Ok(mut picked) = PICKED.lock()
-        && picked.as_ref().is_some_and(|(s, _)| *s == set)
-        && let Some((_, files)) = picked.take()
-    {
-        for f in files {
-            if list.len() < MAX && !list.contains(&f) {
-                list.push(f);
+    if let Ok(mut picked) = PICKED.lock() {
+        picked.retain(|(s, files)| {
+            if *s != set {
+                return true;
             }
-        }
+            for f in files {
+                if list.len() < MAX && !list.contains(f) {
+                    list.push(f.clone());
+                }
+            }
+            false
+        });
     }
     ui.horizontal(|ui| {
         widgets::glyph(ui, "photo-filled", p.muted, 15.0);
@@ -1186,15 +1191,16 @@ fn pictures_rows(ui: &mut egui::Ui, p: &Palette, list: &mut Vec<std::path::PathB
             aurora_i18n::tr!("ui-weather-debris-pictures-tip"),
             width,
         );
+        let choosing = CHOOSING.load(std::sync::atomic::Ordering::Relaxed);
         let add = ui
             .add_enabled(
-                list.len() < MAX,
+                list.len() < MAX && !choosing,
                 egui::Button::new(RichText::new(aurora_i18n::tr!("ui-weather-debris-pictures-add")).size(LABEL_SIZE)),
             )
             .on_hover_text(aurora_i18n::tr!("ui-weather-debris-pictures-tip"));
-        if add.clicked() {
+        if add.clicked() && !CHOOSING.swap(true, std::sync::atomic::Ordering::Relaxed) {
             let ctx = ui.ctx().clone();
-            let _ = std::thread::Builder::new().name("aurora-debris-pictures".into()).spawn(move || {
+            let spawned = std::thread::Builder::new().name("aurora-debris-pictures".into()).spawn(move || {
                 let files = rfd::FileDialog::new()
                     .set_title(aurora_i18n::tr!("ui-weather-debris-pictures"))
                     .add_filter(
@@ -1203,10 +1209,14 @@ fn pictures_rows(ui: &mut egui::Ui, p: &Palette, list: &mut Vec<std::path::PathB
                     )
                     .pick_files();
                 if let (Some(files), Ok(mut picked)) = (files, PICKED.lock()) {
-                    *picked = Some((set, files));
-                    ctx.request_repaint();
+                    picked.push((set, files));
                 }
+                CHOOSING.store(false, std::sync::atomic::Ordering::Relaxed);
+                ctx.request_repaint();
             });
+            if spawned.is_err() {
+                CHOOSING.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     });
     let mut gone = None;
