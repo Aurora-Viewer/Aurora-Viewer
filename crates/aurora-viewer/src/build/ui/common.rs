@@ -107,7 +107,7 @@ pub(crate) fn field_end(ui: &egui::Ui, r: &egui::Response) -> FieldEnd {
         return FieldEnd::Open;
     }
     let ended_id = r.id.with("build_field_ended");
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     if ui.data(|d| d.get_temp::<u64>(ended_id)).is_some_and(|ended| ended + 1 == pass) {
         return FieldEnd::Repeat;
     }

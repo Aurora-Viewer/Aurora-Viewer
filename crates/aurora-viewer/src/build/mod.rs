@@ -33,6 +33,7 @@ pub mod layout;
 mod linking;
 pub mod manip;
 mod material_preview;
+pub mod mesh_physics;
 use material_preview::MaterialTabKey;
 pub mod materials;
 mod new_defaults;
@@ -988,6 +989,9 @@ pub struct BuildTool {
     /// Materials actually received from the server, rather than defaults
     /// accompanying a GetObjectPhysicsData reply containing only shape type.
     pub physics_materials_known: HashSet<u32>,
+    /// Whether a mesh has a physics shape of its own (the Features tab's
+    /// Prim entry), and the collision blocks asked for to find out.
+    pub mesh_physics: mesh_physics::MeshPhysics,
     /// Land impact, weights and parcel capacity.
     pub costs: costs::Costs,
     /// Object inventories (Contents tab).
@@ -1086,6 +1090,7 @@ impl Default for BuildTool {
             grid_objects: Vec::new(),
             physics: HashMap::new(),
             physics_materials_known: HashSet::new(),
+            mesh_physics: mesh_physics::MeshPhysics::default(),
             costs: costs::Costs::default(),
             contents: contents::Contents::default(),
             replacement: replace::Replacement::default(),
