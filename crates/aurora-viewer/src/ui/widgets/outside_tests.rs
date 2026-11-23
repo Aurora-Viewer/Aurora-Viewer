@@ -276,65 +276,124 @@ fn a_window_outside_takes_the_size_of_its_content_once_per_size() {
 /// answered: its content does not jump to the width of both.
 #[test]
 fn a_window_outside_asks_for_the_room_at_its_right_and_keeps_its_width() {
-    assert_eq!(side_room(None, 440.0, 0.0, 300.0, 0.0), (None, None));
+    assert_eq!(side_room(None, 440.0, 0.0, 300.0, 1.0, 0.0), (None, None));
     // the room is wanted: asked once, the window still 440 wide
-    let (side, ask) = side_room(None, 440.0, 356.0, 300.0, 1.0);
+    let (side, ask) = side_room(None, 440.0, 356.0, 300.0, 1.0, 1.0);
     assert_eq!(ask, Some(796.0));
     let side = side.unwrap();
-    assert_eq!((side.own, side.room), (440.0, 356.0));
-    let (waiting, ask) = side_room(Some(side), 440.0, 356.0, 300.0, 1.1);
+    assert_eq!((side.own, side.room, side.waits()), (440.0, 356.0, true));
+    let (waiting, ask) = side_room(Some(side), 440.0, 356.0, 300.0, 1.0, 1.1);
     assert_eq!((waiting, ask), (Some(side), None));
     // the system gave it: the window keeps its 440
-    let (given, ask) = side_room(waiting, 796.0, 356.0, 300.0, 1.2);
+    let (given, ask) = side_room(waiting, 796.0, 356.0, 300.0, 1.0, 1.2);
     let given = given.unwrap();
-    assert_eq!((given.own, given.asked, ask), (440.0, None, None));
-    // the user widens the window by its edge: the room keeps its width
-    let (wider, ask) = side_room(Some(given), 900.0, 356.0, 300.0, 3.0);
-    assert_eq!((wider.unwrap().own, ask), (544.0, None));
+    assert_eq!((given.own, given.back, given.asked, ask), (440.0, 440.0, None, None));
+    // the user widens the window by its edge: the room keeps its width,
+    // and that width is the one to go back to
+    let (wider, ask) = side_room(Some(given), 900.0, 356.0, 300.0, 1.0, 3.0);
+    let wider = wider.unwrap();
+    assert_eq!((wider.own, wider.back, ask), (544.0, 544.0, None));
 }
 
 /// The room is given back when nothing wants it any more, and the window
 /// keeps its own width until the system has taken it.
 #[test]
 fn a_window_outside_gives_the_room_back() {
-    let open = SideRoom {
-        own: 440.0,
-        room: 356.0,
-        asked: None,
-    };
-    let (closing, ask) = side_room(Some(open), 796.0, 0.0, 300.0, 5.0);
+    let (open, _) = side_room(None, 440.0, 356.0, 300.0, 1.0, 1.0);
+    let (open, _) = side_room(open, 796.0, 356.0, 300.0, 1.0, 1.1);
+    let (closing, ask) = side_room(open, 796.0, 0.0, 300.0, 1.0, 5.0);
     assert_eq!(ask, Some(440.0));
     let closing = closing.unwrap();
     assert_eq!((closing.own, closing.room), (440.0, 0.0));
     // still as wide for a frame: the window does not spread over the room
     assert_eq!(
-        side_room(Some(closing), 796.0, 0.0, 300.0, 5.02).0.map(|side| side.own),
+        side_room(Some(closing), 796.0, 0.0, 300.0, 1.0, 5.02).0.map(|side| side.own),
         Some(440.0)
     );
     // taken back: nothing is kept
-    assert_eq!(side_room(Some(closing), 440.0, 0.0, 300.0, 5.05), (None, None));
+    assert_eq!(side_room(Some(closing), 440.0, 0.0, 300.0, 1.0, 5.05), (None, None));
+    // a system that never takes it: nothing is kept past the wait either
+    assert_eq!(side_room(Some(closing), 796.0, 0.0, 300.0, 1.0, 5.1 + SIDE_WAIT), (None, None));
 }
 
-/// A system that gives less than asked (a small screen, a tiled window),
-/// or nothing: past the wait, the window makes do with the width it has,
-/// down to its least width.
+/// A system that gives less than asked (a small screen): the window takes
+/// what is left beside the room, at once, down to its least width, and
+/// goes back to the width it had when the room goes.
 #[test]
 fn a_window_outside_makes_do_with_the_width_the_system_gives() {
-    let (side, _) = side_room(None, 440.0, 356.0, 300.0, 1.0);
-    // not yet
-    let (side, _) = side_room(side, 700.0, 356.0, 300.0, 1.0 + SIDE_WAIT * 0.5);
-    assert_eq!(side.unwrap().own, 440.0);
-    let (side, ask) = side_room(side, 700.0, 356.0, 300.0, 1.1 + SIDE_WAIT);
-    assert_eq!((side.unwrap().own, ask), (344.0, None));
-    // a window that stayed as it was keeps its least width
-    let (side, _) = side_room(None, 440.0, 356.0, 300.0, 1.0);
-    let (side, _) = side_room(side, 440.0, 356.0, 300.0, 1.1 + SIDE_WAIT);
-    assert_eq!(side.unwrap().own, 300.0);
+    let (side, _) = side_room(None, 440.0, 356.0, 300.0, 1.0, 1.0);
+    let (side, ask) = side_room(side, 700.0, 356.0, 300.0, 1.0, 1.05);
+    let less = side.unwrap();
+    assert_eq!((less.own, less.back, less.waits(), ask), (344.0, 440.0, false, None));
+    // the answer came in two steps: the second is not the user's hand
+    let (side, _) = side_room(Some(less), 720.0, 356.0, 300.0, 1.0, 1.1);
+    assert_eq!((side.unwrap().own, side.unwrap().back), (364.0, 440.0));
+    // past the wait, a new width is the user's
+    let (side, _) = side_room(side, 740.0, 356.0, 300.0, 1.0, 2.0 + SIDE_WAIT);
+    assert_eq!((side.unwrap().own, side.unwrap().back), (384.0, 384.0));
+    // the room goes: the width it had
+    let (_, ask) = side_room(Some(less), 700.0, 0.0, 300.0, 1.0, 9.0);
+    assert_eq!(ask, Some(440.0));
+}
+
+/// A system that gives no room (a tiled window), or too little for the
+/// window's least width: past the wait the window keeps the whole width,
+/// and the panel is drawn over its right end, as inside.
+#[test]
+fn a_window_outside_without_room_keeps_its_width_under_the_panel() {
+    let whole = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(440.0, 600.0));
+    let (side, _) = side_room(None, 440.0, 356.0, 300.0, 1.0, 1.0);
+    let waiting = side.unwrap();
+    assert!(side_rect(whole, waiting).is_none(), "not while the system may still answer");
+    let (side, ask) = side_room(side, 440.0, 356.0, 300.0, 1.0, 1.1 + SIDE_WAIT);
+    let over = side.unwrap();
+    assert_eq!((over.own, over.back, over.waits(), ask), (440.0, 440.0, false, None));
+    assert_eq!(
+        side_rect(whole, over),
+        Some(egui::Rect::from_min_max(egui::pos2(92.0, 8.0), egui::pos2(432.0, 592.0)))
+    );
+    // a system's window narrower than the panel: the panel takes its width
+    let narrow = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(300.0, 600.0));
+    assert_eq!(side_rect(narrow, over).map(|rect| rect.width()), Some(284.0));
+    // too little: 100 left beside the room, under the least width of 300
+    let (side, _) = side_room(None, 440.0, 356.0, 300.0, 1.0, 1.0);
+    let (side, _) = side_room(side, 456.0, 356.0, 300.0, 1.0, 1.05);
+    assert_eq!(side.unwrap().own, 456.0);
+    // the room goes: the window is as wide as it was, nothing to wait for
+    assert_eq!(side_room(Some(over), 440.0, 0.0, 300.0, 1.0, 9.0), (None, Some(440.0)));
+    // where the room is there, the panel is beside the window
+    let (side, _) = side_room(Some(waiting), 796.0, 356.0, 300.0, 1.0, 1.05);
+    let wide = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(796.0, 600.0));
+    assert_eq!(
+        side_rect(wide, side.unwrap()),
+        Some(egui::Rect::from_min_max(egui::pos2(448.0, 8.0), egui::pos2(788.0, 592.0)))
+    );
+}
+
+/// At another zoom the same window is counted in other points: the room,
+/// as wide in points as before, is asked again beside the window's width
+/// there, and the window is not narrowed by what the room gained.
+#[test]
+fn the_room_of_a_window_outside_is_asked_again_at_another_zoom() {
+    let (side, _) = side_room(None, 440.0, 356.0, 300.0, 1.0, 1.0);
+    let (side, _) = side_room(side, 796.0, 356.0, 300.0, 1.0, 1.1);
+    // zoom 1 to 1.25: 796 points are 636.8, the window's 440 are 352
+    let (side, ask) = side_room(side, 636.8, 356.0, 300.0, 1.25, 4.0);
+    let zoomed = side.unwrap();
+    assert_eq!(ask, Some(708.0));
+    assert_eq!((zoomed.own, zoomed.back, zoomed.zoom), (352.0, 352.0, 1.25));
+    let (side, ask) = side_room(Some(zoomed), 708.0, 356.0, 300.0, 1.25, 4.1);
+    assert_eq!((side.unwrap().own, side.unwrap().back, ask), (352.0, 352.0, None));
+    // a window under its least width there is given that width
+    let (_, ask) = side_room(Some(zoomed), 318.4, 356.0, 300.0, 2.5, 6.0);
+    assert_eq!(ask, Some(656.0));
 }
 
 /// Drawn: the window keeps the width it had beside the room it asks for,
-/// its size is read without the room, and the room is told to its pass
-/// only once it is there.
+/// its size is read without the room, the room is told to its pass only
+/// once the system has answered, and its content keeps its ids (its
+/// scroll places, its focus) whether the room is there or not. A size
+/// asked of the window by its name is asked with the room beside it.
 #[test]
 fn a_window_outside_draws_at_its_own_width_beside_its_room() {
     let mut frames = elide_tests::Frames::new();
@@ -345,31 +404,90 @@ fn a_window_outside_draws_at_its_own_width_beside_its_room() {
     crate::outside::set_native(&frames.ctx, id, true);
     let draw = |frames: &mut elide_tests::Frames, side: f32| {
         let mut open = true;
-        let mut seen = (0.0, None);
+        let mut seen = None;
         frames.run(Vec::new(), |ui| {
             let mut floater = Floater::new(name, "Build", egui::pos2(10.0, 10.0), Vec2::new(360.0, 400.0)).silent();
             floater.side_outside = side;
             floater.show(ui.ctx(), &p, &mut open, |ui| {
-                seen = (ui.max_rect().width(), side_room_outside(ui.ctx(), name));
+                seen = Some((ui.max_rect(), side_room_outside(ui.ctx(), name), ui.make_persistent_id("list")));
             });
         });
-        seen
+        seen.unwrap()
     };
-    let (alone, room) = draw(&mut frames, 0.0);
-    assert!(alone > 0.0 && room.is_none());
+    // (this screen never answers a size asked: the wait runs out)
+    let wait = |frames: &mut elide_tests::Frames, side: f32| {
+        let mut last = draw(frames, side);
+        for _ in 0..(SIDE_WAIT * 60.0) as usize + 2 {
+            last = draw(frames, side);
+        }
+        last
+    };
+    let (alone, room, list) = draw(&mut frames, 0.0);
+    assert!(alone.width() > 0.0 && room.is_none());
     let size = floater_size(&frames.ctx, name).unwrap();
+    // (the system's window: the content and its margins, the same on both sides)
+    let right = alone.center().x + size.x / 2.0;
     assert!(crate::outside::take_resizes(&frames.ctx).is_empty());
-    let (beside, room) = draw(&mut frames, 340.0);
+    // a narrow panel, which this window has the width for
+    let (narrow, gaps) = (60.0, 2.0 * SIDE_GAP);
+    assert!(size.x - narrow - gaps >= 220.0 && size.x - 340.0 - gaps < 220.0);
+    let (beside, room, list_beside) = draw(&mut frames, narrow);
     assert_eq!(
         crate::outside::take_resizes(&frames.ctx),
-        [(id, Vec2::new(size.x + 340.0 + 2.0 * SIDE_GAP, size.y), false)]
+        [(id, Vec2::new(size.x + narrow + gaps, size.y), false)]
     );
     assert_eq!(beside, alone);
+    assert_eq!(list_beside, list);
     assert!(room.is_none(), "the system has not made the room yet");
     assert_eq!(floater_size(&frames.ctx, name), Some(size));
+    size_floater(&frames.ctx, name, Vec2::new(size.x, 300.0));
+    assert_eq!(
+        crate::outside::take_resizes(&frames.ctx),
+        [(id, Vec2::new(size.x + narrow + gaps, 300.0), false)]
+    );
     // asked once
-    draw(&mut frames, 340.0);
+    draw(&mut frames, narrow);
     assert!(crate::outside::take_resizes(&frames.ctx).is_empty());
+    // past the wait the window takes what is left beside the room, and
+    // the panel has its place at the right of it
+    let (narrowed, room, list_narrowed) = wait(&mut frames, narrow);
+    let room = room.expect("the room is told once the wait is over");
+    assert!((room.width() - narrow).abs() < 0.01);
+    assert!((room.right() - (right - SIDE_GAP)).abs() < 0.01);
+    assert!((narrowed.width() - (alone.width() - narrow - gaps)).abs() < 0.01);
+    assert!(narrowed.right() <= room.left() - SIDE_GAP + 0.01);
+    assert_eq!(list_narrowed, list);
+    assert_eq!(floater_size(&frames.ctx, name), Some(Vec2::new(size.x - narrow - gaps, size.y)));
+    size_floater(&frames.ctx, name, Vec2::new(500.0, 300.0));
+    assert_eq!(
+        crate::outside::take_resizes(&frames.ctx),
+        [(id, Vec2::new(500.0 + narrow + gaps, 300.0), false)]
+    );
+    // the room goes: asked back to the width it had, and nothing is added
+    // to a size asked from then on
+    draw(&mut frames, 0.0);
+    assert_eq!(crate::outside::take_resizes(&frames.ctx), [(id, size, false)]);
+    size_floater(&frames.ctx, name, Vec2::new(500.0, 300.0));
+    assert_eq!(crate::outside::take_resizes(&frames.ctx), [(id, Vec2::new(500.0, 300.0), false)]);
+    let (back, room, _) = wait(&mut frames, 0.0);
+    assert_eq!((back, room), (alone, None));
+    assert!(crate::outside::take_resizes(&frames.ctx).is_empty());
+    // A panel this window has no width for, on a system that gives none:
+    // the window keeps its whole width and the panel is over its right
+    // end; a size asked of the window is then the system's window's.
+    draw(&mut frames, 340.0);
+    assert_eq!(
+        crate::outside::take_resizes(&frames.ctx),
+        [(id, Vec2::new(size.x + 340.0 + gaps, size.y), false)]
+    );
+    let (under, room, list_under) = wait(&mut frames, 340.0);
+    let room = room.expect("the panel has a place without the room");
+    assert_eq!((under, list_under), (alone, list));
+    assert!((room.width() - (size.x - gaps)).abs() < 0.01);
+    assert!((room.right() - (right - SIDE_GAP)).abs() < 0.01);
+    assert_eq!(floater_size(&frames.ctx, name), Some(size));
+    size_floater(&frames.ctx, name, Vec2::new(500.0, 300.0));
+    assert_eq!(crate::outside::take_resizes(&frames.ctx), [(id, Vec2::new(500.0, 300.0), false)]);
 }
 
 /// Ctrl+Shift+W in the viewer's window closes a window outside with the

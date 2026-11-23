@@ -748,6 +748,12 @@ impl Outside {
         let zoom = ctx.zoom_factor();
         for (window, size, held) in sizes {
             if let Some(native) = self.shared.borrow().windows.get(&viewport(window)) {
+                // A maximized or full-screen window keeps the size the
+                // system gave it: Windows takes a size asked of one as the
+                // end of that state (winit's `request_inner_size`).
+                if native.window.is_maximized() || native.window.fullscreen().is_some() {
+                    continue;
+                }
                 let room = native.window.current_monitor().map(|monitor| {
                     let room = monitor.size().to_logical::<f32>(monitor.scale_factor());
                     egui::vec2(room.width / zoom, room.height / zoom)
