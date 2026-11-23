@@ -62,6 +62,7 @@ SCENES = {
     "sand": ("dust storm: sand, drifts, tumbleweeds", {"AURORA_WEATHER_PRESET": "dust-storm", "AURORA_FOG": "off"}),
     "paper": ("paper", {"AURORA_WEATHER_PRESET": "autumn", "AURORA_DEBRIS": "paper", "AURORA_FOG": "off"}),
     "embers": ("embers", {"AURORA_WEATHER_PRESET": "autumn", "AURORA_DEBRIS": "embers", "AURORA_FOG": "off"}),
+    "motes": ("dust motes", {"AURORA_DEBRIS": "motes", "AURORA_FOG": "off"}),
 }
 
 # what a scene does not set: no weather (the demo's saved settings may hold some)
