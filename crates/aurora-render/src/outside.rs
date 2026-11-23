@@ -236,7 +236,8 @@ impl Surfaces {
 
     /// Draws and presents every window a frame waits for. The viewer's own
     /// frame is submitted: egui's buffers are free to be written again.
-    /// `second_view`: the second camera's picture, when it has one.
+    /// `second_view`: the second camera's picture, when it has one;
+    /// `look_thumbs`: the photo filters' catalogue pictures.
     #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
@@ -246,6 +247,7 @@ impl Surfaces {
         egui: &mut egui_wgpu::Renderer,
         previews: &mut crate::preview::Cache,
         second_view: Option<egui::TextureId>,
+        look_thumbs: Option<&crate::look_thumbs::LookThumbs>,
         index: u64,
     ) -> Drawn {
         let mut drawn = Drawn::default();
@@ -258,7 +260,7 @@ impl Surfaces {
                 continue;
             }
             entry.rest_until = None;
-            if entry.draw(*key, device, queue, lost, egui, previews, second_view, index) {
+            if entry.draw(*key, device, queue, lost, egui, previews, second_view, look_thumbs, index) {
                 drawn.windows += 1;
             }
             let took = now.elapsed();
@@ -305,6 +307,7 @@ impl Entry {
         egui: &mut egui_wgpu::Renderer,
         previews: &mut crate::preview::Cache,
         second_view: Option<egui::TextureId>,
+        look_thumbs: Option<&crate::look_thumbs::LookThumbs>,
         index: u64,
     ) -> bool {
         let Some((width, height)) = self.pending.as_ref().map(|f| (f.width.max(1), f.height.max(1))) else {
@@ -346,6 +349,7 @@ impl Entry {
             egui,
             previews,
             second_view,
+            look_thumbs,
         );
         let mut cmds = egui.update_buffers(device, queue, &mut encoder, &ui.primitives, &sd);
         {
@@ -376,9 +380,10 @@ impl Entry {
     }
 }
 
-/// What a window outside draws of its pass: the previews and the second
-/// camera's picture become meshes of their targets (drawn into `encoder`
-/// first when they changed), as in the viewer's frame; what is painted
+/// What a window outside draws of its pass: the previews, the second
+/// camera's picture and the photo filters' pictures become meshes of their
+/// targets (drawn into `encoder` first when they changed), as in the
+/// viewer's frame; what is painted
 /// through the viewer's frame (the glass, the labels in the world, the
 /// markers of its passes) has nothing to read here and goes. egui-wgpu
 /// gets meshes only.
@@ -393,6 +398,7 @@ fn drawable(
     egui: &mut egui_wgpu::Renderer,
     previews: &mut crate::preview::Cache,
     second_view: Option<egui::TextureId>,
+    look_thumbs: Option<&crate::look_thumbs::LookThumbs>,
 ) {
     crate::second_view::replace(primitives, second_view);
     previews.render(
@@ -404,6 +410,7 @@ fn drawable(
         primitives,
         pixels_per_point,
     );
+    crate::look_thumbs::resolve(look_thumbs, primitives);
     primitives.retain(|p| matches!(p.primitive, Primitive::Mesh(_)));
 }
 
@@ -431,6 +438,11 @@ fn same_shape(a: &egui::Shape, b: &egui::Shape) -> bool {
 
 fn same_callback(a: &egui::PaintCallback, b: &egui::PaintCallback) -> bool {
     if crate::second_view::is(a) || crate::second_view::is(b) {
+        return false;
+    }
+    // (the catalogue's pictures are drawn again on a new still every few
+    // seconds, one a frame: a picture that moves, as the second camera's)
+    if crate::look_thumbs::is(a) || crate::look_thumbs::is(b) {
         return false;
     }
     crate::preview_mesh::same(a, b)
@@ -566,6 +578,18 @@ mod tests {
     }
 
     #[test]
+    fn the_filters_pictures_are_never_the_same_picture() {
+        let ctx = egui::Context::default();
+        let tiles = || {
+            pass(&ctx, |ui| {
+                crate::look_thumbs::paint(ui.painter(), TILE, 0, egui::Color32::WHITE, 2.0);
+            })
+            .shapes
+        };
+        assert!(!same_picture(&tiles(), &tiles()));
+    }
+
+    #[test]
     fn the_second_camera_is_never_the_same_picture() {
         let ctx = egui::Context::default();
         let live = || pass(&ctx, |ui| crate::second_view::paint(ui, TILE)).shapes;
@@ -613,6 +637,7 @@ mod tests {
                 &mut encoder,
                 egui,
                 previews,
+                None,
                 None,
             );
             queue.submit([encoder.finish()]);

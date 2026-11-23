@@ -8399,6 +8399,7 @@ impl Backend {
             &mut self.egui,
             &mut self.previews,
             second_view,
+            self.look_thumbs.as_ref(),
             index,
         );
         result.stats.outside_windows = drawn.windows;

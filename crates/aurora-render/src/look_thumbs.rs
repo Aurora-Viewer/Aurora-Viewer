@@ -342,6 +342,11 @@ fn rounded(rect: egui::Rect, radius: f32, texture: egui::TextureId, tint: egui::
     mesh
 }
 
+/// Whether a paint callback is one of the catalogue's pictures.
+pub(crate) fn is(callback: &egui::PaintCallback) -> bool {
+    callback.callback.downcast_ref::<ThumbRegion>().is_some()
+}
+
 /// The pictures painted by the interface swapped for their textures (none
 /// while the renderer has no pictures: nothing is drawn there).
 pub(crate) fn resolve(thumbs: Option<&LookThumbs>, primitives: &mut [egui::ClippedPrimitive]) {
