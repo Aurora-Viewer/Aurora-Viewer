@@ -406,7 +406,17 @@ impl InspectUi {
             .corner_radius(radius)
             .inner_margin(10)
             .show(ui, |ui| {
+                let limit = self.avatar().then_some(frame.max_complexity);
                 ui.horizontal(|ui| {
+                    // egui cannot centre a block before it knows its size: the
+                    // row takes its height first (the box, the picture, and the
+                    // text block as the last frame measured it), and the box
+                    // and the text get the margins that centre them on it
+                    let text_id = ui.scope_id().with("inspect_summary_text");
+                    let box_h = complexity_box_height(ui, limit.is_some());
+                    let text_h = ui.data(|d| d.get_temp::<f32>(text_id)).unwrap_or(box_h);
+                    let row_h = box_h.max(38.0).max(text_h);
+                    ui.set_min_height(row_h);
                     let (pic, _) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::hover());
                     let title = match self.subject {
                         Subject::Avatar(id) => {
@@ -430,15 +440,19 @@ impl InspectUi {
                     if !self.avatar() {
                         parts.push(aurora_i18n::tr!("inspect-summary-creators", count = creators));
                     }
-                    let limit = self.avatar().then_some(frame.max_complexity);
                     // the box first, from the right: the name and the line
                     // take what is left, on one line each, cut short with "…"
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        complexity_box(ui, p, frame.totals.complexity, limit);
+                        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                            ui.add_space(((row_h - box_h) / 2.0).max(0.0));
+                            complexity_box(ui, p, frame.totals.complexity, limit);
+                        });
                         ui.add_space(6.0);
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.vertical(|ui| {
                                 ui.spacing_mut().item_spacing.y = 2.0;
+                                let pad = ((row_h - text_h) / 2.0).max(0.0);
+                                ui.add_space(pad);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 4.0;
                                     let bold = crate::ui::fonts::semibold(ui.ctx());
@@ -458,6 +472,11 @@ impl InspectUi {
                                     }
                                 });
                                 ui.add(egui::Label::new(figures_line(ui, p, &parts)).truncate());
+                                let measured = ui.min_rect().height() - pad;
+                                if (measured - text_h).abs() > 0.5 {
+                                    ui.data_mut(|d| d.insert_temp(text_id, measured));
+                                    ui.ctx().request_repaint();
+                                }
                             });
                         });
                     });
@@ -640,6 +659,18 @@ fn complexity_box(ui: &mut egui::Ui, p: &Palette, complexity: u32, limit: Option
                 }
             });
         });
+}
+
+/// Height of `complexity_box`: its margins and its two or three lines.
+fn complexity_box_height(ui: &egui::Ui, with_limit: bool) -> f32 {
+    let bold = crate::ui::fonts::semibold(ui.ctx());
+    ui.ctx().fonts_mut(|f| {
+        let mut h = 10.0 + f.row_height(&egui::FontId::new(10.5, bold.clone())) + 1.0 + f.row_height(&egui::FontId::new(14.0, bold));
+        if with_limit {
+            h += 1.0 + f.row_height(&egui::FontId::proportional(11.0));
+        }
+        h
+    })
 }
 
 /// The quiet link beside the name in the summary card: a small icon, a face
