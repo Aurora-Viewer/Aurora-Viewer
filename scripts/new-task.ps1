@@ -43,7 +43,7 @@ if (Test-Path -LiteralPath $p.Work) {
         $why = $null
         $trim = @()
         $b = git -C $t.FullName rev-parse --abbrev-ref HEAD 2>$null
-        if ($LASTEXITCODE -eq 0 -and (gh pr view $b.Trim() --json state --jq .state 2>$null) -eq 'MERGED') {
+        if ($LASTEXITCODE -eq 0 -and (Get-BranchPr $t.FullName $b).state -eq 'MERGED') {
             $why = 'PR merged'
         } else {
             $last = Get-LastBuildTime $target

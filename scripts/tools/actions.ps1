@@ -97,12 +97,13 @@ function Show-Tasks {
     $dirs = @(Get-ChildItem -LiteralPath $Paths.Work -Directory -Force -ErrorAction SilentlyContinue)
     if (-not $dirs) { Write-Color '  No task in progress.' muted; return @() }
     Write-Color '  Computing (PRs on GitHub, sizes)…' muted_dim
-    # Get-LastBuildTime (scripts\common.ps1): the same last build as the
-    # housekeeping of new-task.ps1
+    # Get-LastBuildTime and Get-BranchPr (scripts\common.ps1): the same
+    # last build and PR as the housekeeping of new-task.ps1
     . (Join-Path $Paths.Repo 'scripts\common.ps1')
     $rows = foreach ($d in $dirs) {
         $branch = (git -C $d.FullName rev-parse --abbrev-ref HEAD 2>$null)
-        $pr = if ($branch) { gh pr view $branch.Trim() --json number,state 2>$null | ConvertFrom-Json }
+        # its head on origin or on a fork (common.ps1)
+        $pr = Get-BranchPr $d.FullName $branch
         $last = Get-LastBuildTime (Join-Path $d.FullName 'target')
         [pscustomobject]@{
             Name = $d.Name

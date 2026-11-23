@@ -354,3 +354,62 @@ function Invoke-Checked([string]$What, [scriptblock]$Command) {
     & $Command
     if ($LASTEXITCODE -ne 0) { throw "Failed: $What (code $LASTEXITCODE)." }
 }
+
+# owner/name of a GitHub remote URL (https or ssh), nothing for another host.
+function Get-GitHubSlug([string]$Url) {
+    if ($Url -and $Url.Trim() -match 'github\.com[:/](?<owner>[^/]+)/(?<name>[^/]+?)(\.git)?/?$') {
+        "$($Matches.owner)/$($Matches.name)"
+    }
+}
+
+# GitHub owners whose copy of the repository may hold the head of a task
+# branch's PR: those of the remotes it was pushed to (push remote, a
+# tracked branch of the same name, or a remote-tracking ref left by a push).
+# A task branch tracks origin/main from new-task.ps1, which says nothing of
+# where it was pushed. When nothing tells, every GitHub remote's owner.
+function Get-BranchHeadOwners([string]$Dir, [string]$Branch) {
+    $owners = @{}
+    foreach ($r in @(git -C $Dir remote 2>$null)) {
+        $slug = Get-GitHubSlug (git -C $Dir remote get-url $r 2>$null)
+        if ($slug) { $owners[$r] = $slug.Split('/')[0] }
+    }
+    $pushed = @()
+    $pushed += git -C $Dir config "branch.$Branch.pushRemote" 2>$null
+    $pushed += git -C $Dir config remote.pushDefault 2>$null
+    if ((git -C $Dir config "branch.$Branch.merge" 2>$null) -eq "refs/heads/$Branch") {
+        $pushed += git -C $Dir config "branch.$Branch.remote" 2>$null
+    }
+    foreach ($r in @($owners.Keys)) {
+        git -C $Dir show-ref --verify --quiet "refs/remotes/$r/$Branch" 2>$null
+        if ($LASTEXITCODE -eq 0) { $pushed += $r }
+    }
+    $known = @($pushed | Where-Object { $_ -and $owners.ContainsKey($_) } | ForEach-Object { $owners[$_] } | Select-Object -Unique)
+    if ($known) { $known } else { @($owners.Values | Select-Object -Unique) }
+}
+
+# The newest of $Prs (gh pr list JSON, newest first) whose head is in the
+# repository of one of $Owners: another contributor's PR from a branch of
+# the same name (main, fix/...) is not ours.
+function Select-BranchPr($Prs, [string[]]$Owners) {
+    foreach ($pr in $Prs) {
+        if ($pr.headRepositoryOwner -and $Owners -contains $pr.headRepositoryOwner.login) { return $pr }
+    }
+}
+
+# Number and state of the PR of a task branch, into the repository of the
+# origin remote, or nothing. The head may be on a fork (branches pushed to a
+# personal fork, PRs opened cross-repo): a bare `gh pr view <branch>` only
+# looks in the repository gh picks for the folder and, with a fork remote
+# and no `gh repo set-default`, finds nothing.
+function Get-BranchPr([string]$Dir, [string]$Branch) {
+    if (-not $Branch) { return }
+    $Branch = $Branch.Trim()
+    $repo = Get-GitHubSlug (git -C $Dir remote get-url origin 2>$null)
+    if (-not $repo) { return }
+    $json = gh pr list --repo $repo --head $Branch --state all --limit 30 --json number,state,headRepositoryOwner 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $json) { return }
+    # assigned before use: Windows PowerShell 5.1 hands a JSON array to the
+    # pipeline as one object
+    $prs = ($json -join "`n") | ConvertFrom-Json
+    Select-BranchPr $prs (Get-BranchHeadOwners $Dir $Branch)
+}
