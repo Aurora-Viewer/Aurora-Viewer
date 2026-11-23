@@ -637,12 +637,35 @@ fn poser_mirror_undo_hand_presets_reset_and_native_export_use_real_bento_channel
     editor.hand_preset(&rig, Some(true));
     let session = &editor.poser.sessions[&world.agent_id];
     assert!(session.edited(rig.names["mHandIndex1Left"]));
-    let native = storage::native(&rig, &session.pose, &[], "Pose".into(), 4).unwrap();
+    let native = storage::native(&rig, &session.authored(&rig, frame.model).unwrap(), "Pose".into(), 4).unwrap();
     assert!(native.animation.looping);
     assert_eq!(native.animation.base_priority, 4);
     assert!(native.animation.joints.iter().any(|j| j.joint_name == "mHandIndex1Left"));
     editor.pose_operation(&rig, &frame, controls::Operation::ResetAll);
     assert!((0..rig.len()).all(|b| !editor.poser.sessions[&world.agent_id].edited(b)));
+}
+#[test]
+fn poser_native_export_only_keys_the_channels_the_user_changed() {
+    let (world, mut editor, left, _, _) = captured_animation();
+    let rig = &world.avatar_lib.rig;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    let pose = Arc::make_mut(&mut session.pose);
+    pose.rotations[left] *= Quat::from_rotation_y(0.07);
+    pose.positions[rig.pelvis].z += 0.125;
+    let lip = rig.names["mFaceLipCornerLeft"];
+    pose.positions[lip].y += 0.002;
+    let authored = session.authored(rig, Mat4::IDENTITY).unwrap();
+    let upload = storage::native(rig, &authored, "Pose".into(), 4).unwrap();
+    let tracks = &upload.animation.joints;
+    assert_eq!(tracks.len(), 3, "untouched joints are available to attachments");
+    let elbow = tracks.iter().find(|j| j.joint_name == "mElbowLeft").unwrap();
+    assert!(near(elbow.rot_keys[0].rotation, authored.rotations[left]));
+    assert!(elbow.pos_keys.is_empty());
+    for (name, expected) in [("mPelvis", Vec3::Z * 0.125), ("mFaceLipCornerLeft", authored.positions[lip])] {
+        let joint = tracks.iter().find(|j| j.joint_name == name).unwrap();
+        assert!(joint.rot_keys.is_empty());
+        assert!(joint.pos_keys[0].position.abs_diff_eq(expected, 0.0002));
+    }
 }
 #[test]
 fn poser_bvh_export_round_trips_axis_order_and_pelvis_unlock_through_the_real_importer() {
@@ -1762,10 +1785,7 @@ fn poser_poses_and_exports_a_shape_that_leaves_a_joint_almost_flat() {
     let authored = session.authored(rig, frame.model).expect("the export has a pose");
     let moved = authored.rotations[rig.names["mHead"]].dot(rig.local_rot[rig.names["mHead"]]).abs();
     assert!(moved < 0.999, "the edit is exported");
-    assert!(
-        storage::native(rig, &authored, &[], "Flat".into(), 4).is_ok(),
-        "the upload is prepared"
-    );
+    assert!(storage::native(rig, &authored, "Flat".into(), 4).is_ok(), "the upload is prepared");
     assert!(
         document::Document::capture(rig, session, "Flat".into(), 4).valid(rig),
         "the pose can be saved"
@@ -1850,6 +1870,67 @@ fn near(a: Quat, b: Quat) -> bool {
     a.dot(b).abs() > 0.9999
 }
 #[test]
+fn poser_upload_exports_an_explicit_t_pose_in_full_and_undo_restores_sparse_export() {
+    let (world, mut editor, left, _, _) = captured_animation();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let export = |session: &data::Session| storage::native(rig, &session.authored(rig, frame.model).unwrap(), "Pose".into(), 4);
+    assert!(export(&editor.poser.sessions[&world.agent_id]).is_err());
+    editor.pose_operation(rig, &frame, controls::Operation::TPose);
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    let expected = rig.canonical_names.iter().filter(|name| name.starts_with('m')).count();
+    let neutral = export(session).expect("an explicit neutral pose has rotation tracks");
+    assert_eq!(neutral.animation.joints.len(), expected);
+    for track in &neutral.animation.joints {
+        assert!(near(track.rot_keys[0].rotation, rig.local_rot[rig.names[&track.joint_name]]));
+        if track.joint_name == "mPelvis" {
+            assert!(track.pos_keys[0].position.abs_diff_eq(Vec3::ZERO, 0.0002));
+        } else {
+            assert!(track.pos_keys.is_empty());
+        }
+    }
+    session.checkpoint();
+    Arc::make_mut(&mut session.pose).rotations[left] = Quat::from_rotation_y(0.5);
+    let built = export(session).unwrap();
+    assert_eq!(built.animation.joints.len(), expected, "the other bones keep the T-pose");
+    let elbow = built
+        .animation
+        .joints
+        .iter()
+        .find(|track| track.joint_name == "mElbowLeft")
+        .unwrap();
+    assert!(near(elbow.rot_keys[0].rotation, Quat::from_rotation_y(0.5)));
+    session.history(false);
+    session.history(false);
+    assert!(export(session).is_err(), "undoing T-pose restores the captured baseline");
+    session.history(true);
+    assert_eq!(export(session).unwrap().animation.joints.len(), expected);
+    editor.pose_operation(rig, &frame, controls::Operation::ResetAll);
+    assert!(export(&editor.poser.sessions[&world.agent_id]).is_err());
+}
+
+#[test]
+fn poser_saved_t_pose_round_trips_neutral_keys_and_released_joints() {
+    let (world, mut editor, left, _, _) = captured_animation();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    editor.select(left, rig, &frame);
+    editor.pose_operation(rig, &frame, controls::Operation::TPose);
+    editor.pose_operation(rig, &frame, controls::Operation::ResetJoint);
+    let session = &editor.poser.sessions[&world.agent_id];
+    let document = document::Document::capture(rig, session, "T-pose".into(), 4);
+    let saved = serde_json::to_vec(&document).unwrap();
+    let reopened: document::Document = serde_json::from_slice(&saved).unwrap();
+    let mut fresh = data::Session::new((*session.base).clone());
+    assert!(reopened.apply(rig, &mut fresh, document::LoadMode::All, frame.model));
+    let upload = storage::native(rig, &fresh.authored(rig, frame.model).unwrap(), "T-pose".into(), 4).unwrap();
+    let names: std::collections::HashSet<_> = upload.animation.joints.iter().map(|j| j.joint_name.as_str()).collect();
+    for (bone, name) in rig.canonical_names.iter().enumerate().filter(|(_, name)| name.starts_with('m')) {
+        assert_eq!(names.contains(name.as_str()), bone != left, "{name}");
+    }
+}
+
+#[test]
 fn poser_exports_nothing_of_a_captured_animation_through_any_format() {
     let (world, editor, left, _, played) = captured_animation();
     let rig = &world.avatar_lib.rig;
@@ -1860,11 +1941,10 @@ fn poser_exports_nothing_of_a_captured_animation_through_any_format() {
         assert!(near(authored.rotations[bone], rig.local_rot[bone]), "{}", rig.canonical_names[bone]);
         assert!(authored.positions[bone].abs_diff_eq(rig.local_pos[bone], 1e-5));
     }
-    let native = storage::native(rig, &authored, &[], "Pose".into(), 4).unwrap();
-    let track = native.animation.joints.iter().find(|j| j.joint_name == "mElbowLeft").unwrap();
-    assert!(near(track.rot_keys[0].rotation, rig.local_rot[left]));
-    let pelvis = native.animation.joints.iter().find(|j| j.joint_name == "mPelvis").unwrap();
-    assert!(pelvis.pos_keys[0].position.abs_diff_eq(Vec3::ZERO, 1e-4));
+    assert!(
+        storage::native(rig, &authored, "Pose".into(), 4).is_err(),
+        "there is no authored channel to upload"
+    );
     let bvh = bvh::encode(rig, &authored, true).unwrap();
     assert!(
         aurora_assets::import_animation::parse_bvh(bvh.as_bytes(), world.avatar_lib.skeleton.as_ref().unwrap()).is_err(),
@@ -1879,12 +1959,14 @@ fn poser_exports_nothing_of_a_captured_animation_through_any_format() {
         scales: rig.scale.clone(),
         locks: Default::default(),
         origin: rig.local_rot.clone(),
+        hold_rotation: vec![false; rig.len()],
     });
     assert!(decoded.apply(rig, &mut other, document::LoadMode::All, Mat4::IDENTITY));
     assert!(
         (0..rig.len()).all(|b| near(other.pose.rotations[b], rig.local_rot[b])),
         "a saved file brings none of it to another avatar"
     );
+    assert!(storage::native(rig, &other.authored(rig, Mat4::IDENTITY).unwrap(), "Pose".into(), 4).is_err());
 }
 #[test]
 fn poser_touching_or_mirroring_joints_exports_the_change_and_not_the_captured_rotation() {

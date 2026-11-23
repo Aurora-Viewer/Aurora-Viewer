@@ -407,6 +407,7 @@ mod tests {
             scales: rig.scale.clone(),
             locks: std::collections::HashMap::new(),
             origin: rig.local_rot.clone(),
+            hold_rotation: vec![false; rig.len()],
         })
     }
 
