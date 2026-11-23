@@ -602,6 +602,13 @@ impl ObjGpu {
 /// never auto alpha-mask a rigged face or a HUD attachment. Soft genital
 /// and hair alphas stay visible; an explicit MASK material / PBR mask is
 /// unchanged.
+/// Aurora Weather: a face whose base texture is in `slot` counts as foliage
+/// (the canopy map): its slot's verdict, never an opaque texture (a slot
+/// reused for one before its new verdict).
+fn leafy_slot(foliage: &[bool], alpha: &[AlphaKind], slot: u32) -> bool {
+    foliage.get(slot as usize).copied().unwrap_or(false) && alpha.get(slot as usize).is_some_and(|a| *a != AlphaKind::Opaque)
+}
+
 fn face_mode(f: &FaceDraw, alpha: &[AlphaKind], channel: &[bool], object_auto_mask: bool) -> (Pass, bool) {
     let tex_alpha = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
     let mut pass = classify(f, tex_alpha);
@@ -2517,6 +2524,9 @@ impl Scene {
         }
         self.water.clear(renderer);
         self.studio_stage.clear(renderer);
+        // (their meshes and records are this renderer's: a recovery or a
+        // relog makes them again)
+        self.tumbleweeds.clear(renderer);
         self.banlines.clear(renderer);
         self.spinning_cat.clear(renderer);
         self.portals.clear(renderer);
@@ -3603,10 +3613,17 @@ impl Scene {
                         continue;
                     }
                     let (pass, pool) = face_mode(f, alpha, channel, object_auto_mask);
-                    if pass == f.pass && pool == f.glow_pool && !foliage.get(slot as usize).copied().unwrap_or(false) {
+                    // Aurora Weather's foliage, set or cleared with the slot's
+                    // verdict (a reused slot's new texture may not be leaves)
+                    let leafy = leafy_slot(foliage, alpha, slot);
+                    let foliage_changed = renderer
+                        .records
+                        .get(f.record)
+                        .is_some_and(|r| (r.flags[3] & flags::FOLIAGE != 0) != leafy);
+                    if pass == f.pass && pool == f.glow_pool && !foliage_changed {
                         continue;
                     }
-                    any = true;
+                    any |= pass != f.pass || pool != f.glow_pool;
                     let before = f.record_flags();
                     f.pass = pass;
                     f.glow_pool = pool;
@@ -3615,16 +3632,14 @@ impl Scene {
                     let (record, face) = (f.record, cull_face(f, idx, fi == 0));
                     // (`object_auto_mask`: neither rigged nor a HUD, the
                     // objects whose blended faces take a rank of their own)
-                    if (mode_changed || object_auto_mask || foliage.get(slot as usize).copied().unwrap_or(false))
+                    if (mode_changed || object_auto_mask || foliage_changed)
                         && let Some(mut r) = renderer.records.get(record).copied()
                     {
                         r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
                         if object_auto_mask {
                             r.set_layer_rank(stacked_layer_rank(pass, f.te_index));
                         }
-                        if foliage.get(slot as usize).copied().unwrap_or(false) {
-                            r.flags[3] |= flags::FOLIAGE;
-                        }
+                        r.flags[3] = (r.flags[3] & !flags::FOLIAGE) | if leafy { flags::FOLIAGE } else { 0 };
                         renderer.records.set(record, r);
                     }
                     renderer.records.set_face(record, face);
@@ -3676,7 +3691,7 @@ impl Scene {
             } else {
                 0
             };
-            let leafy = foliage.get(f.base_slot as usize).copied().unwrap_or(false);
+            let leafy = leafy_slot(foliage, alpha, f.base_slot);
             if (mode != 0 || rank != 0 || leafy)
                 && let Some(mut r) = renderer.records.get(f.record).copied()
             {
@@ -4555,6 +4570,10 @@ impl Scene {
                 g.tex_ids.push(base_tex);
             }
             rec.tex[0] = self.textures.acquire(renderer, base_tex, source);
+            // a Linden tree's texture is foliage, whatever the classifier says
+            if o.is_tree() && !base_tex.is_nil() {
+                self.textures.force_foliage(base_tex, rec.tex[0]);
+            }
             let rigged = rigged_owner.is_some();
             if let Some((owner, _, binds)) = rigged_owner {
                 rec.flags[0] |= flags::SKINNED;

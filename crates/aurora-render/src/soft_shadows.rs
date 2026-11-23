@@ -980,8 +980,9 @@ mod tests {
         assert!(env.contains("let lifted = shadow_lift(shade);"));
         assert!(env.contains("* sunlit * lifted * 1.5;"));
         assert!(env.contains("sheen = sunlit * lifted * pow("));
-        assert!(env.contains("sn, view, world, lifted, clip, false) + sheen + glint, world);"));
-        assert!(env.contains("ll_classic_diffuse(base, sn, world, shade, clip, a) + sheen + glint, a);"));
+        // (the sheen and glints in the snow's tint: white by default)
+        assert!(env.contains("sn, view, world, lifted, clip, false) + (sheen + glint) * tint.rgb, world);"));
+        assert!(env.contains("ll_classic_diffuse(base, sn, world, shade, clip, a) + (sheen + glint) * tint.rgb, a);"));
         // the noise is counted from the photo's corner
         assert!(include_str!("shaders/soft_shadows.wgsl").contains("id.xy + p.size.zw"));
     }

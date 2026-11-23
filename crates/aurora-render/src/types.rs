@@ -2380,8 +2380,8 @@ pub struct RenderStats {
     pub gpu_effects: Option<[f32; 4]>,
     /// GPU time of [`GpuElement::Weather`] in parts (ms): the shelter map,
     /// the wetness and footprints memories, the wet ground (with the snow
-    /// lying), the drops and flakes with the distant layers, the fog's
-    /// volume.
+    /// lying), the drops and flakes with the distant layers and the debris
+    /// drawn, the fog's volume, the debris' canopy map and simulation.
     pub gpu_weather: Option<[f32; 6]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
@@ -2477,7 +2477,8 @@ pub enum GpuElement {
     /// Blended faces and particles.
     Transparent,
     /// Aurora Weather: the shelter map, the memories, the wet ground and
-    /// the snow lying, the drops and flakes, the fog's volume
+    /// the snow lying, the drops and flakes and the debris drawn, the fog's
+    /// volume, the debris' canopy map and simulation
     /// (`RenderStats::gpu_weather`).
     Weather,
     /// Glow, TAA, tone mapping, SMAA.

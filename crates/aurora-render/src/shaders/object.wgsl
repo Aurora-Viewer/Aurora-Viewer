@@ -3712,8 +3712,26 @@ fn fs_canopy(in: ShadowOut) -> @location(0) vec4<f32> {
     let alpha = sample_tex_unbiased(rec.tex.x, in.uv).a * rec.base_color.a;
     if ((rec.flags.x & FLAG_ALPHA_BLEND) != 0u && alpha < 0.02) { discard; }
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && alpha < rec.params.w) { discard; }
-    let leafy = (rec.flags.w & FLAG_FOLIAGE) != 0u && (rec.flags.x & FLAG_ANCHORED) == 0u;
-    return vec4<f32>(select(0.0, 1.0, leafy), in.world_pos.z, 0.0, 0.0);
+    return vec4<f32>(select(0.0, 1.0, canopy_leafy(rec)), in.world_pos.z, 0.0, 0.0);
+}
+
+// Foliage for the canopy map: the flag, never on a worn object nor a
+// rigged mesh (hair on a mannequin).
+fn canopy_leafy(rec: DrawRecord) -> bool {
+    return (rec.flags.w & FLAG_FOLIAGE) != 0u && (rec.flags.x & (FLAG_ANCHORED | FLAG_SKINNED)) == 0u;
+}
+
+// The floor under the foliage (debris_sim.wgsl `debris_floor`): the same
+// casters without the foliage, the topmost of what is left.
+@fragment
+fn fs_canopy_floor(in: ShadowOut) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
+    if (canopy_leafy(rec)) { discard; }
+    let alpha = sample_tex_unbiased(rec.tex.x, in.uv).a * rec.base_color.a;
+    if ((rec.flags.x & FLAG_ALPHA_BLEND) != 0u && alpha < 0.02) { discard; }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && alpha < rec.params.w) { discard; }
+    return vec4<f32>(in.world_pos.z, 0.0, 0.0, 0.0);
 }
 
 // --------------------------------------------------------------- particles

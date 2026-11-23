@@ -1244,8 +1244,10 @@ struct Pipelines {
     /// lying on what the map says, left every slope bare.
     shelter: wgpu::RenderPipeline,
     shelter_terrain: wgpu::RenderPipeline,
-    /// Aurora Weather's canopy map (debris.rs, object.wgsl `fs_canopy`).
+    /// Aurora Weather's canopy map (debris.rs, object.wgsl `fs_canopy`) and
+    /// the floor under it (`fs_canopy_floor`).
     canopy: wgpu::RenderPipeline,
+    canopy_floor: wgpu::RenderPipeline,
     /// Aurora Weather's fog: the walls drawn into its flow grid (fog.rs
     /// `Flow`, object.wgsl `fs_fog_voxel`).
     fog_voxel: wgpu::RenderPipeline,
@@ -3112,8 +3114,11 @@ impl Backend {
         let by = Vec2::from(by);
         self.rain_wet.shift(by);
         self.snow_trail.shift(by);
-        // (the debris is in world positions: it starts afresh)
-        self.debris = None;
+        // (the debris is in world positions: it starts afresh, its pool and
+        // pipelines kept)
+        if let Some(debris) = &mut self.debris {
+            debris.reset();
+        }
         // (the fog's history is of the old positions: it starts afresh)
         if let Some(fog) = &mut self.fog {
             fog.skipped();
@@ -6474,6 +6479,16 @@ impl Backend {
                 ..shadow_desc("debris canopy", Some("fs_canopy"))
             },
         );
+        let canopy_floor = batch.add(
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                format: Some(crate::debris::FLOOR_FORMAT),
+                depth_compare: wgpu::CompareFunction::Less,
+                depth_bias: level,
+                ..shadow_desc("debris floor", Some("fs_canopy_floor"))
+            },
+        );
         let shelter_terrain = batch.add(
             &module,
             &shadow_pl,
@@ -6639,6 +6654,7 @@ impl Backend {
             shelter: shelter.resolve(&mut done),
             shelter_terrain: shelter_terrain.resolve(&mut done),
             canopy: canopy.resolve(&mut done),
+            canopy_floor: canopy_floor.resolve(&mut done),
             fog_voxel: fog_voxel.resolve(&mut done),
             post: post.resolve(&mut done),
             pick: pick.resolve(&mut done),
@@ -12129,48 +12145,70 @@ impl Backend {
             && f.debris.is_some_and(|d| d.kind == crate::types::DebrisKind::Leaves)
             && let Some(debris) = &mut self.debris
         {
-            let (target, depth) = debris.canopy_targets();
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("debris canopy"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
+            let [canopy, floor, depth] = debris.canopy_targets();
+            // the canopy (the topmost surface, foliage or not), then the
+            // floor under it (the topmost that is not foliage)
+            for (target, pipeline, clear, label) in [
+                (canopy, &self.pipelines.canopy, wgpu::Color::TRANSPARENT, "debris canopy"),
+                (
+                    floor,
+                    &self.pipelines.canopy_floor,
+                    wgpu::Color {
+                        r: -1e9,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
                     },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                    "debris floor",
+                ),
+            ] {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some(label),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(clear),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
                     }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_bind_group(1, &self.records_bind_group, &[]);
-            pass.set_bind_group(2, &scene.textures, &[]);
-            pass.set_vertex_buffer(0, scene.vertices.slice(..));
-            pass.set_vertex_buffer(1, scene.skin.slice(..));
-            pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
-            pass.set_pipeline(&self.pipelines.canopy);
-            let k = self.shelter_slot;
-            pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
-            let (off, count) = rg.spot[k];
-            if count > 0 {
-                pass.multi_draw_indexed_indirect(&self.indirect, off, count);
-                calls.set(calls.get() + 1);
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_pipeline(pipeline);
+                let k = self.shelter_slot;
+                pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
+                let (off, count) = rg.spot[k];
+                if count > 0 {
+                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                    calls.set(calls.get() + 1);
+                }
+                draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
             }
-            draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
         }
         // ---- Aurora Weather's debris (debris.rs): after the shadows (the
         // shelter map it lands on), before the scene that draws it
-        if let (Some(look), Some(debris)) = (f.debris.filter(|_| !f.cutout && debris_shelter), &mut self.debris) {
+        // (not between a photo's tiles: the particles would move across
+        // their seams)
+        if let (Some(look), Some(debris)) = (
+            f.debris.filter(|_| !f.cutout && debris_shelter && still.is_none()),
+            &mut self.debris,
+        ) {
             debris.encode(
                 &self.device,
                 &self.queue,

@@ -440,6 +440,15 @@ impl WeatherSettings {
         0.5 * 4.0f32.powf(self.snow_size.clamp(0.0, 1.0))
     }
 
+    /// Where the weather's wind stands between its lulls and gusts, for what
+    /// the gusts lift and churn (the debris, the drops): none with the wind
+    /// off or steady (its lulls as strong as its gusts), all of the curve
+    /// once the gusts are well above the lulls.
+    pub fn gust(&self, wind: &Wind) -> f32 {
+        let (lo, hi) = self.wind_range();
+        wind.gust * ((hi - lo) * 4.0).clamp(0.0, 1.0)
+    }
+
     /// The wind's range, lulls to gusts (0..1, the lower first).
     pub fn wind_range(&self) -> (f32, f32) {
         let (a, b) = (self.wind_min.clamp(0.0, 1.0), self.wind_max.clamp(0.0, 1.0));
@@ -543,16 +552,11 @@ impl WeatherSettings {
             clean: false,
             fill: false,
             quality: self.quality_index(),
-            tint: {
-                let mut tint = self.tint();
-                // what lies is the sand's while sand blows and no snow falls
-                if self.sand_blowing() > 0.0 && !self.snowing() {
-                    tint.snow = tint::SAND_LINEAR;
-                }
-                tint
-            },
+            // (the app draws what lies in the sand's colour while it is
+            // the sand's, `App::lying_sand`)
+            tint: self.tint(),
             sand: self.sand_blowing(),
-            gust: wind.gust,
+            gust: self.gust(wind),
             fall_speed: self.fall_speed.clamp(*tint::FALL_SPEED.start(), *tint::FALL_SPEED.end()),
             flutter: self.flutter.clamp(*tint::FLUTTER.start(), *tint::FLUTTER.end()),
             fall_melts: self.fall_melts,

@@ -840,6 +840,10 @@ pub struct App {
     weather_saved: crate::weather::WeatherSettings,
     /// The weather's wind, in gusts.
     weather_wind: crate::weather::Wind,
+    /// What lies on the ground is the sand's (blown sand gathered there,
+    /// no snow fallen since): it keeps the sand's colour after the storm,
+    /// until snow falls or nothing lies any more.
+    lying_sand: bool,
     /// How far the wind has carried the weather's fog (weather/fog.rs).
     fog_drift: crate::weather::FogDrift,
     /// The weather in effect this frame: the settings (`update_weather_now`;
@@ -2164,6 +2168,7 @@ impl App {
             rain_last: None,
             weather_saved: Default::default(),
             weather_wind: Default::default(),
+            lying_sand: false,
             fog_drift: Default::default(),
             weather_now: Default::default(),
             thunder: Default::default(),
@@ -11045,6 +11050,7 @@ impl App {
             if let Some(ap) = &mut self.autopilot {
                 ap.shift(shift);
             }
+            self.scene.tumbleweeds.shift(shift);
             // the weather's memory of the ground (snow, wet, footprints)
             if let Some(gfx) = &mut self.gfx {
                 gfx.renderer.shift_world(shift);
@@ -12414,7 +12420,7 @@ impl App {
                 let wind = self
                     .weather_now
                     .tumbleweeds
-                    .then_some((self.weather_wind.now, self.weather_wind.gust));
+                    .then_some((self.weather_wind.now, self.weather_now.gust(&self.weather_wind)));
                 let mut weeds = std::mem::take(&mut self.scene.tumbleweeds);
                 weeds.update(
                     &mut gfx.renderer,
@@ -12867,6 +12873,14 @@ impl App {
             self.scene.snow_trails.clear();
             self.scene.avatar_snow = Default::default();
         }
+        // Aurora Weather: blown sand lying (drawn as the snow lying is, in
+        // the sand's colour), until snow falls on it or nothing lies
+        let snow_falling = self.weather_now.snowing() && self.weather_now.fall() > 0.0;
+        if self.weather_now.sand_blowing() > 0.0 && !snow_falling {
+            self.lying_sand = true;
+        } else if weather_clean || snow_falling || !gfx.renderer.snow_lying() {
+            self.lying_sand = false;
+        }
         // Aurora Weather: the snow gathering on the avatars near the camera
         // ("Snow on avatars"; off, what lay on them goes at once)
         // (nothing to do in clear weather with none left on them)
@@ -13102,7 +13116,14 @@ impl App {
                 trail_centre: self.trail_centre().truncate().to_array(),
                 clean: weather_clean,
                 fill: weather_fill,
-                ..self.weather_now.rain_look(&self.weather_wind)
+                ..{
+                    let mut look = self.weather_now.rain_look(&self.weather_wind);
+                    // what lies is sand: drawn in its colour
+                    if self.lying_sand {
+                        look.tint.snow = crate::weather::tint::SAND_LINEAR;
+                    }
+                    look
+                }
             },
             hide_sky: self.settings.debug.hidden_types.sky,
             hide_water: self.settings.debug.hidden_types.water,
@@ -13112,10 +13133,15 @@ impl App {
             debris: {
                 // the exclusion list, for the textures classified from now
                 let excluded = &mut self.scene.textures.foliage_excluded;
-                if excluded.len() != self.weather_now.debris_not_foliage.len() {
-                    *excluded = self.weather_now.debris_not_foliage.iter().copied().collect();
+                let list = &self.weather_now.debris_not_foliage;
+                if excluded.len() != list.len() || !list.iter().all(|id| excluded.contains(id)) {
+                    *excluded = list.iter().copied().collect();
                 }
-                self.weather_now.debris_look(self.weather_now.quality_index())
+                // not in VR yet: each eye would simulate its own pool (two
+                // different sets of particles, no depth between the eyes)
+                self.weather_now
+                    .debris_look(self.weather_now.quality_index())
+                    .filter(|_| !gfx.renderer.vr_engaged())
             },
             fog: self.weather_now.fog_look(
                 self.fog_drift.at,

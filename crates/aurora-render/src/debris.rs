@@ -16,6 +16,7 @@
 //! (`DebrisLook::stream`). Off (`FrameParams::debris` None), nothing is made
 //! or run.
 
+use crate::pipeline_cache::CachedPipelines;
 use crate::types::{DebrisKind, DebrisLook};
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec2, Vec3};
@@ -111,6 +112,8 @@ pub struct Debris {
     /// The canopy map (debris_sim.wgsl `debris_canopy`), drawn by the
     /// renderer with the shelter map's casters; until then, empty.
     canopy_view: wgpu::TextureView,
+    /// The floor under the foliage (debris_sim.wgsl `debris_floor`).
+    floor_view: wgpu::TextureView,
     canopy_depth: wgpu::TextureView,
     canopy_drawn: bool,
     pool: u32,
@@ -187,6 +190,16 @@ impl Debris {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: cs,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -194,7 +207,7 @@ impl Debris {
             bind_group_layouts: &[Some(&frame_layout), Some(&own_layout)],
             immediate_size: 0,
         });
-        let sim = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let sim = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
             label: Some("debris"),
             layout: Some(&layout),
             module: &module,
@@ -230,6 +243,22 @@ impl Debris {
             view_formats: &[],
         });
         let canopy_view = canopy.create_view(&Default::default());
+        let floor_view = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("debris floor"),
+                size: wgpu::Extent3d {
+                    width: CANOPY_PX,
+                    height: CANOPY_PX,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: FLOOR_FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
         let canopy_depth = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("debris canopy depth"),
@@ -253,6 +282,7 @@ impl Debris {
             params,
             particles,
             canopy_view,
+            floor_view,
             canopy_depth,
             canopy_drawn: false,
             pool,
@@ -266,12 +296,21 @@ impl Debris {
         self.pool
     }
 
-    /// The canopy map's target and its depth, for the renderer to draw the
-    /// shelter map's casters into (object.wgsl `fs_canopy`); from then on
-    /// the leaves fall from it.
-    pub fn canopy_targets(&mut self) -> (&wgpu::TextureView, &wgpu::TextureView) {
+    /// The canopy map's target, the floor's and their depth (cleared for
+    /// each), for the renderer to draw the shelter map's casters into
+    /// (object.wgsl `fs_canopy`, `fs_canopy_floor`); from then on the
+    /// leaves fall from it.
+    pub fn canopy_targets(&mut self) -> [&wgpu::TextureView; 3] {
         self.canopy_drawn = true;
-        (&self.canopy_view, &self.canopy_depth)
+        [&self.canopy_view, &self.floor_view, &self.canopy_depth]
+    }
+
+    /// Everything goes (a region crossing: the particles' places and the
+    /// canopy map are the old region's): the pool emptied at the next step,
+    /// the canopy map not read until drawn again. Nothing is made again.
+    pub fn reset(&mut self) {
+        self.kind = None;
+        self.canopy_drawn = false;
     }
 
     /// The particles, as the instance buffer of `vs_debris`.
@@ -297,9 +336,11 @@ impl Debris {
         dt: f32,
     ) {
         if self.kind != Some(look.kind) {
-            // another kind: what was there goes at once
+            // another kind (or a reset): what was there goes at once, and
+            // the canopy map waits to be drawn again
             encoder.clear_buffer(&self.particles, 0, None);
             self.kind = Some(look.kind);
+            self.canopy_drawn = false;
         }
         self.frame = self.frame.wrapping_add(1);
         let dt = dt.clamp(0.0, 0.1);
@@ -351,6 +392,10 @@ impl Debris {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(&self.canopy_view),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.floor_view),
+                },
             ],
         });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -364,8 +409,10 @@ impl Debris {
     }
 }
 
-/// The canopy map's format: x the foliage's top (m; 0 none), y its depth.
+/// The canopy map's format: x 1 where the top is foliage, y its height (m).
 pub const CANOPY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
+/// The floor's: the height of the topmost surface that is not foliage (m).
+pub const FLOOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 #[cfg(test)]
 mod tests {
@@ -411,6 +458,28 @@ mod tests {
     fn the_pool_grows_with_the_quality() {
         assert!(pool_size(0) < pool_size(1) && pool_size(1) < pool_size(2));
         assert_eq!(u64::from(pool_size(2)) * STRIDE, 1 << 20);
+    }
+
+    #[test]
+    fn the_shaders_hold_the_same_numbers() {
+        let sim = include_str!("shaders/debris_sim.wgsl");
+        let draw = include_str!("shaders/debris.wgsl");
+        let common = include_str!("shaders/common.wgsl");
+        assert!(sim.contains(&format!("const REACH: f32 = {REACH:?};")), "REACH");
+        assert!(sim.contains(&format!("const FLAG_STREAM: u32 = {FLAG_STREAM}u;")));
+        assert!(sim.contains(&format!("const FLAG_CANOPY: u32 = {FLAG_CANOPY}u;")));
+        for (kind, name) in [
+            (DebrisKind::Leaves, "LEAVES"),
+            (DebrisKind::Sand, "SAND"),
+            (DebrisKind::Paper, "PAPER"),
+            (DebrisKind::Embers, "EMBERS"),
+        ] {
+            assert!(sim.contains(&format!("const DK_{name}: u32 = {}u;", kind.index())), "DK_{name}");
+            assert!(draw.contains(&format!("const DD_{name}: u32 = {}u;", kind.index())), "DD_{name}");
+        }
+        // a particle is four vec4
+        assert_eq!(STRIDE, 4 * 16);
+        assert!(common.contains(&format!("const FLAG_FOLIAGE: u32 = {}u;", crate::types::flags::FOLIAGE)));
     }
 
     #[test]

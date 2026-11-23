@@ -106,7 +106,10 @@ impl Tumbleweeds {
                     }
                 }
             }
-            self.rng = 0x9e37_79b9_7f4a_7c15 ^ now.elapsed().as_nanos() as u64;
+            self.rng = 0x9e37_79b9_7f4a_7c15
+                ^ std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(1, |d| d.as_nanos() as u64);
         }
         let dt = self.last.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32().min(0.1));
         self.last = Some(now);
@@ -210,6 +213,8 @@ impl Tumbleweeds {
         }
     }
 
+    /// Everything goes: their records and meshes (of `renderer`, the one
+    /// they were made on), and a failure to make them is tried again later.
     pub fn clear(&mut self, renderer: &mut Renderer) {
         for w in self.weeds.drain(..) {
             renderer.records.free(w.record);
@@ -218,6 +223,15 @@ impl Tumbleweeds {
             renderer.free_mesh(m);
         }
         self.last = None;
+        self.failed = false;
+    }
+
+    /// A region crossing: positions are relative to the new region (`by`
+    /// m, as the camera's `shift`).
+    pub fn shift(&mut self, by: Vec3) {
+        for w in &mut self.weeds {
+            w.pos += by;
+        }
     }
 }
 

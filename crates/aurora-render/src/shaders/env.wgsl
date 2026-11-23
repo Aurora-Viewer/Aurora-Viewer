@@ -2046,8 +2046,9 @@ fn vs_rain(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
         speed = (0.5 + 0.08 * min(diameter, 12.0) + rain_rand(seed + 5u) * 0.3);
         carried = 1.0;
     }
-    // ash and other slow falls (1: as before)
-    speed *= fall_speed_scale();
+    // ash and other slow falls (1: as before); flakes only, the rain falls
+    // as it does
+    if (snow) { speed *= fall_speed_scale(); }
     let time = frame.camera_pos.w;
     var velocity = vec3<f32>(frame.rain_wind.zw * carried, -speed);
     // the box is centered on the camera, a little above it; drops keep their

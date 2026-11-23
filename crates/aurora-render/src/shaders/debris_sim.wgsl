@@ -34,6 +34,10 @@ struct DebrisParams {
 // shelter map's square x 1 where the topmost surface is foliage, y its
 // height (m).
 @group(1) @binding(2) var debris_canopy: texture_2d<f32>;
+// The floor under the foliage (object.wgsl `fs_canopy_floor`): the topmost
+// surface that is not foliage (m; -1e9 where none), what leaves land on
+// under a tree (the shelter map only sees the crown there).
+@group(1) @binding(3) var debris_floor: texture_2d<f32>;
 
 const DK_LEAVES: u32 = 1u;
 const DK_SAND: u32 = 2u;
@@ -130,11 +134,28 @@ fn ds_canopy(xy: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(c.y, 2.0);
 }
 
-// The surface's facing at `xy` (from its heights a texel around).
-fn ds_normal(xy: vec2<f32>, h: f32) -> vec3<f32> {
+// The ground for a particle at height `z` over `xy`: the shelter map's top
+// surface, or under the foliage there (below the canopy's top) the floor
+// beneath it, so that leaves fall through a crown to the ground under it.
+fn ds_ground(xy: vec2<f32>, z: f32) -> f32 {
+    let top = ds_surface(xy);
+    if ((dp.look.w & FLAG_CANOPY) == 0u || !ds_on()) { return top; }
+    let uv = ds_uv(xy);
+    if (any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) { return top; }
+    let at = vec2<i32>(uv * vec2<f32>(textureDimensions(debris_canopy)));
+    let c = textureLoad(debris_canopy, at, 0).xy;
+    if (c.x > 0.5 && z < c.y + 0.05) {
+        return textureLoad(debris_floor, at, 0).x;
+    }
+    return top;
+}
+
+// The surface's facing at `xy` (from its heights a texel around), for a
+// particle at height `z`.
+fn ds_normal(xy: vec2<f32>, h: f32, z: f32) -> vec3<f32> {
     let e = 0.35;
-    let hx = ds_surface(xy + vec2<f32>(e, 0.0));
-    let hy = ds_surface(xy + vec2<f32>(0.0, e));
+    let hx = ds_ground(xy + vec2<f32>(e, 0.0), z);
+    let hy = ds_ground(xy + vec2<f32>(0.0, e), z);
     // a step (a wall's top, a kerb): level rather than a cliff
     let dx = select(0.0, hx - h, abs(hx - h) < 0.3);
     let dy = select(0.0, hy - h, abs(hy - h) < 0.3);
@@ -291,9 +312,8 @@ fn ds_spawn(i: u32, seed: u32) {
             return;
         }
     }
-    // never indoors: nothing above where it starts but the canopy it falls
-    // from (the shelter map's top is the canopy there)
-    if (!from_canopy && ds_surface(xy) > z) { return; }
+    // (never indoors: what does not fall from a canopy starts on the
+    // shelter map's top surface, the open sky above it)
     var mode = MODE_FLUTTER;
     let m = dr(seed + 6u);
     if (kind == DK_LEAVES || kind == DK_PAPER) {
@@ -343,7 +363,7 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    let ground = ds_surface(p.xy);
+    let ground = ds_ground(p.xy, p.z);
     let landed = (state & DS_LANDED) != 0u;
     var vel = v.xyz;
     if (landed) {
@@ -364,7 +384,7 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
             vel = vec3<f32>(vel.xy * max(1.0 - dt * 4.0, 0.0), 0.0);
         }
         var to = p.xyz + vel * dt;
-        let h = ds_surface(to.xy);
+        let h = ds_ground(to.xy, p.z + 0.25);
         // a wall: it stops against it
         if (h > p.z + 0.25) {
             to = vec3<f32>(p.xy, p.z);
@@ -383,9 +403,11 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
         // allows: g / vt² (quadratic), a light leaf rides the wind
         let vt = max(abs(k.terminal), 0.2);
         let gravity = vec3<f32>(0.0, 0.0, -9.81 * sign(k.terminal));
-        let rel = vel - air;
-        let drag = -rel * length(rel) * (9.81 / (vt * vt));
-        var acc = gravity + drag;
+        // (the drag is applied after the other forces, implicitly: an
+        // explicit step on a quadratic drag overshoots and blows up at a
+        // low frame rate, embers below 50 fps)
+        let kdrag = 9.81 / (vt * vt);
+        var acc = gravity;
         let mode = (state >> DS_MODE_SHIFT) & 15u;
         let rate = 0.7 + 0.6 * dr(seed + 14u);
         if (kind == DK_LEAVES || kind == DK_PAPER) {
@@ -407,7 +429,7 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
                 // end over end about a level axis, drifting sideways as it
                 // spins (Magnus)
                 let axis = normalize(cross(vec3<f32>(0.0, 0.0, 1.0), glide));
-                acc += cross(axis, rel) * 0.6;
+                acc += cross(axis, vel - air) * 0.6;
                 q = ds_quat_mul(ds_quat_axis(axis, s.x * 2.4), ds_quat_facing(glide, 0.0));
             } else {
                 // a spiral: round a small circle, banked into it
@@ -434,8 +456,11 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
             s.x += dt;
         }
         vel += acc * dt;
+        // quadratic drag toward the air, solved for the end of the step
+        let rel = vel - air;
+        vel = air + rel / (1.0 + kdrag * length(rel) * dt);
         var to = p.xyz + vel * dt;
-        let h = ds_surface(to.xy);
+        let h = ds_ground(to.xy, p.z);
         if (h > -1e8 && to.z <= h + 0.01) {
             if (h > p.z + 0.4) {
                 // into a wall (the top it shows is well above): bounce back
@@ -458,15 +483,15 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
             } else {
                 // it lands, lying on the surface with a yaw of its own
                 to.z = h + 0.004;
-                let n = ds_normal(to.xy, h);
+                let n = ds_normal(to.xy, h, to.z);
                 q = ds_quat_facing(n, dr(seed + 20u) * 6.2831853);
                 vel = vec3<f32>(vel.xy * 0.2, 0.0);
                 state |= DS_LANDED;
                 s.z = 0.0;
             }
         }
-        // under cover it does not go: a roof or a canopy above it is fine
-        // (it came from there or blows under an edge), never through it
+        // (under a roof it does not blow: a top above it is a wall it stops
+        // against; under a canopy it falls through to the floor beneath)
         p = vec4<f32>(to, p.w);
         // too old in the air: it fades (embers burn out; sand settles out)
         if (s.z > k.life) { p.w -= dt / 2.0; }

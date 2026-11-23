@@ -55,27 +55,42 @@ impl WeatherSettings {
         (!is_white(c)).then(|| c.map(srgb_to_linear))
     }
 
-    /// Set what `preset` sets: colour, opacity, fall, fog and wind; what it
-    /// leaves (quality, distances, the ground's switches) stays as it was.
-    /// The raw sliders under the presets show its values and can change them.
+    /// Set what `preset` sets: colour, opacity, fall, fog, wind and debris.
+    /// Every preset first puts back what any preset sets (so that one never
+    /// keeps another's fog, wind or debris; Plain is that alone), then sets
+    /// its own; what none sets (quality, distances, the ground's switches,
+    /// how much falls) stays as it was. The raw settings under the presets
+    /// show its values and can change them.
     pub fn apply_preset(&mut self, preset: WeatherPreset) {
         let clear = WeatherSettings::default();
-        // each starts from the plain fall, then sets its own
         self.rain_tint = clear.rain_tint;
         self.rain_opacity = clear.rain_opacity;
         self.puddle_opacity = clear.puddle_opacity;
         self.snow_tint = clear.snow_tint;
         self.snow_opacity = clear.snow_opacity;
+        self.snow_size = clear.snow_size;
         self.fall_speed = clear.fall_speed;
         self.flutter = clear.flutter;
         self.fall_melts = clear.fall_melts;
+        self.fog_on = clear.fog_on;
+        self.fog_follows_fall = clear.fog_follows_fall;
+        self.fog_follow_sky = clear.fog_follow_sky;
+        self.fog_colour = clear.fog_colour;
+        self.fog_density = clear.fog_density;
+        self.fog_height = clear.fog_height;
+        self.fog_drift = clear.fog_drift;
+        self.wind_min = clear.wind_min;
+        self.wind_max = clear.wind_max;
+        self.debris_on = clear.debris_on;
+        self.debris_kind = clear.debris_kind;
+        self.debris_density = clear.debris_density;
+        self.tumbleweeds = clear.tumbleweeds;
+        if preset == WeatherPreset::Clear {
+            return;
+        }
         self.enabled = true;
         match preset {
-            WeatherPreset::Clear => {
-                self.fog_follows_fall = false;
-                self.debris_on = false;
-                self.tumbleweeds = false;
-            }
+            WeatherPreset::Clear => {}
             WeatherPreset::BloodRain => {
                 self.precipitation_on = true;
                 self.precipitation = Precipitation::Rain;
@@ -240,6 +255,13 @@ mod tests {
     }
 
     #[test]
+    fn the_sand_is_the_shaders_sand() {
+        let common = include_str!("../../../aurora-render/src/shaders/common.wgsl");
+        let [r, g, b, _] = SAND_LINEAR;
+        assert!(common.contains(&format!("const SAND_COLOUR: vec3<f32> = vec3<f32>({r:?}, {g:?}, {b:?});")));
+    }
+
+    #[test]
     fn preset_names_parse() {
         assert_eq!(WeatherPreset::parse(" Blood-Rain "), Some(WeatherPreset::BloodRain));
         assert_eq!(WeatherPreset::parse("dust-storm"), Some(WeatherPreset::DustStorm));
@@ -261,5 +283,15 @@ mod tests {
         assert_eq!(w.tint(), aurora_render::WeatherTint::NONE);
         w.apply_preset(WeatherPreset::DustStorm);
         assert!(w.fog_on && !w.precipitation_on && w.wind_max > 0.8);
+        assert!(w.debris_on && w.tumbleweeds && w.debris_kind == super::super::DebrisChoice::Sand);
+        // another preset keeps none of the storm's fog, wind or debris
+        w.apply_preset(WeatherPreset::BloodRain);
+        assert!(!w.debris_on && !w.tumbleweeds && w.fog_follow_sky && w.wind_max < 0.5);
+        // and Plain undoes it all, the main switch as it was
+        w.apply_preset(WeatherPreset::DustStorm);
+        w.apply_preset(WeatherPreset::Clear);
+        let clear = WeatherSettings::default();
+        assert!(!w.fog_on && !w.debris_on && w.fog_colour == clear.fog_colour && w.wind_max == clear.wind_max);
+        assert!(w.enabled);
     }
 }
