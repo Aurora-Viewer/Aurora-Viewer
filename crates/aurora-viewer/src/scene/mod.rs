@@ -4563,6 +4563,12 @@ impl Scene {
             if !g.hud {
                 rec.flags[3] |= flags::OBJECT_MASK_PICK;
             }
+            // Alt-focus keeps an emissive mask's clear texels whatever the
+            // face's alpha, also where EMISSIVE_MASK is dropped above
+            // (LLVOVolume::lineSegmentIntersect's `ignore_alpha`).
+            if legacy_alpha == Some(legacy_mat::alpha_mode::EMISSIVE) {
+                rec.flags[3] |= flags::PICK_IGNORES_ALPHA;
+            }
             rec.set_world_blend_pick(
                 !g.hud
                     && wearer.is_none()
@@ -6862,7 +6868,8 @@ fn te_invisible(o: &Object, face: usize) -> bool {
 /// LLVolumeGeometryManager::genDrawInfo (`blinn_phong_transparent` sends
 /// the face to PASS_ALPHA) and LLVolumeGeometryManager::registerFace (the
 /// shader mask of PASS_ALPHA is DIFFUSE_ALPHA_MODE_BLEND's), llvovolume.cpp.
-/// The click pick keeps the material's mode (`legacy_alpha`), as
+/// The click pick keeps the material's mode (`legacy_alpha`) and Alt-focus
+/// keeps the face's clear texels (`flags::PICK_IGNORES_ALPHA`), as
 /// LLVOVolume::lineSegmentIntersect ignores the face's alpha there.
 fn emissive_mask_applies(diffuse_alpha_mode: u8, te_alpha: f32) -> bool {
     diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE && te_alpha >= 0.999
@@ -8206,10 +8213,6 @@ mod tests {
         assert!(usage.contains(&(source, texture_importance::per_repeats(256.0, 2.0), true)));
     }
 
-    /// materialF.glsl (blend): a transparent texture under a glossy or shiny
-    /// legacy material still shows its reflections (alpha = max(texture
-    /// alpha, glare)), the "wet" layers over mesh bodies (#1420). Without
-    /// one, or not blended, the transparent texture stays hidden.
     /// #4517: an emissive mask on a transparent face blends like any
     /// transparent face (texture alpha = opacity), as in the Legacy Viewer;
     /// on an opaque face it stays an emissive mask.
@@ -8225,6 +8228,10 @@ mod tests {
         }
     }
 
+    /// materialF.glsl (blend): a transparent texture under a glossy or shiny
+    /// legacy material still shows its reflections (alpha = max(texture
+    /// alpha, glare)), the "wet" layers over mesh bodies (#1420). Without
+    /// one, or not blended, the transparent texture stays hidden.
     #[test]
     fn transparent_texture_under_a_glaring_legacy_material_is_blended() {
         let face = |glare: bool, legacy: Option<u8>, te_alpha: f32| FaceDraw {
