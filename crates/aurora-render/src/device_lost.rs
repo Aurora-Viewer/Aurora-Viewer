@@ -346,6 +346,14 @@ impl DeviceLost {
         submission
     }
 
+    /// The frame of the latest submission noted (0 before any): work
+    /// submitted between frames, outside a frame's own path (DLSS's
+    /// feature and its first clear, dlss.rs), is noted under the frame it
+    /// follows, so that it shows in the line of a loss too.
+    pub fn last_frame(&self) -> u64 {
+        self.work.lock().ok().and_then(|w| w.submitted.map(|(s, _)| s.frame)).unwrap_or(0)
+    }
+
     /// The GPU finished `submission` (`on_submitted_work_done`).
     pub fn finished(&self, submission: Submission) {
         if let Ok(mut w) = self.work.lock()

@@ -84,6 +84,11 @@ pub struct GpuInfo {
     /// Whether this device ray-traces (Preferences › Graphics › Ray
     /// tracing).
     pub ray_tracing: crate::RayTracingSupport,
+    /// Whether DLSS can draw (Preferences › Graphics › FSR).
+    pub dlss: crate::DlssSupport,
+    /// The folder DLSS looks in for the user's files; None without the
+    /// `dlss` feature.
+    pub dlss_folder: Option<String>,
 }
 
 impl GpuInfo {
@@ -420,9 +425,10 @@ impl Renderer {
         };
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         #[allow(unused_mut)] // reassigned only by the Windows enumeration retries below
-        let mut instance = xr_graphics
-            .as_ref()
-            .map_or_else(|| wgpu::Instance::new(desc()), |g| g.instance.clone());
+        let mut instance = xr_graphics.as_ref().map_or_else(
+            || crate::dlss::instance(&desc()).unwrap_or_else(|| wgpu::Instance::new(desc())),
+            |g| g.instance.clone(),
+        );
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         let _ = xr; // no VR on the other systems
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
@@ -483,6 +489,8 @@ impl Renderer {
                 drop(instance);
                 xr_graphics = None;
                 instance = wgpu::Instance::new(desc());
+                // a device from the plain instance has no DLSS extensions
+                crate::dlss::forget_instance();
                 adapters = pollster::block_on(instance.enumerate_adapters(crate::BACKENDS));
                 if adapters.is_empty() {
                     log::warn!(
@@ -668,6 +676,10 @@ impl Renderer {
             notice,
             vulkan: vulkan_limits(&adapter),
             ray_tracing,
+            // (of this device: one opened before it for DLSS says nothing of
+            // a VR headset's opened without the DLSS extensions)
+            dlss: crate::dlss::support_on(&device),
+            dlss_folder: crate::dlss::folder_named(),
         };
 
         // ---- the scene's stores; what they write at creation is replayed
@@ -1311,6 +1323,13 @@ impl Renderer {
     /// reported it with the last frame it finished (None before the first).
     pub fn present_mode(&self) -> Option<wgpu::PresentMode> {
         self.last_stats.present_mode
+    }
+
+    /// DLSS drew the last frame the backend finished, and in which mode:
+    /// None when FSR stood in for it (Help › About and the crash report
+    /// name the upscaler that drew, not the setting's FSR 3.1).
+    pub fn dlss_drawing(&self) -> Option<crate::DlssDrawing> {
+        self.last_stats.dlss_drawing
     }
 
     /// Aurora Weather: snow lay on the ground in the last frame the backend
@@ -2371,11 +2390,16 @@ fn open_device(
     };
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     let (device, queue) = if let Some(xr) = xr {
+        // (with the DLSS extensions when DLSS is set up: xr_device.rs tells
+        // dlss.rs, as request_device does below)
         let graphics = xr
             .open(adapter, &descriptor(asked))
             .map_err(|e| RenderError::Device(e.to_string()))?;
         log::info!("OpenXR-compatible viewer graphics device: {}", adapter.get_info().name);
         graphics
+    } else if let Some(opened) = crate::dlss::request_device(adapter, &descriptor(asked), alim.clone()) {
+        // (the instance carries the DLSS extensions, dlss.rs)
+        opened
     } else {
         request()?
     };

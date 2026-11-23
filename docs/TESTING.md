@@ -13803,6 +13803,8 @@ What the inventory must show with these scenarios:
 | `AURORA_DEBUG_MOTION=1` | The screen's motion vectors shown instead of the image |
 | `AURORA_TAA_MOTION=0` or `alt` | TAA reprojected through the camera alone, without the motion vectors, as before |
 | `AURORA_FSR_QUALITY=<0-4>` | FSR's mode for this launch, with `AURORA_AA=7`: native AA, quality, balanced, performance, ultra performance |
+| `AURORA_DLSS=<1/0>`, `AURORA_DLSS_DIR=<folder>`, `AURORA_DLSS_PRESET=<n>` | Builds with the `dlss` feature only (docs/DLSS.md): 1 draws DLSS in FSR's place for this launch whatever the DLSS setting (with FSR chosen: `AURORA_AA=7`), 0 keeps NVIDIA's files out of it; the folder of the user's DLSS files; NVIDIA's render preset number for this launch (11 K, 12 L, 13 M, 0 its own) |
+| `AURORA_DLSS_JITTER=x`, `y` or `xy`, `AURORA_DLSS_ALPHA=1` or `0`, `AURORA_DLSS_AUTOEXP=0`, `AURORA_DLSS_FAIL=<n>[,<n>]`, `AURORA_DLSS_SETTLE=0` | DLSS debugging (`dlss` feature): the jitter's sign flipped on the axes named; the scene's alpha upscaled by DLSS, or left as DLSS wrote it; no automatic exposure; those evaluates failed (counted from the first), to see DLSS made again and then given up; a feature made at every size of a resize, as before, to time it (the log times each feature's release after it was retired) |
 | `AURORA_FSR_SHARPNESS=<0-1>` or `off` | FSR's RCAS sharpening for this launch, or none |
 | `AURORA_FSR_REACTIVE=0` | FSR without the reactive mask it generates from the blended faces |
 | `AURORA_FSR_BLEND_MOTION=0` | FSR without the depth and motion of the blended faces |

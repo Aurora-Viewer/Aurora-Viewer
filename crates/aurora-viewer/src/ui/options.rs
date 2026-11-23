@@ -557,6 +557,10 @@ pub struct OptionsUi {
     pub gpu_notice: Option<aurora_render::adapter_choice::Notice>,
     /// Whether the GPU device ray-traces; set by the app with the GPUs.
     pub ray_tracing: aurora_render::RayTracingSupport,
+    /// Whether DLSS can draw, and the folder it looks in for the user's
+    /// files; set by the app with the GPUs.
+    pub dlss: aurora_render::DlssSupport,
+    pub dlss_folder: Option<String>,
     /// The sky in use is tone mapped (not classic); set by the app each
     /// frame: the tone mapper choice is greyed otherwise.
     pub sky_tone_mapped: bool,
@@ -665,6 +669,9 @@ impl OptionsUi {
             self.gpus.clone_from(&from.gpus);
         }
         self.gpu_notice = from.gpu_notice;
+        // Phototools borrows the anti-aliasing rows: DLSS as Preferences has it
+        self.dlss = from.dlss;
+        self.dlss_folder.clone_from(&from.dlss_folder);
     }
 
     pub fn set_chat_log_status(&mut self, text: impl Into<String>, warn: bool) {

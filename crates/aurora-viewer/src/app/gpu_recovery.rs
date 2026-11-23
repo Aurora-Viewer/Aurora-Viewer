@@ -81,6 +81,8 @@ impl App {
         self.options_ui.gpu_in_use = renderer.info.name.clone();
         self.options_ui.gpu_notice = renderer.info.notice;
         self.options_ui.ray_tracing = renderer.info.ray_tracing;
+        self.options_ui.dlss = renderer.info.dlss;
+        self.options_ui.dlss_folder = renderer.info.dlss_folder.clone();
     }
 
     pub(super) fn egui_state_for(&self, window: &Window, renderer: &Renderer) -> egui_winit::State {
