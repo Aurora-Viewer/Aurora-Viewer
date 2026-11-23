@@ -178,8 +178,16 @@ pub(super) fn native(rig: &Rig, pose: &SubjectPose, name: String, priority: i32)
             animation.joints.push(JointMotion {
                 joint_name: joint_name.clone(),
                 priority: -1,
-                rot_keys: if rotated { times.map(|time| RotKey { time, rotation }).to_vec() } else { Vec::new() },
-                pos_keys: if moved { times.map(|time| PosKey { time, position }).to_vec() } else { Vec::new() },
+                rot_keys: if rotated {
+                    times.map(|time| RotKey { time, rotation }).to_vec()
+                } else {
+                    Vec::new()
+                },
+                pos_keys: if moved {
+                    times.map(|time| PosKey { time, position }).to_vec()
+                } else {
+                    Vec::new()
+                },
             });
         }
     }

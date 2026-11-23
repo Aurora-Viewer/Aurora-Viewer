@@ -1753,10 +1753,7 @@ fn poser_poses_and_exports_a_shape_that_leaves_a_joint_almost_flat() {
     let authored = session.authored(rig, frame.model).expect("the export has a pose");
     let moved = authored.rotations[rig.names["mHead"]].dot(rig.local_rot[rig.names["mHead"]]).abs();
     assert!(moved < 0.999, "the edit is exported");
-    assert!(
-        storage::native(rig, &authored, "Flat".into(), 4).is_ok(),
-        "the upload is prepared"
-    );
+    assert!(storage::native(rig, &authored, "Flat".into(), 4).is_ok(), "the upload is prepared");
     assert!(
         document::Document::capture(rig, session, "Flat".into(), 4).valid(rig),
         "the pose can be saved"
