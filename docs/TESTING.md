@@ -10140,7 +10140,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `experiences`, `environment` (or their index); Aurora's window opens a
   tab's section of "Manage", scrolled to and unfolded (`options` on "What
   visitors can do", `general` on "Sale and ownership", `covenant` on the
-  overview); `people` asks for the object owners as Refresh does, `owners`
+  overview); `visibility` opens "Visibility and search" with its
+  advanced rows unfolded and a five-paragraph parcel description (the
+  description field taller than its label, #4647); `people` asks for the
+  object owners as Refresh does, `owners`
   also scrolls down to them; `environment-picker` and `experience-picker`
   open the settings picker (the demo library's skies, waters and days, also
   listed without `AURORA_DEMO_ENV_SELECT`) and the experience picker with
