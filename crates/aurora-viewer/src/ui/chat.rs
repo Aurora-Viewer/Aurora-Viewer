@@ -4069,7 +4069,11 @@ pub fn show(
         .attention(conversations_waiting(world))
         .attention_flash(st.button_flash.bar(ctx.input(|i| i.time)))
         .steady_size();
-    if st.contacts {
+    if minimized {
+        // Not on the minimized bar: nothing shows to detach, and the
+        // window's name keeps room (the human's report of 2026-11-23 on
+        // #4756: "Convers…").
+    } else if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
     } else {
