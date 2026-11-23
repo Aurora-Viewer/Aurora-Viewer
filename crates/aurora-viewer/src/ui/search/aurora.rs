@@ -57,19 +57,16 @@ const DETAILS_W: f32 = 372.0;
 /// the sections it lacks at their default place. Aurora's own: the Legacy
 /// Viewer's tabs have a fixed order.
 fn section_order(saved: &[String]) -> [Tab; 5] {
-    let mut order: Vec<Tab> = Vec::with_capacity(SECTIONS.len());
-    for tab in saved.iter().filter_map(|k| Tab::from_key(k)) {
-        if SECTIONS.contains(&tab) && !order.contains(&tab) {
-            order.push(tab);
-        }
-    }
-    for tab in SECTIONS {
-        if !order.contains(&tab) {
-            order.push(tab);
-        }
-    }
+    // read every frame: no allocation
     let mut out = SECTIONS;
-    out.copy_from_slice(&order);
+    let mut n = 0;
+    let known = saved.iter().filter_map(|k| Tab::from_key(k));
+    for tab in known.chain(SECTIONS) {
+        if SECTIONS.contains(&tab) && !out[..n].contains(&tab) {
+            out[n] = tab;
+            n += 1;
+        }
+    }
     out
 }
 
