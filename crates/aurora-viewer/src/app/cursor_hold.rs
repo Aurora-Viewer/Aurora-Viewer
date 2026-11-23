@@ -6,14 +6,17 @@
 //!
 //! While held the cursor is the tool's (the mouse capture of LLToolGun and
 //! LLToolCamera): the windows neither see it hover, nor get its clicks or its
-//! wheel. Windows and X11 cannot lock it, only confine it to the window, so
-//! mouselook brings it back to the centre whenever it moves
+//! wheel. Mouselook brings it back to the centre whenever it moves
 //! (LLToolGun::handleHover → LLViewerWindow::moveCursorToCenter,
-//! indra/newview/lltoolgun.cpp): it never drifts over a window (#1343).
-//! macOS and Wayland lock it: it stays still, and moving it there would undo
-//! the lock (on macOS a warp couples the cursor to the mouse again, and the
-//! warp back came in as an equal and opposite raw motion that turned the
-//! view back where mouselook began, #3310).
+//! indra/newview/lltoolgun.cpp): X11 cannot lock it, only confine it to the
+//! window, and there it never drifts over a window (#1343); on Wayland the
+//! move under the lock is the hint of where it shows when given back.
+//! Except on macOS: a warp there couples the cursor to the mouse again,
+//! undoing the lock, and the warp back came in as an equal and opposite raw
+//! motion that turned the view back where mouselook began (#3310). The
+//! Legacy Viewer does not warp a decoupled cursor there either
+//! (LLViewerWindow::moveCursorToCenter, isWrapMouse is !mCursorDecoupled,
+//! indra/llwindow/llwindowmacosx.h).
 
 use super::App;
 use winit::event::{ElementState, WindowEvent};
@@ -66,9 +69,9 @@ pub(super) struct CursorHold {
     /// it while the interface is built): done as soon as the frame gives the
     /// window back, so the cursor is never left hidden and locked.
     pending: Option<bool>,
-    /// The system locked the cursor (macOS, Wayland): it does not move, so
-    /// mouselook never brings it back to the centre.
-    locked: bool,
+    /// macOS locked the cursor: a warp would undo the lock, so mouselook
+    /// never brings it back to the centre.
+    warp_unlocks: bool,
     /// The next raw motion is dropped: on macOS the first one after the lock
     /// still carries the warp to the centre that preceded it
     /// (LLWindowMacOSX::adjustCursorDecouple sets mCursorIgnoreNextDelta,
@@ -85,14 +88,19 @@ impl CursorHold {
     /// was just moved to the centre, a move macOS reports in the next raw
     /// motion.
     pub(super) fn locked(&mut self, locked: bool, warped: bool) {
-        self.locked = locked;
-        self.skip_motion = locked && warped && cfg!(target_os = "macos");
+        self.lock_answer(locked, warped, cfg!(target_os = "macos"));
+    }
+
+    /// `locked`, the system given (`macos`) so that the tests cover both.
+    fn lock_answer(&mut self, locked: bool, warped: bool, macos: bool) {
+        self.warp_unlocks = locked && macos;
+        self.skip_motion = self.warp_unlocks && warped;
     }
 
     /// The held cursor moved: whether mouselook must bring it back to the
-    /// centre (a confined cursor, Windows and X11).
+    /// centre (everywhere but a cursor macOS locked).
     pub(super) fn recenters(&self) -> bool {
-        self.kind == Some(HoldKind::Mouselook) && !self.locked
+        self.kind == Some(HoldKind::Mouselook) && !self.warp_unlocks
     }
 
     /// A raw motion arrived: false when it is the warp's and must not turn
@@ -125,7 +133,7 @@ impl CursorHold {
     /// window lost the focus, the cursor stays where the system left it.
     pub(super) fn give_back(&mut self, focus_lost: bool) -> Option<Return> {
         self.pending = None;
-        self.locked = false;
+        self.warp_unlocks = false;
         self.skip_motion = false;
         let kind = self.kind.take()?;
         Some(match kind {
@@ -282,10 +290,10 @@ impl App {
         }
     }
 
-    /// The hidden mouselook cursor moved (it could only be confined): back
-    /// to the centre, like LLToolGun::handleHover. The view turns from the
-    /// raw motion, which the move back does not produce on Windows and X11.
-    /// A locked cursor is left alone (see the module comment).
+    /// The hidden mouselook cursor moved: back to the centre, like
+    /// LLToolGun::handleHover. The view turns from the raw motion, which the
+    /// move back does not produce outside macOS, where a locked cursor is
+    /// left alone (see the module comment).
     pub(super) fn recenter_mouselook_cursor(&mut self) {
         if !self.cursor_hold.recenters() {
             return;
@@ -448,52 +456,50 @@ mod tests {
     }
 
     #[test]
-    fn only_a_confined_mouselook_cursor_is_brought_back_to_the_centre() {
-        // Windows, X11: confined, it moves and comes back to the centre
+    fn only_a_cursor_macos_locked_is_left_off_the_centre() {
+        // Windows and Wayland lock it, X11 only confines it: recentred as
+        // before (on Wayland the move is where it shows when given back)
+        for (locked, macos) in [(true, false), (false, false), (false, true)] {
+            let mut hold = CursorHold::default();
+            hold.take(true, false, (0.0, 0.0));
+            hold.lock_answer(locked, true, macos);
+            assert!(hold.recenters(), "locked {locked}, macOS {macos}");
+            assert!(hold.take_motion(), "locked {locked}, macOS {macos}");
+        }
+        // macOS locked it: a warp would undo the lock (#3310)
         let mut hold = CursorHold::default();
         hold.take(true, false, (0.0, 0.0));
-        hold.locked(false, true);
-        assert!(hold.recenters());
-        assert!(hold.take_motion());
-        hold.give_back(false);
-        // macOS, Wayland: locked, a warp would undo the lock (#3310)
-        hold.take(true, false, (0.0, 0.0));
-        hold.locked(true, true);
+        hold.lock_answer(true, true, true);
         assert!(!hold.recenters());
-        // given back and taken again (Alt): confined this time, recentred
+        // given back and taken again (Alt), the lock refused this time
         hold.give_back(false);
-        assert!(!hold.recenters());
         hold.take(true, false, (0.0, 0.0));
-        hold.locked(false, true);
+        hold.lock_answer(false, true, true);
         assert!(hold.recenters());
         // a camera drag is never recentred
         let mut drag = CursorHold::default();
         drag.take(false, false, (40.0, 50.0));
-        drag.locked(false, false);
+        drag.lock_answer(false, false, false);
         assert!(!drag.recenters());
     }
 
     #[test]
-    fn the_warp_before_a_lock_turns_the_view_only_where_it_is_reported() {
+    fn the_warp_before_a_macos_lock_does_not_turn_the_view() {
         let mut hold = CursorHold::default();
         hold.take(true, false, (0.0, 0.0));
-        hold.locked(true, true);
-        // macOS reports the warp in the first raw motion after it
-        assert_eq!(hold.take_motion(), !cfg!(target_os = "macos"));
+        hold.lock_answer(true, true, true);
+        // the first raw motion after it carries the warp: dropped, once
+        assert!(!hold.take_motion());
         assert!(hold.take_motion());
-        // no warp, or no lock: nothing is dropped
+        // no warp before the lock (a camera drag): nothing is dropped
         hold.give_back(false);
         hold.take(false, false, (0.0, 0.0));
-        hold.locked(true, false);
-        assert!(hold.take_motion());
-        hold.give_back(false);
-        hold.take(true, false, (0.0, 0.0));
-        hold.locked(false, true);
+        hold.lock_answer(true, false, true);
         assert!(hold.take_motion());
         // a give-back forgets a motion still to drop
         hold.give_back(false);
         hold.take(true, false, (0.0, 0.0));
-        hold.locked(true, true);
+        hold.lock_answer(true, true, true);
         hold.give_back(false);
         assert!(hold.take_motion());
     }

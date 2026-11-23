@@ -25593,6 +25593,11 @@ impl ApplicationHandler for App {
             let Some(delta) = crate::raw_mouse::motion(delta) else {
                 return;
             };
+            // the warp to the centre that preceded a macOS lock
+            // (cursor_hold.rs): dropped whatever would have taken it
+            if !self.cursor_hold.take_motion() {
+                return;
+            }
             if self.numeric_drag.active() {
                 if let Some(g) = &mut self.gfx {
                     g.egui_state.on_mouse_motion(delta);
@@ -25600,10 +25605,6 @@ impl ApplicationHandler for App {
                 return;
             }
             if !self.in_world() || self.exit_prompt.open {
-                return;
-            }
-            // the warp to the centre that preceded a lock (cursor_hold.rs)
-            if !self.cursor_hold.take_motion() {
                 return;
             }
             let dy = if self.settings.invert_mouse { -delta.1 } else { delta.1 };
