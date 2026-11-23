@@ -211,7 +211,11 @@ fn filter_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
     if underlined_button(ui, p, aurora_i18n::tr!("common-preferences"), st.preferences_open).clicked() {
         st.preferences_open = !st.preferences_open;
     }
-    tree_actions(ui, p, st);
+    // LLPanelMainInventory::toggleViewMode hides `collapse_expand_buttons`
+    // in single folder mode: its list opens no folder in place.
+    if st.single_folder.is_none() {
+        tree_actions(ui, p, st);
+    }
 }
 
 fn tree_actions(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
