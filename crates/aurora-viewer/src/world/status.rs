@@ -497,7 +497,16 @@ impl World {
                         beyond_range: false,
                         speaker: Default::default(),
                     };
+                    let (line_time, line_text) = (line.time, line.text.clone());
                     self.conversation_push(from, line, true);
+                    // captured like an ordinary incoming IM (the Legacy
+                    // Viewer's LLIMProcessing::processNewMessage, case
+                    // IM_DO_NOT_DISTURB_AUTO_RESPONSE, gives it to
+                    // gIMMgr->addMessage like any IM): the service keeps
+                    // dialog 20, and its copy, the raw body on the receipt
+                    // clock, pairs with this line instead of coming back
+                    // as a history line (#4691)
+                    self.direct_incoming(from, line_time, &line_text, &im.message, false, im.timestamp);
                 }
                 true
             }

@@ -125,7 +125,7 @@ impl App {
     pub(super) fn note_viewer_stats(&mut self, paced: Duration, gpu: &aurora_render::GpuInfo) {
         let now = Instant::now();
         let position = self.in_world().then(|| self.world.agent_global()).flatten();
-        let focused = self.focused;
+        let focused = self.in_front();
         let t = &mut self.viewer_stats;
         t.render_start.get_or_insert(now);
         t.frames += 1;

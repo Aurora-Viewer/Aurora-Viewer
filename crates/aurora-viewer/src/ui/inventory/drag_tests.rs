@@ -527,3 +527,14 @@ fn inventory_double_click_attaches_an_object_then_detaches_it_once_worn() {
     f.click(101, false);
     assert!(f.actions.is_empty());
 }
+
+/// A held drag tells where the pointer is beyond the window's edges.
+#[test]
+fn beyond_the_viewers_window_the_pointer_is_not_over_the_world() {
+    let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+    assert!(drag::in_world(false, Some(egui::pos2(400.0, 300.0)), window));
+    assert!(!drag::in_world(false, Some(egui::pos2(900.0, 300.0)), window));
+    assert!(!drag::in_world(false, Some(egui::pos2(400.0, -20.0)), window));
+    // over a window of the interface, as before
+    assert!(!drag::in_world(true, Some(egui::pos2(400.0, 300.0)), window));
+}
