@@ -917,7 +917,7 @@ fn material_image_overrides_control_encoded_upload_dimensions_deduplication_and_
     assert!(imports.has_shared_textures());
     imports.start(&world, &Default::default(), &prefs, &prices());
     assert!(imports.message.is_empty(), "{}", imports.message);
-    let maps: Vec<_> = imports.queue.iter().filter(|step| step.kind == Kind::Texture).collect();
+    let maps: Vec<_> = imports.queue.iter().filter(|step| step.kind == Some(Kind::Texture)).collect();
     assert_eq!(
         maps.len(),
         2,
@@ -929,7 +929,7 @@ fn material_image_overrides_control_encoded_upload_dimensions_deduplication_and_
         let image = aurora_assets::decode_j2k(&bytes, 0).expect("decode uploaded map");
         assert_eq!((image.width, image.height), expected);
     }
-    assert_eq!(imports.queue.iter().filter(|step| step.kind == Kind::Material).count(), 3);
+    assert_eq!(imports.queue.iter().filter(|step| step.kind == Some(Kind::Material)).count(), 3);
 }
 
 #[test]

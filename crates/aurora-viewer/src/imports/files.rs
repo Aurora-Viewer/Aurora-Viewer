@@ -1241,7 +1241,7 @@ mod tests {
         assert!(!empty[0].selected);
 
         // a folder scan picks up the scripts, in their folders, and nothing else
-        let rows = load_folder(&root, &prefs, prefs.texture(), 30, 0, 0);
+        let rows = load_folder(&root, &prefs, prefs.texture(), 30);
         let mut scripts: Vec<_> = rows
             .iter()
             .filter(|entry| matches!(entry.source, Some(Source::Script(_))))
