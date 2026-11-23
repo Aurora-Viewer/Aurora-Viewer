@@ -13,7 +13,8 @@
 // a shadow ray to each that counts, where the view traces their shadows),
 // and where it is itself a mirror the ray goes on from it once (`hit_sent`,
 // `BOUNCES`).
-// Not yet: the projectors and the materials' maps past the base colour.
+// Not yet: the projectors, and the materials' maps past the base colour
+// and a PBR face's packed one (`pbr_orm`).
 
 // After rt_common.wgsl, rt_view.wgsl, rt_light.wgsl, rt_probes.wgsl,
 // rt_history.wgsl and wgpu_ray_query's enable (rt_shadows.rs `source`).
@@ -39,7 +40,8 @@ struct Params {
     // the glossy history averages at most.
     half: vec4<f32>,
     // x: 1 when last frame's glossy history is valid, y: the rays of a
-    // glossy pixel this frame.
+    // glossy pixel this frame, z: 1 when a PBR face's occlusion counts
+    // (AURORA_PBR_OCCLUSION, as the frame's `sky_ll.z`).
     gloss: vec4<f32>,
     // (rt_history.wgsl `light_changed`, which the glossy history does not
     // ask: a reflection shows the light of what it meets, not the pixel's)
@@ -160,7 +162,9 @@ struct Sent {
     mirror: vec3<f32>,
 };
 
-// types.rs `DrawRecord`: `legacy` and `spec_color`; common.wgsl's flag
+// types.rs `DrawRecord`: `spec_uv`, `legacy` and `spec_color`;
+// common.wgsl's flag
+const RECORD_SPEC_UV: u32 = 11u;
 const RECORD_LEGACY: u32 = 12u;
 const RECORD_SPEC_COLOR: u32 = 13u;
 const FLAG_LEGACY_MAT: u32 = 256u;
@@ -197,14 +201,33 @@ const GLOSS_HISTORY_ALPHA: f32 = 0.25;
 // than that trails it.
 const GLOSS_DRIFT: f32 = 2.0;
 
+// A PBR face's occlusion, roughness and metallic at `uv` (x, y, z), as
+// object.wgsl `eval_material_base` reads them: the red of its packed map,
+// and its green and blue times the material's factors. A material that
+// keeps its roughness and its metal in the map has factors of 1: by them
+// alone it reflected as a rough metal whatever the map says. A face
+// without the map reads the white texture. The terrain's record keeps its
+// layers where a face keeps its maps: its factors alone.
+fn pbr_orm(record: u32, uv: vec2<f32>, lod: f32) -> vec3<f32> {
+    let factors = record_vecf(record, RECORD_PARAMS);
+    var map = vec3<f32>(1.0);
+    if ((record_vec(record, RECORD_FLAGS).x & FLAG_TERRAIN) == 0u) {
+        let at = pbr_uv(uv, record_vecf(record, RECORD_SPEC_UV), record_vecf(record, RECORD_LEGACY).y);
+        map = sample_tex_level(record_vec(record, RECORD_TEX).z, at, lod).rgb;
+    }
+    let occlusion = select(1.0, map.r, params.gloss.z > 0.5);
+    return vec3<f32>(occlusion, clamp(factors.z * map.g, 0.03, 1.0), clamp(factors.y * map.b, 0.0, 1.0));
+}
+
 // A fullbright face sends its colour, unlit (object.wgsl `fs_main`); the
-// others rt_light.wgsl's diffuse and what they mirror, by their material's
-// factors without its maps. A PBR face: less a metal's diffuse, which has
-// none, and the Fresnel share of common.wgsl `shade_pbr`, a mirror's as far
-// as ssr.wgsl `reflection_weight` and `traced_share` make it one, the rest
-// of it the probes' reflection there. The ambient is the probes' too
-// (rt_probes.wgsl), as the shading's: inside a room neither is the open
-// sky's. A legacy material: object.wgsl
+// others rt_light.wgsl's diffuse and what they mirror. A PBR face, by its
+// packed map (`pbr_orm`): less a metal's diffuse, which has none, and the
+// Fresnel share of common.wgsl `shade_pbr`, a mirror's as far as ssr.wgsl
+// `reflection_weight` and `traced_share` make it one, the rest of it the
+// probes' reflection there; the material's occlusion dims its ambient and
+// what it mirrors, as `shade_pbr`'s `mat_ao`. The ambient is the probes'
+// too (rt_probes.wgsl), as the shading's: inside a room neither is the open
+// sky's. A legacy material, by its factors without its maps: object.wgsl
 // `legacy_light`'s glossy environment and its environment (applyGlossEnv,
 // applyLegacyEnv), which dims the face as it covers it; a face with neither
 // mirrors nothing, as it is drawn.
@@ -218,18 +241,21 @@ fn hit_sent(s: Surface, hit: vec3<f32>, dir: vec3<f32>, lod: f32, offset: f32) -
     let lamps = Lamps(u32(params.mode.z), params.mode.w > 0.5, -1.0);
     let grazing = 1.0 - max(dot(s.normal, -dir), 0.0);
     if ((flags & FLAG_PBR) != 0u) {
-        let factors = record_vecf(s.record, RECORD_PARAMS);
-        let metallic = clamp(factors.y, 0.0, 1.0);
+        let orm = pbr_orm(s.record, s.uv, lod);
+        let occlusion = orm.x;
+        let roughness = orm.y;
+        let metallic = orm.z;
         // (a metal has no diffuse: no light to find for it)
         var light = vec3<f32>(0.0);
         if (metallic < 0.999) {
-            light = hit_light(params.lit, s, hit, offset, params.mode.x, params.mode.y > 0.5, lamps, ambient_at(params.lit, hit, s.normal));
+            let ambient = ambient_at(params.lit, hit, s.normal) * occlusion;
+            light = hit_light(params.lit, s, hit, offset, params.mode.x, params.mode.y > 0.5, lamps, ambient);
         }
         let f0 = mix(vec3<f32>(0.04), base, metallic);
-        let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(grazing, 5.0);
-        let gloss = clamp(1.0 - 2.0 * factors.z, 0.0, 1.0);
-        let sharp = gloss * gloss * (1.0 - smoothstep(TRACED_ROUGH_FADE, TRACED_ROUGH_MAX, factors.z));
-        let blurred = fresnel * (1.0 - sharp) * mirrored_at(params.lit, hit, reflect(dir, s.normal), factors.z);
+        let fresnel = (f0 + (vec3<f32>(1.0) - f0) * pow(grazing, 5.0)) * occlusion;
+        let gloss = clamp(1.0 - 2.0 * roughness, 0.0, 1.0);
+        let sharp = gloss * gloss * (1.0 - smoothstep(TRACED_ROUGH_FADE, TRACED_ROUGH_MAX, roughness));
+        let blurred = fresnel * (1.0 - sharp) * mirrored_at(params.lit, hit, reflect(dir, s.normal), roughness);
         return Sent(base * (1.0 - metallic) * light + blurred + glow, fresnel * sharp);
     }
     let light = hit_light(params.lit, s, hit, offset, params.mode.x, params.mode.y > 0.5, lamps, ambient_at(params.lit, hit, s.normal));

@@ -519,6 +519,7 @@ dependencies = [
 name = "aurora-assets"
 version = "0.1.0"
 dependencies = [
+ "aurora-j2k",
  "aurora-llsd",
  "base64 0.23.1",
  "cc",
@@ -587,6 +588,14 @@ dependencies = [
  "fluent-syntax",
  "log",
  "sys-locale",
+]
+
+[[package]]
+name = "aurora-j2k"
+version = "0.1.0"
+dependencies = [
+ "openjpeg-sys",
+ "rayon",
 ]
 
 [[package]]

@@ -273,6 +273,15 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3<f32>(0.04045));
 }
 
+// A PBR map's coordinates (object.wgsl `pbr_uv`): `so` its scale and
+// offset, `rot` its rotation.
+fn pbr_uv(uv: vec2<f32>, so: vec4<f32>, rot: f32) -> vec2<f32> {
+    let c = cos(rot);
+    let sn = sin(rot);
+    let v = vec2<f32>(uv.x, 1.0 - uv.y) * so.xy;
+    return vec2<f32>(c * v.x + sn * v.y, -sn * v.x + c * v.y) + so.zw;
+}
+
 // The diffuse map's coordinates (object.wgsl `diffuse_uv`: the texture
 // animation at the shading's time, then `te_uv`, `ll_uv` / `pbr_uv`), from
 // the face's own (`surface_at`: planar mapping is in them).
@@ -293,8 +302,7 @@ fn diffuse_uv(record: u32, uv: vec2<f32>) -> vec2<f32> {
     let c = cos(rot);
     let sn = sin(rot);
     if ((flags & FLAG_PBR) != 0u) {
-        let v = vec2<f32>(st.x, 1.0 - st.y) * so.xy;
-        return vec2<f32>(c * v.x + sn * v.y, -sn * v.x + c * v.y) + so.zw;
+        return pbr_uv(st, so, rot);
     }
     var s = st.x - 0.5;
     var t = st.y - 0.5;

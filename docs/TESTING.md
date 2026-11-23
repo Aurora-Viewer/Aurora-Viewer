@@ -5128,9 +5128,14 @@ both open states and the selection count. Capture at frame 620.
   polished metal cube whose packed map (occlusion, roughness, metal) has
   an occlusion of 0 but for a disc on each face: the cube is dark and only
   reflects the sky in the discs, as in the Legacy Viewer
-  (`AURORA_PBR_OCCLUSION=alt` shows it plain one second in three). Left
-  of the cube, an inside corner (floor, back and side) of the
-  half-polished metal: with GTAO its reflections fade into the corner
+  (`AURORA_PBR_OCCLUSION=alt` shows it plain one second in three). With
+  `AURORA_RT_REFLECTIONS=1`, the polished sphere mirrors the cube's sides
+  the view does not see as dark as the cube is seen
+  (`AURORA_DEMO_POS="133.0,132.6"`, close to the sphere), and as a polished
+  mirror with `AURORA_PBR_OCCLUSION=0`: the traced reflections read the
+  packed map too. Left of the cube, an inside corner (floor, back and
+  side) of the half-polished metal: with GTAO its reflections fade into
+  the corner
   (`AURORA_GTAO_SPECULAR=alt`; seen best with `AURORA_DEMO_POS="131.5,131"`).
 - **`AURORA_DEMO_SHIMMER=1`**: ahead of the start position, a 16 × 6 m
   glossy plate (legacy material, specular exponent 245) whose bump normal
@@ -5629,7 +5634,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
 | `AURORA_DEMO_SOFT_SHADOWS=1`, `near` or `slope` | A pergola, a 14 m pole, a table, a thin post and a sphere on a pale receiving plate in a 35 degree sun, soft shadows on (`near`: at 0.4 of the distance) |
-| `AURORA_DEMO_BLEND_SHADOWS=1` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), or 400 greenhouse panes |
+| `AURORA_DEMO_BLEND_SHADOWS=1`, `behind` or `dense` | Alpha-blended panels in the sun (greenhouse pane, face and texture alpha), a nearly opaque pane before a shadow, or 400 greenhouse panes |
 | `AURORA_DEMO_FEET=opaque` or `blend` | A shoe on each foot of our avatar and of the crowd, and two blocks on the ground (contact shadows) |
 | `AURORA_DEMO_LIGHTS=<n>` | Local light load: n small lights in the crowd |
 | `AURORA_DEMO_LAMP_BLINK=<frames>` | A lamp ahead of the start view, switched off and on every `frames` frames |
@@ -5960,7 +5965,7 @@ both open states and the selection count. Capture at frame 620.
   in from the contact (a 5 degree sun did that at 0.25 and, at 1, lost the
   post's, the table legs' and the pergola legs' shadows). `slope` adds a
   ramp tilted 35 degrees away from the sun with a second post on it.
-- **`AURORA_DEMO_BLEND_SHADOWS=1|dense`**: alpha-blended prims that cast
+- **`AURORA_DEMO_BLEND_SHADOWS=1|behind|dense`**: alpha-blended prims that cast
   sun shadows (`demo_blend_shadows.rs`), best from
   `AURORA_DEMO_POS="80,100"`. `1`: six 2 m panels lying 1.3 m above the
   ground, 14 m along the start view and to its right (clear of the
@@ -5972,7 +5977,14 @@ both open states and the selection count. Capture at frame 620.
   Viewer's rules, `fs_shadow` in `object.wgsl`). The classic sun lights
   with `min(n·l, shadow)` as the Legacy Viewer does, so a dithered shadow
   barely darkens ground the sun already lights at a slant: see the
-  dithered ones with `AURORA_DEBUG_SHADOWS=1`. `dense`: 400 upright
+  dithered ones with `AURORA_DEBUG_SHADOWS=1`. `behind`: two upright panes
+  8 m along the start view, the left one blended at face alpha 0.95, the
+  right one opaque, each before an opaque slab lying 2.2 m up; with
+  `AURORA_DEMO_SUN=207,70` the slabs' shadows lie on the ground behind the
+  panes. With `AURORA_RT_SHADOWS=1` and `AURORA_CONTACT_SHADOWS=1`, the
+  blended pane is lit as the opaque one is: the ray-traced mask is made
+  from the depth that holds it, so it does not show the slab's shadow seen
+  through it. `dense`: 400 upright
   greenhouse panes over a 60 m square ahead, for the cost of the blended
   casters (`AURORA_PROFILE=1`, with `AURORA_BLEND_SHADOWS=0` to compare).
 - **`AURORA_DEMO_FEET=opaque|blend`**: our avatar and each avatar of
@@ -12947,6 +12959,8 @@ What the inventory must show with these scenarios:
 | `AURORA_ANCHOR_CENTRES=every` | The centre of every worn object recomputed at every frame, as before |
 | `AURORA_NAME_TAGS=classic`, `plate` or `alt` | Style of the avatar name tags for this launch |
 | `AURORA_LABEL_OCCLUSION=0` | Name tags and floating texts drawn over the scene, as before, instead of behind what is in front of them |
+| `AURORA_J2K=openjpeg` | Textures decoded by OpenJPEG, as before `aurora-j2k` |
+| `AURORA_J2K_THREADS=<n>` | Threads a large texture's decode is shared between at most (16; `1` for one thread a texture) |
 | `AURORA_TEXTURE_BC7=0` | Textures never compressed to BC7 |
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 without its disk cache |
 | `AURORA_RENDER_THREAD=0` | Frames drawn on the main thread |
@@ -13315,7 +13329,8 @@ What the inventory must show with these scenarios:
   leaves the occlusion out, as before; `alt` leaves it out one second in
   three, without `AURORA_PROFILE`, to see the difference
   (`AURORA_DEMO_PBR_METAL=1`: the cube left of the spheres turns from dark
-  with bright discs to an even mirror).
+  with bright discs to an even mirror). The traced reflections follow it
+  for the faces they shade themselves (`AURORA_RT_REFLECTIONS`).
 - **`AURORA_AO=legacy|gtao|alt[:<0-3>]`**: the ambient occlusion method of
   Preferences › Graphics for this launch, without changing the saved
   setting: `legacy` the Legacy Viewer's screen-space occlusion
@@ -14147,6 +14162,38 @@ What the inventory must show with these scenarios:
   the screen under the window and its refresh rate at each change
   (`screen under the window: \\.\DISPLAY2, 144 Hz`); `present=` and
   `screen_hz=` appear in the `perf settings` line.
+- **`AURORA_J2K=openjpeg`**: every JPEG2000 texture is decoded by OpenJPEG,
+  as it was before `aurora-j2k` (the Rust decoder of the workspace), to
+  compare the two on the same place: the image, and the decode time of the
+  `texture load:` line. Without it, `aurora-j2k` decodes and OpenJPEG only
+  takes what it refuses (the log then has `aurora-j2k: …; decoding with
+  OpenJPEG` at the debug level, target `aurora_assets::j2k`). Whole
+  textures have the same pixels either way on x86-64 (on Apple Silicon
+  OpenJPEG's own lossy pixels can be one unit off in a few places, where
+  `aurora-j2k` has the x86-64 ones); a texture whose download is
+  still partial can be finer with `aurora-j2k`, which keeps the code-blocks
+  of the packet the bytes end in where OpenJPEG drops them. Offline, on a
+  folder of `.j2c` files (a demo cache's `tex`, never the sealed store):
+  `cargo run --release -p aurora-j2k --example j2k_compare -- <folder>
+  [--sample N] [--cuts N] [--bench]` decodes every file with both, whole at
+  each reduce level and cut at N places, counts the decodes that are
+  identical and lists any that are not, and with `--bench` times both on
+  one thread by size and level (a round times each decoder in turn and the
+  best of each is kept: `--rounds N`).
+- **`AURORA_J2K_THREADS=<n>`**: a texture of 512 x 512 pixels or more at
+  the decoded level is decoded by the thread that has its job and by the
+  threads of the background pool that have none at that moment, `n` at most
+  in all (16 without the variable; `1`: one thread a texture, as before).
+  The pixels are the same whatever the number. Nothing changes while the
+  pool has as many jobs as threads, or more (an arrival in a busy place):
+  the decoder then asks for no help and each texture has its one thread;
+  what changes is the decode time of a large texture that arrives alone
+  (the `texture load:` line). Offline,
+  `j2k_compare … --bench --threads T` also times each decode with T
+  threads lent by an idle pool, next to its time on one, and compares the
+  decodes made with them; with `--busy` the threads never come (a pool
+  with no idle thread: what offering the work costs), and `--retain MB`
+  sets the working memory the bench's decoder keeps between two decodes.
 - **`AURORA_TEXTURE_BC7_CACHE=0`**: the textures compressed to BC7 are
   neither written to the disk cache (`cache\tex\<id>.bc7`) nor read back:
   each texture is decoded from its JPEG2000 as on a first visit, to measure

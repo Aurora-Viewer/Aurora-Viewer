@@ -1441,13 +1441,14 @@ const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
 // (AURORA_SPECULAR_AA, specular_aa_roughness)
 const SPECULAR_AA: u32 = 0x8000u;
 // The point lights' share is traced (common.wgsl `local_share`).
-const LOCAL_TRACED: u32 = 0x800000u;
-// With it: how many of the frame's first lights the share is of, in these
-// bits (Preferences' lamps, rt_shadows.rs `traced_count`; the others are
-// not shadowed), and whether the projectors' beams take it
-// (`projector_at`).
-const TRACED_LIGHTS_SHIFT: u32 = 24u;
-const TRACED_LIGHTS_BITS: u32 = 0x7Fu;
+const LOCAL_TRACED: u32 = 0x1000000u;
+// With it: how many of the frame's first lights the share is of, less one,
+// in these bits (Preferences' lamps, 1 to 64, rt_shadows.rs `traced_count`;
+// the others are not shadowed), and whether the projectors' beams take it
+// (`projector_at`). The bits above LOCAL_TRACED: those below are flags
+// (types.rs `the_flags_of_the_light_mode_word_share_no_bit`).
+const TRACED_LIGHTS_SHIFT: u32 = 25u;
+const TRACED_LIGHTS_BITS: u32 = 0x3Fu;
 const PROJECTORS_TRACED: u32 = 0x80000000u;
 
 // Geometric specular anti-aliasing (Kaplanyan & Hoffman 2016, "Stable
@@ -1693,7 +1694,7 @@ fn local_traced(frag: vec2<f32>) -> bool {
 
 // Whether light `i` of the frame is one the traced share is of.
 fn light_traced(i: i32) -> bool {
-    return u32(i) < ((frame.light_mode.z >> TRACED_LIGHTS_SHIFT) & TRACED_LIGHTS_BITS);
+    return u32(i) <= ((frame.light_mode.z >> TRACED_LIGHTS_SHIFT) & TRACED_LIGHTS_BITS);
 }
 
 // Point light `i` of the frame with its colour times `share` (local_share),

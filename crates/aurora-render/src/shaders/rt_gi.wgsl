@@ -521,8 +521,9 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     // its zero value at each turn, and a ray query's is an `OpConstantNull`
     // of `OpTypeRayQueryKHR`, which SPIR-V forbids (an opaque type has no
     // null): AMD's compiler (LLPC, an RX 9070 XT) crashed on it in
-    // vkCreateComputePipelines (#4596). `rt_shaders_have_no_null_ray_query`
-    // checks every traced pass.
+    // vkCreateComputePipelines (#4596), and it is an assignment Metal's
+    // compiler refuses for a ray query. `rt_shaders_have_no_null_ray_query`
+    // and `no_ray_query_is_declared_in_a_loop` check every traced pass.
     var rq: ray_query;
     var rp: ray_query;
     for (var ray = 0u; ray < rays; ray++) {

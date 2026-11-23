@@ -24,6 +24,12 @@ overflow-checks = false
 [profile.dev.package."*"]
 opt-level = 3
 
+# The texture decoder is the hot loop of a region's loading, and replaces a
+# dependency (OpenJPEG, built with full optimisation like every dependency):
+# it is built as one. A small crate without dependents but aurora-assets.
+[profile.dev.package.aurora-j2k]
+opt-level = 3
+
 # The one exception to the single profile: the viewer crate's own test
 # executable, the heaviest compile of the workspace, is built without
 # optimisation. It only runs the tests, and the CI builds them unoptimised
@@ -53,6 +59,11 @@ incremental = false
 # task `ci-optimised-deps`, has the measures). Without this section `ci`
 # would inherit the 3 of `dev`.
 [profile.ci.package."*"]
+opt-level = 1
+
+# The texture decoder's tests decode thousands of codestreams with it and
+# with OpenJPEG: optimised like the dependencies, they take seconds.
+[profile.ci.package.aurora-j2k]
 opt-level = 1
 
 # "Debug viewer" of aurora-tools.cmd (target\debugging): a console window,

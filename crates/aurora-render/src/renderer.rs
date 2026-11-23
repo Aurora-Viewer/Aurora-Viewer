@@ -62,42 +62,7 @@ fn demo_vr_closed() -> Option<u64> {
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 const XR_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
 const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// A colour target of 16 normalized bits per channel, on the device that has
-/// it (`main_thread.rs` `open_device` asks for it where `gbuf_wide` holds).
-pub(crate) const GBUF_WIDE: wgpu::Features = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
-
-/// The adapter draws into that target, resolves it and filters it: what the
-/// G-buffer needs of its format.
-pub(crate) fn gbuf_wide(adapter: &wgpu::Adapter) -> bool {
-    if !adapter
-        .features()
-        .contains(GBUF_WIDE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
-    {
-        return false;
-    }
-    let f = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba16Unorm);
-    f.allowed_usages
-        .contains(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING)
-        && f.flags.contains(
-            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4
-                | wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE
-                | wgpu::TextureFormatFeatureFlags::FILTERABLE,
-        )
-}
-
-/// The G-buffer (octahedral normal, roughness, metallic): 16 bits per
-/// channel, as the normals of LLPipeline::addDeferredAttachments
-/// (indra/newview/pipeline.cpp, GL_RGBA16; originally LGPL 2.1). Eight bits
-/// step the normal by 0.45 degrees, and a mirror doubles it: the reflection
-/// of a smooth face came in terraces, 30 cm apart at 20 m. Without the
-/// normalized format, 16-bit floats: steps of 0.06 degrees at most.
-pub(crate) fn gbuf_format(features: wgpu::Features) -> wgpu::TextureFormat {
-    if features.contains(GBUF_WIDE) {
-        wgpu::TextureFormat::Rgba16Unorm
-    } else {
-        wgpu::TextureFormat::Rgba16Float
-    }
-}
+const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -2118,6 +2083,9 @@ pub(crate) struct Backend {
     rt: Option<crate::rt_shadows::RtShadows>,
     /// The ray tracer, or what an effect turned on needs, being made.
     rt_build: Option<RtBuild>,
+    /// The worker making it stopped (a panic) or could not start: nothing is
+    /// made again until ray tracing is turned off and on.
+    rt_failed: bool,
     rt_now: bool,
     /// The soft sun shadows' pipelines, made with the first frame that
     /// wants them.
@@ -3141,7 +3109,7 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
     }
     if d.gbuf {
         targets.push(Some(wgpu::ColorTargetState {
-            format: gbuf_format(device.features()),
+            format: GBUF_FORMAT,
             blend: None,
             write_mask: wgpu::ColorWrites::ALL,
         }));
@@ -4475,7 +4443,7 @@ impl Backend {
 
         let fmt_features = adapter.get_texture_format_features(HDR_FORMAT);
         let depth_features = adapter.get_texture_format_features(DEPTH_FORMAT);
-        let gbuf_features = adapter.get_texture_format_features(gbuf_format(device.features()));
+        let gbuf_features = adapter.get_texture_format_features(GBUF_FORMAT);
         let msaa_supported: Vec<u32> = [2u32, 4, 8]
             .into_iter()
             .filter(|n| *n == 4 || adapter_specific)
@@ -4719,6 +4687,7 @@ impl Backend {
             clouds_now: false,
             rt,
             rt_build: None,
+            rt_failed: false,
             rt_now: false,
             soft: None,
             soft_now: false,
@@ -6497,8 +6466,8 @@ impl Backend {
         let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
         let (gbuf_msaa, gbuf) = if s.gbuffer() {
             (
-                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, gbuf_format(device.features()), samples, att).1),
-                Some(make_view(device, "gbuffer", w, h, gbuf_format(device.features()), 1, sampled).1),
+                (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, GBUF_FORMAT, samples, att).1),
+                Some(make_view(device, "gbuffer", w, h, GBUF_FORMAT, 1, sampled).1),
             )
         } else {
             (None, None)
@@ -7636,37 +7605,42 @@ impl Backend {
     /// tracing on, dropped with the levels it built when they turn it off
     /// (its targets go with the others, `make_targets`). It is made on a
     /// worker thread ([`RtBuild`]), as is what an effect turned on later
-    /// needs: called again at each frame until the worker is done.
+    /// needs: called again at each frame until the worker is done. A worker
+    /// that stops without its result (a panic) leaves ray tracing as it is,
+    /// the frames on the shadow maps: made again on the render thread, it
+    /// would hold the picture and likely stop there too.
     fn follow_ray_tracing(&mut self) {
         let options = crate::rt_shadows::traced(&self.device, self.external, self.settings.ray_tracing);
         if !options.shadows {
             // (one still being made is dropped as its worker ends)
             self.rt_build = None;
+            self.rt_failed = false;
             if self.rt.take().is_some() {
                 log::info!("ray tracing off");
             }
             return;
         }
-        let mut here = false;
         if let Some(build) = &self.rt_build {
             match build.done.try_recv() {
                 Ok(made) => {
                     let spent = build.started.elapsed().as_millis();
                     self.rt_build = None;
-                    self.take_ray_tracing(made, spent, "on a worker");
+                    self.take_ray_tracing(made, spent);
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    log::error!("the ray tracer's worker stopped: made on the render thread");
+                    log::error!(
+                        "the ray tracer's worker stopped: nothing more is made for ray tracing until it is turned off and on again"
+                    );
                     self.rt_build = None;
-                    here = true;
+                    self.rt_failed = true;
                 }
             }
         }
         if let Some(rt) = &mut self.rt {
             rt.set_options(options);
         }
-        if self.rt_build.is_some() {
+        if self.rt_build.is_some() || self.rt_failed {
             return;
         }
         let make: Box<dyn FnOnce() -> RtMade + Send> = match &self.rt {
@@ -7680,11 +7654,6 @@ impl Backend {
             },
         };
         let started = std::time::Instant::now();
-        if here {
-            let made = make();
-            self.take_ray_tracing(made, started.elapsed().as_millis(), "on the render thread");
-            return;
-        }
         let (tx, done) = std::sync::mpsc::sync_channel(1);
         let spawned = std::thread::Builder::new().name("aurora-ray-tracer".into()).spawn(move || {
             // (refused when ray tracing was turned off meanwhile: dropped)
@@ -7694,22 +7663,24 @@ impl Backend {
             Ok(worker) => {
                 self.pipeline_workers.retain(|w| !w.is_finished());
                 self.pipeline_workers.push(worker);
+                self.rt_build = Some(RtBuild { started, done });
             }
-            // the receiver reports the worker gone: made on this thread
-            Err(e) => log::error!("cannot start the ray tracer's worker: {e}"),
+            Err(e) => {
+                log::error!("cannot start the ray tracer's worker: {e}");
+                self.rt_failed = true;
+            }
         }
-        self.rt_build = Some(RtBuild { started, done });
     }
 
     /// What was made for ray tracing, in `spent` ms, takes its place.
-    fn take_ray_tracing(&mut self, made: RtMade, spent: u128, how: &str) {
+    fn take_ray_tracing(&mut self, made: RtMade, spent: u128) {
         match made {
             RtMade::Tracer(rt) => {
-                log::info!("ray tracer made in {spent} ms {how}");
+                log::info!("ray tracer made in {spent} ms on a worker");
                 self.rt = Some(*rt);
             }
             RtMade::Parts(parts) => {
-                log::info!("ray tracer: the effects turned on made in {spent} ms {how}");
+                log::info!("ray tracer: the effects turned on made in {spent} ms on a worker");
                 if let Some(rt) = &mut self.rt {
                     rt.take(*parts);
                 }
@@ -9356,7 +9327,8 @@ impl Backend {
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
         self.rt_now = f.shadows && self.rt.is_some() && self.targets.rt.is_some() && rt_faces.is_some();
-        self.soft_now = self.soft_on(f.shadows, f.shadow_softness);
+        // (the traced shadows take the soft ones' place)
+        self.soft_now = !self.rt_now && self.soft_on(f.shadows, f.shadow_softness);
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
         self.motion_now = self.gtao_normals_now || self.taa.is_some();
         // nothing kept the matrices while nothing read the motion: the
@@ -9469,10 +9441,12 @@ impl Backend {
             main.contact[0] = 1.0;
             main.contact[2] = 1.0;
         }
+        // the blended faces opaque enough are in the depth the contact
+        // shadows read
+        let contact_blend = self.contact_now && crate::contact_shadows::Override::from_env().all_casters();
         if self.contact_now {
             main.contact[0] = 1.0;
-            // the blended faces opaque enough are in the depth it read
-            if crate::contact_shadows::Override::from_env().all_casters() {
+            if contact_blend {
                 main.contact[1] = 1.0;
             }
         }
@@ -9665,7 +9639,8 @@ impl Backend {
         // (common.wgsl LOCAL_TRACED, TRACED_LIGHTS_SHIFT, PROJECTORS_TRACED)
         if rt_lights_now {
             let tuning = self.settings.rt_tuning;
-            main.light_sets.mode[2] |= 0x800000 | (crate::rt_shadows::traced_count(tuning) as u32) << 24;
+            let lights = crate::rt_shadows::traced_count(tuning) as u32;
+            main.light_sets.mode[2] |= 0x100_0000 | (lights - 1) << 25;
             if tuning.projectors {
                 main.light_sets.mode[2] |= 0x8000_0000;
             }
@@ -11060,7 +11035,7 @@ impl Backend {
         // copy of its depth, which the pass then reads; the occlusion's
         // depth already holds those blended faces
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
-            let more = crate::contact_shadows::Override::from_env().all_casters() && (n_blend > 0 || n_sprites > 0);
+            let more = contact_blend && (n_blend > 0 || n_sprites > 0);
             if more {
                 let source = match &self.targets.ao_depth {
                     Some((tex, _)) if blend_in_ao_depth => tex,
@@ -11128,21 +11103,21 @@ impl Backend {
             }
             self.contact.encode(&mut encoder, t, more);
         }
+        // The depth the ray-traced mask is made from. Where `frame.contact.y`
+        // tells a blended face solid to the eye that the mask is its own
+        // (object.wgsl `contact_share`), it is the solid depth, which holds
+        // those faces: traced from the prepass, the mask held there the
+        // shadow of what lies behind the face.
+        let rt_mask_depth = match &self.targets.solid_depth {
+            Some((_, solid)) if contact_blend && n_blend > 0 => solid,
+            _ => &self.targets.depth_ss,
+        };
         if let (true, Some(rt), Some(t), Some(faces)) = (self.rt_now, &mut self.rt, &self.targets.rt, &rt_faces) {
             let contact = match (self.contact_now, &self.targets.contact) {
                 (true, Some(c)) => &c.result,
                 _ => &self.dummies.black,
             };
-            rt.encode(
-                &self.device,
-                &self.queue,
-                &mut encoder,
-                t,
-                &self.targets.depth_ss,
-                contact,
-                &scene,
-                faces,
-            );
+            rt.encode(&self.device, &self.queue, &mut encoder, t, rt_mask_depth, contact, &scene, faces);
             // A photo (a tile of one, a 360° face, an offline film's frame)
             // has no frame before it: its passes run their rounds over its
             // view (rt_shadows.rs `STILL_ROUNDS`). The small frame that
@@ -11169,6 +11144,7 @@ impl Backend {
                 sky_zenith: fu_sky[0],
                 sky_horizon: fu_sky[1],
                 ground_color: fu_sky[2],
+                pbr_occlusion: pbr_occlusion_now(),
             };
             for n in 0..rounds {
                 let round = if rt_still {
@@ -11177,16 +11153,7 @@ impl Backend {
                     crate::rt_shadows::Round::Live
                 };
                 if n > 0 {
-                    rt.retrace(
-                        &self.device,
-                        &self.queue,
-                        &mut encoder,
-                        t,
-                        &self.targets.depth_ss,
-                        contact,
-                        &scene,
-                        round,
-                    );
+                    rt.retrace(&self.device, &self.queue, &mut encoder, t, rt_mask_depth, contact, &scene, round);
                 }
                 rt.encode_lights(
                     &self.device,
@@ -11195,7 +11162,7 @@ impl Backend {
                     t,
                     &light,
                     &f.lights,
-                    &self.targets.depth_ss,
+                    rt_mask_depth,
                     rt_motion_drawn,
                     &self.dummies.black,
                     &scene,
@@ -11671,14 +11638,7 @@ impl Backend {
                 cloud_size,
                 still,
             );
-            clouds.prepare(
-                &self.device,
-                scene_samples,
-                scene_gbuf,
-                HDR_FORMAT,
-                gbuf_format(self.device.features()),
-                DEPTH_FORMAT,
-            );
+            clouds.prepare(&self.device, scene_samples, scene_gbuf, HDR_FORMAT, GBUF_FORMAT, DEPTH_FORMAT);
         } else if let Some(clouds) = &mut self.clouds {
             clouds.skipped(still.is_some());
         }
@@ -12016,6 +11976,7 @@ impl Backend {
                         sky_zenith: fu_sky[0],
                         sky_horizon: fu_sky[1],
                         ground_color: fu_sky[2],
+                        pbr_occlusion: pbr_occlusion_now(),
                     };
                     rt.encode_reflections(
                         &self.device,
