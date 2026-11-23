@@ -5745,7 +5745,7 @@ impl App {
             Action::StopAnimations => self.stop_animations(false),
             Action::ResyncAnimations => self.scene.resync_animations(Instant::now()),
             Action::RefreshAttachments => self.refresh_attachments(),
-            Action::PhotoWindow => ui::widgets::toggle_floater(&self.egui_ctx, ui::snapshot::WINDOW, &mut self.panels.snapshot),
+            Action::PhotoWindow => self.photo_window_shortcut(),
             Action::PhotoToDisk => self.photo_to_disk(),
             Action::Phototools => ui::widgets::toggle_floater(&self.egui_ctx, ui::phototools::WINDOW, &mut self.panels.phototools),
             Action::EnvSunrise | Action::EnvMidday | Action::EnvSunset | Action::EnvMidnight | Action::EnvShared => {
@@ -16844,6 +16844,8 @@ impl App {
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
+            BarAction::PhotoWindow => self.photo_window_shortcut(),
+            BarAction::PhotoToggle => self.photo_window_toggle(),
             BarAction::PhotoRoll => self.photo_reel_show_newest(),
             BarAction::Photo360 => {
                 if self.pano_open() {
