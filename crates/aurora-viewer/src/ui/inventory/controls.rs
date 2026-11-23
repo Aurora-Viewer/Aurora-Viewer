@@ -49,6 +49,17 @@ pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut In
     changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-tooltips"), &mut prefs.show_hover_tooltips);
     changed |= check(ui, p, aurora_i18n::tr!("inventory-hover-pictures"), &mut prefs.thumbnail_tooltips);
     changed |= check(ui, p, aurora_i18n::tr!("inventory-folder-colors"), &mut prefs.folder_colors_enabled);
+    if prefs.folder_colors_enabled {
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            changed |= check(
+                ui,
+                p,
+                aurora_i18n::tr!("inventory-folder-colors-inherit"),
+                &mut prefs.folder_colors_inherit,
+            );
+        });
+    }
     changed |= check(ui, p, aurora_i18n::tr!("ui-inventory-controls-recent-tab"), &mut prefs.show_recent);
     if prefs.show_recent {
         ui.horizontal(|ui| {

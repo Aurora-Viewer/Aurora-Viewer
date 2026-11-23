@@ -386,6 +386,8 @@ pub struct InventoryPreferences {
     pub dual_panel: bool,
     /// Folder icon colors (`folder_colors.rs`): this viewer only, on by default.
     pub folder_colors_enabled: bool,
+    /// A folder created inside a colored one takes its color (off by default).
+    pub folder_colors_inherit: bool,
     pub folder_colors: std::collections::BTreeMap<Uuid, [u8; 3]>,
 }
 impl Default for InventoryPreferences {
@@ -437,6 +439,7 @@ impl Default for InventoryPreferences {
             show_details: true,
             dual_panel: false,
             folder_colors_enabled: true,
+            folder_colors_inherit: false,
             folder_colors: Default::default(),
         }
     }
