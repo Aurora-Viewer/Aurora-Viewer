@@ -50,7 +50,7 @@ pub(super) enum Job {
     List,
     Load(Option<PathBuf>, LoadMode, Uuid),
     Save(Save),
-    Import(Arc<SubjectPose>, Vec<usize>, String, i32),
+    Import(Arc<SubjectPose>, String, i32),
     /// Convert a folder of Legacy Viewer or Alchemy poses into the library:
     /// the one given, or the one chosen in the folder dialog.
     ImportLegacyFolder(Option<PathBuf>),
@@ -154,23 +154,42 @@ pub(super) fn read(path: &Path) -> Result<Vec<u8>, String> {
     }
     Ok(bytes)
 }
-pub(super) fn native(rig: &Rig, pose: &SubjectPose, translations: &[usize], name: String, priority: i32) -> Result<clip::Prepared, String> {
-    let mut document = clip::document::Document::new();
-    document.name = name;
-    document.meta.base_priority = priority;
-    let frame = Frame {
-        model: Mat4::IDENTITY,
-        joints: pose.matrices(rig, Mat4::IDENTITY),
-        at: Instant::now(),
-    };
-    document
-        .record(rig, &frame, 0, &(0..rig.len()).collect::<Vec<_>>(), translations)
-        .map_err(|k| aurora_i18n::text(k).to_owned())?;
-    let animation = document.animation().map_err(|k| aurora_i18n::text(k).to_owned())?;
+/// Encode the local channels returned by Session::authored. As with the
+/// Legacy BVH importer's reference frame, a joint at rest needs no track.
+/// Rotation and translation are independent in the native animation format.
+pub(super) fn native(rig: &Rig, pose: &SubjectPose, name: String, priority: i32) -> Result<clip::Prepared, String> {
+    use aurora_assets::anim::{JointMotion, PosKey, RotKey};
+    let mut animation = clip::document::Document::new().meta;
+    animation.base_priority = priority;
+    let times = [0.0, animation.duration];
+    for (bone, joint_name) in rig.canonical_names.iter().enumerate().filter(|(_, name)| name.starts_with('m')) {
+        let rotation = pose.rotations[bone];
+        let rest = rig.local_rot[bone];
+        // q and -q encode the same rotation. Compare their components to
+        // retain small facial edits below the resolution of a quaternion dot.
+        let rotated = (rotation - rest).length_squared().min((rotation + rest).length_squared()) > 1e-10;
+        let offset = pose.positions[bone] - rig.local_pos[bone];
+        let moved = offset.length_squared() > 1e-10;
+        if rotated || moved {
+            let position = if bone == rig.pelvis { offset } else { pose.positions[bone] };
+            if moved && position.abs().max_element() > 5.0 {
+                return Err(aurora_i18n::text("anim-edit-pelvis-bound").to_owned());
+            }
+            animation.joints.push(JointMotion {
+                joint_name: joint_name.clone(),
+                priority: -1,
+                rot_keys: if rotated { times.map(|time| RotKey { time, rotation }).to_vec() } else { Vec::new() },
+                pos_keys: if moved { times.map(|time| PosKey { time, position }).to_vec() } else { Vec::new() },
+            });
+        }
+    }
+    if animation.joints.is_empty() {
+        return Err(aurora_i18n::text("anim-edit-no-bones").to_owned());
+    }
     let bytes = aurora_assets::import_animation::encode(&animation).map_err(|e| e.to_string())?;
     let animation = aurora_assets::anim::parse_animation_upload(&bytes).map_err(|e| e.to_string())?;
     Ok(clip::Prepared {
-        name: document.name,
+        name,
         bytes: Arc::new(bytes),
         animation: Arc::new(animation),
     })
@@ -377,9 +396,7 @@ impl Service {
                             Output::Saved(path)
                         }
                     }
-                    Job::Import(pose, translations, name, priority) => {
-                        Output::Prepared(native(&rig, &pose, &translations, name, priority)?)
-                    }
+                    Job::Import(pose, name, priority) => Output::Prepared(native(&rig, &pose, name, priority)?),
                     Job::ImportLegacyFolder(folder) => {
                         let folder = match folder {
                             Some(folder) => folder,

@@ -605,12 +605,35 @@ fn poser_mirror_undo_hand_presets_reset_and_native_export_use_real_bento_channel
     editor.hand_preset(&rig, Some(true));
     let session = &editor.poser.sessions[&world.agent_id];
     assert!(session.edited(rig.names["mHandIndex1Left"]));
-    let native = storage::native(&rig, &session.pose, &[], "Pose".into(), 4).unwrap();
+    let native = storage::native(&rig, &session.authored(&rig, frame.model).unwrap(), "Pose".into(), 4).unwrap();
     assert!(native.animation.looping);
     assert_eq!(native.animation.base_priority, 4);
     assert!(native.animation.joints.iter().any(|j| j.joint_name == "mHandIndex1Left"));
     editor.pose_operation(&rig, &frame, controls::Operation::ResetAll);
     assert!((0..rig.len()).all(|b| !editor.poser.sessions[&world.agent_id].edited(b)));
+}
+#[test]
+fn poser_native_export_only_keys_the_channels_the_user_changed() {
+    let (world, mut editor, left, _, _) = captured_animation();
+    let rig = &world.avatar_lib.rig;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    let pose = Arc::make_mut(&mut session.pose);
+    pose.rotations[left] *= Quat::from_rotation_y(0.07);
+    pose.positions[rig.pelvis].z += 0.125;
+    let lip = rig.names["mFaceLipCornerLeft"];
+    pose.positions[lip].y += 0.002;
+    let authored = session.authored(rig, Mat4::IDENTITY).unwrap();
+    let upload = storage::native(rig, &authored, "Pose".into(), 4).unwrap();
+    let tracks = &upload.animation.joints;
+    assert_eq!(tracks.len(), 3, "untouched joints are available to attachments");
+    let elbow = tracks.iter().find(|j| j.joint_name == "mElbowLeft").unwrap();
+    assert!(near(elbow.rot_keys[0].rotation, authored.rotations[left]));
+    assert!(elbow.pos_keys.is_empty());
+    for (name, expected) in [("mPelvis", Vec3::Z * 0.125), ("mFaceLipCornerLeft", authored.positions[lip])] {
+        let joint = tracks.iter().find(|j| j.joint_name == name).unwrap();
+        assert!(joint.rot_keys.is_empty());
+        assert!(joint.pos_keys[0].position.abs_diff_eq(expected, 0.0002));
+    }
 }
 #[test]
 fn poser_bvh_export_round_trips_axis_order_and_pelvis_unlock_through_the_real_importer() {
@@ -1731,7 +1754,7 @@ fn poser_poses_and_exports_a_shape_that_leaves_a_joint_almost_flat() {
     let moved = authored.rotations[rig.names["mHead"]].dot(rig.local_rot[rig.names["mHead"]]).abs();
     assert!(moved < 0.999, "the edit is exported");
     assert!(
-        storage::native(rig, &authored, &[], "Flat".into(), 4).is_ok(),
+        storage::native(rig, &authored, "Flat".into(), 4).is_ok(),
         "the upload is prepared"
     );
     assert!(
@@ -1828,11 +1851,10 @@ fn poser_exports_nothing_of_a_captured_animation_through_any_format() {
         assert!(near(authored.rotations[bone], rig.local_rot[bone]), "{}", rig.canonical_names[bone]);
         assert!(authored.positions[bone].abs_diff_eq(rig.local_pos[bone], 1e-5));
     }
-    let native = storage::native(rig, &authored, &[], "Pose".into(), 4).unwrap();
-    let track = native.animation.joints.iter().find(|j| j.joint_name == "mElbowLeft").unwrap();
-    assert!(near(track.rot_keys[0].rotation, rig.local_rot[left]));
-    let pelvis = native.animation.joints.iter().find(|j| j.joint_name == "mPelvis").unwrap();
-    assert!(pelvis.pos_keys[0].position.abs_diff_eq(Vec3::ZERO, 1e-4));
+    assert!(
+        storage::native(rig, &authored, "Pose".into(), 4).is_err(),
+        "there is no authored channel to upload"
+    );
     let bvh = bvh::encode(rig, &authored, true).unwrap();
     assert!(
         aurora_assets::import_animation::parse_bvh(bvh.as_bytes(), world.avatar_lib.skeleton.as_ref().unwrap()).is_err(),
