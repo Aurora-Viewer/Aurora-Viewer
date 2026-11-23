@@ -5,8 +5,8 @@ description: >
   beta, as the ruleset of the stable tags already requires. The Nightly's
   own schedule needs nobody; a re-run of a scheduled run is checked like a
   manual one. A guard for the workflows only: anyone with write access can
-  still create a release by hand on GitHub, which the updater must refuse on
-  its own (TASKS.md, signed updates).
+  still create a release by hand on GitHub, which the updater refuses on its
+  own (docs/UPDATES.md, "Signed updates").
 inputs:
   enforce:
     description: "'false' only checks that the permission can be read (the pull request test)"

@@ -10295,7 +10295,6 @@ build-compact-summary-details = { " - " }{ $capacity }    { $counts }
 build-compact-link-action = Collega
 build-compact-unlink-action = Scollega
 build-compact-link-value = Link { $number }
-build-compact-face-value = Faccia { $number }
 build-compact-move = Sposta
 build-compact-rotate = Ruota (Ctrl)
 build-compact-stretch = Allunga (Ctrl+Maiusc)

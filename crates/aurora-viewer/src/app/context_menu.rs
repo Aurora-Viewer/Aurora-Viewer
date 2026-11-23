@@ -148,6 +148,14 @@ impl App {
             }
             return;
         }
+        // Ctrl+right click set to "Edit the object": the menu's Edit at once,
+        // where the menu would offer it; elsewhere the menu
+        if crate::build::CtrlRightClick::edits(&self.settings.build, self.shift, self.ctrl, self.alt)
+            && let Some(idx) = picked
+            && self.ctrl_right_click_edit(idx)
+        {
+            return;
+        }
         if let Some(source) = picked
             .and_then(|idx| self.world.objects.get(idx))
             .filter(|object| object.is_editable_preview())
@@ -240,6 +248,38 @@ impl App {
             pie_path: Vec::new(),
             pie_input_frame: None,
         });
+    }
+
+    /// Ctrl+right click on object `idx` set to "Edit the object": what the
+    /// menu's Edit does (CtxAction::Edit, or EditAttachment for what we
+    /// wear), when its menu would enable Edit (`context_facts`: selectable,
+    /// within @fartouch). False for an avatar, someone else's attachment or
+    /// an object Edit is greyed for: the menu opens.
+    fn ctrl_right_click_edit(&mut self, idx: usize) -> bool {
+        let w = &self.world;
+        let Some(o) = w.objects.get(idx) else { return false };
+        if o.is_avatar() {
+            return false;
+        }
+        let (key, id) = (o.key, o.full_id);
+        let root = linkset_root(w, idx);
+        let wearer = ui::context::wearer(w, idx);
+        let editable = crate::build::selectable_within(w, idx)
+            && (w.rlva_within_fartouch(idx) || w.objects.get(root).is_some_and(|r| self.object_menu.near == Some(r.key)));
+        match wearer {
+            _ if !editable => false,
+            Some(wearer) if wearer != w.agent_id => false,
+            Some(_) => {
+                self.build.release_menu_selection(&self.world);
+                self.on_ctx_action(CtxAction::EditAttachment(key));
+                true
+            }
+            None => {
+                self.build.release_menu_selection(&self.world);
+                self.on_ctx_action(CtxAction::Edit(id));
+                true
+            }
+        }
     }
 
     /// The prims of the object another avatar wears that the open menu is

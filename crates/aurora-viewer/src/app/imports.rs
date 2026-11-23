@@ -567,6 +567,9 @@ impl App {
                         .into_iter()
                         .filter_map(|index| self.world.objects.get(index))
                         .filter(|object| object.pcode == aurora_prim::params::LL_PCODE_VOLUME)
+                        // an empty list is the whole object, a prim kept selected
+                        // with no face takes nothing
+                        .filter(|object| self.build.faces.get(&object.key).is_none_or(|faces| !faces.is_empty()))
                         .map(|object| (object.full_id, self.build.faces.get(&object.key).cloned().unwrap_or_default()))
                         .collect();
                     if targets.is_empty() {
