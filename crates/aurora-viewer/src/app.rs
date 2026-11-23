@@ -1019,6 +1019,8 @@ pub struct App {
     region_tracker_ui: ui::region_tracker::RegionTrackerUi,
     map_tiles: ui::map_tiles::MapTiles,
     options_ui: ui::options::OptionsUi,
+    extension_host: crate::extension_host::Service,
+    extension_account_scope: Option<String>,
     grids_ui: ui::grids::Manager,
     audio_ui: ui::audio::AudioUi,
     /// The nearby media panel under the media button (app/nearby_media.rs).
@@ -2248,6 +2250,8 @@ impl App {
             region_tracker_ui: Default::default(),
             map_tiles: ui::map_tiles::MapTiles::new(),
             options_ui: Default::default(),
+            extension_host: crate::extension_host::Service::new(crate::settings::config_dir().join("extensions")),
+            extension_account_scope: None,
             grids_ui: Default::default(),
             audio_ui: Default::default(),
             nearby_media: Default::default(),
@@ -7285,6 +7289,68 @@ impl App {
         self.egui_ctx.request_repaint();
     }
 
+    fn extension_store_scope(&self) -> String {
+        crate::extension_host::account_scope_key(&self.settings.login_uri(), self.world.login.as_ref().map(|login| login.agent_id))
+    }
+
+    fn process_extension_events(&mut self) {
+        let scope = self.extension_store_scope();
+        let scope_is_current = self.extension_account_scope.as_deref() == Some(scope.as_str());
+        let scope_changed = !scope_is_current;
+        if scope_changed {
+            self.options_ui.extensions = Default::default();
+            self.options_ui.extension_grants.clear();
+            self.options_ui.extension_review_id = None;
+            self.options_ui.extension_enable_after_install = false;
+            self.options_ui.extension_ack_unverified = false;
+            self.options_ui.extension_ack_publisher_change = false;
+            self.options_ui.extension_enable_acknowledgements.clear();
+            if self
+                .extension_host
+                .submit(crate::extension_host::Command::SetAccountScope(scope.clone()))
+            {
+                self.extension_account_scope = Some(scope.clone());
+            }
+        }
+        let scope_ready_to_submit = self.extension_account_scope.as_deref() == Some(scope.as_str());
+        let manager_snapshot = self.extension_host.snapshot();
+        let worker_scope_ready = manager_snapshot.ready && manager_snapshot.account_scope.as_deref() == Some(scope.as_str());
+        let chat_events = self.world.take_extension_chat_events();
+        if !scope_changed && scope_ready_to_submit && worker_scope_ready {
+            for request in chat_events {
+                let _ = self
+                    .extension_host
+                    .submit(crate::extension_host::Command::NearbyChat(request.event));
+            }
+        }
+
+        for batch in self.extension_host.take_actions_for_scope(&scope) {
+            let request_message_id = batch.message_id;
+            for action in batch.actions {
+                match action {
+                    aurora_extension_api::ExtensionAction::AnnotateChat { message_id, text } => {
+                        if request_message_id == Some(message_id) {
+                            self.world.annotate_extension_chat(message_id, batch.extension_id.clone(), text);
+                        } else {
+                            self.extension_host.report_error(aurora_i18n::tr!(
+                                "extensions-manager-annotation-rejected",
+                                id = batch.extension_id.as_str()
+                            ));
+                            log::warn!("discarded extension annotation not bound to its triggering chat event");
+                        }
+                    }
+                    aurora_extension_api::ExtensionAction::ShowNotification { title, body } => {
+                        crate::extension_host::show_notification(&mut self.world.notifications, title, body);
+                        self.egui_ctx.request_repaint();
+                    }
+                    aurora_extension_api::ExtensionAction::RegisterPanel { .. } => {
+                        // The worker stores validated panel declarations for the native manager UI.
+                    }
+                }
+            }
+        }
+    }
+
     fn pump_network_events(&mut self, t_ev: Instant) {
         while let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
@@ -10934,6 +11000,7 @@ impl App {
         if !still {
             self.pump_network_events(t_ev);
         }
+        self.process_extension_events();
         self.poll_inventory_offers();
         self.net_profile.events_left(self.net.events.len());
         let corrections = self.world.agent.take_corrections();
@@ -18007,8 +18074,15 @@ impl App {
         self.options_ui.joystick = self.joystick.snapshot.clone();
         self.options_ui.game_control = crate::game_control::View::of(&self.game_control.engine);
         self.options_ui.flycam_active = self.joystick.active;
+        let extension_scope = self.extension_store_scope();
+        self.options_ui.extensions = self.extension_host.snapshot_for_scope(&extension_scope);
         let before_camera = self.settings.camera.clone();
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        if let Some(command) = res.extension_command.take()
+            && !self.extension_host.submit(command)
+        {
+            self.options_ui.extensions.status = Some(aurora_i18n::tr!("extensions-manager-busy").to_owned());
+        }
         if res.show_contacts_tab_on {
             self.dock_contacts();
         }

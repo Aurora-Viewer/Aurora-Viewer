@@ -1779,6 +1779,26 @@ fn line_job(
         }
         at += n;
     }
+    for (extension_id, annotation) in world.extension_annotations(line) {
+        let text = format!(
+            "\n{}",
+            aurora_i18n::tr!(
+                "extensions-manager-annotation",
+                extension = extension_id.as_str(),
+                annotation = annotation.as_str()
+            )
+        );
+        job.append(
+            &text,
+            0.0,
+            egui::TextFormat {
+                color: p.muted_dim,
+                font_id: egui::FontId::proportional(size - 2.0),
+                italics: true,
+                ..Default::default()
+            },
+        );
+    }
     job.wrap.max_width = width;
     BubbleJob {
         job,

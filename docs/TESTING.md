@@ -21,8 +21,9 @@ Headset movement and resolution checks are listed in [VR.md](VR.md#movement-and-
 
 For localisation, launch the same scenario with `--language en`, then
 `--language fr`. `AURORA_DEMO_OPTIONS=1` opens the interface preferences,
-with the language selector. Remove the argument to check the immediate
-change and the choice saved at the next launch. The details of the
+with the language selector; `AURORA_DEMO_OPTIONS=extensions` opens
+Preferences › Extensions directly in the offline demo. Remove the argument to
+check the immediate change and the choice saved at the next launch. The details of the
 catalogues, dates and plurals are in [TRANSLATING.md](TRANSLATING.md).
 
 **Unit tests**: always on the whole workspace, filtered by name if needed:
@@ -9250,6 +9251,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (`AURORA_FPS_LIMIT=60`, `AURORA_CAPTURE_FRAMES` listing every frame from
   about 23 s to 31 s after the arrival) and compare the lines' bottom frame
   by frame.
+
 
 - **`AURORA_DEMO_MUTED_CHAT=aurora|compact|bubbles|legacy|lines[:hidden|collapsed|greyed]`**:
   the demo's blocked resident, Violet Wolf (on the demo block list), talks

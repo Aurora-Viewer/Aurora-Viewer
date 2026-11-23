@@ -1,0 +1,20 @@
+[package]
+name = "aurora-extension-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "aurora-ext"
+path = "src/main.rs"
+
+[dependencies]
+aurora-extension-runtime = { version = "0.1.0", path = "../aurora-extension-runtime" }
+semver = "1.0.28"
+serde_json = "1.0.151"
+zip = { version = "9.0.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[lints]
+workspace = true

@@ -345,6 +345,11 @@ impl World {
     pub fn clear_nearby_chat(&mut self) {
         self.chat.clear();
         self.chat_objects.clear();
+        self.extension_chat_events.clear();
+        self.extension_message_targets.clear();
+        self.extension_message_order.clear();
+        self.extension_message_ids.clear();
+        self.extension_annotations.clear();
         self.chat_clock.renumbered();
     }
 
