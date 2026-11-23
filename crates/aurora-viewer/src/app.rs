@@ -23608,6 +23608,7 @@ impl ApplicationHandler for App {
                         self.demo_cached_outfit_portrait();
                     }
                 }
+                ui::appearance::demo_size(&self.egui_ctx);
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {
                     crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);
