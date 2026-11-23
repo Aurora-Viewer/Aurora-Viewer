@@ -167,9 +167,11 @@ pub(super) fn native(rig: &Rig, pose: &SubjectPose, name: String, priority: i32)
         let rest = rig.local_rot[bone];
         // q and -q encode the same rotation. Compare their components to
         // retain small facial edits below the resolution of a quaternion dot.
-        let rotated = (rotation - rest).length_squared().min((rotation + rest).length_squared()) > 1e-10;
+        let rotated = pose.hold_rotation[bone] || (rotation - rest).length_squared().min((rotation + rest).length_squared()) > 1e-10;
         let offset = pose.positions[bone] - rig.local_pos[bone];
-        let moved = offset.length_squared() > 1e-10;
+        // A complete native pose also anchors the pelvis at its neutral
+        // offset. Ordinary rotation-only poses leave its translation free.
+        let moved = offset.length_squared() > 1e-10 || (bone == rig.pelvis && pose.hold_rotation[bone]);
         if rotated || moved {
             let position = if bone == rig.pelvis { offset } else { pose.positions[bone] };
             if moved && position.abs().max_element() > 5.0 {

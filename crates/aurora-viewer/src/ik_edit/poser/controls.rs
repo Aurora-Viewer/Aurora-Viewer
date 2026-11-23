@@ -35,6 +35,7 @@ impl Editor {
         let copy = |pose: &mut SubjectPose, from: usize, to: usize| {
             pose.rotations[to] = data::mirrored(rig, before.rotations[from], from, to);
             pose.origin[to] = data::mirrored(rig, before.origin[from], from, to);
+            pose.hold_rotation[to] = before.hold_rotation[from];
             pose.positions[to] = session.base.positions[to] + rig_controls::reflect(before.positions[from] - session.base.positions[from]);
             pose.scales[to] = session.base.scales[to] * (before.scales[from] / session.base.scales[from]);
             pose.locks.remove(&to);
@@ -76,6 +77,7 @@ impl Editor {
                 for &b in &reset {
                     pose.rotations[b] = session.base.rotations[b];
                     pose.origin[b] = session.base.origin[b];
+                    pose.hold_rotation[b] = session.base.hold_rotation[b];
                     pose.positions[b] = session.base.positions[b];
                     pose.scales[b] = session.base.scales[b];
                     pose.locks.remove(&b);
@@ -88,6 +90,7 @@ impl Editor {
                 // from here on the whole pose is the user's: it exports in
                 // full (FSPoserAnimator::setAllAvatarStartingRotationsToZero)
                 pose.origin.clone_from(&rig.local_rot);
+                pose.hold_rotation.fill(true);
                 pose.locks.clear();
             }
             Operation::WorldLock => {
@@ -271,6 +274,7 @@ impl Editor {
                     {
                         pose.rotations[other] = data::mirrored(rig, pose.rotations[changed], changed, other);
                         pose.origin[other] = data::mirrored(rig, pose.origin[changed], changed, other);
+                        pose.hold_rotation[other] = pose.hold_rotation[changed];
                         pose.scales[other] = base.scales[other] * (pose.scales[changed] / base.scales[changed]);
                         pose.locks.remove(&other);
                     }
