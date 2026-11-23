@@ -131,7 +131,7 @@ pub mod pipette {
     /// drawn for a few frames (its window was closed) no longer holds it.
     pub fn owner(ctx: &egui::Context) -> Option<egui::Id> {
         let (owner, seen) = load(ctx).armed?;
-        (ctx.cumulative_frame_nr() <= seen + 2).then_some(owner)
+        (ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) <= seen + 2).then_some(owner)
     }
 
     pub fn armed(ctx: &egui::Context) -> bool {
@@ -145,7 +145,7 @@ pub mod pipette {
             shared.cursor = None;
             shared.sample = None;
         }
-        shared.armed = Some((owner, ctx.cumulative_frame_nr()));
+        shared.armed = Some((owner, ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)));
         store(ctx, shared);
     }
 
@@ -573,7 +573,9 @@ fn close(ctx: &egui::Context, id: egui::Id) {
 /// frame 300.
 fn demo_opens(ctx: &egui::Context) -> bool {
     static DEMO: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if !*DEMO.get_or_init(|| std::env::var_os("AURORA_DEMO_COLORPICK").is_some()) || ctx.cumulative_frame_nr() != 300 {
+    if !*DEMO.get_or_init(|| std::env::var_os("AURORA_DEMO_COLORPICK").is_some())
+        || ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) != 300
+    {
         return false;
     }
     let done = egui::Id::unique("aurora_color_pick_demo");

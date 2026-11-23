@@ -241,6 +241,8 @@ pub enum InvAction {
     },
     Environment(Uuid, u32),
     EnvironmentParcel(Uuid),
+    /// Apply to myself and keep it for the parcel under the agent.
+    EnvironmentSaveParcel(Uuid, u32),
     ExportTextures {
         items: Vec<Uuid>,
         png: bool,
@@ -317,6 +319,8 @@ pub struct Facts {
     pub pictures: std::collections::HashMap<Uuid, egui::TextureHandle>,
     pub online: HashSet<Uuid>,
     pub parcel_environment: bool,
+    /// RLVa @setenv holds the environment: no save for a parcel.
+    pub environment_locked: bool,
     /// What RLVa locks leave of wearing and taking off, for the menus.
     pub rlva: std::sync::Arc<crate::world::rlva::WearLocks>,
     /// RLVa @tplm (or @unsit while seated): a landmark's Teleport is greyed
@@ -375,6 +379,7 @@ impl Facts {
                 .filter(|friend| friend.online)
                 .map(|friend| friend.id)
                 .collect(),
+            environment_locked: world.eep.rlva_locked,
             parcel_environment: world
                 .land
                 .sel
@@ -414,7 +419,11 @@ impl Facts {
     }
 
     fn worn_label(&self, inv: &Inventory, id: Uuid) -> Option<&str> {
-        let original = rules::original(inv, id)?;
+        self.original_worn_label(rules::original(inv, id)?)
+    }
+
+    /// [`Self::worn_label`] of an original item (a link's target).
+    fn original_worn_label(&self, original: Uuid) -> Option<&str> {
         if self.active_gestures.contains(&original) {
             return Some(aurora_i18n::tr!("gesture-active"));
         }
@@ -523,9 +532,7 @@ pub const DUAL_ICON: &str = "columns-2-filled";
 /// (each pane keeps the width of the single one), at least `DUAL_SIZE`;
 /// back to one pane, half of it. A size the user sets afterwards stays.
 pub fn resize_for_dual(ctx: &egui::Context, dual: bool) {
-    let size = egui::AreaState::load(ctx, egui::Id::unique("inventory"))
-        .and_then(|state| state.size)
-        .unwrap_or(DEFAULT_SIZE);
+    let size = super::widgets::floater_size(ctx, "inventory").unwrap_or(DEFAULT_SIZE);
     let size = if dual {
         Vec2::new((size.x * 2.0).max(DUAL_SIZE.x), size.y.max(DUAL_SIZE.y))
     } else {
@@ -572,7 +579,7 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
     let item = egui::DragAndDrop::payload::<InvDrag>(ctx)
         .map(|cargo| cargo.0)
         .or_else(|| egui::DragAndDrop::payload::<super::places::drag::PlaceDrag>(ctx).and_then(|cargo| cargo.target.item()))?;
-    if ctx.is_pointer_over_egui() {
+    if !drag::over_world(ctx) {
         return None;
     }
     ctx.input(|i| {
@@ -694,6 +701,8 @@ pub struct InventoryUi {
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
+    /// A local copy, cut or cancellation changed the shared clipboard in this pane.
+    clipboard_edited: bool,
     cut_rows: clipboard::CutRows,
     #[cfg(windows)]
     clipboard_sequence: Option<u32>,
@@ -2636,10 +2645,6 @@ pub fn show(
         }
     }
     let inv = &mut world.inventory;
-    // What the right pane was handed of the shared clipboard: a Copy, Cut or
-    // paste made in it is given back to the main pane once it is drawn, as the
-    // other windows do, or the next frame's copy above would erase it (#4570).
-    let mut dual_clipboard = None;
     if let Some(dual) = dual.as_deref_mut() {
         if !*open {
             dual.pending_delete = None;
@@ -2652,7 +2657,7 @@ pub fn show(
         dual.focus_search = *open && dual.focus_search;
         dual.clipboard.clone_from(&st.clipboard);
         dual.cut = st.cut;
-        dual_clipboard = Some((dual.clipboard.clone(), dual.cut));
+        dual.clipboard_edited = false;
         dual.pending = st.pending;
         dual.progress.clone_from(&st.progress);
         dual.copy_jobs.clone_from(&st.copy_jobs);
@@ -2851,7 +2856,7 @@ pub fn show(
         st.wanted_hover_images.extend(dual.wanted_hover_images.drain());
         st.preferences_dirty |= dual.preferences_dirty;
         dual.preferences_dirty = false;
-        if dual_clipboard.is_some_and(|before| before != (dual.clipboard.clone(), dual.cut)) {
+        if dual.clipboard_edited {
             st.clipboard.clone_from(&dual.clipboard);
             st.cut = dual.cut;
         }

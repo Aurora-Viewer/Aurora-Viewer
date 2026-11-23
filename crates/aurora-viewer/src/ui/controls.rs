@@ -85,11 +85,41 @@ pub enum Tab {
     Movement,
 }
 
+/// The compact choice of each tab (#3904): `Settings::compact_controls`
+/// and `Settings::compact_movement_controls`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Compact {
+    pub camera: bool,
+    pub movement: bool,
+}
+
+impl Compact {
+    fn of(self, tab: Tab) -> bool {
+        match tab {
+            Tab::Camera => self.camera,
+            Tab::Movement => self.movement,
+        }
+    }
+
+    fn set(&mut self, tab: Tab, on: bool) {
+        match tab {
+            Tab::Camera => self.camera = on,
+            Tab::Movement => self.movement = on,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct ControlsUi {
     pub tab: Tab,
     /// The flags of the last frame, to see which one was just raised.
     was: (bool, bool),
+    /// The tab shown on the last frame, and whether in the free camera
+    /// (`None`: closed); a tab turned to shows in its saved form.
+    shown: Option<(Tab, bool)>,
+    /// The saved compact choices of the last frame, to apply a change made
+    /// in Preferences while the window is open.
+    compact_seen: Option<Compact>,
     naming: ShotNaming,
 }
 
@@ -254,8 +284,20 @@ pub(crate) fn control_height(ui: &egui::Ui) -> f32 {
 impl ControlsUi {
     /// The Aurora window (`camera` / `movement`: the toolbar's View and
     /// Movement, the World menu's entries; either opens it on its tab), or
-    /// Firestorm's two windows when `classic`.
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, camera: &mut bool, movement: &mut bool, classic: bool, view: &View) -> Output {
+    /// the Legacy Viewer's two windows when `classic`. `compact` is the saved
+    /// compact choice of each tab (`Compact`): the title bar's compact /
+    /// full button (or a double-click on the title bar, as on every window)
+    /// sets the shown tab's, and a tab shows that way.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        camera: &mut bool,
+        movement: &mut bool,
+        compact: &mut Compact,
+        classic: bool,
+        view: &View,
+    ) -> Output {
         let mut out = Output::default();
         // the free camera keeps Aurora's window (Firestorm has none)
         if classic && view.free.is_none() {
@@ -282,6 +324,8 @@ impl ControlsUi {
                 .show(ctx, p, movement, |ui| classic_movement(ui, p, view, &mut out));
             }
             self.was = (*camera, *movement);
+            self.shown = None;
+            self.compact_seen = Some(*compact);
             return out;
         }
         sync_tab(self, camera, movement);
@@ -290,8 +334,43 @@ impl ControlsUi {
         }
         let mut open = *camera || *movement;
         if open {
+            // #3904: compact is a form each tab keeps, chosen by the title
+            // button or in Preferences, not a minimize forgotten on closing:
+            // a tab shows in its saved form whenever it is turned to (the
+            // toolbar, a menu, its tab, an opening) or its choice changes in
+            // Preferences. A difference from the Legacy Viewer, whose small
+            // camera window is a separate floater behind a setting
+            // (FSUseSmallCameraFloater, floater_fs_camera_small.xml): here it
+            // stays the one window, and its title button switches it.
+            // The free camera's compact window is its own.
+            let free = view.free.is_some();
+            let saved = compact.of(self.tab);
+            let entered = self.shown != Some((self.tab, free));
+            let switched = self.compact_seen.is_some_and(|seen| seen.of(self.tab) != saved);
+            // a "Reset window positions and sizes" made while it was closed
+            // expands it at this opening, after the saved form is applied:
+            // applied again at the next frame
+            let reset_on_opening = entered && crate::ui::layout::reset_pending(ctx, egui::Id::unique(WINDOW));
+            if (entered || switched) && !free {
+                // the Movement button's expand (#1815) yields to a compact
+                // movement saved
+                let minimized = widgets::floater_minimized(ctx, WINDOW);
+                if saved {
+                    widgets::cancel_expand(ctx, WINDOW);
+                    if !minimized {
+                        widgets::minimize_floater(ctx, WINDOW);
+                    }
+                } else if minimized {
+                    // an expand asked for, so not the title button
+                    widgets::expand_floater(ctx, WINDOW);
+                }
+            }
+            let shown = self.tab;
             let screen = ctx.content_rect();
             let minimized = widgets::floater_minimized(ctx, WINDOW);
+            // an expand asked for elsewhere (the Movement button, the photo
+            // window's Controls, a window reset) is not the title button
+            let asked = widgets::floater_expand_pending(ctx, WINDOW);
             // minimized, the free camera names the window
             let title = match view.free {
                 Some(_) if minimized => aurora_i18n::tr!("controls-free-title"),
@@ -307,13 +386,16 @@ impl ControlsUi {
             .auto_height()
             .compact_when_minimized(COMPACT_WIDTH + 20.0)
             .show(ctx, p, &mut open, |ui| {
-                // minimized: the joysticks and the zoom only (the mockup's
-                // compact window), or the free camera's joysticks, speed
-                // and way back
+                // minimized: the camera's joysticks, zoom and roll (the
+                // mockup's compact window), the movement pad, or the free
+                // camera's joysticks, speed and way back
                 if widgets::floater_minimized(ui.ctx(), WINDOW) {
-                    match view.free {
-                        Some(free) => free_compact(ui, p, view, free, &mut out),
-                        None => {
+                    match (view.free, self.tab) {
+                        (Some(free), _) => free_compact(ui, p, view, free, &mut out),
+                        // the Movement tab compact: the Legacy Viewer's
+                        // movement window, the pad and walk / run / fly
+                        (None, Tab::Movement) => classic_movement(ui, p, view, &mut out),
+                        (None, Tab::Camera) => {
                             sticks(ui, p, view, &mut out, COMPACT_WIDTH);
                             roll_controls(ui, p, view, &mut out);
                         }
@@ -322,6 +404,21 @@ impl ControlsUi {
                     self.body(ui, p, view, &mut out);
                 }
             });
+            // the title button switched it (or a double-click on the title
+            // bar, which every window takes as its button): the one change
+            // kept as the choice (a close expands it too; an expand asked for elsewhere
+            // and the free camera's own compact window are not choices of
+            // the camera's form)
+            let now = widgets::floater_minimized(ctx, WINDOW);
+            let by_title = open && now != minimized && !asked;
+            if let Some(chosen) = compact_choice(by_title, now, free) {
+                compact.set(shown, chosen);
+            }
+            // a tab just clicked shows in its form from the next frame; closed
+            // here (its cross, a close asked for), it opens again as entered
+            self.shown = (open && !reset_on_opening).then_some((shown, free));
+        } else {
+            self.shown = None;
         }
         if open {
             *camera = self.tab == Tab::Camera;
@@ -331,6 +428,7 @@ impl ControlsUi {
             *movement = false;
         }
         self.was = (*camera, *movement);
+        self.compact_seen = Some(*compact);
         out
     }
 
@@ -673,13 +771,22 @@ fn parse_speed(text: &str) -> Option<f64> {
     )
 }
 
+/// The compact choice the title button just made for the tab shown
+/// (`by_title`: the window went `now` compact or full by its title
+/// button), kept outside the free camera, whose compact window is its own
+/// (#3904).
+fn compact_choice(by_title: bool, now: bool, free: bool) -> Option<bool> {
+    (by_title && !free).then_some(now)
+}
+
 /// A flag just raised opens the window on its tab; otherwise it stays.
 /// The camera (`movement` false) or movement controls asked for by a
 /// toolbar button or a shortcut (`toggle`, LLFloaterReg::toggleInstance) or
-/// a menu item (LLFloaterReg::showInstance). A minimized window expands on
-/// the tab asked for (minimized, Aurora's window only shows the camera's
-/// joysticks: #1815); the other tab shown switches to it; the tab shown
-/// closes with `toggle`. `classic`: Legacy's two windows, each its own.
+/// a menu item that only opens (`toggle` false, LLFloaterReg::showInstance:
+/// the camera presets' Camera controls). Compact, the window shows
+/// the tab it is on (#3904): the button of that tab closes it with
+/// `toggle`, as it closes the full window; the other tab's button turns
+/// to it (#1815), in that tab's saved form (`ControlsUi::show`). `classic`: Legacy's two windows, each its own.
 pub fn request(ctx: &egui::Context, camera: &mut bool, movement: &mut bool, classic: bool, want_movement: bool, toggle: bool) {
     if classic {
         let (id, open) = if want_movement {
@@ -696,17 +803,22 @@ pub fn request(ctx: &egui::Context, camera: &mut bool, movement: &mut bool, clas
     }
     let other = if want_movement { *camera } else { *movement };
     let open = if want_movement { movement } else { camera };
-    let minimized = widgets::floater_minimized(ctx, WINDOW);
+    let compact = widgets::floater_minimized(ctx, WINDOW);
     if *open {
-        if minimized {
-            widgets::expand_floater(ctx, WINDOW);
+        if compact && toggle {
+            // as its cross does: it opens again as the saved choice says,
+            // not as it was left
+            widgets::close_floater(ctx, WINDOW);
+        } else if compact {
+            // shown: to the front, compact still
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(WINDOW)));
         } else if toggle {
             *open = false;
         }
     } else if other {
-        // (`ControlsUi::show` turns to the tab just asked for)
+        // (`ControlsUi::show` turns to the tab just asked for, in its form)
         *open = true;
-        if minimized {
+        if compact && want_movement {
             widgets::expand_floater(ctx, WINDOW);
         }
     } else {
@@ -1509,7 +1621,7 @@ fn pad_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, binding: Op
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(PAD_BUTTON), Sense::click_and_drag());
     // Continue only a primary press observed on this pad in consecutive frames.
     // A hidden pad may miss a release; a fresh press must start on a visible button.
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let (down, pressed) = ui.input(|i| (i.pointer.primary_down(), i.pointer.primary_pressed()));
     let pad_pressed = down
         && ui.data_mut(|d| {
@@ -2106,6 +2218,347 @@ mod tests {
         assert!(!camera && movement);
     }
 
+    /// #3904: the compact window is the camera shown, so its button
+    /// closes it; a request that only opens (`toggle` false) leaves it
+    /// compact.
+    #[test]
+    fn the_camera_button_closes_the_compact_window() {
+        let ctx = egui::Context::default();
+        let (mut camera, mut movement) = (true, false);
+        widgets::minimize_floater(&ctx, WINDOW);
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        let expand = ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(WINDOW).with(widgets::EXPAND)));
+        assert_eq!(expand, None, "not expanded");
+        let close = ctx.data(|d| d.get_temp::<u64>(egui::Id::unique(WINDOW).with("close")));
+        assert!(close.is_some(), "closed as its cross does");
+        let ctx = egui::Context::default();
+        let (mut camera, mut movement) = (true, false);
+        widgets::minimize_floater(&ctx, WINDOW);
+        request(&ctx, &mut camera, &mut movement, false, false, false);
+        let expand = ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(WINDOW).with(widgets::EXPAND)));
+        assert!(camera && !movement && expand.is_none() && widgets::floater_minimized(&ctx, WINDOW));
+    }
+
+    /// #3904: the compact form is kept across closing and reopening, and
+    /// follows the saved choice when it changes (set here by hand, as the
+    /// title button or Preferences would); the Movement button and a window
+    /// reset do not change it.
+    #[test]
+    fn the_compact_window_opens_again_compact() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let keys = KeyBindings::default();
+        let views = SavedViews::default();
+        let view = View {
+            zoom: 0.5,
+            roll: 0.0,
+            preset: CameraPreset::Rear,
+            shots: &[],
+            views: &views,
+            flying: false,
+            always_run: false,
+            seated: false,
+            run_locked: false,
+            fly_locked: false,
+            stand_locked: false,
+            mouselook: false,
+            object_view: false,
+            keys: &keys,
+            free: None,
+        };
+        let mut controls = ControlsUi::default();
+        let (mut camera, mut movement) = (false, false);
+        let mut compact = Compact {
+            camera: true,
+            movement: false,
+        };
+        let mut time = 0.0;
+        let mut run = |controls: &mut ControlsUi, camera: &mut bool, movement: &mut bool, compact: &mut Compact| {
+            for _ in 0..3 {
+                time += 0.1;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1000.0))),
+                        time: Some(time),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        controls.show(ui.ctx(), &p, camera, movement, compact, false, &view);
+                    },
+                );
+                output.textures_delta.clear();
+            }
+        };
+        let minimized = || widgets::floater_minimized(&ctx, WINDOW);
+        // the toolbar's camera: it opens compact
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && minimized(), "opens compact");
+        // the button again closes it, a third press opens it compact
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(!camera && !movement, "closed");
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && minimized() && compact.camera, "compact again");
+        // Movement: the full window on its tab, the choice kept
+        request(&ctx, &mut camera, &mut movement, false, true, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(movement && !camera && !minimized() && compact.camera);
+        // back to the camera from the toolbar: compact, as saved
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && minimized());
+        // the photo window's Controls asks for it full: the choice kept
+        widgets::expand_floater(&ctx, WINDOW);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && !minimized() && compact.camera, "an expand asked for is no choice");
+        // closed and opened again: compact
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && minimized());
+        // "Reset window positions and sizes" expands it: the choice kept
+        crate::ui::layout::reset_windows(&ctx);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && !minimized() && compact.camera, "a reset is no choice");
+        // the choice made full, then closed and opened again: full
+        compact.camera = false;
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && !minimized());
+        // the Preferences switch while the window is open: at once, both ways
+        compact.camera = true;
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && minimized() && compact.camera, "switched on in Preferences");
+        // Movement, then back by the Camera tab: the camera compact again
+        request(&ctx, &mut camera, &mut movement, false, true, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(movement && !minimized(), "Movement full, as saved");
+        controls.tab = Tab::Camera;
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && minimized(), "the Camera tab: compact, as saved");
+        compact.camera = false;
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && !minimized() && !compact.camera, "switched off in Preferences");
+        // the Movement tab's own choice: it opens compact, the camera full
+        compact.movement = true;
+        request(&ctx, &mut camera, &mut movement, false, true, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(movement && minimized(), "Movement compact, as saved");
+        request(&ctx, &mut camera, &mut movement, false, false, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(camera && !minimized(), "the camera full, as saved");
+        request(&ctx, &mut camera, &mut movement, false, true, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(movement && minimized(), "Movement compact again");
+        // its button closes the compact movement, as the full one
+        request(&ctx, &mut camera, &mut movement, false, true, true);
+        run(&mut controls, &mut camera, &mut movement, &mut compact);
+        assert!(!camera && !movement, "closed from Movement");
+    }
+
+    /// The Controls window driven frame by frame, as `App::controls_window`
+    /// does, with real clicks on its title bar.
+    struct Harness {
+        ctx: egui::Context,
+        p: Palette,
+        keys: KeyBindings,
+        views: SavedViews,
+        controls: ControlsUi,
+        camera: bool,
+        movement: bool,
+        compact: Compact,
+        free: Option<FreeView>,
+        time: f64,
+    }
+
+    impl Harness {
+        fn new(compact: Compact) -> Self {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            Self {
+                ctx,
+                p: theme.palette(),
+                keys: KeyBindings::default(),
+                views: SavedViews::default(),
+                controls: ControlsUi::default(),
+                camera: false,
+                movement: false,
+                compact,
+                free: None,
+                time: 0.0,
+            }
+        }
+
+        fn frame(&mut self, events: Vec<egui::Event>) {
+            self.time += 0.1;
+            let view = View {
+                zoom: 0.5,
+                roll: 0.0,
+                preset: CameraPreset::Rear,
+                shots: &[],
+                views: &self.views,
+                flying: false,
+                always_run: false,
+                seated: false,
+                run_locked: false,
+                fly_locked: false,
+                stand_locked: false,
+                mouselook: false,
+                object_view: false,
+                keys: &self.keys,
+                free: self.free,
+            };
+            let (controls, camera, movement, compact, p) =
+                (&mut self.controls, &mut self.camera, &mut self.movement, &mut self.compact, &self.p);
+            let mut output = self.ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1000.0))),
+                    time: Some(self.time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    controls.show(ui.ctx(), p, camera, movement, compact, false, &view);
+                },
+            );
+            output.textures_delta.clear();
+        }
+
+        /// The toolbar's camera (or Move) button, then one frame only.
+        fn press(&mut self, want_movement: bool) {
+            request(&self.ctx, &mut self.camera, &mut self.movement, false, want_movement, true);
+            self.frame(Vec::new());
+        }
+
+        fn settle(&mut self) {
+            for _ in 0..3 {
+                self.frame(Vec::new());
+            }
+        }
+
+        /// A click on the title bar's compact / full button.
+        fn click_title_button(&mut self) {
+            let rect = self
+                .ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("floater_minimize", WINDOW))))
+                .expect("the title button drawn");
+            let at = rect.center();
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            };
+            self.frame(vec![egui::Event::PointerMoved(at)]);
+            self.frame(vec![button(true)]);
+            self.frame(vec![button(false)]);
+            self.settle();
+        }
+
+        /// A double-click on the title bar, left of its buttons.
+        fn double_click_title(&mut self) {
+            let rect = self
+                .ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("floater_minimize", WINDOW))))
+                .expect("the title button drawn");
+            let at = rect.center() - Vec2::new(rect.width() * 3.0, 0.0);
+            let button = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::default(),
+            };
+            self.frame(vec![egui::Event::PointerMoved(at)]);
+            self.frame(vec![button(true), button(false)]);
+            self.frame(vec![button(true), button(false)]);
+            self.settle();
+        }
+
+        fn minimized(&self) -> bool {
+            widgets::floater_minimized(&self.ctx, WINDOW)
+        }
+    }
+
+    /// #3904: the title button's compact / full, or a double-click on the
+    /// title bar, is the shown tab's saved choice; in the free camera it is
+    /// the free camera's own window.
+    #[test]
+    fn the_title_button_sets_the_compact_choice() {
+        let mut h = Harness::new(Compact::default());
+        h.press(false);
+        h.settle();
+        assert!(h.camera && !h.minimized());
+        h.click_title_button();
+        assert!(
+            h.minimized() && h.compact.camera && !h.compact.movement,
+            "compact, saved for the camera"
+        );
+        h.click_title_button();
+        assert!(!h.minimized() && !h.compact.camera, "full, saved");
+        // the Movement tab keeps its own choice
+        h.press(true);
+        h.settle();
+        assert!(h.movement && !h.minimized());
+        h.click_title_button();
+        assert!(
+            h.minimized() && h.compact.movement && !h.compact.camera,
+            "compact, saved for Movement"
+        );
+        // a double-click on the title bar is the same choice
+        h.double_click_title();
+        assert!(!h.minimized() && !h.compact.movement, "full by a double-click, saved");
+        // the free camera's compact window is no choice of the camera's
+        let mut h = Harness::new(Compact::default());
+        h.free = Some(FreeView {
+            speed: 2.0,
+            no_collisions: false,
+        });
+        h.press(false);
+        h.settle();
+        h.click_title_button();
+        assert!(h.minimized() && h.compact == Compact::default(), "the free camera's own");
+        // the pure rule underneath
+        assert_eq!(compact_choice(true, true, false), Some(true));
+        assert_eq!(compact_choice(true, false, false), Some(false));
+        assert_eq!(compact_choice(true, true, true), None);
+        assert_eq!(compact_choice(false, false, false), None);
+    }
+
+    /// #3904: "Reset window positions and sizes" made while the window is
+    /// closed, or a close and an opening one frame apart, still open it in
+    /// its saved compact form.
+    #[test]
+    fn a_reset_while_closed_keeps_the_compact_form() {
+        let mut h = Harness::new(Compact {
+            camera: true,
+            movement: false,
+        });
+        h.press(false);
+        h.settle();
+        assert!(h.camera && h.minimized(), "opens compact");
+        h.press(false);
+        h.settle();
+        assert!(!h.camera, "closed");
+        crate::ui::layout::reset_windows(&h.ctx);
+        h.press(false);
+        h.settle();
+        assert!(h.camera && h.minimized() && h.compact.camera, "compact after the reset");
+        // closed by its button, opened again at the very next frame
+        h.press(false);
+        assert!(!h.camera, "closed at once");
+        h.press(false);
+        h.settle();
+        assert!(h.camera && h.minimized(), "compact, the frame after a close");
+    }
+
     #[test]
     fn the_joysticks_hold_firestorms_keys() {
         assert_eq!(orbit_actions(Vec2::new(0.8, 0.0)), vec![Action::CamOrbitCcw]);
@@ -2193,7 +2646,7 @@ mod tests {
                             ..Default::default()
                         },
                         |ui| {
-                            controls.show(ui.ctx(), &p, &mut camera, &mut movement, classic, &view);
+                            controls.show(ui.ctx(), &p, &mut camera, &mut movement, &mut Compact::default(), classic, &view);
                         },
                     );
                     frame_output.textures_delta.clear();

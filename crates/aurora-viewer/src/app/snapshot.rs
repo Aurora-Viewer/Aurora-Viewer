@@ -719,10 +719,11 @@ impl App {
         })
     }
 
-    /// The GPU time of a frame just reported, which plans the photo's
-    /// passes (`snapshot::GpuCost`), and the video memory its targets take.
+    /// The GPU time of a frame just reported, as a photo would spend it
+    /// (its traced passes run more rounds), which plans the photo's passes
+    /// (`snapshot::GpuCost`), and the video memory its targets take.
     pub(super) fn photo_gpu_time(&mut self, stats: &aurora_render::RenderStats) {
-        self.snapshots.gpu_cost.note(stats.gpu_ms, stats.gpu_pixels);
+        self.snapshots.gpu_cost.note(stats.gpu_photo_ms, stats.gpu_pixels);
         if stats.target_bytes_per_pixel.is_some() {
             self.snapshots.target_bytes = stats.target_bytes_per_pixel;
         }

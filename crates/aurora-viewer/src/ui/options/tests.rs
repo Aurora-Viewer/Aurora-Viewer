@@ -445,6 +445,8 @@ const BEFORE: &[&str] = &[
     "classic_pay_window",
     "legacy_money_tracker",
     "classic_controls",
+    "compact_controls",
+    "compact_movement_controls",
     "classic_restart_alert",
     "classic_rez_effect",
     "classic_hover_tips",
@@ -870,7 +872,11 @@ fn every_page_names_its_tabs() {
     assert_eq!(Page::parse("9"), None, "the former Debug page is the Dev Toolbox");
     assert_eq!(
         Page::Graphics.tabs()[5..],
-        [aurora_i18n::tr!("ui-options-smoothness"), aurora_i18n::tr!("region-parcels")]
+        [
+            aurora_i18n::tr!("ui-options-smoothness"),
+            aurora_i18n::tr!("region-parcels"),
+            aurora_i18n::tr!("ui-options-tab-ray-tracing")
+        ]
     );
 }
 
@@ -1872,6 +1878,61 @@ fn the_graphics_card_group_shows_the_startup_notice() {
             assert_eq!(shows(text), shown == Some(text), "{text} with {notice:?}");
         }
     }
+}
+
+/// Graphics › Light › Ray tracing: the rows are there whatever the graphics
+/// card, and the reason it cannot trace shows under the group's title, only
+/// when there is one.
+#[test]
+fn the_ray_tracing_group_says_why_the_card_cannot_trace() {
+    use aurora_render::RayTracingSupport as Support;
+    let tab = 7;
+    let unsupported = aurora_i18n::tr!("ui-options-ray-tracing-unsupported").to_string();
+    let vr = aurora_i18n::tr!("ui-options-ray-tracing-vr").to_string();
+    let row = aurora_i18n::tr!("ui-options-ray-traced-shadows").to_string();
+    for (support, shown) in [
+        (Support::Unsupported, Some(&unsupported)),
+        (Support::Vr, Some(&vr)),
+        (Support::NotOpened, None),
+        (Support::Ready, None),
+    ] {
+        let mut frames = Frames::new();
+        let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+        st.ray_tracing = support;
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Graphics, tab, Vec::new());
+        }
+        let shows = |text: &str| texts.iter().any(|t| t.source == text);
+        assert!(shows(&row), "the ray tracing row is on the Ray tracing tab with {support:?}");
+        for text in [&unsupported, &vr] {
+            assert_eq!(shows(text), shown == Some(text), "{text} with {support:?}");
+        }
+        // nothing traced by default, and nothing here changes it
+        assert_eq!(s.ray_tracing, crate::settings::RayTracingSettings::OFF);
+    }
+    // found by the words people type, its options behind the cog too
+    let mut s = Settings::default();
+    assert!(counts(&mut s, "raytracing").hits(Page::Graphics) >= 1);
+    s.ray_tracing.reflections = true;
+    assert_eq!(counts(&mut s, "").modified(Page::Graphics), 1);
+}
+
+/// Deluxe (RT) is out of reach, with the Ray tracing tab's reason, where the
+/// card cannot trace; elsewhere it can be chosen.
+#[test]
+fn deluxe_rt_says_why_the_card_cannot_take_it() {
+    use aurora_render::RayTracingSupport as Support;
+    assert_eq!(
+        super::deluxe_rt_blocked(Support::Unsupported),
+        Some(aurora_i18n::tr!("ui-options-ray-tracing-unsupported"))
+    );
+    assert_eq!(
+        super::deluxe_rt_blocked(Support::Vr),
+        Some(aurora_i18n::tr!("ui-options-ray-tracing-vr"))
+    );
+    assert_eq!(super::deluxe_rt_blocked(Support::Ready), None);
+    assert_eq!(super::deluxe_rt_blocked(Support::NotOpened), None);
 }
 
 /// Accessibility gathers rows of other pages: each one is drawn there, and

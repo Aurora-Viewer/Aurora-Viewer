@@ -936,7 +936,9 @@ pub fn show_shape(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &
             }
         });
     });
-    shape_column(ui, p, tool, world, idx, &volume, chosen_type, editable && single, flexible, env);
+    ui.push_id(key, |ui| {
+        shape_column(ui, p, tool, world, idx, &volume, chosen_type, editable && single, flexible, env);
+    });
 }
 
 /// Show a dash only on axes whose selected objects have different values.
@@ -1263,7 +1265,9 @@ fn shape_column(
             ));
         });
     }
-    if e.changed && u != ui_now {
+    // During a drag the shape has already been previewed on the prim. On
+    // release it still needs its one ObjectShape even if that preview matches.
+    if e.changed && (e.commit || u != ui_now) {
         let v = volume_from_ui(&u, ui_now.ty, flexible);
         // Sculptie: the sculpt parameter goes on (LLPanelObject::onCommitParametric)
         let was_sculpt = volume.sculpt.is_some();
