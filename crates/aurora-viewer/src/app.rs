@@ -12405,6 +12405,8 @@ impl App {
             self.scene
                 .physics_shapes
                 .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
+            // after the display, which may release a mesh the Features tab still needs
+            self.build.mesh_physics.apply(&mut self.scene.meshes);
             self.scene.physics_shapes.append(&mut self.scene.lists);
             let huds_shown = self.huds_shown();
             self.scene

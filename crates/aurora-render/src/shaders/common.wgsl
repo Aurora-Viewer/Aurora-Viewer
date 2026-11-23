@@ -226,6 +226,7 @@ const LAYER_RANK_SHIFT: u32 = 24u;
 const LAYER_RANK_MAX: u32 = 7u;
 const LAYER_DEPTH_STEP: f32 = 9.5367431640625e-7; // 2^-20
 const FLAG_STUDIO_STAGE: u32 = 536870912u; // flags.w bit 29, local scenery, not the avatar reveal
+const FLAG_PICK_IGNORES_ALPHA: u32 = 268435456u; // flags.w bit 28, Alt-focus keeps clear texels (emissive mask mode)
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
 const PORTAL_SURFACE_SCALE: f32 = 1.16;
