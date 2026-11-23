@@ -146,13 +146,21 @@ pub fn keyword_color(line: &ChatLine) -> Option<Color32> {
     crate::keywords::color(&line.from, &line.text, line.kind != ChatKind::Im).map(text)
 }
 
+/// The colour a line takes over its sender's usual one: the keyword
+/// colour, else its contact set's. LLViewerChat::getChatColor
+/// (indra/newview/llviewerchat.cpp) colours a resident's line by contact set
+/// (LGGContactSets::colorize, hasFriendColorThatShouldShow) and applies the
+/// keyword colour last, so a keyword shows on a contact set's line too
+/// (#3879).
+pub fn keyword_or_contact_color(line: &ChatLine, world: &World) -> Option<Color32> {
+    keyword_color(line).or_else(|| contact_chat_color(line, world))
+}
+
 /// Text color of a chat line (LLViewerChat::getChatColor): the keyword
-/// colour for a line that holds a keyword, else the sender's.
+/// colour for a line that holds a keyword, else its contact set's, else the
+/// sender's.
 pub fn chat_color(line: &ChatLine, world: &World) -> Color32 {
-    if let Some(color) = contact_chat_color(line, world) {
-        return color;
-    }
-    if let Some(color) = keyword_color(line) {
+    if let Some(color) = keyword_or_contact_color(line, world) {
         return color;
     }
     let k = get();
@@ -493,6 +501,38 @@ mod tests {
         for line in &hidden {
             assert_eq!(contact_chat_color(line, &world), None);
         }
+    }
+
+    /// LLViewerChat::getChatColor applies the keyword colour after the
+    /// contact set's (#3879): a keyword line of a contact set's member takes
+    /// the keyword colour, in nearby chat and in an IM; the member's other
+    /// lines keep the set's colour.
+    #[test]
+    fn a_keyword_colour_wins_over_a_contact_set_colour() {
+        let world = world();
+        let keyword = [255, 128, 0, 255];
+        // a word no other test says: the matcher is global
+        crate::keywords::set(&crate::keywords::KeywordSettings {
+            on: true,
+            in_chat: true,
+            in_im: true,
+            words: "zephyr3879".into(),
+            change_color: true,
+            color: keyword,
+            ..Default::default()
+        });
+        let set = contact_chat_color(&rlva_line(ChatKind::Local(ChatType::Normal)), &world).expect("the set colours chat");
+        for kind in [ChatKind::Local(ChatType::Normal), ChatKind::Local(ChatType::Shout), ChatKind::Im] {
+            let mut line = rlva_line(kind);
+            assert_eq!(chat_color(&line, &world), set, "{kind:?}: no keyword, the set's colour");
+            line.text = "meet at the Zephyr3879 stage".into();
+            assert_eq!(keyword_or_contact_color(&line, &world), Some(text(keyword)), "{kind:?}");
+            assert_eq!(chat_color(&line, &world), text(keyword), "{kind:?}: the keyword colour wins");
+        }
+        // our own line never holds a keyword (chatContainsKeyword) and keeps the set's colour
+        let mut own = rlva_line(ChatKind::Own(ChatType::Normal));
+        own.text = "zephyr3879".into();
+        assert_eq!(keyword_or_contact_color(&own, &world), contact_chat_color(&own, &world));
     }
 
     /// LLVOAvatar::getNameTagColor ends with the mark whatever RLVa hides,

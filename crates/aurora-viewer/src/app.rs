@@ -15014,6 +15014,7 @@ impl App {
         if self.demo && self.frame_count == 60 {
             crate::demo::people::seed(&mut self.world);
             crate::demo::contact_markers::seed(&mut self.world);
+            crate::demo::keywords::seed(&mut self.world);
             crate::demo::friend_location(&mut self.world);
         }
         if self.demo && matches!(self.frame_count, 700 | 720) && crate::demo::friend_join_scenario() {

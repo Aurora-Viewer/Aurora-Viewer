@@ -6586,7 +6586,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GAMING_MODE=<frame>` | From that frame, gaming mode is on as from its toolbar button: the Render pauses, the loop slows, with its notice and window title, until the window comes back in front |
 | `AURORA_DEMO_IM_ANNOUNCE=1\|prefs` | Residents start typing IMs to us, then send them: the conversation announced before the message, and the unread count in the window title |
 | `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
-| `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
+| `AURORA_DEMO_KEYWORDS=1\|sets\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; `sets`: their speakers in a contact set that colours chat; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object\|group-notice\|legacy-group-notice\|group-notice-saved\|group-notice-chat\|purchase\|purchase-open\|fees\|fees-answered\|fees-short\|pie-toasts\|legacy-pie-toasts` | Notification center: cards, burst, paused bell, history, Legacy toasts, object inventory offers, group notices, a delivered purchase, a group fee and a question to take L$, toasts a wider gap apart under a more transparent pie |
 | `AURORA_DEMO_DELIVERY=1\|several\|open\|history` | A Marketplace delivery arriving in Received items: its card under the bell, several at once, "Show in inventory", its history entry |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
@@ -8064,7 +8064,7 @@ failure. Grid validation and any paid upload are performed by the human.
   letters of the nearest resident's user name (the log's `demo mention:`
   line): the rest of their first name and a space follow, selected; capture
   frame 620.
-- **`AURORA_DEMO_KEYWORDS=1|prefs`**: keyword alerts on for the run, never saved
+- **`AURORA_DEMO_KEYWORDS=1|sets|prefs`**: keyword alerts on for the run, never saved
   (the two keywords of `demo-keywords-words`, "party, builders" in English,
   "fête, constructeurs" in French; colour change and sound on), with the
   Conversations window open on the nearby chat. A resident says a line
@@ -8077,7 +8077,11 @@ failure. Grid validation and any paid upload are performed by the human.
   a "Keyword alert". `AURORA_DEMO_OPTIONS=3:keywords` opens Preferences ›
   Chat on the group (it shows the saved settings, not the run's). `prefs`
   keeps the settings of Preferences › Chat › Keyword alerts, to try them by
-  hand, and sends the same five lines again every 1200 frames.
+  hand, and sends the same five lines again every 1200 frames. `sets` is
+  `1` with Tess and Nova in a Family contact set that colours their chat
+  text green (in memory only, from frame 60): their keyword lines must
+  still be orange, the keyword colour winning as in LLViewerChat::getChatColor
+  (#3879), and Tess's line without a keyword green.
 - **`AURORA_DEMO_IM_ANNOUNCE=1|prefs`**: from frame 700, every 600 frames
   (about ten seconds at 60 fps), Nova then Tess in turn start typing an IM
   to us (IM_TYPING_START), and send it 300 frames later. `1` turns on
