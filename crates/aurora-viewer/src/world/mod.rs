@@ -506,7 +506,8 @@ pub struct World {
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     /// Objects that changed key without being removed (old, new), in
     /// order, until the build tool takes them (`take_rekeyed`): its
-    /// selection follows an object across a border.
+    /// selection follows an object across a border. At most
+    /// [`REKEYS_KEPT`]; a logout drops them with the rest (`reset`).
     rekeyed: Vec<(ObjKey, ObjKey)>,
     pub chat: VecDeque<ChatLine>,
     /// The origin of each object's chat line (its object and the line's
@@ -999,6 +1000,10 @@ fn saved_prefix(timestamp: u32) -> String {
 /// The largest region a grid can have (Constants.MaximumRegionSize,
 /// OpenSim): a corrupt patch number must not make a land grid of gigabytes.
 const MAX_REGION_SIZE: u32 = 4096;
+
+/// Key changes kept for the build tool between two of its frames
+/// (`World::take_rekeyed`): far more than the crossings of a frame.
+const REKEYS_KEPT: usize = 1024;
 
 impl World {
     pub fn add_tracked_region(&mut self, name: &str, label: &str) {
@@ -1522,6 +1527,11 @@ impl World {
                 self.gltf_overrides.insert(new, sides);
             }
             self.rekeyed.push((old, new));
+        }
+        // only frames in the world take them: none may pile up meanwhile
+        if self.rekeyed.len() > REKEYS_KEPT {
+            let extra = self.rekeyed.len() - REKEYS_KEPT;
+            self.rekeyed.drain(..extra);
         }
     }
 

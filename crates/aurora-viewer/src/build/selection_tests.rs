@@ -2195,3 +2195,41 @@ fn rekeys_are_followed_in_order_and_leave_other_keys_alone() {
     rekey_map(&mut faces, &pairs);
     assert_eq!(faces, HashMap::from([(key(3, 7), vec![1u8]), (key(4, 4), vec![3])]));
 }
+
+#[test]
+fn a_grab_follows_its_object_into_the_next_region() {
+    // #4483: LLToolGrab reads the object's region and local ID each time
+    let (mut world, mut tool, _) = fixture();
+    let idx = object(&world, 99614);
+    let movable = 1 << 8; // FLAGS_OBJECT_MOVE
+    world.objects.get_mut(idx).unwrap().update_flags |= movable;
+    let old = world.objects.get(idx).unwrap().key;
+    let point = world.objects.get(idx).unwrap().position + world.region_offset(old.region).unwrap();
+    tool.grab_down(
+        &mut world,
+        idx,
+        point,
+        aurora_net::TouchSurface::default(),
+        (0.0, 0.0),
+        Mods::default(),
+    );
+    let mut update = cycle_update(99614);
+    update.update_flags |= movable;
+    let new = cross_east(&mut world, update, 7614);
+    let rekeys = world.take_rekeyed();
+    tool.follow_rekeyed(&world, &rekeys);
+    tool.out.clear();
+    tool.grab_hover(&world, (12.0, 0.0), Mods::default());
+    let Some(aurora_net::NetCommand::ObjectGrabUpdate { handle, position, .. }) = tool.out.last() else {
+        panic!("the drag goes on: {:?}", tool.out);
+    };
+    assert_eq!(*handle, new.region);
+    // the demo object stands at x = 138 of the region left: about 118 m
+    // west of the corner of the one it entered
+    assert!((-130.0..-100.0).contains(&position.x), "{position}");
+    tool.grab_up();
+    assert!(
+        matches!(tool.out.last(), Some(aurora_net::NetCommand::ObjectRelease { handle, local_id, .. })
+        if *handle == new.region && *local_id == new.local_id)
+    );
+}

@@ -11,6 +11,7 @@ use super::geom::Cam;
 use super::{BuildTool, GrabMode, Mods};
 use crate::scene::Scene;
 use crate::world::World;
+use crate::world::objects::ObjKey;
 use aurora_net::build::BuildCmd;
 use aurora_net::{NetCommand, TouchSurface};
 use glam::{Quat, Vec3};
@@ -67,6 +68,24 @@ pub struct GrabState {
 #[derive(Debug, Default)]
 pub struct Grab {
     pub state: Option<GrabState>,
+}
+
+impl GrabState {
+    /// The grabbed prim crossed into another region: the updates, the spin
+    /// and the release go to that region under its new number, and the
+    /// place sent is counted from that region's corner, as LLToolGrab
+    /// reads the object's region and local ID each time (handleHoverActive,
+    /// stopGrab; indra/newview/lltoolgrab.cpp).
+    pub(super) fn follow_rekeyed(&mut self, pairs: &[(ObjKey, ObjKey)]) {
+        let key = super::rekeyed(
+            ObjKey {
+                region: self.region,
+                local_id: self.local_id,
+            },
+            pairs,
+        );
+        (self.region, self.local_id) = (key.region, key.local_id);
+    }
 }
 
 impl BuildTool {

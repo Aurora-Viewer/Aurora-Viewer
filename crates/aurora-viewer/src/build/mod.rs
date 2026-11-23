@@ -1906,6 +1906,9 @@ impl BuildTool {
             }
         }
         self.manip.follow_rekeyed(world, pairs);
+        if let Some(g) = &mut self.grab.state {
+            g.follow_rekeyed(pairs);
+        }
         self.ui.follow_rekeyed(pairs);
     }
 
