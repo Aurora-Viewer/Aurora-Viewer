@@ -13,9 +13,12 @@ pub fn spacing(ui: &mut egui::Ui) {
     super::super::widgets::inventory_spacing(ui);
 }
 
+/// The room of [`caret`], kept before a folder that has none.
+pub const CARET: Vec2 = Vec2::splat(12.0);
+
 /// The open / closed triangle before a folder; clicked to toggle it.
 pub fn caret(ui: &mut egui::Ui, p: &Palette, open: bool) -> egui::Response {
-    let (r, resp) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::click());
+    let (r, resp) = ui.allocate_exact_size(CARET, egui::Sense::click());
     let c = r.center();
     let pts = if open {
         vec![c + egui::vec2(-4.0, -2.0), c + egui::vec2(4.0, -2.0), c + egui::vec2(0.0, 3.0)]

@@ -67,6 +67,8 @@ pub fn row_height(ui: &egui::Ui, p: &Palette, st: &InventoryUi) -> f32 {
 pub enum Kind {
     Folder {
         open: bool,
+        /// Whether it has a caret and opens ([`branches`]).
+        branches: bool,
     },
     Item,
     /// "Empty" or "Loading folder" under an open folder without children.
@@ -77,6 +79,17 @@ pub enum Kind {
         index: usize,
         open: bool,
     },
+}
+
+/// Whether a folder's row has a caret and opens: while it lists something
+/// or its contents are not known yet. LLFolderViewItem::drawOpenFolderArrow
+/// (indra/llui/llfolderviewitem.cpp) draws the arrow only when
+/// `hasVisibleChildren() || !isFolderComplete()`; a folder fetched and empty
+/// has none (issue #4765). Aurora difference: such a folder does not open
+/// either, where the Legacy Viewer still toggles it to show nothing.
+pub(super) fn branches(view: &ViewCache, inv: &Inventory, show_library: bool, id: Uuid) -> bool {
+    inv.folders.get(&id).is_some_and(|folder| folder.state != FetchState::Fetched)
+        || view.children_iter(id, show_library, inv.lib_root).next().is_some()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,6 +209,13 @@ impl PlainTree {
         self.open.contains(&id)
     }
 
+    /// Whether the folder's row is listed with a caret ([`branches`]).
+    pub fn folds(&self, id: Uuid) -> bool {
+        self.rows
+            .iter()
+            .any(|row| row.id == id && matches!(row.kind, Kind::Folder { branches: true, .. }))
+    }
+
     pub fn set_open(&mut self, id: Uuid, open: bool) {
         let changed = if open { self.open.insert(id) } else { self.open.remove(&id) };
         if changed {
@@ -291,7 +311,15 @@ impl PlainTree {
             self.rows.push(Row {
                 id,
                 level: 1,
-                kind: if is_folder { Kind::Folder { open: false } } else { Kind::Item },
+                // the explorer goes into a tile's folder, empty or not
+                kind: if is_folder {
+                    Kind::Folder {
+                        open: false,
+                        branches: true,
+                    }
+                } else {
+                    Kind::Item
+                },
                 parent: NONE,
                 end: self.rows.len(),
             });
@@ -313,12 +341,14 @@ impl PlainTree {
         if depth > MAX_DEPTH || !inv.folders.contains_key(&id) {
             return;
         }
-        let open = self.open.contains(&id);
+        // A shown root stays open, with "Empty" under it when it is.
+        let branches = depth == 0 || branches(view, inv, show_library, id);
+        let open = branches && self.open.contains(&id);
         let index = self.rows.len();
         self.rows.push(Row {
             id,
             level,
-            kind: Kind::Folder { open },
+            kind: Kind::Folder { open, branches },
             parent,
             end: index,
         });
@@ -408,8 +438,12 @@ impl PlainTree {
                 self.rows.push(Row {
                     id,
                     level: 0,
+                    // the explorer goes into a folder, empty or not
                     kind: if inv.folders.contains_key(&id) {
-                        Kind::Folder { open: false }
+                        Kind::Folder {
+                            open: false,
+                            branches: true,
+                        }
                     } else {
                         Kind::Item
                     },
@@ -632,10 +666,11 @@ fn rows(
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.add_space(row.level as f32 * ui.spacing().indent);
             match row.kind {
-                Kind::Folder { open } => {
+                Kind::Folder { open, branches } => {
                     let mut now = open;
-                    folder_row(ui, p, icons, inv, row.id, &mut now, st, prefs, facts, actions);
-                    if now != open {
+                    folder_row(ui, p, icons, inv, row.id, &mut now, branches, st, prefs, facts, actions);
+                    // cargo held over an empty folder does not open it either
+                    if now != open && branches {
                         st.plain.set_open(row.id, now);
                     }
                 }
@@ -757,32 +792,47 @@ mod tests {
         tree.rows.iter().map(|r| (r.id.as_u128(), r.level, r.kind)).collect()
     }
 
+    const OPEN: Kind = Kind::Folder {
+        open: true,
+        branches: true,
+    };
+    const SHUT: Kind = Kind::Folder {
+        open: false,
+        branches: true,
+    };
+    const LEAF: Kind = Kind::Folder {
+        open: false,
+        branches: false,
+    };
+
     #[test]
-    fn only_open_folders_list_their_contents_and_an_empty_one_gets_a_placeholder() {
+    fn only_open_folders_list_their_contents_and_an_empty_one_has_no_caret() {
         let (inv, view, prefs) = fixture();
         let mut tree = PlainTree::default();
         tree.prepare(&view, &inv, inv.root, true, true);
-        assert_eq!(listed(&tree), [(1, 0, Kind::Folder { open: false })]);
+        assert_eq!(listed(&tree), [(1, 0, SHUT)]);
         tree.open_all([id(1), id(10), id(20)]);
         assert!(tree.prepare(&view, &inv, inv.root, true, prefs.show_library));
+        // 20 and the library are fetched and empty: no caret, and opening
+        // them lists nothing (issue #4765).
         assert_eq!(
             listed(&tree),
             [
-                (1, 0, Kind::Folder { open: true }),
-                (10, 1, Kind::Folder { open: true }),
-                (11, 2, Kind::Folder { open: false }),
+                (1, 0, OPEN),
+                (10, 1, OPEN),
+                (11, 2, SHUT),
                 (100, 2, Kind::Item),
                 (101, 2, Kind::Item),
-                (20, 1, Kind::Folder { open: true }),
-                (20, 2, Kind::Empty),
-                (3, 1, Kind::Folder { open: false }),
+                (20, 1, LEAF),
+                (3, 1, LEAF),
             ]
         );
+        assert!(tree.folds(id(10)) && !tree.folds(id(20)));
         assert_eq!(tree.order, [1, 10, 11, 100, 101, 20, 3].map(id));
-        assert_eq!(tree.rows[0].end, 7);
+        assert_eq!(tree.rows[0].end, 6);
         assert_eq!(tree.rows[1].end, 4);
         assert_eq!(tree.rows[3].parent, 1);
-        assert_eq!(tree.listed_open, [1, 10, 20].map(id));
+        assert_eq!(tree.listed_open, [1, 10].map(id));
         assert!(!tree.prepare(&view, &inv, inv.root, true, true), "nothing changed");
         // Hiding the library, closing a folder and folder windows.
         assert!(tree.prepare(&view, &inv, inv.root, true, false));
@@ -791,11 +841,58 @@ mod tests {
         tree.prepare(&view, &inv, inv.root, true, true);
         assert_eq!(tree.order, [1, 10, 20, 3].map(id));
         tree.prepare(&view, &inv, id(10), false, true);
-        assert_eq!(
-            listed(&tree),
-            [(11, 0, Kind::Folder { open: false }), (100, 0, Kind::Item), (101, 0, Kind::Item)]
-        );
+        assert_eq!(listed(&tree), [(11, 0, SHUT), (100, 0, Kind::Item), (101, 0, Kind::Item)]);
         assert_eq!(tree.listed_open, [id(10)]);
+    }
+
+    #[test]
+    fn a_folder_keeps_its_caret_until_its_contents_are_known() {
+        let (mut inv, mut view, prefs) = fixture();
+        let mut tree = PlainTree::default();
+        tree.open_all([id(1), id(20)]);
+        for state in [FetchState::Unknown, FetchState::Fetching, FetchState::Failed] {
+            if let Some(folder) = inv.folders.get_mut(&id(20)) {
+                folder.state = state;
+            }
+            view.prepare(&inv, prefs.sort);
+            tree.key = None;
+            tree.prepare(&view, &inv, inv.root, true, true);
+            let at = tree.position(id(20)).expect("folder 20 is listed");
+            assert_eq!(tree.rows[at].kind, OPEN, "{state:?}: the caret stays");
+            assert_eq!(tree.rows[at + 1].kind, Kind::Empty, "{state:?}: loading or not loaded");
+            assert!(tree.listed_open.contains(&id(20)), "{state:?}: it is fetched");
+        }
+        // Fetched and empty, it shuts though it was left open; an item put
+        // in it brings the caret back, and the folder opens as it was left.
+        if let Some(folder) = inv.folders.get_mut(&id(20)) {
+            folder.state = FetchState::Fetched;
+        }
+        view.prepare(&inv, prefs.sort);
+        tree.key = None;
+        tree.prepare(&view, &inv, inv.root, true, true);
+        assert_eq!(tree.rows[tree.position(id(20)).expect("listed")].kind, LEAF);
+        inv.add_items(vec![InvItem {
+            id: id(200),
+            parent: id(20),
+            name: "new item".into(),
+            ..Default::default()
+        }]);
+        view.prepare(&inv, prefs.sort);
+        tree.prepare(&view, &inv, inv.root, true, true);
+        let at = tree.position(id(20)).expect("listed");
+        assert_eq!(tree.rows[at].kind, OPEN);
+        assert_eq!(tree.rows[at + 1].id, id(200));
+    }
+
+    #[test]
+    fn an_empty_shown_root_and_an_empty_folder_window_say_so() {
+        let (inv, view, _) = fixture();
+        let mut tree = PlainTree::default();
+        tree.set_open(id(20), true);
+        tree.prepare(&view, &inv, id(20), true, true);
+        assert_eq!(listed(&tree), [(20, 0, OPEN), (20, 1, Kind::Empty)], "a shown root keeps its caret");
+        tree.prepare(&view, &inv, id(20), false, true);
+        assert_eq!(listed(&tree), [(20, 0, Kind::Empty)]);
     }
 
     #[test]

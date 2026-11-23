@@ -1594,6 +1594,10 @@ pub struct TreeRow {
     pub depth: usize,
     pub folder: bool,
     pub open: bool,
+    /// Whether it has a caret and opens: while results are below it, as the
+    /// Legacy Viewer's filtered tree draws the arrow only over a visible
+    /// child (`rows::branches`).
+    pub branches: bool,
 }
 
 /// Flatten only the expanded branches for virtual drawing. Collapsed folders
@@ -1652,13 +1656,21 @@ impl TreeState {
                     self.closed[tab].remove(&id);
                 }
             }
-            let open = folder && !self.closed[tab].contains(&id);
+            let children = view.result_children.get(&id).filter(|children| !children.is_empty());
+            let branches = folder && children.is_some();
+            let open = branches && !self.closed[tab].contains(&id);
             if id != root || show_root {
-                self.rows.push(TreeRow { id, depth, folder, open });
+                self.rows.push(TreeRow {
+                    id,
+                    depth,
+                    folder,
+                    open,
+                    branches,
+                });
                 self.order.push(id);
             }
             if (open || (id == root && !show_root))
-                && let Some(children) = view.result_children.get(&id)
+                && let Some(children) = children
             {
                 let depth = depth + usize::from(id != root || show_root);
                 todo.extend(children.iter().rev().map(|id| (*id, depth)));
@@ -1674,6 +1686,11 @@ impl TreeState {
 
     pub fn is_open(&self, id: Uuid, tab: usize) -> bool {
         !self.closed[tab.min(4)].contains(&id)
+    }
+
+    /// Whether the folder's row is listed with a caret.
+    pub fn folds(&self, id: Uuid) -> bool {
+        self.rows.iter().any(|row| row.id == id && row.branches)
     }
 
     pub fn set_open(&mut self, id: Uuid, tab: usize, open: bool) {
@@ -2966,10 +2983,12 @@ mod tests {
         view.search(&inv, inv.root, "", &prefs, &filters, 2, None, &facts, facts.agent, 1000);
         tree.prepare(&view, inv.root, 2, true);
         assert_eq!(open(&tree, 2), Some(false));
-        // Expand all opens everything, Inner included
+        // Expand all opens everything but Inner: nothing is under it, so it
+        // has no caret and stays shut (`rows::branches`)
         tree.set_all(&view, inv.root, 2, true);
         tree.prepare(&view, inv.root, 2, true);
-        assert_eq!((open(&tree, 2), open(&tree, 7)), (Some(true), Some(true)));
+        assert_eq!((open(&tree, 2), open(&tree, 7)), (Some(true), Some(false)));
+        assert!(tree.folds(id(2)) && !tree.folds(id(7)));
 
         // without the option, nothing changes: only the folders of the matches
         let mut view = ViewCache::default();
