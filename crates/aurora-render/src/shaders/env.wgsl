@@ -3201,7 +3201,38 @@ fn snow_surface(xy: vec2<f32>, lying: f32, slot: u32, lod: f32) -> f32 {
 // a white blanket; lit by the sky, the sun (with its shadows) and the
 // lamps, a few glints toward the sun. `n`: the smooth facing.
 fn snow_cover(clip: vec2<f32>, world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
-    return snow_cover_lit(clip, world, world, n, n);
+    let s = snow_cover_lit(clip, world, world, n, n);
+    // sand blowing over it (the debris' sand): wisps over what lies
+    let k = sand_snakes(world, n);
+    return vec4<f32>(k.rgb + s.rgb * (1.0 - k.a), k.a + s.a * (1.0 - k.a));
+}
+
+// Sand snakes: in a sandstorm (the debris' sand, `frame.weather_tint[2].w`)
+// thin wisps of sand race along the open ground downwind, wavering across
+// it; stronger in the gusts. A noise stretched along the wind and scrolled
+// with it, on level ground out in the open, within 40 m.
+fn sand_snakes(world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
+    let sand = sand_level();
+    if (sand <= 0.0) { return vec4<f32>(0.0); }
+    let w = frame.rain_wind.zw;
+    let speed = length(w);
+    if (speed < 1.0 || n.z < 0.7) { return vec4<f32>(0.0); }
+    let dist = distance(world, frame.camera_pos.xyz);
+    if (dist > 40.0 || rain_sheltered(world + n * 0.05) > 0.5) { return vec4<f32>(0.0); }
+    let dir = w / speed;
+    let t = frame.camera_pos.w;
+    let along = dot(world.xy, dir);
+    let across = dot(world.xy, vec2<f32>(-dir.y, dir.x));
+    let wave = across * 3.2 + 0.8 * sin(along * 0.45 + t * 0.7);
+    let flow = along * 0.35 - t * speed * 0.28;
+    let a = snow_noise(vec2<f32>(flow, wave));
+    let b = snow_noise(vec2<f32>(flow * 2.1 + 3.0, wave * 2.0 + 7.0));
+    let wisp = smoothstep(0.66, 0.9, a * 0.7 + b * 0.3);
+    let alpha = wisp * sand * (0.4 + 0.6 * weather_gust()) * 0.55 * (1.0 - smoothstep(25.0, 40.0, dist));
+    if (alpha < 0.003) { return vec4<f32>(0.0); }
+    let sky_light = frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4;
+    let lit = sky_light * 0.6 + frame.sun_color.rgb * frame.sun_dir.w * max(frame.sun_dir.z, 0.0) * 0.8;
+    return vec4<f32>(apply_fog(SAND_COLOUR * lit, world) * alpha, alpha);
 }
 
 // `snow_cover` judging where snow lies at `lies_at` by the facing `n` (what

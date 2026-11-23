@@ -59,6 +59,16 @@ pub(crate) fn env_debris() -> Option<(DebrisChoice, bool)> {
 }
 
 impl WeatherSettings {
+    /// How much sand blows (0..1): the debris' sand on, its density; it
+    /// gathers in drifts and snakes along the ground (none while it rains:
+    /// wet sand does not blow).
+    pub fn sand_blowing(&self) -> f32 {
+        if !(self.enabled && self.debris_on && self.debris_kind == DebrisChoice::Sand) || self.rain() > 0.0 {
+            return 0.0;
+        }
+        self.debris_density.clamp(0.0, 1.0)
+    }
+
     /// The debris drawn (of `in_effect`'s settings), None when its switch
     /// or the main one is off: `quality` the weather's (0..2).
     pub fn debris_look(&self, quality: u32) -> Option<aurora_render::DebrisLook> {

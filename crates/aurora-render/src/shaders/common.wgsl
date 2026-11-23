@@ -184,6 +184,14 @@ fn weather_gust() -> f32 {
     return frame.weather_tint[2].y;
 }
 
+// How much sand blows (the debris' sand, 0..1): its drifts and snakes.
+fn sand_level() -> f32 {
+    return frame.weather_tint[2].w;
+}
+
+// Sand's colour (linear), its streaks, drifts and snakes alike.
+const SAND_COLOUR: vec3<f32> = vec3<f32>(0.62, 0.49, 0.32);
+
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
 // no emissive target (RenderEnableEmissiveBuffer, HAS_EMISSIVE): the PBR
 // faces it draws deferred (opaque, alpha-masked, terrain) lose their

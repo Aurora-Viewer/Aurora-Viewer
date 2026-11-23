@@ -200,7 +200,7 @@ fn fs_debris(in: DebrisOut, @builtin(front_facing) front: bool) -> @location(0) 
     } else if (kind == DD_SAND) {
         // a soft streak, fading at its ends
         cover = (1.0 - smoothstep(0.4, 1.0, abs(in.uv.x))) * (1.0 - smoothstep(0.5, 1.0, abs(in.uv.y))) * 0.8;
-        base = vec3<f32>(0.62, 0.49, 0.32) * (0.85 + 0.3 * f32(variant & 7u) / 7.0);
+        base = SAND_COLOUR * (0.85 + 0.3 * f32(variant & 7u) / 7.0);
     } else if (kind == DD_EMBERS) {
         let r = length(in.uv);
         cover = 1.0 - smoothstep(0.3, 1.0, r);

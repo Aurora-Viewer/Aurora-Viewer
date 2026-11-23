@@ -14,6 +14,9 @@ pub const FALL_SPEED: std::ops::RangeInclusive<f32> = 0.3..=1.5;
 /// The flutter scale's range (ash 1.8, 1 as before).
 pub const FLUTTER: std::ops::RangeInclusive<f32> = 0.0..=3.0;
 
+/// Sand lying in drifts (linear, common.wgsl `SAND_COLOUR`), opaque.
+pub const SAND_LINEAR: [f32; 4] = [0.62, 0.49, 0.32, 1.0];
+
 /// A colour this near white counts as none: the fog keeps its own.
 const NEAR_WHITE: f32 = 0.02;
 

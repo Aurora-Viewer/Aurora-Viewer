@@ -1736,6 +1736,9 @@ pub struct RainLook {
     pub flutter: f32,
     /// The snow lying melts once the fall stops (off for ash).
     pub fall_melts: bool,
+    /// Sand blowing (the debris' sand, 0..1): it gathers in drifts as snow
+    /// does (sand-coloured, the snow's tint), and snakes along the ground.
+    pub sand: f32,
 }
 
 /// The colour and opacity of the rain and the snow (Aurora Weather's tint),
@@ -1762,14 +1765,14 @@ impl WeatherTint {
 
     /// The frame uniform's `weather_tint` (common.wgsl): [0] the rain,
     /// [1] the snow, [2] x the puddles' opacity, y the gust, z 1 (set: a
-    /// frame left zeroed, a preview's, takes no tint), w unused; [3] x the
-    /// fall's speed, y the flakes' flutter (scales, 1 as before).
-    pub fn uniform(&self, gust: f32, fall_speed: f32, flutter: f32) -> [[f32; 4]; 4] {
+    /// frame left zeroed, a preview's, takes no tint), w the sand blowing;
+    /// [3] x the fall's speed, y the flakes' flutter (scales, 1 as before).
+    pub fn uniform(&self, gust: f32, fall_speed: f32, flutter: f32, sand: f32) -> [[f32; 4]; 4] {
         let clamp = |c: [f32; 4]| [c[0].max(0.0), c[1].max(0.0), c[2].max(0.0), c[3].clamp(0.0, 1.0)];
         [
             clamp(self.rain),
             clamp(self.snow),
-            [self.puddle_opacity.clamp(0.0, 1.0), gust.clamp(0.0, 1.0), 1.0, 0.0],
+            [self.puddle_opacity.clamp(0.0, 1.0), gust.clamp(0.0, 1.0), 1.0, sand.clamp(0.0, 1.0)],
             [fall_speed.clamp(0.1, 3.0), flutter.clamp(0.0, 4.0), 0.0, 0.0],
         ]
     }
@@ -1816,6 +1819,7 @@ impl Default for RainLook {
             fall_speed: 1.0,
             flutter: 1.0,
             fall_melts: true,
+            sand: 0.0,
         }
     }
 }

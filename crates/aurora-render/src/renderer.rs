@@ -8393,7 +8393,7 @@ impl Backend {
         u.weather_tint = f
             .rain_look
             .tint
-            .uniform(f.rain_look.gust, f.rain_look.fall_speed, f.rain_look.flutter);
+            .uniform(f.rain_look.gust, f.rain_look.fall_speed, f.rain_look.flutter, f.rain_look.sand);
         u.selection_color = f.selection_color;
         // (object.wgsl fs_selection_pattern; 0: its procedural stand-in)
         u.features[FEATURE_FACE_SELECT_SLOT] = f.face_select_texture;
@@ -9766,6 +9766,9 @@ impl Backend {
         let debris_shelter = self.rain_shelter_map(f).is_some();
         // snow wets nothing (the ground dries as after rain), it lies
         let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
+        // blowing sand gathers in drifts as snow does (its colour the snow's
+        // tint, from the viewer), slowly; and stays while it blows
+        let snow = snow.max(f.rain_look.sand * 0.35);
         // cleaned up (the Weather window): the memory starts again, every
         // cell new, as dry and bare as the open is now (a region's snow so
         // far, given below, is still the region's)
@@ -9805,7 +9808,7 @@ impl Backend {
         let extent = self.water_effects.rain_wet_size as f32 / RAIN_WET_TEXELS_PER_M;
         self.follow_shelter(f.camera_pos);
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
-        self.rain_wet.keeps = !f.rain_look.fall_melts;
+        self.rain_wet.keeps = !f.rain_look.fall_melts || f.rain_look.sand > 0.0;
         self.rain_wet
             .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow, extent);
         // footprints while snow lies and they are wanted

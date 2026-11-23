@@ -543,7 +543,15 @@ impl WeatherSettings {
             clean: false,
             fill: false,
             quality: self.quality_index(),
-            tint: self.tint(),
+            tint: {
+                let mut tint = self.tint();
+                // what lies is the sand's while sand blows and no snow falls
+                if self.sand_blowing() > 0.0 && !self.snowing() {
+                    tint.snow = tint::SAND_LINEAR;
+                }
+                tint
+            },
+            sand: self.sand_blowing(),
             gust: wind.gust,
             fall_speed: self.fall_speed.clamp(*tint::FALL_SPEED.start(), *tint::FALL_SPEED.end()),
             flutter: self.flutter.clamp(*tint::FLUTTER.start(), *tint::FLUTTER.end()),
