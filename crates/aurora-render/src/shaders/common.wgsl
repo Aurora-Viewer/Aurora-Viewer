@@ -145,7 +145,44 @@ struct Frame {
     // [5] its cells (main view); [6] the ground map's corner (xy, m) and
     // side (z; 0: none)
     fog_look: array<vec4<f32>, 7>,
+    // Aurora Weather's tint (types.rs WeatherTint::uniform): [0] the rain's
+    // linear colour and opacity, [1] the snow's, [2] x the puddles'
+    // opacity, y the gust (0 lulls, 1 gusts), z 1 when set (0: no tint);
+    // [3] x how fast what falls falls, y how far flakes swing (scales)
+    weather_tint: array<vec4<f32>, 4>,
 };
+
+// How fast what falls falls, and how far flakes swing (1: as before).
+fn fall_speed_scale() -> f32 {
+    if (frame.weather_tint[2].z < 0.5) { return 1.0; }
+    return frame.weather_tint[3].x;
+}
+fn flutter_scale() -> f32 {
+    if (frame.weather_tint[2].z < 0.5) { return 1.0; }
+    return frame.weather_tint[3].y;
+}
+
+// The rain's colour and opacity: white and 1 when no tint is set.
+fn rain_tint() -> vec4<f32> {
+    if (frame.weather_tint[2].z < 0.5) { return vec4<f32>(1.0); }
+    return frame.weather_tint[0];
+}
+
+// The snow's colour and opacity: white and 1 when no tint is set.
+fn snow_tint() -> vec4<f32> {
+    if (frame.weather_tint[2].z < 0.5) { return vec4<f32>(1.0); }
+    return frame.weather_tint[1];
+}
+
+// How opaque the puddles are: 0 (clear water) when no tint is set.
+fn puddle_opacity() -> f32 {
+    return frame.weather_tint[2].x;
+}
+
+// Where the wind stands between its lulls (0) and its gusts (1).
+fn weather_gust() -> f32 {
+    return frame.weather_tint[2].y;
+}
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
 // no emissive target (RenderEnableEmissiveBuffer, HAS_EMISSIVE): the PBR

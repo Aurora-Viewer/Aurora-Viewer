@@ -65,6 +65,8 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) -> WeatherA
             fog_card(left, p, w);
             wind_card(right, p, w);
             right.add_space(4.0);
+            tint_card(right, p, w);
+            right.add_space(4.0);
             thunder_card(right, p, w);
             right.add_space(4.0);
             northern_lights_card(right, p, w);
@@ -960,6 +962,121 @@ fn fog_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             }
         });
         widgets::switch(ui, p, &mut w.fog_follow_sky).on_hover_text(aurora_i18n::tr!("ui-weather-fog-follow-sky-tip"));
+    });
+}
+
+/// "Colour": the presets (tint, fall, fog and wind together), then the raw
+/// settings under them: the colour and opacity of what falls (the rain's
+/// puddles in rain; the snow's fall and melting in snow) and the fog
+/// following that colour.
+fn tint_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    card(ui, p, "palette", aurora_i18n::tr!("ui-weather-tint"), None, |ui, _| {
+        ui.horizontal_wrapped(|ui| {
+            for preset in crate::weather::WeatherPreset::ALL {
+                if ui.button(RichText::new(preset.label()).size(LABEL_SIZE)).clicked() {
+                    w.apply_preset(preset);
+                }
+            }
+        });
+        let snowing = w.snowing();
+        let (tint, opacity) = if snowing {
+            (&mut w.snow_tint, &mut w.snow_opacity)
+        } else {
+            (&mut w.rain_tint, &mut w.rain_opacity)
+        };
+        colour_row(
+            ui,
+            p,
+            if snowing {
+                aurora_i18n::tr!("ui-weather-snow-colour")
+            } else {
+                aurora_i18n::tr!("ui-weather-rain-colour")
+            },
+            aurora_i18n::tr!("ui-weather-fall-colour-tip"),
+            tint,
+        );
+        let shown = format!("{:.0} %", *opacity * 100.0);
+        slider_row(
+            ui,
+            p,
+            (
+                aurora_i18n::tr!("ui-weather-fall-opacity"),
+                aurora_i18n::tr!("ui-weather-fall-opacity-tip"),
+            ),
+            &shown,
+            None,
+            egui::Slider::new(opacity, 0.0..=1.0),
+        );
+        if snowing {
+            let speed = format!("{:.0} %", w.fall_speed * 100.0);
+            slider_row(
+                ui,
+                p,
+                (
+                    aurora_i18n::tr!("ui-weather-fall-speed"),
+                    aurora_i18n::tr!("ui-weather-fall-speed-tip"),
+                ),
+                &speed,
+                None,
+                egui::Slider::new(&mut w.fall_speed, crate::weather::tint::FALL_SPEED),
+            );
+            let flutter = format!("{:.0} %", w.flutter * 100.0);
+            slider_row(
+                ui,
+                p,
+                (aurora_i18n::tr!("ui-weather-flutter"), aurora_i18n::tr!("ui-weather-flutter-tip")),
+                &flutter,
+                None,
+                egui::Slider::new(&mut w.flutter, crate::weather::tint::FLUTTER),
+            );
+            switch_row(
+                ui,
+                p,
+                "sun",
+                aurora_i18n::tr!("ui-weather-fall-melts"),
+                aurora_i18n::tr!("ui-weather-fall-melts-tip"),
+                &mut w.fall_melts,
+            );
+        } else {
+            let thick = format!("{:.0} %", w.puddle_opacity * 100.0);
+            slider_row(
+                ui,
+                p,
+                (
+                    aurora_i18n::tr!("ui-weather-puddle-opacity"),
+                    aurora_i18n::tr!("ui-weather-puddle-opacity-tip"),
+                ),
+                &thick,
+                Some((
+                    aurora_i18n::tr!("ui-weather-puddle-clear"),
+                    aurora_i18n::tr!("ui-weather-puddle-thick"),
+                )),
+                egui::Slider::new(&mut w.puddle_opacity, 0.0..=1.0),
+            );
+        }
+        switch_row(
+            ui,
+            p,
+            "mist",
+            aurora_i18n::tr!("ui-weather-fog-follows-fall"),
+            aurora_i18n::tr!("ui-weather-fog-follows-fall-tip"),
+            &mut w.fog_follows_fall,
+        );
+    });
+}
+
+/// A colour setting (sRGB 0..1): its label, a colour button on the right.
+fn colour_row(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str, colour: &mut [f32; 3]) {
+    ui.horizontal(|ui| {
+        widgets::glyph(ui, "palette", p.muted, 15.0);
+        let gap = ui.spacing().item_spacing.x;
+        let width = ui.available_width() - ui.spacing().interact_size.x - gap;
+        label(ui, p, text, tip, width);
+        let to_byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let mut rgba = [to_byte(colour[0]), to_byte(colour[1]), to_byte(colour[2]), 255];
+        if widgets::color_button(ui, p, text, &mut rgba, false).on_hover_text(tip).changed() {
+            *colour = [rgba[0], rgba[1], rgba[2]].map(|c| f32::from(c) / 255.0);
+        }
     });
 }
 

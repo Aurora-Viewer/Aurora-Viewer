@@ -1721,6 +1721,61 @@ pub struct RainLook {
     /// This frame starts it again full of snow: lying everywhere as deep as
     /// a long snowfall leaves it (the snow-fill button).
     pub fill: bool,
+    /// The colour of what falls, and of what it leaves (Aurora Weather's
+    /// tint): white and opaque draw what was drawn before it.
+    pub tint: WeatherTint,
+    /// Where the wind stands between its lulls (0) and its gusts (1): the
+    /// one gust curve the drops, the fog and the debris share.
+    pub gust: f32,
+    /// How fast what falls falls (1 as before; ash 0.6).
+    pub fall_speed: f32,
+    /// How far flakes swing as they fall (1 as before; ash 1.8).
+    pub flutter: f32,
+    /// The snow lying melts once the fall stops (off for ash).
+    pub fall_melts: bool,
+}
+
+/// The colour and opacity of the rain and the snow (Aurora Weather's tint),
+/// linear RGB: the drops, the puddles and the wet ground they fill, the
+/// flakes, the lying snow and the snow on avatars.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeatherTint {
+    /// The rain's colour (linear) and opacity (0..1; 1 as before).
+    pub rain: [f32; 4],
+    /// How opaque the puddles are (0..1; 0 the clear water of before, 1
+    /// as thick as paint: their own colour, no mirror).
+    pub puddle_opacity: f32,
+    /// The snow's colour (linear) and opacity (0..1; 1 as before).
+    pub snow: [f32; 4],
+}
+
+impl WeatherTint {
+    /// Clear rain and white snow: what was drawn before the tint.
+    pub const NONE: WeatherTint = WeatherTint {
+        rain: [1.0; 4],
+        puddle_opacity: 0.0,
+        snow: [1.0; 4],
+    };
+
+    /// The frame uniform's `weather_tint` (common.wgsl): [0] the rain,
+    /// [1] the snow, [2] x the puddles' opacity, y the gust, z 1 (set: a
+    /// frame left zeroed, a preview's, takes no tint), w unused; [3] x the
+    /// fall's speed, y the flakes' flutter (scales, 1 as before).
+    pub fn uniform(&self, gust: f32, fall_speed: f32, flutter: f32) -> [[f32; 4]; 4] {
+        let clamp = |c: [f32; 4]| [c[0].max(0.0), c[1].max(0.0), c[2].max(0.0), c[3].clamp(0.0, 1.0)];
+        [
+            clamp(self.rain),
+            clamp(self.snow),
+            [self.puddle_opacity.clamp(0.0, 1.0), gust.clamp(0.0, 1.0), 1.0, 0.0],
+            [fall_speed.clamp(0.1, 3.0), flutter.clamp(0.0, 4.0), 0.0, 0.0],
+        ]
+    }
+}
+
+impl Default for WeatherTint {
+    fn default() -> Self {
+        WeatherTint::NONE
+    }
 }
 
 /// The most feet set down in the snow in one frame.
@@ -1753,6 +1808,11 @@ impl Default for RainLook {
             snow_stamp_z: [0.0; SNOW_STAMPS],
             clean: false,
             fill: false,
+            tint: WeatherTint::NONE,
+            gust: 0.0,
+            fall_speed: 1.0,
+            flutter: 1.0,
+            fall_melts: true,
         }
     }
 }

@@ -235,6 +235,9 @@ struct FrameU {
     curvature: [f32; 4],
     /// Aurora Weather's fog (fog.rs `frame_terms`; zero: none).
     fog_look: [[f32; 4]; 7],
+    /// Aurora Weather's tint, gust and fall (`WeatherTint::uniform`; zero:
+    /// none).
+    weather_tint: [[f32; 4]; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -2783,6 +2786,9 @@ struct RainWet {
     /// and melts after, the faster in rain (the memory's places new to it
     /// take it, as `soak`).
     snow: f32,
+    /// What lies does not melt once the fall stops (ash: `RainLook::
+    /// fall_melts` off); rain still washes it away.
+    keeps: bool,
     uniform: [f32; 4],
     step: [f32; 4],
     snow_cover: [f32; 4],
@@ -2995,7 +3001,7 @@ impl RainWet {
         if snow > 0.0 {
             self.snow += (1.0 - self.snow) * (1.0 - (-dt * snow / SNOW_FILL_SECS).exp());
             self.snow = self.snow.max(1e-3);
-        } else {
+        } else if rain > 0.0 || !self.keeps {
             let melt = if rain > 0.0 { SNOW_RAIN_MELT_SECS } else { SNOW_MELT_SECS };
             self.snow *= (-dt / melt).exp();
         }
@@ -8305,6 +8311,10 @@ impl Backend {
             },
         ];
         u.rain_wind = [f.rain_look.drift[0], f.rain_look.drift[1], f.rain_look.wind[0], f.rain_look.wind[1]];
+        u.weather_tint = f
+            .rain_look
+            .tint
+            .uniform(f.rain_look.gust, f.rain_look.fall_speed, f.rain_look.flutter);
         u.selection_color = f.selection_color;
         // (object.wgsl fs_selection_pattern; 0: its procedural stand-in)
         u.features[FEATURE_FACE_SELECT_SLOT] = f.face_select_texture;
@@ -9712,6 +9722,7 @@ impl Backend {
         let extent = self.water_effects.rain_wet_size as f32 / RAIN_WET_TEXELS_PER_M;
         self.follow_shelter(f.camera_pos);
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
+        self.rain_wet.keeps = !f.rain_look.fall_melts;
         self.rain_wet
             .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow, extent);
         // footprints while snow lies and they are wanted

@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 pub mod fog;
+pub mod tint;
 pub use fog::{FogDrift, FogTier};
+pub use tint::WeatherPreset;
 
 /// What falls from the sky.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -161,6 +163,25 @@ pub struct WeatherSettings {
     pub fog_tier: FogTier,
     /// The glow around the lights and the sun (0 even, 0.9 tight).
     pub fog_anisotropy: f32,
+    /// The rain's colour (sRGB, weather/tint.rs): white is clear water.
+    pub rain_tint: [f32; 3],
+    /// How much of the drops is seen (0..1; 1 as before).
+    pub rain_opacity: f32,
+    /// How opaque the puddles' liquid is (0 clear water, as before; 1 as
+    /// thick as paint: its own colour, rough, hardly a mirror).
+    pub puddle_opacity: f32,
+    /// The snow's colour (sRGB): falling, lying and on avatars.
+    pub snow_tint: [f32; 3],
+    /// How much of the snow is seen (0..1; 1 as before).
+    pub snow_opacity: f32,
+    /// How fast what falls falls (a scale, 1 as before; ash falls slower).
+    pub fall_speed: f32,
+    /// How far flakes swing as they fall (a scale, 1 as before).
+    pub flutter: f32,
+    /// Snow lying melts once it stops falling (off: ash stays).
+    pub fall_melts: bool,
+    /// The fog takes the colour of what falls (when it is not white).
+    pub fog_follows_fall: bool,
     pub quality: WeatherQuality,
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
@@ -214,6 +235,15 @@ impl Default for WeatherSettings {
             fog_from_sky: true,
             fog_tier: FogTier::VolumetricLights,
             fog_anisotropy: fog::FOG_ANISOTROPY_DEFAULT,
+            rain_tint: tint::WHITE,
+            rain_opacity: 1.0,
+            puddle_opacity: 0.0,
+            snow_tint: tint::WHITE,
+            snow_opacity: 1.0,
+            fall_speed: 1.0,
+            flutter: 1.0,
+            fall_melts: true,
+            fog_follows_fall: false,
             quality: WeatherQuality::High,
             touched: false,
             former_region_weather: None,
@@ -254,6 +284,11 @@ impl WeatherSettings {
         }
         if !w.touched && fog::env_fog_off() {
             w.fog_on = false;
+        }
+        if !w.touched
+            && let Some(preset) = tint::env_preset()
+        {
+            w.apply_preset(preset);
         }
         if !(w.enabled && w.precipitation_on) {
             w.amount = 0.0;
@@ -476,6 +511,11 @@ impl WeatherSettings {
             clean: false,
             fill: false,
             quality: self.quality_index(),
+            tint: self.tint(),
+            gust: wind.gust,
+            fall_speed: self.fall_speed.clamp(*tint::FALL_SPEED.start(), *tint::FALL_SPEED.end()),
+            flutter: self.flutter.clamp(*tint::FLUTTER.start(), *tint::FLUTTER.end()),
+            fall_melts: self.fall_melts,
         }
     }
 
@@ -505,6 +545,9 @@ pub struct Wind {
     heading: Vec2,
     /// The wind now (m/s).
     pub now: Vec2,
+    /// Where it stands between its lulls (0) and its gusts (1): the one
+    /// gust curve the drops, the fog and the debris share.
+    pub gust: f32,
     /// How far it has carried a drop so far (m).
     pub drift: Vec2,
 }
@@ -516,6 +559,7 @@ impl Default for Wind {
             clock: 0.0,
             heading: Vec2::new(0.94, 0.34),
             now: Vec2::ZERO,
+            gust: 0.0,
             drift: Vec2::ZERO,
         }
     }
@@ -553,10 +597,11 @@ impl Wind {
         let (lo, hi) = (range.0.clamp(0.0, 1.0), range.1.clamp(0.0, 1.0));
         let (lo, hi) = (lo.min(hi), lo.max(hi));
         let t = self.clock;
-        let level = lo + (hi - lo) * gustiness(t);
+        self.gust = gustiness(t);
+        let level = lo + (hi - lo) * self.gust;
         let speed = WIND_MAX * level.powf(1.5);
         // the direction swings a little, more in the gusts
-        let swing = (0.12 * (t * 0.23 + 0.7).sin() + 0.06 * (t * 0.71).sin()) * (0.6 + 0.4 * gustiness(t));
+        let swing = (0.12 * (t * 0.23 + 0.7).sin() + 0.06 * (t * 0.71).sin()) * (0.6 + 0.4 * self.gust);
         let dir = Vec2::from_angle(swing).rotate(self.heading);
         self.now = dir * speed;
         self.drift += self.now * dt;

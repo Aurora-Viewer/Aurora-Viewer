@@ -4912,6 +4912,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_FOG=<0..1>\|off` | Fog of this thickness (or none, in a fog demo scene) until the Aurora Weather window is used |
 | `AURORA_FOG_TIER=height\|volumetric\|lights` | How the fog is drawn until the Aurora Weather window is used |
 | `AURORA_FOG_COLOUR=sky\|<r>,<g>,<b>` | The fog's colour (the sky's light, or its own in sRGB 0..1) until the Aurora Weather window is used |
+| `AURORA_WEATHER_PRESET=<name>` | An Aurora Weather preset (colour, fall, fog, wind) until the window is used |
 | `AURORA_DEMO_FOG=sunset\|neon\|indoor\|underwater\|shelter\|aerial\|ground` | Fog under a fixed sky with props and a placed camera |
 | `AURORA_DEMO_FOG_SWING=<degrees>` | The fog scene's camera swings side to side, through its view at full speed every 100 frames |
 
@@ -4951,6 +4952,14 @@ both open states and the selection count. Capture at frame 620.
   own colour (its ambient part), so that the fog and the haze beyond it
   meet without a seam; under the height fog, a room under a roof stays
   clear (the shelter map, three taps along each view).
+
+  `AURORA_WEATHER_PRESET=plain|blood-rain|ash|acid-rain|dust-storm|autumn`
+  sets what that preset of the Aurora Weather window's Colour card sets
+  (the colour and opacity of the rain or snow and of their puddles and
+  snow lying, the fall's speed and flutter, the fog and the wind) until the
+  window is used. With `AURORA_RAIN` or `AURORA_SNOW` it shows the tinted
+  drops, puddles or snow at once; `plain` draws what the weather drew
+  before the tint (the defaults), for a before / after comparison.
 
 - **Weather (`AURORA_RAIN`, `AURORA_SNOW*`, `AURORA_THUNDER_*`)**: the
   weather of the Aurora Weather window is drawn for

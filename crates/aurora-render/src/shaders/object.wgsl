@@ -1035,8 +1035,11 @@ fn avatar_snow_on(m_in: Material, in: VsOut) -> Material {
         fract(sin(dot(i + vec2<f32>(0.0, 1.0), vec2<f32>(127.1, 311.7))) * 43758.5453),
         fract(sin(dot(i + vec2<f32>(1.0, 1.0), vec2<f32>(127.1, 311.7))) * 43758.5453));
     let patches = mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
-    let cover = smoothstep(patches * 0.8, patches * 0.8 + 0.3, in.snow * up * 1.25);
-    m.color = vec4<f32>(mix(m.color.rgb, vec3<f32>(0.86, 0.88, 0.9), cover), m.color.a);
+    let cover_full = smoothstep(patches * 0.8, patches * 0.8 + 0.3, in.snow * up * 1.25);
+    // the snow's tint (white by default), thinner as its opacity falls
+    let tint = snow_tint();
+    let cover = cover_full * tint.a;
+    m.color = vec4<f32>(mix(m.color.rgb, vec3<f32>(0.86, 0.88, 0.9) * tint.rgb, cover), m.color.a);
     m.roughness = mix(m.roughness, 0.85, cover);
     m.metallic *= 1.0 - cover;
     m.legacy_spec *= 1.0 - cover;

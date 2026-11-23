@@ -103,7 +103,10 @@ impl WeatherSettings {
             height: self.fog_height.clamp(*FOG_HEIGHT.start(), *FOG_HEIGHT.end()),
             color: match env_fog_colour().filter(|_| !self.touched) {
                 Some(c) => c.map(|c| c.map(srgb_to_linear)),
-                None => (!self.fog_follow_sky).then(|| self.fog_colour.map(srgb_to_linear)),
+                // what falls colours it, when asked and not white
+                None => self
+                    .fog_fall_colour()
+                    .or_else(|| (!self.fog_follow_sky).then(|| self.fog_colour.map(srgb_to_linear))),
             },
             anisotropy: self.fog_anisotropy.clamp(*FOG_ANISOTROPY.start(), *FOG_ANISOTROPY.end()),
             drift: drift.to_array(),
@@ -113,7 +116,7 @@ impl WeatherSettings {
     }
 }
 
-fn srgb_to_linear(c: f32) -> f32 {
+pub(crate) fn srgb_to_linear(c: f32) -> f32 {
     let c = c.clamp(0.0, 1.0);
     if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 }
