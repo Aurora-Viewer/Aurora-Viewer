@@ -92,6 +92,12 @@ impl SubjectPose {
         if !solve(rig, &mut pose, &self.scales, bone, position, None, root, mode) {
             return false;
         }
+        if mode == Mode::Direct {
+            // a direct move only translates: the solver rebuilds the local
+            // rotation from world matrices, which rounds, and Mirror would
+            // take that rounding for a turn of this joint
+            pose.rotations[bone] = self.rotations[bone];
+        }
         self.rotations = pose.rotations;
         self.positions = pose.positions;
         true

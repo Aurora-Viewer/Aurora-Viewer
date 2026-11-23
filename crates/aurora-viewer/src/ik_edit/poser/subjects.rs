@@ -180,20 +180,29 @@ impl Editor {
             let change = if rotate { together::Change::Rotate } else { together::Change::Move };
             together::follow(rig, &start, &mut edited, bone, &followers, change, !rotate && move_joint_only);
             for (joint, dragged) in dragged.iter_mut().enumerate() {
-                *dragged = edited.rotations[joint] != before.rotations[joint] || joint == bone || followers.contains(&joint);
+                *dragged = edited.rotations[joint] != before.rotations[joint]
+                    || edited.positions[joint] != before.positions[joint]
+                    || joint == bone
+                    || followers.contains(&joint);
             }
         }
         if self.symmetry {
-            if !rotate
-                && move_joint_only
-                && edited.positions[bone] != before.positions[bone]
-                && let Some(other) = self.mirrors.counterpart(bone)
-                && Some(other) != selected
-                && !dragged[other]
-            {
-                edited.positions[other] = session.base.positions[other]
-                    + crate::ik_edit::rig_controls::reflect(edited.positions[bone] - session.base.positions[bone]);
-                edited.locks.remove(&other);
+            // a joint the drag moved directly (the leader or a follower with
+            // "Move this joint only", or a joint whose parent is a spine joint
+            // even without it): only its position changed, so the rotation
+            // mirror below would miss it (FSPoserAnimator::setJointPosition
+            // also moves the opposite joint in its MIRROR styles)
+            let positions = edited.positions.clone();
+            for (changed, position) in positions.into_iter().enumerate() {
+                if position != before.positions[changed]
+                    && let Some(other) = self.mirrors.counterpart(changed)
+                    && Some(other) != selected
+                    && !dragged[other]
+                {
+                    edited.positions[other] =
+                        session.base.positions[other] + crate::ik_edit::rig_controls::reflect(position - session.base.positions[changed]);
+                    edited.locks.remove(&other);
+                }
             }
             let rotations = edited.rotations.clone();
             for (changed, rotation) in rotations.into_iter().enumerate() {

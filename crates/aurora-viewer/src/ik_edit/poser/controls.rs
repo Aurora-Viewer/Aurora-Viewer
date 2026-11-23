@@ -505,9 +505,12 @@ impl Editor {
                 ui.allocate_ui_with_layout(egui::vec2(TRACKBALL, 30.0), egui::Layout::top_down(egui::Align::Center), |ui| {
                     ui.set_width(TRACKBALL);
                     ui.label(
-                        egui::RichText::new(aurora_i18n::text(
-                            ["poser-ball-rotation", "poser-ball-position", "poser-ball-scale"][self.poser.transform.min(2)],
-                        ))
+                        egui::RichText::new(aurora_i18n::text(match self.poser.transform.min(2) {
+                            0 => "poser-ball-rotation",
+                            1 if self.poser.move_joint_only => "poser-ball-position-only",
+                            1 => "poser-ball-position",
+                            _ => "poser-ball-scale",
+                        }))
                         .size(11.0)
                         .color(p.muted_dim),
                     );

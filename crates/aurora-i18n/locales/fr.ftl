@@ -13809,6 +13809,7 @@ poser-move-joint-only-hint = Déplace cette articulation directement sans plier 
 poser-hint-scale = facteurs · cube central = uniforme
 poser-ball-rotation = Glisser pour tourner · alignée sur la caméra
 poser-ball-position = Déplacez la poignée dans le monde · la chaîne se plie
+poser-ball-position-only = Déplacez la poignée dans le monde · cette articulation uniquement
 poser-ball-scale = Cubes dans le monde : un axe · centre : uniforme
 poser-whole-pose = Pose entière
 poser-save-options = Options d’enregistrement

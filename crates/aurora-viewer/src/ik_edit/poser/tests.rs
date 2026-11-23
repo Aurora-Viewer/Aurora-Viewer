@@ -561,6 +561,100 @@ fn poser_joint_only_does_not_mirror_over_a_selected_follower() {
     );
 }
 
+/// A joint whose parent is a spine joint moves directly even with the switch
+/// off: Mirror must still reflect its move onto the opposite joint.
+#[test]
+fn poser_mirror_reflects_a_joint_that_moves_directly_with_the_switch_off() {
+    let (world, mut editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let base = editor.poser.sessions[&world.agent_id].base.clone();
+    let (left, right) = (rig.names["mCollarLeft"], rig.names["mCollarRight"]);
+    editor.symmetry = true;
+    editor.poser.move_joint_only = false;
+    editor.select(left, rig, &frame);
+    editor.position = frame.model.inverse().transform_point3(frame.joints[left].w_axis.truncate()) + Vec3::new(0.02, 0.03, 0.04);
+    assert!(editor.commit_poser_manipulation(rig, &frame, false));
+    let pose = &editor.poser.sessions[&world.agent_id].pose;
+    let moved = pose.positions[left] - base.positions[left];
+    assert!(moved.length() > 1e-3, "the collar should move directly");
+    let mirrored = pose.positions[right] - base.positions[right];
+    let expected = crate::ik_edit::rig_controls::reflect(moved);
+    assert!(mirrored.distance(expected) < 1e-5, "{mirrored} instead of {expected}");
+    assert_eq!(pose.rotations, base.rotations, "a direct move turns no joint");
+}
+
+/// Shoulder and elbow selected together, the switch on: every joint the drag
+/// moved is reflected (whichever leads), and a selected opposite joint keeps
+/// its own move.
+#[test]
+fn poser_mirror_reflects_every_follower_moved_with_the_switch_on() {
+    let run = |symmetry: bool, lead: &str, others: &[&str]| {
+        let (world, mut editor) = fixture();
+        let rig = &world.avatar_lib.rig;
+        let frame = editor.editor_frame(&world).unwrap();
+        let lead = rig.names[lead];
+        editor.symmetry = symmetry;
+        editor.poser.move_joint_only = true;
+        editor.select(lead, rig, &frame);
+        for name in others {
+            editor.click_pose_bone(rig.names[*name], rig, &frame, true);
+        }
+        let base = editor.poser.sessions[&world.agent_id].base.clone();
+        editor.position = frame.model.inverse().transform_point3(frame.joints[lead].w_axis.truncate()) + Vec3::new(0.05, 0.04, -0.02);
+        assert!(editor.commit_poser_manipulation(rig, &frame, false));
+        let pose = editor.poser.sessions[&world.agent_id].pose.clone();
+        let delta = |name: &str| pose.positions[rig.names[name]] - base.positions[rig.names[name]];
+        ["mShoulderLeft", "mElbowLeft", "mShoulderRight", "mElbowRight"].map(delta)
+    };
+    let reflect = crate::ik_edit::rig_controls::reflect;
+    for (lead, others) in [("mShoulderLeft", ["mElbowLeft"]), ("mElbowLeft", ["mShoulderLeft"])] {
+        let [shoulder, elbow, shoulder_r, elbow_r] = run(true, lead, &others);
+        assert!(shoulder.length() > 1e-3 || elbow.length() > 1e-3, "{lead} should move");
+        assert!(
+            shoulder_r.distance(reflect(shoulder)) < 1e-5,
+            "{lead}: right shoulder {shoulder_r} vs {}",
+            reflect(shoulder)
+        );
+        assert!(
+            elbow_r.distance(reflect(elbow)) < 1e-5,
+            "{lead}: right elbow {elbow_r} vs {}",
+            reflect(elbow)
+        );
+    }
+    // the right elbow selected too: it keeps its own move, not the reflection
+    let others = ["mShoulderLeft", "mElbowRight"];
+    let [_, off_elbow, _, off_elbow_r] = run(false, "mElbowLeft", &others);
+    let [_, on_elbow, shoulder, on_elbow_r] = run(true, "mElbowLeft", &others);
+    assert!(on_elbow.distance(off_elbow) < 1e-5);
+    assert!(on_elbow_r.distance(off_elbow_r) < 1e-5, "{on_elbow_r} vs {off_elbow_r}");
+    assert!(
+        on_elbow_r.distance(reflect(on_elbow)) > 1e-3,
+        "mirror wrote over the selected right elbow"
+    );
+    // its unselected parent still mirrors the left shoulder
+    assert!(shoulder.length() > 1e-3);
+}
+
+/// A direct position move keeps the joint's stored rotation bit for bit, so
+/// the rotation mirror does not take it for a turn.
+#[test]
+fn a_direct_position_move_keeps_the_stored_rotation() {
+    let (world, editor) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let mut pose = (*editor.poser.sessions[&world.agent_id].base).clone();
+    let (chest, collar) = (rig.names["mChest"], rig.names["mCollarLeft"]);
+    pose.rotations[chest] = (pose.rotations[chest] * Quat::from_euler(EulerRot::ZYX, 0.31, -0.23, 0.17)).normalize();
+    pose.rotations[collar] = (pose.rotations[collar] * Quat::from_euler(EulerRot::ZYX, -0.41, 0.27, 0.13)).normalize();
+    let placed = pose.matrices(rig, Mat4::IDENTITY);
+    for only in [false, true] {
+        let mut moved = pose.clone();
+        assert!(moved.move_joint(rig, collar, placed[collar].w_axis.truncate() + Vec3::new(0.03, -0.02, 0.05), only));
+        assert_ne!(moved.positions[collar], pose.positions[collar]);
+        assert_eq!(moved.rotations, pose.rotations, "only = {only}");
+    }
+}
+
 #[test]
 fn a_head_position_drag_bends_the_neck_and_the_neck_itself_moves_directly() {
     let (world, editor) = fixture();

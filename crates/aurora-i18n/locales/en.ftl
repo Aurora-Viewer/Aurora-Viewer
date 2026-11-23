@@ -13804,6 +13804,7 @@ poser-move-joint-only-hint = Move this joint directly without bending its chain.
 poser-hint-scale = factors · centre cube = uniform
 poser-ball-rotation = Drag to rotate · aligned with the camera
 poser-ball-position = Drag the handle in world · the chain bends
+poser-ball-position-only = Drag the handle in world · this joint only
 poser-ball-scale = Cubes in world: one axis · centre: uniform
 poser-whole-pose = Whole pose
 poser-save-options = Save options
