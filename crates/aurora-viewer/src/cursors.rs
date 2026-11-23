@@ -215,6 +215,8 @@ pub struct Shown {
     /// egui-winit has a pointer position: without one it leaves the cursor
     /// alone, and forgets what it sent.
     pointer: bool,
+    /// The finger egui-winit follows as its pointer (its `pointer_touch_id`).
+    finger: Option<u64>,
     /// The window's cursor of each picture, by its pixels.
     made: Vec<(std::sync::Arc<[u8]>, winit::window::CustomCursor, u32)>,
     numbered: u32,
@@ -233,15 +235,33 @@ pub enum Change {
 
 impl Shown {
     /// A window event egui-winit receives: its pointer position follows
-    /// these (one finger: it follows the first).
+    /// these, and of several fingers the first one only (its `on_touch`).
     pub fn event(&mut self, event: &winit::event::WindowEvent) {
         use winit::event::{TouchPhase, WindowEvent};
         match event {
             WindowEvent::CursorMoved { .. } => self.pointer = true,
             WindowEvent::CursorLeft { .. } => self.pointer = false,
-            WindowEvent::Touch(touch) => self.pointer = matches!(touch.phase, TouchPhase::Started | TouchPhase::Moved),
+            WindowEvent::Touch(touch) if self.finger.is_none_or(|id| id == touch.id) => match touch.phase {
+                TouchPhase::Started => {
+                    self.finger = Some(touch.id);
+                    self.pointer = true;
+                }
+                TouchPhase::Moved => self.pointer = true,
+                TouchPhase::Ended | TouchPhase::Cancelled => {
+                    self.finger = None;
+                    self.pointer = false;
+                }
+            },
+            WindowEvent::ScaleFactorChanged { .. } => self.rescaled(),
             _ => {}
         }
+    }
+
+    /// The window's scale changed. Wayland sizes a picture from the scale
+    /// the window has when it is sent (winit's `apply_custom_cursor`), and
+    /// nothing sends it again by itself: the one on screen goes out anew.
+    fn rescaled(&mut self) {
+        self.picture = None;
     }
 
     /// A new egui-winit state, or a new window: nothing is sent yet, and it
@@ -250,6 +270,7 @@ impl Shown {
         self.picture = None;
         self.icon = None;
         self.pointer = false;
+        self.finger = None;
     }
 
     /// The window's cursor of a picture and its number, made once.
@@ -522,15 +543,63 @@ mod tests {
 
     #[test]
     fn a_new_state_sends_the_picture_again_at_the_first_move() {
+        // (a new window opens under the pointer: its move can come before
+        // the next frame, or after it)
+        for frame_between in [true, false] {
+            let mut shown = with_pointer();
+            assert_eq!(shown.step(Some(1), egui::CursorIcon::ZoomIn), Change::Picture);
+            shown.forget();
+            if frame_between {
+                assert_eq!(shown.step(Some(1), egui::CursorIcon::ZoomIn), Change::Nothing);
+            }
+            shown.event(&winit::event::WindowEvent::CursorMoved {
+                device_id: winit::event::DeviceId::dummy(),
+                position: winit::dpi::PhysicalPosition::new(10.0, 10.0),
+            });
+            assert_eq!(
+                shown.step(Some(1), egui::CursorIcon::ZoomIn),
+                Change::Picture,
+                "a frame between: {frame_between}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_pointer_follows_the_first_finger_only() {
+        let touch = |id, phase| {
+            winit::event::WindowEvent::Touch(winit::event::Touch {
+                device_id: winit::event::DeviceId::dummy(),
+                phase,
+                location: winit::dpi::PhysicalPosition::new(10.0, 10.0),
+                force: None,
+                id,
+            })
+        };
+        use winit::event::TouchPhase::{Ended, Started};
+        let mut shown = Shown::default();
+        shown.event(&touch(1, Started));
+        assert_eq!(shown.step(Some(1), egui::CursorIcon::ZoomIn), Change::Picture);
+        // a second finger comes and goes: egui-winit keeps its pointer
+        shown.event(&touch(2, Started));
+        shown.event(&touch(2, Ended));
+        assert_eq!(shown.step(Some(1), egui::CursorIcon::ZoomIn), Change::Nothing);
+        // so the picture's end still brings the system cursor back
+        assert_eq!(shown.step(None, egui::CursorIcon::ZoomIn), Change::System);
+        shown.event(&touch(1, Ended));
+        assert_eq!(shown.step(Some(1), egui::CursorIcon::ZoomIn), Change::Nothing);
+    }
+
+    #[test]
+    fn a_new_scale_sends_the_picture_again_once() {
         let mut shown = with_pointer();
         assert_eq!(shown.step(Some(1), egui::CursorIcon::ZoomIn), Change::Picture);
-        shown.forget();
-        assert_eq!(shown.step(Some(1), egui::CursorIcon::ZoomIn), Change::Nothing);
-        shown.event(&winit::event::WindowEvent::CursorMoved {
-            device_id: winit::event::DeviceId::dummy(),
-            position: winit::dpi::PhysicalPosition::new(10.0, 10.0),
-        });
+        shown.rescaled();
         assert_eq!(shown.step(Some(1), egui::CursorIcon::ZoomIn), Change::Picture);
+        assert_eq!(shown.step(Some(1), egui::CursorIcon::ZoomIn), Change::Nothing);
+        // a system cursor is the system's to size
+        assert_eq!(shown.step(None, egui::CursorIcon::ZoomIn), Change::System);
+        shown.rescaled();
+        assert_eq!(shown.step(None, egui::CursorIcon::ZoomIn), Change::Nothing);
     }
 
     #[test]
