@@ -4,7 +4,9 @@
 
 use super::common::{Edit, check, color_swatch, combo, label, linear_to_srgb, row, small};
 use super::{Confirm, Env, FeaturesClip, PickTarget};
-use crate::build::edits::{CLICK_ACTION_SIT, CLICK_ACTION_TOUCH, Extra, FLEX_DEFAULT, LIGHT_DEFAULT, LIGHT_IMAGE_DEFAULT, PROBE_DEFAULT};
+use crate::build::edits::{
+    CLICK_ACTION_SIT, CLICK_ACTION_TOUCH, Extra, FLEX_DEFAULT, LIGHT_DEFAULT, LIGHT_IMAGE_DEFAULT, PHYSICS_SHAPE_NONE, PROBE_DEFAULT,
+};
 use crate::build::{BuildSettings, BuildTool};
 use crate::theme::Palette;
 use crate::ui::widgets::collapsing;
@@ -37,6 +39,18 @@ fn physics_shapes() -> [(&'static str, u8); 3] {
         (aurora_i18n::tr!("build-ui-features-prim"), 0),
         (aurora_i18n::tr!("build-ui-features-convex-hull"), 2),
     ]
+}
+
+/// The shapes the combo offers. The Legacy Viewer always lists None
+/// (LLPanelVolume::refresh, indra/newview/llpanelvolume.cpp), but the
+/// simulator refuses it on a root prim and the choice snaps back. Aurora lists
+/// None only when a child prim of a linkset is selected (stricter, the same
+/// final state), and keeps it while a prim already shows None.
+fn physics_shape_choices(child_selected: bool, current: Option<u8>) -> Vec<(&'static str, u8)> {
+    physics_shapes()
+        .into_iter()
+        .filter(|&(_, v)| v != PHYSICS_SHAPE_NONE || child_selected || current == Some(PHYSICS_SHAPE_NONE))
+        .collect()
 }
 
 /// Reflection probe flags (LLReflectionProbeParams).
@@ -241,9 +255,28 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         |ui| {
             label(ui, p, aurora_i18n::tr!("build-ui-features-physics-shape-type"));
             let phys = tool.physics.get(&key.local_id).copied();
+            let shape = phys.map(|x| x.shape_type);
+            let roots: Vec<bool> = tool
+                .sel_prims(world)
+                .into_iter()
+                .map(|i| crate::build::root_of(world, i) == i)
+                .collect();
+            let (child_selected, root_selected) = (roots.contains(&false), roots.contains(&true));
+            let shapes = physics_shape_choices(child_selected, shape);
             ui.horizontal(|ui| {
-                if let Some(t) = combo(ui, "physics_shape", phys.map(|x| x.shape_type), &physics_shapes(), 110.0, editable) {
+                if let Some(t) = combo(ui, "physics_shape", shape, &shapes, 110.0, editable) {
                     tool.set_physics(world, |x| x.shape_type = t);
+                }
+                if root_selected {
+                    // why None is missing, or why a whole linkset set to None
+                    // still shows the root's shape: only child prims take it
+                    let _ = super::common::icon_button(
+                        ui,
+                        p,
+                        "info-circle-filled",
+                        aurora_i18n::tr!("build-ui-features-physics-none-root-hint"),
+                        true,
+                    );
                 }
                 let eye = if s.show_physics_shape { "eye-filled" } else { "eye-off" };
                 if super::common::icon_button(
@@ -683,6 +716,21 @@ fn paste_features(tool: &mut BuildTool, world: &mut World, idx: usize, c: Featur
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn none_is_offered_only_for_a_child_prim() {
+        let values = |v: Vec<(&str, u8)>| v.into_iter().map(|(_, x)| x).collect::<Vec<_>>();
+        // root or lone prim: Prim and Convex hull only
+        assert_eq!(values(physics_shape_choices(false, Some(0))), [0, 2]);
+        assert_eq!(values(physics_shape_choices(false, None)), [0, 2]);
+        // a child prim in the selection: None too, in the Legacy Viewer's order
+        assert_eq!(values(physics_shape_choices(true, Some(0))), [PHYSICS_SHAPE_NONE, 0, 2]);
+        // a root already showing None keeps it in the list, so the combo can name it
+        assert_eq!(
+            values(physics_shape_choices(false, Some(PHYSICS_SHAPE_NONE))),
+            [PHYSICS_SHAPE_NONE, 0, 2]
+        );
+    }
 
     #[test]
     fn a_projector_the_agent_cannot_copy_leaves_the_target_its_own() {
