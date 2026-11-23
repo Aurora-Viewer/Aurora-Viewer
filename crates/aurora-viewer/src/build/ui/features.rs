@@ -64,34 +64,6 @@ fn physics_shape_choices(child_selected: bool, prim_allowed: bool, current: Opti
 /// PHYSICS_SHAPE_PRIM (LLViewerObject::PHYSICS_SHAPE_*).
 const PHYSICS_SHAPE_PRIM: u8 = 0;
 
-/// Whether the mesh `id` has a physics shape of its own; `None` (Prim not
-/// listed, like the Legacy Viewer before its header and hulls arrive) while
-/// its collision blocks are fetched. The answer is kept: a mesh asset never
-/// changes.
-fn mesh_has_physics(tool: &mut BuildTool, meshes: &mut crate::scene::meshes::MeshStreamer, id: uuid::Uuid) -> Option<bool> {
-    if let Some(&known) = tool.mesh_physics.get(&id) {
-        return Some(known);
-    }
-    let known = meshes.view(&id).and_then(|view| {
-        let convex = view.header.physics_convex.and_then(|r| view.bytes.section(r));
-        aurora_assets::mesh_physics::has_physics_shape(&view.header, convex)
-    });
-    if let Some(old) = tool.mesh_physics_fetch.take().filter(|old| *old != id || known.is_some()) {
-        // the physics shape display asks again while it needs the blocks
-        meshes.want_physics(old, false);
-    }
-    match known {
-        Some(known) => {
-            tool.mesh_physics.insert(id, known);
-        }
-        None => {
-            meshes.want_physics(id, true);
-            tool.mesh_physics_fetch = Some(id);
-        }
-    }
-    known
-}
-
 /// Reflection probe flags (LLReflectionProbeParams).
 const PROBE_BOX: u8 = 0x01;
 const PROBE_DYNAMIC: u8 = 0x02;
@@ -302,7 +274,15 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 .collect();
             let (child_selected, root_selected) = (roots.contains(&false), roots.contains(&true));
             let mesh_id = volume.sculpt.filter(|sc| sc.is_mesh()).map(|sc| sc.texture);
-            let prim_allowed = mesh_id.is_none_or(|id| mesh_has_physics(tool, &mut env.scene.meshes, id) == Some(true));
+            let prim_allowed = mesh_id.is_none_or(|id| {
+                let meshes = &env.scene.meshes;
+                let lookup = || {
+                    let view = meshes.view(&id)?;
+                    let convex = view.header.physics_convex.and_then(|r| view.bytes.section(r));
+                    aurora_assets::mesh_physics::has_physics_shape(&view.header, convex)
+                };
+                tool.mesh_physics.ask(id, lookup) == Some(true)
+            });
             let shapes = physics_shape_choices(child_selected, prim_allowed, shape);
             ui.horizontal(|ui| {
                 if let Some(t) = combo(ui, "physics_shape", shape, &shapes, 110.0, editable) {

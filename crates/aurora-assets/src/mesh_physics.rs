@@ -48,7 +48,7 @@ pub fn has_physics_shape(header: &crate::MeshHeader, convex: Option<&[u8]>) -> O
     }
     // A damaged block counts as no hulls, as fromLLSD then leaves none.
     let data = crate::mesh::unzip_llsd(convex?).unwrap_or_default();
-    Some(data.is_map() && data.has("Positions") && !data["HullList"].as_binary().is_empty())
+    Some(data.has("Positions") && !data["HullList"].as_binary().is_empty())
 }
 
 pub fn decode(section: &[u8]) -> Result<Decomposition, AssetError> {
