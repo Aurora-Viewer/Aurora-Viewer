@@ -43,7 +43,7 @@ pub(crate) fn location_world_drag(ctx: &egui::Context) -> Option<LocationDrag> {
     if matches!(target, Target::Landmark(_)) {
         return None;
     }
-    if ctx.is_pointer_over_egui() {
+    if !crate::ui::inventory::drag::over_world(ctx) {
         return None;
     }
     ctx.input(|i| {

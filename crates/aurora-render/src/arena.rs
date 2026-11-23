@@ -2,7 +2,7 @@
 //! a storage buffer of draw records, all sub-allocated on the CPU side.
 
 use crate::gpu_alloc::{Backoff, fallback_capacities, try_buffer};
-use crate::gpu_cull::{CullFace, DirtyChunks, GpuTable};
+use crate::gpu_cull::{CullFace, DirtyChunks, GpuTable, Touched};
 use crate::types::{DrawRecord, SkinVertex, Vertex};
 use crate::upload::{StagedMesh, UploadQueue};
 use crate::writes::GpuWrites;
@@ -222,11 +222,22 @@ impl GeometryArena {
     }
 
     fn make(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
-        device.create_buffer(&Self::desc(label, size, usage))
+        device.create_buffer(&Self::desc(label, size, Self::traced(device, usage)))
     }
 
     fn try_make(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> Result<wgpu::Buffer, String> {
-        try_buffer(device, &Self::desc(label, size, usage))
+        try_buffer(device, &Self::desc(label, size, Self::traced(device, usage)))
+    }
+
+    /// The ray-traced shadows build their bottom levels from the arena and
+    /// pose the avatars from it in a compute pass (rt_shadows.rs): the
+    /// buffers say so when the device traces.
+    fn traced(device: &wgpu::Device, usage: wgpu::BufferUsages) -> wgpu::BufferUsages {
+        if device.features().contains(crate::rt_shadows::FEATURES) {
+            usage | wgpu::BufferUsages::BLAS_INPUT | wgpu::BufferUsages::STORAGE
+        } else {
+            usage
+        }
     }
 
     fn desc(label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::BufferDescriptor<'_> {
@@ -604,6 +615,8 @@ pub struct RecordStore {
     mirror: Blocks<DrawRecord>,
     free: Vec<u32>,
     dirty: DirtyChunks,
+    /// The records that changed, for `take_changed`.
+    touched: Touched,
     live: u32,
     /// Live records with a rez effect in progress, then with a portal clip
     /// (`scene_needs`): the scene pass's variant keeps those paths while
@@ -635,6 +648,7 @@ impl RecordStore {
             mirror: Blocks::new(),
             free: Vec::new(),
             dirty: DirtyChunks::default(),
+            touched: Touched::default(),
             live: 0,
             scene_needs: [0; 2],
             generation: 0,
@@ -736,6 +750,26 @@ impl RecordStore {
 
     fn mark(&mut self, idx: usize) {
         self.dirty.mark(idx);
+        self.touched.mark(idx);
+    }
+
+    /// Follows the records and the faces that change, for `take_changed`:
+    /// whether it already did.
+    pub(crate) fn watch_changes(&mut self) -> bool {
+        self.touched.watch() & self.faces.watch(|a, b| a != b)
+    }
+
+    /// Stops following them (`watch_changes`).
+    pub(crate) fn unwatch_changes(&mut self) {
+        self.touched.unwatch();
+        self.faces.unwatch();
+    }
+
+    /// Adds to `into` the records that changed since the last call, or
+    /// whose face did (one that did both is there twice).
+    pub(crate) fn take_changed(&mut self, into: &mut Vec<u32>) {
+        self.touched.take(into);
+        self.faces.take_touched(into);
     }
 
     pub fn set(&mut self, id: u32, rec: DrawRecord) {

@@ -64,6 +64,12 @@ pub fn paint(ui: &egui::Ui, rect: egui::Rect) {
     }));
 }
 
+/// Whether `callback` is the second view's: a picture that changes at
+/// every frame, whatever its shapes say.
+pub(crate) fn is(callback: &egui::PaintCallback) -> bool {
+    callback.callback.downcast_ref::<Region>().is_some()
+}
+
 /// Replace the second view's callbacks with meshes of its texture, or with
 /// nothing while it has none (egui-wgpu only knows meshes).
 pub(crate) fn replace(primitives: &mut [egui::ClippedPrimitive], texture: Option<egui::TextureId>) {
@@ -165,6 +171,7 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
         params,
         lists,
         ui: None,
+        outside: Default::default(),
         surface: SurfaceState {
             width,
             height,
@@ -184,6 +191,8 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
         // (each renderer moves its weather memory once, the window's from
         // its own packet)
         world_shift: main.world_shift,
+        // (traced by the window's renderer only: `rt_shadows::traced`)
+        rt: None,
         input_at: None,
         rez_records: main.rez_records,
         portal_records: main.portal_records,
