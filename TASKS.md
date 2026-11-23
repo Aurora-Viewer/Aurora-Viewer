@@ -3004,6 +3004,8 @@ The same questions an hour long, **the most rewarding first**. Reading taken by 
 
 ## Interface
 
+- 🔧 Page Up and Page Down scroll the focused transcript or composer's conversation in Nearby Chat, private IMs, group chats and conferences. Demo: `AURORA_DEMO_CONV_OPTIONS=aurora:paging`.
+
 - ✅ A texture opened from a notecard scales with its window (a tester's report, 2026-11-22; task `notecard-texture-scale`; no issue). The notecard's image window drew the picture at most at the texture's own pixel size, so enlarging the window left it small; it now uses the inventory texture preview's picture (`texture_view::picture`): it fills the window and keeps its ratio, as LLPreviewTexture does (indra/newview/llpreviewtexture.cpp). The description heads the window, as in floater_preview_texture.xml. Scenario `AURORA_DEMO_INVENTORY=note-image`. Validated by the human in demo mode on 2026-11-22.
 
 - ✅ Object Contents uses the inventory text matcher for plus-separated terms and quoted words in both Build styles ([#4419](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/4419), [PR #4575](https://github.com/Aurora-Viewer/Aurora-Viewer/pull/4575)). Validated in the Windows test viewer on 2026-11-22.

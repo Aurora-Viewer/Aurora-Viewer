@@ -6545,7 +6545,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Legacy bars, place island, favourites, menus, balance, clock, hidden interface, immersive mode, chat bar autohide / Conversations window only; `profiles` / `fpspresets`: saved graphics fixtures / FPS hover card |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized\|emote` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card, emotes |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
-| `AURORA_DEMO_CONV_OPTIONS=aurora\|compact\|bubbles\|legacy[:on][:group\|nova]` | The conversation options of Preferences › Chat: tabs ordered by type, tab names, group moderators, "(You)", system messages in brackets, faded history, opening on offline messages |
+| `AURORA_DEMO_CONV_OPTIONS=aurora\|compact\|bubbles\|legacy[:on][:group\|nova][:paging]` | Conversation options or numbered transcripts for keyboard paging |
 | `AURORA_DEMO_OIIA=<seconds>` | The spinning cat's show, started without its warning from that second of its music, without the video |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and system notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_BUSY_PAUSE=<frame>` | From that frame, the window counts as behind on a busy card: the Render pauses, with its notice and window title, until a click |
@@ -7967,7 +7967,7 @@ failure. Grid validation and any paid upload are performed by the human.
   700: "Open conversations", then "Don't flash for nearby chat" (unchecked).
   Capture with `AURORA_FPS_LIMIT=60` at `690,715,730,915,1200` (715 and 915:
   the top of a rise; 730: its bottom), `760` for `menu`.
-- **`AURORA_DEMO_CONV_OPTIONS=aurora|compact|bubbles|legacy[:on][:group|nova]`**: the
+- **`AURORA_DEMO_CONV_OPTIONS=aurora|compact|bubbles|legacy[:on][:group|nova][:paging]`**: the
   options of Preferences › Chat › Conversations (tab order, tab names,
   moderators, "(You)", brackets) and › History (faded history, opening on
   offline messages), in the chat style named, the Conversations window
@@ -7986,6 +7986,10 @@ failure. Grid validation and any paid upload are performed by the human.
   `on`, today's look: open the window from the chat bar and compare. Add
   `group` (`legacy:on:group`) or `nova` to open Aurora Builders' or Nova's
   conversation at frame 780.
+  Add `paging` to open Conversations at frame 780 with numbered lines in
+  Nearby Chat, Nova's IM, Aurora Builders and Sunset Crew. Click the
+  transcript or message field and press Page Up, then Page Down. Click the
+  scene and check that the transcript stays put.
   `AURORA_DEMO_OPTIONS=chat:conversation-options` or `chat:history-fade`
   opens Preferences on the rows. Capture at `800` or later.
 - **`AURORA_DEMO_OIIA=<seconds>`**: the spinning cat (`crate::oiia`, an

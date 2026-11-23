@@ -14501,7 +14501,9 @@ impl App {
             }
         }
         // AURORA_DEMO_CONV_OPTIONS: the group, the conference, Tess's IM
-        if self.demo && crate::demo::conv_options::scene().is_some() {
+        if self.demo
+            && let Some(scene) = crate::demo::conv_options::scene()
+        {
             let agent = self.world.agent_id;
             for event in crate::demo::conv_options::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
@@ -14509,11 +14511,15 @@ impl App {
                 }
             }
             crate::demo::conv_options::own_lines(&mut self.world, self.frame_count);
-            if self.frame_count == crate::demo::conv_options::SHOW_AT
-                && let Some(id) = crate::demo::conv_options::scene().and_then(|s| s.show)
-            {
-                self.panels.chat = true;
-                self.chat_ui.open(id);
+            if self.frame_count == crate::demo::conv_options::SHOW_AT {
+                if scene.paging {
+                    crate::demo::conv_options::paging_lines(&mut self.world);
+                    self.panels.chat = true;
+                }
+                if let Some(id) = scene.show {
+                    self.panels.chat = true;
+                    self.chat_ui.open(id);
+                }
             }
         }
         if self.demo

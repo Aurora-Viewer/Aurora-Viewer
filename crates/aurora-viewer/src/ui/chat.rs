@@ -3422,6 +3422,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 demo_selection(selection, &mode, &drawn, copied.ends());
             }
             to_field = select_lines(ui, &content, &drawn, selection, &copied);
+            page_transcript(ui, &content, st.selected, viewport.height());
             if matches!(rows, Rows::Thread(_)) {
                 line_menu::demo_mark(ui, &drawn);
                 let first = clock.first;
@@ -3463,6 +3464,45 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         }
     });
     to_field
+}
+
+fn page_transcript(ui: &egui::Ui, transcript: &egui::Response, conversation: Option<uuid::Uuid>, page: f32) {
+    let composer = egui::Id::unique(("conv_input", conversation));
+    if !ui.is_enabled()
+        || ui.is_sizing_pass()
+        || !ui.input(|i| i.focused)
+        || egui::Popup::is_any_open(ui.ctx())
+        || !ui.memory(|m| m.allows_interaction(ui.layer_id()) && (m.has_focus(transcript.id) || m.has_focus(composer)))
+    {
+        return;
+    }
+    let pages = ui.input_mut(|i| {
+        let mut pages = 0.0;
+        i.events.retain(|event| {
+            match event {
+                egui::Event::Key {
+                    key: egui::Key::PageUp,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                    ..
+                } => pages += 1.0,
+                egui::Event::Key {
+                    key: egui::Key::PageDown,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                    ..
+                } => pages -= 1.0,
+                _ => return true,
+            }
+            false
+        });
+        pages
+    });
+    if pages != 0.0 {
+        // Keep this inside the transcript's scroll area so it cannot scroll a sibling.
+        ui.scroll_with_delta_animation(egui::vec2(0.0, pages * page), egui::style::ScrollAnimation::none());
+        ui.ctx().request_repaint();
+    }
 }
 
 /// What drawing a line of a conversation needs.
@@ -5556,6 +5596,58 @@ pub(crate) fn bar_input(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn page_keys_scroll_only_the_focused_conversation() {
+        use egui::{Event, Id, Key, Modifiers, RawInput, ScrollArea, Sense};
+
+        let ctx = egui::Context::default();
+        let transcript = Id::new("transcript");
+        let composer = Id::unique(("conv_input", Option::<uuid::Uuid>::None));
+        let elsewhere = Id::unique(("conv_input", Some(uuid::Uuid::from_u128(1))));
+        let frame = |focus, key: Option<Key>, modifiers, focused| {
+            let events = key
+                .map(|key| Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                })
+                .into_iter()
+                .collect();
+            let mut offset = 0.0;
+            let _ = ctx.run_ui(
+                RawInput {
+                    events,
+                    focused,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.memory_mut(|m| m.request_focus(focus));
+                    let out = ScrollArea::vertical()
+                        .stick_to_bottom(true)
+                        .animated(false)
+                        .max_height(100.0)
+                        .show_viewport(ui, |ui, viewport| {
+                            let (_, rect) = ui.allocate_space(egui::vec2(50.0, 500.0));
+                            let response = ui.interact(rect, transcript, Sense::click_and_drag());
+                            super::page_transcript(ui, &response, None, viewport.height());
+                        });
+                    offset = out.state.unclamped_offset().y;
+                },
+            );
+            offset
+        };
+        let end = frame(transcript, None, Modifiers::NONE, true);
+        assert!(end > 100.0);
+        let older = frame(transcript, Some(Key::PageUp), Modifiers::NONE, true);
+        assert!((end - older - 100.0).abs() < 0.1);
+        assert_eq!(frame(elsewhere, Some(Key::PageUp), Modifiers::NONE, true), older);
+        assert_eq!(frame(composer, Some(Key::PageUp), Modifiers::SHIFT, true), older);
+        assert_eq!(frame(composer, Some(Key::PageUp), Modifiers::NONE, false), older);
+        assert_eq!(frame(composer, Some(Key::PageDown), Modifiers::NONE, true), end);
+    }
+
     #[test]
     fn alt_enter_alone_sends_ooc_before_the_channel_is_read() {
         let send_with = |keys: &super::shortcuts::ChatKeys, modifiers: egui::Modifiers| {
