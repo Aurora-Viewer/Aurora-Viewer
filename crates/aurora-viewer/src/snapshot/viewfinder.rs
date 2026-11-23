@@ -222,6 +222,15 @@ impl KeptView {
     }
 }
 
+/// The tilt to take back at an opening: the one the viewfinder closed on
+/// (`roll_kept`), with the view it closed on only (`view_back`: a view
+/// dropped because the avatar moved away, #4604, takes its tilt with it),
+/// and unless the camera controls tilted the view meanwhile (`roll_now`,
+/// theirs is kept). None: the roll stays as it is.
+pub fn tilt_back(view_back: bool, roll_now: f32, roll_kept: f32) -> Option<f32> {
+    (view_back && roll_now == 0.0 && roll_kept != 0.0).then_some(roll_kept)
+}
+
 /// The viewfinder's settings kept between sessions (the rest of the photo
 /// is `snapshot::Settings`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1243,6 +1252,19 @@ mod tests {
         assert!(kept.back((256_256, 512_000), Vec3::new(-216.0, 20.0, 22.0), 64.0).is_none());
         // a broken avatar position drops it
         assert!(kept.back(origin, Vec3::NAN, 64.0).is_none());
+    }
+
+    #[test]
+    fn the_tilt_comes_back_only_with_its_view() {
+        let tilt = 20f32.to_radians();
+        assert_eq!(tilt_back(true, 0.0, tilt), Some(tilt));
+        // #4604: the view was dropped (the avatar moved away), or "Keep the
+        // framing" is off: the photo mode opens level
+        assert_eq!(tilt_back(false, 0.0, tilt), None);
+        // the camera controls tilted the view meanwhile: theirs stays
+        assert_eq!(tilt_back(true, 5f32.to_radians(), tilt), None);
+        // it closed level
+        assert_eq!(tilt_back(true, 0.0, 0.0), None);
     }
 
     #[test]
