@@ -1698,6 +1698,10 @@ when unfocused") is ignored during a screenshot.
   The departure's arrival also says "Teleport completed from" and a link to
   the plaza in nearby chat (FSShowBackSLURL; capture at frame 900); the
   return says nothing, the far region having no name.
+  The particles keep their place in the world: captured at frame 790, just
+  after the departure, our avatar is alone above the water, with none of
+  the fountain's particles around it (they stay 25 km away, over the
+  plaza); at frame 1500 the fountain plays on the plaza again.
 - **`AURORA_DEMO_AGENT_JITTER=<mm>`**: our avatar receives five times a
   second (at 60 fps) a position correction of at most this size, like those
   a simulator sends to an avatar standing at altitude. With
