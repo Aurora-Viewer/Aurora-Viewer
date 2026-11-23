@@ -65,6 +65,10 @@ jobs:
       actions: read
     with:
       tag: ${{ needs.tag.outputs.tag }}
+    # A called workflow sees no secret the caller does not pass, the release
+    # environment's included: without this its publish jobs find no signing
+    # key (UPDATE_SIGNING_KEY*) and stop.
+    secrets: inherit
 
   prune:
     needs: release

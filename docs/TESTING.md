@@ -14735,9 +14735,15 @@ the variable.
 - `udp in= out= pkt/s`, then `in / out kb/s`: packets and throughput of all
   the circuits.
 - `resent`, `given_up`: reliable packets we sent again, and those abandoned
-  after their last resend. `dup`: packets the simulator resent although we
-  had them (our acknowledgement was late or lost). `unacked`: reliable
-  packets still waiting for their acknowledgement.
+  after their last resend. An ordinary reliable packet waits five times
+  the Legacy Viewer's averaged ping, at least 1 s, fixed when it is sent
+  and at each resend, then is given up after three resends. That average
+  starts at 1 s (a 5 s wait), is at least 1.6 s after the first ping reply
+  (a 100 ms ping gives 1,620 ms, an 8.1 s wait) and stops at 2 s, which
+  it also is while a ping is unanswered (a 10 s wait). The login circuit
+  code keeps a fixed 5 s wait. `dup`: packets the
+  simulator resent although we had them (our acknowledgement was late or
+  lost). `unacked`: reliable packets still waiting for their acknowledgement.
 - `gaps`, `late`, `lost`: provisional sequence holes, those filled before
   their deadline, and confirmed losses. A hole becomes `lost` only after
   sixteen smoothed round trips (ping floored at 100 ms), at most 5 s, like
