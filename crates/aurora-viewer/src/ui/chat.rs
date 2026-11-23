@@ -2915,19 +2915,34 @@ pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::Ch
     if line.origin != Origin::Live || line.anonymous() {
         return line.from.clone();
     }
-    let own = line.kind.is_own();
-    let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-    let names = &world.social.avatar_names;
-    let cached = if object {
-        None
-    } else {
-        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
-    };
-    match cached {
-        Some(n) => n.display(&names.options),
-        None if own => own_name.to_owned(),
+    match cached_chat_sender(world, line) {
+        Some(n) => n.display(&world.social.avatar_names.options),
+        None if line.kind.is_own() => own_name.to_owned(),
         None => line.from.clone(),
     }
+}
+
+fn cached_chat_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
+    if line.origin != Origin::Live || line.anonymous() || matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
+        return None;
+    }
+    let id = if line.kind.is_own() { &world.agent_id } else { &line.source };
+    world.social.avatar_names.get_in(NameScope::Roster, id)
+}
+
+/// Visible header label in Aurora, Compact and Bubbles. Preserve the text
+/// of emotes, saved transcripts and names frozen under RLVa.
+fn chat_header_name(world: &World, line: &crate::world::ChatLine, name: &str) -> String {
+    if let Some(alias) = conversation_options::you(&conversation_options::current(), line) {
+        return alias.to_owned();
+    }
+    if let Some(username) = cached_chat_sender(world, line).and_then(|n| n.chat_username(&world.social.avatar_names.options))
+        && !username.is_empty()
+        && !username.eq_ignore_ascii_case(name)
+    {
+        return format!("{name} ({username})");
+    }
+    name.to_owned()
 }
 
 /// The text of a message and whether it is in italics: an emote is the
@@ -3537,11 +3552,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
-    let cached = if object || logged || line.anonymous() {
-        None
-    } else {
-        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
-    };
+    let cached = cached_chat_sender(world, line);
     let name = match cached {
         Some(n) => n.display(&names.options),
         None if own && !logged => env.own_name.to_owned(),
