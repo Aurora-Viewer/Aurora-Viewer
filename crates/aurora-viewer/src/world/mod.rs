@@ -6,22 +6,29 @@ pub mod appearance;
 pub mod appearance_xml;
 pub mod attachment_inventory;
 pub mod attention;
+pub mod avatar_marks;
 pub mod blocking;
 pub mod body;
 pub mod bubble_chat;
 pub mod calling_cards;
+pub mod object_motion_trace;
+pub mod shape_tween;
 
 mod arrival_wait;
+pub mod avatar_cache;
 pub mod beacons;
+pub mod beams;
 pub mod bridge;
 pub mod calls;
 pub mod chat_log;
+pub mod chat_service;
 pub mod collisions;
 pub mod complexity_notice;
 pub mod contact_markers;
 pub mod contact_sets;
 pub mod derender;
 pub mod dialog_names;
+pub mod direct_history;
 pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
@@ -39,10 +46,10 @@ pub mod favorites;
 pub mod flying_at_exit;
 mod friend_join;
 pub mod friends_only;
+pub mod group_ban_all;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
-pub mod hand_ik;
 pub mod home;
 pub mod hover_height;
 pub mod hud_lock;
@@ -59,6 +66,7 @@ pub mod lsl_syntax;
 pub mod lslbridge;
 pub mod marketplace;
 pub mod maturity;
+pub mod mirror;
 pub mod motion;
 pub mod mutes;
 pub mod names;
@@ -68,11 +76,13 @@ pub mod notification_history;
 pub mod notifications;
 pub mod object_im_filter;
 pub mod objects;
+pub mod omnifilter;
 pub mod open_ims;
 pub mod outfit;
 pub mod outfit_backup;
 pub mod outfit_folders;
 pub mod outfit_paste;
+pub mod parcel_env;
 pub mod parcel_visibility;
 pub mod parked;
 pub mod particle_filters;
@@ -91,9 +101,8 @@ pub mod region_messages;
 pub mod region_restart;
 pub mod region_titles;
 pub mod region_tracker;
-pub mod rig_graph;
-pub mod rig_targets;
 pub mod rlva;
+pub mod rlva_selftest;
 pub mod script_debug;
 pub mod script_dialog_limit;
 pub mod search;
@@ -104,6 +113,7 @@ pub mod staff;
 pub mod status;
 pub mod suitcase;
 pub mod system_messages;
+pub mod teleport_access;
 pub mod teleport_cancel;
 pub mod teleport_failure;
 pub mod teleport_invites;
@@ -113,6 +123,7 @@ pub mod tphistory;
 pub mod transcripts;
 pub mod user_info;
 pub mod voice_moderation;
+pub mod wearable_favorites;
 pub mod windlight_presets;
 pub mod worldmap;
 pub mod worn_listed;
@@ -129,6 +140,12 @@ mod flash_tests;
 mod god_mode_tests;
 #[cfg(test)]
 mod group_notice_tests;
+#[cfg(test)]
+mod last_speaker_tests;
+#[cfg(test)]
+mod object_name_tests;
+#[cfg(test)]
+pub(crate) mod rlva_location_tests;
 #[cfg(test)]
 mod toasts_tests;
 
@@ -164,6 +181,8 @@ pub struct Region {
     pub avatar_hover_height: bool,
     /// SimulatorFeatures' LSLSyntaxId once they came (nil: none named).
     pub lsl_syntax_id: Option<Uuid>,
+    /// SimulatorFeatures' LuaScriptsEnabled: the region runs SLua scripts.
+    pub lua_scripts: bool,
     /// RenderMaterials limits of the region (SimulatorFeatures).
     pub materials_limits: crate::scene::legacy_mat::RegionLimits,
     /// Object capacity (SimStats ObjectCapacity, LLViewerRegion::getMaxTasks);
@@ -181,7 +200,16 @@ pub struct Region {
     pub currency_symbol: String,
     /// OpenSimExtras' ExportSupported: the export permission applies here.
     pub export_supported: bool,
+    /// SimulatorFeatures' GroupChatPostLinksEnabled: the group ability to
+    /// post links in chat applies here, so the role editor shows it.
+    pub group_chat_post_links: bool,
+    /// SimulatorFeatures' GameControlEnabled: the region reads
+    /// GameControlData (LLViewerRegion::gameControlEnabled).
+    pub game_control: bool,
     pub max_link_children: Option<u32>,
+    /// OpenRegionInfo (Aurora-Sim based grids): the Region / Estate
+    /// window's "Region settings".
+    pub open_settings: Option<aurora_net::open_region::OpenRegionSettings>,
     pub animated_object_max_tris: u32,
 }
 
@@ -277,6 +305,18 @@ impl ChatKind {
         matches!(self, ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_))
     }
 
+    /// The text of a line of this kind, in a conversation that shows the
+    /// names of `names` (`names::TextScope`): what a resident typed, we
+    /// included, in the nearby chat or in an IM session, is shown as typed
+    /// under RLVa's `@shownames` and `@showloc`; an object's line, the
+    /// viewer's notices and the cards are rewritten.
+    pub fn text_in(self, names: names::NameScope) -> names::TextScope {
+        match self {
+            ChatKind::Local(_) | ChatKind::Own(_) | ChatKind::Im => names::TextScope::verbatim(names),
+            _ => names.into(),
+        }
+    }
+
     /// Not sent by a person: what an object or a script says (its owner-say
     /// and its llRegionSayTo to us included), its IMs, and the viewer's
     /// notices. The cards of residents' offers are people's (#741).
@@ -298,6 +338,26 @@ pub enum Origin {
     ServerLog,
 }
 
+/// What RLVa's `@shownames` made of the resident who wrote a line, decided
+/// once, when the line arrives: the Legacy Viewer writes the stand-in in
+/// `chat.mFromName`, sets `mRlvNamesFiltered` and colours the line then
+/// (process_chat_from_simulator, indra/newview/llviewermessage.cpp;
+/// LGGContactSets::colorize, indra/newview/lggcontactsets.cpp), and nothing
+/// rewrites a line already shown when the restriction comes or goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Speaker {
+    /// No restriction, or someone it does not reach.
+    #[default]
+    Named,
+    /// Named (oneself aside, an `@shownames:<uuid>` exception), but around
+    /// us under the restriction: not coloured as Linden staff
+    /// (`World::rlva_speaker`).
+    Around,
+    /// `!RlvActions::canShowName(SNC_DEFAULT, id)`: no contact colour, and
+    /// in the nearby chat the stand-in for a name, in plain text.
+    Hidden,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChatLine {
     pub time: SystemTime,
@@ -306,6 +366,74 @@ pub struct ChatLine {
     pub kind: ChatKind,
     pub source: Uuid,
     pub origin: Origin,
+    /// A blocked resident's line, kept for the nearby chat's history only
+    /// (FSShowMutedChatHistory, `settings::BlockedChat`): never above the
+    /// chat bar, never counted, logged or alerted.
+    pub blocked: bool,
+    /// Said beyond the say range from where we stood when it arrived
+    /// (LLViewerChat::getChatColor, indra/newview/llviewerchat.cpp): drawn
+    /// dimmed by Preferences › Chat's factor (`ui::colors::beyond_range_alpha`).
+    pub beyond_range: bool,
+    /// How RLVa's `@shownames` left the resident who wrote the line when it
+    /// arrived (`World::rlva_freeze_line`).
+    pub speaker: Speaker,
+}
+
+impl ChatLine {
+    /// The line shows the stand-in of its speaker, which `from` holds
+    /// (`mRlvNamesFiltered` of a resident's line): plain text, no picture,
+    /// no menu. The nearby chat's alone: an IM session names its people.
+    pub fn anonymous(&self) -> bool {
+        self.speaker == Speaker::Hidden && matches!(self.kind, ChatKind::Local(_))
+    }
+
+    /// How the text of the line is shown in a conversation that shows the
+    /// names of `names`: as it is, a mention in it naming its resident.
+    /// What RLVa's `@shownames` and `@showloc` hide of a line said during
+    /// this session is rewritten once, when it arrives
+    /// (`World::rlva_freeze_line`:
+    /// LLFloaterIMNearbyChatHandler::processChat,
+    /// indra/newview/llfloaterimnearbychathandler.cpp, sets `mRlvNamesFiltered`
+    /// and `mRlvLocFiltered` so that nothing runs twice), and a line already
+    /// shown is left alone when a restriction comes or goes. The card of an
+    /// offer or a payment is a notice with a state of its own: its text
+    /// follows its kind (`ChatKind::text_in`) while it is shown. Nothing
+    /// rewrites a line read back either:
+    /// LLLogChat::loadChatHistory (indra/newview/lllogchat.cpp),
+    /// FSFloaterNearbyChat::loadHistory
+    /// (indra/newview/fsfloaternearbychat.cpp) and
+    /// LLIMModel::LLIMSession::chatFromLogFile (indra/newview/llimview.cpp)
+    /// have no RLVa test, and RlvUtil::filterMentions runs on the lines the
+    /// simulator sends. What a restriction hid when the line was said is
+    /// hidden in the file already (`World::transcript_text`).
+    pub fn wording(&self, names: names::NameScope) -> names::TextScope {
+        match (self.origin, self.kind) {
+            (Origin::Live, ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_)) => self.kind.text_in(names),
+            _ => names::TextScope::as_received(names),
+        }
+    }
+}
+
+/// The name an object speaks under in the nearby chat. A name of nothing but
+/// spaces is an empty one, and with `mark` (FSMarkObjects) it becomes "(no
+/// name)": a script that clears its name can no longer write a line that
+/// reads like a resident's. process_chat_from_simulator
+/// (indra/newview/llviewermessage.cpp, FIRE-2434).
+pub fn object_speaker_name(name: String, mark: bool) -> String {
+    match name.trim().is_empty() {
+        false => name,
+        true if mark => aurora_i18n::tr!("world-chat-unnamed-object").to_owned(),
+        true => String::new(),
+    }
+}
+
+/// Whether a nearby line makes its speaker the last one heard: a resident
+/// other than us or an object, outside do not disturb (process_chat_from_simulator
+/// calls LLAgent::heardChat for an audible line of anyone not muted, unless
+/// do not disturb is on; heardChat skips our own id). The blocked never get
+/// this far.
+fn heard_from(kind: ChatKind, dnd: bool) -> bool {
+    !dnd && matches!(kind, ChatKind::Local(_) | ChatKind::Object(_))
 }
 
 /// Drawn speed (m/s) under which our walk stops after a release, with
@@ -370,9 +498,6 @@ pub struct World {
     pub regions: HashMap<RegionHandle, Region>,
     pub main_region: Option<RegionHandle>,
     pub objects: ObjectStore,
-    /// Session-only local contacts from our own seated vehicle.
-    pub hand_contacts: hand_ik::Contacts,
-    pub ik_targets: rig_targets::Targets,
     pub(crate) scripted_camera: crate::camera::follow::Sources,
     /// When the clocks of the regions were last advanced (`advance_motion`).
     motion_tick: Instant,
@@ -381,6 +506,10 @@ pub struct World {
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
+    /// The origin of each object's chat line (its object and the line's
+    /// time), as the Legacy Viewer links each line to its own `objectim`
+    /// SLURL; bounded by chat history.
+    pub chat_objects: HashMap<(Uuid, SystemTime), crate::slapp::RemoteObject>,
     /// What each avatar said lately, for the bubbles above its head.
     pub bubble_chat: bubble_chat::BubbleChat,
     /// Follows `chat` for the view.
@@ -389,12 +518,19 @@ pub struct World {
     /// A resident said something in nearby chat since the app last looked:
     /// it may flash the Conversations button (FSNotifyNearbyChatFlash).
     pub nearby_news: bool,
+    /// The last resident or object heard in nearby chat, ourselves and the
+    /// blocked left out, nothing recorded in do not disturb (LLAgent::heardChat
+    /// from process_chat_from_simulator): what Look at Last Chatter frames.
+    pub last_speaker: Option<Uuid>,
     /// What the nearby chat's entry counts as unread: `chat_unread`, or only
     /// the people's lines while `quiet_automated_chat` is on.
     pub chat_badge: usize,
     /// Lines not sent by a person neither count as unread nor alert
     /// (Preferences › Chat, #741, off), given every frame by the app.
     pub quiet_automated_chat: bool,
+    /// What becomes of a blocked resident's nearby chat (Preferences ›
+    /// Chat, hidden by default), given every frame by the app.
+    pub blocked_chat: crate::settings::BlockedChat,
     /// A resident starting to type to us opens the conversation with an
     /// announcement (FSAnnounceIncomingIM, `im_announce.rs`), given every
     /// frame by the app.
@@ -412,11 +548,16 @@ pub struct World {
     pub notice_topics: notice_topics::Topics,
     /// Conversation transcripts of the account logged in.
     pub chat_log: chat_log::ChatLog,
+    /// The Chat Service's direct-IM history (direct_history.rs).
+    pub chat_service: direct_history::ChatService,
     /// The last import's result, for the app.
     pub import_report: Option<chat_log::import::Report>,
     /// History of the nearby chat (asked once per login).
     nearby_history: transcripts::HistoryState,
     pub script_debug: script_debug::Messages,
+    /// Objects' Debug and OwnerSay lines for the editor sync's run-time
+    /// events (`crate::editor_sync`).
+    pub editor_sync_chat: crate::editor_sync::ChatTap,
     pub sun: Option<(SunInfo, Instant)>,
     pub agent: AgentState,
     /// Session-only UI readback of the active avatar follow.
@@ -434,7 +575,8 @@ pub struct World {
     /// The worn objects each avatar's last AvatarAppearance listed, kept
     /// even when the message itself is dropped (stale, no parameters): the
     /// Legacy Viewer fills mSimAttachments in parseAppearanceMessage, before
-    /// those checks. Read by the Dev Toolbox's J2 only (world/worn_listed.rs).
+    /// those checks. Read by the Dev Toolbox's J2 (world/worn_listed.rs) and
+    /// the worn objects cache (world/avatar_cache).
     listed_worn: HashMap<Uuid, Vec<(Uuid, u8)>>,
     appearance_counter: u64,
     /// Bakes the scene swapped in, by avatar (`refresh_bakes`).
@@ -446,7 +588,12 @@ pub struct World {
     /// so ours shows them as LLVOAvatarSelf shows its own composites.
     local_bakes: HashMap<usize, Uuid>,
     shape_preview_generation: u64,
+    /// Other avatars' shapes gliding to a new appearance (shape_tween.rs).
+    pub shape_tweens: shape_tween::ShapeTweens,
     pub alerts: VecDeque<String>,
+    /// The last simulator alerts with a running number, which jobs waiting
+    /// for a refusal read (`alerts` is emptied by the interface).
+    pub recent_alerts: VecDeque<(u64, String)>,
     /// The announced restart of the agent's region (region_restart.rs).
     pub region_restart: region_restart::Tracker,
     pub movement_complete: bool,
@@ -469,11 +616,22 @@ pub struct World {
     pub water_float: crate::movement::water_float::Follower,
     /// Drawn body orientation per standing avatar (LLVOAvatar::updateOrientation).
     pub bodies: HashMap<Uuid, body::Body>,
+    /// The seated avatars turned on purpose, drawn so until the simulator
+    /// reports their rotation (Compass, Face nearest avatar).
+    pub seat_snaps: HashMap<Uuid, body::SeatSnap>,
     /// Where avatars look (ours and the ones others send).
     pub look_at: lookat::LookAts,
     pub point_at: pointat::PointAts,
+    /// Selection and give beams, ours and the others' (`beams`).
+    pub beams: beams::Beams,
     /// Object messages from elsewhere (Preferences › Privacy, issue #623).
     pub object_im_filter: object_im_filter::Settings,
+    /// The Omnifilter's rules (`crate::omnifilter`, `world/omnifilter.rs`).
+    pub omnifilter: crate::omnifilter::Engine,
+    /// Answers of matched dialogs waiting for their rule's delay.
+    omnifilter_replies: Vec<(Instant, omnifilter::Reply)>,
+    /// Links a rule opened, for the app.
+    omnifilter_urls: Vec<String>,
     pub anti_spam: anti_spam::Registry,
     pub teleporting: bool,
     /// Since when a teleport to another region waits for that region's
@@ -493,6 +651,8 @@ pub struct World {
     pub tp_cancel: teleport_cancel::TeleportCancel,
     /// Outfit restore at login (Current Outfit folder).
     pub outfit: outfit::OutfitRestore,
+    /// Worn objects drawn from the cache while the region sends them.
+    pub avatar_cache: avatar_cache::AvatarCache,
     /// Objects already reported by a diagnostic (logged once).
     diag_reported: HashSet<Uuid>,
     pub events_this_frame: usize,
@@ -510,6 +670,8 @@ pub struct World {
     pub land_credit: i32,
     pub upload_cost: Option<i32>,
     pub local_assets: HashMap<Uuid, (String, bool)>,
+    /// Insertion order in the persisted local library, independent of GPU upload completion.
+    pub local_asset_order: HashMap<Uuid, usize>,
     /// The texture picker's Local tab buttons (drained by the app's importer).
     pub local_asset_requests: Vec<LocalAssetRequest>,
     /// ExtEnvironment answers of the frame (parcel local id, error), for the
@@ -517,6 +679,9 @@ pub struct World {
     pub environment_answers: Vec<(i32, Result<(), String>)>,
     /// Health in percent (HealthMessage; only changes on damage-enabled land).
     pub health: f32,
+    /// The last LL_SIM_STAT_FPS of a SimStats, from any region: it paces
+    /// GameControlData (`game_control::Engine::set_server_fps`).
+    pub sim_fps: Option<f32>,
     /// A parcel owner or an estate manager froze us (ViewerFrozenMessage):
     /// shown on the navigation bar while it lasts.
     pub frozen: bool,
@@ -526,6 +691,22 @@ pub struct World {
     /// What the simulator killed while the photo mode held the world still
     /// (`freeze_motion`): each object's key and id, removed on thaw.
     held_kills: Vec<(ObjKey, Uuid)>,
+    /// The animation editor's Person B (couple mode), set by the app each
+    /// frame: when they teleport away or log off, they stay drawn as they
+    /// were, with what they wear, until couple mode ends (`hold_partner`).
+    pub couple_partner: Option<Uuid>,
+    /// Where the animation editor moved Person B on screen: a shift in the
+    /// region (metres) and a turn about their pelvis (radians). Their body
+    /// is drawn there; their animation and the simulator are untouched.
+    pub couple_place: (Vec3, f32),
+    /// Person B's skeleton model when couple mode took them: they stay
+    /// there while they walk, turn or sit in the world, `couple_place`
+    /// moving them from it.
+    couple_anchor: Option<(Uuid, glam::Mat4)>,
+    /// The partner's kills held meanwhile.
+    held_partner: Vec<(ObjKey, Uuid)>,
+    /// The stand-in Person B, a mirror of our avatar (mirror.rs).
+    mirror: Option<mirror::Mirror>,
     /// Interface sounds to play (drained by the app).
     pub ui_sounds: Vec<UiSound>,
     /// Conversation messages received (their sound depends on the IM modes).
@@ -535,6 +716,8 @@ pub struct World {
     pub attention: Vec<attention::Attention>,
     /// L$ balance changes (previous, new), for the money sounds.
     pub balance_changes: Vec<(Option<i32>, i32)>,
+    /// Health changes (previous, new), for the hurt sounds.
+    pub health_changes: Vec<(f32, f32)>,
     /// Avatars that just started typing (typing sound, LLVOAvatar::startMotion).
     pub typing_started: Vec<Uuid>,
     /// Avatars whose viewer said they type in the nearby chat
@@ -544,6 +727,9 @@ pub struct World {
     pub social: social::Social,
     /// Contact sets and aliases (LGGContactSets), per account.
     pub contact_sets: contact_sets::ContactSets,
+    /// The residents marked with a colour this session (radar and
+    /// mini-map Mark menus, LLNetMap::sAvatarMarksMap).
+    pub avatar_marks: avatar_marks::AvatarMarks,
     /// The residents we dealt with lately (People › Recent).
     pub recent: recent::RecentPeople,
     /// Contact sets generation whose aliases the name cache has.
@@ -556,6 +742,12 @@ pub struct World {
     pub lsl_bridge: lslbridge::LslBridge,
     pub rlva: rlva::Rlva,
     pub rlva_privacy: rlva::privacy::TextFilter,
+    /// `rlva_privacy` without the places: the names alone, for the name of
+    /// an object that speaks (`rlva_object_name`).
+    pub rlva_name_privacy: rlva::privacy::TextFilter,
+    /// `rlva_privacy` without the names: what the places that name their
+    /// residents (`NameScope::Roster`) still hide under `@showloc`.
+    pub rlva_place_privacy: rlva::privacy::TextFilter,
     pub rlva_hover_privacy: rlva::privacy::TextFilter,
     rlva_location_hidden: bool,
     /// Derendered objects and residents, and the asset blacklist.
@@ -617,11 +809,27 @@ pub struct World {
     /// Full description of that parcel (navigation bar icons, media, voice).
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
     pub parcel_visibility: parcel_visibility::Visibility,
+    /// Environments saved for parcels.
+    pub parcel_env: parcel_env::ParcelEnv,
     /// The photo's isolation (`snapshot::isolate`): read with the parcel
     /// filter by `parcel_object_visibility`.
     pub photo_isolation: crate::snapshot::isolate::Isolation,
+    /// Inventory item of the Aurora bridge while its factory sets it up
+    /// (`bridge::Bridge::update`), nil otherwise: its worn object is the
+    /// Library container until the simulator applies its new look, and the
+    /// HUD pass leaves it out (`concealed`, `Scene::build_huds`).
+    pub concealed_attachment: Uuid,
     /// Local dressing-room visibility; independent of photo choices.
     pub avatar_studio: bool,
+    /// Avatar Studio's display-only hover height (metres) that our avatar's
+    /// entry of `avatar_poses` carries, as the scene last posed it.
+    pub avatar_studio_lift: f32,
+    /// Avatar Studio's Hover Height for the animation editor's Person B
+    /// (their own, or the user's when they follow it): `couple_shift`.
+    pub couple_hover: f32,
+    /// The base our avatar's IK edit session poses on, as the scene last
+    /// applied it (`scene::ik::EditBase`); `None` outside an edit session.
+    pub ik_edit_base: Option<std::sync::Arc<crate::scene::ik::EditBase>>,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
     /// The Region / Estate window's region and estate.
@@ -643,6 +851,9 @@ pub struct World {
     /// The content rating chosen during the session and its sync with the
     /// server.
     pub maturity: maturity::MaturityPreference,
+    /// A teleport refused for its content rating: the request to restart
+    /// and the prompt (`teleport_access.rs`).
+    pub teleport_access: teleport_access::TeleportAccess,
     /// World › Set Home to Here waiting for the simulator's answer.
     pub set_home: home::SetHome,
     /// Preferences › Privacy's account settings kept by the grid.
@@ -678,6 +889,9 @@ pub struct World {
     /// not TeleportFinish): the camera may stay where it is
     /// (`Camera::on_teleport_arrival`).
     pub arrived_by_local_teleport: bool,
+    /// The last arrival was in another region than the one before (a
+    /// teleport away or a border crossing), not the login.
+    pub arrived_in_another_region: bool,
     /// Inventory folders asked again after a failed fetch since the agent
     /// last changed region (`InventoryFetchFailed`).
     inventory_retried: HashSet<Uuid>,
@@ -702,6 +916,8 @@ pub struct World {
     /// Members, roles, titles and notices of the groups whose profile is
     /// open (LLGroupMgr).
     pub group_data: group_data::GroupMgr,
+    /// A ban (or its lifting) on its way to all our groups.
+    pub ban_all: group_ban_all::BanAll,
     /// The group title worn by region, and every group's titles for the
     /// Group titles window (FSGroupTitleRegionMgr).
     pub region_titles: region_titles::RegionTitles,
@@ -715,14 +931,30 @@ pub struct World {
     offline_im_requested: bool,
     /// Which group titles the name tags show (from the settings).
     pub group_titles: names::GroupTitles,
-    /// Whose shared portals are shown (from the settings, `portals::Sources`).
-    pub portal_sources: portals::Sources,
     /// Script count and simulator version alerts (region_alerts.rs).
     pub region_alerts: region_alerts::RegionAlerts,
     /// Bumps, pushes and hits (collisions.rs).
     pub collisions: collisions::Collisions,
     /// Always fly after a teleport (FSFlyAfterTeleport, from the settings).
     pub fly_after_teleport: bool,
+    /// "Teleport completed from <SLURL>" in nearby chat after a teleport to
+    /// another region (FSShowBackSLURL, from the settings).
+    pub show_back_slurl: bool,
+    /// An object with an empty name speaks as "(no name)" (FSMarkObjects,
+    /// from the settings; `object_speaker_name`).
+    pub mark_unnamed_objects: bool,
+    /// Objects' "returned to your inventory" messages dropped
+    /// (FSDisableReturnObjectNotification, from the settings).
+    pub hide_object_returns: bool,
+    /// The residents drawn otherwise than by the complexity rules: 1 never
+    /// fully, 2 always fully (Settings::render_exceptions), copied from the
+    /// settings each frame for the menus of the people lists.
+    pub render_exceptions: std::collections::HashMap<Uuid, u8>,
+    /// The place a teleport leaves (grid, region, position), taken at its
+    /// TeleportFinish (LLAgent::setTeleportState(TELEPORT_MOVING) saves the
+    /// "back" SLURL there) and said on its arrival, its SLURL made then as
+    /// the Legacy Viewer's getSLURLString is.
+    tp_back_slurl: Option<(Option<String>, String, Vec3)>,
     /// The account's list of open private and group conversations (open_ims.rs).
     open_ims_path: Option<std::path::PathBuf>,
     /// Conversations of the last session, read at login, that the app
@@ -779,12 +1011,20 @@ impl World {
         self.save_tracked_regions();
     }
 
+    /// Written by a save thread (saves.rs), from a copy of the list.
     fn save_tracked_regions(&self) {
-        if let Some(path) = &self.region_tracker_path
-            && let Err(error) = self.region_tracker.save(path)
-        {
-            log::warn!("region tracker: could not save {}: {error}", path.display());
-        }
+        let Some(path) = self.region_tracker_path.clone() else {
+            return;
+        };
+        let list = self.region_tracker.clone();
+        crate::saves::replace(path.clone(), move || {
+            if let Err(error) = list.save(&path) {
+                log::warn!(
+                    "region tracker: could not save {} ({error}); kept, tried again later",
+                    path.display()
+                );
+            }
+        });
     }
 
     /// ALFloaterRegionTracker::refresh, while its window is open: every
@@ -835,6 +1075,7 @@ impl World {
             im_messages: Vec::new(),
             attention: Vec::new(),
             balance_changes: Vec::new(),
+            health_changes: Vec::new(),
             typing_started: Vec::new(),
             nearby_typing: HashSet::new(),
             login: None,
@@ -846,20 +1087,25 @@ impl World {
             motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
+            chat_objects: HashMap::new(),
             bubble_chat: Default::default(),
             chat_clock: Default::default(),
             chat_unread: 0,
             nearby_news: false,
+            last_speaker: None,
             chat_badge: 0,
             quiet_automated_chat: false,
+            blocked_chat: crate::settings::BlockedChat::Hidden,
             announce_incoming_im: false,
             script_dialog_limit: None,
             fly_override: false,
             notice_topics: Default::default(),
             chat_log: Default::default(),
+            chat_service: Default::default(),
             import_report: None,
             nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
+            editor_sync_chat: Default::default(),
             sun: None,
             agent: AgentState::default(),
             following_avatar: None,
@@ -875,9 +1121,14 @@ impl World {
             animesh_fixups: HashMap::new(),
             water_float: Default::default(),
             bodies: HashMap::new(),
+            seat_snaps: HashMap::new(),
             look_at: lookat::LookAts::default(),
             point_at: pointat::PointAts::default(),
+            beams: beams::Beams::default(),
             object_im_filter: object_im_filter::Settings::default(),
+            omnifilter: Default::default(),
+            omnifilter_replies: Vec::new(),
+            omnifilter_urls: Vec::new(),
             anti_spam: Default::default(),
             appearance_counter: 1,
             bake_refreshes: HashMap::new(),
@@ -885,7 +1136,9 @@ impl World {
             preview_bakes: HashMap::new(),
             local_bakes: HashMap::new(),
             shape_preview_generation: 0,
+            shape_tweens: Default::default(),
             alerts: VecDeque::new(),
+            recent_alerts: VecDeque::new(),
             region_restart: Default::default(),
             movement_complete: false,
             demo_outfit_region: false,
@@ -899,6 +1152,7 @@ impl World {
             tp_cancel: Default::default(),
             own_animations_awaited: None,
             outfit: Default::default(),
+            avatar_cache: Default::default(),
             diag_reported: HashSet::new(),
             events_this_frame: 0,
             motd: String::new(),
@@ -908,24 +1162,32 @@ impl World {
             land_credit: 0,
             upload_cost: None,
             local_assets: HashMap::new(),
+            local_asset_order: HashMap::new(),
             local_asset_requests: Vec::new(),
             environment_answers: Vec::new(),
             health: 100.0,
+            sim_fps: None,
             frozen: false,
             god_level: 0,
             held_kills: Vec::new(),
+            couple_partner: None,
+            couple_place: (Vec3::ZERO, 0.0),
+            couple_anchor: None,
+            held_partner: Vec::new(),
+            mirror: None,
             social: social::Social::default(),
             contact_sets: Default::default(),
+            avatar_marks: Default::default(),
             recent: Default::default(),
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
             poser_consent: poser_consent::State::default(),
             portals: portals::State::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
-            hand_contacts: hand_ik::Contacts::default(),
-            ik_targets: rig_targets::Targets::default(),
             rlva: rlva::Rlva::default(),
             rlva_privacy: Default::default(),
+            rlva_name_privacy: Default::default(),
+            rlva_place_privacy: Default::default(),
             rlva_hover_privacy: Default::default(),
             rlva_location_hidden: false,
             derender: derender::Derender::default(),
@@ -958,8 +1220,13 @@ impl World {
             sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
             parcel_visibility: Default::default(),
+            parcel_env: Default::default(),
             photo_isolation: Default::default(),
+            concealed_attachment: Uuid::nil(),
             avatar_studio: false,
+            avatar_studio_lift: 0.0,
+            couple_hover: 0.0,
+            ik_edit_base: None,
             parcel: None,
             land: land::Land::default(),
             estate: estate::Estate::default(),
@@ -974,6 +1241,7 @@ impl World {
             arrived_by_crossing: false,
             local_teleport: false,
             arrived_by_local_teleport: false,
+            arrived_in_another_region: false,
             inventory_retried: HashSet::new(),
             origin_shift: Vec3::ZERO,
             left_behind_since: None,
@@ -985,6 +1253,7 @@ impl World {
             place_snapshots: Default::default(),
             search: Default::default(),
             group_data: Default::default(),
+            ban_all: Default::default(),
             region_titles: Default::default(),
             group_money: Default::default(),
             notifications: notifications::Notifications::default(),
@@ -992,6 +1261,7 @@ impl World {
             inventory_offers: inventory_offers::InventoryOffers::default(),
             payments: payments::Payments::default(),
             maturity: maturity::MaturityPreference::default(),
+            teleport_access: Default::default(),
             set_home: home::SetHome::default(),
             user_info: user_info::UserInfoState::default(),
             sim_console: sim_console::SimConsole::default(),
@@ -1002,10 +1272,14 @@ impl World {
             arrival_wait_since: None,
             offline_im_requested: false,
             group_titles: Default::default(),
-            portal_sources: Default::default(),
             region_alerts: Default::default(),
             collisions: Default::default(),
             fly_after_teleport: false,
+            show_back_slurl: true,
+            mark_unnamed_objects: false,
+            hide_object_returns: false,
+            render_exceptions: Default::default(),
+            tp_back_slurl: None,
             open_ims_path: None,
             reopen_ims: Vec::new(),
             cache_dir: None,
@@ -1019,15 +1293,28 @@ impl World {
         self.save_open_ims();
         let lib = self.avatar_lib.clone();
         let cache_dir = self.cache_dir.take();
+        // LLChatServiceHistory::stop; the manager stays, so that no ticket
+        // of this login is taken for one of the next
+        self.chat_service_logout();
+        let chat_service = std::mem::take(&mut self.chat_service);
         let mut chat_log = std::mem::take(&mut self.chat_log);
         chat_log.logout();
         // a setting, not the session's: the arrival's lines follow it too
         let quiet = self.quiet_automated_chat;
+        let blocked_chat = self.blocked_chat;
         let fly_override = self.fly_override;
+        // the rules are the computer's, not the session's
+        let omnifilter = std::mem::take(&mut self.omnifilter);
+        // the avatar cache's store, which the next login reads
+        let avatar_cache = self.avatar_cache.next_login();
         *self = World::new(lib);
+        self.omnifilter = omnifilter;
+        self.avatar_cache = avatar_cache;
         self.chat_log = chat_log;
+        self.chat_service = chat_service;
         self.cache_dir = cache_dir;
         self.quiet_automated_chat = quiet;
+        self.blocked_chat = blocked_chat;
         self.fly_override = fly_override;
     }
 
@@ -1045,6 +1332,20 @@ impl World {
             .and_then(|h| self.regions.get(&h))
             .map(|r| r.name.clone())
             .unwrap_or_default();
+        // @showloc released: the place it emptied is the one we stand in
+        // (RlvUIEnabler::onToggleShowLoc → LLTeleportHistory::updateCurrentLocation)
+        if let Some(handle) = self.main_region {
+            self.tp_history.locate_current(tphistory::TpEntry {
+                region: region.clone(),
+                handle,
+                position: self.agent.position,
+                parcel: String::new(),
+                at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs() as i64),
+                grid: self.grid_of(handle),
+            });
+        }
         // the arrows' list names the place by its parcel too
         self.tp_history.name_parcel(&self.parcel_name);
         let title = tphistory::location_title(&self.parcel_name, &region);
@@ -1080,6 +1381,83 @@ impl World {
         let region = self.regions.get(&handle)?;
         region.lsl_syntax_id?;
         crate::grids::here(Some(home), Some(&region.opensim))
+    }
+
+    /// LLAgentUI::buildSLURL (indra/newview/llagentui.cpp): where the agent
+    /// is now, on the main region's grid. None before the first arrival or
+    /// with no region name yet. Under RLVa `@showloc` a connected region is
+    /// "(Hidden region)" (`rlva_slurl_on`).
+    pub(crate) fn back_slurl(&self) -> Option<String> {
+        let (grid, region, pos) = self.back_place()?;
+        Some(self.rlva_slurl_on(grid.as_deref(), &region, pos))
+    }
+
+    /// Where the agent is now: grid, region and position of `back_slurl`.
+    fn back_place(&self) -> Option<(Option<String>, String, Vec3)> {
+        if !self.arrived_once {
+            return None;
+        }
+        let handle = self.main_region?;
+        let name = self.regions.get(&handle).map(|r| r.name.as_str()).filter(|n| !n.is_empty())?;
+        Some((self.grid_of(handle), name.to_owned(), self.agent.position))
+    }
+
+    /// LLSLURL::getSLURLString (indra/newview/llslurl.cpp, fsslurl.cpp):
+    /// the SLURL of a place on `grid`, "(Hidden region)" with no position
+    /// under RLVa `@showloc` for a region the agent is connected to
+    /// (RlvUtil::isNearbyRegion, rlvcommon.cpp: the exact name).
+    pub(crate) fn rlva_slurl_on(&self, grid: Option<&str>, region: &str, pos: Vec3) -> String {
+        if self.rlva_hides_region(region) {
+            crate::slurl::hidden_on(grid, aurora_i18n::tr!("rlva-hidden-region"))
+        } else {
+            crate::slurl::make_on(grid, region, pos)
+        }
+    }
+
+    /// The region a teleport offer names ("Join me in [REGION]"): "(Hidden)"
+    /// under RLVa `@showloc` (handle_lure, indra/newview/llviewermessage.cpp:
+    /// Hidden::Generic, not Hidden::Region).
+    pub fn rlva_lure_region(&self) -> String {
+        if self.rlva.has("showloc") {
+            aurora_i18n::tr!("rlva-hidden-generic").to_owned()
+        } else {
+            self.region_name()
+        }
+    }
+
+    /// RLVa `@showloc` hides `region`, one the agent is connected to:
+    /// `hasBehaviour(RLV_BHVR_SHOWLOC) && RlvUtil::isNearbyRegion`
+    /// (rlvcommon.cpp: the exact name of a region of LLWorld).
+    pub(crate) fn rlva_hides_region(&self, region: &str) -> bool {
+        self.rlva.has("showloc") && !region.is_empty() && self.regions.values().any(|r| r.name == region)
+    }
+
+    /// What `slurl::make` hides under RLVa `@showloc`: the "(Hidden
+    /// region)" label and the names of the regions the agent is connected
+    /// to (`slurl::set_hidden_regions`); None without the restriction.
+    pub fn rlva_slurl_hidden_regions(&self) -> Option<(String, Vec<String>)> {
+        self.rlva.has("showloc").then(|| {
+            (
+                aurora_i18n::tr!("rlva-hidden-region").to_owned(),
+                self.regions.values().map(|r| r.name.clone()).filter(|n| !n.is_empty()).collect(),
+            )
+        })
+    }
+
+    /// process_agent_movement_complete (indra/newview/llviewermessage.cpp,
+    /// FSShowBackSLURL): the teleport's "completed_from" message
+    /// (teleport_strings.xml) in nearby chat, a ChatSystemMessageTip.
+    /// Under RLVa `@showloc` the line is said too, the place left
+    /// "(Hidden region)" while still connected (`rlva_slurl_on`, as
+    /// getSLURLString makes `[T_SLURL]` there).
+    fn say_back_slurl(&mut self, slurl: &str) {
+        if !self.show_back_slurl {
+            return;
+        }
+        self.system_notice(
+            aurora_i18n::tr!("world-mod-teleport-completed-from", slurl = slurl.to_owned()),
+            notice_topics::Topic::Teleport,
+        );
     }
 
     /// An arrival whose parcel did not come within a few seconds is saved
@@ -1122,6 +1500,8 @@ impl World {
         let objects = &self.objects;
         self.look_at.forget(|id| objects.index_of_uuid(id).is_some());
         self.point_at.forget(|id| objects.index_of_uuid(id).is_some());
+        self.beams
+            .forget(std::time::Instant::now(), |id| objects.index_of_uuid(id).is_some());
         self.nearby_typing.retain(|id| objects.index_of_uuid(id).is_some());
     }
 
@@ -1464,6 +1844,11 @@ impl World {
     }
 
     fn inventory_cache_path(&self) -> Option<std::path::PathBuf> {
+        // The fetch demo starts cold on purpose: a cache from an earlier run
+        // would restore the folders and the walk would have nothing to load.
+        if std::env::var_os("AURORA_DEMO").is_some() && inventory::demo::big().is_some_and(|big| big.fetch) {
+            return None;
+        }
         let dir = self.cache_dir.as_ref()?;
         (!self.agent_id.is_nil()).then(|| crate::cache::path(dir, "inventory", &self.agent_id, "inv"))
     }
@@ -1508,7 +1893,7 @@ impl World {
     /// Persist the fetched inventory (next login skips unchanged folders).
     pub fn save_inventory_cache(&self) {
         // not applied yet: the file holds more than the inventory in memory
-        if self.inventory_cache.is_some() {
+        if self.inventory_cache.is_some() && !self.inventory.outgoing.has_originals() {
             return;
         }
         if let Some(path) = self.inventory_cache_path() {
@@ -1607,8 +1992,15 @@ impl World {
     /// transform edits for their answer (edit_echo.rs). Then the roots
     /// avatars sit on take a step of their damping, those `selected` in the
     /// build tools excepted (ObjectStore::damp_seats).
-    pub fn advance_motion(&mut self, now: Instant, sims: &[aurora_net::stats::SimulatorMotion], selected: impl Fn(&ObjKey) -> bool) {
+    pub fn advance_motion(
+        &mut self,
+        now: Instant,
+        sims: &[aurora_net::stats::SimulatorMotion],
+        selected: impl Fn(&ObjKey) -> bool,
+        view: impl Fn(usize) -> Option<motion::DampingView>,
+    ) {
         let dt = now.saturating_duration_since(self.motion_tick).as_secs_f64();
+        object_motion_trace::poll();
         self.motion_tick = now;
         for &handle in self.regions.keys() {
             let rate = sims
@@ -1618,6 +2010,7 @@ impl World {
             self.objects.advance_motion(handle, dt * f64::from(rate));
             self.objects.note_motion_tick(now, handle, rate);
         }
+        self.objects.damp_drawables(dt as f32, &selected, view);
         self.objects.expire_corrections(now);
         self.objects.expire_sent_edits(now);
         self.objects.damp_seats(now, dt as f32, selected);
@@ -1644,6 +2037,7 @@ impl World {
                     .and_then(|i| self.objects.get(i))
                     .is_some_and(|o| !o.is_avatar());
             if let Some(i) = self.objects.index_of(&key) {
+                self.rlva_attachment_killed(i);
                 self.unregister_attachment(i);
                 // (who sits on it stays, with what it wears: the
                 // simulator does not send them again)
@@ -1703,6 +2097,118 @@ impl World {
             }
         }
         now
+    }
+
+    /// The kill of the couple partner's avatar is held: the animation
+    /// editor keeps posing them after they left (a teleport, a log-off),
+    /// as they were, standing still. Their consent still applies: a
+    /// withdrawal ends couple mode, which lets them go (`set_couple_partner`).
+    /// Returns the kills to apply now.
+    fn hold_partner(&mut self, handle: RegionHandle, local_ids: Vec<u32>) -> Vec<u32> {
+        let Some(partner) = self.couple_partner else { return local_ids };
+        let mut now = Vec::with_capacity(local_ids.len());
+        for id in local_ids {
+            let key = ObjKey {
+                region: handle,
+                local_id: id,
+            };
+            let held = self
+                .objects
+                .index_of(&key)
+                .filter(|idx| self.objects.get(*idx).is_some_and(|o| o.full_id == partner && o.is_avatar()));
+            match held {
+                Some(idx) => {
+                    if let Some(object) = self.objects.get_mut(idx) {
+                        object.velocity = Vec3::ZERO;
+                        object.acceleration = Vec3::ZERO;
+                        object.angular_velocity = Vec3::ZERO;
+                    }
+                    log::info!("couple partner left: kept drawn while the animation editor poses them");
+                    self.held_partner.push((key, partner));
+                }
+                None => now.push(id),
+            }
+        }
+        now
+    }
+
+    /// The region-space move of Person B's body, for a body whose skeleton
+    /// model is now `model`: back to where they stood when couple mode took
+    /// them, whatever they do in the world since, then by `couple_place`,
+    /// the turn about their pelvis. Avatar Studio's Hover Height lifts B
+    /// by `couple_hover` (the agent's own hover unless B has one). None for anyone else,
+    /// or when B is drawn where the world has them.
+    pub fn couple_shift(&self, id: Uuid, model: glam::Mat4) -> Option<glam::Mat4> {
+        let lift = if self.avatar_studio { self.couple_hover } else { 0.0 };
+        self.couple_shift_lifted(id, model, lift)
+    }
+
+    /// `couple_shift` without the Studio's display lift: where B stands
+    /// for the couple's placement note, which leaves A's lift out too.
+    pub fn couple_move(&self, id: Uuid, model: glam::Mat4) -> Option<glam::Mat4> {
+        self.couple_shift_lifted(id, model, 0.0)
+    }
+
+    fn couple_shift_lifted(&self, id: Uuid, model: glam::Mat4, lift: f32) -> Option<glam::Mat4> {
+        if self.couple_partner != Some(id) {
+            return None;
+        }
+        let (mut offset, yaw) = self.couple_place;
+        if lift.is_finite() {
+            offset.z += lift;
+        }
+        if !offset.is_finite() || !yaw.is_finite() || model.determinant().abs() <= 1e-8 {
+            return None;
+        }
+        let base = self.couple_base(id).unwrap_or(model);
+        let pelvis = base.transform_point3(self.avatar_lib.pelvis);
+        let placed =
+            glam::Mat4::from_translation(pelvis + offset) * glam::Mat4::from_rotation_z(yaw) * glam::Mat4::from_translation(-pelvis) * base;
+        // where the body is drawn, from where the world has it now
+        let shift = placed * model.inverse();
+        (shift.is_finite() && !shift.abs_diff_eq(glam::Mat4::IDENTITY, 1e-5)).then_some(shift)
+    }
+
+    /// Person B's body as couple mode holds it, before `couple_place`: the
+    /// skeleton model they had when they became B.
+    pub fn couple_base(&self, id: Uuid) -> Option<glam::Mat4> {
+        match self.couple_anchor {
+            Some((anchored, model)) if anchored == id && self.couple_partner == Some(id) => Some(model),
+            _ => self.avatar_models.get(&id).copied(),
+        }
+    }
+
+    /// The animation editor's couple partner, each frame. A partner whose
+    /// kill was held goes once they are no longer the partner, unless their
+    /// key went to another object since (they came back).
+    pub fn set_couple_partner(&mut self, partner: Option<Uuid>) {
+        self.couple_partner = partner;
+        // B is held where they stood when they became B (their model once
+        // the scene has one)
+        match partner {
+            Some(id) if self.couple_anchor.is_none_or(|(anchored, _)| anchored != id) => {
+                self.couple_anchor = self.avatar_models.get(&id).map(|model| (id, *model));
+            }
+            None => self.couple_anchor = None,
+            _ => {}
+        }
+        if self.held_partner.is_empty() {
+            return;
+        }
+        let (keep, release): (Vec<_>, Vec<_>) = std::mem::take(&mut self.held_partner)
+            .into_iter()
+            .partition(|(_, id)| Some(*id) == partner);
+        self.held_partner = keep;
+        for (key, id) in release {
+            if self
+                .objects
+                .index_of(&key)
+                .and_then(|i| self.objects.get(i))
+                .is_some_and(|o| o.full_id == id)
+            {
+                self.kill_objects(key.region, &[key.local_id]);
+            }
+        }
     }
 
     /// `idx` is `ancestor` or hangs from it (a prim of what an avatar wears).
@@ -1957,6 +2463,44 @@ impl World {
         origin + clipped
     }
 
+    /// Like LLWorld::getRegionFromPosAgent (indra/newview/llworld.cpp), but
+    /// ChatFromSimulator positions are relative to the sending circuit's
+    /// region (message_template.msg), not the agent's current region.
+    /// Returns the known region under that position and its local position.
+    fn region_at_offset(&self, origin: RegionHandle, pos: Vec3) -> Option<(&Region, Vec3)> {
+        if !pos.is_finite() {
+            return None;
+        }
+        let x = (origin >> 32) as f64 + f64::from(pos.x);
+        let y = (origin & 0xffff_ffff) as f64 + f64::from(pos.y);
+        self.regions.iter().find_map(|(&handle, r)| {
+            let (x0, y0) = ((handle >> 32) as f64, (handle & 0xffff_ffff) as f64);
+            let (w, d) = (f64::from(r.heightmap.size_x), f64::from(r.heightmap.size_y));
+            (x >= x0 && x < x0 + w && y >= y0 && y < y0 + d).then(|| (r, Vec3::new((x - x0) as f32, (y - y0) as f32, pos.z)))
+        })
+    }
+
+    /// The object of a chat line about to be pushed, for its name's
+    /// inspector (`AppLink::ObjectIm`): kept while the line is. Returns the
+    /// line's time, made unique for the object so each line keeps its own.
+    fn remember_chat_object(&mut self, object: crate::slapp::RemoteObject) -> SystemTime {
+        let mut time = SystemTime::now();
+        while self.chat_objects.contains_key(&(object.id, time)) {
+            time += std::time::Duration::from_micros(1);
+        }
+        if self.chat_objects.len() >= MAX_CHAT {
+            let retained: HashSet<_> = self.chat.iter().map(|line| (line.source, line.time)).collect();
+            self.chat_objects.retain(|key, _| retained.contains(key));
+        }
+        self.chat_objects.insert((object.id, time), object);
+        time
+    }
+
+    /// The origin kept with an object's chat line (owner, location).
+    pub fn chat_object(&self, line: &ChatLine) -> Option<&crate::slapp::RemoteObject> {
+        self.chat_objects.get(&(line.source, line.time))
+    }
+
     fn push_chat(&mut self, line: ChatLine) {
         if self.alerts(line.kind) {
             self.chat_badge += 1;
@@ -1996,12 +2540,11 @@ impl World {
         self.profiles.take_requests()
     }
 
-    /// Picks, classifieds and friend rights changed from a profile window:
+    /// Pick deletions, classifieds and friend rights changed from a profile window:
     /// the local copy follows before the command is sent.
     pub fn profile_command(&mut self, cmd: &aurora_net::NetCommand) {
         use aurora_net::NetCommand;
         match cmd {
-            NetCommand::PickUpdate(p) => self.profiles.pick_saved(self.agent_id, (**p).clone()),
             NetCommand::PickDelete(id) => self.profiles.pick_deleted(self.agent_id, *id),
             NetCommand::ClassifiedDelete(id) => self.profiles.classified_deleted(self.agent_id, *id),
             NetCommand::ClassifiedUpdate(c) => self.profiles.classified_saved(self.agent_id, (**c).clone()),
@@ -2080,6 +2623,25 @@ impl World {
         self.system_message(text.to_string());
     }
 
+    /// The Legacy Viewer's InventoryLimitReachedAIS alert, once per session.
+    fn announce_inventory_limit(&mut self) {
+        let (folders, status) = self.inventory_background.take_too_big();
+        if folders.is_empty() {
+            return;
+        }
+        let body = match status {
+            Some(status) => aurora_i18n::tr!("inventory-limit-body-status", status = status.to_string()),
+            None => aurora_i18n::tr!("inventory-limit-body").to_string(),
+        };
+        log::warn!("inventory limit alert: {body}");
+        self.notifications.push(
+            notifications::Kind::Alert,
+            aurora_i18n::tr!("inventory-limit-title"),
+            body,
+            notifications::Data::None,
+        );
+    }
+
     pub fn system_message(&mut self, text: impl Into<String>) {
         self.system_notice(text, notice_topics::Topic::Info);
     }
@@ -2110,6 +2672,9 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
@@ -2125,6 +2690,9 @@ impl World {
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         };
         self.notice_topics.note(&line, topic);
         self.conversation_push(session, line, false);
@@ -2161,15 +2729,19 @@ impl World {
             voice_server: String::new(),
             avatar_hover_height: false,
             lsl_syntax_id: None,
+            lua_scripts: false,
             materials_limits: Default::default(),
             max_tasks: 0,
             grid_status: Default::default(),
             currency_base_uri: String::new(),
             max_link_children: None,
+            open_settings: None,
             animated_object_max_tris: 0,
             opensim: Default::default(),
             currency_symbol: String::new(),
             export_supported: false,
+            group_chat_post_links: false,
+            game_control: false,
         });
         if inserted || grew {
             self.dirty_terrain_dependents(h);
@@ -2310,12 +2882,54 @@ impl World {
 
     /// Visual parameter values (shape) of an avatar's last appearance.
     pub fn visual_params(&self, avatar: &Uuid) -> Option<&[u8]> {
+        let avatar = &self.appearance_of(avatar);
         if *avatar == self.agent_id
             && let Some(values) = &self.shape_preview
         {
             return Some(values);
         }
-        self.appearances.get(avatar).map(|(a, _)| a.visual_params.as_slice())
+        if let Some(values) = self.shape_tweens.shown(avatar) {
+            return Some(values);
+        }
+        self.shown_appearance(avatar).map(|(a, _)| a.visual_params.as_slice())
+    }
+
+    /// The avatar's last appearance from the region or, until one comes,
+    /// the look the avatar cache kept for it (world/avatar_cache): what is
+    /// drawn. What reads the region's own (the outfit's COF checks, the
+    /// list of worn objects, the appearance editor) reads `appearances`.
+    fn shown_appearance(&self, avatar: &Uuid) -> Option<&(AvatarAppearance, u64)> {
+        self.appearances.get(avatar).or_else(|| self.avatar_cache.kept_look(avatar))
+    }
+
+    /// Redraw the avatar's skin and what it wears with bakes on mesh.
+    fn mark_avatar_materials_dirty(&mut self, avatar: &Uuid) {
+        let Some(idx) = self.objects.index_of_uuid(avatar) else {
+            return;
+        };
+        if let Some(o) = self.objects.get(idx) {
+            let key = o.key;
+            let kids: Vec<usize> = self.objects.children_of(&key).to_vec();
+            for k in kids {
+                self.mark_tree_material_dirty(k);
+            }
+        }
+        if let Some(o) = self.objects.get_mut(idx) {
+            o.material_dirty = true;
+        }
+    }
+
+    /// Whether `avatar` stands within `range` of the agent (a seated one:
+    /// its seat).
+    fn near_agent(&self, avatar: &Uuid, range: f32) -> bool {
+        let Some(mut o) = self.objects.index_of_uuid(avatar).and_then(|i| self.objects.get(i)) else {
+            return false;
+        };
+        if let Some(seat) = self.objects.parent_of(o).and_then(|p| self.objects.get(p)) {
+            o = seat;
+        }
+        self.region_offset(o.key.region)
+            .is_some_and(|off| (o.position + off).distance(self.agent.position) < range)
     }
 
     /// A draft never replaces the authoritative appearance received meanwhile.
@@ -2338,6 +2952,7 @@ impl World {
 
     /// Hover height of an avatar's last appearance (m).
     pub fn appearance_hover(&self, avatar: &Uuid) -> f32 {
+        let avatar = &self.appearance_of(avatar);
         if *avatar == self.agent_id {
             return if self.hover_height_available() {
                 self.hover_height.effective()
@@ -2345,8 +2960,7 @@ impl World {
                 0.0
             };
         }
-        self.appearances
-            .get(avatar)
+        self.shown_appearance(avatar)
             .map(|(a, _)| a.hover_height)
             .filter(|h| h.is_finite())
             .unwrap_or(0.0)
@@ -2367,13 +2981,18 @@ impl World {
 
     /// COF version of the last appearance received for an avatar.
     pub fn appearance_cof_version(&self, avatar: &Uuid) -> i32 {
-        self.appearances.get(avatar).map(|(a, _)| a.cof_version).unwrap_or(-1)
+        self.appearances
+            .get(&self.appearance_of(avatar))
+            .map(|(a, _)| a.cof_version)
+            .unwrap_or(-1)
     }
 
     /// Worn objects the simulator listed in the avatar's last appearance
     /// (LLVOAvatar::mSimAttachments); 0 when it listed none.
     pub fn announced_attachments(&self, avatar: &Uuid) -> usize {
-        self.appearances.get(avatar).map_or(0, |(a, _)| a.attachments.len())
+        self.appearances
+            .get(&self.appearance_of(avatar))
+            .map_or(0, |(a, _)| a.attachments.len())
     }
 
     /// Inventory items attached to our avatar (AttachItemID name-values).
@@ -2393,6 +3012,21 @@ impl World {
             .collect()
     }
 
+    /// How many objects our avatar wears, HUDs included, each linkset once:
+    /// LLVOAvatar::getAttachmentCount (indra/newview/llvoavatar.cpp) adds up
+    /// the attached objects of every attachment point, never their child
+    /// prims. The arrival's patience counts 3 s for each (`arrival_wait.rs`).
+    pub fn own_attachment_count(&self) -> usize {
+        let Some(me) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
+            return 0;
+        };
+        self.objects
+            .children_of(&me.key)
+            .iter()
+            .filter(|i| self.objects.get(**i).is_some_and(|o| o.is_attachment() && !o.is_client_preview()))
+            .count()
+    }
+
     /// The root prim of the object our avatar wears from inventory item
     /// `item` (LLVOAvatar::getWornAttachment).
     pub fn worn_attachment(&self, item: &Uuid) -> Option<usize> {
@@ -2407,8 +3041,24 @@ impl World {
             .find(|i| self.objects.get(*i).and_then(|o| o.attachment_item_id()) == Some(*item))
     }
 
+    /// Whether object `index` is a prim of the object our avatar wears from
+    /// `concealed_attachment`: the HUD pass neither draws nor picks it.
+    /// Anything that is not worn is answered without reading a name value.
+    pub fn concealed(&self, index: usize) -> bool {
+        let item = self.concealed_attachment;
+        if item.is_nil() {
+            return false;
+        }
+        let Some(o) = self.objects.get(index).filter(|o| o.parent_id != 0) else {
+            return false;
+        };
+        let parent = |o: &Object| self.objects.parent_of(o).and_then(|i| self.objects.get(i));
+        let root = |o: &Object| o.attachment_item_id() == Some(item) && parent(o).is_some_and(|p| p.full_id == self.agent_id);
+        root(o) || parent(o).is_some_and(root)
+    }
+
     /// Worn items whose object handles touches (enable_attachment_touch:
-    /// flagHandleTouch of the attachment's root).
+    /// flagHandleTouch of the attachment's root, and RlvActions::canTouch).
     pub fn touchable_attachment_items(&self) -> HashSet<Uuid> {
         let Some(me) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
             return HashSet::new();
@@ -2418,6 +3068,7 @@ impl World {
             .iter()
             .filter_map(|i| self.objects.get(*i))
             .filter(|o| o.update_flags & crate::ui::context::flags::HANDLE_TOUCH != 0)
+            .filter(|o| self.rlva_can_touch(o.key.region, o.key.local_id))
             .filter_map(|o| o.attachment_item_id())
             .filter(|id| !id.is_nil())
             .collect()
@@ -2454,7 +3105,13 @@ impl World {
             .login
             .as_ref()
             .is_some_and(|l| l.raw["login-flags"].at(0)["ever_logged_in"].as_str() == "N");
+        // LLStartUp's sInitialOutfit, read from the login response
+        let initial_outfit = self.login.as_ref().filter(|_| first_login).and_then(|l| {
+            let outfit = l.raw["initial-outfit"].at(0);
+            outfit::registration_outfit(outfit["folder_name"].as_str(), outfit["gender"].as_str())
+        });
         let inputs = outfit::OutfitInputs {
+            initial_outfit,
             worn: self.outfit_attachment_items(),
             received_cof_version: self.appearance_cof_version(&self.agent_id),
             inventory: &mut self.inventory,
@@ -2502,8 +3159,10 @@ impl World {
     }
 
     pub fn appearance_generation(&self, avatar: &Uuid) -> u64 {
-        self.appearances.get(avatar).map(|(_, g)| *g).unwrap_or(0)
+        let avatar = &self.appearance_of(avatar);
+        self.shown_appearance(avatar).map(|(_, g)| *g).unwrap_or(0)
             + self.bake_refreshes.get(avatar).copied().unwrap_or(0)
+            + self.shape_tweens.generation(avatar)
             + if *avatar == self.agent_id {
                 self.shape_preview_generation
             } else {
@@ -2551,6 +3210,9 @@ impl World {
     /// Baked texture id for an avatar (by object index) and TE slot.
     pub fn bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
+        if self.is_mirror(&o.full_id) {
+            return self.bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
+        }
         if o.full_id == self.agent_id
             && let Some(id) = self.preview_bakes.get(&te_index).or_else(|| self.local_bakes.get(&te_index))
         {
@@ -2561,7 +3223,10 @@ impl World {
 
     pub fn server_bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
-        if let Some((a, _)) = self.appearances.get(&o.full_id)
+        if self.is_mirror(&o.full_id) {
+            return self.server_bake_texture(self.objects.index_of_uuid(&self.agent_id)?, te_index);
+        }
+        if let Some((a, _)) = self.shown_appearance(&o.full_id)
             && let Some(te) = &a.texture_entry
         {
             return te.faces.get(te_index).map(|f| f.texture);
@@ -2570,6 +3235,7 @@ impl World {
     }
 
     pub fn bake_source(&self, avatar: Uuid, bake: &str, tex: Uuid) -> TexSource {
+        let avatar = self.appearance_of(&avatar);
         match self.login.as_ref().map(|l| l.agent_appearance_service.as_str()) {
             Some(base) if !base.is_empty() => {
                 let base = if base.ends_with('/') { base.to_owned() } else { format!("{base}/") };
@@ -2611,7 +3277,9 @@ impl World {
                 // a new session: no script holds a control yet
                 self.script_controls = Default::default();
                 // the account is known: its transcripts open
-                self.chat_log.login(l.agent_id);
+                self.chat_log.login_named(l.agent_id, Some((&l.first_name, &l.last_name)));
+                // LLChatServiceHistory::start, in the account's own folder
+                self.chat_service_login();
                 if self.chat_log.cfg.import_at_login
                     && let Some(grid) = self.chat_log.identity().map(|id| id.grid.clone())
                 {
@@ -2663,6 +3331,7 @@ impl World {
                 let root = self.inventory.root;
                 self.inventory.request(root);
                 self.map.set_home_from_login(l.raw["home"].as_str());
+                crate::ui::bars::clock::set_grid_time(&l.raw["seconds_since_epoch"].to_string_value());
                 self.login = Some(l.clone());
                 Some(NetEvent::LoggedIn(l))
             }
@@ -2718,6 +3387,10 @@ impl World {
                 self.ensure_region(handle, (256, 256)).max_link_children = max_children;
                 None
             }
+            NetEvent::OpenRegionSettings { handle, settings } => {
+                self.ensure_region(handle, (256, 256)).open_settings = Some(*settings);
+                None
+            }
             NetEvent::SimulatorFeatures {
                 handle,
                 animated_object_max_tris,
@@ -2726,21 +3399,27 @@ impl World {
                 materials_rate,
                 materials_max,
                 lsl_syntax_id,
+                lua_scripts,
                 grid_status_feed,
                 grid_status_page,
                 currency_base_uri,
                 opensim,
                 currency_symbol,
                 export_supported,
+                group_chat_post_links,
+                game_control,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.animated_object_max_tris = animated_object_max_tris;
                 r.lsl_syntax_id = Some(lsl_syntax_id);
+                r.lua_scripts = lua_scripts;
                 r.grid_status = (grid_status_feed, grid_status_page);
                 r.currency_base_uri = currency_base_uri;
                 r.opensim = opensim;
                 r.currency_symbol = currency_symbol;
                 r.export_supported = export_supported;
+                r.group_chat_post_links = group_chat_post_links;
+                r.game_control = game_control;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -2758,6 +3437,10 @@ impl World {
             }
             NetEvent::HoverHeightUpdated { region, request, success } => {
                 self.hover_height.reply(request, region, success);
+                None
+            }
+            NetEvent::TeleportAccessBlocked(blocked) => {
+                self.teleport_access.blocked(blocked);
                 None
             }
             NetEvent::MaturityPreference(result) => {
@@ -2780,8 +3463,8 @@ impl World {
                 self.on_user_info_update_failed(error);
                 None
             }
-            NetEvent::LslSyntax { id, keywords } => {
-                self.on_lsl_syntax(id, keywords);
+            NetEvent::LslSyntax { id, keywords, lua } => {
+                self.on_lsl_syntax(id, keywords, lua);
                 None
             }
             NetEvent::SimConsoleReply(reply) => {
@@ -2836,28 +3519,35 @@ impl World {
                 // to another region (MainRegionChanged comes first) only the
                 // arrival's list stays; the simulators still connected send
                 // theirs again.
-                if self.region_left.take().is_some_and(|left| left != handle) && !self.arrived_by_crossing {
+                self.arrived_in_another_region = self.region_left.take().is_some_and(|left| left != handle);
+                if self.arrived_in_another_region && !self.arrived_by_crossing {
                     self.coarse.retain(|h, _| *h == handle);
                 }
                 self.movement_complete = true;
+                // LLAgent::handleTeleportFinished, once the arrival is known
+                // (LLViewerParcelMgr's teleport finished callback)
+                if self.teleporting {
+                    self.teleport_access_ended(true);
+                }
                 if self.teleporting || !self.arrived_once {
-                    let region = if self.rlva.has("showloc") {
-                        aurora_i18n::tr!("rlva-hidden-region").to_owned()
-                    } else {
-                        self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default()
-                    };
                     let at = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |d| d.as_secs() as i64);
-                    let grid = self.grid_of(handle);
-                    self.tp_history.arrived(tphistory::TpEntry {
-                        region,
-                        handle,
-                        position,
-                        parcel: String::new(),
-                        at,
-                        grid,
-                    });
+                    // @showloc: the session keeps neither the name nor the
+                    // way back to the place (LLTeleportHistory::updateCurrentLocation)
+                    let entry = if self.rlva.has("showloc") {
+                        tphistory::TpEntry::hidden(aurora_i18n::tr!("rlva-hidden-parcel"), at)
+                    } else {
+                        tphistory::TpEntry {
+                            region: self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default(),
+                            handle,
+                            position,
+                            parcel: String::new(),
+                            at,
+                            grid: self.grid_of(handle),
+                        }
+                    };
+                    self.tp_history.arrived(entry);
                     // LLViewerParcelMgr::onTeleportFinished: a local teleport keeps
                     // the agent parcel (the simulator only sends ParcelProperties
                     // when the parcel changes)
@@ -2879,6 +3569,10 @@ impl World {
                 if self.teleporting {
                     self.friends_only_teleport_arrival();
                     self.tp_cancel.on_end();
+                }
+                if let Some((grid, region, pos)) = self.tp_back_slurl.take().filter(|_| self.teleporting) {
+                    let slurl = self.rlva_slurl_on(grid.as_deref(), &region, pos);
+                    self.say_back_slurl(&slurl);
                 }
                 self.teleporting = false;
                 self.park_far_regions();
@@ -2948,7 +3642,7 @@ impl World {
                     }
                     self.on_camera_parent_change(handle, &u);
                     let foot_plane = u.foot_plane;
-                    self.objects.upsert_at(handle, u, self.received);
+                    self.objects.upsert_at(handle, u, self.received, Instant::now());
                     self.note_friend_join_object(handle, avatar_id, foot_plane);
                     if is_me {
                         let at = self.agent_report_time();
@@ -2957,7 +3651,6 @@ impl World {
                     }
                 }
                 self.move_rekeyed();
-                self.retry_ik_declarations(Instant::now());
                 if land_changed {
                     self.land.objects_changed(handle, Instant::now());
                 }
@@ -2973,7 +3666,7 @@ impl World {
                     if let Some(idx) = self.objects.index_of(&key) {
                         let mut mine = false;
                         let mut seated = false;
-                        self.objects.apply_terse_at(idx, &t, self.received);
+                        self.objects.apply_terse_at(idx, &t, self.received, Instant::now());
                         if let Some(o) = self.objects.get(idx) {
                             mine = o.full_id == me;
                             seated = o.parent_id != 0;
@@ -3013,6 +3706,7 @@ impl World {
                 None
             }
             NetEvent::ObjectsKilled { handle, local_ids } => {
+                let local_ids = self.hold_partner(handle, local_ids);
                 let local_ids = self.hold_kills(handle, local_ids);
                 self.kill_objects(handle, &local_ids);
                 None
@@ -3097,17 +3791,11 @@ impl World {
             | NetEvent::SessionStarted { .. }
             | NetEvent::SessionAgents { .. }
             | NetEvent::SessionError { .. }
+            | NetEvent::SessionModerationFailed { .. }
             | NetEvent::SessionClosed { .. }
             | NetEvent::ChatSessionReply { .. }) => {
-                match &ev {
-                    NetEvent::SessionStarted {
-                        temp_session,
-                        session,
-                        success,
-                        ..
-                    } => self.call_session_started(*temp_session, *session, *success),
-                    NetEvent::SessionClosed { session, .. } => self.call_session_closed(*session),
-                    _ => {}
+                if let NetEvent::SessionClosed { session, .. } = &ev {
+                    self.call_session_closed(*session);
                 }
                 self.on_group_event(ev)
             }
@@ -3164,6 +3852,27 @@ impl World {
                         return None;
                     }
                 }
+                // the look the avatar cache drew in its place goes
+                let kept = self.avatar_cache.appearance_came(&id);
+                // LLVOAvatar::processAvatarAppearance: another avatar's
+                // shape glides to its new values (setAnimationTarget), its
+                // first appearance lands at once; from what it shows now
+                // when a glide is under way. Within shape_tween::RANGE only.
+                // (Aurora's own: from the kept look too, which was drawn)
+                if !own {
+                    let from = self
+                        .shape_tweens
+                        .shown(&id)
+                        .map(<[u8]>::to_vec)
+                        .or_else(|| self.appearances.get(&id).map(|(old, _)| old.visual_params.clone()))
+                        .or_else(|| kept.map(|k| k.visual_params));
+                    match from {
+                        Some(from) if self.near_agent(&id, shape_tween::RANGE) => {
+                            self.shape_tweens.start(id, from, a.visual_params.clone(), Instant::now());
+                        }
+                        _ => self.shape_tweens.cancel(&id),
+                    }
+                }
                 self.appearance_counter += 1;
                 if own {
                     // (with the outfit restore lines: when our bakes came)
@@ -3175,18 +3884,7 @@ impl World {
                 }
                 self.appearances.insert(id, (a, self.appearance_counter));
                 // Attachments using bakes-on-mesh must refresh too.
-                if let Some(idx) = self.objects.index_of_uuid(&id) {
-                    if let Some(o) = self.objects.get(idx) {
-                        let key = o.key;
-                        let kids: Vec<usize> = self.objects.children_of(&key).to_vec();
-                        for k in kids {
-                            self.mark_tree_material_dirty(k);
-                        }
-                    }
-                    if let Some(o) = self.objects.get_mut(idx) {
-                        o.material_dirty = true;
-                    }
-                }
+                self.mark_avatar_materials_dirty(&id);
                 None
             }
             NetEvent::Sun(s) => {
@@ -3259,6 +3957,9 @@ impl World {
                     log::info!("Restoring canceled teleport request");
                     self.tp_failed = false;
                 }
+                // the region left is still the main one: the session changes
+                // it right after this event (switch_region)
+                self.tp_back_slurl = self.back_place();
                 self.teleporting = true;
                 let remote = Some(handle) != self.main_region;
                 // TeleportStart has no destination. Unlike Firestorm's
@@ -3322,18 +4023,27 @@ impl World {
                 self.cancel_friend_join();
                 self.tp_history.failed();
                 self.tp_cancel.on_end();
+                self.tp_back_slurl = None;
                 self.teleporting = false;
                 self.tp_failed = true;
-                let said = teleport_failure::text(&code, &reason, &region);
-                self.system_notice(
-                    aurora_i18n::tr!("world-mod-teleport-failed", reason = said),
-                    crate::world::notice_topics::Topic::Teleport,
-                );
-                // CouldNotTeleportReason: the simulator's failures only, the
-                // viewer's own ones stay a notice
-                if !code.is_empty() {
-                    log::warn!("teleport failed: {reason} (code {code})");
-                    self.tp_failure = Some(teleport_failure::Failure { code, reason, region });
+                self.teleport_access_ended(false);
+                // handle_teleport_access_blocked: a refusal for the rating gets
+                // its prompt instead of the reason, and process_teleport_failed
+                // returns before CouldNotTeleportReason (the call takes the
+                // refusal: once only)
+                let prompted = self.teleport_access_failed();
+                if !prompted {
+                    let said = teleport_failure::text(code.as_deref().unwrap_or_default(), &reason, &region);
+                    self.system_notice(
+                        aurora_i18n::tr!("world-mod-teleport-failed", reason = said.clone()),
+                        crate::world::notice_topics::Topic::Teleport,
+                    );
+                    // CouldNotTeleportReason: the simulator's failures only,
+                    // the viewer's own ones stay a notice
+                    if let Some(code) = code {
+                        log::warn!("teleport failed: '{reason}' (code '{code}')");
+                        self.tp_failure = Some(teleport_failure::Failure { text: said, reason });
+                    }
                 }
                 None
             }
@@ -3341,6 +4051,10 @@ impl World {
                 for (take, controls, pass_on) in blocks {
                     self.script_controls.apply(take, controls, pass_on);
                 }
+                None
+            }
+            NetEvent::Alert { message } if self.ban_all.mutes_alert(&message, Instant::now()) => {
+                log::info!("alert muted during a ban in all groups: {message}");
                 None
             }
             NetEvent::Alert { message } => {
@@ -3357,6 +4071,11 @@ impl World {
                 // SystemMessageTip (process_alert_core)
                 let notice = self.notice_of(id, attention::Open::Notifications);
                 self.ask_attention(attention::Cause::Notice, notice);
+                let serial = self.recent_alerts.back().map_or(1, |(n, _)| n + 1);
+                if self.recent_alerts.len() >= 8 {
+                    self.recent_alerts.pop_front();
+                }
+                self.recent_alerts.push_back((serial, message.clone()));
                 self.alerts.push_back(message);
                 None
             }
@@ -3373,14 +4092,27 @@ impl World {
                 self.system_notice(aurora_i18n::tr!("rlva-blocked-script-dialog"), notice_topics::Topic::Warning);
                 None
             }
-            // process_script_question drops only the questions of a blocked
-            // object (LLMuteList::isMuted(taskid)): not those of a blocked
-            // owner, nor on any other condition (no click needed, object out
-            // of view or unknown, another region, Do Not Disturb)
-            NetEvent::ScriptQuestion { task_id, .. } if self.mutes.is_muted_id(&task_id) => None,
+            // A permission question follows the same block rule as script
+            // dialogs and URLs (`object_blocked`): a blocked object, by id or
+            // by name, or the blocked owner of an object in the scene.
+            // process_script_question checks the object id alone
+            // (LLMuteList::isMuted(taskid)); the owner and name checks are
+            // stricter. No other condition drops it (no click needed, object
+            // out of view or unknown, another region, Do Not Disturb).
+            NetEvent::ScriptQuestion { task_id, object_name, .. } if self.object_blocked(&task_id, &object_name) => None,
             NetEvent::LoadUrl {
                 object_id, object_name, ..
             } if self.object_blocked(&object_id, &object_name) => None,
+            NetEvent::ScriptDialog {
+                sender,
+                object_id,
+                object_name,
+                owner_name,
+                owner_id,
+                message,
+                channel,
+                buttons,
+            } if self.omnifilter_script_dialog(sender, object_id, &object_name, &owner_name, owner_id, &message, channel, &buttons) => None,
             NetEvent::ScriptDialog {
                 sender,
                 object_id,
@@ -3441,7 +4173,12 @@ impl World {
                 experience,
                 region,
             } => {
+                let requested = questions;
                 let (questions, auto_accept) = self.rlva_script_permissions(task_id, questions);
+                // process_script_question keeps what RLVa stripped for the
+                // answer (RlvUtil::filterScriptQuestions, "rlv_blocked")
+                let notice = self.rlva_permission_notice(requested, questions, &object_name);
+                self.rlva_hold_permission_notice(task_id, item_id, notice);
                 if auto_accept && experience.is_nil() {
                     self.rlva.out.push(aurora_net::NetCommand::ScriptAnswer {
                         task_id,
@@ -3449,6 +4186,8 @@ impl World {
                         questions,
                         region,
                     });
+                    // forceResponse(YES): answered yes at once
+                    self.rlva_answer_permission_notice(task_id, item_id, true);
                     return None;
                 }
                 // process_script_question: an experience's question waits
@@ -3547,15 +4286,32 @@ impl World {
                 self.experiences.list_arrived(kind, ids);
                 None
             }
+            NetEvent::ExperienceAdmin { experience, admin } => {
+                self.experiences.admin_arrived(experience, admin);
+                None
+            }
+            NetEvent::ExperienceUpdated { experience, result } => {
+                self.experiences.updated(experience, result);
+                None
+            }
             NetEvent::GroupExperiences { group, ids } => {
                 self.experiences.group_arrived(group, ids);
                 None
             }
             NetEvent::LoadUrl {
                 object_name,
+                owner_id,
+                owner_is_group,
+                message,
+                url,
+                ..
+            } if self.omnifilter_load_url(&object_name, owner_id, owner_is_group, &message, &url) => None,
+            NetEvent::LoadUrl {
+                object_name,
                 object_id,
                 message,
                 url,
+                ..
             } => {
                 let body = format!("{message}\n{url}");
                 let object_name = dialog_names::shown(&object_name).into_owned();
@@ -3664,6 +4420,16 @@ impl World {
                         }
                     }
                 }
+                // the animations of our worn objects played from the cache
+                // (world/avatar_cache): those the region lists now go on
+                // as they are, without a restart; the others stay
+                let cached: Vec<PlayingAnimation> = if avatar == self.agent_id {
+                    let cached = self.avatar_cache.played_motions().copied().collect();
+                    self.avatar_cache.region_signals(anims.iter().map(|a| a.0));
+                    cached
+                } else {
+                    Vec::new()
+                };
                 let prev = self.animations.remove(&avatar).unwrap_or_default();
                 // ANIM_AGENT_TYPE starting: the typing sound at the avatar
                 const ANIM_AGENT_TYPE: Uuid = Uuid::from_u128(0xc541c47f_e0c0_058b_ad1a_d6ae3a4584d9);
@@ -3672,8 +4438,24 @@ impl World {
                 }
                 let mut list: Vec<_> = anims
                     .into_iter()
-                    .map(|(id, seq)| PlayingAnimation::from_signal(id, seq, now, prev.iter().find(|p| p.id == id)))
+                    .map(|(id, seq)| {
+                        let previous = prev.iter().find(|p| p.id == id).map(|p| {
+                            if cached.iter().any(|c| c.id == id) {
+                                PlayingAnimation { sequence: seq, ..*p }
+                            } else {
+                                *p
+                            }
+                        });
+                        PlayingAnimation::from_signal(id, seq, now, previous.as_ref())
+                    })
                     .collect();
+                if avatar == self.agent_id {
+                    for motion in self.avatar_cache.played_motions() {
+                        if !list.iter().any(|a| a.id == motion.id) {
+                            list.push(*motion);
+                        }
+                    }
+                }
                 if avatar == self.agent_id
                     && let Some(preview) = self.local_preview
                 {
@@ -3857,7 +4639,13 @@ impl World {
                 }
                 None
             }
+            NetEvent::SimFrameRate(fps) => {
+                self.sim_fps = Some(fps);
+                None
+            }
             NetEvent::Health(health) => {
+                // the app compares with UISndHealthReductionThreshold
+                self.health_changes.push((self.health, health));
                 self.health = health;
                 None
             }
@@ -3950,7 +4738,7 @@ impl World {
                 None
             }
             NetEvent::PickInfo(p) => {
-                self.profiles.picks.insert(p.id, *p);
+                self.profiles.pick_received(self.agent_id, *p, std::time::Instant::now());
                 None
             }
             NetEvent::AvatarPicks { target, picks } => {
@@ -4005,6 +4793,10 @@ impl World {
                 self.search
                     .name_row(search::Tab::Events, search::Key::Event(e.id), &e.name, vec![date]);
                 self.search.events.insert(e.id, *e);
+                None
+            }
+            NetEvent::GroupBanInGroup { group, agent, ban, ok } => {
+                self.on_group_ban_in_group(group, agent, ban, ok);
                 None
             }
             ev @ (NetEvent::GroupMembers(_)
@@ -4141,22 +4933,31 @@ impl World {
                 None
             }
             NetEvent::InventoryTreeFetched { request, result } => {
-                if let Ok(contents) = result {
-                    self.inventory.apply(contents);
-                }
-                self.inventory_background.on_reply(&mut self.inventory, request);
+                let (stale, outcome) = match result {
+                    Ok(contents) => (self.inventory.apply(contents), Ok(())),
+                    Err(error) => (Vec::new(), Err(error)),
+                };
+                self.inventory_background.on_reply(&mut self.inventory, request, &stale, outcome);
+                self.announce_inventory_limit();
                 None
             }
-            NetEvent::InventoryFetchFailed { folders } => {
+            NetEvent::InventoryFetchFailed { folders, too_big, status } => {
                 self.inventory.failed(&folders);
-                // BGFolderHttpHandler::processFailure puts a failed folder
-                // back in the queue. A fetch sent on the capabilities of the
-                // region just left fails once the agent is in the next one:
-                // asked again once per change of region, then on the new
-                // region's capabilities (`retry_failed`)
-                for id in folders {
-                    if self.inventory_retried.insert(id) {
-                        self.inventory.request(id);
+                if too_big {
+                    // A folder the server refuses even alone: record it and
+                    // stop asking for it (search and refresh skip it too).
+                    self.inventory_background.note_too_big(&mut self.inventory, &folders, status);
+                    self.announce_inventory_limit();
+                } else {
+                    // BGFolderHttpHandler::processFailure puts a failed folder
+                    // back in the queue. A fetch sent on the capabilities of
+                    // the region just left fails once the agent is in the
+                    // next one: asked again once per change of region, then
+                    // on the new region's capabilities (`retry_failed`)
+                    for id in folders {
+                        if self.inventory_retried.insert(id) {
+                            self.inventory.request(id);
+                        }
                     }
                 }
                 None
@@ -4194,9 +4995,13 @@ impl World {
                 }
                 None
             }
-            NetEvent::InventoryUpdated { folders, items } => {
+            NetEvent::InventoryUpdated { folders, items, bulk } => {
                 self.reveal_added(&folders, &items);
-                self.inventory.server_updated(folders, items);
+                if bulk {
+                    self.inventory.bulk_updated(folders, items);
+                } else {
+                    self.inventory.server_updated(folders, items);
+                }
                 None
             }
             NetEvent::InventoryDelivery { transaction, folders } => {
@@ -4323,6 +5128,25 @@ impl World {
                 }
                 None
             }
+            NetEvent::Beam {
+                effect,
+                source,
+                target,
+                position,
+                color,
+                duration,
+            } => {
+                // LLHUDEffectSpiral::unpackData: its source and its target
+                // object must be in the world; ours are drawn on their own
+                if source != self.agent_id {
+                    let objects = &self.objects;
+                    self.beams
+                        .receive(effect, source, target, position, color, duration, std::time::Instant::now(), |id| {
+                            objects.index_of_uuid(id).is_some()
+                        });
+                }
+                None
+            }
             NetEvent::ResetSkeleton {
                 source,
                 target,
@@ -4331,6 +5155,10 @@ impl World {
                 if let Some(reset) = self.skeleton_reset_from(source, target, animations) {
                     self.skeleton_resets.push(reset);
                 }
+                None
+            }
+            NetEvent::ChatServiceResponse { id, status, body } => {
+                self.chat_service_response(id, status, body);
                 None
             }
             other => Some(other),
@@ -4350,31 +5178,50 @@ impl World {
     }
 
     fn on_chat(&mut self, c: ChatMessage) {
+        // process_chat_from_simulator (llviewermessage.cpp) returns for a
+        // blocked object, or an object of a blocked owner, before anything
+        // else: its RLVa commands never reach RlvHandler either.
+        if c.source_type == aurora_net::ChatSourceType::Object && self.chat_blocked(&c) {
+            return;
+        }
         let controller_allowed = self.rlva_controller_chat_allowed(c.source_id);
         if c.source_type == aurora_net::ChatSourceType::Object
             && c.chat_type == aurora_net::ChatType::OwnerSay
             && c.message.starts_with('@')
             && controller_allowed
         {
-            self.rlva_bind_controller(c.source_id);
             self.rlva_prepare_version(c.source_id, &c.message);
         }
-        if controller_allowed && self.rlva.receive(&c) {
-            self.eep.rlva_locked = self.rlva.has("setenv");
-            let environment_owner = self.rlva.rules_for("setenv", Uuid::nil()).next().map(|(id, _)| id);
-            if self.eep.rlva_locked
-                && self.rlva.environment.is_none()
-                && let Some(actor) = environment_owner
-            {
-                self.rlva.environment = Some((actor, self.eep.current().0));
-            }
+        let inventory = &self.inventory;
+        let shared_folder = |path: &str| rlva::shared_folder_exists(inventory, path);
+        if controller_allowed && self.rlva.receive_with(&c, Some(&shared_folder)) {
+            self.rlva_resolve_sources();
+            self.rlva_sync_environment_lock();
             self.inventory.rlva_preview_mask = self.rlva.preview_mask();
             self.refresh_rlva_privacy();
             self.rlva_watchdog_tick(Instant::now());
+            // RestrainedLoveDebug: process_chat_from_simulator shows what
+            // ran, failed or was retained as the object's chat line
+            let Some(line) = self.rlva.take_debug_line() else {
+                return;
+            };
+            let mut c = c;
+            c.message = line;
+            self.on_chat_line(c);
             return;
         }
+        self.on_chat_line(c);
+    }
+
+    /// An object's or a resident's chat line, past the RLVa commands.
+    fn on_chat_line(&mut self, c: ChatMessage) {
         let mut c = c;
-        if let std::borrow::Cow::Owned(text) = self.rlva_filter_text(&c.message) {
+        // `@shownames` and `@showloc` rewrite what an object or the system
+        // says, never what a resident typed ("avatar => filter only their
+        // name", process_chat_from_simulator; `names::TextScope`)
+        if c.source_type != aurora_net::ChatSourceType::Agent
+            && let std::borrow::Cow::Owned(text) = self.rlva_filter_text(&c.message)
+        {
             c.message = text;
         }
         let own_attachment = self.rlva.enabled()
@@ -4384,12 +5231,25 @@ impl World {
         if !own_attachment && !self.rlva.receive_chat(&mut c, self.agent_id) {
             return;
         }
-        if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) || self.object_chat_filtered(&c) {
+        if c.message.is_empty() || self.lsl_bridge.hides(&c) {
             return;
         }
-        if self.receive_hand_contacts(&c, Instant::now()) {
+        // a blocked resident's line goes to the history alone, if at all
+        if self.chat_blocked(&c) {
+            self.blocked_chat_line(c);
             return;
         }
+        if self.object_chat_filtered(&c) {
+            return;
+        }
+        // process_chat_from_simulator: before the debug channel takes its
+        // lines
+        if !self.omnifilter_chat(&mut c) {
+            return;
+        }
+        // forwardChatToIDE, where processChat sends it: after the filters,
+        // before the debug window takes its lines
+        self.editor_sync_chat.offer(&c);
         if self.script_debug.route(&c, self.agent_id, Instant::now()) || self.anti_spam_chat(&c) {
             return;
         }
@@ -4406,7 +5266,11 @@ impl World {
                     self.nearby_typing.remove(&c.source_id);
                     // LLNearbyChatHandler::processChat: the speaker joins
                     // the recent people
-                    self.met(c.source_id);
+                    // (not one whose name is hidden: RlvActions::canShowName
+                    // there, llfloaterimnearbychathandler.cpp)
+                    if self.rlva_can_name(c.source_id) {
+                        self.met(c.source_id);
+                    }
                     // LLAgent::heardChat (half the time, ll_rand(2))
                     let coin = Uuid::new_v4().as_bytes()[0] & 1 == 0;
                     self.look_at.heard_chat(c.source_id, coin);
@@ -4420,15 +5284,35 @@ impl World {
                     {
                         self.ui_sounds.push(UiSound::NearbyChat);
                     }
+                    // UISndChatMention (LLIMMgr's nearby chat toast): a
+                    // resident's line that mentions us, out of do not disturb
+                    if !self.status.dnd && crate::ui::chat::mentions(&c.message, &self.agent_id) {
+                        self.ui_sounds.push(UiSound::ChatMention);
+                    }
                     ChatKind::Local(c.chat_type)
                 }
             }
         };
         // IDEVO: avatars by their complete name ("Jane Doe (janedoe)")
         let from = match c.source_type {
-            ChatSourceType::Agent => self.social.avatar_names.complete(&c.source_id).unwrap_or(c.from_name),
+            ChatSourceType::Agent => {
+                // a name not cached yet stays the one the line came with:
+                // under `@shownames` its stand-in is RlvStrings::getAnonym
+                // of it (`rlva_sender`), not the one `complete` gives the id
+                let names = &self.social.avatar_names;
+                let complete = names.complete(&c.source_id);
+                match names.raw(&c.source_id) {
+                    Some(_) => complete.unwrap_or(c.from_name),
+                    None => c.from_name,
+                }
+            }
+            ChatSourceType::Object => object_speaker_name(c.from_name, self.mark_unnamed_objects),
             _ => c.from_name,
         };
+        // RLVa `@shownames`: who the line names is decided now, once
+        // (`Speaker`): the stand-in of a hidden speaker, the name of an
+        // object rewritten
+        let (speaker, from) = self.rlva_sender(names::NameScope::World, kind, c.source_id, from);
         // a resident's line that mentions the agent
         // (LLUrlRegistry::containsAgentMention)
         if matches!(kind, ChatKind::Local(_)) && crate::ui::chat::mentions(&c.message, &self.agent_id) {
@@ -4448,6 +5332,9 @@ impl World {
         // a resident's line, not ours nor an object's: the Conversations
         // button may flash (the blocked never got this far)
         self.nearby_news |= matches!(kind, ChatKind::Local(_));
+        if heard_from(kind, self.status.dnd) {
+            self.last_speaker = Some(c.source_id);
+        }
         // the bubble above the speaker's head: residents only, ourselves
         // included, never while we are in do not disturb
         // (process_chat_from_simulator, LLVOAvatar::addChat)
@@ -4471,13 +5358,60 @@ impl World {
                 );
             }
         }
+        // LLViewerChat::getObjectImSLURL uses the message's owner and
+        // position, even when the speaking object is not in the scene: the
+        // region under the position (LLWorld::getRegionFromPosAgent), none
+        // when no region we know holds it.
+        let mut time = SystemTime::now();
+        if matches!(kind, ChatKind::Object(_)) && !c.source_id.is_nil() {
+            // RLVa @showloc: the location is masked when the line arrives,
+            // so a later region change cannot reveal it (the inspector also
+            // hides one kept from before the restriction)
+            let slurl = c
+                .region
+                .and_then(|region| self.region_at_offset(region, c.position))
+                .filter(|(r, _)| !r.name.is_empty() && !self.rlva_private_region(&r.name))
+                .map(|(r, pos)| {
+                    format!(
+                        "{}/{:.0}/{:.0}/{:.0}",
+                        crate::slurl::encode(&r.name),
+                        pos.x.round(),
+                        pos.y.round(),
+                        pos.z.round()
+                    )
+                })
+                .unwrap_or_default();
+            time = self.remember_chat_object(crate::slapp::RemoteObject {
+                id: c.source_id,
+                // as the line keeps it (`rlva_sender`): the `name` of the
+                // objectim link is chat.mFromName, rewritten already
+                name: self.rlva_object_name(&from).into_owned(),
+                owner: c.owner_id,
+                group_owned: false,
+                // the `rlv_shownames` of the line's objectim link
+                // (process_chat_from_simulator): an owner hidden now, who
+                // is not us
+                owner_hidden: self.rlva.has("shownames") && !self.rlva_can_name(c.owner_id),
+                slurl,
+            });
+        }
+        // LLViewerChat::getChatColor: a resident's or an object's line said
+        // beyond the say range from where we stand now is dimmed (ours is
+        // said where we stand; a line of an unknown region is not judged)
+        let beyond_range = !kind.is_own()
+            && c.region
+                .and_then(|h| self.region_offset(h))
+                .is_some_and(|offset| radar::beyond_say_range(c.position, offset, self.agent.position, radar::chat_ranges().say));
         self.push_chat(ChatLine {
-            time: SystemTime::now(),
+            time,
             from,
             text: c.message,
             kind,
             source: c.source_id,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range,
+            speaker,
         });
     }
 
@@ -4485,7 +5419,7 @@ impl World {
         // a message to the whole region, before the rules of conversations
         // (region_messages.rs)
         if region_messages::is_region_message(&im) {
-            if !self.anti_spam_im(&im) {
+            if !self.anti_spam_im(&im) && self.omnifilter_im(&mut im) {
                 self.on_region_message(&im);
             }
             return;
@@ -4494,6 +5428,10 @@ impl World {
             return;
         }
         if self.anti_spam_im(&im) {
+            return;
+        }
+        // processNewMessage: every dialog, before it is handled
+        if !self.omnifilter_im(&mut im) {
             return;
         }
         // IM queries obey the same friends-only policy, before recvim.
@@ -4535,16 +5473,19 @@ impl World {
             if !im.from_name.is_empty() {
                 self.social.names.entry(im.from_agent_id).or_insert_with(|| im.from_name.clone());
             }
-            // UISndNewIncomingIMSession (by the IM mode)
+            // UISndNewIncomingIMSession (by the IM mode), or UISndChatMention
             self.im_messages.push(ImMessage {
                 kind: ImKind::Private,
                 session: im.from_agent_id,
                 new_session: !self.social.has_session(&im.from_agent_id),
+                mention: crate::ui::chat::mentions(&im.message, &self.agent_id),
             });
+            // named whatever `@shownames`: an instant message is not the
+            // nearby chat (process_improved_im tests nothing for it)
             let from = self
                 .social
                 .avatar_names
-                .complete(&im.from_agent_id)
+                .complete_in(names::NameScope::Roster, &im.from_agent_id)
                 .unwrap_or_else(|| im.from_name.clone());
             self.social.session_mut(im.from_agent_id);
             let open = attention::Open::Conversation(im.from_agent_id);
@@ -4556,6 +5497,7 @@ impl World {
             } else {
                 im.message.clone()
             };
+            self.social.offline_ims |= im.offline;
             let line = ChatLine {
                 time: SystemTime::now(),
                 from,
@@ -4563,8 +5505,20 @@ impl World {
                 kind: ChatKind::Im,
                 source: im.from_agent_id,
                 origin: Origin::Live,
+                blocked: false,
+                beyond_range: false,
+                speaker: Default::default(),
             };
+            let opened = !self.chat_log.conversations.known.contains(&im.from_agent_id);
+            let (line_time, line_text) = (line.time, line.text.clone());
             self.conversation_push(im.from_agent_id, line, true);
+            // the Chat Service's capture and activity, offline too
+            // (processNewMessage, LL viewer 26.5)
+            self.direct_incoming(im.from_agent_id, line_time, &line_text, &im.message, im.offline, im.timestamp);
+            // sessionAdded with has_offline_msg: the log marks it unread
+            if im.offline && opened {
+                self.log_conversation(im.from_agent_id, true);
+            }
             if rlva_filter != rlva::communication::Received::Masked {
                 self.send_autoresponse(&im, autoresponse);
             }
@@ -4577,6 +5531,10 @@ impl World {
             return;
         }
         // dialog 19 = MessageFromObject
+        if self.hide_object_returns && object_im_filter::is_return_notice(&im) {
+            log::info!("object return message hidden: {}", im.from_name);
+            return;
+        }
         if self.object_im_filtered(&im) {
             return;
         }
@@ -4586,6 +5544,51 @@ impl World {
         } else {
             im.from_name
         };
+        // IM_FROM_TASK (LLIMProcessing::processNewMessage): the line belongs
+        // to the object, the IM's session id; the sender is its owner (a
+        // group with from_group) and the binary bucket its location. With
+        // the owner's id, the name's Inspect showed no object and its Block
+        // muted the owner, hiding all their chat and objects. An older
+        // region gives no session id: no object to link then.
+        let source = if im.dialog == 19 { im.session_id } else { im.from_agent_id };
+        // RLVa `@shownames`, IM_FROM_TASK of LLIMProcessing::processNewMessage
+        // (indra/newview/llimprocessing.cpp): the owner of the object is
+        // hidden, and the object's name rewritten, when they stand around
+        // us now, an `@shownames:<uuid>` exception included; a group's
+        // object keeps both. Kept with the line (`rlv_shownames`).
+        let owner_hidden = im.dialog == 19 && self.rlva.has("shownames") && !im.from_group && self.rlva_is_nearby(im.from_agent_id);
+        let from = if owner_hidden {
+            self.rlva_object_name(&from).into_owned()
+        } else {
+            from
+        };
+        let mut time = SystemTime::now();
+        if im.dialog == 19 && !im.session_id.is_nil() {
+            // RLVa @showloc masks the location of an object's IM from a
+            // nearby region when it is received, as the Legacy Viewer does:
+            // kept with the line, not checked against the regions of later
+            let slurl = object_im_filter::origin(&im.binary_bucket)
+                .filter(|o| !self.rlva_private_region(&o.region))
+                .map(|o| match o.pos {
+                    Some(p) => format!(
+                        "{}/{:.0}/{:.0}/{:.0}",
+                        crate::slurl::encode(&o.region),
+                        p.x.round(),
+                        p.y.round(),
+                        p.z.round()
+                    ),
+                    None => crate::slurl::encode(&o.region),
+                })
+                .unwrap_or_default();
+            time = self.remember_chat_object(crate::slapp::RemoteObject {
+                id: im.session_id,
+                name: from.clone(),
+                owner: im.from_agent_id,
+                group_owned: im.from_group,
+                owner_hidden,
+                slurl,
+            });
+        }
         // an object's message kept while we were offline (IM_FROM_TASK)
         let text = if im.offline && im.dialog == 19 {
             saved_prefix(im.timestamp) + &im.message
@@ -4614,12 +5617,15 @@ impl World {
             }
         }
         self.push_chat(ChatLine {
-            time: SystemTime::now(),
+            time,
             from,
             text,
             kind,
-            source: im.from_agent_id,
+            source,
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         });
     }
 
@@ -4681,9 +5687,22 @@ impl World {
                     });
                 }
                 let what = inventory_offers::item_label(&im.message);
+                // Who gives is named or not now, once
+                // (inventory_offer_handler, indra/newview/llimprocessing.cpp):
+                // the notice is written with their name or with their
+                // stand-in in its place, the NAME and `rlvanonym` NAME_SLURL
+                // of UserGiveItem. Nothing else of its text is rewritten:
+                // the item keeps the name it was given with.
+                let named = self.rlva_names_giver(im.from_agent_id, false);
+                let giver = if named {
+                    from.to_string()
+                } else {
+                    self.rlva_anonymous(im.from_agent_id).display_name.clone()
+                };
+                let n = &mut self.notifications;
                 let entry = n.push(
                     Kind::Inventory,
-                    aurora_i18n::tr!("world-mod-gives-you", from = from.to_string(), what = what.to_string()),
+                    aurora_i18n::tr!("world-mod-gives-you", from = giver, what = what.to_string()),
                     String::new(),
                     Data::Inventory {
                         from: im.from_agent_id,
@@ -4694,7 +5713,9 @@ impl World {
                         task_offer: None,
                     },
                 );
-                n.link_name(entry, from.clone(), notifications::NameTarget::Avatar(im.from_agent_id));
+                if named {
+                    n.link_name(entry, from.clone(), notifications::NameTarget::Avatar(im.from_agent_id));
+                }
                 if self.receive_inventory_offer(im, entry) {
                     return true;
                 }
@@ -4755,12 +5776,25 @@ impl World {
                 } else {
                     aurora_i18n::tr!("world-mod-declined")
                 };
-                n.push(
+                // Named or not as an offer of theirs would be, decided
+                // now: IM_INVENTORY_ACCEPTED and IM_INVENTORY_DECLINED of
+                // process_improved_im (indra/newview/llimprocessing.cpp)
+                // write RlvStrings::getAnonym in place of the name.
+                let named = self.rlva_names_giver(im.from_agent_id, false);
+                let who = if named {
+                    from.to_string()
+                } else {
+                    self.rlva_anonymous(im.from_agent_id).display_name.clone()
+                };
+                let id = self.notifications.push(
                     Kind::Inventory,
-                    aurora_i18n::tr!("world-mod-has-your-object", from = from.to_string(), verb = verb.to_string()),
+                    aurora_i18n::tr!("world-mod-has-your-object", from = who, verb = verb.to_string()),
                     String::new(),
                     Data::None,
                 );
+                if named {
+                    self.notifications.name_resident(id);
+                }
             }
             d::MESSAGEBOX | d::FROM_TASK_AS_ALERT => {
                 n.push(Kind::Alert, from, im.message.clone(), Data::None);
@@ -4793,7 +5827,14 @@ impl World {
                 | d::MESSAGEBOX
         );
         let last = self.notifications.last_id();
+        // The notice that hides who gave, or who answered what we gave,
+        // links no one: their stand-in is plain text, as the `rlvanonym`
+        // link of the Legacy Viewer is (`name_giver_notice`).
+        let hidden = self.rlva.enabled()
+            && matches!(im.dialog, d::INVENTORY_OFFERED | d::INVENTORY_ACCEPTED | d::INVENTORY_DECLINED)
+            && !self.notifications.names_resident(last);
         if last != before
+            && !hidden
             && !matches!(
                 im.dialog,
                 d::TASK_INVENTORY_OFFERED | d::GROUP_NOTICE | d::FROM_TASK_AS_ALERT | d::GOTO_URL | d::MESSAGEBOX
@@ -4811,7 +5852,22 @@ impl World {
         } else {
             None
         };
-        self.ask_attention(attention::Cause::Message, notice);
+        // an offer is told as one; an alert, a notice or an answer as a notice
+        let cause = if matches!(
+            im.dialog,
+            d::LURE_USER
+                | d::GODLIKE_LURE_USER
+                | d::TELEPORT_REQUEST
+                | d::FRIENDSHIP_OFFERED
+                | d::INVENTORY_OFFERED
+                | d::TASK_INVENTORY_OFFERED
+                | d::GROUP_INVITATION
+        ) {
+            attention::Cause::Offer
+        } else {
+            attention::Cause::Message
+        };
+        self.ask_attention(cause, notice);
         true
     }
 
@@ -5029,8 +6085,10 @@ impl World {
         self.notifications
             .link_name(id, name, notifications::NameTarget::Experience(q.experience));
         self.link_object_notification(id, q.task, &object, &owner);
-        // UISndQuestionExperience is Firestorm's own; the script sound is Aurora's
-        self.ui_sounds.push(UiSound::ScriptFloaterOpen);
+        // process_script_experience_details: UISndQuestionExperience, off by
+        // default like the Legacy Viewer's (Aurora played the script
+        // dialog's sound here before the sound existed)
+        self.ui_sounds.push(UiSound::QuestionExperience);
     }
 
     /// Answer a notification: messages to send and a URL to open.
@@ -5068,6 +6126,19 @@ impl World {
             }
             return (Vec::new(), None);
         }
+        // script_question_cb: a yes says what RLVa stripped from the
+        // question (RlvUtil::notifyBlocked with its "rlv_blocked")
+        if let Some(notifications::Data::Permissions { task, item, .. }) = &data
+            && matches!(
+                r,
+                notifications::Response::Accept
+                    | notifications::Response::Decline
+                    | notifications::Response::Block
+                    | notifications::Response::BlockExperience
+            )
+        {
+            self.rlva_answer_permission_notice(*task, *item, matches!(r, notifications::Response::Accept));
+        }
         // notify_cautioned_script_question: the answer to a caution
         // question is told in the nearby chat
         if let Some(notifications::Data::Permissions {
@@ -5076,6 +6147,13 @@ impl World {
             caution: Some(prompt),
             ..
         }) = &data
+            && matches!(
+                r,
+                notifications::Response::Accept
+                    | notifications::Response::Decline
+                    | notifications::Response::Block
+                    | notifications::Response::BlockExperience
+            )
         {
             let place = self.caution_place(task);
             let granted = matches!(r, notifications::Response::Accept);
@@ -5162,6 +6240,13 @@ impl World {
             };
             self.invite_card_answered(invite, answer);
             return (std::mem::take(&mut self.groups.out), None);
+        }
+        // a teleport refused for its rating (teleport_access.rs)
+        if let Some(notifications::Data::MaturityChange { rating, prompt }) = data {
+            let accept = matches!(r, notifications::Response::Accept);
+            self.notifications.respond(id, r, |_| Uuid::nil(), Uuid::nil());
+            self.answer_teleport_access(rating, prompt, accept);
+            return (Vec::new(), None);
         }
         // teleport offers and requests: answered through their invitation,
         // closing the notification declines (as Firestorm's toasts do)
@@ -5329,8 +6414,14 @@ impl World {
     /// Name of an avatar by id (from its object name-values).
     pub fn avatar_name(&self, id: &Uuid) -> Option<String> {
         if !id.is_nil() && !self.rlva_can_name(*id) {
-            return Some(rlva::privacy::anonymous(*id).display_name.clone());
+            return Some(self.rlva_anonymous(*id).display_name.clone());
         }
+        self.scene_name(id)
+    }
+
+    /// The name the scene gives an avatar, whatever RLVa hides: for the
+    /// callers that applied `@shownames` themselves.
+    fn scene_name(&self, id: &Uuid) -> Option<String> {
         let idx = self.objects.index_of_uuid(id)?;
         self.objects.get(idx)?.display_name()
     }
@@ -5339,6 +6430,13 @@ impl World {
     /// (LLAvatarNameCache::get with a callback).
     pub fn flush_online_notices(&mut self) {
         for (id, n, online) in self.social.take_online_notices() {
+            // a set with "Show notifications" brings them as a toast and in
+            // nearby chat when the global choices are off
+            // (LLNotificationTipHandler::processNotification,
+            // on_avatar_name_cache_notify; FIRE-3522)
+            let for_set = self.contact_sets.notify_for(&id);
+            let toast = self.notifications.toasts.presence || (self.contact_sets.notices_toast && for_set);
+            let in_chat = self.notifications.toasts.presence_in_chat || (self.contact_sets.notices_chat && for_set);
             // FIRE-2731 (on_avatar_name_cache_notify)
             self.ui_sounds
                 .push(if online { UiSound::FriendOnline } else { UiSound::FriendOffline });
@@ -5351,10 +6449,13 @@ impl World {
             }
             // the toast of LLNotificationTipHandler (ChatOnlineNotification),
             // never during login, in do not disturb nor for a blocked resident
-            if self.notifications.toasts.presence && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
+            if toast && self.notifications.started && !self.status.dnd && !self.mutes.is_muted_id(&id) {
                 let notification = self.notifications.push_presence(id, n.clone(), online);
-                self.notifications
-                    .link_name(notification, self.social.name_of(&id), notifications::NameTarget::Avatar(id));
+                self.notifications.link_name(
+                    notification,
+                    self.social.name_in(names::NameScope::Roster, &id),
+                    notifications::NameTarget::Avatar(id),
+                );
             }
             // FriendOnlineOffline for the system (never during login)
             if self.notifications.started && !self.mutes.is_muted_id(&id) {
@@ -5363,18 +6464,19 @@ impl World {
                     body: String::new(),
                     open: attention::Open::Conversation(id),
                 };
-                self.ask_attention(attention::Cause::Notice, Some(notice));
+                self.ask_attention(attention::Cause::Presence(online), Some(notice));
             }
             // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
             // asked for: the toast already says it
-            if self.notifications.toasts.presence_in_chat {
+            if in_chat {
                 // checked as nearby chat (LLAvatarTracker::processNotify),
                 // unless notices are kept quiet (#741)
                 if self.alerts(ChatKind::System) {
-                    let from = self.social.name_of(&id);
+                    let from = self.social.name_in(names::NameScope::Roster, &id);
                     self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 }
-                self.system_notice(n, notice_topics::Topic::People);
+                // the name is a link to the resident (social::online_chat_line)
+                self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::Radar);
             }
         }
     }
@@ -5428,8 +6530,11 @@ impl World {
             (line.from.clone(), emote.unwrap_or(text))
         };
         let notification = self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
-        self.notifications
-            .link_name(notification, self.social.name_of(&from), notifications::NameTarget::Avatar(from));
+        self.notifications.link_name(
+            notification,
+            self.social.name_in(names::NameScope::Roster, &from),
+            notifications::NameTarget::Avatar(from),
+        );
         if m.kind == ImKind::Group {
             self.notifications.link_name(
                 notification,
@@ -5437,6 +6542,16 @@ impl World {
                 notifications::NameTarget::Group(m.session),
             );
         }
+    }
+
+    /// Show `conversation` in the Conversations window. `to_type` gives its
+    /// field the keyboard too, as FSFloaterIM::show → setFocus(true) →
+    /// focusFirstItem (indra/newview/fsfloaterim.cpp) does for a conversation
+    /// the user asked for; a call shows it alone, leaving the keyboard where
+    /// it was.
+    pub fn focus_conversation(&mut self, conversation: Uuid, to_type: bool) {
+        self.social.focus_im = Some(conversation);
+        self.social.focus_im_to_type = to_type;
     }
 
     /// A friend's or a message's card clicked: it is acknowledged (gone from
@@ -5458,7 +6573,8 @@ impl World {
             s.unread = 0;
         }
         self.acknowledge_read_messages();
-        self.social.focus_im = Some(session);
+        // a click on the toast or the card: ready to type in
+        self.focus_conversation(session, true);
         Some(session)
     }
 
@@ -5482,10 +6598,17 @@ impl World {
     /// Complete name of an avatar ("Jane Doe (janedoe)"), else its legacy
     /// name (name-values, UUIDNameReply).
     pub fn person_name(&self, id: &Uuid) -> Option<String> {
+        self.person_name_in(names::NameScope::World, id)
+    }
+
+    /// `person_name` for a name shown in `scope`.
+    pub fn person_name_in(&self, scope: names::NameScope, id: &Uuid) -> Option<String> {
         self.social
             .avatar_names
-            .complete(id)
-            .or_else(|| self.avatar_name(id))
+            // (the stand-in of a resident `scope` hides: the names below
+            // are those of the residents it shows)
+            .complete_in(scope, id)
+            .or_else(|| self.scene_name(id))
             .or_else(|| self.social.names.get(id).cloned())
     }
 
@@ -5518,6 +6641,18 @@ impl World {
     /// (LFSimFeatureHandler::simSupportsExport).
     pub fn export_supported(&self) -> bool {
         self.main().is_some_and(|r| r.export_supported)
+    }
+
+    /// The region we are in reads GameControlData (gAgent.getRegion()'s
+    /// gameControlEnabled).
+    pub fn game_control_enabled(&self) -> bool {
+        self.main().is_some_and(|r| r.game_control)
+    }
+
+    /// The region we are in applies the ability to post links in group
+    /// chat (LLViewerRegion::groupChatPostLinksEnabled for gAgent's region).
+    pub fn group_chat_post_links(&self) -> bool {
+        self.main().is_some_and(|r| r.group_chat_post_links)
     }
 
     /// The status feed and page the agent's region names for its OpenSim
@@ -5583,6 +6718,9 @@ impl World {
             .map(|l| social::format_name(&l.first_name, &l.last_name))
             .unwrap_or_default();
         self.social.session_mut(to);
+        // the newest service id known before it is sent
+        // (History::outgoingContext, LL viewer 26.5)
+        let context = self.direct_outgoing_context(to);
         let line = ChatLine {
             time: SystemTime::now(),
             from: me,
@@ -5590,8 +6728,15 @@ impl World {
             kind: ChatKind::OWN,
             source: Uuid::nil(),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         };
+        let (line_time, line_text) = (line.time, line.text.clone());
         self.conversation_push(to, line, false);
+        if let Some(context) = context {
+            self.direct_outgoing(to, context, line_time, &line_text);
+        }
     }
 
     /// Add a line said at its own time to a conversation, opening it (the
@@ -5687,6 +6832,16 @@ impl World {
             }
         }
         self.bodies.retain(|id, _| seen.contains(id));
+        // a seat snap lasts while the avatar sits on that seat with the
+        // rotation it was reported with: standing up, another seat or a new
+        // report ends it, so a later sit on the same seat starts afresh
+        let objects = &self.objects;
+        self.seat_snaps.retain(|id, snap| {
+            objects
+                .index_of_uuid(id)
+                .and_then(|i| objects.get(i))
+                .is_some_and(|o| o.parent_id == snap.parent_id && o.rotation == snap.reported)
+        });
         own_turn
     }
 
@@ -6421,6 +7576,87 @@ mod motion_tests {
         assert!(!present(&world, 970));
         assert!(present(&world, 975));
         assert!(world.held_kills.is_empty());
+    }
+
+    #[test]
+    fn the_couple_partner_stays_where_couple_mode_took_them_while_they_walk() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let partner = Uuid::from_u128(983);
+        let start = glam::Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
+        world.avatar_models.insert(partner, start);
+        world.set_couple_partner(Some(partner));
+        assert!(world.couple_shift(partner, start).is_none(), "drawn where they stand");
+        // they walk off and turn in the world: drawn where they were
+        let walked = glam::Mat4::from_translation(Vec3::new(14.0, 18.0, 30.0)) * glam::Mat4::from_rotation_z(1.0);
+        world.avatar_models.insert(partner, walked);
+        world.set_couple_partner(Some(partner));
+        let shift = world.couple_shift(partner, walked).expect("held back");
+        assert!((shift * walked).abs_diff_eq(start, 1e-4));
+        // a move on screen goes from the held place
+        world.couple_place = (Vec3::new(0.0, 1.0, 0.0), 0.0);
+        let shift = world.couple_shift(partner, walked).expect("moved");
+        assert!((shift * walked).abs_diff_eq(glam::Mat4::from_translation(Vec3::new(0.0, 1.0, 0.0)) * start, 1e-4));
+        assert_eq!(world.couple_base(partner), Some(start));
+        // couple mode over: their own place again
+        world.set_couple_partner(None);
+        world.couple_place = (Vec3::ZERO, 0.0);
+        assert!(world.couple_shift(partner, walked).is_none());
+        assert_eq!(world.couple_base(partner), Some(walked));
+    }
+
+    #[test]
+    fn the_studio_hover_lifts_the_couple_partner_but_not_the_placement() {
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        let partner = Uuid::from_u128(981);
+        world.couple_partner = Some(partner);
+        let model = glam::Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
+        assert!(world.couple_shift(partner, model).is_none(), "nothing to move");
+        world.avatar_studio = true;
+        world.avatar_studio_lift = 0.1;
+        world.couple_hover = 0.4;
+        let shift = world.couple_shift(partner, model).expect("B's hover lifts B");
+        assert!((shift.transform_point3(Vec3::ZERO) - Vec3::new(0.0, 0.0, 0.4)).length() < 1e-5);
+        assert!(world.couple_move(partner, model).is_none(), "the note leaves the lift out");
+        assert!(world.couple_shift(Uuid::from_u128(982), model).is_none(), "only the partner");
+        world.avatar_studio = false;
+        assert!(world.couple_shift(partner, model).is_none(), "no hover outside the Studio");
+    }
+
+    #[test]
+    fn the_couple_partner_stays_drawn_after_leaving_until_couple_mode_ends() {
+        let (mut world, me, handle) = fixture();
+        let mut partner = me.clone();
+        partner.full_id = Uuid::from_u128(980);
+        partner.local_id = 980;
+        partner.velocity = Vec3::new(1.0, 0.0, 0.0);
+        let mut other = partner.clone();
+        other.full_id = Uuid::from_u128(981);
+        other.local_id = 981;
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![me.clone(), partner.clone(), other.clone()],
+        });
+        let present = |world: &World, id: u128| world.objects.index_of_uuid(&Uuid::from_u128(id)).is_some();
+        world.set_couple_partner(Some(partner.full_id));
+        world.apply(NetEvent::ObjectsKilled {
+            handle,
+            local_ids: vec![980, 981],
+        });
+        // Person B is kept, standing still; anyone else goes
+        assert!(present(&world, 980));
+        assert!(!present(&world, 981));
+        let held = world
+            .objects
+            .index_of_uuid(&partner.full_id)
+            .and_then(|i| world.objects.get(i))
+            .expect("held");
+        assert_eq!(held.velocity, Vec3::ZERO);
+        world.set_couple_partner(Some(partner.full_id));
+        assert!(present(&world, 980));
+        // couple mode ends: they go
+        world.set_couple_partner(None);
+        assert!(!present(&world, 980));
+        assert!(world.held_partner.is_empty());
     }
 
     #[test]
@@ -7172,6 +8408,65 @@ mod motion_tests {
         assert!(!world.arrived_by_local_teleport);
     }
 
+    /// LLTeleportHistory::updateCurrentLocation under @showloc, from the
+    /// restriction to its release.
+    #[test]
+    fn rlva_showloc_arrivals_leave_one_hidden_place_without_a_destination() {
+        let (mut world, handle) = teleport_fixture();
+        let restrict = |world: &mut World, command: &str| {
+            world.apply(NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: "Fixture".into(),
+                source_id: Uuid::from_u128(1),
+                owner_id: world.agent_id,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: Vec3::ZERO,
+                message: command.into(),
+            }));
+        };
+        let teleport = |world: &mut World, position: Vec3| {
+            world.begin_teleport(false);
+            world.apply(NetEvent::TeleportStarted { flags: 0 });
+            world.apply(NetEvent::TeleportLocal { flying: false });
+            world.apply(NetEvent::AgentMovementComplete {
+                handle,
+                position,
+                look_at: Vec3::X,
+            });
+        };
+        teleport(&mut world, Vec3::new(60.0, 70.0, 30.0));
+        let places = world.tp_history.session().items.len();
+        assert!(places >= 2 && world.tp_history.back_name().is_some());
+        world.rlva.configure(true);
+        restrict(&mut world, "@showloc=n");
+        assert!(world.rlva.has("showloc"));
+        for height in [500.0, 900.0, 1300.0] {
+            teleport(&mut world, Vec3::new(128.0, 128.0, height));
+        }
+        let session = world.tp_history.session();
+        assert_eq!((session.items.len(), session.current), (places, places - 1));
+        let hidden = &session.items[session.current];
+        assert!(hidden.is_hidden(), "the place keeps a destination: {hidden:?}");
+        assert!(hidden.parcel.is_empty() && hidden.grid.is_none());
+        assert!(world.tp_history.back_name().is_some(), "the places before the restriction stay");
+        world.flush_arrival(Instant::now() + std::time::Duration::from_secs(10));
+        assert!(
+            world.tp_history.session().items[places - 1].is_hidden(),
+            "a late parcel names nothing"
+        );
+        // released: the place is where the agent stands, and the next one is new
+        restrict(&mut world, "@showloc=y");
+        let session = world.tp_history.session();
+        let here = &session.items[session.current];
+        assert_eq!(
+            (session.items.len(), here.handle, here.position),
+            (places, handle, world.agent.position)
+        );
+        teleport(&mut world, Vec3::new(10.0, 10.0, 30.0));
+        assert_eq!(world.tp_history.session().items.len(), places + 1);
+    }
+
     #[test]
     fn unknown_destination_only_shows_progress_when_another_region_is_confirmed() {
         let (mut world, handle) = teleport_fixture();
@@ -7211,14 +8506,12 @@ mod motion_tests {
         world.apply(NetEvent::TeleportStarted { flags: 0 });
         world.apply(NetEvent::TeleportFailed {
             reason: "You cannot go there".into(),
-            code: "noaccess_tport".into(),
+            code: Some("noaccess_tport".into()),
             region: String::new(),
         });
         let failure = world.tp_failure.clone().expect("popup kept");
-        assert_eq!(
-            teleport_failure::text(&failure.code, &failure.reason, &failure.region),
-            aurora_i18n::tr!("teleport-error-noaccess-tport")
-        );
+        assert_eq!(failure.text, aurora_i18n::tr!("teleport-error-noaccess-tport"));
+        assert_eq!(failure.reason, "You cannot go there");
         let said = aurora_i18n::tr!(
             "world-mod-teleport-failed",
             reason = aurora_i18n::tr!("teleport-error-noaccess-tport").to_owned()
@@ -7229,6 +8522,17 @@ mod motion_tests {
         world.begin_teleport(true);
         world.apply(NetEvent::viewer_teleport_failed(aurora_i18n::tr!("rlva-blocked")));
         assert!(world.tp_failure.is_none());
+
+        // OpenSim's EntityTransferModule: an empty reason and no AlertInfo is
+        // still the simulator's failure (the Legacy Viewer's popup, empty)
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportFailed {
+            reason: String::new(),
+            code: Some(String::new()),
+            region: String::new(),
+        });
+        let failure = world.tp_failure.clone().expect("popup kept for an empty reason");
+        assert!(failure.text.is_empty() && failure.reason.is_empty());
     }
 
     #[test]
@@ -7261,6 +8565,86 @@ mod motion_tests {
         world.apply(NetEvent::TeleportFinished { handle, flying: false });
         assert!(world.teleporting && !world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+    }
+
+    /// FSShowBackSLURL: a teleport through TeleportFinish says, on its
+    /// arrival, the SLURL of the place left; a local teleport, a failed one
+    /// or the setting off say nothing. Under RLVa `@showloc` the place left,
+    /// still connected, is "(Hidden region)" (LLSLURL::getSLURLString in
+    /// process_agent_movement_complete, llviewermessage.cpp).
+    #[test]
+    fn a_teleport_to_another_region_says_where_it_came_from() {
+        fn back_lines(world: &World) -> Vec<String> {
+            world
+                .chat
+                .iter()
+                .filter(|l| l.text.contains("/Demo%20Start/40/50/30"))
+                .map(|l| l.text.clone())
+                .collect()
+        }
+        fn hop(world: &mut World, from: RegionHandle, fail: bool) -> RegionHandle {
+            let to = from + (256_u64 << 32);
+            world.begin_teleport(true);
+            world.apply(NetEvent::TeleportStarted { flags: 0 });
+            world.apply(NetEvent::TeleportFinished { handle: to, flying: false });
+            if fail {
+                world.apply(NetEvent::viewer_teleport_failed("no"));
+                return from;
+            }
+            world.apply(NetEvent::MainRegionChanged { handle: to });
+            world.apply(NetEvent::AgentMovementComplete {
+                handle: to,
+                position: Vec3::new(10.0, 10.0, 20.0),
+                look_at: Vec3::X,
+            });
+            to
+        }
+        let (mut world, handle) = teleport_fixture();
+        world.regions.get_mut(&handle).expect("region").name = "Demo Start".into();
+        hop(&mut world, handle, false);
+        let lines = back_lines(&world);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].contains("http://maps.secondlife.com/secondlife/Demo%20Start/40/50/30"),
+            "{lines:?}"
+        );
+
+        let (mut world, handle) = teleport_fixture();
+        world.regions.get_mut(&handle).expect("region").name = "Demo Start".into();
+        // the failed teleport's SLURL is not said by the next arrival
+        hop(&mut world, handle, true);
+        world.begin_teleport(false);
+        world.apply(NetEvent::TeleportLocal { flying: false });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(40.0, 50.0, 30.0),
+            look_at: Vec3::X,
+        });
+        assert!(back_lines(&world).is_empty(), "local or failed teleport");
+
+        world.show_back_slurl = false;
+        hop(&mut world, handle, false);
+        assert!(back_lines(&world).is_empty(), "setting off");
+
+        let (mut world, handle) = teleport_fixture();
+        world.regions.get_mut(&handle).expect("region").name = "Demo Start".into();
+        world.rlva.configure(true);
+        assert!(world.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Controller".to_owned(),
+            source_id: Uuid::from_u128(2),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: Vec3::ZERO,
+            message: "@showloc=n".to_owned(),
+        }));
+        assert!(world.rlva.has("showloc"));
+        hop(&mut world, handle, false);
+        assert!(back_lines(&world).is_empty(), "@showloc");
+        let hidden = format!("http://maps.secondlife.com/secondlife/{}", aurora_i18n::tr!("rlva-hidden-region"));
+        let said: Vec<&str> = world.chat.iter().map(|l| l.text.as_str()).filter(|t| t.contains(&hidden)).collect();
+        assert_eq!(said.len(), 1, "the place left, hidden: {said:?}");
     }
 
     #[test]
@@ -7445,6 +8829,75 @@ mod motion_tests {
         assert!(world.im_messages.is_empty(), "no message");
         world.apply(notice(&world, IM_TYPING_STOP));
         assert!(!world.social.is_typing(&from));
+    }
+
+    /// UISndChatMention: a private message that mentions us is marked for
+    /// the mention's sound, one that mentions someone else is not; a health
+    /// change is handed to the app for UISndHealthReduction*.
+    #[test]
+    fn mentions_and_health_reach_the_interface_sounds() {
+        let (mut world, _, _) = fixture();
+        let from = Uuid::from_u128(78);
+        let other = Uuid::from_u128(79);
+        let im = |world: &World, message: String| {
+            NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: from,
+                from_name: "Mentioner Resident".into(),
+                to_agent_id: world.agent_id,
+                dialog: 0,
+                session_id: Uuid::from_u128(world.agent_id.as_u128() ^ from.as_u128()),
+                message,
+                offline: false,
+                from_group: false,
+                binary_bucket: vec![0],
+                timestamp: 0,
+            })
+        };
+        let me = world.agent_id;
+        world.apply(im(&world, format!("hi secondlife:///app/agent/{me}/mention !")));
+        world.apply(im(&world, format!("ask secondlife:///app/agent/{other}/mention")));
+        let mentions: Vec<bool> = std::mem::take(&mut world.im_messages).iter().map(|m| m.mention).collect();
+        assert_eq!(mentions, [true, false]);
+        world.apply(NetEvent::Health(80.0));
+        assert_eq!(std::mem::take(&mut world.health_changes), [(100.0, 80.0)]);
+    }
+
+    /// FSOpenIMContainerOnOfflineMessage: a message kept while we were
+    /// offline, a resident's or a group's, raises the flag the app opens
+    /// the Conversations window on; a live one does not.
+    #[test]
+    fn offline_messages_raise_the_open_conversations_flag() {
+        let (mut world, _, _) = fixture();
+        let from = Uuid::from_u128(78);
+        let im = |world: &World, offline| {
+            NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: from,
+                from_name: "Writer Resident".into(),
+                to_agent_id: world.agent_id,
+                dialog: 0,
+                session_id: Uuid::from_u128(world.agent_id.as_u128() ^ from.as_u128()),
+                message: "hello".into(),
+                offline,
+                from_group: false,
+                binary_bucket: vec![0],
+                timestamp: 0,
+            })
+        };
+        world.apply(im(&world, false));
+        assert!(!world.social.offline_ims, "a live message");
+        world.apply(im(&world, true));
+        assert!(world.social.offline_ims, "kept while we were offline");
+        world.social.offline_ims = false;
+        world.apply(NetEvent::SessionInvite(aurora_net::SessionInvite {
+            session: Uuid::from_u128(0x6E00_0077),
+            from,
+            from_name: "Writer Resident".into(),
+            message: "for the group".into(),
+            session_name: "A Group".into(),
+            offline: true,
+            timestamp: 0,
+        }));
+        assert!(world.social.offline_ims, "a group's offline message");
     }
 
     fn inventory_offer(world: &World, dialog: u8, bucket: Vec<u8>) -> NetEvent {
@@ -7633,6 +9086,25 @@ mod motion_tests {
             world.experiences.permissions.get(&xp),
             Some(&aurora_net::experience::ExperiencePermission::Allowed)
         );
+    }
+
+    #[test]
+    fn closing_an_experience_question_keeps_its_permission_unchanged() {
+        let (mut world, _, _) = fixture();
+        let xp = Uuid::from_u128(0xE2E2);
+        world.apply(NetEvent::ExperienceInfo(vec![aurora_net::experience::ExperienceDetails::unknown(
+            xp,
+        )]));
+        world.apply(experience_question(xp, 1 << 12));
+        let id = world.notifications.list.last().expect("experience question").id;
+        world.experiences.take_commands();
+        let lines = world.chat.len();
+        let (cmds, url) = world.respond_notification(id, notifications::Response::Dismiss);
+        assert!(cmds.is_empty() && url.is_none());
+        assert_eq!(world.chat.len(), lines);
+        assert!(!world.notifications.list.iter().any(|n| n.id == id));
+        assert!(!world.experiences.permissions.contains_key(&xp));
+        assert!(world.experiences.take_commands().is_empty() && world.experiences.profile.is_none());
     }
 
     #[test]
@@ -7952,6 +9424,7 @@ mod motion_tests {
             owner_id: id,
             source_type: ChatSourceType::Agent,
             chat_type: ChatType::Normal,
+            region: None,
             position: Vec3::new(10.0, 10.0, 20.0),
             message: "hello".into(),
         }));
@@ -8008,6 +9481,41 @@ mod motion_tests {
         world.flush_arrival(t);
         world.flush_arrival(t + std::time::Duration::from_secs(60));
         assert_eq!(world.objects.index_of_uuid(&worn.full_id), Some(worn_idx));
+    }
+
+    /// TELEPORT_EXPIRY_PER_ATTACHMENT counts attached objects
+    /// (getAttachmentCount), HUDs included, not their prims: two worn
+    /// linksets of 50 prims and a HUD give up a stuck arrival after
+    /// 15 + 3 x 3 s, not after minutes.
+    #[test]
+    fn the_arrival_waits_per_worn_object_not_per_prim() {
+        let (mut world, _, worn, here, _) = worn_fixture();
+        let mut objects = Vec::new();
+        for n in 0..49 {
+            objects.push(prim(&worn, worn.local_id + 100 + n, worn.local_id));
+        }
+        let mut second = worn.clone();
+        second.local_id = worn.local_id + 1000;
+        second.full_id = Uuid::from_u128(0xBEEF2);
+        for n in 0..49 {
+            objects.push(prim(&second, second.local_id + 1 + n, second.local_id));
+        }
+        let mut hud = worn.clone();
+        hud.local_id = worn.local_id + 2000;
+        hud.full_id = Uuid::from_u128(0xBEEF3);
+        hud.state = 0xF1;
+        objects.push(second);
+        objects.push(hud);
+        world.apply(NetEvent::ObjectUpdates { handle: here, objects });
+        assert_eq!(world.own_attachment_count(), 3);
+        world.arrived_once = true;
+        world.begin_teleport(true);
+        world.apply(NetEvent::TeleportStarted { flags: 0 });
+        let t = Instant::now();
+        let count = world.own_attachment_count();
+        assert!(!world.arrival_overdue(t, count));
+        assert!(!world.arrival_overdue(t + Duration::from_secs(24), count));
+        assert!(world.arrival_overdue(t + Duration::from_secs(25), count));
     }
 
     #[test]
@@ -8754,12 +10262,15 @@ mod motion_tests {
                 materials_rate: None,
                 materials_max: None,
                 lsl_syntax_id: Uuid::nil(),
+                lua_scripts: false,
                 grid_status_feed: String::new(),
                 grid_status_page: String::new(),
                 currency_base_uri: String::new(),
                 opensim: Default::default(),
                 currency_symbol: String::new(),
                 export_supported: false,
+                group_chat_post_links: false,
+                game_control: false,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());
@@ -8809,11 +10320,19 @@ mod motion_tests {
         world.inventory.queue.clear();
         world.apply(NetEvent::MainRegionChanged { handle: there });
         // sent on the capabilities of the region left: asked again once
-        world.apply(NetEvent::InventoryFetchFailed { folders: vec![cof] });
+        world.apply(NetEvent::InventoryFetchFailed {
+            folders: vec![cof],
+            too_big: false,
+            status: None,
+        });
         assert_eq!(world.inventory.queue, vec![(cof, false)]);
         world.inventory.queue.clear();
         // the region entered has no capabilities yet: it waits for them
-        world.apply(NetEvent::InventoryFetchFailed { folders: vec![cof] });
+        world.apply(NetEvent::InventoryFetchFailed {
+            folders: vec![cof],
+            too_big: false,
+            status: None,
+        });
         assert!(world.inventory.queue.is_empty());
         assert_eq!(world.inventory.folders[&cof].state, FetchState::Failed);
         // a neighbour's capabilities change nothing
@@ -8837,7 +10356,7 @@ mod motion_tests {
             position: Vec3::new(255.0, 50.0, 30.0),
             look_at: Vec3::Y,
         });
-        assert!(world.arrived_by_crossing);
+        assert!(world.arrived_by_crossing && world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(256.5, 50.0, 30.0));
         assert_eq!(world.take_origin_shift(), Vec3::new(256.0, 0.0, 0.0));
     }
@@ -8855,7 +10374,7 @@ mod motion_tests {
             position: Vec3::new(200.0, 20.0, 40.0),
             look_at: Vec3::Y,
         });
-        assert!(!world.arrived_by_crossing);
+        assert!(!world.arrived_by_crossing && world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(200.0, 20.0, 40.0));
         assert_eq!(world.agent.velocity, Vec3::ZERO);
     }
@@ -8869,7 +10388,7 @@ mod motion_tests {
             position: Vec3::new(200.0, 50.0, 30.0),
             look_at: Vec3::Y,
         });
-        assert!(!world.arrived_by_crossing);
+        assert!(!world.arrived_by_crossing && !world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(200.0, 50.0, 30.0));
     }
 

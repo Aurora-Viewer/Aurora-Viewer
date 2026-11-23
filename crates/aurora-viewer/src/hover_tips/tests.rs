@@ -276,3 +276,191 @@ fn the_hovered_parcel_is_asked_once_and_kept() {
         "another parcel"
     );
 }
+
+const VENDOR: u32 = 34_001;
+const OTHER: u32 = 34_002;
+const OWNER: Uuid = Uuid::from_u128(0x0A11);
+
+/// The demo world with RLVa on: a scripted vendor prim 1 m from the agent
+/// and another avatar, with a group title, 2 m away. Returns their subjects
+/// and the vendor's properties.
+fn rlva_world() -> (World, Subject, Subject, HashMap<Uuid, ObjectProps>) {
+    let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    let handle = world.main_region.expect("demo region");
+    let at = Vec3::new(100.0, 120.0, 30.0);
+    let mut vendor = crate::demo::action_avatar(false);
+    vendor.local_id = VENDOR;
+    vendor.full_id = crate::demo::action_id(VENDOR);
+    vendor.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+    vendor.parent_id = 0;
+    vendor.position = at;
+    vendor.name_values.clear();
+    let mut other = crate::demo::action_avatar(false);
+    other.local_id = OTHER;
+    other.full_id = crate::demo::action_id(OTHER);
+    other.parent_id = 0;
+    other.position = at + Vec3::X * 2.0;
+    other.name_values = "FirstName STRING RW SV Test\nLastName STRING RW SV Resident\nTitle STRING RW SV Boss".to_owned();
+    world.apply(aurora_net::NetEvent::ObjectUpdates {
+        handle,
+        objects: vec![vendor, other],
+    });
+    world.agent.position = at + Vec3::Y;
+    let vendor = world.objects.index_of_uuid(&crate::demo::action_id(VENDOR)).expect("vendor");
+    world.objects.get_mut(vendor).expect("vendor").update_flags = flag::HANDLE_TOUCH | flag::TAKES_MONEY;
+    let other = world.objects.index_of_uuid(&crate::demo::action_id(OTHER)).expect("other avatar");
+    let props = HashMap::from([(
+        crate::demo::action_id(VENDOR),
+        ObjectProps {
+            object_id: crate::demo::action_id(VENDOR),
+            owner_id: OWNER,
+            owner_mask: perm::TRANSFER | perm::COPY,
+            sale_type: 2,
+            sale_price: 10,
+            name: "Vendor".to_owned(),
+            ..Default::default()
+        },
+    )]);
+    world.rlva.configure(true);
+    let object = subject_at(&world, Some(vendor), at).expect("an object subject");
+    let avatar = subject_at(&world, Some(other), at + Vec3::X * 2.0).expect("an avatar subject");
+    assert!(matches!(object, Subject::Object { .. }) && matches!(avatar, Subject::Avatar { .. }));
+    (world, object, avatar, props)
+}
+
+fn rlva_restrict(world: &mut World, text: &str) {
+    assert!(world.rlva.receive(&aurora_net::ChatMessage {
+        from_name: "Test object".to_owned(),
+        source_id: Uuid::from_u128(1),
+        owner_id: Uuid::from_u128(2),
+        source_type: aurora_net::ChatSourceType::Object,
+        chat_type: aurora_net::ChatType::OwnerSay,
+        region: None,
+        position: Vec3::ZERO,
+        message: text.to_owned(),
+    }));
+}
+
+/// The tip of `subject` hovered at `point`, every switch on.
+fn rlva_tip(world: &mut World, subject: Subject, props: &HashMap<Uuid, ObjectProps>, point: Vec3) -> Tip {
+    let settings = HoverTips {
+        enabled: true,
+        all_objects: true,
+        group_titles: true,
+        ..HoverTips::default()
+    };
+    let parcels = HoverParcels::default();
+    let sources = Sources {
+        props,
+        parcels: &parcels,
+        land_impact: None,
+        point,
+        agent: world.agent.position,
+    };
+    build(world, subject, &sources, &settings).expect("a tip")
+}
+
+#[test]
+fn rlva_leaves_no_tip_on_what_the_user_may_not_interact_with() {
+    let (mut world, object, avatar, _) = rlva_world();
+    let at = Vec3::new(100.0, 120.0, 30.0);
+    let land = Subject::Land {
+        handle: world.main_region.expect("demo region"),
+        local: at,
+        origin: (0, 0),
+    };
+    for subject in [object, avatar, land] {
+        assert!(rlva_allows(&world, subject, at));
+    }
+    // @fartouch: the hovered point decides, the land keeps its tip
+    rlva_restrict(&mut world, "@fartouch:0.5=n");
+    assert!(!rlva_allows(&world, object, at));
+    assert!(!rlva_allows(&world, avatar, at));
+    assert!(rlva_allows(&world, object, world.agent.position + Vec3::X * 0.3));
+    assert!(rlva_allows(&world, land, at));
+    rlva_restrict(&mut world, "@fartouch:0.5=y");
+    // @interact: no tip at all, the land's included
+    rlva_restrict(&mut world, "@interact=n");
+    for subject in [object, avatar, land] {
+        assert!(!rlva_allows(&world, subject, world.agent.position));
+    }
+    // the preference off: every tip is back
+    world.rlva.configure(false);
+    for subject in [object, avatar, land] {
+        assert!(rlva_allows(&world, subject, at));
+    }
+}
+
+#[test]
+fn rlva_hides_the_tip_of_an_avatar_whose_name_is_hidden() {
+    let (mut world, _, avatar, props) = rlva_world();
+    let at = Vec3::new(102.0, 120.0, 30.0);
+    assert_eq!(rlva_tip(&mut world, avatar, &props, at).kicker.as_deref(), Some("Boss"));
+    rlva_restrict(&mut world, "@shownames=n");
+    assert!(!rlva_allows(&world, avatar, at));
+    // an exception brings the tip back, without the group title
+    rlva_restrict(&mut world, &format!("@shownames:{}=add", crate::demo::action_id(OTHER)));
+    assert!(rlva_allows(&world, avatar, at));
+    let tip = rlva_tip(&mut world, avatar, &props, at);
+    assert_eq!(tip.kicker, None);
+    assert!(!tip.legacy.contains("Boss"));
+}
+
+#[test]
+fn rlva_takes_the_refused_buttons_off_an_avatars_tip() {
+    let (mut world, _, avatar, props) = rlva_world();
+    let at = Vec3::new(102.0, 120.0, 30.0);
+    let other = crate::demo::action_id(OTHER);
+    assert_eq!(
+        rlva_tip(&mut world, avatar, &props, at).actions,
+        vec![TipAction::Im(other), TipAction::PayResident(other)]
+    );
+    rlva_restrict(&mut world, "@pay=n");
+    assert_eq!(rlva_tip(&mut world, avatar, &props, at).actions, vec![TipAction::Im(other)]);
+    rlva_restrict(&mut world, "@startim=n");
+    assert!(rlva_tip(&mut world, avatar, &props, at).actions.is_empty());
+}
+
+#[test]
+fn rlva_takes_the_refused_buttons_off_an_objects_tip() {
+    let (mut world, object, _, props) = rlva_world();
+    let at = Vec3::new(100.0, 120.0, 30.0);
+    let id = crate::demo::action_id(VENDOR);
+    let all = vec![TipAction::Buy(id), TipAction::Pay(id), TipAction::Touch(VENDOR)];
+    assert_eq!(rlva_tip(&mut world, object, &props, at).actions, all);
+    rlva_restrict(&mut world, "@buy=n");
+    assert_eq!(rlva_tip(&mut world, object, &props, at).actions, vec![TipAction::Touch(VENDOR)]);
+    rlva_restrict(&mut world, "@buy=y");
+    rlva_restrict(&mut world, "@touchall=n");
+    assert_eq!(rlva_tip(&mut world, object, &props, at).actions, all[..2].to_vec());
+    rlva_restrict(&mut world, "@touchall=y");
+    // @fartouch at the hovered point: Touch goes where the point is too far
+    rlva_restrict(&mut world, "@fartouch:1.5=n");
+    assert_eq!(rlva_tip(&mut world, object, &props, at).actions, all);
+    assert_eq!(rlva_tip(&mut world, object, &props, at - Vec3::Y).actions, all[..2].to_vec());
+}
+
+#[test]
+fn rlva_hides_the_owner_and_the_position_of_an_objects_tip() {
+    let (mut world, object, _, props) = rlva_world();
+    let at = Vec3::new(100.0, 120.0, 30.0);
+    let position = aurora_i18n::tr!("hover-tips-position");
+    let has_position = |tip: &Tip| tip.rows.iter().any(|(label, _)| *label == position);
+    let free = rlva_tip(&mut world, object, &props, at);
+    assert!(has_position(&free));
+    // @showloc: no position, in the card as in the Legacy text; the distance stays
+    rlva_restrict(&mut world, "@showloc=n");
+    let tip = rlva_tip(&mut world, object, &props, at);
+    assert!(!has_position(&tip));
+    assert!(tip.rows.iter().any(|(label, _)| *label == aurora_i18n::tr!("common-distance")));
+    assert!(tip.legacy.lines().count() < free.legacy.lines().count());
+    // @shownames: the owner is a stand-in, an exception changes nothing
+    let anonym = world.rlva_anonymous(OWNER).display_name.clone();
+    rlva_restrict(&mut world, "@shownames=n");
+    assert_eq!(rlva_tip(&mut world, object, &props, at).owner, Some((anonym.clone(), false)));
+    rlva_restrict(&mut world, &format!("@shownames:{OWNER}=add"));
+    assert_eq!(rlva_tip(&mut world, object, &props, at).owner, Some((anonym, false)));
+}

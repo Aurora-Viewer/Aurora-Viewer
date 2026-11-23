@@ -45,6 +45,10 @@ pub(crate) struct Control {
     head_pose: Mutex<Option<HeadPose>>,
     reference: AtomicU64,
     default_resolution: AtomicU64,
+    /// The runtime announced it is going away (`xr_frame::runtime_leaving`):
+    /// VR is over for this renderer, which the viewer replaces by one
+    /// without the runtime.
+    runtime_lost: AtomicBool,
 }
 impl Control {
     pub fn new(available: bool) -> Self {
@@ -54,6 +58,7 @@ impl Control {
             head_pose: Mutex::new(None),
             reference: AtomicU64::new(0),
             default_resolution: AtomicU64::new(0),
+            runtime_lost: AtomicBool::new(false),
             state: AtomicU8::new(if available { VrState::Off } else { VrState::Unavailable } as u8),
         }
     }
@@ -95,6 +100,15 @@ impl Control {
         if let Ok(mut head) = self.head_pose.try_lock() {
             *head = Some(pose);
         }
+    }
+    pub fn runtime_lost(&self) -> bool {
+        self.runtime_lost.load(Ordering::Acquire)
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
+    pub fn lose_runtime(&self) {
+        self.runtime_lost.store(true, Ordering::Release);
+        self.finish(false);
+        self.state.store(VrState::Unavailable as u8, Ordering::Release);
     }
     pub fn focused(&self) -> bool {
         self.focused.load(Ordering::Acquire)
@@ -263,5 +277,18 @@ mod tests {
         assert!(!c.wanted());
         c.finish(false);
         assert!(!c.state().engaged());
+    }
+
+    #[test]
+    fn a_runtime_that_goes_away_ends_vr_and_refuses_new_requests() {
+        let c = Control::new(true);
+        assert!(!c.runtime_lost());
+        c.request(true);
+        c.started();
+        c.lose_runtime();
+        assert!(c.runtime_lost());
+        assert_eq!(c.state(), VrState::Unavailable);
+        assert!(!c.wanted());
+        assert!(!c.request(true));
     }
 }

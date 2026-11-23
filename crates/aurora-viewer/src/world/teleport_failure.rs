@@ -12,13 +12,14 @@
 //! gatekeeper"…) that do not say what happened. On an OpenSim grid, the popup
 //! adds one line that explains the usual cause.
 
-/// A failure the simulator sent, kept until its popup is closed. A new one
-/// replaces it (the notification is `<unique/>`).
+/// A failure the simulator sent, for its popup. A new one replaces it (the
+/// notification is `<unique/>`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
-    pub code: String,
+    /// The reason as the Legacy Viewer words it (`text`).
+    pub text: String,
+    /// The simulator's own text, for the Hypergrid explanation (`hint`).
     pub reason: String,
-    pub region: String,
 }
 
 /// Where the agent is, for the Hypergrid explanations.
@@ -32,12 +33,19 @@ pub enum Grid {
 }
 
 /// The reason as the Legacy Viewer words it: its own text for a code it
-/// knows, else the simulator's text, else the code.
+/// knows, else the simulator's text, else the code; `[REGION_NAME]` filled
+/// in whenever the AlertInfo names a region.
 pub fn text(code: &str, reason: &str, region: &str) -> String {
-    match legacy(code, region) {
+    let said = match legacy(code, region) {
         Some(text) => text,
         None if !reason.is_empty() => reason.to_owned(),
         None => code.to_owned(),
+    };
+    // LLStringUtil::format(big_reason, name_args), on whichever text it is
+    if region.is_empty() {
+        said
+    } else {
+        said.replace("[REGION_NAME]", region)
     }
 }
 
@@ -117,6 +125,12 @@ mod tests {
     fn the_region_name_is_filled_in() {
         let said = text("RegionTPSpecialUsageBlocked", "", "Skill Arena");
         assert!(said.contains("Skill Arena"), "{said}");
+        // also in the simulator's own text, for a code the viewer does not know
+        assert_eq!(
+            text("SomeNewTag", "[REGION_NAME] is closed", "Skill Arena"),
+            "Skill Arena is closed"
+        );
+        assert_eq!(text("SomeNewTag", "[REGION_NAME] is closed", ""), "[REGION_NAME] is closed");
     }
 
     #[test]

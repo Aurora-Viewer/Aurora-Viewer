@@ -6,7 +6,10 @@
 //! code the viewer looks up (`LLAgent::sTeleportErrorMessages`) and the Info
 //! Reason is the text used when the code is unknown. The block's ExtraParams
 //! may name the region (`REGION_NAME`). Without it, the Info Reason is the
-//! code and the text both.
+//! code and the text both, even when empty (OpenSim's EntityTransferModule
+//! sends an empty reason): the popup still opens, as it does in the Legacy
+//! Viewer. A refusal for the content rating is read first
+//! (`teleport_access.rs`).
 
 use crate::NetEvent;
 
@@ -16,21 +19,17 @@ pub(crate) fn event(reason: String, alert: Option<(String, &[u8])>) -> NetEvent 
     match alert.filter(|(message, _)| !message.is_empty()) {
         Some((code, extra)) => {
             let region = crate::region_restart::parse_extra(extra)["REGION_NAME"].to_string_value();
-            NetEvent::TeleportFailed { reason, code, region }
+            NetEvent::TeleportFailed {
+                reason,
+                code: Some(code),
+                region,
+            }
         }
         None => NetEvent::TeleportFailed {
-            code: reason.clone(),
+            code: Some(reason.clone()),
             reason,
             region: String::new(),
         },
-    }
-}
-
-/// The ExtraParams of the event queue's AlertInfo, binary or text.
-pub(crate) fn llsd_bytes(value: &aurora_llsd::Llsd) -> Vec<u8> {
-    match value {
-        aurora_llsd::Llsd::Binary(bytes) => bytes.clone(),
-        other => other.to_string_value().into_bytes(),
     }
 }
 
@@ -38,7 +37,7 @@ pub(crate) fn llsd_bytes(value: &aurora_llsd::Llsd) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    fn fields(event: NetEvent) -> (String, String, String) {
+    fn fields(event: NetEvent) -> (String, Option<String>, String) {
         match event {
             NetEvent::TeleportFailed { reason, code, region } => (reason, code, region),
             other => panic!("not a TeleportFailed: {other:?}"),
@@ -49,15 +48,26 @@ mod tests {
     fn without_alert_info_the_reason_is_the_code() {
         assert_eq!(
             fields(event("Unauthorized".into(), None)),
-            ("Unauthorized".into(), "Unauthorized".into(), String::new())
+            ("Unauthorized".into(), Some("Unauthorized".into()), String::new())
         );
+    }
+
+    #[test]
+    fn an_empty_reason_is_still_the_simulators_failure() {
+        // EntityTransferModule: TeleportFailed with an empty Info.Reason and
+        // no AlertInfo; the Legacy Viewer shows its popup all the same
+        assert_eq!(
+            fields(event(String::new(), None)),
+            (String::new(), Some(String::new()), String::new())
+        );
+        assert_eq!(fields(event(String::new(), Some((String::new(), b"")))).1, Some(String::new()));
     }
 
     #[test]
     fn an_empty_alert_message_counts_as_no_alert_info() {
         // getSizeFast(_PREHASH_AlertInfo, _PREHASH_Message) > 0
         let (_, code, _) = fields(event("noaccess_tport".into(), Some((String::new(), b""))));
-        assert_eq!(code, "noaccess_tport");
+        assert_eq!(code.as_deref(), Some("noaccess_tport"));
     }
 
     #[test]
@@ -68,13 +78,15 @@ mod tests {
             Some(("RegionTPSpecialUsageBlocked".into(), extra.as_slice())),
         ));
         assert_eq!(reason, "You cannot enter");
-        assert_eq!(code, "RegionTPSpecialUsageBlocked");
+        assert_eq!(code.as_deref(), Some("RegionTPSpecialUsageBlocked"));
         assert_eq!(region, "Skill Arena");
     }
 
     #[test]
-    fn unreadable_extra_params_leave_no_region() {
-        let (_, code, region) = fields(event("x".into(), Some(("no_host".into(), b"\x01\x02".as_slice()))));
-        assert_eq!((code.as_str(), region.as_str()), ("no_host", ""));
+    fn missing_or_unreadable_extra_params_leave_no_region() {
+        for extra in [b"".as_slice(), b"  \0\0", b"\x01\x02"] {
+            let (_, code, region) = fields(event("x".into(), Some(("no_host".into(), extra))));
+            assert_eq!((code.as_deref(), region.as_str()), (Some("no_host"), ""));
+        }
     }
 }

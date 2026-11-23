@@ -459,6 +459,9 @@ impl BuildTool {
     pub fn set_tool(&mut self, t: Tool) {
         self.manip.cancel();
         self.land.cancel();
+        // the gesture belongs to the tool it started under
+        self.press = None;
+        self.rect = None;
         self.tool = t;
         // LLToolGrab::handleSelect resets the radio
         if t == Tool::Grab {
@@ -471,7 +474,9 @@ impl BuildTool {
     pub fn set_edit_mode(&mut self, world: &mut World, s: &mut BuildSettings, m: EditMode) {
         let was_face = self.edit_mode == EditMode::Face;
         self.edit_mode = m;
-        if was_face && m != EditMode::Face {
+        // Align works on whole linksets: the faces picked in Move, Rotate
+        // or Stretch (face_buttons.rs) go with "Select face"
+        if (was_face && m != EditMode::Face) || m == EditMode::Align {
             self.faces.clear();
         }
         if m == EditMode::Align && s.edit_linked {
@@ -499,11 +504,10 @@ impl BuildTool {
         let Some(idx) = self.selection.first().and_then(|key| world.objects.index_of(key)) else {
             return "—".into();
         };
-        let Some(o) = world.objects.get(idx) else { return "—".into() };
-        let mut faces: Vec<usize> = match self.faces.get(&o.key).filter(|f| !f.is_empty()) {
-            Some(f) => f.iter().map(|&n| n as usize).collect(),
-            None => (0..self.num_faces(world, idx)).collect(),
-        };
+        let mut faces: Vec<usize> = self.sel_faces(world, idx).into_iter().map(usize::from).collect();
+        if faces.is_empty() {
+            return "—".into();
+        }
         faces.sort_unstable();
         faces.dedup();
         faces.into_iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")
@@ -519,8 +523,8 @@ impl BuildTool {
         }
         if self.tool == Tool::Edit && self.effective_mode(mods) == EditMode::Face {
             let idx = self.selection.first().and_then(|key| world.objects.index_of(key))?;
-            let picked = self.faces.get(&world.objects.get(idx)?.key).map_or(0, Vec::len);
-            let list = if picked == 0 || picked >= self.num_faces(world, idx) {
+            let picked = self.faces.get(&world.objects.get(idx)?.key).map(Vec::len);
+            let list = if picked.is_none_or(|picked| picked >= self.num_faces(world, idx)) {
                 // The LSL constant, untranslated in the Legacy Viewer too.
                 "ALL_SIDES".to_string()
             } else {

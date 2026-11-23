@@ -76,7 +76,7 @@ async fn gesture_upload_preserves_bytes_and_requires_matching_inventory_asset() 
     for (stale, reject) in [(false, false), (true, false), (false, true)] {
         let (url, task) = server(stale, reject, false).await;
         let result = save_content(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &format!("{url}/fetch"),
             Uuid::from_u128(2),
@@ -107,7 +107,7 @@ async fn material_upload_preserves_asset_bytes_and_requires_matching_inventory_a
     for (stale, reject) in [(false, false), (true, false), (false, true)] {
         let (url, task) = server(stale, reject, true).await;
         let result = save_content(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             &url,
             &format!("{url}/fetch"),
             Uuid::from_u128(2),
@@ -126,7 +126,7 @@ async fn material_upload_preserves_asset_bytes_and_requires_matching_inventory_a
     }
     assert!(
         save_content(
-            &reqwest::Client::new(),
+            &crate::test_http_client(),
             "invalid",
             "invalid",
             Uuid::from_u128(2),

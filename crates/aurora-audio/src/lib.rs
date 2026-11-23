@@ -39,9 +39,12 @@ mod mixer;
 mod output;
 mod playlist;
 mod processing;
+mod record;
 mod resample;
 mod reverb;
 mod stream;
+mod tls;
+mod voice_route;
 mod wind;
 
 use std::sync::Arc;
@@ -52,11 +55,14 @@ use parking_lot::Mutex;
 pub use capture::{CAPTURE_SAMPLE_RATE, MAX_INPUT_GAIN, MicCapture, MicFeed, OVERDRIVEN_POWER_LEVEL};
 pub use decode::SoundClip;
 pub use devices::{DeviceLister, DeviceLists, input_devices, output_devices};
-pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE};
+pub use mixer::{Channel, ChannelSettings, ENGINE_SAMPLE_RATE, MAX_RATE, MIN_RATE};
 pub use output::OutputInfo;
 pub use processing::{EchoReference, MicProcessing};
+pub use record::{Block as RecordBlock, RECORD_BLOCK, RecordTap};
 pub use reverb::ReverbParams;
 pub use stream::{StreamError, StreamStatus};
+pub use tls::CertificateIssue;
+pub use voice_route::{VoiceStream, voice_stream_for};
 pub use wind::WindTarget;
 
 use mixer::{ClipVoice, Command, Mixer, PcmSource, SharedParams, WorldVoice};
@@ -161,6 +167,17 @@ impl AudioEngine {
         self.inner.output.set_device(name);
     }
 
+    /// Routes voice to `name` when it differs from the active main output.
+    /// `None`, an empty name, or the main output's current device keeps voice
+    /// on the main stream. The voice sink remains connected while the route
+    /// changes. If the requested device is unavailable, voice falls back to
+    /// the main stream and the request is retried when output devices change,
+    /// and on a timer with a backoff (2 s doubling to 30 s) while the device
+    /// stays listed.
+    pub fn set_voice_output_device(&self, name: Option<String>) {
+        self.inner.output.set_voice_device(name.filter(|name| !name.is_empty()));
+    }
+
     /// Sets a channel volume (linear, clamped to 0..=1).
     pub fn set_volume(&self, ch: Channel, v: f32) {
         self.inner.params.set_volume(ch, v);
@@ -236,10 +253,9 @@ impl AudioEngine {
     /// the same id): mono, looped or not, with (left, right) gains updated
     /// by [`AudioEngine::world_gain`] as the listener or the source moves.
     pub fn play_world(&self, id: u64, ch: Channel, clip: &SoundClip, looped: bool, gain: (f32, f32)) {
-        let _ = self
-            .inner
-            .cmd_tx
-            .try_send(Command::PlayWorld(WorldVoice::new(id, ch, clip.samples.clone(), looped, gain)));
+        let _ = self.inner.cmd_tx.try_send(Command::PlayWorld(
+            WorldVoice::new(id, ch, clip.samples.clone(), looped, gain).starting_at(clip.start),
+        ));
     }
 
     /// Like [`AudioEngine::play_world`], rendered binaurally (3D sound for
@@ -247,7 +263,7 @@ impl AudioEngine {
     /// direction in the listener's frame (x to the right, y ahead, z up),
     /// updated by [`AudioEngine::world_binaural`].
     pub fn play_world_binaural(&self, id: u64, ch: Channel, clip: &SoundClip, looped: bool, gain: f32, direction: [f32; 3]) {
-        let voice = WorldVoice::new_binaural(id, ch, clip.samples.clone(), looped, gain, direction);
+        let voice = WorldVoice::new_binaural(id, ch, clip.samples.clone(), looped, gain, direction).starting_at(clip.start);
         let _ = self.inner.cmd_tx.try_send(Command::PlayWorld(voice));
     }
 
@@ -281,11 +297,35 @@ impl AudioEngine {
         let _ = self.inner.cmd_tx.try_send(Command::WorldReverbSend(id, factor));
     }
 
+    /// Playback rate of a world sound, its Doppler shift: above 1 higher
+    /// (coming closer), below 1 lower (going away), within
+    /// [`MIN_RATE`]..[`MAX_RATE`]. Glides over a buffer; a sound that has
+    /// not played yet takes it at once.
+    pub fn world_rate(&self, id: u64, rate: f32) {
+        let _ = self.inner.cmd_tx.try_send(Command::WorldRate(id, rate));
+    }
+
     /// The reverb of the surroundings on with these parameters (they glide
     /// there), or off (`None`: its output fades out, then the mix is the dry
     /// one, bit for bit).
     pub fn set_reverb(&self, params: Option<ReverbParams>) {
         let _ = self.inner.cmd_tx.try_send(Command::Reverb(params));
+    }
+
+    /// The Director's film takes the viewer's own mix of `channels` from
+    /// now on (record.rs): what the user hears of them, at their volumes and
+    /// mutes. A second call replaces the first; `stop_recording` ends it.
+    pub fn start_recording(&self, channels: &[Channel]) -> RecordTap {
+        let (sink, tap) = record::pair(channels);
+        if self.inner.cmd_tx.try_send(Command::Record(Some(Box::new(sink)))).is_err() {
+            log::warn!("audio: the film's sound could not be started (command queue full)");
+        }
+        tap
+    }
+
+    /// The film no longer takes the mix.
+    pub fn stop_recording(&self) {
+        let _ = self.inner.cmd_tx.try_send(Command::Record(None));
     }
 
     /// Fades a world sound out and removes it.
@@ -301,10 +341,9 @@ impl AudioEngine {
 
     /// Plays a one-shot sound on `ch` with an extra per-sound `gain` (0..=1).
     pub fn play_clip(&self, ch: Channel, clip: &SoundClip, gain: f32) {
-        let _ = self
-            .inner
-            .cmd_tx
-            .try_send(Command::PlayClip(ClipVoice::new(ch, clip.samples.clone(), gain)));
+        let _ = self.inner.cmd_tx.try_send(Command::PlayClip(
+            ClipVoice::new(ch, clip.samples.clone(), gain).starting_at(clip.start),
+        ));
     }
 }
 

@@ -35,6 +35,7 @@ impl Editor {
         let copy = |pose: &mut SubjectPose, from: usize, to: usize| {
             pose.rotations[to] = data::mirrored(rig, before.rotations[from], from, to);
             pose.origin[to] = data::mirrored(rig, before.origin[from], from, to);
+            pose.hold_rotation[to] = before.hold_rotation[from];
             pose.positions[to] = session.base.positions[to] + rig_controls::reflect(before.positions[from] - session.base.positions[from]);
             pose.scales[to] = session.base.scales[to] * (before.scales[from] / session.base.scales[from]);
             pose.locks.remove(&to);
@@ -76,6 +77,7 @@ impl Editor {
                 for &b in &reset {
                     pose.rotations[b] = session.base.rotations[b];
                     pose.origin[b] = session.base.origin[b];
+                    pose.hold_rotation[b] = session.base.hold_rotation[b];
                     pose.positions[b] = session.base.positions[b];
                     pose.scales[b] = session.base.scales[b];
                     pose.locks.remove(&b);
@@ -88,6 +90,7 @@ impl Editor {
                 // from here on the whole pose is the user's: it exports in
                 // full (FSPoserAnimator::setAllAvatarStartingRotationsToZero)
                 pose.origin.clone_from(&rig.local_rot);
+                pose.hold_rotation.fill(true);
                 pose.locks.clear();
             }
             Operation::WorldLock => {
@@ -141,7 +144,11 @@ impl Editor {
                 None => name.ends_with("Left") || name.ends_with("Right"),
             };
             if applies && let Some(&bone) = rig.names.get(name) {
-                pose.rotations[bone] = Quat::from_euler(EulerRot::ZYX, xyz[2], xyz[1], xyz[0]);
+                // X, then Y, then Z, like LLMatrix3(roll, pitch, yaw)
+                // (indra/llmath/m3math.cpp, setRot) in
+                // FSPoserAnimator::translateRotationToQuaternion: the curled
+                // presets (Fist, Point) were up to 105° off in Z-Y-X (#3602)
+                pose.rotations[bone] = Quat::from_euler(EulerRot::XYZ, xyz[0], xyz[1], xyz[2]);
                 pose.origin[bone] = rig.local_rot[bone];
                 pose.locks.remove(&bone);
             }
@@ -156,11 +163,12 @@ impl Editor {
     /// window's joint row; a right click puts an axis back. True when one
     /// changed: `apply_joint_value` then sets it. `base_point` is the joint's
     /// starting place, for Position.
-    pub(super) fn axis_sliders(&self, ui: &mut egui::Ui, p: &Palette, value: &mut Vec3, base_point: Option<Vec3>) -> bool {
+    pub(super) fn axis_sliders(&self, ui: &mut egui::Ui, p: &Palette, value: &mut Vec3, base_point: Option<Vec3>, bone_name: &str) -> bool {
         let mut edited = false;
         // below the last decimal shown: 0, never -0
         let zero = if self.poser.transform == 0 { 0.005 } else { 0.00005 };
         let unit = ["°", " m", " ×"][self.poser.transform.min(2)];
+        let fine_position = self.poser.transform == 1 && visibility::Group::of(bone_name) == visibility::Group::Face;
         for axis in 0..3 {
             ui.horizontal(|ui| {
                 ui.label(
@@ -179,16 +187,38 @@ impl Editor {
                 ui.spacing_mut().slider_width = (ui.available_width() - 84.0).max(60.0);
                 // Display precision must not round the captured pose on idle
                 // frames or add another undo step when a gizmo drag ends.
-                let response = ui.add(
-                    egui::Slider::new(&mut value[axis], range)
-                        .clamping(egui::SliderClamping::Edits)
-                        .suffix(unit)
-                        .max_decimals(if self.poser.transform == 0 { 2 } else { 4 })
-                        // a tiny negative reads 0, never -0
-                        .custom_formatter(move |v, range| {
-                            egui::emath::format_with_decimals_in_range(if v.abs() < zero { 0.0 } else { v }, range)
-                        }),
-                );
+                let response = if fine_position {
+                    // An absolute track moves the lip as soon as it is pressed.
+                    // A relative field starts at the displayed position (or delta)
+                    // and moves a tenth of a millimetre per logical pixel.
+                    let center = if self.poser.delta {
+                        0.0
+                    } else {
+                        base_point.unwrap_or_default()[axis]
+                    };
+                    ui.add(
+                        egui::DragValue::new(&mut value[axis])
+                            .min_size(egui::vec2(ui.available_width(), ui.spacing().interact_size.y))
+                            .speed(0.0001)
+                            .range(center - 5.0..=center + 5.0)
+                            .clamp_existing_to_range(false)
+                            .fixed_decimals(4)
+                            .suffix(unit),
+                    )
+                    .on_hover_text(aurora_i18n::tr!("poser-face-position-drag"))
+                } else {
+                    ui.add(
+                        egui::Slider::new(&mut value[axis], range)
+                            .clamping(egui::SliderClamping::Edits)
+                            .step_by(if self.poser.transform == 0 { 0.01 } else { 0.001 })
+                            .suffix(unit)
+                            .max_decimals(if self.poser.transform == 0 { 2 } else { 4 })
+                            // a tiny negative reads 0, never -0
+                            .custom_formatter(move |v, range| {
+                                egui::emath::format_with_decimals_in_range(if v.abs() < zero { 0.0 } else { v }, range)
+                            }),
+                    )
+                };
                 edited |= response.changed();
                 if response.secondary_clicked() {
                     value[axis] = match self.poser.transform {
@@ -266,6 +296,7 @@ impl Editor {
                     {
                         pose.rotations[other] = data::mirrored(rig, pose.rotations[changed], changed, other);
                         pose.origin[other] = data::mirrored(rig, pose.origin[changed], changed, other);
+                        pose.hold_rotation[other] = pose.hold_rotation[changed];
                         pose.scales[other] = base.scales[other] * (pose.scales[changed] / base.scales[changed]);
                         pose.locks.remove(&other);
                     }
@@ -395,16 +426,18 @@ impl Editor {
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let changed = widgets::segmented(
-                ui,
-                p,
-                &mut self.poser.transform,
-                &[
-                    (aurora_i18n::text("poser-mode-rotation"), false),
-                    (aurora_i18n::text("poser-mode-position"), false),
-                    (aurora_i18n::text("poser-mode-scale"), false),
-                ],
-            );
+            let modes = [
+                (aurora_i18n::text("poser-mode-rotation"), false),
+                (aurora_i18n::text("poser-mode-position"), false),
+                (aurora_i18n::text("poser-mode-scale"), false),
+            ];
+            let animation_active = self.clip.active;
+            if animation_active && self.clip.restrict_pose_transform(&mut self.poser.transform) {
+                self.tool = Tool::Rotate;
+                self.poser.cancel_scale_gizmo();
+            }
+            let available_modes = if animation_active { &modes[..2] } else { &modes[..] };
+            let changed = widgets::segmented(ui, p, &mut self.poser.transform, available_modes);
             if changed {
                 self.tool = if self.poser.transform == 0 { Tool::Rotate } else { Tool::Move };
                 self.gizmo.cancel();
@@ -433,6 +466,9 @@ impl Editor {
             ui.spacing_mut().item_spacing.x = 16.0;
             ui.vertical(|ui| {
                 let (rect, response) = ui.allocate_exact_size(egui::vec2(TRACKBALL, TRACKBALL), Sense::drag());
+                if self.poser.transform == 0 {
+                    response.clone().on_hover_text(aurora_i18n::tr!("poser-fine-adjustment"));
+                }
                 let painter = ui.painter();
                 let center = rect.center();
                 let radius = TRACKBALL / 2.0 - 14.0;
@@ -472,7 +508,8 @@ impl Editor {
                     }
                     painter.circle_filled(center, 4.0, p.ink);
                     if self.poser.transform == 0 && response.dragged() {
-                        let d = ui.input(|i| i.pointer.delta()) * self.poser.sensitivity * 0.025;
+                        let (pointer_delta, fine) = ui.input(|i| (i.pointer.delta(), i.modifiers.shift));
+                        let d = trackball::drag_delta(pointer_delta, self.poser.sensitivity, fine);
                         let local = trackball::rotate(&cam, parent, pose.rotations[bone], d);
                         let q = if self.poser.delta {
                             base.rotations[bone].inverse() * local
@@ -497,7 +534,7 @@ impl Editor {
             });
             ui.vertical(|ui| {
                 ui.add_space(TRACKBALL / 2.0 - 60.0);
-                edited |= self.axis_sliders(ui, p, &mut value, base_point);
+                edited |= self.axis_sliders(ui, p, &mut value, base_point, name);
                 ui.add_space(4.0);
                 // beside the trackball the column is narrow: the French and a
                 // larger font take two lines

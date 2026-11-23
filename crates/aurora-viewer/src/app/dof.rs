@@ -69,9 +69,27 @@ impl App {
             }
             return Some(dof::lens(&s, d, view, debug));
         }
+        // the Director's lens while its window is open with its depth of
+        // field on: at its own aperture, focused on the lock's target or at
+        // the distance set there
+        if let Some((f_number, distance)) = self.director_dof() {
+            let s = dof::Settings {
+                enabled: true,
+                f_number,
+                ..self.settings.dof.clone()
+            };
+            let focus = self.dof_focus.update(distance, dt, s.transition);
+            return Some(dof::lens(&s, focus, view, false));
+        }
         // the photo window's lens while it is open, off included (its All
         // sharp is sharp, not the Preferences' blur), else the Preferences'
         // (never changed by the window)
+        // a 360° picture has no depth of field (the blur would differ from
+        // face to face and show at their edges): the live view shows what
+        // the picture will, with none
+        if self.pano_open() || self.capture_360.drawing_face() {
+            return None;
+        }
         let photo = &self.settings.snapshot.dof;
         let (s, manual) = if self.panels.snapshot {
             photo.applied(&self.settings.dof)
@@ -138,6 +156,56 @@ impl App {
             });
         }
         Some(lens)
+    }
+
+    /// "Show focus point" (FSFocusPointRender, LLPipeline::renderFocusPoint,
+    /// pipeline.cpp, originally LGPL 2.1): the Legacy Viewer's triad, three
+    /// segments of 4 cm along the world's axes centred on the point the
+    /// lens focuses on, one colour (yellow when the focus is free, red when
+    /// it is locked), over everything (no depth test), on the screen only,
+    /// never in a photo. It shows under the conditions that the effect
+    /// itself does (`dof_frame`).
+    pub(super) fn draw_focus_point(&self, ctx: &egui::Context, proj: &crate::ui::hud::Projector) {
+        if !self.settings.dof.show_focus_point {
+            return;
+        }
+        let photo = &self.settings.snapshot.dof;
+        let (s, manual) = if self.panels.snapshot {
+            photo.applied(&self.settings.dof)
+        } else {
+            (self.settings.dof.clone(), None)
+        };
+        let lens_on = s.enabled
+            && !(self.build.open && !s.in_edit)
+            && !posing_turns_dof_off(self.ik_editor.posing(), self.ik_editor.poser_dof(), self.panels.snapshot)
+            && self.in_world();
+        // the Director's lens, a 360° picture (no depth of field), and the
+        // viewfinder's AF-S (its own mark, no point of ours)
+        let blocked = self.director_dof().is_some()
+            || self.pano_open()
+            || self.capture_360.drawing_face()
+            || (self.viewfinder_on() && photo.enabled && photo.focus == crate::dof::PhotoFocus::Click);
+        let input = dof::FocusMarkInput {
+            show: true,
+            lens_on,
+            blocked,
+            manual: manual.is_some(),
+            focus: s.focus,
+            point: self.dof_focus.point,
+            target: self.camera.target,
+        };
+        let Some((point, [r, g, b, a])) = dof::focus_mark(&input) else {
+            return;
+        };
+        // theme-guard: content: the Legacy Viewer's own colours of the mark
+        let color = egui::Color32::from_rgba_unmultiplied(r, g, b, a);
+        let painter = crate::ui::hud::world_painter(ctx);
+        for axis in [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z] {
+            let end = |sign: f32| proj.project(point + axis * (sign * dof::FOCUS_MARK_HALF)).map(|(at, _)| at);
+            if let (Some(from), Some(to)) = (end(-1.0), end(1.0)) {
+                painter.line_segment([from, to], egui::Stroke::new(1.0, color));
+            }
+        }
     }
 }
 
