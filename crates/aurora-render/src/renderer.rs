@@ -2003,7 +2003,8 @@ pub(crate) struct Backend {
     /// then the user's settings applied by a frame, with nothing refused.
     seed: Option<Box<BackendInit>>,
     /// The scene pipelines are specialised (Metal: `scene_variant::
-    /// specialised`), their lean variants made with the others.
+    /// specialised`): their lean variants are compiled after the start
+    /// (`start_lean_build`) and with every later set.
     specialise: bool,
     /// Video memory refused part of what the start makes outside the render
     /// targets (the placeholders, probes, shadow atlases, culling and
@@ -2206,6 +2207,9 @@ pub(crate) struct Backend {
     soft_pipelines: bool,
     /// The pipelines being compiled for other samples or SSR, if any.
     pipeline_build: Option<PipelineBuild>,
+    /// The lean scene pipelines being compiled after the start (Metal,
+    /// `start_lean_build`), if any.
+    lean_build: Option<LeanBuild>,
     /// The pipeline workers still running, a set no longer wanted included:
     /// waited for when the renderer is dropped (`wait_pipeline_workers`).
     pipeline_workers: Vec<std::thread::JoinHandle<()>>,
@@ -3409,6 +3413,21 @@ struct PipelineBuild {
     done: std::sync::mpsc::Receiver<(Pipelines, ImpostorPipelines)>,
 }
 
+/// The lean scene pipelines (Metal, `scene_variant::specialised`) compiled
+/// on a worker thread once the renderer has started: made with the others,
+/// the 112 of them took the first start after an update (an empty Metal
+/// shader cache) from 6.7 to 27.7 s on an M2 Pro. The frames draw with the
+/// full shader meanwhile, the same image. Taken only if the samples, SSR and
+/// soft shadows are still those it was made for; a set compiled for new ones
+/// (`PipelineBuild`) carries its own.
+struct LeanBuild {
+    samples: u32,
+    ssr: bool,
+    soft: bool,
+    started: std::time::Instant,
+    done: std::sync::mpsc::Receiver<Pipelines>,
+}
+
 impl Impostors {
     fn new(
         device: &wgpu::Device,
@@ -4439,7 +4458,7 @@ impl Backend {
             format,
             settings.gbuffer(),
             soft_path(&settings),
-            specialise,
+            false,
         );
         let ssao = Self::make_ssao(&device);
         let gtao = crate::gtao::Gtao::new(&device);
@@ -4706,6 +4725,7 @@ impl Backend {
             finishers: Helpers::new(2, "aurora-render-finish", finish_encoder),
             msaa_samples,
             pipeline_build: None,
+            lean_build: None,
             soft_pipelines: soft_path(&settings),
             pipeline_workers: Vec::new(),
             rain_wet: RainWet::default(),
@@ -5044,7 +5064,7 @@ impl Backend {
         surface_format: wgpu::TextureFormat,
         ssr: bool,
         soft: bool,
-        specialise: bool,
+        lean: bool,
     ) -> Pipelines {
         // (without the stochastic transparency's passes: its own module,
         // `make_st`, when the method is first on)
@@ -5184,7 +5204,7 @@ impl Backend {
         // their lean variants (SCENE_VARIANT 1 to 4, scene_variant.rs)
         let lean_opaque = [1.0, 2.0, 3.0, 4.0].map(|v| [("SCENE_VARIANT", v)]);
         let lean_mask = [1.0, 2.0, 3.0, 4.0].map(|v| [a2c[0], ("SCENE_VARIANT", v)]);
-        let lean = specialise.then(|| {
+        let lean_scene = lean.then(|| {
             [0, 1, 2, 3].map(|v| {
                 [
                     pipe(PipeDesc {
@@ -5218,7 +5238,7 @@ impl Backend {
         let lean_opaque_material = [1.0, 2.0, 3.0, 4.0].map(|v| [1.0, 2.0, 3.0].map(|c| [("SCENE_VARIANT", v), ("MATERIAL_CLASS", c)]));
         let lean_mask_material =
             [1.0, 2.0, 3.0, 4.0].map(|v| [1.0, 2.0, 3.0].map(|c| [a2c[0], ("SCENE_VARIANT", v), ("MATERIAL_CLASS", c)]));
-        let lean_material = specialise.then(|| {
+        let lean_material = lean.then(|| {
             [0, 1, 2, 3].map(|v| {
                 [0, 1, 2].map(|c| {
                     [
@@ -5387,7 +5407,7 @@ impl Backend {
                 [("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0), ("SCENE_VARIANT", v)],
             ]
         });
-        let lean_blend = specialise.then(|| {
+        let lean_blend = lean.then(|| {
             [0, 1, 2, 3].map(|v| {
                 let [plain, early] = &lean_blend_constants[v];
                 [
@@ -5429,7 +5449,7 @@ impl Backend {
                 ]
             })
         });
-        let lean_blend_material = specialise.then(|| {
+        let lean_blend_material = lean.then(|| {
             [0, 1, 2, 3].map(|v| {
                 [0, 1, 2].map(|class| {
                     sided_pipe(PipeDesc {
@@ -6312,7 +6332,7 @@ impl Backend {
             opaque_2s: opaque_2s.resolve(&mut done),
             mask: mask.resolve(&mut done),
             mask_2s: mask_2s.resolve(&mut done),
-            lean: lean.resolve(&mut done),
+            lean: lean_scene.resolve(&mut done),
             lean_blend: lean_blend.resolve(&mut done),
             lean_blend_material: lean_blend_material.resolve(&mut done),
             lean_material: lean_material.resolve(&mut done),
@@ -7432,7 +7452,7 @@ impl Backend {
                     self.config.format,
                     s.gbuffer(),
                     soft,
-                    self.specialise,
+                    false,
                 );
                 let impostors = Impostors::make_pipelines(
                     &self.device,
@@ -7447,6 +7467,106 @@ impl Backend {
                 self.apply_settings_with(s, Some((samples, scene, impostors)));
             }
         }
+    }
+
+    /// Start compiling the lean scene pipelines for the current samples,
+    /// SSR and soft shadows on a worker thread (`LeanBuild`), where they are
+    /// wanted and missing.
+    fn start_lean_build(&mut self) {
+        if !self.specialise || self.pipelines.lean.is_some() {
+            return;
+        }
+        let (samples, ssr, soft) = (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines);
+        if self
+            .lean_build
+            .as_ref()
+            .is_some_and(|b| (b.samples, b.ssr, b.soft) == (samples, ssr, soft))
+        {
+            return;
+        }
+        let (tx, done) = std::sync::mpsc::sync_channel(1);
+        let device = self.device.clone();
+        let layouts = [
+            self.frame_layout.clone(),
+            self.records_layout.clone(),
+            self.tex_layout.clone(),
+            self.shadow_layout.clone(),
+            self.post_layout.clone(),
+            self.bloom.post_layout.clone(),
+            self.gbuf_layout.clone(),
+        ];
+        let format = self.config.format;
+        // (the whole set is described again: the pipelines the frames
+        // already draw with come from the driver's cache)
+        let spawned = std::thread::Builder::new().name("aurora-pipelines-lean".into()).spawn(move || {
+            let [frame, records, tex, shadow, post, bloom, gbuf] = &layouts;
+            let scene = Self::make_pipelines(
+                &device,
+                frame,
+                records,
+                tex,
+                shadow,
+                [post, bloom],
+                gbuf,
+                samples,
+                format,
+                ssr,
+                soft,
+                true,
+            );
+            // (refused once no longer wanted: dropped)
+            let _ = tx.send(scene);
+        });
+        match spawned {
+            Ok(worker) => {
+                self.pipeline_workers.retain(|w| !w.is_finished());
+                self.pipeline_workers.push(worker);
+                self.lean_build = Some(LeanBuild {
+                    samples,
+                    ssr,
+                    soft,
+                    started: std::time::Instant::now(),
+                    done,
+                });
+            }
+            // the frames keep the full shader
+            Err(e) => log::error!("cannot start the lean pipelines' worker: {e}"),
+        }
+    }
+
+    /// Take the lean scene pipelines once their worker made them, if the
+    /// samples, SSR and soft shadows are still theirs.
+    /// Started once the start is over (the user's settings applied, `seed`
+    /// gone) and no other set is compiling: a set compiled for the user's
+    /// samples or SSR carries its own lean pipelines.
+    fn take_lean_build(&mut self) {
+        let Some(build) = &self.lean_build else {
+            if self.seed.is_none() && self.pipeline_build.is_none() {
+                self.start_lean_build();
+            }
+            return;
+        };
+        let scene = match build.done.try_recv() {
+            Ok(scene) => scene,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                log::error!("the lean pipelines' worker stopped: the full scene shader stays");
+                self.lean_build = None;
+                return;
+            }
+        };
+        let current = (self.msaa_samples, self.settings.gbuffer(), self.soft_pipelines);
+        if (build.samples, build.ssr, build.soft) == current && self.pipelines.lean.is_none() {
+            log::info!("lean scene pipelines ready in {} ms", build.started.elapsed().as_millis());
+            let p = &mut self.pipelines;
+            p.lean = scene.lean;
+            p.lean_blend = scene.lean_blend;
+            p.lean_blend_material = scene.lean_blend_material;
+            p.lean_material = scene.lean_material;
+        }
+        // (made for samples or SSR gone meanwhile: again for the current
+        // ones, at the next frame)
+        self.lean_build = None;
     }
 
     /// Compile the pipelines for `samples`, `ssr` and the soft shadows'
@@ -8790,6 +8910,7 @@ impl Backend {
     }
 
     fn render_view(&mut self, packet: FramePacket) -> FrameResult {
+        self.take_lean_build();
         // (here, not in `render`: the eyes' backends of VR are made, and
         // can be refused, like the window's)
         if self.remake && self.oom.targets_due(Instant::now()) {
