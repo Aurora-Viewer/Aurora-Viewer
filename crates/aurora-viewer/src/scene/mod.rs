@@ -6458,14 +6458,14 @@ impl Scene {
         }
     }
 
-    /// Animated system eyes relative to the avatar root, before its world
-    /// transform: the mouselook camera's eye point
-    /// (`anim::Controller::system_eyes_pos`, LLVOAvatar::mHeadOffset), never
+    /// The animated left system eye relative to the avatar root, before its
+    /// world transform: the mouselook camera's eye point
+    /// (`anim::Controller::camera_eye_pos`, LLVOAvatar::mHeadOffset), never
     /// the Bento eyes of a mesh head, which the look-at line follows
     /// (`eyes_world`). Camera placement can then apply the hover-camera
     /// preference directly.
     pub fn eyes_offset(&self, world: &World, id: &Uuid) -> Option<Vec3> {
-        Some(self.motions.get(id)?.system_eyes_pos()? - world.avatar_lib.pelvis)
+        Some(self.motions.get(id)?.camera_eye_pos()? - world.avatar_lib.pelvis)
     }
 
     /// The head joint as last posed, relative to the avatar root (as
@@ -7692,7 +7692,7 @@ mod tests {
             });
             let now = now + std::time::Duration::from_secs(i as u64);
             scene.update_poses(&mut world, Vec3::ZERO, now);
-            let eyes = scene.eyes_world(&world, &owner, now).expect("posed eyes");
+            let eyes = scene.joint_world(&world, &owner, "mEyeLeft", now).expect("posed left eye");
             let input = FrameInput {
                 dt: 1.0,
                 now,
@@ -7713,7 +7713,7 @@ mod tests {
             let aim = camera.forward();
             settings.mouselook_follow_eyes = true;
             camera.update(&mut world, &settings, &input);
-            assert!(camera.position.abs_diff_eq(eyes, 2e-5), "follow the actual posed midpoint");
+            assert!(camera.position.abs_diff_eq(eyes, 2e-5), "follow the actual posed left eye");
             assert!(camera.forward().abs_diff_eq(aim, 2e-5), "head motion must not rotate the camera");
             settings.mouselook_follow_eyes = false;
             if let Some(previous) = previous {
@@ -7724,11 +7724,12 @@ mod tests {
     }
 
     #[test]
-    fn seated_mouselook_follows_system_eyes_raised_by_the_seat() {
+    fn seated_mouselook_follows_the_left_system_eye_raised_by_the_seat() {
         use crate::camera::{Camera, CameraSettings, FrameInput};
 
-        // A vehicle's sit animation raises only the system eyes to its
-        // periscope; the Bento eyes stay in the head (#4606).
+        // A vehicle's sit animation raises only the left system eye to its
+        // periscope; the right one and the Bento eyes stay in the head
+        // (#4606). The midpoint of the two system eyes would rise half way.
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());
         world.agent_id = crate::demo::DEMO_AGENT;
@@ -7755,11 +7756,8 @@ mod tests {
         let now = Instant::now() + std::time::Duration::from_secs(1);
         scene.update_poses(&mut world, Vec3::ZERO, now);
         let head = scene.head_offset(&world, &owner).expect("posed head");
-        let eyes = scene.eyes_offset(&world, &owner).expect("posed system eyes");
-        assert!(
-            eyes.z - head.z > 1.4,
-            "the camera's eyes follow the raised system eyes: {eyes} / {head}"
-        );
+        let eyes = scene.eyes_offset(&world, &owner).expect("posed left eye");
+        assert!(eyes.z - head.z > 1.4, "the camera follows the raised left eye: {eyes} / {head}");
         // the look-at line keeps the eyes of the head (the Bento ones)
         let look = scene.eyes_world(&world, &owner, now).expect("look-at eyes");
         let head_world = scene.head_world(&world, &owner, now).expect("head");
@@ -7814,7 +7812,7 @@ mod tests {
         assert!(world.agent.ground_sit && !world.agent.seated);
         let now = Instant::now();
         scene.update_poses(&mut world, Vec3::ZERO, now);
-        let eyes = scene.eyes_world(&world, &owner, now).unwrap();
+        let eyes = scene.joint_world(&world, &owner, "mEyeLeft", now).unwrap();
         let mut settings = CameraSettings {
             hover_affects_camera: true,
             ..Default::default()

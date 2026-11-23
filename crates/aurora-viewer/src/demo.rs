@@ -935,24 +935,21 @@ pub fn first_person_eye_animation() -> aurora_assets::Animation {
 }
 
 /// AURORA_DEMO_CAMERA=sit-ml-periscope: a vehicle's sit animation that
-/// raises only the system eyes (mEyeLeft / mEyeRight) to its periscope,
-/// 1.5 m above the head, the Bento eyes left in it (#4606).
+/// raises only the left system eye (mEyeLeft) to its periscope, 1.5 m above
+/// the head, the right eye and the Bento eyes left in it (#4606).
 pub const PERISCOPE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0104);
 
-/// The animation of PERISCOPE_ANIM: position keys on the two system eyes,
-/// from their rest places in `rig`.
+/// The animation of PERISCOPE_ANIM: a position key on mEyeLeft, from its
+/// rest place in `rig`.
 pub fn periscope_animation(rig: &crate::scene::anim::Rig) -> aurora_assets::Animation {
     use aurora_assets::anim::{JointMotion, PosKey};
     let mut animation = idle_animation();
     animation.base_priority = 6;
     animation.ease_in = 0.0;
     animation.joints.clear();
-    for name in ["mEyeLeft", "mEyeRight"] {
-        let Some(rest) = rig.names.get(name).and_then(|&i| rig.local_pos.get(i)) else {
-            continue;
-        };
+    if let Some(rest) = rig.names.get("mEyeLeft").and_then(|&i| rig.local_pos.get(i)) {
         animation.joints.push(JointMotion {
-            joint_name: name.into(),
+            joint_name: "mEyeLeft".into(),
             priority: 5,
             rot_keys: Vec::new(),
             pos_keys: vec![PosKey {

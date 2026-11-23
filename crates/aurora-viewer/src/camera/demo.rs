@@ -53,7 +53,7 @@
 //! - `sit-ml` / `sit-ml-reclined`: the same seat, upright or tilted, delayed
 //!   400 frames past the loading fade; first person with mouse look on both axes.
 //! - `sit-ml-periscope`: `sit-ml` with a seat animation that raises only the
-//!   system eyes 1.5 m (a vehicle's periscope): the camera goes up with them
+//!   left system eye 1.5 m (a vehicle's periscope): the camera goes up with it
 //! - `right-click,x,y` / `right-jitter,x,y`: right click with small motion / repeated
 //!   back-and-forth motion: the camera stays still and the menu opens on release
 //! - `right-drag,x,y` / `right-slow,x,y`: held right button with fast / slow motion:
