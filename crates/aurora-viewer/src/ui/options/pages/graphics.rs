@@ -1,7 +1,7 @@
 //! Preferences › Graphics (panel_preferences_graphics1.xml and its
 //! advanced floater): the level of the whole, then quality, light, the sky,
 //! reflections and Aurora's water, the image (anti-aliasing, tone mapping,
-//! depth of field), smoothness and parcel visibility.
+//! depth of field), smoothness, parcel visibility and ray tracing.
 
 use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
@@ -21,6 +21,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
             overlays(cx);
         }
         6 => parcels(cx),
+        7 => ray_tracing(cx),
         _ => {}
     }
 }
@@ -226,7 +227,24 @@ fn ray_tracing(cx: &mut Cx) {
         );
         let off = blocked.is_some() || !cx.s.ray_tracing.enabled;
         cx.subs(off, |cx| {
-            use crate::settings::{RT_SHADOW_LAMPS_MAX, RT_SOFTNESS_MAX};
+            use crate::settings::{RT_QUALITY_HIGH, RT_SHADOW_LAMPS_MAX, RT_SOFTNESS_MAX, Settings};
+            // (Aurora's own, as the games that trace rays have it: every
+            // traced effect stays on, with fewer samples; choosing one sets
+            // its lamps' count, which the slider below still moves)
+            let levels = [
+                (0, tr!("ui-options-preset-low"), false),
+                (1, tr!("ui-options-preset-medium"), false),
+                (RT_QUALITY_HIGH, tr!("ui-options-preset-high"), false),
+            ];
+            if cx.keywords("RT raytracing").choice(
+                tr!("ui-options-rt-quality"),
+                tr!("ui-options-rt-quality-help"),
+                &field!(rt_quality),
+                &levels,
+            ) {
+                let lamps = Settings::rt_lamp_quality(cx.s.rt_quality).lamps;
+                cx.s.rt_shadow_lamps = u8::try_from(lamps).unwrap_or(RT_SHADOW_LAMPS_MAX).clamp(1, RT_SHADOW_LAMPS_MAX);
+            }
             // (Aurora's own: the Legacy Viewer's maps blur by a kernel,
             // RenderShadowBlurSize, a debug setting)
             cx.slider(
@@ -468,12 +486,12 @@ fn quality(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-presets"), |cx| {
         let p = cx.p;
-        cx.wide().keywords(tr!("ui-options-preset-custom")).row(
+        cx.wide().keywords(tr!("ui-options-preset-custom")).row_with(
             tr!("ui-options-preset-level"),
             tr!("ui-options-preset-level-help"),
             // a level writes the page's settings: they are the rows below
             &Nothing,
-            |ui, s| preset_choice(ui, &p, s),
+            |ui, s, st, _| preset_choice(ui, &p, s, st.ray_tracing),
         );
         cx.below()
             .row_with(tr!("graphics-saved-title"), tr!("graphics-saved-help"), &Nothing, |ui, s, st, _| {
@@ -853,7 +871,6 @@ fn light(cx: &mut Cx) {
             );
         });
     });
-    ray_tracing(cx);
     cx.group(tr!("ui-options-ambient-occlusion"), |cx| {
         cx.stepped(
             tr!("ui-options-ambient-occlusion"),

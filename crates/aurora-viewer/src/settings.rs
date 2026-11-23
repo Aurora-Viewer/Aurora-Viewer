@@ -1920,6 +1920,10 @@ pub struct Settings {
     pub ssr: bool,
     /// Preferences › Graphics › Ray tracing.
     pub ray_tracing: RayTracingSettings,
+    /// The warning of Deluxe (RT) was shown and accepted once
+    /// (ui/options.rs `deluxe_rt_warning`): choosing the level again
+    /// applies it at once.
+    pub deluxe_rt_warned: bool,
     /// The traced sun's shadows' softness: 1 the real sun's, 0 sharp
     /// (aurora-render `RtTuning`). Apart from `ray_tracing`, which the
     /// graphics levels set.
@@ -1932,6 +1936,12 @@ pub struct Settings {
     /// `RtTuning::probes`): more bounces, and no sky's light in a closed
     /// room. On by default; read only with the traced indirect light.
     pub rt_gi_probes: bool,
+    /// The ray tracing quality, 0 Low, 1 Medium, 2 High (`RT_QUALITY_HIGH`,
+    /// the default and Deluxe (RT)'s image): every traced effect stays on,
+    /// traced with fewer samples, at a coarser grid for the indirect light
+    /// (aurora-render `LampQuality` and `RtTuning::with_gi_quality`). Apart
+    /// from the graphics levels, like the softness.
+    pub rt_quality: u8,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -2065,7 +2075,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 45;
+const SETTINGS_VERSION: u32 = 47;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2928,11 +2938,13 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
-            ray_tracing: RayTracingSettings::SHADOWS,
-            rt_sun_softness: 1.0,
+            ray_tracing: RayTracingSettings::OFF,
+            deluxe_rt_warned: false,
+            rt_sun_softness: RT_SOFTNESS,
             rt_gi_probes: true,
-            rt_lamp_softness: 1.0,
+            rt_lamp_softness: RT_SOFTNESS,
             rt_shadow_lamps: RT_SHADOW_LAMPS_MAX,
+            rt_quality: RT_QUALITY_HIGH,
             // an opt-in: the Legacy Viewer sorts its blended faces, and the
             // method's targets take video memory while it is on
             anisotropy: 8,
@@ -3684,14 +3696,24 @@ impl Settings {
             // takes them, so that switching it on blows
             self.weather.upgrade_wind_defaults();
         }
-        if self.settings_version < 45 {
-            // the shadows are traced by default where the card can, in the
-            // shadow maps' place: every earlier file turns the sun's and
-            // the local lights' on once (the indirect light and the
-            // reflections keep their choice), Preferences › Graphics › Ray
-            // tracing goes back to the maps
-            self.ray_tracing.enabled = true;
-            self.ray_tracing.lights = true;
+        if self.settings_version < 46 {
+            // ray tracing is Deluxe (RT)'s alone (graphics_presets.rs):
+            // an earlier file, which traced the shadows by default since
+            // version 45, goes back to the shadow maps once, and a profile
+            // still exactly on the former Deluxe moves to High
+            self.ray_tracing = RayTracingSettings::OFF;
+            crate::graphics_presets::upgrade_deluxe_to_high(&mut self);
+        }
+        if self.settings_version < 47 {
+            // the traced shadows' softness moved from 1 to `RT_SOFTNESS`:
+            // a file still on the former default takes the new one once, a
+            // softness chosen by hand stays
+            if self.rt_sun_softness == 1.0 {
+                self.rt_sun_softness = RT_SOFTNESS;
+            }
+            if self.rt_lamp_softness == 1.0 {
+                self.rt_lamp_softness = RT_SOFTNESS;
+            }
         }
         if !self.audio.enabled[VOICE_CHANNEL] {
             // this box used to switch a mixer channel of its own, leaving
@@ -4130,6 +4152,34 @@ impl Settings {
         }
     }
 
+    /// The ray tracing quality's lamps (aurora-render `LampQuality`), Low,
+    /// Medium then High.
+    pub fn rt_lamp_quality(level: u8) -> aurora_render::LampQuality {
+        use aurora_render::LampQuality;
+        [LampQuality::LOW, LampQuality::MEDIUM, LampQuality::HIGH][usize::from(level.min(RT_QUALITY_HIGH))]
+    }
+
+    /// What the traced effects are asked for: the softness and the lamps of
+    /// Preferences, and the ray tracing quality's samples (its lamps' count
+    /// is the slider's, which choosing a quality moves:
+    /// ui/options/pages/graphics.rs `ray_tracing`). AURORA_RT_GI_QUALITY
+    /// sets the indirect light's alone for a launch (docs/TESTING.md).
+    fn rt_tuning(&self) -> aurora_render::RtTuning {
+        let level = self.rt_quality.min(RT_QUALITY_HIGH);
+        let base = aurora_render::RtTuning {
+            sun_softness: self.rt_sun_softness.clamp(0.0, RT_SOFTNESS_MAX),
+            lamp_softness: self.rt_lamp_softness.clamp(0.0, RT_SOFTNESS_MAX),
+            projectors: self.projector_shadows,
+            probes: self.rt_gi_probes,
+            ..aurora_render::RtTuning::default()
+        };
+        let gi = aurora_render::RtTuning::gi_quality_from_env().unwrap_or(usize::from(level));
+        aurora_render::RtTuning {
+            lamps: u32::from(self.rt_shadow_lamps.clamp(1, RT_SHADOW_LAMPS_MAX)),
+            ..Self::rt_lamp_quality(level).apply(base).with_gi_quality(gi)
+        }
+    }
+
     pub fn render_settings(&self) -> aurora_render::RenderSettings {
         use aurora_render::{AntiAliasing, AoMethod, FsrQuality, Tonemapper};
         let mut water_effects = self.water_effects.render();
@@ -4183,20 +4233,7 @@ impl Settings {
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
             ray_tracing: self.ray_tracing.render(),
-            rt_tuning: aurora_render::RtTuning {
-                sun_softness: self.rt_sun_softness.clamp(0.0, RT_SOFTNESS_MAX),
-                lamp_softness: self.rt_lamp_softness.clamp(0.0, RT_SOFTNESS_MAX),
-                lamps: u32::from(self.rt_shadow_lamps.clamp(1, RT_SHADOW_LAMPS_MAX)),
-                // (the ray tracing quality's High, until its menu sets them)
-                lamp_candidates: aurora_render::LampQuality::HIGH.candidates,
-                lamp_reuse: aurora_render::LampQuality::HIGH.reuse,
-                lamp_denoise: aurora_render::LampQuality::HIGH.denoise,
-                projectors: self.projector_shadows,
-                probes: self.rt_gi_probes,
-                // (High, until the ray tracing quality has its setting;
-                // AURORA_RT_GI_QUALITY for a launch)
-                ..aurora_render::RtTuning::default().with_gi_quality(aurora_render::RtTuning::gi_quality_from_env().unwrap_or(2))
-            },
+            rt_tuning: self.rt_tuning(),
             // set each frame by the app while it rains
             rain_surfaces: false,
             anisotropy: self.anisotropy,
@@ -4315,17 +4352,24 @@ impl Default for MapSettings {
 
 /// The most the traced shadows' softness goes to (Preferences' sliders).
 pub const RT_SOFTNESS_MAX: f32 = 4.0;
+/// The traced shadows' default softness, the sun's and the lamps' (decided
+/// by the human on 2026-11-22 after the grid tests: crisper and prettier
+/// than 1, the size measured, which version 47 moves to it once).
+pub const RT_SOFTNESS: f32 = 0.2;
+/// The ray tracing quality's levels (`Settings::rt_quality`): Low, Medium,
+/// High, the default.
+pub const RT_QUALITY_HIGH: u8 = 2;
 /// The most lamps that cast traced shadows (aurora-render's
 /// `MAX_TRACED_LIGHTS`).
 pub const RT_SHADOW_LAMPS_MAX: u8 = 64;
 
 /// Preferences › Graphics › Ray tracing (aurora-render's rt_shadows.rs):
 /// only on a graphics card with ray queries
-/// (`aurora_render::RayTracingSupport`); elsewhere the shadow maps stay. The
-/// sun's and the local lights' shadows are traced by default
-/// (`RayTracingSettings::SHADOWS`), in the shadow maps' place, and turning
-/// them off here goes back to the maps; the indirect light and the
-/// reflections, experimental, stay off. The renderer adds what each needs:
+/// (`aurora_render::RayTracingSupport`); elsewhere the shadow maps stay. Off
+/// by default: the Deluxe (RT) level turns on the sun's and the local
+/// lights' shadows and the indirect light (`RayTracingSettings::DELUXE`),
+/// in the shadow maps' and the screen-space light's place; the reflections,
+/// experimental, stay off. The renderer adds what each needs:
 /// the sun's shadows only with the shadows, the reflections only with the
 /// screen-space ones. (`Default` is all off: what a saved graphics profile
 /// written before ray tracing reads.)
@@ -4351,13 +4395,19 @@ impl RayTracingSettings {
         reflections: false,
     };
 
-    /// The default where the card can: the shadows traced, the sun's and
-    /// the local lights', in the shadow maps' place.
+    /// The shadows traced, the sun's and the local lights', in the shadow
+    /// maps' place.
     pub const SHADOWS: RayTracingSettings = RayTracingSettings {
         enabled: true,
         lights: true,
         indirect: false,
         reflections: false,
+    };
+
+    /// Deluxe (RT)'s: the shadows and the indirect light traced.
+    pub const DELUXE: RayTracingSettings = RayTracingSettings {
+        indirect: true,
+        ..RayTracingSettings::SHADOWS
     };
 
     pub fn render(self) -> aurora_render::RayTracing {
@@ -4683,6 +4733,51 @@ mod tests {
         assert!(old.rt_gi_probes);
         let off: Settings = serde_json::from_str(r#"{"rt_gi_probes":false}"#).expect("preferences");
         assert!(!off.render_settings().rt_tuning.probes);
+    }
+
+    #[test]
+    fn the_ray_tracing_quality_defaults_to_high_and_lowers_the_samples_only() {
+        use super::{RT_QUALITY_HIGH, Settings};
+        use aurora_render::LampQuality;
+        let high = Settings::default();
+        assert_eq!(high.rt_quality, RT_QUALITY_HIGH);
+        // preferences saved before the setting existed keep today's image
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert_eq!(old.rt_quality, RT_QUALITY_HIGH);
+        let t = high.render_settings().rt_tuning;
+        assert_eq!(LampQuality::of(t), LampQuality::HIGH);
+        if aurora_render::RtTuning::gi_quality_from_env().is_none() {
+            let full = aurora_render::RtTuning::default().with_gi_quality(2);
+            assert_eq!(
+                (t.gi_step, t.gi_probe_updates, t.gi_neighbours),
+                (full.gi_step, full.gi_probe_updates, full.gi_neighbours)
+            );
+        }
+        for level in 0..=RT_QUALITY_HIGH + 3 {
+            let s = Settings {
+                rt_quality: level,
+                rt_shadow_lamps: 5,
+                ..Settings::default()
+            };
+            let t = s.render_settings().rt_tuning;
+            let q = Settings::rt_lamp_quality(level);
+            assert_eq!(
+                (t.lamp_candidates, t.lamp_reuse, t.lamp_denoise),
+                (q.candidates, q.reuse, q.denoise),
+                "{level}"
+            );
+            // the lamps' count stays the slider's; the other effects stay on
+            assert_eq!(t.lamps, 5, "{level}");
+            assert_eq!((t.probes, t.projectors), (s.rt_gi_probes, s.projector_shadows), "{level}");
+            assert_eq!(
+                (t.sun_softness, t.lamp_softness),
+                (s.rt_sun_softness, s.rt_lamp_softness),
+                "{level}"
+            );
+        }
+        assert_eq!(Settings::rt_lamp_quality(0), LampQuality::LOW);
+        assert_eq!(Settings::rt_lamp_quality(1), LampQuality::MEDIUM);
+        assert_eq!(Settings::rt_lamp_quality(9), LampQuality::HIGH);
     }
 
     #[test]
@@ -5351,9 +5446,10 @@ mod tests {
         deluxe_v18().write(&mut old);
         old.ao_method = 0;
         let now = old.sanitized();
-        // straight to the Deluxe of now
-        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
-        assert_eq!((now.ao_method, now.gtao_quality), (1, 3));
+        // to the Deluxe of then (GTAO at Ultra), then to High once Deluxe
+        // became Deluxe (RT) (version 46)
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
+        assert_eq!((now.ao_method, now.gtao_quality), (1, 2));
         // chosen after the change: kept
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
@@ -5370,10 +5466,10 @@ mod tests {
         };
         deluxe_v18().write(&mut old);
         let now = old.sanitized();
-        // through version 19 to the Deluxe of now: the contact shadows and
-        // the indirect light, the experimental bloom off
-        assert!(now.contact_shadows && !now.bloom && now.screen_indirect_light);
-        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
+        // through version 19 to the Deluxe of then, then to High (version
+        // 46): the contact shadows, the experimental bloom off
+        assert!(now.contact_shadows && !now.bloom && !now.screen_indirect_light);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
         // turned off after the change: kept off
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
@@ -5390,9 +5486,9 @@ mod tests {
         };
         deluxe_v19().write(&mut old);
         let now = old.sanitized();
-        // to the Deluxe of now: the bloom off, the indirect light on again
-        assert!(now.contact_shadows && !now.bloom && now.screen_indirect_light);
-        assert_eq!(Preset::matching(&now), Some(Preset::Deluxe));
+        // to the Deluxe of then (the bloom off), then to High (version 46)
+        assert!(now.contact_shadows && !now.bloom && !now.screen_indirect_light);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
         // turned on again after the change: kept on
         let mut chosen = Settings::default();
         Preset::Deluxe.apply(&mut chosen);
@@ -5428,7 +5524,8 @@ mod tests {
         for (former, preset) in [
             (medium_v20(), Preset::Medium),
             (high_v20(), Preset::High),
-            (deluxe_v20(), Preset::Deluxe),
+            // (the Deluxe of then, then High since Deluxe became Deluxe (RT))
+            (deluxe_v20(), Preset::High),
         ] {
             let mut old = Settings {
                 settings_version: 20,
@@ -5458,12 +5555,11 @@ mod tests {
     }
 
     #[test]
-    fn earlier_files_trace_the_shadows_once_and_keep_their_level() {
-        use crate::graphics_presets::{Preset, high_v20};
+    fn earlier_files_go_back_to_the_shadow_maps_once_and_the_former_deluxe_to_high() {
+        use crate::graphics_presets::{Preset, deluxe_v45, high_v20};
         let path = scratch_settings_file();
-        // a file written before ray tracing holds none: it read as off, so
-        // the earlier levels' migrations still find their level, then the
-        // shadows are traced
+        // a file written before ray tracing holds none: it reads as off, so
+        // the earlier levels' migrations still find their level
         let without = |version: u32, level: &dyn Fn(&mut Settings)| {
             let mut s = Settings {
                 settings_version: version,
@@ -5475,38 +5571,79 @@ mod tests {
             let (s, newer) = Settings::read_document(file, &path).expect("readable settings");
             s.finished(newer)
         };
-        for preset in [Preset::High, Preset::Deluxe] {
-            let now = without(44, &|s| preset.apply(s));
-            assert_eq!(now.ray_tracing, RayTracingSettings::SHADOWS, "{preset:?}");
-            assert_eq!(Preset::matching(&now), Some(preset), "{preset:?}");
-        }
+        let now = without(44, &|s| Preset::High.apply(s));
+        assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
+        // the former Deluxe moves to High, nothing traced
+        let now = without(44, &|s| deluxe_v45().write(s));
+        assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
         let now = without(20, &|s| high_v20().write(s));
         assert_eq!(Preset::matching(&now), Some(Preset::High));
-        // a level without shadows stays itself, nothing traced
         let now = without(44, &|s| Preset::Low.apply(s));
         assert_eq!(Preset::matching(&now), Some(Preset::Low));
-        // a file that held the switches off, written while ray tracing was
-        // experimental: the shadows on once, its experimental choices kept
-        let mut old = Settings {
-            settings_version: 44,
+        // a file of version 45, which traced the shadows by default: back to
+        // the shadow maps once, its High and its Deluxe both to High
+        for level in [Preset::High.values(), deluxe_v45()] {
+            let mut old = Settings {
+                settings_version: 45,
+                ..Settings::default()
+            };
+            level.write(&mut old);
+            old.ray_tracing = RayTracingSettings::SHADOWS;
+            let now = old.sanitized();
+            assert_eq!(now.ray_tracing, RayTracingSettings::OFF);
+            assert_eq!(Preset::matching(&now), Some(Preset::High));
+        }
+        // chosen after the migration, Deluxe (RT) and ray tracing by hand: kept
+        let mut deluxe = Settings::default();
+        Preset::Deluxe.apply(&mut deluxe);
+        let kept = deluxe.sanitized();
+        assert_eq!(kept.ray_tracing, RayTracingSettings::DELUXE);
+        assert_eq!(Preset::matching(&kept), Some(Preset::Deluxe));
+        let by_hand = Settings {
+            ray_tracing: RayTracingSettings::SHADOWS,
             ..Settings::default()
         };
-        old.ray_tracing = RayTracingSettings {
-            reflections: true,
-            ..RayTracingSettings::OFF
+        assert_eq!(by_hand.sanitized().ray_tracing, RayTracingSettings::SHADOWS);
+        // nothing traced by default, and the warning of Deluxe (RT) not seen
+        let d = Settings::default();
+        assert_eq!(d.ray_tracing, RayTracingSettings::OFF);
+        assert!(!d.deluxe_rt_warned);
+    }
+
+    #[test]
+    fn the_traced_shadows_softness_moves_from_the_former_default_once() {
+        assert_eq!(
+            (Settings::default().rt_sun_softness, Settings::default().rt_lamp_softness),
+            (RT_SOFTNESS, RT_SOFTNESS)
+        );
+        // a file of version 46 still on the former default, 1: the new one
+        let old = Settings {
+            settings_version: 46,
+            rt_sun_softness: 1.0,
+            rt_lamp_softness: 1.0,
+            ..Settings::default()
         };
         let now = old.sanitized();
-        assert_eq!(
-            now.ray_tracing,
-            RayTracingSettings {
-                reflections: true,
-                ..RayTracingSettings::SHADOWS
-            }
-        );
-        // turned off after the migration, back to the shadow maps: kept
-        let mut maps = Settings::default();
-        maps.ray_tracing.enabled = false;
-        assert!(!maps.sanitized().ray_tracing.enabled);
+        assert_eq!((now.rt_sun_softness, now.rt_lamp_softness), (RT_SOFTNESS, RT_SOFTNESS));
+        // a softness chosen by hand stays, the other follows
+        let mine = Settings {
+            settings_version: 46,
+            rt_sun_softness: 0.5,
+            rt_lamp_softness: 1.0,
+            ..Settings::default()
+        };
+        let now = mine.sanitized();
+        assert_eq!((now.rt_sun_softness, now.rt_lamp_softness), (0.5, RT_SOFTNESS));
+        // once migrated, 1 chosen again stays
+        let again = Settings {
+            rt_sun_softness: 1.0,
+            rt_lamp_softness: 1.0,
+            ..Settings::default()
+        };
+        let now = again.sanitized();
+        assert_eq!((now.rt_sun_softness, now.rt_lamp_softness), (1.0, 1.0));
     }
 
     #[test]
@@ -6391,7 +6528,11 @@ mod tests {
             old.blend_order = Settings::default().blend_order;
             let read = old.sanitized();
             assert_eq!(read.blend_order, order, "{level:?}");
-            assert_eq!(Preset::matching(&read), Some(level));
+            // (Deluxe (RT)'s values in a file of then: its ray tracing goes
+            // off once with version 46, which leaves High's with the
+            // projectors' shadows, a custom profile)
+            let shown = if level == Preset::Deluxe { None } else { Some(level) };
+            assert_eq!(Preset::matching(&read), shown, "{level:?}");
             // and the level itself, chosen now
             let mut new = Settings::default();
             level.apply(&mut new);
