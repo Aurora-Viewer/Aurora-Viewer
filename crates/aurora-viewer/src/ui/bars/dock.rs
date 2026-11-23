@@ -344,7 +344,7 @@ fn chat_island(
     if smile_resp.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
         chat.bar_emoji_open = !chat.bar_emoji_open;
     }
-    if super::demo::get().open == Some(super::demo::Open::Emoji) && ui.ctx().cumulative_frame_nr() == 300 {
+    if super::demo::get().open == Some(super::demo::Open::Emoji) && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 {
         chat.bar_emoji_open = true;
     }
 
@@ -514,7 +514,7 @@ fn conversations_button(
     // its right click: nearby chat left out of the flash
     let flash_nearby = chat.flash_nearby;
     crate::ui::menu::context_menu(&resp, p, |ui| {
-        if let Some(choice) = crate::ui::chat::button_menu(ui, p, flash_nearby) {
+        if let Some(choice) = crate::ui::chat::button_menu(ui, p, flash_nearby, chat.has_open_ims) {
             chat.button_menu = Some(choice);
         }
     });
@@ -884,6 +884,14 @@ mod tests {
         bench.click(off.center(), egui::PointerButton::Primary);
         assert_eq!(bench.chat.button_menu.take(), Some(crate::ui::chat::ButtonMenu::NearbyFlash(false)));
         assert!(!bench.panels.chat);
+        bench.chat.has_open_ims = true;
+        bench.click(button.center(), egui::PointerButton::Secondary);
+        let close_all = bench
+            .text_rect(aurora_i18n::tr!("ui-chat-close-all-ims"))
+            .expect("the close all row");
+        bench.click(close_all.center(), egui::PointerButton::Primary);
+        assert_eq!(bench.chat.button_menu.take(), Some(crate::ui::chat::ButtonMenu::CloseAll));
+        assert!(!bench.panels.chat, "closing IMs does not open their window");
         bench.click(button.center(), egui::PointerButton::Secondary);
         let open = bench
             .text_rect(aurora_i18n::tr!("ui-bars-conversations-open"))

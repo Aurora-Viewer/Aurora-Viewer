@@ -7,6 +7,7 @@ pub(crate) use app_links::{group_name as app_link_group_name, take_wanted as tak
 mod bubbles;
 mod call;
 mod channel;
+mod close_all;
 mod completion;
 mod compose;
 mod console;
@@ -285,6 +286,9 @@ pub struct ChatUi {
     /// app; and what that menu asked for this frame.
     pub flash_nearby: bool,
     pub button_menu: Option<ButtonMenu>,
+    pub has_open_ims: bool,
+    /// Pending voice confirmation and its “do not ask again” choice.
+    close_all_prompt: Option<bool>,
     /// The thumbnails of the open conversations beside the chat bar or at
     /// the top right (`thumbnails.rs`, #1134).
     pub thumbnails: thumbnails::Thumbnails,
@@ -1852,6 +1856,7 @@ pub enum ConvAction {
     /// Close a conversation (the X of its tab in FSFloaterIMContainer): a
     /// group / conference session is left, a 1:1 conversation leaves the list.
     Close(uuid::Uuid),
+    CloseAll,
     /// Stop receiving a group's chat (and leave its session).
     BlockGroupChat(uuid::Uuid),
     /// Snooze a group chat: closed without leaving, its messages ignored
@@ -4011,7 +4016,7 @@ pub fn show(
     }
     let style = st.demo_style.unwrap_or(st.style);
     popout::one_picker(st);
-    st.gifs.close_if_hidden(ctx.cumulative_pass_nr());
+    st.gifs.close_if_hidden(ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
     // every entry of the window, whatever the column's search: it never
     // shows a conversation that is in its own window (`popout.rs`)
     let entries: Vec<Option<uuid::Uuid>> = std::iter::once(None)
