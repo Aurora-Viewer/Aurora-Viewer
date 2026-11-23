@@ -60,6 +60,7 @@ impl App {
         self.snapshots.view_kept = (!self.camera.mouselook()).then(|| vf::KeptView {
             eye: crate::camera::presets::to_global(origin, self.camera.position),
             at: crate::camera::presets::to_global(origin, self.camera.target),
+            avatar: crate::camera::presets::to_global(origin, self.world.agent.position),
             fov: self.settings.camera.fov,
             free: self.camera.free().is_some(),
         });
@@ -69,7 +70,9 @@ impl App {
     /// it last closed (`vf_keep_view`), with its field of view, flown by
     /// the free camera again if it was. Not in mouselook, nor while RLVa
     /// holds the camera (as for a preset), nor past the draw distance (as
-    /// for a place preset): the view stays where it is then.
+    /// for a place preset), nor once the avatar has moved away from where
+    /// it stood (#4604, `vf::KEPT_VIEW_MOVE_MAX`): the view stays where it
+    /// is then.
     fn vf_view_back(&mut self) {
         let Some(kept) = self.snapshots.view_kept else {
             return;
@@ -82,7 +85,7 @@ impl App {
         };
         let reach = self.settings.draw_distance.max(64.0);
         let Some((eye, at)) = kept.back(origin, self.world.agent.position, reach) else {
-            log::info!("viewfinder: the view it closed on is out of reach, kept where it is");
+            log::info!("viewfinder: the view it closed on is out of reach or the avatar moved, kept where it is");
             return;
         };
         if kept.fov.is_finite() {
