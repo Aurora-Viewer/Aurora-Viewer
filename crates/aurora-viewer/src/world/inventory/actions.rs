@@ -146,6 +146,16 @@ pub fn held(inv: &Inventory, item: &InvItem) -> u32 {
     agent_mask(item, inv.owner)
 }
 
+/// LLPreviewGesture::handleDragAndDrop (indra/newview/llpreviewgesture.cpp)
+/// requires unrestricted base permissions. Aurora's gesture editor also
+/// requires the agent to hold those rights and excludes the Trash.
+pub fn gesture_asset_allowed(inv: &Inventory, item: &InvItem) -> bool {
+    matches!(item.asset_type, 1 | 20)
+        && !item.asset_id.is_nil()
+        && item.base_mask & held(inv, item) & FULL == FULL
+        && !in_type(inv, item.id, 14)
+}
+
 /// GOD_MAINTENANCE (indra/llcommon/indra_constants.h): the god level from
 /// which LLAgent::allowOperation, at its default `god_minimum`, lets a god
 /// past an item's permissions.

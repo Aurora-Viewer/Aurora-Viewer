@@ -654,6 +654,9 @@ pub struct App {
     /// world focuses the camera, as with Alt (LLToolCamera).
     controls_ui: ui::controls::ControlsUi,
     controls_held: Vec<Action>,
+    /// AURORA_DEMO_CONTROLS=compact… and movement-compact: the compact forms
+    /// of the run, never saved; `None` until the window is drawn
+    demo_compact: Option<controls::DemoCompact>,
     /// Its free camera joysticks this frame: move, look.
     controls_free: (egui::Vec2, egui::Vec2),
     object_view: bool,
@@ -2043,6 +2046,7 @@ impl App {
             always_run: false,
             controls_ui: Default::default(),
             controls_held: Vec::new(),
+            demo_compact: None,
             controls_free: (egui::Vec2::ZERO, egui::Vec2::ZERO),
             object_view: false,
             double_click: Default::default(),
@@ -12972,6 +12976,7 @@ impl App {
                 ..self.weather_now.rain_look(&self.weather_wind)
             },
             hide_sky: self.settings.debug.hidden_types.sky,
+            hide_water: self.settings.debug.hidden_types.water,
             curvature: self.settings.planet_radius(),
             look: None,
             look_thumbs: None,

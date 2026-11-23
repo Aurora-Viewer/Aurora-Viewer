@@ -126,6 +126,11 @@ fn solid_background_at(ctx: &egui::Context, pos: egui::Pos2) -> bool {
         && ctx.data_mut(|d| d.get_temp_mut_or_default::<SolidAreas>(solid_areas_id()).0.contains(&layer.id))
 }
 
+/// A floater edge or corner grip contains `pos` (LLResizeBar / LLResizeHandle).
+pub(crate) fn pointer_on_floater_edge(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    resize::contains_pointer(ctx, pos)
+}
+
 /// Any floater/bare window is moving or resizing, independently of drawing
 /// order. The move ID starts dragging only after the window's click tolerance,
 /// so pointer jitter, child controls and text selection keep their behavior.
@@ -1226,7 +1231,11 @@ impl<'a> Floater<'a> {
                             (false, true) => aurora_i18n::tr!("common-expand"),
                             (false, false) => aurora_i18n::tr!("common-collapse"),
                         };
-                        if title_button(ui, p, icon).on_hover_text(tip).clicked() {
+                        let response = title_button(ui, p, icon).on_hover_text(tip);
+                        #[cfg(test)]
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(egui::Id::unique(("floater_minimize", self.id)), response.rect));
+                        if response.clicked() {
                             toggle_min = true;
                         }
                         for (icon, tip, clicked) in &mut self.actions {
@@ -1996,6 +2005,21 @@ pub fn floater_minimized(ctx: &egui::Context, id: &str) -> bool {
 pub fn expand_floater(ctx: &egui::Context, id: &str) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(EXPAND), true));
     ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
+}
+
+/// Will the floater `id` change its minimized state at its next frame for a
+/// reason other than its title button: an expand asked for
+/// (`expand_floater`) or a "Reset window positions and sizes" not yet
+/// applied to it.
+pub fn floater_expand_pending(ctx: &egui::Context, id: &str) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(id).with(EXPAND))).unwrap_or(false)
+        || super::layout::reset_pending(ctx, egui::Id::unique(id))
+}
+
+/// Drops an expand asked for by `expand_floater` that the floater `id` has
+/// not shown yet (a window reset's is left).
+pub fn cancel_expand(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(id).with(EXPAND)));
 }
 
 /// The toolbar button, menu entry or shortcut of the floater `id`

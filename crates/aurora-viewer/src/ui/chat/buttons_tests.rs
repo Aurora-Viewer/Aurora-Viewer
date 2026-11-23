@@ -20,6 +20,36 @@ const MEETING: Uuid = Uuid::from_u128(0xC0);
 const ALL: [ChatStyle; 4] = [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy];
 
 #[test]
+fn chat_header_username_follows_preferences_and_saved_names_stay_frozen() {
+    let mut h = H::new(ChatStyle::Aurora);
+    let names = &mut h.world.social.avatar_names;
+    names.options.legacy_format = false;
+    names.options.use_display_names = true;
+    names.options.show_usernames = true;
+    names.on_display_names(
+        &[aurora_net::AvatarNameData {
+            id: JANE,
+            username: "janedoe".into(),
+            display_name: "Jane".into(),
+            ..Default::default()
+        }],
+        &[],
+        None,
+    );
+    let mut message = line("Jane", JANE, ChatKind::Im, "/me waves");
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane (janedoe)");
+    assert_eq!(
+        super::line_body(&message, &super::sender_name(&h.world, "", &message)).0,
+        "Jane waves"
+    );
+    message.origin = Origin::Log;
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
+    message.origin = Origin::Live;
+    h.world.social.avatar_names.options.show_usernames = false;
+    assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
+}
+
+#[test]
 fn teleport_invitation_paints_one_destination_in_every_style() {
     use crate::world::teleport_invites::{Answer, Invite, InviteKind, Place, Rating};
     for style in ALL {

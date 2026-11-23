@@ -286,6 +286,7 @@ impl Editor {
                 {
                     edited.rotations[other] = data::mirrored(rig, rotation, changed, other);
                     edited.origin[other] = data::mirrored(rig, edited.origin[changed], changed, other);
+                    edited.hold_rotation[other] = edited.hold_rotation[changed];
                     edited.locks.remove(&other);
                 }
             }
