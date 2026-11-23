@@ -488,7 +488,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:open][:menu][:replace][:folded][:favorites][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora, a LUT or a creator's LUT), the last one's strength and settings, the before / after line, the filter panel and its cards' states |
 | `AURORA_DEMO_WORLD_LOOK=<look>[+<look>…][:window]` | The world filters switched on with those looks, on the whole 3D view outside the photo mode, and their window (see Details) |
-| `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|views\|classic-views\|position\|classic-position\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, a view saved and given back, the camera position window, or driving the photo window's free camera |
+| `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|compact-close\|compact-move-back\|movement-compact\|classic\|views\|classic-views\|position\|classic-position\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, a view saved and given back, the camera position window, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
 `AURORA_DEMO_RENDER_TEXTURE`: with demo mode and `AURORA_CAPTURE`, the capture
@@ -1064,8 +1064,18 @@ reset, saved positions), `roll` on the same tab with a 15° camera roll
 (the hold-to-roll buttons and the angle button that levels the camera), `movement` on its Movement tab
 (the eight buttons with the keys of the keyboard's layout, walk / run / fly),
 `compact` the window in its compact view (its joysticks, zoom and roll controls),
+with "Compact camera controls" on for that run (not saved, nor is its title
+button's switch; #3904),
 `compact-move` the same, then at frame 640 the toolbar's Move pressed on it
-(#1815: it expands on its Movement tab; capture at 700),
+(#1815: it expands on its Movement tab, the compact choice kept; capture at 700),
+`compact-close` the same, then the toolbar's camera button pressed at 640 (it
+closes, logged at 660) and again at 680 (it opens compact, logged and captured
+at 700; #3904),
+`compact-move-back` the same as `compact-move`, then the window's Camera tab
+clicked at 660 (the camera compact again, as saved, logged at 680; #3904),
+`movement-compact` the Movement tab shown compact at 640, the run's form,
+its saved choice left as it is (the movement pad and walk / run / fly; #3904,
+capture at 700),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
 not saved). `views` (Aurora's window) and `classic-views` (the Legacy
 Viewer's camera window) save a view (#2755): the camera turned away at 610
@@ -2058,6 +2068,14 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_CHATCMD="calc 2+2;rolld 2 20"`**: lines typed in the chat
   bar at frame 240, separated by `;` (chat bar commands: `calc`, `rolld`,
   `gtp`…).
+- **Chat bar Enter** ([#3349](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/3349)): no new demo
+  variable. With `AURORA_DEMO=1` (the ordinary chat bar), at a normal frame
+  rate and again with `AURORA_FPS_LIMIT=10`: type a line, Enter, Enter, type,
+  twenty times. Each line is sent and the avatar stays still. Preferences ›
+  Chat › Nearby chat › "Keep the chat bar active after sending" on (the
+  default): Enter on the empty bar leaves the keyboard in the bar. Escape, or
+  a click in the world, returns to moving. With that preference off: Enter
+  after a message lets the bar go, and the next Enter takes it back.
 
 ## Objects and building
 
@@ -2194,6 +2212,13 @@ cube as a hologram, `start` leaves a hologram of it where the move began.
 `AURORA_DEMO_BUILD_STYLE=legacy` selects the Legacy tool strip and five tabs,
 independently of the saved preference. Use `AURORA_DEMO_BUILD=move,object:118`
 with `AURORA_DEMO_BUILD_TAB=general|object|features|texture:bp|texture:pbr|contents`.
+On General, click the object in the world, then the blank stretch in the
+label column to the left of the Name field: the whole name is selected and
+the next letters replace it. Click into Description, click the world, then
+that blank stretch again: Description is selected instead. A click on a
+tab, a checkbox or into the field itself does not select the whole line.
+Check both `AURORA_DEMO_BUILD_STYLE=aurora` and `legacy`. A read-only name
+(no modify right) selects the same way and does not change when typed on.
 Compare with `floater_tools.xml` and `panel_fs_tools_texture.xml`: the compact tool
 block ends with linked-part navigation, Link/Unlink and the ruler on one row;
 counters sit directly above the five tabs. General places sale before permissions.
@@ -3263,6 +3288,12 @@ relaunch: a change closes the dialogs open).
 **`AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`** — script of the build
 tools. Modes: `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
 `focus`, `create`, `land`, `select`, `select-join`.
+Ctrl+1 to Ctrl+5 follow the key position (Focus, Move, Edit, Create, Land),
+including a French AZERTY layout where the 4 key types `'`. There is no demo
+that changes the operating-system layout. The unit test feeds that event
+(logical quote, physical 4). On a French AZERTY keyboard, Windows or Linux,
+Ctrl+1 to Ctrl+5 open those tools, Ctrl+4 does not also move or play a
+gesture, and a QWERTY keyboard is unchanged.
 `AURORA_DEMO_BUILD_FRAME` changes its start frame.
 `select-join,620,540,xy,140,-80` simulates a multi-parcel reply with no unique
 owner and the same area as the selected rectangle. After frame 635, Join must
@@ -6610,6 +6641,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WEARABLE_FAVORITES=1\|evening\|recent\|custom\|create\|import\|import-done` | Favorite Wearables window on the Appearance demo's favorites |
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit, sorted by date, favorites or images |
+| `AURORA_DEMO_APPEARANCE_SIZE=<width>,<height>` | Size of the Appearance window in the Appearance demo |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_AVATAR_CACHE=1` | Avatars drawn from the cache until the region sends them: Violet Wolf's look and worn objects; ours with `AURORA_DEMO_OUTFIT_RESTORE` |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -11515,6 +11547,18 @@ ms with the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms
 open and 2.5 ms closed before the wardrobe's links were walked only on
 inventory changes and only the rows in sight laid out.
 
+**`AURORA_DEMO_APPEARANCE_SIZE=<width>,<height>`** — with
+`AURORA_DEMO_APPEARANCE`, opens the Appearance window at that size in
+points, without the showcase's one-time widening, for captures at a set
+size. For the showcase preview's scroll bar (#4633), pick a height where
+the outfit preview just overflows: `AURORA_DEMO_APPEARANCE=showcase`,
+`AURORA_WINDOW_SIZE=1600,1000`, `AURORA_UI_SCALE=0.75` and
+`AURORA_DEMO_APPEARANCE_SIZE=1080,1004` (Cop's preview just overflows),
+captured at neighbouring frames (`AURORA_CAPTURE_FRAMES=620,621`): the
+preview's picture, its scroll bar and the text under it are the same in
+both captures; before the fix the bar and a narrower picture showed in one
+and not the other.
+
 The demo objects use distinct points (skull, left ear,
 left ring finger, left foot and top-right HUD), shown in the
 lists of Appearance and Inventory.
@@ -12099,6 +12143,13 @@ separate searches enabled and disabled; that preference controls only the text.
 - `sort`, `filters`, `preferences`, `recent`, `worn`, `filtered`, `large`:
   system / date sort, filters, preferences, Recent / Worn tree,
   filter excluding objects or search of 1,500 items.
+- `search-worn`, `aurora-search-worn`: the All tab searching "worn" (in
+  the interface's language), in the Legacy and Aurora styles, which the
+  label of a worn item holds, as in the Legacy Viewer (#4423): the worn
+  clothing, body parts and attachments are listed, with the item that
+  has "worn" in its own name; the items not worn are not. Like every
+  `AURORA_DEMO_INVENTORY` mode, the mode's name chooses the window's
+  style, whatever the preference.
 - `many-folders`, `aurora-many-folders`: 300 more top folders, in the
   Legacy and Aurora styles; scroll to the end, press Collapse: the list
   goes back to its top.

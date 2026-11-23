@@ -654,6 +654,9 @@ pub struct App {
     /// world focuses the camera, as with Alt (LLToolCamera).
     controls_ui: ui::controls::ControlsUi,
     controls_held: Vec<Action>,
+    /// AURORA_DEMO_CONTROLS=compact… and movement-compact: the compact forms
+    /// of the run, never saved; `None` until the window is drawn
+    demo_compact: Option<controls::DemoCompact>,
     /// Its free camera joysticks this frame: move, look.
     controls_free: (egui::Vec2, egui::Vec2),
     object_view: bool,
@@ -2043,6 +2046,7 @@ impl App {
             always_run: false,
             controls_ui: Default::default(),
             controls_held: Vec::new(),
+            demo_compact: None,
             controls_free: (egui::Vec2::ZERO, egui::Vec2::ZERO),
             object_view: false,
             double_click: Default::default(),
@@ -23608,6 +23612,7 @@ impl ApplicationHandler for App {
                         self.demo_cached_outfit_portrait();
                     }
                 }
+                ui::appearance::demo_size(&self.egui_ctx);
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {
                     crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);
@@ -23740,6 +23745,8 @@ impl ApplicationHandler for App {
                         | "recent-date"
                         | "aurora-recent-date"
                         | "worn"
+                        | "search-worn"
+                        | "aurora-search-worn"
                         | "filtered"
                         | "large"
                         | "keyboard-click-top"
@@ -23870,7 +23877,7 @@ impl ApplicationHandler for App {
                         // Aurora's window at each width, on the demo object
                         // of the right-click tests, a favourite beside it.
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
-                        if view.starts_with("aurora-worn") {
+                        if view.starts_with("aurora-worn") || view == "aurora-search-worn" {
                             self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(715));
                             self.inventory_ui.selected = None;
                             self.inventory_ui.selection.clear();
@@ -23999,6 +24006,10 @@ impl ApplicationHandler for App {
                     }
                     if view == "worn" {
                         self.inventory_ui.tab = 3;
+                    }
+                    if view.ends_with("search-worn") {
+                        // #4423: the worn tag is searched with the name
+                        self.inventory_ui.search = aurora_i18n::tr!("common-worn").to_lowercase();
                     }
                     if matches!(view.as_str(), "received-big" | "received-big-open") {
                         self.inventory_ui.tab = 1;

@@ -357,6 +357,20 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-aurora-controls-classic"),
                 &field!(classic_controls),
             );
+            // the compact window is Aurora's: greyed in the Classic style
+            let classic_controls = cx.s.classic_controls;
+            cx.subs(classic_controls, |cx| {
+                cx.toggle(
+                    tr!("ui-options-aurora-controls-compact"),
+                    tr!("ui-options-aurora-controls-compact-help"),
+                    &field!(compact_controls),
+                );
+                cx.toggle(
+                    tr!("ui-options-aurora-controls-compact-movement"),
+                    tr!("ui-options-aurora-controls-compact-movement-help"),
+                    &field!(compact_movement_controls),
+                );
+            });
         }),
         1 => {
             cx.group(tr!("ui-options-aurora-in-the-world"), |cx| {

@@ -414,7 +414,11 @@ impl Facts {
     }
 
     fn worn_label(&self, inv: &Inventory, id: Uuid) -> Option<&str> {
-        let original = rules::original(inv, id)?;
+        self.original_worn_label(rules::original(inv, id)?)
+    }
+
+    /// [`Self::worn_label`] of an original item (a link's target).
+    fn original_worn_label(&self, original: Uuid) -> Option<&str> {
         if self.active_gestures.contains(&original) {
             return Some(aurora_i18n::tr!("gesture-active"));
         }

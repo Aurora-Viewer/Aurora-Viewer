@@ -1051,10 +1051,11 @@ pub struct Settings {
     /// name)", so that its line cannot pass for a resident's (FSMarkObjects,
     /// off; Preferences > Chat).
     pub mark_unnamed_objects: bool,
-    /// The local chat bar keeps the keyboard after a message is sent; Enter
-    /// on the empty bar gives it back to the world (the Legacy Viewer's
-    /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
-    /// off, the bar lets go after sending.
+    /// The local chat bar keeps the keyboard after a message is sent, and
+    /// an empty Enter leaves it there (the Legacy Viewer's CloseChatOnReturn
+    /// off, FSNearbyChatControl::autohide). On by default (human choice of
+    /// 2026-10-16, empty Enter kept since #3349). Off, sending lets the
+    /// keyboard go and the next Enter takes the bar back.
     pub chat_keep_focus: bool,
     /// Aurora extension, Enter toggles typing: Enter on an empty field gives
     /// the keyboard back to the world in every conversation too (IMs and
@@ -1527,6 +1528,12 @@ pub struct Settings {
     /// Firestorm's camera and movement windows (floater_camera.xml,
     /// floater_moveview.xml) instead of `ui/controls.rs`.
     pub classic_controls: bool,
+    /// The Controls window opens compact on the camera: its joysticks, zoom
+    /// and roll (the title button's compact / full, kept: #3904).
+    pub compact_controls: bool,
+    /// The Controls window's Movement tab opens compact: the movement
+    /// buttons and walk / run / fly (its title button, kept: #3904).
+    pub compact_movement_controls: bool,
     /// Camera presets, saved from the Controls window (Firestorm's camera
     /// presets) or the viewfinder (`camera::presets`); kept apart from
     /// `camera`, which "Reset" sets back.
@@ -2775,6 +2782,8 @@ impl Default for Settings {
             disable_glass: false,
             interface_colors: Default::default(),
             classic_controls: false,
+            compact_controls: false,
+            compact_movement_controls: false,
             camera_shots: Vec::new(),
             camera_views: Default::default(),
             plates_friends_only_full: false,

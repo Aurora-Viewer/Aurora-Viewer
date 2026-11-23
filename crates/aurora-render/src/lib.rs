@@ -320,6 +320,7 @@ mod shader_tests {
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
             return;
         };
+        let fragment = crate::test_gpu::fragment_inv_w(fragment, &adapter);
         let features = adapter.features() & wgpu::Features::DEPTH_CLIP_CONTROL;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: features,
@@ -634,10 +635,12 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                 reference = Some(row);
                 for x in 0..8 {
                     assert_eq!(data[x], 0.0, "air must not write an interface");
-                    // Clipping a 200 m triangle to this tiny target has sub-mm
-                    // interpolation error, well below the 1 cm sheet spacing.
+                    // Clipping a 200 m triangle to this tiny target leaves an
+                    // interpolation error of about 1 mm (0.00035 at 0.3 m on an
+                    // AMD Vulkan driver), well below the 1 cm sheet spacing
+                    // (0.0078 between the two sheets at 0.3 m).
                     assert!(
-                        (data[7 * 64 + x] - expected).abs() < 0.0002,
+                        (data[7 * 64 + x] - expected).abs() < 0.001,
                         "the nearest interface must win in either order, including before near: delta {delta}, order {order:?}, got {} expected {expected}",
                         data[7 * 64 + x]
                     );
@@ -658,6 +661,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
         let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
         let env = include_str!("shaders/env.wgsl");
         let depth = &env[env.find("fn water_interface_depth(").expect("depth")..env.find("// Event history").expect("end")];
+        let depth = crate::test_gpu::fragment_inv_w(depth, &adapter);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water exclusion regression"),
             source: wgpu::ShaderSource::Wgsl(
@@ -672,7 +676,9 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32
     let corners=array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0),vec2<f32>(3.0,-1.0),vec2<f32>(-1.0,3.0));
     let w=1.0+f32(layer);
     let world=vec3<f32>(corners[v]*w,w);
-    return WaterOut(vec4<f32>(corners[v],0.5,1.0),world);
+    // The clip position the frame's matrix gives this point: the depth
+    // reads the fragment's 1/w, like the viewer's water.
+    return WaterOut(vec4<f32>(corners[v]*w,0.5*w,w),world);
 }}
 {depth}
 "#

@@ -10,6 +10,8 @@ mod contents_keyboard_tests;
 mod layout_tests;
 #[path = "legacy_tests.rs"]
 mod legacy_tests;
+#[path = "name_focus_tests.rs"]
+mod name_focus_tests;
 
 /// Whether a painted text is the heading of the former labelled navigation
 /// ("OBJECT"). In Japanese that heading is オブジェクト, the very word of
@@ -2168,10 +2170,7 @@ fn pbr_number_scrubbing_keeps_the_chosen_inspector_width() {
 
 #[test]
 fn material_numbers_commit_typed_values_once_without_resetting_the_inspector() {
-    for label in [
-        aurora_i18n::tr!("build-ui-texture-shininess"),
-        aurora_i18n::tr!("common-environment"),
-    ] {
+    for label in [aurora_i18n::tr!("build-legacy-glossiness"), aurora_i18n::tr!("common-environment")] {
         for finish in [egui::Key::Enter, egui::Key::Tab, egui::Key::Escape] {
             let mut inspector = material_inspector();
             inspector.settings.transform_expanded = false;
@@ -2265,6 +2264,28 @@ fn material_numbers_commit_typed_values_once_without_resetting_the_inspector() {
             );
         }
     }
+}
+
+/// Issue #4484: the Blinn-Phong shininess menu (None / Low / Medium / High)
+/// is captioned "Shininess" and the specular exponent "Glossiness", as the
+/// labels "label shininess" and "label glossiness" of panel_tools_texture.xml.
+#[test]
+fn blinn_phong_captions_follow_the_legacy_panel() {
+    let mut inspector = material_inspector();
+    inspector.settings.transform_expanded = false;
+    inspector.tool.tab = 3;
+    for _ in 0..5 {
+        inspector.show(vec![]);
+    }
+    let (_, texts) = inspector.show(vec![]);
+    let caption = |key: &str| texts.iter().find(|(text, _)| text == key).map(|(_, rect)| *rect);
+    let shininess = caption(aurora_i18n::tr!("build-ui-texture-shininess")).expect("a Shininess caption");
+    let glossiness = caption(aurora_i18n::tr!("build-legacy-glossiness")).expect("a Glossiness caption");
+    assert!(shininess.top() < glossiness.top(), "the menu comes before the exponent");
+    assert!(
+        caption(aurora_i18n::tr!("common-brightness")).is_none(),
+        "no Brightness caption on the Blinn-Phong tab"
+    );
 }
 
 #[test]
@@ -3495,8 +3516,7 @@ fn typed_value_over_the_other_mixed_texture_fields_reaches_every_face() {
             let caption = match field {
                 Field::Glow => aurora_i18n::tr!("build-ui-texture-glow"),
                 Field::RepeatsPerMeter => aurora_i18n::tr!("build-ui-texture-repeats-meter"),
-                Field::Glossiness if legacy => aurora_i18n::tr!("build-legacy-glossiness"),
-                Field::Glossiness => aurora_i18n::tr!("build-ui-texture-shininess"),
+                Field::Glossiness => aurora_i18n::tr!("build-legacy-glossiness"),
                 Field::Environment => aurora_i18n::tr!("common-environment"),
                 Field::MaskCutoff => aurora_i18n::tr!("build-ui-texture-mask-cutoff"),
             };

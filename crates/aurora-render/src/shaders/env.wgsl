@@ -1395,7 +1395,7 @@ const WATER_GLINT_FLOOR: f32 = 0.0000039;
 fn water_pixel(in: WaterOut) -> vec4<f32> {
     if(water_excluded(in.world_pos)){discard;}
     if(water_fx_on(1u) || water_fx_on(16u)) {
-        let depth=water_interface_depth(in.world_pos);
+        let depth=water_interface_depth(in.clip.w);
         // Single-sample interface coverage must also retain MSAA edge samples.
         let tolerance=0.6*(abs(dpdx(depth))+abs(dpdy(depth)))+0.000001;
         let first=textureLoad(water_interface,vec2<i32>(in.clip.xy),0);
@@ -1724,21 +1724,28 @@ struct WaterDepthOut {
     @builtin(frag_depth) depth:f32,
 };
 
-fn water_physical_depth(world:vec3<f32>)->f32 {
+// The fragment's own 1/w (`@builtin(position).w`) divides, not the w of the
+// interpolated world position: on a sheet that crosses the camera's near
+// plane, a few millimetres away, the interpolated position is a few
+// centimetres off on some drivers (AMD Vulkan), enough to read the water as
+// lying behind what it covers. The raster's 1/w is exact, and the reversed
+// infinite projection's clip z does not depend on the position at all.
+fn water_physical_depth(world:vec3<f32>,inv_w:f32)->f32 {
     let clip=world_clip(world);
-    return clamp(clip.z/max(clip.w,0.000001),0.0,1.0);
+    return clamp(clip.z*inv_w,0.0,1.0);
 }
 
 @fragment
 fn fs_water_unclipped(in:WaterOut)->WaterDepthOut {
-    return WaterDepthOut(water_pixel(in),water_physical_depth(in.world_pos));
+    return WaterDepthOut(water_pixel(in),water_physical_depth(in.world_pos,in.clip.w));
 }
 
-fn water_interface_depth(world:vec3<f32>)->f32 {
+fn water_interface_depth(inv_w:f32)->f32 {
     // Standard near-clamped depth merges all interfaces before near. This
     // ordering retains their true distance, including millimetre crossings.
-    let clip=world_clip(world);
-    return 1.0/(1.0+max(clip.w,0.0));
+    // 1/(1+w) from the fragment's exact 1/w (see water_physical_depth).
+    let w=max(inv_w,0.0);
+    return w/(w+1.0);
 }
 
 struct WaterMaskOut {
@@ -1748,17 +1755,17 @@ struct WaterMaskOut {
 
 @fragment
 fn fs_water_mask(in:WaterOut)->WaterMaskOut {
-    return WaterMaskOut(vec4<f32>(1.0),water_interface_depth(in.world_pos));
+    return WaterMaskOut(vec4<f32>(1.0),water_interface_depth(in.clip.w));
 }
 
 @fragment
 fn fs_water_exclusion(in:VsOut)->WaterMaskOut {
-    return WaterMaskOut(vec4<f32>(0.0,0.0,0.0,1.0),water_interface_depth(in.world_pos));
+    return WaterMaskOut(vec4<f32>(0.0,0.0,0.0,1.0),water_interface_depth(in.clip.w));
 }
 
 @fragment
 fn fs_water_interface(in:WaterOut)->@builtin(frag_depth) f32 {
-    return water_interface_depth(in.world_pos);
+    return water_interface_depth(in.clip.w);
 }
 
 // Event history is small; all droplet/bubble trajectories are evaluated on GPU.
