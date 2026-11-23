@@ -134,8 +134,12 @@ fn world_undo_toast(live: &mut Live, ctx: &egui::Context, p: &Palette) {
                 },
                 |ui| {
                     ui.add(
-                        egui::Label::new(RichText::new(aurora_i18n::tr!("blender-live-title").ui_upper()).size(10.5).color(p.muted))
-                            .selectable(false),
+                        egui::Label::new(
+                            RichText::new(aurora_i18n::tr!("blender-live-title").ui_upper())
+                                .size(10.5)
+                                .color(p.muted),
+                        )
+                        .selectable(false),
                     );
                     undo_row(live, ui, p, &text);
                 },
