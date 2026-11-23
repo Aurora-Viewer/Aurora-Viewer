@@ -298,6 +298,14 @@ pub struct Renderer {
     /// they leave with the next one (a lost font atlas update would leave
     /// glyphs missing for the rest of the session).
     held_textures: HeldTextures,
+    /// The instance the device comes from: the surfaces of the interface's
+    /// windows outside the viewer's are made from it (outside.rs).
+    instance: wgpu::Instance,
+    /// Windows outside opened and closed, and their frames, since the last
+    /// frame handed over; they leave with the next one.
+    outside: crate::outside::Packet,
+    /// What the render thread answered about them, until the caller takes it.
+    outside_events: Vec<crate::OutsideEvent>,
     /// Set to request a copy of the next presented frame.
     pub capture_request: bool,
     /// Capture the 3D view without the interface (next frame) into `captured`.
@@ -847,6 +855,9 @@ impl Renderer {
             failed: false,
             stalled: false,
             held_textures: HeldTextures::default(),
+            instance,
+            outside: Default::default(),
+            outside_events: Vec::new(),
             capture_request: false,
             capture_scene: false,
             captured: None,
@@ -1409,6 +1420,7 @@ impl Renderer {
         }
         self.pick_answers.append(&mut r.picks);
         self.drawn_answers.append(&mut r.drawn);
+        self.outside_events.append(&mut r.outside);
         if let Some(joint) = r.part_pick {
             self.part_pick = Some(joint);
         }
@@ -1512,6 +1524,58 @@ impl Renderer {
 
     pub fn render(&mut self, params: FrameParams, lists: &DrawLists, ui: Option<crate::EguiFrame>) -> RenderStats {
         self.render_output(params, lists, ui, None)
+    }
+
+    /// A window of the interface outside the viewer's (outside.rs): a
+    /// surface on `window`, drawn by this renderer from the next frame on.
+    /// `key` names it in the calls below. `sync` synchronizes it with its
+    /// screen, which a window outside never is otherwise: only to measure.
+    /// The render thread answers a surface it cannot draw to with
+    /// [`crate::OutsideEvent::Failed`].
+    pub fn open_outside<W>(&mut self, key: u64, window: Arc<W>, width: u32, height: u32, sync: bool) -> Result<(), RenderError>
+    where
+        W: wgpu::rwh::HasWindowHandle + wgpu::rwh::HasDisplayHandle + Send + Sync + 'static,
+    {
+        // SAFETY: `window` goes with the surface, in the change then in the
+        // backend's entry, and both drop the surface first (their field
+        // order, outside.rs).
+        let surface = unsafe {
+            let target =
+                wgpu::SurfaceTargetUnsafe::from_display_and_window(&*window, &*window).map_err(|e| RenderError::Surface(e.to_string()))?;
+            self.instance.create_surface_unsafe(target)
+        }
+        .map_err(|e| RenderError::Surface(e.to_string()))?;
+        self.outside.changes.push(crate::outside::Change::Open {
+            key,
+            surface,
+            keep: window,
+            width,
+            height,
+            sync,
+        });
+        Ok(())
+    }
+
+    /// The window outside `key` is over: its surface is destroyed by the
+    /// render thread, which answers [`crate::OutsideEvent::Closed`]. The
+    /// native window is kept until then.
+    pub fn close_outside(&mut self, key: u64) {
+        self.outside.frames.retain(|(k, _)| *k != key);
+        self.outside.changes.push(crate::outside::Change::Close(key));
+    }
+
+    /// What the window outside `key` shows from now on: drawn after the
+    /// next frame of the viewer. Hand one when what it shows changed. The
+    /// texture changes of its pass leave with the viewer's own interface,
+    /// before it is drawn.
+    pub fn draw_outside(&mut self, key: u64, mut frame: crate::OutsideFrame) {
+        self.held_textures.0.append(std::mem::take(&mut frame.ui.textures_delta));
+        self.outside.hand(key, frame);
+    }
+
+    /// What became of the windows outside since the last call.
+    pub fn outside_events(&mut self) -> Vec<crate::OutsideEvent> {
+        std::mem::take(&mut self.outside_events)
     }
 
     /// Draw a frame into a caller-owned texture instead of presenting the window.
@@ -1697,6 +1761,7 @@ impl Renderer {
             params,
             lists: spent.lists,
             ui,
+            outside: std::mem::take(&mut self.outside),
             surface: SurfaceState {
                 width: self.size.0,
                 height: self.size.1,

@@ -6613,6 +6613,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens preferences on a page, search, modified settings, open cogs, the system font list, reset, or a graphics profile dialog/list |
 | `AURORA_DEMO_GRIDS=1\|pages` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
+| `AURORA_DEMO_OUTSIDE=still\|busy[,sync][,click]\|conversations\|build` | A test window of the interface outside the viewer's window (its cost, its pointer and its keyboard), or the Conversations or the Build window sent outside |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
@@ -8203,7 +8204,12 @@ failure. Grid validation and any paid upload are performed by the human.
   Focus another window, then click back into Aurora: with Preferences ›
   Graphics › "Leave gaming mode when Aurora comes back in front" on (the
   default), it ends at once (`gaming mode off`); off, only the button ends
-  it, and the notice says so. A capture run pauses too but keeps its frame
+  it, and the notice says so. A window of the interface outside the
+  viewer's (Conversations sent outside by its title bar's button) does not
+  end it: with the focus there, the world stays paused and the loop runs at
+  30 fps (the rate in the top bar), so that what is typed shows as it is
+  typed; back to the game, it falls to 5 fps again. A capture run pauses
+  too but keeps its frame
   rate: `AURORA_DEMO_GAMING_MODE=900` and `AURORA_CAPTURE_FRAMES=1000`.
   Memory: within a second the log says `texture memory: the window was
   in gaming mode for 1 s, freeing up video memory`, and 3 s in `gaming mode: memory
@@ -8247,6 +8253,64 @@ failure. Grid validation and any paid upload are performed by the human.
   Combine with `AURORA_DEMO_VOICE=speaking|cycle` and `AURORA_PROFILE=1` for
   matched visual/performance comparisons, or `AURORA_DEMO_CALL=group` to
   check that hiding world indicators leaves the call's controls intact.
+- **`AURORA_DEMO_OUTSIDE`**: at frame 300, opens a second window of the
+  system, drawn by the viewer's renderer on the render thread, with a test
+  picture (the palette's colours, a bar, a number) and three controls: a
+  button that shows the count of its clicks, a switch and a text field.
+  `still` (or `1`) shows
+  a picture that does not change: the window is drawn again only when its
+  picture or its size changes. `busy` moves the bar and counts the frames:
+  the window is drawn at every frame of the viewer, the worst case. `,sync`
+  synchronizes the window with its screen, which a window outside never is
+  when its surface offers another mode: it shows what that costs (the 3D
+  view falls to that screen's rate). With `AURORA_PROFILE=1`, the
+  `perf summary` lines gain `out_draws` (draws per frame of the viewer),
+  `out_ms` (the render thread's time on one draw) and `out_ms_max` (the
+  longest it spent on them after one frame), only when a window outside was
+  drawn. Compare `fps`, `frame`, `p95` and `rt_frame` with a run without
+  the variable, both with `AURORA_FPS_LIMIT=0`. Closing the window ends the
+  scenario; quitting the viewer with it open must leave no crash.
+  `,click` moves a scripted pointer over the button and clicks it 120
+  frames after the window opens: the log says
+  `AURORA_DEMO_OUTSIDE: the button was clicked (1)`. The log also notes
+  the switch and the length of the field's text (never the text). By hand:
+  the controls answer the pointer; typing goes to the field once it is
+  clicked, and nowhere else; with the focus in the window and not in its
+  field, the viewer's shortcuts and movement keys work as they do over a
+  window inside; and the 3D view keeps its frame rate with the focus in the
+  window (the rate shown in the top bar does not fall to the background
+  limit), which it loses only to another program. Leave `AURORA_PROFILE`
+  out for that check: a timed run has no background cap.
+  `conversations` opens the Conversations window in a window of its own,
+  as the button of its title bar sends it (the small window, next to the
+  minimize button). By hand: the window has the system's title bar and one
+  row of buttons; its menus and its emoji picker open in it; the windows it
+  opens (a profile) open in the viewer's; its first button brings it back
+  where it was; closed by the system's cross and opened again, it opens
+  outside, as large as it was (it must not come back shorter by the height
+  of its title bar); quitting the viewer with it outside leaves no crash.
+  With `AURORA_DEMO_GPU_LOST=400`, the recovery replaces the window
+  outside as it replaces the viewer's: the log has a second
+  `window outside 2: …` line of the same size after
+  `GPU recovery: new window and renderer`, and the first window is gone.
+  `build` sends the Build window outside; open it with
+  `AURORA_DEMO_BUILD=create-preview,640,430,0`. By hand: the Create
+  tool's grid shows the shapes' pictures as inside (they are drawn by the
+  renderer into pictures of their own, like every 3D preview of a window);
+  its header is one dark row (the states, "UUID", the buttons) above the
+  line of the selection, with no empty band over it. With
+  `AURORA_PROFILE=1`, `out_draws` stays near 0 while nothing changes in
+  the window: a preview does not have it drawn again at every frame. With
+  `AURORA_DEMO_UI_FEATURE=cycle` (the interface off at frame 600, back at
+  900), the window stays up with its last picture under a shade and the
+  notice "Paused while the interface is off", and the log has one
+  `window outside 1: …` line only: it is not closed and opened again. With
+  `AURORA_PROFILE=1`, no `out_draws` is reported while it is off: the
+  notice is drawn once. The same holds by hand for mouselook, immersive
+  mode, "Hide the interface", the Director's playback and the photo mode's
+  full frame; in the first three the window stays live, in the others it
+  shows its notice and takes no click until the interface is back. With
+  the build tools open, Escape leaves the photo mode and they stay open.
 - **`AURORA_DEMO_TOOLBOX`**: `1` opens the Dev Toolbox (Advanced › Dev
   Toolbox, Ctrl+Alt+D); `edit` opens it in Customize (grips, "+ Add a
   tool"); `<target>:<tool>` chooses the target (0 nearest avatar, 1

@@ -2236,6 +2236,9 @@ pub(crate) struct Backend {
     gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
     /// Where the replay of the journal stages its buffer writes.
     write_staging: crate::write_staging::WriteStaging,
+    /// The surfaces of the interface's windows outside the viewer's
+    /// (outside.rs); the window's renderer alone has any.
+    outside: crate::outside::Surfaces,
 }
 
 impl Drop for Backend {
@@ -2249,6 +2252,7 @@ impl Drop for Backend {
     fn drop(&mut self) {
         if self.lost.get() {
             log::warn!("GPU device lost: the window surface is left to the process");
+            self.outside.leak();
             return;
         }
         self.wait_pipeline_workers();
@@ -4744,6 +4748,7 @@ impl Backend {
             lost,
             gpu_frames,
             write_staging: Default::default(),
+            outside: Default::default(),
         };
         r.rebuild_bind_groups();
         Ok(r)
@@ -8117,6 +8122,7 @@ impl Backend {
             // egui-wgpu gets meshes, not callbacks it does not know
             crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
             self.previews.render(
+                crate::preview::Shower::Viewer,
                 &self.device,
                 &self.queue,
                 &mut encoder,
@@ -8187,6 +8193,8 @@ impl Backend {
             equirect: None,
             histogram: self.histogram.take(),
             thumbnails: self.thumbnails.take(),
+            // (`render` fills it once the windows outside are drawn)
+            outside: Vec::new(),
             films,
             rt: self.rt.as_ref().map_or(0, |rt| rt.made),
             spent,
@@ -8458,6 +8466,7 @@ impl Backend {
             params: packet.params.clone(),
             lists: other_lists,
             ui: None,
+            outside: Default::default(),
             surface: packet.surface,
             settings: packet.settings,
             hover: None,
@@ -8557,9 +8566,36 @@ impl Backend {
             );
             self.cube = None;
         }
+        let outside = std::mem::take(&mut packet.outside);
+        let index = packet.index;
         let mut result = self.render_frame(packet);
         result.equirect = self.equirect_reads.poll();
+        self.draw_outside(outside, index, &mut result);
         result
+    }
+
+    /// The interface's windows outside the viewer's (outside.rs), once the
+    /// viewer's own frame is submitted and presented: the texture changes
+    /// of the interface are applied, and egui's buffers are free.
+    fn draw_outside(&mut self, packet: crate::outside::Packet, index: u64, result: &mut FrameResult) {
+        if self.lost.get() {
+            return;
+        }
+        self.outside.take(&self.device, &self.st_init.adapter, self.config.format, packet);
+        let second_view = self.second_view_texture();
+        let drawn = self.outside.draw(
+            &self.device,
+            &self.queue,
+            &self.lost,
+            &mut self.egui,
+            &mut self.previews,
+            second_view,
+            self.look_thumbs.as_ref(),
+            index,
+        );
+        result.stats.outside_windows = drawn.windows;
+        result.stats.outside_ms = drawn.ms;
+        result.outside = self.outside.take_events();
     }
 
     fn render_frame(&mut self, packet: FramePacket) -> FrameResult {
@@ -8756,6 +8792,7 @@ impl Backend {
             Ok(mut fresh) if !fresh.remake => {
                 log::info!("renderer: made again, whole ({took} ms)");
                 fresh.egui.0 = self.egui.0.take();
+                fresh.outside = std::mem::take(&mut self.outside);
                 // (a set still compiling is the new one's to wait for: the
                 // old one's drop would hold this frame for it)
                 fresh.adopt_pipeline_workers(self);
@@ -8807,6 +8844,8 @@ impl Backend {
             params,
             lists: draw_lists,
             ui: mut egui_frame,
+            // (taken by `render` before the frame)
+            outside: _,
             surface,
             settings,
             hover,
@@ -13220,8 +13259,15 @@ impl Backend {
                 crate::label_depth::skip(labels);
             }
             crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
-            self.previews
-                .render(&self.device, &self.queue, &mut encoder, &mut self.egui, &mut ui.primitives, scale);
+            self.previews.render(
+                crate::preview::Shower::Viewer,
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &mut self.egui,
+                &mut ui.primitives,
+                scale,
+            );
             crate::look_thumbs::resolve(self.look_thumbs.as_ref(), &mut ui.primitives);
             extra_cmds = self
                 .egui

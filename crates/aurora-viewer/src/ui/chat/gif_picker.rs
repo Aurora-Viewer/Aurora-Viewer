@@ -587,7 +587,7 @@ impl GifPicker {
 
     pub(super) fn show(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &crate::ui::icons::Icons) -> Out {
         let ctx = ui.ctx().clone();
-        let pass = ctx.cumulative_pass_nr();
+        let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
         let now = ui.input(|i| i.time);
         let opened = self.shown_pass.is_none_or(|last| last + 1 < pass);
         self.shown_pass = Some(pass);

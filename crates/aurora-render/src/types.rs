@@ -2100,6 +2100,11 @@ pub struct RenderStats {
     pub ui_shapes: u32,
     pub ui_meshes: u32,
     pub ui_vertices: u32,
+    /// Windows of the interface outside the viewer's drawn after this
+    /// frame (outside.rs), and the render thread's time on them (ms),
+    /// their swapchains' images and presentations included.
+    pub outside_windows: u32,
+    pub outside_ms: f32,
     /// Draw commands recorded (multi-draws, fullscreen and sprite draws).
     pub draw_calls: u32,
     /// Bytes of draw records and joint palettes sent to the GPU this frame.
