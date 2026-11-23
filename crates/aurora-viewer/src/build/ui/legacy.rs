@@ -210,10 +210,20 @@ fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut W
         common::small(ui, p, aurora_i18n::tr!("build-compact-select-hint"));
         return;
     }
-    if tool.face_mode() {
-        // the face buttons 0 to 8 replace the "Faces:" line under the face tool
-        let size = vec2(ui.available_width().min(9.0 * 17.0), 14.0 * common::font_scale(ui));
-        super::layout::face_buttons(ui, p, tool, world, mods, size);
+    if tool.face_picking() {
+        // the face buttons 0 to 8 replace the "Faces:" line, Invert and All
+        // after them; the link number follows in the other edit modes
+        let link = (!tool.face_mode()).then(|| tool.legacy_part_line(world, s, mods)).flatten();
+        ui.horizontal(|ui| {
+            let height = 18.0 * common::font_scale(ui);
+            let actions = 2.0 * (height + ui.spacing().item_spacing.x);
+            let size = vec2((ui.available_width() - actions).clamp(1.0, 9.0 * 22.0), height);
+            super::layout::face_buttons(ui, p, tool, world, mods, size);
+            super::layout::face_actions(ui, p, tool, world, egui::Vec2::splat(height));
+        });
+        if let Some(link) = link {
+            ui.add(egui::Label::new(RichText::new(link).size(11.0).color(p.ink)).truncate());
+        }
     } else {
         // The row stays when it is empty: the counts do not move with the mode.
         let part = tool.legacy_part_line(world, s, mods).unwrap_or_else(|| " ".into());

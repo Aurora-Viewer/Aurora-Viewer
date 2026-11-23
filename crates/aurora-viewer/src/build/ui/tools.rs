@@ -474,7 +474,9 @@ impl BuildTool {
     pub fn set_edit_mode(&mut self, world: &mut World, s: &mut BuildSettings, m: EditMode) {
         let was_face = self.edit_mode == EditMode::Face;
         self.edit_mode = m;
-        if was_face && m != EditMode::Face {
+        // Align works on whole linksets: the faces picked in Move, Rotate
+        // or Stretch (face_buttons.rs) go with "Select face"
+        if (was_face && m != EditMode::Face) || m == EditMode::Align {
             self.faces.clear();
         }
         if m == EditMode::Align && s.edit_linked {

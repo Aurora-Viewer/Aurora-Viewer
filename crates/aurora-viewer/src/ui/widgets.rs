@@ -667,6 +667,9 @@ pub struct Floater<'a> {
     /// A single-line detail row inside the expanded title section.
     pub header_summary: Option<egui::WidgetText>,
     pub header_summary_action: Option<&'a mut bool>,
+    /// An icon button at the right end of the detail row, under the status
+    /// action: its glyph, tooltip, and whether it was clicked.
+    pub header_summary_icon: Option<(&'a str, &'a str, &'a mut bool)>,
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
@@ -734,6 +737,7 @@ impl<'a> Floater<'a> {
             header_status_action: None,
             header_summary: None,
             header_summary_action: None,
+            header_summary_icon: None,
             title_note: None,
             title_note_tooltip: None,
             title_state: None,
@@ -1317,13 +1321,54 @@ impl<'a> Floater<'a> {
                     } else {
                         Sense::hover()
                     };
-                    if ui
-                        .add(egui::Label::new(summary.clone()).truncate().sense(sense))
-                        .on_hover_text(full_text)
-                        .clicked()
-                        && let Some(clicked) = &mut self.header_summary_action
-                    {
-                        **clicked = true;
+                    let summary_action = &mut self.header_summary_action;
+                    let mut summary_row = |ui: &mut egui::Ui| {
+                        if ui
+                            .add(egui::Label::new(summary.clone()).truncate().sense(sense))
+                            .on_hover_text(&full_text)
+                            .clicked()
+                            && let Some(clicked) = summary_action
+                        {
+                            **clicked = true;
+                        }
+                    };
+                    if let Some((icon, tip, clicked)) = &mut self.header_summary_icon {
+                        ui.horizontal(|ui| {
+                            let size = Vec2::splat(18.0);
+                            let width = (ui.available_width() - size.x - ui.spacing().item_spacing.x).max(1.0);
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(width, size.y),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                &mut summary_row,
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+                                if response.hovered() {
+                                    ui.painter()
+                                        .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                let glyph_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(14.0));
+                                #[cfg(test)]
+                                ui.ctx()
+                                    .data_mut(|d| d.insert_temp(egui::Id::unique(("header_summary_icon", *icon)), glyph_rect));
+                                if let Some(texture) = crate::ui::icons::global(icon) {
+                                    ui.painter().image(
+                                        texture.id(),
+                                        glyph_rect,
+                                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                                        p.violet_light,
+                                    );
+                                }
+                                let response = response.on_hover_text(*tip);
+                                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *tip));
+                                if response.clicked() {
+                                    **clicked = true;
+                                }
+                            });
+                        });
+                    } else {
+                        summary_row(ui);
                     }
                 }
                 title_row
@@ -2285,24 +2330,7 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     resp
 }
 
-/// Compact padding for values adjoining construction controls.
-const READOUT_PADDING: Vec2 = Vec2::new(4.0, 1.0);
 pub const TEXT_BUTTON_HEIGHT: f32 = 18.0;
-
-/// A non-interactive value with the same neutral face as the adjoining buttons.
-pub fn readout_sized(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, size: Vec2) -> egui::Response {
-    let label = label.into();
-    let response = ui
-        .scope(|ui| {
-            ui.spacing_mut().button_padding = READOUT_PADDING;
-            let face = ui.visuals().widgets.inactive;
-            ui.visuals_mut().widgets.noninteractive = face;
-            ui.add_sized(size, egui::Button::new(label.clone()).sense(egui::Sense::hover()).truncate())
-        })
-        .inner;
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label.text()));
-    response
-}
 
 /// Check box of the interface, with the contract of `ui.checkbox`: the
 /// response is `changed()` when a click flipped `on`. A flat square with the

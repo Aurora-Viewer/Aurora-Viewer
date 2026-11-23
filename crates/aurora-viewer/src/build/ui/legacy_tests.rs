@@ -270,6 +270,29 @@ fn legacy_selection_shows_the_link_or_the_faces_of_one_prim() {
         inspector.tool.face_buttons(&inspector.world)[..3],
         [FaceButton::On, FaceButton::Off, FaceButton::On]
     );
+    // Invert and All after them
+    let action = |inspector: &Inspector, invert: bool| {
+        inspector
+            .ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_face_action", invert))))
+            .expect("drawn in the Legacy style")
+    };
+    let (invert, all) = (action(&inspector, true), action(&inspector, false));
+    assert!(all.left() >= invert.right() && invert.width() > 4.0);
+    inspector.show(vec![egui::Event::PointerMoved(invert.center())]);
+    for pressed in [true, false] {
+        inspector.show(vec![egui::Event::PointerButton {
+            pos: invert.center(),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }]);
+    }
+    let mut want: Vec<u8> = (0..count as u8).filter(|face| ![0, 2].contains(face)).collect();
+    want.sort_unstable();
+    let mut got = inspector.tool.sel_faces(&inspector.world, root);
+    got.sort_unstable();
+    assert_eq!(got, want, "Invert gives the other faces");
     inspector.tool.faces.insert(key, (0..count as u8).collect());
     assert_eq!(line(&inspector), Some(faces("ALL_SIDES")));
 

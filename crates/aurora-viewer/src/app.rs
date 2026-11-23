@@ -8512,6 +8512,8 @@ impl App {
             self.flush_build();
             return true;
         }
+        // the second press of a double click (BuildSettings::double_click_linked)
+        self.build.double_press = self.double_press;
         let used = self.build.mouse_down(
             &mut self.world,
             &mut self.settings.build,
@@ -12846,7 +12848,7 @@ impl App {
             },
             selection_scale: self.egui_ctx.pixels_per_point(),
             face_select_texture: {
-                let wanted = self.build.face_mode() || !self.scene.pattern_faces.is_empty();
+                let wanted = self.build.face_mode() || self.build.picks_faces() || !self.scene.pattern_faces.is_empty();
                 self.scene.face_select_texture(&mut gfx.renderer, wanted)
             },
             vr_origin: self.world.main_region,

@@ -1887,7 +1887,10 @@ alignment and mapping form the footer. UV writers, permission checks, pickers an
 simulator commands stay shared with Aurora.
 Contents keeps its three-column action strip. The fixed Legacy controls remain
 independent of the customized Aurora arrangement. Aurora's five editing sections share a full-width
-folding transform area and an editable footer. `build/layout.rs` owns the saved
+folding transform area and an editable footer; `build/ui/second_tab.rs` shows a
+second section beside the active one in a window widened for two.
+`build/face_buttons.rs` holds the face buttons, Invert / All and the face step
+shared by the arrows and the Ctrl+, / Ctrl+. keys. `build/layout.rs` owns the saved
 item order/destinations and the versioned, validated notecard profile, excluding
 object properties/transforms. `build/ui/layout.rs` renders the same controls in
 the footer or the bottom-aligned side settings. Organization captures whole rows,
