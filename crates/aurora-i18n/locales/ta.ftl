@@ -16057,3 +16057,141 @@ toolbar-remove-from-menu = கருவிப்பட்டையில் இ�
 toolbar-command-build-edit = பொருள்களை தொகு
 toolbar-command-build-create = முதன்மைகளை உருவாக்கு
 toolbar-command-build-land = நாடுகளை தொகு
+
+### Updated release translations
+
+inventory-search-no-copy = நகல் இல்லை
+inventory-search-no-modify = மாற்றமுடியாது
+inventory-search-no-transfer = மாற்று
+ui-options-chat-keep-focus-hint = Enter செய்தியை அனுப்பும். அடுத்த செய்திக்காக அரட்டைப் பட்டை செயலில் இருக்கும். பட்டை காலியாக இருந்தாலும் Enter அழுத்தும்போது அது செயலில் இருக்கும். மீண்டும் அசைய Esc அழுத்தவும் அல்லது உலகில் கிளிக் செய்யவும்.
+ui-options-chat-enter-toggles-hint = உரையாடல்கள் சாளரத்தில் காலிப் புலத்தில் Enter அழுத்தினால் அருகாமை அரட்டை, தனிச் செய்திகள், குழு அரட்டை ஆகியவற்றிலிருந்து அசைவுக் கட்டுப்பாட்டுக்குத் திரும்புவீர்கள். உலகில் Enter அழுத்தி மீண்டும் தட்டச்சு செய்யலாம்.
+build-ui-features-physics-none-root-hint = ஒரு இணைப்புக் குழுவின் குழந்தை முக்கோணங்கள் மட்டுமே இயற்பியல் வடிவத்தை பயன்படுத்த முடியும் None: root prim, oraprim on its own, keeps Prim or Convex hull.
+controls-position-tip = கேமரா இடம்: அப்பாட்டருக்கு பின்னால் கேமராவின் இருப்பிடத்தை அமைக்கவும், சரியாக
+camera-position-hint = அவாட்டரிலிருந்து மீட்டர்களில்: X முன்னே, Y இடது, Z மேலே. Ctrl + சக்கரம் கேமராவை உயர்த்துகிறது, Shift + சக்தி புள்ளியை சுழற்றுகிறது.
+camera-position-save = கேமரா இடமாக சேமி...
+photo-looks-replace = & மாற்று
+photo-looks-empty = இன்னும் விளைவு இல்லை. கீழே உள்ள வடிகட்டியை சுட்டு அதை முயற்சிக்கவும், பின்னர் அதை க்ளிக் செய்யவும் அல்லது இங்கே இழுக்கவும்.
+photo-looks-active = செயல்படுகிறது
+photo-looks-count = { $count } அல்லது { $max }
+photo-looks-expand-all = அனைத்தையும் விரிவாக்கு
+photo-looks-collapse-all = அனைத்தையும் குறுக்கு
+photo-looks-hint = மேல் இருந்து கீழ் வரை செயல்படுத்தப்பட்டது. சீட்டுகளை இழுத்து மாற்றி அமைக்கவும், அல்லது Alt + ↑ ↓ அழுத்தவும். சீட்டை வெளியே எடுக்க வலது புறமாக சொடுக்கவும்.
+photo-looks-right-click-out = வலது- க்ளிக்: செயலில் உள்ள விளைவுகளிலிருந்து வெளியேற்று
+photo-looks-drop = ஒரு விளைவை இங்கே இழுக்கவும் அல்லது கீழே ஒன்றை க்ளிக் செய்யவும்
+photo-looks-full = { $max } அல்லது { $max }: ஒன்றை நீக்கு, அல்லது மாற்று ஒன்றை மாற்றி அமைக்க இடமாற்றத்தை இயக்கு.
+photo-looks-catalogue = விளைவுகளின் பட்டியல்
+photo-looks-catalogue-tip = புகைப்படத்தில் ஒரு விளைவை முயற்சிக்க அதனை சுட்டிக்காட்டு; அதை சேர்க்க க்ளிக் செய்யவும், அல்லது செயலில் உள்ளவற்றை இழுக்கவும்
+photo-looks-catalogue-fold = அட்டவணையை காட்டு அல்லது மறை
+photo-looks-replace-tip = மாற்று: அட்டவணையில் க்ளிக் செய்தால், புதியதை சேர்ப்பதற்கு பதிலாக தேர்ந்தெடுக்கப்பட்ட சீட்டை மாற்றும்
+photo-looks-replacing = ஒரு கிளிக் மாற்று { $name }
+photo-looks-done = முடிந்தது
+photo-looks-take-out-zone = அதை வெளியே எடுக்க இங்கே விடுக
+photo-looks-hide = மறை { $name } (அது அதன் இடத்தை வைத்திருக்கும்)
+photo-looks-show = காட்டு { $name }
+photo-looks-more = மேலும் செயல்கள்
+photo-looks-move-up = மேலே நகர்த்து
+photo-looks-move-down = கீழே நகர்த்து
+photo-looks-replace-one = மாற்று...
+photo-looks-take-out = வெளியே எடுக்கவும்
+photo-looks-not-in-360-tag = 360 டிகிரியில் இல்லை
+photo-looks-all = அனைத்து
+photo-looks-favorites = விரும்பியவை: நீங்கள் நட்சத்திரப்படுத்திய ஒவ்வொரு விளைவும்
+photo-looks-favorites-empty = விருப்பம் இன்னும் இல்லை. ஒரு விளைவை சுட்டிக்காட்டு அதன் நட்சத்திரத்தை க்ளிக் செய்: அது பட்டியலில் முதலில் தெரியும், மற்றும் இங்கே.
+photo-looks-favorite = விருப்பத்தேர்வுகள்
+photo-looks-unfavorite = விருப்பத்தேர்விலிருந்து நீக்கு
+photo-looks-card = { $name }, { $place } அல்லது { $count }. Alt + அம்புக்குறி விசைகள் அதை நகர்த்தும்
+photo-looks-legacy-note = பழைய காட்சி வடிகட்டிகளுக்கு கூடுதல் அமைப்புகள் இல்லை.
+photo-knob-toning = நிறத்தொனி
+photo-knob-local-contrast = உள்ளமை வேறுபாடு
+build-face-button = முகம் { $number }: ஒவ்வொரு தேர்ந்தெடுக்கப்பட்ட prim- இல் அதைத் தேர்வு செய். Shift+click: சேர் அல்லது நீக்கு.
+build-face-invert = தேர்ந்தெடுக்கப்பட்ட முகங்களை திருப்பு
+build-face-all = எல்லா முகங்களையும் தேர்ந்தெடு
+ui-options-aurora-controls-compact = குறுகிய கேமரா கட்டுப்பாடுகள்
+ui-options-aurora-controls-compact-help = கட்டுப்பாட்டு சாளரம் காமிராவில் ஒட்டிக் கொண்டு திறக்கப்படுகிறது: அதன் ஜாய்ஸ்டிக்கள், பெரிதாக்கு மற்றும் சுழற்று. அதன் தலைப்பு பட்டை பொத்தான் ஒட்டிக்கும் முழுமையுமாக மாற்றுகிறது, மேலும் இதை அமைக்கிறது.
+ui-options-aurora-controls-compact-movement = நகர்வு கட்டுப்பாடுகள்
+ui-options-aurora-controls-compact-movement-help = கட்டுப்பாட்டு சாளரத்தின் நகர்வு தத்தலை திறக்கிறது: நகர்ப்பு பொத்தான்கள் மற்றும் நடக்கவும், ஓடவும், பறக்கவும். அதன் தலைப்பு பட்டி பொத்தானை நகர்த்தும் மற்றும் முழுமையாக இருக்கும் இடையே மாற்றுகிறது, மேலும் இதை அமைக்கும்.
+poser-face-position-drag = ஒரு பிக்சலுக்கு 0.1 மிமீ வீதம் மூட்டை நகர்த்த இழுக்கவும். நிலையை உள்ளிட கிளிக் செய்யவும்.
+build-layout-clicks = பொருள்களின் க்ளிக்குகள்
+build-ui-floaters-shift-click = Shift + கிளிக்
+build-ui-floaters-ctrl-click = Ctrl+நொடி
+build-ui-floaters-click-object = பொருளை சேர் அல்லது நீக்கு
+build-ui-floaters-click-face = முகத்தை தேர்ந்தெடு
+build-ui-floaters-clicks-hint = தொகுப்பு கருவியுடன், வெளியே ஒழுங்குபடுத்து. Ctrl + Shift + கிளிக் செய்த முகத்தை சேர்க்கும் அல்லது அதை வெளியே எடுக்கும்.
+build-ui-floaters-ctrl-right-click = Ctrl + வலது க்ளிக்
+build-ui-floaters-right-click-menu = பட்டியலை திற
+build-ui-floaters-right-click-edit = பொருளை தொகு
+build-ui-floaters-double-click-linked = முதன்மையில் இருமுறை க்ளிக் செய்க: மாற்று "இணைக்கப்பட்ட பகுதிகளை திருத்து"
+blender-live-tab-place = இடம்
+blender-live-tab-avatar = அவதாரம்
+blender-live-objects-help = பிளண்டர் அனுப்பும் மேசைகள். அவற்றை வைக்க ஒன்றைத் தேர்ந்தெடு, அல்லது அதன் பட்டியலிலிருந்து இறக்குமதி செய்.
+blender-live-more = அதிகம்
+blender-live-place = இடம்
+blender-live-linked-prims = இணைக்கப்பட்ட முதன்மைகளை காட்டு அல்லது மறை
+blender-live-tag-rigged = எலும்புக்கூடு இணைந்தது
+blender-live-card-rigged =
+    { $triangles ->
+        [one] முக்கோணங்கள்: { $triangles }
+       *[other] முக்கோணங்கள்: { $triangles }
+    }
+blender-live-card-static =
+    நிலையானது · { $triangles ->
+        [one] முக்கோணங்கள்: { $triangles }
+       *[other] முக்கோணங்கள்: { $triangles }
+    }
+blender-live-card-linkset =
+    நிலையானது · { $prims ->
+        [one] அடிப்படைப் பொருட்கள்: { $prims }
+       *[other] அடிப்படைப் பொருட்கள்: { $prims }
+    } · { $triangles ->
+        [one] முக்கோணங்கள்: { $triangles }
+       *[other] முக்கோணங்கள்: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] முக்கோணங்கள்: { $triangles }
+       *[other] முக்கோணங்கள்: { $triangles }
+    }
+blender-live-place-help = எங்கு தேர்ந்தெடுக்கப்பட்ட நிலையான கட்டம் உள்ளது. ரிகிட் செய்யப்பட்ட கட்டங்கள் எப்பொழுதும் உங்கள் அவதாரத்தை பின்பற்றுகின்றன.
+blender-live-place-none = நிலையான பொருளை தேர்ந்தெடுத்து அதை இடவும்.
+blender-live-where = எங்கே
+blender-live-transform = இடம், சுழற்சி மற்றும் அளவு
+blender-live-size-note = அளவு பிளண்டர் அனுப்புவதை பெருக்குகிறது, எனவே பிளாண்டரில் பின்வரும் திருத்தங்கள் அதை வைத்திருக்கும்.
+blender-live-avatar-help = ரிகிட் மேசுகளுக்கான: உங்கள் வடிவத்தை பிளண்டருக்கு அனுப்பவும் அதில் மாடலிங் செய்யவும்.
+blender-live-shape-section = பிளண்டரில் உங்கள் வடிவம்
+blender-live-import-help = இயல்பான இறக்குமதிக்காக பொருளின் ஒரு ஸ்னாப்ஷாட்டை முடக்குகிறது: மதிப்பீடு, விலை, பின்னர் உறுதிப்படுத்தவும். பிளண்டரில் பின்பு திருத்தங்கள் அதை மாற்றாது.
+blender-live-from = & அனுப்புநர்
+blender-live-plugins-help = Aurora ஒவ்வொரு பிளண்டரில் பொருத்தமான செருகலை நிறுவுகிறது, முந்தைய ஒன்றின் காப்புப்பிரதியை வைத்திருக்கிறது மற்றும் எப்போதும் பழைய பதிப்பினை நிறுவுவதில்லை.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } நிமிடம்
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = பிளாண்டர் இந்த பொருளை மாற்றிய காலம்
+blender-live-show-all = அனைத்தையும் காட்டு
+blender-live-hide-all = அனைத்தையும் மறை
+blender-live-bend-section = எடைகளை சரிபார்க்கவும்
+blender-live-elbows = முழங்கால்
+blender-live-knees = முழங்கால்
+blender-live-bend-hold = என் அசைவூட்டத்திற்கு பதிலாக இந்த நிலையை பிடித்து கொள்ளவும்
+blender-live-bend-note = நீங்கள் மட்டும் தான், உங்கள் உருவத்தில், இந்த வளைவை பார்க்க முடியும். உங்கள் அசைவூட்டங்கள், மற்ற குடிமக்களின் பார்வை மற்றும் இறக்குமதி மாற்றப்படவில்லை.
+blender-live-levels = விவரங்களின் நிலைகள்
+blender-live-levels-pending = நீங்கள் இறக்குமதி செய்வதை கிளிக் செய்யும் போது பிளண்டர் விவரங்களின் நிலைகளை தயார்படுத்துகிறது.
+blender-live-levels-note = ஒவ்வொரு பொருளின் லைவ்மெஷ் அமைப்புகளிலிருந்து பிளண்டரில் தயாரிக்கப்பட்டது.
+blender-live-quick-look-tip = விரைவான பார்வை: இந்த பொருளை பெரியதாக பார்க்கவும்
+blender-live-quick-look-drag = அதை சுழற்ற இழுக்கவும், மீண்டும் முகம் காட்ட இருமுறை சொடுக்கவும்.
+blender-live-quick-look-changed = பிளண்டரில் { $ago } ஆண்டுகளுக்கு முன் மாற்றப்பட்டது.
+blender-live-quick-look-bend = அவாட்டர் தத்தலில் உள்ளதைப் போல் கவிழ்: முழங்கால் { $elbows }°, முழங்கால் { $knees }°.
+blender-live-undo = & திரும்பச் செய்
+blender-live-undo-derez = தரம் { $name } · இன்னும் பிளண்டர் பட்டியலில் உள்ளது
+blender-live-undo-detach = பிரிக்கப்பட்ட { $name } · இன்னும் பிளண்டரின் பட்டியலில் உள்ளது
+blender-live-undo-drop = பூமிக்கு { $name } வீழ்த்தப்பட்டது
+blender-live-undo-attach = { $name } என்பது { $point } இடத்துக்கு நகர்த்தப்பட்டது
+parcel-environment-apply-save = இந்த தொகுப்புக்காக, எனக்கு மட்டும் பயன்படுத்து
+parcel-environment-save = இந்த தொகுப்பிற்கு இந்த சூழலை சேமிக்கவும்: நீங்கள் இங்கே இருக்கும் போது அது திரும்ப வரும்
+parcel-environment-forget = இந்த தொகுப்பிற்கு சேமிக்கப்பட்ட சூழலை மற
+parcel-environment-not-saved = இந்த தொகுப்பு இன்னும் தெரியவில்லை, எனவே அதன் சூழல் சேமிக்கப்படவில்லை. சிறிது நேரத்தில் மீண்டும் முயற்சி செய்யவும்.
+parcel-environment-left = அதன் சூழல் சேமிக்க முடியும் முன் நீங்கள் தொகுப்பை விட்டு, எனவே அது சேமிக்கப்பட்டது இல்லை.
+parcel-environment-title = தொகுப்புகளுக்கான சேமிக்கப்பட்ட சூழல்கள்
+parcel-environment-help = உங்கள் சொந்த சூழல் ஒரு தொகுப்பிற்கு: நீங்கள் அங்கு நிற்கும்போது உங்கள் உள்ளூர் சூழலை மாற்றுகிறது, மற்றும் நீங்கள் முன்பு இருந்ததை நீங்கள் வெளியேறும் போது திரும்ப வருகிறது. நீங்கள் மட்டுமே அதைக் காணலாம். சூழ்நிலை சாளரத்திலிருந்து ஒன்றை சேமிக்கவும் அல்லது சூழலின் பொருளின் பட்டியல் உங்கள் பட்டியலில்.
+parcel-environment-empty = சூழல்கள் சேமிக்கப்படவில்லை
+parcel-environment-remove-all = எல்லாவற்றையும் நீக்கு
+parcel-environment-remove-all-title = ஒரு தொகுப்பிற்கு சேமிக்கப்பட்ட அனைத்து சூழல்களையும் நீக்கவா?
+parcel-environment-remove-all-text = இந்தக் கிரிட்டில் நிலத்துண்டுகளுக்காகச் சேமித்த சூழல்கள் நீக்கப்படும். மற்ற கிரிட்களில் உள்ளவை மாறாது. இதை மீளச் செய்ய முடியாது.

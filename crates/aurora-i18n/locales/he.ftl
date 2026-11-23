@@ -16046,3 +16046,141 @@ toolbar-remove-from-menu = הסר מסרגל הכלים
 toolbar-command-build-edit = עריכת עצמים
 toolbar-command-build-create = יצירת קבוצות ראשוניות
 toolbar-command-build-land = עריכת הארץ
+
+### Updated release translations
+
+inventory-search-no-copy = אין עותק
+inventory-search-no-modify = לא ניתן לשנות
+inventory-search-no-transfer = אין העברה
+ui-options-chat-keep-focus-hint = Enter שולח את ההודעה ומשאיר את שורת הצ׳אט פעילה להודעה הבאה, גם כשהיא ריקה. Esc או לחיצה בעולם מחזירים את השליטה בתנועה.
+ui-options-chat-enter-toggles-hint = בחלון השיחות, Enter בשדה ריק מחזיר את השליטה בתנועה בצ׳אט קרוב, בהודעות פרטיות ובצ׳אט קבוצתי. לחצו על Enter מתוך העולם כדי לחזור להקלדה.
+build-ui-features-physics-none-root-hint = רק הראשונים הילדים של קבוצת קישורים יכולים להשתמש בצורת הפיזיקה אף אחד: ראשית השורש, או ראשית בעצמה, שומרת על Prim או Convex hull.
+controls-position-tip = מיקום המצלמה: הגדירו איפה המצלמה תהיה מאחורי האווטאר, בדיוק
+camera-position-hint = במטרים מהאווטאר: X קדימה, Y שמאלה, Z למעלה. Ctrl + גלגל מעלה את המצלמה, Shift + גלגלי את נקודת המיקוד.
+camera-position-save = שמור כמיקום המצלמה...
+photo-looks-replace = תחליף
+photo-looks-empty = עדיין אין אפקט. הצב על מסנן למטה כדי לנסות אותו, לאחר מכן לחץ עליו או שחרר אותו לכאן.
+photo-looks-active = פעיל
+photo-looks-count = { $count } של { $max }
+photo-looks-expand-all = הרחב את כולם
+photo-looks-collapse-all = תפוס את כולם
+photo-looks-hint = מיושמים מלמעלה למטה. מושכים קלף כדי לשנות את סדרו, או לוחצים Alt + ↑ ↓ עליו. לחץ ימני על קלף בכדי להוציא אותו.
+photo-looks-right-click-out = לחיצה ימנית: להוציא אותו מהאפקטים הפעילים
+photo-looks-drop = זרקו אפקט לכאן, או לחצו על אחד מתחת
+photo-looks-full = { $max } של { $max }: קח אחד החוצה, או הפעל את החלפה כדי להחליף אחד.
+photo-looks-catalogue = קטלוג אפקטים
+photo-looks-catalogue-tip = הצב על אפקט כדי לנסות אותו בתמונה; לחץ עליו כדי להוסיף אותו, או גרר אותו בין הפעילים
+photo-looks-catalogue-fold = הצג או הסתר את הקטלוג
+photo-looks-replace-tip = תחליף: לחיצה בקטלוג מחליפה את הקלף הנבחר במקום להוסיף קלף חדש
+photo-looks-replacing = לחיצה אחת משנה את { $name }.
+photo-looks-done = סיימתי.
+photo-looks-take-out-zone = תוריד את זה לכאן.
+photo-looks-hide = להסתיר { $name } (זה שומר על מקומו)
+photo-looks-show = תראה { $name }.
+photo-looks-more = עוד פעולות
+photo-looks-move-up = תזוז למעלה
+photo-looks-move-down = תזוז למטה.
+photo-looks-replace-one = תחליף...
+photo-looks-take-out = קח את זה.
+photo-looks-not-in-360-tag = לא ב-360 מעלות.
+photo-looks-all = כל
+photo-looks-favorites = אהובים: כל אפקט ששיחקת בו
+photo-looks-favorites-empty = עדיין אין אהובים. הצב על אפקט ולחץ על הכוכב שלו: הוא מופיע ראשון ברשימה, וכאן.
+photo-looks-favorite = הוספת לרשימות אהובות
+photo-looks-unfavorite = הסר מהאהובים
+photo-looks-card = { $name }, { $place } של { $count }Alt + מקש חץ להזיז אותו.
+photo-looks-legacy-note = למסננים עתיקים של המראה אין הגדרות נוספות.
+photo-knob-toning = גיוון צבע
+photo-knob-local-contrast = ניגודיות מקומית
+build-face-button = פנים. { $number }: בחר אותו על כל פרים שנבחר. Shift+click: להוסיף אותו או להוציא אותו.
+build-face-invert = הופך את הפנים הנבחרות
+build-face-all = בחר כל פנים
+ui-options-aurora-controls-compact = בקרה על המצלמה הקומפקטית
+ui-options-aurora-controls-compact-help = חלון הבקרה נפתח בצורה קטנה על המצלמה: ג'ויסטיקים, זום וגלישה. הכפתור של סרגל הכותרת שלו משנה בין קומפקטי למלא, ומגדיל גם את זה.
+ui-options-aurora-controls-compact-movement = בקרת תנועה קומפקטית
+ui-options-aurora-controls-compact-movement-help = חלון הבקרה של תפריט התנועה נפתח בצורה קומפקטית: הכפתורים לתנועה והליכה, ריצה ועוף. כפתורי סרגל הכותרת שלו מאפשרים להחליף בין קומפקטי למלא, ומגדירים גם את זה.
+poser-face-position-drag = גררו כדי להזיז את המפרק ב־0.1 מ״מ לכל פיקסל, או לחצו כדי להקליד מיקום.
+build-layout-clicks = לחיצות על עצמים
+build-ui-floaters-shift-click = Shift + לחיצה
+build-ui-floaters-ctrl-click = Ctrl + לחיצה
+build-ui-floaters-click-object = הוסף או הסר את האובייקט
+build-ui-floaters-click-face = בחר את הפנים
+build-ui-floaters-clicks-hint = עם כלי העריכה, מחוץ למסלול ההתאמה. Ctrl + Shift + לחיצה מוסיפים את הפנים שנלחצו או מוציאים אותם.
+build-ui-floaters-ctrl-right-click = Ctrl + לחיצה ימנית
+build-ui-floaters-right-click-menu = פתח את התפריט
+build-ui-floaters-right-click-edit = ערוך את העצמים
+build-ui-floaters-double-click-linked = לחיצה כפולה על פרים: משנה את "עריכת חלקים מקושרים"
+blender-live-tab-place = מקום
+blender-live-tab-avatar = אווטאר
+blender-live-objects-help = הרשתות שבלנדר שולח. בחר אחת כדי להציב אותה, או ייבוא אותה מהתפריט שלה.
+blender-live-more = עוד.
+blender-live-place = מקום
+blender-live-linked-prims = להראות או להסתיר את הראשונים הקשורים
+blender-live-tag-rigged = עם שלד
+blender-live-card-rigged =
+    { $triangles ->
+        [one] משולשים: { $triangles }
+       *[other] משולשים: { $triangles }
+    }
+blender-live-card-static =
+    סטטי · { $triangles ->
+        [one] משולשים: { $triangles }
+       *[other] משולשים: { $triangles }
+    }
+blender-live-card-linkset =
+    סטטי · { $prims ->
+        [one] פרימים: { $prims }
+       *[other] פרימים: { $prims }
+    } · { $triangles ->
+        [one] משולשים: { $triangles }
+       *[other] משולשים: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] משולשים: { $triangles }
+       *[other] משולשים: { $triangles }
+    }
+blender-live-place-help = איפה הרשת הסטטית שנבחרה, רשתות מתוחכמות תמיד עוקבות אחרי האווטאר שלך.
+blender-live-place-none = בחר אובייקט סטטי כדי להציב אותו.
+blender-live-where = איפה
+blender-live-transform = מיקום, סיבוב וגודל
+blender-live-size-note = הגודל מכפיל את מה שבלנדר שולח, כך שעריכות מאוחר יותר בבלנדר ישמרו אותו.
+blender-live-avatar-help = עבור רשתות מתוחכמות: שלח את הצורה שלך ל- Blender כדי לדמות אותה.
+blender-live-shape-section = הצורה שלך ב- Blender
+blender-live-import-help = קפא תמונה של האובייקט עבור הייבוא הרגיל: סקירה, מחיר, ואז אישור. עריכה מאוחר יותר ב- Blender לא תשנה את זה.
+blender-live-from = מ
+blender-live-plugins-help = Aurora מתקין את התוסף המתאים בכל בלנדר, שומר גיבוי של זה הקודם ולא מתקין גרסה ישנה יותר.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } דקות
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = זמן מאז שבלנדר שינה את האובייקט הזה בפעם האחרונה
+blender-live-show-all = הראה את כולם
+blender-live-hide-all = הסתיר הכל
+blender-live-bend-section = בדוק את המשקלים.
+blender-live-elbows = מרפקים.
+blender-live-knees = ברכיים.
+blender-live-bend-hold = תחזיק את הפוזה הזו במקום האנימציה שלי.
+blender-live-bend-note = רק אתה רואה את העקומה, על האווטאר שלך הנפשות שלך, תושבים אחרים נקודת מבט והייבוא לא משתנים.
+blender-live-levels = רמות הפרטים
+blender-live-levels-pending = Blender מכין את רמות הפרטים כשאתה לוחץ על ייבוא.
+blender-live-levels-note = מוכן בבלנדר מההגדרות של LiveMesh של כל אובייקט.
+blender-live-quick-look-tip = מבט מהיר: ראה את העצם הזה גדול יותר
+blender-live-quick-look-drag = גרור כדי להסתובב, לחץ פעמיים כדי להתמודד עם זה שוב.
+blender-live-quick-look-changed = שונה בבלנדר לפני { $ago }.
+blender-live-quick-look-bend = כופף כמו בטבלה אווטאר: מרפקים { $elbows }°, ברכיים { $knees }°.
+blender-live-undo = בטל
+blender-live-undo-derez = נקודות { $name } · עדיין ברשימת בלנדר
+blender-live-undo-detach = מבודד { $name } · עדיין ברשימת בלנדר
+blender-live-undo-drop = הנחתי את { $name } על הקרקע.
+blender-live-undo-attach = { $name } הועבר אל { $point }
+parcel-environment-apply-save = יישמתי לעצמי בלבד, עבור החבילה הזו.
+parcel-environment-save = שמור את הסביבה הזו עבור החבילה הזו, היא חוזרת בכל פעם שאתה כאן.
+parcel-environment-forget = שכח את הסביבה שנשמרה עבור החבילה הזו.
+parcel-environment-not-saved = החבילה הזו לא הייתה ידועה עדיין, אז הסביבה שלה לא נשמרה. נסה שוב בעוד רגע.
+parcel-environment-left = עזבת את החבילה לפני שאפשר להציל את הסביבה שלה, אז היא לא נשמרה.
+parcel-environment-title = סביבות שומרות עבור חבילות
+parcel-environment-help = סביבה אישית עבור חבילה: היא מחליפה את הסביבה המקומית שלך בזמן שאתה עומד שם, ומה שהיה לך קודם חוזר כשאתה עוזב. רק אתה רואה אותה. שמור אחת מהחלון "סביבה" או מתפריט של פריט סביבתי במחסן שלך.
+parcel-environment-empty = לא נשמרו סביבות
+parcel-environment-remove-all = הסר את כולם
+parcel-environment-remove-all-title = להסיר כל סביבה שנשמרה עבור חבילה?
+parcel-environment-remove-all-text = הסביבות ששמרתם לחלקות קרקע בגריד הזה יוסרו. הסביבות בגרידים אחרים יישארו כפי שהן. לא ניתן לבטל את הפעולה.

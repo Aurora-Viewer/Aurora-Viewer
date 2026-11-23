@@ -15839,3 +15839,141 @@ toolbar-remove-from-menu = 從工具欄中刪除
 toolbar-command-build-edit = 編輯對象
 toolbar-command-build-create = 建立基本體
 toolbar-command-build-land = 編輯土地
+
+### Updated release translations
+
+inventory-search-no-copy = 不可複製
+inventory-search-no-modify = 無法修改
+inventory-search-no-transfer = 不可轉讓
+ui-options-chat-keep-focus-hint = 按 Enter 傳送訊息，聊天列會保持輸入焦點，即使聊天列是空的也一樣。按 Esc 或點擊場景即可恢復移動操作。
+ui-options-chat-enter-toggles-hint = 在「對話」視窗的空白輸入欄按 Enter 可恢復移動操作，適用於附近聊天、私訊和群組聊天。在場景中按 Enter 可再次輸入。
+build-ui-features-physics-none-root-hint = 只有鏈接集的子素數才能使用物理形狀 None:根素數,或單獨的素數保持 Prim 或 Convex hull。
+controls-position-tip = 攝像頭位置:設置攝像機在頭像后面的位置,準確
+camera-position-hint = 從頭像的米:X向前,Y左邊,Z上。 Ctrl +輪提高相機,Shift +輪焦點。
+camera-position-save = 保存為相機位置 . .
+photo-looks-replace = 替換
+photo-looks-empty = 還沒有效果。 指向下面的過濾器試用,然后點擊或拖動到這里。
+photo-looks-active = 進行中
+photo-looks-count = { $count } 2013年1月1日至 { $max }
+photo-looks-expand-all = 全部展開
+photo-looks-collapse-all = 全部摺疊
+photo-looks-hint = 效果從上到下套用。拖曳卡片或選取後按 Alt + ↑ ↓ 可調整順序。按右鍵可移除該效果。
+photo-looks-right-click-out = 右鍵單擊:將其從活動效果中移除
+photo-looks-drop = 在這里拖動效果,或點擊下面的一個
+photo-looks-full = { $max } 2013年1月1日至 { $max }:刪除一個,或打開"替換"以交換一個。
+photo-looks-catalogue = 效應目錄
+photo-looks-catalogue-tip = 指向效果以在照片上試用;點按它以添加它,或將其拖到活動效果中
+photo-looks-catalogue-fold = 顯示或隱藏目錄
+photo-looks-replace-tip = 替換:在目錄中點擊將替換選定的卡片,而不是添加新卡片
+photo-looks-replacing = 點擊交換 { $name }
+photo-looks-done = 完成
+photo-looks-take-out-zone = 下來拿出來
+photo-looks-hide = 隱藏{ $name }(它保持其位置)
+photo-looks-show = 表演{ $name }
+photo-looks-more = 更多操作
+photo-looks-move-up = 上移
+photo-looks-move-down = 下移
+photo-looks-replace-one = 替換.
+photo-looks-take-out = 取出
+photo-looks-not-in-360-tag = 不在360度
+photo-looks-all = 全部
+photo-looks-favorites = 收藏夾:您主演的每個效果
+photo-looks-favorites-empty = 指向某個效果并點擊它的星標:它會在列表中顯示第一,并且在這里。
+photo-looks-favorite = 添加到收藏夾
+photo-looks-unfavorite = 從收藏夾中刪除
+photo-looks-card = { $name }, { $place } 2013年1月1日至 { $count }Alt + 箭頭鍵移動它。
+photo-looks-legacy-note = 傳統查看器過濾器沒有額外設置。
+photo-knob-toning = 色調調整
+photo-knob-local-contrast = 局部對比
+build-face-button = 面部 { $number }: 在每個選定的prim上選擇它。 Shift+click: 添加或刪除它。
+build-face-invert = 翻轉所選面孔
+build-face-all = 選擇每個面孔
+ui-options-aurora-controls-compact = 緊湊型相機控制
+ui-options-aurora-controls-compact-help = Controls 窗口在相機上打開緊湊:它的操縱桿、縮放和滾動。 它的標題欄按鈕在緊湊和全部之間切換,并設置這一點。
+ui-options-aurora-controls-compact-movement = 緊湊型運動控制器
+ui-options-aurora-controls-compact-movement-help = 控制窗口的移動標簽打開緊湊:移動按鈕和走路,跑步和飛行。 其標題欄按鈕在緊湊和全部之間切換,并設置這一點。
+poser-face-position-drag = 拖動以每像素 0.1 mm 移動接頭,或點按以鍵入位置。
+build-layout-clicks = 點擊對象
+build-ui-floaters-shift-click = Shift + 按一下
+build-ui-floaters-ctrl-click = Ctrl + 按一下
+build-ui-floaters-click-object = 添加或移除對象
+build-ui-floaters-click-face = 選擇面孔
+build-ui-floaters-clicks-hint = 使用編輯工具,在對齊之外,Ctrl + Shift + 單擊添加或刪除點擊的面。
+build-ui-floaters-ctrl-right-click = Ctrl + 右鍵單擊
+build-ui-floaters-right-click-menu = 打開菜單
+build-ui-floaters-right-click-edit = 編輯對象
+build-ui-floaters-double-click-linked = 雙擊prim:切換“編輯鏈接部分”
+blender-live-tab-place = 位置
+blender-live-tab-avatar = 化身
+blender-live-objects-help = Blender 發送的網格。 選擇一個放置它,或從菜單中導入它。
+blender-live-more = 更多
+blender-live-place = 位置
+blender-live-linked-prims = 顯示或隱藏鏈接的prim
+blender-live-tag-rigged = 已綁定骨架
+blender-live-card-rigged =
+    { $triangles ->
+        [one] 三角形: { $triangles }
+       *[other] 三角形: { $triangles }
+    }
+blender-live-card-static =
+    靜態 · { $triangles ->
+        [one] 三角形: { $triangles }
+       *[other] 三角形: { $triangles }
+    }
+blender-live-card-linkset =
+    靜態 · { $prims ->
+        [one] 基本體: { $prims }
+       *[other] 基本體: { $prims }
+    } · { $triangles ->
+        [one] 三角形: { $triangles }
+       *[other] 三角形: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] 三角形: { $triangles }
+       *[other] 三角形: { $triangles }
+    }
+blender-live-place-help = 所選靜態網格的位置。 被操縱的網格總是跟隨你的頭像。
+blender-live-place-none = 選擇靜態對象以放置它。
+blender-live-where = 哪里
+blender-live-transform = 位置、旋轉和大小
+blender-live-size-note = 這項尺寸設定會等比例縮放 Blender 傳送的模型。之後在 Blender 繼續編輯時，這個縮放比例會保留。
+blender-live-avatar-help = 對于裝飾網格:將形狀發送到 Blender 以在其上建模。
+blender-live-shape-section = 在Blender中創建你的形狀
+blender-live-import-help = 將物件的目前狀態固定為快照，供一般匯入使用。確認前請檢查物件和價格。之後在 Blender 的編輯不會更改這份快照。
+blender-live-from = 從
+blender-live-plugins-help = Aurora 在每個Blender中安裝匹配的插件,保留前一個插件的備份并且永遠不會安裝舊版本。
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count }分鐘
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Blender 上次更改此對象以來的時間
+blender-live-show-all = 全部顯示
+blender-live-hide-all = 隱藏所有
+blender-live-bend-section = 檢查重量
+blender-live-elbows = 肘部
+blender-live-knees = 膝蓋
+blender-live-bend-hold = 保持這個姿勢,而不是我的動畫
+blender-live-bend-note = 只有你在你的頭像上看到彎曲,你的動畫、其他居民的視圖和導入不會改變。
+blender-live-levels = 詳細程度
+blender-live-levels-pending = 當您點擊"導入"時,Blender 會準備詳細級別。
+blender-live-levels-note = 在 Blender 中從每個對象的 LiveMesh 設置中準備。
+blender-live-quick-look-tip = 快速查看:查看此對象更大
+blender-live-quick-look-drag = 拖動旋轉它,雙擊再次面對它。
+blender-live-quick-look-changed = 改變在Blender { $ago }年前。
+blender-live-quick-look-bend = 彎曲如在頭像選項卡:肘部 { $elbows }°，膝蓋 { $knees }°.
+blender-live-undo = 復原
+blender-live-undo-derez = 德雷茲澤德 { $name } ·仍然在Blender的列表
+blender-live-undo-detach = 分離 { $name } ·仍然在Blender的列表
+blender-live-undo-drop = 把{ $name }扔到地上
+blender-live-undo-attach = 已將 { $name } 移至 { $point }
+parcel-environment-apply-save = 僅套用給自己並為此地塊儲存
+parcel-environment-save = 保存這個環境的包裹:它會回來,每當你在這里
+parcel-environment-forget = 忘記為此包裹保存的環境
+parcel-environment-not-saved = 該包尚未被識別,因此其環境沒有保存。 稍后再試。
+parcel-environment-left = 您在環境能夠保存之前離開了包,因此它沒有被保存。
+parcel-environment-title = 為包保存的環境
+parcel-environment-help = 您可以為地塊儲存個人環境。進入地塊時會取代您目前的本機環境，離開後恢復原有環境。只有您看得到。可從環境視窗或物品欄中環境物品的選單儲存。
+parcel-environment-empty = 沒有保存環境
+parcel-environment-remove-all = 刪除所有
+parcel-environment-remove-all-title = 刪除為包裹保存的每個環境?
+parcel-environment-remove-all-text = 您為目前網格的地塊儲存的環境將被刪除。其他網格的紀錄會保留。此操作無法復原。

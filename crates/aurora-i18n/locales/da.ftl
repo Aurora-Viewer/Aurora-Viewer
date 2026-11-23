@@ -16058,3 +16058,141 @@ toolbar-remove-from-menu = Fjern fra værktøjslinjen
 toolbar-command-build-edit = Rediger objekter
 toolbar-command-build-create = Opret prims
 toolbar-command-build-land = Rediger land
+
+### Updated release translations
+
+inventory-search-no-copy = ingen kopi
+inventory-search-no-modify = kan ikke ændres
+inventory-search-no-transfer = Ingen overførsel
+ui-options-chat-keep-focus-hint = Enter sender beskeden, og chatfeltet er klar til næste besked, også hvis du trykker Enter i et tomt felt. Tryk Esc eller klik i verdenen for at styre figuren igen.
+ui-options-chat-enter-toggles-hint = Enter i et tomt felt i Samtaler sætter dig tilbage i bevægelsestilstand i nærchat, private beskeder og gruppechat. Tryk Enter fra verdenen for at skrive igen.
+build-ui-features-physics-none-root-hint = Kun børneprimerne af et linkset kan bruge fysikformen Ingen: rodprim, eller en prim alene, holder Prim eller Convex hull.
+controls-position-tip = Kamera position: sæt, hvor kameraet hviler bag avataren, præcis
+camera-position-hint = I meter fra avataren: X fremad, Y venstre, Z op. Ctrl + hjul hæver kameraet, Shift + hjulet fokuspunktet.
+camera-position-save = Gem som kameraposition…
+photo-looks-replace = Erstat
+photo-looks-empty = Peg på et filter nedenfor for at prøve det, og klik derefter på det, eller træk det hertil.
+photo-looks-active = Aktiv
+photo-looks-count = { $count } af { $max }
+photo-looks-expand-all = Udvid alle
+photo-looks-collapse-all = Skjul alle
+photo-looks-hint = Anvendt fra top til bund. Træk et kort for at ændre dets rækkefølge, eller tryk på Alt + ↑ ↓ på det. Højreklik på et kort til at tage det ud.
+photo-looks-right-click-out = Højreklik: tag det ud af de aktive effekter
+photo-looks-drop = Træk en effekt her, eller klik på en nedenfor
+photo-looks-full = { $max } af { $max }: Tag en ud, eller slå Erstat til for at bytte en.
+photo-looks-catalogue = Katalog over effekter
+photo-looks-catalogue-tip = Peg på en effekt for at prøve den på billedet, klik på den for at tilføje den, eller træk den mellem de aktive effekter
+photo-looks-catalogue-fold = Vis eller skjul kataloget
+photo-looks-replace-tip = Udskift: et klik i kataloget udskifter det valgte kort i stedet for at tilføje et nyt
+photo-looks-replacing = Et klik swaps { $name }
+photo-looks-done = Udført
+photo-looks-take-out-zone = Drop her for at tage det ud
+photo-looks-hide = Skjul { $name } (det holder sin plads)
+photo-looks-show = Vis { $name }
+photo-looks-more = Flere handlinger
+photo-looks-move-up = Flyt op
+photo-looks-move-down = Flyt ned
+photo-looks-replace-one = Erstat…
+photo-looks-take-out = Tag ud
+photo-looks-not-in-360-tag = Ikke i 360°
+photo-looks-all = Alle
+photo-looks-favorites = Favoritter: alle effekter, du har spillet hovedrollen i
+photo-looks-favorites-empty = Peg på en effekt og klik på dens stjerne: den vises først i listen, og her.
+photo-looks-favorite = Tilføj til favoritter
+photo-looks-unfavorite = Fjern fra favoritter
+photo-looks-card = { $name }, { $place } af { $count }. Alt + piletasterne flytte det.
+photo-looks-legacy-note = Ældre Viewer-filtre har ingen yderligere indstillinger.
+photo-knob-toning = Toning
+photo-knob-local-contrast = Lokal kontrast
+build-face-button = Ansigt { $number }: vælg det på hver valgt prim. Shift+click: tilføje det eller tage det ud.
+build-face-invert = Inverter de valgte ansigter
+build-face-all = Vælg hvert ansigt
+ui-options-aurora-controls-compact = Kompakt kamerabetjening
+ui-options-aurora-controls-compact-help = Kontrolvinduet åbner kompakt på kameraet: dets joysticks, zoom og roll.Dets titellinje knap skifter mellem kompakt og fuld, og indstiller dette også.
+ui-options-aurora-controls-compact-movement = Kompakt bevægelseskontrol
+ui-options-aurora-controls-compact-movement-help = Kontrolvinduets fane Bevægelse åbner kompakt: bevægelsesknapperne og gå, løbe og flyve.Dets titellinjeknap skifter mellem kompakt og fuld, og indstiller også dette.
+poser-face-position-drag = Træk for at flytte samlingen med 0,1 mm pr. pixel, eller klik for at skrive en placering.
+build-layout-clicks = Klik på objekter
+build-ui-floaters-shift-click = Skift + klik
+build-ui-floaters-ctrl-click = Ctrl + klik
+build-ui-floaters-click-object = Tilføj eller fjern objektet
+build-ui-floaters-click-face = Vælg ansigtet
+build-ui-floaters-clicks-hint = Med redigeringsværktøjet uden for Juster tilføjer Ctrl + Skift + klik det klikkede ansigt eller fjerner det.
+build-ui-floaters-ctrl-right-click = Ctrl + højreklik
+build-ui-floaters-right-click-menu = Åbn menuen
+build-ui-floaters-right-click-edit = Rediger objektet
+build-ui-floaters-double-click-linked = Dobbeltklik på en prim: skift til “Rediger linkede dele”
+blender-live-tab-place = Sted
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = Vælg et af de net, som Blender sender, for at placere det, eller importér det fra menuen.
+blender-live-more = Mere
+blender-live-place = Sted
+blender-live-linked-prims = Vis eller skjul de sammenkædede primtal
+blender-live-tag-rigged = Med rig
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Trekanter: { $triangles }
+       *[other] Trekanter: { $triangles }
+    }
+blender-live-card-static =
+    Statisk · { $triangles ->
+        [one] Trekanter: { $triangles }
+       *[other] Trekanter: { $triangles }
+    }
+blender-live-card-linkset =
+    Statisk · { $prims ->
+        [one] Primdele: { $prims }
+       *[other] Primdele: { $prims }
+    } · { $triangles ->
+        [one] Trekanter: { $triangles }
+       *[other] Trekanter: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Trekanter: { $triangles }
+       *[other] Trekanter: { $triangles }
+    }
+blender-live-place-help = Hvor det valgte statiske net er. Riggede net følger altid din avatar.
+blender-live-place-none = Vælg et statisk objekt for at placere det.
+blender-live-where = Hvor
+blender-live-transform = Placering, rotation og størrelse
+blender-live-size-note = Størrelse multiplicerer hvad Blender sender, så senere redigeringer i Blender beholder det.
+blender-live-avatar-help = For rigged net: send din form til Blender for at modellere på det.
+blender-live-shape-section = Din figur i Blender
+blender-live-import-help = Fryser et øjebliksbillede af objektet til den normale import: gennemgang, pris, derefter bekræft.Senere redigeringer i Blender ændrer det ikke.
+blender-live-from = Fra
+blender-live-plugins-help = Aurora installerer det matchende plug-in i hver Blender, holder en sikkerhedskopi af den forrige og aldrig installere en ældre version.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Tid siden Blender sidst ændrede dette objekt
+blender-live-show-all = Vis alle varer
+blender-live-hide-all = Skjul alle
+blender-live-bend-section = Tjek vægtene
+blender-live-elbows = Albuer
+blender-live-knees = Knæ
+blender-live-bend-hold = Hold denne pose i stedet for mine animationer
+blender-live-bend-note = Kun du kan se bøjningen på din avatar, dine animationer, andre beboeres syn og importen er uændret.
+blender-live-levels = Niveauer af detaljer
+blender-live-levels-pending = Blender forbereder detaljeringsniveauerne, når du klikker på Importer.
+blender-live-levels-note = Forberedt i Blender fra hvert objekts LiveMesh indstillinger.
+blender-live-quick-look-tip = Hurtigt kig: se dette objekt større
+blender-live-quick-look-drag = Træk for at dreje den, dobbeltklik for at vende den igen.
+blender-live-quick-look-changed = Ændret i Blender { $ago } siden.
+blender-live-quick-look-bend = Bøjet som i Avatar fanen: albuer { $elbows }°, knæ { $knees }°.
+blender-live-undo = Fortryd
+blender-live-undo-derez = Derezzed { $name } · stadig i Blender’s liste
+blender-live-undo-detach = Fritstående { $name } · stadig i Blender's liste
+blender-live-undo-drop = Tabte { $name } til jorden
+blender-live-undo-attach = Flyttede { $name } til { $point }
+parcel-environment-apply-save = Ansøg kun til mig selv, for denne pakke
+parcel-environment-save = Gem dette miljø for denne pakke: det kommer tilbage, når du er her
+parcel-environment-forget = Glem miljøet gemt for denne pakke
+parcel-environment-not-saved = Denne pakke var endnu ikke kendt, så dens miljø blev ikke gemt. Prøv igen om et øjeblik.
+parcel-environment-left = Du forlod pakken, før dens miljø kunne gemmes, så den blev ikke gemt.
+parcel-environment-title = Miljøer gemt til pakker
+parcel-environment-help = Dit eget miljø for en parcel: det erstatter dit lokale miljø, mens du står der, og det du havde før kommer tilbage når du går væk. Kun du kan se det. Gem et fra vinduet Miljø eller menuen for et miljøelement i dit inventar.
+parcel-environment-empty = Ingen miljøer gemt
+parcel-environment-remove-all = Fjern alle
+parcel-environment-remove-all-title = Fjerne alle miljøer, der er gemt for en pakke?
+parcel-environment-remove-all-text = De miljøer, du har gemt til parceller på dette grid, fjernes. Miljøerne på andre grids bevares. Handlingen kan ikke fortrydes.

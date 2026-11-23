@@ -16023,3 +16023,141 @@ toolbar-remove-from-menu = Von der Symbolleiste entfernen
 toolbar-command-build-edit = Objekte bearbeiten
 toolbar-command-build-create = Prims erstellen
 toolbar-command-build-land = Land bearbeiten
+
+### Updated release translations
+
+inventory-search-no-copy = kopiergeschützt
+inventory-search-no-modify = Kann nicht geändert werden
+inventory-search-no-transfer = kein Transferieren
+ui-options-chat-keep-focus-hint = Enter sendet die Nachricht. Die Chatleiste bleibt für die nächste Nachricht aktiv, auch wenn du bei leerer Leiste Enter drückst. Mit Esc oder einem Klick in die Welt steuerst du wieder die Bewegung.
+ui-options-chat-enter-toggles-hint = Enter in einem leeren Feld des Unterhaltungsfensters schaltet zurück zur Bewegung, im Nahchat, in Direktnachrichten und in Gruppenchats. Mit Enter aus der Welt beginnst du wieder zu schreiben.
+build-ui-features-physics-none-root-hint = Nur die untergeordneten Prims eines Linksets können die physikalische Form None verwenden: Die Wurzelprim oder eine Prim für sich alleine behält Prim oder Convex Hull.
+controls-position-tip = Kameraposition: Stellen Sie ein, wo die Kamera hinter dem Avatar liegt, genau
+camera-position-hint = In Metern vom Avatar entfernt: X vorwärts, Y links, Z oben. Strg + Rad hebt die Kamera an, Umschalt + Rad den Fokuspunkt.
+camera-position-save = Speichern als Kameraposition…
+photo-looks-replace = Ersetzen
+photo-looks-empty = Zeigen Sie auf einen Filter unten, um ihn auszuprobieren, und klicken Sie dann darauf oder ziehen Sie ihn hierher.
+photo-looks-active = Aktiv
+photo-looks-count = { $count } von { $max }
+photo-looks-expand-all = Alle ausklappen
+photo-looks-collapse-all = Alles einklappen
+photo-looks-hint = Ziehen Sie eine Karte, um sie neu anzuordnen, oder drücken Sie Alt + ↑ ↓ auf der Karte. Klicken Sie mit der rechten Maustaste auf eine Karte und ziehen Sie sie heraus.
+photo-looks-right-click-out = Rechtsklick: Aus den aktiven Effekten entfernen
+photo-looks-drop = Ziehen Sie einen Effekt hierher oder klicken Sie auf einen unten
+photo-looks-full = { $max } von { $max }: Entfernen Sie einen oder aktivieren Sie Ersetzen, um einen zu tauschen.
+photo-looks-catalogue = Effektkatalog
+photo-looks-catalogue-tip = Zeigen Sie auf einen Effekt, um ihn im Foto auszuprobieren; klicken Sie darauf, um den Effekt hinzuzufügen, oder ziehen Sie ihn zwischen die aktiven Effekte.
+photo-looks-catalogue-fold = Katalog ein- oder ausblenden
+photo-looks-replace-tip = Ersetzen: Ein Klick im Katalog tauscht die gewählte Karte aus, anstatt eine neue hinzuzufügen
+photo-looks-replacing = Ein Klick tauscht { $name }
+photo-looks-done = Fertig
+photo-looks-take-out-zone = Hier fallen lassen, um es herauszunehmen
+photo-looks-hide = Ausblenden { $name } (behält seinen Platz)
+photo-looks-show = { $name } einblenden
+photo-looks-more = Weitere Aktionen
+photo-looks-move-up = Nach oben verschieben
+photo-looks-move-down = Nach unten verschieben
+photo-looks-replace-one = Ersetzen…
+photo-looks-take-out = Entfernen
+photo-looks-not-in-360-tag = Nicht in 360°
+photo-looks-all = Alle
+photo-looks-favorites = Favoriten: alle Effekte, die Sie gespielt haben
+photo-looks-favorites-empty = Zeigen Sie auf einen Effekt und klicken Sie auf seinen Stern: Er wird als erstes in der Liste angezeigt, und hier.
+photo-looks-favorite = Zu Favoriten hinzufügen
+photo-looks-unfavorite = Aus Favoriten entfernen
+photo-looks-card = { $name }, { $place } von { $count }. Alt + Pfeiltasten verschieben Sie es.
+photo-looks-legacy-note = Legacy Viewer-Filter haben keine zusätzlichen Einstellungen.
+photo-knob-toning = Tonung
+photo-knob-local-contrast = Lokaler Kontrast
+build-face-button = Gesicht { $number }: Wählen Sie es auf jedem ausgewählten Prim. Shift+click: Hinzufügen oder Entfernen.
+build-face-invert = Ausgewählte Flächen umkehren
+build-face-all = Jedes Gesicht auswählen
+ui-options-aurora-controls-compact = Kompakte Kamerasteuerung
+ui-options-aurora-controls-compact-help = Das Controls-Fenster öffnet sich kompakt auf der Kamera: seine Joysticks, Zoom und Rolle.Seine Titelleistentaste schaltet zwischen kompakt und voll um und stellt dies ebenfalls ein.
+ui-options-aurora-controls-compact-movement = Kompakte Bewegungssteuerungen
+ui-options-aurora-controls-compact-movement-help = Die Bewegungs-Registerkarte des Steuerfensters wird kompakt geöffnet: die Bewegungstasten und Gehen, Laufen und Fliegen.Die Titelleisten-Taste wechselt zwischen kompakt und voll und stellt dies ebenfalls ein.
+poser-face-position-drag = Ziehen Sie, um die Verbindung um 0,1 mm pro Pixel zu verschieben, oder klicken Sie auf, um eine Position einzugeben.
+build-layout-clicks = Klicks auf Objekte
+build-ui-floaters-shift-click = Umschalt + Klick
+build-ui-floaters-ctrl-click = Strg + Klick
+build-ui-floaters-click-object = Objekt hinzufügen oder entfernen
+build-ui-floaters-click-face = Wählen Sie das Gesicht aus
+build-ui-floaters-clicks-hint = Mit dem Bearbeiten-Werkzeug außerhalb von Ausrichten fügt Strg + Umschalt + Klicken die angeklickte Fläche hinzu oder entfernt sie.
+build-ui-floaters-ctrl-right-click = Strg + Rechtsklick
+build-ui-floaters-right-click-menu = Öffnen Sie das Menü
+build-ui-floaters-right-click-edit = Das Objekt bearbeiten
+build-ui-floaters-double-click-linked = Doppelklick auf eine Prim: Schalter „Verlinkte Teile bearbeiten“
+blender-live-tab-place = Position
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = Die Meshes, die Blender sendet: Wählen Sie eines aus, um es zu platzieren oder importieren Sie es aus dem Menü.
+blender-live-more = Mehr
+blender-live-place = Position
+blender-live-linked-prims = Verknüpfte Prims ein- oder ausblenden
+blender-live-tag-rigged = Mit Skelett
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Dreiecke: { $triangles }
+       *[other] Dreiecke: { $triangles }
+    }
+blender-live-card-static =
+    Statisch · { $triangles ->
+        [one] Dreiecke: { $triangles }
+       *[other] Dreiecke: { $triangles }
+    }
+blender-live-card-linkset =
+    Statisch · { $prims ->
+        [one] Prims: { $prims }
+       *[other] Prims: { $prims }
+    } · { $triangles ->
+        [one] Dreiecke: { $triangles }
+       *[other] Dreiecke: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Dreiecke: { $triangles }
+       *[other] Dreiecke: { $triangles }
+    }
+blender-live-place-help = Wo sich das ausgewählte statische Netz befindet. Rigged Meshes folgen immer deinem Avatar.
+blender-live-place-none = Wählen Sie ein statisches Objekt zum Platzieren aus.
+blender-live-where = Position
+blender-live-transform = Position, Rotation und Größe
+blender-live-size-note = Größe multipliziert, was Blender sendet, so dass spätere Bearbeitungen in Blender es behalten.
+blender-live-avatar-help = Für Rigged Meshes: Senden Sie Ihre Form an Blender, um sie zu modellieren.
+blender-live-shape-section = Deine Form in Blender
+blender-live-import-help = Friert einen Schnappschuss des Objekts für den normalen Import ein: Überprüfung, Preis, dann bestätigen.Spätere Bearbeitungen in Blender ändern ihn nicht.
+blender-live-from = Von
+blender-live-plugins-help = Aurora installiert das passende Plug-in in jedem Blender, behält ein Backup des vorherigen und installiert niemals eine ältere Version.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Zeit seit Blender dieses Objekt zuletzt geändert hat
+blender-live-show-all = Alle anzeigen
+blender-live-hide-all = Alle ausblenden
+blender-live-bend-section = Überprüfen Sie die Gewichte
+blender-live-elbows = Ellenbogen
+blender-live-knees = Knie
+blender-live-bend-hold = Halten Sie diese Pose anstelle meiner Animationen
+blender-live-bend-note = Nur du siehst die Biegung auf deinem Avatar, deine Animationen, die Ansicht anderer Bewohner und der Import bleiben unverändert.
+blender-live-levels = Detaillierungsstufen
+blender-live-levels-pending = Blender bereitet die Detailstufen vor, wenn Sie auf Importieren klicken.
+blender-live-levels-note = In Blender aus den LiveMesh-Einstellungen jedes Objekts vorbereitet.
+blender-live-quick-look-tip = Schnellansicht: Dieses Objekt größer sehen
+blender-live-quick-look-drag = Ziehen Sie, um es zu drehen, Doppelklick, um wieder zu sehen.
+blender-live-quick-look-changed = Geändert in Blender { $ago } vor.
+blender-live-quick-look-bend = Gebogen wie im Avatar Tab: Ellbogen { $elbows }°, Knie { $knees }°.
+blender-live-undo = Rückgängig machen
+blender-live-undo-derez = Derezzed { $name } · noch in Blender’s Liste
+blender-live-undo-detach = Freistehend { $name } · noch in Blender's Liste
+blender-live-undo-drop = { $name } auf den Boden geworfen
+blender-live-undo-attach = { $name } wurde an { $point } verschoben
+parcel-environment-apply-save = Bewerben Sie sich nur für mich, für dieses Paket
+parcel-environment-save = Speichern Sie diese Umgebung für dieses Paket: es kommt zurück, wann immer Sie hier sind
+parcel-environment-forget = Vergessen Sie die Umgebung für dieses Paket gespeichert
+parcel-environment-not-saved = Dieses Paket war noch nicht bekannt, daher wurde seine Umgebung nicht gespeichert. Versuchen Sie es in einem Moment erneut.
+parcel-environment-left = Ihr habt das Paket verlassen, bevor seine Umgebung gespeichert werden konnte, also wurde es nicht gespeichert.
+parcel-environment-title = Umgebungen für Pakete gespeichert
+parcel-environment-help = Deine eigene Umgebung für ein Päckchen: es ersetzt deine lokale Umwelt, während du dort stehst, und das, was du vorher hattest, kommt zurück, wenn du es verlässt. Nur du siehst es. Speichere eine aus dem Fenster "Umgebung" oder dem Menü eines Umgehungsgegenstandes in deinem Inventar.
+parcel-environment-empty = Keine Umgebungen gespeichert
+parcel-environment-remove-all = Alles entfernen
+parcel-environment-remove-all-title = Jede für ein Paket gespeicherte Umgebung entfernen?
+parcel-environment-remove-all-text = Deine für Parzellen auf diesem Grid gespeicherten Umgebungen werden entfernt. Andere Grids bleiben unverändert. Dieser Vorgang lässt sich nicht rückgängig machen.

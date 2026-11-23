@@ -16049,3 +16049,141 @@ toolbar-remove-from-menu = Buang dari toolbar
 toolbar-command-build-edit = Edit objek
 toolbar-command-build-create = Cipta prims
 toolbar-command-build-land = Edit negara
+
+### Updated release translations
+
+inventory-search-no-copy = tiada salinan
+inventory-search-no-modify = tidak boleh diubahsuai
+inventory-search-no-transfer = tidak boleh dipindah milik
+ui-options-chat-keep-focus-hint = Enter menghantar mesej dan bar sembang kekal aktif untuk mesej berikutnya, walaupun Enter ditekan pada bar kosong. Tekan Esc atau klik dalam dunia untuk kembali bergerak.
+ui-options-chat-enter-toggles-hint = Dalam tetingkap Perbualan, Enter pada medan kosong mengembalikan kawalan pergerakan untuk sembang sekitar, mesej peribadi dan sembang kumpulan. Tekan Enter dari dunia untuk menaip semula.
+build-ui-features-physics-none-root-hint = Hanya prim anak set pautan boleh menggunakan bentuk fizik Tiada: prim akar, atau prim sendiri, menyimpan hull Prim atau Convex.
+controls-position-tip = Kedudukan kamera: tetapkan di mana kamera terletak di belakang avatar, tepat
+camera-position-hint = Dalam meter dari avatar: X ke hadapan, Y ke kiri, Z ke atas. Ctrl + roda menaikkan kamera, Shift + roda titik fokus.
+camera-position-save = Simpan sebagai posisi kamera...
+photo-looks-replace = Ganti
+photo-looks-empty = Tiada kesan lagi. Tuding ke penapis di bawah untuk cuba, kemudian klik atau seret ke sini.
+photo-looks-active = Aktif
+photo-looks-count = { $count } dari { $max }
+photo-looks-expand-all = Kembangkan semua
+photo-looks-collapse-all = Kumpul Semua
+photo-looks-hint = Digunakan dari atas ke bawah. Seret kad untuk menyusun semula, atau tekan Alt + ↑ ↓ padanya. Klik kanan pada kad untuk mengeluarkannya.
+photo-looks-right-click-out = Klik-kanan: ambil ia keluar dari kesan aktif
+photo-looks-drop = Seret kesan ke sini, atau klik satu di bawah
+photo-looks-full = { $max } dari { $max }: ambil satu keluar, atau aktifkan Ganti untuk tukar satu.
+photo-looks-catalogue = Katalog Kesan
+photo-looks-catalogue-tip = Tunjukkan kesan untuk cuba ia pada foto; klik untuk menambahnya, atau seret di antara yang aktif
+photo-looks-catalogue-fold = Papar atau sembunyikan katalog
+photo-looks-replace-tip = Ganti: klik dalam katalog menukar kad dipilih daripada menambah yang baru
+photo-looks-replacing = Klik tukar { $name }
+photo-looks-done = Selesai
+photo-looks-take-out-zone = Drop di sini untuk mengambilnya keluar
+photo-looks-hide = Sembunyi { $name } (ia menyimpan tempatnya)
+photo-looks-show = Tunjukkan { $name }
+photo-looks-more = Lebih Tindakan
+photo-looks-move-up = Alih ke atas
+photo-looks-move-down = Alih ke bawah
+photo-looks-replace-one = Ganti...
+photo-looks-take-out = Ambil keluar
+photo-looks-not-in-360-tag = Tidak dalam 360°
+photo-looks-all = Semua
+photo-looks-favorites = Kegemaran: setiap kesan yang anda bintangi
+photo-looks-favorites-empty = Tiada kegemaran lagi. Tuding pada kesan dan klik bintangnya: ia muncul pertama dalam senarainya, dan di sini.
+photo-looks-favorite = Tambah ke Kegemaran
+photo-looks-unfavorite = Buang dari kegemaran
+photo-looks-card = { $name }, { $place } dari { $count }. Alt + kekunci panah alihkan ia.
+photo-looks-legacy-note = Penapis Pelihat Lama tidak mempunyai seting tambahan.
+photo-knob-toning = Pelarasan rona
+photo-knob-local-contrast = Kontras Setempat
+build-face-button = Wajah { $number }: pilih ia pada setiap prim yang dipilih. Shift+click: tambah atau buang.
+build-face-invert = Terbalikkan muka yang dipilih
+build-face-all = Pilih semua muka
+ui-options-aurora-controls-compact = Kawalan kamera kompak
+ui-options-aurora-controls-compact-help = Tetingkap Kawalan dibuka kompak pada kamera: joystick, zum dan gulungnya. Butang bar tajuknya beralih antara kompak dan penuh, dan tetapkan ini juga.
+ui-options-aurora-controls-compact-movement = Kawalan pergerakan padat
+ui-options-aurora-controls-compact-movement-help = Tab Pergerakan tetingkap Kawalan dibuka kompak: butang pergerakan dan berjalan, lari dan terbang. Butang bar tajuknya tukar antara kompak dan penuh, dan tetapkan ini juga.
+poser-face-position-drag = Seret untuk alih sambungan 0.1 mm per piksel, atau klik untuk taip kedudukan.
+build-layout-clicks = Klik pada objek
+build-ui-floaters-shift-click = Shift + klik
+build-ui-floaters-ctrl-click = Ctrl + klik
+build-ui-floaters-click-object = Tambah atau buang objek
+build-ui-floaters-click-face = Pilih Fail
+build-ui-floaters-clicks-hint = Dengan alat Edit, di luar Jajaran. Ctrl + Shift + klik menambahkan muka yang diklik atau mengeluarkannya.
+build-ui-floaters-ctrl-right-click = Ctrl + klik kanan
+build-ui-floaters-right-click-menu = Buka menu
+build-ui-floaters-right-click-edit = Edit objek
+build-ui-floaters-double-click-linked = Klik dua kali pada prim: togol "Edit bahagian terpaut"
+blender-live-tab-place = Tempat
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = Jaringan yang Blender hantar. Pilih satu untuk letakkannya, atau import ia dari menunya.
+blender-live-more = Lebih
+blender-live-place = Tempat
+blender-live-linked-prims = Papar atau sembunyikan prim terpaut
+blender-live-tag-rigged = Berangka
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Segi tiga: { $triangles }
+       *[other] Segi tiga: { $triangles }
+    }
+blender-live-card-static =
+    Statik · { $triangles ->
+        [one] Segi tiga: { $triangles }
+       *[other] Segi tiga: { $triangles }
+    }
+blender-live-card-linkset =
+    Statik · { $prims ->
+        [one] Prim: { $prims }
+       *[other] Prim: { $prims }
+    } · { $triangles ->
+        [one] Segi tiga: { $triangles }
+       *[other] Segi tiga: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Segi tiga: { $triangles }
+       *[other] Segi tiga: { $triangles }
+    }
+blender-live-place-help = Di mana mesh statik yang dipilih. Jaringan tersusun sentiasa mengikuti avatar anda.
+blender-live-place-none = Pilih objek statik untuk ditempatkan.
+blender-live-where = Dimana
+blender-live-transform = Posisi, Putaran dan Saiz
+blender-live-size-note = Saiz melipatgandakan apa yang Blender hantar, jadi penyuntingan kemudian dalam Blender menyimpannya.
+blender-live-avatar-help = Untuk jaring yang disusun: hantar bentuk anda ke Blender untuk model padanya.
+blender-live-shape-section = Bentuk anda dalam Blender
+blender-live-import-help = Mengbekukan snapshot objek untuk import biasa: ulasan, harga, kemudian sahkan. Editan seterusnya dalam Blender tidak mengubahnya.
+blender-live-from = Daripada
+blender-live-plugins-help = Aurora memasang pemalam yang sepadan dalam setiap Blender, menyimpan salinan simpanan bagi yang terdahulu dan tidak pernah memasang versi lama.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Masa sejak Blender terakhir mengubah objek ini
+blender-live-show-all = Papar semua
+blender-live-hide-all = Sembunyikan semua
+blender-live-bend-section = Semak berat
+blender-live-elbows = Siku
+blender-live-knees = Lutut
+blender-live-bend-hold = Pegang pose ini bukannya animasi saya
+blender-live-bend-note = Hanya awak yang nampak lengkungan, pada avatar awak. Animasi awak, pandangan penduduk lain dan import tidak berubah.
+blender-live-levels = Aras perincian
+blender-live-levels-pending = Blender menyediakan tahap perincian bila anda klik Import.
+blender-live-levels-note = Disediakan dalam Blender dari tetapan LiveMesh setiap objek.
+blender-live-quick-look-tip = Lihat cepat: lihat objek ini lebih besar
+blender-live-quick-look-drag = Seret untuk putar, klik dua kali untuk hadapinya lagi.
+blender-live-quick-look-changed = Diubah dalam Blender { $ago } tahun lalu.
+blender-live-quick-look-bend = Bend seperti dalam tab Avatar: elbows { $elbows }°, lutut { $knees }°.
+blender-live-undo = _Buat asal
+blender-live-undo-derez = Derezzed { $name } · masih dalam senarai Blender
+blender-live-undo-detach = Terpisah { $name } · masih dalam senarai Blender
+blender-live-undo-drop = Terjatuh { $name } ke tanah.
+blender-live-undo-attach = { $name } dialihkan ke { $point }
+parcel-environment-apply-save = Gunakan untuk diri saya sahaja, untuk pakej ini
+parcel-environment-save = Simpan persekitaran ini untuk pakej ini: ia kembali bila-bila anda berada di sini
+parcel-environment-forget = Lupakan persekitaran yang disimpan untuk pakej ini
+parcel-environment-not-saved = Paket ini belum diketahui, jadi persekitarannya tidak disimpan. Cuba lagi dalam seketika.
+parcel-environment-left = Awak tinggalkan paket sebelum persekitarannya dapat diselamatkan, jadi ia tidak disimpan.
+parcel-environment-title = Persekitaran disimpan untuk pakej
+parcel-environment-help = Persekitaran anda sendiri untuk pakej: ia menggantikan persekitaran setempat anda semasa anda berdiri di sana, dan apa yang anda ada sebelum ini kembali bila anda keluar. Hanya anda yang melihatnya. Simpan satu dari tetingkap Persekitaran atau menu item persekitaran dalam inventori anda.
+parcel-environment-empty = Tiada persekitaran disimpan
+parcel-environment-remove-all = Buang semua
+parcel-environment-remove-all-title = Buang semua persekitaran yang disimpan untuk pakej?
+parcel-environment-remove-all-text = Persekitaran yang anda simpan untuk petak tanah pada grid ini akan dibuang. Persekitaran pada grid lain kekal. Tindakan ini tidak boleh dibuat asal.

@@ -16057,3 +16057,141 @@ toolbar-remove-from-menu = Odebrat z panelu nástrojů
 toolbar-command-build-edit = Úprava objektů
 toolbar-command-build-create = Vytvořit primy
 toolbar-command-build-land = Editovat zemi
+
+### Updated release translations
+
+inventory-search-no-copy = žádná kopie
+inventory-search-no-modify = nelze změnit
+inventory-search-no-transfer = bez převodu
+ui-options-chat-keep-focus-hint = Enter odešle zprávu a chatový řádek zůstane připravený na další zprávu, i když Enter stisknete v prázdném řádku. Esc nebo kliknutí do světa vrátí ovládání pohybu.
+ui-options-chat-enter-toggles-hint = Stisknutí Enteru v prázdném poli okna Konverzace vrátí ovládání pohybu v chatu nablízku, soukromých zprávách i skupinových chatech. Enter ze světa znovu spustí psaní.
+build-ui-features-physics-none-root-hint = Pouze podřízené primy linkset mohou použít fyzikální tvar None: kořenový prim, nebo prim sám o sobě, udržuje Prim nebo Convex hull.
+controls-position-tip = Pozice kamery: nastavte, kde kamera spočívá za avatara, přesně
+camera-position-hint = V metrech od avatara: X dopředu, Y doleva, Z nahoru. Ctrl + kolečko zvedne kameru, Shift + kolečka zaostří bod.
+camera-position-save = Uložit jako pozici kamery…
+photo-looks-replace = Nahradit
+photo-looks-empty = Najeďte myší na filtr níže, abyste ho vyzkoušeli, a potom na něj klikněte nebo jej přetáhněte sem.
+photo-looks-active = Aktivní
+photo-looks-count = { $count } nebo { $max }
+photo-looks-expand-all = Rozbalit vše
+photo-looks-collapse-all = Sbalit vše
+photo-looks-hint = Přetáhněte kartu, abyste změnili její pořadí, nebo na ni stiskněte Alt + ↑ ↓. Kliknutím pravým tlačítkem myši na kartu ji odstraňte.
+photo-looks-right-click-out = Kliknutí pravým tlačítkem myši: vytáhnout z aktivních efektů
+photo-looks-drop = Přetáhněte efekt sem nebo klikněte na jeden níže
+photo-looks-full = { $max } nebo { $max }: Vyjměte jeden nebo zapněte Nahradit a vyměňte jeden.
+photo-looks-catalogue = Katalog efektů
+photo-looks-catalogue-tip = Přesuňte ukazatel myši na efekt a vyzkoušejte jej na fotografii; kliknutím ho přidejte nebo přetáhněte mezi aktivní efekty.
+photo-looks-catalogue-fold = Zobrazit nebo skrýt katalog
+photo-looks-replace-tip = Nahradit: kliknutím v katalogu se vymění vybraná karta místo přidání nové karty
+photo-looks-replacing = Kliknutím swapy { $name }
+photo-looks-done = Hotovo
+photo-looks-take-out-zone = Spadnout sem, abych to vytáhl ven
+photo-looks-hide = Skrýt { $name } (drží se na svém místě)
+photo-looks-show = Zobrazit { $name }
+photo-looks-more = Další akce
+photo-looks-move-up = Pohyb nahoru
+photo-looks-move-down = Pohyb dolů
+photo-looks-replace-one = Nahradit…
+photo-looks-take-out = Odebrat
+photo-looks-not-in-360-tag = Ne v 360°
+photo-looks-all = Všechny
+photo-looks-favorites = Oblíbené: každý efekt, ve kterém jste hrál
+photo-looks-favorites-empty = Najeďte myší na efekt a klikněte na jeho hvězdičku: zobrazí se jako první v seznamu a zde.
+photo-looks-favorite = Přidat do oblíbených
+photo-looks-unfavorite = Odstranit z oblíbených
+photo-looks-card = { $name }, { $place } nebo { $count }. Alt + šipky pro pohyb.
+photo-looks-legacy-note = Filtry starších verzí prohlížeče nemají žádná další nastavení.
+photo-knob-toning = Tónování
+photo-knob-local-contrast = Lokální kontrast
+build-face-button = Stěna { $number }: vyberte ji na každém vybraném základním prvku. Shift + kliknutí ji přidá nebo odebere.
+build-face-invert = Převrácení vybraných ploch
+build-face-all = Výběr každé tváře
+ui-options-aurora-controls-compact = Ovládací prvky kompaktního fotoaparátu
+ui-options-aurora-controls-compact-help = Okno Ovládací prvky se otevře kompaktně na fotoaparátu: jeho joysticky, zoom a rolování.Jeho tlačítko v titulní liště přepíná mezi kompaktním a plným a také toto nastavuje.
+ui-options-aurora-controls-compact-movement = Kompaktní řízení pohybu
+ui-options-aurora-controls-compact-movement-help = Záložka Pohyb v okně Ovládací prvky se otevře kompaktní: tlačítka pohybu a chůze, běhu a létání.Její tlačítko v titulku přepíná mezi kompaktním a plným zobrazením a také toto nastavuje.
+poser-face-position-drag = Tažením posuňte kloub o 0,1 mm na pixel nebo kliknutím zadejte pozici.
+build-layout-clicks = Kliknutí na objekty
+build-ui-floaters-shift-click = Shift + kliknutí
+build-ui-floaters-ctrl-click = Ctrl + kliknutí
+build-ui-floaters-click-object = Přidání nebo odebrání objektu
+build-ui-floaters-click-face = Vyberte obličej
+build-ui-floaters-clicks-hint = S nástrojem Úpravy, mimo Zarovnat, Ctrl + Shift + kliknutí přidá klepnutou plochu nebo ji odebere.
+build-ui-floaters-ctrl-right-click = Ctrl + kliknutí pravým tlačítkem
+build-ui-floaters-right-click-menu = Otevřete nabídku
+build-ui-floaters-right-click-edit = Upravit objekt
+build-ui-floaters-double-click-linked = Dvojklik na prim: přepínač „Upravit propojené části“
+blender-live-tab-place = Místo
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = Mřížky, které Blender posílá. Vyberte jednu pro umístění nebo ji importujte z jeho menu.
+blender-live-more = Více
+blender-live-place = Místo
+blender-live-linked-prims = Zobrazení nebo skrytí propojených prvků
+blender-live-tag-rigged = S kostrou
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Trojúhelníky: { $triangles }
+       *[other] Trojúhelníky: { $triangles }
+    }
+blender-live-card-static =
+    Statické · { $triangles ->
+        [one] Trojúhelníky: { $triangles }
+       *[other] Trojúhelníky: { $triangles }
+    }
+blender-live-card-linkset =
+    Statické · { $prims ->
+        [one] Základní prvky: { $prims }
+       *[other] Základní prvky: { $prims }
+    } · { $triangles ->
+        [one] Trojúhelníky: { $triangles }
+       *[other] Trojúhelníky: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Trojúhelníky: { $triangles }
+       *[other] Trojúhelníky: { $triangles }
+    }
+blender-live-place-help = Kde je vybraná statická síť. Rigged sítě vždy následují váš avatar.
+blender-live-place-none = Vyberte statický objekt, který chcete umístit.
+blender-live-where = Kde
+blender-live-transform = Pozice, rotace a velikost
+blender-live-size-note = Velikost násobí to, co Blender posílá, takže pozdější úpravy v Blendru ji zachovají.
+blender-live-avatar-help = Pro rigged sítě: odešlete svůj tvar do Blenderu, aby na něm modeloval.
+blender-live-shape-section = Váš tvar v Blenderu
+blender-live-import-help = Zmrazí snímek objektu pro normální import: recenze, cena, pak potvrzení Pozdější úpravy v Blenderu jej nezmění.
+blender-live-from = Od
+blender-live-plugins-help = Aurora instaluje odpovídající plugin do každého Blendru, udržuje zálohu předchozího a nikdy nenainstaluje starší verzi.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Čas od poslední změny tohoto objektu v Blenderu
+blender-live-show-all = Zobrazit všechny produkty
+blender-live-hide-all = Skrýt vše »
+blender-live-bend-section = Zkontrolujte závaží
+blender-live-elbows = Lokty
+blender-live-knees = Koleno
+blender-live-bend-hold = Drž tuto pózu místo mých animací
+blender-live-bend-note = Ohyb vidíte pouze vy, na vašem avatarovi, animace, pohled ostatních obyvatel a import zůstávají nezměněny.
+blender-live-levels = Úrovně detailů
+blender-live-levels-pending = Blender připraví úrovně detailů, když kliknete na Import.
+blender-live-levels-note = Připraveno v Blendru z nastavení LiveMesh každého objektu.
+blender-live-quick-look-tip = Rychlý pohled: zobrazit tento objekt větší
+blender-live-quick-look-drag = Přetáhněte ji otočit, poklepejte na obličej znovu.
+blender-live-quick-look-changed = Změněno v Blender { $ago } před.
+blender-live-quick-look-bend = Ohnuté jako v záložce Avatar: lokty { $elbows }°, kolena { $knees }°.
+blender-live-undo = Undo
+blender-live-undo-derez = Derezzed { $name } · stále v Blenderově seznamu
+blender-live-undo-detach = { $name } · stále v seznamu Blenderu
+blender-live-undo-drop = Spustil { $name } na zem
+blender-live-undo-attach = Objekt { $name } byl přesunut na { $point }
+parcel-environment-apply-save = Použít pouze na sebe, pro tento balíček
+parcel-environment-save = Uložte toto prostředí pro tento balíček: vrátí se, kdykoli jste zde
+parcel-environment-forget = Zapomenout na prostředí uložené pro tento balík
+parcel-environment-not-saved = Tato parcela ještě nebyla známá, takže její prostředí nebylo uloženo. Zkuste to za chvíli znovu.
+parcel-environment-left = Balíček jste opustili dříve, než bylo možné uložit jeho prostředí, takže nebyl uložen.
+parcel-environment-title = Prostředí uložená pro parcely
+parcel-environment-help = Vaše vlastní prostředí pro parcelu: nahradí vaše lokální prostřední, když tam stojíte a to, co jste měli předtím se vrátí, když odejdete. Uložte si je z okna Prostředí nebo z menu položky prostředku v inventáři.
+parcel-environment-empty = Žádná prostředí uložena
+parcel-environment-remove-all = Odstranit vše
+parcel-environment-remove-all-title = Odstranit všechna prostředí uložená pro parcelu?
+parcel-environment-remove-all-text = Odstraní se prostředí uložená pro parcely na této síti. Ostatní sítě zůstanou beze změny. Tuto akci nelze vrátit.

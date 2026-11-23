@@ -16051,3 +16051,141 @@ toolbar-remove-from-menu = টুলবার থেকে অপসারণ �
 toolbar-command-build-edit = বস্তু সম্পাদন করো
 toolbar-command-build-create = প্রাইম তৈরি করো
 toolbar-command-build-land = দেশ সম্পাদন করো
+
+### Updated release translations
+
+inventory-search-no-copy = অনুলিপি
+inventory-search-no-modify = পরিবর্তন করা যাবে না
+inventory-search-no-transfer = স্থানান্তর
+ui-options-chat-keep-focus-hint = Enter বার্তা পাঠায় এবং চ্যাট বার পরের বার্তার জন্য সক্রিয় থাকে। খালি বারেও Enter চাপলে ফোকাস থাকে। চলাফেরায় ফিরতে Esc চাপুন বা জগতে ক্লিক করুন।
+ui-options-chat-enter-toggles-hint = কথোপকথন উইন্ডোতে খালি ঘরে Enter চাপলে চলাফেরায় ফিরবেন। এটি কাছের চ্যাট, ব্যক্তিগত বার্তা ও গ্রুপ চ্যাটে প্রযোজ্য। জগতে থাকা অবস্থায় Enter চেপে আবার লিখতে শুরু করুন।
+build-ui-features-physics-none-root-hint = কেবল একটি লিঙ্কসেটের চাইল্ড প্রাইমগুলি পদার্থবিজ্ঞান আকৃতি ব্যবহার করতে পারে না: মূল প্রাইমের, অথবা নিজের প্রাইমে, প্রাইমা বা কনভেক্স হাল রাখে ।
+controls-position-tip = ক্যামেরা অবস্থান: অ্যাভাটারের পিছনে ক্যামেরায় ঠিক কোথায় অবস্থিত তা নির্ধারণ করুন
+camera-position-hint = অ্যাভাটার থেকে মিটার অনুযায়ী: X সামনে, Y বামে, Z উপরে। Ctrl+wheel ক্যামেরা তুলে নেয়, Shift+wheel ফোকাস বিন্দু নির্ধারণ করে।
+camera-position-save = ক্যামেরা অবস্থান হিসেবে সংরক্ষণ করো…
+photo-looks-replace = প্রতিস্থাপন
+photo-looks-empty = এখনো কোনো প্রভাব নেই । চেষ্টা করার জন্য নীচে একটি ফিল্টার- এর দিকে ইঙ্গিত করুন, তারপর ক্লিক করুন অথবা এটিকে এখানে টেনে আনুন ।
+photo-looks-active = সক্রিয়
+photo-looks-count = { $count } এর { $max }
+photo-looks-expand-all = সব সম্প্রসারণ করো
+photo-looks-collapse-all = সব সংকুচিত করো
+photo-looks-hint = উপর থেকে নীচে প্রয়োগ করা হয়েছে। তাস পুনরায় সাজানো হলে তা সরিয়ে ফেলুন, অথবা Alt + ↑ ↓ চাপুন। তাসের ওপর ডান ক্লিক করে তা সরাতে পারেন।
+photo-looks-right-click-out = ডান- ক্লিক: সক্রিয় এফেক্ট থেকে এটিকে বের করে নাও
+photo-looks-drop = এখানে একটি এফেক্ট টেনে আনুন, অথবা নীচে একটিতে ক্লিক করুন
+photo-looks-full = { $max } এর { $max }: একটি সরিয়ে ফেলুন, অথবা প্রতিস্থাপন করে অন্যটি ব্যবহার করুন ।
+photo-looks-catalogue = এফেক্ট ক্যাটালগ
+photo-looks-catalogue-tip = ফটোতে প্রয়োগ করার জন্য একটি এফেক্টের দিকে ইঙ্গিত করুন; এটি যোগ করতে ক্লিক করুন, অথবা সক্রিয় এফ্যাক্টগুলির মধ্যে এটি টেনে নিয়ে যান
+photo-looks-catalogue-fold = ক্যাটালগ প্রদর্শন করো
+photo-looks-replace-tip = প্রতিস্থাপন: ক্যাটালগ-এ ক্লিক করলে নতুন কার্ড যোগ করার পরিবর্তে নির্বাচিত কার্ডটি বদলে যাবে
+photo-looks-replacing = একটি ক্লিক স্যুইচ { $name }
+photo-looks-done = সম্পন্ন
+photo-looks-take-out-zone = এটা বের করতে এখানে ড্রপ করুন
+photo-looks-hide = { $name } আড়াল করো (এটি তার স্থান ধরে রাখে)
+photo-looks-show = { $name } দেখাও
+photo-looks-more = আরও কাজ
+photo-looks-move-up = উপরে যাও
+photo-looks-move-down = নিচে যাও
+photo-looks-replace-one = & বদলাও
+photo-looks-take-out = বের করো
+photo-looks-not-in-360-tag = ৩৬০ ডিগ্রিতে নয়
+photo-looks-all = সব
+photo-looks-favorites = পছন্দের তালিকা: আপনার প্রদর্শিত প্রতিটি প্রভাব
+photo-looks-favorites-empty = এখনো কোন পছন্দের তালিকা নেই । একটি এফেক্ট- এর দিকে ইঙ্গিত করে তার তারকাটি ক্লিক করুন: এটি তালিকার প্রথমে দেখানো হবে এবং এখানেও দেখানো যাবে ।
+photo-looks-favorite = প্রিয় তালিকায় যোগ করো
+photo-looks-unfavorite = পছন্দের তালিকা থেকে অপসারণ করো
+photo-looks-card = { $name }, { $place } এর { $count }. Alt + তীরচিহ্ন কী (Key) এটিকে সরিয়ে নিয়ে যায় ।
+photo-looks-legacy-note = লিগেসি প্রদর্শক পরিশোধকের কোন অতিরিক্ত বৈশিষ্ট্য নেই।
+photo-knob-toning = টোনিং
+photo-knob-local-contrast = স্থানীয় বৈসাদৃশ্য
+build-face-button = মুখ { $number }: প্রতিটি নির্বাচিত প্রাইম- এ এটি বেছে নিন । Shift+click: এটি যোগ করুন অথবা এটি সরিয়ে নিন ।
+build-face-invert = নির্বাচিত মুখ উল্টাও
+build-face-all = প্রতিটি মুখ নির্বাচন করো
+ui-options-aurora-controls-compact = কম্প্যাক্ট ক্যামেরা নিয়ন্ত্রণ
+ui-options-aurora-controls-compact-help = নিয়ন্ত্রণ উইন্ডোটি ক্যামেরার উপর সংকুচিতভাবে খোলা হবে: এর জয়স্টিক, জুম এবং রোল। এর শিরোনাম বার বাটনটি সংকুচিত ও সম্পূর্ণরূপে প্রদর্শনের মধ্যে পরিবর্তন করে এবং এটিও নির্ধারণ করে।
+ui-options-aurora-controls-compact-movement = সঞ্চালন নিয়ন্ত্রণ
+ui-options-aurora-controls-compact-movement-help = নিয়ন্ত্রণ উইন্ডোর চলাচল ট্যাব সংকুচিত করা হবে: চলাচলের বাটন এবং হাঁটা, দৌড়ানো এবং উড়ো। এর শিরোনামের বার বাটন সংকুचित ও সম্পূর্ণরূপে পরিবর্তিত হয়, এবং এটিও নির্ধারণ করে।
+poser-face-position-drag = প্রতি পিক্সেলে ০.১ মিলিমিটার করে জয়েন্ট সরাতে টানুন। অবস্থান লিখতে ক্লিক করুন।
+build-layout-clicks = বস্তুর ওপর ক্লিক
+build-ui-floaters-shift-click = Shift+ক্লিক
+build-ui-floaters-ctrl-click = Ctrl+ক্লিক
+build-ui-floaters-click-object = বস্তু যোগ করো অথবা অপসারণ করো
+build-ui-floaters-click-face = মুখ বেছে নিন
+build-ui-floaters-clicks-hint = সম্পাদন টুল- এর সাহায্যে, বাইরের দিকে আঁকা হবে । Ctrl+Shift+ক্লিক করলে ক্লিক করা পৃষ্ঠটি যোগ করা হবে অথবা সরিয়ে নেওয়া হবে ।
+build-ui-floaters-ctrl-right-click = Ctrl + ডান ক্লিক
+build-ui-floaters-right-click-menu = মেনু খুলুন
+build-ui-floaters-right-click-edit = বস্তুটি সম্পাদন করো
+build-ui-floaters-double-click-linked = একটি প্রাইম-এ দ্বিগুণ ক্লিক করুন: “সংযুক্ত অংশ সম্পাদন” পরিবর্তন করুন
+blender-live-tab-place = স্থান
+blender-live-tab-avatar = অ্যাভাটার
+blender-live-objects-help = ব্লেন্ডার দ্বারা প্রেরিত মেশ। এটি স্থাপনের জন্য একটি নির্বাচন করুন, অথবা এর মেনু থেকে ইম্পোর্ট করুন।
+blender-live-more = আরো
+blender-live-place = স্থান
+blender-live-linked-prims = লিঙ্ককৃত প্রাইম প্রদর্শন অথবা আড়াল করো
+blender-live-tag-rigged = রিগ করা
+blender-live-card-rigged =
+    { $triangles ->
+        [one] ত্রিভুজ: { $triangles }
+       *[other] ত্রিভুজ: { $triangles }
+    }
+blender-live-card-static =
+    স্থির · { $triangles ->
+        [one] ত্রিভুজ: { $triangles }
+       *[other] ত্রিভুজ: { $triangles }
+    }
+blender-live-card-linkset =
+    স্থির · { $prims ->
+        [one] প্রিম: { $prims }
+       *[other] প্রিম: { $prims }
+    } · { $triangles ->
+        [one] ত্রিভুজ: { $triangles }
+       *[other] ত্রিভুজ: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] ত্রিভুজ: { $triangles }
+       *[other] ত্রিভুজ: { $triangles }
+    }
+blender-live-place-help = নির্বাচিত স্থায়ী মেশের অবস্থান। বানানো মেশ সবসময় আপনার অ্যাভাটার অনুসরণ করে।
+blender-live-place-none = স্থানান্তর করার জন্য একটি স্থির বস্তু বেছে নিন ।
+blender-live-where = কোথায়
+blender-live-transform = অবস্থান, আবর্তন এবং মাপ
+blender-live-size-note = ব্লেন্ডার যা প্রেরণ করে তার আকার গুণ করা হয়, ফলে পরবর্তীকালে ব্লেণ্ডারে সম্পাদন করলে তা সংরক্ষিত থাকে।
+blender-live-avatar-help = বানানো মেশের জন্য: আপনার আকৃতিকে ব্লেন্ডারে প্রেরণ করুন এর উপর মডেল করার জন্য।
+blender-live-shape-section = ব্লেন্ডারে আপনার আকৃতি
+blender-live-import-help = স্বাভাবিক ইম্পোর্টের জন্য অবজেক্টের স্ন্যাপশট স্থগিত করে: পর্যালোচনা, মূল্য, তারপর নিশ্চিত করুন। পরবর্তীতে ব্লেন্ডারে সম্পাদনা করলে এটি পরিবর্তন হবে না।
+blender-live-from = থেকে
+blender-live-plugins-help = Aurora প্রতিটি ব্লেন্ডারে যথাযথ প্লাগ-ইন ইনস্টল করে, পূর্ববর্তীটির ব্যাকআপ রাখে এবং কোন পুরনো সংস্করণ ইনস্টলেশন করে না।
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } মিনিট
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Blender এই অবজেক্টটি শেষ পরিবর্তন করার সময়
+blender-live-show-all = সব দেখাও
+blender-live-hide-all = সব আড়াল করো
+blender-live-bend-section = ওজন পরীক্ষা করো
+blender-live-elbows = হাতুড়ি
+blender-live-knees = হাঁটু
+blender-live-bend-hold = আমার অ্যানিমেশনের পরিবর্তে এই পোজ ধরুন
+blender-live-bend-note = শুধু তুমিই দেখতে পাবে, তোমার আভাটার উপরে... ...তোমার অ্যানিমেশন, অন্য অধিবাসীদের দৃষ্টি এবং ইম্পোর্ট পরিবর্তন হয়নি।
+blender-live-levels = বিস্তারিত বিবরণ
+blender-live-levels-pending = ইম্পোর্ট ক্লিক করার সময় ব্লেন্ডার বিস্তারিত তথ্যের স্তর প্রস্তুত করে।
+blender-live-levels-note = প্রতিটি বস্তুর LiveMesh সেটিংস থেকে Blender-এ প্রস্তুত করা হয়েছে।
+blender-live-quick-look-tip = জলদি দেখুন: এই বস্তুটি বড় আকারে দেখুন
+blender-live-quick-look-drag = এটিকে ঘুরাতে টেনে আনুন, আবার মুখোমুখি হতে দুইবার ক্লিক করুন।
+blender-live-quick-look-changed = ব্লেন্ডারে পরিবর্তন করা হয়েছে { $ago } আগস্ট
+blender-live-quick-look-bend = অ্যাভাটার ট্যাব- এর মত বাঁকা: হাতের আঙ্গুল { $elbows }°, হাঁটু { $knees }°.
+blender-live-undo = বাতিল করো
+blender-live-undo-derez = স্তর { $name } · এখনও ব্লেন্ডারের তালিকায় আছে
+blender-live-undo-detach = বিচ্ছিন্ন { $name } · এখনও ব্লেন্ডারের তালিকায় রয়েছে
+blender-live-undo-drop = { $name } মাটিতে ফেলে দিয়েছে
+blender-live-undo-attach = { $name } সরানো হয়েছে { $point }
+parcel-environment-apply-save = শুধুমাত্র আমার জন্য, এই প্যাকেজের জন্য
+parcel-environment-save = এই প্যাকেজের জন্য এই পরিবেশ সংরক্ষণ করুন: যখনই আপনি এখানে থাকেন তখনই এটি ফিরে আসে
+parcel-environment-forget = এই প্যাকেজের জন্য সংরক্ষিত পরিবেশ ভুলে যাও
+parcel-environment-not-saved = এই প্যাকেজটি এখনো পরিচিত নয়, তাই এর এনভায়রনমেন্ট সংরক্ষণ করা হয়নি । এক মুহূর্তের মধ্যে আবার চেষ্টা করুন ।
+parcel-environment-left = পরিবেশ সংরক্ষণের আগেই আপনি প্যাকেজটি ছেড়ে গেছেন, তাই সেটা সংরক্ষিত হয়নি।
+parcel-environment-title = প্যাকেজের জন্য সংরক্ষিত এনভায়রনমেন্ট
+parcel-environment-help = একটি প্যাকেজের জন্য আপনার নিজস্ব পরিবেশ: আপনি যেখানে আছেন সেখানে এটি আপনার স্থানীয় পরিবেশ প্রতিস্থাপন করে, এবং যা আগে ছিল তা আপনি যখন চলে যান তখন ফিরে আসে। শুধুমাত্র আপনিই এটি দেখতে পাবেন। পরিবেশ উইন্ডো থেকে অথবা আপনার ইনভেস্টমেন্টে পরিবেশ আইটেমের মেনু থেকে একটি সংরক্ষণ করুন।
+parcel-environment-empty = কোন এনভায়রনমেন্ট সংরক্ষণ করা হয়নি
+parcel-environment-remove-all = সব অপসারণ করো
+parcel-environment-remove-all-title = একটি প্যাকেজের জন্য সংরক্ষিত সকল এনভায়রনমেন্ট মুছে ফেলা হবে কি?
+parcel-environment-remove-all-text = এই গ্রিডের জমির খণ্ডগুলোর জন্য আপনার সংরক্ষিত পরিবেশ মুছে যাবে। অন্য গ্রিডের পরিবেশ অপরিবর্তিত থাকবে। এই কাজ ফেরানো যাবে না।

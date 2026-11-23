@@ -16056,3 +16056,141 @@ toolbar-remove-from-menu = Verwijderen uit werkbalk
 toolbar-command-build-edit = Bewerk objecten
 toolbar-command-build-create = Maak prims aan
 toolbar-command-build-land = Land bewerken
+
+### Updated release translations
+
+inventory-search-no-copy = Geen kopie
+inventory-search-no-modify = Kan niet worden gewijzigd
+inventory-search-no-transfer = Geen overdracht mogelijk
+ui-options-chat-keep-focus-hint = Enter verstuurt het bericht en houdt de chatbalk actief voor het volgende bericht, ook als de balk leeg is. Druk op Esc of klik in de wereld om weer te bewegen.
+ui-options-chat-enter-toggles-hint = Enter in een leeg veld in Gesprekken brengt je terug naar de bewegingsbesturing, bij chat in de buurt, privéberichten en groepschats. Druk in de wereld op Enter om weer te typen.
+build-ui-features-physics-none-root-hint = Alleen de kind prims van een linkset kunnen de physics shape None gebruiken: de root prim, of een prim op zichzelf, houdt Prim of Convex hull.
+controls-position-tip = Camera positie: stel in waar de camera precies achter de avatar staat
+camera-position-hint = In meters vanaf de avatar: X naar voren, Y links, Z omhoog. Ctrl + wieltje verhoogt de camera, Shift + wiel het focuspunt.
+camera-position-save = Opslaan als camerapositie…
+photo-looks-replace = Vervangen
+photo-looks-empty = Wijs een filter hieronder aan om het uit te proberen en klik er vervolgens op of sleep het hierheen.
+photo-looks-active = Actief
+photo-looks-count = { $count } van { $max }
+photo-looks-expand-all = Alles uitvouwen
+photo-looks-collapse-all = Alles samenvouwen
+photo-looks-hint = De kaart wordt van boven naar beneden toegepast. Sleep een kaart om de volgorde te wijzigen of druk op Alt + ↑ ↓ op de kaart. Klik met de rechtermuisknop op een kaart als u deze wilt verwijderen.
+photo-looks-right-click-out = Rechtermuisknop: neem het uit de actieve effecten
+photo-looks-drop = Sleep een effect hierheen of klik erop hieronder
+photo-looks-full = { $max } van { $max }: verwijder een effect of schakel Vervangen in om het te wisselen.
+photo-looks-catalogue = Effectencatalogus
+photo-looks-catalogue-tip = Wijs een effect aan om het uit te proberen op de foto; klik erop om het toe te voegen of sleep het tussen de actieve effecten
+photo-looks-catalogue-fold = Toon of verberg de catalogus
+photo-looks-replace-tip = Vervangen: een klik in de catalogus verwisselt de gekozen kaart in plaats van een nieuwe toe te voegen
+photo-looks-replacing = Een klik swaps { $name }
+photo-looks-done = Gereed
+photo-looks-take-out-zone = Drop hier om het uit te nemen
+photo-looks-hide = Verbergen { $name } (houdt zijn plaats)
+photo-looks-show = Toon { $name }
+photo-looks-more = Meer acties bekijken
+photo-looks-move-up = Omhoog gaan
+photo-looks-move-down = Naar beneden bewegen
+photo-looks-replace-one = Vervangen…
+photo-looks-take-out = Neem uit
+photo-looks-not-in-360-tag = Niet in 360°
+photo-looks-all = Allemaal
+photo-looks-favorites = Favorieten: elk effect dat je hebt gekozen
+photo-looks-favorites-empty = Wijs een effect aan en klik op de ster ervan: het verschijnt als eerste in de lijst, en hier.
+photo-looks-favorite = Voeg toe aan favorieten
+photo-looks-unfavorite = Verwijderen uit favorieten
+photo-looks-card = { $name }, { $place } van { $count }. Gebruik Alt + een pijltoets om het effect te verplaatsen.
+photo-looks-legacy-note = Oude Viewer-filters hebben geen aanvullende instellingen.
+photo-knob-toning = Kleurtoning
+photo-knob-local-contrast = Het lokale contrast
+build-face-button = Gezicht { $number }: selecteer het op elke geselecteerde prim. Shift+click: voeg het toe of verwijder het.
+build-face-invert = De geselecteerde vlakken omkeren
+build-face-all = Elk gezicht selecteren
+ui-options-aurora-controls-compact = Compacte camerabediening
+ui-options-aurora-controls-compact-help = Het Controls venster opent compact op de camera: zijn joysticks, zoom en roll.Zijn titelbalkknop schakelt tussen compact en volledig, en stelt dit ook in.
+ui-options-aurora-controls-compact-movement = Compacte bewegingsbesturing
+ui-options-aurora-controls-compact-movement-help = Het tabblad Beweging van het Controls-venster wordt compact geopend: de bewegingsknoppen en loop, ren en vlieg.De titelbalkknop schakelt tussen compact en volledig en stelt dit ook in.
+poser-face-position-drag = Sleep om de verbinding met 0,1 mm per pixel te verplaatsen of klik om een positie in te voeren.
+build-layout-clicks = Klikken op objecten
+build-ui-floaters-shift-click = Shift + klikken
+build-ui-floaters-ctrl-click = Ctrl + klikken
+build-ui-floaters-click-object = Het object toevoegen of verwijderen
+build-ui-floaters-click-face = Selecteer het gezicht
+build-ui-floaters-clicks-hint = Met het gereedschap Bewerken, buiten Uitlijnen, voegt Ctrl + Shift + klik het geklikte vlak toe of verwijdert het.
+build-ui-floaters-ctrl-right-click = Ctrl + rechtermuisknop
+build-ui-floaters-right-click-menu = Het menu openen
+build-ui-floaters-right-click-edit = Het object bewerken
+build-ui-floaters-double-click-linked = Dubbelklik op een prim: schakelaar “Gekoppelde delen bewerken”
+blender-live-tab-place = Plaats
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = Selecteer er een om te plaatsen, of importeer het vanuit het menu van Blender.
+blender-live-more = Meer
+blender-live-place = Plaats
+blender-live-linked-prims = De gekoppelde prims tonen of verbergen
+blender-live-tag-rigged = Met skelet
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Driehoeken: { $triangles }
+       *[other] Driehoeken: { $triangles }
+    }
+blender-live-card-static =
+    Statisch · { $triangles ->
+        [one] Driehoeken: { $triangles }
+       *[other] Driehoeken: { $triangles }
+    }
+blender-live-card-linkset =
+    Statisch · { $prims ->
+        [one] Prims: { $prims }
+       *[other] Prims: { $prims }
+    } · { $triangles ->
+        [one] Driehoeken: { $triangles }
+       *[other] Driehoeken: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Driehoeken: { $triangles }
+       *[other] Driehoeken: { $triangles }
+    }
+blender-live-place-help = Waar het geselecteerde statische gaas is. Gericht gaas volgt altijd je avatar.
+blender-live-place-none = Selecteer een statisch object om het te plaatsen.
+blender-live-where = Waar
+blender-live-transform = Positie, rotatie en grootte
+blender-live-size-note = De grootte vermenigvuldigt wat Blender stuurt, dus latere bewerkingen in Blender houden het.
+blender-live-avatar-help = Voor rigged netten: stuur je shape naar Blender om erop te modelleren.
+blender-live-shape-section = Je vorm in Blender
+blender-live-import-help = Bevriest een momentopname van het object voor de normale import: beoordeling, prijs en vervolgens bevestigen Latere bewerkingen in Blender veranderen dit niet.
+blender-live-from = Vanaf
+blender-live-plugins-help = Aurora installeert de bijbehorende plug-in in elke Blender, houdt een back-up van de vorige en installeert nooit een oudere versie.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Tijd sinds Blender dit object voor het laatst wijzigde
+blender-live-show-all = Toon alle producten
+blender-live-hide-all = Alles verbergen
+blender-live-bend-section = Controleer de gewichten
+blender-live-elbows = Ellebogen
+blender-live-knees = Knieën
+blender-live-bend-hold = Houd deze pose in plaats van mijn animaties
+blender-live-bend-note = Alleen jij ziet de bocht op je avatar, je animaties, het beeld van andere bewoners en de import zijn ongewijzigd.
+blender-live-levels = Niveaus van detail
+blender-live-levels-pending = Blender bereidt de detailniveaus voor wanneer je op Importeren klikt.
+blender-live-levels-note = Voorbereid in Blender vanuit de LiveMesh-instellingen van elk object.
+blender-live-quick-look-tip = Snelle blik: zie dit object groter
+blender-live-quick-look-drag = Sleep om het te draaien, dubbelklik om het weer te zien.
+blender-live-quick-look-changed = Gewijzigd in Blender { $ago } geleden.
+blender-live-quick-look-bend = Gebogen zoals in het Avatar tabblad: ellebogen { $elbows }°, knieën { $knees }°.
+blender-live-undo = Ongedaan maken
+blender-live-undo-derez = Derezzed { $name } · nog steeds in Blender's lijst
+blender-live-undo-detach = Vrijstaand { $name } · nog steeds in Blender's lijst
+blender-live-undo-drop = { $name } op de grond laten vallen
+blender-live-undo-attach = { $name } verplaatst naar { $point }
+parcel-environment-apply-save = Toepassen op mij alleen, voor dit pakket
+parcel-environment-save = Bewaar deze omgeving voor dit pakket: het komt terug wanneer u hier bent
+parcel-environment-forget = Vergeet de omgeving opgeslagen voor dit pakket
+parcel-environment-not-saved = Dit pakket was nog niet bekend, dus de omgeving is niet opgeslagen. Probeer het over een moment opnieuw.
+parcel-environment-left = Je hebt het pakket verlaten voordat de omgeving kon worden opgeslagen, dus het is niet opgeslagen.
+parcel-environment-title = Omgevingen opgeslagen voor pakketten
+parcel-environment-help = Je eigen omgeving voor een pakket: het vervangt je lokale omgeving terwijl je daar staat, en wat je eerder had komt terug als je weggaat. Alleen jij ziet het.Sla er een op vanuit het Omgeving-venster of het menu van een omgevingsitem in je inventaris.
+parcel-environment-empty = Geen omgevingen opgeslagen
+parcel-environment-remove-all = Alles verwijderen
+parcel-environment-remove-all-title = Elke omgeving verwijderen die is opgeslagen voor een pakket?
+parcel-environment-remove-all-text = Je opgeslagen omgevingen voor percelen op dit grid worden verwijderd. Die op andere grids blijven behouden. Dit kan niet ongedaan worden gemaakt.

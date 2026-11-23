@@ -16072,3 +16072,141 @@ toolbar-remove-from-menu = إزالة من شريط الأدوات
 toolbar-command-build-edit = تحرير الأشياء
 toolbar-command-build-create = إنشاء أجزاء أساسية
 toolbar-command-build-land = تعديل الأراضي
+
+### Updated release translations
+
+inventory-search-no-copy = لا نسخة
+inventory-search-no-modify = لا يمكن تعديلها
+inventory-search-no-transfer = لا نقل
+ui-options-chat-keep-focus-hint = يرسل Enter الرسالة ويبقى شريط الدردشة جاهزًا للرسالة التالية، حتى عند ضغط Enter والشريط فارغ. اضغط Esc أو انقر في العالم للعودة إلى الحركة.
+ui-options-chat-enter-toggles-hint = في نافذة المحادثات، يؤدي ضغط Enter والحقل فارغ إلى العودة للحركة، سواء في الدردشة القريبة أو الخاصة أو الجماعية. اضغط Enter من العالم لبدء الكتابة مجددًا.
+build-ui-features-physics-none-root-hint = فقط الطفل الأول من مجموعة الروابط يمكن أن تستخدم الشكل الفيزيائي لا أحد: الجذر الأول، أو الأول في حد ذاته، يحتفظ Prim أو Convex hull.
+controls-position-tip = موقع الكاميرا: تحديد المكان الذي توضع فيه الكاميرا خلف الصورة، بالضبط
+camera-position-hint = بالأمتار من الصورة: X إلى الأمام، Y إلى اليسار، Z إلى الأعلى. Ctrl + العجلة ترفع الكاميرا، Shift + العجّلة نقطة التركيز.
+camera-position-save = حفظ كموقع الكاميرا...
+photo-looks-replace = يستعاض عن عبارة
+photo-looks-empty = لا يوجد تأثير بعد. حدد المرشح أدناه لتجربته، ثم انقر عليه أو اسحبه إلى هنا.
+photo-looks-active = نشط
+photo-looks-count = { $count } من { $max }
+photo-looks-expand-all = توسيع الجميع
+photo-looks-collapse-all = تقليص الجميع
+photo-looks-hint = يطبق من الأعلى إلى الأسفل. اسحب بطاقة لإعادة ترتيبها، أو اضغط Alt + ↑ ↓ عليها. انقر بزر الماوس الأيمن على بطاقة لإخراجها.
+photo-looks-right-click-out = انقر بزر الماوس الأيمن: أخذه من الآثار النشطة
+photo-looks-drop = اسحب تأثير هنا، أو انقر فوق أحد أدناه
+photo-looks-full = { $max } من { $max }: أخذ واحد خارج، أو تفعيل الاستبدال لتبادل واحد.
+photo-looks-catalogue = فهرس الآثار
+photo-looks-catalogue-tip = حدد تأثيراً لتجربته على الصورة؛ انقر عليه لإضافته، أو اسحبه بين المؤثرات النشطة
+photo-looks-catalogue-fold = عرض أو إخفاء الفهرس
+photo-looks-replace-tip = الاستبدال: النقر في الفهرس يغير البطاقة المختارة بدلاً من إضافة بطاقة جديدة
+photo-looks-replacing = تبادل النقرات { $name }
+photo-looks-done = أنجز
+photo-looks-take-out-zone = ضعه هنا لأخذه
+photo-looks-hide = إخفي { $name } (يحتفظ بمكانه)
+photo-looks-show = عرض { $name }
+photo-looks-more = المزيد من الإجراءات
+photo-looks-move-up = تحرك للأعلى
+photo-looks-move-down = تحرك للأسفل
+photo-looks-replace-one = يستعاض عن ...
+photo-looks-take-out = خذها
+photo-looks-not-in-360-tag = ليس في 360 درجة
+photo-looks-all = الجميع
+photo-looks-favorites = المفضلة: كل تأثير أنت نجم
+photo-looks-favorites-empty = لا توجد مفضلة بعد. حدد تأثير وانقر على نجمه: يظهر أولاً في قائمته، وهنا.
+photo-looks-favorite = أضف إلى المفضلات
+photo-looks-unfavorite = إزالة من المفضلات
+photo-looks-card = { $name }, { $place } من { $count }. Alt + مفاتيح السهم لتحريكه
+photo-looks-legacy-note = المرشحات القديمة للمشاهدة لا تحتوي على إعدادات إضافية.
+photo-knob-toning = تلوين الدرجات
+photo-knob-local-contrast = التباين المحلي
+build-face-button = الوجه { $number }: انقر عليه على كل أولية مختارة. Shift+click: أضفها أو حذفها
+build-face-invert = عكس الوجوه المختارة
+build-face-all = انتخب كل وجه
+ui-options-aurora-controls-compact = أجهزة التحكم في الكاميرات المدمجة
+ui-options-aurora-controls-compact-help = تفتح نافذة التحكمات على الكاميرا: عصا التحكم، والتكبير والتدحرج. زر شريط العنوان يتنقل بين المضغوط والمكتمل، ويحدد هذا أيضاً.
+ui-options-aurora-controls-compact-movement = أجهزة مراقبة الحركة الصغيرة
+ui-options-aurora-controls-compact-movement-help = تفتح نافذة التحكمات علامة التبويب الحركة المدمجة: أزرار الحركة والمشي والركض والطيران. زر شريط عنوانه يتنقل بين المدمج والكامل، ويحدد هذا أيضاً.
+poser-face-position-drag = اسحب لتحريك المفصل بمعدل 0.1 مم لكل بكسل، أو انقر للكتابة على موقع.
+build-layout-clicks = عدد النقرات على الأشياء
+build-ui-floaters-shift-click = Shift+نقرة
+build-ui-floaters-ctrl-click = Ctrl + انقر
+build-ui-floaters-click-object = إضافة أو حذف الكائن
+build-ui-floaters-click-face = انتقِ الوجه
+build-ui-floaters-clicks-hint = مع أداة التحرير، خارج المواءمة. Ctrl + Shift + النقر يضاف الوجه المنقر عليه أو يستبعده.
+build-ui-floaters-ctrl-right-click = Ctrl + النقر الأيمن
+build-ui-floaters-right-click-menu = افتح القائمة
+build-ui-floaters-right-click-edit = تحرير الكائن
+build-ui-floaters-double-click-linked = النقر مرتين على نقطة رئيسية: تغيير " تعديل الأجزاء المرتبطة ".
+blender-live-tab-place = المكان
+blender-live-tab-avatar = الشخصية
+blender-live-objects-help = الشبكات التي يرسلها Blender. اختار واحدة لوضعها، أو استوردها من قائمة Blender
+blender-live-more = أكثر
+blender-live-place = المكان
+blender-live-linked-prims = عرض أو إخفاء الأوليات المرتبطة
+blender-live-tag-rigged = مزوّد بهيكل عظمي
+blender-live-card-rigged =
+    { $triangles ->
+        [one] المثلثات: { $triangles }
+       *[other] المثلثات: { $triangles }
+    }
+blender-live-card-static =
+    ثابت · { $triangles ->
+        [one] المثلثات: { $triangles }
+       *[other] المثلثات: { $triangles }
+    }
+blender-live-card-linkset =
+    ثابت · { $prims ->
+        [one] الأجزاء الأساسية: { $prims }
+       *[other] الأجزاء الأساسية: { $prims }
+    } · { $triangles ->
+        [one] المثلثات: { $triangles }
+       *[other] المثلثات: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] المثلثات: { $triangles }
+       *[other] المثلثات: { $triangles }
+    }
+blender-live-place-help = حيث توجد الشبكة الثابتة المختارة. الشبكات المتلاعب بها دائماً تتبع صورتك.
+blender-live-place-none = اختر كائن ثابت لوضعه.
+blender-live-where = حيث
+blender-live-transform = الموقع والتناوب والحجم
+blender-live-size-note = الحجم يضاعف ما يرسله Blender، لذا فإن التحرير اللاحق في Blender يحتفظ به.
+blender-live-avatar-help = بالنسبة للشبكات المضلعة: أرسل شكلك إلى Blender لوضع النماذج عليه.
+blender-live-shape-section = شكلك في Blender
+blender-live-import-help = تجمد صورة سريعة للكائن من أجل الاستيراد العادي: مراجعة، السعر، ثم التأكيد. التحرير اللاحق في Blender لا يغيرها.
+blender-live-from = من
+blender-live-plugins-help = Aurora يقوم بتركيب الملحقات المطابقة في كل Blender، ويحافظ على نسخة احتياطية من السابقة ولا يقوم بتثبيت إصدار أقدم.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } دقيقة
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = الوقت منذ آخر تغيير Blender لهذا الكائن
+blender-live-show-all = أظهر كل شيء
+blender-live-hide-all = إخفاء الجميع
+blender-live-bend-section = تحقق من الوزن
+blender-live-elbows = المرفقين
+blender-live-knees = الركبة
+blender-live-bend-hold = إبقي هذه الوضعية بدلاً من رسوماتي المتحركة
+blender-live-bend-note = أنت فقط ترى الانحناء على صورةك الرسوم المتحركة الخاصة بك ورؤية السكان الآخرين والواردات لا تتغير
+blender-live-levels = مستويات التفصيل
+blender-live-levels-pending = يعد Blender مستويات التفاصيل عندما تنقر على استيراد.
+blender-live-levels-note = تم إعداده في Blender من كل كائن LiveMesh settings.
+blender-live-quick-look-tip = نظرة سريعة: انظر إلى هذا الجسم أكبر
+blender-live-quick-look-drag = اسحبه لتحويله، انقر مرتين للتعامل معه مرة أخرى.
+blender-live-quick-look-changed = تغيرت في بلندر منذ { $ago }
+blender-live-quick-look-bend = انحني كما في علامة الأفاتار: المرفقين { $elbows }°، الركبة { $knees }°.
+blender-live-undo = إلغاء
+blender-live-undo-derez = { $name } · لا يزال في قائمة Blender
+blender-live-undo-detach = منفصلة { $name } · لا تزال في قائمة Blender
+blender-live-undo-drop = أسقطت طائرة { $name } على الأرض
+blender-live-undo-attach = نُقل { $name } إلى { $point }
+parcel-environment-apply-save = أنا أطبق على نفسي فقط، لهذا الطرد
+parcel-environment-save = إنقاذ هذه البيئة لهذا الطرد: أنها تعود كلما كنت هنا
+parcel-environment-forget = نسيت البيئة المحفوظة لهذا الطرد
+parcel-environment-not-saved = لم تكن هذه الحزمة معروفة بعد، لذلك لم يتم حفظ بيئتها. حاول مرة أخرى في لحظة.
+parcel-environment-left = لقد تركت الطرد قبل أن يتم إنقاذ بيئته، لذلك لم يتم إنقاذه.
+parcel-environment-title = البيئات المحفوظة للطرود
+parcel-environment-help = بيئتك الخاصة لحزمة: يستبدل بيئتك المحلية عندما تقف هناك، وما كان لديك سابقاً يعود عندما ترحل. أنت فقط الذي يرى ذلك. حفظ واحد من نافذة البيئة أو قائمة بندا البيئة في مخزونك.
+parcel-environment-empty = لا توجد بيئات محفوظة
+parcel-environment-remove-all = حذف كل شيء
+parcel-environment-remove-all-title = هل تريد إزالة كل البيئات التي تم حفظها للطرد؟
+parcel-environment-remove-all-text = ستُحذف البيئات المحفوظة لقطع الأراضي على هذه الشبكة فقط. لن تتأثر الشبكات الأخرى. لا يمكن التراجع عن هذا الإجراء.

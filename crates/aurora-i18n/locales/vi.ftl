@@ -16019,3 +16019,141 @@ toolbar-remove-from-menu = Xoá khỏi thanh công cụ
 toolbar-command-build-edit = Sửa đối tượng
 toolbar-command-build-create = Tạo prim
 toolbar-command-build-land = Sửa đất nước
+
+### Updated release translations
+
+inventory-search-no-copy = không sao chép
+inventory-search-no-modify = không thể sửa đổi
+inventory-search-no-transfer = không chuyển
+ui-options-chat-keep-focus-hint = Enter gửi tin nhắn và giữ thanh trò chuyện sẵn sàng cho tin nhắn tiếp theo, kể cả khi thanh đang trống. Nhấn Esc hoặc bấm vào thế giới để điều khiển di chuyển trở lại.
+ui-options-chat-enter-toggles-hint = Trong cửa sổ Cuộc trò chuyện, nhấn Enter khi ô nhập trống để trở lại điều khiển di chuyển, áp dụng cho trò chuyện lân cận, tin nhắn riêng và trò chuyện nhóm. Nhấn Enter trong thế giới để gõ lại.
+build-ui-features-physics-none-root-hint = Chỉ các prim con của một linket có thể sử dụng hình dạng vật lý None: prim gốc, hoặc một prim riêng biệt, giữ Prim hay Convex hull.
+controls-position-tip = Vị trí máy ảnh: thiết lập chính xác vị trí của máy ảnh sau hình nhân
+camera-position-hint = Theo mét từ hình nhân: X đi trước, Y sang trái, Z lên. Ctrl + bánh xe nâng camera, Shift + bán hổ điểm tập trung.
+camera-position-save = Lưu như vị trí máy ảnh...
+photo-looks-replace = Thay thế
+photo-looks-empty = Vẫn chưa có hiệu ứng nào. Chỉ vào bộ lọc bên dưới để thử nó, sau đó nhấn vào nó hoặc kéo nó tới đây.
+photo-looks-active = Chạy
+photo-looks-count = { $count } của { $max }
+photo-looks-expand-all = Mở rộng tất cả
+photo-looks-collapse-all = Thu gọn tất cả
+photo-looks-hint = Được áp dụng từ trên xuống dưới. Kéo một lá bài để sắp xếp lại, hoặc nhấn Alt + ↑ ↓ lên nó. Nhấn phải vào một lá để lấy ra.
+photo-looks-right-click-out = Nhấn phải: lấy nó ra khỏi hiệu ứng đang hoạt động
+photo-looks-drop = Kéo một hiệu ứng tới đây, hoặc nhấn vào một hiệu quả bên dưới
+photo-looks-full = { $max } của { $max }: lấy ra một, hoặc bật Thay thế để thay thế.
+photo-looks-catalogue = Danh mục hiệu ứng
+photo-looks-catalogue-tip = Chọn hiệu ứng để thử nó trên ảnh; nhấn vào nó để thêm, hoặc kéo nó giữa các hiệu ứng đang hoạt động
+photo-looks-catalogue-fold = Hiện hoặc ẩn danh mục
+photo-looks-replace-tip = Thay thế: nhấn vào danh mục để thay thế thẻ đã chọn thay vì thêm một thẻ mới
+photo-looks-replacing = Một cú click đổi { $name }.
+photo-looks-done = Xong.
+photo-looks-take-out-zone = Đưa nó xuống đây để lấy ra.
+photo-looks-hide = Giấu { $name } (nó giữ chỗ của nó)
+photo-looks-show = Cho xem { $name }.
+photo-looks-more = Thêm hành động
+photo-looks-move-up = Đi lên
+photo-looks-move-down = Di chuyển xuống
+photo-looks-replace-one = Thay thế...
+photo-looks-take-out = Đưa ra.
+photo-looks-not-in-360-tag = Không phải 360 độ.
+photo-looks-all = Tất cả
+photo-looks-favorites = Ưu thích: mọi hiệu ứng mà bạn tham gia
+photo-looks-favorites-empty = Vẫn chưa có ảnh yêu thích. Chọn một hiệu ứng và nhấn vào ngôi sao của nó: nó sẽ xuất hiện đầu tiên trong danh sách, và ở đây.
+photo-looks-favorite = Thêm vào mục ưa thích
+photo-looks-unfavorite = Xoá khỏi những thứ yêu thích
+photo-looks-card = { $name }, { $place } của { $count }Alt + mũi tên di chuyển nó.
+photo-looks-legacy-note = Các bộ lọc xem cũ không có thiết lập bổ sung.
+photo-knob-toning = Chỉnh tông màu
+photo-knob-local-contrast = Độ tương phản cục bộ
+build-face-button = Mặt { $number }: chọn nó trên mỗi prim đã chọn. Shift+click: thêm nó vào hoặc lấy nó ra.
+build-face-invert = Lật ngược các mặt được chọn
+build-face-all = Chọn mọi mặt
+ui-options-aurora-controls-compact = Điều khiển máy ảnh compact
+ui-options-aurora-controls-compact-help = Cửa sổ Điều khiển mở nhỏ gọn trên máy ảnh: thanh điều hướng, phóng to và cuộn. Nút thanh tiêu đề của nó chuyển giữa nhỏ gọm và đầy đủ, và cũng đặt điều này.
+ui-options-aurora-controls-compact-movement = Bộ điều khiển chuyển động nhỏ gọn
+ui-options-aurora-controls-compact-movement-help = Thẻ Di chuyển của cửa sổ Điều khiển mở nhỏ gọn: các nút di chuyển và đi, chạy và bay. Nút thanh tiêu đề của nó thay đổi giữa nhỏ và đầy, và cũng đặt điều này.
+poser-face-position-drag = Kéo để di chuyển khớp 0,1 mm mỗi pixel hoặc bấm để nhập vị trí.
+build-layout-clicks = Nhấn vào các đối tượng
+build-ui-floaters-shift-click = Shift + nhấn
+build-ui-floaters-ctrl-click = Ctrl+nhấp
+build-ui-floaters-click-object = Thêm hoặc gỡ bỏ đối tượng
+build-ui-floaters-click-face = Chọn mặt
+build-ui-floaters-clicks-hint = Với công cụ Sửa đổi, bên ngoài Đường thẳng. Ctrl + Shift + nhấn để thêm mặt đã nhấn hoặc lấy nó ra.
+build-ui-floaters-ctrl-right-click = Ctrl + nhấn phải
+build-ui-floaters-right-click-menu = Mở thực đơn
+build-ui-floaters-right-click-edit = Sửa đối tượng
+build-ui-floaters-double-click-linked = Nhấn đôi vào một prim: bật/ tắt "Sửa đổi các phần liên kết"
+blender-live-tab-place = Địa điểm
+blender-live-tab-avatar = Nhân vật
+blender-live-objects-help = Các lưới mà Blender đang gửi. Chọn một để đặt nó, hoặc nhập nó từ thực đơn của nó.
+blender-live-more = Nhiều hơn
+blender-live-place = Địa điểm
+blender-live-linked-prims = Hiện hoặc ẩn các số nguyên liên kết
+blender-live-tag-rigged = Có khung xương
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Tam giác: { $triangles }
+       *[other] Tam giác: { $triangles }
+    }
+blender-live-card-static =
+    Tĩnh · { $triangles ->
+        [one] Tam giác: { $triangles }
+       *[other] Tam giác: { $triangles }
+    }
+blender-live-card-linkset =
+    Tĩnh · { $prims ->
+        [one] Prim: { $prims }
+       *[other] Prim: { $prims }
+    } · { $triangles ->
+        [one] Tam giác: { $triangles }
+       *[other] Tam giác: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Tam giác: { $triangles }
+       *[other] Tam giác: { $triangles }
+    }
+blender-live-place-help = Địa điểm của lưới tĩnh đã chọn. Lưới bị chỉnh luôn luôn theo hình tượng của bạn.
+blender-live-place-none = Chọn một đối tượng tĩnh để đặt nó.
+blender-live-where = Ở đâu?
+blender-live-transform = Vị trí, quay và kích thước
+blender-live-size-note = Size nhân những gì Blender gửi, vì vậy các bản chỉnh sửa sau này trong Blender giữ nó.
+blender-live-avatar-help = Đối với các lưới bị hỏng: gửi hình dạng của bạn đến Blender để mô phỏng trên nó.
+blender-live-shape-section = Hình dạng của bạn trong Blender
+blender-live-import-help = Lưu lại trạng thái hiện tại của đối tượng để nhập theo quy trình thông thường. Hãy xem lại đối tượng và giá trước khi xác nhận. Các chỉnh sửa sau đó trong Blender sẽ không làm thay đổi bản này.
+blender-live-from = Từ
+blender-live-plugins-help = Aurora cài đặt plugin tương ứng trong mỗi Blender, giữ một bản sao lưu của phiên bản trước đó và không bao giờ cài một phiên phiên cũ.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Thời gian kể từ khi Blender thay đổi đối tượng này lần cuối
+blender-live-show-all = Hiển thị tất cả
+blender-live-hide-all = Ẩn tất cả
+blender-live-bend-section = Kiểm tra trọng lượng.
+blender-live-elbows = Khuỷu tay.
+blender-live-knees = Gậy.
+blender-live-bend-hold = Giữ tư thế này thay vì động tác của tôi.
+blender-live-bend-note = Chỉ có cậu thấy đường cong, trên hình tượng của cậu. hoạt hình của cậy, nhìn của những cư dân khác và nhập liệu vẫn không thay đổi.
+blender-live-levels = Mức độ chi tiết
+blender-live-levels-pending = Blender chuẩn bị các cấp độ chi tiết khi bạn bấm nhập.
+blender-live-levels-note = Được chuẩn bị trong Blender từ thiết lập LiveMesh của mỗi đối tượng.
+blender-live-quick-look-tip = Xem nhanh: xem vật thể này to hơn
+blender-live-quick-look-drag = Kéo để quay nó, nhấn đôi để đối diện lại.
+blender-live-quick-look-changed = Thay đổi trong Blender { $ago } trước.
+blender-live-quick-look-bend = Bẻ cong như trong thẻ Avatar: khuỷu tay { $elbows }°, đầu gối { $knees }°.
+blender-live-undo = Hủy
+blender-live-undo-derez = Derezzed { $name } · vẫn còn trong danh sách của Blender
+blender-live-undo-detach = Tách ra { $name } · vẫn còn trong danh sách của Blender
+blender-live-undo-drop = Bỏ { $name } xuống đất.
+blender-live-undo-attach = Đã chuyển { $name } đến { $point }
+parcel-environment-apply-save = Chỉ có mình tôi, cho gói này.
+parcel-environment-save = Lưu môi trường này cho gói này: nó sẽ trở lại bất cứ khi nào bạn ở đây
+parcel-environment-forget = Quên môi trường đã lưu cho gói này
+parcel-environment-not-saved = Vẫn chưa biết gói này, vì thế môi trường của nó không được lưu. Thử lại sau một lúc.
+parcel-environment-left = Anh đã bỏ gói trước khi môi trường có thể được cứu, nên nó không được cứu.
+parcel-environment-title = Môi trường được lưu cho gói
+parcel-environment-help = Môi trường riêng của bạn cho một gói: nó thay thế môi trường cục bộ của bạn khi bạn đứng đó, và những gì bạn có trước đây sẽ trở lại khi bạn rời đi. Chỉ có bạn mới thấy nó. Lưu một trong cửa sổ Môi trường hoặc thực đơn mục môi trường trong kho hàng của bạn.
+parcel-environment-empty = Không có môi trường nào được lưu
+parcel-environment-remove-all = Xoá tất cả
+parcel-environment-remove-all-title = Xóa tất cả môi trường đã lưu cho một gói?
+parcel-environment-remove-all-text = Các môi trường đã lưu cho những thửa đất trên lưới này sẽ bị xóa. Môi trường trên lưới khác vẫn được giữ. Không thể hoàn tác thao tác này.

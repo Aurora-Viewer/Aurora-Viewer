@@ -16374,3 +16374,141 @@ toolbar-remove-from-menu = Удалить с панели инструменто
 toolbar-command-build-edit = Редактирование объектов
 toolbar-command-build-create = Создание первичных
 toolbar-command-build-land = Редактировать землю
+
+### Updated release translations
+
+inventory-search-no-copy = без права копирования
+inventory-search-no-modify = не может быть изменено
+inventory-search-no-transfer = без права передачи
+ui-options-chat-keep-focus-hint = Enter отправляет сообщение, и строка чата остаётся активной для следующего сообщения, даже если она пуста. Чтобы вернуться к управлению движением, нажмите Esc или щёлкните в мире.
+ui-options-chat-enter-toggles-hint = Enter в пустом поле окна «Беседы» возвращает управление движением в чате поблизости, личных сообщениях и групповых чатах. Нажмите Enter в мире, чтобы снова начать писать.
+build-ui-features-physics-none-root-hint = Только дочерние примитивы множества связей могут использовать физическую форму None: корневой примитив, или примитив самостоятельно, сохраняет Prim или Convex hull.
+controls-position-tip = Положение камеры: установить, где камера стоит за аватаром, точно
+camera-position-hint = В метрах от аватара: X вперед, Y влево, Z вверх. Ctrl + колесо поднимает камеру, Shift + колеса фокусирует точку.
+camera-position-save = Сохранить как положение камеры…
+photo-looks-replace = Заменить
+photo-looks-empty = Пока эффекта нет. Наведите указатель мыши на фильтр ниже, чтобы попробовать его, а затем щелкните или перетащите его сюда.
+photo-looks-active = Активно
+photo-looks-count = { $count } от { $max }
+photo-looks-expand-all = Развернуть всё
+photo-looks-collapse-all = Свернуть всё
+photo-looks-hint = Применяется сверху вниз. Перетащите карту, чтобы изменить ее порядок, или нажмите Alt + ↑ ↓ на ней. Щелкните правой кнопкой мыши на карте, чтобы вытащить ее.
+photo-looks-right-click-out = Правый щелчок: вывести из активных эффектов
+photo-looks-drop = Перетащите эффект сюда или нажмите на один из ниже
+photo-looks-full = { $max } от { $max }: выберите один из них или включите Заменить, чтобы заменить его.
+photo-looks-catalogue = Каталог эффектов
+photo-looks-catalogue-tip = Наведите курсор на эффект, чтобы попробовать его на фотографии; щелкните его, чтобы добавить или перетащить его между активными
+photo-looks-catalogue-fold = Показать или скрыть каталог
+photo-looks-replace-tip = Заменить: нажатие в каталоге заменяет выбранную карту, а не добавляет новую
+photo-looks-replacing = Клик свопы { $name }
+photo-looks-done = Готово
+photo-looks-take-out-zone = Спустись сюда, чтобы вытащить его.
+photo-looks-hide = Скрыть { $name } (он держит свое место)
+photo-looks-show = Показать { $name }
+photo-looks-more = Другие действия
+photo-looks-move-up = Переместить вверх
+photo-looks-move-down = Переместить вниз
+photo-looks-replace-one = Заменить…
+photo-looks-take-out = Выносить
+photo-looks-not-in-360-tag = Не в 360°
+photo-looks-all = Все
+photo-looks-favorites = Избранное: все эффекты, в которых вы играли
+photo-looks-favorites-empty = Еще нет любимых. Наведите курсор на эффект и щелкните его звезду: он появится первым в списке, а также здесь.
+photo-looks-favorite = Добавить в избранное
+photo-looks-unfavorite = Удалить из избранного
+photo-looks-card = { $name }, { $place } от { $count }. Alt + клавиши со стрелками переместить его.
+photo-looks-legacy-note = Фильтры Legacy Viewer не имеют дополнительных настроек.
+photo-knob-toning = Тонирование
+photo-knob-local-contrast = Локальный контраст
+build-face-button = Лицо { $number }: выберите его на каждом выбранном prim. Shift+click: добавить или исключить.
+build-face-invert = Инверсия выбранных лиц
+build-face-all = Выбрать все лица
+ui-options-aurora-controls-compact = Компактные элементы управления камерой
+ui-options-aurora-controls-compact-help = Окно Controls открывается компактным на камере: его джойстики, увеличение и поворот. Его кнопка заголовка переключается между компактными и полными, а также устанавливает это тоже.
+ui-options-aurora-controls-compact-movement = Компактные системы управления движением
+ui-options-aurora-controls-compact-movement-help = Вкладка Движение окна Управление открывается компактным: кнопки движения и ходьба, бег и полет. Его кнопка заголовка переключается между компактными и полными, и устанавливает это также.
+poser-face-position-drag = Перетащите, чтобы переместить соединение на 0,1 мм на пиксель, или щелкните, чтобы ввести позицию.
+build-layout-clicks = Нажатия на объекты
+build-ui-floaters-shift-click = Shift + щелчок
+build-ui-floaters-ctrl-click = Ctrl + щелчок
+build-ui-floaters-click-object = Добавление или удаление объекта
+build-ui-floaters-click-face = Выберите лицо
+build-ui-floaters-clicks-hint = С помощью инструмента Редактировать, вне Выравнивание. Ctrl + Shift + щелкните добавляет нажатую поверхность или снимает ее.
+build-ui-floaters-ctrl-right-click = Ctrl + правый щелчок
+build-ui-floaters-right-click-menu = Открыть меню
+build-ui-floaters-right-click-edit = Редактировать объект
+build-ui-floaters-double-click-linked = Двойной щелчок на приме: переключатель «Редактировать связанные части»
+blender-live-tab-place = Положение
+blender-live-tab-avatar = Аватар
+blender-live-objects-help = Сетки, которые отправляет Blender. Выберите одну для размещения или импортируйте ее из меню.
+blender-live-more = Ещё
+blender-live-place = Положение
+blender-live-linked-prims = Показать или скрыть связанные первичные объекты
+blender-live-tag-rigged = Со скелетом
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Треугольники: { $triangles }
+       *[other] Треугольники: { $triangles }
+    }
+blender-live-card-static =
+    Статическая · { $triangles ->
+        [one] Треугольники: { $triangles }
+       *[other] Треугольники: { $triangles }
+    }
+blender-live-card-linkset =
+    Статическая · { $prims ->
+        [one] Примы: { $prims }
+       *[other] Примы: { $prims }
+    } · { $triangles ->
+        [one] Треугольники: { $triangles }
+       *[other] Треугольники: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Треугольники: { $triangles }
+       *[other] Треугольники: { $triangles }
+    }
+blender-live-place-help = Где находится выбранная статическая сетка. Ригированные сетки всегда следуют за вашим аватаром.
+blender-live-place-none = Выберите статический объект, чтобы разместить его.
+blender-live-where = Где
+blender-live-transform = Местоположение, ротация и размер
+blender-live-size-note = Размер умножает то, что Blender отправляет, так что последующие редактирования в Blender сохраняют его.
+blender-live-avatar-help = Для сеток с кривыми: отправьте форму в Blender для моделирования.
+blender-live-shape-section = Ваша форма в Blender
+blender-live-import-help = Замораживает моментальный снимок объекта для обычного импорта: обзор, цена, затем подтверждение. Последующие изменения в Blender не меняют его.
+blender-live-from = От
+blender-live-plugins-help = Aurora устанавливает соответствующий плагин в каждом Blender, сохраняет резервную копию предыдущего и никогда не устанавливается более старую версию.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } мин.
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Время с момента последнего изменения объекта в Blender
+blender-live-show-all = Показать всё
+blender-live-hide-all = Скрыть все
+blender-live-bend-section = Проверка весов
+blender-live-elbows = Локоть
+blender-live-knees = Колено
+blender-live-bend-hold = Держите эту позу вместо моих анимаций
+blender-live-bend-note = Только вы видите изгиб, на вашем аватаре. Ваши анимации, вид других жителей и импорт остаются неизменными.
+blender-live-levels = Уровни детализации
+blender-live-levels-pending = Blender подготавливает уровни детализации при нажатии кнопки Импорт.
+blender-live-levels-note = Подготавливается в Blender из настроек LiveMesh каждого объекта.
+blender-live-quick-look-tip = Быстрый взгляд: увидеть этот объект больше
+blender-live-quick-look-drag = Перетащите, чтобы повернуть его, дважды щелкните, чтобы снова обратиться к нему.
+blender-live-quick-look-changed = Изменено в Blender { $ago } назад.
+blender-live-quick-look-bend = Наклонитесь, как на вкладке Аватара: локти { $elbows }°, колени { $knees }°.
+blender-live-undo = Отменить
+blender-live-undo-derez = Derezzed { $name } · все еще в списке Blender
+blender-live-undo-detach = { $name } · все еще в списке Blender
+blender-live-undo-drop = Бросил { $name } на землю
+blender-live-undo-attach = { $name } перемещён в точку { $point }
+parcel-environment-apply-save = Применить к себе только, для этого пакета
+parcel-environment-save = Сохраните эту среду для этого пакета: она возвращается, когда вы здесь
+parcel-environment-forget = Забыть среду, сохраненную для этого пакета
+parcel-environment-not-saved = Этот участок еще не был известен, поэтому его окружение не было сохранено. Попробуйте снова через минуту.
+parcel-environment-left = Вы покинули пакет до того, как его окружение могло быть сохранено, поэтому он не был сохранен.
+parcel-environment-title = Среда, сохраненная для пакетов
+parcel-environment-help = Ваша собственная среда для участка: она заменяет вашу локальную среду, пока вы стоите там, и то, что у вас было раньше, возвращается, когда вы уходите. Только вы видите ее. Сохраните одну из окна Среда или меню элемента среды в вашем инвентаре.
+parcel-environment-empty = Среда не сохранена
+parcel-environment-remove-all = Удалить все
+parcel-environment-remove-all-title = Удалить все среды, сохраненные для пакета?
+parcel-environment-remove-all-text = Окружения, сохранённые для участков в этой сети, будут удалены. Сохранения других сетей останутся без изменений. Это действие нельзя отменить.

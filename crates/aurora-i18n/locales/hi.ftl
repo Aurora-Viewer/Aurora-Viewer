@@ -16030,3 +16030,141 @@ toolbar-remove-from-menu = औज़ार पट्टी से मिटा�
 toolbar-command-build-edit = वस्तुएँ संपादित करें
 toolbar-command-build-create = प्राइम बनाएँ
 toolbar-command-build-land = देश संपादन
+
+### Updated release translations
+
+inventory-search-no-copy = नक़ल नहीं
+inventory-search-no-modify = परिवर्धित नहीं किया जा सकता
+inventory-search-no-transfer = स्थानांतरण
+ui-options-chat-keep-focus-hint = Enter संदेश भेजता है और चैट बार अगले संदेश के लिए सक्रिय रहता है। खाली बार में Enter दबाने पर भी फ़ोकस बना रहता है। चलने के नियंत्रण पर लौटने के लिए Esc दबाएँ या दुनिया में क्लिक करें।
+ui-options-chat-enter-toggles-hint = बातचीत विंडो के खाली फ़ील्ड में Enter दबाने से आस-पास की चैट, निजी संदेशों और समूह चैट से चलने के नियंत्रण पर लौटते हैं। दुनिया में Enter दबाकर फिर लिख सकते हैं।
+build-ui-features-physics-none-root-hint = केवल एक लिंकसेट के बच्चे प्राइम भौतिकी आकार कोई नहीं का उपयोग कर सकते हैं: रूट प्राइम, या अपने आप में एक प्राइम प्राइम या उत्तल हूल रखता है।
+controls-position-tip = कैमरा स्थिति: सेट करें जहां कैमरा अवतार के पीछे खड़ा है, ठीक
+camera-position-hint = अवतार से मीटर में: X आगे, Y बायाँ, Z ऊपर. कंट्रोल + व्हील कैमरा उठाता है, शिफ़्ट + व्हिल फोकस बिन्दु.
+camera-position-save = कैमरा स्थिति के रूप में सहेजें...
+photo-looks-replace = बदलें (R)
+photo-looks-empty = अभी तक कोई प्रभाव नहीं. इसे कोशिश करने के लिए नीचे दिए फ़िल्टर पर इशारा करें, फिर क्लिक करें या इसे यहाँ खींच लाएँ.
+photo-looks-active = सक्रिय
+photo-looks-count = { $count } का { $max }
+photo-looks-expand-all = सभी फैलाएँ
+photo-looks-collapse-all = सभी संपीड़ित करें
+photo-looks-hint = ऊपर से नीचे तक लागू किया गया. कार्ड को फिरसे व्यवस्थित करने के लिये उसे खींच ले या Alt + ↑ ↓ दबाये. कार्ड निकालने के लिए दायाँ क्लिक करे.
+photo-looks-right-click-out = दायाँ क्लिक: इसे सक्रिय प्रभावों से बाहर निकालें
+photo-looks-drop = प्रभाव यहाँ खींच लाएँ, या नीचे एक पर क्लिक करें
+photo-looks-full = { $max } का { $max }: एक बाहर ले, या स्वेप करने के लिए बदलें चालू करें.
+photo-looks-catalogue = प्रभाव सूचीपत्र
+photo-looks-catalogue-tip = फोटो में इसे कोशिश करने के लिए प्रभाव पर संकेत करें; इसे जोड़ने के लिए क्लिक करें, या सक्रियों के बीच खींचें
+photo-looks-catalogue-fold = सूचीपत्र दिखाएँ या छुपाएँ
+photo-looks-replace-tip = बदलें: सूची में क्लिक करने से नए कार्ड जोड़ने के बजाय चुना गया कार्ड बदल जाता है.
+photo-looks-replacing = एक क्लिक स्वेप्स { $name }
+photo-looks-done = पूर्ण
+photo-looks-take-out-zone = इसे बाहर निकालने के लिए यहाँ छोड़ें
+photo-looks-hide = छुपाएँ { $name } (यह अपनी जगह रखता है)
+photo-looks-show = { $name } दिखाएँ
+photo-looks-more = और कार्रवाइयाँ
+photo-looks-move-up = ऊपर जाएँ
+photo-looks-move-down = नीचे जाएँ
+photo-looks-replace-one = बदलें...
+photo-looks-take-out = बाहर निकालें
+photo-looks-not-in-360-tag = 360 डिग्री में नहीं
+photo-looks-all = सभी
+photo-looks-favorites = पसंदीदा: हर प्रभाव जिसे आपने स्टार किया है
+photo-looks-favorites-empty = अभी कोई पसंदीदा नहीं है. प्रभाव पर इशारा करें तथा उसके तारे को क्लिक करें: यह सूची में पहले दिखाई देता है, और यहाँ.
+photo-looks-favorite = पसंदीदा में जोड़ें
+photo-looks-unfavorite = पसंदीदा से हटाएँ
+photo-looks-card = { $name }, { $place } का { $count }ऑल्ट + तीर कुंजियाँ इसे खिसकाएँ.
+photo-looks-legacy-note = लीजेसी प्रदर्शक फ़िल्टर में कोई अतिरिक्त विन्यास नहीं है.
+photo-knob-toning = टोनिंग
+photo-knob-local-contrast = स्थानीय कंट्रास्ट
+build-face-button = चेहरे { $number }: प्रत्येक चयनित प्राम पर इसे चुनें. Shift+click: इसे जोड़ें या हटाएँ.
+build-face-invert = चयनित चेहरे उलटें
+build-face-all = सभी चेहरे चुनें
+ui-options-aurora-controls-compact = कॉम्पैक्ट कैमरा नियंत्रण
+ui-options-aurora-controls-compact-help = नियंत्रण विंडो कैमरा पर कॉम्पैक्ट खुलता है: इसके जॉयस्टिक, ज़ूम और रोल. इसका शीर्षक पट्टी बटन कॉम्पेक्ट और फुल के बीच स्विच करता है, और इसे भी सेट करता है.
+ui-options-aurora-controls-compact-movement = कॉम्पैक्ट गति नियंत्रण
+ui-options-aurora-controls-compact-movement-help = नियंत्रण विंडो के गति टैब को कॉम्पैक्ट खोलता है: गति बटन और चलना, दौड़ना और उड़ान. इसका शीर्षक पट्टी बटन कॉम्पेक्ट और पूर्ण के बीच स्विच करता है, और इसे भी सेट करता है.
+poser-face-position-drag = जोड़ को 0.1 मिमी प्रति पिक्सेल खिसकाने के लिए खींचें, या स्थिति दर्ज करने के लिए क्लिक करें।
+build-layout-clicks = वस्तुओं पर क्लिक
+build-ui-floaters-shift-click = शिफ़्ट + क्लिक
+build-ui-floaters-ctrl-click = कंट्रोल+क्लिक
+build-ui-floaters-click-object = वस्तु जोड़ें या हटाएँ
+build-ui-floaters-click-face = चेहरे को चुनें
+build-ui-floaters-clicks-hint = संपादन औज़ार के साथ, बाहर पंक्तिबद्ध करें. कंट्रोल+शिफ्ट+क्लिक क्लिक किए गए फेस को जोड़ता है या इसे बाहर ले जाता है.
+build-ui-floaters-ctrl-right-click = कंट्रोल + दायाँ क्लिक
+build-ui-floaters-right-click-menu = मेन्यू खोलें
+build-ui-floaters-right-click-edit = वस्तु संपादित करें
+build-ui-floaters-double-click-linked = प्राम पर दोहरा क्लिक करें: स्विच “संबद्ध भाग संपादित करें”
+blender-live-tab-place = स्थान
+blender-live-tab-avatar = अवतार
+blender-live-objects-help = ब्लेंडर भेज रहा है मेश. इसे रखने के लिए एक चुनें, या अपने मेन्यू से आयात करें.
+blender-live-more = अधिक
+blender-live-place = स्थान
+blender-live-linked-prims = लिंक्ड प्राइम दिखाएँ या छुपाएँ
+blender-live-tag-rigged = रिग वाला
+blender-live-card-rigged =
+    { $triangles ->
+        [one] त्रिभुज: { $triangles }
+       *[other] त्रिभुज: { $triangles }
+    }
+blender-live-card-static =
+    स्थिर · { $triangles ->
+        [one] त्रिभुज: { $triangles }
+       *[other] त्रिभुज: { $triangles }
+    }
+blender-live-card-linkset =
+    स्थिर · { $prims ->
+        [one] प्रिम: { $prims }
+       *[other] प्रिम: { $prims }
+    } · { $triangles ->
+        [one] त्रिभुज: { $triangles }
+       *[other] त्रिभुज: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] त्रिभुज: { $triangles }
+       *[other] त्रिभुज: { $triangles }
+    }
+blender-live-place-help = चयनित स्थिर मेश कहाँ है. रिग्ड मेश हमेशा आपके अवतार का अनुसरण करते हैं.
+blender-live-place-none = इसे रखने के लिए स्थिर वस्तु चुनें.
+blender-live-where = कहाँ
+blender-live-transform = स्थिति, परिक्रमण तथा आकार
+blender-live-size-note = ब्लेंडर भेजे गए आकार को गुणा करता है, इसलिए बाद में ब्लेण्डर में संपादन इसे बनाए रखते हैं।
+blender-live-avatar-help = इसका प्रयोग निम्नलिखित कार्यों में किया जाता है : 1. कोशिकाओं को एक दूसरे से जोड़ना।
+blender-live-shape-section = ब्लेंडर में आपका आकार
+blender-live-import-help = सामान्य आयात के लिए वस्तु के स्नैपशॉट को फ्रीज करता है: समीक्षा, कीमत, फिर पुष्टि. बाद में ब्लेंडर में संपादन इसे नहीं बदलता है.
+blender-live-from = से
+blender-live-plugins-help = Aurora प्रत्येक ब्लेंडर में मिलता-जुलता प्लगइन स्थापित करता है, पिछले संस्करण का बैकअप रखता है और कभी भी पुराने संस्करण को स्थापित नहीं करता है।
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } मिनट
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = ब्लेंडर द्वारा इस वस्तु को अंतिम बार परिवर्तित करने के बाद का समय
+blender-live-show-all = सभी दिखाएँ
+blender-live-hide-all = सभी छुपाएँ
+blender-live-bend-section = वजन जाँचें
+blender-live-elbows = कुँए
+blender-live-knees = घुटने
+blender-live-bend-hold = मेरे एनिमेशन के बजाय इस पोज़ को रखें
+blender-live-bend-note = सिर्फ आप अपने अवतार पर, झुकाव देख सकते हैं. आपके एनिमेशन, अन्य निवासियों के दृश्य और आयात अपरिवर्तित है.
+blender-live-levels = विवरण के स्तर
+blender-live-levels-pending = जब आप आयात पर क्लिक करते हैं तो ब्लेंडर विवरण के स्तर तैयार करता है.
+blender-live-levels-note = प्रत्येक वस्तु के लाइवमेश सेटिंग्स से ब्लेंडर में तैयार किया गया.
+blender-live-quick-look-tip = त्वरित नज़र: इस वस्तु को बड़ा देखें
+blender-live-quick-look-drag = इसे घुमाने के लिये खींचें, फिर से सामने लाने के लिए दोहरा क्लिक करें.
+blender-live-quick-look-changed = ब्लेंडर में बदला गया { $ago } अगस्त का
+blender-live-quick-look-bend = अवतार टैब के रूप में झुका हुआ: कुँए { $elbows }°, घुटने { $knees }°.
+blender-live-undo = पहले जैसा (_U)
+blender-live-undo-derez = डिज़ीटेड { $name } · अभी भी ब्लेंडर की सूची में
+blender-live-undo-detach = अलग { $name } · अभी भी ब्लेंडर की सूची में
+blender-live-undo-drop = जमीन पर { $name } गिरा
+blender-live-undo-attach = { $name } को { $point } पर ले जाया गया
+parcel-environment-apply-save = इस पैकेज के लिए सिर्फ मुझ पर लागू करें
+parcel-environment-save = इस पैकेज के लिए इस वातावरण को सहेजें: जब भी आप यहाँ हों तो यह वापस आता है
+parcel-environment-forget = इस पैकेज के लिए सहेजे गए वातावरण को भूल जाएँ
+parcel-environment-not-saved = यह पैकेज अभी तक ज्ञात नहीं है, अतः इसका वातावरण सहेजा नहीं गया है. एक पल में फिर से कोशिश करें.
+parcel-environment-left = आपने पैकेज को छोड़ दिया उसके वातावरण को बचाने से पहले, इसलिए यह नहीं बचाया गया था.
+parcel-environment-title = पैकेट के लिए सहेजे गए वातावरण
+parcel-environment-help = पैकेज के लिए आपका अपना वातावरण: यह आपके स्थानीय वातावरण को बदलता है जब तक आप वहाँ खड़े होते हैं, और जो पहले था वह वापस आता है जब आप बाहर जाते हैं. केवल आप इसे देख सकते हैं. एक को पर्यावरण विंडो से या अपने इनवेस्टमेंट में एक पर्यावरण वस्तु का मेन्यू से सहेजें.
+parcel-environment-empty = कोई वातावरण सहेजा नहीं गया
+parcel-environment-remove-all = सभी मिटाएँ
+parcel-environment-remove-all-title = पैकेज के लिए सहेजे गए सभी वातावरण को हटाएँ?
+parcel-environment-remove-all-text = इस ग्रिड के भूखंडों के लिए सहेजे गए परिवेश हट जाएँगे। दूसरे ग्रिड के परिवेश बने रहेंगे। यह कार्रवाई वापस नहीं ली जा सकती।

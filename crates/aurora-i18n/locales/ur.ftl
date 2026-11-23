@@ -16058,3 +16058,141 @@ toolbar-remove-from-menu = ٹول پٹی سے حذف کریں
 toolbar-command-build-edit = اشيا ں کا تغیر
 toolbar-command-build-create = پرائم بنا ئيں
 toolbar-command-build-land = ملک
+
+### Updated release translations
+
+inventory-search-no-copy = کاپی نہیں
+inventory-search-no-modify = تبدیل نہیں کیا جاسکتا
+inventory-search-no-transfer = منتقلي
+ui-options-chat-keep-focus-hint = Enter پیغام بھیجتا ہے اور چیٹ بار اگلے پیغام کے لیے فعال رہتی ہے، چاہے بار خالی ہو۔ دوبارہ حرکت کرنے کے لیے Esc دبائیں یا دنیا میں کلک کریں۔
+ui-options-chat-enter-toggles-hint = گفتگو کی ونڈو میں خالی خانے پر Enter دبانے سے قریبی چیٹ، نجی پیغامات اور گروپ چیٹ سے حرکت کے کنٹرول پر واپس آتے ہیں۔ دنیا میں Enter دبا کر پھر لکھنا شروع کریں۔
+build-ui-features-physics-none-root-hint = صرف لينک سيٹ کے بچے پرائمز جسماني شکل استعمال کر سکتے هيں کوئی نهيں: روٹ پرائم ، يا خود پرائم، پرائم يا کنوکس ہل کو محفوظ رکھتا هے
+controls-position-tip = کيمرا پوزيشن: سيٹ کريں جتي کيم را آ وٹر کے پيچھے لگتا هے
+camera-position-hint = آ وٹا ر سے ميٹرس ميں : X آگے ، Y با ئيں ، Z اوپر Ctrl + wheel کيمرا بلند کر تا هے ، Shift + wheel فوکس پو اينٹ
+camera-position-save = کیمرے کی جگہ کے طور پر محفوظ کریں...
+photo-looks-replace = بدلیں
+photo-looks-empty = ابھی تک کوئی اثر نہیں. اس کو آزمانے کے ليے نيچے کے فلٹر پر اشارہ کريں ، پھر اس پر کلک کريئے يا اس کو یہاں کھينچيں
+photo-looks-active = فعال
+photo-looks-count = { $count } يا { $max }
+photo-looks-expand-all = سب پھیلاؤ
+photo-looks-collapse-all = سب کو گھٹاو
+photo-looks-hint = اوپر سے نيچے تک لا گيا هے اس کو دوباره ترتيب دينے کے ليے کارڈ کھينچيں يا اس پر Alt + ↑ ↓ دبا ئيں اسے نکال نے کے ليئے کارڈ پر دا ئيں کلک کريں
+photo-looks-right-click-out = دائيں کلک: فعال اثرات سے باہر لے لیں
+photo-looks-drop = ايک اثر یہاں کھينچيں يا نيچے کلک کريں
+photo-looks-full = { $max } يا { $max }: ایک نکا ليں يا تبديل کر نے کے ليے بدليں کو فعال کريں
+photo-looks-catalogue = اثرات کا کتلا گ
+photo-looks-catalogue-tip = فوٹو ميں اثر کو آزمانے کے ليے اشارہ کريں اسے شامل کر نے کے ليئے کلک کريے يا فعالوں ميں سے کھينچيں
+photo-looks-catalogue-fold = کتلا گ ے کو دکھائیں يا چھپائیں
+photo-looks-replace-tip = تبديل کريں : کيٹلا گ ميں کلک کر نے سے منتخب کارڈ بدل جا تا هے
+photo-looks-replacing = کلک کر کے { $name } بدليں
+photo-looks-done = ختم
+photo-looks-take-out-zone = اس کو باہر لینے کے لئے یہاں گر
+photo-looks-hide = { $name } چھپائيں (يہ اسکے مقام کو محفوظ رکھتا هے)
+photo-looks-show = { $name } دکھائیں
+photo-looks-more = مزید عمل
+photo-looks-move-up = اوپر منتقل کریں
+photo-looks-move-down = نیچے منتقل کریں
+photo-looks-replace-one = بدلیں...
+photo-looks-take-out = باہر لے لو
+photo-looks-not-in-360-tag = 360 درجے میں نہیں
+photo-looks-all = سب
+photo-looks-favorites = پسندیدہ: ہر اثر آپ ستارہ
+photo-looks-favorites-empty = ابھی تک کوئی پسنديده نهيں هے ايک اثر پر اشارہ کريں اور اس کے ستارے کو کلک کريے: یہ اسکے فهرست ميں اول دکھا يا گيا هے ، اور یہاں
+photo-looks-favorite = پسندیدہ میں شامل کریں
+photo-looks-unfavorite = پسندیدہ سے حذف کریں
+photo-looks-card = { $name }, { $place } يا { $count }Alt + تیروں کے کليد اس کو ہٹا ئے
+photo-looks-legacy-note = لیجڈی ویئر فلٹرز میں کوئی اضافی ترتیبات نہیں ہیں.
+photo-knob-toning = رنگ کی ٹوننگ
+photo-knob-local-contrast = مقامی فرق
+build-face-button = چہرہ { $number }: ہر منتخب prim پر اسے منتخب کریں. Shift+click: اسے شامل کریں يا اسے نکالیں
+build-face-invert = منتخب کردہ چہرے بدليں
+build-face-all = تمام چہرے منتخب کريں
+ui-options-aurora-controls-compact = کمپیکٹ کیمرے کنٹرول
+ui-options-aurora-controls-compact-help = کنٹرول وينڈو کيمرا پر کمپیکٹ کھولتا هے: اسکے جو يسٹک ، زوم اور رول اسکا عنواني بار بٹن کمپیکٹ اور پورا کے ميں تبديل کر تا هے اور اسکو بھی سيٹ کرتا هے
+ui-options-aurora-controls-compact-movement = حرکت کنٹرول
+ui-options-aurora-controls-compact-movement-help = کنٹرول وينڈو کے حرکت ٽيب کو کمپیکٹ کھولتا هے : حرکت بٹن اور چلنا ، دوڑنا اور پرواز اسکے عنوان بار بٹن کمپیکٹ اور پورا کے ميں تبديل کر تا هے اور اسکو بھی سيٹ کرتا هے
+poser-face-position-drag = 0.1mm پر پکسل جوئنٹ کي منتقلي کے ليے کھينچ کريں ، يا ايک مقام تاليف کے ليئے کلک کريے
+build-layout-clicks = اشياء پر کلک کريں
+build-ui-floaters-shift-click = Shift + کلک
+build-ui-floaters-ctrl-click = Ctrl+کلیک
+build-ui-floaters-click-object = اجزا شامل کریں يا حذف کریں
+build-ui-floaters-click-face = چہرہ منتخب کريں
+build-ui-floaters-clicks-hint = ايڈٹ ٹو ل کے ساتھ ، خارجي سا ئے ميں Ctrl+Shift+ کلک کريں کلک کيے گئے چہرے کو شامل کر تا هے يا اسے نکالتا هے
+build-ui-floaters-ctrl-right-click = Ctrl+دائيں کلک
+build-ui-floaters-right-click-menu = مینو کھولیں
+build-ui-floaters-right-click-edit = اشيا ں کو منسوخ کريں
+build-ui-floaters-double-click-linked = پريم پر دو گنا کلک کريں: "ليکڈ پارٹس" کو تبديل کريے
+blender-live-tab-place = جگہ
+blender-live-tab-avatar = اوتار
+blender-live-objects-help = ميشز جو بلنڈر بھیج رہا هے اسے رکھنے کے ليے ایک منتخب کريں يا اسکے مينو سے اخراج کريے
+blender-live-more = مزید
+blender-live-place = جگہ
+blender-live-linked-prims = رابطہ دار پرائمز دکھائیں يا چھپائیں
+blender-live-tag-rigged = ڈھانچے کے ساتھ
+blender-live-card-rigged =
+    { $triangles ->
+        [one] مثلثیں: { $triangles }
+       *[other] مثلثیں: { $triangles }
+    }
+blender-live-card-static =
+    جامد · { $triangles ->
+        [one] مثلثیں: { $triangles }
+       *[other] مثلثیں: { $triangles }
+    }
+blender-live-card-linkset =
+    جامد · { $prims ->
+        [one] پرِمز: { $prims }
+       *[other] پرِمز: { $prims }
+    } · { $triangles ->
+        [one] مثلثیں: { $triangles }
+       *[other] مثلثیں: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] مثلثیں: { $triangles }
+       *[other] مثلثیں: { $triangles }
+    }
+blender-live-place-help = منتخب شدہ سٹیٹک ميش کہاں ہے. ريگڈ ميش ہمیشہ آپکے آوٹار کے پیچھے چلتا ہے
+blender-live-place-none = اس کو رکھنے کے ليے يک ثابت شيٹ منتخب کريں
+blender-live-where = کہاں
+blender-live-transform = مقام، گردش اور سائز
+blender-live-size-note = سائز ضرب کرتا ہے جو بلنڈر بھیجتا هے، اس ليے بعد ميں بلینڈر ميں ايڈٹ اسے محفوظ رکھتے هيں
+blender-live-avatar-help = ريگڈ ميشز کے ليے: آپ کي شکل کو بلنڈر ميں موڈل کر نےکے ليے بھیج ديں
+blender-live-shape-section = بلنڈر میں آپ کی شکل
+blender-live-import-help = معمولي واردات کے ليے اوبجیکٹ کا سناپ شاٹ محفوظ کر تا هے: جائزہ، قيمت، پھر تصديق. بعد ميں بلنڈر ميں ايڈٹ اس کو تبديل نہیں کرتا
+blender-live-from = سے
+blender-live-plugins-help = Aurora ہر بلنڈر میں مطابقت رکھنے والا پلگ ان انسٹال کرتا ہے، پہلے ایک کی بک اپ رکھتا ہے اور کبھی بھی پرانا ورژن انسٹالے نہیں کرتا.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } منٹ
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = بلنڈر نے اس اشیا کو آخری بار تبدیل کرنے کے بعد وقت
+blender-live-show-all = سب دکھائیں
+blender-live-hide-all = سب چھپائیں
+blender-live-bend-section = وزن چيک کريں
+blender-live-elbows = کونے
+blender-live-knees = گھٹنے
+blender-live-bend-hold = میرے متحرک نما ئيں کے بدلے اس پوز کو تھامے
+blender-live-bend-note = صرف آپ کو دیکھتے ہیں، آپ کے آوٹار پر بند. آپ کی متحرک، دوسرے رہنے والوں کی نظر اور واردات غیر تبدیل ہیں.
+blender-live-levels = تفصیل کے سطح
+blender-live-levels-pending = بلنڈر تفصيل کے ليول تيار کر تا هے جب آپ واردات پر کلک کريں
+blender-live-levels-note = بلنڈر ميں تيار کريے گيا هے ہر اوبجیکٹ کے LiveMesh سيٹنگز
+blender-live-quick-look-tip = جلدي نظر: اس شيد کو بڑا دیکھيں
+blender-live-quick-look-drag = اسے موڑنے کے ليے کھينچيں ، اسکے سامنے آ نےکے ليے دو گنا کلک کريں
+blender-live-quick-look-changed = { $ago } سال پہلے بلنڈر میں تبديل کیا گیا.
+blender-live-quick-look-bend = آوٹار ٹیب میں بنے جیسے: کنویں { $elbows }°، گٹنے { $knees }°.
+blender-live-undo = واپس لوڈ
+blender-live-undo-derez = درجہ { $name } · ابھی بھی بلنڈر کی فهرست میں
+blender-live-undo-detach = الگ { $name } · ابھی بھی بلنڈر کی فهرست میں
+blender-live-undo-drop = زمین پر { $name } ڈال دیا
+blender-live-undo-attach = { $name } کو { $point } پر منتقل کیا گیا
+parcel-environment-apply-save = صرف اپنے آپ کو، اس پیکل کے لئے درخواست
+parcel-environment-save = اس پيکج کے ليے ماحول محفوظ کريں: جب آپ یہاں هيں تو وہ واپس آتا هے
+parcel-environment-forget = اس پیکج کے لیے محفوظ ماحول کو بھول جائیں
+parcel-environment-not-saved = اس پيکيج کو ابھی تک معلوم نہيں هے ، اس ليے اسکے ماحول کي محفوظ کر نے کي ضرورت نهيں هيں چند دقيقہ ميں پھر کوشش کريں
+parcel-environment-left = آپ نے اپنے ماحول کو بچایا جا سکتا ہے اس سے پہلے پیکج چھوڑ دیا، تو یہ محفوظ نہیں تھا.
+parcel-environment-title = پيکلز کے ليے محفوظ ماحول
+parcel-environment-help = پيک ليٹ کے ليے آپ کا خود ماحول : جب آپ وہاں بيٹھے هيں تو آپکا مقامي ماحول بدلتا هے اور جو آپکے پاس اس سے پہلے هو تا هے وه واپس آتا هئے جب آپ نکلتے هيں صرف آپ اسے دیکھ سکتے هيں ماحول وينڈوز يا ماحول ايٹم مينو سے ایک محفوظ کريں
+parcel-environment-empty = کوئی ماحول محفوظ نہیں ہے
+parcel-environment-remove-all = سب کو حذف کریں
+parcel-environment-remove-all-title = ایک پیکل کے لیے محفوظ تمام ماحول کو ہٹا دیں؟
+parcel-environment-remove-all-text = اس گرڈ میں زمین کے قطعات کے لیے محفوظ کیے گئے ماحول حذف ہو جائیں گے۔ دوسرے گرڈ کے ماحول برقرار رہیں گے۔ یہ عمل واپس نہیں لیا جا سکتا۔

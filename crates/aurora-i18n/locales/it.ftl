@@ -15863,3 +15863,141 @@ toolbar-remove-from-menu = Rimuovere dalla barra degli strumenti
 toolbar-command-build-edit = Modificare gli oggetti
 toolbar-command-build-create = Creare i prims
 toolbar-command-build-land = Modifica il terreno
+
+### Updated release translations
+
+inventory-search-no-copy = non copiabile
+inventory-search-no-modify = Non può essere modificato
+inventory-search-no-transfer = non trasferibile
+ui-options-chat-keep-focus-hint = Invio invia il messaggio e lascia la barra della chat attiva per il successivo, anche se premi Invio a barra vuota. Premi Esc o fai clic nel mondo per tornare a muoverti.
+ui-options-chat-enter-toggles-hint = Nella finestra Conversazioni, Invio in un campo vuoto ripristina il controllo del movimento nella chat vicina, nei messaggi privati e nelle chat di gruppo. Premi Invio dal mondo per ricominciare a scrivere.
+build-ui-features-physics-none-root-hint = Solo le prime figlie di un linkset possono usare la forma fisica None: la prima radice, o una prima da sola, mantiene Prim o Convex hull.
+controls-position-tip = Posizione della telecamera: imposta esattamente dove la telecamera si trova dietro l'avatar
+camera-position-hint = In metri dall'avatar: X avanti, Y sinistra, Z su. Ctrl + ruota solleva la fotocamera, Shift + ruote il punto di messa a fuoco.
+camera-position-save = Salva come posizione della telecamera…
+photo-looks-replace = Sostituisci
+photo-looks-empty = Non ci sono ancora effetti. Passa il puntatore su un filtro qui sotto per provarlo, poi fai clic o trascinalo qui.
+photo-looks-active = Effetti attivi
+photo-looks-count = { $count } di { $max }
+photo-looks-expand-all = Espandi tutti
+photo-looks-collapse-all = Comprimi tutti
+photo-looks-hint = Gli effetti si applicano dall'alto verso il basso. Trascina una scheda per riordinarla oppure premi Alt + ↑ ↓ quando è selezionata. Fai clic con il pulsante destro per rimuoverla.
+photo-looks-right-click-out = Clic destro: rimuovi dagli effetti attivi
+photo-looks-drop = Trascina qui un effetto o fai clic su uno qui sotto
+photo-looks-full = { $max } di { $max }: rimuovi un effetto oppure attiva Sostituisci per scambiarlo con un altro.
+photo-looks-catalogue = Catalogo degli effetti
+photo-looks-catalogue-tip = Passa il puntatore su un effetto per provarlo sulla foto. Fai clic per aggiungerlo o trascinalo tra gli effetti attivi.
+photo-looks-catalogue-fold = Mostra o nascondi il catalogo
+photo-looks-replace-tip = Con Sostituisci attivo, un clic nel catalogo sostituisce la scheda selezionata.
+photo-looks-replacing = Un clic sostituisce { $name }
+photo-looks-done = Fatto
+photo-looks-take-out-zone = Rilascia qui per rimuovere
+photo-looks-hide = Nascondi { $name } (mantiene la posizione)
+photo-looks-show = Mostra { $name }
+photo-looks-more = Altre azioni
+photo-looks-move-up = Sposta in alto
+photo-looks-move-down = Sposta in basso
+photo-looks-replace-one = Sostituisci…
+photo-looks-take-out = Rimuovi
+photo-looks-not-in-360-tag = Non disponibile a 360°
+photo-looks-all = Tutti
+photo-looks-favorites = Preferiti: effetti contrassegnati con una stella
+photo-looks-favorites-empty = Non ci sono ancora preferiti. Passa il puntatore su un effetto e fai clic sulla sua stella. Comparirà all'inizio del suo elenco e anche qui.
+photo-looks-favorite = Aggiungi ai preferiti
+photo-looks-unfavorite = Rimuovi dai preferiti
+photo-looks-card = { $name }, { $place } di { $count }. Premi Alt e un tasto freccia per spostarlo.
+photo-looks-legacy-note = I filtri del visualizzatore classico non hanno impostazioni aggiuntive.
+photo-knob-toning = Viraggio
+photo-knob-local-contrast = Contrasto locale
+build-face-button = Faccia { $number }: selezionarlo su ogni prim selezionato. Shift+click: aggiungerlo o toglierlo.
+build-face-invert = Inverti le facce selezionate
+build-face-all = Selezionare ogni faccia
+ui-options-aurora-controls-compact = Comandi compatti della fotocamera
+ui-options-aurora-controls-compact-help = La finestra Controlli si apre compatta sulla fotocamera: i suoi joystick, zoom e roll.Il suo pulsante della barra del titolo passa tra compatto e pieno, e imposta anche questo.
+ui-options-aurora-controls-compact-movement = Comandi di movimento compatti
+ui-options-aurora-controls-compact-movement-help = La scheda Movimento della finestra Controlli si apre compatta: i pulsanti di movimento e camminare, correre e volare.Il suo pulsante nella barra del titolo passa tra compatto e pieno, e imposta anche questo.
+poser-face-position-drag = Trascinate per spostare il giunto di 0,1 mm per pixel oppure fate clic per digitare una posizione.
+build-layout-clicks = Clicchi sugli oggetti
+build-ui-floaters-shift-click = Maiusc + clic
+build-ui-floaters-ctrl-click = Ctrl + clic
+build-ui-floaters-click-object = Aggiungere o rimuovere l'oggetto
+build-ui-floaters-click-face = Selezionare il volto
+build-ui-floaters-clicks-hint = Con lo strumento Modifica, all'esterno di Allinea, Ctrl + Maiusc + clic aggiunge o elimina la faccia selezionata.
+build-ui-floaters-ctrl-right-click = Ctrl + clic destro
+build-ui-floaters-right-click-menu = Aprire il menu
+build-ui-floaters-right-click-edit = Modificare l'oggetto
+build-ui-floaters-double-click-linked = Fare doppio clic su un prim: attivare “Modifica parti collegate”
+blender-live-tab-place = Posizione
+blender-live-tab-avatar = Avatar
+blender-live-objects-help = Le mesh che Blender sta inviando: selezionarne una per posizionarla, o importarla dal suo menu.
+blender-live-more = Altro
+blender-live-place = Posizione
+blender-live-linked-prims = Mostrare o nascondere le prime collegate
+blender-live-tag-rigged = Con scheletro
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Triangoli: { $triangles }
+       *[other] Triangoli: { $triangles }
+    }
+blender-live-card-static =
+    Statico · { $triangles ->
+        [one] Triangoli: { $triangles }
+       *[other] Triangoli: { $triangles }
+    }
+blender-live-card-linkset =
+    Statico · { $prims ->
+        [one] Prim: { $prims }
+       *[other] Prim: { $prims }
+    } · { $triangles ->
+        [one] Triangoli: { $triangles }
+       *[other] Triangoli: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Triangoli: { $triangles }
+       *[other] Triangoli: { $triangles }
+    }
+blender-live-place-help = Dove si trova la mesh statica selezionata. Le mesh rigged seguono sempre il tuo avatar.
+blender-live-place-none = Selezionare un oggetto statico per posizionarlo.
+blender-live-where = Dove
+blender-live-transform = Posizione, rotazione e dimensioni
+blender-live-size-note = La dimensione moltiplica ciò che Blender invia, quindi le modifiche successive in Blender lo mantengono.
+blender-live-avatar-help = Per le mesh rigged: invia la tua forma a Blender per modellarla.
+blender-live-shape-section = La tua forma in Blender
+blender-live-import-help = Per l'importazione normale viene salvata una copia dello stato attuale dell'oggetto. Controlla l'oggetto e il prezzo prima di confermare. Le modifiche successive in Blender non cambiano questa copia.
+blender-live-from = Da
+blender-live-plugins-help = Aurora installa il plug-in corrispondente in ogni Blender, mantiene un backup di quello precedente e non installa mai una versione più vecchia.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } min
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Tempo trascorso dall'ultima modifica di Blender a questo oggetto
+blender-live-show-all = Mostra tutto
+blender-live-hide-all = Nascondi tutto
+blender-live-bend-section = Controllare i pesi
+blender-live-elbows = Gomiti
+blender-live-knees = Ginocchio
+blender-live-bend-hold = Tieni questa posa invece delle mie animazioni
+blender-live-bend-note = Solo tu puoi vedere la curvatura sul tuo avatar, le tue animazioni, la vista degli altri residenti e l'importazione rimangono invariate.
+blender-live-levels = Livelli di dettaglio
+blender-live-levels-pending = Blender prepara i livelli di dettaglio quando si fa clic su Importa.
+blender-live-levels-note = Preparato in Blender dalle impostazioni LiveMesh di ogni oggetto.
+blender-live-quick-look-tip = Quick look: vedere questo oggetto più grande
+blender-live-quick-look-drag = Trascinare per ruotare, doppio clic per affrontare di nuovo.
+blender-live-quick-look-changed = Cambiato in Blender { $ago } fa.
+blender-live-quick-look-bend = Piegati come nella scheda Avatar: gomiti { $elbows }°, ginocchia { $knees }°.
+blender-live-undo = Annulla
+blender-live-undo-derez = Derezzed { $name } · ancora nella lista di Blender
+blender-live-undo-detach = { $name } · ancora nella lista di Blender
+blender-live-undo-drop = Ha lasciato cadere { $name } a terra
+blender-live-undo-attach = { $name } spostato su { $point }
+parcel-environment-apply-save = Applica solo per me e salva per questa particella
+parcel-environment-save = Salva questo ambiente per questo pacco: torna ogni volta che sei qui
+parcel-environment-forget = Dimentica l'ambiente salvato per questo pacco
+parcel-environment-not-saved = Questo pacco non era ancora conosciuto, quindi il suo ambiente non è stato salvato. Riprova tra un attimo.
+parcel-environment-left = Hai lasciato il pacco prima che il suo ambiente potesse essere salvato, quindi non è stato salvato.
+parcel-environment-title = Ambienti salvati per pacchi
+parcel-environment-help = Il tuo ambiente personale per un pacco: sostituisce il tuo ambiente locale mentre sei lì, e quello che avevi prima torna quando te ne vai. Solo tu lo vedi.Salva uno dalla finestra Ambiente o dal menu di un elemento ambientale nel tuo inventario.
+parcel-environment-empty = Nessun ambiente salvato
+parcel-environment-remove-all = Rimuovi tutto
+parcel-environment-remove-all-title = Rimuovere ogni ambiente salvato per un pacco?
+parcel-environment-remove-all-text = Verranno rimossi gli ambienti che hai salvato per le particelle su questa griglia. Quelli delle altre griglie resteranno invariati. L'operazione non può essere annullata.

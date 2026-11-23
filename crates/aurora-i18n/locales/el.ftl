@@ -16053,3 +16053,141 @@ toolbar-remove-from-menu = Κατάργηση από τη γραμμή εργα�
 toolbar-command-build-edit = Επεξεργασία αντικειμένων
 toolbar-command-build-create = Δημιουργία πρωτοτύπων
 toolbar-command-build-land = Επεξεργασία γης
+
+### Updated release translations
+
+inventory-search-no-copy = Δεν υπάρχει αντίγραφο
+inventory-search-no-modify = δεν μπορεί να τροποποιηθεί
+inventory-search-no-transfer = Δεν υπάρχει μεταφορά
+ui-options-chat-keep-focus-hint = Το Enter στέλνει το μήνυμα και η γραμμή συνομιλίας παραμένει έτοιμη για το επόμενο, ακόμη και αν πατήσετε Enter με άδεια γραμμή. Πατήστε Esc ή κάντε κλικ στον κόσμο για να επιστρέψετε στην κίνηση.
+ui-options-chat-enter-toggles-hint = Στο παράθυρο Συνομιλίες, το Enter σε κενό πεδίο επιστρέφει στον χειρισμό κίνησης για την κοντινή συνομιλία, τα προσωπικά μηνύματα και τις ομάδες. Πατήστε Enter από τον κόσμο για να γράψετε ξανά.
+build-ui-features-physics-none-root-hint = Μόνο τα παιδιά των πρωτοβάθμιων ενός συνόλου συνδέσμων μπορούν να χρησιμοποιήσουν το φυσικό σχήμα None: η ρίζα prim, ή ένα prim από μόνη της, διατηρεί Prim ή Convex hull.
+controls-position-tip = Θέση κάμερας: ορίστε πού ακριβώς βρίσκεται η κάμερα πίσω από το άβαταρ
+camera-position-hint = Σε μέτρα από το άβαταρ: Χ προς τα εμπρός, Υ αριστερά, Ζ πάνω. τροχός ανεβάζει την κάμερα, τροχό το σημείο εστίασης.
+camera-position-save = Αποθήκευση ως θέση κάμερας…
+photo-looks-replace = Αντικατάσταση
+photo-looks-empty = Τοποθετήστε το δείκτη του ποντικιού σε ένα φίλτρο παρακάτω για να το δοκιμάσετε και, στη συνέχεια, κάντε κλικ ή σύρετέ το εδώ.
+photo-looks-active = Ενεργό
+photo-looks-count = { $count } του { $max }
+photo-looks-expand-all = Αναπτύξτε όλα τα
+photo-looks-collapse-all = Σύμπτυξη όλων των
+photo-looks-hint = Τα εφέ εφαρμόζονται από πάνω προς τα κάτω. Σύρετε μια κάρτα για να αλλάξετε τη σειρά της ή πατήστε Alt + ↑ ↓ όταν την έχετε επιλέξει. Κάντε δεξί κλικ στην κάρτα για να την αφαιρέσετε.
+photo-looks-right-click-out = Δεξί κλικ: βγάλτε το από τα ενεργά εφέ
+photo-looks-drop = Σύρετε ένα εφέ εδώ ή κάντε κλικ σε ένα παρακάτω
+photo-looks-full = { $max } του { $max }: Αφαιρέστε ένα ή ενεργοποιήστε την Αντικατάσταση για να αλλάξετε ένα.
+photo-looks-catalogue = Κατάλογος εφέ
+photo-looks-catalogue-tip = Τοποθετήστε το δείκτη του ποντικιού σε ένα εφέ για να το δοκιμάσετε στη φωτογραφία. Κάντε κλικ σε αυτό για να προσθέσετε ή σύρετε μεταξύ των ενεργών
+photo-looks-catalogue-fold = Εμφάνιση ή απόκρυψη του καταλόγου
+photo-looks-replace-tip = Αντικατάσταση: ένα κλικ στον κατάλογο αλλάζει την επιλεγμένη κάρτα αντί να προσθέσει μια νέα
+photo-looks-replacing = Ένα κλικ ανταλλάσσει { $name }
+photo-looks-done = Τελειώσαμε.
+photo-looks-take-out-zone = Πέτα εδώ για να το βγάλεις έξω
+photo-looks-hide = Απόκρυψη { $name } (κρατάει τη θέση του)
+photo-looks-show = Εμφάνιση { $name }
+photo-looks-more = Περισσότερες ενέργειες
+photo-looks-move-up = Κουνήσου.
+photo-looks-move-down = Μετακίνηση προς τα κάτω
+photo-looks-replace-one = Αντικατάσταση…
+photo-looks-take-out = Πάρτε έξω
+photo-looks-not-in-360-tag = Όχι στο 360°
+photo-looks-all = Όλα
+photo-looks-favorites = Αγαπημένα: κάθε εφέ που έχετε πρωταγωνιστήσει
+photo-looks-favorites-empty = Τοποθετήστε το δείκτη του ποντικιού σε ένα εφέ και κάντε κλικ στο αστέρι του: εμφανίζεται πρώτο στη λίστα του, και εδώ.
+photo-looks-favorite = Προσθήκη στα αγαπημένα
+photo-looks-unfavorite = Αφαίρεση από τα αγαπημένα
+photo-looks-card = { $name }, { $place } του { $count }. Πλήκτρα βέλους για να το μετακινήσετε.
+photo-looks-legacy-note = Τα φίλτρα παλαιού προγράμματος προβολής δεν έχουν πρόσθετες ρυθμίσεις.
+photo-knob-toning = Χρωματικός τονισμός
+photo-knob-local-contrast = Τοπική αντίθεση
+build-face-button = Πρόσωπο { $number }: επιλέξτε το σε κάθε επιλεγμένο πρωτόκολλο. Shift+click: προσθέστε το ή αφαιρέστε το.
+build-face-invert = Αντιστροφή των επιλεγμένων προσώπων
+build-face-all = Επιλογή κάθε προσώπου
+ui-options-aurora-controls-compact = Χειριστήρια συμπαγούς κάμερας
+ui-options-aurora-controls-compact-help = Το παράθυρο ανοίγει συμπαγές στην κάμερα: τα χειριστήρια, το ζουμ και η κύλιση.Το κουμπί της γραμμής τίτλου εναλλάσσει μεταξύ συμπαγούς και πλήρους, και ορίζει και αυτό.
+ui-options-aurora-controls-compact-movement = Συμπαγείς έλεγχοι κίνησης
+ui-options-aurora-controls-compact-movement-help = Η καρτέλα Κίνηση του παραθύρου Ελέγχων ανοίγει συμπαγώς: τα κουμπιά κίνησης και το περπάτημα, το τρέξιμο και η πτήση.Το κουμπί της γραμμής τίτλου εναλλάσσεται μεταξύ συμπαγούς και πλήρους, και ορίζει και αυτό.
+poser-face-position-drag = Σύρετε για να μετακινήσετε την άρθρωση κατά 0,1 ανά ή κάντε κλικ για να πληκτρολογήσετε μια θέση.
+build-layout-clicks = Κλικ σε αντικείμενα
+build-ui-floaters-shift-click = Μετακίνηση + κλικ
+build-ui-floaters-ctrl-click = Κλικ στο κουμπί
+build-ui-floaters-click-object = Προσθήκη ή κατάργηση του αντικειμένου
+build-ui-floaters-click-face = Επιλέξτε το πρόσωπο
+build-ui-floaters-clicks-hint = Με το εργαλείο επεξεργασίας, έξω από Στοίχιση.Κλικ προσθέτει την επιλεγμένη όψη ή την αφαιρεί.
+build-ui-floaters-ctrl-right-click = Δεξί κλικ
+build-ui-floaters-right-click-menu = Ανοίξτε το μενού
+build-ui-floaters-right-click-edit = Επεξεργασία του αντικειμένου
+build-ui-floaters-double-click-linked = Κάντε διπλό κλικ σε ένα πρωτεύον: εναλλαγή «Επεξεργασία συνδεδεμένων τμημάτων»
+blender-live-tab-place = Τόπος
+blender-live-tab-avatar = Άβαταρ
+blender-live-objects-help = Τα πλέγματα που στέλνει το Επιλέξτε ένα για να το τοποθετήσετε, ή εισάγετέ το από το μενού του.
+blender-live-more = Περισσότερα
+blender-live-place = Τόπος
+blender-live-linked-prims = Εμφάνιση ή απόκρυψη των συνδεδεμένων πρώτων αριθμών
+blender-live-tag-rigged = Με σκελετό
+blender-live-card-rigged =
+    { $triangles ->
+        [one] Τρίγωνα: { $triangles }
+       *[other] Τρίγωνα: { $triangles }
+    }
+blender-live-card-static =
+    Στατικό · { $triangles ->
+        [one] Τρίγωνα: { $triangles }
+       *[other] Τρίγωνα: { $triangles }
+    }
+blender-live-card-linkset =
+    Στατικό · { $prims ->
+        [one] Βασικά στοιχεία: { $prims }
+       *[other] Βασικά στοιχεία: { $prims }
+    } · { $triangles ->
+        [one] Τρίγωνα: { $triangles }
+       *[other] Τρίγωνα: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] Τρίγωνα: { $triangles }
+       *[other] Τρίγωνα: { $triangles }
+    }
+blender-live-place-help = Πού βρίσκεται το επιλεγμένο στατικό πλέγμα. Τα παραποιημένα πλέγματα ακολουθούν πάντα το άβαταρ σας.
+blender-live-place-none = Επιλέξτε ένα στατικό αντικείμενο για να το τοποθετήσετε.
+blender-live-where = Πού
+blender-live-transform = Θέση, περιστροφή και μέγεθος
+blender-live-size-note = Το μέγεθος πολλαπλασιάζει αυτό που στέλνει το Blender, έτσι ώστε οι μεταγενέστερες επεξεργασίες στο Blender να το διατηρούν.
+blender-live-avatar-help = Για τα πλεγμένα πλέγματα: στείλτε το σχήμα σας στο Μπλέντερ για να μοντελοποιήσετε πάνω του.
+blender-live-shape-section = Το σχήμα σας στο Μπλέντερ
+blender-live-import-help = Παγώνει ένα στιγμιότυπο του αντικειμένου για την κανονική εισαγωγή: αναθεώρηση, τιμή, στη συνέχεια επιβεβαίωση.Μεταγενέστερες επεξεργασίες στο δεν το αλλάζουν.
+blender-live-from = Από
+blender-live-plugins-help = Το Aurora εγκαθιστά το αντίστοιχο πρόσθετο σε κάθε διατηρεί ένα αντίγραφο ασφαλείας του προηγούμενου και ποτέ δεν εγκαθίσταται μια παλαιότερη έκδοση.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } λεπτά
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = Χρόνος από την τελευταία αλλαγή αυτού του αντικειμένου
+blender-live-show-all = Εμφάνιση όλων των προϊόντων
+blender-live-hide-all = Απόκρυψη όλων των
+blender-live-bend-section = Ελέγξτε τα βάρη
+blender-live-elbows = Αγκώνες
+blender-live-knees = Γόνατα
+blender-live-bend-hold = Κρατήστε αυτή τη στάση αντί των κινούμενων σχεδίων μου
+blender-live-bend-note = Μόνο εσείς βλέπετε την καμπύλη, στο άβαταρ σας.Τα κινούμενα σχέδιά σας, η προβολή των άλλων κατοίκων και η εισαγωγή παραμένουν αμετάβλητα.
+blender-live-levels = Επίπεδα λεπτομέρειας
+blender-live-levels-pending = Το προετοιμάζει τα επίπεδα λεπτομέρειας όταν κάνετε κλικ στην επιλογή Εισαγωγή.
+blender-live-levels-note = Προετοιμάστηκε στο Μπλέντερ από τις ρυθμίσεις του κάθε αντικειμένου.
+blender-live-quick-look-tip = Γρήγορη ματιά: δείτε αυτό το αντικείμενο μεγαλύτερο
+blender-live-quick-look-drag = Σύρετε για να το γυρίσετε, κάντε διπλό κλικ για να αντιμετωπίσει και πάλι.
+blender-live-quick-look-changed = Αλλαγή στο Μπλέντερ { $ago } πριν.
+blender-live-quick-look-bend = Λυγισμένα όπως στην καρτέλα Άβαταρ: αγκώνες { $elbows }°, γόνατα { $knees }°.
+blender-live-undo = Αναίρεση
+blender-live-undo-derez = { $name } · ακόμα στη λίστα του Μπλέντερ
+blender-live-undo-detach = Απομονωμένο { $name } · ακόμα στη λίστα του Μπλέντερ
+blender-live-undo-drop = Έπεσε { $name } στο έδαφος
+blender-live-undo-attach = Το { $name } μετακινήθηκε στο { $point }
+parcel-environment-apply-save = Εφαρμόστε στον εαυτό μου μόνο, για αυτό το δέμα
+parcel-environment-save = Αποθηκεύστε αυτό το περιβάλλον για αυτό το δέμα: επιστρέφει όποτε είστε εδώ
+parcel-environment-forget = Ξεχάστε το περιβάλλον που σώζεται για αυτό το δέμα
+parcel-environment-not-saved = Αυτό το αγροτεμάχιο δεν ήταν ακόμα γνωστό, επομένως το περιβάλλον του δεν αποθηκεύτηκε.Δοκιμάστε ξανά σε λίγο.
+parcel-environment-left = Αφήσατε το δέμα πριν να μπορέσει να σωθεί το περιβάλλον του, οπότε δεν σώθηκε.
+parcel-environment-title = Περιβάλλοντα αποθηκευμένα για αγροτεμάχια
+parcel-environment-help = Το δικό σας περιβάλλον για ένα αγροτεμάχιο: αντικαθιστά το τοπικό σας περιβάλον όσο βρίσκεστε εκεί, και αυτό που είχατε πριν επιστρέφει όταν φύγετε.Μόνο εσείς μπορείτε να το δείτε.Αποθηκεύστε ένα από το παράθυρο Περιβάλλον ή το μενού ενός αντικειμένου περιβάλλοντος στην αποθήκη σας.
+parcel-environment-empty = Δεν έχουν αποθηκευτεί περιβάλλοντα
+parcel-environment-remove-all = Αφαίρεση όλων των
+parcel-environment-remove-all-title = Διαγραφή κάθε περιβάλλοντος που έχει αποθηκευτεί για ένα αγροτεμάχιο;
+parcel-environment-remove-all-text = Διαγράφονται τα περιβάλλοντα που αποθηκεύσατε για οικόπεδα σε αυτό το grid. Τα άλλα grid μένουν ως έχουν. Η ενέργεια δεν αναιρείται.

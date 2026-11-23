@@ -16052,3 +16052,141 @@ toolbar-remove-from-menu = حذف از نوار ابزار
 toolbar-command-build-edit = ویرایش شیء
 toolbar-command-build-create = ایجاد یک عدد اول
 toolbar-command-build-land = ویرایش کشور
+
+### Updated release translations
+
+inventory-search-no-copy = رونوشت نیست
+inventory-search-no-modify = نمی‌توان تغییر داد
+inventory-search-no-transfer = انتقال
+ui-options-chat-keep-focus-hint = Enter پیام را می‌فرستد و نوار گفت‌وگو برای پیام بعدی فعال می‌ماند، حتی اگر در نوار خالی Enter بزنید. برای بازگشت به حرکت، Esc را بزنید یا در جهان کلیک کنید.
+ui-options-chat-enter-toggles-hint = در پنجرهٔ گفتگوها، زدن Enter در کادر خالی فرمان حرکت را برمی‌گرداند. این رفتار برای گفت‌وگوی اطراف، پیام خصوصی و گروه یکسان است. از داخل جهان Enter بزنید تا دوباره بنویسید.
+build-ui-features-physics-none-root-hint = تنها فرزندان اولیه یک مجموعه پیوند می‌توانند از شکل فیزیکی None استفاده کنند: ریشه اولیه، یا یک اولیه به تنهایی، حاوی Prim یا Convex hull است.
+controls-position-tip = موقعیت دوربین: تنظیم دقیقاً جایی که دوربین پشت آواتار قرار دارد
+camera-position-hint = در مترها از آواتار: X به جلو، Y به چپ، Z به بالا. Ctrl + چرخ برای بالا بردن دوربین، Shift + چرخ نقطه تمرکز است.
+camera-position-save = ذخیره به عنوان موقعیت دوربین...
+photo-looks-replace = جایگزینی
+photo-looks-empty = هنوز اثری وجود ندارد. برای امتحان کردن ، به یک پالایۀ زیر اشاره کنید ، سپس آن را فشار دهید یا به اینجا بکشید.
+photo-looks-active = فعال
+photo-looks-count = { $count } از { $max }
+photo-looks-expand-all = گسترش همه
+photo-looks-collapse-all = فشردن همه
+photo-looks-hint = از بالا به پایین اعمال می‌شود. برای تغییر ترتیب کارت، آن را بکشید یا Alt + ↑ ↓ را روی آن فشار دهید. برای خارج کردن کارت، بر روی آن کلیک راست کنید.
+photo-looks-right-click-out = کلیک راست: خارج کردن از جلوه‌های فعال
+photo-looks-drop = کشیدن یک جلوه به اینجا ، یا فشار دادن یکی از زیر
+photo-looks-full = { $max } از { $max }: یکی را بیرون بکشید ، یا جایگزینی را برای جابه‌جایی یکی روشن کنید.
+photo-looks-catalogue = فهرست جلوه‌ها
+photo-looks-catalogue-tip = برای امتحان کردن آن در عکس ، به یک جلوه اشاره کنید. برای افزودن آن ، روی آن کلیک کنید ، یا آن را بین فعال‌ها بکشید
+photo-looks-catalogue-fold = نمایش یا مخفی کردن فهرست
+photo-looks-replace-tip = جایگزینی: فشار دادن در فهرست کارت انتخاب شده را به جای اضافه کردن کارت جدید جابه‌جا می‌کند
+photo-looks-replacing = يه کلیک { $name } رو عوض ميکنه
+photo-looks-done = انجام شد
+photo-looks-take-out-zone = بذارش اينجا تا بره بيرون
+photo-looks-hide = مخفی کردن { $name } (جایش رو نگه میداره)
+photo-looks-show = { $name } رو نشون بده
+photo-looks-more = کنشهای بیشتر
+photo-looks-move-up = حرکت به بالا
+photo-looks-move-down = حرکت به پایین
+photo-looks-replace-one = جایگزینی...
+photo-looks-take-out = ببر بيرون
+photo-looks-not-in-360-tag = نه در 360 درجه
+photo-looks-all = همۀ
+photo-looks-favorites = مورد علاقه: هر اثری که در آن بازی کرده‌اید
+photo-looks-favorites-empty = هنوز مورد علاقه وجود ندارد. به یک اثر اشاره کنید و ستارۀ آن را فشار دهید: در فهرست اول ظاهر می‌شود ، و اینجا.
+photo-looks-favorite = افزودن به مورد علاقه‌ها
+photo-looks-unfavorite = حذف از مورد علاقه‌ها
+photo-looks-card = { $name }, { $place } از { $count }. Alt + کلیدهای پیکان برای حرکت دادنش
+photo-looks-legacy-note = فیلترهای نمایشگر قدیمی تنظیمات اضافی ندارند.
+photo-knob-toning = تن‌دهی رنگ
+photo-knob-local-contrast = تضاد محلی
+build-face-button = چهره { $number }: بر روی هر پریم برگزیده ، آن را انتخاب کنید. Shift+click: اضافه کردن یا حذف آن.
+build-face-invert = وارونه کردن چهره‌های برگزیده
+build-face-all = برگزیدن هر چهره
+ui-options-aurora-controls-compact = کنترل‌های دوربین فشرده
+ui-options-aurora-controls-compact-help = پنجرۀ کنترلها به صورت فشرده در دوربین باز می‌شود: جویستیک‌ها، بزرگنمایی و چرخش آن. دکمۀ میله عنوان آن بین فشردۀ کامل و کامل تغییر می‌کند و این را نیز تنظیم می‌کند.
+ui-options-aurora-controls-compact-movement = کنترل حرکت فشرده
+ui-options-aurora-controls-compact-movement-help = تب حرکت پنجرۀ کنترلها فشرده باز می‌شود: دکمه‌های حرکت و راه رفتن ، دویدن و پرواز. دکمۀ میله عنوان آن بین فشردۀ کامل و کامل عوض می‌کند ، و این را نیز تنظیم می‌کند.
+poser-face-position-drag = برای جابه‌جایی مفصل به اندازهٔ ۰٫۱ میلی‌متر در هر پیکسل بکشید یا برای وارد کردن موقعیت کلیک کنید.
+build-layout-clicks = کلیک بر روی شیء
+build-ui-floaters-shift-click = Shift + کلیک
+build-ui-floaters-ctrl-click = Ctrl+کلیک
+build-ui-floaters-click-object = افزودن یا حذف شیء
+build-ui-floaters-click-face = برگزیدن چهره
+build-ui-floaters-clicks-hint = با ابزار ویرایش ، خارج از هم‌تراز کردن. Ctrl + Shift + کلیک برای افزودن یا حذف چهره کلیک‌شده استفاده می‌شود.
+build-ui-floaters-ctrl-right-click = Ctrl + کلیک راست
+build-ui-floaters-right-click-menu = باز کردن منو
+build-ui-floaters-right-click-edit = ویرایش شیء
+build-ui-floaters-double-click-linked = دوبار روی یک پریم کلیک کنید: کلید «تغییر بخش‌های پیوسته»
+blender-live-tab-place = محل
+blender-live-tab-avatar = آواتار
+blender-live-objects-help = شبکه‌هایی که Blender ارسال می‌کند. یکی را برای قرار دادن انتخاب کنید، یا از منوی آن وارد کنید.
+blender-live-more = بيشتر
+blender-live-place = محل
+blender-live-linked-prims = نمایش یا مخفی کردن اعداد اول پیوسته
+blender-live-tag-rigged = دارای اسکلت
+blender-live-card-rigged =
+    { $triangles ->
+        [one] مثلث‌ها: { $triangles }
+       *[other] مثلث‌ها: { $triangles }
+    }
+blender-live-card-static =
+    ثابت · { $triangles ->
+        [one] مثلث‌ها: { $triangles }
+       *[other] مثلث‌ها: { $triangles }
+    }
+blender-live-card-linkset =
+    ثابت · { $prims ->
+        [one] اجزای پایه: { $prims }
+       *[other] اجزای پایه: { $prims }
+    } · { $triangles ->
+        [one] مثلث‌ها: { $triangles }
+       *[other] مثلث‌ها: { $triangles }
+    }
+blender-live-triangles =
+    { $triangles ->
+        [one] مثلث‌ها: { $triangles }
+       *[other] مثلث‌ها: { $triangles }
+    }
+blender-live-place-help = جایی که شبکه ایستا برگزیده قرار دارد. شبکه‌های تنظیم شده همیشه آواتار شما را دنبال می‌کنند.
+blender-live-place-none = برگزیدن یک شیء ایستا برای قرار دادن آن.
+blender-live-where = کجا
+blender-live-transform = موقعیت، چرخش و اندازه
+blender-live-size-note = اندازه آنچه را که بلندر می‌فرستد ضرب می‌کند، بنابراین ویرایش‌های بعدی در بلندر آن را حفظ می‌کنند.
+blender-live-avatar-help = برای شبکه‌های ریگ شده: شکل خود را به بلندر بفرستید تا بر روی آن مدل شود.
+blender-live-shape-section = شکل شما در Blender
+blender-live-import-help = یک عکس‌العمل شیء را برای واردات عادی یخ می‌زند: بررسی، قیمت، سپس تأیید. ویرایش‌های بعدی در بلندر آن را تغییر نمی‌دهند.
+blender-live-from = از
+blender-live-plugins-help = Aurora در هر بلندر، پلاگین متناظر را نصب می‌کند، یک نسخهٔ پشتیبان از نسخهٔ قبلی را نگه می‌دارد و هیچ‌گاه نسخهٔ قدیمی‌تری را نصب نمی‌کند.
+blender-live-ago-seconds = { $count } s
+blender-live-ago-minutes = { $count } دقیقه
+blender-live-ago-hours = { $count } h
+blender-live-changed-tip = زمان از آخرین تغییر Blender به این شیء
+blender-live-show-all = نمایش همۀ
+blender-live-hide-all = مخفی کردن همه
+blender-live-bend-section = وزنه ها رو چک کن
+blender-live-elbows = آرنج
+blender-live-knees = زانو
+blender-live-bend-hold = اين حالت رو به جاي انیميشن من بگير
+blender-live-bend-note = فقط شما مي تونيد خم رو در آواتارتون ببينيد پويانمایی ها و ديدن بقيه ساکنين و واردات تغيير نمي کنه
+blender-live-levels = سطوح جزئیات
+blender-live-levels-pending = Blender سطوح جزئیات را هنگام کلیک بر روی واردات آماده می‌کند.
+blender-live-levels-note = در این روش، هر گراف از گراف‌های همبند تشکیل می‌شود.
+blender-live-quick-look-tip = نگاهی سریع: این شیء را بزرگتر ببینید
+blender-live-quick-look-drag = برای چرخاندن کشش کنید، دوبار کلیک کنید تا دوباره به آن نگاه کنید.
+blender-live-quick-look-changed = تغییر یافته در Blender { $ago } قبلاً.
+blender-live-quick-look-bend = خم شده مانند در تب آواتار: آرنجها { $elbows }°, زانو { $knees }°.
+blender-live-undo = برگشت
+blender-live-undo-derez = فشرده سازی { $name } · هنوز در فهرست Blender است
+blender-live-undo-detach = جداشده { $name } · هنوز در فهرست Blender است
+blender-live-undo-drop = { $name } رو به زمين انداختم
+blender-live-undo-attach = { $name } به { $point } منتقل شد
+parcel-environment-apply-save = فقط براي خودم درخواست ميکنم، براي اين بسته
+parcel-environment-save = ذخیره این محیط برای این بسته: وقتی شما اینجا هستید برمی‌گردد
+parcel-environment-forget = محیط ذخیره شده برای این بسته را فراموش کنید
+parcel-environment-not-saved = این بسته هنوز شناخته نشده بود ، بنابراین محیط آن ذخیره نشد. در یک لحظه دوباره سعی کنید.
+parcel-environment-left = تو بسته رو قبل از اينکه محيطش نجات پيدا کنه ترک کردي پس نجات نيافت
+parcel-environment-title = محیط‌هایی که برای بسته‌ها ذخیره شده‌اند
+parcel-environment-help = محیط خودتان برای یک بسته: هنگامی که آنجا می‌ایستید ، محیط محلی شما را جایگزین می‌کند ، و چیزی که قبلاً داشتید وقتی خارج می‌شوید به آن برمی‌گردد. تنها شما می‌توانید آن را ببینید. یکی از پنجره‌ی محیط یا منوی مورد محیط در فهرست موجودی خود ذخیره کنید.
+parcel-environment-empty = هیچ محیطی ذخیره نشده است
+parcel-environment-remove-all = حذف همه
+parcel-environment-remove-all-title = حذف تمام محیطهای ذخیره‌شده برای یک بسته؟
+parcel-environment-remove-all-text = محیط‌هایی که برای قطعه‌زمین‌های این شبکه ذخیره کرده‌اید حذف می‌شوند. محیط‌های شبکه‌های دیگر دست‌نخورده می‌مانند. این کار برگشت‌پذیر نیست.
