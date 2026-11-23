@@ -1486,6 +1486,37 @@ mod tests {
 
     #[test]
     fn search_moves_between_left_floating_and_inline_without_losing_fields_or_focus() {
+        // Whether the toolbar fits inline depends on the width of the labels,
+        // so on the interface language. That language is process-wide and
+        // follows the PC's by default: English in the CI, French on a French
+        // PC, where a 840 px window fitted one and not the other. Run alone and
+        // check each maintained catalogue, so every PC checks the same layouts.
+        const ALONE: &str = "AURORA_TEST_SCRIPT_SEARCH_LANGUAGES_ALONE";
+        if std::env::var_os(ALONE).is_none() {
+            let path = concat!(
+                module_path!(),
+                "::search_moves_between_left_floating_and_inline_without_losing_fields_or_focus"
+            );
+            let (_, name) = path.split_once("::").expect("test module path");
+            let run = std::process::Command::new(std::env::current_exe().expect("the test binary"))
+                .args([name, "--exact", "--test-threads=1"])
+                .env(ALONE, "1")
+                .output()
+                .expect("the test binary starts");
+            let stdout = String::from_utf8_lossy(&run.stdout);
+            let stderr = String::from_utf8_lossy(&run.stderr);
+            assert!(run.status.success(), "the run in each language failed:\n{stdout}\n{stderr}");
+            assert!(stdout.contains("1 passed"), "the run in each language ran this test:\n{stdout}");
+            return;
+        }
+        for language in ["en", "fr", "ja"] {
+            aurora_i18n::select(language, None);
+            assert_eq!(aurora_i18n::language(), language);
+            search_moves_between_left_floating_and_inline_in_the_current_language();
+        }
+    }
+
+    fn search_moves_between_left_floating_and_inline_in_the_current_language() {
         let ctx = egui::Context::default();
         let mut editors = Editors::default();
         let target = target(1);
@@ -1555,14 +1586,20 @@ mod tests {
             assert_eq!(editors.panels.search.query, "needle");
             assert_eq!(editors.panels.search.replacement, "thread");
             assert!(!editors.panels.search.insensitive && editors.panels.search.up);
-            assert_eq!(
+            // The Find button shows in both modes; only the floating panel
+            // labels the query field. Some languages use one word for both.
+            let texts = |label: &str| {
                 output
                     .shapes
                     .iter()
-                    .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-query")))
-                    .count(),
-                if expected_inline { 1 } else { 2 } // Text Find button; floating mode also has a query label.
-            );
+                    .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == label))
+                    .count()
+            };
+            let query_label = aurora_i18n::tr!("script-search-query");
+            let find_label = aurora_i18n::tr!("script-search-find");
+            let same_word = usize::from(query_label == find_label);
+            assert_eq!(texts(query_label), usize::from(!expected_inline) + same_word);
+            assert_eq!(texts(find_label), 1 + usize::from(!expected_inline) * same_word);
             if expected_inline {
                 let label_pos = |label| {
                     output

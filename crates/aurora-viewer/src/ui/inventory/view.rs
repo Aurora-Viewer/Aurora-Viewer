@@ -1375,7 +1375,8 @@ fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
         .then_with(|| a.id.cmp(&b.id))
 }
 
-fn matches_text(value: &str, query: &str) -> bool {
+/// Inventory text matching on a label and query already folded to the same case.
+pub(crate) fn matches_text(value: &str, query: &str) -> bool {
     if let Some(exact) = query.strip_prefix('"').and_then(|q| q.strip_suffix('"')) {
         return value.split_whitespace().any(|word| word == exact);
     }
@@ -1476,7 +1477,11 @@ mod tests {
         jacket.asset_type = 5;
         jacket.inv_type = 18;
         let spare = item(21, id(2), "Spare Jacket", 100);
-        let named = item(22, id(2), "Worn-out Jacket", 100);
+        let worn = aurora_i18n::tr!("common-worn").to_lowercase();
+        let jacket_query = format!("jacket+{worn}");
+        let link_tag = aurora_i18n::tr!("inventory-pill-link").to_lowercase();
+        let active = aurora_i18n::tr!("gesture-active").to_lowercase();
+        let named = item(22, id(2), &format!("Jacket ({worn})"), 100);
         let mut link = item(23, id(6), "Denim Jacket", 100);
         link.asset_type = 24;
         link.asset_id = id(20);
@@ -1494,18 +1499,18 @@ mod tests {
                 found.sort();
                 found
             };
-            // the jacket, its link (" (link) (worn)") and the worn-out one
-            assert_eq!(search(&facts, "jacket+worn"), [id(20), id(22), id(23)], "{field:?}");
-            assert_eq!(search(&facts, "jacket+link+worn"), [id(23)], "{field:?}");
+            // The jacket, its link and the item with the tag in its name.
+            assert_eq!(search(&facts, &jacket_query), [id(20), id(22), id(23)], "{field:?}");
+            assert_eq!(search(&facts, &format!("{jacket_query}+{link_tag}")), [id(23)], "{field:?}");
             assert_eq!(search(&facts, "ring+worn on left hand"), [id(24)], "{field:?}");
-            assert_eq!(search(&facts, "wave+active"), [id(25)], "{field:?}");
+            assert_eq!(search(&facts, &format!("wave+{active}")), [id(25)], "{field:?}");
             // taken off: only the name is left
             facts.worn.clear();
-            assert_eq!(search(&facts, "jacket+worn"), [id(22)], "{field:?}");
+            assert_eq!(search(&facts, &jacket_query), [id(22)], "{field:?}");
             facts.worn = [id(20), id(24)].into();
         }
         // the description has no label tags
-        assert!(search_text(&inv, &facts, SearchField::Description, "worn").is_empty());
+        assert!(search_text(&inv, &facts, SearchField::Description, &worn).is_empty());
     }
 
     #[test]

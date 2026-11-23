@@ -54,6 +54,8 @@ pub struct SnapshotUi {
     pub looks: super::looks_editor::LooksUi,
     /// The user's 3D tables, by file name (`snapshot::luts`).
     pub lut_names: Vec<String>,
+    /// The slot of each look's catalogue picture (`snapshot::look_thumbs`).
+    pub thumbs: std::collections::HashMap<String, usize>,
     /// The 360° format: the shutter takes a panorama. Not kept between
     /// sessions, like the destination: Ctrl+` and the reel keep taking
     /// ordinary photos.
@@ -948,11 +950,14 @@ impl SnapshotUi {
 
         let filter = ui.cursor();
         section(ui, p, "color-filter", aurora_i18n::tr!("photo-looks"));
+        let thumb = |id: &str| self.thumbs.get(id).copied();
         let opts = super::looks_editor::Options {
             list_height: 220.0,
+            height: None,
             compare: false,
             luts: &self.lut_names,
             pano: self.pano,
+            thumb: &thumb,
         };
         self.looks.show(ui, p, super::looks_editor::Stack::photo(s), opts, out);
         if std::mem::take(&mut self.looks.reveal) {
