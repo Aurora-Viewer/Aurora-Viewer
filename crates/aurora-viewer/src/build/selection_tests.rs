@@ -1373,6 +1373,61 @@ fn select_by_surrounding_takes_only_what_the_rectangle_surrounds() {
 }
 
 #[test]
+fn a_hand_that_moves_a_little_still_clicks_with_any_keys() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let first = object(&world, 99610);
+    let other = object(&world, 99614);
+    let id = |world: &World, idx: usize| world.objects.get(root_of(world, idx)).unwrap().key.local_id;
+    let (first_id, other_id) = (id(&world, first), id(&world, other));
+    // one UI point is two pixels: the slop is in points
+    tool.cam = geom::Cam::new(Vec3::ZERO, Vec3::X, glam::Mat4::IDENTITY, 1.0, 800.0, 800.0, 2.0);
+    let (shift, ctrl) = (
+        Mods {
+            shift: true,
+            ..Mods::default()
+        },
+        Mods {
+            ctrl: true,
+            ..Mods::default()
+        },
+    );
+    let both = Mods { shift: true, ..ctrl };
+    for mods in [Mods::default(), shift, ctrl, both] {
+        tool.deselect_all(&world);
+        tool.click_select(&mut world, &settings, Some(other), false);
+        tool.mouse_down(&mut world, &mut settings, None, Some(first), None, (100.0, 100.0), mods);
+        // 9 points away, out and back: never a rectangle
+        tool.update(&mut world, &settings, None, (112.0, 112.0), false, mods);
+        assert_eq!(selected(&tool), [other_id], "{mods:?}: a wobble deselects nothing");
+        tool.update(&mut world, &settings, None, (101.0, 99.0), false, mods);
+        tool.mouse_up(&mut world, &settings, None);
+        let want: &[u32] = if mods.shift || mods.ctrl {
+            &[first_id, other_id]
+        } else {
+            &[first_id]
+        };
+        let mut got = selected(&tool);
+        got.sort_unstable();
+        let mut want = want.to_vec();
+        want.sort_unstable();
+        assert_eq!(got, want, "{mods:?}: the wobble is the click it was");
+    }
+
+    // once out of the slop it is a rectangle, even back on the press
+    tool.deselect_all(&world);
+    tool.click_select(&mut world, &settings, Some(other), false);
+    tool.mouse_down(&mut world, &mut settings, None, Some(first), None, (100.0, 100.0), Mods::default());
+    tool.update(&mut world, &settings, None, (121.0, 100.0), false, Mods::default());
+    assert!(tool.selection.is_empty(), "10 points out, the rectangle starts");
+    tool.update(&mut world, &settings, None, (100.0, 100.0), false, Mods::default());
+    tool.mouse_up(&mut world, &settings, None);
+    assert!(
+        !selected(&tool).contains(&first_id),
+        "back on the press it stays a rectangle, not a click"
+    );
+}
+
+#[test]
 fn a_rectangle_started_on_an_object_takes_it_only_if_the_rectangle_does() {
     let (mut world, mut tool, mut settings) = fixture();
     let first = object(&world, 99610);
@@ -2044,4 +2099,26 @@ fn rlva_rectangles_follow_fartouch_and_select_nothing_under_interact() {
     restrict(&mut world, "@fartouch:5=y");
     restrict(&mut world, "@interact=n");
     assert!(!take(&mut world, &mut tool, &settings) && tool.selection.is_empty());
+}
+
+#[test]
+fn a_prim_is_counted_again_when_a_hollow_gives_it_a_seventh_face() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99614);
+    // the box's count, kept by the app for its shape
+    let count = tool.num_faces(&world, idx);
+    assert_eq!(count, 6);
+    tool.set_face_count(&world, idx, count);
+    assert!(tool.face_count_known(&world, idx));
+    // LLPrimitive::setVolume: the TE count follows the new volume
+    world.objects.get_mut(idx).unwrap().volume.profile.hollow = 0.5;
+    assert!(!tool.face_count_known(&world, idx));
+    assert_eq!(tool.num_faces(&world, idx), 7);
+    tool.set_edit_mode(&mut world, &mut settings, EditMode::Face);
+    tool.face_click(&mut world, Some(idx), Some(6), false);
+    assert_eq!(tool.sel_te(&world), [(idx, 6)]);
+    tool.set_face_count(&world, idx, 7);
+    assert!(tool.face_count_known(&world, idx));
+    tool.forget_face_count(&world.objects.get(idx).unwrap().full_id);
+    assert!(!tool.face_count_known(&world, idx));
 }

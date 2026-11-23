@@ -15,6 +15,7 @@ pub mod inventory;
 pub mod isolate;
 pub mod knobs;
 pub mod light;
+pub mod look_thumbs;
 pub mod looks;
 pub mod lut_packs;
 pub mod luts;
@@ -278,6 +279,9 @@ pub struct Settings {
     /// The settings of Aurora's looks by id (`knobs`), kept when a look is
     /// taken out.
     pub look_settings: std::collections::BTreeMap<String, Vec<f32>>,
+    /// The looks starred in the filters catalogue, by id, in the order they
+    /// were starred (`looks::favorites_first`, the ★ list).
+    pub look_favorites: Vec<String>,
     /// The 360° snapshot window's (`capture_360`).
     pub capture_360: capture_360::Settings,
 }
@@ -329,6 +333,7 @@ impl Default for Settings {
             viewfinder: Default::default(),
             looks: Vec::new(),
             look_settings: Default::default(),
+            look_favorites: Vec::new(),
             capture_360: Default::default(),
         }
     }
@@ -340,6 +345,8 @@ impl Settings {
         self.custom = [clamp_side(self.custom[0]), clamp_side(self.custom[1])];
         self.jpeg_quality = self.jpeg_quality.min(100);
         self.look_intensity = self.look_intensity.min(100);
+        // a file from another build, or edited by hand: the stack's rules
+        looks::sanitize(&mut self.looks);
         if self.base_name.trim().is_empty() {
             self.base_name = "Snapshot".into();
         }

@@ -1156,13 +1156,14 @@ impl App {
         }
         let mut applied = false;
         for idx in drop_prims(&self.world, drop.object, drop.all && drop.linkset) {
-            let Some(object) = self.world.objects.get(idx) else { continue };
-            let object_id = object.full_id;
+            if self.world.objects.get(idx).is_none() {
+                continue;
+            }
             let count = self
                 .media
                 .face_count(&self.world, &self.scene, idx)
                 .unwrap_or_else(|| self.build.num_faces(&self.world, idx));
-            self.build.face_counts.insert(object_id, count);
+            self.build.set_face_count(&self.world, idx, count);
             let faces: Vec<_> = if drop.all {
                 (0..count.min(256)).map(|i| i as u8).collect()
             } else {
@@ -1186,13 +1187,11 @@ impl App {
         // The expanded texture entry is not a geometry face count (notably
         // on meshes). Refresh bounds before collecting the selected faces.
         for idx in self.build.sel_prims(&self.world) {
-            if let Some(object) = self.world.objects.get(idx) {
-                let count = self
-                    .media
-                    .face_count(&self.world, &self.scene, idx)
-                    .unwrap_or_else(|| self.build.num_faces(&self.world, idx));
-                self.build.face_counts.insert(object.full_id, count);
-            }
+            let count = self
+                .media
+                .face_count(&self.world, &self.scene, idx)
+                .unwrap_or_else(|| self.build.num_faces(&self.world, idx));
+            self.build.set_face_count(&self.world, idx, count);
         }
         let targets = self.build.inventory_surface_selection(&self.world);
         if targets.is_empty() {

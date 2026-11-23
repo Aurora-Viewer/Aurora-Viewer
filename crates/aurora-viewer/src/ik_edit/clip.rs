@@ -922,9 +922,11 @@ impl Editor {
     }
     pub fn take_clip_imports(&mut self) -> Vec<Prepared> {
         let prepared = std::mem::take(&mut self.clip.prepared);
-        if !prepared.is_empty() {
+        // Preparing an upload leaves every Poser subject posed, so another
+        // subject can be exported too. Only the animation editor gives up
+        // its preview while the import window takes over.
+        if !prepared.is_empty() && !self.poser.active {
             self.clip.return_after_upload = self.clip.from_avatar_studio;
-            self.poser.active = false;
             self.leave_clip();
             self.open = false;
         }

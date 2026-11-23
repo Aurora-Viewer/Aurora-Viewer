@@ -13,6 +13,7 @@ pub mod ffmpeg_pack;
 pub mod install;
 pub mod media_pack;
 pub mod package;
+pub mod signature;
 mod user_data;
 
 pub use user_data::clear_deferred_cache;
@@ -31,6 +32,8 @@ pub struct TestEnvironment {
 
 /// A disposable test installation must opt in with a local marker and feed.
 /// This also isolates settings/cache and disables credential-store access.
+/// The marker names the key the test releases are signed with: a key of the
+/// test script's own, trusted by the loopback feed only (never by GitHub's).
 pub fn test_environment() -> Option<&'static TestEnvironment> {
     static TEST: std::sync::OnceLock<Option<TestEnvironment>> = std::sync::OnceLock::new();
     TEST.get_or_init(|| {
@@ -47,7 +50,8 @@ pub fn test_environment() -> Option<&'static TestEnvironment> {
         if config["schema"].as_u64()? != 1 {
             return None;
         }
-        let source = feed::Source::local(config["feed"].as_str()?).ok()?;
+        let key = signature::parse_key(config["public_key"].as_str()?).ok()?;
+        let source = feed::Source::local(config["feed"].as_str()?).ok()?.trusting(key).ok()?;
         Some(TestEnvironment { root, source })
     })
     .as_ref()
