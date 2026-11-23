@@ -15625,6 +15625,7 @@ ui-weather-tint = 色
 ui-weather-rain-colour = 雨の色
 ui-weather-snow-colour = 雪の色
 ui-weather-fall-colour-tip = 降るものと、それが地面やアバターに残すものの色です。白は普通の雨や雪です
+ui-weather-presets-tip = 降るものの色、降り方、霧、風の強さ、飛散物をまとめて設定します。「標準」はすべてを初期状態に戻します
 ui-weather-fall-opacity = 不透明度
 ui-weather-fall-opacity-tip = 降るものの見え方です。低いほど雨粒や雪片が薄くなります
 ui-weather-puddle-opacity = 水たまりの不透明度

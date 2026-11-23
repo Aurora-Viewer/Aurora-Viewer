@@ -194,7 +194,7 @@ impl Debris {
                     binding: 3,
                     visibility: cs,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -296,10 +296,10 @@ impl Debris {
         self.pool
     }
 
-    /// The canopy map's target, the floor's and their depth (cleared for
-    /// each), for the renderer to draw the shelter map's casters into
-    /// (object.wgsl `fs_canopy`, `fs_canopy_floor`); from then on the
-    /// leaves fall from it.
+    /// The canopy map's target and its depth, and the floor's depth, for
+    /// the renderer to draw the shelter map's casters into (object.wgsl
+    /// `fs_canopy`, `fs_canopy_floor`); from then on the leaves fall from
+    /// it.
     pub fn canopy_targets(&mut self) -> [&wgpu::TextureView; 3] {
         self.canopy_drawn = true;
         [&self.canopy_view, &self.floor_view, &self.canopy_depth]
@@ -411,8 +411,10 @@ impl Debris {
 
 /// The canopy map's format: x 1 where the top is foliage, y its height (m).
 pub const CANOPY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
-/// The floor's: the height of the topmost surface that is not foliage (m).
-pub const FLOOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+/// The floor's: the depth of the topmost surface that is not foliage, on
+/// the shelter map's projection (the shadow maps' format, so that the
+/// shelter's terrain pipeline draws into it).
+pub const FLOOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[cfg(test)]
 mod tests {

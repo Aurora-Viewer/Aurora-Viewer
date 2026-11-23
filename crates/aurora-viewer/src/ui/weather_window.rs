@@ -975,7 +975,11 @@ fn tint_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     card(ui, p, "palette", aurora_i18n::tr!("ui-weather-tint"), None, |ui, _| {
         ui.horizontal_wrapped(|ui| {
             for preset in crate::weather::WeatherPreset::ALL {
-                if ui.button(RichText::new(preset.label()).size(LABEL_SIZE)).clicked() {
+                if ui
+                    .button(RichText::new(preset.label()).size(LABEL_SIZE))
+                    .on_hover_text(aurora_i18n::tr!("ui-weather-presets-tip"))
+                    .clicked()
+                {
                     w.apply_preset(preset);
                 }
             }

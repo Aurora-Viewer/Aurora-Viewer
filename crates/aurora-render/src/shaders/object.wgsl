@@ -3700,19 +3700,20 @@ fn fs_fog_voxel(in: ShadowOut) -> @location(0) vec4<f32> {
 }
 
 // ---------------------------------------------------------- the canopy map
-// Aurora Weather's debris (debris.rs): the shelter map's casters drawn from
-// above again into a small target with a depth of its own, so that each
-// texel keeps the topmost surface: x 1 where it is foliage (a foliage
-// texture or a Linden tree, never a worn object), y its height. Leaves
-// start just under the foliage there.
+// Aurora Weather's debris (debris.rs): the shelter map's foliage (a foliage
+// texture or a Linden tree, never a worn object) drawn from above again
+// into a small target with a depth of its own, so that each texel keeps
+// the top of the foliage over it: x 1 where there is foliage, y its top.
+// Leaves start just under it, and fall through it to the floor below.
 @fragment
 fn fs_canopy(in: ShadowOut) -> @location(0) vec4<f32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
+    if (!canopy_leafy(rec)) { discard; }
     let alpha = sample_tex_unbiased(rec.tex.x, in.uv).a * rec.base_color.a;
     if ((rec.flags.x & FLAG_ALPHA_BLEND) != 0u && alpha < 0.02) { discard; }
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && alpha < rec.params.w) { discard; }
-    return vec4<f32>(select(0.0, 1.0, canopy_leafy(rec)), in.world_pos.z, 0.0, 0.0);
+    return vec4<f32>(1.0, in.world_pos.z, 0.0, 0.0);
 }
 
 // Foliage for the canopy map: the flag, never on a worn object nor a
@@ -3722,16 +3723,16 @@ fn canopy_leafy(rec: DrawRecord) -> bool {
 }
 
 // The floor under the foliage (debris_sim.wgsl `debris_floor`): the same
-// casters without the foliage, the topmost of what is left.
+// casters without the foliage, depth only (the terrain with the shelter's
+// own pipeline), the topmost of what is left.
 @fragment
-fn fs_canopy_floor(in: ShadowOut) -> @location(0) vec4<f32> {
+fn fs_canopy_floor(in: ShadowOut) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
     if (canopy_leafy(rec)) { discard; }
     let alpha = sample_tex_unbiased(rec.tex.x, in.uv).a * rec.base_color.a;
     if ((rec.flags.x & FLAG_ALPHA_BLEND) != 0u && alpha < 0.02) { discard; }
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && alpha < rec.params.w) { discard; }
-    return vec4<f32>(in.world_pos.z, 0.0, 0.0, 0.0);
 }
 
 // --------------------------------------------------------------- particles

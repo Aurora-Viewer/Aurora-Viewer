@@ -31,13 +31,13 @@ struct DebrisParams {
 @group(1) @binding(0) var<storage, read_write> debris: array<vec4<f32>>;
 @group(1) @binding(1) var<uniform> dp: DebrisParams;
 // The canopy map (debris.rs, object.wgsl `fs_canopy`): per texel of the
-// shelter map's square x 1 where the topmost surface is foliage, y its
-// height (m).
+// shelter map's square x 1 where there is foliage, y the top of it (m).
 @group(1) @binding(2) var debris_canopy: texture_2d<f32>;
-// The floor under the foliage (object.wgsl `fs_canopy_floor`): the topmost
-// surface that is not foliage (m; -1e9 where none), what leaves land on
-// under a tree (the shelter map only sees the crown there).
-@group(1) @binding(3) var debris_floor: texture_2d<f32>;
+// The floor under the foliage (object.wgsl `fs_canopy_floor`, and the
+// terrain): the depth of the topmost surface that is not foliage, on the
+// shelter map's projection; what leaves land on under a tree (the shelter
+// map only sees the crown there).
+@group(1) @binding(3) var debris_floor: texture_depth_2d;
 
 const DK_LEAVES: u32 = 1u;
 const DK_SAND: u32 = 2u;
@@ -145,7 +145,11 @@ fn ds_ground(xy: vec2<f32>, z: f32) -> f32 {
     let at = vec2<i32>(uv * vec2<f32>(textureDimensions(debris_canopy)));
     let c = textureLoad(debris_canopy, at, 0).xy;
     if (c.x > 0.5 && z < c.y + 0.05) {
-        return textureLoad(debris_floor, at, 0).x;
+        let d = textureLoad(debris_floor, at, 0);
+        // (nothing under it: the shelter map's top, as without foliage)
+        if (d >= 0.999) { return top; }
+        let m = ds_vp();
+        return (d - m[3].z) / m[2].z;
     }
     return top;
 }

@@ -15765,6 +15765,7 @@ ui-weather-tint = Color
 ui-weather-rain-colour = Rain color
 ui-weather-snow-colour = Snow color
 ui-weather-fall-colour-tip = The color of what falls, and of what it leaves on the ground and on avatars. White is the plain rain or snow
+ui-weather-presets-tip = Sets the color of what falls, how it falls, the fog, the wind’s strength and the debris together; Plain puts them all back as they were at first
 ui-weather-fall-opacity = Opacity
 ui-weather-fall-opacity-tip = How much of what falls is seen: lower, the drops or flakes are fainter
 ui-weather-puddle-opacity = Puddle opacity

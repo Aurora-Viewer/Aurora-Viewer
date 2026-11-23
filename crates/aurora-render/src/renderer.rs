@@ -6479,12 +6479,12 @@ impl Backend {
                 ..shadow_desc("debris canopy", Some("fs_canopy"))
             },
         );
+        // (depth only, as the shelter map: its terrain pipeline draws the
+        // ground into the same pass)
         let canopy_floor = batch.add(
             &module,
             &shadow_pl,
             PipeDesc {
-                format: Some(crate::debris::FLOOR_FORMAT),
-                depth_compare: wgpu::CompareFunction::Less,
                 depth_bias: level,
                 ..shadow_desc("debris floor", Some("fs_canopy_floor"))
             },
@@ -12146,38 +12146,32 @@ impl Backend {
             && let Some(debris) = &mut self.debris
         {
             let [canopy, floor, depth] = debris.canopy_targets();
-            // the canopy (the topmost surface, foliage or not), then the
-            // floor under it (the topmost that is not foliage)
-            for (target, pipeline, clear, label) in [
-                (canopy, &self.pipelines.canopy, wgpu::Color::TRANSPARENT, "debris canopy"),
-                (
-                    floor,
-                    &self.pipelines.canopy_floor,
-                    wgpu::Color {
-                        r: -1e9,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 0.0,
+            // the canopy: the top of the foliage (its own depth, let go);
+            // then the floor: the topmost of the rest and the terrain, its
+            // depth kept for the simulation
+            for floor_pass in [false, true] {
+                let (color, depth_view, store) = if floor_pass {
+                    (None, floor, wgpu::StoreOp::Store)
+                } else {
+                    (Some(canopy), depth, wgpu::StoreOp::Discard)
+                };
+                let color_attachments = [color.map(|view| wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
                     },
-                    "debris floor",
-                ),
-            ] {
+                })];
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some(label),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: target,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(clear),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
+                    label: Some(if floor_pass { "debris floor" } else { "debris canopy" }),
+                    color_attachments: if floor_pass { &[] } else { &color_attachments },
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: depth,
+                        view: depth_view,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Discard,
+                            store,
                         }),
                         stencil_ops: None,
                     }),
@@ -12190,9 +12184,16 @@ impl Backend {
                 pass.set_vertex_buffer(0, scene.vertices.slice(..));
                 pass.set_vertex_buffer(1, scene.skin.slice(..));
                 pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
-                pass.set_pipeline(pipeline);
                 let k = self.shelter_slot;
                 pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
+                if floor_pass {
+                    draw(&mut pass, &self.pipelines.shelter_terrain, rg.spot_terrain[k]);
+                }
+                pass.set_pipeline(if floor_pass {
+                    &self.pipelines.canopy_floor
+                } else {
+                    &self.pipelines.canopy
+                });
                 let (off, count) = rg.spot[k];
                 if count > 0 {
                     pass.multi_draw_indexed_indirect(&self.indirect, off, count);
