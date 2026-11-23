@@ -1379,18 +1379,26 @@ impl<'a> Floater<'a> {
                                 **clicked = true;
                             }
                         }
-                        if let Some(h) = self.help {
+                        // The minimized bar leaves help and reset out, so
+                        // the name keeps room (#4756): LLFloater::
+                        // updateTitleButtons (indra/llui/llfloater.cpp)
+                        // hides help on a minimized floater. A compact
+                        // view is no bar and keeps them.
+                        let bar = minimized && !compact;
+                        if let Some(h) = self.help.filter(|_| !bar) {
                             title_button(ui, p, "help-circle-filled").on_hover_text(h);
                         }
                         // the window alone back to its default place and
                         // size (#4756): the last button from close, out of
                         // a quick click's way
-                        let response = title_button(ui, p, RESET_ICON).on_hover_text(aurora_i18n::tr!("common-window-reset"));
-                        #[cfg(test)]
-                        ui.ctx()
-                            .data_mut(|d| d.insert_temp(egui::Id::unique(("floater_reset", self.id)), response.rect));
-                        if response.clicked() {
-                            reset_one = true;
+                        if !bar {
+                            let response = title_button(ui, p, RESET_ICON).on_hover_text(aurora_i18n::tr!("common-window-reset"));
+                            #[cfg(test)]
+                            ui.ctx()
+                                .data_mut(|d| d.insert_temp(egui::Id::unique(("floater_reset", self.id)), response.rect));
+                            if response.clicked() {
+                                reset_one = true;
+                            }
                         }
                         if let Some((dot, text)) = &self.title_state {
                             ui.add_space(4.0);
