@@ -28,6 +28,8 @@ pub mod powers {
     pub const LAND_CHANGE_MEDIA: u64 = 1 << 20;
     pub const LAND_EDIT: u64 = 1 << 21;
     pub const LAND_OPTIONS: u64 = 1 << 22;
+    /// Edit the terrain of the group's land whatever its options.
+    pub const LAND_ALLOW_EDIT_LAND: u64 = 1 << 23;
     pub const LAND_ALLOW_FLY: u64 = 1 << 24;
     /// Create and edit objects on the group's land whatever its options.
     pub const LAND_ALLOW_CREATE: u64 = 1 << 25;
