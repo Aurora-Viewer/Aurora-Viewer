@@ -66,11 +66,12 @@ const fn candidate(script: &'static str, probe: char, files: &'static str) -> Ca
 /// out like typewriter text.
 #[rustfmt::skip]
 pub const CANDIDATES: &[Candidate] = &[
-    // Noto Sans Georgian before DejaVu: on Linux the Noto file is the usual
-    // one, and DejaVu (ttf-dejavu, `DejaVuSans.ttf`) still covers a machine
-    // that has it and not Noto. Windows keeps Segoe UI / Sylfaen first.
-    candidate("Georgian, Armenian", 'ღ', "segoeui.ttf|sylfaen.ttf|ARIALUNI.TTF|Arial Unicode.ttf|NotoSansGeorgian-Regular.ttf|DejaVuSans.ttf|FreeSans.ttf"),
-    candidate("Armenian", 'Ա', "sylfaen.ttf|segoeui.ttf|ARIALUNI.TTF|Arial Unicode.ttf|NotoSansArmenian-Regular.ttf|DejaVuSans.ttf|FreeSans.ttf"),
+    // Noto Sans Georgian after DejaVu: DejaVu, the first face of this line on
+    // a Linux that has it, also draws Arabic, Hebrew, mathematical letters
+    // and arrows for the lines below, so moving it would change their face.
+    // The Noto file serves a Linux without DejaVu, which had squares.
+    candidate("Georgian, Armenian", 'ღ', "segoeui.ttf|sylfaen.ttf|ARIALUNI.TTF|Arial Unicode.ttf|DejaVuSans.ttf|NotoSansGeorgian-Regular.ttf|FreeSans.ttf"),
+    candidate("Armenian", 'Ա', "segoeui.ttf|sylfaen.ttf|ARIALUNI.TTF|Arial Unicode.ttf|NotoSansArmenian-Regular.ttf|DejaVuSans.ttf|FreeSans.ttf"),
     candidate("Arabic", 'ب', "segoeui.ttf|tahoma.ttf|micross.ttf|arial.ttf|GeezaPro.ttc|NotoSansArabic-Regular.ttf|DejaVuSans.ttf"),
     candidate("Hebrew", 'א', "segoeui.ttf|tahoma.ttf|arial.ttf|ArialHB.ttc|NotoSansHebrew-Regular.ttf|DejaVuSans.ttf"),
     candidate("symbols, mathematical letters", '𝓐', "seguisym.ttf|cambria.ttc|STIXGeneral.otf|STIXTwoMath.otf|NotoSansMath-Regular.ttf|DejaVuSans.ttf"),
@@ -83,10 +84,15 @@ pub const CANDIDATES: &[Candidate] = &[
     candidate("box drawing, dingbats", '░', "seguisym.ttf|Apple Symbols.ttf|DejaVuSans.ttf|NotoSansSymbols2-Regular.ttf"),
     candidate("crosses, dingbats", '♱', "seguisym.ttf|Apple Symbols.ttf|NotoSansSymbols-Regular.ttf|NotoSansSymbols[wght].ttf|DejaVuSans.ttf"),
     candidate("ballot marks", '✘', "seguisym.ttf|Apple Symbols.ttf|NotoSansSymbols2-Regular.ttf|NotoSansSymbols[wght].ttf|NotoSansSymbols-Regular.ttf|DejaVuSans.ttf"),
-    candidate("Japanese", 'あ', "meiryo.ttc#2|YuGothM.ttc#1|msgothic.ttc#1|meiryo.ttc|YuGothR.ttc|YuGothM.ttc|msgothic.ttc|ヒラギノ角ゴシック W3.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKjp-Regular.otf"),
-    candidate("Korean", '한', "malgun.ttf|gulim.ttc|AppleSDGothicNeo.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKkr-Regular.otf"),
-    candidate("Chinese (simplified)", '们', "msyh.ttc|simsun.ttc|simhei.ttf|PingFang.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKsc-Regular.otf"),
-    candidate("Chinese (traditional)", '們', "msjh.ttc|mingliub.ttc|PingFang.ttc|NotoSansCJK-Regular.ttc|NotoSansCJKtc-Regular.otf"),
+    // Noto Sans CJK's collection holds the faces JP, KR, SC, TC, HK, then
+    // their Mono versions (checked with fc-query on Arch's noto-fonts-cjk,
+    // the upstream file Debian and Fedora ship too). Every face has every
+    // character: without an index each line would find face 0 again, the
+    // Japanese one, drop it as already taken and never reach the next file.
+    candidate("Japanese", 'あ', "meiryo.ttc#2|YuGothM.ttc#1|msgothic.ttc#1|meiryo.ttc|YuGothR.ttc|YuGothM.ttc|msgothic.ttc|ヒラギノ角ゴシック W3.ttc|NotoSansCJK-Regular.ttc#0|NotoSansCJKjp-Regular.otf"),
+    candidate("Korean", '한', "malgun.ttf|gulim.ttc|AppleSDGothicNeo.ttc|NotoSansCJK-Regular.ttc#1|NotoSansCJKkr-Regular.otf"),
+    candidate("Chinese (simplified)", '们', "msyh.ttc|simsun.ttc|simhei.ttf|PingFang.ttc|NotoSansCJK-Regular.ttc#2|NotoSansCJKsc-Regular.otf"),
+    candidate("Chinese (traditional)", '們', "msjh.ttc|mingliub.ttc|PingFang.ttc|NotoSansCJK-Regular.ttc#3|NotoSansCJKtc-Regular.otf"),
     candidate("Devanagari and other Indic scripts", 'ॐ', "Nirmala.ttc|Nirmala.ttf|mangal.ttf|Kohinoor.ttc|NotoSansDevanagari-Regular.ttf"),
     // One file per script. Nirmala is a collection: the face that draws the
     // probe is the one kept, and a face already taken (Devanagari) is not
@@ -122,14 +128,32 @@ pub const CANDIDATES: &[Candidate] = &[
     // script instead: a sort would change which face draws a shared
     // character on every distro, and the squares were files never named.
     candidate("other scripts", 'ᬅ', "SansSerifCollection.ttf|NotoSansBalinese-Regular.ttf"),
-    candidate("Egyptian hieroglyphs", '𓆩', "NotoSansEgyptianHieroglyphs-Regular.ttf"),
+    // Segoe UI Historic has the Egyptian hieroglyphs (Microsoft's list of
+    // its scripts; not checked on a Windows file here).
+    candidate("Egyptian hieroglyphs", '𓆩', "seguihis.ttf|NotoSansEgyptianHieroglyphs-Regular.ttf"),
     candidate("Tai Le", 'ᥫ', "taile.ttf|NotoSansTaiLe-Regular.ttf"),
+    // No Windows file named for these three: Linux only (`NOT_ON_WINDOWS`).
+    // Cham may be in Windows 11's Sans Serif Collection; unverified, so not
+    // named.
     candidate("Linear A", '𐙚', "NotoSansLinearA-Regular.ttf"),
     candidate("Bamum", '𖤐', "NotoSansBamum-Regular.ttf"),
     candidate("Cham", 'ꨄ', "NotoSansCham-Regular.ttf"),
     // recent emoji missing from egui's Noto Emoji, as monochrome outlines
     candidate("recent emoji", '🫠', "seguiemj.ttf|NotoEmoji-Regular.ttf|NotoEmoji[wght].ttf"),
 ];
+
+/// Probes of the candidates that name no Windows file: a complete Windows
+/// install still has squares for them, so the "no square" tests leave them
+/// out there.
+#[cfg(test)]
+pub const NOT_ON_WINDOWS: &[char] = &['𐙚', '𖤐', 'ꨄ'];
+
+/// Should a complete install of this system draw `c` (a candidate's
+/// probe)?
+#[cfg(test)]
+pub fn expected_here(c: char) -> bool {
+    !(cfg!(windows) && NOT_ON_WINDOWS.contains(&c))
+}
 
 /// A face of an installed font, mapped and checked: ready for egui.
 pub struct SystemFace {
@@ -294,9 +318,15 @@ fn select(candidates: &[Candidate], mut probe: impl FnMut(&'static str, char) ->
     for c in candidates {
         let Some((file, index)) = c.files().find_map(|f| probe(f, c.probe).map(|i| (face_spec(f).0, i))) else {
             // Once per scan, not per drawn glyph: egui does not report the
-            // character it replaced with a square. A face already chosen for
-            // an earlier script is not a miss (it is skipped below).
-            log::debug!("system fallback font: no installed face for {} ({})", c.script, c.probe);
+            // character it replaced with a square. Only a line none of whose
+            // files is installed with the probe logs this; a face another
+            // script already took is found here and skipped below.
+            log::debug!(
+                "system fallback font for {} ({}): none of {} is installed",
+                c.script,
+                c.probe,
+                c.files
+            );
             continue;
         };
         if !out.iter().any(|(f, i, _)| f.eq_ignore_ascii_case(file) && *i == index) {
@@ -467,6 +497,114 @@ mod tests {
         assert!(has("Cham", "NotoSansCham-Regular.ttf"));
         // ttf-dejavu ships this file name; it was already the Latin fallback.
         assert!(has("Georgian, Armenian", "DejaVuSans.ttf"));
+    }
+
+    /// DejaVu keeps its place before Noto Sans Georgian (it draws other
+    /// scripts for the lines below), and Armenian asks for Segoe UI first,
+    /// the face Georgian already took on Windows.
+    #[test]
+    fn georgian_and_armenian_keep_the_faces_they_had() {
+        let files = |script: &str| {
+            CANDIDATES
+                .iter()
+                .find(|c| c.script == script)
+                .expect("line")
+                .files()
+                .collect::<Vec<_>>()
+        };
+        let georgian = files("Georgian, Armenian");
+        let at = |name: &str| georgian.iter().position(|f| *f == name).expect(name);
+        assert!(at("DejaVuSans.ttf") < at("NotoSansGeorgian-Regular.ttf"));
+        assert_eq!(files("Armenian")[0], "segoeui.ttf");
+    }
+
+    /// The CJK scripts' faces of Noto Sans CJK's collection, as each line
+    /// asks for them.
+    const CJK_FACES: [(&str, u32, &str); 4] = [
+        ("Japanese", 0, "JP"),
+        ("Korean", 1, "KR"),
+        ("Chinese (simplified)", 2, "SC"),
+        ("Chinese (traditional)", 3, "TC"),
+    ];
+
+    /// Every face of the collection draws every probe: each line must ask
+    /// for its own face, or it finds the Japanese face again, drops it as
+    /// taken and never tries its region's .otf.
+    #[test]
+    fn each_cjk_line_takes_its_own_face_of_the_collection() {
+        for (script, index, _) in CJK_FACES {
+            let line = CANDIDATES.iter().find(|c| c.script == script).expect("CJK line");
+            let wanted = format!("NotoSansCJK-Regular.ttc#{index}");
+            assert!(line.files().any(|f| f == wanted), "{script}: {}", line.files);
+            assert_eq!(face_spec(&wanted), ("NotoSansCJK-Regular.ttc", Some(index)));
+        }
+        // only the collection installed, ten faces that all draw everything
+        let chosen = select(CANDIDATES, |spec, _| match face_spec(spec) {
+            ("NotoSansCJK-Regular.ttc", Some(i)) => (i < 10).then_some(i),
+            ("NotoSansCJK-Regular.ttc", None) => Some(0),
+            _ => None,
+        });
+        assert_eq!(
+            chosen.iter().map(|c| (c.0, c.1, c.2)).collect::<Vec<_>>(),
+            CJK_FACES.map(|(script, i, _)| ("NotoSansCJK-Regular.ttc", i, script))
+        );
+        // the traditional Chinese .otf installed too: the collection's
+        // own TC face still comes first, and nothing is dropped
+        let chosen = select(CANDIDATES, |spec, _| match face_spec(spec) {
+            ("NotoSansCJK-Regular.ttc", Some(i)) => (i < 10).then_some(i),
+            ("NotoSansCJKtc-Regular.otf", None) => Some(0),
+            _ => None,
+        });
+        let tc = chosen
+            .iter()
+            .find(|c| c.2 == "Chinese (traditional)")
+            .expect("traditional Chinese face");
+        assert_eq!((tc.0, tc.1), ("NotoSansCJK-Regular.ttc", 3));
+        // without the collection, each region's .otf
+        let chosen = select(CANDIDATES, |spec, _| {
+            (spec.starts_with("NotoSansCJK") && spec.ends_with(".otf")).then_some(0)
+        });
+        assert_eq!(
+            chosen.iter().map(|c| c.0).collect::<Vec<_>>(),
+            [
+                "NotoSansCJKjp-Regular.otf",
+                "NotoSansCJKkr-Regular.otf",
+                "NotoSansCJKsc-Regular.otf",
+                "NotoSansCJKtc-Regular.otf"
+            ]
+        );
+    }
+
+    /// The installed collection, when there is one, has the faces in the
+    /// order the lines ask for.
+    #[test]
+    fn installed_cjk_collection_has_the_faces_the_lines_ask_for() {
+        let mut dirs = super::super::font_dirs();
+        let extra = super::super::extra_font_dirs(&dirs);
+        dirs.extend(extra);
+        let Some(map) = index_files(&dirs).get("notosanscjk-regular.ttc").and_then(|path| map_file(path)) else {
+            eprintln!("NotoSansCJK-Regular.ttc not installed: not checked");
+            return;
+        };
+        for (script, index, region) in CJK_FACES {
+            let face = ttf_parser::Face::parse(&map, index).expect("face of the collection");
+            let family = face
+                .names()
+                .into_iter()
+                .filter(|name| name.name_id == ttf_parser::name_id::FAMILY)
+                .find_map(|name| name.to_string())
+                .expect("family name");
+            assert!(family.ends_with(region), "{script}: face {index} is {family}");
+        }
+    }
+
+    #[test]
+    fn faces_left_out_on_windows_are_probes_of_the_list() {
+        for c in NOT_ON_WINDOWS {
+            assert!(CANDIDATES.iter().any(|candidate| candidate.probe == *c), "{c}");
+        }
+        assert_eq!(expected_here('𐙚'), !cfg!(windows));
+        assert!(expected_here('ღ'));
     }
 
     #[test]
