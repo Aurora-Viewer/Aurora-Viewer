@@ -817,6 +817,8 @@ mod tests {
             notice: None,
             vulkan: None,
             ray_tracing: Default::default(),
+            dlss: Default::default(),
+            dlss_folder: None,
         };
         let data = PerfData::default();
         for tab in super::super::monitor::Tab::ALL {

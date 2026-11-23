@@ -198,6 +198,9 @@ futures-lite = "2.6.1"
 # The Khronos OpenXR loader built into the exe (needs CMake): the published
 # Windows viewer (release.yml); local builds load the runtime's loader.
 xr-static-loader = ["aurora-render/xr-static-loader"]
+# NVIDIA DLSS (aurora-render dlss.rs), from files the user installs (Linux,
+# Windows x86-64); off by default (docs/DLSS.md)
+dlss = ["aurora-render/dlss"]
 
 # libmimalloc-sys is never named in the sources: it is listed only to hold
 # the version mimalloc builds (see the comment above its line)

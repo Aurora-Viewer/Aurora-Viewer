@@ -13097,6 +13097,14 @@ impl App {
             env.sun_dir = sun;
         }
         self.options_ui.sky_tone_mapped = !env.sky.no_post;
+        // DLSS that Streamline refused after the device opened for it: FSR draws,
+        // and Preferences says so (the other states are fixed at the start)
+        if matches!(
+            self.options_ui.dlss,
+            aurora_render::DlssSupport::Ready | aurora_render::DlssSupport::Failed
+        ) {
+            self.options_ui.dlss = aurora_render::dlss_support();
+        }
         if in_world {
             // what the sky source is: region, day cycle, altitude track, preset
             let key = {
