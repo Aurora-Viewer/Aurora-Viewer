@@ -1,5 +1,11 @@
 //! JPEG2000 texture decoding.
 //!
+//! Textures are decoded by `aurora-j2k`, the Rust decoder of this workspace
+//! (a port of neo-j2k, with OpenJPEG's pixels). OpenJPEG stays behind it:
+//! whatever `aurora-j2k` refuses is handed to OpenJPEG as before, and
+//! `AURORA_J2K=openjpeg` decodes everything with OpenJPEG (docs/TESTING.md).
+//! Encoding (`encode.rs`) is OpenJPEG's.
+//!
 //! Ported from the Second Life / Firestorm viewer sources (originally LGPL 2.1):
 //! - `indra/llimage/llimagej2c.cpp` (`LLImageJ2C::calcDataSizeJ2C`, `calcHeaderSizeJ2C`)
 //! - `indra/llimagej2coj/llimagej2coj.cpp` (`JPEG2KDecode`, memory stream callbacks,
@@ -18,6 +24,8 @@
 
 use std::ffi::{CStr, c_char, c_void};
 use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use openjpeg_sys as opj;
@@ -734,19 +742,170 @@ pub fn decode_j2k(data: &[u8], discard: u8) -> Result<DecodedImage, AssetError> 
 /// Where the time of one decode went ([`decode_j2k_timed`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DecodeTimings {
-    /// OpenJPEG: header, entropy decoding, inverse wavelet and colour transforms.
+    /// The decoder: header, entropy decoding, inverse wavelet and colour
+    /// transforms (`aurora-j2k` writes the 8-bit pixels in the same pass).
     pub codec: Duration,
-    /// Planar 32-bit samples to interleaved 8-bit pixels.
+    /// OpenJPEG only: planar 32-bit samples to interleaved 8-bit pixels.
     pub convert: Duration,
+}
+
+/// `AURORA_J2K=openjpeg`: every texture decoded by OpenJPEG, as before
+/// `aurora-j2k` (to compare the two on the grid).
+fn openjpeg_forced() -> bool {
+    static FORCED: OnceLock<bool> = OnceLock::new();
+    *FORCED.get_or_init(|| std::env::var("AURORA_J2K").is_ok_and(|v| v.eq_ignore_ascii_case("openjpeg")))
+}
+
+/// What `aurora-j2k` may take of the machine for one texture. The headers
+/// it reads have passed [`check_decode_memory`] and the size checks of
+/// [`decode_j2k_timed`], which are tighter; these are its own bounds, checked
+/// from the headers before it allocates.
+const NATIVE_LIMITS: aurora_j2k::Limits = aurora_j2k::Limits {
+    max_tiles: MAX_TILES as u32,
+    max_components: MAX_HEADER_COMPONENTS as u32,
+    max_layers: 0,
+    max_decoded_side: MAX_DIMENSION,
+    max_memory: DECODE_BUDGET,
+};
+
+/// Threads one texture's decode is shared between at most (`AURORA_J2K_THREADS`
+/// sets another number; 1 for none).
+const LENT_THREADS: usize = 16;
+
+/// Queues a task of the decoder on the pool whose thread is decoding
+/// (`rayon::spawn` from a pool's thread queues in that pool).
+fn pool_spawn(task: Box<dyn FnOnce() + Send + 'static>) {
+    rayon::spawn(task);
+}
+
+thread_local! {
+    /// The jobs of the pool this thread belongs to, queued and running, as
+    /// the pool's owner counts them ([`pool_thread`]).
+    static POOL_JOBS: std::cell::RefCell<Option<Arc<AtomicUsize>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// To call on each thread of a pool that decodes textures, when the thread
+/// starts: `jobs` is the pool's count of jobs, queued and running. A large
+/// texture decoded on this thread then shares its decode with the pool's
+/// other threads, while the pool has fewer jobs than threads
+/// ([`lent_count`]). A thread that did not say so decodes alone: the pool
+/// must be one whose threads may take such work (its jobs counted, a panic
+/// handler), which the frame's own pool is not.
+pub fn pool_thread(jobs: Arc<AtomicUsize>) {
+    POOL_JOBS.set(Some(jobs));
+}
+
+/// Threads a decode is shared between, the calling one included: `max` at
+/// most, and no more than the pool has idle (`threads` in the pool, `jobs`
+/// queued or running on it, this decode among them). With jobs waiting for
+/// a thread, one: a pool's thread that ends a job takes an offer of help
+/// before a job that waits (rayon looks at the other threads' queues first),
+/// so offers made then would put the pool's threads on the textures being
+/// decoded while the others wait, for the price of handing code-blocks
+/// from a thread to another.
+fn lent_count(max: usize, threads: usize, jobs: usize) -> usize {
+    let idle = threads.saturating_sub(jobs);
+    max.min(idle + 1).min(threads).max(1)
+}
+
+/// The threads lent to a decode: the idle ones of the pool the decode runs
+/// on (the viewer's background jobs, scene/jobs.rs), which `aurora-j2k`
+/// asks for a large texture only. A thread of that pool with nothing to do
+/// takes the offer at once: a texture decoded alone gets the idle cores,
+/// textures decoded together a core each. The decoder waits for the
+/// threads that came on a condition variable, not on the pool, so it never
+/// takes another job of the pool onto its stack (the loop that did,
+/// #1689). Off such a pool, the calling thread alone.
+fn lent_threads() -> aurora_j2k::Threads {
+    static COUNT: OnceLock<usize> = OnceLock::new();
+    let max = *COUNT.get_or_init(|| {
+        std::env::var("AURORA_J2K_THREADS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(LENT_THREADS)
+    });
+    if max < 2 || rayon::current_thread_index().is_none() {
+        return aurora_j2k::Threads::default();
+    }
+    let Some(jobs) = POOL_JOBS.with_borrow(|jobs| jobs.as_ref().map(|jobs| jobs.load(Ordering::Relaxed))) else {
+        return aurora_j2k::Threads::default();
+    };
+    let count = lent_count(max, rayon::current_num_threads(), jobs);
+    if count < 2 {
+        return aurora_j2k::Threads::default();
+    }
+    aurora_j2k::Threads {
+        count,
+        spawn: Some(pool_spawn),
+    }
+}
+
+thread_local! {
+    /// The decoding thread's `aurora-j2k` decoder: its working memory serves
+    /// the next texture (it keeps a few MiB, and gives back the rest).
+    static NATIVE: std::cell::RefCell<aurora_j2k::Decoder> = std::cell::RefCell::new(aurora_j2k::Decoder::new());
+}
+
+/// Decode a codestream with `aurora-j2k`: the first four components, as
+/// [`convert_image`] keeps them of an OpenJPEG decode.
+fn decode_native(cs: &[u8], reduce: u8, local_import: bool) -> Result<DecodedImage, aurora_j2k::Error> {
+    let options = aurora_j2k::Options {
+        reduce,
+        components: 4,
+        limits: NATIVE_LIMITS,
+        threads: lent_threads(),
+    };
+    let image = NATIVE.with_borrow_mut(|decoder| decoder.decode(cs, &options))?;
+    match image.samples {
+        // 8-bit components of one size: the pixels as the viewer wants them
+        aurora_j2k::Samples::Packed(data) => Ok(DecodedImage {
+            width: image.width,
+            height: image.height,
+            components: image.components.min(4) as u8,
+            data,
+            discard: reduce,
+        }),
+        aurora_j2k::Samples::Planes(planes) => {
+            let views: Vec<PlaneView<'_>> = planes
+                .iter()
+                .take(4)
+                .map(|p| PlaneView {
+                    w: p.width,
+                    h: p.height,
+                    prec: u32::from(p.precision),
+                    signed: p.signed,
+                    data: &p.data,
+                })
+                .collect();
+            planes_to_image(&views, reduce, local_import).map_err(|_| aurora_j2k::Error::Data("decoded components"))
+        }
+    }
 }
 
 /// [`decode_j2k`], with the time spent in each of its two stages
 /// (measurements: `examples/j2k_bench.rs`).
 pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, DecodeTimings), AssetError> {
+    decode_j2k_inner(data, discard, false)
+}
+
+/// Local import sources may be larger than network textures. Decode only
+/// the wavelet levels needed for a 2K upload; retain at least that much
+/// detail so a later 1K -> 2K change never enlarges a previously reduced
+/// upload. The same tile, coding-layout and memory checks still apply.
+pub(crate) fn decode_j2k_for_import(data: &[u8]) -> Result<DecodedImage, AssetError> {
+    let info = j2k_info(data).ok_or(AssetError::J2k("JPEG2000 main header"))?;
+    decode_j2k_inner(data, import_discard(info), true).map(|(image, _)| image)
+}
+
+fn import_discard(info: J2kInfo) -> u8 {
+    ((info.width.max(info.height) / 2048).max(1).ilog2() as u8).min(info.levels)
+}
+
+fn decode_j2k_inner(data: &[u8], discard: u8, local_import: bool) -> Result<(DecodedImage, DecodeTimings), AssetError> {
     let start = Instant::now();
     let cs = locate_codestream(data).ok_or(AssetError::J2k("not a JPEG2000 codestream"))?;
     let info = parse_main_header(cs).ok_or(AssetError::Truncated("JPEG2000 main header"))?;
-    if info.width > MAX_DIMENSION || info.height > MAX_DIMENSION || info.width as u64 * info.height as u64 > MAX_PIXELS {
+    if !local_import && (info.width > MAX_DIMENSION || info.height > MAX_DIMENSION || info.width as u64 * info.height as u64 > MAX_PIXELS) {
         return Err(AssetError::TooLarge("JPEG2000 image dimensions"));
     }
     if u16::from(info.components) > MAX_HEADER_COMPONENTS {
@@ -754,8 +913,27 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
     }
     let reduce = discard.min(info.levels);
     let siz = check_decode_memory(cs, reduce)?;
+    if !openjpeg_forced() {
+        match decode_native(cs, reduce, local_import) {
+            Ok(out) => {
+                return Ok((
+                    out,
+                    DecodeTimings {
+                        codec: start.elapsed(),
+                        convert: Duration::ZERO,
+                    },
+                ));
+            }
+            // what the Rust decoder does not take is OpenJPEG's, as everything was before it
+            Err(e) => log::debug!(target: "aurora_assets::j2k", "aurora-j2k: {e}; decoding with OpenJPEG"),
+        }
+    }
     // (a tile-part can never need more than about twice the raw pixels)
-    let plausible = (info.width as usize * info.height as usize * usize::from(info.components)).saturating_mul(2) + (1 << 16);
+    let plausible = (info.width as usize)
+        .saturating_mul(info.height as usize)
+        .saturating_mul(usize::from(info.components))
+        .saturating_mul(2)
+        .saturating_add(1 << 16);
     let bounded = bound_tile_parts(cs, plausible);
     let cs = bounded.as_deref().unwrap_or(cs);
     // Disable any TLM tile-part index: OpenJPEG 2.5.3 can write past it (see
@@ -830,7 +1008,7 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
     // `opj_read_header`/`opj_decode`; it is not mutated while borrowed.
     let img = unsafe { &*image.0 };
     let codec = start.elapsed();
-    let out = convert_image(img, &siz, reduce)?;
+    let out = convert_image(img, &siz, reduce, local_import)?;
     let convert = start.elapsed().saturating_sub(codec);
     Ok((out, DecodeTimings { codec, convert }))
 }
@@ -854,7 +1032,7 @@ fn component_size(siz: &Siz, sub: (u8, u8), reduce: u8) -> (u64, u64) {
 /// components are checked against the codestream's own SIZ (`siz`, decoded
 /// at `reduce`) before their planes are read: the same component count, and
 /// planes no larger than the SIZ gives them.
-fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<DecodedImage, AssetError> {
+fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8, local_import: bool) -> Result<DecodedImage, AssetError> {
     if img.numcomps == 0 || img.comps.is_null() {
         return Err(AssetError::J2k("decoded image has no components"));
     }
@@ -878,23 +1056,75 @@ fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<Decode
         width = width.max(c.w);
         height = height.max(c.h);
     }
-    if width > MAX_DIMENSION || height > MAX_DIMENSION {
+    if !local_import && (width > MAX_DIMENSION || height > MAX_DIMENSION) {
         return Err(AssetError::TooLarge("decoded JPEG2000 dimensions"));
     }
-    let n = used.len();
-    let pixels = width as usize * height as usize;
-    let mut out = vec![0u8; pixels * n];
-
-    for (ci, c) in used.iter().enumerate() {
-        let cw = c.w as usize;
-        let ch = c.h as usize;
+    let mut views: Vec<PlaneView<'_>> = Vec::with_capacity(used.len());
+    for c in used {
+        let samples = (c.w as usize)
+            .checked_mul(c.h as usize)
+            .filter(|&samples| samples <= isize::MAX as usize / std::mem::size_of::<i32>())
+            .ok_or(AssetError::TooLarge("decoded JPEG2000 component samples"))?;
         // SAFETY: `data` is non-null and OpenJPEG allocates `w * h` samples for
         // each decoded component (dimensions already reduced by the resolution
         // factor); `w` and `h` were checked above against the SIZ, so the
         // slice never spans more than the header's own component size.
-        let plane = unsafe { std::slice::from_raw_parts(c.data as *const i32, cw * ch) };
+        let data = unsafe { std::slice::from_raw_parts(c.data as *const i32, samples) };
+        views.push(PlaneView {
+            w: c.w,
+            h: c.h,
+            prec: c.prec,
+            signed: c.sgnd != 0,
+            data,
+        });
+    }
+    planes_to_image(&views, comps[0].factor.min(255) as u8, local_import)
+}
+
+/// One decoded component: `w * h` samples of `prec` bits, rows top to
+/// bottom.
+struct PlaneView<'a> {
+    w: u32,
+    h: u32,
+    prec: u32,
+    signed: bool,
+    data: &'a [i32],
+}
+
+/// Convert component planes (at most four) to interleaved 8-bit pixels of
+/// the largest component's size: precisions other than 8 bits and signed
+/// samples scaled to 8 bits, sub-sampled components stretched. A local
+/// import (`local_import`) may be larger than a network texture.
+fn planes_to_image(planes: &[PlaneView<'_>], discard: u8, local_import: bool) -> Result<DecodedImage, AssetError> {
+    let width = planes.iter().map(|c| c.w).max().unwrap_or(0);
+    let height = planes.iter().map(|c| c.h).max().unwrap_or(0);
+    if planes.is_empty()
+        || planes
+            .iter()
+            .any(|c| c.w == 0 || c.h == 0 || c.data.len() < c.w as usize * c.h as usize)
+    {
+        return Err(AssetError::J2k("decoded component has no data"));
+    }
+    if !local_import && (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        return Err(AssetError::TooLarge("decoded JPEG2000 dimensions"));
+    }
+    let n = planes.len();
+    let length = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(n))
+        .filter(|&bytes| bytes <= isize::MAX as usize)
+        .ok_or(AssetError::TooLarge("decoded JPEG2000 pixels"))?;
+    let mut out = Vec::new();
+    out.try_reserve_exact(length)
+        .map_err(|_| AssetError::TooLarge("decoded JPEG2000 pixel allocation"))?;
+    out.resize(length, 0_u8);
+
+    for (ci, c) in planes.iter().enumerate() {
+        let cw = c.w as usize;
+        let ch = c.h as usize;
+        let plane = &c.data[..cw * ch];
         let prec = c.prec.clamp(1, 31);
-        let offset: i64 = if c.sgnd != 0 { 1i64 << (prec - 1) } else { 0 };
+        let offset: i64 = if c.signed { 1i64 << (prec - 1) } else { 0 };
         let max_in = (1i64 << prec) - 1;
         let to8 = |v: i32| -> u8 {
             let v = (v as i64 + offset).clamp(0, max_in);
@@ -928,13 +1158,28 @@ fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<Decode
         height,
         components: n as u8,
         data: out,
-        discard: comps[0].factor.min(255) as u8,
+        discard,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_decode_is_shared_with_idle_threads_only() {
+        // this decode alone on the pool, then more jobs than idle threads
+        assert_eq!(lent_count(16, 30, 1), 16);
+        assert_eq!(lent_count(16, 6, 1), 6);
+        assert_eq!(lent_count(16, 30, 20), 11);
+        assert_eq!(lent_count(16, 30, 28), 3);
+        // every thread has a job, or jobs wait: the calling thread alone
+        assert_eq!(lent_count(16, 30, 30), 1);
+        assert_eq!(lent_count(16, 30, 5000), 1);
+        // never more than the pool, never fewer than the calling thread
+        assert_eq!(lent_count(16, 1, 0), 1);
+        assert_eq!(lent_count(0, 30, 1), 1);
+    }
 
     struct VecWriter {
         buf: Vec<u8>,
@@ -984,6 +1229,10 @@ mod tests {
 
     /// Lossless J2K encode (test helper, mirrors JPEG2KEncode in llimagej2coj.cpp).
     fn encode(w: u32, h: u32, comps: u32, pixel: impl Fn(u32, u32, u32) -> u8) -> Vec<u8> {
+        encode_with_levels(w, h, comps, 5, pixel)
+    }
+
+    fn encode_with_levels(w: u32, h: u32, comps: u32, levels: u8, pixel: impl Fn(u32, u32, u32) -> u8) -> Vec<u8> {
         // SAFETY: test-only FFI usage; every pointer is checked and freed below.
         unsafe {
             let mut params: opj::opj_cparameters_t = std::mem::zeroed();
@@ -994,7 +1243,7 @@ mod tests {
             params.irreversible = 0;
             params.tcp_mct = if comps >= 3 { 1 } else { 0 };
             // Like JPEG2KEncode: small images need fewer resolutions.
-            params.numresolution = params.numresolution.min(1 + w.min(h).ilog2() as i32);
+            params.numresolution = params.numresolution.min(1 + w.min(h).ilog2() as i32).min(1 + i32::from(levels));
             let mut cparms: Vec<opj::opj_image_cmptparm_t> = (0..comps)
                 .map(|_| {
                     let mut p: opj::opj_image_cmptparm_t = std::mem::zeroed();
@@ -1043,6 +1292,55 @@ mod tests {
 
     fn pattern(x: u32, y: u32, c: u32) -> u8 {
         ((x * 4 + y * 3 + c * 50) & 0xFF) as u8
+    }
+
+    #[test]
+    fn local_jpeg2000_import_reduces_large_sources_without_relaxing_network_limits() {
+        // A narrow source exercises the network dimension rejection without
+        // allocating a multi-gigabyte encoder fixture for a square 16K map.
+        let bytes = encode(32768, 64, 3, |_, _, c| [30, 80, 150][c as usize]);
+        assert!(matches!(
+            decode_j2k(&bytes, 0),
+            Err(AssetError::TooLarge("JPEG2000 image dimensions"))
+        ));
+        for loader in [crate::import_texture::decode, crate::import_texture::decode_map] {
+            let source = loader(&bytes).expect("large local JPEG2000");
+            assert_eq!((source.width, source.height, source.components, source.discard), (2048, 4, 3, 4));
+            assert!(source.data.as_chunks::<3>().0.iter().all(|pixel| *pixel == [30, 80, 150]));
+            for maximum in [1024, 2048] {
+                let options = crate::import_texture::Options {
+                    max_width: maximum,
+                    max_height: maximum,
+                    ..Default::default()
+                };
+                let pixels = crate::import_texture::prepare(&source, options).expect("resize imported J2K");
+                assert_eq!((pixels.width, pixels.height), (maximum, 4));
+            }
+        }
+    }
+
+    #[test]
+    fn local_jpeg2000_import_without_wavelet_levels_resizes_after_full_decode() {
+        let bytes = encode_with_levels(32768, 4, 3, 0, |_, _, c| [30, 80, 150][c as usize]);
+        assert_eq!(j2k_info(&bytes).expect("header").levels, 0);
+        assert!(matches!(
+            decode_j2k(&bytes, 0),
+            Err(AssetError::TooLarge("JPEG2000 image dimensions"))
+        ));
+        for loader in [crate::import_texture::decode, crate::import_texture::decode_map] {
+            let source = loader(&bytes).expect("large local source without wavelet reductions");
+            assert_eq!((source.width, source.height, source.components, source.discard), (32768, 4, 3, 0));
+            for maximum in [1024, 2048] {
+                let options = crate::import_texture::Options {
+                    max_width: maximum,
+                    max_height: maximum,
+                    ..Default::default()
+                };
+                let pixels = crate::import_texture::prepare(&source, options).expect("resize full-resolution J2K");
+                assert_eq!((pixels.width, pixels.height), (maximum, 4));
+                assert!(pixels.data.as_chunks::<3>().0.iter().all(|pixel| *pixel == [30, 80, 150]));
+            }
+        }
     }
 
     #[test]
@@ -1307,6 +1605,29 @@ mod tests {
             );
             assert!(matches!(decode_j2k(cs, discard), Err(AssetError::TooLarge(_))));
         }
+        assert!(
+            matches!(decode_j2k_for_import(cs), Err(AssetError::TooLarge(_))),
+            "local imports retain the decoder memory checks"
+        );
+    }
+
+    #[test]
+    fn local_jpeg2000_import_keeps_enough_resolution_for_2k_within_the_decoder_budget() {
+        for (width, expected) in [(3000, 0), (8192, 2), (16384, 3)] {
+            let cs = codestream(&Layout::texture(width, width, 4), &[]);
+            let discard = import_discard(j2k_info(&cs).expect("source header"));
+            assert_eq!(discard, expected);
+            assert!(check_decode_memory(&cs, discard).is_ok());
+            assert!((width >> discard) >= 2048);
+        }
+        let mut few_levels = Layout::texture(16384, 16384, 4);
+        few_levels.levels = 1;
+        let cs = codestream(&few_levels, &[]);
+        assert_eq!(import_discard(j2k_info(&cs).expect("source header")), 1);
+        assert!(matches!(
+            decode_j2k_for_import(&cs),
+            Err(AssetError::TooLarge("JPEG2000 decoder memory"))
+        ));
     }
 
     #[test]

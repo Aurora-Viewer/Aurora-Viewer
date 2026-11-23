@@ -323,7 +323,7 @@ fn import_folder_toggle_discards_mesh_quotes_even_when_the_mesh_destination_is_u
     let mut entry = Entry::new(
         "mesh.dae".into(),
         Ok(Source::Mesh(Box::new(super::super::tests::mesh_fixture()))),
-        Default::default(),
+        Preferences::default().texture(),
     );
     entry.folder = world.inventory.root;
     imports.entries.push(entry);

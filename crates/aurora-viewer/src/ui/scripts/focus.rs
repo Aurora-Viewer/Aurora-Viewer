@@ -26,7 +26,7 @@ fn state_id() -> Id {
 
 /// Register the editor, its find controls, or one of its popup menus.
 pub(super) fn claim(ctx: &egui::Context, layer: LayerId, owner: Id) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
         state.claims.retain(|c| c.layer != layer && c.frame + 1 >= frame);
@@ -38,7 +38,7 @@ fn resolve(ctx: &egui::Context, state: &State) -> Option<Id> {
     if ctx.memory(|m| m.top_modal_layer()).is_some() {
         return None;
     }
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let owner = |layer| {
         state
             .claims
@@ -63,12 +63,12 @@ fn resolve(ctx: &egui::Context, state: &State) -> Option<Id> {
 /// Used by the app's Ctrl+F arbitration before it runs the viewer shortcut.
 pub fn editor_focused(ctx: &egui::Context) -> bool {
     let state = ctx.data(|d| d.get_temp::<State>(state_id())).unwrap_or_default();
-    state.frame + 1 >= ctx.cumulative_frame_nr() && resolve(ctx, &state).is_some()
+    state.frame + 1 >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) && resolve(ctx, &state).is_some()
 }
 
 /// Run once after all editors handled clicks, before drawing the shared find.
 pub(super) fn find(ctx: &egui::Context, editors: &mut [Editor], search: &mut Search) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let windows: Vec<_> = editors
         .iter()
         .map(|e| {
@@ -93,17 +93,13 @@ pub(super) fn find(ctx: &egui::Context, editors: &mut [Editor], search: &mut Sea
     {
         egui::Popup::close_all(ctx);
         crate::ui::widgets::expand_floater(ctx, &windows[index].0);
-        if search.owns(owner) && Search::focused(ctx) {
-            search.focus = true;
-        } else {
-            let e = &editors[index];
-            let id = if e.tools.processed { owner.with("processed") } else { owner };
-            search.begin(
-                ctx,
-                owner,
-                id,
-                if e.tools.processed { &e.tools.processed_source } else { &e.source },
-            );
-        }
+        let e = &editors[index];
+        let id = if e.tools.processed { owner.with("processed") } else { owner };
+        search.begin(
+            ctx,
+            owner,
+            id,
+            if e.tools.processed { &e.tools.processed_source } else { &e.source },
+        );
     }
 }

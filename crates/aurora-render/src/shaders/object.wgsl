@@ -1228,7 +1228,9 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         return mix(col, base, unlit);
     }
     let r = reflect(-v, n);
-    let sky = sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))) * sky_scale * (0.35 + 0.65 * shadow);
+    // (and the traced probes' sight of the sky where no reflection probe
+    // gives the place's reflection, common.wgsl `screen_sky`)
+    let sky = sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))) * sky_scale * (0.35 + 0.65 * shadow) * screen_sky(frag);
     // sampleReflectionProbesLegacy: glossy environment at the glossiness mip,
     // legacy environment at the sharpest one
     var gloss_sky = sky;
@@ -1236,7 +1238,7 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     if (probes_on()) {
         // (both in one walk of the probes)
         let both = sample_probes_pair(
-            world_pos,
+            probe_point(world_pos, n),
             frag,
             ProbeLookup(r, (1.0 - spec.a) * probe_max_lod(), false),
             ProbeLookup(r, 0.0, false),
@@ -1330,8 +1332,9 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
     var lights = light_walk(world_pos, frag);
     var spots = projector_walk(lights);
     if (spec.a > 0.0) {
+        let share = local_share(frag);
         for (var i = next_light(&lights); i >= 0; i = next_light(&lights)) {
-            let lt = frame.lights[i];
+            let lt = shared_light(i, share);
             let to_l = lt.pos_radius.xyz - world_pos;
             let dist = length(to_l);
             let radius = lt.pos_radius.w;
@@ -1345,7 +1348,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        let at = projector_at(i, world_pos, n);
+        let at = projector_at(i, world_pos, n, frag);
         if (at.atten <= 0.0) {
             continue;
         }
@@ -1681,6 +1684,9 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         }
         screen_share = select(0.0, max(share, on), in_depth);
         contact_share = max(select(0.0, share, frame.contact.y > 0.5), select(0.0, on, contact));
+        // the depth holds the texel from SCREEN_BLEND_ALPHA: under it, the
+        // traced surface is what the layer lies on
+        contact_glass = in_depth && share > 0.0;
     }
     // Share this calculation across both lighting branches: duplicating its
     // wave/shadow code crashes Apple's Metal pipeline compiler.
@@ -1735,7 +1741,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
             // environment at the probes' radiance (legacy_light first: both
             // add to legacy_glare, whose sum depends on the order)
             col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh,
-                               frame.sun_color.rgb / 3.0, 1.0);
+                               frame.sun_color.rgb * sun_glass / 3.0, 1.0);
             let local_spec = legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy);
             col += local_spec + m.emissive;
             own = m.emissive + shade_pbr_local * (1.0 - clamp(m.unlit, 0.0, 1.0)) * (1.0 - clamp(m.legacy_env, 0.0, 1.0)) + local_spec;
@@ -1818,8 +1824,10 @@ fn mask_color(rec: DrawRecord, c: vec4<f32>) -> vec4<f32> {
         }
         return vec4<f32>(c.rgb, 1.0);
     }
-    // sharpen alpha around the cutoff for alpha-to-coverage
-    let a = clamp((c.a - cutoff) / max(fwidth(c.a), 1e-4) + 0.5, 0.0, 1.0);
+    // The Legacy Viewer's alphaMask compares at half an 8-bit step below
+    // the cutoff. A flat texel equal to the cutoff covers every sample.
+    let edge = cutoff - 1.0 / 512.0;
+    let a = clamp((c.a - edge) / max(fwidth(c.a), 1e-4) + 0.5, 0.0, 1.0);
     return vec4<f32>(c.rgb, a);
 }
 
@@ -3558,10 +3566,12 @@ fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
 fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
-    // An emissive mask uses texture alpha for lighting, not opacity
-    // (eval_material): its visible surface must remain a camera target.
+    // A legacy material in emissive mask mode stays a camera target on its
+    // clear texels, whatever the face's alpha: LLVOVolume::
+    // lineSegmentIntersect ignores texture alpha there, even on a
+    // transparent face that is drawn blended (types.rs PICK_IGNORES_ALPHA).
     let terrain_pbr = (rec.flags.x & (FLAG_TERRAIN | FLAG_PBR)) == (FLAG_TERRAIN | FLAG_PBR);
-    let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= PICK_ALPHA_CUTOFF;
+    let hidden_texel = (rec.flags.w & FLAG_PICK_IGNORES_ALPHA) == 0u && sample_tex(select(rec.tex.x, 0u, terrain_pbr), in.uv).a <= PICK_ALPHA_CUTOFF;
     // An opaque glTF material ignores its base color alpha (FaceDraw::
     // fully_transparent): drawn, it stays a target.
     let gltf_opaque = (rec.flags.x & FLAG_PBR) != 0u && (rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) == 0u;

@@ -30,6 +30,9 @@ pub struct DemoSim {
     /// The inventory folder each object rezzed from inventory came from,
     /// sent back in its ObjectProperties (FolderID) as a simulator does.
     rezzed_from: HashMap<Uuid, Uuid>,
+    /// The inventory item each object rezzed from inventory came from,
+    /// sent back in its ObjectProperties (ItemID) as a simulator does.
+    rezzed_item: HashMap<Uuid, Uuid>,
     /// The object each object rezzed from an object's contents came from,
     /// sent back in its ObjectProperties (FromTaskID).
     rezzed_from_task: HashMap<Uuid, Uuid>,
@@ -148,6 +151,7 @@ impl DemoSim {
     }
     fn props_of(&mut self, world: &World, id: Uuid) -> &mut ObjectProps {
         let folder_id = self.rezzed_from.get(&id).copied().unwrap_or_default();
+        let item_id = self.rezzed_item.get(&id).copied().unwrap_or_default();
         let from_task_id = self.rezzed_from_task.get(&id).copied().unwrap_or_default();
         let group = self.rezzed_groups.get(&id).copied();
         self.props.entry(id).or_insert_with(|| {
@@ -201,6 +205,7 @@ impl DemoSim {
                 sale_price: 10,
                 category: 0,
                 inventory_serial: 1,
+                item_id,
                 folder_id,
                 from_task_id,
                 name,
@@ -353,6 +358,7 @@ impl DemoSim {
                     .into_iter()
                     .collect();
                 let mut events = vec![NetEvent::InventoryUpdated {
+                    bulk: false,
                     folders: Vec::new(),
                     items,
                 }];
@@ -614,6 +620,7 @@ impl DemoSim {
                 let object = crate::demo::inventory_rez(rez);
                 if rez.from_task.is_nil() {
                     self.rezzed_from.insert(object.full_id, rez.item.parent);
+                    self.rezzed_item.insert(object.full_id, rez.item.id);
                 } else {
                     self.rezzed_from_task.insert(object.full_id, rez.from_task);
                 }
@@ -945,7 +952,7 @@ impl DemoSim {
             let child_id = Uuid::new_v4();
             let mut child = object.clone();
             child.full_id = child_id;
-            child.local_id = child_id.as_u128() as u32;
+            child.local_id = crate::demo::next_rez_local_id();
             child.parent_id = object.local_id;
             // (a child's position is its parent's frame)
             child.position = glam::Vec3::new(0.6 * (n as f32 + 1.0), 0.0, 0.0);
