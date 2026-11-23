@@ -17,7 +17,7 @@
 //! stay in the thread. The texts are the classic lines' (`chat_text_marked`:
 //! links, places, mentions, emoji, find highlights, selection).
 
-use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, sender_name, view};
+use super::{LineEnv, Mark, chat_text_bracketed, chat_text_marked, hhmm, history_tone, line_name_menu, sender_name, view};
 use crate::theme::Palette;
 use crate::ui::fonts::chat_size;
 use crate::world::chat_log::format::Slt;
@@ -224,9 +224,10 @@ impl Who {
     }
 }
 
-/// The colour of an author's name: ours in the theme's teal, a moderator's
-/// in light violet, an object's in the colour of objects, a history line's
-/// greyed.
+/// The colour of an author's name: a moderator's in light violet, a
+/// history line's greyed, any other in the senders' colour of Preferences ›
+/// Emitter (Avatars, ours included, or Objects), as FSChatHistory::appendMessage
+/// (indra/newview/fschathistory.cpp) gives every resident ChatNameColor.
 fn name_color(env: &LineEnv, th: &Thread, line: &ChatLine, who: &Who) -> Color32 {
     let p = env.p;
     if let Some(color) = crate::ui::colors::contact_sender_color(line, env.world) {
@@ -235,20 +236,15 @@ fn name_color(env: &LineEnv, th: &Thread, line: &ChatLine, who: &Who) -> Color32
     if let Some(tone) = history_tone(p, line.origin) {
         return tone;
     }
-    if who.object {
-        return crate::ui::colors::sender_color(line);
-    }
-    if line.kind.is_own() {
-        return p.teal;
-    }
-    if th.moderators.is_some_and(|m| m.contains(&line.source)) {
+    if !who.object && th.moderators.is_some_and(|m| m.contains(&line.source)) {
         return p.violet_light;
     }
-    p.ink
+    crate::ui::colors::sender_color(line)
 }
 
-/// The text of a message and how it reads: an emote is the name in violet
-/// italics, a whisper in grey italics; the user's chat colours otherwise.
+/// The text of a message and how it reads: an emote is the name and its
+/// action in italics, a whisper in grey italics; the user's chat colours
+/// for all of them.
 /// The lines drawn pass `shown_name` ("(You)" with the option); a quote
 /// passes the real name, since it is pasted for others to read.
 fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
@@ -313,8 +309,8 @@ fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, col
         text = text.italics();
     }
     let r = ui.add(crate::ui::widgets::elided_label(ui, text, max).sense(egui::Sense::click()));
-    if who.object && !line.source.is_nil() {
-        super::object_sender(&r.on_hover_cursor(egui::CursorIcon::PointingHand), env.p, env.world, line);
+    if who.object {
+        super::line_object_sender(r, env.p, env.world, line, env.menu);
         return;
     }
     if who.avatar.is_nil() {
@@ -489,6 +485,12 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
         let (glyph, tint) = super::object_row::object_glyph(line, p, crate::ui::colors::sender_color(line));
         paint_icon(ui.painter(), glyph, rect.shrink(9.0), tint);
+        let cube = ui.interact(
+            rect,
+            ui.scope_id().with(("thread_pic", line.time, line.source)),
+            egui::Sense::click(),
+        );
+        super::line_object_sender(cube.on_hover_text(name), p, env.world, line, env.menu);
         return;
     }
     if !who.avatar.is_nil() {
@@ -575,18 +577,19 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
-            chat_text_marked(
+            chat_text_bracketed(
                 ui,
                 p,
                 env.emoji,
                 env.world,
                 line.wording(env.names),
                 env.want_names,
-                &super::system_text(&line.text),
+                &line.text,
                 chat_size(ui.ctx(), 12.0),
                 tone,
                 false,
                 mark,
+                super::system_brackets(env.world, line),
             );
         });
     });
@@ -664,6 +667,9 @@ pub(super) fn message_menu(ui: &mut egui::Ui, env: &LineEnv, th: &mut Thread, ta
     if !who.avatar.is_nil() {
         crate::ui::menu::separator(ui, p);
         crate::ui::context::chat_sender_menu(ui, p, env.world, who.avatar, env.names, line);
+    } else if let Some(object) = super::line_object(line) {
+        crate::ui::menu::separator(ui, p);
+        super::sender_menu(ui, p, env.world, object, env.names, line);
     }
 }
 

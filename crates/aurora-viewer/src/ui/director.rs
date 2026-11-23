@@ -34,8 +34,8 @@ mod shots;
 pub const WINDOW: &str = "director";
 
 const WIDTH: f32 = 340.0;
-const LABEL_W: f32 = 112.0;
-pub(super) const SLIDER_W: f32 = 120.0;
+const LABEL_W: f32 = widgets::FORM_LABEL_W;
+pub(super) const SLIDER_W: f32 = widgets::FORM_SLIDER_W;
 /// What the window keeps clear of the room the bars leave: its own title
 /// and margins, the timeline strip under it, and a little air.
 const WINDOW_MARGIN: f32 = 230.0;
@@ -129,6 +129,8 @@ pub struct Looks<'a> {
     pub settings: &'a mut crate::snapshot::Settings,
     /// The user's LUTs, by file name.
     pub luts: &'a [String],
+    /// The catalogue's pictures: their slot by look id.
+    pub thumbs: &'a std::collections::HashMap<String, usize>,
     /// What the editor asks of the app (import, remove, open the folder).
     pub out: &'a mut Vec<super::snapshot::Action>,
 }
@@ -215,14 +217,13 @@ pub struct Env<'a> {
     pub out: &'a mut Vec<EnvAction>,
 }
 
-pub(super) fn row<R>(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.horizontal(|ui| {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(LABEL_W, 20.0), Sense::hover());
-        ui.painter()
-            .text(rect.left_center(), Align2::LEFT_CENTER, label, FontId::proportional(12.5), p.ink);
-        add(ui)
-    })
-    .inner
+/// The Director's label row, shared with the other tool windows.
+pub(super) use super::widgets::form_row as row;
+
+fn text_button_size(ui: &egui::Ui) -> Vec2 {
+    let font = widgets::control_font(ui, 12.5);
+    let height = ui.fonts_mut(|f| f.row_height(&font)) + 2.0 * ui.spacing().button_padding.y;
+    Vec2::new(0.0, height.max(26.0))
 }
 
 /// An angle in radians as the sliders show it, in whole degrees: under
@@ -302,7 +303,7 @@ pub fn window(
                 let mut tab = shown_tab(ui.ctx());
                 let labels = Tab::ALL.map(|tab| (tab.label(), true));
                 let mut index = tab as usize;
-                if widgets::tabs(ui, p, &mut index, &labels) {
+                if widgets::wrapping_tabs(ui, p, &mut index, &labels) {
                     tab = Tab::ALL[index.min(Tab::ALL.len() - 1)];
                     set_tab(ui.ctx(), tab);
                 }
@@ -389,11 +390,15 @@ pub fn window(
                         // the Photo window's own looks and LUTs: one stack,
                         // the photos' and the films'
                         ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("director-filters-note")).size(12.0).color(p.muted)).wrap());
+                        let thumbs = looks.thumbs;
+                        let thumb = |id: &str| thumbs.get(id).copied();
                         let opts = super::looks_editor::Options {
                             list_height: 260.0,
+                            height: None,
                             compare: false,
                             luts: looks.luts,
                             pano: false,
+                            thumb: &thumb,
                         };
                         looks
                             .ui
@@ -483,7 +488,7 @@ fn clear_prompt(ctx: &egui::Context, p: &Palette, d: &mut Director) {
         ui.label(aurora_i18n::tr!("director-clear-confirm-text", count = d.track.len()));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            let size = Vec2::new(0.0, 26.0);
+            let size = text_button_size(ui);
             if widgets::action_button(
                 ui,
                 p,
@@ -538,9 +543,13 @@ fn camera_section(ui: &mut egui::Ui, p: &Palette, live: &Live, actions: &mut Vec
         actions.push(Action::FreezeWorld(frozen));
     }
     let mut free = live.free;
-    if widgets::switch_labeled(ui, p, &mut free, aurora_i18n::tr!("director-free-camera"))
-        .on_hover_text(aurora_i18n::tr!("director-free-camera-tip"))
-        .changed()
+    if ui
+        .add_enabled_ui(!live.restricted, |ui| {
+            widgets::switch_labeled(ui, p, &mut free, aurora_i18n::tr!("director-free-camera"))
+                .on_hover_text(aurora_i18n::tr!("director-free-camera-tip"))
+                .changed()
+        })
+        .inner
     {
         actions.push(Action::Free(free));
     }
@@ -621,7 +630,7 @@ fn lock_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, live: &Live, a
         ui.label(RichText::new(name).size(12.5).color(p.ink));
     });
     ui.horizontal_wrapped(|ui| {
-        let size = Vec2::new(0.0, 26.0);
+        let size = text_button_size(ui);
         if widgets::action_button(
             ui,
             p,
@@ -779,7 +788,7 @@ fn isolate_section(
         } else {
             ("pointer-filled", aurora_i18n::tr!("photo-isolate-pick"), ActionKind::Flat)
         };
-        if widgets::action_button(ui, p, glyph, label, kind, Vec2::new(0.0, 26.0)).clicked() {
+        if widgets::action_button(ui, p, glyph, label, kind, text_button_size(ui)).clicked() {
             out.push(Isolate::Picking(!iso.picking));
         }
         if iso.picking {
@@ -934,7 +943,7 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
             "crosshair",
             aurora_i18n::tr!("director-key-aim-take"),
             ActionKind::Flat,
-            Vec2::new(0.0, 26.0),
+            text_button_size(ui),
             aim != own,
         )
         .on_hover_text(tip)
@@ -945,7 +954,7 @@ fn keyframe_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director, actions: &
         }
     }
     ui.horizontal_wrapped(|ui| {
-        let size = Vec2::new(0.0, 26.0);
+        let size = text_button_size(ui);
         if widgets::action_button(
             ui,
             p,
@@ -1063,7 +1072,7 @@ fn path_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
             "gauge-filled",
             aurora_i18n::tr!("director-even-speed"),
             ActionKind::Flat,
-            Vec2::new(0.0, 26.0),
+            text_button_size(ui),
             d.track.len() >= 3,
         )
         .on_hover_text(aurora_i18n::tr!("director-even-speed-tip"))
@@ -1120,7 +1129,7 @@ fn playback_section(ui: &mut egui::Ui, p: &Palette, d: &mut Director) {
         "trash-filled",
         aurora_i18n::tr!("director-clear"),
         ActionKind::FlatDanger,
-        Vec2::new(0.0, 26.0),
+        text_button_size(ui),
         !d.track.is_empty(),
     )
     .clicked()
@@ -1955,6 +1964,73 @@ mod tests {
             });
         }
         assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    #[test]
+    fn form_labels_do_not_overlap_fields_with_large_text() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+
+        let labels = [
+            aurora_i18n::tr!("director-span-time"),
+            aurora_i18n::tr!("director-lens"),
+            aurora_i18n::tr!("director-key-ease"),
+        ];
+        for width in [260.0, 316.0] {
+            for scale in [1.0, 2.0] {
+                let mut frames = Frames::new();
+                let theme = crate::theme::Theme::default();
+                theme.apply(&frames.ctx, scale);
+                let p = theme.palette();
+                let mut seconds = 12.0;
+                let mut angle = 60.0;
+                let mut fields = Vec::new();
+                let mut right = 0.0;
+                let mut action_rect = Rect::NOTHING;
+                let action_label = aurora_i18n::tr!("director-update");
+                let mut draw = |ui: &mut egui::Ui| {
+                    ui.set_width(width);
+                    right = ui.max_rect().right();
+                    fields.clear();
+                    fields.push(row(ui, &p, labels[0], |ui| {
+                        ui.add(egui::DragValue::new(&mut seconds).fixed_decimals(1).suffix(" s")).rect
+                    }));
+                    fields.push(row(ui, &p, labels[1], |ui| {
+                        ui.spacing_mut().slider_width = SLIDER_W;
+                        ui.add(egui::Slider::new(&mut angle, 5.0..=120.0).fixed_decimals(0).suffix("°"))
+                            .rect
+                    }));
+                    fields.push(row(ui, &p, labels[2], |ui| {
+                        egui::ComboBox::from_id_salt("director_test_easing")
+                            .selected_text(aurora_i18n::tr!("director-curve-smooth"))
+                            .show_ui(ui, |_| {})
+                            .response
+                            .rect
+                    }));
+                    action_rect = widgets::action_button(ui, &p, "refresh", action_label, ActionKind::Flat, text_button_size(ui)).rect;
+                };
+                frames.run(Vec::new(), &mut draw);
+                let texts = frames.run(Vec::new(), &mut draw);
+                for (label, field) in labels.iter().zip(&fields) {
+                    let text = painted(&texts, label);
+                    assert!(!text.cut, "label shortened at {width}/{scale}: {label}");
+                    assert!(
+                        !text.rect.intersects(*field),
+                        "label overlaps its field at {width}/{scale}: {label}"
+                    );
+                    assert!(
+                        text.rect.right() <= right + 0.5 && field.right() <= right + 0.5,
+                        "row overflows at {width}/{scale}: {label}"
+                    );
+                }
+                let action = painted(&texts, action_label);
+                assert!(
+                    !action.cut && action_rect.contains_rect(action.rect),
+                    "action text outside its button at {width}/{scale}"
+                );
+                assert_eq!(seconds, 12.0);
+                assert_eq!(angle, 60.0);
+            }
+        }
     }
 
     #[test]

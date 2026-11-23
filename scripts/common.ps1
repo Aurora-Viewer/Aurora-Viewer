@@ -47,6 +47,43 @@ function Get-IncrementalDirs([string]$Target) {
         Where-Object { Test-Path -LiteralPath $_ -PathType Container }
 }
 
+# The file new-task.ps1 leaves in a target\ before it frees its incremental
+# caches: its date is the last build, which the trim would otherwise erase.
+$LastBuildMarker = 'aurora-last-build'
+
+# When Cargo last built into the target directory $Target, or $null when
+# nothing tells. Cargo 1.100 keeps no deps\ folder any more (its artefacts
+# are in build\<crate>\<hash>\): incremental\ was the only date left, and
+# once new-task.ps1 freed it the next run took the task for infinitely idle
+# and deleted its whole target\. So the date is the newest of, per profile
+# folder (debug, ci, release…): deps\ and .fingerprint\ (older Cargo),
+# incremental\, build\ and its per-crate folders, the files Cargo puts in the
+# profile folder itself (exe, .d, .pdb); and the marker above.
+function Get-LastBuildTime([string]$Target) {
+    if (-not (Test-Path -LiteralPath $Target -PathType Container)) { return }
+    $dates = @(Get-Item -LiteralPath (Join-Path $Target $LastBuildMarker) -Force -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.LastWriteTime })
+    foreach ($prof in Get-ChildItem -LiteralPath $Target -Directory -Force -ErrorAction SilentlyContinue) {
+        foreach ($c in Get-ChildItem -LiteralPath $prof.FullName -Force -ErrorAction SilentlyContinue) {
+            if (-not $c.PSIsContainer) { $dates += $c.LastWriteTime; continue }
+            if ($c.Name -in 'deps', '.fingerprint', 'incremental') { $dates += $c.LastWriteTime }
+            if ($c.Name -eq 'build') {
+                $dates += $c.LastWriteTime
+                $dates += @(Get-ChildItem -LiteralPath $c.FullName -Directory -Force -ErrorAction SilentlyContinue |
+                        ForEach-Object { $_.LastWriteTime })
+            }
+        }
+    }
+    if ($dates) { ($dates | Sort-Object -Descending)[0] }
+}
+
+# Writes the marker of Get-LastBuildTime: $When, the last build of $Target.
+function Set-LastBuildMarker([string]$Target, [datetime]$When) {
+    $marker = Join-Path $Target $LastBuildMarker
+    [IO.File]::WriteAllText($marker, "Last Cargo build into this folder, kept by scripts/new-task.ps1.`n")
+    [IO.File]::SetLastWriteTime($marker, $When)
+}
+
 # --- Shared Cargo configuration: build gate and compiler cache -----------------
 # <root>\.cargo\config.toml covers the main repository and every task of
 # work\, whatever the command (check, demo, tests). The scripts write it with

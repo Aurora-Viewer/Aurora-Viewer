@@ -88,6 +88,48 @@ pub fn process_memory() -> Option<ProcessMemory> {
     None
 }
 
+/// The machine's memory as the system counts it (bytes). On Windows the
+/// commit charge too: what every program has committed, against the limit
+/// of the RAM and the page file together. When the charge reaches the
+/// limit every allocation fails, in every program, whatever each one holds
+/// (crash reports #2927, #2935: out of memory with the viewer at 2 GB while
+/// Blender ran). Linux commits lazily: no limit is given there (0).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SystemMemory {
+    pub total: u64,
+    pub available: u64,
+    pub committed: u64,
+    pub commit_limit: u64,
+}
+
+/// The machine's memory now (None where it is not known).
+pub fn system_memory() -> Option<SystemMemory> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        // SAFETY: plain-old-data structure, all zeroes is a valid value.
+        let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+        m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        // SAFETY: `m` is a MEMORYSTATUSEX whose `dwLength` is set, as the
+        // call requires; it writes that structure only.
+        let ok = unsafe { GlobalMemoryStatusEx(&mut m) };
+        (ok != 0).then_some(SystemMemory {
+            total: m.ullTotalPhys,
+            available: m.ullAvailPhys,
+            // (the "page file" figures of this call are the commit charge
+            // and its limit, RAM included)
+            committed: m.ullTotalPageFile.saturating_sub(m.ullAvailPageFile),
+            commit_limit: m.ullTotalPageFile,
+        })
+    }
+    #[cfg(target_os = "linux")]
+    {
+        proc_text::parse_meminfo(&std::fs::read_to_string("/proc/meminfo").ok()?)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    None
+}
+
 /// One thread of the process: its name (empty when it has none) and the
 /// processor cycles it has run (nanoseconds on Linux, as
 /// `thread_cpu::cycles`).
@@ -906,6 +948,28 @@ pub mod proc_text {
         Some(out)
     }
 
+    /// `/proc/meminfo`: `MemTotal` and `MemAvailable` (in kB); None
+    /// without both (kernels before 3.14 have no `MemAvailable`).
+    pub fn parse_meminfo(text: &str) -> Option<super::SystemMemory> {
+        let (mut total, mut available) = (None, None);
+        for line in text.lines() {
+            let Some((key, value)) = line.split_once(':') else {
+                continue;
+            };
+            let kb = value.split_whitespace().next().and_then(|v| v.parse::<u64>().ok());
+            match key {
+                "MemTotal" => total = kb,
+                "MemAvailable" => available = kb,
+                _ => {}
+            }
+        }
+        Some(super::SystemMemory {
+            total: total?.saturating_mul(1024),
+            available: available?.saturating_mul(1024),
+            ..Default::default()
+        })
+    }
+
     /// `/proc/stat`: the whole machine's (idle, total) ticks, then each
     /// core's in core order. Idle counts the wait for the disk (`iowait`),
     /// as Windows' idle time does; `guest` is already inside `user`.
@@ -1026,6 +1090,17 @@ mod tests {
             (700_000 << 10, 812_340 << 10, 500_000 << 10, 1000 << 10)
         );
         assert_eq!(proc_text::parse_status("Name:\tx\nThreads:\t1\n"), None);
+    }
+
+    #[test]
+    fn proc_meminfo_gives_the_machine_memory() {
+        let text = "MemTotal:       32768000 kB\nMemFree:         1000000 kB\nMemAvailable:    8192000 kB\n\
+                    Committed_AS:   40000000 kB\nCommitLimit:    20000000 kB\n";
+        let m = proc_text::parse_meminfo(text).expect("parsed");
+        assert_eq!((m.total, m.available), (32_768_000 << 10, 8_192_000 << 10));
+        // Linux commits lazily: no limit is reported
+        assert_eq!((m.committed, m.commit_limit), (0, 0));
+        assert_eq!(proc_text::parse_meminfo("MemTotal: 1000 kB\nMemFree: 10 kB\n"), None);
     }
 
     #[test]

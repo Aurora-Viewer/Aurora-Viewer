@@ -162,9 +162,24 @@ fn bit(state: (u32, u32), b: u32) -> (bool, bool) {
 
 /// A clickable name (agent or group SLURL of the panel).
 fn name_link(ui: &mut egui::Ui, p: &Palette, name: &str) -> bool {
+    name_response(ui, p, name).clicked()
+}
+
+/// The label of [`name_link`], for a row that also has a right-click menu.
+fn name_response(ui: &mut egui::Ui, p: &Palette, name: &str) -> egui::Response {
     ui.add(egui::Label::new(RichText::new(name).size(12.0).color(p.violet_light)).sense(egui::Sense::click()))
         .on_hover_text(aurora_i18n::tr!("build-ui-general-open-profile"))
-        .clicked()
+}
+
+/// A group's name link, with the shared right-click menu of a group link
+/// (`context::group_link_menu`, menu_url_group.xml); returns whether it was
+/// clicked (the group's profile).
+fn group_link(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) -> bool {
+    let name = world.land.group_name(&id, &world.groups.groups);
+    let label = name.clone().unwrap_or_else(|| aurora_i18n::tr!("common-loading").into());
+    let resp = name_response(ui, p, &label);
+    crate::ui::context::group_link_menu(&resp, p, world, id, name.as_deref());
+    resp.clicked()
 }
 
 /// Which Legacy window's `@shownames` test the rows of the panel follow.
@@ -233,13 +248,6 @@ fn open_profile(ctx: &egui::Context, requests: &mut Vec<Request>, world: &World,
     } else {
         crate::ui::profile::request_open_in(ctx, NameScope::Roster, id);
     }
-}
-
-fn group_name(world: &mut World, id: Uuid) -> String {
-    world
-        .land
-        .group_name(&id, &world.groups.groups)
-        .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into())
 }
 
 /// The shared General editor and its detached property dialogs must use
@@ -485,8 +493,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             if !owners_identical {
                 text(ui, p, aurora_i18n::tr!("status-multiple"));
             } else if group_owned {
-                let name = group_name(world, first.group_id);
-                if name_link(ui, p, &name) {
+                if group_link(ui, p, world, first.group_id) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
             } else if person_link(ui, p, world, names, NameScope::Owner, first.owner_id) {
@@ -502,7 +509,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 // group's id included
                 text(ui, p, &world.rlva_anonymous(first.last_owner_id).display_name);
             } else if first.last_owner_id == first.group_id {
-                if name_link(ui, p, &group_name(world, first.group_id)) {
+                if group_link(ui, p, world, first.group_id) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
             } else if person_link(ui, p, world, names, NameScope::Owner, first.last_owner_id) {
@@ -511,8 +518,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         });
         row(ui, p, aurora_i18n::tr!("common-group-2"), identity_width, |ui| {
             if same(&|x| x.group_id) && !first.group_id.is_nil() {
-                let name = group_name(world, first.group_id);
-                if name_link(ui, p, &name) {
+                if group_link(ui, p, world, first.group_id) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
             } else {
@@ -687,8 +693,15 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             crate::ui::widgets::divider(ui, p);
         }
         ui.horizontal(|ui| {
-            if legacy && ui.button(aurora_i18n::tr!("build-legacy-copy-keys")).clicked() {
-                tool.ui.requests.push(Request::CopyKeys);
+            if legacy {
+                let copy = ui.button(aurora_i18n::tr!("build-legacy-copy-keys"));
+                if copy.clicked() {
+                    tool.ui.requests.push(Request::CopyKeys {
+                        feedback: copy.id,
+                        anchor: copy.rect,
+                    });
+                }
+                crate::ui::widgets::copied_feedback(ui.ctx(), p, copy.id, super::window_rect(ui.ctx()));
             }
             let roots = tool.roots(world);
             let (search, search_mixed) = super::common::same(
@@ -765,7 +778,7 @@ fn ownership_permissions(
     let everyone = perm_state(&refs, |x| x.everyone_mask);
     let next = perm_state(&refs, |x| x.next_owner_mask);
     let first_column_width = (!super::legacy::active(ui)).then(|| {
-        let text_width = [aurora_i18n::tr!("common-move"), aurora_i18n::tr!("common-edit")]
+        let text_width = [aurora_i18n::tr!("common-move"), aurora_i18n::tr!("common-modify")]
             .into_iter()
             .map(|caption| {
                 egui::WidgetText::from(RichText::new(caption).size(12.0))
@@ -806,7 +819,7 @@ fn ownership_permissions(
             let (v, t) = bit(next, mask);
             // Transfer remains enabled by the next owner's Copy bit (LLPanelPermissions).
             let (caption, tentative, enabled) = match mask {
-                perm::MODIFY => (aurora_i18n::tr!("common-edit"), t, next_ok && base.0 & perm::MODIFY != 0),
+                perm::MODIFY => (aurora_i18n::tr!("common-modify"), t, next_ok && base.0 & perm::MODIFY != 0),
                 perm::COPY => (
                     aurora_i18n::tr!("common-copy-2"),
                     t || !can_copy,

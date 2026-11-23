@@ -19,6 +19,7 @@ mod bloom;
 mod clouds;
 pub mod clouds_noise;
 mod contact_shadows;
+pub mod curvature;
 mod cutout;
 // (Vulkan only: Metal textures stay with wgpu's allocator)
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
@@ -40,6 +41,7 @@ mod histogram;
 pub mod hud;
 mod label_depth;
 pub mod light_tiles;
+pub mod look_thumbs;
 pub mod looks;
 pub mod main_thread;
 mod motion_debug;
@@ -67,6 +69,7 @@ pub mod second_view;
 mod selection;
 pub mod shadow_cull;
 mod shadow_merge;
+mod soft_shadows;
 #[cfg(test)]
 mod specular_aa;
 pub mod spirv_fix;
@@ -134,6 +137,8 @@ pub use hud::HudView;
 pub use label_depth::{WORLD_OVERLAY_NEAR_W, clip_world_line, world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use renderer::{CASCADES, RenderError};
+// What a tile of a photo draws around what it keeps for the soft shadows.
+pub use soft_shadows::tile_reach as soft_shadow_tile_reach;
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
 pub use ui_blur::{blurred_backdrop, set_ui_blur};
@@ -315,6 +320,7 @@ mod shader_tests {
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
             return;
         };
+        let fragment = crate::test_gpu::fragment_inv_w(fragment, &adapter);
         let features = adapter.features() & wgpu::Features::DEPTH_CLIP_CONTROL;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: features,
@@ -325,6 +331,7 @@ mod shader_tests {
             r#"
 struct ProbeFrame {{view_proj:mat4x4<f32>}};
 @group(0) @binding(0) var<uniform> frame:ProbeFrame;
+fn world_clip(p:vec3<f32>)->vec4<f32> {{return frame.view_proj*vec4<f32>(p,1.0);}}
 struct VsIn {{@builtin(vertex_index) vertex:u32,@builtin(instance_index) layer:u32}};
 struct WaterOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>,@location(1) level:f32}};
 struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
@@ -628,10 +635,12 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                 reference = Some(row);
                 for x in 0..8 {
                     assert_eq!(data[x], 0.0, "air must not write an interface");
-                    // Clipping a 200 m triangle to this tiny target has sub-mm
-                    // interpolation error, well below the 1 cm sheet spacing.
+                    // Clipping a 200 m triangle to this tiny target leaves an
+                    // interpolation error of about 1 mm (0.00035 at 0.3 m on an
+                    // AMD Vulkan driver), well below the 1 cm sheet spacing
+                    // (0.0078 between the two sheets at 0.3 m).
                     assert!(
-                        (data[7 * 64 + x] - expected).abs() < 0.0002,
+                        (data[7 * 64 + x] - expected).abs() < 0.001,
                         "the nearest interface must win in either order, including before near: delta {delta}, order {order:?}, got {} expected {expected}",
                         data[7 * 64 + x]
                     );
@@ -652,6 +661,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
         let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
         let env = include_str!("shaders/env.wgsl");
         let depth = &env[env.find("fn water_interface_depth(").expect("depth")..env.find("// Event history").expect("end")];
+        let depth = crate::test_gpu::fragment_inv_w(depth, &adapter);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water exclusion regression"),
             source: wgpu::ShaderSource::Wgsl(
@@ -659,13 +669,16 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                     r#"
 struct Frame {{view_proj:mat4x4<f32>}};
 @group(0) @binding(0) var<uniform> frame:Frame;
+fn world_clip(p:vec3<f32>)->vec4<f32> {{return frame.view_proj*vec4<f32>(p,1.0);}}
 struct WaterOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
 struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
 @vertex fn vertex(@builtin(vertex_index) v:u32,@builtin(instance_index) layer:u32)->WaterOut {{
     let corners=array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0),vec2<f32>(3.0,-1.0),vec2<f32>(-1.0,3.0));
     let w=1.0+f32(layer);
     let world=vec3<f32>(corners[v]*w,w);
-    return WaterOut(vec4<f32>(corners[v],0.5,1.0),world);
+    // The clip position the frame's matrix gives this point: the depth
+    // reads the fragment's 1/w, like the viewer's water.
+    return WaterOut(vec4<f32>(corners[v]*w,0.5*w,w),world);
 }}
 {depth}
 "#
@@ -1119,6 +1132,20 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     #[test]
     fn ssr_shader_is_valid() {
         validate(&format!("{}\n{}", crate::COMMON_SHADER, include_str!("shaders/ssr.wgsl")));
+    }
+
+    /// The variants compiled while the soft shadows are off (`SOFT_PATH`
+    /// false in common.wgsl) are valid too.
+    #[test]
+    fn scene_and_ssr_shaders_without_the_soft_path_are_valid() {
+        let common = crate::renderer::common_shader_for(false);
+        validate(&format!(
+            "{}\n{}\n{}",
+            common,
+            include_str!("shaders/object.wgsl"),
+            include_str!("shaders/env.wgsl")
+        ));
+        validate(&format!("{}\n{}", common, include_str!("shaders/ssr.wgsl")));
     }
 
     #[test]

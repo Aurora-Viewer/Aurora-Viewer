@@ -1471,6 +1471,7 @@ fn production_receive_path_hides_protocol_before_chat_and_applies_regular_world_
     assert!(sim.bridge.accept_candidate(&sim.world, sim.now));
     let count = sim.world.inventory.items.len();
     sim.event(NetEvent::InventoryUpdated {
+        bulk: false,
         folders: Vec::new(),
         items: vec![aurora_net::inventory::InvItem {
             id: Uuid::from_u128(0xAB_CD),
@@ -2110,6 +2111,7 @@ fn worn_firestorm_bridge_is_only_detached_once_without_any_inventory_or_script_e
     let folder = Uuid::from_u128(0xF501);
     let item = Uuid::from_u128(0xF502);
     sim.world.apply(NetEvent::InventoryUpdated {
+        bulk: false,
         folders: vec![
             InvFolder {
                 id: fs,
@@ -2340,6 +2342,54 @@ fn a_bridge_turned_off_at_login_is_never_made() {
     }
     assert_eq!((sim.copies, sim.uploads, sim.attaches), (0, 0, 0));
     assert!(sim.world.inventory.items.values().all(|i| i.name != NAME));
+}
+
+/// Longest gap between two motor refreshes, held for 10 s at `fps` with the
+/// script answering `rtt` after each command (bridge.lsl releases the motor
+/// 1.5 s after the last one: `gMotionCommand`).
+fn longest_motor_refresh_gap(fps: f32, rtt: Duration) -> Duration {
+    let mut sim = Simulator::new();
+    sim.ready();
+    sim.bridge.commands.clear();
+    sim.bridge.motion = Motion::motor(3, 2.0, 1.7);
+    let start = sim.now;
+    let frame = Duration::from_secs_f32(1.0 / fps);
+    let mut sends: Vec<Instant> = Vec::new();
+    let mut at = start;
+    while at < start + Duration::from_secs(10) {
+        if let Some((request, sequence, _)) = sim.bridge.pending
+            && sends.last().is_some_and(|sent| at >= *sent + rtt)
+        {
+            sim.event(NetEvent::BridgeReply {
+                request,
+                result: Ok(Ack {
+                    sequence,
+                    enabled: true,
+                    ..Default::default()
+                }),
+            });
+        }
+        let before = sim.bridge.sequence;
+        sim.bridge.send_mode(&sim.prefs, at);
+        if sim.bridge.sequence != before {
+            sends.push(at);
+        }
+        at += frame;
+    }
+    sends.windows(2).map(|w| w[1] - w[0]).max().expect("several refreshes")
+}
+
+#[test]
+fn a_background_frame_rate_keeps_refreshing_the_motor_inside_the_script_watchdog() {
+    // A window without the focus draws at the background cap (15 by
+    // default, 5 or less on a busy card). The 500 ms refresh still reaches
+    // the script well inside its 1.5 s watchdog, even behind a busy
+    // region's 600 ms round trip: the frame rate is not why an unfocused
+    // swimmer was let go (the focus suspension was, #2449).
+    for fps in [15.0, 5.0, 2.0] {
+        let gap = longest_motor_refresh_gap(fps, Duration::from_millis(600));
+        assert!(gap < Duration::from_millis(1100), "{fps} fps: {gap:?}");
+    }
 }
 
 /// The worn bridge of the simulator, as the world knows it.

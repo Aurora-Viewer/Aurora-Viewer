@@ -11,7 +11,7 @@
 //! - Same texts as the classic lines (`draw_line`): links, mentions, emoji,
 //!   find highlights, history greyed and looked up for nothing.
 
-use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, presence, view};
+use super::{LineEnv, Mark, chat_text_bracketed, chat_text_marked, hhmm, history_tone, line_name_menu, presence, view};
 use crate::theme::Palette;
 use crate::ui::fonts::chat_size;
 use crate::world::chat_log::format::Slt;
@@ -116,8 +116,18 @@ fn text_width(ui: &egui::Ui, text: &str, size: f32, max: f32) -> f32 {
 fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLine, mark: Option<Mark>) {
     let (p, world) = (env.p, env.world);
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
-    let text = super::system_text(&line.text);
-    let width = text_width(ui, &text, chat_size(ui.ctx(), TEXT_SIZE), ui.available_width() * 0.86);
+    let brackets = super::system_brackets(world, line);
+    // the brackets are drawn with the text: the pill takes their room too
+    let width = if brackets {
+        text_width(
+            ui,
+            &format!("[{}]", line.text),
+            chat_size(ui.ctx(), TEXT_SIZE),
+            ui.available_width() * 0.86,
+        )
+    } else {
+        text_width(ui, &line.text, chat_size(ui.ctx(), TEXT_SIZE), ui.available_width() * 0.86)
+    };
     ui.add_space(3.0);
     ui.vertical_centered(|ui| {
         egui::Frame::new()
@@ -127,18 +137,19 @@ fn system_pill(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::ChatLi
             .show(ui, |ui| {
                 ui.set_max_width(width);
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                    chat_text_marked(
+                    chat_text_bracketed(
                         ui,
                         p,
                         env.emoji,
                         world,
                         line.wording(env.names),
                         env.want_names,
-                        &text,
+                        &line.text,
                         chat_size(ui.ctx(), 12.0),
                         tone.unwrap_or(p.muted),
                         true,
                         mark,
+                        brackets,
                     );
                 });
             });
@@ -238,8 +249,8 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                 )
                 .sense(egui::Sense::click()),
             );
-            if object && !line.source.is_nil() {
-                super::object_sender(&r.on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
+            if object {
+                super::line_object_sender(r, p, world, line, env.menu);
             } else if !avatar.is_nil() {
                 line_name_menu(&r, p, world, avatar, env.names, line, env.menu);
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -339,7 +350,10 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
         if !own && look.tail {
             let pic = egui::Rect::from_min_size(egui::pos2(rect.left() - PIC_GAP - PIC, rect.bottom() - PIC), egui::Vec2::splat(PIC));
             sender_picture(ui, env, line, pic, &name, avatar, object, logged);
-            if !avatar.is_nil() {
+            if object {
+                let cube = ui.interact(pic, ui.scope_id().with("sender"), egui::Sense::click());
+                super::line_object_sender(cube.on_hover_text(name.as_str()), p, world, line, env.menu);
+            } else if !avatar.is_nil() {
                 let resp = ui.interact(pic, ui.scope_id().with("sender"), egui::Sense::click());
                 line_name_menu(&resp, p, world, avatar, env.names, line, env.menu);
                 if resp

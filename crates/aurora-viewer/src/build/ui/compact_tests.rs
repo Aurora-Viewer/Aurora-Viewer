@@ -120,7 +120,7 @@ fn construction_clears_forbidden_vectors_for_both_styles_and_the_complete_select
         inspector.settings.transform_expanded = true;
         inspector.tool.tab = 5;
         inspector.screen = vec2(1600.0, 1400.0);
-        resize_inspector(&mut inspector, vec2(700.0, 1160.0));
+        resize_inspector(&mut inspector, vec2(700.0, 1190.0));
         let idx = inspector.world.objects.index_of(&inspector.tool.selection[0]).unwrap();
         let id = inspector.world.objects.get(idx).unwrap().full_id;
         for (rights, linked, known, expected) in [
@@ -210,7 +210,7 @@ fn construction_hides_forbidden_geometry_and_feature_parameters() {
         inspector.settings.legacy_window = legacy;
         inspector.settings.transform_expanded = false;
         inspector.screen = vec2(1600.0, 1400.0);
-        resize_inspector(&mut inspector, vec2(700.0, 1160.0));
+        resize_inspector(&mut inspector, vec2(700.0, 1190.0));
         let idx = inspector.world.objects.index_of(&inspector.tool.selection[0]).unwrap();
         let object = inspector.world.objects.get_mut(idx).unwrap();
         object.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_FLEXIBLE;
@@ -530,16 +530,34 @@ fn mesh_inspector_is_interactive_without_modify_and_selection_numbers_stay_with_
     inspector.tool.faces.insert(key, [0, 2, 5].into_iter().collect());
     let (_, texts) = inspector.show(Vec::new());
     for (item, number) in [(Item::Face, "0, 2, 5"), (Item::Linked, "0")] {
+        // the link number is in the "Edit linked parts" option
         let target = inspector
             .ctx
             .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
-            .unwrap();
-        let label = if item == Item::Face {
-            aurora_i18n::tr!("build-compact-face-value", number = number)
-        } else {
-            aurora_i18n::tr!("build-compact-link-value", number = number)
-        };
-        assert!(texts.iter().any(|(text, rect)| text == &label && target.contains_rect(*rect)));
+            .unwrap_or(egui::Rect::EVERYTHING);
+        if item == Item::Face {
+            // the face buttons 0 to 8, those three on
+            assert!((0..9).all(|face| {
+                texts
+                    .iter()
+                    .any(|(text, rect)| text == &face.to_string() && target.contains_rect(*rect))
+            }));
+            let on = inspector
+                .tool
+                .face_buttons(&inspector.world)
+                .map(|state| state == crate::build::face_buttons::FaceButton::On);
+            assert_eq!(
+                on.iter()
+                    .enumerate()
+                    .filter(|(_, on)| **on)
+                    .map(|(face, _)| face)
+                    .collect::<Vec<_>>(),
+                number.split(", ").map(|n| n.parse::<usize>().unwrap()).collect::<Vec<_>>()
+            );
+            continue;
+        }
+        let label = aurora_i18n::tr!("build-compact-link-value", number = number);
+        assert!(texts.iter().any(|(text, rect)| text == &label && target.contains(rect.center())));
     }
     for _ in 0..12 {
         let (next, _) = inspector.show(Vec::new());
@@ -1379,6 +1397,8 @@ struct Inspector {
     text_fonts: Vec<(String, f32)>,
     /// A window drawn before the build tools that takes Escape for itself.
     escape_taken_first: bool,
+    /// The keys the build tools are given as held.
+    mods: Mods,
 }
 
 impl Inspector {
@@ -1409,6 +1429,7 @@ impl Inspector {
             inventory_surface: None,
             numeric_drag: None,
             escape_taken_first: false,
+            mods: Mods::default(),
             native_pixels_per_point: 1.0,
             screen: egui::vec2(1280.0, 900.0),
             text_fonts: Vec::new(),
@@ -1456,7 +1477,7 @@ impl Inspector {
                 &mut self.tool,
                 &mut self.world,
                 &mut self.settings,
-                Mods::default(),
+                self.mods,
                 &mut env,
             );
         });
@@ -1618,7 +1639,7 @@ fn create_panel_holds_still_at_every_width_around_its_scroll_bar() {
     // viewport. Keep the marker visible while the shape grid crosses the
     // scroll-bar threshold at the current construction layout's height.
     for width in (300..=450).step_by(3) {
-        resize_inspector(&mut inspector, vec2(width as f32, 820.0));
+        resize_inspector(&mut inspector, vec2(width as f32, 850.0));
         let first = place(&inspector.show(vec![]).1);
         assert!(first.is_some(), "Create options missing at width {width}");
         for _ in 0..4 {
@@ -1823,7 +1844,7 @@ fn navigation_sets_the_resize_floor_and_settings_glyph_stays_square() {
         }
         let glyph = inspector
             .ctx
-            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("compact_icon_glyph", "settings-filled"))))
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("header_summary_icon", "settings-filled"))))
             .unwrap();
         assert_eq!(glyph.width(), glyph.height());
         assert!(window.contains_rect(glyph));
@@ -1967,25 +1988,35 @@ fn material_previews_are_larger_above_their_options_and_open_the_correct_picker(
             .collect();
         for rect in &rects {
             assert!(window.contains_rect(*rect));
-            assert!((78.0..=82.1).contains(&rect.width()));
+            // PBR and Blinn-Phong swatches share one size
+            assert!((54.0..=58.1).contains(&rect.width()), "{rect:?}");
             assert!((rect.width() - rect.height()).abs() < 0.1);
         }
-        assert!((rects[0].top() - rects[1].top()).abs() < 0.1);
-        assert!(rects[0].right() < rects[1].left());
         if pbr {
-            assert!((rects[2].top() - rects[0].top()).abs() < 0.1);
-            assert!(rects[3].top() > rects[0].bottom());
-            assert!((rects[3].left() - rects[0].left()).abs() < 0.1);
-            assert!((rects[4].top() - rects[3].top()).abs() < 0.1);
+            // the material and its base colour, the normal and emissive
+            // maps under them, then the ORM map
+            assert!((rects[0].top() - rects[1].top()).abs() < 0.1);
+            assert!(rects[0].right() < rects[1].left());
+            assert!(rects[2].top() > rects[0].bottom());
+            assert!((rects[2].left() - rects[0].left()).abs() < 0.1);
+            assert!((rects[3].top() - rects[2].top()).abs() < 0.1);
+            assert!(rects[2].right() < rects[3].left());
+            assert!(rects[4].top() > rects[2].bottom());
+            assert!((rects[4].left() - rects[0].left()).abs() < 0.1);
         } else {
-            assert!((rects[2].top() - rects[0].top()).abs() < 0.1);
+            // one column: diffuse, normal, specular
+            for pair in rects.windows(2) {
+                assert!(pair[1].top() > pair[0].bottom());
+                assert!((pair[1].left() - pair[0].left()).abs() < 0.1);
+            }
         }
-        let surface = texts
+        // above the face options, which start with Occlude water
+        let options = texts
             .iter()
-            .find(|(text, _)| text == aurora_i18n::tr!("build-material-surface"))
+            .find(|(text, _)| text == aurora_i18n::tr!("build-ui-texture-occlude-water"))
             .unwrap()
             .1;
-        assert!(rects.iter().all(|rect| rect.bottom() < surface.top()));
+        assert!(rects.iter().all(|rect| rect.bottom() < options.top()));
         let point = rects[1].center();
         inspector.show(vec![egui::Event::PointerMoved(point)]);
         for pressed in [true, false] {
@@ -2299,7 +2330,13 @@ fn material_update_keeps_controls_and_focus_until_the_new_material_loads() {
     );
     Arc::make_mut(inspector.world.objects.get_mut(idx).unwrap().te.as_mut().unwrap()).faces[0].material_id = uuid::Uuid::nil();
     let (_, texts) = inspector.show(vec![]);
-    assert!(!texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-environment")));
+    // without a specular map, glossiness and environment stay in place,
+    // greyed, at their defaults: the controls under them do not move
+    assert!(texts.iter().any(|(text, _)| text == aurora_i18n::tr!("common-environment")));
+    assert!(
+        !texts.iter().any(|(text, _)| text == "46"),
+        "the cleared material's environment is gone"
+    );
 }
 
 #[test]
@@ -2776,7 +2813,7 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
             (rect.size() - expanded.size()).length() < 1.0,
             "Switching tool changed the chosen size: {tool:?}"
         );
-        assert_eq!(
+        assert!(
             inspector
                 .tool
                 .ui
@@ -2784,11 +2821,11 @@ fn inspector_resize_fills_the_chosen_size_and_preserves_it_across_sections_and_t
                 .targets
                 .iter()
                 .any(|(item, panel, _)| { *item == crate::build::layout::Item::Actions && *panel == crate::build::layout::Panel::Footer }),
-            tool == Tool::Create
+            "the options show with every tool, so the bars under them stay in place: {tool:?}"
         );
-        assert_eq!(
+        assert!(
             texts.iter().any(|(text, _)| text == aurora_i18n::tr!("build-compact-linked")),
-            tool == Tool::Create
+            "the options show with every tool: {tool:?}"
         );
     }
 }
@@ -3217,6 +3254,119 @@ fn a_pbr_uv_edit_keeps_the_other_component_inherited_from_the_material() {
             }
         }
     }
+}
+
+/// #3885: on the PBR tab, Repeats / meter shows the material's repeats
+/// (getSelectedGLTFMaterialMaxRepeats) and writes the override's texture
+/// transform scale of the picked channel, or all four under "All"
+/// (onCommitGLTFRepeatsPerMeter); the texture entry's repeats, which a PBR
+/// face ignores, stay as they were. The normal map has its own scale:
+/// under "All" the field shows the base color's alone and is not mixed,
+/// as the Legacy Viewer reads it. Both window styles.
+#[test]
+fn pbr_repeats_per_meter_edits_the_material_transforms() {
+    let asset = uuid::Uuid::from_u128(0x3885);
+    let base = aurora_assets::material::TextureTransform {
+        scale: [2.0, 3.0],
+        offset: [0.2, 0.3],
+        rotation: 0.0,
+    };
+    let normal = aurora_assets::material::TextureTransform { scale: [6.0, 6.0], ..base };
+    let transforms = [base, normal, base, base];
+    for legacy in [false, true] {
+        for channel in [0usize, 2] {
+            let case = format!("legacy={legacy} channel={channel}");
+            let mut inspector = material_inspector();
+            inspector.settings.legacy_window = legacy;
+            inspector.tool.tab = 3;
+            inspector.tool.ui.tex_tab = 1;
+            inspector.tool.ui.pbr_channel = channel;
+            let key_ = inspector.tool.selection[0];
+            let idx = inspector.world.objects.index_of(&key_).unwrap();
+            let n = inspector.tool.num_faces(&inspector.world, idx) as u8;
+            let object = inspector.world.objects.get_mut(idx).unwrap();
+            // the same size on every axis: each face shows max(2, 3) / 2
+            object.scale = glam::Vec3::splat(2.0);
+            object.extra.render_materials = vec![(u8::MAX, asset)];
+            let before: Vec<(f32, f32)> = object.te.as_ref().unwrap().faces[..usize::from(n)]
+                .iter()
+                .map(|f| (f.scale_s, f.scale_t))
+                .collect();
+            inspector.scene.materials.insert(
+                asset,
+                aurora_assets::PbrMaterial {
+                    transforms,
+                    ..Default::default()
+                },
+            );
+            inspector.list_contents(idx);
+            inspector.show(vec![]);
+            crate::ui::widgets::size_floater(&inspector.ctx, super::super::INSPECTOR_ID, egui::vec2(390.0, 1500.0));
+            for _ in 0..5 {
+                inspector.show(vec![]);
+            }
+            let (_, texts) = inspector.show(vec![]);
+            let caption = aurora_i18n::tr!("build-ui-texture-repeats-meter");
+            // max(2, 3) / 2 for the base color, 6 / 2 for the normal map
+            let want = if channel == 2 { 3.0 } else { 1.5 };
+            let (shown, rect) = row_field(&texts, caption).unwrap_or_else(|| panic!("{case}: no field beside {caption}"));
+            assert!(
+                aurora_i18n::parse_number(&shown).is_some_and(|v| (v as f32 - want).abs() < 1e-5),
+                "{case}: the field shows the material's repeats, not {shown}"
+            );
+            press(&mut inspector, rect.center());
+            inspector.tool.out.clear();
+            inspector.show(vec![egui::Event::Text(aurora_i18n::number_text("4"))]);
+            key(&mut inspector, egui::Key::Enter);
+            inspector.show(vec![]);
+            let edited: Vec<usize> = if channel == 0 { (0..4).collect() } else { vec![channel - 1] };
+            let object = inspector.world.objects.get(idx).unwrap();
+            for face in 0..n {
+                let mut material = aurora_assets::PbrMaterial {
+                    transforms,
+                    ..Default::default()
+                };
+                material.apply_override(&BuildTool::gltf_override(&inspector.world, idx, face));
+                for (c, t) in material.transforms.iter().enumerate() {
+                    let scale = if edited.contains(&c) { [8.0, 8.0] } else { transforms[c].scale };
+                    assert_eq!((t.scale, t.offset), (scale, base.offset), "{case}: face {face} channel {c}");
+                }
+                let f = object.te.as_ref().unwrap().face(usize::from(face));
+                assert_eq!(
+                    (f.scale_s, f.scale_t),
+                    before[usize::from(face)],
+                    "{case}: face {face} keeps its repeats"
+                );
+            }
+            assert!(
+                inspector.tool.out.iter().any(|command| matches!(
+                    command,
+                    aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::Cap { cap, .. }) if cap == "ModifyMaterialParams"
+                )),
+                "{case}: the override is sent"
+            );
+        }
+    }
+}
+
+#[test]
+fn gltf_repeats_follow_the_faces_axes() {
+    let t = aurora_assets::material::TextureTransform {
+        scale: [4.0, 2.0],
+        offset: [0.0, 0.0],
+        rotation: 0.0,
+    };
+    let size = glam::Vec3::new(2.0, 4.0, 0.5);
+    // face 0 (top): s along x, t along y: max(4 / 2, 2 / 4)
+    assert_eq!(texture::gltf_max_repeats(&t, size, 0), 2.0);
+    // face 2: s along y, t along z: max(4 / 4, 2 / 0.5)
+    assert_eq!(texture::gltf_max_repeats(&t, size, 2), 4.0);
+    // face 1: s along x, t along z: max(4 / 2, 2 / 0.5)
+    assert_eq!(texture::gltf_max_repeats(&t, size, 1), 4.0);
+    assert_eq!(texture::gltf_repeats_scale(3.0, size, 0), [6.0, 12.0]);
+    assert_eq!(texture::gltf_repeats_scale(3.0, size, 2), [12.0, 1.5]);
+    // a flat axis does not divide by zero
+    assert!(texture::gltf_max_repeats(&t, glam::Vec3::ZERO, 0).is_finite());
 }
 
 /// The value under a row's caption: the first number or "—" to its right,

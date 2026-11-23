@@ -236,11 +236,13 @@ fn mesh_base_hull_keeps_custom_collision_first_then_uses_the_smallest_nonempty_l
 #[test]
 fn mesh_default_lods_use_legacy_generation_and_one_third_targets() {
     // genMeshOptimizerLODs truncates base / 3^(3 - level).
-    assert_eq!(default_lod_targets(3000), [111, 333, 1000, 3000]);
+    assert_eq!(default_lod_targets(3000, 1), [111, 333, 1000, 3000]);
     // #3433's 1,400 triangles: 466, 155 and 51 below the High LOD.
-    assert_eq!(default_lod_targets(1400), [51, 155, 466, 1400]);
+    assert_eq!(default_lod_targets(1400, 1), [51, 155, 466, 1400]);
     // 10 / 27 truncates to 0 there; the target stays at least 1.
-    assert_eq!(default_lod_targets(10), [1, 1, 3, 10]);
+    assert_eq!(default_lod_targets(10, 1), [1, 1, 3, 10]);
+    assert_eq!(default_lod_targets(10, 6), [6, 6, 6, 10]);
+    assert_eq!(default_lod_targets(0, 0), [0; 4]);
     let mut scene = Scene::default();
     scene.models.push(Model {
         name: "Counted".into(),
@@ -262,6 +264,45 @@ fn mesh_default_lods_use_legacy_generation_and_one_third_targets() {
         sources(&draft),
         [LodSource::Legacy, LodSource::Legacy, LodSource::Legacy, LodSource::File]
     );
+}
+
+#[test]
+fn mesh_saved_generation_modes_migrate_to_the_automatic_chain() {
+    for name in ["Legacy", "Auto", "Combine", "Fast"] {
+        let saved = format!("\"{name}\"");
+        assert_eq!(serde_json::from_str::<LodSource>(&saved).expect("saved mode"), LodSource::Legacy);
+    }
+    assert_eq!(serde_json::to_string(&LodSource::Legacy).expect("automatic mode"), "\"Legacy\"");
+    assert_eq!(
+        serde_json::from_str::<LodSource>("\"Reliable\"").expect("reliable mode"),
+        LodSource::Reliable
+    );
+}
+
+#[test]
+fn mesh_lod_model_budgets_preserve_each_nonempty_material_face() {
+    let mut scene = crate::imports::tests::mesh_fixture().scene.as_ref().clone();
+    let first = &mut scene.models[0];
+    let face = first.faces[0].clone();
+    first.faces = vec![face.clone(); 3];
+    let mut second = first.clone();
+    second.faces = vec![face.clone(), face];
+    for face in &mut second.faces {
+        face.indices.truncate(3);
+    }
+    let mut empty = second.faces[0].clone();
+    empty.indices.clear();
+    second.faces.push(empty);
+    scene.models.push(second);
+    assert_eq!(minimum_lod_triangles(&scene), 5);
+    let loaded = Draft::new(scene.clone(), HashMap::new());
+    assert_eq!(loaded.lods[0].triangles, 5, "the default cannot hide a material face");
+    for target in [0, 4, 5, 6, 17, 38, 100] {
+        let targets = model_lod_targets(&scene.models, target);
+        assert!(targets[0] >= 3);
+        assert_eq!(targets[1], 2, "single-triangle faces retain their only triangle");
+        assert_eq!(targets.iter().sum::<usize>(), target.clamp(5, 38));
+    }
 }
 
 #[test]

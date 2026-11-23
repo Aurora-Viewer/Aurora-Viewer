@@ -122,6 +122,10 @@ impl App {
                     egui::pos2(1000.0, 90.0),
                     crate::ik_edit::poser::COMPACT_SIZE,
                 );
+            } else if mode == "frame" {
+                // the framed joint sits at the centre of the view: the
+                // window stays on the left, clear of it
+                widgets::place_floater(&self.egui_ctx, "poser", egui::pos2(10.0, 70.0), egui::vec2(700.0, 760.0));
             } else {
                 widgets::place_floater(
                     &self.egui_ctx,
@@ -307,6 +311,13 @@ impl App {
                 crate::ik_edit::poser::Request::Cancel(peer) => consent.cancel(peer),
                 // The Movelock window's Repair: recompile and restart both scripts.
                 crate::ik_edit::poser::Request::RepairBridge => self.bridge_runtime.retry(Instant::now()),
+                crate::ik_edit::poser::Request::ObjectName(object) => {
+                    let target = self.world.objects.index_of_uuid(&object).and_then(|i| self.world.objects.get(i));
+                    if let Some((handle, object)) = target.map(|o| (o.key.region, o.full_id)) {
+                        // through `send`, as every other property request (the demo answers it)
+                        self.send(aurora_net::NetCommand::RequestObjectProperties { handle, object });
+                    }
+                }
             }
         }
         // in the photo mode, the notice stays over the poser window it

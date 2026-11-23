@@ -101,6 +101,10 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             AppLink::InventoryShow => ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory),
+            AppLink::Preferences(path) => {
+                self.options_ui.open_setting(path);
+                ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+            }
             AppLink::Experience(id) => self.world.experiences.open_profile(id),
             AppLink::Classified(id) => self.show_search_one(Tab::Classifieds, Key::Id(id)),
             AppLink::Event(id) => self.show_search_one(Tab::Events, Key::Event(id)),
@@ -135,7 +139,7 @@ impl App {
     /// `unblock` asks first (`BlockStep::AskUnblock`), whether the link was
     /// clicked in a text or came from outside the viewer.
     fn run_agent_verb(&mut self, id: Uuid, verb: AgentVerb) {
-        match verb.block_step(self.world.mutes.is_muted_id(&id)) {
+        match verb.block_step(self.world.object_block_entry(&id).is_some()) {
             BlockStep::Nothing => return,
             BlockStep::AskUnblock => {
                 let object = match verb {
@@ -220,7 +224,7 @@ impl App {
             log::info!("app link: unblocking cancelled");
             return;
         }
-        if !self.world.mutes.is_muted_id(&ask.id) {
+        if self.world.object_block_entry(&ask.id).is_none() {
             return;
         }
         log::info!("app link: unblocking confirmed");

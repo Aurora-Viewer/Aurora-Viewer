@@ -18,19 +18,49 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LodSource {
     File,
-    Auto,
-    Combine,
-    Fast,
     Reliable,
     Above,
-    /// The Legacy Viewer's automatic chain, part by part.
+    /// Automatic generation retains the Legacy Viewer's chain and saved identity.
+    #[serde(alias = "Auto", alias = "Combine", alias = "Fast")]
     Legacy,
 }
 /// Lowest, Low, Medium and High targets, following
 /// LLModelPreview::genMeshOptimizerLODs (indra/newview/llmodelpreview.cpp):
-/// base triangles / 3^(3 - level), truncated and at least one triangle.
-pub fn default_lod_targets(high_triangles: usize) -> [usize; 4] {
-    std::array::from_fn(|level| (high_triangles / 3usize.pow((3 - level) as u32)).max(1))
+/// base triangles / 3^(3 - level), with at least one triangle per nonempty
+/// material face so a generated level cannot discard one of its surfaces.
+pub fn default_lod_targets(high_triangles: usize, minimum_triangles: usize) -> [usize; 4] {
+    let minimum = minimum_triangles.min(high_triangles);
+    std::array::from_fn(|level| (high_triangles / 3usize.pow((3 - level) as u32)).max(minimum))
+}
+
+pub fn minimum_lod_triangles(scene: &Scene) -> usize {
+    scene.models.iter().map(process::minimum_lod_triangles).sum()
+}
+
+/// Reserve every model's material faces before sharing the reducible triangles.
+/// Cumulative integer shares spend the requested budget without rounding losses.
+fn model_lod_targets(models: &[Model], triangles: usize) -> Vec<usize> {
+    let minimum: usize = models.iter().map(process::minimum_lod_triangles).sum();
+    let total: usize = models.iter().map(Model::triangles).sum();
+    let available = total - minimum;
+    let remaining = triangles.clamp(minimum, total) - minimum;
+    let mut cumulative = 0u128;
+    let mut assigned = 0;
+    models
+        .iter()
+        .map(|model| {
+            let minimum = process::minimum_lod_triangles(model);
+            cumulative += (model.triangles() - minimum) as u128;
+            let share = if available == 0 {
+                0
+            } else {
+                (remaining as u128 * cumulative / available as u128) as usize
+            };
+            let target = minimum + share - assigned;
+            assigned = share;
+            target
+        })
+        .collect()
 }
 #[derive(Clone)]
 pub struct Lod {
@@ -166,7 +196,7 @@ impl Draft {
     }
     pub fn from_shared(scene: Arc<Scene>, images: HashMap<usize, LocalImage>) -> Self {
         let triangles = scene.models.iter().map(Model::triangles).sum::<usize>();
-        let targets = default_lod_targets(triangles);
+        let targets = default_lod_targets(triangles, minimum_lod_triangles(&scene));
         let skin = scene.models.iter().any(|m| m.skin.is_some());
         let mut draft = Self {
             inspector: inspector::Inspector::new(&scene),
@@ -410,7 +440,10 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
     {
         return Err(AssetError::invalid("mesh scale or linkset size"));
     }
-    let total = draft.scene.models.iter().map(Model::triangles).sum::<usize>().max(1);
+    let targets = draft
+        .lods
+        .each_ref()
+        .map(|lod| model_lod_targets(&draft.scene.models, lod.triangles));
     let mut hull_scales = vec![Vec::new(); draft.scene.models.len()];
     for instance in &draft.scene.instances {
         if let Some(scales) = hull_scales.get_mut(instance.model) {
@@ -450,23 +483,17 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                         .and_then(Option::as_ref)
                         .cloned()
                         .ok_or_else(|| AssetError::invalid("high LOD cannot use the LOD above"))?,
-                    method => process::lod(
+                    source @ (LodSource::Legacy | LodSource::Reliable) => process::lod(
                         high,
                         process::LodOptions {
-                            triangles: if spec.error_mode {
-                                0
-                            } else {
-                                high.triangles() * spec.triangles / total
-                            },
+                            triangles: if spec.error_mode { 0 } else { targets[level][index] },
                             // Firestorm uses 100% error in triangle-budget mode;
                             // the saved error threshold applies only to error mode.
                             error: if spec.error_mode { spec.error } else { 1.0 },
-                            method: match method {
-                                LodSource::Auto => process::Method::Auto,
-                                LodSource::Reliable => process::Method::Reliable,
-                                LodSource::Legacy => process::Method::Legacy,
-                                LodSource::Fast => process::Method::Fast,
-                                _ => process::Method::Precise,
+                            method: if source == LodSource::Legacy {
+                                process::Method::Legacy
+                            } else {
+                                process::Method::Reliable
                             },
                             crease_angle: None,
                             error_only: spec.error_mode,
@@ -766,6 +793,7 @@ impl Imports {
         let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && !e.reloading) else {
             return;
         };
+        entry.sync_image_size(self.load_preferences.limit_texture_size);
         let Some(Source::Mesh(draft)) = &mut entry.source else {
             return;
         };
