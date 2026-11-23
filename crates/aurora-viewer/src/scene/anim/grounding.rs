@@ -90,6 +90,9 @@ const RISER: f32 = 0.05;
 /// How far a higher step may reach into a footprint, from its edge, and
 /// still be the riser in front of or behind the foot rather than its floor.
 const RISER_OVERLAP: f32 = 0.05;
+/// How far both authored feet may sink below the floor together and be
+/// carried by the body rather than by the knees (`Placement::apply`).
+const COMMON_SINK: f32 = 0.02;
 
 /// The point of the sole under the ankle.
 fn under_ankle(corners: [Vec3; 4], sole: [Vec3; 4]) -> Vec3 {
@@ -451,7 +454,26 @@ impl Placement {
                 .into_iter()
                 .fold(f32::INFINITY, f32::min)
         });
-        let source: Vec<Mat4> = source.into_iter().map(|matrix| frame.to_world * matrix).collect();
+        // Many stands move the pelvis a few millimetres on locked knees, so
+        // the authored feet sink into the floor and rise off it with each
+        // breath. Planting them by bending the knees flexed nearly straight
+        // legs several degrees per millimetre, in time with the bob: the
+        // legs stuttered. The sink both feet share lifts the whole source
+        // instead, and the body with it; a deeper sink still bends the
+        // knees. Clearances are continuous, so a foot that lifts eases it
+        // out. Feet without a known support keep the source as it is.
+        let sink = if pose.allowed.iter().all(|allowed| *allowed) && self.feet.iter().all(|foot| foot.departure.is_some()) {
+            clearances
+                .iter()
+                .map(|clearance| (-clearance).max(0.0))
+                .fold(f32::INFINITY, f32::min)
+                .min(COMMON_SINK)
+        } else {
+            0.0
+        };
+        let clearances = clearances.map(|clearance| clearance + sink);
+        let lifted = Mat4::from_translation(Vec3::Z * sink) * frame.to_world;
+        let source: Vec<Mat4> = source.into_iter().map(|matrix| lifted * matrix).collect();
         let reference_floor = frame.to_world.transform_point3(Vec3::Z * setup.floor + pose.reference_offset).z;
         let inverse_frame = frame.to_world.inverse();
         let query = |point: Vec3| {
@@ -479,7 +501,7 @@ impl Placement {
                     .max(0.0);
             }
             self.height = Some(Height {
-                value: reference_floor + frame.to_world.transform_vector3(seed.pelvis).z,
+                value: reference_floor + frame.to_world.transform_vector3(seed.pelvis).z - sink,
                 velocity: 0.0,
             });
             self.acquired = Some(Acquisition {
@@ -645,7 +667,7 @@ impl Placement {
         let offset = Vec3::Z * (height.value - reference_floor);
         let mut result = Placed {
             rotations: pose.rotations.to_vec(),
-            pelvis: inverse_frame.transform_vector3(offset),
+            pelvis: inverse_frame.transform_vector3(offset + Vec3::Z * sink),
         };
         for (side, leg) in setup.legs.iter().enumerate() {
             if !pose.allowed[side] {
@@ -676,7 +698,7 @@ impl Placement {
             .map(|(&placed, &raw)| placed * raw.inverse())
             .collect();
         log::trace!(target: "aurora_viewer::foot_placement", "terrain anchor={} body={:.5} reference={reference_floor:.5} contact={:?} targets={targets:?}",
-            frame.standing_anchor, height.value, self.feet.each_ref().map(|foot| foot.contact));
+            frame.standing_anchor, height.value + sink, self.feet.each_ref().map(|foot| foot.contact));
         self.held = Some(result.clone());
         Some(result)
     }
@@ -1443,6 +1465,50 @@ mod tests {
             .iter()
             .map(|leg| rest[leg.joints[2]].w_axis.x + leg.sole[0].x)
             .fold(f32::INFINITY, f32::min)
+    }
+
+    #[test]
+    fn grounding_a_breathing_stand_keeps_its_straight_knees() {
+        // A stand that bobs the pelvis on locked knees sinks its authored
+        // feet into the floor: the body carries that sink, not the knees.
+        let f = Fixture::new();
+        let now = Instant::now();
+        let knee = |world: &[Mat4], side: &str| {
+            let at = |bone: &str| world[f.rig.names[&format!("m{bone}{side}")]].w_axis.truncate();
+            (at("Hip") - at("Knee")).angle_between(at("Ankle") - at("Knee")).to_degrees()
+        };
+        for fps in [30, 60, 144] {
+            for (bob, sway) in [(0.003_f32, 0.0_f32), (0.01, 0.012)] {
+                let mut placement = Placement::default();
+                for i in 0..=fps * 6 {
+                    let t = i as f32 / fps as f32;
+                    let frame = f.frame(Vec3::new(sway * (t * std::f32::consts::PI).sin(), 0.0, 0.0), 0.0);
+                    let pelvis = Vec3::Z * bob * (t * std::f32::consts::TAU * 0.7).sin();
+                    let placed = f.sample(
+                        &mut placement,
+                        &f.rig.local_rot,
+                        pelvis,
+                        Some(frame),
+                        now + Duration::from_secs_f32(t),
+                        &flat,
+                    );
+                    f.check(&placement, &placed, &f.rig.local_rot, pelvis, frame, &flat);
+                    let output = f
+                        .rig
+                        .world_with(&placed.rotations, pelvis + placed.pelvis, &f.base.local_pos, &f.base.scale);
+                    let source = f.rig.world_with(&f.rig.local_rot, pelvis, &f.base.local_pos, &f.base.scale);
+                    for side in ["Left", "Right"] {
+                        let bend = knee(&source, side) - knee(&output, side);
+                        // Without the shared sink: 4.7 degrees for 3 mm, 11 for
+                        // 10 mm. What is left is the foot height's smoothing.
+                        assert!(
+                            bend.abs() < 0.5,
+                            "a {bob} m bob bent the {side} knee by {bend} degrees at {fps} fps, time {t}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
