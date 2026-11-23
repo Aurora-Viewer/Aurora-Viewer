@@ -1936,6 +1936,7 @@ mod tests {
             adapters: Vec::new(),
             notice: None,
             vulkan: None,
+            ray_tracing: Default::default(),
         };
         let input = egui::RawInput {
             screen_rect: Some(screen),

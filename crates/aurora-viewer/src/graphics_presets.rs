@@ -671,6 +671,11 @@ pub struct Effects {
     pub shadow_softness: f32,
     pub screen_indirect_light: bool,
     pub screen_indirect_intensity: f32,
+    /// Ray tracing, experimental: off in every level, so the safe graphics
+    /// turn it off (a backup or a saved preset written before it holds
+    /// none: off).
+    #[serde(default)]
+    pub ray_tracing: crate::settings::RayTracingSettings,
 }
 
 fn shadow_softness() -> f32 {
@@ -687,6 +692,7 @@ impl Effects {
         shadow_softness: crate::settings::SHADOW_SOFTNESS,
         screen_indirect_light: false,
         screen_indirect_intensity: crate::settings::SCREEN_INDIRECT_INTENSITY,
+        ray_tracing: crate::settings::RayTracingSettings::OFF,
     };
     /// High's: the contact shadows.
     pub const HIGH: Effects = Effects {
@@ -832,7 +838,8 @@ impl Values {
     /// The method and quality of the occlusion only count while it is on,
     /// and GTAO's quality only under GTAO (the page greys them out); the
     /// same for the effects: the contact shadows only with the shadows, the
-    /// indirect light only with GTAO, a strength only while its effect is on.
+    /// indirect light only with GTAO, a strength only while its effect is on,
+    /// ray tracing only with the shadows, and its reflections only with SSR.
     /// The Glow switch never counts: no level sets it, so turning it off
     /// keeps the level lit instead of "Custom".
     fn as_shown(self) -> Values {
@@ -841,6 +848,7 @@ impl Values {
         let ao_method = if self.ssao == 0 { 0 } else { self.ao_method };
         let e = self.effects;
         let indirect = ao_method == 1 && e.screen_indirect_light;
+        let traced = self.shadow_quality > 0 && e.ray_tracing.enabled;
         let effects = Effects {
             bloom: e.bloom,
             bloom_strength: if e.bloom {
@@ -861,6 +869,12 @@ impl Values {
                 round(e.screen_indirect_intensity, 0.1)
             } else {
                 Effects::OFF.screen_indirect_intensity
+            },
+            ray_tracing: crate::settings::RayTracingSettings {
+                enabled: traced,
+                lights: traced && e.ray_tracing.lights,
+                indirect: traced && e.ray_tracing.indirect,
+                reflections: traced && self.ssr && e.ray_tracing.reflections,
             },
         };
         Values {
@@ -926,6 +940,7 @@ impl Values {
                 shadow_softness: s.shadow_softness,
                 screen_indirect_light: s.screen_indirect_light,
                 screen_indirect_intensity: s.screen_indirect_intensity,
+                ray_tracing: s.ray_tracing,
             },
         }
     }
@@ -969,6 +984,7 @@ impl Values {
         s.shadow_softness = self.effects.shadow_softness;
         s.screen_indirect_light = self.effects.screen_indirect_light;
         s.screen_indirect_intensity = self.effects.screen_indirect_intensity;
+        s.ray_tracing = self.effects.ray_tracing;
     }
 }
 
@@ -1489,6 +1505,51 @@ mod tests {
         // outside the levels, all off
         let d = Settings::default();
         assert!(!d.bloom && !d.contact_shadows && !d.screen_indirect_light);
+        assert_eq!(d.ray_tracing, crate::settings::RayTracingSettings::OFF);
+    }
+
+    #[test]
+    fn every_level_turns_ray_tracing_off_and_it_counts_only_with_what_it_needs() {
+        use crate::settings::RayTracingSettings;
+        let all = RayTracingSettings {
+            enabled: true,
+            lights: true,
+            indirect: true,
+            reflections: true,
+        };
+        // experimental: no level has it, the safe graphics' Potato included
+        for p in [Preset::Potato, Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+            let mut s = Settings {
+                ray_tracing: all,
+                ..Default::default()
+            };
+            p.apply(&mut s);
+            assert_eq!(s.ray_tracing, RayTracingSettings::OFF, "{p:?}");
+        }
+        // Low has no shadows: what is left on traces nothing, the level stays
+        let mut s = Settings::default();
+        Preset::Low.apply(&mut s);
+        s.ray_tracing = all;
+        assert_eq!(Preset::matching(&s), Some(Preset::Low));
+        // High has them: on is custom, and its options alone are not
+        Preset::High.apply(&mut s);
+        s.ray_tracing = RayTracingSettings { enabled: false, ..all };
+        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        s.ray_tracing.enabled = true;
+        assert_eq!(Preset::matching(&s), None);
+        // a saved profile and the safe graphics' backup keep it, and one
+        // written before it reads as off
+        let kept = Values::read(&s);
+        assert_eq!(kept.effects.ray_tracing, all);
+        let mut json = serde_json::to_value(kept).expect("the values serialize");
+        let back: Values = serde_json::from_value(json.clone()).expect("the values read back");
+        assert_eq!(back, kept);
+        json["effects"]
+            .as_object_mut()
+            .expect("the effects are an object")
+            .remove("ray_tracing");
+        let before: Values = serde_json::from_value(json).expect("values written before ray tracing read");
+        assert_eq!(before.effects.ray_tracing, RayTracingSettings::OFF);
     }
 
     #[test]

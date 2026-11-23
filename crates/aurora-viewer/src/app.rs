@@ -638,6 +638,8 @@ pub struct App {
     cursor_shown: crate::cursors::Shown,
     /// Demo mode: answers to the build tools' commands.
     build_demo: crate::build::demo_sim::DemoSim,
+    /// AURORA_DEMO_RT_WALK (app/double_click.rs).
+    rt_walk_demo: double_click::RtWalkDemo,
     /// Cursor position in physical pixels.
     cursor_pos: (f32, f32),
     /// Last walk-key press (for double-tap running) and the active temporary run.
@@ -1186,12 +1188,16 @@ pub struct App {
     texture_res_demo: Option<crate::demo::texture_res::TextureResDemo>,
     /// AURORA_DEMO_AA_SWITCH: the anti-aliasing changes still to come.
     aa_switch_demo: Vec<(u64, u8)>,
+    /// AURORA_DEMO_RT_SWITCH: ray tracing turned on at given frames.
+    rt_switch_demo: Option<crate::demo::rt_switch::RtSwitch>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_TEXTURE_MISSING: boxes whose texture is missing.
     texture_missing_demo: Option<crate::demo::missing_texture::MissingTextureDemo>,
     /// AURORA_DEMO_SLIDESHOW: a panel whose texture changes every few seconds.
     slideshow_demo: Option<crate::demo::slideshow::SlideshowDemo>,
+    /// The lamp of `AURORA_DEMO_LAMP_BLINK` and `AURORA_DEMO_LAMP_MOVE`.
+    lamp_demo: Option<crate::demo::lamp::LampDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_TP_AWAY: the demo region's coarse locations while away.
@@ -1666,6 +1672,9 @@ fn apply_test_overrides(settings: &mut Settings) {
     if let Ok(v) = std::env::var("AURORA_HDR") {
         settings.hdr_emissive = v != "0";
     }
+    if let Ok(v) = std::env::var("AURORA_SSR") {
+        settings.ssr = v != "0";
+    }
     if let Ok(v) = std::env::var("AURORA_OCCLUSION") {
         settings.occlusion_culling = v != "0";
     }
@@ -2038,6 +2047,7 @@ impl App {
             cursors: crate::cursors::Cursors::with_palette(&palette),
             cursor_shown: Default::default(),
             build_demo: Default::default(),
+            rt_walk_demo: Default::default(),
             cursor_pos: (0.0, 0.0),
             last_tap: None,
             temp_run: None,
@@ -2358,9 +2368,11 @@ impl App {
             } else {
                 Vec::new()
             },
+            rt_switch_demo: std::env::var_os("AURORA_DEMO").and_then(|_| crate::demo::rt_switch::from_env()),
             sculpt_missing_demo: None,
             texture_missing_demo: None,
             slideshow_demo: None,
+            lamp_demo: None,
             experience_demo: None,
             away_coarse: Vec::new(),
             geometry_demo: None,
@@ -11629,6 +11641,20 @@ impl App {
             self.settings.antialiasing = mode;
             gfx.renderer.apply_settings(self.photo_render_settings());
         }
+        let tracing = gfx.renderer.rt_tracing();
+        if let Some(step) = self
+            .rt_switch_demo
+            .as_mut()
+            .and_then(|d| d.tick(self.frame_count, Instant::now(), tracing))
+        {
+            use crate::demo::rt_switch::Step;
+            let rt = &mut self.settings.ray_tracing;
+            match step {
+                Step::Shadows => rt.enabled = true,
+                Step::Effects => (rt.lights, rt.indirect, rt.reflections) = (true, true, true),
+            }
+            gfx.renderer.apply_settings(self.photo_render_settings());
+        }
         if !gfx.renderer.vr_engaged()
             && self.vr_start_in == 0
             && let Some(camera) = self.vr_camera.take()
@@ -14766,6 +14792,7 @@ impl App {
         }
         if self.demo {
             self.demo_double_click_steps();
+            self.demo_rt_walk_steps();
             self.demo_avatar_travel_steps();
         }
         self.demo_hud_drag_steps();
@@ -15196,6 +15223,10 @@ impl App {
                 self.camera.position,
                 self.camera.forward(),
             );
+        }
+        // AURORA_DEMO_LAMP_BLINK: a lamp switched off and on
+        if let Some(demo) = &mut self.lamp_demo {
+            demo.tick(self.frame_count, &mut self.world, self.camera.position, self.camera.forward());
         }
         // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
         // without a click (walking into the pad, arriving)
@@ -24379,6 +24410,19 @@ impl ApplicationHandler for App {
                 for ev in crate::demo::animesh_events() {
                     self.world.apply(ev);
                 }
+                // AURORA_DEMO_RT_WALK: our avatar heavy and hatted
+                if crate::demo::rt_walk()
+                    && let Some(wearer) = self
+                        .world
+                        .objects
+                        .index_of_uuid(&self.world.agent_id)
+                        .and_then(|i| self.world.objects.get(i))
+                        .map(|o| o.key.local_id)
+                {
+                    for ev in crate::demo::rt_walk_events(wearer) {
+                        self.world.apply(ev);
+                    }
+                }
                 if crate::demo::animation_edit_demo()
                     && let Some(wearer) = self
                         .world
@@ -24424,6 +24468,7 @@ impl ApplicationHandler for App {
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
             self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();
             self.slideshow_demo = crate::demo::slideshow::SlideshowDemo::from_env();
+            self.lamp_demo = crate::demo::lamp::LampDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             self.turn_demo = crate::demo::turn::TurnDemo::from_env();

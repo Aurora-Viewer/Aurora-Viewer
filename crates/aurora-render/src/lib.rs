@@ -65,6 +65,8 @@ mod readback;
 mod render_thread;
 mod renderer;
 mod rlva;
+mod rt_light_changes;
+mod rt_shadows;
 pub mod second_view;
 mod selection;
 pub mod shadow_cull;

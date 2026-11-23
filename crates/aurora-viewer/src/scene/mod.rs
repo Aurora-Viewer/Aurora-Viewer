@@ -3188,6 +3188,7 @@ impl Scene {
 
         if self.update_origin(world) {
             renderer.cut_motion_history();
+            renderer.rebase_world();
             self.water.clear(renderer);
         }
 
@@ -4234,6 +4235,11 @@ impl Scene {
     /// avatar, or the root of an animated-mesh (animesh) linkset.
     pub fn skeleton_owner(world: &World, idx: usize) -> Option<(Uuid, usize)> {
         animesh::owner(&world.objects, idx)
+    }
+
+    /// The palette base of a skeleton owner that has one.
+    pub fn palette_of(&self, owner: &Uuid) -> Option<u32> {
+        self.palette_slots.get(owner).map(|s| *s * anim::PALETTE_JOINTS as u32)
     }
 
     /// Palette base (first matrix index) for a skeleton owner.
