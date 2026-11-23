@@ -25,6 +25,7 @@ const DD_LEAVES: u32 = 1u;
 const DD_SAND: u32 = 2u;
 const DD_PAPER: u32 = 3u;
 const DD_EMBERS: u32 = 4u;
+const DD_MOTES: u32 = 5u;
 
 fn dd_rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
     let t = 2.0 * cross(q.xyz, v);
@@ -110,7 +111,7 @@ fn vs_debris(
         width_m = size * 0.6;
         across = normalize(cross(along, to_cam) + vec3<f32>(1e-5, 0.0, 0.0));
     } else {
-        // an ember: a point that faces the camera
+        // an ember or a mote: a point that faces the camera
         across = normalize(cross(vec3<f32>(0.0, 0.0, 1.0), to_cam) + vec3<f32>(1e-5, 0.0, 0.0));
         along = cross(to_cam, across);
     }
@@ -127,11 +128,12 @@ fn vs_debris(
     return out;
 }
 
-// A cheap hash of the pixel for the hashed alpha test (stable per pixel
-// and frame: TAA smooths it into coverage).
+// The hashed alpha test's threshold at a pixel: interleaved gradient
+// noise, moved a little each frame (TAA smooths it into the coverage; the
+// edge is the only place it decides, the rest of the card being 0 or 1).
 fn dd_dither(frag: vec2<f32>) -> f32 {
-    let n = vec2<u32>(frag) + vec2<u32>(frame.anim_clock.x * 7u, 0u);
-    return f32((n.x * 1973u + n.y * 9277u + 26699u) * 0x9e3779b9u >> 8u) / 16777216.0;
+    let shift = f32(frame.anim_clock.x % 64u) * 5.588238;
+    return fract(52.9829189 * fract(dot(frag + vec2<f32>(shift), vec2<f32>(0.06711056, 0.00583715))));
 }
 
 // A leaf's outline at `uv` (x along it from stem -1 to tip 1, y across):
@@ -149,8 +151,9 @@ fn dd_leaf_shape(uv: vec2<f32>, variant: u32) -> f32 {
     }
     // a fine toothed edge
     w *= 1.0 - 0.06 * abs(sin(t * 60.0));
-    // the stem: a thin line below the blade
-    let stem = select(0.0, 0.06 - abs(uv.y), uv.x < -0.82);
+    // the stem: a thin line below the blade (elsewhere none: well outside,
+    // not on the edge, or the whole card would be half covered)
+    let stem = select(-1.0, 0.06 - abs(uv.y), uv.x < -0.82);
     return max(w - abs(uv.y), stem);
 }
 
@@ -184,11 +187,13 @@ fn fs_debris(in: DebrisOut, @builtin(front_facing) front: bool) -> @location(0) 
         let rib = 1.0 - smoothstep(0.0, 0.05, abs(in.uv.y));
         let veins = 1.0 - smoothstep(0.0, 0.06, abs(fract((in.uv.x - abs(in.uv.y) * 0.8) * 4.0) - 0.5) - 0.44);
         base *= 1.0 - 0.25 * max(rib, veins * 0.6);
-        base *= 0.85 + 0.3 * fract(sin(dot(floor(in.uv * 6.0), vec2<f32>(12.9898, 78.233)) + f32(variant)) * 43758.5);
+        // soft blotches, no cells
+        let v = f32(variant);
+        base *= 0.9 + 0.12 * sin(in.uv.x * 5.3 + v) * sin(in.uv.y * 7.1 + v * 0.37) + 0.06 * sin((in.uv.x + in.uv.y) * 11.0 + v);
         through = 0.55;
     } else if (kind == DD_PAPER) {
         let edge = 1.0 - max(abs(in.uv.x), abs(in.uv.y) / 0.98);
-        cover = clamp(edge / max(fwidth(edge), 1e-4), 0.0, 1.0);
+        cover = clamp(edge / max(fwidth(edge), 1e-4) + 0.5, 0.0, 1.0);
         // newsprint, a flyer or a wrapper; the newsprint with its lines
         let k = variant % 4u;
         base = select(select(vec3<f32>(0.72, 0.70, 0.64), vec3<f32>(0.75, 0.75, 0.73), k == 1u), vec3<f32>(0.55, 0.2, 0.15), k == 3u);
@@ -209,6 +214,17 @@ fn fs_debris(in: DebrisOut, @builtin(front_facing) front: bool) -> @location(0) 
         let heat = life * flicker;
         emissive = mix(vec3<f32>(1.0, 0.12, 0.01), vec3<f32>(1.0, 0.55, 0.12), heat) * (6.0 * heat + 0.5) * (1.0 - smoothstep(0.0, 0.8, r));
         base = vec3<f32>(0.05);
+    } else if (kind == DD_MOTES) {
+        // a speck of dust: seen against the light, where it scatters the
+        // sun toward the eye (a sunbeam), barely elsewhere
+        let r = length(in.uv);
+        cover = (1.0 - smoothstep(0.2, 1.0, r)) * 0.9;
+        let toward_sun = max(dot(-view, frame.sun_dir.xyz), 0.0);
+        let beam = frame.sun_color.rgb * frame.sun_dir.w * (0.15 + 3.0 * pow(toward_sun, 8.0)) * shadow_factor(in.world, view, in.clip.w);
+        let sky_light = frame.sky_zenith.rgb * 0.55 + frame.sky_horizon.rgb * 0.45;
+        emissive = vec3<f32>(0.85, 0.8, 0.7) * (beam + sky_light * 0.25);
+        base = vec3<f32>(0.0);
+        cover *= clamp(dot(emissive, vec3<f32>(0.2126, 0.7152, 0.0722)) * 4.0, 0.15, 1.0);
     } else {
         discard;
     }

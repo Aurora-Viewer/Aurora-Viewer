@@ -43,6 +43,7 @@ const DK_LEAVES: u32 = 1u;
 const DK_SAND: u32 = 2u;
 const DK_PAPER: u32 = 3u;
 const DK_EMBERS: u32 = 4u;
+const DK_MOTES: u32 = 5u;
 
 // state bits (v.w as u32): the kind (low 4 bits), the motion mode (4 bits),
 // the variant (8 bits: shape and colour), landed (bit 16)
@@ -135,23 +136,20 @@ fn ds_canopy(xy: vec2<f32>) -> vec2<f32> {
 }
 
 // The ground for a particle at height `z` over `xy`: the shelter map's top
-// surface, or under the foliage there (below the canopy's top) the floor
-// beneath it, so that leaves fall through a crown to the ground under it.
+// surface where it is open above; where something is above it, the floor
+// (the topmost surface that is not foliage) if that is below it: only
+// foliage was above, and it falls through the crown to the ground under
+// it. A roof or a wall above it stays the top (it stops against it).
 fn ds_ground(xy: vec2<f32>, z: f32) -> f32 {
     let top = ds_surface(xy);
-    if ((dp.look.w & FLAG_CANOPY) == 0u || !ds_on()) { return top; }
+    if (top <= z + 0.05 || (dp.look.w & FLAG_CANOPY) == 0u || !ds_on()) { return top; }
     let uv = ds_uv(xy);
     if (any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) { return top; }
-    let at = vec2<i32>(uv * vec2<f32>(textureDimensions(debris_canopy)));
-    let c = textureLoad(debris_canopy, at, 0).xy;
-    if (c.x > 0.5 && z < c.y + 0.05) {
-        let d = textureLoad(debris_floor, at, 0);
-        // (nothing under it: the shelter map's top, as without foliage)
-        if (d >= 0.999) { return top; }
-        let m = ds_vp();
-        return (d - m[3].z) / m[2].z;
-    }
-    return top;
+    let d = textureLoad(debris_floor, vec2<i32>(uv * vec2<f32>(textureDimensions(debris_floor))), 0);
+    if (d >= 0.999) { return top; }
+    let m = ds_vp();
+    let floor = (d - m[3].z) / m[2].z;
+    return select(top, floor, floor <= z + 0.05);
 }
 
 // The surface's facing at `xy` (from its heights a texel around), for a
@@ -255,10 +253,14 @@ struct DsKindParams {
 
 fn ds_kind(kind: u32) -> DsKindParams {
     switch kind {
-        // (fine sand and dust: it settles slowly, the turbulence keeps it up)
-        case DK_SAND: { return DsKindParams(0.9, 3.0, 0.006, 1.2); }
+        // (sand: it settles within a second or two unless the turbulence
+        // and the hops along the ground keep it going)
+        case DK_SAND: { return DsKindParams(1.8, 3.0, 0.006, 0.8); }
         case DK_PAPER: { return DsKindParams(1.6, 30.0, 0.22, 1.5); }
-        case DK_EMBERS: { return DsKindParams(-0.6, 5.0, 0.025, 1.5); }
+        // (buoyant while hot; debris_sim's step makes it fall as it cools)
+        case DK_EMBERS: { return DsKindParams(-0.6, 6.0, 0.025, 1.5); }
+        // (as light as the air: they hang, close to the camera)
+        case DK_MOTES: { return DsKindParams(0.03, 25.0, 0.0025, 2.5); }
         default: { return DsKindParams(1.4, 28.0, 0.09, 12.0); }
     }
 }
@@ -450,13 +452,20 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
                 state = (state & ~(15u << DS_MODE_SHIFT)) | (next << DS_MODE_SHIFT);
             }
         } else if (kind == DK_EMBERS) {
-            // hot: it rises, more in the gusts, and flickers about
-            acc += vec3<f32>(0.0, 0.0, 1.2 * dp.wind.z);
+            // hot, it rises (more in the gusts) and flickers about; as it
+            // cools its lift fades, and a dying ember drifts back down
+            let heat = clamp(1.0 - s.z / k.life, 0.0, 1.0);
+            acc += vec3<f32>(0.0, 0.0, (1.2 * dp.wind.z + 0.8) * heat * heat - 2.2 * (1.0 - heat));
             s.x += dt * 9.0 * rate;
+        } else if (kind == DK_MOTES) {
+            // dust motes: nearly as light as the air, they hang and wander
+            // with its slightest stirring
+            let wander = vec3<f32>(sin(s.z * 0.7 + f32(seed & 255u)), cos(s.z * 0.53 + f32((seed >> 8u) & 255u)), sin(s.z * 0.31 + f32((seed >> 16u) & 255u)) * 0.5);
+            acc += wander * 0.08;
         } else {
             // sand: the turbulence near the ground kicks it up and about
-            let kick = vec3<f32>(dr(frame_seed + 21u) - 0.5, dr(frame_seed + 22u) - 0.5, dr(frame_seed + 23u) - 0.35);
-            acc += kick * (3.0 + 5.0 * dp.wind.z) * clamp(length(dp.wind.xy) / 6.0, 0.2, 1.5);
+            let kick = vec3<f32>(dr(frame_seed + 21u) - 0.5, dr(frame_seed + 22u) - 0.5, dr(frame_seed + 23u) - 0.5);
+            acc += kick * (2.0 + 3.0 * dp.wind.z) * clamp(length(dp.wind.xy) / 6.0, 0.2, 1.5);
             s.x += dt;
         }
         vel += acc * dt;
@@ -471,8 +480,9 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
                 // off it, and leave the cell it would enter
                 vel = vec3<f32>(-vel.xy * 0.3, vel.z);
                 to = vec3<f32>(p.xy, p.z);
-            } else if (kind == DK_EMBERS) {
-                // an ember that touches the ground goes out
+            } else if (kind == DK_EMBERS || kind == DK_MOTES) {
+                // an ember that touches the ground goes out; a mote settles
+                // out of sight
                 p.w = 0.0;
             } else if (kind == DK_SAND) {
                 // sand hops along the ground in the wind (saltation); in a

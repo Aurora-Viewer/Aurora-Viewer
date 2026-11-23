@@ -29,9 +29,12 @@ fn linear(c: [f32; 3], opacity: f32) -> [f32; 4] {
         srgb_to_linear(c[0]),
         srgb_to_linear(c[1]),
         srgb_to_linear(c[2]),
-        opacity.clamp(0.0, 1.0),
+        opacity.clamp(0.0, OPACITY_MAX),
     ]
 }
+
+/// The opacity sliders' top: twice what was drawn before.
+pub const OPACITY_MAX: f32 = 2.0;
 
 impl WeatherSettings {
     /// The renderer's tint (linear): the defaults give
@@ -39,7 +42,7 @@ impl WeatherSettings {
     pub fn tint(&self) -> aurora_render::WeatherTint {
         aurora_render::WeatherTint {
             rain: linear(self.rain_tint, self.rain_opacity),
-            puddle_opacity: self.puddle_opacity.clamp(0.0, 1.0),
+            thickness: self.liquid_thickness.clamp(0.0, 1.0),
             snow: linear(self.snow_tint, self.snow_opacity),
         }
     }
@@ -65,7 +68,7 @@ impl WeatherSettings {
         let clear = WeatherSettings::default();
         self.rain_tint = clear.rain_tint;
         self.rain_opacity = clear.rain_opacity;
-        self.puddle_opacity = clear.puddle_opacity;
+        self.liquid_thickness = clear.liquid_thickness;
         self.snow_tint = clear.snow_tint;
         self.snow_opacity = clear.snow_opacity;
         self.snow_size = clear.snow_size;
@@ -95,8 +98,8 @@ impl WeatherSettings {
                 self.precipitation_on = true;
                 self.precipitation = Precipitation::Rain;
                 self.rain_tint = [0.42, 0.02, 0.03];
-                self.rain_opacity = 0.9;
-                self.puddle_opacity = 0.85;
+                self.rain_opacity = 1.3;
+                self.liquid_thickness = 0.9;
                 self.fog_on = true;
                 self.fog_follows_fall = true;
                 self.fog_density = 0.25;
@@ -117,8 +120,8 @@ impl WeatherSettings {
                 self.precipitation_on = true;
                 self.precipitation = Precipitation::Rain;
                 self.rain_tint = [0.62, 0.9, 0.18];
-                self.rain_opacity = 0.8;
-                self.puddle_opacity = 0.4;
+                self.rain_opacity = 1.2;
+                self.liquid_thickness = 0.35;
                 self.fog_on = true;
                 self.fog_follows_fall = true;
                 self.fog_density = 0.3;
@@ -278,7 +281,7 @@ mod tests {
         w.apply_preset(WeatherPreset::BloodRain);
         // Ash's fall is not kept
         assert!(w.fall_melts && w.fall_speed == 1.0);
-        assert!(w.puddle_opacity > 0.5 && w.rain_tint[0] > w.rain_tint[1]);
+        assert!(w.liquid_thickness > 0.5 && w.rain_tint[0] > w.rain_tint[1]);
         w.apply_preset(WeatherPreset::Clear);
         assert_eq!(w.tint(), aurora_render::WeatherTint::NONE);
         w.apply_preset(WeatherPreset::DustStorm);

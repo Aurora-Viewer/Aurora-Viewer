@@ -16,10 +16,18 @@ pub enum DebrisChoice {
     Sand,
     Paper,
     Embers,
+    /// Dust motes hanging in the air, seen in sunbeams.
+    Motes,
 }
 
 impl DebrisChoice {
-    pub const ALL: [DebrisChoice; 4] = [DebrisChoice::Leaves, DebrisChoice::Sand, DebrisChoice::Paper, DebrisChoice::Embers];
+    pub const ALL: [DebrisChoice; 5] = [
+        DebrisChoice::Leaves,
+        DebrisChoice::Sand,
+        DebrisChoice::Paper,
+        DebrisChoice::Embers,
+        DebrisChoice::Motes,
+    ];
 
     fn render(self) -> aurora_render::DebrisKind {
         match self {
@@ -27,6 +35,7 @@ impl DebrisChoice {
             DebrisChoice::Sand => aurora_render::DebrisKind::Sand,
             DebrisChoice::Paper => aurora_render::DebrisKind::Paper,
             DebrisChoice::Embers => aurora_render::DebrisKind::Embers,
+            DebrisChoice::Motes => aurora_render::DebrisKind::Motes,
         }
     }
 
@@ -37,6 +46,7 @@ impl DebrisChoice {
             "sand" => Some(DebrisChoice::Sand),
             "paper" => Some(DebrisChoice::Paper),
             "embers" => Some(DebrisChoice::Embers),
+            "motes" => Some(DebrisChoice::Motes),
             _ => None,
         }
     }
@@ -45,7 +55,7 @@ impl DebrisChoice {
 /// The density slider's default (0..1).
 pub const DEBRIS_DENSITY_DEFAULT: f32 = 0.5;
 
-/// `AURORA_DEBRIS=<leaves|sand|paper|embers>[,stream]`: that debris on
+/// `AURORA_DEBRIS=<leaves|sand|paper|embers|motes>[,stream]`: that debris on
 /// until the Weather window is used (demo captures); `,stream` lets leaves
 /// come on the wind where no foliage is near.
 pub(crate) fn env_debris() -> Option<(DebrisChoice, bool)> {

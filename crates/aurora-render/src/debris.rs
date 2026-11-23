@@ -54,7 +54,8 @@ fn mean_life(kind: DebrisKind) -> f32 {
         DebrisKind::Leaves => 30.0,
         DebrisKind::Sand => 3.0,
         DebrisKind::Paper => 32.0,
-        DebrisKind::Embers => 5.0,
+        DebrisKind::Embers => 6.0,
+        DebrisKind::Motes => 25.0,
     }
 }
 
@@ -64,6 +65,8 @@ fn mean_life(kind: DebrisKind) -> f32 {
 pub fn spawn_ring(kind: DebrisKind) -> (f32, f32) {
     match kind {
         DebrisKind::Sand => (1.0, 14.0),
+        // motes are only seen near
+        DebrisKind::Motes => (0.8, 8.0),
         _ => (8.0, REACH - 2.0),
     }
 }
@@ -77,6 +80,8 @@ pub fn wanted_share(look: &DebrisLook, wind: Vec2, gust: f32) -> f32 {
         // camera: a share of the pool is plenty)
         DebrisKind::Sand => windy * 0.45,
         DebrisKind::Paper => windy,
+        // motes hang in still air; a wind clears them away
+        DebrisKind::Motes => 0.35 * (1.0 - 0.7 * windy),
         _ => 0.15 + 0.85 * windy,
     };
     (look.density.clamp(0.0, 1.0) * base * (0.6 + 0.8 * gust.clamp(0.0, 1.0))).clamp(0.0, 0.95)
@@ -475,6 +480,7 @@ mod tests {
             (DebrisKind::Sand, "SAND"),
             (DebrisKind::Paper, "PAPER"),
             (DebrisKind::Embers, "EMBERS"),
+            (DebrisKind::Motes, "MOTES"),
         ] {
             assert!(sim.contains(&format!("const DK_{name}: u32 = {}u;", kind.index())), "DK_{name}");
             assert!(draw.contains(&format!("const DD_{name}: u32 = {}u;", kind.index())), "DD_{name}");

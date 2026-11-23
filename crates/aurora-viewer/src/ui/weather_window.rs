@@ -1011,7 +1011,7 @@ fn tint_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             ),
             &shown,
             None,
-            egui::Slider::new(opacity, 0.0..=1.0),
+            egui::Slider::new(opacity, 0.0..=crate::weather::tint::OPACITY_MAX),
         );
         if snowing {
             let speed = format!("{:.0} %", w.fall_speed * 100.0);
@@ -1044,20 +1044,20 @@ fn tint_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                 &mut w.fall_melts,
             );
         } else {
-            let thick = format!("{:.0} %", w.puddle_opacity * 100.0);
+            let thick = format!("{:.0} %", w.liquid_thickness * 100.0);
             slider_row(
                 ui,
                 p,
                 (
-                    aurora_i18n::tr!("ui-weather-puddle-opacity"),
-                    aurora_i18n::tr!("ui-weather-puddle-opacity-tip"),
+                    aurora_i18n::tr!("ui-weather-thickness"),
+                    aurora_i18n::tr!("ui-weather-thickness-tip"),
                 ),
                 &thick,
                 Some((
-                    aurora_i18n::tr!("ui-weather-puddle-clear"),
-                    aurora_i18n::tr!("ui-weather-puddle-thick"),
+                    aurora_i18n::tr!("ui-weather-thickness-clear"),
+                    aurora_i18n::tr!("ui-weather-thickness-thick"),
                 )),
-                egui::Slider::new(&mut w.puddle_opacity, 0.0..=1.0),
+                egui::Slider::new(&mut w.liquid_thickness, 0.0..=1.0),
             );
         }
         switch_row(
@@ -1088,13 +1088,14 @@ fn debris_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                 (aurora_i18n::tr!("ui-weather-debris-sand"), true),
                 (aurora_i18n::tr!("ui-weather-debris-paper"), true),
                 (aurora_i18n::tr!("ui-weather-debris-embers"), true),
+                (aurora_i18n::tr!("ui-weather-debris-motes"), true),
             ];
             let mut i = crate::weather::DebrisChoice::ALL
                 .iter()
                 .position(|k| *k == w.debris_kind)
                 .unwrap_or(0);
             if widgets::segmented(ui, p, &mut i, &options) {
-                w.debris_kind = crate::weather::DebrisChoice::ALL[i.min(3)];
+                w.debris_kind = crate::weather::DebrisChoice::ALL[i.min(crate::weather::DebrisChoice::ALL.len() - 1)];
             }
             let amount = format!("{:.0} %", w.debris_density * 100.0);
             slider_row(

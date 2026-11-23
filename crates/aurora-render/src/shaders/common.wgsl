@@ -146,8 +146,8 @@ struct Frame {
     // side (z; 0: none)
     fog_look: array<vec4<f32>, 7>,
     // Aurora Weather's tint (types.rs WeatherTint::uniform): [0] the rain's
-    // linear colour and opacity, [1] the snow's, [2] x the puddles'
-    // opacity, y the gust (0 lulls, 1 gusts), z 1 when set (0: no tint);
+    // linear colour and opacity (0..2), [1] the snow's, [2] x the liquid's
+    // thickness, y the gust (0 lulls, 1 gusts), z 1 when set (0: no tint);
     // [3] x how fast what falls falls, y how far flakes swing (scales)
     weather_tint: array<vec4<f32>, 4>,
 };
@@ -174,8 +174,8 @@ fn snow_tint() -> vec4<f32> {
     return frame.weather_tint[1];
 }
 
-// How opaque the puddles are: 0 (clear water) when no tint is set.
-fn puddle_opacity() -> f32 {
+// How thick the rain's liquid is: 0 (clear water) when no tint is set.
+fn liquid_thickness() -> f32 {
     return frame.weather_tint[2].x;
 }
 

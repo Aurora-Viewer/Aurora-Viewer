@@ -167,14 +167,16 @@ pub struct WeatherSettings {
     pub fog_anisotropy: f32,
     /// The rain's colour (sRGB, weather/tint.rs): white is clear water.
     pub rain_tint: [f32; 3],
-    /// How much of the drops is seen (0..1; 1 as before).
+    /// How much of the drops is seen (0..2; 1 as before, 2 twice as much).
     pub rain_opacity: f32,
-    /// How opaque the puddles' liquid is (0 clear water, as before; 1 as
-    /// thick as paint: its own colour, rough, hardly a mirror).
-    pub puddle_opacity: f32,
+    /// How thick the rain's liquid is (0 clear water, as before; 1 as thick
+    /// as paint): the drops are no longer seen through, the puddles show
+    /// its own colour, rough, hardly a mirror.
+    #[serde(alias = "puddle_opacity")]
+    pub liquid_thickness: f32,
     /// The snow's colour (sRGB): falling, lying and on avatars.
     pub snow_tint: [f32; 3],
-    /// How much of the snow is seen (0..1; 1 as before).
+    /// How much of the snow is seen (0..2; 1 as before).
     pub snow_opacity: f32,
     /// How fast what falls falls (a scale, 1 as before; ash falls slower).
     pub fall_speed: f32,
@@ -253,7 +255,7 @@ impl Default for WeatherSettings {
             fog_anisotropy: fog::FOG_ANISOTROPY_DEFAULT,
             rain_tint: tint::WHITE,
             rain_opacity: 1.0,
-            puddle_opacity: 0.0,
+            liquid_thickness: 0.0,
             snow_tint: tint::WHITE,
             snow_opacity: 1.0,
             fall_speed: 1.0,

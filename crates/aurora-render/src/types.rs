@@ -1746,12 +1746,13 @@ pub struct RainLook {
 /// flakes, the lying snow and the snow on avatars.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeatherTint {
-    /// The rain's colour (linear) and opacity (0..1; 1 as before).
+    /// The rain's colour (linear) and opacity (0..2; 1 as before).
     pub rain: [f32; 4],
-    /// How opaque the puddles are (0..1; 0 the clear water of before, 1
-    /// as thick as paint: their own colour, no mirror).
-    pub puddle_opacity: f32,
-    /// The snow's colour (linear) and opacity (0..1; 1 as before).
+    /// How thick the rain's liquid is (0..1; 0 the clear water of before,
+    /// 1 as thick as paint: drops not seen through, puddles of its own
+    /// colour, hardly a mirror).
+    pub thickness: f32,
+    /// The snow's colour (linear) and opacity (0..2; 1 as before).
     pub snow: [f32; 4],
 }
 
@@ -1759,20 +1760,20 @@ impl WeatherTint {
     /// Clear rain and white snow: what was drawn before the tint.
     pub const NONE: WeatherTint = WeatherTint {
         rain: [1.0; 4],
-        puddle_opacity: 0.0,
+        thickness: 0.0,
         snow: [1.0; 4],
     };
 
     /// The frame uniform's `weather_tint` (common.wgsl): [0] the rain,
-    /// [1] the snow, [2] x the puddles' opacity, y the gust, z 1 (set: a
+    /// [1] the snow, [2] x the liquid's thickness, y the gust, z 1 (set: a
     /// frame left zeroed, a preview's, takes no tint), w the sand blowing;
     /// [3] x the fall's speed, y the flakes' flutter (scales, 1 as before).
     pub fn uniform(&self, gust: f32, fall_speed: f32, flutter: f32, sand: f32) -> [[f32; 4]; 4] {
-        let clamp = |c: [f32; 4]| [c[0].max(0.0), c[1].max(0.0), c[2].max(0.0), c[3].clamp(0.0, 1.0)];
+        let clamp = |c: [f32; 4]| [c[0].max(0.0), c[1].max(0.0), c[2].max(0.0), c[3].clamp(0.0, 2.0)];
         [
             clamp(self.rain),
             clamp(self.snow),
-            [self.puddle_opacity.clamp(0.0, 1.0), gust.clamp(0.0, 1.0), 1.0, sand.clamp(0.0, 1.0)],
+            [self.thickness.clamp(0.0, 1.0), gust.clamp(0.0, 1.0), 1.0, sand.clamp(0.0, 1.0)],
             [fall_speed.clamp(0.1, 3.0), flutter.clamp(0.0, 4.0), 0.0, 0.0],
         ]
     }
@@ -1837,6 +1838,8 @@ pub enum DebrisKind {
     Paper,
     /// Embers rising and glowing.
     Embers,
+    /// Dust motes hanging in the air, glinting in the sun.
+    Motes,
 }
 
 impl DebrisKind {
@@ -1847,6 +1850,7 @@ impl DebrisKind {
             DebrisKind::Sand => 2,
             DebrisKind::Paper => 3,
             DebrisKind::Embers => 4,
+            DebrisKind::Motes => 5,
         }
     }
 }

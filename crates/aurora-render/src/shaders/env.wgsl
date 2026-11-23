@@ -2281,7 +2281,7 @@ fn snow_flake(in: RainOut, soft: f32) -> vec4<f32> {
     if (in.world.z < frame.params.y || camera_underwater()) { discard; }
     let d = length(in.uv);
     let tint = snow_tint();
-    var alpha = (1.0 - smoothstep(0.35, 1.0, d)) * in.life * 0.85 * tint.a;
+    var alpha = min((1.0 - smoothstep(0.35, 1.0, d)) * in.life * 0.85 * tint.a, 1.0);
     if (alpha <= 0.002) { discard; }
     let view = normalize(frame.camera_pos.xyz - in.world);
     let ambient = frame.sky_zenith.rgb * 0.55 + frame.sky_horizon.rgb * 0.45;
@@ -2330,13 +2330,22 @@ fn rain_streak(in: RainOut, soft: f32) -> vec4<f32> {
     let ambient = frame.sky_horizon.rgb * 0.12;
     let lamps = rain_lamps(in.world, in.clip.xy, view);
     // the rain's tint colours what is seen through the drop and the light
-    // it gives back (white and opaque: the drop of before)
+    // it gives back (white and opaque: the drop of before); a thick liquid
+    // (blood, paint) is not seen through: its own colour, lit, with the
+    // sky's glint on it
     let tint = rain_tint();
-    let color = (mix(transmitted * 1.04, reflected, fresnel) + (glint + ambient) * (0.35 + fresnel) + lamps * (0.3 + fresnel * 0.5)) * tint.rgb;
+    let thick = liquid_thickness();
+    let water = (mix(transmitted * 1.04, reflected, fresnel) + (glint + ambient) * (0.35 + fresnel) + lamps * (0.3 + fresnel * 0.5)) * tint.rgb;
+    let sky_light = frame.sky_zenith.rgb * 0.55 + frame.sky_horizon.rgb * 0.45;
+    let body = tint.rgb * (sky_light * 0.8 + frame.sun_color.rgb * frame.sun_dir.w * 0.25 + lamps * 0.6) + reflected * fresnel * 0.25 + glint * 0.5;
+    let color = mix(water, body, thick);
 
     // drops a lamp lights stand out of the dark
     let lit = min(dot(lamps, vec3<f32>(0.2126, 0.7152, 0.0722)) * 0.12, 0.15);
-    var alpha = taper * sqrt(r) * (0.22 + fresnel * 0.55 + lit) * in.life * tint.a;
+    // (opacity above 1 shows more of the drops; a thick liquid hides what
+    // is behind it)
+    let seen = mix(0.22 + fresnel * 0.55 + lit, 0.95, thick);
+    var alpha = min(taper * sqrt(r) * seen * in.life * tint.a, 1.0);
     alpha *= 1.0 - rain_sheltered_slanted(in.world);
     // soft where a drop meets the ground or a wall behind it
     let depth = scene_depth_at(suv);
@@ -2351,7 +2360,7 @@ fn rain_streak(in: RainOut, soft: f32) -> vec4<f32> {
     if (over_water) {
         // the scene copy holds what is under the water there (the water is
         // drawn after it): no bending, only the light the drop adds
-        let lit_only = (mix(vec3<f32>(0.0), reflected, fresnel) + (glint + ambient) * (0.35 + fresnel) + lamps * (0.3 + fresnel * 0.5)) * tint.rgb;
+        let lit_only = mix((mix(vec3<f32>(0.0), reflected, fresnel) + (glint + ambient) * (0.35 + fresnel) + lamps * (0.3 + fresnel * 0.5)) * tint.rgb, body, thick);
         return vec4<f32>(apply_fog(lit_only, in.world) * alpha, 0.0);
     }
     return vec4<f32>(apply_fog(color, in.world) * alpha, alpha);
@@ -2951,14 +2960,14 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
     let darker = base * mix(1.0, mix(0.82, 0.5, porosity), soaked);
     // tinted rain stains what it soaks (white rain, the tint's default,
     // leaves it as it was)
-    let stain = mix(vec3<f32>(1.0), rain_tint().rgb, soaked * 0.35 * rain_tint().a);
+    let stain = mix(vec3<f32>(1.0), rain_tint().rgb, soaked * min(0.35 * rain_tint().a + 0.5 * liquid_thickness(), 1.0));
     let deeper = max(mix(vec3<f32>(dot(darker, lum)), darker, 1.0 + 0.3 * soaked), vec3<f32>(0.0)) * stain;
     // a film of water: a sheen of the sky and the lamps, faint on porous
     // ground; nothing is added where the sky would only lighten it into a
     // haze. The film evens out the surface's small bumps: its facing is
     // halfway to level, so the bevels of normal maps do not each catch a
     // highlight (bright outlines around every stone and leaf).
-    let film = soaked * mix(0.35, 0.1, porosity);
+    let film = soaked * mix(0.35, 0.1, porosity) * mix(1.0, 0.3, liquid_thickness());
     let nf = normalize(mix(n, vec3<f32>(0.0, 0.0, 1.0), 0.5));
     let rd = reflect(-view, nf);
     let fresnel_d = 0.02037 + 0.97963 * pow(1.0 - max(dot(nf, view), 0.0), 5.0);
@@ -3020,7 +3029,7 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         // darker, opaque, hardly a mirror). Clear water (the defaults)
         // keeps the pool of before.
         let tint = rain_tint();
-        let thick = puddle_opacity();
+        let thick = liquid_thickness();
         let sky_light = frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4;
         // (the body lit as the ground under it is, so it reads as its own
         // colour in any light, not black)
@@ -3030,7 +3039,9 @@ fn rain_wet_surface(clip: vec2<f32>, uv: vec2<f32>, world: vec3<f32>, n: vec3<f3
         let peak = max(max(tint.r, tint.g), max(tint.b, 1e-3));
         let hue = tint.rgb / peak;
         let body = mix(base * 0.3 * tint.rgb, hue * lit * mix(0.45, 0.9, sqrt(min(peak, 1.0))), thick);
-        let gloss = mix(1.0, 0.2, thick);
+        // (a thick liquid is dull: a faint, blurred sheen of the sky, the
+        // lamps' highlights small)
+        let gloss = mix(1.0, 0.06, thick);
         let reflected = mix(mirrored, sky_light * mix(vec3<f32>(1.0), tint.rgb, 0.5), thick * 0.6);
         let pool = mix(body, reflected, (0.35 + fresnel * 0.6) * gloss) + rain_wet_lamps(world, clip, np, view, 0.025, 0.06 + 0.14 * raining) * gloss;
         color = mix(color, rain_dull(pool, rain_splash_mist(raining, view.z)), puddle);
@@ -3224,12 +3235,16 @@ fn sand_snakes(world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     let t = frame.camera_pos.w;
     let along = dot(world.xy, dir);
     let across = dot(world.xy, vec2<f32>(-dir.y, dir.x));
-    let wave = across * 3.2 + 0.8 * sin(along * 0.45 + t * 0.7);
-    let flow = along * 0.35 - t * speed * 0.28;
+    // broad soft ribbons (half a metre across, a few metres long) drifting
+    // at a third of the wind's speed; thinner ones shimmered and raced
+    let wave = across * 1.1 + 0.6 * sin(along * 0.25 + t * 0.35);
+    let flow = along * 0.18 - t * speed * 0.06;
     let a = snow_noise(vec2<f32>(flow, wave));
-    let b = snow_noise(vec2<f32>(flow * 2.1 + 3.0, wave * 2.0 + 7.0));
-    let wisp = smoothstep(0.66, 0.9, a * 0.7 + b * 0.3);
-    let alpha = wisp * sand * (0.4 + 0.6 * weather_gust()) * 0.55 * (1.0 - smoothstep(25.0, 40.0, dist));
+    let b = snow_noise(vec2<f32>(flow * 1.7 + 3.0, wave * 1.6 + 7.0));
+    let wisp = smoothstep(0.55, 0.95, a * 0.75 + b * 0.25);
+    // gone where a pixel spans a ribbon (they would alias)
+    let footprint = dist * 1.15 * frame.screen.w / max(abs(dot(normalize(frame.camera_pos.xyz - world), n)), 0.1);
+    let alpha = wisp * sand * (0.4 + 0.6 * weather_gust()) * 0.3 * (1.0 - smoothstep(18.0, 32.0, dist)) * (1.0 - smoothstep(0.15, 0.4, footprint));
     if (alpha < 0.003) { return vec4<f32>(0.0); }
     let sky_light = frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4;
     let lit = sky_light * 0.6 + frame.sun_color.rgb * frame.sun_dir.w * max(frame.sun_dir.z, 0.0) * 0.8;
@@ -3361,7 +3376,7 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
         color = apply_fog(shade_pbr(base, 0.0, 0.85, 1.0, sn, view, world, lifted, clip, false) + (sheen + glint) * tint.rgb, world);
     }
     // a thinner tint lets the ground show through (opacity 1: as before)
-    let shown = cover * tint.a;
+    let shown = cover * min(tint.a, 1.0);
     return vec4<f32>(color * shown, shown);
 }
 

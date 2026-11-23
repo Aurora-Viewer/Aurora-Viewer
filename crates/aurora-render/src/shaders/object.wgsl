@@ -1038,7 +1038,7 @@ fn avatar_snow_on(m_in: Material, in: VsOut) -> Material {
     let cover_full = smoothstep(patches * 0.8, patches * 0.8 + 0.3, in.snow * up * 1.25);
     // the snow's tint (white by default), thinner as its opacity falls
     let tint = snow_tint();
-    let cover = cover_full * tint.a;
+    let cover = cover_full * min(tint.a, 1.0);
     m.color = vec4<f32>(mix(m.color.rgb, vec3<f32>(0.86, 0.88, 0.9) * tint.rgb, cover), m.color.a);
     m.roughness = mix(m.roughness, 0.85, cover);
     m.metallic *= 1.0 - cover;
