@@ -86,6 +86,8 @@ enum ChatField {
 
 #[derive(Default)]
 pub struct ChatUi {
+    /// Keyboard events for the next nearby line when two sends share a frame.
+    deferred_bar_input: Vec<egui::Event>,
     pub input: String,
     pub focus_request: bool,
     /// `start_gesture` resumes a nonempty draft at its existing caret.
@@ -93,8 +95,9 @@ pub struct ChatUi {
     /// The slash press reserved for `start_gesture`, until its release.
     gesture_key_down: Option<winit::keyboard::KeyCode>,
     pub has_focus: bool,
-    /// The local chat field keeps the keyboard after a message is sent
-    /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
+    /// The local chat field keeps the keyboard after a message is sent,
+    /// and an empty Enter leaves it there (Preferences › Chat; the Legacy
+    /// Viewer's CloseChatOnReturn off, FSNearbyChatControl::autohide).
     pub keep_focus: bool,
     /// No button back to the latest messages (Preferences › Chat ›
     /// Conversations, `Settings::chat_latest_button` off): `latest.rs`.
@@ -1004,40 +1007,77 @@ impl SendKey {
     }
 }
 
-/// Classify the send key once: releasing a modifier later in the same
-/// frame must change neither permission to send, OOC wrapping nor volume.
-/// FSNearbyChatControl / FSFloaterIM::handleKeyHere (indra/newview) read
-/// the event's mask. The ((OOC)), shout and whisper keys are the user's
-/// (`shortcuts.rs`: Alt+Enter, then none by default); Enter
-/// otherwise sends at the selected volume, an Alt chord left unclaimed
-/// (AltGr). The New line key never comes here: `input::prepare` made it
-/// a line break.
-fn send_enter(i: &egui::InputState, keys: &shortcuts::ChatKeys) -> Option<SendKey> {
+/// Honor the configurable chat shortcuts and the modifiers of this event.
+fn classify_send(event: &egui::Event, keys: &shortcuts::ChatKeys) -> Option<SendKey> {
     use crate::keybinds::Action;
-    i.events.iter().find_map(|event| {
-        let egui::Event::Key {
-            key,
-            physical_key,
-            pressed: true,
-            modifiers,
-            ..
-        } = event
-        else {
-            return None;
-        };
-        let hit = |a| keys.hit(a, *key, *physical_key, *modifiers);
-        if hit(Action::ChatOoc) {
-            Some(SendKey::Ooc)
-        } else if hit(Action::ChatShout) {
-            Some(SendKey::Shout)
-        } else if hit(Action::ChatWhisper) {
-            Some(SendKey::Whisper)
-        } else if *key == egui::Key::Enter && !modifiers.alt {
-            Some(SendKey::Normal)
-        } else {
-            None
-        }
-    })
+    let egui::Event::Key {
+        key,
+        physical_key,
+        pressed: true,
+        modifiers,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    let hit = |a| keys.hit(a, *key, *physical_key, *modifiers);
+    if hit(Action::ChatOoc) {
+        Some(SendKey::Ooc)
+    } else if hit(Action::ChatShout) {
+        Some(SendKey::Shout)
+    } else if hit(Action::ChatWhisper) {
+        Some(SendKey::Whisper)
+    } else if *key == egui::Key::Enter && !modifiers.alt {
+        Some(SendKey::Normal)
+    } else {
+        None
+    }
+}
+
+fn send_enter(i: &egui::InputState, keys: &shortcuts::ChatKeys) -> Option<SendKey> {
+    i.events.iter().find_map(|event| classify_send(event, keys))
+}
+
+/// The editor must not insert the next draft into the outgoing message,
+/// even when the caret is in the middle of a selection at send time.
+#[derive(Default)]
+struct BarSend {
+    first: Option<SendKey>,
+    another: bool,
+    next_draft: String,
+}
+
+fn bar_send(ui: &egui::Ui, keep_focus: bool, deferred: &mut Vec<egui::Event>) -> BarSend {
+    let bindings = shortcuts::get(ui.ctx());
+    let mut send = BarSend::default();
+    ui.input_mut(|i| {
+        i.events.retain(|event| {
+            let key = classify_send(event, &bindings);
+            if send.first.is_none() {
+                send.first = key;
+                return true;
+            }
+            // The bar can produce one outgoing line per UI pass. Replay a
+            // second send or an edit of the next line in the next pass.
+            match event {
+                egui::Event::Key { pressed: true, .. } if key.is_some() && !keep_focus && !send.another => {
+                    send.another = true;
+                }
+                egui::Event::Text(text) | egui::Event::Paste(text) if deferred.is_empty() => {
+                    send.next_draft.push_str(text);
+                }
+                egui::Event::Key { pressed: true, .. }
+                | egui::Event::Paste(_)
+                | egui::Event::Text(_)
+                | egui::Event::Cut
+                | egui::Event::Copy
+                | egui::Event::Ime(_) => deferred.push(event.clone()),
+                _ => return true,
+            }
+            false
+        })
+    });
+    send
 }
 
 /// An OOC line as FSNearbyChat::sendChat (fsnearbychathub.cpp) and
@@ -5375,9 +5415,12 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
 /// The local chat's field, the Legacy Viewer's chat bar (LLFloaterIMNearbyChat):
 /// Enter says, the Shout and Whisper keys (`shortcuts.rs`, none by
 /// default) shout and whisper, Alt+Enter sends ((OOC)), `/channel` and the
-/// gestures' completion; Enter on an empty field returns to movement. Shared
-/// by the full-width bar and the chat island (`bars/dock.rs`), which draws
-/// its own frame (`build` dresses the field) and shows emoji pictures.
+/// gestures' completion. With `keep_focus` (CloseChatOnReturn off,
+/// FSNearbyChatControl::autohide), Enter on an empty field leaves the
+/// keyboard there; without it, that Enter returns to movement. A second
+/// Enter in the same pass takes the bar back. Shared by the full-width bar
+/// and the chat island (`bars/dock.rs`), which draws its own frame (`build`
+/// dresses the field) and shows emoji pictures.
 pub(crate) fn bar_input(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -5395,13 +5438,26 @@ pub(crate) fn bar_input(
     // written in the empty field they crowded the bar (the human's request)
     let build = identified(|edit| build(edit).desired_width(field_width));
     let mut emoji = emoji;
+    let mut send = BarSend::default();
     let output = ui
         .horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            let deferred = std::mem::take(&mut st.deferred_bar_input);
+            if !deferred.is_empty() && ui.memory(|m| m.has_focus(bar_input_id())) {
+                ui.input_mut(|i| {
+                    i.events.splice(0..0, deferred);
+                });
+            }
             input::prepare(ui, bar_input_id(), true);
             let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
             let nav = super::emoji::codes::keys(ui, bar_input_id());
             let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+            if !st.focus_request && ui.memory(|m| m.has_focus(bar_input_id())) {
+                send = bar_send(ui, st.keep_focus, &mut st.deferred_bar_input);
+                if !st.deferred_bar_input.is_empty() {
+                    ui.ctx().request_repaint();
+                }
+            }
             let minimum = ui.spacing().interact_size.y;
             let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, field_width, minimum, build);
             if recalled {
@@ -5454,45 +5510,47 @@ pub(crate) fn bar_input(
     if resp.gained_focus() {
         st.last_field = ChatField::Bar;
     }
-    // The editor leaves ordinary Enter to this send path.
-    let send = if !focusing && (resp.has_focus() || resp.lost_focus()) {
-        {
-            let keys = shortcuts::get(ui.ctx());
-            ui.input(|i| send_enter(i, &keys))
-        }
-    } else {
-        None
-    };
-    let enter = send.is_some();
+    let enter = send.first.is_some();
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
     let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
     st.local_field(&resp, said, enter);
-    if enter {
-        resp.surrender_focus();
-    }
-    if let Some(send) = send
-        && !st.input.trim().is_empty()
-    {
-        st.last_field = ChatField::Bar;
-        st.input_history.entry(None).or_default().record(bar_input_id(), &st.input);
-        let mut text = st.suggest.expand(None, st.input.trim());
-        if send == SendKey::Ooc {
-            text = ooc(&text);
+    if let Some(key) = send.first {
+        let body = std::mem::replace(&mut st.input, send.next_draft);
+        cursor_to_end(ui.ctx(), resp.id, &st.input);
+        if !body.trim().is_empty() {
+            st.last_field = ChatField::Bar;
+            st.input_history.entry(None).or_default().record(bar_input_id(), &body);
+            let mut text = st.suggest.expand(None, body.trim());
+            if key == SendKey::Ooc {
+                text = ooc(&text);
+            }
+            let (channel, message) = channel::resolve(&text, st.selector_channel());
+            out = Some(OutgoingChat {
+                message,
+                channel,
+                chat_type: key.chat_type(ChatType::Normal),
+            });
+            // CloseChatOnReturn off keeps the keyboard. A second Enter in
+            // this pass is start-chat even when that preference is off
+            // (the bar was let go by the first Enter).
+            if st.keep_focus || send.another {
+                if !resp.has_focus() {
+                    st.focus_request = true;
+                }
+            } else {
+                resp.surrender_focus();
+            }
+        } else if st.keep_focus {
+            // FSNearbyChatControl::autohide(true) calls setFocus(false)
+            // only when CloseChatOnReturn is on. Escape and a click in
+            // the world still leave.
+        } else {
+            resp.surrender_focus();
+            if send.another {
+                st.focus_request = true;
+            }
         }
-        let (channel, message) = channel::resolve(&text, st.selector_channel());
-        out = Some(OutgoingChat {
-            message,
-            channel,
-            chat_type: send.chat_type(ChatType::Normal),
-        });
-        st.input.clear();
-        if st.keep_focus {
-            // ready for the next message; only Enter on the empty bar or a
-            // click elsewhere gives the keyboard back to the world
-            st.focus_request = true;
-        }
     }
-    // Enter on an empty bar returns to movement (like the Legacy Viewer).
     out
 }
 
