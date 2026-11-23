@@ -956,6 +956,9 @@ pub struct Scene {
     pub studio_stage: avatar_studio::Stage,
     /// Aurora Weather's tumbleweeds (their own meshes and records).
     pub tumbleweeds: tumbleweeds::Tumbleweeds,
+    /// Aurora Weather's wind at the camera (m/s, as sheltered as we are),
+    /// None without it: the flexis feel it instead of the region's.
+    pub weather_wind: Option<Vec3>,
     /// Aurora Weather's debris pictures (the user's image files).
     pub debris_textures: debris_textures::DebrisTextures,
     pub studio_pose: crate::avatar_studio::Pose,
@@ -1792,6 +1795,7 @@ impl Scene {
             studio_roots: Vec::new(),
             studio_stage: Default::default(),
             tumbleweeds: Default::default(),
+            weather_wind: None,
             debris_textures: Default::default(),
             studio_pose: Default::default(),
             studio_floor_offset: 0.0,

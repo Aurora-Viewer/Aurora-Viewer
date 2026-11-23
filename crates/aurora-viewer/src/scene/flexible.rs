@@ -134,6 +134,10 @@ impl Scene {
     }
 
     pub(super) fn sync_flexibles(&mut self, renderer: &mut Renderer, world: &World, synced: &[usize], now: Instant, view: &CullView) {
+        // (the weather wind's unevenness drifts with the hour's seconds)
+        let clock = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |d| (d.as_secs() % 3600) as f32 + d.subsec_millis() as f32 * 1e-3);
         self.flexibles
             .retain(|&idx, s| world.objects.get(idx).is_some_and(|o| o.full_id == s.id && o.is_flexible()));
         for &idx in synced {
@@ -183,9 +187,16 @@ impl Scene {
             state.last = now;
             let region = world.regions.get(&o.key.region);
             let offset = world.region_offset(o.key.region).unwrap_or(Vec3::ZERO);
+            let weather = self.weather_wind;
             state.sim.update(p, pos, rot, dt, |sample| {
                 if hud {
                     Vec3::ZERO
+                } else if let Some(w) = weather {
+                    // Aurora Weather's wind, drawn for this viewer only (the
+                    // region's otherwise, as the Legacy Viewer), a little
+                    // uneven from place to place so that flexis side by
+                    // side do not sway in step
+                    weather_gusting(w, sample, clock)
                 } else {
                     region.map_or(Vec3::ZERO, |r| r.wind.velocity(sample - offset, r.heightmap.size_x as f32))
                 }
@@ -336,5 +347,41 @@ mod tests {
         let scale = Vec3::new(0.2, 0.3, 4.0);
         let far = (scale.z * 0.5 + scale.z) + scale.truncate().length() * 0.5;
         assert!(flexi_bounds(scale) >= far);
+    }
+}
+
+/// Aurora Weather's wind `w` (m/s, one for the whole view) at `at`, `clock`
+/// seconds: a little stronger or weaker and turned a little from place to
+/// place and moment to moment (a few metres and seconds apart), so that
+/// flexis side by side do not sway in step.
+fn weather_gusting(w: Vec3, at: Vec3, clock: f32) -> Vec3 {
+    let speed = w.length();
+    if speed < 1e-3 {
+        return w;
+    }
+    let a = (at.x * 0.37 + at.y * 0.29 + clock * 1.7).sin() + 0.5 * (at.x * -0.21 + at.y * 0.53 + clock * 2.9).sin();
+    let b = (at.x * 0.23 - at.y * 0.41 + clock * 1.3).cos();
+    let across = Vec3::new(-w.y, w.x, 0.0) / speed;
+    w * (1.0 + 0.2 * a / 1.5) + across * (0.15 * speed * b)
+}
+
+#[cfg(test)]
+mod weather_wind_tests {
+    use super::*;
+
+    #[test]
+    fn the_weather_wind_varies_a_little_and_keeps_its_way() {
+        let w = Vec3::new(6.0, 0.0, 0.0);
+        let mut seen = Vec::new();
+        for i in 0..50 {
+            let v = weather_gusting(w, Vec3::new(i as f32 * 1.7, i as f32 * 0.9, 20.0), i as f32 * 0.3);
+            assert!(v.is_finite());
+            // the same way, within a fifth or so of its strength
+            assert!(v.x > 4.0 && v.x < 8.0 && v.y.abs() < 1.2, "{v}");
+            seen.push(v.x);
+        }
+        let spread = seen.iter().cloned().fold(f32::MIN, f32::max) - seen.iter().cloned().fold(f32::MAX, f32::min);
+        assert!(spread > 0.5, "it varies: {spread}");
+        assert_eq!(weather_gusting(Vec3::ZERO, Vec3::ONE, 1.0), Vec3::ZERO);
     }
 }

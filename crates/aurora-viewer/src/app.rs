@@ -6945,9 +6945,12 @@ impl App {
         };
         self.fog_drift
             .advance(std::time::Instant::now(), fog_wind, self.weather_now.fog_drift);
+        self.scene.weather_wind = None;
         if weather_wind {
             let open = self.scene.sound_reverb.sky.map_or(1.0, |s| s.exposure.clamp(0.0, 1.0));
             region_wind = self.weather_wind.now.extend(0.0) * (0.15 + 0.85 * open);
+            // (the flexis feel it, sheltered as we are)
+            self.scene.weather_wind = Some(region_wind);
         }
         let agent = &self.world.agent;
         // demo runs stay silent unless AURORA_DEMO_SOUND or AURORA_DEMO_WIND

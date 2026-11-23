@@ -301,6 +301,13 @@ impl WeatherSettings {
     /// until the window is used (they are read before these values).
     pub fn in_effect(&self) -> WeatherSettings {
         let mut w = self.clone();
+        // a preset first: the variables below override what it sets
+        // (`AURORA_FOG=off` keeps a Dust storm's fog away)
+        if !w.touched
+            && let Some(preset) = tint::env_preset()
+        {
+            w.apply_preset(preset);
+        }
         // what the variables set is on, for the summary's words too
         if !w.touched && (env_rain().is_some() || env_snow().is_some()) {
             w.enabled = true;
@@ -315,11 +322,6 @@ impl WeatherSettings {
         }
         if !w.touched && fog::env_fog_off() {
             w.fog_on = false;
-        }
-        if !w.touched
-            && let Some(preset) = tint::env_preset()
-        {
-            w.apply_preset(preset);
         }
         if !w.touched
             && let Some((kind, stream)) = debris::env_debris()
