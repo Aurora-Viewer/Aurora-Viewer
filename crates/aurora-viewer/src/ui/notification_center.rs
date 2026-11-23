@@ -102,7 +102,7 @@ pub struct Moment {
     pub dnd: bool,
     /// Mouselook or the photo's full frame: nothing over the view...
     pub hidden: bool,
-    /// ...but the script floaters, in mouselook
+    /// ...but what awaits an answer, in mouselook
     /// (`notifications::clear_view_shows`, #4363).
     pub scripts_in_view: bool,
     /// The full list is open.
@@ -194,9 +194,8 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
         c.peek.clear();
     } else {
         if m.hidden {
-            // mouselook: only the script floaters stay out (#4363)
-            c.peek
-                .retain(|p| p.pinned && list.list.iter().find(|n| n.id == p.id).is_none_or(cards::script_floater));
+            // mouselook: only what awaits an answer stays out (#4363)
+            c.peek.retain(|p| p.pinned);
         }
         if m.dnd {
             // the bell is paused: only the script menus stay out (#491)
@@ -565,7 +564,7 @@ fn rolled_out(
             answers.push((peek.id, r));
         }
     }
-    if behind > 0 {
+    if cards::more_link_shows(behind, env.hidden) {
         let more = ui
             .add(
                 egui::Label::new(
