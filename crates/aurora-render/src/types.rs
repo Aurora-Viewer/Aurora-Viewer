@@ -1817,6 +1817,59 @@ impl Default for RainLook {
     }
 }
 
+/// What Aurora Weather's wind blows about (debris.rs): the user's choice,
+/// as the viewer cannot know the place (a forest, a city street, a desert).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DebrisKind {
+    /// Leaves falling from the foliage around (canopy map).
+    #[default]
+    Leaves,
+    /// Sand streaming past near the ground.
+    Sand,
+    /// Paper and litter tumbling along a street.
+    Paper,
+    /// Embers rising and glowing.
+    Embers,
+}
+
+impl DebrisKind {
+    /// Its number in debris_sim.wgsl (`DK_*`; 0 is none).
+    pub fn index(self) -> u32 {
+        match self {
+            DebrisKind::Leaves => 1,
+            DebrisKind::Sand => 2,
+            DebrisKind::Paper => 3,
+            DebrisKind::Embers => 4,
+        }
+    }
+}
+
+/// Aurora Weather's debris this frame (debris.rs).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DebrisLook {
+    pub kind: DebrisKind,
+    /// How much of it (0..1): a share of the pool, more in the wind.
+    pub density: f32,
+    /// The pool's size: 0 low, 1 medium, 2 high (the weather's quality).
+    pub quality: u32,
+    /// Leaves with no foliage near: a thin stream from upwind (else none).
+    pub stream: bool,
+    /// Its size scale (0.5..2, 1 as made).
+    pub size: f32,
+}
+
+impl Default for DebrisLook {
+    fn default() -> Self {
+        DebrisLook {
+            kind: DebrisKind::Leaves,
+            density: 0.5,
+            quality: 2,
+            stream: false,
+            size: 1.0,
+        }
+    }
+}
+
 /// How Aurora Weather's fog is drawn (fog.rs): its cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FogTier {
@@ -2060,6 +2113,8 @@ pub struct FrameParams {
     pub clouds: Option<CloudsFrame>,
     /// Aurora Weather's fog (fog.rs); None: none, at no cost.
     pub fog: Option<FogLook>,
+    /// Aurora Weather's debris (debris.rs); None: none, at no cost.
+    pub debris: Option<DebrisLook>,
     /// Planet curvature (curvature.rs, Aurora's own): the planet's radius
     /// in metres; None: the flat regions, as the Legacy Viewer draws them.
     pub curvature: Option<f32>,

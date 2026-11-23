@@ -70,6 +70,8 @@ impl WeatherSettings {
         match preset {
             WeatherPreset::Clear => {
                 self.fog_follows_fall = false;
+                self.debris_on = false;
+                self.tumbleweeds = false;
             }
             WeatherPreset::BloodRain => {
                 self.precipitation_on = true;
@@ -116,6 +118,10 @@ impl WeatherSettings {
                 self.wind_on = true;
                 self.wind_min = 0.45;
                 self.wind_max = 0.85;
+                self.debris_on = true;
+                self.debris_kind = super::DebrisChoice::Sand;
+                self.debris_density = 0.8;
+                self.tumbleweeds = true;
             }
             WeatherPreset::Autumn => {
                 self.precipitation_on = false;
@@ -123,6 +129,10 @@ impl WeatherSettings {
                 self.wind_on = true;
                 self.wind_min = 0.12;
                 self.wind_max = 0.45;
+                self.debris_on = true;
+                self.debris_kind = super::DebrisChoice::Leaves;
+                self.debris_density = 0.6;
+                self.tumbleweeds = false;
             }
         }
     }

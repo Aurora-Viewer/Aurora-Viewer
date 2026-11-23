@@ -67,6 +67,8 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) -> WeatherA
             right.add_space(4.0);
             tint_card(right, p, w);
             right.add_space(4.0);
+            debris_card(right, p, w);
+            right.add_space(4.0);
             thunder_card(right, p, w);
             right.add_space(4.0);
             northern_lights_card(right, p, w);
@@ -1061,6 +1063,69 @@ fn tint_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             aurora_i18n::tr!("ui-weather-fog-follows-fall"),
             aurora_i18n::tr!("ui-weather-fog-follows-fall-tip"),
             &mut w.fog_follows_fall,
+        );
+    });
+}
+
+/// "Debris": what the wind blows about (the user's choice: the viewer
+/// cannot know the place), how much, leaves coming on the wind where no
+/// foliage is near, and tumbleweeds.
+fn debris_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    let mut on = w.debris_on;
+    let head = Head {
+        on: &mut on,
+        tip: aurora_i18n::tr!("ui-weather-debris-on-tip"),
+    };
+    card(ui, p, "leaf", aurora_i18n::tr!("ui-weather-debris"), Some(head), |ui, on| {
+        w.debris_on = on;
+        ui.add_enabled_ui(on, |ui| {
+            let options = [
+                (aurora_i18n::tr!("ui-weather-debris-leaves"), true),
+                (aurora_i18n::tr!("ui-weather-debris-sand"), true),
+                (aurora_i18n::tr!("ui-weather-debris-paper"), true),
+                (aurora_i18n::tr!("ui-weather-debris-embers"), true),
+            ];
+            let mut i = crate::weather::DebrisChoice::ALL
+                .iter()
+                .position(|k| *k == w.debris_kind)
+                .unwrap_or(0);
+            if widgets::segmented(ui, p, &mut i, &options) {
+                w.debris_kind = crate::weather::DebrisChoice::ALL[i.min(3)];
+            }
+            let amount = format!("{:.0} %", w.debris_density * 100.0);
+            slider_row(
+                ui,
+                p,
+                (
+                    aurora_i18n::tr!("ui-weather-debris-density"),
+                    aurora_i18n::tr!("ui-weather-debris-density-tip"),
+                ),
+                &amount,
+                Some((
+                    aurora_i18n::tr!("ui-weather-debris-few"),
+                    aurora_i18n::tr!("ui-weather-debris-many"),
+                )),
+                egui::Slider::new(&mut w.debris_density, 0.0..=1.0),
+            );
+            if w.debris_kind == crate::weather::DebrisChoice::Leaves {
+                switch_row(
+                    ui,
+                    p,
+                    "wind",
+                    aurora_i18n::tr!("ui-weather-debris-stream"),
+                    aurora_i18n::tr!("ui-weather-debris-stream-tip"),
+                    &mut w.debris_stream,
+                );
+            }
+        });
+        // tumbleweeds roll with any debris or none
+        switch_row(
+            ui,
+            p,
+            "circle",
+            aurora_i18n::tr!("ui-weather-tumbleweeds"),
+            aurora_i18n::tr!("ui-weather-tumbleweeds-tip"),
+            &mut w.tumbleweeds,
         );
     });
 }

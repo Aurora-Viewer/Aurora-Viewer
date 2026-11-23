@@ -1139,6 +1139,9 @@ struct Pipelines {
     water_particles_under: wgpu::RenderPipeline,
     /// Rain prototype (`vs_rain` in env.wgsl, `AURORA_RAIN`).
     rain: wgpu::RenderPipeline,
+    /// Aurora Weather's debris (debris.rs, `vs_debris`): cards and points
+    /// tested against the depth, their edges a hashed alpha test.
+    debris: wgpu::RenderPipeline,
     /// Rain prototype's splashes (`vs_rain_splash`).
     rain_splash: wgpu::RenderPipeline,
     /// Deep snow's surface (`vs_snow_mesh`): writes the depth.
@@ -2112,6 +2115,11 @@ pub(crate) struct Backend {
     rt_now: bool,
     /// Aurora Weather's fog (fog.rs), made while it is on.
     fog: Option<crate::fog::Fog>,
+    /// Aurora Weather's debris (debris.rs): made while it is on.
+    debris: Option<crate::debris::Debris>,
+    /// When the debris last moved, and its step this frame (s).
+    debris_last: Option<Instant>,
+    debris_dt: f32,
     /// This frame's fog: the height fog's terms of every view (none: no
     /// fog, or the camera under the water), and whether the main view
     /// reads the volume.
@@ -2488,6 +2496,8 @@ enum Vb {
     Sprite,
     /// Aurora Weather's footprints, one an instance (`vs_snow_print`).
     Print,
+    /// Aurora Weather's debris, a particle an instance (`vs_debris`).
+    Debris,
 }
 
 /// The most footprints kept (32 bytes each).
@@ -2508,6 +2518,17 @@ fn print_layout() -> wgpu::VertexBufferLayout<'static> {
     ];
     wgpu::VertexBufferLayout {
         array_stride: 32,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &ATTRS,
+    }
+}
+
+/// Aurora Weather's debris: a particle an instance, its four vec4
+/// (debris.rs `STRIDE`; `vs_debris`).
+fn debris_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4];
+    wgpu::VertexBufferLayout {
+        array_stride: crate::debris::STRIDE,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &ATTRS,
     }
@@ -3031,7 +3052,7 @@ impl Backend {
     /// to it, where the camera goes, from it); with the shadows off too,
     /// alone in the atlas (low settings keep the rain out of the houses).
     fn rain_shelter(&self, f: &FrameParams) -> bool {
-        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && (self.rain_wet.active() || self.fog_shelter)
+        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && (self.rain_wet.active() || self.fog_shelter || f.debris.is_some())
     }
 
     /// How many of the frame's first lights have their projector shadows
@@ -3084,6 +3105,8 @@ impl Backend {
         let by = Vec2::from(by);
         self.rain_wet.shift(by);
         self.snow_trail.shift(by);
+        // (the debris is in world positions: it starts afresh)
+        self.debris = None;
         // (the fog's history is of the old positions: it starts afresh)
         if let Some(fog) = &mut self.fog {
             fog.skipped();
@@ -3095,6 +3118,30 @@ impl Backend {
 }
 
 impl Backend {
+    /// Aurora Weather's debris this frame (debris.rs): made while it is on
+    /// (again at another quality, the pool's size), gone when off, and its
+    /// step; it moves (in the frame, after the shadows) while the shelter
+    /// map it reads is drawn. Not in a cut-out photo.
+    fn prepare_debris(&mut self, f: &FrameParams) {
+        let Some(look) = f.debris.filter(|_| !f.cutout) else {
+            self.debris = None;
+            self.debris_last = None;
+            return;
+        };
+        let pool = crate::debris::pool_size(look.quality);
+        if self.debris.as_ref().is_some_and(|d| d.pool() != pool) {
+            self.debris = None;
+        }
+        if self.debris.is_none() {
+            self.debris = extra(&mut self.oom, &self.device, self.lost.get(), "debris", |d| {
+                crate::debris::Debris::new(d, look.quality)
+            });
+        }
+        let now = Instant::now();
+        self.debris_dt = self.debris_last.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
+        self.debris_last = Some(now);
+    }
+
     /// Aurora Weather's fog this frame (fog.rs): made while it is on, its
     /// volume's textures while its tier has one (the frame groups bound to
     /// them again when they change). The height fog's terms of every view
@@ -3207,6 +3254,7 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
     let part_bufs = [Some(particle_layout())];
     let sprite_bufs = [Some(sprite_layout())];
     let print_bufs = [Some(print_layout())];
+    let debris_bufs = [Some(debris_layout())];
     let mut targets = Vec::new();
     if let Some(f) = d.format {
         targets.push(Some(wgpu::ColorTargetState {
@@ -3246,6 +3294,7 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
                 Vb::Particle => &part_bufs,
                 Vb::Sprite => &sprite_bufs,
                 Vb::Print => &print_bufs,
+                Vb::Debris => &debris_bufs,
             },
         },
         primitive: wgpu::PrimitiveState {
@@ -4894,6 +4943,9 @@ impl Backend {
             rt_failed: false,
             rt_now: false,
             fog: None,
+            debris: None,
+            debris_last: None,
+            debris_dt: 0.0,
             fog_terms: None,
             fog_volume_now: false,
             fog_shelter: false,
@@ -5315,10 +5367,11 @@ impl Backend {
         // (without the stochastic transparency's passes: its own module,
         // `make_st`, when the method is first on)
         let src = format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n{}\n{}",
             common_shader_for(soft),
             crate::oit_stochastic::without_st(&crate::object_shader_source(device.features())),
-            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl")),
+            include_str!("shaders/debris.wgsl")
         );
         let src = crate::blend_exact::scene_source(src, device.features());
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -5740,6 +5793,16 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Greater,
             constants: rain_constants(),
             ..base("rain", "vs_rain", "fs_rain")
+        });
+        let debris = pipe(PipeDesc {
+            vb: Vb::Debris,
+            cull: None,
+            write_mask: wgpu::ColorWrites::COLOR,
+            // (drawn with the rain, whose pass reads the depth only: sparse
+            // cards, rarely over each other)
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("debris", "vs_debris", "fs_debris")
         });
         let rain_splash = pipe(PipeDesc {
             vb: Vb::None,
@@ -6504,6 +6567,7 @@ impl Backend {
             water_particles: water_particles.resolve(&mut done),
             water_particles_under: water_particles_under.resolve(&mut done),
             rain: rain.resolve(&mut done),
+            debris: debris.resolve(&mut done),
             rain_wet: rain_wet.resolve(&mut done),
             rain_wet_g: rain_wet_g.resolve(&mut done),
             rain_splash: rain_splash.resolve(&mut done),
@@ -9681,6 +9745,10 @@ impl Backend {
         // Aurora Weather's fog: before the uniforms (its terms) and the
         // shadows (its shelter map)
         self.prepare_fog(f, &lists.fog_ground, camera_water_level);
+        // Aurora Weather's debris: made or let go, its step (it moves after
+        // the shadows, on the shelter map they draw)
+        self.prepare_debris(f);
+        let debris_shelter = self.rain_shelter_map(f).is_some();
         // snow wets nothing (the ground dries as after rain), it lies
         let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
         // cleaned up (the Weather window): the memory starts again, every
@@ -12102,6 +12170,22 @@ impl Backend {
             }
         }
         mark(&mut encoder, MARK_FOG_END);
+        // ---- Aurora Weather's debris (debris.rs): after the shadows (the
+        // shelter map it lands on), before the scene that draws it
+        if let (Some(look), Some(debris)) = (f.debris.filter(|_| !f.cutout && debris_shelter), &mut self.debris) {
+            debris.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.frame_buffer,
+                &self.shadow_view,
+                &look,
+                f.camera_pos,
+                (Vec2::from(f.rain_look.wind), f.rain_look.gust),
+                f.time,
+                self.debris_dt,
+            );
+        }
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -12233,6 +12317,11 @@ impl Backend {
         }
         let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
         let rain_drops = if f.cutout { 0 } else { rain_drops(f.rain, f.rain_look.quality) };
+        // the debris drawn when it moved this frame (debris.rs)
+        let debris_draw = self
+            .debris
+            .as_ref()
+            .filter(|_| f.debris.is_some() && !f.cutout && self.rain_shelter_map(f).is_some());
         // rain prototype: the wetness memory, from the last one and the
         // shelter map, then copied where it is read
         let rain_wet = !f.cutout && self.rain_wet.active();
@@ -12706,6 +12795,11 @@ impl Backend {
                 pass.draw(0..3, 0..1);
             }
             pass_mark(pass, MARK_RAIN_END);
+            if let Some(debris) = debris_draw {
+                pass.set_pipeline(&self.pipelines.debris);
+                pass.set_vertex_buffer(0, debris.instances().slice(..));
+                pass.draw(0..crate::debris::VERTICES, 0..debris.pool());
+            }
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
                 pass.set_pipeline(&self.pipelines.particles);

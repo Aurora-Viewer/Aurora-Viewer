@@ -5,8 +5,10 @@ use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+pub mod debris;
 pub mod fog;
 pub mod tint;
+pub use debris::DebrisChoice;
 pub use fog::{FogDrift, FogTier};
 pub use tint::WeatherPreset;
 
@@ -182,6 +184,17 @@ pub struct WeatherSettings {
     pub fall_melts: bool,
     /// The fog takes the colour of what falls (when it is not white).
     pub fog_follows_fall: bool,
+    /// The "Debris" card's switch (weather/debris.rs): the wind blows
+    /// leaves, sand, paper or embers about. Off by default.
+    pub debris_on: bool,
+    pub debris_kind: DebrisChoice,
+    /// How much of it (0..1).
+    pub debris_density: f32,
+    /// Leaves with no foliage near come on the wind from upwind.
+    pub debris_stream: bool,
+    /// Tumbleweeds roll across open ground (their own switch, with any
+    /// debris or none).
+    pub tumbleweeds: bool,
     pub quality: WeatherQuality,
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
@@ -244,6 +257,11 @@ impl Default for WeatherSettings {
             flutter: 1.0,
             fall_melts: true,
             fog_follows_fall: false,
+            debris_on: false,
+            debris_kind: DebrisChoice::Leaves,
+            debris_density: debris::DEBRIS_DENSITY_DEFAULT,
+            debris_stream: false,
+            tumbleweeds: false,
             quality: WeatherQuality::High,
             touched: false,
             former_region_weather: None,
@@ -290,6 +308,14 @@ impl WeatherSettings {
         {
             w.apply_preset(preset);
         }
+        if !w.touched
+            && let Some((kind, stream)) = debris::env_debris()
+        {
+            w.enabled = true;
+            w.debris_on = true;
+            w.debris_kind = kind;
+            w.debris_stream = stream;
+        }
         if !(w.enabled && w.precipitation_on) {
             w.amount = 0.0;
             w.thunder = false;
@@ -301,6 +327,8 @@ impl WeatherSettings {
         if !w.enabled {
             w.aurora = false;
             w.fog_on = false;
+            w.debris_on = false;
+            w.tumbleweeds = false;
         }
         w
     }

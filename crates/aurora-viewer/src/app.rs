@@ -13089,6 +13089,7 @@ impl App {
             curvature: self.settings.planet_radius(),
             look: None,
             look_thumbs: None,
+            debris: self.weather_now.debris_look(self.weather_now.quality_index()),
             fog: self.weather_now.fog_look(
                 self.fog_drift.at,
                 crate::weather::fog::utc_clock(),
