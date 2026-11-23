@@ -25,6 +25,13 @@ fn world() -> World {
 /// the line in the conversation, unread, and the message for the app.
 fn receive(w: &mut World, session: Uuid, from: Uuid, text: &str, kind: ImKind, in_sight: bool) {
     let name = w.social.name_of(&from);
+    receive_named(w, session, from, &name, text, kind, in_sight);
+}
+
+/// `receive` with the name the line carries: a group or conference line
+/// keeps the legacy name the server sent (`groups.rs`).
+fn receive_named(w: &mut World, session: Uuid, from: Uuid, name: &str, text: &str, kind: ImKind, in_sight: bool) {
+    let name = name.to_owned();
     w.session_lines(session);
     w.conversation_push(
         session,
@@ -470,5 +477,58 @@ fn an_offer_is_told_to_the_system_as_one_and_an_alert_notice_or_answer_as_a_noti
         }));
         let causes: Vec<_> = w.attention.iter().map(|a| a.cause).collect();
         assert_eq!(causes, [cause], "dialog {dialog}");
+    }
+}
+
+/// Tom's display name arrives from the People API, as `GetDisplayNames`
+/// answers it.
+fn tom_has_a_display_name(w: &mut World) {
+    w.apply(aurora_net::NetEvent::DisplayNames {
+        names: vec![aurora_net::AvatarNameData {
+            id: TOM,
+            username: "tom.smith".into(),
+            display_name: "Captain Tom".into(),
+            legacy_first: "Tom".into(),
+            legacy_last: "Smith".into(),
+            ..Default::default()
+        }],
+        bad_ids: Vec::new(),
+        max_age: None,
+    });
+}
+
+/// #3538: a group or conference toast names its sender by the complete
+/// name, as a private one does (on_avatar_name_cache_toast,
+/// llimview.cpp), not by the legacy name the server put on the line; the
+/// emote too, and the names settings still apply.
+#[test]
+fn group_and_conference_toasts_name_the_sender_by_the_complete_name() {
+    for kind in [ImKind::Group, ImKind::Conference] {
+        let session = if kind == ImKind::Group { GROUP } else { Uuid::from_u128(0x6300) };
+        let mut w = world();
+        w.notifications.toasts.group_im = true;
+        tom_has_a_display_name(&mut w);
+        receive_named(&mut w, session, TOM, "Tom Smith", "meeting at 9", kind, false);
+        assert_eq!(
+            messages(&w),
+            vec![(session, 1, "Captain Tom (Tom Smith): meeting at 9".into())],
+            "{kind:?}"
+        );
+        let n = w.notifications.list.last().expect("the toast");
+        assert_ne!(n.title, "Captain Tom (Tom Smith)", "{kind:?}: the session keeps the title");
+
+        let mut w = world();
+        w.notifications.toasts.group_im = true;
+        tom_has_a_display_name(&mut w);
+        receive_named(&mut w, session, TOM, "Tom Smith", "/me waves", kind, false);
+        assert_eq!(messages(&w), vec![(session, 1, "Captain Tom (Tom Smith) waves".into())], "{kind:?}");
+
+        // display names turned off: the user name, as everywhere else
+        let mut w = world();
+        w.notifications.toasts.group_im = true;
+        tom_has_a_display_name(&mut w);
+        w.social.avatar_names.options.use_display_names = false;
+        receive_named(&mut w, session, TOM, "Tom Smith", "meeting at 9", kind, false);
+        assert_eq!(messages(&w), vec![(session, 1, "Tom Smith: meeting at 9".into())], "{kind:?}");
     }
 }

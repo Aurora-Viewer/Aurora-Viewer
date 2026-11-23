@@ -6505,15 +6505,21 @@ impl World {
         };
         let (from, text) = (line.source, line.text.clone());
         let group = m.kind != ImKind::Private;
+        // the sender's complete name in every kind of session, as
+        // on_avatar_name_cache_toast writes FROM (indra/newview/llimview.cpp):
+        // a group or conference line keeps the legacy name the server sent
+        // (#3538); that name stands in until the display name is known
+        let name = self
+            .social
+            .avatar_names
+            .complete_in(names::NameScope::Roster, &from)
+            .unwrap_or_else(|| line.from.clone());
         // an emote reads "Jane waves", as LLToastIMPanel writes it
-        let emote = attention::emote_line(&line.from, &text);
+        let emote = attention::emote_line(&name, &text);
         let (title, body) = if group {
-            (
-                self.session_title(&m.session),
-                emote.unwrap_or_else(|| format!("{}: {text}", line.from)),
-            )
+            (self.session_title(&m.session), emote.unwrap_or_else(|| format!("{name}: {text}")))
         } else {
-            (line.from.clone(), emote.unwrap_or(text))
+            (name, emote.unwrap_or(text))
         };
         let notification = self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
         self.notifications.link_name(
