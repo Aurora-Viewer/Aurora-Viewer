@@ -1047,6 +1047,9 @@ struct Pipelines {
     hud_debug_red: wgpu::RenderPipeline,
     hud_debug_blue: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
+    /// The real stars after the anti-aliasing (env.wgsl `fs_star_composite`,
+    /// star_composite.rs).
+    star_composite: wgpu::RenderPipeline,
     /// The volumetric clouds' weather map (env.wgsl `fs_cloud_weather`).
     clouds_weather: wgpu::RenderPipeline,
     terrain: wgpu::RenderPipeline,
@@ -2109,6 +2112,9 @@ pub(crate) struct Backend {
     glow: Glow,
     /// Depth of field, made the first time it is on.
     dof: Option<crate::dof::Dof>,
+    /// The real stars drawn after the anti-aliasing (star_composite.rs); its
+    /// target only while they are.
+    star_composite: crate::star_composite::StarComposite,
     /// The photo's look, made the first time one is on.
     looks: Option<crate::looks::Looks>,
     /// The photo filters' catalogue pictures, while the catalogue asks for
@@ -3291,6 +3297,30 @@ fn dof_targets(
     true
 }
 
+/// The stars' target after the anti-aliasing for `size`, made if needed,
+/// checked as `dof_targets`: refused, the frame draws them in the sky pass.
+fn star_targets(
+    oom: &mut crate::gpu_alloc::Refusals,
+    stars: &mut crate::star_composite::StarComposite,
+    device: &wgpu::Device,
+    post: &crate::dof::PostInputs,
+    size: (u32, u32),
+    lost: bool,
+) -> bool {
+    if stars.has_targets(size) {
+        return true;
+    }
+    if !oom.extras_ready(Instant::now()) {
+        return false;
+    }
+    let (_, refused) = crate::gpu_alloc::scoped(device, || stars.ensure_targets(device, size, HDR_FORMAT, post));
+    if first_use(oom, "stars after the anti-aliasing", false, refused && !lost) {
+        stars.release();
+        return false;
+    }
+    true
+}
+
 pub(crate) fn make_view(
     device: &wgpu::Device,
     label: &str,
@@ -4388,6 +4418,7 @@ impl Backend {
                 scene_groups: vec![frame_entries.clone(), records_entries.clone(), tex_layout_entries.clone()],
             }
         };
+        let star_composite = crate::star_composite::StarComposite::new(&device, &queue, crate::star_composite::layout(&device));
         let pipelines = Self::make_pipelines(
             &device,
             &frame_layout,
@@ -4396,6 +4427,7 @@ impl Backend {
             &shadow_layout,
             [&post_layout, &bloom.post_layout],
             &gbuf_layout,
+            star_composite.layout(),
             msaa_samples,
             format,
             settings.gbuffer(),
@@ -4632,6 +4664,7 @@ impl Backend {
             shadow_sampler,
             glow,
             dof: None,
+            star_composite,
             looks: None,
             look_thumbs: None,
             rlva_spheres: None,
@@ -4999,6 +5032,7 @@ impl Backend {
         shadow_layout: &wgpu::BindGroupLayout,
         post_layouts: [&wgpu::BindGroupLayout; 2],
         gbuf_layout: &wgpu::BindGroupLayout,
+        star_layout: &wgpu::BindGroupLayout,
         samples: u32,
         surface_format: wgpu::TextureFormat,
         ssr: bool,
@@ -5020,6 +5054,13 @@ impl Backend {
         let scene_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("scene"),
             bind_group_layouts: &[Some(frame_layout), Some(records_layout), Some(tex_layout)],
+            immediate_size: 0,
+        });
+        // the stars after the anti-aliasing (star_composite.rs): the frame,
+        // the textures (sun and moon) and the pass's own group
+        let star_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("star composite"),
+            bind_group_layouts: &[Some(frame_layout), None, Some(tex_layout), Some(star_layout)],
             immediate_size: 0,
         });
         let shadow_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -5094,6 +5135,22 @@ impl Backend {
             gbuf: ssr,
             ..base("sky", "vs_sky", g("fs_sky", "fs_sky_g"))
         });
+        // over the resolved image, at its size: no depth, one sample, the
+        // glow amount in alpha carried over
+        let star_composite = batch.add(
+            &module,
+            &star_pl,
+            PipeDesc {
+                vb: Vb::None,
+                cull: None,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                samples: 1,
+                depth_format: None,
+                write_mask: wgpu::ColorWrites::ALL,
+                ..base("star composite", "vs_sky", "fs_star_composite")
+            },
+        );
         let clouds_weather = pipe(PipeDesc {
             vb: Vb::None,
             cull: None,
@@ -6124,6 +6181,7 @@ impl Backend {
             hud_debug_red: hud_debug_red.resolve(&mut done),
             hud_debug_blue: hud_debug_blue.resolve(&mut done),
             sky: sky.resolve(&mut done),
+            star_composite: star_composite.resolve(&mut done),
             clouds_weather: clouds_weather.resolve(&mut done),
             terrain: terrain.resolve(&mut done),
             terrain_pbr: terrain_pbr.resolve(&mut done),
@@ -7246,6 +7304,7 @@ impl Backend {
                     &self.shadow_layout,
                     [&self.post_layout, &self.bloom.post_layout],
                     &self.gbuf_layout,
+                    self.star_composite.layout(),
                     samples,
                     self.config.format,
                     s.gbuffer(),
@@ -7280,10 +7339,11 @@ impl Backend {
             self.bloom.post_layout.clone(),
             self.gbuf_layout.clone(),
             self.impostors.layout.clone(),
+            self.star_composite.layout().clone(),
         ];
         let format = self.config.format;
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
-            let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
+            let [frame, records, tex, shadow, post, bloom, gbuf, impostor, stars] = &layouts;
             let scene = Self::make_pipelines(
                 &device,
                 frame,
@@ -7292,6 +7352,7 @@ impl Backend {
                 shadow,
                 [post, bloom],
                 gbuf,
+                stars,
                 samples,
                 format,
                 ssr,
@@ -9410,8 +9471,38 @@ impl Backend {
         };
         self.clouds_now = cloud_params.is_some() && cloud_targets_ok;
         if self.clouds_now {
-            // (env.wgsl, features.w: the sky pass leaves the clouds to clouds.rs)
-            main.features[3] = 1;
+            // (env.wgsl, features.w bit 0: the sky pass leaves the clouds to
+            // clouds.rs)
+            main.features[3] |= 1;
+        }
+        // The real stars drawn after the anti-aliasing (star_composite.rs)
+        // while the sky shows any (its star brightness: none by day); the
+        // Legacy Viewer's stars keep the sky pass. Its target refused, the
+        // sky pass draws them, as before.
+        let stars_after = crate::star_composite::enabled()
+            && f.sky.stars.catalogue == Some(crate::stars::REAL)
+            && f.sky.star_brightness > 0.0
+            && !f.cutout
+            && !f.hide_sky
+            && star_targets(
+                &mut self.oom,
+                &mut self.star_composite,
+                &self.device,
+                &crate::dof::PostInputs {
+                    layout: &self.post_layout,
+                    sampler: &self.post_sampler,
+                    buffer: &self.post_buffer,
+                    glow: &self.glow.views[1],
+                },
+                post_size,
+                self.lost.get(),
+            );
+        if stars_after {
+            // (env.wgsl, features.w bit 1: the sky pass leaves the real
+            // stars' points to `fs_star_composite`)
+            main.features[3] |= 2;
+        } else {
+            self.star_composite.release();
         }
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
@@ -12366,6 +12457,38 @@ impl Backend {
             } else if let Some(w) = taa_written {
                 post_bg = &taa.post_bgs[w];
                 post_src = &taa.history[w];
+            }
+        }
+        // ---- the real stars, sharp over the resolved image (TAA and FSR
+        // smear a point of a pixel), before the depth of field blurs them
+        // with the rest and the glow, the bloom and the tone mapping
+        if stars_after {
+            let lines = snapshot.as_ref().map_or(post_size.1, |s| s.photo.1);
+            let inputs = crate::star_composite::Inputs {
+                color: post_src,
+                depth: &self.targets.depth_ss,
+                before: &self.targets.scene_copy,
+                after: &self.targets.color,
+                clouds: if self.clouds_now {
+                    self.clouds.as_ref().and_then(|c| c.composited_image())
+                } else {
+                    None
+                },
+                frame: &self.groups.a,
+                textures: &scene.textures,
+                inv_view_proj_rot: inv_view_proj_rot(f.proj, f.view),
+                scale: crate::star_composite::star_scale(lines),
+            };
+            if let Some((src, bg)) = self.star_composite.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.pipelines.star_composite,
+                post_size,
+                &inputs,
+            ) {
+                post_src = src;
+                post_bg = bg;
             }
         }
         // ---- depth of field, on the resolved (and TAA-steady) image,
