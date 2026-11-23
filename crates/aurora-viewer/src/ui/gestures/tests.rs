@@ -197,7 +197,10 @@ fn gesture_editor_drops_append_select_and_replace_one_step() {
 
 #[test]
 fn gesture_assets_require_full_base_and_held_permissions() {
-    let (inv, _) = Fixture::library();
+    let (mut inv, _) = Fixture::library();
+    // The demo seeds the items, while an online inventory also has the
+    // logged-in agent's ID. Without it agent_mask uses its pre-login fallback.
+    inv.owner = Uuid::from_u128(2);
     let mut item = inv.items[&Uuid::from_u128(8106)].clone();
     item.asset_type = 1;
     item.owner = inv.owner;
@@ -213,8 +216,8 @@ fn gesture_assets_require_full_base_and_held_permissions() {
         item.base_mask = rules::FULL;
     }
     // Library, group-owned and other residents' items use the everyone mask.
-    item.owner = Uuid::from_u128(888);
-    for group in [true, false] {
+    for (owner, group) in [(inv.lib_owner, false), (Uuid::from_u128(888), true), (Uuid::from_u128(999), false)] {
+        item.owner = owner;
         item.group_owned = group;
         for everyone in [rules::COPY, rules::FULL] {
             item.everyone_mask = everyone;
