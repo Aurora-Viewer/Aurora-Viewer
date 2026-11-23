@@ -6,9 +6,10 @@
      if a part or a validation stays pending; "Part of #<epic>" in plain
      text when the issue belongs to an epic (a "Refs #<epic>" line invites
      the close of the epic, which only the project manager closes).
-     "No issue" is for a feature whose work has no issue, or for a PR with
-     no effect on the viewer (documentation, CI, scripts, dependency
-     updates); a "fix" PR always names its Bug. -->
+     "No issue" is for a feature, a performance or refactoring change whose
+     work has no issue, or for a PR with no effect on the viewer
+     (documentation, CI, scripts, dependency updates); a "fix" PR always
+     names its Bug. -->
 Closes #
 
 ## What it is for

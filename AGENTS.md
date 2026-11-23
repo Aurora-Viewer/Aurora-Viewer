@@ -568,9 +568,9 @@ change to the interface:
      choose what to take next, follow the Priority the project manager set
      on the project board (`issue-board.ps1 -Todo`, section 15);
    - **claims**: an issue you claimed and are not working on any more is
-     released before you hand back — edit or delete its `Work started`
-     comment, and put its Status back to `Todo` (section 15) — so that it
-     does not look taken.
+     released before you hand back — edit its `Work started` comment, and
+     put its Status back to `Todo` (section 15) — so that it does not look
+     taken.
 1. **Read** AGENTS.md, ARCHITECTURE.md, TASKS.md; study Firestorm.
 2. **Create the worktree** (`new-task.ps1`), set the task to 🔧 in TASKS.md;
    then, **before any code, get the task's issue** (section 15, "Find the
@@ -579,9 +579,9 @@ change to the interface:
    it when the search finds none. **Then claim it, before the first commit**:
    a comment on the issue saying you have started, then your human assigned,
    the area labels and Status `In progress` (section 15, "At the very start
-   of the work on an issue"). A feature may go without an issue; when it has
-   one, claim it the same way. Another agent's claim means the work is taken:
-   stop and tell your human.
+   of the work on an issue"). A feature (or a performance or refactoring
+   change) may go without an issue; when it has one, claim it the same way.
+   Another agent's claim means the work is taken: stop and tell your human.
 3. **Develop** in small local commits (clear messages, section 10).
 4. **Test in demo mode**, `check.ps1` green.
 5. **Human validation (mandatory, before the PR)**:
@@ -729,10 +729,10 @@ The link goes both ways: the issue shows its PR, the PR names its issue.
   A PR covering several issues has one line each (`Refs #475`, then
   `Refs #741`). These lines are written in the `gh pr create` body, not added
   later: a PR that names neither its issue nor `No issue` is not reviewed.
-- **A bug fix always names its issue.** A feature may say `No issue` (an
-  issue is still recommended: it is where the claim comment goes), and so
-  does a PR with no effect on the viewer. Section 15 says what each kind of
-  PR needs.
+- **A bug fix always names its issue.** A feature (or a performance or
+  refactoring change) may say `No issue` (an issue is still recommended: it
+  is where the claim comment goes), and so does a PR with no effect on the
+  viewer. Section 15 says what each kind of PR needs.
 - **An epic**: when the issue is a sub-issue of one, the PR body also says
   `Part of #<epic>`, as plain text. Never `Refs #<epic>`: that puts the epic
   in the Development panel and invites the close that only the project
@@ -1018,9 +1018,10 @@ meantime by others.
 costs two agents a whole task. Three places:
 
 ```powershell
-gh issue view <n> --json comments,assignees,labels           # a Work started claim
-gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n>/timeline --paginate   # the PRs that name it
-git worktree list; git branch -a --list "*<word of the feature>*"        # work in progress here
+gh issue view <n> --repo Aurora-Viewer/Aurora-Viewer --json comments,assignees,labels   # a Work started claim
+gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n>/timeline --paginate                 # the PRs that name it
+git worktree list                                                                       # work in progress here
+git branch -a --list "*<word of the feature>*"
 ```
 
 - **the thread**: the comments (a `Work started` claim, below) and the
@@ -1132,10 +1133,11 @@ gh issue list --repo Aurora-Viewer/Aurora-Viewer --state all --search "<words> i
 - None matches: **what to do depends on the kind of PR**:
   - **a bug fix always has one**: file it before any code, with the bug's
     title, what happens and how to reproduce it, then claim it (below);
-  - **a feature may go without one**: an issue is recommended as soon as
-    another agent could pick the work up (its claim comment is then the only
-    lock), and especially when the work belongs to an epic, where the
-    sub-issue is what the epic's progress counts;
+  - **a feature** (or a performance or refactoring change) **may go without
+    one**: an issue is recommended as soon as another agent could pick the
+    work up (its claim comment is then the only lock), and especially when
+    the work belongs to an epic, where the sub-issue is what the epic's
+    progress counts;
   - **a PR with no effect on the viewer** (documentation, CI, scripts,
     dependency updates) needs none: its description says `No issue`.
 
@@ -1152,7 +1154,8 @@ gh issue list --repo Aurora-Viewer/Aurora-Viewer --state all --search "<words> i
   cannot: it leaves them to the QA):
 
   ```powershell
-  gh issue create --repo Aurora-Viewer/Aurora-Viewer --title "<title>" --body-file .scratch/issue.md --label <area>
+  gh issue create --repo Aurora-Viewer/Aurora-Viewer --title "<title>" --body-file .scratch/issue.md
+  gh issue edit <n> --repo Aurora-Viewer/Aurora-Viewer --add-label <area>
   gh api -X PATCH repos/Aurora-Viewer/Aurora-Viewer/issues/<n> -f type=Bug
   ```
 
@@ -1162,7 +1165,8 @@ gh issue list --repo Aurora-Viewer/Aurora-Viewer --state all --search "<words> i
   writes `Part of #<epic>` in the body, which links it in the timeline.
 
   ```powershell
-  gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<epic>/sub_issues -F sub_issue_id=<id from .id of the new issue>
+  gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<n> --jq .id
+  gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<epic>/sub_issues -F sub_issue_id=<that .id>
   ```
 
   Do not file an issue for an idea you are not starting: `Todo` is the
