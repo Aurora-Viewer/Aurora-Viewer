@@ -194,10 +194,12 @@ pub fn bottom(
     chat.thumbnails.reserve(geo.thumbs, thumb(geo.button), true);
 
     // Autohidden (#1009), the island shows while the chat is used, without
-    // its button when the dock holds Conversations; out of use it goes
-    // away, or keeps its button alone when the dock has none (a saved dock
+    // its button when any toolbar holds Conversations (#2993); out of use it
+    // goes away, or keeps its button alone when none does (a saved dock
     // without Conversations keeps a way to the conversations). The geometry
-    // stays: nothing moves when the field comes and goes.
+    // stays: nothing moves when the field comes and goes. With the bar always
+    // shown, the same rule hides the island's button so a side toolbar cannot
+    // resurrect the "Nearby chat and Conversations" control.
     let shown = chat.bar_shown();
     if shown {
         let slot = geo.button - 4.0;
@@ -208,7 +210,7 @@ pub fn bottom(
         }
     }
     chat.bar_hovered = false;
-    let docked = chat.autohide && buttons.iter().any(|b| b.command == "conversations");
+    let docked = toolbar_settings.location("conversations", layout).is_some();
     let out = if shown {
         area(&ctx, p, "chat", geo.chat, |ui| {
             let out = chat_island(
@@ -575,7 +577,7 @@ fn open_conversations(ctx: &egui::Context, panels: &mut Panels, chat: &mut crate
 /// chat island's button opens the conversations and counts their unread
 /// lines. Only the default dock leaves it out: a saved dock that holds it
 /// keeps it, and the toolbar's catalogue still offers it. With the chat bar
-/// autohidden (`autohide`, #1009) the island goes away with its button: the
+/// hidden (`ChatBar::hides`, #1009, #2696) the island goes away with its button: the
 /// default dock keeps the skin's Conversations button. Kept from one frame
 /// to the next, built again when the skin's toolbar changes.
 #[derive(Default)]
@@ -739,8 +741,10 @@ mod tests {
         flash: f32,
         /// What the last frame painted.
         shapes: Vec<egui::epaint::ClippedShape>,
-        /// A saved dock (None: the skin's).
+        /// A saved dock (None: the skin's, through DockLayout like the app).
         buttons: Option<Vec<crate::ui::skin::ToolButton>>,
+        left: Vec<crate::ui::skin::ToolButton>,
+        right: Vec<crate::ui::skin::ToolButton>,
     }
 
     impl Bench {
@@ -758,6 +762,8 @@ mod tests {
                 flash: 0.0,
                 shapes: Vec::new(),
                 buttons: None,
+                left: Vec::new(),
+                right: Vec::new(),
             }
         }
 
@@ -771,9 +777,14 @@ mod tests {
 
         fn frame(&mut self, events: Vec<egui::Event>) -> (Option<crate::ui::chat::OutgoingChat>, f32, bool) {
             let p = crate::theme::Theme::default().palette();
-            let layout = crate::ui::skin::Layout::default();
+            let skin = crate::ui::skin::Layout::default();
+            // Same as app.rs: the default dock leaves Conversations to the
+            // island unless the chat bar is autohidden.
+            let layout = DockLayout::default().of(&skin, self.chat.bar_mode.hides()).clone();
             let settings = crate::ui::toolbar::ToolbarSettings {
                 buttons: self.buttons.clone(),
+                left: self.left.clone(),
+                right: self.right.clone(),
                 ..Default::default()
             };
             let view = super::super::favorites::View::default();
@@ -892,7 +903,8 @@ mod tests {
         }
     }
 
-    /// The island's field is the chat bar's: Enter says, Ctrl+Enter shouts,
+    /// The island's field is the chat bar's: Enter says, the Shout key set
+    /// (Ctrl+Enter here) shouts,
     /// `/5` picks the channel, and the islands keep the 56 px of the dock.
     #[test]
     fn the_chat_island_says_and_shouts_like_the_chat_bar() {
@@ -909,6 +921,7 @@ mod tests {
         bench.chat.focus_request = true;
         bench.frame(vec![]);
         bench.frame(vec![egui::Event::Text("/5 loud".into())]);
+        crate::ui::chat::shortcuts::publish(&bench.ctx, &crate::ui::chat::shortcuts::ctrl_enter_shout());
         let (out, _, _) = bench.frame(vec![
             egui::Event::ModifiersChanged(egui::Modifiers::CTRL),
             key(egui::Key::Enter, true, egui::Modifiers::CTRL),
@@ -1104,16 +1117,59 @@ mod tests {
         assert!(bench.chat.has_focus);
     }
 
+    #[test]
+    fn a_paste_after_send_at_a_selection_is_kept_in_the_next_draft() {
+        let mut bench = Bench::shown();
+        bench.chat.keep_focus = true;
+        bench.chat.focus_request = true;
+        bench.frame(vec![]);
+        bench.frame(vec![egui::Event::Text("public message".into())]);
+        let id = crate::ui::chat::bar_input_id();
+        let mut edit = egui::TextEdit::load_state(&bench.ctx, id).unwrap();
+        let start = egui::text::CCursor::new(0);
+        let end = egui::text::CCursor::new(6);
+        edit.cursor.set_char_range(Some(egui::text::CCursorRange::two(start, end)));
+        egui::TextEdit::store_state(&bench.ctx, id, edit);
+        let enter = || key(egui::Key::Enter, true, egui::Modifiers::NONE);
+        let (out, _, _) = bench.frame(vec![enter(), egui::Event::Paste("next message".into())]);
+        assert_eq!(out.unwrap().message, "public message");
+        assert_eq!(bench.chat.input, "next message");
+        let (next, _, _) = bench.frame(vec![enter()]);
+        assert_eq!(next.unwrap().message, "next message");
+    }
+
+    #[test]
+    fn two_completed_lines_in_one_frame_are_sent_in_order() {
+        let mut bench = Bench::shown();
+        bench.chat.keep_focus = true;
+        bench.chat.focus_request = true;
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        let enter = || key(egui::Key::Enter, true, egui::Modifiers::NONE);
+        let (first, _, _) = bench.frame(vec![
+            egui::Event::Text("first".into()),
+            enter(),
+            egui::Event::Text("second".into()),
+            enter(),
+            egui::Event::Text("draft".into()),
+        ]);
+        assert_eq!(first.unwrap().message, "first");
+        let (second, _, _) = bench.frame(vec![]);
+        assert_eq!(second.unwrap().message, "second");
+        assert_eq!(bench.chat.input, "draft");
+        assert!(bench.frame(vec![]).0.is_none());
+    }
+
     /// #1009: autohidden, the chat island shows only while the chat is used
     /// (Enter, a draft), without its button when the dock holds
-    /// Conversations; Escape on the empty bar puts it away. A saved dock
+    /// Conversations; Escape puts the draft away until Enter. A saved dock
     /// without Conversations keeps the island's button alone.
     #[test]
     fn the_autohidden_chat_island_shows_while_the_chat_is_used() {
         let hint = aurora_i18n::tr!("common-nearby-chat");
         let escape = || vec![key(egui::Key::Escape, true, egui::Modifiers::NONE)];
         let mut bench = Bench::new();
-        bench.chat.autohide = true;
+        bench.chat.bar_mode = crate::settings::ChatBar::WhenTyping;
         bench.frame(vec![]);
         bench.frame(vec![]);
         assert!(bench.text_rect(hint).is_none(), "out of use: no field");
@@ -1131,13 +1187,17 @@ mod tests {
             bench.ctx.read_response(Id::unique("chat_island_open")).is_none(),
             "without its button"
         );
-        // a draft keeps it once the keyboard went elsewhere
         bench.frame(vec![egui::Event::Text("draft".into())]);
-        bench.frame(escape());
+        assert!(bench.frame(escape()).0.is_none());
         bench.frame(vec![]);
-        assert!(!bench.chat.has_focus);
-        assert!(bench.chat.bar_shown(), "the draft keeps the bar");
-        // empty, Escape puts it away
+        assert!(!bench.chat.has_focus && !bench.chat.bar_shown() && !bench.chat.in_use());
+        assert_eq!(bench.chat.input, "draft");
+        bench.chat.start_chat(&bench.ctx, false, |_| false);
+        assert!(bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]).0.is_none());
+        bench.frame(vec![]);
+        assert!(bench.chat.has_focus && bench.chat.bar_shown());
+        assert_eq!(bench.chat.input, "draft");
+        // empty, Escape also puts it away
         bench.chat.input.clear();
         bench.chat.focus_request = true;
         bench.frame(vec![]);
@@ -1149,7 +1209,7 @@ mod tests {
 
         // a saved dock without Conversations: the island's button alone
         let mut bench = Bench::new();
-        bench.chat.autohide = true;
+        bench.chat.bar_mode = crate::settings::ChatBar::WhenTyping;
         bench.buttons = Some(DockLayout::default().of(&crate::ui::skin::Layout::default(), false).toolbar.clone());
         bench.frame(vec![]);
         bench.frame(vec![]);
@@ -1160,6 +1220,94 @@ mod tests {
             .expect("the button alone")
             .rect;
         assert!(button.right() < 2.0 * MARGIN + 2.0 * PAD + 40.0, "in the corner: {button:?}");
+    }
+
+    #[test]
+    fn clicking_the_world_puts_away_the_draft_and_enter_restores_it() {
+        let mut bench = Bench::new();
+        bench.chat.bar_mode = crate::settings::ChatBar::WhenTyping;
+        bench.chat.start_chat(&bench.ctx, false, |_| false);
+        bench.frame(vec![]);
+        bench.frame(vec![]);
+        bench.frame(vec![egui::Event::Text("nearby draft".into())]);
+
+        let field = crate::ui::chat::bar_input_id();
+        let inside = bench.ctx.read_response(field).expect("nearby editor").rect.center();
+        let outside = screen(1536.0).center();
+        for pos in [inside, outside] {
+            bench.frame(vec![egui::Event::PointerMoved(pos)]);
+            let over_ui = crate::ui::widgets::pointer_over_ui(&bench.ctx, pos);
+            assert_eq!(over_ui, pos == inside, "only the world takes the second press");
+            if !over_ui {
+                assert!(crate::app::release_world_keyboard(
+                    &bench.ctx,
+                    &mut bench.chat,
+                    winit::event::MouseButton::Left
+                ));
+            }
+            for pressed in [true, false] {
+                let (out, _, _) = bench.frame(vec![egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }]);
+                assert!(out.is_none());
+            }
+            bench.frame(vec![]);
+            assert_eq!(bench.chat.bar_shown(), pos == inside);
+            assert_eq!(bench.chat.input, "nearby draft");
+        }
+
+        bench.chat.start_chat(&bench.ctx, false, |_| false);
+        assert!(bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]).0.is_none());
+        assert!(bench.chat.has_focus && bench.chat.bar_shown());
+        assert_eq!(bench.chat.input, "nearby draft");
+        assert!(bench.chat.draft_mut(None).is_empty());
+    }
+
+    /// #2993: Conversations on a side toolbar keeps the island's
+    /// "Nearby chat and Conversations" button away in all three chat bar modes.
+    #[test]
+    fn conversations_on_a_side_toolbar_hides_the_island_button() {
+        use crate::settings::ChatBar;
+        use crate::ui::toolbar::Bar;
+
+        let conv = crate::ui::skin::Layout::default()
+            .toolbar
+            .into_iter()
+            .find(|b| b.command == "conversations")
+            .expect("skin Conversations");
+        let without = DockLayout::default().of(&crate::ui::skin::Layout::default(), false).toolbar.clone();
+        for (side, bar_mode) in [
+            (Bar::Left, ChatBar::Always),
+            (Bar::Right, ChatBar::Always),
+            (Bar::Left, ChatBar::WhenTyping),
+            (Bar::Right, ChatBar::WhenTyping),
+            (Bar::Left, ChatBar::ConversationsOnly),
+            (Bar::Right, ChatBar::ConversationsOnly),
+        ] {
+            let mut bench = Bench::new();
+            bench.chat.bar_mode = bar_mode;
+            bench.buttons = Some(without.clone());
+            match side {
+                Bar::Left => bench.left = vec![conv.clone()],
+                Bar::Right => bench.right = vec![conv.clone()],
+                Bar::Bottom => unreachable!(),
+            }
+            bench.chat.focus_request = bar_mode == ChatBar::Always;
+            bench.frame(vec![]);
+            bench.frame(vec![]);
+            assert!(
+                bench.ctx.read_response(Id::unique("chat_island_open")).is_none(),
+                "Conversations on {side:?}, {bar_mode:?}: no island button"
+            );
+            assert_eq!(
+                bench.text_rect(aurora_i18n::tr!("common-nearby-chat")).is_some(),
+                bar_mode == ChatBar::Always,
+                "nearby chat field on {side:?}, {bar_mode:?}"
+            );
+        }
     }
 
     /// The default dock keeps the skin's Conversations button while the

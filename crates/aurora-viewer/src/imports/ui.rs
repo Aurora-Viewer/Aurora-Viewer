@@ -284,6 +284,14 @@ fn mesh_blocked(imports: &Imports, connected: bool, account: Uuid) -> bool {
     connected && has_selected_mesh(imports) && imports.mesh_permission_denied && imports.mesh_permission_account == account
 }
 
+fn start_action(choice: Choice) -> Action {
+    if choice == Choice::Bulk {
+        Action::Start
+    } else {
+        Action::StartFor(choice)
+    }
+}
+
 fn price_label(imports: &Imports, prices: &Prices, connected: bool, account: Uuid) -> String {
     if imports.choice == Choice::Local {
         return aurora_i18n::tr!("import-local-free").into();
@@ -328,12 +336,7 @@ pub fn show(
     imports.sync_destinations(prefs, world, inventory_prefs);
     imports.reconcile_active();
     let prices = if imports.demo_started {
-        Prices {
-            texture: Some(10),
-            large_texture: Some(40),
-            sound: Some(10),
-            animation: Some(10),
-        }
+        imports.demo_prices()
     } else {
         world.login.as_ref().map(|login| Prices::from_login(&login.raw)).unwrap_or_default()
     };
@@ -368,7 +371,8 @@ pub fn show(
             let modal = widgets::Modal::new(egui::Id::unique("import_confirmation")).show(ctx, |ui| {
                 ui.set_width(380.0_f32.min(ctx.content_rect().width() - 60.0).max(180.0));
                 widgets::section_header(ui, p, "file-upload-filled", aurora_i18n::tr!("import-confirm-title"));
-                if let Some(cost) = imports.total(&prices) {
+                // A free upload only gets here for its folders: no price to confirm.
+                if let Some(cost) = imports.total(&prices).filter(|cost| *cost != 0) {
                     ui.label(aurora_i18n::tr!("import-confirm-price", cost = cost));
                     if imports.has_shared_textures() {
                         ui.label(aurora_i18n::tr!("import-confirm-shared-textures"));
@@ -384,11 +388,7 @@ pub fn show(
                     #[cfg(test)]
                     ctx.data_mut(|data| data.insert_temp(egui::Id::unique("import_confirm_upload"), start.rect));
                     if start.clicked() {
-                        actions.push(if choice == Choice::Bulk {
-                            Action::Start
-                        } else {
-                            Action::StartFor(choice)
-                        });
+                        actions.push(start_action(choice));
                         imports.confirm = false;
                     }
                     if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
@@ -531,6 +531,44 @@ fn linear_color(color: [f32; 4]) -> [f32; 4] {
     // The egui preview target stores gamma RGB. PBR factors use linear RGB.
     egui::Rgba::from(color32(color)).to_rgba_unmultiplied()
 }
+fn image_size_limit(ui: &mut egui::Ui, entry: &mut Entry, prefs: &Preferences) {
+    let old = entry.image_size_limit;
+    ui.horizontal_wrapped(|ui| {
+        ui.label(if matches!(entry.source, Some(Source::Texture(_))) {
+            aurora_i18n::tr!("import-image-size-single")
+        } else {
+            aurora_i18n::tr!("import-image-size-limit")
+        });
+        let label = |limit| match limit {
+            ImageSizeLimit::Default => aurora_i18n::tr!("import-image-size-inherit", size = limit.maximum(prefs.limit_texture_size)),
+            limit => aurora_i18n::tr!("import-image-size-pixels", size = limit.maximum(prefs.limit_texture_size)),
+        };
+        let response = egui::ComboBox::from_id_salt(("import_image_size_limit", entry.id))
+            .width(210.0)
+            .selected_text(label(entry.image_size_limit))
+            .show_ui(ui, |ui| {
+                for limit in [ImageSizeLimit::Default, ImageSizeLimit::Size1024, ImageSizeLimit::Size2048] {
+                    let response = selection(ui, &mut entry.image_size_limit, limit, label(limit));
+                    #[cfg(test)]
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(egui::Id::unique(("import_image_size_choice", entry.id, limit)), response.rect);
+                    });
+                    let _ = response;
+                }
+            })
+            .response
+            .on_hover_text(aurora_i18n::tr!("import-image-size-inherit-help"));
+        #[cfg(test)]
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(egui::Id::unique(("import_image_size_limit", entry.id)), response.rect);
+        });
+        let _ = response;
+    });
+    if old != entry.image_size_limit {
+        entry.sync_image_size(prefs.limit_texture_size);
+    }
+}
+
 fn texture(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -538,7 +576,6 @@ fn texture(
     image: &DecodedImage,
     empty_alpha: bool,
     options: &mut import_texture::Options,
-    prefs: &mut Preferences,
     preview: &Option<egui::TextureHandle>,
     actions: &mut Vec<Action>,
     generation: &mut u64,
@@ -568,15 +605,6 @@ fn texture(
                 selection(ui, target, index, label);
             }
         });
-    if texture_needs_size_limit(image) {
-        let mut limit_size = options.max_width.max(options.max_height) <= 1024;
-        if widgets::switch_labeled(ui, p, &mut limit_size, aurora_i18n::tr!("import-max-size")).changed() {
-            let maximum = if limit_size { 1024 } else { 2048 };
-            options.max_width = maximum;
-            options.max_height = maximum;
-            prefs.limit_texture_size = limit_size;
-        }
-    }
     let (width, height) = import_texture::dimensions(image.width, image.height, *options);
     ui.label(aurora_i18n::tr!("import-texture-size", width = width, height = height));
     if width * height <= 128 * 128 {

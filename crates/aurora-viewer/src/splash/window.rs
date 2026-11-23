@@ -397,6 +397,18 @@ impl ApplicationHandler<Input> for Splash {
         }
     }
 
+    /// As the viewer's own window and the crash window do: egui-winit's
+    /// state and the window go while the event loop, and with it the
+    /// Wayland connection, still lives. Dropped after `run_app`, the
+    /// clipboard's worker destroyed its objects on a closed connection and
+    /// the splash process ended in a segmentation fault on Wayland as it
+    /// closed (#3776).
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.input = None;
+        self.surface = None;
+        self.window = None;
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // asked to close and held long enough (`AURORA_DEMO_SPLASH_HOLD`)
         let leave = self.closing.then(|| self.opened + self.hold.unwrap_or_default());

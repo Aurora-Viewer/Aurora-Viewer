@@ -17,8 +17,24 @@ pub fn set(value: &mut PbrMaterial, slot: usize, asset: Option<Uuid>) {
         _ => value.emissive_texture = asset,
     }
 }
+impl Entry {
+    /// File selection belongs to one map slot, not to its preview resolution.
+    /// A later choice for that slot supersedes even an open native dialog.
+    pub(super) fn begin_map_file_request(&mut self, slot: usize) -> Option<Uuid> {
+        if self.reloading || !matches!(self.source, Some(Source::Material { .. })) {
+            return None;
+        }
+        let pending = self.material_map_requests.get_mut(slot)?;
+        let request = Uuid::new_v4();
+        *pending = Some(request);
+        Some(request)
+    }
+}
 impl Imports {
     pub fn open_map_picker(&mut self, id: Uuid, slot: usize) {
+        if slot >= 4 {
+            return;
+        }
         let Some(Source::Material { value, images }) = self.entries.iter().find(|e| e.id == id).and_then(|e| e.source.as_ref()) else {
             return;
         };
@@ -34,10 +50,19 @@ impl Imports {
             })
         });
         self.map_before = Some((asset, images[slot].clone()));
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) {
+            entry.material_map_requests[slot] = None;
+        }
         self.map_target = Some((id, slot));
         self.map_picker
             .open_with_defaults(aurora_i18n::tr!("import-texture"), current.unwrap_or_default(), None, true);
         self.map_picker.allow_local = true;
+        // The same maps as the material editor takes
+        // (LLMaterialEditor::postBuild's setFilterPermissionMasks).
+        self.map_picker.required_permissions = {
+            use crate::world::inventory::actions;
+            actions::COPY | actions::TRANSFER
+        };
     }
 
     pub fn show_map_picker(
@@ -58,11 +83,15 @@ impl Imports {
                 {
                     set(value, slot, *asset);
                     images[slot] = image.clone();
+                    entry.material_map_requests[slot] = None;
                     entry.preview_generation += 1;
                     entry.model = None;
                     entry.preview_error = None;
                 }
-            } else if let Some(asset) = chosen {
+            } else if let Some(asset) = chosen
+                && (self.entries.iter().any(|entry| entry.id == asset && entry.local)
+                    || crate::ui::texture_library::map_allowed(world, asset))
+            {
                 self.select_map(id, slot, asset);
             }
         }
@@ -112,6 +141,7 @@ impl Imports {
                 entry.watch = Some(local::Watch::new(paths));
             }
             images[slot] = local;
+            entry.material_map_requests[slot] = None;
             entry.preview_generation += 1;
             entry.model = None;
             entry.preview_error = None;
@@ -206,6 +236,11 @@ mod tests {
         };
         imports.open_map_picker(material_id, 1);
         assert!(imports.map_picker.allow_local);
+        // the material editor's filter (LLMaterialEditor::postBuild)
+        assert_eq!(imports.map_picker.required_permissions, {
+            use crate::world::inventory::actions;
+            actions::COPY | actions::TRANSFER
+        });
         imports.select_map(material_id, 1, texture_id);
         let Some(Source::Material { value, images }) = &imports.entries[1].source else {
             panic!("material")

@@ -28,6 +28,9 @@ pub struct Bundle {
 pub struct State {
     active: Option<(Request, Instant)>,
     pub ready: Option<Bundle>,
+    /// The triangles of the last levels Blender prepared (high, medium,
+    /// low, lowest), with their source: the Import tab shows them.
+    pub levels: Option<(Uuid, [usize; 4])>,
     pub message: String,
     pub error: bool,
     pub demo_requested: bool,
@@ -204,6 +207,12 @@ impl Live {
             self.import.error = result.is_err();
             match result {
                 Ok(bundle) => {
+                    let triangles = |scene: &Scene| scene.models.iter().map(|model| model.triangles()).sum::<usize>();
+                    let [medium, low, lowest] = &bundle.lods;
+                    self.import.levels = Some((
+                        request.source,
+                        [triangles(&bundle.high.scene), triangles(medium), triangles(low), triangles(lowest)],
+                    ));
                     self.import.ready = Some(bundle);
                     self.import.message = aurora_i18n::tr!("blender-import-ready").into();
                 }
@@ -231,7 +240,10 @@ mod tests {
         let shared = Arc::new(super::super::Shared::default());
         shared.status.lock().connected = true;
         let mut live = Live {
-            server: Some(super::super::Server { shared: shared.clone() }),
+            server: Some(super::super::Server {
+                shared: shared.clone(),
+                _token: None,
+            }),
             ..Default::default()
         };
         live.request_import(Uuid::from_u128(456));

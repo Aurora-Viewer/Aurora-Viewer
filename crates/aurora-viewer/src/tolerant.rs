@@ -112,13 +112,33 @@ enum Step {
 /// Keeps a copy of a file before it is rewritten without what this build
 /// could not read (`settings.json` → `settings.newer-backup.json`): a newer
 /// build's values stay on disk. Replaced at each repair, so it holds the
-/// latest file that needed one.
+/// latest file that needed one. A refused write keeps the bytes read: the
+/// next save may replace the file, the copy is written later from memory
+/// (`save_retry`) and once more at exit (`save_before_exit`).
 pub fn backup(path: &Path) {
     let target = backup_path(path);
-    match std::fs::read(path).and_then(|bytes| crate::atomic_file::write(&target, &bytes)) {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log::warn!("cannot keep a copy of {}: {error}", file_name(path));
+            return;
+        }
+    };
+    match OWED.write(&target, bytes) {
         Ok(()) => log::info!("kept a copy of {} as {}", file_name(path), file_name(&target)),
-        Err(error) => log::warn!("cannot keep a copy of {}: {error}", file_name(path)),
+        Err(error) => log::warn!(
+            "cannot keep a copy of {} yet ({error}); kept in memory, tried again",
+            file_name(path)
+        ),
     }
+}
+
+/// The copies whose write was refused, with their bytes.
+static OWED: crate::save_retry::OwedFiles = crate::save_retry::OwedFiles::new("aurora-newer-backup", "copy of a newer file");
+
+/// The viewer closing: a copy still owed is tried once more.
+pub fn save_before_exit() {
+    OWED.finish();
 }
 
 pub fn backup_path(path: &Path) -> PathBuf {
@@ -256,6 +276,27 @@ mod tests {
         let ours = json!({ "kind": "B", "version": 1 });
         let merged = merge_over_newer(&theirs, ours, &loaded, &kept);
         assert_eq!(merged["kind"], "B");
+    }
+
+    /// The copy's write is refused (a folder stands where the copy goes):
+    /// the original is rewritten meanwhile, and the copy still gets the
+    /// newer build's bytes once the place is free.
+    #[test]
+    fn a_refused_copy_is_written_later_from_memory() {
+        let root = std::env::temp_dir().join(format!("aurora-newer-backup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+        std::fs::write(&path, b"{\"from\":\"a newer build\"}").unwrap();
+        std::fs::create_dir(backup_path(&path)).unwrap();
+        backup(&path);
+        assert!(OWED.owed(&backup_path(&path)).is_some(), "kept");
+        // the next save replaces the original
+        std::fs::write(&path, b"{}").unwrap();
+        std::fs::remove_dir(backup_path(&path)).unwrap();
+        // the retry's run
+        OWED.retry_now();
+        assert_eq!(std::fs::read(backup_path(&path)).unwrap(), b"{\"from\":\"a newer build\"}");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

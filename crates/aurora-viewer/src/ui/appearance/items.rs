@@ -2,6 +2,7 @@
 //! (indra/newview/llwearableitemslist.cpp / llviewerattachmenu.cpp, LGPL 2.1).
 
 use super::{Action, AppearanceUi, model};
+use crate::world::names::NameScope;
 use crate::{
     theme::Palette,
     ui::{menu, widgets},
@@ -84,25 +85,41 @@ pub(super) fn double_clicked(response: &egui::Response) -> bool {
 /// remove a worn item, and only replace body parts. Act on the clicked row
 /// alone, independently of the inventory's Add/Replace preferences.
 pub(super) fn double_click(response: &egui::Response, world: &World, it: &InvItem, worn: bool, actions: &mut Vec<Action>) {
-    if !double_clicked(response) || !matches!(it.asset_type, 5 | 6 | 13) {
-        return;
+    if double_clicked(response)
+        && let Some(action) = wear_toggle(world, it, worn)
+    {
+        actions.push(action);
+    }
+}
+
+/// What a double-click on `it` does (`double_click`), when RLVa allows it:
+/// None for what cannot be worn, a worn body part, or a lock. Also the
+/// Favorite Wearables rows' Wear / Take off button.
+pub(super) fn wear_toggle(world: &World, it: &InvItem, worn: bool) -> Option<Action> {
+    if !matches!(it.asset_type, 5 | 6 | 13) {
+        return None;
     }
     let locks = world.rlva_wear_locks();
     if worn {
-        if it.asset_type != 13 && locks.can_remove(it.id) {
-            actions.push(Action::Remove(it.id));
-        }
+        (it.asset_type != 13 && locks.can_remove(it.id)).then_some(Action::Remove(it.id))
     } else {
         let replace = it.asset_type == 13;
         let allowed = locks.wear(&world.inventory, it.id, 0);
-        if if replace { allowed.replace } else { allowed.add } {
-            actions.push(Action::WearItem {
-                item: it.id,
-                replace,
-                point: 0,
-            });
-        }
+        (if replace { allowed.replace } else { allowed.add }).then_some(Action::WearItem {
+            item: it.id,
+            replace,
+            point: 0,
+        })
     }
+}
+
+/// The list a row's menu is opened in: an outfit of My Outfits, which
+/// offers Delete from outfit, or the Favorite Wearables window, which offers
+/// Assign to Folder with the favorites' subfolders instead (is_outfit_menu
+/// and is_wearable_favorite of LLWearableItemsList::ContextMenu::updateItemsVisibility).
+pub(super) enum List<'a> {
+    Outfit(Uuid),
+    Favorites(&'a [(Uuid, String)]),
 }
 
 /// The menu of an outfit's item row `it`, acting on `selected` (the row
@@ -118,7 +135,7 @@ pub(super) fn context_menu(
     p: &Palette,
     world: &World,
     st: &mut AppearanceUi,
-    folder: Uuid,
+    list: List<'_>,
     it: &InvItem,
     selected: &[Uuid],
     actions: &mut Vec<Action>,
@@ -133,15 +150,11 @@ pub(super) fn context_menu(
             .filter(|it| matches!(it.asset_type, 5 | 6 | 13))
             .map(|it| it.id)
             .collect();
-        let is_worn = worn_set.contains(&it.id);
         // RLVa greys what a lock forbids, as LLWearableItemsList::ContextMenu
         // does with ERlvWearMask (llwearableitemslist.cpp): enabled when a
         // lock lets one of the items through; the outgoing COF update drops
         // the others (World::rlva_prepare_outfit).
         let locks = world.rlva_wear_locks();
-        if single && is_worn && matches!(it.asset_type, 5 | 13) && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
-            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
-        }
         if !wearable.is_empty() {
             let wear = |id: &Uuid| locks.wear(&world.inventory, *id, 0);
             if menu::item_if(
@@ -167,17 +180,10 @@ pub(super) fn context_menu(
                 attach_menu(ui, p, world, &locks, &wearable, true, actions);
             }
         }
-        // "touch" / "edit" of a worn object (updateItemsVisibility); editing
-        // worn clothing waits for the appearance editor
-        if single && is_worn && it.asset_type == 6 {
-            let touch = world.touchable_attachment_items().contains(&it.id);
-            if menu::item_if(ui, p, "click-filled", aurora_i18n::tr!("ui-context-touch"), touch) {
-                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::TouchWorn(it.id));
-            }
-            let edit = world.worn_attachment(&it.id).is_some();
-            if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"), edit) {
-                crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
-            }
+        // Touch and Edit when every selected item is worn (n_worn ==
+        // n_items), greyed for several
+        if !items.is_empty() && worn.len() == items.len() {
+            worn_touch_edit_menu(ui, p, world, &items);
         }
         remove_item(ui, p, &worn, &locks, aurora_i18n::tr!("ui-appearance-items-remove"), actions);
         if menu::item_if(
@@ -190,23 +196,23 @@ pub(super) fn context_menu(
             st.profile_item = Some(it.id);
         }
         menu::separator(ui, p);
-        // favorites_add / favorites_remove: each one shown when an item of
-        // the selection is in the other state
-        for favorite in [false, true] {
-            let ids: Vec<Uuid> = items
-                .iter()
-                .filter(|it| it.favorite == favorite && !st.favorite_pending.contains(&it.id))
-                .map(|it| it.id)
-                .collect();
-            let shown = items.iter().any(|it| it.favorite == favorite);
-            let label = if favorite {
-                aurora_i18n::tr!("common-remove-from-favorites")
+        favorites_menu(ui, p, st, &items, actions);
+        // gestures are activated, not worn (the inventory's Activate /
+        // Deactivate entry)
+        let gestures: Vec<Uuid> = items.iter().filter(|it| it.asset_type == 21).map(|it| it.id).collect();
+        if matches!(list, List::Favorites(_)) && !gestures.is_empty() {
+            let active = gestures.iter().all(|id| world.active_gestures.contains(id));
+            let label = if active {
+                aurora_i18n::tr!("gesture-deactivate")
             } else {
-                aurora_i18n::tr!("common-add-to-favorites")
+                aurora_i18n::tr!("gesture-activate")
             };
-            if shown && menu::item_if(ui, p, "star-filled", label, !ids.is_empty()) {
-                actions.extend(ids.into_iter().map(Action::Favorite));
+            if menu::item(ui, p, "player-play-filled", label) {
+                actions.push(Action::Gesture(gestures, !active));
             }
+        }
+        if let List::Favorites(folders) = list {
+            assign_menu(ui, p, world, folders, &items, actions);
         }
         if menu::item_if(
             ui,
@@ -217,17 +223,106 @@ pub(super) fn context_menu(
         ) {
             actions.push(Action::ShowOriginal(it.id));
         }
-        if menu::item_if(
-            ui,
-            p,
-            "trash-filled",
-            aurora_i18n::tr!("ui-appearance-items-remove-from-outfit"),
-            st.pending.is_none(),
-        ) {
+        if let List::Outfit(folder) = list
+            && menu::item_if(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("ui-appearance-items-remove-from-outfit"),
+                st.pending.is_none(),
+            )
+        {
             actions.push(Action::DeleteFromOutfit {
                 folder,
                 items: items.iter().map(|it| it.id).collect(),
             });
+        }
+    });
+}
+
+/// Touch and Edit of the worn `items`. Port of
+/// LLWearingContextMenu::updateMenuItemsVisibility
+/// (indra/newview/llpanelwearing.cpp) and of the touch and edit entries of
+/// LLWearableItemsList::ContextMenu::updateItemsVisibility
+/// (indra/newview/llwearableitemslist.cpp), originally LGPL 2.1: Touch is
+/// shown for attachments alone, Edit for any selection with an attachment,
+/// clothing or a body part. Both act on one item: with several selected they
+/// stay in the menu, greyed, as there. Touch needs an attachment that handles
+/// touches (enable_attachment_touch), Edit [`worn_editable`].
+pub(super) fn worn_touch_edit_menu(ui: &mut egui::Ui, p: &Palette, world: &World, items: &[&InvItem]) {
+    let single = match items {
+        [] => return,
+        [it] => Some(*it),
+        _ => None,
+    };
+    if items.iter().all(|it| it.asset_type == 6) {
+        let touch = single.filter(|it| world.touchable_attachment_items().contains(&it.id));
+        if menu::item_if(ui, p, "click-filled", aurora_i18n::tr!("ui-context-touch"), touch.is_some())
+            && let Some(it) = touch
+        {
+            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::TouchWorn(it.id));
+        }
+    }
+    if items.iter().any(|it| matches!(it.asset_type, 5 | 6 | 13)) {
+        let edit = single.filter(|it| worn_editable(world, it));
+        if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"), edit.is_some())
+            && let Some(it) = edit
+        {
+            crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
+        }
+    }
+}
+
+/// Whether Edit may open worn item `it`: get_is_item_editable
+/// (indra/newview/llinventoryfunctions.cpp, originally LGPL 2.1). An
+/// attachment must be on the avatar and allowed by RlvActions::canEdit
+/// (`@edit`, `@editattach`, `@editobj:<id>`); clothing and body parts need
+/// the modify right (LLAgentWearables::isWearableModifiable), the rule of the
+/// wearable editor's `can_modify`.
+pub(super) fn worn_editable(world: &World, it: &InvItem) -> bool {
+    use crate::world::inventory::actions;
+    match it.asset_type {
+        6 => world.worn_attachment(&it.id).is_some_and(|i| world.rlva_can_edit(i)),
+        5 | 13 => actions::agent_mask(it, world.agent_id) & actions::MODIFY != 0,
+        _ => false,
+    }
+}
+
+/// Shared Add to / Remove from Favorites entries for worn and outfit rows.
+pub(super) fn favorites_menu(ui: &mut egui::Ui, p: &Palette, st: &AppearanceUi, items: &[&InvItem], actions: &mut Vec<Action>) {
+    for favorite in [false, true] {
+        let ids: Vec<Uuid> = items
+            .iter()
+            .filter(|it| it.favorite == favorite && !st.favorite_pending.contains(&it.id))
+            .map(|it| it.id)
+            .collect();
+        let shown = items.iter().any(|it| it.favorite == favorite);
+        let label = if favorite {
+            aurora_i18n::tr!("common-remove-from-favorites")
+        } else {
+            aurora_i18n::tr!("common-add-to-favorites")
+        };
+        if shown && menu::item_if(ui, p, "star-filled", label, !ids.is_empty()) {
+            actions.extend(ids.into_iter().map(Action::Favorite));
+        }
+    }
+}
+
+/// Assign to Folder: the favorites' subfolders, by name
+/// (populate_assign_to_folder_menu); one links the selected originals it
+/// does not hold yet (assign_to_favorite_folder).
+fn assign_menu(ui: &mut egui::Ui, p: &Palette, world: &World, folders: &[(Uuid, String)], items: &[&InvItem], actions: &mut Vec<Action>) {
+    use crate::world::wearable_favorites as favorites;
+    let label = aurora_i18n::tr!("wearable-favorites-assign");
+    menu::submenu(ui, p, "folder-filled", label, !folders.is_empty(), |ui| {
+        for (id, name) in folders {
+            if menu::item(ui, p, "folder-filled", name) {
+                let ids: Vec<Uuid> = items.iter().map(|it| it.id).collect();
+                let targets = favorites::droppable(&world.inventory, &ids, *id);
+                if let Some(change) = favorites::link(&world.inventory, &targets, *id) {
+                    actions.push(Action::Folders(change));
+                }
+            }
         }
     });
 }
@@ -409,22 +504,28 @@ pub(super) fn profile(ctx: &egui::Context, p: &Palette, world: &World, st: &mut 
             ui.add(egui::Label::new(&item.desc).wrap());
         }
         ui.add_space(8.0);
-        for (label, id) in [
-            (aurora_i18n::tr!("common-creator"), item.creator),
-            (aurora_i18n::tr!("common-owner"), item.owner),
+        // RLVa `@shownames`, as LLSidepanelItemInfo::refreshFromItem
+        // (indra/newview/llsidepaneliteminfo.cpp): the owner is hidden unless
+        // excepted, the creator only when they also own the item or stand in
+        // a region around; a hidden name opens no profile.
+        let [owner, creator] = crate::ui::inventory::resident_scopes(item);
+        for (label, (id, scope)) in [
+            (aurora_i18n::tr!("common-creator"), creator),
+            (aurora_i18n::tr!("common-owner"), owner),
         ] {
             ui.horizontal(|ui| {
                 ui.label(label);
-                if !id.is_nil()
-                    && ui
-                        .link(
-                            world
-                                .person_name(&id)
-                                .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-items-show-profile").into()),
-                        )
-                        .clicked()
-                {
-                    crate::ui::profile::request_open(ctx, id);
+                if id.is_nil() {
+                    return;
+                }
+                let name = world
+                    .person_name_in(scope, &id)
+                    .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-items-show-profile").into());
+                if !world.rlva_shows_name(scope, id) {
+                    ui.label(RichText::new(name).color(p.muted));
+                } else if ui.link(name).clicked() {
+                    // the name is shown here whoever stands around
+                    crate::ui::profile::request_open_in(ctx, NameScope::Roster, id);
                 }
             });
         }

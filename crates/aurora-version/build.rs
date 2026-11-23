@@ -1,45 +1,23 @@
 mod build_support;
+mod git_watch;
 
 use std::path::Path;
-use std::process::Command;
 
-fn git(root: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git").arg("-C").arg(root).args(args).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8(output.stdout)
-        .ok()
-        .map(|text| text.trim().to_owned())
-        .filter(|text| !text.is_empty())
-}
+use git_watch::git;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build_support.rs");
+    println!("cargo:rerun-if-changed=git_watch.rs");
     println!("cargo:rerun-if-env-changed=AURORA_VERSION_TAG");
     println!("cargo:rerun-if-env-changed=AURORA_UPDATE_TEST_VERSION");
     let manifest = std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo supplies CARGO_MANIFEST_DIR");
     let root = Path::new(&manifest).join("../..");
 
-    // Worktrees keep HEAD in their private Git directory and tags/branches
-    // in the common one. Cargo must rebuild after a commit, checkout or tag.
-    if let Some(head) = git(&root, &["rev-parse", "--path-format=absolute", "--git-path", "HEAD"]) {
-        println!("cargo:rerun-if-changed={head}");
-    }
-    if let Some(common) = git(&root, &["rev-parse", "--path-format=absolute", "--git-common-dir"]) {
-        for name in ["packed-refs", "refs/tags"] {
-            let path = Path::new(&common).join(name);
-            if path.exists() {
-                println!("cargo:rerun-if-changed={}", path.display());
-            }
-        }
-        if let Some(branch) = git(&root, &["symbolic-ref", "-q", "HEAD"]) {
-            let path = Path::new(&common).join(branch);
-            if path.exists() {
-                println!("cargo:rerun-if-changed={}", path.display());
-            }
-        }
+    // Cargo must rebuild after a commit, a checkout or a tag of this
+    // checkout, and not after the Git commands of another worktree.
+    for path in git_watch::watch_list(&root) {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
 
     let tag = std::env::var("AURORA_VERSION_TAG").ok();

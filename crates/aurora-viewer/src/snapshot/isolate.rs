@@ -6,9 +6,12 @@
 //! the sky, the terrain, the water and the clouds are not drawn either,
 //! and the photo keeps its alpha: a PNG with nothing around the subject.
 //!
-//! The scene flags what is left out for the GPU lists
-//! (`object_flags::HIDDEN`); the particles, name plates and water
-//! effects read [`object_visible`]. While choosing in the scene everything
+//! The scene flags what is left out for the GPU lists ([`object_view`]): a
+//! linkset left out is only unseen (`object_flags::UNSEEN`: it still
+//! casts its shadow and lights the reflections, so the subject keeps the
+//! scene's light, #2316), an avatar left out is gone with what it wears
+//! (`object_flags::HIDDEN`); the particles, name plates and water effects
+//! read [`object_visible`]. While choosing in the scene everything
 //! is drawn, the chosen ones outlined, so that anything can be clicked.
 
 use uuid::Uuid;
@@ -49,6 +52,10 @@ pub struct Isolation {
     /// Bumped when what is drawn changes: the scene flags every object
     /// again.
     pub version: u64,
+    /// Every avatar left out, with what it wears, whatever the mode (the
+    /// 360° snapshot's "Hide all avatars", LLFloater360Capture's
+    /// RENDER_TYPE_AVATAR toggle).
+    pub hide_avatars: bool,
 }
 
 impl Default for Isolation {
@@ -61,6 +68,7 @@ impl Default for Isolation {
             picking: false,
             open: false,
             version: 0,
+            hide_avatars: false,
         }
     }
 }
@@ -69,6 +77,19 @@ impl Isolation {
     /// The choice decides what is drawn now.
     pub fn applied(&self) -> bool {
         self.open && !self.picking && self.mode != Mode::Off
+    }
+
+    /// Something is left out now: the choice, or every avatar.
+    pub fn hides(&self) -> bool {
+        self.applied() || self.hide_avatars
+    }
+
+    /// Every avatar left out (the 360° snapshot's capture), or back.
+    pub fn set_hide_avatars(&mut self, on: bool) {
+        if self.hide_avatars != on {
+            self.hide_avatars = on;
+            self.bump();
+        }
     }
 
     /// The background is left empty now (and the photo keeps its alpha).
@@ -216,17 +237,99 @@ fn root_including_huds(world: &crate::world::World, index: usize, huds: bool) ->
     None
 }
 
-/// Visibility in the local studio or the photo's independent isolation.
-pub fn object_visible(world: &crate::world::World, index: usize) -> bool {
+fn seat_root(world: &crate::world::World, avatar: usize) -> Option<(usize, Uuid)> {
+    let object = world.objects.get(avatar).filter(|o| o.is_avatar())?;
+    let seat = world.objects.parent_of(object)?;
+    let root = root_of(world, seat)?;
+    (!world.objects.get(root.0)?.is_avatar()).then_some(root)
+}
+
+pub(crate) fn studio_seat(world: &crate::world::World) -> Option<(usize, Uuid)> {
+    world.objects.index_of_uuid(&world.agent_id).and_then(|i| seat_root(world, i))
+}
+
+pub(crate) fn studio_roots(world: &crate::world::World) -> Vec<Uuid> {
+    let mut roots = vec![world.agent_id];
+    // the animation editor's couple partner stands on the stage with us
+    roots.extend(world.couple_partner);
+    // and the mirror of us that is becoming Person B
+    roots.extend(world.mirror());
+    if let Some((_, seat)) = studio_seat(world) {
+        roots.push(seat);
+        roots.extend(
+            world
+                .objects
+                .avatars()
+                .filter(|(i, _)| seat_root(world, *i).is_some_and(|(_, root)| root == seat))
+                .map(|(_, o)| o.full_id),
+        );
+    }
+    roots.sort_unstable();
+    roots.dedup();
+    roots
+}
+
+/// How an object takes part in the frame ([`object_view`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    /// Drawn.
+    Drawn,
+    /// Left out of the picture only: the scene still has it, so it still
+    /// casts its shadow and shows in the reflections and the reflection
+    /// probes, and the subject keeps the light of the entire scene (#2316:
+    /// an avatar under a roof left out took the full sun, with hard
+    /// shadows on the face, and the probes lit it with the open sky).
+    Unseen,
+    /// Not there at all: no shadow, no reflection.
+    Gone,
+}
+
+/// How the object at `index` takes part in the frame: in the local studio
+/// the live avatar, and what it sits on with the avatars seated on it, are
+/// drawn and the rest is gone (the studio is a stage of its own); else
+/// under the photo's isolation, or with every avatar hidden (an avatar and
+/// what it wears go together). A linkset the photo leaves out is
+/// [`View::Unseen`]; an avatar left out is [`View::Gone`] with what it
+/// wears: it takes no place among the avatars drawn in full (the scene's
+/// avatar limit), so it casts nothing either.
+pub fn object_view(world: &crate::world::World, index: usize) -> View {
+    let drawn = |on: bool| if on { View::Drawn } else { View::Gone };
     if world.avatar_studio {
-        return root_including_huds(world, index, true).is_some_and(|(_, root)| root == world.agent_id);
+        let Some((root_index, root)) = root_including_huds(world, index, true) else {
+            return View::Gone;
+        };
+        if root == world.agent_id || Some(root) == world.couple_partner || world.is_mirror(&root) {
+            return View::Drawn;
+        }
+        let Some((_, seat)) = studio_seat(world) else {
+            return View::Gone;
+        };
+        return drawn(
+            root == seat || root_of(world, index).is_some() && seat_root(world, root_index).is_some_and(|(_, root)| root == seat),
+        );
     }
     let iso = &world.photo_isolation;
-    !iso.applied()
-        || root_of(world, index).is_none_or(|(at, root)| {
-            let avatar = world.objects.get(at).is_some_and(|o| o.is_avatar());
-            iso.root_visible(&root, avatar)
-        })
+    if !iso.hides() {
+        return View::Drawn;
+    }
+    let Some((root_index, root)) = root_of(world, index) else {
+        return View::Drawn;
+    };
+    let avatar = world.objects.get(root_index).is_some_and(|o| o.is_avatar());
+    if iso.hide_avatars && avatar {
+        return View::Gone;
+    }
+    match (iso.root_visible(&root, avatar), avatar) {
+        (true, _) => View::Drawn,
+        (false, true) => View::Gone,
+        (false, false) => View::Unseen,
+    }
+}
+
+/// Whether the object at `index` is drawn ([`object_view`]): what the
+/// particles, the name plates and the water effects follow.
+pub fn object_visible(world: &crate::world::World, index: usize) -> bool {
+    object_view(world, index) == View::Drawn
 }
 
 #[cfg(test)]
@@ -284,6 +387,146 @@ mod tests {
         assert_eq!(world.photo_isolation.version, version);
         assert_eq!(world.photo_isolation.chosen(), &[id(99)]);
         assert_eq!((world.agent.position, world.agent.yaw), (position, yaw));
+    }
+
+    #[test]
+    fn a_linkset_left_out_stays_in_the_light_an_avatar_left_out_is_gone() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let agent = world.agent_id;
+        world.photo_isolation.set_open(true);
+        world.photo_isolation.set_own(agent);
+        let views = |world: &crate::world::World| {
+            world
+                .objects
+                .iter()
+                .filter_map(|(index, _)| {
+                    let (root_index, root) = root_of(world, index)?;
+                    let avatar = world.objects.get(root_index).is_some_and(|o| o.is_avatar());
+                    Some((root == agent, avatar, object_view(world, index)))
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            views(&world).iter().all(|v| v.2 == View::Drawn),
+            "nothing left out outside an isolation"
+        );
+        world.photo_isolation.set_mode(Mode::Own);
+        let (mut unseen, mut gone) = (0, 0);
+        for (own, avatar, view) in views(&world) {
+            let expected = match (own, avatar) {
+                (true, _) => View::Drawn,
+                (false, true) => View::Gone,
+                (false, false) => View::Unseen,
+            };
+            assert_eq!(view, expected, "own {own}, avatar {avatar}");
+            unseen += usize::from(view == View::Unseen);
+            gone += usize::from(view == View::Gone);
+        }
+        assert!(
+            unseen > 0 && gone > 0,
+            "the demo has linksets and other avatars: {unseen} unseen, {gone} gone"
+        );
+        // the 360° capture's "Hide all avatars" alone: every avatar gone,
+        // the linksets drawn
+        world.photo_isolation.set_mode(Mode::Off);
+        world.photo_isolation.set_hide_avatars(true);
+        for (_, avatar, view) in views(&world) {
+            assert_eq!(view, if avatar { View::Gone } else { View::Drawn });
+        }
+    }
+
+    #[test]
+    fn studio_shows_the_couple_partner_beside_the_live_avatar() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.expect("demo region");
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![crate::demo::poser::peer()],
+        });
+        let partner = world.objects.index_of_uuid(&crate::demo::poser::PEER).expect("partner");
+        world.avatar_studio = true;
+        assert!(!object_visible(&world, partner));
+        world.couple_partner = Some(crate::demo::poser::PEER);
+        assert!(object_visible(&world, partner));
+        assert!(studio_roots(&world).contains(&crate::demo::poser::PEER));
+    }
+
+    #[test]
+    fn studio_includes_the_seated_linkset_and_companions_until_they_stand() {
+        use aurora_net::NetEvent;
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::sit_events(250)) {
+            world.apply(event);
+        }
+        let sit = crate::demo::sit_events(300);
+        let (handle, mut own) = sit
+            .iter()
+            .find_map(|event| match event {
+                NetEvent::ObjectUpdates { handle, objects } => objects.first().cloned().map(|o| (*handle, o)),
+                _ => None,
+            })
+            .expect("seated fixture");
+        for event in sit {
+            world.apply(event);
+        }
+        let mut companion = own.clone();
+        companion.local_id = 9800;
+        companion.full_id = id(9800);
+        companion.parent_id = 951;
+        let mut body = crate::demo::hud::object(1, false);
+        body.local_id = 9801;
+        body.full_id = id(9801);
+        body.parent_id = companion.local_id;
+        let mut hud = crate::demo::hud::object(31, false);
+        hud.local_id = 9802;
+        hud.full_id = id(9802);
+        hud.parent_id = companion.local_id;
+        let mut other_seat = body.clone();
+        other_seat.local_id = 9803;
+        other_seat.full_id = id(9803);
+        other_seat.parent_id = 0;
+        let mut bystander = companion.clone();
+        bystander.local_id = 9804;
+        bystander.full_id = id(9804);
+        bystander.parent_id = other_seat.local_id;
+        let update = |objects| NetEvent::ObjectUpdates { handle, objects };
+        world.apply(update(vec![companion.clone(), body, hud, other_seat, bystander]));
+        world.avatar_studio = true;
+        let visible = |world: &crate::world::World, local_id| {
+            let index = world
+                .objects
+                .iter()
+                .find(|(_, o)| o.key.local_id == local_id)
+                .expect("fixture object")
+                .0;
+            object_visible(world, index)
+        };
+        for local in [950, 951, own.local_id, 9800, 9801] {
+            assert!(visible(&world, local), "furniture, companion and worn body: {local}");
+        }
+        for local in [9802, 9803, 9804] {
+            assert!(!visible(&world, local), "other HUD, furniture and occupant: {local}");
+        }
+        let group = studio_roots(&world);
+        companion.parent_id = 0;
+        world.apply(update(vec![companion.clone()]));
+        assert_ne!(studio_roots(&world), group, "standing invalidates the cached scene visibility");
+        assert!(!visible(&world, 9800) && !visible(&world, 9801));
+        companion.parent_id = 951;
+        world.apply(update(vec![companion]));
+        assert_eq!(studio_roots(&world), group);
+        own.parent_id = 0;
+        world.apply(update(vec![own]));
+        assert_eq!(studio_roots(&world), vec![world.agent_id]);
+        for local in [950, 951, 9800, 9801] {
+            assert!(!visible(&world, local), "our standing restores the ordinary studio: {local}");
+        }
     }
 
     #[test]

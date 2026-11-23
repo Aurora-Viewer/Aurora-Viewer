@@ -47,16 +47,73 @@ function Get-IncrementalDirs([string]$Target) {
         Where-Object { Test-Path -LiteralPath $_ -PathType Container }
 }
 
-# --- Shared compiler cache (sccache) ------------------------------------------
-# Every worktree builds the same dependencies. When sccache is installed (the
-# Aurora tools install it), their compiled crates are kept in one folder next
-# to the repository (<root>\.sccache) and a new worktree takes them from
-# there. Cargo finds sccache through <root>\.cargo\config.toml, which covers
-# the main repository and every task of work\, whatever the command (check,
-# demo, tests). The scripts write that file while sccache is there and delete
-# it once it is gone: without sccache, Cargo builds as before.
+# The file new-task.ps1 leaves in a target\ before it frees its incremental
+# caches: its date is the last build, which the trim would otherwise erase.
+$LastBuildMarker = 'aurora-last-build'
 
-$BuildCacheMarker = '# Written by the Aurora Viewer scripts (Sync-BuildCache).'
+# When Cargo last built into the target directory $Target, or $null when
+# nothing tells. Cargo 1.100 keeps no deps\ folder any more (its artefacts
+# are in build\<crate>\<hash>\): incremental\ was the only date left, and
+# once new-task.ps1 freed it the next run took the task for infinitely idle
+# and deleted its whole target\. So the date is the newest of, per profile
+# folder (debug, ci, release…): deps\ and .fingerprint\ (older Cargo),
+# incremental\, build\ and its per-crate folders, the files Cargo puts in the
+# profile folder itself (exe, .d, .pdb); and the marker above.
+function Get-LastBuildTime([string]$Target) {
+    if (-not (Test-Path -LiteralPath $Target -PathType Container)) { return }
+    $dates = @(Get-Item -LiteralPath (Join-Path $Target $LastBuildMarker) -Force -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.LastWriteTime })
+    foreach ($prof in Get-ChildItem -LiteralPath $Target -Directory -Force -ErrorAction SilentlyContinue) {
+        foreach ($c in Get-ChildItem -LiteralPath $prof.FullName -Force -ErrorAction SilentlyContinue) {
+            if (-not $c.PSIsContainer) { $dates += $c.LastWriteTime; continue }
+            if ($c.Name -in 'deps', '.fingerprint', 'incremental') { $dates += $c.LastWriteTime }
+            if ($c.Name -eq 'build') {
+                $dates += $c.LastWriteTime
+                $dates += @(Get-ChildItem -LiteralPath $c.FullName -Directory -Force -ErrorAction SilentlyContinue |
+                        ForEach-Object { $_.LastWriteTime })
+            }
+        }
+    }
+    if ($dates) { ($dates | Sort-Object -Descending)[0] }
+}
+
+# Writes the marker of Get-LastBuildTime: $When, the last build of $Target.
+function Set-LastBuildMarker([string]$Target, [datetime]$When) {
+    $marker = Join-Path $Target $LastBuildMarker
+    [IO.File]::WriteAllText($marker, "Last Cargo build into this folder, kept by scripts/new-task.ps1.`n")
+    [IO.File]::SetLastWriteTime($marker, $When)
+}
+
+# --- Shared Cargo configuration: build gate and compiler cache -----------------
+# <root>\.cargo\config.toml covers the main repository and every task of
+# work\, whatever the command (check, demo, tests). The scripts write it with
+# what they find:
+#
+# - the build gate (crates/aurora-build-gate): Cargo runs every compiler
+#   through it, and a heavy crate waits there for a build slot. A cargo
+#   command typed by hand cannot go around it, unlike the slot of check.ps1
+#   (below). It is built here with rustc alone and kept in <root>\.cargo\.
+# - sccache, when it is installed (the Aurora tools install it): every
+#   worktree builds the same dependencies, and their compiled crates are kept
+#   in one folder next to the repository (<root>\.sccache), where a new
+#   worktree takes them. The gate hands the compiler over to it.
+#
+# With neither, the file is deleted: Cargo builds as before.
+
+# The marker names the generation of the gate. A script of an older worktree
+# does not know a newer file as its own and leaves it alone, instead of
+# writing its own gate back at each of its runs: the file names the gate
+# built by the last script that wrote it. A change to the gate that every
+# worktree of the PC must get takes the next number here and moves the
+# marker it replaces to the older ones. 1 came with the gate; 2 runs the
+# compiler alone when sccache cannot be started (a command line just under
+# Windows' limit).
+$BuildCacheMarker = '# Written by the Aurora Viewer scripts (Sync-BuildCache, build gate 2).'
+# Files of older scripts: this one's to replace.
+$BuildCacheOlderMarkers = @(
+    '# Written by the Aurora Viewer scripts (Sync-BuildCache).',
+    '# Written by the Aurora Viewer scripts (Sync-BuildCache, build gate).'
+)
 
 function Find-Sccache {
     $cmd = Get-Command sccache -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -66,36 +123,164 @@ function Find-Sccache {
         Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 }
 
-# Writes or deletes <root>\.cargo\config.toml to match the installed sccache.
-# A file there that these scripts did not write is left alone. Size of the
-# cache: AURORA_BUILD_CACHE_SIZE (sccache format, 10G by default).
+# The build gate of this checkout: <root>\.cargo\aurora-build-gate-<hash>,
+# built at its first use. The name follows the source: a changed gate is a
+# new file, and a build started with the old one keeps it. Returns nothing
+# when it cannot be built (no rustc, compile error): the builds then run
+# without a gate.
+function Get-BuildGate([string]$Root) {
+    $repo = Split-Path $PSScriptRoot -Parent
+    $source = Join-Path $repo 'crates/aurora-build-gate/src/main.rs'
+    if (-not (Test-Path -LiteralPath $source)) { return }
+    $rustc = Get-Command rustc -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $rustc) { return }
+    # line endings aside: git may check the file out with CRLF
+    $text = [IO.File]::ReadAllText($source) -replace "`r`n", "`n"
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))[0..5] | ForEach-Object { $_.ToString('x2') })
+    } finally {
+        $sha.Dispose()
+    }
+    # $IsWindows is unset on Windows PowerShell 5.1; that edition is Windows.
+    $ext = ''
+    if (($PSVersionTable.PSEdition -eq 'Desktop') -or $IsWindows) { $ext = '.exe' }
+    $dir = Join-Path $Root '.cargo'
+    $gate = Join-Path $dir "aurora-build-gate-$hash$ext"
+    if (-not (Test-Path -LiteralPath $gate)) {
+        # built apart: on Windows rustc leaves a .pdb next to the exe
+        $build = Join-Path ([IO.Path]::GetTempPath()) "aurora-build-gate-$PID"
+        New-Item -ItemType Directory -Force -Path $build, $dir | Out-Null
+        try {
+            $built = Join-Path $build "gate$ext"
+            # from the repository: rustup takes the toolchain of rust-toolchain.toml
+            Push-Location -LiteralPath $repo
+            try {
+                & $rustc.Source --edition 2024 -C opt-level=2 -C debuginfo=0 -o $built $source
+            } finally {
+                Pop-Location
+            }
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Build gate not built (rustc, code $LASTEXITCODE): the builds run without it." -ForegroundColor Yellow
+                # not the result of the calling script
+                $global:LASTEXITCODE = 0
+                return
+            }
+            # another script may have built it in the meantime: keep that one
+            Move-Item -LiteralPath $built -Destination $gate -ErrorAction SilentlyContinue
+        } finally {
+            Remove-Item -LiteralPath $build -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (-not (Test-Path -LiteralPath $gate)) { return }
+    }
+    # A gate's date says when a script last chose it. One that none has
+    # chosen for a week is no longer the gate of a running build: delete it.
+    $now = Get-Date
+    $item = Get-Item -LiteralPath $gate
+    if ($item.LastWriteTime -lt $now.AddDays(-1)) { try { $item.LastWriteTime = $now } catch { } }
+    Get-ChildItem -LiteralPath $dir -File -Filter 'aurora-build-gate-*' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -ne $item.FullName -and $_.LastWriteTime -lt $now.AddDays(-7) } |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    $gate
+}
+
+# Writes or deletes <root>\.cargo\config.toml to match the build gate and the
+# installed sccache. A file there that these scripts did not write is left
+# alone. Size of the cache: AURORA_BUILD_CACHE_SIZE (sccache format, 10G by
+# default).
 function Sync-BuildCache([string]$Root) {
     if (-not $Root) { $Root = (Get-AuroraPaths).Root }
     $file = Join-Path $Root '.cargo\config.toml'
-    if ((Test-Path -LiteralPath $file) -and -not (Select-String -LiteralPath $file -SimpleMatch $BuildCacheMarker -Quiet)) { return }
+    if ((Test-Path -LiteralPath $file) -and
+        -not (Select-String -LiteralPath $file -Pattern (@($BuildCacheMarker) + $BuildCacheOlderMarkers) -SimpleMatch -Quiet)) { return }
     $sccache = Find-Sccache
-    if (-not $sccache) {
+    $gate = Get-BuildGate $Root
+    if (-not $sccache -and -not $gate) {
         if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
         return
     }
-    $size = if ($env:AURORA_BUILD_CACHE_SIZE) { $env:AURORA_BUILD_CACHE_SIZE } else { '10G' }
+    $wrapper = $sccache
+    if ($gate) { $wrapper = $gate }
     # TOML literal strings ('…'): the backslashes of the paths stay as they are
-    $text = @(
+    $lines = @(
         $BuildCacheMarker,
-        '# Deleted by them when sccache is uninstalled; see scripts/common.ps1.',
+        '# Deleted by them when neither the build gate nor sccache is there; see scripts/common.ps1.',
         '[build]',
-        "rustc-wrapper = '$sccache'",
-        '',
-        '[env]',
-        "SCCACHE_DIR = '$(Join-Path $Root '.sccache')'",
-        "SCCACHE_CACHE_SIZE = '$size'",
-        '# cache server unreachable: compile without it',
-        "SCCACHE_IGNORE_SERVER_IO_ERROR = '1'",
-        ''
-    ) -join "`n"
+        "rustc-wrapper = '$wrapper'"
+    )
+    if ($sccache) {
+        $size = if ($env:AURORA_BUILD_CACHE_SIZE) { $env:AURORA_BUILD_CACHE_SIZE } else { '10G' }
+        $lines += '', '[env]'
+        if ($gate) { $lines += '# the build gate hands the compiler over to sccache', "AURORA_GATE_NEXT = '$sccache'" }
+        $lines += @(
+            "SCCACHE_DIR = '$(Join-Path $Root '.sccache')'",
+            "SCCACHE_CACHE_SIZE = '$size'",
+            '# cache server unreachable: compile without it',
+            "SCCACHE_IGNORE_SERVER_IO_ERROR = '1'"
+        )
+    }
+    $text = ($lines + '') -join "`n"
     if ((Test-Path -LiteralPath $file) -and ([IO.File]::ReadAllText($file) -eq $text)) { return }
     New-Item -ItemType Directory -Force -Path (Split-Path $file) | Out-Null
     [IO.File]::WriteAllText($file, $text, (New-Object Text.UTF8Encoding $false))
+}
+
+# --- The Rust version of rust-toolchain.toml ------------------------------------
+# rustup installs the named version by itself at the first Cargo command. Two
+# installs of one version at the same moment break each other: they share
+# rustup's download folder, and the one that fails takes back what it wrote
+# (on a Mac of the CI, the other's whole toolchain: rustc was gone under a
+# build that had just started). Several agents share a PC, so the scripts
+# install it first, one at a time. The lock is a named mutex: the OS frees
+# it if the script dies.
+
+# The version <Repo>\rust-toolchain.toml names, or $null: a channel such as
+# "stable" is not a version.
+function Get-RustVersion([string]$Repo) {
+    $file = Join-Path $Repo 'rust-toolchain.toml'
+    if (-not (Test-Path -LiteralPath $file)) { return $null }
+    if ((Get-Content -LiteralPath $file -Raw) -match '(?m)^channel\s*=\s*"(\d+\.\d+(?:\.\d+)?)"') { return $Matches[1] }
+    $null
+}
+
+# rustup has this version installed.
+function Test-RustVersion([string]$Version) {
+    [bool](@(rustup toolchain list 2>$null) -match "^$([regex]::Escape($Version))-")
+}
+
+# Installs the version <Repo> names when rustup lacks it. Nothing to do
+# without rustup or without a named version: Cargo then says what is missing.
+function Install-RustVersion([string]$Repo) {
+    $version = Get-RustVersion $Repo
+    if (-not $version -or -not (Get-Command rustup -ErrorAction SilentlyContinue)) { return }
+    if (Test-RustVersion $version) { return }
+    $lock = New-Object Threading.Mutex($false, 'Local\AuroraViewerRustInstall')
+    $held = $false
+    try {
+        try {
+            $held = $lock.WaitOne()
+        } catch {
+            # the holder died during its install: the lock is now ours
+            $e = $_.Exception
+            while ($e -and -not ($e -is [Threading.AbandonedMutexException])) { $e = $e.InnerException }
+            if (-not $e) { throw }
+            $held = $true
+        }
+        # another script may have installed it while this one waited
+        if (-not (Test-RustVersion $version)) {
+            Write-Host "Installing Rust $version (rust-toolchain.toml)…" -ForegroundColor Cyan
+            Push-Location -LiteralPath $Repo
+            try {
+                # no version argument: rustup takes the file's, with its components
+                rustup toolchain install --profile minimal --no-self-update
+            } finally {
+                Pop-Location
+            }
+        }
+    } finally {
+        if ($held) { $lock.ReleaseMutex() }
+        $lock.Dispose()
+    }
 }
 
 # --- One heavy build at a time --------------------------------------------------
@@ -103,6 +288,10 @@ function Sync-BuildCache([string]$Root) {
 # them end up slower than one after the other. A heavy build takes one of
 # AURORA_BUILD_SLOTS slots (2 by default) and waits for a free one. A slot is
 # a named mutex: the OS frees it if the script dies.
+#
+# These slots hold a whole run of check.ps1 (clippy, then the tests). The
+# build gate (above) has slots of its own for each compile of the viewer
+# crate, whatever the command that started it.
 #
 # Windows waits on every slot at once. PowerShell 7 on Linux and macOS cannot:
 # WaitAny of several named mutexes throws PlatformNotSupportedException.
