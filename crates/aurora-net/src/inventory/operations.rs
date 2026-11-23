@@ -194,6 +194,25 @@ fn not_on_this_grid() -> String {
     aurora_i18n::tr!("session-inventory-change-not-supported-on-this-grid").into()
 }
 
+/// Whether an item field of an AIS patch fits in `UpdateInventoryItem`
+/// (LLViewerInventoryItem::packMessage, llviewerinventory.cpp): the
+/// permission masks the properties change (LLSidepanelItemInfo::
+/// updatePermissions), the sale info (updateSaleInfo) and the flags they set.
+fn udp_item_field(key: &str, value: &Llsd) -> bool {
+    let only = |keys: &[&str]| {
+        value
+            .as_map()
+            .is_some_and(|fields| fields.keys().all(|key| keys.contains(&key.as_str())))
+    };
+    match key {
+        "flags" => true,
+        "permissions" => only(&["next_owner_mask", "group_mask", "everyone_mask"]),
+        // LLSaleInfo::EForSale: FS_NOT, FS_ORIGINAL, FS_COPY, FS_CONTENTS
+        "sale_info" => only(&["sale_type", "sale_price"]) && (!value.has("sale_type") || (0..=3).contains(&value["sale_type"].as_i32())),
+        _ => false,
+    }
+}
+
 /// The UDP messages of an operation, moves apart. AIS metadata (favorites,
 /// thumbnails) has no message: such a change fails rather than half apply.
 pub(crate) fn udp_edits(op: &Operation, known: &Known) -> Result<Vec<UdpEdit>, String> {
@@ -213,7 +232,10 @@ pub(crate) fn udp_edits(op: &Operation, known: &Known) -> Result<Vec<UdpEdit>, S
             let Some(fields) = body.as_map() else {
                 return Err(not_on_this_grid());
             };
-            if fields.keys().any(|key| !matches!(key.as_str(), "parent_id" | "name" | "desc")) {
+            if fields
+                .iter()
+                .any(|(key, value)| !matches!(key.as_str(), "parent_id" | "name" | "desc") && (*folder || !udp_item_field(key, value)))
+            {
                 return Err(not_on_this_grid());
             }
             if !fields.keys().any(|key| key != "parent_id") {
@@ -245,6 +267,27 @@ pub(crate) fn udp_edits(op: &Operation, known: &Known) -> Result<Vec<UdpEdit>, S
                 }
                 if fields.contains_key("desc") {
                     item.desc = body["desc"].to_string_value();
+                }
+                // update_inventory_item's [UDP-Msg] branch sends the whole
+                // item: what the patch leaves out stays as the viewer holds it
+                let (masks, sale) = (&body["permissions"], &body["sale_info"]);
+                for (key, mask) in [
+                    ("next_owner_mask", &mut item.next_owner_mask),
+                    ("group_mask", &mut item.group_mask),
+                    ("everyone_mask", &mut item.everyone_mask),
+                ] {
+                    if masks.has(key) {
+                        *mask = masks[key].as_u32();
+                    }
+                }
+                if sale.has("sale_type") {
+                    item.sale_type = sale["sale_type"].as_i32() as u8;
+                }
+                if sale.has("sale_price") {
+                    item.sale_price = sale["sale_price"].as_i32();
+                }
+                if fields.contains_key("flags") {
+                    item.flags = body["flags"].as_u32();
                 }
                 vec![UdpEdit::UpdateItem(Box::new(item))]
             }
@@ -2562,6 +2605,82 @@ mod udp_tests {
         ] {
             assert!(udp_edits(&patch(id(1), false, body), &known()).is_err());
         }
+    }
+
+    #[test]
+    fn a_permissions_change_sends_the_whole_item_with_its_new_masks() {
+        let body = llsd_map! { "permissions" => llsd_map! {
+        "next_owner_mask" => 0x0008_2000, "group_mask" => 0x0000_4000, "everyone_mask" => 0x0000_8000 } };
+        let edits = udp_edits(&patch(id(1), false, body), &known()).unwrap();
+        let [UdpEdit::UpdateItem(item)] = edits.as_slice() else {
+            panic!("{edits:?}");
+        };
+        let expected = InvItem {
+            next_owner_mask: 0x0008_2000,
+            group_mask: 0x0000_4000,
+            everyone_mask: 0x0000_8000,
+            ..known().items[&id(1)].clone()
+        };
+        assert_eq!(**item, expected);
+        // a mask the patch leaves out stays as the viewer holds it
+        let lone = llsd_map! { "permissions" => llsd_map! { "next_owner_mask" => 0x0000_a000 } };
+        let edits = udp_edits(&patch(id(1), false, lone), &known()).unwrap();
+        let [UdpEdit::UpdateItem(item)] = edits.as_slice() else {
+            panic!("{edits:?}");
+        };
+        assert_eq!((item.next_owner_mask, item.group_mask, item.everyone_mask), (0x0000_a000, 0, 0));
+    }
+
+    #[test]
+    fn a_sale_change_and_the_object_flags_go_in_the_item_update() {
+        let body = llsd_map! { "sale_info" => llsd_map! { "sale_type" => 2, "sale_price" => 150 }, "flags" => 0x0010_0000 };
+        let edits = udp_edits(&patch(id(1), false, body), &known()).unwrap();
+        let [UdpEdit::UpdateItem(item)] = edits.as_slice() else {
+            panic!("{edits:?}");
+        };
+        let expected = InvItem {
+            sale_type: 2,
+            sale_price: 150,
+            flags: 0x0010_0000,
+            ..known().items[&id(1)].clone()
+        };
+        assert_eq!(**item, expected);
+    }
+
+    #[test]
+    fn the_properties_save_of_name_and_permissions_is_one_item_update() {
+        // what the inventory Properties send on each change
+        let body = llsd_map! { "name" => "New", "desc" => "Kept",
+        "permissions" => llsd_map! { "next_owner_mask" => 0x0000_8000, "group_mask" => 0, "everyone_mask" => 0x0000_8000 },
+        "sale_info" => llsd_map! { "sale_type" => 0, "sale_price" => 25 } };
+        let edits = udp_edits(&patch(id(1), false, body), &known()).unwrap();
+        let [UdpEdit::UpdateItem(item)] = edits.as_slice() else {
+            panic!("{edits:?}");
+        };
+        let expected = InvItem {
+            name: "New".into(),
+            next_owner_mask: 0x0000_8000,
+            everyone_mask: 0x0000_8000,
+            ..known().items[&id(1)].clone()
+        };
+        assert_eq!(**item, expected);
+    }
+
+    #[test]
+    fn what_the_item_update_cannot_carry_still_fails() {
+        for body in [
+            llsd_map! { "permissions" => llsd_map! { "next_owner_mask" => 0x0000_8000 }, "thumbnail" => metadata_thumbnail(id(7))["thumbnail"].clone() },
+            llsd_map! { "sale_info" => llsd_map! { "sale_type" => 1 }, "favorite" => llsd_map! { "toggled" => true } },
+            // the owner and the creator are the server's, not the masks'
+            llsd_map! { "permissions" => llsd_map! { "owner_id" => id(9) } },
+            llsd_map! { "permissions" => 0x0000_8000 },
+            llsd_map! { "sale_info" => llsd_map! { "sale_type" => 7 } },
+        ] {
+            assert!(udp_edits(&patch(id(1), false, body), &known()).is_err());
+        }
+        // UpdateInventoryFolder has no permissions
+        let masks = llsd_map! { "permissions" => llsd_map! { "group_mask" => 0 } };
+        assert!(udp_edits(&patch(id(4), true, masks), &known()).is_err());
     }
 
     #[test]
