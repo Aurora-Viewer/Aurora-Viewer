@@ -418,7 +418,10 @@ impl App {
     /// "Clicked!" (#4111). The log compares the page's coordinates with
     /// those of the object's own pick (a touch's).
     fn demo_hud_media_scale_steps(&mut self) {
-        if !self.demo || !std::env::var("AURORA_DEMO_HUDS").is_ok_and(|mode| mode == "media-scale") {
+        if !self.demo
+            || !matches!(self.frame_count, 700 | 720 | 840 | 880 | 900)
+            || !std::env::var("AURORA_DEMO_HUDS").is_ok_and(|mode| mode == "media-scale")
+        {
             return;
         }
         let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::hud::object(35, false).full_id) else {
