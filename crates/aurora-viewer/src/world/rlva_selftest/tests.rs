@@ -808,6 +808,26 @@ fn selftest_failure_in_phase_2_still_stands_up_and_removes_its_prims() {
 }
 
 #[test]
+fn simulated_attachment_with_matching_uuid_suffix_leaves_the_hud_worn() {
+    let mut host = Host::new();
+    let hud = Uuid::from_u128(721);
+    let other = Uuid::from_u128(hud.as_u128() + 0x1_0000);
+    assert!(host.world.worn_attachment(&hud).is_some());
+
+    let request = crate::demo::avatar_cache::request(other, 1);
+    host.send(NetCommand::RezAttachments(vec![request]), Uuid::nil());
+    assert!(host.world.worn_attachment(&other).is_some());
+    assert!(
+        host.world.worn_attachment(&hud).is_some(),
+        "wearing another item displaced the demo HUD"
+    );
+
+    host.send(NetCommand::DetachAttachments(vec![other]), Uuid::nil());
+    assert!(host.world.worn_attachment(&other).is_none());
+    assert!(host.world.worn_attachment(&hud).is_some());
+}
+
+#[test]
 fn selftest_stop_in_phase_2_stands_up_and_removes_its_prims() {
     let mut host = Host::new();
     host.start(Mode::Simulated, true);

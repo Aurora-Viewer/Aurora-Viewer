@@ -18,6 +18,8 @@ pub mod anti_spam;
 pub mod beacons;
 #[path = "demo_beams.rs"]
 pub mod beams;
+#[path = "demo_parcel_env.rs"]
+pub mod parcel_env;
 #[path = "demo_parcel_visibility.rs"]
 pub mod parcel_visibility;
 #[path = "demo_pointing.rs"]
@@ -617,11 +619,19 @@ fn prim(
     }
 }
 
+/// Dynamic objects share one sequence above the demo fixtures' local IDs.
+/// A UUID suffix can coincide with that of an object already in the region.
+pub(crate) fn next_rez_local_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0x4000_0000);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Synthetic inventory rez stand-in: a cube, never a grid asset download.
 pub fn inventory_rez(rez: &aurora_net::inventory::rez::RezInventory) -> ObjectUpdate {
     let id = Uuid::new_v4();
     let mut o = prim(
-        id.as_u128() as u32,
+        next_rez_local_id(),
         rez.ray_end + Vec3::Z * 0.5,
         Quat::IDENTITY,
         Vec3::ONE,
@@ -644,7 +654,7 @@ pub fn inventory_rez(rez: &aurora_net::inventory::rez::RezInventory) -> ObjectUp
 pub fn build_rez(p: &aurora_net::build::NewPrim) -> ObjectUpdate {
     let id = Uuid::new_v4();
     let mut object = prim(
-        id.as_u128() as u32,
+        next_rez_local_id(),
         p.ray_end + Vec3::Z * (p.scale.z * 0.5),
         p.rotation,
         p.scale,
@@ -824,9 +834,8 @@ pub(crate) fn u(n: u128) -> Uuid {
 
 /// Tiny offline attachment used to exercise outfit changes without grid assets.
 pub fn outfit_attachment(item: &aurora_net::AttachRequest) -> ObjectUpdate {
-    let local_id = 30_000 + (item.item_id.as_u128() & 0xffff) as u32;
     let mut o = prim(
-        local_id,
+        next_rez_local_id(),
         Vec3::ZERO,
         Quat::IDENTITY,
         Vec3::splat(0.001),

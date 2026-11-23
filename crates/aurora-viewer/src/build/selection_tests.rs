@@ -1373,6 +1373,61 @@ fn select_by_surrounding_takes_only_what_the_rectangle_surrounds() {
 }
 
 #[test]
+fn a_hand_that_moves_a_little_still_clicks_with_any_keys() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let first = object(&world, 99610);
+    let other = object(&world, 99614);
+    let id = |world: &World, idx: usize| world.objects.get(root_of(world, idx)).unwrap().key.local_id;
+    let (first_id, other_id) = (id(&world, first), id(&world, other));
+    // one UI point is two pixels: the slop is in points
+    tool.cam = geom::Cam::new(Vec3::ZERO, Vec3::X, glam::Mat4::IDENTITY, 1.0, 800.0, 800.0, 2.0);
+    let (shift, ctrl) = (
+        Mods {
+            shift: true,
+            ..Mods::default()
+        },
+        Mods {
+            ctrl: true,
+            ..Mods::default()
+        },
+    );
+    let both = Mods { shift: true, ..ctrl };
+    for mods in [Mods::default(), shift, ctrl, both] {
+        tool.deselect_all(&world);
+        tool.click_select(&mut world, &settings, Some(other), false);
+        tool.mouse_down(&mut world, &mut settings, None, Some(first), None, (100.0, 100.0), mods);
+        // 9 points away, out and back: never a rectangle
+        tool.update(&mut world, &settings, None, (112.0, 112.0), false, mods);
+        assert_eq!(selected(&tool), [other_id], "{mods:?}: a wobble deselects nothing");
+        tool.update(&mut world, &settings, None, (101.0, 99.0), false, mods);
+        tool.mouse_up(&mut world, &settings, None);
+        let want: &[u32] = if mods.shift || mods.ctrl {
+            &[first_id, other_id]
+        } else {
+            &[first_id]
+        };
+        let mut got = selected(&tool);
+        got.sort_unstable();
+        let mut want = want.to_vec();
+        want.sort_unstable();
+        assert_eq!(got, want, "{mods:?}: the wobble is the click it was");
+    }
+
+    // once out of the slop it is a rectangle, even back on the press
+    tool.deselect_all(&world);
+    tool.click_select(&mut world, &settings, Some(other), false);
+    tool.mouse_down(&mut world, &mut settings, None, Some(first), None, (100.0, 100.0), Mods::default());
+    tool.update(&mut world, &settings, None, (121.0, 100.0), false, Mods::default());
+    assert!(tool.selection.is_empty(), "10 points out, the rectangle starts");
+    tool.update(&mut world, &settings, None, (100.0, 100.0), false, Mods::default());
+    tool.mouse_up(&mut world, &settings, None);
+    assert!(
+        !selected(&tool).contains(&first_id),
+        "back on the press it stays a rectangle, not a click"
+    );
+}
+
+#[test]
 fn a_rectangle_started_on_an_object_takes_it_only_if_the_rectangle_does() {
     let (mut world, mut tool, mut settings) = fixture();
     let first = object(&world, 99610);

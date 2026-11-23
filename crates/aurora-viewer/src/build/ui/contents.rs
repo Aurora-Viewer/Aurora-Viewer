@@ -146,7 +146,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let mut list: Vec<&TaskItem> = items
         .iter()
         .filter(|i| filters.matches(i))
-        .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
+        .filter(|i| filter.is_empty() || crate::ui::inventory::view::matches_text(&searchable_name(i).to_uppercase(), &filter))
         .collect();
     list.sort_by_key(|i| crate::natural_order::key(&i.name));
     tool.ui

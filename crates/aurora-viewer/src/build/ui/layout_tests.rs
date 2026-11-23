@@ -141,11 +141,27 @@ fn action_drag_and_keyboard_placement_only_offer_complete_column_block_edges() {
     assert_eq!(i.settings, original, "Organization must not change option values");
 }
 
-fn part_value(item: Item, number: &str) -> String {
+/// The face selector shows its buttons 0 to 8; "Edit linked parts", once
+/// on, "Link n" (`number`, empty while it is off).
+fn part_shown(item: Item, number: &str, texts: &[(String, egui::Rect)], rect: egui::Rect) -> bool {
+    let shown = |label: &str| texts.iter().any(|(text, at)| text == label && rect.contains(at.center()));
     if item == Item::Face {
-        aurora_i18n::tr!("build-compact-face-value", number = number)
+        (0..crate::build::face_buttons::FACE_BUTTONS).all(|face| shown(&face.to_string()))
+    } else if number.is_empty() {
+        shown(aurora_i18n::tr!("build-compact-linked"))
     } else {
-        aurora_i18n::tr!("build-compact-link-value", number = number)
+        shown(&aurora_i18n::tr!("build-compact-link-value", number = number))
+    }
+}
+
+/// The footer's face selector, or the "Edit linked parts" option row.
+fn part_rect(i: &Inspector, item: Item) -> egui::Rect {
+    if item == Item::Face {
+        i.ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
+            .unwrap()
+    } else {
+        row(i, item, Panel::Footer)
     }
 }
 
@@ -160,14 +176,9 @@ fn part_selectors_keep_visible_values_in_the_shared_reference_row() {
         settle(&mut i);
         let (_, texts) = i.show(vec![]);
         for item in [Item::Face, Item::Linked] {
-            let rect = i
-                .ctx
-                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
-                .unwrap();
+            let rect = part_rect(&i, item);
             assert!(
-                texts
-                    .iter()
-                    .any(|(text, label)| text == &part_value(item, "-") && rect.contains(label.center())),
+                part_shown(item, if item == Item::Face { "-" } else { "" }, &texts, rect),
                 "Inactive {item:?} must reserve a visible shared value, organizing={organizing}"
             );
         }
@@ -179,14 +190,9 @@ fn part_selectors_keep_visible_values_in_the_shared_reference_row() {
             (Item::Face, i.tool.selected_face_numbers(&i.world)),
             (Item::Linked, i.tool.selected_link_number(&i.world).unwrap().to_string()),
         ] {
-            let rect = i
-                .ctx
-                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
-                .unwrap();
+            let rect = part_rect(&i, item);
             assert!(
-                texts
-                    .iter()
-                    .any(|(text, label)| text == &part_value(item, &value) && rect.contains(label.center())),
+                part_shown(item, &value, &texts, rect),
                 "Active {item:?} must show its value, organizing={organizing}"
             );
         }
@@ -197,18 +203,181 @@ fn part_selectors_keep_visible_values_in_the_shared_reference_row() {
         settle(&mut i);
         let (_, texts) = i.show(vec![]);
         for item in [Item::Face, Item::Linked] {
-            let rect = i
-                .ctx
-                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
-                .unwrap();
+            let rect = part_rect(&i, item);
             assert!(
-                texts
-                    .iter()
-                    .any(|(text, label)| text == &part_value(item, "-") && rect.contains(label.center())),
+                part_shown(item, "-", &texts, rect),
                 "Unavailable {item:?} must keep its shared placeholder, organizing={organizing}"
             );
         }
     }
+}
+
+#[test]
+fn a_face_button_click_selects_that_face_and_a_missing_face_stays_greyed() {
+    let mut i = Inspector::new();
+    let idx = i.tool.sel_prims(&i.world)[0];
+    let faces = i.tool.num_faces(&i.world, idx);
+    assert!(
+        (3..crate::build::face_buttons::FACE_BUTTONS).contains(&faces),
+        "a demo prim with 3 to 8 faces"
+    );
+    i.tool.edit_mode = EditMode::Face;
+    settle(&mut i);
+    let rects = i
+        .ctx
+        .data(|d| d.get_temp::<Vec<egui::Rect>>(egui::Id::unique("build_face_buttons")))
+        .unwrap();
+    assert_eq!(rects.len(), crate::build::face_buttons::FACE_BUTTONS);
+    let footer = i
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", Item::Face))))
+        .unwrap();
+    assert!(rects.iter().all(|rect| footer.contains_rect(*rect) && rect.width() > 4.0));
+    click(&mut i, rects[2].center());
+    assert_eq!(i.tool.sel_faces(&i.world, idx), [2]);
+    click(&mut i, rects[faces].center());
+    assert_eq!(i.tool.sel_faces(&i.world, idx), [2]);
+    // in Move too, which stays the mode; greyed in Align
+    i.tool.edit_mode = EditMode::Move;
+    i.tool.faces.clear();
+    settle(&mut i);
+    click(&mut i, rects[1].center());
+    assert_eq!(i.tool.sel_faces(&i.world, idx), [1]);
+    assert_eq!(i.tool.edit_mode, EditMode::Move);
+    i.tool.edit_mode = EditMode::Align;
+    i.tool.faces.clear();
+    settle(&mut i);
+    click(&mut i, rects[0].center());
+    assert!(i.tool.faces.is_empty());
+}
+
+#[test]
+fn shift_click_on_a_section_shows_it_beside_the_active_one_in_a_wider_window() {
+    let mut i = Inspector::new();
+    i.tool.tab = 6;
+    settle(&mut i);
+    let width = |i: &Inspector| {
+        i.ctx
+            .memory(|m| m.area_rect(egui::Id::unique(super::super::super::INSPECTOR_ID)))
+            .unwrap()
+            .width()
+    };
+    let column = |i: &Inspector, n: usize| {
+        i.ctx
+            .data(|d| d.get_temp::<(usize, egui::Rect)>(egui::Id::unique(("build_section_column", n))))
+    };
+    let single = width(&i);
+    let materials = row(&i, Item::Materials, Panel::Navigation);
+    i.mods.shift = true;
+    click(&mut i, materials.center());
+    i.mods.shift = false;
+    for _ in 0..8 {
+        i.show(vec![]);
+    }
+    assert!(width(&i) >= 2.0 * single - 1.0, "the window holds both: {} for {single}", width(&i));
+    assert_eq!(i.tool.tab, 6);
+    let (left, right) = (column(&i, 0).unwrap(), column(&i, 1).unwrap());
+    assert_eq!((left.0, right.0), (6, 3));
+    assert!(left.1.right() <= right.1.left() + 0.5 && right.1.width() > single * 0.8);
+    // a click replaces the left one
+    let object = row(&i, Item::Shape, Panel::Navigation);
+    click(&mut i, object.center());
+    settle(&mut i);
+    assert_eq!((i.tool.tab, i.tool.ui.second.tab), (5, Some(3)));
+    // Shift+click on the second closes it, the width given back
+    let materials = row(&i, Item::Materials, Panel::Navigation);
+    i.mods.shift = true;
+    click(&mut i, materials.center());
+    i.mods.shift = false;
+    for _ in 0..8 {
+        i.show(vec![]);
+    }
+    assert_eq!(i.tool.ui.second.tab, None);
+    assert!((width(&i) - single).abs() < 1.0, "back to {single}: {}", width(&i));
+}
+
+#[test]
+fn edit_linked_reads_link_n_with_its_arrows_at_the_same_height() {
+    let mut i = Inspector::new();
+    // a linkset of several prims
+    for event in crate::demo::selection_cycle_events() {
+        i.world.apply(event);
+    }
+    let root = i.world.objects.index_of_uuid(&crate::demo::action_id(99610)).unwrap();
+    i.tool.edit_mode = EditMode::Move;
+    i.settings.edit_linked = false;
+    i.tool.click_select(&mut i.world, &i.settings, Some(root), false);
+    settle(&mut i);
+    let off = row(&i, Item::Linked, Panel::Footer);
+    let arrow = |i: &Inspector, next: bool| {
+        i.ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_link_arrow", next))))
+    };
+    let (_, texts) = i.show(vec![]);
+    assert!(
+        texts
+            .iter()
+            .any(|(t, r)| *t == aurora_i18n::tr!("build-compact-linked") && off.contains(r.center()))
+    );
+    click(&mut i, off.left_center() + vec2(8.0, 0.0));
+    settle(&mut i);
+    assert!(i.settings.edit_linked);
+    let on = row(&i, Item::Linked, Panel::Footer);
+    assert_eq!(on.height(), off.height(), "the row keeps its height");
+    let number = i.tool.selected_link_number(&i.world).expect("a link selected");
+    let (_, texts) = i.show(vec![]);
+    let label = aurora_i18n::tr!("build-compact-link-value", number = number.to_string());
+    assert!(texts.iter().any(|(t, r)| t == &label && on.contains(r.center())));
+    let (back, next) = (arrow(&i, false).unwrap(), arrow(&i, true).unwrap());
+    assert!(on.contains_rect(back) && on.contains_rect(next) && back.right() <= next.left());
+    click(&mut i, next.center());
+    settle(&mut i);
+    let stepped = i.tool.selected_link_number(&i.world);
+    assert!(stepped.is_some() && stepped != Some(number), "► steps the link");
+    click(&mut i, back.center());
+    assert_eq!(i.tool.selected_link_number(&i.world), Some(number), "◄ steps back");
+}
+
+#[test]
+fn the_face_row_holds_invert_all_and_the_references() {
+    let mut i = Inspector::new();
+    let idx = i.tool.sel_prims(&i.world)[0];
+    let faces = i.tool.num_faces(&i.world, idx);
+    i.tool.edit_mode = EditMode::Move;
+    settle(&mut i);
+    let navigation = |i: &Inspector, item: Item| {
+        i.ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
+            .unwrap()
+    };
+    let action = |i: &Inspector, invert: bool| {
+        i.ctx
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_face_action", invert))))
+            .unwrap()
+    };
+    let face = navigation(&i, Item::Face);
+    let (invert, all) = (action(&i, true), action(&i, false));
+    assert!(invert.left() >= face.right() && all.left() >= invert.right());
+    // Global / Local / Reference after them, on the same row
+    let global = i
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_grid_mode", 0usize))))
+        .unwrap();
+    assert!(global.left() >= all.right());
+    for rect in [invert, all, global] {
+        assert!(
+            (rect.center().y - face.center().y).abs() < 1.0,
+            "{rect:?} off the face row {face:?}"
+        );
+    }
+    click(&mut i, all.center());
+    assert_eq!(i.tool.sel_faces(&i.world, idx).len(), faces);
+    assert!(i.tool.picks_faces(), "All shows every face");
+    click(&mut i, invert.center());
+    assert!(i.tool.sel_faces(&i.world, idx).is_empty());
+    click(&mut i, invert.center());
+    assert_eq!(i.tool.sel_faces(&i.world, idx).len(), faces);
+    assert_eq!(i.tool.edit_mode, EditMode::Move, "the mode stays");
 }
 
 #[test]
@@ -791,16 +960,14 @@ fn complete_controls_and_numeric_panels_follow_their_content_height() {
                 "{item:?} was clipped"
             );
         }
-        for item in [Item::Face, Item::Linked] {
-            let part = i
-                .ctx
-                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
-                .unwrap();
-            assert!(
-                controls.contains_rect(part),
-                "Shared part navigation outside the controls container"
-            );
-        }
+        let part = i
+            .ctx
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", Item::Face))))
+            .unwrap();
+        assert!(
+            controls.contains_rect(part),
+            "Shared part navigation outside the controls container"
+        );
         for which in 0usize..3 {
             let fields = i
                 .ctx

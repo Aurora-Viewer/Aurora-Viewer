@@ -525,7 +525,7 @@ fn glow_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
 }
 
 /// Width of the tint strip beside a map square, and the gap before it.
-const TINT_W: f32 = 16.0;
+const TINT_W: f32 = 32.0;
 const TINT_GAP: f32 = 7.0;
 
 /// The tint of a map, as a narrow strip beside its square (the Legacy
@@ -1465,7 +1465,9 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             } else {
                 shiny
             };
-            row(ui, p, aurora_i18n::tr!("common-brightness"), label_width, |ui| {
+            // Labels of panel_tools_texture.xml: "Shininess" for this menu,
+            // "Glossiness" for the specular exponent below.
+            row(ui, p, aurora_i18n::tr!("build-ui-texture-shininess"), label_width, |ui| {
                 if let Some(v) = combo(ui, "shininess", shown, &items, combo_width, editable)
                     && v != SHINY_TEXTURE
                 {
@@ -1483,7 +1485,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             let mut g = gl.unwrap_or(51) as f32;
             let mut en = env_i.unwrap_or(0) as f32;
             ui.add_enabled_ui(editable && spec.is_some(), |ui| {
-                row(ui, p, aurora_i18n::tr!("build-ui-texture-shininess"), label_width, |ui| {
+                row(ui, p, aurora_i18n::tr!("build-legacy-glossiness"), label_width, |ui| {
                     if spin(ui, &mut g, 1.0, 0.0..=255.0, 0, field_width, gl_mixed).commit {
                         tool.edit_legacy(env, world, sel, |m| m.specular_exp = g as u8);
                     }
