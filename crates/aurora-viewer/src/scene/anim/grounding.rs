@@ -102,35 +102,61 @@ fn under_ankle(corners: [Vec3; 4], sole: [Vec3; 4]) -> Vec3 {
     heel + ((corners[2] + corners[3]) * 0.5 - heel) * t
 }
 
+/// The floor a standing foot may not climb above: its absolute height and
+/// the normal of its support.
+type Ceiling = (f32, Vec3);
+
 /// The supports under a footprint's corners, without the edge of a higher
-/// step the foot does not stand on. A heel swaying a few millimetres over
-/// the tread of the step behind touches its riser: lifting the whole foot
-/// onto that tread pumped the leg up and down by the step's height and
-/// swung the bent knee across the other leg. A higher support still
-/// carries the foot when it is under the ankle, reaches further than
-/// `RISER_OVERLAP` into the footprint, or is the level the foot already
-/// stands on (`current`, its absolute floor height): a foot stepping off a
-/// ledge keeps its heel on it until the heel leaves. Without a support under
-/// the ankle (a gap between two prims) every corner counts.
-fn footing(corners: [Vec3; 4], sole: [Vec3; 4], current: Option<f32>, query: &dyn Fn(Vec3) -> Option<Surface>) -> [Option<Surface>; 4] {
-    let hits = corners.map(query);
+/// step the foot does not stand on, and whether a corner was dropped. A
+/// heel swaying a few millimetres over the tread of the step behind
+/// touches its riser: lifting the whole foot onto that tread pumped the leg
+/// up and down by the step's height and swung the bent knee across the
+/// other leg. A higher support still carries the foot when it is under the
+/// ankle, reaches further than `RISER_OVERLAP` into the footprint, or is
+/// the level the foot already stands on (`current`, its absolute floor
+/// height): a foot stepping off a ledge keeps its heel on it until the heel
+/// leaves. Without a support under the ankle (a gap between two prims)
+/// every corner counts.
+///
+/// With a `ceiling`, any support more than `RISER` above that floor's plane
+/// is a riser too, even under the ankle: a standing avatar's lifted foot
+/// moving into a higher step hits it, it is not carried onto its top.
+fn footing(
+    corners: [Vec3; 4],
+    sole: [Vec3; 4],
+    current: Option<f32>,
+    ceiling: Option<Ceiling>,
+    query: &dyn Fn(Vec3) -> Option<Surface>,
+) -> ([Option<Surface>; 4], bool) {
+    let mut hits = corners.map(query);
     let under = under_ankle(corners, sole);
+    let mut dropped = false;
+    if let Some((floor, normal)) = ceiling {
+        let plane = under.with_z(floor);
+        let normal = normal.normalize_or(Vec3::Z);
+        for hit in &mut hits {
+            if hit.is_some_and(|hit| (hit.position - plane).dot(normal) > RISER) {
+                *hit = None;
+                dropped = true;
+            }
+        }
+    }
     let Some(base) = query(under) else {
-        return hits;
+        return (hits, dropped);
     };
     let raised = |hit: &Surface| {
         (hit.position - base.position).dot(base.normal) > RISER && current.is_none_or(|floor| hit.position.z > floor + RISER)
     };
-    let mut kept = hits;
-    for (hit, corner) in kept.iter_mut().zip(corners) {
+    for (hit, corner) in hits.iter_mut().zip(corners) {
         if hit.as_ref().is_some_and(raised) {
             let inward = corner + (under - corner).with_z(0.0).normalize_or_zero() * RISER_OVERLAP;
             if !query(inward).is_some_and(|inner| raised(&inner)) {
                 *hit = None;
+                dropped = true;
             }
         }
     }
-    kept
+    (hits, dropped)
 }
 
 #[derive(Clone, Copy)]
@@ -195,6 +221,11 @@ struct Foot {
     landing: f32,
     normal: Vec3,
     elevation: Option<Height>,
+    /// A higher step stopped this foot while the avatar stood still; it
+    /// stays on its floor until it leaves that step or the avatar moves.
+    blocked: bool,
+    /// The previous frame's point of the sole under the ankle.
+    under: Option<Vec3>,
 }
 
 impl Foot {
@@ -438,6 +469,10 @@ impl Placement {
         };
         self.sampled = Some(now);
         let previous_frame = self.previous_frame.replace(frame);
+        // Walking, not a stand's sway or turning in place.
+        let moving = previous_frame.is_some_and(|previous| {
+            dt > 1e-5 && (frame.to_world.w_axis - previous.to_world.w_axis).truncate().truncate().length() > 0.1 * dt
+        });
         let setup = self.setup.as_ref()?;
         let source = rig.world_with(pose.rotations, pose.pelvis, pose.positions, &base.scale);
         // Contact thresholds are submillimetre. Measure before adding the
@@ -496,7 +531,7 @@ impl Placement {
                 self.feet[side].normal = rotations[side] * Vec3::Z;
                 let corners = footprint(visible.w_axis.truncate(), orientation(visible), leg.sole);
                 let current = self.feet[side].elevation.map(|height| height.value);
-                penetration[side] = correction(corners, footing(corners, leg.sole, current, &query))
+                penetration[side] = correction(corners, footing(corners, leg.sole, current, None, &query).0)
                     .unwrap_or(0.0)
                     .max(0.0);
             }
@@ -532,7 +567,34 @@ impl Placement {
             }
             let corners = footprint(ankle, authored, leg.sole);
             let height = clearances[side];
-            let hits = footing(corners, leg.sole, self.feet[side].elevation.map(|height| height.value), &query);
+            // A standing avatar's lifted foot does not climb a higher step it
+            // moves into, nor does a foot such a step already stopped. The
+            // floor under the ankle's previous position tells a foot moving
+            // into a step (still low there) from a support rising under it
+            // (high there too), which collision still lifts. Feet that
+            // slide on the floor and moving avatars still climb.
+            let under = under_ankle(corners, leg.sole);
+            let foot = &mut self.feet[side];
+            if moving {
+                foot.blocked = false;
+            }
+            let ceiling = foot.elevation.filter(|_| !moving).and_then(|elevation| {
+                let entering = height > 0.0005
+                    && foot
+                        .under
+                        .and_then(&query)
+                        .is_none_or(|previous| previous.position.z <= elevation.value + RISER);
+                (foot.blocked || entering).then_some((elevation.value, foot.normal))
+            });
+            foot.under = Some(under);
+            let (hits, dropped) = footing(
+                corners,
+                leg.sole,
+                self.feet[side].elevation.map(|height| height.value),
+                ceiling,
+                &query,
+            );
+            self.feet[side].blocked = ceiling.is_some() && dropped;
             supported[side] = hits.iter().any(Option::is_some);
             let normal = hits
                 .iter()
@@ -562,7 +624,10 @@ impl Placement {
                         let previous = previous.to_world.transform_point3(inverse_frame.transform_point3(point));
                         point + (point - previous).with_z(0.0) * (0.22 / dt)
                     });
-                    if let Some(lift) = correction(ahead, footing(ahead, leg.sole, foot.elevation.map(|height| height.value), &query)) {
+                    if let Some(lift) = correction(
+                        ahead,
+                        footing(ahead, leg.sole, foot.elevation.map(|height| height.value), ceiling, &query).0,
+                    ) {
                         let next = reference_floor + lift;
                         // A ledge is not a stair tread. Preparing a large
                         // drop while the heels still have support would
@@ -609,7 +674,7 @@ impl Placement {
                 // Query the actual oriented footprint before deriving body
                 // reach, so a toe crossing an edge is part of that constraint.
                 let corners = footprint(targets[side], rotations[side], leg.sole);
-                if let Some(lift) = correction(corners, footing(corners, leg.sole, Some(elevation.value), &query)) {
+                if let Some(lift) = correction(corners, footing(corners, leg.sole, Some(elevation.value), ceiling, &query).0) {
                     // Ease the initial penetration by elapsed time, rather
                     // than a per-frame fraction. New collision remains hard
                     // once the avatar has joined the selected set.
@@ -1550,6 +1615,52 @@ mod tests {
                 low > -0.01 && high < 0.01,
                 "the feet dropped off the ledge at {fps} fps: {low} to {high} m"
             );
+        }
+    }
+
+    #[test]
+    fn grounding_a_standing_foot_lifted_into_a_higher_step_is_not_carried_onto_it() {
+        // A stand lifts the left foot while the avatar drifts back at 3 cm/s
+        // (a stand's shuffle, not walking) towards a 30 cm step behind that
+        // foot: its ankle crosses the step's edge in the air. The foot hits
+        // the riser: neither popped onto the top in flight nor at landing.
+        let f = Fixture::new();
+        let clip = crate::demo::grounding::lifting_animation();
+        let now = Instant::now();
+        let rest = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+        let left = f.rig.names["mAnkleLeft"];
+        let edge = rest[left].w_axis.x - 0.03;
+        let ground = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(if p.x < edge && p.y > 0.0 { 0.3 } else { 0.0 }),
+                normal: Vec3::Z,
+            })
+        };
+        for fps in [30, 60, 144] {
+            let mut placement = Placement::default();
+            let mut worst = 0.0_f32;
+            for i in 0..=fps * 4 {
+                let t = i as f32 / fps as f32;
+                let frame = f.frame(Vec3::X * -0.03 * t, 0.0);
+                let mut raw = f.rig.local_rot.clone();
+                for joint in &clip.joints {
+                    if let (Some(&j), Some(r)) = (f.rig.names.get(&joint.joint_name), joint.rotation_at_loop(t, clip.loop_range())) {
+                        raw[j] = r;
+                    }
+                }
+                let placed = f.sample(
+                    &mut placement,
+                    &raw,
+                    Vec3::ZERO,
+                    Some(frame),
+                    now + Duration::from_secs_f32(t),
+                    &ground,
+                );
+                let output = f.rig.world_with(&placed.rotations, placed.pelvis, &f.base.local_pos, &f.base.scale);
+                let source = f.rig.world_with(&raw, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+                worst = worst.max(output[left].w_axis.z - source[left].w_axis.z);
+            }
+            assert!(worst < RISER, "the lifted foot was carried {worst} m onto the step at {fps} fps");
         }
     }
 
