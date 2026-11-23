@@ -17,6 +17,9 @@ pub(crate) enum Group {
     Gesture,
     /// A conversation in its own window (floater_fs_im_session.xml).
     Conversation,
+    /// Detached nearby chat (floater_fs_nearby_chat.xml, save_rect). Its own
+    /// rect, apart from Conversation: an IM must not overwrite it.
+    Nearby,
     /// Properties of an object's contents item: the Legacy Viewer's
     /// per-item "properties" instances stack in one group.
     TaskProperties,
@@ -38,16 +41,22 @@ impl Group {
     }
 
     fn saves_rect(self) -> bool {
-        // The corresponding Firestorm XUI files use save_rect="true".
+        // The corresponding Legacy Viewer XUI files use save_rect="true".
         // Resource sizes have their own human-requested preferences.
         matches!(
             self,
-            Self::Notecard | Self::Script | Self::Animation | Self::Sound | Self::Gesture | Self::Conversation
+            Self::Notecard | Self::Script | Self::Animation | Self::Sound | Self::Gesture | Self::Conversation | Self::Nearby
         )
     }
 
     fn saved_id(self) -> Id {
         Id::unique(("inventory_cascade_rect", self))
+    }
+
+    /// Persisted save_rect key; tests must not rebuild the tuple by hand.
+    #[cfg(test)]
+    pub(crate) fn test_saved_id(self) -> Id {
+        self.saved_id()
     }
 }
 
@@ -82,8 +91,14 @@ pub(super) struct Opening {
 /// Called only by opted-in floaters. A remembered per-item egui position
 /// must not override a new instance's group placement. Existing instances
 /// keep their position, including when raised/restored or the UI is hidden.
-pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: Rect) -> Option<Opening> {
+///
+/// `reset` is set on the frame of "Reset window positions and sizes": then
+/// Nearby must not keep a leftover AreaState place (the upgrade fallback
+/// below is only for a cold start before Nearby has a save_rect).
+pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: Rect, reset: bool) -> Option<Opening> {
     let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    // Read before data_mut: AreaState lives in Memory, not data.
+    let area = egui::AreaState::load(ctx, id).filter(|s| s.pivot_pos.is_some());
     ctx.data_mut(|data| {
         let saved = group.saves_rect().then(|| data.get_persisted::<Rect>(group.saved_id())).flatten();
         let windows = data.get_temp_mut_or_default::<Windows>(registry_id());
@@ -98,6 +113,35 @@ pub(super) fn prepare(ctx: &Context, id: Id, group: Group, default: Rect, work: 
         }
         let anchor = windows.0.iter().rev().find(|w| w.group == group && w.visible && !w.minimized);
         let primary = anchor.is_none();
+        // Nearby only: egui keeps pivot_pos across sessions but drops size.
+        // Until Nearby has a save_rect, keep that place so a cold start does
+        // not shove the window to the work-area centre and then store that
+        // as save_rect. Other groups must still cascade from the group's
+        // place when the same id reopens (egui still has its AreaState).
+        // Never on a reset frame: forget_saved cleared the rect and the
+        // window must return to default.min.
+        if !reset
+            && matches!(group, Group::Nearby)
+            && primary
+            && saved.is_none()
+            && let Some(area) = area
+        {
+            let size = area.size.unwrap_or(default.size()).min(work.size());
+            let pos = super::fit_in(work, area.left_top_pos(), size);
+            windows.0.push(Window {
+                id,
+                group,
+                rect: Rect::from_min_size(pos, size),
+                frame,
+                born: frame,
+                opening: false,
+                target: pos,
+                primary: true,
+                visible: true,
+                minimized: false,
+            });
+            return None;
+        }
         let size = saved.map_or(default.size(), |r| r.size()).min(work.size());
         let target = anchor.map_or_else(|| saved.map_or(default.min, |r| r.min), |w| w.rect.min + OFFSET);
         let pos = super::fit_in(work, target, size);
@@ -172,7 +216,7 @@ pub(super) fn forget(ctx: &Context, id: Id) {
 pub(super) fn forget_saved(ctx: &Context) {
     use Group::*;
     ctx.data_mut(|data| {
-        for group in [Notecard, Script, Animation, Sound, Gesture, Conversation] {
+        for group in [Notecard, Script, Animation, Sound, Gesture, Conversation, Nearby] {
             debug_assert!(group.saves_rect());
             data.remove::<Rect>(group.saved_id());
         }
