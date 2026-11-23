@@ -336,6 +336,48 @@ pub(crate) fn organization_drop_target(ui: &egui::Ui, p: &Palette, rect: egui::R
     }
 }
 
+/// The width of a form row's label column ([`form_row`]).
+pub const FORM_LABEL_W: f32 = 112.0;
+/// The width of a form row's slider, before its value box.
+pub const FORM_SLIDER_W: f32 = 120.0;
+
+/// A label and its controls on one row, the label column [`FORM_LABEL_W`]
+/// wide (wider for a long label). When the row is too narrow for a slider
+/// and its value box at the active text size, the controls go under the
+/// label: the Director's form, shared by the tool windows built like it.
+pub fn form_row<R>(ui: &mut egui::Ui, p: &Palette, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let font = super::control_font(ui, 12.5);
+    let label_width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), p.ink)
+        .size()
+        .x
+        .max(FORM_LABEL_W);
+    // Leave a slider and its editable value room at the active text size.
+    // Shorter fields use the same breakpoint, keeping the form consistent.
+    let value_width = ui
+        .painter()
+        .layout_no_wrap("000.0".to_owned(), egui::TextStyle::Button.resolve(ui.style()), p.ink)
+        .size()
+        .x
+        + ui.spacing().button_padding.x * 2.0;
+    let field_width = FORM_SLIDER_W + ui.spacing().item_spacing.x + value_width;
+    let label = egui::Label::new(RichText::new(label).font(font).color(p.ink)).wrap();
+    if label_width + ui.spacing().item_spacing.x + field_width > ui.available_width() {
+        ui.vertical(|ui| {
+            ui.add(label);
+            ui.horizontal_wrapped(add).inner
+        })
+        .inner
+    } else {
+        ui.horizontal_top(|ui| {
+            ui.add_sized(Vec2::new(label_width, 0.0), label);
+            add(ui)
+        })
+        .inner
+    }
+}
+
 pub fn section_header(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str) {
     ui.horizontal(|ui| {
         glyph(ui, icon, p.violet_light, 17.0);
@@ -559,6 +601,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "director" => "movie",
         "second_camera" => "device-cctv-filled",
         "movement_controls" => "walk",
+        "camera_position" => "adjustments-horizontal-filled",
         "display_name" => "id-filled",
         "object_purchase" => "shopping-cart-filled",
         "object_payment" | "buy_currency" | "pay" | "pay_classic" => "coin-filled",
@@ -738,13 +781,13 @@ impl ModalGround {
 
     /// For the modals of this frame, drawn after this call.
     pub fn set(self, ctx: &egui::Context) {
-        let frame = ctx.cumulative_frame_nr();
+        let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ctx.data_mut(|d| d.insert_temp(Self::id(), (frame, self)));
     }
 
     fn current(ctx: &egui::Context) -> Option<Self> {
         let (frame, ground) = ctx.data(|d| d.get_temp::<(u64, Self)>(Self::id()))?;
-        (frame == ctx.cumulative_frame_nr()).then_some(ground)
+        (frame == ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)).then_some(ground)
     }
 
     /// The shapes for a modal on `rect`: the part of the picture under it.

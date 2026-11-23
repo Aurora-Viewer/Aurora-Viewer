@@ -221,8 +221,10 @@ are planned or in progress: they are not in the viewer yet.
   fences and hair stay solid in the distance, and textures load as finely as
   you expect close to the camera.
 - **Graphics levels matched to your machine**, chosen at first launch: GTAO
-  from Medium up, contact shadows from High, screen-space indirect light
-  (experimental) in Deluxe with a 192 m draw distance; per-section resets
+  from Medium up, contact shadows from High, and Deluxe (RT): High with the
+  sun's and the lamps' shadows and the indirect light ray-traced, on the
+  cards with ray queries, at a ray tracing quality of your choice (Low,
+  Medium, High) that keeps every traced effect on; per-section resets
   when you want to start over. Save your own settings as named graphics
   profiles and switch between them from Preferences or the FPS counter.
 - **HDR, or the older look**: the Legacy Viewer's HDR and Emissive switch,
@@ -652,8 +654,12 @@ frame on your own PC.
   PBR and legacy materials, shadows, GTAO ambient occlusion with specular
   occlusion, sun contact shadows, specular anti-aliasing, reflection probes,
   water, glow, particles, rainbows, 22° halos and depth of field;
-  screen-space indirect light, GPU occlusion and enhanced water effects (all
-  experimental), graphics presets and per-section resets; headset viewing
+  ray-traced sun and local light shadows and indirect light (the Deluxe
+  (RT) graphics level, on the cards with ray queries; the shadow maps
+  elsewhere); screen-space indirect light,
+  GPU occlusion, enhanced water effects and ray-traced indirect light and
+  reflections (all experimental),
+  graphics presets and per-section resets; headset viewing
   through OpenXR (experimental, view only).
 - **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;

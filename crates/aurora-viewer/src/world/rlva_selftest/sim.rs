@@ -100,6 +100,7 @@ impl Sim {
                 completed.folders.clear();
                 Some(vec![
                     NetEvent::InventoryUpdated {
+                        bulk: false,
                         folders: Vec::new(),
                         items,
                     },

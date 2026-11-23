@@ -21,6 +21,13 @@
 //! as toasts: Close Window takes the newest before the windows behind it
 //! ([`shown_prompt`]); kept in the notification list, Close All still closes
 //! them ([`shown_extra`]).
+//!
+//! A window in its window outside the viewer's (outside.rs) is the front
+//! one when the keyboard is in it: the keys pressed there are its own
+//! ([`pressed_outside`]) and close it, or every window, at the next frame
+//! of the interface. Pressed in the viewer's window, Ctrl+W stays the
+//! front window's inside. Not in the Legacy Viewer, whose floaters stay
+//! inside its window.
 
 use crate::keybinds::{Input, Mods};
 use egui::{Id, Order};
@@ -57,6 +64,9 @@ struct State {
     prompts: Vec<(Id, u64, u64)>,
     target: Option<(Id, u64)>,
     all: bool,
+    /// Pressed in a window outside the viewer's, for the next frame: that
+    /// window to close, or every window (`None`), with the frame.
+    outside: Option<(Option<Id>, u64)>,
 }
 
 fn state_id() -> Id {
@@ -79,7 +89,7 @@ pub fn shown_extra(ctx: &egui::Context, id: Id) {
 /// visible one, over the windows behind it, and Ctrl+Shift+W all of them.
 /// `order` tells the newest (the notification id).
 pub fn shown_prompt(ctx: &egui::Context, id: Id, order: u64) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
         state.prompts.retain(|(other, at, _)| *other != id && at + 1 >= frame);
@@ -88,7 +98,7 @@ pub fn shown_prompt(ctx: &egui::Context, id: Id, order: u64) {
 }
 
 fn note(ctx: &egui::Context, id: Id, extra: bool) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
         let list = if extra { &mut state.extra } else { &mut state.shown };
@@ -110,18 +120,24 @@ fn listed_prompt(list: &[(Id, u64, u64)], id: Id, frame: u64) -> bool {
 /// is taken. Nothing with a dialog open (the menu entry is disabled while
 /// an alert shows), nor without a window: a field keeps the key then.
 pub fn begin(ctx: &egui::Context) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let mut state = ctx.data(|d| d.get_temp::<State>(state_id())).unwrap_or_default();
     state.shown.retain(|(_, at)| at + 1 >= frame);
     state.extra.retain(|(_, at)| at + 1 >= frame);
     state.prompts.retain(|(_, at, _)| at + 1 >= frame);
     state.target = None;
     state.all = false;
+    let outside = state.outside.take().filter(|(_, at)| at + 1 >= frame);
     // held down, it closes once, not on each repeat
     if ctx.memory(|m| m.top_modal_layer()).is_none() {
         let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
         let any = !state.shown.is_empty() || !state.extra.is_empty() || !state.prompts.is_empty();
-        if pressed_alone(ctx, egui::Key::W, shift) && any {
+        if let Some((asked, _)) = outside {
+            match asked {
+                Some(id) => state.target = Some((id, frame)),
+                None => state.all = any,
+            }
+        } else if pressed_alone(ctx, egui::Key::W, shift) && any {
             ctx.input_mut(|i| i.consume_key(shift, egui::Key::W));
             state.all = true;
         } else if pressed_alone(ctx, egui::Key::W, egui::Modifiers::COMMAND) {
@@ -152,6 +168,27 @@ pub fn begin(ctx: &egui::Context) {
     ctx.data_mut(|d| d.insert_temp(state_id(), state));
 }
 
+/// In the pass of the window `id` outside the viewer's, before its fields
+/// read their keys: Ctrl+W pressed there closes that window, the one with
+/// the keyboard, and Ctrl+Shift+W every window, at the next frame of the
+/// interface ([`begin`]), where what answers the key first still does
+/// (Conversations closes its conversation shown). The key is taken: a field
+/// there does not erase a word with it.
+pub fn pressed_outside(ctx: &egui::Context, id: Id) {
+    let shift = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+    let asked = if pressed_alone(ctx, egui::Key::W, shift) {
+        ctx.input_mut(|i| i.consume_key(shift, egui::Key::W));
+        None
+    } else if pressed_alone(ctx, egui::Key::W, egui::Modifiers::COMMAND) {
+        ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::W));
+        Some(id)
+    } else {
+        return;
+    };
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<State>(state_id()).outside = Some((asked, frame)));
+}
+
 /// Ctrl+Shift+W is closing every window this frame. Conversations uses it
 /// to close the window instead of the one conversation Ctrl+W closes.
 pub fn closes_every_window(ctx: &egui::Context) -> bool {
@@ -171,7 +208,7 @@ fn pressed_alone(ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers
 /// Ctrl+W asks the window `id` to close on this frame, once. Ctrl+Shift+W
 /// asks every window drawn on the last frame; each of them hears it.
 pub fn take(ctx: &egui::Context, id: Id) -> bool {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         let state = d.get_temp_mut_or_default::<State>(state_id());
         if state.all {

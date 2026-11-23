@@ -23,6 +23,7 @@ on:
       - scripts/nightly-prune.ps1
       - scripts/test-nightly.ps1
       - scripts/tools/nightly.ps1
+      - .github/actions/release-admin/**
 
 permissions:
   contents: write
@@ -44,6 +45,9 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           filter: blob:none
+      # by hand, an admin only, before any tag is pushed (the Release
+      # workflow checks it again)
+      - uses: ./.github/actions/release-admin
       - name: Next beta tag
         id: next
         shell: pwsh
@@ -61,6 +65,10 @@ jobs:
       actions: read
     with:
       tag: ${{ needs.tag.outputs.tag }}
+    # A called workflow sees no secret the caller does not pass, the release
+    # environment's included: without this its publish jobs find no signing
+    # key (UPDATE_SIGNING_KEY*) and stop.
+    secrets: inherit
 
   prune:
     needs: release
@@ -83,3 +91,8 @@ jobs:
       - name: Fixture tests
         shell: pwsh
         run: ./scripts/test-nightly.ps1
+      # the workflow token can read a permission (anyone's: the pull
+      # request's author need not be an admin)
+      - uses: ./.github/actions/release-admin
+        with:
+          enforce: 'false'

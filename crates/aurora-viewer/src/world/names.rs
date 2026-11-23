@@ -359,7 +359,14 @@ impl AvatarName {
     /// Username shown after the display name in chat headers
     /// (FSChatHistoryHeader: " - username" when a display name was chosen).
     pub fn chat_username(&self, o: &NameOptions) -> Option<String> {
-        (o.use_display_names && o.show_usernames && !self.is_default).then(|| self.user_name_for_display(o))
+        if !o.use_display_names || !o.show_usernames || self.is_default {
+            return None;
+        }
+        if self.legacy_first.is_empty() && self.legacy_last.is_empty() {
+            // A People API reply can supply only the account and display names.
+            return (!self.username.is_empty()).then(|| self.username.clone());
+        }
+        Some(self.user_name_for_display(o))
     }
 
     fn to_llsd(&self) -> Llsd {

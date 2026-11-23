@@ -100,7 +100,7 @@ const OPEN_ID: &str = "emoji_picker_open";
 /// Another picker of the Conversations field (the GIF picker) was drawn in
 /// this pass: Escape is its own too ([`picker_open`]).
 pub fn note_picker_shown(ctx: &egui::Context) {
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique(OPEN_ID), pass));
 }
 
@@ -108,7 +108,7 @@ pub fn note_picker_shown(ctx: &egui::Context) {
 /// (the window events come before the pass that would consume the key).
 pub fn picker_open(ctx: &egui::Context) -> bool {
     let shown: Option<u64> = ctx.data(|d| d.get_temp(egui::Id::unique(OPEN_ID)));
-    shown.is_some_and(|p| p + 1 >= ctx.cumulative_pass_nr())
+    shown.is_some_and(|p| p + 1 >= ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT))
 }
 
 /// The font is part of the executable (10.7 MB): no folder of the
@@ -532,7 +532,7 @@ impl Emoji {
     /// it, and returned for the caller to close the picker.
     /// `favorites` is `None` while they are turned off: no star tab, no menu.
     pub fn picker(&mut self, ui: &mut egui::Ui, p: &Palette, icons: &super::icons::Icons, favorites: Option<&[char]>) -> Picked {
-        let pass = ui.ctx().cumulative_pass_nr();
+        let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
         let opened = self.shown_pass.is_none_or(|last| last + 1 < pass);
         self.shown_pass = Some(pass);
         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(OPEN_ID), pass));
