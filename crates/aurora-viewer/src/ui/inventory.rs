@@ -1458,7 +1458,9 @@ fn item_response(
     super::widgets::demo::rez_row(&r, it.id);
     super::widgets::demo::worn_row(&r, it.id);
     st.hover.record(&r, id, permissions);
-    if r.clicked() || r.secondary_clicked() {
+    // A drop that stayed within egui's click distance is no click: the
+    // dragged selection stays selected.
+    if (r.clicked() && !drag::dragged_this_press(ui.ctx())) || r.secondary_clicked() {
         st.select(ui, id, r.secondary_clicked());
         reveal_clicked_row(ui, &r, st, id);
     }
@@ -1576,7 +1578,7 @@ fn folder_response(
     drag::target(ui, p, &destination, inv, id, state, prefs, facts, actions);
     drag::navigation::folder(ui, &destination, state.ui_id, id, open);
     state.hover.record(&r, id, None);
-    if r.clicked() || r.secondary_clicked() {
+    if (r.clicked() && !drag::dragged_this_press(ui.ctx())) || r.secondary_clicked() {
         state.select(ui, id, r.secondary_clicked());
         reveal_clicked_row(ui, &r, state, id);
     }

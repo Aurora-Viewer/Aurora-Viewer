@@ -137,7 +137,7 @@ pub fn root_drag(world: &World, object: Uuid, items: &[TaskItem], owned: bool) -
 /// the object (move_task_inventory_callback moves each (folder, item) pair);
 /// "Copy to inventory" of the Open window is the one that makes that folder.
 pub fn root_source(ui: &mut egui::Ui, r: &egui::Response, world: &World, object: Uuid, items: &[TaskItem], owned: bool) {
-    if !(r.hovered() || r.drag_started() || r.dragged()) {
+    if !(r.hovered() || r.is_pointer_button_down_on()) {
         return;
     }
     match root_drag(world, object, items, owned) {
@@ -152,7 +152,7 @@ fn begin<E: AsRef<str>>(ui: &mut egui::Ui, r: &egui::Response, object: Uuid, ite
     if let Err(error) = &access {
         r.clone().on_hover_text(error.as_ref());
     }
-    if r.drag_started() {
+    if super::drag::begins(ui, r) {
         if let Ok(Some(kind)) = access {
             let requests = items
                 .iter()
@@ -164,7 +164,7 @@ fn begin<E: AsRef<str>>(ui: &mut egui::Ui, r: &egui::Response, object: Uuid, ite
                     ignore_warning: false,
                 })
                 .collect();
-            r.dnd_set_drag_payload(TaskDrag { requests, kind });
+            egui::DragAndDrop::set_payload(ui.ctx(), TaskDrag { requests, kind });
         } else {
             ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
         }
