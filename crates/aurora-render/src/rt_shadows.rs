@@ -5548,10 +5548,12 @@ mod tests {
     /// structs are common.wgsl's.
     #[test]
     fn rt_probes_structs_are_the_shadings() {
+        // (a checkout with Windows line endings: compared as Unix ones)
         let block = |src: &str, from: &str, to: &str| {
+            let src = src.replace("\r\n", "\n");
             let start = src.find(from).expect("the block's first line");
             let end = start + src[start..].find(to).expect("the block's last line") + to.len();
-            src[start..end].replace("\r\n", "\n")
+            src[start..end].to_string()
         };
         let (from, to) = ("const MAX_PROBES: u32", "    probes: array<Probe, MAX_PROBES>,\n};");
         assert_eq!(block(RT_PROBES, from, to), block(include_str!("shaders/common.wgsl"), from, to));
