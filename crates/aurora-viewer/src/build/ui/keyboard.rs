@@ -450,7 +450,7 @@ mod tests {
             ctrl: true,
             ..Default::default()
         };
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 events: vec![
                     egui::Event::ModifiersChanged(modifiers),
@@ -473,10 +473,11 @@ mod tests {
                 assert!(!ui.input(|i| i.key_pressed(Key::Quote)), "the typed quote is consumed");
             },
         );
+        output.textures_delta.clear();
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let mut tool = BuildTool::default();
         let mut settings = BuildSettings::default();
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 events: vec![egui::Event::Key {
                     key: Key::Quote,
@@ -493,6 +494,7 @@ mod tests {
                 super::super::shortcuts(ui.ctx(), &mut tool, &mut world, &mut settings);
             },
         );
+        output.textures_delta.clear();
         assert!(!tool.open, "a real quote key does not open Create");
         assert_ne!(tool.tool, Tool::Create);
     }
