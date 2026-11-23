@@ -25602,6 +25602,10 @@ impl ApplicationHandler for App {
             if !self.in_world() || self.exit_prompt.open {
                 return;
             }
+            // the warp to the centre that preceded a lock (cursor_hold.rs)
+            if !self.cursor_hold.take_motion() {
+                return;
+            }
             let dy = if self.settings.invert_mouse { -delta.1 } else { delta.1 };
             self.camera_mouse_delta(delta.0 as f32, dy as f32);
         }
