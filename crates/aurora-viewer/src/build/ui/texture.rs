@@ -525,7 +525,7 @@ fn glow_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
 }
 
 /// Width of the tint strip beside a map square, and the gap before it.
-const TINT_W: f32 = 16.0;
+const TINT_W: f32 = 32.0;
 const TINT_GAP: f32 = 7.0;
 
 /// The tint of a map, as a narrow strip beside its square (the Legacy
@@ -1060,7 +1060,7 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
         // component is mixed when it differs between the selected faces or,
         // under "All", between the channels
         // (LLPanelFace::setMaterialOverridesFromSelection).
-        let channels = if ch == 0 { 0..4 } else { ch - 1..ch };
+        let channels = pbr_placement_channels(ch);
         let components = |t: &TextureTransform| [t.scale[0], t.scale[1], t.offset[0], t.offset[1], t.rotation];
         let shown = components(&mat.transforms[channels.start]);
         let mixed: [bool; 5] = std::array::from_fn(|i| {
@@ -1671,8 +1671,95 @@ mod empty_map_tests {
     }
 }
 
-/// Options under the PBR / Blinn-Phong sub-tabs.
-fn repeats_meter(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, sel: &[Sel]) {
+/// getSelectedGLTFMaterialMaxRepeats for one face and channel: the larger of
+/// the channel's U scale per meter along the face's S axis and its V scale
+/// per meter along the T axis (indra/newview/llpanelface.cpp).
+pub(super) fn gltf_max_repeats(t: &TextureTransform, object_scale: glam::Vec3, face: u8) -> f32 {
+    let (sa, ta) = te_st_axes(face);
+    (t.scale[0] / object_scale[sa].max(0.001)).max(t.scale[1] / object_scale[ta].max(0.001))
+}
+
+/// The texture transform scale that gives `repeats` per meter on a face
+/// (LLPanelFace::onCommitGLTFRepeatsPerMeter, updateSelectedGLTFMaterialsWithScale).
+pub(super) fn gltf_repeats_scale(repeats: f32, object_scale: glam::Vec3, face: u8) -> [f32; 2] {
+    let (sa, ta) = te_st_axes(face);
+    [object_scale[sa] * repeats, object_scale[ta] * repeats]
+}
+
+/// The PBR channels the placement tab covers: "All" is the four, shown by
+/// the base color's (getSelectedGLTFMaterialMaxRepeats reads base color for
+/// GLTF_TEXTURE_INFO_COUNT); the others are base, normal, ORM, emissive.
+fn pbr_placement_channels(pbr_channel: usize) -> std::ops::Range<usize> {
+    if pbr_channel == 0 { 0..4 } else { pbr_channel - 1..pbr_channel }
+}
+
+/// Repeats / meter under the PBR / Blinn-Phong sub-tabs. On the PBR tab it
+/// reads and writes the material override's texture transforms, which a
+/// PBR face renders with, instead of the texture entry's repeats, which it
+/// ignores (LLPanelFace's gltfRptctrl beside the Blinn-Phong mTexRepeat).
+fn repeats_meter(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, env: &mut Env, sel: &[Sel]) {
+    if tool.ui.tex_tab == 1 {
+        pbr_repeats_meter(ui, p, tool, world, env, sel);
+    } else {
+        legacy_repeats_meter(ui, p, tool, world, sel);
+    }
+}
+
+/// Port of the PBR repeats of LLPanelFace::updateUI and
+/// onCommitGLTFRepeatsPerMeter (indra/newview/llpanelface.cpp).
+fn pbr_repeats_meter(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, env: &mut Env, sel: &[Sel]) {
+    let planar = sel.iter().all(|x| x.te.media_flags & TEM_TEX_GEN_MASK == TEX_GEN_PLANAR);
+    let has_all = sel.iter().all(|x| BuildTool::gltf_asset(world, x.idx, x.face).is_some());
+    let faces: Vec<(usize, u8)> = sel.iter().map(|x| (x.idx, x.face)).collect();
+    // The placement fields' rule (LLMaterialEditor::canModifyObjectsMaterial),
+    // and a material still loading has no value to show yet. Deliberately
+    // stricter than LLPanelFace, which enables it on a modifiable object with
+    // any PBR face: every face must have PBR and the material may be edited.
+    let loaded = sel.iter().all(|x| face_server_pbr_transforms(world, env, x).is_some());
+    let editable = has_all && loaded && tool.material_edit_allowed(world, &faces);
+    let channels = pbr_placement_channels(tool.ui.pbr_channel);
+    // getSelectedGLTFMaterialMaxRepeats reads the base color under "All".
+    let shown_channel = channels.start;
+    let scales: Vec<glam::Vec3> = sel
+        .iter()
+        .map(|x| world.objects.get(x.idx).map_or(glam::Vec3::ONE, |o| o.scale))
+        .collect();
+    let face_transforms: Vec<[TextureTransform; 4]> = sel.iter().map(|x| face_pbr_transforms(world, env, x)).collect();
+    let rounded = |r: f32| (r * 10.0).round() / 10.0;
+    // Mixed when a face differs (getSelectedTEValue over the faces).
+    let (rpm, rpm_mixed) = same(
+        sel.iter()
+            .zip(&scales)
+            .zip(&face_transforms)
+            .map(|((x, size), t)| rounded(gltf_max_repeats(&t[shown_channel], *size, x.face))),
+    );
+    // A face that cannot be edited shows 1 (repeats_spin_ctrl->setValue(editable ? repeats : 1.0f)).
+    let mut r = rpm.filter(|_| editable).unwrap_or(1.0);
+    let rpm_mixed = rpm_mixed && editable;
+    ui.horizontal(|ui| {
+        let width = (ui.available_width() - 69.0).max(90.0);
+        row(ui, p, aurora_i18n::tr!("build-ui-texture-repeats-meter"), width, |ui| {
+            ui.add_enabled_ui(editable && !planar, |ui| {
+                if spin(ui, &mut r, 0.1, -100.0..=100.0, 1, W, rpm_mixed).commit {
+                    // updateGLTFTextureTransformWithScale: the picked channel,
+                    // or all four under "All"; the offset and rotation stay.
+                    // Like LLPanelFace, the override's scale is written as it
+                    // is: a scale of exactly 1 1 is "no override" to
+                    // applyOverride, so the material's own scale shows then.
+                    tool.edit_gltf_faces(world, sel, |k, o| {
+                        let scale = gltf_repeats_scale(r, scales[k], sel[k].face);
+                        for channel in channels.clone() {
+                            o.transforms[channel].scale = scale;
+                        }
+                    });
+                }
+            });
+        });
+    });
+}
+
+/// The Blinn-Phong repeats: the texture entry's (selectionTexScaleAutofit).
+fn legacy_repeats_meter(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, sel: &[Sel]) {
     let planar = sel.iter().all(|x| x.te.media_flags & TEM_TEX_GEN_MASK == TEX_GEN_PLANAR);
     ui.horizontal(|ui| {
         // repeats per meter: max(scale_s / object s size, scale_t / object t size)
@@ -1724,7 +1811,7 @@ fn face_options(
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(cell, left, |ui| {
             ui.set_min_width(LEFT);
-            repeats_meter(ui, p, tool, world, sel);
+            repeats_meter(ui, p, tool, world, env, sel);
         });
         let legacy0 = tool.face_legacy(env, world, sel[0].idx, sel[0].face, &sel[0].te);
         let water = sel.iter().all(|x| is_hide_water(&x.te, legacy0.as_ref()));

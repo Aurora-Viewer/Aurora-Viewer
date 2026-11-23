@@ -706,6 +706,12 @@ pub struct Settings {
     /// Viewer always does; Preferences › Avatars › Animations). Off, our
     /// avatar keeps its pose. Camera framing is controlled independently.
     pub customize_animation: bool,
+    /// FSPlayDefaultBentoAnimation: a priority 0 Bento pose plays under
+    /// every other animation, so hands, mouth, wings and tail fall back to
+    /// a natural pose instead of staying stuck where the last animation
+    /// left them (off, as in the Legacy Viewer; Preferences › Avatars ›
+    /// Animations).
+    pub bento_idle: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
@@ -2465,6 +2471,7 @@ impl Default for Settings {
             shape_height_feet: false,
             customize_animation: true,
             appearance_camera_movement: true,
+            bento_idle: false,
             imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
@@ -3718,6 +3725,11 @@ impl Settings {
             toolbar.sanitize();
         }
         self.snapshot.sanitize();
+        // the world filters keep the photo stack's rules (8 looks at most,
+        // strengths up to 100): a longer or edited file would otherwise
+        // show "10 of 8", and a card opened would clamp its strength and
+        // switch the world filters on with no edit
+        crate::snapshot::looks::sanitize(&mut self.world_look.looks);
         self.dof.sanitize();
         self.game_control.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
@@ -4303,6 +4315,32 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    /// A settings file whose world filters break the stack's rules (more
+    /// than 8 looks, a strength past 100) is brought back to them on load,
+    /// as the photo stack is, and stays off.
+    #[test]
+    fn loaded_world_filters_keep_to_the_stacks_rules() {
+        use crate::snapshot::looks::{Layer, MAX_LAYERS, WorldLook};
+        let settings = super::Settings {
+            world_look: WorldLook {
+                on: false,
+                looks: (0..12)
+                    .map(|_| Layer {
+                        id: "Sepia".into(),
+                        strength: 250,
+                        on: true,
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .sanitized();
+        assert_eq!(settings.world_look.looks.len(), MAX_LAYERS);
+        assert!(settings.world_look.looks.iter().all(|l| l.strength == 100));
+        assert!(!settings.world_look.on);
+    }
+
     #[test]
     fn voice_output_device_defaults_to_audio_output_and_survives_settings_round_trip() {
         use super::Settings;

@@ -567,6 +567,9 @@ impl App {
                         .into_iter()
                         .filter_map(|index| self.world.objects.get(index))
                         .filter(|object| object.pcode == aurora_prim::params::LL_PCODE_VOLUME)
+                        // an empty list is the whole object, a prim kept selected
+                        // with no face takes nothing
+                        .filter(|object| self.build.faces.get(&object.key).is_none_or(|faces| !faces.is_empty()))
                         .map(|object| (object.full_id, self.build.faces.get(&object.key).cloned().unwrap_or_default()))
                         .collect();
                     if targets.is_empty() {
@@ -1011,7 +1014,7 @@ impl App {
             object.shape_dirty = true;
             object.render.needs_records = true;
             // counted again from the local mesh (face stepping, texturing)
-            self.build.face_counts.remove(id);
+            self.build.forget_face_count(id);
         }
         self.clear_local_mesh_targets(&invalid);
     }
@@ -1027,7 +1030,7 @@ impl App {
                 object.shape_dirty = true;
                 object.render.needs_records = true;
             }
-            self.build.face_counts.remove(id);
+            self.build.forget_face_count(id);
         }
     }
     pub(super) fn apply_local_imports(&mut self, renderer: &mut aurora_render::Renderer) {

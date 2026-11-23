@@ -1334,7 +1334,8 @@ fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
         .then_with(|| a.id.cmp(&b.id))
 }
 
-fn matches_text(value: &str, query: &str) -> bool {
+/// Inventory text matching on a label and query already folded to the same case.
+pub(crate) fn matches_text(value: &str, query: &str) -> bool {
     if let Some(exact) = query.strip_prefix('"').and_then(|q| q.strip_suffix('"')) {
         return value.split_whitespace().any(|word| word == exact);
     }

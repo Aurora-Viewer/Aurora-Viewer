@@ -150,10 +150,12 @@ impl BuildTool {
     /// during a preview, which replaces its volume (VJLocalMeshObject).
     pub fn num_faces(&self, world: &World, idx: usize) -> usize {
         let Some(o) = world.objects.get(idx) else { return 1 };
-        if let Some(n) = self.face_counts.get(&o.full_id) {
+        let volume = o.visual_volume();
+        if let Some(n) = self.face_counts.get(&o.full_id)
+            && self.face_count_shapes.get(&o.full_id).is_none_or(|shape| *shape == volume)
+        {
             return (*n).clamp(1, aurora_prim::te::MAX_TES);
         }
-        let volume = o.visual_volume();
         if volume.is_mesh() {
             8
         } else if volume.is_sculpt() {
@@ -163,14 +165,38 @@ impl BuildTool {
         }
     }
 
+    /// Whether the face count of `idx` is known for its current shape.
+    pub fn face_count_known(&self, world: &World, idx: usize) -> bool {
+        world.objects.get(idx).is_some_and(|o| {
+            self.face_counts.contains_key(&o.full_id) && self.face_count_shapes.get(&o.full_id) == Some(&o.visual_volume())
+        })
+    }
+
+    /// Keeps `count` as the face count of `idx` for its current shape.
+    pub fn set_face_count(&mut self, world: &World, idx: usize, count: usize) {
+        let Some(o) = world.objects.get(idx) else { return };
+        self.face_counts.insert(o.full_id, count);
+        self.face_count_shapes.insert(o.full_id, o.visual_volume());
+    }
+
+    /// Forgets the face count of the prim `id`: counted again when needed.
+    pub fn forget_face_count(&mut self, id: &uuid::Uuid) {
+        self.face_counts.remove(id);
+        self.face_count_shapes.remove(id);
+    }
+
     /// Selected faces of a selected prim (all of them outside face mode).
+    /// A prim with no entry has all its faces selected; an empty entry keeps
+    /// it selected with none of them (the face buttons 0 to 8 on a prim
+    /// without that face, as LLSelectNode keeps a node whose TEs are all
+    /// unselected).
     pub fn sel_faces(&self, world: &World, idx: usize) -> Vec<u8> {
         let Some(o) = world.objects.get(idx) else {
             return Vec::new();
         };
         match self.faces.get(&o.key) {
-            Some(f) if !f.is_empty() => f.clone(),
-            _ => (0..self.num_faces(world, idx) as u8).collect(),
+            Some(f) => f.clone(),
+            None => (0..self.num_faces(world, idx) as u8).collect(),
         }
     }
 

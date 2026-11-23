@@ -371,7 +371,8 @@ impl App {
     }
 
     pub(super) fn studio_overlay(&mut self, ctx: &egui::Context) {
-        if !self.avatar_studio.active || self.viewfinder_on() {
+        // nothing of it while the UI is not drawn (Ctrl+Alt+F1)
+        if !self.avatar_studio.active || self.viewfinder_on() || self.interface.ui_off {
             return;
         }
         let mut reset = false;

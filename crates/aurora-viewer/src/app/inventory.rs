@@ -367,7 +367,7 @@ impl App {
 
     /// An inventory change, after the listings' questions; `drag` when it
     /// comes from a drop on a folder.
-    fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
+    pub(super) fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
         // the clipboard is shared by both panes: the main window holds it
         let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
         if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
@@ -1125,8 +1125,8 @@ impl App {
                 self.open_outfit_portrait(id, super::outfit_portrait::Kind::Viewfinder);
                 return;
             }
-            crate::world::appearance::Action::OutfitBatch(outfits) => {
-                self.open_outfit_batch(outfits);
+            crate::world::appearance::Action::OutfitBatch(outfits, folder) => {
+                self.open_outfit_batch(outfits, folder);
                 return;
             }
             _ => {}
