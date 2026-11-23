@@ -6649,7 +6649,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: no button with `up`; `new` with three messages come in and the button back to the latest messages (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1\|object` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`), or an object line's in any style (with `AURORA_DEMO_OBJECT_CHAT`) |
 | `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
-| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|classic\|form\|publish]` | An avatar's profile window |
+| `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|classic\|form\|publish\|new-pick]` | An avatar's profile window |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
 | `AURORA_DEMO_SHARE=multi[:n=<count>]` | Dozens of Orion-like friends (default 80) for inventory Share multi-select (#3074) |
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
@@ -10159,7 +10159,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Aurora one unless Preferences › Aurora › Profiles is on the classic
   window. `:edit` opens our own profile in edit mode; `:classic` selects the
   classic style for this demo only (`friend:classic:2` for Picks,
-  `friend:classic:3` for Classifieds).
+  `friend:classic:3` for Classifieds). `self:classic:2:new-pick` clicks
+  **New…** on our classic Picks tab, beside our two picks: the new pick's
+  form shows, selected at the end of the list (#4685).
   Click a picture to check its read-only enlarged preview. `:compact` gives the
   window the width of the compact layout (380 px). With this variable the
   three residents of the scenarios have a profile picture, so a banner:
