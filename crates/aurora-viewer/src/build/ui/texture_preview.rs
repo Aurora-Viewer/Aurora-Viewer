@@ -63,6 +63,12 @@ pub(super) struct Session {
 }
 
 impl Session {
+    /// See `FloaterState::follow_rekeyed`.
+    pub(super) fn follow_rekeyed(&mut self, pairs: &[(ObjKey, ObjKey)]) {
+        crate::build::rekey_all(&mut self.selection, pairs);
+        crate::build::rekey_map(&mut self.faces, pairs);
+    }
+
     fn capture(tool: &mut BuildTool, world: &World, env: &Env, target: PickTarget) -> Self {
         let mut saved = Vec::new();
         for s in super::texture::selected(tool, world) {

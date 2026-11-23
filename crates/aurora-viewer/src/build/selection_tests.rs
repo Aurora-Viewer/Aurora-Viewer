@@ -2122,3 +2122,76 @@ fn a_prim_is_counted_again_when_a_hollow_gives_it_a_seventh_face() {
     tool.forget_face_count(&world.objects.get(idx).unwrap().full_id);
     assert!(!tool.face_count_known(&world, idx));
 }
+
+/// The demo object `local_id` of the selection cycle, as the simulator
+/// sends it.
+pub(super) fn cycle_update(local_id: u32) -> aurora_net::objects::ObjectUpdate {
+    crate::demo::selection_cycle_events()
+        .into_iter()
+        .find_map(|event| match event {
+            NetEvent::ObjectUpdates { objects, .. } => objects.into_iter().find(|o| o.local_id == local_id),
+            _ => None,
+        })
+        .expect("demo object")
+}
+
+/// The object of `update` comes from the region east of its own under a
+/// new number, as after a border crossing; its new key.
+pub(super) fn cross_east(world: &mut World, mut update: aurora_net::objects::ObjectUpdate, new_local_id: u32) -> ObjKey {
+    let idx = world.objects.index_of_uuid(&update.full_id).expect("object");
+    let old = world.objects.get(idx).unwrap().key;
+    let there = old.region + (256u64 << 32);
+    update.local_id = new_local_id;
+    update.position.x -= 256.0;
+    world.apply(NetEvent::ObjectUpdates {
+        handle: there,
+        objects: vec![update],
+    });
+    let new = ObjKey {
+        region: there,
+        local_id: new_local_id,
+    };
+    assert_eq!(world.objects.index_of(&new), Some(idx), "the same object, rekeyed");
+    new
+}
+
+#[test]
+fn a_selected_object_stays_selected_when_it_crosses_into_another_region() {
+    // #4483: LLSelectMgr keeps the same LLViewerObject across the border
+    let (mut world, mut tool, settings) = fixture();
+    let idx = object(&world, 99614);
+    tool.click_select(&mut world, &settings, Some(idx), false);
+    let old = world.objects.get(idx).unwrap().key;
+    assert_eq!(tool.selection, [old]);
+    tool.faces.insert(old, vec![2]);
+    tool.grid_objects = vec![old];
+    tool.point_pick = Some((old, glam::DVec3::new(0.1, 0.2, 0.3)));
+    tool.physics.insert(old.local_id, aurora_net::build::PhysicsParams::default());
+    tool.physics_materials_known.insert(old.local_id);
+    tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
+
+    let new = cross_east(&mut world, cycle_update(99614), 7614);
+    tool.update(&mut world, &settings, None, (0.0, 0.0), true, Mods::default());
+    assert_eq!(tool.selection, [new]);
+    assert_eq!(tool.faces.get(&new), Some(&vec![2]));
+    assert!(!tool.faces.contains_key(&old));
+    assert_eq!(tool.grid_objects, [new]);
+    assert_eq!(tool.point_pick.map(|(k, _)| k), Some(new));
+    assert!(tool.physics.contains_key(&new.local_id) && !tool.physics.contains_key(&old.local_id));
+    assert!(tool.physics_materials_known.contains(&new.local_id));
+    assert!(world.take_rekeyed().is_empty(), "taken by the build tool");
+}
+
+#[test]
+fn rekeys_are_followed_in_order_and_leave_other_keys_alone() {
+    let key = |region: u64, local_id: u32| ObjKey { region, local_id };
+    let pairs = [(key(1, 10), key(2, 50)), (key(2, 50), key(3, 7))];
+    assert_eq!(rekeyed(key(1, 10), &pairs), key(3, 7), "two crossings between two frames");
+    assert_eq!(rekeyed(key(1, 11), &pairs), key(1, 11));
+    let mut keys = [key(1, 10), key(2, 9)];
+    rekey_all(&mut keys, &pairs);
+    assert_eq!(keys, [key(3, 7), key(2, 9)]);
+    let mut faces = HashMap::from([(key(1, 10), vec![1u8]), (key(4, 4), vec![3])]);
+    rekey_map(&mut faces, &pairs);
+    assert_eq!(faces, HashMap::from([(key(3, 7), vec![1u8]), (key(4, 4), vec![3])]));
+}

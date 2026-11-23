@@ -46,6 +46,14 @@ pub(super) struct Session {
     applied: bool,
 }
 
+impl Session {
+    /// See `FloaterState::follow_rekeyed`.
+    pub(super) fn follow_rekeyed(&mut self, pairs: &[(ObjKey, ObjKey)]) {
+        crate::build::rekey_all(&mut self.selection, pairs);
+        crate::build::rekey_map(&mut self.faces, pairs);
+    }
+}
+
 impl Original {
     fn rgb(&self) -> Rgb {
         match self {

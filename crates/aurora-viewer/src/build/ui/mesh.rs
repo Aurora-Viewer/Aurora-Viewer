@@ -15,6 +15,13 @@ pub(super) struct Inspection {
     level: Option<u8>,
 }
 
+impl Inspection {
+    /// See `FloaterState::follow_rekeyed`.
+    pub(super) fn follow_rekeyed(&mut self, pairs: &[(ObjKey, ObjKey)]) {
+        crate::build::rekey_all(&mut self.selection, pairs);
+    }
+}
+
 impl BuildTool {
     /// Reset on selection/asset/tool changes, retain across editing sections.
     /// Called every frame, including after the window is closed.

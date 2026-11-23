@@ -504,6 +504,10 @@ pub struct World {
     /// from the objects like LL's region override cache: a message may come
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
+    /// Objects that changed key without being removed (old, new), in
+    /// order, until the build tool takes them (`take_rekeyed`): its
+    /// selection follows an object across a border.
+    rekeyed: Vec<(ObjKey, ObjKey)>,
     pub chat: VecDeque<ChatLine>,
     /// The origin of each object's chat line (its object and the line's
     /// time), as the Legacy Viewer links each line to its own `objectim`
@@ -1083,6 +1087,7 @@ impl World {
             scripted_camera: Default::default(),
             motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
+            rekeyed: Vec::new(),
             chat: VecDeque::new(),
             chat_objects: HashMap::new(),
             bubble_chat: Default::default(),
@@ -1516,7 +1521,16 @@ impl World {
             if let Some(sides) = self.gltf_overrides.remove(&old) {
                 self.gltf_overrides.insert(new, sides);
             }
+            self.rekeyed.push((old, new));
         }
+    }
+
+    /// The objects that changed key since last taken (old, new), in order.
+    /// The build tool takes them every frame in the world: the Legacy
+    /// Viewer keeps the same LLViewerObject, and so its selection, when an
+    /// object changes region (LLViewerObjectList::processObjectUpdate).
+    pub fn take_rekeyed(&mut self) -> Vec<(ObjKey, ObjKey)> {
+        std::mem::take(&mut self.rekeyed)
     }
 
     /// process_kill_object: our avatar is never killed, and neither is what

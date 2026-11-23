@@ -937,6 +937,26 @@ struct PendingUnlink {
     started: Instant,
 }
 
+/// The key `key` has after the key changes `pairs` (old, new), taken in
+/// order: an object can cross twice between two frames.
+pub(crate) fn rekeyed(key: ObjKey, pairs: &[(ObjKey, ObjKey)]) -> ObjKey {
+    pairs.iter().fold(key, |k, &(old, new)| if k == old { new } else { k })
+}
+
+/// [`rekeyed`] on every key of a list.
+pub(crate) fn rekey_all(keys: &mut [ObjKey], pairs: &[(ObjKey, ObjKey)]) {
+    for k in keys {
+        *k = rekeyed(*k, pairs);
+    }
+}
+
+/// [`rekeyed`] on the keys of a map.
+pub(crate) fn rekey_map<V>(map: &mut HashMap<ObjKey, V>, pairs: &[(ObjKey, ObjKey)]) {
+    if pairs.iter().any(|(old, _)| map.contains_key(old)) {
+        *map = map.drain().map(|(k, v)| (rekeyed(k, pairs), v)).collect();
+    }
+}
+
 pub struct BuildTool {
     /// The asset ids our inventory lets be exported, for Build › General's
     /// Export box, with the inventory generation and agent they were read
@@ -1842,6 +1862,53 @@ impl BuildTool {
         }
     }
 
+    /// Objects that changed key without being removed (a border crossing
+    /// gives an object the number of its new region): the selection and
+    /// what is kept for it follow, as the Legacy Viewer's LLSelectMgr keeps
+    /// the same LLViewerObject (LLViewerObjectList::processObjectUpdate,
+    /// indra/newview/llviewerobjectlist.cpp). Nothing is sent: the Legacy
+    /// Viewer does not select the object again in its new region.
+    fn follow_rekeyed(&mut self, world: &World, pairs: &[(ObjKey, ObjKey)]) {
+        if pairs.is_empty() {
+            return;
+        }
+        rekey_all(&mut self.selection, pairs);
+        // a stale key could already stand for the new one
+        let mut seen = HashSet::new();
+        self.selection.retain(|k| seen.insert(*k));
+        rekey_map(&mut self.faces, pairs);
+        rekey_all(&mut self.grid_objects, pairs);
+        if let Some((key, _)) = &mut self.point_pick {
+            *key = rekeyed(*key, pairs);
+        }
+        if let Some(Some(key)) = &mut self.press {
+            *key = rekeyed(*key, pairs);
+        }
+        if let Some(pending) = &mut self.pending_unlink {
+            rekey_all(&mut pending.prims, pairs);
+            rekey_all(&mut pending.waiting, pairs);
+        }
+        // the physics panel's values of the selected prims, by local id
+        // (ObjectPhysicsProperties)
+        let selected: HashSet<ObjKey> = highlighted_of(world, &self.selection, self.selection_linked)
+            .into_iter()
+            .filter_map(|(i, _)| world.objects.get(i).map(|o| o.key))
+            .collect();
+        for &(old, new) in pairs {
+            if old.local_id != new.local_id
+                && selected.contains(&new)
+                && let Some(params) = self.physics.remove(&old.local_id)
+            {
+                self.physics.insert(new.local_id, params);
+                if self.physics_materials_known.remove(&old.local_id) {
+                    self.physics_materials_known.insert(new.local_id);
+                }
+            }
+        }
+        self.manip.follow_rekeyed(world, pairs);
+        self.ui.follow_rekeyed(pairs);
+    }
+
     /// Prims of an unlink join the selection as the simulator makes them
     /// roots, after the selected former root (PendingUnlink).
     fn advance_unlink(&mut self, world: &World, now: Instant) {
@@ -2394,6 +2461,8 @@ impl BuildTool {
             .unwrap_or(0.016)
             .clamp(0.001, 0.25);
         self.last_frame = Some(now);
+        let rekeys = world.take_rekeyed();
+        self.follow_rekeyed(world, &rekeys);
         self.update_replacement(world, now);
         self.advance_bulk_permissions(world, now);
         self.advance_deep_permissions(world, now);
