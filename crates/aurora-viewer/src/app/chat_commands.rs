@@ -137,9 +137,7 @@ impl App {
                 parcel.media_url = url;
                 parcel.media.mime = mime;
                 self.media.stop_parcel();
-                if let Some(url) = self.media.play_url(&crate::media::MediaKey::Parcel, &self.world) {
-                    self.world.media_filter.ask_again(&url);
-                }
+                self.media.played_by_hand(&crate::media::MediaKey::Parcel, &self.world);
                 self.media.play_parcel(&self.world, &self.settings.media);
             }
             Command::Music(url) => {

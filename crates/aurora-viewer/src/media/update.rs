@@ -505,6 +505,9 @@ impl MediaManager {
     /// script, a file of this computer or a browser page never loads, with
     /// the filter off too (`filter::refused_scheme`).
     fn apply_filter(&mut self, world: &mut World, f: &MediaFrame) {
+        for url in std::mem::take(&mut self.replays) {
+            world.media_filter.ask_again(&url);
+        }
         let objects = &self.objects;
         for m in &mut self.impls {
             m.filter_hold = false;

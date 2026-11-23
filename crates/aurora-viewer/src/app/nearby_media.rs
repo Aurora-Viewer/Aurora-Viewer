@@ -95,14 +95,6 @@ impl App {
             .set_all_media_on(on, &self.world, &self.settings.media, self.settings.audio.media_autoplay);
     }
 
-    /// A media played by hand: the filter's question again for a site
-    /// refused for this session only (`MediaFilter::ask_again`, #4390).
-    fn ask_filter_again(&mut self, key: &MediaKey) {
-        if let Some(url) = self.media.play_url(key, &self.world) {
-            self.world.media_filter.ask_again(&url);
-        }
-    }
-
     pub(super) fn apply_nearby_media(&mut self, actions: Vec<Action>) {
         for action in actions {
             match action {
@@ -113,14 +105,14 @@ impl App {
                 }
                 Action::On(key, on) => {
                     if on {
-                        self.ask_filter_again(&key);
+                        self.media.played_by_hand(&key, &self.world);
                     }
                     self.media.set_media_on(key, on, &self.world, &self.settings.media);
                 }
                 Action::Play(key) => {
                     // onClickSelectedMediaPlay: a paused video resumes, an
                     // unloaded media starts
-                    self.ask_filter_again(&key);
+                    self.media.played_by_hand(&key, &self.world);
                     self.media.set_media_on(key, true, &self.world, &self.settings.media);
                 }
                 Action::Pause(key) => {

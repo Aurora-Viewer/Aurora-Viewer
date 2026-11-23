@@ -283,6 +283,16 @@ impl MediaManager {
         };
         let already = self.focus == Some(hit.key);
         if !already {
+            // a face clicked to load it is played by hand: a refusal of this
+            // session alone asks again (#4390)
+            let replay = self.find(&hit.key).filter(|m| !m.wanted).map(|m| {
+                m.entry
+                    .as_ref()
+                    .map(|e| e.url().to_string())
+                    .filter(|u| !u.is_empty())
+                    .unwrap_or_else(|| m.url.clone())
+            });
+            self.replays.extend(replay);
             self.unfocus();
             self.focus = Some(hit.key);
             self.last_surface = position;

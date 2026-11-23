@@ -81,6 +81,26 @@ impl Radio {
     }
 }
 
+/// What a click on the radio's button does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RadioClick {
+    /// Ask the media filter's question again; the radio stays on.
+    AskAgain,
+    /// The radio on or off.
+    Toggle,
+}
+
+/// A radio on but held by a refusal of this session alone (the filter's
+/// "Not now", or Deny with "Only this time") asks again on a click instead
+/// of stopping (#4390); a radio playing, or refused by the list, toggles.
+pub(super) fn radio_click(status: crate::ui::audio::MusicStatus, session_refused: bool) -> RadioClick {
+    if status == crate::ui::audio::MusicStatus::Blocked && session_refused {
+        RadioClick::AskAgain
+    } else {
+        RadioClick::Toggle
+    }
+}
+
 /// Port of LLViewerAudio's stream fading (indra/newview/llvieweraudio.cpp,
 /// FSFadeAudioStream, FSAudioMusicFadeIn / FSAudioMusicFadeOut): a station
 /// that changes fades out, then the next one fades in. Stopping by hand,
@@ -230,6 +250,27 @@ pub(super) fn first_error_notice(seen: &mut std::collections::HashSet<String>, u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_click_asks_again_only_for_a_radio_held_by_a_session_refusal() {
+        use crate::ui::audio::MusicStatus;
+        assert_eq!(radio_click(MusicStatus::Blocked, true), RadioClick::AskAgain);
+        assert_eq!(
+            radio_click(MusicStatus::Blocked, false),
+            RadioClick::Toggle,
+            "refused by the list: stops"
+        );
+        for status in [
+            MusicStatus::Playing(None),
+            MusicStatus::Connecting,
+            MusicStatus::Waiting,
+            MusicStatus::Stopped,
+            MusicStatus::Muted,
+            MusicStatus::Disabled,
+        ] {
+            assert_eq!(radio_click(status, true), RadioClick::Toggle, "{status:?}");
+        }
+    }
 
     const TIMES: FadeTimes = FadeTimes {
         on: true,

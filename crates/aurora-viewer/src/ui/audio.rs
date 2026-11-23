@@ -222,6 +222,9 @@ pub struct MediaState {
     pub music_available: bool,
     pub music_playing: bool,
     pub music_status: MusicStatus,
+    /// A click on the radio asks the media filter's question again instead
+    /// of stopping it (`parcel_music::radio_click`).
+    pub music_asks_again: bool,
     /// Media around to start or stop: the parcel's or on a prim
     /// (LLStatusBar::refresh: hasInWorldMedia, hasParcelMedia).
     pub media_available: bool,
@@ -330,7 +333,7 @@ pub fn top_controls(
             }
             let action_tip = if !media.music_available {
                 aurora_i18n::tr!("ui-audio-no-music-on-this-parcel")
-            } else if media.music_playing {
+            } else if media.music_playing && !media.music_asks_again {
                 aurora_i18n::tr!("ui-audio-stop-parcel-music")
             } else {
                 aurora_i18n::tr!("ui-audio-listen-to-parcel-music")

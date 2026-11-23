@@ -510,6 +510,10 @@ pub struct MediaManager {
     last_surface: Option<Vec3>,
     /// OpenID cookie of the web profiles (login token).
     pub openid: openid::OpenId,
+    /// URLs played by hand (a click on a media face, the object's Play)
+    /// since the last filter pass: a refusal of this session alone is asked
+    /// about again (`MediaFilter::ask_again`, #4390).
+    replays: Vec<String>,
 }
 
 impl Default for MediaManager {
@@ -551,6 +555,7 @@ impl Default for MediaManager {
             last_pixel: None,
             last_surface: None,
             openid: openid::OpenId::default(),
+            replays: Vec::new(),
         }
     }
 }
@@ -770,10 +775,18 @@ impl MediaManager {
 
     /// The URL a Play by hand of `key` loads: the parcel's media (as
     /// `play_parcel` reads it), or the prim media's own.
-    pub fn play_url(&self, key: &MediaKey, world: &World) -> Option<String> {
+    fn play_url(&self, key: &MediaKey, world: &World) -> Option<String> {
         match key {
             MediaKey::Parcel => world.parcel.as_ref().map(|p| effective_parcel_url(&p.media, &p.media_url)),
             MediaKey::Prim { .. } => self.find(key).map(|m| m.url.clone()),
+        }
+    }
+
+    /// `key` played by hand: its URL goes to the next filter pass to be
+    /// asked about again if this session alone refused it.
+    pub fn played_by_hand(&mut self, key: &MediaKey, world: &World) {
+        if let Some(url) = self.play_url(key, world) {
+            self.replays.push(url);
         }
     }
 
@@ -808,7 +821,10 @@ impl MediaManager {
                     m.play();
                 }
             }
-            _ => self.play_parcel(world, settings),
+            _ => {
+                self.played_by_hand(&MediaKey::Parcel, world);
+                self.play_parcel(world, settings);
+            }
         }
     }
 

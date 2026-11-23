@@ -85,7 +85,7 @@ fn banner(ui: &mut egui::Ui, p: &Palette, q: &Question, first_use: bool, st: &mu
         if widgets::flat_button(ui, p, aurora_i18n::tr!("media-filter-deny")).clicked() {
             *answer = Some(Answer::Deny(st.remember));
         }
-        if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("media-filter-not-now"), true) {
+        if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("media-filter-not-now-replay"), true) {
             *answer = Some(Answer::Deny(Remember::Once));
         }
     });

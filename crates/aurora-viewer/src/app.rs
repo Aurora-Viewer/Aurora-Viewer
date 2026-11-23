@@ -7216,9 +7216,8 @@ impl App {
     /// stays on instead of stopping. A radio playing, or refused by the
     /// list, stops as before.
     fn toggle_music_by_hand(&mut self) {
-        let station = self.parcel_music.station();
-        if self.music_status == ui::audio::MusicStatus::Blocked && self.world.media_filter.session_refused(station) {
-            self.world.media_filter.ask_again(station);
+        if self.radio_click() == parcel_music::RadioClick::AskAgain {
+            self.world.media_filter.ask_again(self.parcel_music.station());
             return;
         }
         self.parcel_music.toggle();
@@ -7226,6 +7225,12 @@ impl App {
             self.world.media_filter.ask_again(self.parcel_music.station());
         }
         self.remember_music_choice();
+    }
+
+    /// What a click on the radio's button does now (`parcel_music::radio_click`).
+    fn radio_click(&self) -> parcel_music::RadioClick {
+        let refused = self.world.media_filter.session_refused(self.parcel_music.station());
+        parcel_music::radio_click(self.music_status, refused)
     }
 
     fn remember_music_choice(&mut self) {
@@ -19031,6 +19036,7 @@ impl App {
                     music_available: !self.parcel_music.station().is_empty() || self.parcel_music.requested(),
                     music_playing: self.parcel_music.requested(),
                     music_status: self.music_status,
+                    music_asks_again: self.radio_click() == parcel_music::RadioClick::AskAgain,
                     media_available: self.settings.media.enabled
                         && (self.world.parcel.as_ref().is_some_and(|pc| !pc.media_url.trim().is_empty())
                             || self.media.any_in_world_media()),
