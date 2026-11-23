@@ -265,11 +265,16 @@ pub(super) fn show(
             .focus
             .filter(|id| shown.contains(id))
             .or(current.filter(|id| shown.contains(id)));
+        // the picture's side as if the bar showed, whether it does or not:
+        // sized from the width the bar leaves, a panel that just overflows
+        // would fit once the bar narrows it, hide the bar, widen and
+        // overflow again, frame after frame (#4633)
+        let side = widgets::scrolled_width(&v);
         egui::ScrollArea::vertical()
             .id_salt("appearance_showcase_preview")
             .auto_shrink([false, false])
             .show(&mut v, |ui| match picked {
-                Some(id) => preview_panel(ui, p, world, st, id, actions, images),
+                Some(id) => preview_panel(ui, p, world, st, id, side, actions, images),
                 None => {
                     ui.add_space(24.0);
                     ui.vertical_centered(|ui| {
@@ -705,9 +710,9 @@ fn hover_actions(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appeara
     }
 }
 
-/// The preview of the outfit `id`: its picture and the ways to set one, its
-/// folder and name, Wear / Add / Take off (Edit for the current outfit),
-/// and its items by kind.
+/// The preview of the outfit `id`: its picture (a square of `side`, at most
+/// the width) and the ways to set one, its folder and name, Wear / Add /
+/// Take off (Edit for the current outfit), and its items by kind.
 #[allow(clippy::too_many_arguments)]
 fn preview_panel(
     ui: &mut egui::Ui,
@@ -715,6 +720,7 @@ fn preview_panel(
     world: &World,
     st: &mut AppearanceUi,
     id: Uuid,
+    side: f32,
     actions: &mut Vec<Action>,
     images: &HashMap<Uuid, egui::TextureHandle>,
 ) {
@@ -728,7 +734,7 @@ fn preview_panel(
         rules.remove &= locks.folder_allows(id, false);
         rules
     });
-    let side = ui.available_width();
+    let side = side.min(ui.available_width());
     let (picture, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
     let radius = ui.visuals().window_corner_radius;
     ui.painter().rect_filled(picture, radius, p.panel);
@@ -1227,6 +1233,44 @@ mod tests {
             actions.iter().any(|a| matches!(a, Action::Wear(id, false) if *id == club_red)),
             "{actions:?}"
         );
+    }
+
+    /// The preview's picture does not depend on its scroll bar (#4633): at
+    /// every window height, the bar's strip taking the picture's width when
+    /// the panel just overflows must not make it fit again, which hid the
+    /// bar and looped frame after frame.
+    #[test]
+    fn the_preview_keeps_its_scroll_bar_steady() {
+        let (mut world, mut st) = grouped();
+        st.outfit_selection.focus = Some(Uuid::from_u128(744));
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        ctx.data_mut(|d| d.insert_persisted(egui::Id::unique("appearance_showcase_widened"), true));
+        let preview = |ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi| {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1600.0))),
+                ..Default::default()
+            };
+            let (_, shapes) = draw_output(ctx, world, st, input);
+            let window = ctx.memory(|m| m.area_rect(egui::Id::unique("appearance"))).expect("window");
+            let mut shown = texts(&shapes);
+            shown.retain(|(_, p)| p.x > window.right() - PREVIEW_W);
+            shown
+        };
+        let mut flipped = Vec::new();
+        for height in (420..1400).step_by(2) {
+            crate::ui::widgets::size_floater(&ctx, "appearance", Vec2::new(OPEN_WIDTH, height as f32));
+            // past the bar's fade in or out, which eases the rows' right edge
+            for _ in 0..12 {
+                preview(&ctx, &mut world, &mut st);
+            }
+            let (a, b) = (preview(&ctx, &mut world, &mut st), preview(&ctx, &mut world, &mut st));
+            assert!(!a.is_empty(), "the preview at {height}");
+            if a != b {
+                flipped.push(height);
+            }
+        }
+        assert!(flipped.is_empty(), "the preview's layout flips at heights {flipped:?}");
     }
 
     /// The window keeps its size and its footer in view with the showcase,

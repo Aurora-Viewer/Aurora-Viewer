@@ -6610,6 +6610,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WEARABLE_FAVORITES=1\|evening\|recent\|custom\|create\|import\|import-done` | Favorite Wearables window on the Appearance demo's favorites |
 | `AURORA_DEMO_AVATAR_STUDIO=1|white|reveal|cycle|pedestal|t-pose|a-pose|grounding|hover-height|hover-menu|environment|pose-cycle|pose-menu|lighting-menu|animation-editor|animation-editor-hover|animation-jump` | Studio backdrop, transitions, grounded poses, display hover height, lighting, menu previews and the native animation editor |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate][,newest][,oldest][,favorites][,images]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit, sorted by date, favorites or images |
+| `AURORA_DEMO_APPEARANCE_SIZE=<width>,<height>` | Size of the Appearance window in the Appearance demo |
 | `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_AVATAR_CACHE=1` | Avatars drawn from the cache until the region sends them: Violet Wolf's look and worn objects; ours with `AURORA_DEMO_OUTFIT_RESTORE` |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
@@ -11507,6 +11508,18 @@ summary` (and `u_inventory` in `max:`): with 3,000 outfits it is 0.5 to 0.8
 ms with the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms
 open and 2.5 ms closed before the wardrobe's links were walked only on
 inventory changes and only the rows in sight laid out.
+
+**`AURORA_DEMO_APPEARANCE_SIZE=<width>,<height>`** — with
+`AURORA_DEMO_APPEARANCE`, opens the Appearance window at that size in
+points, without the showcase's one-time widening, for captures at a set
+size. For the showcase preview's scroll bar (#4633), pick a height where
+the outfit preview just overflows: `AURORA_DEMO_APPEARANCE=showcase`,
+`AURORA_WINDOW_SIZE=1600,1000`, `AURORA_UI_SCALE=0.75` and
+`AURORA_DEMO_APPEARANCE_SIZE=1080,1004` (Cop's preview just overflows),
+captured at neighbouring frames (`AURORA_CAPTURE_FRAMES=620,621`): the
+preview's picture, its scroll bar and the text under it are the same in
+both captures; before the fix the bar and a narrower picture showed in one
+and not the other.
 
 The demo objects use distinct points (skull, left ear,
 left ring finger, left foot and top-right HUD), shown in the
