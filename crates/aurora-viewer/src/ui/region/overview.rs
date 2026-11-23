@@ -370,28 +370,16 @@ fn fact_list(p: &Palette, world: &World, details: Option<&aurora_net::estate::Re
             small: false,
         },
     });
-    // objects against the region's capacity
-    out.push(match stats {
-        Some(s) if s.object_capacity > 0 => {
-            let used = s.get(sim_stat::NUMTASKS).unwrap_or(0.0);
-            let left = (i64::from(s.object_capacity) - used.round() as i64).max(0);
-            let frac = fraction(used, s.object_capacity);
-            let tint = (frac >= 0.9).then_some(p.danger).or((frac >= 0.8).then_some(p.warn));
-            Fact {
-                key: aurora_i18n::tr!("common-objects"),
-                value: count_of(used, s.object_capacity),
-                rest: aurora_i18n::tr!("ui-land-overview-objects-free", n = left, count = aurora_i18n::integer(left)),
-                gauge: Some(("region_objects", frac, tint)),
-                small: false,
-            }
-        }
-        _ => Fact {
-            key: aurora_i18n::tr!("common-objects"),
-            value: loading(),
-            rest: String::new(),
-            gauge: None,
-            small: false,
-        },
+    // NUMTASKS counts prims, including attachments. The region's land impact
+    // capacity uses a different unit and cannot be subtracted from this count.
+    out.push(Fact {
+        key: aurora_i18n::tr!("common-objects"),
+        value: stats
+            .and_then(|s| s.get(sim_stat::NUMTASKS))
+            .map_or_else(loading, |n| aurora_i18n::integer(n.round() as i64)),
+        rest: String::new(),
+        gauge: None,
+        small: false,
     });
     // how the simulator keeps up
     out.push(match stats.and_then(|s| s.get(sim_stat::TIME_DILATION)) {
@@ -1003,5 +991,27 @@ mod tests {
         assert!(sunday.chars().next().is_some_and(|c| !c.is_lowercase()), "{sunday}");
         s.days = [true; 7];
         assert!(schedule_text(&s).starts_with(aurora_i18n::tr!("region-schedule-every-day")));
+    }
+}
+
+#[cfg(test)]
+mod object_count_tests {
+    use super::*;
+
+    #[test]
+    fn region_object_count_does_not_use_land_impact_capacity() {
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let palette = crate::theme::Theme::default().palette();
+        let mut stats = SimStats {
+            values: vec![(sim_stat::NUMTASKS, 31_200.0)],
+            object_capacity: 30_000,
+        };
+        for (value, expected) in [(true, aurora_i18n::integer(31_200)), (false, aurora_i18n::tr!("common-loading").to_owned())] {
+            if !value { stats.values.clear(); }
+            let facts = fact_list(&palette, &world, None, Some(&stats));
+            let objects = facts.iter().find(|fact| fact.key == aurora_i18n::tr!("common-objects")).unwrap();
+            assert_eq!(objects.value, expected);
+            assert!(objects.gauge.is_none() && objects.rest.is_empty());
+        }
     }
 }
