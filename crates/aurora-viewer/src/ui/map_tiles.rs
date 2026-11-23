@@ -37,19 +37,40 @@ pub fn tile_origin(gx: u32, gy: u32, level: u32) -> (u32, u32) {
     (gx - gx % n, gy - gy % n)
 }
 
+/// A tile's decoded pixels, kept for the region pictures. `stamp` tells
+/// one load from the next, so a picture knows when to compose again.
+#[derive(Clone)]
+struct Pixels {
+    image: Arc<egui::ColorImage>,
+    stamp: u64,
+}
+
 enum Tile {
     Queued,
     Loading,
     /// The pixels are kept only for a tile a region picture asked for
     /// (`Entry::keep`): the world map's tiles need the texture alone.
-    Ready(egui::TextureHandle, Option<Arc<egui::ColorImage>>),
+    Ready(egui::TextureHandle, Option<Pixels>),
+    /// Drawn before without its pixels, which a region picture now wants:
+    /// the texture stays on the minimap and the world map while they are
+    /// read again (disk cache first). `true` once the read started.
+    Refetch(egui::TextureHandle, bool),
     Missing(Instant),
 }
 
+/// One region's stitched picture. It is composed on the rayon pool and
+/// picked up by `update`; the texture shown meanwhile is the last one.
 struct Picture {
-    tex: egui::TextureHandle,
-    sources: Vec<Arc<egui::ColorImage>>,
+    tex: Option<egui::TextureHandle>,
+    /// The tiles' stamps `tex` was composed from.
+    built: Vec<u64>,
+    composing: bool,
+    used: Instant,
 }
+
+/// Region origin and cell count of a picture.
+type PictureKey = (u32, u32, u32, u32);
+type Composed = (PictureKey, Vec<u64>, Option<egui::ColorImage>);
 
 struct Entry {
     tile: Tile,
@@ -66,27 +87,35 @@ pub struct MapTiles {
     http: Option<reqwest::Client>,
     tiles: HashMap<Key, Entry>,
     /// One stitched picture per region origin and cell count.
-    pictures: HashMap<(u32, u32, u32, u32), Picture>,
+    pictures: HashMap<PictureKey, Picture>,
+    /// The next `Pixels::stamp`.
+    stamp: u64,
     queue: VecDeque<Key>,
     in_flight: usize,
     tx: crossbeam_channel::Sender<(Key, Option<egui::ColorImage>)>,
     rx: crossbeam_channel::Receiver<(Key, Option<egui::ColorImage>)>,
+    composed_tx: crossbeam_channel::Sender<Composed>,
+    composed_rx: crossbeam_channel::Receiver<Composed>,
     disk: PathBuf,
 }
 
 impl MapTiles {
     pub fn new() -> MapTiles {
         let (tx, rx) = crossbeam_channel::unbounded();
+        let (composed_tx, composed_rx) = crossbeam_channel::unbounded();
         MapTiles {
             base_url: String::new(),
             rt: None,
             http: None,
             tiles: HashMap::new(),
             pictures: HashMap::new(),
+            stamp: 0,
             queue: VecDeque::new(),
             in_flight: 0,
             tx,
             rx,
+            composed_tx,
+            composed_rx,
             disk: crate::settings::cache_dir().join("maptiles"),
         }
     }
@@ -129,14 +158,7 @@ impl MapTiles {
     /// (llnetmap.cpp). A 256 m region is that one tile. The Legacy Viewer
     /// squares the cell count; both extents are kept here so a region that
     /// is wider than it is deep is not cropped, and the pin uses each side.
-    pub fn region_picture(
-        &mut self,
-        ctx: &egui::Context,
-        gx: u32,
-        gy: u32,
-        cells_x: u32,
-        cells_y: u32,
-    ) -> Result<egui::TextureHandle, bool> {
+    pub fn region_picture(&mut self, gx: u32, gy: u32, cells_x: u32, cells_y: u32) -> Result<egui::TextureHandle, bool> {
         let cells_x = cells_x.max(1);
         let cells_y = cells_y.max(1);
         if cells_x == 1 && cells_y == 1 {
@@ -146,14 +168,16 @@ impl MapTiles {
         let mut pending = false;
         for dy in 0..cells_y {
             for dx in 0..cells_x {
-                match self.touch(1, gx + dx, gy + dy, true, true) {
-                    Ok((_, Some(image))) => images.push(((dx, dy), image)),
+                let key = (1, gx + dx, gy + dy);
+                match self.touch(key.0, key.1, key.2, true, true) {
+                    Ok((_, Some(pixels))) => images.push(((dx, dy), pixels)),
                     // shown on the world map before, without its pixels:
-                    // read again (disk cache first) and kept this time
+                    // read again and kept this time, its texture still drawn
                     Ok((_, None)) => {
-                        let key = (1, gx + dx, gy + dy);
-                        if let Some(e) = self.tiles.get_mut(&key) {
-                            e.tile = Tile::Queued;
+                        if let Some(e) = self.tiles.get_mut(&key)
+                            && let Tile::Ready(tex, None) = &e.tile
+                        {
+                            e.tile = Tile::Refetch(tex.clone(), false);
                             self.queue.push_back(key);
                         }
                         pending = true;
@@ -163,52 +187,44 @@ impl MapTiles {
                 }
             }
         }
-        if pending {
-            return Err(false);
-        }
-        if images.is_empty() {
-            return Err(true);
-        }
         let key = (gx, gy, cells_x, cells_y);
-        if let Some(cached) = self.pictures.get(&key)
-            && cached.sources.len() == images.len()
-            && cached
-                .sources
-                .iter()
-                .zip(&images)
-                .all(|(kept, (_, image))| Arc::ptr_eq(kept, image))
-        {
-            return Ok(cached.tex.clone());
-        }
-        let refs: Vec<_> = images.iter().map(|(at, image)| (*at, image.as_ref())).collect();
-        let Some(composed) = compose_region(cells_x, cells_y, &refs) else {
+        if !pending && images.is_empty() {
             return Err(true);
-        };
-        let tex = ctx.load_texture(
-            format!("map-region-{gx}-{gy}-{cells_x}x{cells_y}"),
-            composed,
-            egui::TextureOptions::LINEAR,
-        );
-        let sources = images.into_iter().map(|(_, image)| image).collect();
-        self.pictures.insert(key, Picture { tex: tex.clone(), sources });
-        Ok(tex)
+        }
+        let picture = self.pictures.entry(key).or_insert_with(|| Picture {
+            tex: None,
+            built: Vec::new(),
+            composing: false,
+            used: Instant::now(),
+        });
+        picture.used = Instant::now();
+        let stamps: Vec<u64> = images.iter().map(|(_, pixels)| pixels.stamp).collect();
+        if !pending && !picture.composing && picture.built != stamps {
+            // up to 1024 x 1024 samples: off the frame, like the tiles' decoding
+            picture.composing = true;
+            let tx = self.composed_tx.clone();
+            rayon::spawn(move || {
+                let refs: Vec<_> = images.iter().map(|(at, pixels)| (*at, pixels.image.as_ref())).collect();
+                let _ = tx.send((key, stamps, compose_region(cells_x, cells_y, &refs)));
+            });
+        }
+        match &picture.tex {
+            Some(tex) => Ok(tex.clone()),
+            // composed without a picture (empty cells): settled
+            None if !pending && !picture.composing && !picture.built.is_empty() => Err(true),
+            None => Err(false),
+        }
     }
 
-    fn touch(
-        &mut self,
-        level: u32,
-        x: u32,
-        y: u32,
-        load: bool,
-        keep: bool,
-    ) -> Result<(egui::TextureHandle, Option<Arc<egui::ColorImage>>), bool> {
+    fn touch(&mut self, level: u32, x: u32, y: u32, load: bool, keep: bool) -> Result<(egui::TextureHandle, Option<Pixels>), bool> {
         let now = Instant::now();
         let key = (level, x, y);
         if let Some(e) = self.tiles.get_mut(&key) {
             e.used = now;
             e.keep |= keep;
             return match &e.tile {
-                Tile::Ready(tex, image) => Ok((tex.clone(), image.clone())),
+                Tile::Ready(tex, pixels) => Ok((tex.clone(), pixels.clone())),
+                Tile::Refetch(tex, _) => Ok((tex.clone(), None)),
                 Tile::Missing(at) if load && now.duration_since(*at) > MISSING_RETRY => {
                     e.tile = Tile::Queued;
                     self.queue.push_back(key);
@@ -242,12 +258,36 @@ impl MapTiles {
             };
             e.tile = match img {
                 Some(ci) => {
-                    let image = e.keep.then(|| Arc::new(ci.clone()));
-                    let tex = ctx.load_texture(format!("map-{}-{}-{}", key.0, key.1, key.2), ci, egui::TextureOptions::LINEAR);
-                    Tile::Ready(tex, image)
+                    // one buffer for the texture upload and the kept pixels
+                    let image = Arc::new(ci);
+                    let pixels = e.keep.then(|| {
+                        self.stamp += 1;
+                        Pixels {
+                            image: image.clone(),
+                            stamp: self.stamp,
+                        }
+                    });
+                    let tex = ctx.load_texture(format!("map-{}-{}-{}", key.0, key.1, key.2), image, egui::TextureOptions::LINEAR);
+                    Tile::Ready(tex, pixels)
                 }
                 None => Tile::Missing(Instant::now()),
             };
+        }
+        while let Ok((key, stamps, image)) = self.composed_rx.try_recv() {
+            // dropped meanwhile (unused, or another map server)
+            let Some(picture) = self.pictures.get_mut(&key) else {
+                continue;
+            };
+            picture.composing = false;
+            picture.built = stamps;
+            if let Some(image) = image {
+                let (gx, gy, cells_x, cells_y) = key;
+                picture.tex = Some(ctx.load_texture(
+                    format!("map-region-{gx}-{gy}-{cells_x}x{cells_y}"),
+                    image,
+                    egui::TextureOptions::LINEAR,
+                ));
+            }
         }
         let now = Instant::now();
         // newest requests first: what is on screen now matters most
@@ -258,21 +298,31 @@ impl MapTiles {
             let Some(e) = self.tiles.get_mut(&key) else {
                 continue;
             };
-            if !matches!(e.tile, Tile::Queued) {
+            if !matches!(e.tile, Tile::Queued | Tile::Refetch(_, false)) {
                 continue;
             }
-            if now.duration_since(e.used) > Duration::from_secs(2) {
-                // scrolled away before its turn
-                self.tiles.remove(&key);
-                continue;
+            let stale = now.duration_since(e.used) > Duration::from_secs(2);
+            e.tile = match std::mem::replace(&mut e.tile, Tile::Loading) {
+                // scrolled away before its turn: the texture alone stays
+                Tile::Refetch(tex, _) if stale => Tile::Ready(tex, None),
+                Tile::Refetch(tex, _) => Tile::Refetch(tex, true),
+                _ if stale => {
+                    self.tiles.remove(&key);
+                    continue;
+                }
+                _ => Tile::Loading,
+            };
+            if !stale {
+                self.start(key);
             }
-            e.tile = Tile::Loading;
-            self.start(key);
         }
         if self.tiles.len() > MAX_TILES {
             self.tiles
-                .retain(|_, e| matches!(e.tile, Tile::Loading) || now.duration_since(e.used) < UNUSED_DROP);
+                .retain(|_, e| matches!(e.tile, Tile::Loading | Tile::Refetch(_, true)) || now.duration_since(e.used) < UNUSED_DROP);
         }
+        // a picture holds a texture up to MAX_PICTURE square: none is kept
+        // once no window draws it
+        self.pictures.retain(|_, picture| now.duration_since(picture.used) < UNUSED_DROP);
     }
 
     fn start(&mut self, key: Key) {
@@ -328,9 +378,6 @@ pub fn region_pin(x: f32, y: f32, size_x: f32, size_y: f32) -> (f32, f32) {
     (x / size_x.max(1.0), y / size_y.max(1.0))
 }
 
-/// North-up composite. `tiles` are `(dx, dy)` with `dy` 0 at the south edge.
-/// Image row 0 is the north row, so `(gx, gy + cells_y - 1)` is the top-left
-/// cell, as `LLNetMap` draws the higher grid Y further north.
 /// Longest side of a stitched region picture, in pixels.
 const MAX_PICTURE: usize = 1024;
 
@@ -354,6 +401,9 @@ fn sample(image: &egui::ColorImage, x: usize, y: usize, out_w: usize, out_h: usi
     egui::Color32::from_rgba_premultiplied(avg(|p| p.r()), avg(|p| p.g()), avg(|p| p.b()), avg(|p| p.a()))
 }
 
+/// North-up composite. `tiles` are `(dx, dy)` with `dy` 0 at the south edge.
+/// Image row 0 is the north row, so `(gx, gy + cells_y - 1)` is the top-left
+/// cell, as `LLNetMap` draws the higher grid Y further north.
 pub fn compose_region(cells_x: u32, cells_y: u32, tiles: &[((u32, u32), &egui::ColorImage)]) -> Option<egui::ColorImage> {
     if cells_x == 0 || cells_y == 0 || tiles.is_empty() {
         return None;
@@ -429,7 +479,7 @@ mod tests {
         let mut tiles = MapTiles::new();
         let rt = tokio::runtime::Builder::new_current_thread().build().expect("runtime");
         tiles.configure("http://map.example/", rt.handle(), reqwest::Client::new());
-        let _ = tiles.region_picture(&egui::Context::default(), 1000, 2000, 2, 2);
+        let _ = tiles.region_picture(1000, 2000, 2, 2);
         assert_eq!(
             queued(&tiles),
             vec![(1, 1000, 2000), (1, 1000, 2001), (1, 1001, 2000), (1, 1001, 2001)]
@@ -465,7 +515,7 @@ mod tests {
         let mut tiles = MapTiles::new();
         let rt = tokio::runtime::Builder::new_current_thread().build().expect("runtime");
         tiles.configure("http://map.example/", rt.handle(), reqwest::Client::new());
-        let _ = tiles.region_picture(&egui::Context::default(), 1000, 2000, 1, 1);
+        let _ = tiles.region_picture(1000, 2000, 1, 1);
         assert_eq!(queued(&tiles), vec![(1, 1000, 2000)]);
     }
 
@@ -495,9 +545,94 @@ mod tests {
         let rt = tokio::runtime::Builder::new_current_thread().build().expect("runtime");
         tiles.configure("http://map.example/", rt.handle(), reqwest::Client::new());
         let _ = tiles.get(1, 10, 10, true);
-        let _ = tiles.region_picture(&egui::Context::default(), 20, 20, 2, 1);
+        let _ = tiles.region_picture(20, 20, 2, 1);
         assert!(!tiles.tiles[&(1, 10, 10)].keep);
         assert!(tiles.tiles[&(1, 20, 20)].keep && tiles.tiles[&(1, 21, 20)].keep);
+    }
+
+    fn configured() -> (MapTiles, tokio::runtime::Runtime) {
+        let mut tiles = MapTiles::new();
+        let rt = tokio::runtime::Builder::new_current_thread().build().expect("runtime");
+        tiles.configure("http://map.example/", rt.handle(), reqwest::Client::new());
+        (tiles, rt)
+    }
+
+    /// A downloaded tile, with its pixels when a region picture keeps them.
+    fn ready(ctx: &egui::Context, tiles: &mut MapTiles, key: Key, keep: bool) -> egui::TextureHandle {
+        let image = Arc::new(egui::ColorImage::filled([1, 1], egui::Color32::from_rgb(key.1 as u8, 0, 0)));
+        let tex = ctx.load_texture(format!("test-{key:?}"), image.clone(), egui::TextureOptions::LINEAR);
+        tiles.stamp += 1;
+        let pixels = keep.then_some(Pixels { image, stamp: tiles.stamp });
+        tiles.tiles.insert(
+            key,
+            Entry {
+                tile: Tile::Ready(tex.clone(), pixels),
+                used: Instant::now(),
+                keep,
+            },
+        );
+        tex
+    }
+
+    /// Frames until the rayon pool's composite is picked up.
+    fn composed(ctx: &egui::Context, tiles: &mut MapTiles, gx: u32, gy: u32, cells_x: u32, cells_y: u32) -> egui::TextureHandle {
+        let start = Instant::now();
+        loop {
+            tiles.update(ctx);
+            if let Ok(tex) = tiles.region_picture(gx, gy, cells_x, cells_y) {
+                return tex;
+            }
+            assert!(start.elapsed() < Duration::from_secs(10), "the picture is never composed");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// The picture is composed off the frame, kept while drawn, and its
+    /// texture dropped once no window has drawn it for UNUSED_DROP.
+    #[test]
+    fn a_region_picture_is_composed_off_the_frame_and_dropped_once_unused() {
+        let ctx = egui::Context::default();
+        let (mut tiles, _rt) = configured();
+        let _ = ready(&ctx, &mut tiles, (1, 20, 20), true);
+        let _ = ready(&ctx, &mut tiles, (1, 21, 20), true);
+        assert_eq!(tiles.region_picture(20, 20, 2, 1).map(|t| t.id()), Err(false), "composing");
+        let key = (20, 20, 2, 1);
+        assert!(tiles.pictures[&key].composing);
+        let tex = composed(&ctx, &mut tiles, 20, 20, 2, 1);
+        assert_eq!(tex.size(), [2, 1]);
+        let again = tiles.region_picture(20, 20, 2, 1).expect("cached");
+        assert_eq!(again.id(), tex.id());
+        assert!(!tiles.pictures[&key].composing, "the same tiles are not composed again");
+        let long_ago = Instant::now().checked_sub(UNUSED_DROP * 2).expect("uptime");
+        tiles.pictures.get_mut(&key).expect("picture").used = long_ago;
+        tiles.update(&ctx);
+        assert!(tiles.pictures.is_empty(), "an unused picture is dropped");
+    }
+
+    /// A world map tile without its pixels keeps drawing its texture while
+    /// they are read again, and a picture already made stays shown while a
+    /// cell reloads.
+    #[test]
+    fn a_tile_read_again_for_its_pixels_keeps_its_texture() {
+        let ctx = egui::Context::default();
+        let (mut tiles, _rt) = configured();
+        let shown = ready(&ctx, &mut tiles, (1, 20, 20), false);
+        let _ = ready(&ctx, &mut tiles, (1, 21, 20), true);
+        assert_eq!(tiles.region_picture(20, 20, 2, 1).map(|t| t.id()), Err(false));
+        assert!(matches!(tiles.tiles[&(1, 20, 20)].tile, Tile::Refetch(_, false)));
+        assert!(tiles.queue.contains(&(1, 20, 20)));
+        assert_eq!(tiles.get(1, 20, 20, true).map(|t| t.id()), Ok(shown.id()), "still drawn");
+        tiles.update(&ctx);
+        assert!(matches!(tiles.tiles[&(1, 20, 20)].tile, Tile::Refetch(_, true)), "read started");
+        assert_eq!(tiles.get(1, 20, 20, true).map(|t| t.id()), Ok(shown.id()));
+        let pixels = egui::ColorImage::filled([1, 1], egui::Color32::from_rgb(20, 0, 0));
+        tiles.tx.send(((1, 20, 20), Some(pixels))).expect("channel");
+        let picture = composed(&ctx, &mut tiles, 20, 20, 2, 1);
+        assert!(matches!(&tiles.tiles[&(1, 20, 20)].tile, Tile::Ready(_, Some(_))));
+        // a cell reloading: the picture of before stays
+        let tex = ready(&ctx, &mut tiles, (1, 21, 20), true);
+        tiles.tiles.get_mut(&(1, 21, 20)).expect("tile").tile = Tile::Refetch(tex, true);
+        assert_eq!(tiles.region_picture(20, 20, 2, 1).map(|t| t.id()), Ok(picture.id()));
     }
 
     #[test]
