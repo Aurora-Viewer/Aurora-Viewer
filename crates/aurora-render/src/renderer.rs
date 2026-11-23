@@ -3237,8 +3237,8 @@ fn extra<T>(
 /// the main view when it is drawn (not hidden by the debug filter), not
 /// under the water (the sky is seen through its fog), nor in a cut-out
 /// photo (no sky).
-fn clouds_wanted(cutout: bool, hide_sky: bool, camera_z: f32, water_level: f32) -> bool {
-    !cutout && !hide_sky && camera_z >= water_level
+fn clouds_wanted(cutout: bool, hide_sky: bool, camera_z: f32, water_level: Option<f32>) -> bool {
+    !cutout && !hide_sky && water_level.is_none_or(|height| camera_z >= height)
 }
 
 /// The clouds' size-bound targets for `size` (and a still's) are made,
@@ -7829,6 +7829,7 @@ impl Backend {
         }
         // SL uses the clamped light norm's GL z component (world x) here
         let ks = 1.0 / f.sky.light_norm.x.max(0.3);
+        u.water_air[1] = f32::from(u8::from(f.hide_water));
         u.water_fog = lin(w.fog_color.max(Vec3::ZERO)).extend(kd.max(0.0)).to_array();
         u.water_params = [ks, w.fresnel_scale, w.fresnel_offset, w.blur_multiplier];
         u.water_waves = [w.wave1.x, w.wave1.y, w.wave2.x, w.wave2.y];
@@ -9378,7 +9379,7 @@ impl Backend {
         let cloud_params = f
             .clouds
             .as_ref()
-            .filter(|_| clouds_wanted(f.cutout, f.hide_sky, f.camera_pos.z, camera_water_level))
+            .filter(|_| clouds_wanted(f.cutout, f.hide_sky, f.camera_pos.z, (!f.hide_water).then_some(camera_water_level)))
             .and_then(|c| {
                 let rotation = Mat4::from_mat3(glam::Mat3::from_mat4(f.view));
                 crate::clouds::Params::new(f, c, f.proj * rotation, inv_view_proj_rot(f.proj, f.view))
@@ -10138,6 +10139,7 @@ impl Backend {
         }
 
         let mut water_settings = self.settings.water_effects;
+        water_settings.enabled &= !f.hide_water;
         water_settings.particle_budget = water_settings.particle_budget.saturating_sub(n_particles);
         if self.water_effects.prepare(
             &self.device,
@@ -13696,11 +13698,15 @@ mod tests {
 
     #[test]
     fn the_clouds_are_asked_for_only_over_a_drawn_sky() {
-        assert!(clouds_wanted(false, false, 30.0, 20.0));
-        assert!(clouds_wanted(false, false, 20.0, 20.0));
-        assert!(!clouds_wanted(true, false, 30.0, 20.0), "cut-out photo");
-        assert!(!clouds_wanted(false, true, 30.0, 20.0), "sky hidden: no trace for nothing");
-        assert!(!clouds_wanted(false, false, 19.0, 20.0), "under the water");
+        assert!(clouds_wanted(false, false, 30.0, Some(20.0)));
+        assert!(clouds_wanted(false, false, 20.0, Some(20.0)));
+        assert!(!clouds_wanted(true, false, 30.0, Some(20.0)), "cut-out photo");
+        assert!(!clouds_wanted(false, true, 30.0, Some(20.0)), "sky hidden: no trace for nothing");
+        assert!(!clouds_wanted(false, false, 19.0, Some(20.0)), "under the water");
+        assert!(
+            clouds_wanted(false, false, 19.0, None),
+            "hidden water leaves the sky visible below sea level"
+        );
     }
 
     /// The occlusion's table is read by index against the main view's
