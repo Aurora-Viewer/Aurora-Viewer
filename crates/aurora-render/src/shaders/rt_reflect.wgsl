@@ -328,7 +328,7 @@ struct Near {
 fn nearest(origin: vec3<f32>, dir: vec3<f32>, least: f32, reach: f32) -> Near {
     var near = Near(-1.0, 0u, 0u, vec2<f32>(0.0));
     var rq: ray_query;
-    rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, 0xFFu, least, reach, origin, dir));
+    rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, SOLID, least, reach, origin, dir));
     while (rayQueryProceed(&rq)) {
         if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
             rayQueryConfirmIntersection(&rq);
@@ -341,7 +341,7 @@ fn nearest(origin: vec3<f32>, dir: vec3<f32>, least: f32, reach: f32) -> Near {
     }
     if (params.mode.y > 0.5) {
         var rp: ray_query;
-        rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, 0xFFu, least, select(reach, near.t, near.t >= 0.0), origin, dir));
+        rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, SOLID, least, select(reach, near.t, near.t >= 0.0), origin, dir));
         while (rayQueryProceed(&rp)) {
             if (stops(rayQueryGetCandidateIntersection(&rp), true, dir)) {
                 rayQueryConfirmIntersection(&rp);

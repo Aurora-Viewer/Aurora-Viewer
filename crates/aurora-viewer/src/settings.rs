@@ -1920,6 +1920,14 @@ pub struct Settings {
     pub ssr: bool,
     /// Preferences › Graphics › Ray tracing.
     pub ray_tracing: RayTracingSettings,
+    /// The traced sun's shadows' softness: 1 the real sun's, 0 sharp
+    /// (aurora-render `RtTuning`). Apart from `ray_tracing`, which the
+    /// graphics levels set.
+    pub rt_sun_softness: f32,
+    /// The traced lamps' shadows' softness: 1 as measured, 0 sharp.
+    pub rt_lamp_softness: f32,
+    /// How many of the nearest lamps cast traced shadows.
+    pub rt_shadow_lamps: u8,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -2053,7 +2061,7 @@ pub(crate) fn max_texture_resolution_choice(v: u32) -> u32 {
         .unwrap_or(MAX_TEXTURE_RESOLUTIONS[0])
 }
 
-const SETTINGS_VERSION: u32 = 44;
+const SETTINGS_VERSION: u32 = 45;
 
 /// The world render percentage that draws at the display's logical
 /// resolution, as the Legacy Viewer does on a Mac with RenderHiDPI 0: 50 on
@@ -2916,7 +2924,10 @@ impl Default for Settings {
             display_name_notices: true,
             mirrors: 1,
             ssr: false,
-            ray_tracing: RayTracingSettings::OFF,
+            ray_tracing: RayTracingSettings::SHADOWS,
+            rt_sun_softness: 1.0,
+            rt_lamp_softness: 1.0,
+            rt_shadow_lamps: RT_SHADOW_LAMPS_MAX,
             // an opt-in: the Legacy Viewer sorts its blended faces, and the
             // method's targets take video memory while it is on
             anisotropy: 8,
@@ -3226,6 +3237,12 @@ impl Settings {
             if read.value.joystick.mapping == preset.mapping {
                 read.value.finish_legacy_gamepad_migration(None);
             }
+        }
+        if version < 45 && value.get("ray_tracing").is_none() {
+            // a file written before ray tracing traced nothing: the earlier
+            // levels' migrations compare it so, before the version 45 one
+            // turns the shadows on (`sanitized`)
+            read.value.ray_tracing = RayTracingSettings::OFF;
         }
         let mut newer = None;
         if version > SETTINGS_VERSION as u64 {
@@ -3661,6 +3678,15 @@ impl Settings {
             // the wind's defaults, a breeze: a wind off and left still
             // takes them, so that switching it on blows
             self.weather.upgrade_wind_defaults();
+        }
+        if self.settings_version < 45 {
+            // the shadows are traced by default where the card can, in the
+            // shadow maps' place: every earlier file turns the sun's and
+            // the local lights' on once (the indirect light and the
+            // reflections keep their choice), Preferences › Graphics › Ray
+            // tracing goes back to the maps
+            self.ray_tracing.enabled = true;
+            self.ray_tracing.lights = true;
         }
         if !self.audio.enabled[VOICE_CHANNEL] {
             // this box used to switch a mixer channel of its own, leaving
@@ -4152,6 +4178,16 @@ impl Settings {
             probe_slots: self.probe_count.clamp(8, 256),
             ssr: self.ssr,
             ray_tracing: self.ray_tracing.render(),
+            rt_tuning: aurora_render::RtTuning {
+                sun_softness: self.rt_sun_softness.clamp(0.0, RT_SOFTNESS_MAX),
+                lamp_softness: self.rt_lamp_softness.clamp(0.0, RT_SOFTNESS_MAX),
+                lamps: u32::from(self.rt_shadow_lamps.clamp(1, RT_SHADOW_LAMPS_MAX)),
+                // (the ray tracing quality's High, until its menu sets them)
+                lamp_candidates: aurora_render::LampQuality::HIGH.candidates,
+                lamp_reuse: aurora_render::LampQuality::HIGH.reuse,
+                lamp_denoise: aurora_render::LampQuality::HIGH.denoise,
+                projectors: self.projector_shadows,
+            },
             // set each frame by the app while it rains
             rain_surfaces: false,
             anisotropy: self.anisotropy,
@@ -4268,11 +4304,22 @@ impl Default for MapSettings {
     }
 }
 
+/// The most the traced shadows' softness goes to (Preferences' sliders).
+pub const RT_SOFTNESS_MAX: f32 = 4.0;
+/// The most lamps that cast traced shadows (aurora-render's
+/// `MAX_TRACED_LIGHTS`).
+pub const RT_SHADOW_LAMPS_MAX: u8 = 64;
+
 /// Preferences › Graphics › Ray tracing (aurora-render's rt_shadows.rs):
-/// experimental, all off by default, and only on a graphics card with ray
-/// queries (`aurora_render::RayTracingSupport`). The renderer adds what
-/// each needs: the sun's shadows only with the shadows, the reflections
-/// only with the screen-space ones.
+/// only on a graphics card with ray queries
+/// (`aurora_render::RayTracingSupport`); elsewhere the shadow maps stay. The
+/// sun's and the local lights' shadows are traced by default
+/// (`RayTracingSettings::SHADOWS`), in the shadow maps' place, and turning
+/// them off here goes back to the maps; the indirect light and the
+/// reflections, experimental, stay off. The renderer adds what each needs:
+/// the sun's shadows only with the shadows, the reflections only with the
+/// screen-space ones. (`Default` is all off: what a saved graphics profile
+/// written before ray tracing reads.)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct RayTracingSettings {
@@ -4291,6 +4338,15 @@ impl RayTracingSettings {
     pub const OFF: RayTracingSettings = RayTracingSettings {
         enabled: false,
         lights: false,
+        indirect: false,
+        reflections: false,
+    };
+
+    /// The default where the card can: the shadows traced, the sun's and
+    /// the local lights', in the shadow maps' place.
+    pub const SHADOWS: RayTracingSettings = RayTracingSettings {
+        enabled: true,
+        lights: true,
         indirect: false,
         reflections: false,
     };
@@ -5378,6 +5434,58 @@ mod tests {
             let kept = custom.sanitized();
             assert_eq!((kept.ssao, kept.gtao_quality, kept.draw_distance), before);
         }
+    }
+
+    #[test]
+    fn earlier_files_trace_the_shadows_once_and_keep_their_level() {
+        use crate::graphics_presets::{Preset, high_v20};
+        let path = scratch_settings_file();
+        // a file written before ray tracing holds none: it read as off, so
+        // the earlier levels' migrations still find their level, then the
+        // shadows are traced
+        let without = |version: u32, level: &dyn Fn(&mut Settings)| {
+            let mut s = Settings {
+                settings_version: version,
+                ..Settings::default()
+            };
+            level(&mut s);
+            let mut file = serde_json::to_value(s).expect("synthetic saved settings");
+            file.as_object_mut().expect("settings object").remove("ray_tracing");
+            let (s, newer) = Settings::read_document(file, &path).expect("readable settings");
+            s.finished(newer)
+        };
+        for preset in [Preset::High, Preset::Deluxe] {
+            let now = without(44, &|s| preset.apply(s));
+            assert_eq!(now.ray_tracing, RayTracingSettings::SHADOWS, "{preset:?}");
+            assert_eq!(Preset::matching(&now), Some(preset), "{preset:?}");
+        }
+        let now = without(20, &|s| high_v20().write(s));
+        assert_eq!(Preset::matching(&now), Some(Preset::High));
+        // a level without shadows stays itself, nothing traced
+        let now = without(44, &|s| Preset::Low.apply(s));
+        assert_eq!(Preset::matching(&now), Some(Preset::Low));
+        // a file that held the switches off, written while ray tracing was
+        // experimental: the shadows on once, its experimental choices kept
+        let mut old = Settings {
+            settings_version: 44,
+            ..Settings::default()
+        };
+        old.ray_tracing = RayTracingSettings {
+            reflections: true,
+            ..RayTracingSettings::OFF
+        };
+        let now = old.sanitized();
+        assert_eq!(
+            now.ray_tracing,
+            RayTracingSettings {
+                reflections: true,
+                ..RayTracingSettings::SHADOWS
+            }
+        );
+        // turned off after the migration, back to the shadow maps: kept
+        let mut maps = Settings::default();
+        maps.ray_tracing.enabled = false;
+        assert!(!maps.sanitized().ray_tracing.enabled);
     }
 
     #[test]

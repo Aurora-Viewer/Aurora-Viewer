@@ -4870,6 +4870,8 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_RT_SWITCH=<frame>[:<frame>]` | Ray tracing turned on at these frames, as Preferences would: no long frame |
 | `AURORA_DEMO_PBR_MIXED=1` | One cube with white PBR metal on every face but 4, which keeps a red legacy texture (#4467) |
 | `AURORA_DEMO_BOUNCE=1` | A white floor and box between a red and a green wall (GTAO's indirect light) |
+| `AURORA_DEMO_STAINED_GLASS=sun\|lamp` | Red, green and blue panes over a white slab: the traced light they let through is coloured |
+| `AURORA_DEMO_LIGHT_PANEL=1` | A ceiling light panel with a cube hung beside it: the cube casts the panel's traced shadow |
 | `AURORA_DEMO_SHIMMER=1` | A long glossy plate with a fine repeated normal map (specular anti-aliasing) |
 | `AURORA_DEMO_TEXANIM=1` | Texture animations (llSetTextureAnim) |
 | `AURORA_DEMO_GLOW_LAYERS=1` or `shell` | Transparent glowing layer over a glowing skin |
@@ -5196,6 +5198,24 @@ both open states and the selection count. Capture at frame 620.
   (seen with `AURORA_DEMO_POS="131.5,134.5"`). With GTAO's indirect light
   (`AURORA_SSIL=alt`) the box's sides and the foot of the walls take the
   light of the floor and of the walls near them.
+- **`AURORA_DEMO_STAINED_GLASS=sun|lamp`**: ahead of the start position, a
+  canopy of three panes 2.2 m over a white slab, red, green and blue at an
+  alpha of 0.3, 0.5 and 0.7 (the panes of PR #3821's demo). With the
+  shadows traced (the default where the card can), the sun's light through
+  them colours the slab under each pane: a pale red, a green, a dark blue,
+  each pane letting through mix(1, rgb, a) * (1 - a) of the light; where
+  two pane shadows overlap they multiply. Ray tracing off, the shadow maps
+  let blended faces cast nothing, as the Legacy Viewer's: the slab stays
+  white. `lamp` adds a white lamp 1.4 m over the middle pane: at night
+  (`AURORA_DEMO_TOD=4`) the slab under the panes takes their colours from
+  the lamp too, and the lamp's own sphere tints nothing.
+- **`AURORA_DEMO_LIGHT_PANEL=1`**: a ceiling light panel, 2.4 m square,
+  2.6 m over a white slab ahead of the start position, its light at its
+  middle, and a red cube hung 1.2 m under one of its sides. At night
+  (`AURORA_DEMO_TOD=4`) with the lamps' shadows traced, the cube casts a
+  soft shadow on the slab and the panel itself casts none. With
+  `AURORA_RT_EMITTER=sphere` the rays stop at the sphere that holds the
+  panel, which the cube is inside: the cube casts nothing.
 - **`AURORA_DEMO_PBR_OVERRIDE=1`**: two PBR slabs, one of them with a
   GLTF material override (4 × 4 repeats, tint). Their normal map,
   also carried by the "Normal + specular" panel of the ordinary
@@ -13075,13 +13095,16 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
-| `AURORA_SOFT_SHADOWS=0`, `1` or `alt` | Soft sun shadows off, on or one second in two for this launch |
-| `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across; the real sun, 0.53 degrees, is a softness of 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
-| `AURORA_SOFT_PROJECTORS=0` | With the soft shadows, the projectors keep their 5-tap shadows (to measure their cost apart) |
-| `AURORA_RT_SHADOWS=1`, `0`, `front` or `back` | Ray-traced sun shadows forced on or off for this launch |
+| `AURORA_RT_SHADOWS=1`, `0`, `both` or `back` | Ray-traced sun shadows forced on or off for this launch |
 | `AURORA_RT_LIGHTS=1` or `0` | Ray-traced local light shadows forced on or off for this launch |
 | `AURORA_RT_GI=1` or `0` | Ray-traced indirect light forced on or off for this launch |
 | `AURORA_RT_REFLECTIONS=1` or `0` | Ray-traced reflections forced on or off for this launch |
+| `AURORA_RT_EMITTER=sphere` | A lamp's traced rays stop at the sphere around its prim instead of passing that prim alone |
+| `AURORA_RT_LAMPS=low`, `medium` or `high` | The traced lamps' quality for this launch, whatever the settings say (to measure each) |
+| `AURORA_RT_POSED_BUILD=trace` or `build` | The avatars' traced levels built for a fast trace instead of a fast build (the default), to measure both; the picture is the same |
+| `AURORA_SOFT_SHADOWS=0`, `1` or `alt` | Soft sun shadows off, on or one second in two for this launch |
+| `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across; the real sun, 0.53 degrees, is a softness of 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
+| `AURORA_SOFT_PROJECTORS=0` | With the soft shadows, the projectors keep their 5-tap shadows (to measure their cost apart) |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
@@ -13588,6 +13611,44 @@ What the inventory must show with these scenarios:
   `perf summary` is their GPU time, the copy of the depth and its extra
   casters included (same crowd with `AURORA_DEMO_FEET=blend`,
   2560 × 1369, RTX 4090, 120 fps cap: about 0.17 to 0.26 ms).
+- **`AURORA_RT_SHADOWS=1|0|both|back`**, **`AURORA_RT_LIGHTS=1|0`**,
+  **`AURORA_RT_GI=1|0`** and **`AURORA_RT_REFLECTIONS=1|0`**: the four
+  options of Preferences › Graphics › Ray tracing (the sun's and the local
+  lights' shadows on by default, in High and Deluxe, on a card with ray
+  queries; the indirect light and the reflections experimental and off;
+  `rt_shadows.rs`) for this launch, without changing the saved
+  settings: `1` forces one on, `0` (or `off`) off, and an unset variable
+  leaves it to its setting. They need a graphics card with ray queries,
+  and none applies in a run set up for VR. `AURORA_RT_SHADOWS` traces the
+  sun's and the moon's shadows of the main view in the shadow maps' place
+  (the Shadows setting must be on). A shadow ray passes the faces it meets
+  from their front, so that a one-sided face casts only from its side turned
+  to the light, as the Legacy Viewer's shadow maps draw it (#3895: a
+  one-sided wall seen from behind lets the light through); a face drawn on
+  both sides casts from both, a mirrored face keeps its front, and an
+  avatar's faces cast from both sides. `both` stops the rays at every face
+  and `back` at those met from their front, to compare (the lamps' rays
+  too). The
+  three others trace the scene the sun's shadows build, so they do nothing
+  without them: the point lights' and the projectors' shadows (every projector of the list, at any distance, in its shadow map's place on the faces the view's prepass draws, its map no longer drawn: the blended faces and the reflections take it unshadowed, as the Legacy Viewer's blended faces), the indirect light (in the
+  screen-space one's place, at the Indirect light intensity) and the
+  reflections (in the screen-space ones' place, which must be on). The
+  GPU device has its ray queries from the start on a card that has them,
+  whatever the setting says: turned on later, the ray tracer is made on a
+  worker thread and the picture goes on (`AURORA_DEMO_RT_SWITCH`).
+  `AURORA_RT_SHADOWS=0` opens the device without them, as on a card that
+  has none: nothing is traced in that launch, whatever the setting. A
+  lamp's own prim (its bulb, its shade, a strip light's tube) does not
+  shadow it: a ray goes the fast way up to the sphere around that prim,
+  then on to the light past every face but the prim's, so that what stands
+  inside that sphere beside the prim still casts.
+  **`AURORA_RT_EMITTER=sphere`** stops the rays at the sphere instead, as
+  the first version did, to compare the picture and the lights pass's GPU
+  time (`rt lights:`). With
+  `AURORA_PROFILE=1`, the log has every 240 frames the lines `rt shadows:`
+  (the faces posed, the levels built and the trace on the GPU, the faces
+  placed, and the render thread's time), `rt lights:`, `rt gi:` and
+  `rt reflections:` (each pass's GPU time).
 - **`AURORA_SOFT_SHADOWS=0|1|alt`**: the soft sun shadows (Preferences ›
   Graphics › Soft shadows, experimental; `soft_shadows.rs`) for this
   launch, without changing the saved setting: `0` off, `1` on, `alt` off and
@@ -13617,29 +13678,6 @@ What the inventory must show with these scenarios:
   the branch with the soft shadows off, on and at softness 2, and the
   median of each run's medians of `gpu`, `g_objects`, `g_terrain_sky`,
   `g_transparent`, `g_contact` and `g_soft`.
-- **`AURORA_RT_SHADOWS=1|0|front|back`**, **`AURORA_RT_LIGHTS=1|0`**,
-  **`AURORA_RT_GI=1|0`** and **`AURORA_RT_REFLECTIONS=1|0`**: the four
-  options of Preferences › Graphics › Ray tracing (experimental, off by
-  default; `rt_shadows.rs`) for this launch, without changing the saved
-  settings: `1` forces one on, `0` (or `off`) off, and an unset variable
-  leaves it to its setting. They need a graphics card with ray queries,
-  and none applies in a run set up for VR. `AURORA_RT_SHADOWS` traces the
-  sun's and the moon's shadows of the main view in the shadow maps' place
-  (the Shadows setting must be on); `front` and `back` also make the rays
-  pass the faces they meet from the front or from behind, to compare. The
-  three others trace the scene the sun's shadows build, so they do nothing
-  without them: the point lights' shadows, the indirect light (in the
-  screen-space one's place, at the Indirect light intensity) and the
-  reflections (in the screen-space ones' place, which must be on). The
-  GPU device has its ray queries from the start on a card that has them,
-  whatever the setting says: turned on later, the ray tracer is made on a
-  worker thread and the picture goes on (`AURORA_DEMO_RT_SWITCH`).
-  `AURORA_RT_SHADOWS=0` opens the device without them, as on a card that
-  has none: nothing is traced in that launch, whatever the setting. With
-  `AURORA_PROFILE=1`, the log has every 240 frames the lines `rt shadows:`
-  (the faces posed, the levels built and the trace on the GPU, the faces
-  placed, and the render thread's time), `rt lights:`, `rt gi:` and
-  `rt reflections:` (each pass's GPU time).
 - **`AURORA_BLOOM=0|1|alt`**: Aurora's bloom (Preferences › Graphics ›
   Bloom, off by default) for this launch, without changing the saved
   setting: `0` off, `1` on (at the setting's strength, 0.5 when it is off),

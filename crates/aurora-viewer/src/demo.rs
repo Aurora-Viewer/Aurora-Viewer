@@ -6021,6 +6021,121 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_STAINED_GLASS=sun|lamp: a canopy of three panes, red,
+    // green and blue at an alpha of 0.3, 0.5 and 0.7 (the panes of PR
+    // #3821's demo, circuskid), 2.2 m over a white slab ahead of the start
+    // position: with the shadows traced the light they let through colours
+    // the slab, each pane by mix(1, rgb, a) * (1 - a) (aurora-render
+    // rt_common.wgsl `glass_passes`). `lamp` adds a white lamp 1.4 m over
+    // the middle pane, for the night (AURORA_DEMO_TOD=4).
+    if let Ok(mode) = std::env::var("AURORA_DEMO_STAINED_GLASS") {
+        let floor = height(cx, cy) + 0.35;
+        let (x, y) = (136.0, 130.0);
+        add(prim(
+            id,
+            Vec3::new(x, y, floor + 0.02),
+            Quat::IDENTITY,
+            Vec3::new(3.0, 5.0, 0.04),
+            boxp,
+            te([0.9, 0.9, 0.9, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+        for (k, color) in [[0.9, 0.1, 0.08, 0.3], [0.1, 0.8, 0.15, 0.5], [0.1, 0.25, 0.95, 0.7]]
+            .into_iter()
+            .enumerate()
+        {
+            add(prim(
+                id,
+                Vec3::new(x, y + (k as f32 - 1.0) * 1.3, floor + 2.2),
+                Quat::IDENTITY,
+                Vec3::new(1.2, 1.2, 0.02),
+                boxp,
+                te(color, 0, false, 0.0),
+                ExtraParams::default(),
+                "",
+            ));
+            id += 1;
+        }
+        if mode.trim() == "lamp" {
+            add(prim(
+                id,
+                Vec3::new(x, y, floor + 3.6),
+                Quat::IDENTITY,
+                Vec3::splat(0.2),
+                sphere,
+                te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+                ExtraParams {
+                    // (bright on the slab: a weak lamp's colour is lost in
+                    // the night's ambiance, which the panes do not colour)
+                    light: Some(LightParams {
+                        color: [1.0, 1.0, 1.0, 1.0],
+                        radius: 12.0,
+                        cutoff: 0.0,
+                        falloff: 0.0,
+                    }),
+                    ..Default::default()
+                },
+                "",
+            ));
+            id += 1;
+        }
+    }
+    // AURORA_DEMO_LIGHT_PANEL=1: a ceiling light panel, 2.4 m square, 2.6 m
+    // over a white slab, its light at its middle, and a cube hung 1.2 m
+    // under one of its sides, inside the sphere that holds the panel: the
+    // traced rays pass the panel alone, so the cube casts on the slab;
+    // with AURORA_RT_EMITTER=sphere they stop at the sphere and it casts
+    // nothing (aurora-render rt_common.wgsl `shadows_but`). For the night
+    // (AURORA_DEMO_TOD=4).
+    if std::env::var("AURORA_DEMO_LIGHT_PANEL").is_ok() {
+        let floor = height(cx, cy) + 0.35;
+        let (x, y) = (136.0, 122.0);
+        add(prim(
+            id,
+            Vec3::new(x, y, floor + 0.02),
+            Quat::IDENTITY,
+            Vec3::new(5.0, 5.0, 0.04),
+            boxp,
+            te([0.9, 0.9, 0.9, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+        add(prim(
+            id,
+            Vec3::new(x, y, floor + 2.6),
+            Quat::IDENTITY,
+            Vec3::new(2.4, 2.4, 0.05),
+            boxp,
+            te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [0.8, 0.75, 0.68, 1.0],
+                    radius: 10.0,
+                    cutoff: 0.0,
+                    falloff: 0.0,
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        id += 1;
+        // (1.34 m from the light, inside the panel's 1.7 m sphere; its
+        // shadow lands 1.3 m from the slab's middle)
+        add(prim(
+            id,
+            Vec3::new(x + 0.6, y, floor + 1.4),
+            Quat::IDENTITY,
+            Vec3::splat(0.3),
+            boxp,
+            te([0.8, 0.3, 0.2, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+    }
     // AURORA_DEMO_TEXANIM=1: texture animations (llSetTextureAnim) on a row
     // of panels facing the start position, in place of the alpha panels
     if texanim {

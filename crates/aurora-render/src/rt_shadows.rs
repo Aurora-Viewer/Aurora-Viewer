@@ -35,12 +35,16 @@ use crate::types::{DrawRecord, flags};
 /// The device feature ray tracing needs.
 pub const FEATURES: wgpu::Features = wgpu::Features::EXPERIMENTAL_RAY_QUERY;
 
-/// Which faces a ray passes (`AURORA_RT_SHADOWS=front` or `back`): none,
-/// those it meets from their front, those it meets from behind.
+/// Which faces a shadow ray passes: those it meets from their front, by
+/// default, as the Legacy Viewer's shadow maps draw the faces with their
+/// backs culled (#3895: a one-sided face casts only from its side turned
+/// to the light; a face drawn on both sides, from both, `facing`).
+/// `AURORA_RT_SHADOWS=both` stops the rays at every face, `back` at those
+/// met from their front, for a comparison.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Cull {
-    #[default]
     None,
+    #[default]
     Front,
     Back,
 }
@@ -67,13 +71,23 @@ pub(crate) struct Override {
     indirect: Option<bool>,
     reflections: Option<bool>,
     cull: Cull,
+    /// `AURORA_RT_EMITTER=sphere`: a lamp's rays stop at the sphere that
+    /// holds its prim, as before its prim alone was passed
+    /// (rt_lights.wgsl `light_ray`), for a comparison.
+    emitter_sphere: bool,
 }
 
 impl Override {
     /// From the four variables' values: `0` or `off` forces an option off,
-    /// anything else on (`front` and `back`, the sun shadows with that
-    /// culling); unset or empty leaves it to the settings.
-    fn parse(shadows: Option<&str>, lights: Option<&str>, indirect: Option<&str>, reflections: Option<&str>) -> Self {
+    /// anything else on (`both` and `back`, the shadow rays with that
+    /// culling, [`Cull`]); unset or empty leaves it to the settings.
+    fn parse(
+        shadows: Option<&str>,
+        lights: Option<&str>,
+        indirect: Option<&str>,
+        reflections: Option<&str>,
+        emitter: Option<&str>,
+    ) -> Self {
         let forced = |value: Option<&str>| match value?.trim() {
             "" => None,
             "0" | "off" => Some(false),
@@ -85,10 +99,11 @@ impl Override {
             indirect: forced(indirect),
             reflections: forced(reflections),
             cull: match shadows.map(str::trim) {
-                Some("front") => Cull::Front,
+                Some("both") => Cull::None,
                 Some("back") => Cull::Back,
-                _ => Cull::None,
+                _ => Cull::Front,
             },
+            emitter_sphere: emitter.map(str::trim) == Some("sphere"),
         }
     }
 
@@ -101,6 +116,7 @@ impl Override {
                 var("AURORA_RT_LIGHTS").as_deref(),
                 var("AURORA_RT_GI").as_deref(),
                 var("AURORA_RT_REFLECTIONS").as_deref(),
+                var("AURORA_RT_EMITTER").as_deref(),
             )
         })
     }
@@ -148,7 +164,10 @@ pub(crate) fn traced(device: &wgpu::Device, external: bool, asked: crate::RayTra
 }
 
 /// A face to trace: its record, its geometry in the arena, where it stands,
-/// and whether it is opaque (an alpha-masked face is tested at each hit).
+/// whether it is opaque (an alpha-masked face is tested at each hit),
+/// whether it is glass (a blended face, which colours the shadow rays
+/// instead of stopping them: [`GLASS`]), and its instance's flags
+/// ([`facing`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Instance {
     pub record: u32,
@@ -156,7 +175,9 @@ pub struct Instance {
     pub first_index: u32,
     pub index_count: u32,
     pub opaque: bool,
+    pub glass: bool,
     pub model: [[f32; 4]; 4],
+    pub flags: wgpu::TlasInstanceFlags,
 }
 
 /// A rigged or worn face: its world positions exist only once posed, so the
@@ -184,6 +205,10 @@ pub struct PosedGroup {
     /// A hash of its faces: another set makes its bottom level again.
     pub faces: u64,
     pub rebuild: bool,
+    /// Where its level stands in the top level (3×4, row-major): from
+    /// where it was posed to where its anchor is now ([`Skeleton::follow`]),
+    /// the identity on the frame it is built again.
+    pub place: [f32; 12],
 }
 
 /// The small still faces of a cell of the world ([`CELL`]), merged into one
@@ -199,6 +224,11 @@ pub struct Cell {
     pub faces: Arc<Vec<Posed>>,
     /// Posed vertices of all its faces (one per index).
     pub vertices: u32,
+    /// Its faces are drawn on both sides: a ray meets them from both
+    /// ([`facing`]). A cell's other faces are one-sided; a mirrored small
+    /// face is placed alone ([`gather`]): the cell's level is posed in the
+    /// world, where its winding shows the mirror.
+    pub double: bool,
 }
 
 /// What the frame traces: faces placed by their model matrix, and the
@@ -231,8 +261,9 @@ pub struct Faces {
     pub posed: Vec<Posed>,
     pub groups: Vec<PosedGroup>,
     /// The skeletons that had to be built again and wait for a later frame,
-    /// and the farthest one of them stands from where its level was built
-    /// (m): how far behind it its shadow is.
+    /// and the farthest one of them stands from where its level shows it
+    /// (m, its level followed: [`Skeleton::follow`]): how far behind it its
+    /// shadow is.
     pub waiting: u32,
     pub behind: f32,
 }
@@ -369,11 +400,15 @@ struct Track {
 }
 
 /// A face's kinds ([`Track::kind`]): not traced, a placed face (opaque or
-/// alpha-masked), a skeleton's.
+/// alpha-masked), a skeleton's. A placed face's sides ([`sides_of`]) are
+/// kept in the bits above ([`SIDES_SHIFT`]): a change of them is a change
+/// of what it is.
 const NOT_TRACED: u8 = 0;
 const PLACED_OPAQUE: u8 = 1;
 const PLACED_MASKED: u8 = 2;
 const POSED: u8 = 3;
+const KIND_BITS: u8 = 0x0f;
+const SIDES_SHIFT: u8 = 4;
 
 impl Track {
     /// Whether it kept its place long enough to count as still.
@@ -382,7 +417,7 @@ impl Track {
     }
 
     fn placed(&self) -> bool {
-        matches!(self.kind, PLACED_OPAQUE | PLACED_MASKED)
+        matches!(self.kind & KIND_BITS, PLACED_OPAQUE | PLACED_MASKED)
     }
 
     /// Whether it is traced with the moving faces: the still set does not
@@ -619,14 +654,15 @@ impl StillTracker {
     }
 
     /// Notes placed face `id` on `frame`, at `place` (in `cell`) and of
-    /// `shape`, opaque or not, traced or not (`kept`), near or not.
+    /// `shape`, opaque or not, with its `sides`, traced or not (`kept`),
+    /// near or not.
     #[allow(clippy::too_many_arguments)]
-    fn visit(&mut self, id: usize, frame: u64, place: u64, shape: u32, cell: u64, kept: bool, near: bool, opaque: bool) {
+    fn visit(&mut self, id: usize, frame: u64, place: u64, shape: u32, cell: u64, kept: bool, near: bool, opaque: bool, sides: u8) {
         let Some(t) = self.tracks.get_mut(id) else {
             return;
         };
         self.tally.uncount(t);
-        let kind = if opaque { PLACED_OPAQUE } else { PLACED_MASKED };
+        let kind = if opaque { PLACED_OPAQUE } else { PLACED_MASKED } | sides << SIDES_SHIFT;
         let rebased = t.rebase && t.place != place && frame < self.rebased_at + REBASE_FRAMES;
         if rebased && t.present && t.placed() {
             // written relative to the new origin: it arrives there
@@ -819,12 +855,17 @@ impl StillTracker {
     }
 
     /// Face `id` of the still set: its cell, its place and geometry in one
-    /// number (for its cell's version), and whether it is opaque.
-    fn held(&self, id: usize) -> Option<(u64, u64, bool)> {
-        self.tracks
-            .get(id)
-            .filter(|t| t.in_still)
-            .map(|t| (t.cell, t.place ^ ((t.shape as u64) << 32 | t.kind as u64), t.kind == PLACED_OPAQUE))
+    /// number (for its cell's version), whether it is opaque, and its
+    /// sides ([`sides_of`]).
+    fn held(&self, id: usize) -> Option<(u64, u64, bool, u8)> {
+        self.tracks.get(id).filter(|t| t.in_still).map(|t| {
+            (
+                t.cell,
+                t.place ^ ((t.shape as u64) << 32 | t.kind as u64),
+                t.kind & KIND_BITS == PLACED_OPAQUE,
+                t.kind >> SIDES_SHIFT,
+            )
+        })
     }
 
     #[cfg(test)]
@@ -917,24 +958,28 @@ struct Small {
     cell: u64,
     /// Its place and geometry ([`StillTracker::mark`]).
     mark: u64,
+    /// Drawn on both sides: in a part of its cell with the others that are
+    /// ([`Cell::double`]).
+    double: bool,
     face: Posed,
 }
 
 /// The cells of a still set's small faces, by key. A cell with the faces
 /// `before` had keeps its list (and its version, so its level stands).
 fn cells_of(small: &mut [Small], before: &[Cell]) -> Vec<Cell> {
-    small.sort_unstable_by_key(|s| (s.cell, s.face.record));
+    small.sort_unstable_by_key(|s| (s.cell, s.double, s.face.record));
     let mut cells = Vec::new();
     let mut start = 0;
     let mut part = 0u64;
     while start < small.len() {
-        let cell = small[start].cell;
-        // a part: the cell's faces until it is full
+        let (cell, double) = (small[start].cell, small[start].double);
+        // a part: the cell's faces of one kind of sides until it is full
         let mut end = start;
         let mut vertices = 0u32;
         let mut version = 0x9e37_79b9_7f4a_7c15u64;
         while end < small.len()
             && small[end].cell == cell
+            && small[end].double == double
             && end - start < PART_FACES
             && (end == start || vertices + small[end].face.index_count <= PART_VERTICES)
         {
@@ -943,7 +988,7 @@ fn cells_of(small: &mut [Small], before: &[Cell]) -> Vec<Cell> {
                 small[end].mark,
                 (f.record as u64) << 32 | f.base_vertex as u64,
                 (f.first_index as u64) << 32 | f.index_count as u64,
-                f.opaque as u64,
+                f.opaque as u64 | (double as u64) << 1,
             ] {
                 version = (version ^ word).wrapping_mul(0x0000_0100_0000_01b3).rotate_left(23);
             }
@@ -966,6 +1011,7 @@ fn cells_of(small: &mut [Small], before: &[Cell]) -> Vec<Cell> {
             version,
             faces,
             vertices,
+            double,
         });
         part = if small.get(end).is_some_and(|s| s.cell == cell) {
             part + 1
@@ -1043,6 +1089,9 @@ fn shape_of(face: &CullFace) -> u32 {
 /// ([`Skeleton`]).
 #[derive(Default)]
 pub(crate) struct PoseTracker {
+    /// Our avatar's palette (its first entry), whose levels are built first
+    /// ([`choose_rebuilds`]).
+    pub(crate) own: Option<u32>,
     frame: u64,
     placed: StillTracker,
     by_object: ByObject,
@@ -1070,7 +1119,17 @@ pub(crate) struct PoseTracker {
 /// A skeleton's faces, and the pose its bottom level was last built in: a
 /// skeleton whose vertices moved less than a shadow ray's start can tell
 /// keeps its level (wgpu has no refit: a level is only built again from
-/// scratch), the nearest skeletons first within a frame's budget.
+/// scratch, wgpu-core 30 `build_acceleration_structures`), the nearest
+/// skeletons first within a frame's budget.
+///
+/// An anchored skeleton's level follows its anchor each frame
+/// ([`Skeleton::follow`]): an avatar that walks or turns moves its level in
+/// the top level, and only a change of its pose (its joints in its own
+/// space) waits for a build. A worn rigid object follows its attachment
+/// point so, and never waits for its wearer's steps. With a crowd's levels
+/// built a few each frame, every avatar's shadow, our own's too, stood
+/// where its level was last built and jumped to it at the next (2026-11-22,
+/// grid report of beta8: 225 skeletons, 165 waiting, up to 2.4 m behind).
 #[derive(Default)]
 struct Skeleton {
     /// Its faces' records, in order.
@@ -1095,8 +1154,10 @@ struct Skeleton {
     drifted: f32,
     /// Frames it had to be built again and was left waiting.
     waited: u32,
-    /// Where it stood when its level was built ([`Skeleton::origin`]).
+    /// Where it stood when its level was built ([`Skeleton::origin`]), and
+    /// its anchor then ([`Skeleton::anchor`]).
     built_at: glam::Vec3,
+    built_anchor: Option<glam::Mat4>,
 }
 
 impl Skeleton {
@@ -1144,6 +1205,55 @@ impl Skeleton {
         .unwrap_or(model[3]);
         glam::Vec3::new(at[0], at[1], at[2])
     }
+
+    /// The matrix its faces are placed from, which its level follows: a
+    /// skinned skeleton's own anchor (skeleton space to the world, its
+    /// joints being in skeleton space), a worn rigid object's attachment
+    /// point (in the world, its models relative to it). None for faces
+    /// placed in the world by their models.
+    fn anchor(&self, key: u32, palettes: &[[[f32; 4]; 4]]) -> Option<glam::Mat4> {
+        if self.first & flags::ANCHORED == 0 {
+            return None;
+        }
+        let at = if self.first & flags::SKINNED != 0 {
+            key + crate::types::SKELETON_ANCHOR
+        } else {
+            key
+        };
+        palettes.get(at as usize).map(glam::Mat4::from_cols_array_2d)
+    }
+
+    /// Where its level stands now: moved from its anchor when it was built
+    /// to its anchor now (the identity when it has none, or none was kept).
+    fn follow(&self, key: u32, palettes: &[[[f32; 4]; 4]]) -> glam::Mat4 {
+        match (self.built_anchor, self.anchor(key, palettes)) {
+            (Some(then), Some(now)) if then.determinant().abs() > 1e-12 => now * then.inverse(),
+            _ => glam::Mat4::IDENTITY,
+        }
+    }
+
+    /// The entries of its palette that move its vertices, besides the
+    /// anchor its level follows (as offsets from `key`, within `len`): a
+    /// skinned skeleton's joints and live morphs (its anchors, the
+    /// attachment points', place none of its vertices); none for a worn
+    /// rigid object, whose models are read with its faces. A skeleton
+    /// placed in the world reads them all.
+    fn posing(&self, len: usize) -> [std::ops::Range<usize>; 2] {
+        let anchor = crate::types::SKELETON_ANCHOR as usize;
+        let morphs = crate::types::LIVE_MORPH_WEIGHTS as usize;
+        match (self.first & flags::ANCHORED != 0, self.first & flags::SKINNED != 0) {
+            (true, true) => [0..anchor.min(len), morphs.min(len)..len],
+            (true, false) => [0..0, 0..0],
+            _ => [0..len, len..len],
+        }
+    }
+
+    /// How far it stands from where its level puts it (m): its level built,
+    /// and followed since ([`Skeleton::follow`]).
+    fn lag(&self, key: u32, palettes: &[[[f32; 4]; 4]]) -> f32 {
+        let shown = self.follow(key, palettes).transform_point3(self.built_at);
+        self.origin(key, palettes).distance(shown)
+    }
 }
 
 /// How far a vertex can have moved between two placements of its joint.
@@ -1184,16 +1294,69 @@ fn mul(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     (glam::Mat4::from_cols_array_2d(a) * glam::Mat4::from_cols_array_2d(b)).to_cols_array_2d()
 }
 
+/// The instances' cull masks (rt_common.wgsl `SOLID`, `GLASS`): what stops
+/// a ray, and the blended faces, which only colour the shadow rays.
+const SOLID: u32 = 1;
+const GLASS: u32 = 2;
+
+/// Whether a face of the records is glass: a blended one
+/// ([`Instance::glass`]).
+fn is_glass(record: &DrawRecord) -> bool {
+    record.flags[0] & flags::ALPHA_BLEND != 0
+}
+
 /// A face of the records as a placed instance.
 fn instance_of(id: usize, face: &CullFace, record: &DrawRecord) -> Instance {
+    let glass = is_glass(record);
     Instance {
         record: id as u32,
         base_vertex: face.base_vertex,
         first_index: face.first_index,
         index_count: face.index_count - face.index_count % 3,
-        opaque: record.flags[0] & flags::ALPHA_MASK == 0,
+        // (glass: every hit is a candidate the shadow rays weigh)
+        opaque: record.flags[0] & flags::ALPHA_MASK == 0 && !glass,
+        glass,
         model: record.model,
+        flags: facing(sides_of(face, record)),
     }
+}
+
+/// A face's sides as the rasterizer draws them ([`SIDE_DOUBLE`],
+/// [`SIDE_MIRRORED`]): the passes and the glTF flag that turn its back-face
+/// culling off, and a model that mirrors it (the rasterizer then sees its
+/// winding turned).
+fn sides_of(face: &CullFace, record: &DrawRecord) -> u8 {
+    let double = matches!(face.bits & pass::BITS, pass::OPAQUE_2S | pass::MASK_2S) || record.flags[0] & flags::DOUBLE_SIDED != 0;
+    let mirrored = glam::Mat4::from_cols_array_2d(&record.model).determinant() < 0.0;
+    (if double { SIDE_DOUBLE } else { 0 }) | (if mirrored { SIDE_MIRRORED } else { 0 }) | if is_glass(record) { SIDE_GLASS } else { 0 }
+}
+
+/// A face drawn on both sides, and a face its model mirrors.
+const SIDE_DOUBLE: u8 = 1;
+const SIDE_MIRRORED: u8 = 2;
+/// Not a side, kept with them for the still set: the face is glass
+/// ([`Instance::glass`]), and keeps an instance of its own for its mask.
+const SIDE_GLASS: u8 = 4;
+
+/// An instance's cull mask ([`SOLID`], [`GLASS`]).
+fn mask_of(i: &Instance) -> u8 {
+    (if i.glass { GLASS } else { SOLID }) as u8
+}
+
+/// The instance flags that make a ray see a face's sides as the rasterizer
+/// does, for the shadow rays' culling ([`Cull`]): a face drawn on both sides
+/// is met from both, and a mirrored one keeps its front. A ray decides the
+/// facing in the instance's own space, where the winding is the mesh's, so
+/// a mirroring model needs the flip (the rt flags test, rt_flags_tests.rs).
+fn facing(sides: u8) -> wgpu::TlasInstanceFlags {
+    let mut f = wgpu::TlasInstanceFlags::empty();
+    if sides & SIDE_DOUBLE != 0 {
+        f |= wgpu::TlasInstanceFlags::TRIANGLE_FACING_CULL_DISABLE;
+    }
+    if sides & SIDE_MIRRORED != 0 {
+        f |= wgpu::TlasInstanceFlags::TRIANGLE_FLIP_FACING;
+    }
+    f
 }
 
 /// Whether a face is a skeleton's (an avatar's, what it wears, an animated
@@ -1256,10 +1419,10 @@ impl World<'_> {
 }
 
 impl PoseTracker {
-    /// Looks at face `id`: whether it is one to trace (the opaque and
-    /// alpha-masked faces of the terrain and of the objects that are no
-    /// HUD and not hidden; blended ones are not traced yet), a skeleton's
-    /// or a placed one, and where.
+    /// Looks at face `id`: whether it is one to trace (the opaque,
+    /// alpha-masked and blended faces of the terrain and of the objects
+    /// that are no HUD and not hidden; the blended faces of a skeleton are
+    /// not traced yet), a skeleton's or a placed one, and where.
     fn look(&mut self, id: usize, w: &World) {
         if self.placed.seen(id, w.frame) {
             return;
@@ -1286,10 +1449,14 @@ impl PoseTracker {
         let traced = match object {
             None => face.object == NO_OBJECT && rf & flags::TERRAIN != 0,
             Some(object) => {
+                let solid = matches!(face.bits & pass::BITS, pass::OPAQUE | pass::OPAQUE_2S | pass::MASK | pass::MASK_2S)
+                    && rf & flags::ALPHA_BLEND == 0;
+                // (glass: a blended face of a placed object; a worn or
+                // rigged one, posed, is not traced yet)
+                let glass = face.bits & pass::BITS == pass::BLEND && rf & flags::ALPHA_BLEND != 0 && !is_posed(object, rf);
                 object.flags & object_flags::ACTIVE != 0
                     && object.flags & (object_flags::HUD | object_flags::HIDDEN) == 0
-                    && matches!(face.bits & pass::BITS, pass::OPAQUE | pass::OPAQUE_2S | pass::MASK | pass::MASK_2S)
-                    && rf & flags::ALPHA_BLEND == 0
+                    && (solid || glass)
             }
         };
         let (place, shape) = (place_of(&record.model), shape_of(face));
@@ -1319,8 +1486,9 @@ impl PoseTracker {
         self.leave(was, id);
         let cell = cell_of(&record.model);
         let (kept, near) = weigh(object, face.index_count / 3, cell, w.camera, w.far, self.placed.kept(id));
+        let sides = sides_of(face, record);
         self.placed
-            .visit(id, w.frame, place, shape, cell, kept, near, rf & flags::ALPHA_MASK == 0);
+            .visit(id, w.frame, place, shape, cell, kept, near, rf & flags::ALPHA_MASK == 0, sides);
     }
 
     /// Face `id` is no longer `skeleton`'s.
@@ -1444,10 +1612,13 @@ pub(crate) fn gather(
         let mut large = Vec::new();
         tracker.small.clear();
         for id in 0..faces {
-            let (Some((cell, mark, opaque)), Some(face)) = (placed.held(id), records.faces.get(id)) else {
+            let (Some((cell, mark, opaque, sides)), Some(face)) = (placed.held(id), records.faces.get(id)) else {
                 continue;
             };
-            if face.index_count / 3 > MERGED_TRIANGLES {
+            // (a mirrored face is rare: it keeps its own instance, whose
+            // flag keeps its front, [`Cell::double`]; glass too, for its
+            // instance's mask)
+            if face.index_count / 3 > MERGED_TRIANGLES || sides & (SIDE_MIRRORED | SIDE_GLASS) != 0 {
                 if let Some(record) = records.get(id as u32) {
                     large.push(instance_of(id, face, record));
                 }
@@ -1458,6 +1629,7 @@ pub(crate) fn gather(
             tracker.small.push(Small {
                 cell,
                 mark,
+                double: sides & SIDE_DOUBLE != 0,
                 face: Posed {
                     record: id as u32,
                     base_vertex: face.base_vertex as u32,
@@ -1505,7 +1677,7 @@ pub(crate) fn gather(
     }
     out.posed.clear();
     out.groups.clear();
-    choose_rebuilds(palettes, written, camera, ceiling, &mut tracker.skeletons, out);
+    choose_rebuilds(palettes, written, camera, tracker.own, ceiling, &mut tracker.skeletons, out);
     written.clear();
     tracker.spent[0] += started.elapsed().as_micros() as u64;
     out.spent = tracker.spent;
@@ -1519,13 +1691,7 @@ impl PoseTracker {
         self.skeletons
             .range(base..base + crate::types::PALETTE_STRIDE)
             .filter(|(_, s)| s.waited > 0)
-            .map(|(&key, s)| {
-                if s.built {
-                    s.origin(key, palettes).distance(s.built_at)
-                } else {
-                    f32::INFINITY
-                }
-            })
+            .map(|(&key, s)| if s.built { s.lag(key, palettes) } else { f32::INFINITY })
             .fold(0.0, f32::max)
     }
 }
@@ -1567,8 +1733,12 @@ struct Unit {
 
 /// Picks the skeletons built again this frame: new ones, those whose faces
 /// changed, and those whose vertices drifted past what a shadow shows, by
-/// avatar ([`Unit`]). The nearest always, then the most pressing within
-/// [`REBUILD_TRIANGLES`], the first of them whatever its size: taken
+/// avatar ([`Unit`]). Ours always (`own`, its palette's first entry), or
+/// the nearest when ours has none to build, then the most pressing within
+/// [`REBUILD_TRIANGLES`], the first of them whatever its size. In a crowd
+/// the nearest to the eye was often another (one walking by, one standing
+/// between the eye and us), and our own shadow's pose waited its turn
+/// (beta8). Taken
 /// nearest first within the budget, an avatar of more triangles than it
 /// that walked behind anything that moved too (the hat it wore, nearer the
 /// eye) was left out at every frame, and its shadow stayed where it had
@@ -1583,6 +1753,7 @@ fn choose_rebuilds(
     palettes: &[[[f32; 4]; 4]],
     written: &[std::ops::Range<usize>],
     camera: glam::Vec3,
+    own: Option<u32>,
     ceiling: u64,
     skeletons: &mut BTreeMap<u32, Skeleton>,
     out: &mut Faces,
@@ -1610,12 +1781,19 @@ fn choose_rebuilds(
         if s.joints.len() != joints.len() {
             s.drifted = f32::INFINITY;
         }
+        // (its anchor's moves are followed, [`Skeleton::follow`])
+        let posing = s.posing(joints.len());
         let mut at = next;
         while s.drifted <= allowed
             && let Some(w) = written.get(at).filter(|w| w.start < first + joints.len())
         {
             let (a, b) = (w.start.max(first) - first, w.end.min(first + joints.len()) - first);
-            s.drifted = s.drifted.max(joint_drift(&s.joints[a..b], &joints[a..b], allowed));
+            for part in &posing {
+                let (a, b) = (a.max(part.start), b.min(part.end));
+                if a < b {
+                    s.drifted = s.drifted.max(joint_drift(&s.joints[a..b], &joints[a..b], allowed));
+                }
+            }
             at += 1;
         }
         if !s.built || s.moved > allowed || s.drifted > allowed {
@@ -1638,6 +1816,10 @@ fn choose_rebuilds(
         }
     }
     units.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    // ours first, whoever stands nearer the eye (a passer-by, a pet)
+    if let Some(at) = own.and_then(|base| units.iter().position(|u| u.slot == base / stride as u32)) {
+        units[..=at].rotate_right(1);
+    }
     let mut slots: Vec<u32> = Vec::new();
     if let Some(at) = units.iter().position(|u| u.triangles * 3 <= ceiling) {
         // (those nearer are past the ceiling, and past `room` below)
@@ -1676,7 +1858,7 @@ fn choose_rebuilds(
         s.waited += 1;
         out.waiting += 1;
         if s.built {
-            out.behind = out.behind.max(s.origin(key, palettes).distance(s.built_at));
+            out.behind = out.behind.max(s.lag(key, palettes));
         }
     }
     for (&key, s) in skeletons.iter_mut() {
@@ -1689,6 +1871,7 @@ fn choose_rebuilds(
             s.joints.extend_from_slice(joints_of(key));
             s.built_models.clone_from(&s.models);
             s.built_at = s.origin(key, palettes);
+            s.built_anchor = s.anchor(key, palettes);
             (s.moved, s.drifted) = (0.0, 0.0);
         }
         out.groups.push(PosedGroup {
@@ -1698,6 +1881,11 @@ fn choose_rebuilds(
             vertices: s.vertices,
             faces: s.hash,
             rebuild,
+            place: if rebuild {
+                IDENTITY
+            } else {
+                row_major(&s.follow(key, palettes).to_cols_array_2d())
+            },
         });
     }
 }
@@ -1884,9 +2072,10 @@ struct Poser {
     /// A top level of its own: built again on the frames a skeleton was,
     /// while the scene's stands as long as nothing in it moves.
     tlas: Option<wgpu::Tlas>,
-    /// The skeletons the top level holds, in its order, and the moving
-    /// placed faces after them.
-    placed: Vec<u32>,
+    /// The skeletons the top level holds, in its order, where it places
+    /// their levels ([`PosedGroup::place`]), and the moving placed faces
+    /// after them.
+    placed: Vec<(u32, [f32; 12])>,
     movers: usize,
     /// The slots of the top level its last build filled.
     filled: usize,
@@ -1982,6 +2171,8 @@ struct Mover<'a> {
     blas: &'a wgpu::Blas,
     transform: [f32; 12],
     record: u32,
+    flags: wgpu::TlasInstanceFlags,
+    mask: u8,
 }
 
 /// The mask the shading reads in place of the contact shadows', and the
@@ -1993,6 +2184,10 @@ pub(crate) struct Targets {
     /// made one after the other, at one size).
     serial: u64,
     pub result: wgpu::TextureView,
+    /// What the glass leaves of the traced sun's red, green and blue, 1
+    /// where it meets none (rt_shadows.wgsl `out_glass`): the frame's
+    /// binding 31 (common.wgsl `sun_glass`).
+    pub glass: wgpu::TextureView,
     pub reflect: Option<ReflectTargets>,
     pub gi: Option<GiTargets>,
     pub lights: Option<LightTargets>,
@@ -2038,6 +2233,12 @@ pub(crate) struct LightTargets {
     tint_ping: [wgpu::TextureView; 2],
     /// The point lights are traced: the tint is kept.
     tinted: bool,
+    /// What the glass leaves of the sun: this frame's ray (the sun's pass
+    /// writes it here rather than to [`Targets::glass`]) and its history
+    /// (rt_lights.wgsl `glass_history`), which the filter writes to
+    /// [`Targets::glass`].
+    sun_glass: wgpu::TextureView,
+    glass: [wgpu::TextureView; 2],
 }
 
 const CHOICE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -2060,6 +2261,8 @@ struct LightsU {
     columns: [[u32; 4]; crate::light_tiles::TILES / 2],
     rows: [[u32; 4]; crate::light_tiles::TILES / 2],
     slices: [[u32; 4]; crate::light_tiles::SLICES / 2],
+    /// x: the lamps' softness (rt_lights.wgsl `light_size`).
+    tuning: [f32; 4],
 }
 
 /// A light of the frame's list (must match `Light` in rt_lights.wgsl).
@@ -2069,6 +2272,11 @@ struct TracedLightU {
     pos_radius: [f32; 4],
     color_falloff: [f32; 4],
     source: [f32; 4],
+    /// A projector's world to texture and its frustum's apex, which its
+    /// rays aim at (rt_lights.wgsl `light_target`, `light_aim`); zero for a
+    /// point light.
+    beam: [[f32; 4]; 4],
+    apex: [f32; 4],
 }
 
 /// The most lights of the frame's list (the frame uniform's).
@@ -2166,6 +2374,9 @@ struct Denoise {
     params_for: Option<(u32, u32, bool)>,
     /// The variance under which a pixel is left as it is.
     floor: f32,
+    /// The à-trous passes `encode` runs, of [`ATROUS_PASSES`]: the lamps'
+    /// take fewer at a lower ray tracing quality ([`LampQuality`]).
+    passes: usize,
 }
 /// How far an indirect ray goes (m): the light bounced from further off
 /// is faint, and shorter rays are quicker.
@@ -2377,7 +2588,6 @@ pub(crate) struct RtShadows {
     warned: bool,
     pipeline: wgpu::ComputePipeline,
     buffer: wgpu::Buffer,
-    cull: Cull,
     bottoms: HashMap<Key, Bottom>,
     /// The bottom levels nothing uses any more, with the frame each was
     /// retired on, the oldest first ([`RETIRE_FRAMES`]).
@@ -2400,6 +2610,9 @@ pub(crate) struct RtShadows {
     merged_records: wgpu::Buffer,
     merged_list: Vec<u32>,
     merged_faces: usize,
+    /// The texture animations' clock (rt_common.wgsl `tex_clock`,
+    /// `write_texture_clock`).
+    tex_clock: wgpu::Buffer,
     /// The geometries of `still` with no bottom level yet, the next one
     /// last.
     queue: Vec<Key>,
@@ -2590,7 +2803,7 @@ impl RtShadows {
             label: Some("rt shadows"),
             source: wgpu::ShaderSource::Wgsl(source(&[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")]).into()),
         });
-        let scene_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..9).map(|b| storage_entry(b, true)).collect();
+        let scene_entries: Vec<wgpu::BindGroupLayoutEntry> = (0..10).map(|b| storage_entry(b, true)).collect();
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("rt scene"),
             entries: &scene_entries,
@@ -2650,6 +2863,16 @@ impl RtShadows {
                     ty: wgpu::BindingType::AccelerationStructure { vertex_return: false },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: RESULT_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2676,7 +2899,6 @@ impl RtShadows {
             layout,
             pipeline,
             buffer,
-            cull,
             bottoms: HashMap::new(),
             retired: VecDeque::new(),
             arena: None,
@@ -2689,6 +2911,12 @@ impl RtShadows {
             merged_records: records_buffer(device, "rt shadows merged records", 4096),
             merged_list: Vec::new(),
             merged_faces: 0,
+            tex_clock: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("rt texture clock"),
+                size: 16,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
             queue: Vec::new(),
             stale: true,
             built_at: 0,
@@ -2928,7 +3156,7 @@ impl Poser {
             let blas = device.create_blas(
                 &wgpu::CreateBlasDescriptor {
                     label: Some("rt shadows skeleton"),
-                    flags: wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
+                    flags: posed_build_flags(),
                     update_mode: wgpu::AccelerationStructureUpdateMode::Build,
                 },
                 wgpu::BlasGeometrySizeDescriptors::Triangles {
@@ -2952,9 +3180,14 @@ impl Poser {
             }
         }
         self.levels.retain(|_, l| l.used == frame);
-        let placed: Vec<u32> = faces.groups.iter().map(|g| g.key).filter(|k| self.levels.contains_key(k)).collect();
-        // nothing posed, the same skeletons, no face that moves (nor one
-        // to take out): the top level stands
+        let placed: Vec<(u32, [f32; 12])> = faces
+            .groups
+            .iter()
+            .filter(|g| self.levels.contains_key(&g.key))
+            .map(|g| (g.key, g.place))
+            .collect();
+        // nothing posed, the same skeletons where they were, no face that
+        // moves (nor one to take out): the top level stands
         if self.offsets.is_empty() && placed == self.placed && movers.is_empty() && self.movers == 0 {
             return (0, placed.len());
         }
@@ -2972,7 +3205,7 @@ impl Poser {
         // then each moving face's own
         self.record_list.clear();
         let mut starts = Vec::with_capacity(placed.len());
-        for key in &placed {
+        for (key, _) in &placed {
             starts.push(self.record_list.len() as u32);
             if let Some(level) = self.levels.get(key) {
                 self.record_list.extend_from_slice(&level.records);
@@ -2998,11 +3231,21 @@ impl Poser {
                 *slot = match n.checked_sub(placed.len()) {
                     None => self
                         .levels
-                        .get(&placed[n])
-                        .map(|l| wgpu::TlasInstance::new(&l.blas, IDENTITY, starts[n] & 0xff_ffff, 0xFF)),
-                    Some(m) => movers
-                        .get(m)
-                        .map(|mover| wgpu::TlasInstance::new(mover.blas, mover.transform, (first_mover + m as u32) & 0xff_ffff, 0xFF)),
+                        .get(&placed[n].0)
+                        // a skeleton's faces are met from both sides: its
+                        // level is posed in the world, all its faces
+                        // together (an Aurora difference: the Legacy
+                        // Viewer's maps cull an avatar's backs too, which a
+                        // closed body does not show), and placed where its
+                        // anchor took it since
+                        .map(|l| {
+                            wgpu::TlasInstance::new(&l.blas, placed[n].1, starts[n] & 0xff_ffff, SOLID as u8)
+                                .with_flags(wgpu::TlasInstanceFlags::TRIANGLE_FACING_CULL_DISABLE)
+                        }),
+                    Some(m) => movers.get(m).map(|mover| {
+                        wgpu::TlasInstance::new(mover.blas, mover.transform, (first_mover + m as u32) & 0xff_ffff, mover.mask)
+                            .with_flags(mover.flags)
+                    }),
                 };
             }
         }
@@ -3082,9 +3325,14 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
 
 /// A ray-traced shader's source: the enables, rt_common.wgsl, then `parts`
 /// in order (the shared rt_view.wgsl and rt_light.wgsl, then its own).
+/// `CULL_FACE_WORDS` is [`CullFace`]'s size: the rays read the culling's
+/// faces by it (rt_common.wgsl `cull_face`), whatever it adds.
 fn source(parts: &[&str]) -> String {
     let mut src = format!(
-        "enable wgpu_ray_query;\nenable wgpu_binding_array;\n{}\n",
+        "enable wgpu_ray_query;\nenable wgpu_binding_array;\nconst SHADOW_CULL: u32 = {}u;\nconst EMITTER_SPHERE: bool = {};\nconst CULL_FACE_WORDS: u32 = {}u;\n{}\n",
+        Override::from_env().cull.ray_flags(),
+        Override::from_env().emitter_sphere,
+        std::mem::size_of::<CullFace>() / 4,
         include_str!("shaders/rt_common.wgsl")
     );
     for part in parts {
@@ -3127,22 +3375,26 @@ impl Targets {
             return None;
         }
         let size = (width.max(1), height.max(1));
-        let result = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("rt shadows"),
-                size: wgpu::Extent3d {
-                    width: size.0,
-                    height: size.1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: RESULT_FORMAT,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mask = |label: &'static str| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: size.0,
+                        height: size.1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: RESULT_FORMAT,
+                    usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&wgpu::TextureViewDescriptor::default())
+        };
+        let result = mask("rt shadows");
+        let glass = mask("rt sun glass");
         let reflect = options.reflections.then(|| {
             let half = (size.0.div_ceil(2), size.1.div_ceil(2));
             let view = |label: &'static str, (width, height): (u32, u32), format: wgpu::TextureFormat| {
@@ -3247,6 +3499,11 @@ impl Targets {
                 tint: [tint("rt light tint"), tint("rt light tint")],
                 tint_ping: [tint("rt light tint denoise"), tint("rt light tint denoise")],
                 tinted: options.lights,
+                sun_glass: view("rt sun glass ray", RESULT_FORMAT),
+                glass: [
+                    view("rt sun glass history", SHARE_FORMAT),
+                    view("rt sun glass history", SHARE_FORMAT),
+                ],
             }
         });
         static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -3254,6 +3511,7 @@ impl Targets {
             size,
             serial: MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             result,
+            glass,
             reflect,
             gi,
             lights,
@@ -3353,6 +3611,7 @@ impl RtShadows {
         light: glam::Vec3,
         light_up: bool,
         contact: bool,
+        sun_softness: f32,
     ) {
         let (w, h) = (t.size.0 as f32, t.size.1 as f32);
         let u = ParamsU {
@@ -3363,10 +3622,11 @@ impl RtShadows {
                 .extend(if light_up { 1.0 } else { 0.0 })
                 .to_array(),
             screen: [w, h, 1.0 / w, 1.0 / h],
-            mode: [self.cull.ray_flags() as f32, if contact { 1.0 } else { 0.0 }, REACH, 0.0],
-            // soft where the lights' passes average and filter it
+            mode: [0.0, if contact { 1.0 } else { 0.0 }, REACH, 0.0],
+            // soft where the lights' passes average and filter it, as
+            // Preferences set it (0: sharp, its ray to the sun's centre)
             soft: match (&self.lights, &t.lights) {
-                (Some(l), Some(_)) => [SUN_DISC_TAN, (l.frame % (1 << 20)) as f32, 0.0, 0.0],
+                (Some(l), Some(_)) => [SUN_DISC_TAN * sun_softness.max(0.0), (l.frame % (1 << 20)) as f32, 0.0, 0.0],
                 _ => [0.0; 4],
             },
         };
@@ -3701,7 +3961,7 @@ impl RtShadows {
                         None => continue,
                     },
                 };
-                slots[placed] = Some(wgpu::TlasInstance::new(blas, row_major(&i.model), i.record, 0xFF));
+                slots[placed] = Some(wgpu::TlasInstance::new(blas, row_major(&i.model), i.record, mask_of(i)).with_flags(i.flags));
                 placed += 1;
             }
             // the cells' levels after them: this frame's, or the one an
@@ -3728,7 +3988,8 @@ impl RtShadows {
                     None => self.merged_list.extend(cell_table(&cell.faces)),
                 }
                 self.merged_faces += (self.merged_list.len() - from).saturating_sub(2) / 2;
-                slots[placed] = Some(wgpu::TlasInstance::new(blas, IDENTITY, MERGED | first, 0xFF));
+                let sides = if cell.double { SIDE_DOUBLE } else { 0 };
+                slots[placed] = Some(wgpu::TlasInstance::new(blas, IDENTITY, MERGED | first, SOLID as u8).with_flags(facing(sides)));
                 placed += 1;
             }
             for slot in &mut slots[placed..] {
@@ -3832,6 +4093,8 @@ impl RtShadows {
                     blas: &b.blas,
                     transform: row_major(&i.model),
                     record: i.record,
+                    flags: i.flags,
+                    mask: mask_of(i),
                 })
             })
             .collect();
@@ -3929,6 +4192,11 @@ impl RtShadows {
                     binding: 5,
                     // without posed faces the scene's stands in, unread
                     resource: wgpu::BindingResource::AccelerationStructure(self.poser.traced().unwrap_or(tlas)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    // with the traced lights, their passes average it
+                    resource: wgpu::BindingResource::TextureView(t.lights.as_ref().map_or(&t.glass, |l| &l.sun_glass)),
                 },
             ],
         });
@@ -4208,6 +4476,7 @@ impl Denoise {
             tiles: None,
             params_for: None,
             floor,
+            passes: ATROUS_PASSES,
         }
     }
 
@@ -4282,7 +4551,7 @@ impl Denoise {
         };
         let groups = (size.0.div_ceil(8), size.1.div_ceil(8));
         let mut input = history;
-        for (k, params) in self.params.iter().enumerate() {
+        for (k, params) in self.params.iter().enumerate().take(self.passes.clamp(1, ATROUS_PASSES) + 1) {
             let output = first.filter(|_| k == 1).unwrap_or(&ping[k % 2]);
             let mut entries = vec![
                 wgpu::BindGroupEntry {
@@ -4482,6 +4751,9 @@ impl Lights {
                 texture_entry(16, wgpu::TextureSampleType::Uint),
                 texture_entry(17, unfiltered),
                 storage_texture_entry(18, SHARE_FORMAT),
+                texture_entry(20, unfiltered),
+                texture_entry(21, unfiltered),
+                storage_texture_entry(22, SHARE_FORMAT),
             ],
         });
         let filter_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -4492,6 +4764,9 @@ impl Lights {
                 texture_entry(10, unfiltered),
                 storage_texture_entry(11, RESULT_FORMAT),
                 texture_entry(19, unfiltered),
+                texture_entry(23, unfiltered),
+                storage_texture_entry(24, RESULT_FORMAT),
+                texture_entry(26, unfiltered),
             ],
         });
         let pipeline = |label: &'static str, layouts: &[Option<&wgpu::BindGroupLayout>], entry: &'static str| {
@@ -4548,13 +4823,126 @@ impl Lights {
     }
 }
 
+/// The object a light shines from as rt_common.wgsl `shadows_but` compares
+/// it with a face's (`CullFace::object` plus one, `PointLight::source_id`):
+/// a float, exact up to 2^24 objects; 0 (none) beyond.
+fn emitter_key(source_id: u32) -> f32 {
+    if source_id < 1 << 24 { source_id as f32 } else { 0.0 }
+}
+
+/// The lamps' part of a ray tracing quality, which trades their shadows'
+/// noise for time (RtTuning's `lamps` and `lamp_*`): how many lights cast
+/// traced shadows ([`traced_count`]), the lights a pixel weighs to draw
+/// the one it traces (rt_lights.wgsl `candidates`), the neighbours whose
+/// samples it reuses (`neighbours`), and the denoiser's à-trous passes
+/// over their share ([`Denoise::passes`]). Each ray tracing quality keeps
+/// every lamp's shadow on: one ray a pixel, at its full resolution.
+/// [`LampQuality::HIGH`] is the pass as it was before the qualities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LampQuality {
+    pub lamps: u32,
+    pub candidates: u32,
+    pub reuse: u32,
+    pub denoise: u32,
+}
+
+impl LampQuality {
+    pub const HIGH: Self = Self {
+        lamps: 64,
+        candidates: 8,
+        reuse: 4,
+        denoise: 4,
+    };
+    pub const MEDIUM: Self = Self {
+        lamps: 16,
+        candidates: 4,
+        reuse: 3,
+        denoise: 3,
+    };
+    pub const LOW: Self = Self {
+        lamps: 8,
+        candidates: 2,
+        reuse: 2,
+        denoise: 2,
+    };
+
+    /// What `tuning` asks for, within what the passes do.
+    pub fn of(tuning: crate::RtTuning) -> Self {
+        Self {
+            lamps: traced_count(tuning) as u32,
+            candidates: tuning.lamp_candidates.clamp(1, Self::HIGH.candidates),
+            reuse: tuning.lamp_reuse.min(Self::HIGH.reuse),
+            denoise: tuning.lamp_denoise.clamp(1, ATROUS_PASSES as u32),
+        }
+    }
+
+    /// `tuning` with this quality's lamps.
+    pub fn apply(self, tuning: crate::RtTuning) -> crate::RtTuning {
+        crate::RtTuning {
+            lamps: self.lamps,
+            lamp_candidates: self.candidates,
+            lamp_reuse: self.reuse,
+            lamp_denoise: self.denoise,
+            ..tuning
+        }
+    }
+
+    /// The quality `AURORA_RT_LAMPS` names: `low`, `medium` or `high`.
+    fn named(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "low" => Some(Self::LOW),
+            "medium" => Some(Self::MEDIUM),
+            "high" => Some(Self::HIGH),
+            _ => None,
+        }
+    }
+}
+
+/// `tuning` with the lamps' quality `AURORA_RT_LAMPS` forces for a launch
+/// (a measurement of each quality, whatever the settings and without
+/// changing them); as it is when the variable is unset or names none.
+pub(crate) fn forced_tuning(tuning: crate::RtTuning) -> crate::RtTuning {
+    static FORCED: OnceLock<Option<LampQuality>> = OnceLock::new();
+    let forced = FORCED.get_or_init(|| std::env::var("AURORA_RT_LAMPS").ok().as_deref().and_then(LampQuality::named));
+    forced.map_or(tuning, |q| q.apply(tuning))
+}
+
+/// The build flags of the skeletons' bottom levels: `PREFER_FAST_BUILD`, as
+/// they are built again whenever their pose drifts, or `PREFER_FAST_TRACE`
+/// with `AURORA_RT_POSED_BUILD=trace`, to measure on the grid what every
+/// ray near people gains against what each build costs. The same
+/// triangles either way: the picture does not change.
+fn posed_build_flags() -> wgpu::AccelerationStructureFlags {
+    static FLAGS: OnceLock<wgpu::AccelerationStructureFlags> = OnceLock::new();
+    *FLAGS.get_or_init(|| posed_build_named(std::env::var("AURORA_RT_POSED_BUILD").ok().as_deref()))
+}
+
+/// [`posed_build_flags`] from the variable's value: `trace` the fast
+/// trace, anything else (`build`, unset) the fast build.
+fn posed_build_named(value: Option<&str>) -> wgpu::AccelerationStructureFlags {
+    match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("trace") => wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
+        _ => wgpu::AccelerationStructureFlags::PREFER_FAST_BUILD,
+    }
+}
+
+/// How many of the frame's first lights cast traced shadows, as
+/// Preferences set it: common.wgsl `shared_light` leaves the others
+/// unshadowed (the frame's `light_mode.z`, renderer.rs).
+pub(crate) fn traced_count(tuning: crate::RtTuning) -> usize {
+    (tuning.lamps as usize).clamp(1, MAX_TRACED_LIGHTS)
+}
+
 /// The frame's lights as rt_lights.wgsl reads them, in the frame uniform's
-/// order; `places` is where each was last frame, then where it is.
-fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, glam::Vec3>) -> Vec<TracedLightU> {
+/// order, as many as cast traced shadows ([`traced_count`]); `places` is
+/// where each was last frame, then where it is. A projector whose shadows
+/// are off is listed (the lights keep their place) but never drawn
+/// (`source.y` 2, rt_lights.wgsl `light_target`).
+fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, glam::Vec3>, tuning: crate::RtTuning) -> Vec<TracedLightU> {
     let before = std::mem::take(places);
     lights
         .iter()
-        .take(MAX_TRACED_LIGHTS)
+        .take(traced_count(tuning))
         .map(|l| {
             let mut moved = 0.0;
             if l.source_id != 0 {
@@ -4566,10 +4954,16 @@ fn traced_lights(lights: &[crate::types::PointLight], places: &mut HashMap<u32, 
                 color_falloff: l.color.extend(l.falloff).to_array(),
                 source: [
                     l.source_radius,
-                    if l.projector.is_some() { 1.0 } else { 0.0 },
+                    match (l.projector.is_some(), tuning.projectors) {
+                        (false, _) => 0.0,
+                        (true, true) => 1.0,
+                        (true, false) => 2.0,
+                    },
                     if moved.is_finite() { moved } else { 0.0 },
-                    0.0,
+                    emitter_key(l.source_id),
                 ],
+                beam: l.projector.map_or([[0.0; 4]; 4], |p| p.matrix.to_cols_array_2d()),
+                apex: l.projector.map_or([0.0; 4], |p| p.origin.extend(0.0).to_array()),
             }
         })
         .collect()
@@ -4650,6 +5044,7 @@ impl RtShadows {
         black: &wgpu::TextureView,
         scene: &crate::packet::SceneGpu,
         round: Round,
+        tuning: crate::RtTuning,
     ) {
         let scene_group = self.scene_group(device, scene);
         // the frame's lights, for the hits the reflections and the indirect
@@ -4657,8 +5052,8 @@ impl RtShadows {
         let lamps = match (round.first(), self.lights.as_mut()) {
             (false, Some(l)) if l.points => self.lamps_still.clone(),
             (false, _) => Vec::new(),
-            (true, Some(l)) => traced_lights(point_lights, &mut l.places),
-            (true, None) => traced_lights(point_lights, &mut HashMap::new()),
+            (true, Some(l)) => traced_lights(point_lights, &mut l.places, tuning),
+            (true, None) => traced_lights(point_lights, &mut HashMap::new(), tuning),
         };
         if round.first() {
             if !lamps.is_empty() {
@@ -4707,7 +5102,7 @@ impl RtShadows {
             (true, true) => 2.0,
         };
         let tinted = l.points && lt.tinted;
-        let traced = &point_lights[..point_lights.len().min(if l.points { MAX_TRACED_LIGHTS } else { 0 })];
+        let traced = &point_lights[..point_lights.len().min(if l.points { traced_count(tuning) } else { 0 })];
         let changed = l
             .changes
             .update(traced, light.sky(), clip_from_world, camera, 1.0 / LIGHTS_HISTORY, valid);
@@ -4739,6 +5134,10 @@ impl RtShadows {
             columns: light.light_sets.columns,
             rows: light.light_sets.rows,
             slices: light.light_sets.slices,
+            tuning: {
+                let q = LampQuality::of(tuning);
+                [tuning.lamp_softness.max(0.0), q.candidates as f32, q.reuse as f32, 0.0]
+            },
         };
         put(device, queue, encoder, &l.buffer, bytemuck::bytes_of(&u), round);
         let timer = l.timer.as_ref().filter(|_| round.first());
@@ -4791,6 +5190,9 @@ impl RtShadows {
                 view(16, &lt.mid),
                 view(17, &lt.tint[read]),
                 view(18, &lt.tint[write]),
+                view(20, &lt.sun_glass),
+                view(21, &lt.glass[read]),
+                view(22, &lt.glass[write]),
             ],
         });
         let groups = (t.size.0.div_ceil(8), t.size.1.div_ceil(8));
@@ -4825,6 +5227,7 @@ impl RtShadows {
             pass.set_bind_group(0, &reuse_group, &[]);
             pass.dispatch_workgroups(groups.0, groups.1, 1);
         }
+        l.denoise.passes = LampQuality::of(tuning).denoise as usize;
         l.denoise.prepare(device, queue, encoder, t.size, tinted, None, round);
         let (denoised, denoised_tint) = {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -4855,6 +5258,9 @@ impl RtShadows {
                 view(10, &lt.sun),
                 view(11, &t.result),
                 view(19, denoised_tint.unwrap_or(&lt.tint[write])),
+                view(23, &lt.glass[write]),
+                view(24, &t.glass),
+                view(26, &lt.guide[write]),
             ],
         });
         {
@@ -5445,6 +5851,13 @@ impl RtShadows {
 }
 
 impl RtShadows {
+    /// The texture animations' time of this frame (renderer.rs `anim_now`
+    /// zw, the shading's): the rays read an animated face's texture at the
+    /// frame the eye sees (rt_common.wgsl `diffuse_uv`).
+    pub fn write_texture_clock(&self, queue: &wgpu::Queue, clock: [u32; 2]) {
+        queue.write_buffer(&self.tex_clock, 0, bytemuck::cast_slice(&[clock[0], clock[1], 0, 0]));
+    }
+
     /// The scene's tables for the ray-traced passes (rt_common.wgsl group
     /// 1), each bound up to the device's limit.
     fn scene_group(&mut self, device: &wgpu::Device, scene: &crate::packet::SceneGpu) -> wgpu::BindGroup {
@@ -5459,6 +5872,7 @@ impl RtShadows {
             &scene.faces,
             &self.poser.records,
             &self.merged_records,
+            &self.tex_clock,
         ];
         if !self.warned && buffers.iter().any(|b| b.size() > max) {
             log::warn!("ray tracing: a scene buffer is larger than the device binds; what lies past it is not traced right");
@@ -5559,6 +5973,139 @@ mod tests {
         assert_eq!(block(RT_PROBES, from, to), block(include_str!("shaders/common.wgsl"), from, to));
     }
 
+    /// The rays read a face's texture where the shading draws it:
+    /// rt_common.wgsl holds object.wgsl's planar mapping and texture
+    /// animation as they are, and reads the draw record's parts they take
+    /// where `types::DrawRecord` has them.
+    #[test]
+    fn rt_texture_coordinates_are_the_shadings() {
+        let block = |src: &str, from: &str, to: &str| {
+            let src = src.replace("\r\n", "\n");
+            let start = src.find(from).expect("the block's first line");
+            let end = start + src[start..].find(to).expect("the block's last line") + to.len();
+            src[start..end].to_string()
+        };
+        let rt = include_str!("shaders/rt_common.wgsl");
+        let object = include_str!("shaders/object.wgsl");
+        for (from, to) in [
+            ("fn planar_st(", "\n}"),
+            ("fn ll_xform(", "\n}"),
+            ("const TA_LOOP: u32 = 2u;", "    return ll_xform(st, sto, rot);\n}"),
+        ] {
+            assert_eq!(block(rt, from, to), block(object, from, to), "{from}");
+        }
+        let common = include_str!("shaders/common.wgsl");
+        for flag in ["FLAG_PBR", "FLAG_PLANAR", "FLAG_TEX_ANIM", "FLAG_ALPHA_BLEND"] {
+            let line = format!("const {flag}: u32 = ");
+            assert_eq!(block(rt, &line, ";"), block(common, &line, ";"), "{flag}");
+        }
+        let vec4 = |name: &str| -> usize {
+            let line = block(rt, &format!("const {name}: u32 = "), "u;");
+            line.trim_end_matches("u;")
+                .rsplit(' ')
+                .next()
+                .and_then(|n| n.parse().ok())
+                .expect("a number")
+        };
+        assert_eq!(vec4("RECORD_ANIM") * 16, std::mem::offset_of!(crate::types::DrawRecord, anim));
+        assert_eq!(vec4("RECORD_ANIM_XF") * 16, std::mem::offset_of!(crate::types::DrawRecord, anim_xf));
+        assert_eq!(vec4("RECORD_FLAGS") * 16, std::mem::offset_of!(crate::types::DrawRecord, flags));
+    }
+
+    /// No traced pass's SPIR-V gives a ray query a null value. naga 30
+    /// writes a store of its zero value for a variable declared in a loop's
+    /// body, an `OpConstantNull` of `OpTypeRayQueryKHR` for a ray query:
+    /// SPIR-V forbids it (an opaque type has no null), and AMD's compiler
+    /// (LLPC) crashed on it in vkCreateComputePipelines (#4596, rt_gi.wgsl
+    /// `cs_gi`). Each entry point is written as wgpu-hal writes it for a
+    /// Vulkan 1.4 device with ray queries (`spirv_fix::writer_options`).
+    #[test]
+    fn rt_shaders_have_no_null_ray_query() {
+        const OP_CONSTANT_NULL: u32 = 46;
+        const OP_TYPE_RAY_QUERY: u32 = 4472;
+        let vulkan_1_4 = (1 << 22) | (4 << 12);
+        let facts = crate::spirv_fix::VulkanFacts {
+            device_api_version: vulkan_1_4,
+            instance_api_version: vulkan_1_4,
+            vendor_id: 0x1002,
+            instance_flags: wgpu::InstanceFlags::empty(),
+            features: wgpu::Features::EXPERIMENTAL_RAY_QUERY
+                | wgpu::Features::TEXTURE_BINDING_ARRAY
+                | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+            downlevel: wgpu::DownlevelFlags::all(),
+            max_mesh_workgroups_per_dimension: 0,
+            max_mesh_workgroup_total_count: 0,
+            non_semantic_info: false,
+            robust_buffer_access2: true,
+            robust_image_access: true,
+            zero_initialize_workgroup_memory: true,
+            storage_input_output_16: false,
+            shader_integer_dot_product: false,
+            shader_int8: false,
+        };
+        for (name, src) in [
+            ("rt_shadows", source(&[RT_VIEW, include_str!("shaders/rt_shadows.wgsl")])),
+            ("rt_pose", source(&[include_str!("shaders/rt_pose.wgsl")])),
+            (
+                "rt_lights",
+                source(&[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_lights.wgsl")]),
+            ),
+            (
+                "rt_reflect",
+                source(&[RT_VIEW, RT_LIGHT, RT_PROBES, RT_HISTORY, include_str!("shaders/rt_reflect.wgsl")]),
+            ),
+            (
+                "rt_gi",
+                source(&[RT_VIEW, RT_LIGHT, RT_HISTORY, include_str!("shaders/rt_gi.wgsl")]),
+            ),
+        ] {
+            let module = naga::front::wgsl::parse_str(&src).expect("the traced passes parse");
+            let mut v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all());
+            let info = v.validate(&module).expect("the traced passes are valid");
+            // every resource at its own number, the texture pages' array at
+            // a size (the writer refuses a resource the map does not have)
+            let mut map = naga::back::spv::BindingMap::default();
+            for (_, g) in module.global_variables.iter() {
+                if let Some(b) = g.binding {
+                    let array = matches!(module.types[g.ty].inner, naga::TypeInner::BindingArray { .. });
+                    map.insert(
+                        b,
+                        naga::back::spv::BindingInfo {
+                            descriptor_set: b.group,
+                            binding: b.binding,
+                            binding_array_size: array.then_some(16384),
+                        },
+                    );
+                }
+            }
+            for entry in &module.entry_points {
+                let options = crate::spirv_fix::writer_options(&facts, map.clone(), None);
+                let pipeline = naga::back::spv::PipelineOptions {
+                    shader_stage: entry.stage,
+                    entry_point: entry.name.clone(),
+                };
+                let words = naga::back::spv::write_vec(&module, &info, &options, Some(&pipeline))
+                    .unwrap_or_else(|e| panic!("{name} {}: {e}", entry.name));
+                // the instructions after the 5-word header: word count in the
+                // high half of their first word, opcode in the low half
+                let (mut ray_query, mut at) = (None, 5);
+                while at < words.len() {
+                    let (count, op) = ((words[at] >> 16) as usize, words[at] & 0xffff);
+                    assert!(count > 0, "{name} {}: a broken instruction", entry.name);
+                    if op == OP_TYPE_RAY_QUERY {
+                        ray_query = Some(words[at + 1]);
+                    }
+                    assert!(
+                        !(op == OP_CONSTANT_NULL && Some(words[at + 1]) == ray_query),
+                        "{name} {}: a null ray query (a `var` of type ray_query in a loop's body)",
+                        entry.name
+                    );
+                    at += count;
+                }
+            }
+        }
+    }
+
     /// Each ray-traced shader as the device compiles it: its name and its
     /// whole source.
     fn rt_sources() -> Vec<(&'static str, String)> {
@@ -5625,6 +6172,36 @@ mod tests {
             if let Err(e) = v.validate(&module) {
                 panic!("{name}: {}", e.emit_to_string(&src));
             }
+        }
+    }
+
+    #[test]
+    fn the_rays_read_the_culling_faces_at_their_stride() {
+        // rt_common.wgsl `cull_face`: these words of each face, the faces
+        // CullFace's size apart, whatever the culling adds after them
+        assert_eq!(std::mem::offset_of!(CullFace, index_count), 0);
+        assert_eq!(std::mem::offset_of!(CullFace, first_index), 4);
+        assert_eq!(std::mem::offset_of!(CullFace, base_vertex), 8);
+        assert_eq!(std::mem::offset_of!(CullFace, object), 12);
+        assert_eq!(std::mem::offset_of!(CullFace, bits), 16);
+        assert_eq!(std::mem::size_of::<CullFace>() % 4, 0);
+        let words = std::mem::size_of::<CullFace>() / 4;
+        assert!(source(&[]).contains(&format!("const CULL_FACE_WORDS: u32 = {words}u;")));
+        let common = include_str!("shaders/rt_common.wgsl");
+        assert!(common.contains("var<storage, read> cull_faces: array<u32>;"));
+        // no shader indexes the faces but through `cull_face`
+        for (name, src) in [
+            ("rt_common", common),
+            ("rt_lights", include_str!("shaders/rt_lights.wgsl")),
+            ("rt_light", RT_LIGHT),
+            ("rt_view", RT_VIEW),
+            ("rt_gi", include_str!("shaders/rt_gi.wgsl")),
+            ("rt_reflect", include_str!("shaders/rt_reflect.wgsl")),
+            ("rt_shadows", include_str!("shaders/rt_shadows.wgsl")),
+        ] {
+            let direct = src.matches("cull_faces[").count();
+            let allowed = if name == "rt_common" { 5 } else { 0 };
+            assert_eq!(direct, allowed, "{name} indexes cull_faces itself");
         }
     }
 
@@ -5703,7 +6280,7 @@ mod tests {
 
     fn choose(t: &mut BTreeMap<u32, Skeleton>) -> Vec<(u32, bool)> {
         let mut out = Faces::default();
-        choose_rebuilds(&[], &[], glam::Vec3::ZERO, NEAREST_VERTICES, t, &mut out);
+        choose_rebuilds(&[], &[], glam::Vec3::ZERO, None, NEAREST_VERTICES, t, &mut out);
         out.groups.iter().map(|g| (g.key, g.rebuild)).collect()
     }
 
@@ -5782,7 +6359,7 @@ mod tests {
         let (large, larger) = ((POSED_VERTICES / 2) as u32, (POSED_VERTICES * 3 / 4) as u32);
         let choose_waiting = |t: &mut BTreeMap<u32, Skeleton>| {
             let mut out = Faces::default();
-            choose_rebuilds(&[], &[], glam::Vec3::ZERO, NEAREST_VERTICES, t, &mut out);
+            choose_rebuilds(&[], &[], glam::Vec3::ZERO, None, NEAREST_VERTICES, t, &mut out);
             let posed: u64 = out.groups.iter().filter(|g| g.rebuild).map(|g| g.vertices as u64).sum();
             assert!(posed <= POSED_VERTICES, "{posed} vertices to pose");
             (out.groups.iter().map(|g| (g.key, g.rebuild)).collect::<Vec<_>>(), out.waiting)
@@ -5813,7 +6390,7 @@ mod tests {
             read(&mut t, hat, &[2], 300, 3.0 + walked);
             read(&mut t, other, &[3], 300, 9.0 + walked);
             let mut out = Faces::default();
-            choose_rebuilds(&[], &[], glam::Vec3::ZERO, NEAREST_VERTICES, &mut t, &mut out);
+            choose_rebuilds(&[], &[], glam::Vec3::ZERO, None, NEAREST_VERTICES, &mut t, &mut out);
             let chosen: Vec<_> = out.groups.iter().map(|g| (g.key, g.rebuild)).collect();
             assert_eq!(chosen, vec![(body, true), (hat, true), (other, false)], "frame {step}");
             assert_eq!(out.waiting, 1, "frame {step}");
@@ -5843,7 +6420,7 @@ mod tests {
             read(&mut t, next, &[2], heavy, 6.0 + walked);
             read(&mut t, far, &[3], 300, 9.0 + walked);
             let mut out = Faces::default();
-            choose_rebuilds(&[], &[], glam::Vec3::ZERO, ceiling, &mut t, &mut out);
+            choose_rebuilds(&[], &[], glam::Vec3::ZERO, None, ceiling, &mut t, &mut out);
             let chosen: Vec<_> = out.groups.iter().map(|g| (g.key, g.rebuild)).collect();
             assert_eq!(chosen, vec![(giant, false), (next, true), (far, true)], "frame {step}");
             assert_eq!(out.waiting, 1, "frame {step}");
@@ -5916,7 +6493,7 @@ mod tests {
         read(&mut t, stride as u32, &[2], 300, 5.0);
         let mut choose = |palettes: &[[[f32; 4]; 4]], written: &[std::ops::Range<usize>]| {
             let mut out = Faces::default();
-            choose_rebuilds(palettes, written, glam::Vec3::ZERO, NEAREST_VERTICES, &mut t, &mut out);
+            choose_rebuilds(palettes, written, glam::Vec3::ZERO, None, NEAREST_VERTICES, &mut t, &mut out);
             out.groups.iter().map(|g| g.rebuild).collect::<Vec<_>>()
         };
         assert_eq!(choose(&palettes, &[]), [true, true]);
@@ -5953,6 +6530,124 @@ mod tests {
         assert_eq!(drift(&a, &a), 0.0);
     }
 
+    /// Reads skeleton `key`'s one face, of `record`, placed by `model` and
+    /// as the record flags `rf` say.
+    fn read_placed(t: &mut BTreeMap<u32, Skeleton>, key: u32, record: u32, model: glam::Mat4, rf: u32) {
+        let face = Posed {
+            record,
+            base_vertex: 0,
+            first_index: 0,
+            index_count: 300,
+            opaque: true,
+        };
+        t.entry(key)
+            .or_default()
+            .read(std::iter::once((face, model.to_cols_array_2d(), rf)));
+    }
+
+    fn choose_placed(
+        t: &mut BTreeMap<u32, Skeleton>,
+        palettes: &[[[f32; 4]; 4]],
+        written: Option<std::ops::Range<usize>>,
+    ) -> Vec<(u32, bool, [f32; 12])> {
+        let mut out = Faces::default();
+        let written: Vec<_> = written.into_iter().collect();
+        choose_rebuilds(palettes, &written, glam::Vec3::ZERO, None, NEAREST_VERTICES, t, &mut out);
+        out.groups.iter().map(|g| (g.key, g.rebuild, g.place)).collect()
+    }
+
+    /// A skinned avatar that walks and turns, its pose unchanged: its level
+    /// is not built again but follows its anchor, and its shadow stands
+    /// where it does. A change of its pose builds it again.
+    #[test]
+    fn rt_shadows_an_avatar_s_level_follows_its_anchor() {
+        let stride = crate::types::PALETTE_STRIDE as usize;
+        let anchor = crate::types::SKELETON_ANCHOR as usize;
+        let mut palettes = vec![glam::Mat4::IDENTITY.to_cols_array_2d(); 2 * stride];
+        let key = stride as u32;
+        let rf = flags::SKINNED | flags::ANCHORED;
+        let then = glam::Mat4::from_translation(glam::Vec3::new(5.0, 0.0, 0.0));
+        palettes[stride + anchor] = then.to_cols_array_2d();
+        let mut t = BTreeMap::new();
+        read_placed(&mut t, key, 1, glam::Mat4::IDENTITY, rf);
+        assert_eq!(choose_placed(&mut t, &palettes, None), [(key, true, IDENTITY)]);
+        // it walks a metre and turns: followed, not built
+        let now = glam::Mat4::from_rotation_translation(glam::Quat::from_rotation_z(1.0), glam::Vec3::new(6.0, 0.5, 0.0));
+        palettes[stride + anchor] = now.to_cols_array_2d();
+        let written = Some(stride + anchor..stride + anchor + 1);
+        let follow = row_major(&(now * then.inverse()).to_cols_array_2d());
+        assert_eq!(choose_placed(&mut t, &palettes, written.clone()), [(key, false, follow)]);
+        assert!(t[&key].lag(key, &palettes) < 1e-4);
+        // its attachment points move with it, and place none of its faces
+        palettes[stride + anchor + 5][3][0] = 7.0;
+        let written = Some(stride + anchor + 5..stride + anchor + 6);
+        assert_eq!(choose_placed(&mut t, &palettes, written.clone()), [(key, false, follow)]);
+        // a joint moves in its own space: built again, where it stands
+        palettes[stride + 7][3][0] = 0.3;
+        let written = Some(stride + 7..stride + 8);
+        assert_eq!(choose_placed(&mut t, &palettes, written.clone()), [(key, true, IDENTITY)]);
+        // (built where its anchor is: it follows from there)
+        assert!(!choose_placed(&mut t, &palettes, None)[0].1);
+    }
+
+    /// A worn rigid object follows its attachment point and is built again
+    /// only when its own model changes; the next avatar's joints, after its
+    /// point in the palettes, are not its own.
+    #[test]
+    fn rt_shadows_a_worn_object_follows_its_attachment_point() {
+        let stride = crate::types::PALETTE_STRIDE as usize;
+        let point = stride + crate::types::SKELETON_ANCHOR as usize + 3;
+        let mut palettes = vec![glam::Mat4::IDENTITY.to_cols_array_2d(); 3 * stride];
+        let then = glam::Mat4::from_translation(glam::Vec3::new(4.0, 0.0, 1.5));
+        palettes[point] = then.to_cols_array_2d();
+        let model = glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.0, 0.1));
+        let key = point as u32;
+        let mut t = BTreeMap::new();
+        read_placed(&mut t, key, 1, model, flags::ANCHORED);
+        assert_eq!(choose_placed(&mut t, &palettes, None), [(key, true, IDENTITY)]);
+        let now = glam::Mat4::from_translation(glam::Vec3::new(4.0, 2.0, 1.5));
+        palettes[point] = now.to_cols_array_2d();
+        let follow = row_major(&(now * then.inverse()).to_cols_array_2d());
+        assert_eq!(choose_placed(&mut t, &palettes, Some(point..point + 1)), [(key, false, follow)]);
+        // the next avatar walks
+        palettes[2 * stride + 9][3][0] = 3.0;
+        let written = Some(2 * stride + 9..2 * stride + 10);
+        assert_eq!(choose_placed(&mut t, &palettes, written.clone()), [(key, false, follow)]);
+        // its own model moves on the point: built again
+        read_placed(
+            &mut t,
+            key,
+            1,
+            glam::Mat4::from_translation(glam::Vec3::new(0.0, 0.3, 0.1)),
+            flags::ANCHORED,
+        );
+        assert_eq!(choose_placed(&mut t, &palettes, None), [(key, true, IDENTITY)]);
+    }
+
+    /// Two heavy avatars walk, each over what a frame builds beside
+    /// another: ours is built at every frame, though the other stands
+    /// nearer the eye.
+    #[test]
+    fn rt_shadows_our_avatar_is_built_first() {
+        let stride = crate::types::PALETTE_STRIDE;
+        let heavy = (REBUILD_TRIANGLES * 6) as u32;
+        let (other, ours) = (stride, 2 * stride);
+        let mut t = BTreeMap::new();
+        for step in 0..4 {
+            let walked = step as f32 * 0.5;
+            read(&mut t, other, &[1], heavy, 3.0 + walked);
+            read(&mut t, ours, &[2], heavy, 5.0 + walked);
+            let mut out = Faces::default();
+            choose_rebuilds(&[], &[], glam::Vec3::ZERO, Some(ours), NEAREST_VERTICES, &mut t, &mut out);
+            let built: Vec<_> = out.groups.iter().map(|g| (g.key, g.rebuild)).collect();
+            assert_eq!(built, [(other, false), (ours, true)], "frame {step}");
+        }
+        // without it, the nearest
+        read(&mut t, other, &[1], heavy, 6.0);
+        read(&mut t, ours, &[2], heavy, 8.0);
+        assert_eq!(choose(&mut t), [(other, true), (ours, false)]);
+    }
+
     /// A face of a test frame: its id, place, shape, traced or not, near
     /// or not.
     #[derive(Clone, Copy)]
@@ -5976,7 +6671,7 @@ mod tests {
         t.begin(t.tracks.len().max(8));
         for id in 0..t.tracks.len() {
             match faces.iter().find(|f| f.0 == id) {
-                Some(&F(id, place, shape, kept, near)) => t.visit(id, *n, place, shape, 0, kept, near, true),
+                Some(&F(id, place, shape, kept, near)) => t.visit(id, *n, place, shape, 0, kept, near, true, 0),
                 None if t.tracks[id].present => t.absent(id, *n, SLOT_FREED),
                 None => {}
             }
@@ -6313,6 +7008,7 @@ mod tests {
             .map(|(record, triangles, opaque)| Small {
                 cell: 1,
                 mark: record as u64,
+                double: false,
                 face: face(record, triangles, opaque),
             })
             .collect();
@@ -6505,6 +7201,7 @@ mod tests {
         Small {
             cell: cell_of(&model),
             mark,
+            double: false,
             face: Posed {
                 record,
                 base_vertex: 0,
@@ -6536,6 +7233,99 @@ mod tests {
         assert_eq!(cell_centre(of(1).key >> 16), glam::Vec3::splat(8.0));
         assert_eq!(cell_centre(of(7).key >> 16), glam::Vec3::new(-8.0, 8.0, 8.0));
         assert_eq!(cell_centre(of(4).key >> 16), glam::Vec3::new(40.0, 8.0, 24.0));
+    }
+
+    #[test]
+    fn rt_shadows_double_sided_faces_have_parts_of_their_own() {
+        // one cell: two one-sided faces and a double-sided one between them
+        let mut faces = [small(1, [1.0; 3], 1), small(2, [2.0; 3], 1), small(3, [3.0; 3], 1)];
+        faces[1].double = true;
+        let cells = cells_of(&mut faces, &[]);
+        let records = |c: &Cell| c.faces.iter().map(|f| f.record).collect::<Vec<_>>();
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].key >> 16, cells[1].key >> 16, "the same cell");
+        assert_ne!(cells[0].key, cells[1].key, "two parts");
+        assert_eq!((records(&cells[0]), cells[0].double), (vec![1, 3], false));
+        assert_eq!((records(&cells[1]), cells[1].double), (vec![2], true));
+        // the same faces one-sided: another version of the part
+        let mut again = [small(1, [1.0; 3], 1), small(2, [2.0; 3], 1), small(3, [3.0; 3], 1)];
+        let one = cells_of(&mut again, &cells);
+        assert_eq!(one.len(), 1);
+        assert_ne!(one[0].version, cells[0].version);
+    }
+
+    #[test]
+    fn rt_shadows_faces_keep_their_sides() {
+        let one_sided = CullFace {
+            bits: pass::OPAQUE,
+            ..CullFace::NONE
+        };
+        let two_sided = CullFace {
+            bits: pass::MASK_2S,
+            ..CullFace::NONE
+        };
+        let plain = DrawRecord::default();
+        assert_eq!(sides_of(&one_sided, &plain), 0);
+        assert_eq!(sides_of(&two_sided, &plain), SIDE_DOUBLE);
+        // a glTF material drawn on both sides
+        let mut gltf = DrawRecord::default();
+        gltf.flags[0] |= flags::DOUBLE_SIDED;
+        assert_eq!(sides_of(&one_sided, &gltf), SIDE_DOUBLE);
+        // a model that mirrors the face (one axis scaled by -1), and one
+        // that turns it half round (no mirror)
+        let mirrored = DrawRecord {
+            model: glam::Mat4::from_scale(glam::Vec3::new(-1.0, 1.0, 1.0)).to_cols_array_2d(),
+            ..DrawRecord::default()
+        };
+        assert_eq!(sides_of(&one_sided, &mirrored), SIDE_MIRRORED);
+        assert_eq!(sides_of(&two_sided, &mirrored), SIDE_DOUBLE | SIDE_MIRRORED);
+        let turned = DrawRecord {
+            model: glam::Mat4::from_scale(glam::Vec3::new(-1.0, -1.0, 1.0)).to_cols_array_2d(),
+            ..DrawRecord::default()
+        };
+        assert_eq!(sides_of(&one_sided, &turned), 0);
+        // the instance flags
+        use wgpu::TlasInstanceFlags as F;
+        assert_eq!(facing(0), F::empty());
+        assert_eq!(facing(SIDE_DOUBLE), F::TRIANGLE_FACING_CULL_DISABLE);
+        assert_eq!(facing(SIDE_MIRRORED), F::TRIANGLE_FLIP_FACING);
+        assert_eq!(
+            instance_of(5, &two_sided, &mirrored).flags,
+            F::TRIANGLE_FACING_CULL_DISABLE | F::TRIANGLE_FLIP_FACING
+        );
+        // the shadow rays cull the faces met from their front: the ray goes
+        // from the surface to the light (Vulkan's gl_RayFlagsCullFrontFacingTrianglesEXT)
+        assert_eq!(Cull::default().ray_flags(), 0x20);
+    }
+
+    #[test]
+    fn rt_shadows_a_blended_face_is_glass_in_an_instance_of_its_own() {
+        let face = CullFace {
+            bits: pass::BLEND,
+            ..CullFace::NONE
+        };
+        let mut blended = DrawRecord::default();
+        blended.flags[0] |= flags::ALPHA_BLEND;
+        // glass: never opaque (each pane is a candidate), its own mask, and
+        // a side bit that keeps it out of the merged cells but no flag
+        let glass = instance_of(3, &face, &blended);
+        assert!(glass.glass && !glass.opaque);
+        assert_eq!(mask_of(&glass), GLASS as u8);
+        assert_eq!(sides_of(&face, &blended), SIDE_GLASS);
+        assert_eq!(glass.flags, wgpu::TlasInstanceFlags::empty());
+        // an opaque face and an alpha-masked one stop the rays
+        let solid = CullFace {
+            bits: pass::OPAQUE,
+            ..CullFace::NONE
+        };
+        let opaque = instance_of(1, &solid, &DrawRecord::default());
+        assert!(!opaque.glass && opaque.opaque);
+        assert_eq!(mask_of(&opaque), SOLID as u8);
+        let mut masked = DrawRecord::default();
+        masked.flags[0] |= flags::ALPHA_MASK;
+        let masked = instance_of(2, &solid, &masked);
+        assert!(!masked.glass && !masked.opaque);
+        assert_eq!(mask_of(&masked), SOLID as u8);
     }
 
     #[test]
@@ -6618,36 +7408,45 @@ mod tests {
             ..Default::default()
         };
         // no variable: the settings, and nothing without the sun's shadows
-        let none = Override::parse(None, None, None, None);
+        let none = Override::parse(None, None, None, None, None);
         assert_eq!(none, Override::default());
         assert_eq!(none.applied(all), all);
         assert_eq!(none.applied(sun), sun);
         assert_eq!(none.applied(RayTracing { shadows: false, ..all }), RayTracing::default());
         // empty is unset
-        assert_eq!(Override::parse(Some(""), Some(" "), None, None), none);
+        assert_eq!(Override::parse(Some(""), Some(" "), None, None, None), none);
         // the device has its ray queries from the start, the settings on or
         // off, but in a launch that forces the sun's shadows off
         assert!(none.opens_with_ray_queries());
-        assert!(Override::parse(Some("1"), None, None, None).opens_with_ray_queries());
-        assert!(Override::parse(None, Some("0"), Some("0"), Some("0")).opens_with_ray_queries());
-        assert!(!Override::parse(Some("0"), None, None, None).opens_with_ray_queries());
-        assert!(!Override::parse(Some("off"), Some("1"), None, None).opens_with_ray_queries());
+        assert!(Override::parse(Some("1"), None, None, None, None).opens_with_ray_queries());
+        assert!(Override::parse(None, Some("0"), Some("0"), Some("0"), None).opens_with_ray_queries());
+        assert!(!Override::parse(Some("0"), None, None, None, None).opens_with_ray_queries());
+        assert!(!Override::parse(Some("off"), Some("1"), None, None, None).opens_with_ray_queries());
         // forced on, over settings that are off; the others stay theirs
-        let on = Override::parse(Some("1"), Some("1"), None, None);
+        let on = Override::parse(Some("1"), Some("1"), None, None, None);
         assert_eq!(on.applied(RayTracing::default()), RayTracing { lights: true, ..sun });
         assert_eq!(on.applied(all), all);
         // forced off, over settings that are on
-        assert_eq!(Override::parse(Some("0"), None, None, None).applied(all), RayTracing::default());
         assert_eq!(
-            Override::parse(Some("off"), Some("1"), Some("1"), Some("1")).applied(all),
+            Override::parse(Some("0"), None, None, None, None).applied(all),
             RayTracing::default()
         );
-        assert_eq!(Override::parse(None, Some("0"), Some("off"), Some("0")).applied(all), sun);
-        // the culling comes with the sun's shadows
-        assert_eq!(Override::parse(Some("1"), None, None, None).cull, Cull::None);
-        let front = Override::parse(Some("front"), None, None, None);
-        assert_eq!((front.cull, front.applied(RayTracing::default())), (Cull::Front, sun));
-        assert_eq!(Override::parse(Some(" back "), None, None, None).cull, Cull::Back);
+        assert_eq!(
+            Override::parse(Some("off"), Some("1"), Some("1"), Some("1"), None).applied(all),
+            RayTracing::default()
+        );
+        assert_eq!(Override::parse(None, Some("0"), Some("off"), Some("0"), None).applied(all), sun);
+        // the culling comes with the sun's shadows: #3895's rule unless
+        // asked otherwise
+        assert_eq!(Override::parse(None, None, None, None, None).cull, Cull::Front);
+        assert_eq!(Override::parse(Some("1"), None, None, None, None).cull, Cull::Front);
+        let both = Override::parse(Some("both"), None, None, None, None);
+        assert_eq!((both.cull, both.applied(RayTracing::default())), (Cull::None, sun));
+        assert_eq!(Override::parse(Some(" back "), None, None, None, None).cull, Cull::Back);
+        // a lamp's rays pass its prim alone unless asked otherwise
+        assert!(!none.emitter_sphere);
+        assert!(Override::parse(None, None, None, None, Some(" sphere ")).emitter_sphere);
+        assert!(!Override::parse(None, None, None, None, Some("prim")).emitter_sphere);
     }
 
     #[test]
@@ -6677,16 +7476,128 @@ mod tests {
         };
         let mut places = HashMap::new();
         // a light seen for the first time has not moved
-        let first = traced_lights(&[lamp(7, 1.0), lamp(0, 5.0)], &mut places);
+        let first = traced_lights(&[lamp(7, 1.0), lamp(0, 5.0)], &mut places, crate::RtTuning::default());
         assert_eq!([first[0].source[2], first[1].source[2]], [0.0, 0.0]);
         // the list's order changes with the camera: a light is known by
         // what it shines from, and one of no prim never moves
-        let next = traced_lights(&[lamp(0, 6.0), lamp(7, 1.25)], &mut places);
+        let next = traced_lights(&[lamp(0, 6.0), lamp(7, 1.25)], &mut places, crate::RtTuning::default());
         assert_eq!([next[0].source[2], next[1].source[2]], [0.0, 0.25]);
         // a light that left the list starts again when it comes back
-        traced_lights(&[lamp(0, 6.0)], &mut places);
-        let back = traced_lights(&[lamp(7, 4.0)], &mut places);
+        traced_lights(&[lamp(0, 6.0)], &mut places, crate::RtTuning::default());
+        let back = traced_lights(&[lamp(7, 4.0)], &mut places, crate::RtTuning::default());
         assert_eq!(back[0].source[2], 0.0);
+        // and its object, whose faces its rays pass (none of no prim)
+        assert_eq!([first[0].source[3], first[1].source[3]], [7.0, 0.0]);
+        assert_eq!(emitter_key((1 << 24) - 1), 16_777_215.0);
+        assert_eq!(emitter_key(1 << 24), 0.0);
+    }
+
+    #[test]
+    fn rt_shadows_a_projector_gives_its_beam_and_apex_to_its_rays() {
+        use crate::types::{PointLight, Projector};
+        let at = glam::Vec3::new(3.0, 4.0, 5.0);
+        let beam = Projector::new(
+            at,
+            glam::Quat::IDENTITY,
+            glam::Vec3::splat(0.5),
+            10.0,
+            glam::Vec3::new(1.0, 0.0, 0.0),
+            0,
+        );
+        let light = |projector: Option<Projector>| PointLight {
+            position: at,
+            radius: 10.0,
+            color: glam::Vec3::ONE,
+            falloff: 0.5,
+            projector,
+            source_radius: 0.4,
+            source_id: 3,
+        };
+        let listed = traced_lights(&[light(Some(beam)), light(None)], &mut HashMap::new(), crate::RtTuning::default());
+        // the projector: flagged, its frustum's matrix and apex as the
+        // shading's (common.wgsl `projector_at`)
+        assert_eq!(listed[0].source[1], 1.0);
+        assert_eq!(listed[0].beam, beam.matrix.to_cols_array_2d());
+        assert_eq!(listed[0].apex, beam.origin.extend(0.0).to_array());
+        // a point below the apex, along the beam, is inside its frustum
+        let below = beam.origin + beam.direction * (beam.near + 1.0);
+        let tc = beam.matrix * below.extend(1.0);
+        let uv = glam::Vec2::new(tc.x, tc.y) / tc.w;
+        assert!(
+            tc.z >= 0.0 && uv.cmpgt(glam::Vec2::ZERO).all() && uv.cmplt(glam::Vec2::ONE).all(),
+            "{tc}"
+        );
+        // a point light: none of them
+        assert_eq!(listed[1].source[1], 0.0);
+        assert_eq!((listed[1].beam, listed[1].apex), ([[0.0; 4]; 4], [0.0; 4]));
+        // projector shadows off: listed in its place, never drawn
+        let off = crate::RtTuning {
+            projectors: false,
+            ..crate::RtTuning::default()
+        };
+        let listed = traced_lights(&[light(Some(beam)), light(None)], &mut HashMap::new(), off);
+        assert_eq!([listed[0].source[1], listed[1].source[1]], [2.0, 0.0]);
+        // as many lights as cast traced shadows, one at least, 64 at most
+        let few = crate::RtTuning {
+            lamps: 1,
+            ..crate::RtTuning::default()
+        };
+        assert_eq!(traced_lights(&[light(None), light(None)], &mut HashMap::new(), few).len(), 1);
+        for (lamps, count) in [(0, 1), (8, 8), (64, MAX_TRACED_LIGHTS), (500, MAX_TRACED_LIGHTS)] {
+            assert_eq!(
+                traced_count(crate::RtTuning {
+                    lamps,
+                    ..crate::RtTuning::default()
+                }),
+                count
+            );
+        }
+    }
+
+    /// `AURORA_RT_POSED_BUILD`: `trace` alone asks the fast trace.
+    #[test]
+    fn rt_shadows_posed_build_flags_by_name() {
+        use wgpu::AccelerationStructureFlags as F;
+        assert_eq!(posed_build_named(None), F::PREFER_FAST_BUILD);
+        assert_eq!(posed_build_named(Some("build")), F::PREFER_FAST_BUILD);
+        assert_eq!(posed_build_named(Some(" Trace ")), F::PREFER_FAST_TRACE);
+        assert_eq!(posed_build_named(Some("")), F::PREFER_FAST_BUILD);
+        assert_eq!(posed_build_named(Some("fast")), F::PREFER_FAST_BUILD);
+    }
+
+    /// High is the lamps' pass as it was: the defaults, and the shader's
+    /// most; Medium and Low cost less at every knob and keep a ray a
+    /// pixel; what a setting asks is kept within what the passes do.
+    #[test]
+    fn rt_shadows_the_lamps_quality_tiers() {
+        let default = crate::RtTuning::default();
+        assert_eq!(LampQuality::of(default), LampQuality::HIGH);
+        assert_eq!(LampQuality::HIGH.apply(default), default);
+        let lights = include_str!("shaders/rt_lights.wgsl");
+        assert!(lights.contains(&format!("const CANDIDATES: u32 = {}u;", LampQuality::HIGH.candidates)));
+        assert!(lights.contains(&format!("const NEIGHBOURS: u32 = {}u;", LampQuality::HIGH.reuse)));
+        assert_eq!(LampQuality::HIGH.denoise as usize, ATROUS_PASSES);
+        assert_eq!(LampQuality::HIGH.lamps as usize, MAX_TRACED_LIGHTS);
+        for (better, worse) in [(LampQuality::HIGH, LampQuality::MEDIUM), (LampQuality::MEDIUM, LampQuality::LOW)] {
+            assert!(worse.lamps < better.lamps && worse.candidates < better.candidates, "{worse:?}");
+            assert!(worse.reuse < better.reuse && worse.denoise < better.denoise, "{worse:?}");
+            assert_eq!(LampQuality::of(worse.apply(default)), worse);
+        }
+        // AURORA_RT_LAMPS's names
+        assert_eq!(LampQuality::named("low"), Some(LampQuality::LOW));
+        assert_eq!(LampQuality::named(" Medium "), Some(LampQuality::MEDIUM));
+        assert_eq!(LampQuality::named("HIGH"), Some(LampQuality::HIGH));
+        assert_eq!(LampQuality::named(""), None);
+        assert_eq!(LampQuality::named("ultra"), None);
+        let asked = crate::RtTuning {
+            lamps: 0,
+            lamp_candidates: 0,
+            lamp_reuse: 9,
+            lamp_denoise: 0,
+            ..default
+        };
+        let kept = LampQuality::of(asked);
+        assert_eq!((kept.lamps, kept.candidates, kept.reuse, kept.denoise), (1, 1, 4, 1));
     }
 
     #[test]

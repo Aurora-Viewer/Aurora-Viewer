@@ -321,6 +321,19 @@ fn seen_before(p: vec3<f32>, dir: vec3<f32>) -> Seen {
         return out;
     }
     let n = normal_at(px, d);
+    // Last frame showed `p` there only if its surface there was `p`, as its
+    // guide says (half resolution: the distance from last frame's eye and
+    // the normal, which faced that eye). A view that went through a thin
+    // wall saw its other side there, and its outer light lit the room for
+    // a second. (Looser than the photo's: the guide is of the 2×2's first
+    // pixel, a little off `p` on a face seen aslant.)
+    let q = min(vec2<i32>(before * 0.5), vec2<i32>(params.half.xy) - vec2<i32>(1));
+    let was = textureLoad(prev_guide, q, 0);
+    let expected = distance(p, params.prev_camera.xyz);
+    if (params.mode.w < 0.5 || was.z <= 0.0 || abs(was.z - expected) > 0.05 + 0.03 * expected
+        || dot(unpack_normal(was.xy), n) < 0.5) {
+        return out;
+    }
     out.light = textureLoad(scene_tex, vec2<i32>(before), 0).rgb;
     out.normal = select(n, -n, dot(n, dir) > 0.0);
     out.seen = true;
@@ -503,10 +516,14 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     var pick = no_pick();
     // the worths weighed so far, each over how likely its hit was drawn
     var sum = 0.0;
-    // the queries of every ray, declared out of the loop: one declared in it
-    // is set to zero again at each pass, an assignment Metal's compiler
-    // refuses for a ray query (rt_shadows.rs
-    // `no_ray_query_is_declared_in_a_loop`)
+    // The ray queries are declared out of the loop and initialised again at
+    // each ray. naga 30 gives a variable declared in a loop's body a store of
+    // its zero value at each turn, and a ray query's is an `OpConstantNull`
+    // of `OpTypeRayQueryKHR`, which SPIR-V forbids (an opaque type has no
+    // null): AMD's compiler (LLPC, an RX 9070 XT) crashed on it in
+    // vkCreateComputePipelines (#4596), and it is an assignment Metal's
+    // compiler refuses for a ray query. `rt_shaders_have_no_null_ray_query`
+    // and `no_ray_query_is_declared_in_a_loop` check every traced pass.
     var rq: ray_query;
     var rp: ray_query;
     for (var ray = 0u; ray < rays; ray++) {
@@ -516,7 +533,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
         var record = 0u;
         var primitive = 0u;
         var bary = vec2<f32>(0.0);
-        rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, 0xFFu, 0.0, params.mode.x, origin, dir));
+        rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, SOLID, 0.0, params.mode.x, origin, dir));
         while (rayQueryProceed(&rq)) {
             if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
                 rayQueryConfirmIntersection(&rq);
@@ -532,7 +549,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         if (posed) {
             let reach = select(params.mode.x, t, t >= 0.0);
-            rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, 0xFFu, 0.0, reach, origin, dir));
+            rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, SOLID, 0.0, reach, origin, dir));
             while (rayQueryProceed(&rp)) {
                 if (stops(rayQueryGetCandidateIntersection(&rp), true, dir)) {
                     rayQueryConfirmIntersection(&rp);

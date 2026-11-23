@@ -323,6 +323,9 @@ struct ProbeSet {
 @group(0) @binding(12) var probe_irr_tex: texture_cube_array<f32>;
 // the sun's contact shadows (contact_shadows.wgsl): 0 lit, 1 in shadow
 @group(0) @binding(13) var contact_tex: texture_2d<f32>;
+// What the glass leaves of the traced sun's red, green and blue
+// (rt_shadows.wgsl `out_glass`; white without ray tracing): `sun_glass`.
+@group(0) @binding(31) var sun_glass_tex: texture_2d<f32>;
 // the sun's soft shadows (soft_shadows.wgsl): per pixel, the light let
 // through (10 bits) and the distance of the surface it was made for (an f16)
 @group(0) @binding(30) var soft_tex: texture_2d<u32>;
@@ -1439,6 +1442,14 @@ const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
 const SPECULAR_AA: u32 = 0x8000u;
 // The point lights' share is traced (common.wgsl `local_share`).
 const LOCAL_TRACED: u32 = 0x1000000u;
+// With it: how many of the frame's first lights the share is of, less one,
+// in these bits (Preferences' lamps, 1 to 64, rt_shadows.rs `traced_count`;
+// the others are not shadowed), and whether the projectors' beams take it
+// (`projector_at`). The bits above LOCAL_TRACED: those below are flags
+// (types.rs `the_flags_of_the_light_mode_word_share_no_bit`).
+const TRACED_LIGHTS_SHIFT: u32 = 25u;
+const TRACED_LIGHTS_BITS: u32 = 0x3Fu;
+const PROJECTORS_TRACED: u32 = 0x80000000u;
 
 // Geometric specular anti-aliasing (Kaplanyan & Hoffman 2016, "Stable
 // Geometric Specular Antialiasing with Projected-Space NDF Filtering", in
@@ -1627,6 +1638,17 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
 // is in the shadow).
 var<private> contact_share: f32 = 1.0;
 
+// Whether the fragment being shaded takes the traced sun's glass with its
+// mask (`sun_shadow`): yes on the surface the mask was traced for, no on a
+// blended layer that only lies on it (`contact_share` from
+// `on_occlusion_surface`). The glass in that surface's mask is mostly the
+// layer itself: a sea's foam lying on the sand went dark in its own
+// shadow (2026-11-22, grid report of beta6). As the Legacy Viewer, whose
+// blended face is lit where its own texel casts in the shadow map, the
+// sand under it in the shadow. Another pane's tint over the layer is lost
+// with it.
+var<private> contact_glass: bool = true;
+
 // The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
 // what the shadow map is too coarse to show, taken as the darker of the
 // two (sun_shadow). 1 elsewhere: other views, blended faces, off.
@@ -1641,6 +1663,55 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     }
     return 1.0 - contact_share * textureLoad(contact_tex, p, 0).r;
 }
+
+// What arrives of the point lights' and the projectors' red, green and
+// blue at a pixel of the main view: the traced lights' tint (rt_lights.wgsl, `.gba` of the traced
+// mask). 1 elsewhere: other views, without the traced lights.
+fn local_share(frag: vec2<f32>) -> vec3<f32> {
+    if (!local_traced(frag)) {
+        return vec3<f32>(1.0);
+    }
+    let p = vec2<i32>(frag);
+    let size = vec2<i32>(textureDimensions(contact_tex));
+    if (any(p < vec2<i32>(0)) || any(p >= size)) {
+        return vec3<f32>(1.0);
+    }
+    return textureLoad(contact_tex, p, 0).gba;
+}
+
+// Whether `local_share` is traced at this pixel, the projectors' beams'
+// shadows with it (`projector_at`). On every face of the main view, a
+// blended one and the snow included: such a face, which the mask was not
+// traced for (`contact_share` 0), takes the share of the solid surface
+// behind it. Unshadowed, the hair and veils of an avatar in a closed room
+// took a lamp outside through the walls. The limit, chosen by the human
+// (2026-11-22): a lit veil in front of a wall in a lamp's shadow is
+// darkened with the wall. An Aurora difference: the Legacy Viewer shadows
+// no point light, on any face.
+fn local_traced(frag: vec2<f32>) -> bool {
+    return (frame.light_mode.z & LOCAL_TRACED) != 0u && !in_reflection_pass();
+}
+
+// Whether light `i` of the frame is one the traced share is of.
+fn light_traced(i: i32) -> bool {
+    return u32(i) <= ((frame.light_mode.z >> TRACED_LIGHTS_SHIFT) & TRACED_LIGHTS_BITS);
+}
+
+// Point light `i` of the frame with its colour times `share` (local_share),
+// if the share is of it.
+fn shared_light(i: i32, share: vec3<f32>) -> Light {
+    var lt = frame.lights[i];
+    let s = select(vec3<f32>(1.0), share, light_traced(i));
+    lt.color_falloff = vec4<f32>(lt.color_falloff.rgb * s, lt.color_falloff.w);
+    return lt;
+}
+
+// The colour the glass gives the sunlight at this pixel, which `sun_shadow`
+// reads with the traced shadow and the shading multiplies the sun by
+// (`shade_pbr`, the classic sky's `ll_classic_sun_ambient`,
+// `ll_classic_pbr`, a legacy face's highlights): 1 where the sun is not
+// traced or meets no glass.
+var<private> sun_glass: vec3<f32> = vec3<f32>(1.0);
 
 // Whether this shader reads the soft shadows: the sun's mask and the
 // projectors' filter. `true` here; while the option is off the scene's
@@ -1677,45 +1748,22 @@ fn soft_shadow(world_pos: vec3<f32>, frag: vec2<f32>) -> f32 {
     return f32(texel & 1023u) / 1023.0;
 }
 
-// What arrives of the point lights' red, green and blue at a pixel of the
-// main view: the traced lights' tint (rt_lights.wgsl, `.gba` of the traced
-// mask), by the fragment's share of that mask (`contact_share`: a step
-// would draw a line where a glass's opacity crosses the limit). 1
-// elsewhere: other views, more transparent blended faces, without the
-// traced lights.
-fn local_share(frag: vec2<f32>) -> vec3<f32> {
-    if ((frame.light_mode.z & LOCAL_TRACED) == 0u || contact_share <= 0.0 || in_reflection_pass()) {
-        return vec3<f32>(1.0);
-    }
-    let p = vec2<i32>(frag);
-    let size = vec2<i32>(textureDimensions(contact_tex));
-    if (any(p < vec2<i32>(0)) || any(p >= size)) {
-        return vec3<f32>(1.0);
-    }
-    return mix(vec3<f32>(1.0), textureLoad(contact_tex, p, 0).gba, contact_share);
-}
-
-// Point light `i` of the frame with its colour times `share` (local_share).
-fn shared_light(i: i32, share: vec3<f32>) -> Light {
-    var lt = frame.lights[i];
-    lt.color_falloff = vec4<f32>(lt.color_falloff.rgb * share, lt.color_falloff.w);
-    return lt;
-}
-
-// The sun's shadow of an opaque surface of the main view: the shadow map
-// (its soft mask where that holds), and the contact shadows where they are
-// on, then the shadow intensity (Preferences, or the photo's).
+// The sun's shadow of an opaque surface of the main view: the ray-traced
+// mask where the view traces it (rt_shadows.rs; the contact shadows are
+// in it), else the shadow map (its soft mask where that holds) and the
+// contact shadows where they are on; then the shadow intensity
+// (Preferences, or the photo's).
 fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
-    // the ray-traced mask (rt_shadows.rs), the contact shadows in it, where
-    // the surface is the mask's whole (`contact_share`); the shadow map
-    // elsewhere, with the mask by the fragment's share of it
-    if (frame.contact.z > 0.5 && frame.params.z > 0.5 && contact_share >= 1.0 && !in_reflection_pass()) {
-        let traced = contact_shadow(frag);
-        // (the lift of a classic sky's sun: see below)
-        if (frame.sky_ll.x < 0.5) {
-            return shadow_lift(traced);
+    // the traced mask holds where the surface is the prepass's
+    if (frame.contact.z > 0.5 && frame.params.z > 0.5 && contact_share > 0.0 && !in_reflection_pass()) {
+        let p = vec2<i32>(frag);
+        let size = vec2<i32>(textureDimensions(sun_glass_tex));
+        if (contact_glass && all(p >= vec2<i32>(0)) && all(p < size)) {
+            sun_glass = textureLoad(sun_glass_tex, p, 0).rgb;
         }
-        return traced;
+        let traced = contact_shadow(frag);
+        // (as below: a classic sky lifts it in `classic_shadowed`)
+        return select(traced, shadow_lift(traced), frame.sky_ll.x < 0.5);
     }
     var s = soft_shadow(world_pos, frag);
     if (s < 0.0) {
@@ -2078,7 +2126,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     let l = normalize(frame.sun_dir.xyz);
     let nl = max(dot(n, l), 0.0);
     if (legacy) {
-        col += diffuse_color * frame.sun_color.rgb * (nl * shadow / 3.0);
+        col += diffuse_color * frame.sun_color.rgb * sun_glass * (nl * shadow / 3.0);
     } else if (nl > 0.0) {
         let h = normalize(l + v);
         let nh = max(dot(n, h), 0.0);
@@ -2086,7 +2134,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         let f = f_schlick(f0, vh);
         let spec = d_ggx(nh, a) * v_smith(nv, nl, a) * f;
         let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-        col += (kd + spec) * frame.sun_color.rgb * nl * shadow;
+        col += (kd + spec) * frame.sun_color.rgb * sun_glass * nl * shadow;
     }
     // local lights
     var local = vec3<f32>(0.0);
@@ -2114,7 +2162,7 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        local += pbr_local_light(projector_at(i, world_pos, n), n, v, f0, a, nv, diffuse_color);
+        local += pbr_local_light(projector_at(i, world_pos, n, frag), n, v, f0, a, nv, diffuse_color);
     }
     col += local;
     shade_pbr_local = local;
@@ -2589,8 +2637,9 @@ struct LightAt {
     shadow: f32,
 };
 
-// Projector `i` of the frame's list on a point of normal `n`.
-fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
+// Projector `i` of the frame's list on a point of normal `n`, seen at
+// pixel `frag`.
+fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>, frag: vec2<f32>) -> LightAt {
     let lt = frame.lights[i];
     var at: LightAt;
     at.shadow = 1.0;
@@ -2625,9 +2674,18 @@ fn projector_at(i: i32, world_pos: vec3<f32>, n: vec3<f32>) -> LightAt {
     let slot = pj.tex.x;
     let l_dist = -dot(to_l, pj.dir.xyz);
     let c = projector_diffuse(slot, uv, clamp((l_dist - pj.origin.w) / pj.dir.w, 0.0, 1.0));
-    // the beam is shadowed, the ambiance is not (spotLightF)
-    at.shadow = projector_shadow(i, world_pos, n);
-    at.color = lt.color_falloff.rgb * c.rgb * c.a * at.shadow;
+    // the beam is shadowed, the ambiance is not (spotLightF): by the traced
+    // lights' tint where it is traced (rt_lights.wgsl, which draws the
+    // projectors with the point lights), by its shadow map elsewhere
+    var beam = vec3<f32>(1.0);
+    if (local_traced(frag) && (frame.light_mode.z & PROJECTORS_TRACED) != 0u && light_traced(i)) {
+        beam = local_share(frag);
+        at.shadow = dot(beam, vec3<f32>(0.2126, 0.7152, 0.0722));
+    } else {
+        at.shadow = projector_shadow(i, world_pos, n);
+        beam = vec3<f32>(at.shadow);
+    }
+    at.color = lt.color_falloff.rgb * c.rgb * c.a * beam;
     at.ambiance = pj.params.y;
     if (at.ambiance > 0.0) {
         // getTexture2DLodAmbient: the image's mean color (its last level),
@@ -2867,7 +2925,7 @@ fn ll_local_scale() -> f32 {
 fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2<f32>, a: LLAtmos) -> vec3<f32> {
     let nl_sun = max(dot(n, frame.sun_dir.xyz), 0.0);
     if (ll_classic_mode()) {
-        let sunlit = a.sunlit * 1.35;
+        let sunlit = a.sunlit * 1.35 * sun_glass;
         let irr = ll_ssao(a.amblit * ll_ambient_lighting(n), frag);
         let sun_contrib = vec3<f32>(classic_shadowed(pow(nl_sun, 1.2), shadow));
         // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
@@ -2877,7 +2935,7 @@ fn ll_classic_sun_ambient(base: vec3<f32>, n: vec3<f32>, shadow: f32, frag: vec2
     let amb_lin = srgb_to_linear(a.amblit * ll_ambient_lighting(n));
     let amb_grey = vec3<f32>(dot(amb_lin, vec3<f32>(0.2126, 0.7152, 0.0722)));
     let irr = ll_ssao(select(amb_grey, amb_lin, colored_sky_ambient()), frag);
-    return (irr + classic_shadowed(nl_sun, shadow) * srgb_to_linear(a.sunlit) + screen_indirect(frag)) * base;
+    return (irr + classic_shadowed(nl_sun, shadow) * srgb_to_linear(a.sunlit) * sun_glass + screen_indirect(frag)) * base;
 }
 
 // Local lights on a classic surface (multiPointLightF): light color x n.l x
@@ -2900,7 +2958,7 @@ fn ll_local_diffuse(base: vec3<f32>, n: vec3<f32>, world_pos: vec3<f32>, frag: v
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        local += ll_diffuse_light(projector_at(i, world_pos, n), n, base);
+        local += ll_diffuse_light(projector_at(i, world_pos, n, frag), n, base);
     }
     return local * ll_local_scale();
 }
@@ -2939,7 +2997,7 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
         let spec = d_ggx(nh, ra) * v_smith(nv, nl, ra) * f;
         let diff = (vec3<f32>(1.0) - f) * diffuse_color / PI;
         let sun_contrib = srgb_to_linear(ll_linear_to_srgb(vec3<f32>(classic_shadowed(pow(nl, 1.2), shadow))) * sunlit * 0.7) * PI;
-        final_sun = clamp(sun_contrib * (diff + spec) * shadow_lift(shadow), vec3<f32>(0.0), vec3<f32>(10.0));
+        final_sun = clamp(sun_contrib * (diff + spec) * sun_glass * shadow_lift(shadow), vec3<f32>(0.0), vec3<f32>(10.0));
     }
     var col = srgb_to_linear(ll_linear_to_srgb(irr * diffuse_color) + ll_linear_to_srgb(final_sun) * 1.1);
     // GTAO's indirect light (Aurora's own: the Legacy Viewer has none)
@@ -2995,7 +3053,7 @@ fn ll_classic_pbr_local(base: vec3<f32>, metallic: f32, roughness_in: f32, n: ve
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        col += ll_pbr_light(projector_at(i, world_pos, n), n, v, f0, ra, nv, diffuse_color);
+        col += ll_pbr_light(projector_at(i, world_pos, n, frag), n, v, f0, ra, nv, diffuse_color);
     }
     return col * ll_local_scale();
 }

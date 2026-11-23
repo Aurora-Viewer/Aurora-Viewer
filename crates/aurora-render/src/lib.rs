@@ -66,6 +66,8 @@ mod readback;
 mod render_thread;
 mod renderer;
 mod rlva;
+#[cfg(test)]
+mod rt_flags_tests;
 mod rt_light_changes;
 mod rt_shadows;
 pub mod second_view;
@@ -100,6 +102,7 @@ pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
+pub use rt_shadows::LampQuality;
 pub use thumbnail::{THUMBNAIL_MAX, Thumbnail};
 pub use vr_control::{HeadPose, VrState};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the

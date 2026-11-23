@@ -1030,8 +1030,10 @@ pub struct PointLight {
     pub source_radius: f32,
     /// What the light shines from, the same number at every frame, for what
     /// follows a light from a frame to the next (how far it moved, for the
-    /// history of its traced shadow). 0 for lights of no prim, which stay
-    /// where they are.
+    /// history of its traced shadow): its prim's object index plus one, the
+    /// `CullFace::object` of the prim's faces plus one, which its traced
+    /// rays pass (rt_lights.wgsl `light_blocked`). 0 for lights of no prim,
+    /// which stay where they are.
     pub source_id: u32,
 }
 
@@ -1224,6 +1226,48 @@ pub struct RayTracing {
     pub reflections: bool,
 }
 
+/// What Preferences › Graphics › Ray tracing sets of the traced shadows
+/// beside the effects ([`RayTracing`]): nothing a change of it makes anew.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RtTuning {
+    /// The sun's shadows' softness: the size of the disc its rays aim at,
+    /// 1 the real sun's (half a degree), 0 sharp.
+    pub sun_softness: f32,
+    /// The lamps' shadows' softness: their size, 1 as rt_lights.wgsl
+    /// measures it from the prim (`light_size`), 0 sharp.
+    pub lamp_softness: f32,
+    /// How many of the frame's first lights (the nearest and brightest,
+    /// `LightList`'s order) cast traced shadows; the others light
+    /// unshadowed, as the Legacy Viewer's point lights.
+    pub lamps: u32,
+    /// The lamps' cost against their noise, for the ray tracing quality
+    /// (rt_shadows.rs `LampQuality`; the defaults are its High, the
+    /// pass as it was before them): the lights a pixel weighs to draw the
+    /// one it traces, when more reach it (rt_lights.wgsl `candidates`, 1 to
+    /// 8), the neighbours whose samples it reuses (`neighbours`, 0 to 4),
+    /// and the denoiser's à-trous passes over their share (1 to 4).
+    pub lamp_candidates: u32,
+    pub lamp_reuse: u32,
+    pub lamp_denoise: u32,
+    /// The projectors cast traced shadows (the Legacy Viewer's "Sun/Moon +
+    /// Projectors" shadow detail, Aurora's projector shadows option).
+    pub projectors: bool,
+}
+
+impl Default for RtTuning {
+    fn default() -> Self {
+        RtTuning {
+            sun_softness: 1.0,
+            lamp_softness: 1.0,
+            lamps: 64,
+            lamp_candidates: 8,
+            lamp_reuse: 4,
+            lamp_denoise: 4,
+            projectors: true,
+        }
+    }
+}
+
 /// Whether the device can ray-trace: what Preferences › Graphics › Ray
 /// tracing shows of the graphics card.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1292,6 +1336,8 @@ pub struct RenderSettings {
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
     pub ray_tracing: RayTracing,
+    /// The traced shadows' softness and lamps.
+    pub rt_tuning: RtTuning,
     /// Rain prototype: the G-buffer of the screen-space reflections is drawn
     /// while it rains, even with them off, for the wet surfaces' smooth
     /// facings and materials (the reflections themselves only with `ssr`).
@@ -1346,6 +1392,7 @@ impl Default for RenderSettings {
             mirror_scale: 0.25,
             ssr: false,
             ray_tracing: RayTracing::default(),
+            rt_tuning: RtTuning::default(),
             rain_surfaces: false,
             anisotropy: 8,
             probe_slots: 32,
@@ -2783,6 +2830,20 @@ mod tests {
             assert!(*bits > 0xff, "{name} is clear of the view's number");
         }
         assert_eq!(sharing_a_bit(&flags), []);
+        // the traced lights' count, a number in the word's top bits, takes
+        // none of theirs either (common.wgsl `light_traced`)
+        let common = include_str!("shaders/common.wgsl");
+        let number = |name: &str| -> u32 {
+            let declared = format!("const {name}: u32 = ");
+            let rest = &common[common.find(&declared).expect(name) + declared.len()..];
+            let digits = rest[..rest.find('u').expect(name)].trim_start_matches("0x");
+            u32::from_str_radix(digits, if rest.starts_with("0x") { 16 } else { 10 }).expect(name)
+        };
+        let count = number("TRACED_LIGHTS_BITS") << number("TRACED_LIGHTS_SHIFT");
+        assert!(number("TRACED_LIGHTS_BITS") + 1 >= 64, "the 64 lamps of High fit");
+        for (name, bits) in &flags {
+            assert_eq!(bits & count, 0, "{name} is clear of the traced lights' count");
+        }
 
         let clash = "const A: u32 = 0x800000u;\nconst B: u32 = 0x800000u;\nconst C: u32 = 0x400u;\n\
                      if ((frame.light_mode.z & A) != 0u && (frame.light_mode.z & 0xffu) == 1u) {}\n\
