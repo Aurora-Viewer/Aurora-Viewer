@@ -54,6 +54,25 @@ pub struct NoticeView {
     pub saved: bool,
 }
 
+impl NoticeView {
+    /// Its attachment is offered to us: a notice the grid sent, not one
+    /// sent from here (`GroupData::sent_notice`).
+    pub fn offered(&self) -> bool {
+        self.offer.is_some()
+    }
+}
+
+/// A notice just sent (`GroupMgr::add_sent_notice`).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct SentNotice {
+    pub subject: String,
+    pub message: String,
+    /// Our legacy name.
+    pub from: String,
+    /// The attachment's name and asset type.
+    pub attachment: Option<(String, u8)>,
+}
+
 /// One group (LLGroupMgrGroupData).
 #[derive(Debug, Default, Clone)]
 pub struct GroupData {
@@ -84,6 +103,10 @@ pub struct GroupData {
     /// The notice shown, and the one asked for.
     pub notice: Option<NoticeView>,
     asked_notice: Option<Uuid>,
+    /// The notices sent from here, under the ids of their places in the
+    /// list (`add_sent_notice`): the grid knows them under ids of its own,
+    /// so they are shown from what was sent, never asked for (#4325).
+    sent_notices: Vec<NoticeView>,
     accessed: u64,
     /// A ban asked before the members and roles were known
     /// (mPendingBanRequest, mPendingBanMemberID): sent once they are; the
@@ -108,6 +131,12 @@ impl GroupData {
     /// (isMemberDataComplete, isRoleDataComplete, isRoleMemberDataComplete).
     fn loaded(&self) -> bool {
         self.members_complete && self.roles_complete && self.role_members_complete && !self.members.is_empty()
+    }
+
+    /// A notice of the list sent from here, kept until the list is asked
+    /// again: no GroupNoticeRequest finds it.
+    pub fn sent_notice(&self, id: Uuid) -> Option<&NoticeView> {
+        self.sent_notices.iter().find(|n| n.id == id)
     }
 
     /// The title we wear (the selected one of GroupTitlesReply), including
@@ -291,14 +320,22 @@ impl GroupMgr {
 
     /// onClickRefreshNotices: the list starts again.
     pub fn request_notices(&mut self, group: Uuid) {
-        self.data(group).notices = None;
+        let g = self.data(group);
+        g.notices = None;
+        g.sent_notices.clear();
         self.out.push(NetCommand::GroupNoticesListRequest(group));
     }
 
     /// LLPanelGroupNotices::onSelectNotice: GroupNoticeRequest, and the
-    /// notice counts as read.
+    /// notice counts as read. One sent from here is not asked for: the grid
+    /// does not know its id and would never answer (#4325).
     pub fn open_notice(&mut self, group: Uuid, notice: Uuid) {
-        self.data(group).asked_notice = Some(notice);
+        let g = self.data(group);
+        if g.sent_notice(notice).is_some() {
+            log::info!("group notice {notice}: sent from here, shown as sent");
+            return;
+        }
+        g.asked_notice = Some(notice);
         self.out.push(NetCommand::GroupNoticeRequest(notice));
         if self.read.entry(group).or_default().insert(notice) {
             self.save_read();
@@ -685,24 +722,36 @@ impl GroupMgr {
     }
 
     /// onClickSendMessage: the notice sent, shown at once in the list (the
-    /// server's copy comes with the next refresh).
-    pub fn add_sent_notice(&mut self, group: Uuid, subject: String, from: String, has_attachment: bool) {
+    /// server's copy comes with the next refresh) under an id of ours, its
+    /// text kept to be read from here (`sent_notice`). `attachment` is the
+    /// item's name and asset type.
+    pub fn add_sent_notice(&mut self, group: Uuid, sent: SentNotice) {
         let id = Uuid::new_v4();
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as u32);
-        let list = self.data(group).notices.get_or_insert_with(Vec::new);
-        list.insert(
+        let g = self.data(group);
+        g.notices.get_or_insert_with(Vec::new).insert(
             0,
             NoticeSummary {
                 id,
                 timestamp,
-                from,
-                subject,
-                has_attachment,
-                asset_type: 0,
+                from: sent.from.clone(),
+                subject: sent.subject.clone(),
+                has_attachment: sent.attachment.is_some(),
+                asset_type: sent.attachment.as_ref().map_or(0, |a| a.1),
             },
         );
+        g.sent_notices.push(NoticeView {
+            id,
+            subject: sent.subject,
+            message: sent.message,
+            from_name: sent.from,
+            timestamp,
+            attachment: sent.attachment,
+            offer: None,
+            saved: false,
+        });
         self.read.entry(group).or_default().insert(id);
     }
 
@@ -1211,5 +1260,42 @@ mod tests {
         assert!(!cmds.iter().any(|c| matches!(c, NetCommand::GroupBans { .. })));
         assert!(!mgr.get(&G).is_some_and(GroupData::ban_pending));
         assert!(mgr.banned.is_empty());
+    }
+
+    /// onClickSendMessage's row has an id of ours that the grid does not
+    /// know: it is read from what was sent, never asked for, and goes with
+    /// the next list (#4325).
+    #[test]
+    fn a_notice_sent_from_here_is_read_from_what_was_sent_never_asked() {
+        let mut mgr = GroupMgr::default();
+        mgr.add_sent_notice(
+            G,
+            SentNotice {
+                subject: "Party".into(),
+                message: "Tonight at 8".into(),
+                from: "Ann Resident".into(),
+                attachment: Some(("Invitation".into(), 7)),
+            },
+        );
+        let d = mgr.get(&G).expect("group");
+        let row = d.notices.as_ref().and_then(|l| l.first()).cloned().expect("listed at once");
+        assert_eq!((row.subject.as_str(), row.from.as_str()), ("Party", "Ann Resident"));
+        assert!(row.has_attachment && row.asset_type == 7);
+        let n = d.sent_notice(row.id).expect("kept");
+        assert_eq!((n.subject.as_str(), n.message.as_str()), ("Party", "Tonight at 8"));
+        assert_eq!(n.attachment, Some(("Invitation".into(), 7)));
+        assert!(!n.offered(), "nothing to save");
+        assert!(mgr.is_read(&G, &row.id));
+        mgr.open_notice(G, row.id);
+        assert!(mgr.take_commands().is_empty(), "no GroupNoticeRequest for it");
+        // a notice of the grid's is still asked for
+        let other = Uuid::from_u128(77);
+        mgr.open_notice(G, other);
+        assert!(matches!(&mgr.take_commands()[..], [NetCommand::GroupNoticeRequest(id)] if *id == other));
+        mgr.request_notices(G);
+        assert!(
+            mgr.get(&G).and_then(|d| d.sent_notice(row.id)).is_none(),
+            "the list's copy replaces it"
+        );
     }
 }

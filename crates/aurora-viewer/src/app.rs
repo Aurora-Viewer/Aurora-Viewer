@@ -10802,6 +10802,14 @@ impl App {
         }
         self.outfit_portrait_demo();
         self.outfit_batch_demo();
+        // AURORA_DEMO_GROUP_PROFILE=<scenario>:sent: the notice written is
+        // sent, then its row clicked, once the list is in (#4325)
+        if self.demo
+            && self.frame_count == 640
+            && let Some((subject, message)) = crate::demo::group::sent_notice()
+        {
+            self.demo_sent_notice(subject, message);
+        }
         // AURORA_DEMO_GROUP_REGION: the Group titles window
         if self.demo && self.frame_count == 600 && crate::demo::group_region::on() {
             self.panels.group_titles = true;
@@ -17718,6 +17726,33 @@ impl App {
     }
 
     /// What the group profile window asked (LLGroupActions).
+    /// `AURORA_DEMO_GROUP_PROFILE=<scenario>:sent`: Send, then a click on
+    /// the row it adds (#4325).
+    fn demo_sent_notice(&mut self, subject: String, message: String) {
+        use ui::group_profile::GroupAction;
+        let group = crate::demo::DEMO_GROUP1;
+        let ctx = self.egui_ctx.clone();
+        let item = None;
+        self.apply_group_actions(
+            &ctx,
+            vec![GroupAction::SendNotice {
+                group,
+                subject,
+                message,
+                item,
+            }],
+        );
+        let row = self
+            .world
+            .group_data
+            .get(&group)
+            .and_then(|d| d.notices.as_ref()?.first().map(|n| n.id));
+        if let Some(notice) = row {
+            self.group_profile_ui.choose_notice(notice);
+            self.apply_group_actions(&ctx, vec![GroupAction::OpenNotice { group, notice }]);
+        }
+    }
+
     fn apply_group_actions(&mut self, ctx: &egui::Context, actions: Vec<ui::group_profile::GroupAction>) {
         use ui::group_profile::GroupAction;
         let mut search = Vec::new();
@@ -17800,8 +17835,20 @@ impl App {
                         message: text,
                         bucket,
                     });
-                    let me = self.world.notifications.own_name.clone();
-                    self.world.group_data.add_sent_notice(group, subject, me, item.is_some());
+                    let attachment = item.map(|(id, _)| {
+                        self.world
+                            .inventory
+                            .items
+                            .get(&id)
+                            .map_or_else(Default::default, |it| (it.name.clone(), it.asset_type as u8))
+                    });
+                    let sent = crate::world::group_data::SentNotice {
+                        subject,
+                        message,
+                        from: self.world.notifications.own_name.clone(),
+                        attachment,
+                    };
+                    self.world.group_data.add_sent_notice(group, sent);
                 }
                 GroupAction::Invite { group, invites } => {
                     log::info!("group invite: {} resident(s) invited", invites.len());

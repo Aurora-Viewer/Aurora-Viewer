@@ -679,6 +679,63 @@ fn a_notice_opens_with_its_attachment_and_is_saved_once() {
     assert!(world.group_data.take_commands().is_empty(), "saved once");
 }
 
+/// A notice just sent is not opened by itself (onClickSendMessage leaves it
+/// unselected) and, chosen, shows what was sent instead of waiting for a
+/// grid that does not know it (#4325).
+#[test]
+fn a_notice_just_sent_is_not_asked_for_and_reads_as_sent() {
+    let mut world = world(true, MEMBER | powers::NOTICES_SEND);
+    let mut st = opened(&mut world);
+    pump(&mut world);
+    let real = world
+        .group_data
+        .get(&DEMO_GROUP1)
+        .and_then(|d| d.notices.as_ref())
+        .and_then(|l| l.first().map(|n| n.id))
+        .expect("notices");
+    world.group_data.add_sent_notice(
+        DEMO_GROUP1,
+        crate::world::group_data::SentNotice {
+            subject: "Party".into(),
+            message: "Tonight at the plaza".into(),
+            from: "Ann Resident".into(),
+            attachment: None,
+        },
+    );
+    let sent = world
+        .group_data
+        .get(&DEMO_GROUP1)
+        .and_then(|d| d.notices.as_ref())
+        .and_then(|l| l.first().map(|n| n.id))
+        .expect("listed first");
+    assert_ne!(sent, real);
+    st.tab = Tab::Notices;
+    let (_, actions) = texts(&mut st, &world, false);
+    let asked: Vec<Uuid> = actions
+        .iter()
+        .filter_map(|a| match a {
+            GroupAction::OpenNotice { notice, .. } => Some(*notice),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked, vec![real], "the grid's newest notice is read first");
+    assert_eq!(st.notices.selected, Some(real));
+    st.notices.selected = Some(sent);
+    let (texts, _) = texts(&mut st, &world, false);
+    assert!(texts.iter().any(|t| t == "Tonight at the plaza"), "{texts:?}");
+    assert!(!has(&texts, "common-loading-2"), "{texts:?}");
+    // Refresh: the grid's list, the row gone, its newest notice read
+    world.group_data.request_notices(DEMO_GROUP1);
+    pump(&mut world);
+    let (_, actions) = self::texts(&mut st, &world, false);
+    assert_eq!(st.notices.selected, Some(real));
+    assert!(
+        actions
+            .iter()
+            .any(|a| matches!(a, GroupAction::OpenNotice { notice, .. } if *notice == real))
+    );
+}
+
 #[test]
 fn ejects_bans_and_role_ticks_follow_firestorm() {
     use super::admin_members::{self, Me};
