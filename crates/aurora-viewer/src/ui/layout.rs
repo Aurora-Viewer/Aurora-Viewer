@@ -222,6 +222,11 @@ pub(crate) fn take_reset(ctx: &egui::Context, id: Id) -> bool {
     windows(ctx, |w| w.resets > 0 && w.reset_done.insert(id.value()))
 }
 
+/// `take_reset` would answer true for `id`, without taking it.
+pub(crate) fn reset_pending(ctx: &egui::Context, id: Id) -> bool {
+    windows(ctx, |w| w.resets > 0 && !w.reset_done.contains(&id.value()))
+}
+
 /// Remove the file; a background save still on its way, older than
 /// `generation`, does not write it back.
 fn discard(state: &Mutex<Written>, p: &Path, generation: u64) {

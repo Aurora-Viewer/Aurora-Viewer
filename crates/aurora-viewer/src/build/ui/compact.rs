@@ -373,6 +373,8 @@ pub(super) fn navigation_button_marked(
         painter.galley(egui::pos2(left + lead, rect.center().y - galley.size().y / 2.0), galley, color);
     }
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), active, title));
+    #[cfg(test)]
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(("build-rail", title)), rect));
     response.on_hover_text(title)
 }
 
