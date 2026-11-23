@@ -4102,7 +4102,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns; `far`: an animesh carried far by its animation and one worn far from its point |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-derez-closed\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_LIVE_TAB=place\|avatar\|import\|plugins\|quick-look\|sweep` | Opens the LiveMesh window of the Blender demo on that tab, Quick look, or a card's update sweep |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -4132,7 +4132,7 @@ the linked set. `static-linked-child` selects only the child with Edit linked.
 `static-linked-hud`, `static-linked-attached` and `static-linked-detached`
 exercise whole-family attachment or removal. `static-linked-menu` opens the
 native object menu on the child, preserving whole-linkset selection;
-`static-linked-hud-menu` exercises the worn local menu. Check the single root,
+`static-linked-hud-menu` exercises the worn local menu. `static-derez-closed` closes the window and turns the camera to the green object at frame 450, then derezzes it at frame 700 through the world menu's command: the object goes and the Undo toast shows over the world, above the toolbar; Undo brings it back. Check the single root,
 indented prim numbers and object/prim counts. The Edit linked checkbox belongs to
 the native build tools and context menu; it is absent from the LiveMesh
 window. `AURORA_DEMO_BLENDER_LIVE_TAB` opens the window on its Place, Avatar,
@@ -7118,7 +7118,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   a price line.
 - **`AURORA_DEMO_IMPORTS=inspectors`** loads every type, including local
   previews, in the same window. Queue selection replaces the former type tabs.
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-native-metadata|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-native-metadata|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|bulk-failed|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
@@ -7289,6 +7289,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   of 51 fictitious L$. Uploaded files leave the list after acknowledgement;
   reopening stays empty. Local previews and unselected / failed /
   cancelled drafts remain; no real transfer or payment.
+  `bulk-failed` is `bulk` on a server that leaves the first upload without
+  an answer once, as after an HTTP 500: untick `mesh-demo` (or calculate its
+  fee), press Import and confirm. The failed
+  row shows its error and is no longer ticked, the rows behind it are
+  cancelled, and the price and Import follow the rows that are left: after
+  "Resume remaining files", and for a file added afterwards. "Resume this
+  draft" on the failed row ticks it again.
   `mesh-physics` shows the physics shape and its edges; `mesh-degenerate`
   injects a triangle defect, which must appear in the preview and block
   the quote with a diagnostic. The convex analysis must allow it to be solved.

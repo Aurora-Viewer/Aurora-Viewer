@@ -56,7 +56,8 @@ removes a worn preview; **Rez** brings it back. Derez/detach keep the source in
 the list and subsequent Blender edits never rez it automatically. A Derez,
 Detach, Drop or Attach happens at once and shows a toast under the status
 line for 8 seconds, whose **Undo** puts the object and its prims back where
-they were. The card's
+they were. Made from the world's menu while the window is closed or
+minimized, the same toast shows over the world, above the toolbar. The card's
 eye remains independent. **Stop** clears all session previews and placement.
 
 **Edit** uses the normal Aurora translation, rotation and size tools, with the
