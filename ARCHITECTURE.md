@@ -3612,6 +3612,10 @@ list for false positives), Linden trees always count, and the faces get the
 `FOLIAGE` record flag; the canopy map (`fs_canopy` in `shaders/object.wgsl`)
 draws the shelter map's casters again from above to keep, per texel, whether
 the topmost surface is foliage (never a worn object) and its height.
+Tumbleweeds are `scene/tumbleweeds.rs`: a few procedural meshes simulated on
+the CPU (rolling with the wind, rays through the picking's triangles for the
+ground and the walls ahead, `Scene::ground_below`, `obstacle_ahead`), added
+to the frame's lists with their shadows.
 
 ## Life of a frame
 

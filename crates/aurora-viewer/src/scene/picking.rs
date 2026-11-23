@@ -503,6 +503,26 @@ impl Scene {
         })
     }
 
+    /// Aurora Weather's tumbleweeds: something solid within `far` m of
+    /// `from` along `dir` (unit): a wall, a fence, a tree (not an avatar,
+    /// a rigged mesh, nor what is physical or moving).
+    pub fn obstacle_ahead(&self, world: &World, from: Vec3, dir: Vec3, far: f32) -> bool {
+        let ray = (from, dir);
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        let now = Instant::now();
+        candidates.iter().any(|&idx| {
+            let (Some(g), Some(o)) = (self.gpu.get(idx), world.objects.get(idx)) else {
+                return false;
+            };
+            if g.hud || g.rigged || g.physical || g.is_avatar || o.pcode != aurora_prim::params::LL_PCODE_VOLUME || !ray_may_hit(g, ray) {
+                return false;
+            }
+            self.face_hit(world, idx, ray, now, false)
+                .is_some_and(|hit| hit.t.is_finite() && hit.t >= 0.0 && hit.t <= far)
+        })
+    }
+
     /// Aurora Weather: the height of the ground within `far` m straight below
     /// `from`: the terrain, or an object's face that does not move (not an
     /// avatar, a rigged mesh, nor what is physical or moving).

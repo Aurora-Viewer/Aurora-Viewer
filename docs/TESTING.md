@@ -4914,6 +4914,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_FOG_COLOUR=sky\|<r>,<g>,<b>` | The fog's colour (the sky's light, or its own in sRGB 0..1) until the Aurora Weather window is used |
 | `AURORA_WEATHER_PRESET=<name>` | An Aurora Weather preset (colour, fall, fog, wind) until the window is used |
 | `AURORA_DEBRIS=<kind>[,stream]` | Aurora Weather's debris (leaves, sand, paper or embers) on until the window is used |
+| `AURORA_DEMO_TUMBLEWEEDS=1` | Aurora Weather's tumbleweeds start in view, 10 m ahead (demo only) |
 | `AURORA_DEMO_FOG=sunset\|neon\|indoor\|underwater\|shelter\|aerial\|ground` | Fog under a fixed sky with props and a placed camera |
 | `AURORA_DEMO_FOG_SWING=<degrees>` | The fog scene's camera swings side to side, through its view at full speed every 100 frames |
 
@@ -4969,7 +4970,11 @@ both open states and the selection count. Capture at frame 620.
   with `AURORA_FOG=off` the saved fog does not hide it. Leaves streaming
   from upwind take ten to twenty seconds to reach the plaza
   (`AURORA_CAPTURE_FRAMES=1800`). `AURORA_PROFILE=1` gives its GPU time
-  in `g_weather`.
+  in `g_weather`. With `AURORA_DEMO_PLANTS=dense` the leaves fall from the
+  trees (the canopy map). Tumbleweeds come with the Dust storm preset; they
+  start upwind out of view, so `AURORA_DEMO_TUMBLEWEEDS=1` starts them 10 m
+  ahead of the camera instead, rolling across the view (the log says
+  `tumbleweeds: one starts…` and `…goes`).
 
 - **Weather (`AURORA_RAIN`, `AURORA_SNOW*`, `AURORA_THUNDER_*`)**: the
   weather of the Aurora Weather window is drawn for

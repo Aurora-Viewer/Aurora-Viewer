@@ -80,6 +80,7 @@ mod sync_plan;
 mod sync_slow;
 pub mod thunder;
 mod tree_detail;
+pub mod tumbleweeds;
 mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
@@ -945,6 +946,8 @@ pub struct Scene {
     studio_visible: bool,
     studio_roots: Vec<Uuid>,
     pub studio_stage: avatar_studio::Stage,
+    /// Aurora Weather's tumbleweeds (their own meshes and records).
+    pub tumbleweeds: tumbleweeds::Tumbleweeds,
     pub studio_pose: crate::avatar_studio::Pose,
     pub studio_floor_offset: f32,
     pub studio_hover_height: f32,
@@ -1778,6 +1781,7 @@ impl Scene {
             studio_visible: false,
             studio_roots: Vec::new(),
             studio_stage: Default::default(),
+            tumbleweeds: Default::default(),
             studio_pose: Default::default(),
             studio_floor_offset: 0.0,
             studio_hover_height: 0.0,

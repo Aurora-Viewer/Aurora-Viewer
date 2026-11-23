@@ -12409,6 +12409,26 @@ impl App {
                 .physics_shapes
                 .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
             self.scene.physics_shapes.append(&mut self.scene.lists);
+            // Aurora Weather's tumbleweeds: rolled, then drawn with the rest
+            {
+                let wind = self
+                    .weather_now
+                    .tumbleweeds
+                    .then_some((self.weather_wind.now, self.weather_wind.gust));
+                let mut weeds = std::mem::take(&mut self.scene.tumbleweeds);
+                weeds.update(
+                    &mut gfx.renderer,
+                    &self.scene,
+                    &self.world,
+                    Instant::now(),
+                    wind,
+                    self.camera.position,
+                    self.camera.forward(),
+                    self.camera.fov_y,
+                );
+                weeds.append(&mut self.scene.lists);
+                self.scene.tumbleweeds = weeds;
+            }
             let huds_shown = self.huds_shown();
             self.scene
                 .build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown, |id| {

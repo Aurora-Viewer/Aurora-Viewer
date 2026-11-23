@@ -805,7 +805,7 @@ mod tests {
     #[test]
     fn foliage_is_a_leafy_colour_with_many_fine_holes() {
         // speckled leaves: a hash pattern, about half solid
-        let speckled = |x: usize, y: usize| (x * 7 + y * 13 + (x * y) % 5) % 3 != 0;
+        let speckled = |x: usize, y: usize| !(x * 7 + y * 13 + (x * y) % 5).is_multiple_of(3);
         assert!(classify_foliage(&image([60, 110, 30], speckled), 32, 32), "green leaves");
         assert!(classify_foliage(&image([170, 90, 20], speckled), 32, 32), "autumn leaves");
         // the same holes in grey (a chain-link fence) or blue: not leaves
