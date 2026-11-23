@@ -121,10 +121,9 @@ pub(crate) fn show(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Sta
         ctx.global_style().spacing.interact_size.y + margin.y,
     );
     let at = position(screen, anchor, size);
-    if st.location_hidden {
-        state.text = None;
-        state.fresh = false;
-    } else if state.text.is_none() {
+    // under @showloc too: the SLURL is the hidden one, as the navigation
+    // bar's field keeps it (LLLocationInputCtrl::changeLocationPresentation)
+    if state.text.is_none() {
         state.text = Some(st.slurl.clone());
     }
     let mut open = true;
@@ -140,30 +139,18 @@ pub(crate) fn show(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Sta
                 ui.set_width(size.x - margin.x);
                 ui.horizontal(|ui| {
                     let width = (ui.available_width() - 52.0 - ui.spacing().item_spacing.x * 2.0).max(1.0);
-                    if st.location_hidden {
-                        // Aurora's own SLURL button: no field while @showloc
-                        // hides the place; the navigation bar's field keeps
-                        // the hidden SLURL like LLLocationInputCtrl
-                        ui.label(aurora_i18n::tr!("toolbar-location-hidden"));
-                    } else {
-                        let saved_text = std::mem::replace(&mut panels.nav_edit, state.text.take());
-                        let saved_fresh = std::mem::replace(&mut panels.nav_edit_new, state.fresh);
-                        action = super::location_field_scoped(ui, p, panels, st, &st.slurl, width, field_id());
-                        state.text = std::mem::replace(&mut panels.nav_edit, saved_text);
-                        state.fresh = std::mem::replace(&mut panels.nav_edit_new, saved_fresh);
-                    }
-                    if widgets::action_button_if(
-                        ui,
-                        p,
-                        "copy-filled",
-                        "",
-                        widgets::ActionKind::Flat,
-                        Vec2::splat(26.0),
-                        !st.location_hidden,
-                    )
-                    .on_hover_text(aurora_i18n::tr!("common-copy"))
-                    .clicked()
-                        && !st.location_hidden
+                    let saved_text = std::mem::replace(&mut panels.nav_edit, state.text.take());
+                    let saved_fresh = std::mem::replace(&mut panels.nav_edit_new, state.fresh);
+                    action = super::location_field_scoped(ui, p, panels, st, &st.slurl, width, field_id());
+                    state.text = std::mem::replace(&mut panels.nav_edit, saved_text);
+                    state.fresh = std::mem::replace(&mut panels.nav_edit_new, saved_fresh);
+                    // the hidden SLURL is copied too, like the place menu's
+                    // Copy (LLStatusBar::onContextMenuItemClicked)
+                    let copy = super::place::slurl_copy_enabled(st);
+                    if widgets::action_button_if(ui, p, "copy-filled", "", widgets::ActionKind::Flat, Vec2::splat(26.0), copy)
+                        .on_hover_text(aurora_i18n::tr!("common-copy"))
+                        .clicked()
+                        && copy
                     {
                         ctx.copy_text(st.slurl.clone());
                     }

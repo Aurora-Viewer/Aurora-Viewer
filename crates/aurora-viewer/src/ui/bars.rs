@@ -4070,10 +4070,6 @@ pub(crate) fn toolbar_row(
             match b.command.as_str() {
                 "edit_particles" => format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("particle-editor-menu-tip")),
                 "photo_roll" => format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("photo-reel-none")),
-                // a native menu entry the menu greys out says so
-                command if command.starts_with(super::toolbar::commands::PREFIX) => {
-                    format!("{}\n{}", super::toolbar::label(b), aurora_i18n::tr!("common-disabled"))
-                }
                 _ => super::toolbar::label(b).to_owned(),
             }
         } else {

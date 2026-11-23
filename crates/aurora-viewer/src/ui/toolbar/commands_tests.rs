@@ -1391,13 +1391,10 @@ fn slurl_button_popup_is_anchored_and_keeps_integrated_navigation_placement() {
             for _ in 0..3 {
                 bench.frame(Vec::new());
             }
-            assert!(
-                bench
-                    .text
-                    .iter()
-                    .any(|(text, _)| text == aurora_i18n::tr!("toolbar-location-hidden"))
-            );
-            assert!(bench.ctx.read_response(bars::location_popup::field_id()).is_none());
+            // @showloc keeps the field, on the hidden SLURL, like the
+            // navigation bar's
+            assert!(bars::location_popup::is_open(&bench.ctx));
+            assert!(bench.ctx.read_response(bars::location_popup::field_id()).is_some());
         }
     }
 }

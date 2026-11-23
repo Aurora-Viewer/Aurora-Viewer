@@ -15613,7 +15613,6 @@ toolbar-block-split-before = { $button } の前
 toolbar-block-remove = ブロックを削除
 toolbar-move-block = ドラッグしてブロック全体を移動
 toolbar-remove-block = ブロックを削除
-toolbar-location-hidden = 位置は非表示です
 toolbar-drawer-empty = このドロワーは空です。
 toolbar-drawer-drop = ボタンをここにドラッグして追加・並べ替えます。
 toolbar-drawer-fold = このブロックをドロワーに収納

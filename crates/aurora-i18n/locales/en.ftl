@@ -15753,7 +15753,6 @@ toolbar-block-split-before = Before { $button }
 toolbar-block-remove = Remove block
 toolbar-move-block = Drag to move the whole block
 toolbar-remove-block = Remove block
-toolbar-location-hidden = Location hidden
 toolbar-drawer-empty = This drawer is empty.
 toolbar-drawer-drop = Drag buttons here to add or reorder them.
 toolbar-drawer-fold = Fold this block into a drawer

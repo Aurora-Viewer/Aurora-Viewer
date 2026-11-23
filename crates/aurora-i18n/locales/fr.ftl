@@ -15762,7 +15762,6 @@ toolbar-block-split-before = Avant { $button }
 toolbar-block-remove = Retirer le bloc
 toolbar-move-block = Glissez pour déplacer tout le bloc
 toolbar-remove-block = Retirer le bloc
-toolbar-location-hidden = Position masquée
 toolbar-drawer-empty = Ce tiroir est vide.
 toolbar-drawer-drop = Glissez des boutons ici pour les ajouter ou les réorganiser.
 toolbar-drawer-fold = Replier ce bloc dans un tiroir

@@ -413,10 +413,6 @@ fn place(
     rect: Rect,
     detail: Detail,
 ) -> Option<BarAction> {
-    if st.location_hidden {
-        panels.nav_edit = None;
-        panels.nav_edit_new = false;
-    }
     if panels.nav_edit.is_some() {
         let mut field = ui.new_child(
             egui::UiBuilder::new()
@@ -773,7 +769,7 @@ mod address_tests {
     use super::*;
 
     #[test]
-    fn the_island_renders_and_focuses_the_requested_slurl_and_clears_it_for_privacy() {
+    fn the_island_renders_and_focuses_the_requested_slurl_and_keeps_it_under_showloc() {
         let ctx = egui::Context::default();
         let p = crate::theme::Theme::default().palette();
         let mut st = super::super::islands::tests::status(true, false);
@@ -802,7 +798,8 @@ mod address_tests {
         let _ = ctx.run_ui(Default::default(), |ui| {
             place(ui, &p, &Icons::default(), &mut panels, &st, rect, Detail::Bare);
         });
-        assert!(panels.nav_edit.is_none(), "a newly active privacy restriction clears the URL");
+        // like the navigation bar (LLLocationInputCtrl): the field stays open
+        assert!(panels.nav_edit.is_some(), "@showloc keeps the field open");
     }
 }
 
