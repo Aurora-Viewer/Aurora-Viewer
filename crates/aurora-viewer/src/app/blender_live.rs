@@ -250,6 +250,8 @@ impl App {
                 self.blender_live.bend.elbows = 90.0;
                 self.blender_live.bend.knees = 60.0;
                 crate::blender_live::demo_sleeves_fixture(&self.world.avatar_lib.rig)
+            } else if mode == "warnings" {
+                crate::blender_live::demo_warnings_fixture(&self.world.avatar_lib.rig)
             } else if mode.starts_with("static") {
                 crate::blender_live::demo_static_fixture(&self.world.avatar_lib.rig, mode.starts_with("static-linked"))
             } else {

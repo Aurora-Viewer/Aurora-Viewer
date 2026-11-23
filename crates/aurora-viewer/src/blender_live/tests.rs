@@ -177,6 +177,37 @@ pub(super) fn static_triangle() -> serde_json::Value {
 }
 
 #[test]
+fn blender_live_object_warnings_are_bounded_and_never_refuse_the_snapshot() {
+    use protocol::WarningKind;
+    let id = Uuid::from_u128(7);
+    let mut value = static_triangle();
+    value["warnings"] = serde_json::json!([
+        {"source_id": id, "name": "Textured", "kind": "textures", "reason": "Bake procedural shaders"},
+        {"name": "Too large", "kind": "not-sent", "reason": format!("limit\n{}", "r".repeat(900))},
+        {"name": "Later plug-in", "kind": "something-new", "reason": "skipped"},
+        {"name": "  ", "kind": "textures", "reason": "no name: skipped"}
+    ]);
+    let prepared = prepare(&value).expect("a snapshot with warnings");
+    assert_eq!(prepared.sources.len(), 1, "the meshes are untouched");
+    assert_eq!(prepared.warnings.len(), 2, "unknown kinds and empty names are dropped");
+    assert_eq!(prepared.warnings[0].source, Some(id));
+    assert_eq!(prepared.warnings[0].kind, WarningKind::Textures);
+    assert_eq!(prepared.warnings[1].source, None);
+    assert_eq!(prepared.warnings[1].kind, WarningKind::NotSent);
+    let reason = &prepared.warnings[1].reason;
+    assert!(reason.starts_with("limit r") && !reason.contains('\n'), "control characters become spaces");
+    assert_eq!(reason.chars().count(), 512);
+    // many warnings are cut, not refused
+    value["warnings"] = serde_json::json!(vec![serde_json::json!({"name": "n", "kind": "not-sent", "reason": ""}); 200]);
+    assert_eq!(prepare(&value).expect("many warnings").warnings.len(), protocol::MAX_WARNINGS);
+    // an unknown field in a warning is a protocol error, like the rest of the snapshot
+    value["warnings"] = serde_json::json!([{"name": "n", "kind": "textures", "reason": "", "extra": 1}]);
+    assert!(prepare(&value).is_err());
+    // a snapshot without warnings has none
+    assert!(prepare(&static_triangle()).expect("plain").warnings.is_empty());
+}
+
+#[test]
 fn blender_live_static_sources_have_normalized_geometry_without_a_skin() {
     let mut value = static_triangle();
     let source = Uuid::new_v4();
@@ -1062,6 +1093,58 @@ fn blender_live_static_controls_request_derez_rez_and_hud_attachment_for_the_sel
     frame(&mut live, click(at, true));
     frame(&mut live, click(at, false));
     assert!(matches!(live.object_action.take(), Some((id, objects::Action::Attach(31))) if id == source));
+}
+
+#[test]
+fn blender_live_cards_show_blenders_warnings_and_list_what_it_could_not_send() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
+    let palette = theme.palette();
+    let lib = crate::scene::avatar::AvatarLibrary::load();
+    let mut live = Live {
+        open: true,
+        ..Default::default()
+    };
+    live.receive(super::demo::warnings_fixture(&lib.rig).expect("fixture"));
+    let texts = |live: &mut Live| -> Vec<String> {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1200.0))),
+                ..Default::default()
+            },
+            |ui| {
+                super::ui::show(live, ui.ctx(), &palette, true);
+            },
+        );
+        out.textures_delta.clear();
+        out.shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    };
+    for _ in 0..3 {
+        texts(&mut live);
+    }
+    let shown = texts(&mut live);
+    let textures = aurora_i18n::tr!("blender-live-warning-textures");
+    let not_sent = aurora_i18n::tr!("blender-live-warning-not-sent");
+    assert!(
+        shown.iter().any(|t| t.starts_with(textures) && t.ends_with("Bake procedural shaders to UV image textures for live materials")),
+        "the textured object's card says why: {shown:?}"
+    );
+    for name in ["Sculpted rock", "Hair cards"] {
+        assert!(shown.iter().any(|t| t == name), "{name} has its own card");
+    }
+    assert_eq!(shown.iter().filter(|t| t.starts_with(not_sent)).count(), 2);
+    // the next revision without warnings clears them
+    live.receive(prepare(&static_triangle()).expect("plain"));
+    let shown = texts(&mut live);
+    assert!(!shown.iter().any(|t| t.starts_with(textures) || t.starts_with(not_sent) || t == "Hair cards"));
 }
 
 #[test]
