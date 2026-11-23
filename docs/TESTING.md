@@ -8119,12 +8119,15 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_PROFILE=1`, `out_draws` stays near 0 while nothing changes in
   the window: a preview does not have it drawn again at every frame. With
   `AURORA_DEMO_UI_FEATURE=cycle` (the interface off at frame 600, back at
-  900), the window stays up with its last picture and the log has one
-  `window outside 1: …` line only: it is not closed and opened again. The
-  same holds by hand for mouselook, immersive mode, "Hide the interface",
-  the Director's playback and the photo mode's full frame; in the first
-  three the window stays live, in the others it takes no click until the
-  interface is back.
+  900), the window stays up with its last picture under a shade and the
+  notice "Paused while the interface is off", and the log has one
+  `window outside 1: …` line only: it is not closed and opened again. With
+  `AURORA_PROFILE=1`, no `out_draws` is reported while it is off: the
+  notice is drawn once. The same holds by hand for mouselook, immersive
+  mode, "Hide the interface", the Director's playback and the photo mode's
+  full frame; in the first three the window stays live, in the others it
+  shows its notice and takes no click until the interface is back. With
+  the build tools open, Escape leaves the photo mode and they stay open.
 - **`AURORA_DEMO_TOOLBOX`**: `1` opens the Dev Toolbox (Advanced › Dev
   Toolbox, Ctrl+Alt+D); `edit` opens it in Customize (grips, "+ Add a
   tool"); `<target>:<tool>` chooses the target (0 nearest avatar, 1

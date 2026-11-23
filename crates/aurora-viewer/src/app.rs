@@ -1392,6 +1392,15 @@ fn exit_prompt_modifiers(mods: Mods, super_held: bool) -> egui::Modifiers {
 
 /// A press winit made up from the keyboard state when the window gained the
 /// focus. Its synthetic releases stay: they only ever clear a held key.
+/// A key press brought the interface's windows back, which were not drawn
+/// before it (`App::windows_drawn`): Escape out of the full-frame photo
+/// view or of the Director's playback. The press is used: egui's copy of it
+/// is not a shortcut of the windows too at their next pass (the build
+/// tools' Escape would close them).
+fn key_brought_windows_back(drawn_before: bool, drawn_after: bool) -> bool {
+    !drawn_before && drawn_after
+}
+
 fn synthetic_press(is_synthetic: bool, state: ElementState) -> bool {
     is_synthetic && state == ElementState::Pressed
 }
@@ -3395,6 +3404,13 @@ impl App {
 
     fn in_world(&self) -> bool {
         matches!(self.screen, Screen::World | Screen::Loading { .. })
+    }
+
+    /// The interface's windows are drawn at this frame of the world
+    /// (`draw_ui`): not where it shows the world alone, with "UI off", the
+    /// Director's playback or the full-frame photo view.
+    fn windows_drawn(&self) -> bool {
+        !(self.interface.ui_off || self.director_playing() || self.photo_full_frame())
     }
 
     /// Nearby chat in bubbles above the heads (#673); AURORA_DEMO_CHAT_BUBBLES
@@ -11979,6 +11995,11 @@ impl App {
             // (nor while the Director's track plays or it films: the world alone)
             // (nor with the UI not drawn, Ctrl+Alt+F1: render_ui_3d's
             // renderSelections goes with it in the Legacy Viewer)
+            // What the build tools draw in the world goes with it, all of
+            // it: the outlines here, the faces' halo and pattern, and below
+            // the Create tool's preview, the holograms and the physics
+            // shapes. The tools may be open behind the photo view, or in a
+            // window outside.
             let bare = self.photo_full_frame() || self.director_playing() || self.director_filming() || self.interface.ui_off;
             let mut selection_wire = if bare {
                 Default::default()
@@ -12004,10 +12025,10 @@ impl App {
             // Use face coverage while highlighting local appearances. Actual
             // build selection, wire outlines and edits stay untouched; its
             // ordinary face overlay returns when the mode is switched off.
-            let revealing = self.imports.local_status.revealing();
+            let revealing = !bare && self.imports.local_status.revealing();
             // (TE mode's faces show the face-select pattern, and the halo
             // with "Show highlight": the picks are gathered once)
-            let pattern = if revealing {
+            let pattern = if revealing || bare {
                 Default::default()
             } else {
                 self.build.face_picks(&self.world)
@@ -12270,6 +12291,7 @@ impl App {
                 && self.cursor_pos.1 >= 0.0
                 && self.cursor_pos.0 < w as f32
                 && self.cursor_pos.1 < h as f32
+                && !bare
                 && self.build.creation_preview_enabled(&self.settings.build, over_ui, mods)
             {
                 let mut candidates = std::mem::take(&mut self.scene.creation_preview.candidates);
@@ -12290,8 +12312,8 @@ impl App {
             {
                 use crate::build::MoveHologram;
                 use crate::scene::build_hologram::Ghost;
-                let landing = self.build.place.active.then_some(self.build.place.preview).flatten();
-                let moving = self.build.move_hologram(&self.world, &self.settings.build);
+                let landing = (!bare && self.build.place.active).then_some(self.build.place.preview).flatten();
+                let moving = self.build.move_hologram(&self.world, &self.settings.build).filter(|_| !bare);
                 let now = moving.as_ref().map(|(_, m)| crate::build::Bounds {
                     center: m.start.center + m.delta,
                     ..m.start
@@ -12305,7 +12327,11 @@ impl App {
                 self.scene.update_build_hologram(&mut gfx.renderer, copies, in_place);
             }
             self.scene.build_hologram.append(&mut self.scene.lists);
-            let physics = crate::scene::physics_shapes::selection(&self.build, &self.world, &self.settings.build);
+            let physics = if bare {
+                Vec::new()
+            } else {
+                crate::scene::physics_shapes::selection(&self.build, &self.world, &self.settings.build)
+            };
             self.scene
                 .physics_shapes
                 .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
@@ -25383,7 +25409,13 @@ impl ApplicationHandler for App {
                         && !altgr_text
                         && !self.egui_ctx.egui_wants_keyboard_input()
                         && !egui::Popup::is_any_open(&self.egui_ctx);
-                    let build_shortcut = pressed
+                    // The build tools run their shortcuts with the
+                    // interface's windows (`build::ui::shortcuts`, in
+                    // `draw_ui`): where none is drawn, a key kept for them
+                    // would do nothing at all, and Escape would not leave
+                    // the full-frame photo view while they are open.
+                    let windows_drawn = self.windows_drawn();
+                    let build_shortcut = (pressed && windows_drawn)
                         .then(|| {
                             crate::build::ui::Shortcut::take_native_key(
                                 &ke.logical_key,
@@ -25541,6 +25573,11 @@ impl ApplicationHandler for App {
                         && !ui_shortcut
                     {
                         self.on_input(Input::key(code), pressed);
+                        if key_brought_windows_back(windows_drawn, self.windows_drawn())
+                            && let Some(g) = self.gfx.as_mut()
+                        {
+                            g.egui_state.egui_input_mut().events.truncate(first_event);
+                        }
                     }
                 }
             }
@@ -25978,6 +26015,17 @@ mod tests {
         assert!(clouds_choice(Some("aurora"), false, false));
         assert!(!clouds_choice(Some("legacy"), true, true), "before / after on the same sky");
         assert!(clouds_choice(Some("other"), true, false), "an unknown value changes nothing");
+    }
+
+    #[test]
+    fn the_key_that_brings_the_windows_back_is_not_theirs_too() {
+        use super::key_brought_windows_back;
+        // Escape out of the full-frame photo view, of the Director's playback
+        assert!(key_brought_windows_back(false, true));
+        // a key of the photo view that leaves it up, a key among the windows
+        assert!(!key_brought_windows_back(false, false));
+        assert!(!key_brought_windows_back(true, true));
+        assert!(!key_brought_windows_back(true, false));
     }
 
     #[test]
