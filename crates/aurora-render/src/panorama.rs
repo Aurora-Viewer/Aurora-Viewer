@@ -81,6 +81,13 @@ impl PanoRegion {
     }
 }
 
+/// Whether two callbacks of one place show the same panorama: the same
+/// image and view. `None`: not both panoramas.
+pub(crate) fn same(a: &egui::PaintCallback, b: &egui::PaintCallback) -> Option<bool> {
+    let (a, b) = (a.callback.downcast_ref::<PanoRegion>()?, b.callback.downcast_ref::<PanoRegion>()?);
+    Some(a.id == b.id && Arc::ptr_eq(&a.image, &b.image) && a.params == b.params)
+}
+
 /// Adds the viewer to `painter` over `rect`. `id` names its render target.
 pub fn paint_in(painter: &egui::Painter, rect: egui::Rect, id: egui::Id, image: Arc<Image>, params: PanoParams) {
     painter.add(egui::Shape::Callback(egui::PaintCallback {
@@ -411,9 +418,13 @@ pub(crate) struct Cache {
     pipelines: Option<Pipelines>,
     targets: HashMap<egui::Id, Target>,
     sources: HashMap<usize, (Weak<Image>, Option<Source>)>,
-    /// The images drawn this frame: the others are let go (a closed window's
-    /// panorama is not kept on the GPU).
+    /// The images drawn in the pass under way.
     used: HashSet<usize>,
+    /// The viewers and the images each window showed in its last pass: the
+    /// others are let go (a closed window's panorama is not kept on the
+    /// GPU).
+    shown: crate::preview::Shown<egui::Id>,
+    shown_images: crate::preview::Shown<usize>,
 }
 
 impl Cache {
@@ -515,19 +526,30 @@ impl Cache {
         mesh
     }
 
-    /// Forgets the viewers not drawn this frame and the images nobody holds.
-    pub(crate) fn retain(&mut self, seen: &HashSet<egui::Id>, egui: &mut egui_wgpu::Renderer) {
+    /// The viewers `shower`'s pass drew, and its images.
+    pub(crate) fn show(&mut self, shower: crate::preview::Shower, seen: HashSet<egui::Id>) {
+        self.shown.set(shower, seen);
+        self.shown_images.set(shower, std::mem::take(&mut self.used));
+    }
+
+    /// Whether a window outside that showed a panorama went.
+    pub(crate) fn keep_outside(&mut self, alive: impl Fn(u64) -> bool) -> bool {
+        let viewers = self.shown.keep_outside(&alive);
+        self.shown_images.keep_outside(&alive) || viewers
+    }
+
+    /// Forgets the viewers no window shows and the images nobody holds.
+    pub(crate) fn retain(&mut self, egui: &mut egui_wgpu::Renderer) {
+        let (shown, images) = (&self.shown, &self.shown_images);
         self.targets.retain(|id, target| {
-            if seen.contains(id) {
+            if shown.has(id) {
                 true
             } else {
                 egui.free_texture(&target.texture);
                 false
             }
         });
-        let used = std::mem::take(&mut self.used);
-        self.sources
-            .retain(|key, (owner, _)| owner.strong_count() > 0 && used.contains(key));
+        self.sources.retain(|key, (owner, _)| owner.strong_count() > 0 && images.has(key));
     }
 }
 

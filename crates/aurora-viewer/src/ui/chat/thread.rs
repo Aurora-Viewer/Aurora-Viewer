@@ -17,7 +17,7 @@
 //! stay in the thread. The texts are the classic lines' (`chat_text_marked`:
 //! links, places, mentions, emoji, find highlights, selection).
 
-use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, line_name_menu, sender_name, view};
+use super::{LineEnv, Mark, chat_text_bracketed, chat_text_marked, hhmm, history_tone, line_name_menu, sender_name, view};
 use crate::theme::Palette;
 use crate::ui::fonts::chat_size;
 use crate::world::chat_log::format::Slt;
@@ -224,9 +224,10 @@ impl Who {
     }
 }
 
-/// The colour of an author's name: ours in the theme's teal, a moderator's
-/// in light violet, an object's in the colour of objects, a history line's
-/// greyed.
+/// The colour of an author's name: a moderator's in light violet, a
+/// history line's greyed, any other in the senders' colour of Preferences ›
+/// Emitter (Avatars, ours included, or Objects), as FSChatHistory::appendMessage
+/// (indra/newview/fschathistory.cpp) gives every resident ChatNameColor.
 fn name_color(env: &LineEnv, th: &Thread, line: &ChatLine, who: &Who) -> Color32 {
     let p = env.p;
     if let Some(color) = crate::ui::colors::contact_sender_color(line, env.world) {
@@ -235,20 +236,15 @@ fn name_color(env: &LineEnv, th: &Thread, line: &ChatLine, who: &Who) -> Color32
     if let Some(tone) = history_tone(p, line.origin) {
         return tone;
     }
-    if who.object {
-        return crate::ui::colors::sender_color(line);
-    }
-    if line.kind.is_own() {
-        return p.teal;
-    }
-    if th.moderators.is_some_and(|m| m.contains(&line.source)) {
+    if !who.object && th.moderators.is_some_and(|m| m.contains(&line.source)) {
         return p.violet_light;
     }
-    p.ink
+    crate::ui::colors::sender_color(line)
 }
 
-/// The text of a message and how it reads: an emote is the name in violet
-/// italics, a whisper in grey italics; the user's chat colours otherwise.
+/// The text of a message and how it reads: an emote is the name and its
+/// action in italics, a whisper in grey italics; the user's chat colours
+/// for all of them.
 /// The lines drawn pass `shown_name` ("(You)" with the option); a quote
 /// passes the real name, since it is pasted for others to read.
 fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
@@ -306,7 +302,7 @@ pub(super) fn tag(ui: &mut egui::Ui, text: &str, fill: Option<Color32>, color: C
 fn name_label(ui: &mut egui::Ui, env: &LineEnv, line: &ChatLine, name: &str, color: Color32, who: &Who, max: f32) {
     // "(You)" with the option; a moderator's name style adds its italics
     // (the names are semi-bold already)
-    let mut text = RichText::new(super::shown_name(line, name))
+    let mut text = RichText::new(super::chat_header_name(env.world, line, name))
         .font(egui::FontId::new(chat_size(ui.ctx(), 13.5), crate::ui::fonts::semibold(ui.ctx())))
         .color(color);
     if super::moderator_look(env, line).is_some_and(|(n, _)| n.italics) {
@@ -581,18 +577,19 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
-            chat_text_marked(
+            chat_text_bracketed(
                 ui,
                 p,
                 env.emoji,
                 env.world,
                 line.wording(env.names),
                 env.want_names,
-                &super::system_text(&line.text),
+                &line.text,
                 chat_size(ui.ctx(), 12.0),
                 tone,
                 false,
                 mark,
+                super::system_brackets(env.world, line),
             );
         });
     });

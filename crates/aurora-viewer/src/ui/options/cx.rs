@@ -359,7 +359,7 @@ impl<'a> Cx<'a> {
         // in a frame (one per collapsing section).
         let number_width = if mode.draws() {
             let font = ui.style().drag_value_text_style.resolve(ui.style());
-            let pass = ui.ctx().cumulative_pass_nr();
+            let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
             let pad = ui.spacing().button_padding.x;
             match &st.number_width {
                 Some((at, f, width, padding)) if *at == pass && *f == font && *padding == pad => *width,

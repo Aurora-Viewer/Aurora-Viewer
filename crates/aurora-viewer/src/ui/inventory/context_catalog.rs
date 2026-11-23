@@ -613,6 +613,14 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                         single && !it.asset_id.is_nil(),
                         InvAction::Environment(it.asset_id, it.flags),
                     );
+                    c.invoke(
+                        "apply-save-parcel",
+                        TEXT,
+                        "map-pin-filled",
+                        aurora_i18n::tr!("parcel-environment-apply-save"),
+                        single && crate::world::inventory::actions::environment_applies_locally(it) && !facts.environment_locked,
+                        InvAction::EnvironmentSaveParcel(it.asset_id, it.flags),
+                    );
                 }
             }
             let selected: Vec<_> = ids.iter().filter_map(|id| rules::original(inv, *id)).collect();
@@ -1378,6 +1386,83 @@ mod tests {
     }
 
     #[test]
+    fn the_parcel_save_row_is_greyed_while_rlva_holds_the_environment() {
+        let mut inv = inventory();
+        let item = Uuid::from_u128(8103);
+        let settings = inv.items.get_mut(&item).expect("demo item");
+        settings.asset_type = 56;
+        settings.inv_type = 56;
+        settings.asset_id = Uuid::from_u128(4243);
+        let enabled = |facts: &Facts| {
+            let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), facts);
+            c.entries
+                .iter()
+                .find(|e| e.id == "apply-save-parcel")
+                .expect("parcel save row")
+                .enabled
+        };
+        assert!(enabled(&facts()));
+        let locked = Facts {
+            environment_locked: true,
+            ..facts()
+        };
+        assert!(!enabled(&locked));
+    }
+
+    #[test]
+    fn the_parcel_save_row_takes_a_no_copy_or_no_modify_environment() {
+        use crate::world::inventory::actions::{COPY, MODIFY, TRANSFER};
+        let item = Uuid::from_u128(8103);
+        for mask in [MODIFY | TRANSFER, COPY | TRANSFER, 0] {
+            let mut inv = inventory();
+            let settings = inv.items.get_mut(&item).expect("demo item");
+            settings.asset_type = 56;
+            settings.inv_type = 56;
+            settings.asset_id = Uuid::from_u128(4243);
+            settings.base_mask = mask;
+            settings.owner_mask = mask;
+            let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), &facts());
+            let row = c.entries.iter().find(|e| e.id == "apply-save-parcel").expect("parcel save row");
+            assert!(row.enabled, "mask {mask:#x}");
+        }
+    }
+
+    #[test]
+    fn the_parcel_save_row_takes_an_environment_whoever_owns_it() {
+        // AGENTS.md §2's owner cases, with no permission and with all
+        let me = Uuid::from_u128(2);
+        let group = Uuid::from_u128(4244);
+        let item = Uuid::from_u128(8103);
+        let facts = Facts { agent: me, ..facts() };
+        for (case, owner, group_owned, library) in [
+            ("mine", me, false, false),
+            ("group-owned", group, true, false),
+            ("someone else's", Uuid::from_u128(4245), false, false),
+            ("the Library's", Uuid::from_u128(4246), false, true),
+        ] {
+            for mask in [crate::world::inventory::actions::FULL, 0] {
+                let mut inv = inventory();
+                let settings = inv.items.get_mut(&item).expect("demo item");
+                settings.asset_type = 56;
+                settings.inv_type = 56;
+                settings.asset_id = Uuid::from_u128(4243);
+                settings.base_mask = mask;
+                settings.owner_mask = mask;
+                settings.owner = owner;
+                settings.group_owned = group_owned;
+                settings.group_id = if group_owned { group } else { Uuid::nil() };
+                let parent = settings.parent;
+                if library {
+                    inv.folders.get_mut(&parent).expect("demo folder").library = true;
+                }
+                let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), &facts);
+                let row = c.entries.iter().find(|e| e.id == "apply-save-parcel").expect("parcel save row");
+                assert!(row.enabled, "{case}, mask {mask:#x}");
+            }
+        }
+    }
+
+    #[test]
     fn landmark_destination_actions_use_link_targets_and_require_one_available_asset() {
         let mut inv = inventory();
         let item = Uuid::from_u128(8103);
@@ -1483,6 +1568,7 @@ mod tests {
             "play-local",
             "play-sound",
             "apply-environment",
+            "apply-save-parcel",
             "gesture-active",
             "about-landmark",
             "copy-landmark-slurl",

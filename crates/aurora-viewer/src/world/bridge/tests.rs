@@ -1471,6 +1471,7 @@ fn production_receive_path_hides_protocol_before_chat_and_applies_regular_world_
     assert!(sim.bridge.accept_candidate(&sim.world, sim.now));
     let count = sim.world.inventory.items.len();
     sim.event(NetEvent::InventoryUpdated {
+        bulk: false,
         folders: Vec::new(),
         items: vec![aurora_net::inventory::InvItem {
             id: Uuid::from_u128(0xAB_CD),
@@ -2110,6 +2111,7 @@ fn worn_firestorm_bridge_is_only_detached_once_without_any_inventory_or_script_e
     let folder = Uuid::from_u128(0xF501);
     let item = Uuid::from_u128(0xF502);
     sim.world.apply(NetEvent::InventoryUpdated {
+        bulk: false,
         folders: vec![
             InvFolder {
                 id: fs,

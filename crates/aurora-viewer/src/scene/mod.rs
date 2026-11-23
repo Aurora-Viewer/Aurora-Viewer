@@ -922,6 +922,8 @@ pub struct Scene {
     pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
+    /// LiveMesh's elbow and knee bend of our avatar (`anim::PreviewBend`).
+    pub preview_bend: anim::PreviewBend,
     /// Session-only keyframe animation rate for every avatar and animesh.
     pub animation_speed: f32,
     /// Session-only slow motion on our avatar (the Legacy Viewer's 0.2 factor).
@@ -1758,6 +1760,7 @@ impl Scene {
             ik_edit_others: HashMap::new(),
             poser: HashMap::new(),
             synchronize_animations: false,
+            preview_bend: anim::PreviewBend::default(),
             animation_speed: 1.0,
             slow_motion_animations: false,
             ground_avatar_feet: false,
@@ -3185,6 +3188,7 @@ impl Scene {
 
         if self.update_origin(world) {
             renderer.cut_motion_history();
+            renderer.rebase_world();
             self.water.clear(renderer);
         }
 
@@ -4231,6 +4235,11 @@ impl Scene {
     /// avatar, or the root of an animated-mesh (animesh) linkset.
     pub fn skeleton_owner(world: &World, idx: usize) -> Option<(Uuid, usize)> {
         animesh::owner(&world.objects, idx)
+    }
+
+    /// The palette base of a skeleton owner that has one.
+    pub fn palette_of(&self, owner: &Uuid) -> Option<u32> {
+        self.palette_slots.get(owner).map(|s| *s * anim::PALETTE_JOINTS as u32)
     }
 
     /// Palette base (first matrix index) for a skeleton owner.
@@ -6170,6 +6179,11 @@ impl Scene {
             motions.aurora_feet = self.ground_avatar_feet;
             motions.look_over_animations = photo_look;
             motions.look_glance = if photo_look { world.look_at.photo.glance } else { 0.0 };
+            motions.preview_bend = if owner == world.agent_id {
+                self.preview_bend
+            } else {
+                anim::PreviewBend::default()
+            };
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {
