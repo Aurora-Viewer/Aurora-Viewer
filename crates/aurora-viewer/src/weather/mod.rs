@@ -200,6 +200,11 @@ pub struct WeatherSettings {
     /// Textures never taken as foliage (false positives of the classifier,
     /// `scene::jobs::classify_foliage`): kept on this computer only.
     pub debris_not_foliage: Vec<uuid::Uuid>,
+    /// The user's own pictures for the leaves and the paper (image files on
+    /// this computer, up to `scene::debris_textures::MAX` each; none: the
+    /// drawn shapes).
+    pub debris_pictures_leaves: Vec<std::path::PathBuf>,
+    pub debris_pictures_paper: Vec<std::path::PathBuf>,
     pub quality: WeatherQuality,
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
@@ -268,6 +273,8 @@ impl Default for WeatherSettings {
             debris_stream: false,
             tumbleweeds: false,
             debris_not_foliage: Vec::new(),
+            debris_pictures_leaves: Vec::new(),
+            debris_pictures_paper: Vec::new(),
             quality: WeatherQuality::High,
             touched: false,
             former_region_weather: None,
@@ -321,6 +328,12 @@ impl WeatherSettings {
             w.debris_on = true;
             w.debris_kind = kind;
             w.debris_stream = stream;
+        }
+        if !w.touched
+            && let Some(files) = debris::env_pictures()
+        {
+            w.debris_pictures_leaves = files.clone();
+            w.debris_pictures_paper = files;
         }
         if !(w.enabled && w.precipitation_on) {
             w.amount = 0.0;

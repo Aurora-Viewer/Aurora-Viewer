@@ -238,6 +238,9 @@ struct FrameU {
     /// Aurora Weather's tint, gust and fall (`WeatherTint::uniform`; zero:
     /// none).
     weather_tint: [[f32; 4]; 4],
+    /// Aurora Weather's debris pictures (`DebrisLook::pictures`): [0..2]
+    /// the leaves', [2..4] the paper's; zero: none.
+    debris_pictures: [[u32; 4]; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -8415,6 +8418,12 @@ impl Backend {
             .rain_look
             .tint
             .uniform(f.rain_look.gust, f.rain_look.fall_speed, f.rain_look.flutter, f.rain_look.sand);
+        if let Some(d) = &f.debris {
+            for (k, list) in d.pictures.iter().enumerate() {
+                u.debris_pictures[k * 2] = [list[0], list[1], list[2], list[3]];
+                u.debris_pictures[k * 2 + 1] = [list[4], list[5], list[6], list[7]];
+            }
+        }
         u.selection_color = f.selection_color;
         // (object.wgsl fs_selection_pattern; 0: its procedural stand-in)
         u.features[FEATURE_FACE_SELECT_SLOT] = f.face_select_texture;
@@ -12138,11 +12147,12 @@ impl Backend {
         // reads, before the scene that reads it; then the sky's pipeline
         mark(&mut encoder, MARK_DEBRIS_BEGIN);
         // ---- Aurora Weather's canopy map (debris.rs): the shelter map's
-        // casters again, from above, into its own small target, for the
-        // leaves to fall from foliage (with its draws, this frame's)
+        // casters again, from above, into its own small target: the leaves
+        // fall from the foliage, and every debris through it to the floor
+        // under it (with its draws, this frame's)
         if shelter_drawn_now
             && still.is_none()
-            && f.debris.is_some_and(|d| d.kind == crate::types::DebrisKind::Leaves)
+            && f.debris.is_some()
             && let Some(debris) = &mut self.debris
         {
             let [canopy, floor, depth] = debris.canopy_targets();

@@ -78,7 +78,7 @@ pub fn wanted_share(look: &DebrisLook, wind: Vec2, gust: f32) -> f32 {
     let base = match look.kind {
         // sand and paper only move in a wind (sand streams by near the
         // camera: a share of the pool is plenty)
-        DebrisKind::Sand => windy * 0.45,
+        DebrisKind::Sand => (0.1 + 0.9 * windy) * 0.45,
         DebrisKind::Paper => windy,
         // motes hang in still air; a wind clears them away
         DebrisKind::Motes => 0.1 * (1.0 - 0.7 * windy),
@@ -455,7 +455,8 @@ mod tests {
         let calm = wanted_share(&leaves, Vec2::ZERO, 0.0);
         let windy = wanted_share(&leaves, Vec2::new(8.0, 0.0), 1.0);
         assert!(calm > 0.0 && calm < windy * 0.2, "{calm} {windy}");
-        assert_eq!(wanted_share(&sand, Vec2::ZERO, 1.0), 0.0);
+        // (a little sand stirs even in still air: a breeze moves some)
+        assert!(wanted_share(&sand, Vec2::ZERO, 1.0) < 0.1);
         assert!(wanted_share(&sand, Vec2::new(10.0, 0.0), 0.5) > 0.15);
         // never the whole pool: slots are left to spawn into
         assert!(windy <= 0.95);

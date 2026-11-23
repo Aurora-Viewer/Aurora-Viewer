@@ -27,6 +27,20 @@ const DD_PAPER: u32 = 3u;
 const DD_EMBERS: u32 = 4u;
 const DD_MOTES: u32 = 5u;
 
+// The user's pictures for a kind (0 leaves, 1 paper): how many, and the
+// `k`th's slot.
+fn dd_picture_count(which: u32) -> u32 {
+    var n = 0u;
+    for (var i = 0u; i < 8u; i++) {
+        if (frame.debris_pictures[which * 2u + i / 4u][i % 4u] != 0u) { n = i + 1u; }
+    }
+    return n;
+}
+
+fn dd_picture(which: u32, k: u32) -> u32 {
+    return frame.debris_pictures[which * 2u + k / 4u][k % 4u];
+}
+
 fn dd_rotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
     let t = 2.0 * cross(q.xyz, v);
     return v + q.w * t + cross(q.xyz, t);
@@ -81,6 +95,10 @@ fn vs_debris(
         if (kind == DD_PAPER) {
             extent = vec2<f32>(1.0, 0.75);
             crease = 0.08 + 0.1 * f32(variant & 7u) / 7.0;
+        }
+        // a picture of the user's: a square card, its own outline in it
+        if (dd_picture_count(select(0u, 1u, kind == DD_PAPER)) > 0u) {
+            extent = vec2<f32>(1.0, 1.0);
         }
         let local = vec3<f32>(c.x * extent.x, c.y * extent.y, crease * extent.y * (1.0 - abs(c.y))) * size;
         let world = p.xyz + dd_rotate(q, local);
@@ -179,7 +197,17 @@ fn fs_debris(in: DebrisOut, @builtin(front_facing) front: bool) -> @location(0) 
     var emissive = vec3<f32>(0.0);
     var cover = 1.0;
     var through = 0.0;
-    if (kind == DD_LEAVES) {
+    let pictures = select(0u, dd_picture_count(select(0u, 1u, kind == DD_PAPER)), kind == DD_LEAVES || kind == DD_PAPER);
+    if (pictures > 0u) {
+        // one of the user's pictures, the particle's own: its colour and
+        // its cut-out (along the card is up the picture, its stem at the
+        // bottom)
+        let slot = dd_picture(select(0u, 1u, kind == DD_PAPER), variant % pictures);
+        let c = sample_tex(slot, vec2<f32>(in.uv.y * 0.5 + 0.5, 0.5 - in.uv.x * 0.5));
+        cover = c.a;
+        base = c.rgb;
+        through = select(0.3, 0.55, kind == DD_LEAVES);
+    } else if (kind == DD_LEAVES) {
         let d = dd_leaf_shape(in.uv, variant);
         cover = clamp(d / max(fwidth(d), 1e-4) + 0.5, 0.0, 1.0);
         base = dd_leaf_colour(variant);

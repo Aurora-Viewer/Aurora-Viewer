@@ -152,6 +152,17 @@ fn ds_ground(xy: vec2<f32>, z: f32) -> f32 {
     return select(top, floor, floor <= z + 0.05);
 }
 
+// The floor under the foliage at `xy` (m; -1e9 where none known).
+fn ds_floor(xy: vec2<f32>) -> f32 {
+    if ((dp.look.w & FLAG_CANOPY) == 0u || !ds_on()) { return -1e9; }
+    let uv = ds_uv(xy);
+    if (any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) { return -1e9; }
+    let d = textureLoad(debris_floor, vec2<i32>(uv * vec2<f32>(textureDimensions(debris_floor))), 0);
+    if (d >= 0.999) { return -1e9; }
+    let m = ds_vp();
+    return (d - m[3].z) / m[2].z;
+}
+
 // The surface's facing at `xy` (from its heights a texel around), for a
 // particle at height `z`.
 fn ds_normal(xy: vec2<f32>, h: f32, z: f32) -> vec3<f32> {
@@ -201,8 +212,10 @@ fn ds_air(p: vec3<f32>, above: f32) -> vec3<f32> {
     let gust = dp.wind.z;
     let wind = dp.wind.xy;
     let speed = length(wind);
-    // slower near the ground (a log profile, roughly), full by 10 m
-    let profile = clamp(log(max(above, 0.05) / 0.05 + 1.0) / log(201.0), 0.15, 1.0);
+    // slower near the ground (a log profile, roughly), full by 10 m; sand
+    // (light, rolling on the surface) catches more of it down there
+    let floor_share = select(0.15, 0.4, dp.look.x == DK_SAND);
+    let profile = clamp(log(max(above, 0.05) / 0.05 + 1.0) / log(201.0), floor_share, 1.0);
     // the eddies drift with the wind and churn faster in it
     let t = dp.wind.w;
     let q = p * 0.18 - vec3<f32>(wind * t * 0.18, t * 0.05);
@@ -308,6 +321,11 @@ fn ds_spawn(i: u32, seed: u32) {
                 xy = tried;
                 canopy = c;
             }
+        }
+        // foliage high over its floor only (a tree, not grass or a low
+        // bush: no leaves from the ground)
+        if (canopy.x > 0.0 && canopy.x - ds_floor(xy) < 1.5) {
+            canopy = vec2<f32>(0.0);
         }
         if (canopy.x > 0.0) {
             // just under the canopy's top, among its leaves

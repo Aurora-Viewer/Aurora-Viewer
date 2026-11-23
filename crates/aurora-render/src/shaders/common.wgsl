@@ -150,6 +150,9 @@ struct Frame {
     // thickness, y the gust (0 lulls, 1 gusts), z 1 when set (0: no tint);
     // [3] x how fast what falls falls, y how far flakes swing (scales)
     weather_tint: array<vec4<f32>, 4>,
+    // Aurora Weather's debris pictures (bindless slots, 0 none): [0..2] the
+    // leaves', [2..4] the paper's (debris.wgsl)
+    debris_pictures: array<vec4<u32>, 4>,
 };
 
 // How fast what falls falls, and how far flakes swing (1: as before).

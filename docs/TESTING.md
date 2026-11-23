@@ -4914,6 +4914,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_FOG_COLOUR=sky\|<r>,<g>,<b>` | The fog's colour (the sky's light, or its own in sRGB 0..1) until the Aurora Weather window is used |
 | `AURORA_WEATHER_PRESET=<name>` | An Aurora Weather preset (colour, fall, fog, wind) until the window is used |
 | `AURORA_DEBRIS=<kind>[,stream]` | Aurora Weather's debris (leaves, sand, paper, embers or dust motes) on until the window is used |
+| `AURORA_DEBRIS_PICTURES=<file>[;<file>…]` | Image files as the debris leaves' and paper's pictures until the window is used |
 | `AURORA_DEMO_TUMBLEWEEDS=1` | Aurora Weather's tumbleweeds start in view, 10 m ahead (demo only) |
 | `AURORA_DEMO_FOG=sunset\|neon\|indoor\|underwater\|shelter\|aerial\|ground` | Fog under a fixed sky with props and a placed camera |
 | `AURORA_DEMO_FOG_SWING=<degrees>` | The fog scene's camera swings side to side, through its view at full speed every 100 frames |

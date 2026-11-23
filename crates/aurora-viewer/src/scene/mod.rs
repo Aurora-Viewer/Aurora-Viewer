@@ -17,6 +17,7 @@ pub mod body_physics;
 pub mod build_hologram;
 pub mod complexity;
 pub mod creation_preview;
+pub mod debris_textures;
 pub(crate) mod default_motions;
 pub mod describe;
 pub mod draw_limits;
@@ -955,6 +956,8 @@ pub struct Scene {
     pub studio_stage: avatar_studio::Stage,
     /// Aurora Weather's tumbleweeds (their own meshes and records).
     pub tumbleweeds: tumbleweeds::Tumbleweeds,
+    /// Aurora Weather's debris pictures (the user's image files).
+    pub debris_textures: debris_textures::DebrisTextures,
     pub studio_pose: crate::avatar_studio::Pose,
     pub studio_floor_offset: f32,
     pub studio_hover_height: f32,
@@ -1789,6 +1792,7 @@ impl Scene {
             studio_roots: Vec::new(),
             studio_stage: Default::default(),
             tumbleweeds: Default::default(),
+            debris_textures: Default::default(),
             studio_pose: Default::default(),
             studio_floor_offset: 0.0,
             studio_hover_height: 0.0,
@@ -2527,6 +2531,7 @@ impl Scene {
         // (their meshes and records are this renderer's: a recovery or a
         // relog makes them again)
         self.tumbleweeds.clear(renderer);
+        self.debris_textures.clear(renderer);
         self.banlines.clear(renderer);
         self.spinning_cat.clear(renderer);
         self.portals.clear(renderer);
@@ -4570,8 +4575,10 @@ impl Scene {
                 g.tex_ids.push(base_tex);
             }
             rec.tex[0] = self.textures.acquire(renderer, base_tex, source);
-            // a Linden tree's texture is foliage, whatever the classifier says
-            if o.is_tree() && !base_tex.is_nil() {
+            // a Linden tree's or grass's texture is foliage, whatever the
+            // classifier says (what blows about falls through grass to the
+            // ground, as through a crown)
+            if (o.is_tree() || o.pcode == aurora_prim::params::LL_PCODE_LEGACY_GRASS) && !base_tex.is_nil() {
                 self.textures.force_foliage(base_tex, rec.tex[0]);
             }
             let rigged = rigged_owner.is_some();

@@ -1867,6 +1867,10 @@ pub struct DebrisLook {
     pub stream: bool,
     /// Its size scale (0.5..2, 1 as made).
     pub size: f32,
+    /// The user's own pictures (bindless slots, 0 for none; the leading
+    /// ones used): [0] for the leaves, [1] for the paper. With none, the
+    /// shapes drawn in the shader.
+    pub pictures: [[u32; 8]; 2],
 }
 
 impl Default for DebrisLook {
@@ -1877,6 +1881,7 @@ impl Default for DebrisLook {
             quality: 2,
             stream: false,
             size: 1.0,
+            pictures: [[0; 8]; 2],
         }
     }
 }

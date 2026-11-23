@@ -3616,6 +3616,9 @@ Tumbleweeds are `scene/tumbleweeds.rs`: a few procedural meshes simulated on
 the CPU (rolling with the wind, rays through the picking's triangles for the
 ground and the walls ahead, `Scene::ground_below`, `obstacle_ahead`), added
 to the frame's lists with their shadows.
+The user's own pictures for the leaves and the paper are `scene/debris_textures.rs`
+(image files on this computer, read small on a worker thread, given bindless
+slots, passed in the frame's `debris_pictures`).
 Blowing sand (`WeatherSettings::sand_blowing`, `RainLook::sand`) feeds the
 snow's memory, its lying snow drawn in the sand's colour (the drifts), and
 `sand_snakes` in `shaders/env.wgsl` draws wisps racing along the open ground.

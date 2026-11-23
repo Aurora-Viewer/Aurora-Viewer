@@ -3236,10 +3236,11 @@ fn sand_snakes(world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     let along = dot(world.xy, dir);
     let across = dot(world.xy, vec2<f32>(-dir.y, dir.x));
     // broad soft ribbons (half a metre across, a few metres long) drifting
-    // downwind at a third of the wind's speed, their meanders fixed (no
-    // back and forth); thinner ones shimmered and raced
+    // downwind at about an eighth of the wind's speed, as the grains go
+    // along the ground, their meanders fixed (no back and forth); faster or
+    // thinner ones raced and shimmered
     let wave = across * 1.1 + 0.6 * sin(along * 0.25);
-    let flow = along * 0.18 - t * speed * 0.06;
+    let flow = along * 0.18 - t * speed * 0.0225;
     let a = snow_noise(vec2<f32>(flow, wave));
     let b = snow_noise(vec2<f32>(flow * 1.7 + 3.0, wave * 1.6 + 7.0));
     let wisp = smoothstep(0.55, 0.95, a * 0.75 + b * 0.25);

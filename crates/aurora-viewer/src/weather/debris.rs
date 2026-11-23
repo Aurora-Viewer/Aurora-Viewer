@@ -68,6 +68,25 @@ pub(crate) fn env_debris() -> Option<(DebrisChoice, bool)> {
     })
 }
 
+/// `AURORA_DEBRIS_PICTURES=<file>[;<file>…]`: these image files as the
+/// leaves' and the paper's pictures until the Weather window is used (demo
+/// captures).
+pub(crate) fn env_pictures() -> Option<Vec<std::path::PathBuf>> {
+    static PICTURES: std::sync::OnceLock<Option<Vec<std::path::PathBuf>>> = std::sync::OnceLock::new();
+    PICTURES
+        .get_or_init(|| {
+            let v = std::env::var("AURORA_DEBRIS_PICTURES").ok()?;
+            Some(
+                v.split(';')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .collect(),
+            )
+        })
+        .clone()
+}
+
 impl WeatherSettings {
     /// How much sand blows (0..1): the debris' sand on, its density; it
     /// gathers in drifts and snakes along the ground (none while it rains:
@@ -91,6 +110,8 @@ impl WeatherSettings {
             quality: quality.min(2),
             stream: self.debris_stream,
             size: 1.0,
+            // (the app gives the slots of the user's pictures)
+            pictures: [[0; 8]; 2],
         })
     }
 }

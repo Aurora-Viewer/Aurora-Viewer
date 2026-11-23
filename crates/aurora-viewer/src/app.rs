@@ -13137,11 +13137,21 @@ impl App {
                 if excluded.len() != list.len() || !list.iter().all(|id| excluded.contains(id)) {
                     *excluded = list.iter().copied().collect();
                 }
+                // the user's pictures, read while the debris is on (let go
+                // when off)
+                let on = self.weather_now.enabled && self.weather_now.debris_on;
+                let none = Vec::new();
+                let pictures = self.scene.debris_textures.update(
+                    &mut gfx.renderer,
+                    if on { &self.weather_now.debris_pictures_leaves } else { &none },
+                    if on { &self.weather_now.debris_pictures_paper } else { &none },
+                );
                 // not in VR yet: each eye would simulate its own pool (two
                 // different sets of particles, no depth between the eyes)
                 self.weather_now
                     .debris_look(self.weather_now.quality_index())
                     .filter(|_| !gfx.renderer.vr_engaged())
+                    .map(|look| aurora_render::DebrisLook { pictures, ..look })
             },
             fog: self.weather_now.fog_look(
                 self.fog_drift.at,

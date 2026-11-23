@@ -109,9 +109,13 @@ impl WeatherSettings {
                 self.precipitation_on = true;
                 self.precipitation = Precipitation::Snow;
                 self.snow_tint = [0.36, 0.35, 0.34];
-                // big soft flakes of ash; no puddles (they would freeze)
+                // big soft flakes of ash; no puddles (they would freeze);
+                // a few embers from the fire it comes from
                 self.snow_size = 0.75;
                 self.puddles = false;
+                self.debris_on = true;
+                self.debris_kind = super::DebrisChoice::Embers;
+                self.debris_density = 0.2;
                 self.fall_speed = 0.6;
                 self.flutter = 1.8;
                 self.fall_melts = false;
@@ -281,6 +285,7 @@ mod tests {
         assert_eq!(w.precipitation, Precipitation::Snow);
         assert!(!w.fall_melts && w.fall_speed < 1.0 && w.flutter > 1.0);
         assert!(!w.puddles && w.snow_size > 0.5);
+        assert!(w.debris_on && w.debris_kind == super::super::DebrisChoice::Embers);
         assert!(w.enabled && w.precipitation_on);
         w.apply_preset(WeatherPreset::BloodRain);
         // Ash's fall is not kept

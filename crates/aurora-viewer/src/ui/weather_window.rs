@@ -1104,6 +1104,11 @@ fn debris_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
                 )),
                 egui::Slider::new(&mut w.debris_density, 0.0..=1.0),
             );
+            match w.debris_kind {
+                crate::weather::DebrisChoice::Leaves => pictures_rows(ui, p, &mut w.debris_pictures_leaves, PictureSet::Leaves),
+                crate::weather::DebrisChoice::Paper => pictures_rows(ui, p, &mut w.debris_pictures_paper, PictureSet::Paper),
+                _ => {}
+            }
             if w.debris_kind == crate::weather::DebrisChoice::Leaves {
                 switch_row(
                     ui,
@@ -1143,6 +1148,83 @@ fn presets_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             }
         });
     });
+}
+
+/// Which pictures a file chooser adds to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PictureSet {
+    Leaves,
+    Paper,
+}
+
+/// The files picked in the chooser (its own thread), for the next frame.
+static PICKED: std::sync::Mutex<Option<(PictureSet, Vec<std::path::PathBuf>)>> = std::sync::Mutex::new(None);
+
+/// The debris' own pictures (leaves or paper): their file names, each with
+/// a button to take it out, and one to add more (a file chooser, off the
+/// frame); none: the drawn shapes.
+fn pictures_rows(ui: &mut egui::Ui, p: &Palette, list: &mut Vec<std::path::PathBuf>, set: PictureSet) {
+    use crate::scene::debris_textures::MAX;
+    if let Ok(mut picked) = PICKED.lock()
+        && picked.as_ref().is_some_and(|(s, _)| *s == set)
+        && let Some((_, files)) = picked.take()
+    {
+        for f in files {
+            if list.len() < MAX && !list.contains(&f) {
+                list.push(f);
+            }
+        }
+    }
+    ui.horizontal(|ui| {
+        widgets::glyph(ui, "photo", p.muted, 15.0);
+        let gap = ui.spacing().item_spacing.x;
+        let width = ui.available_width() - ui.spacing().interact_size.x * 2.0 - gap;
+        label(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-weather-debris-pictures"),
+            aurora_i18n::tr!("ui-weather-debris-pictures-tip"),
+            width,
+        );
+        let add = ui
+            .add_enabled(
+                list.len() < MAX,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("ui-weather-debris-pictures-add")).size(LABEL_SIZE)),
+            )
+            .on_hover_text(aurora_i18n::tr!("ui-weather-debris-pictures-tip"));
+        if add.clicked() {
+            let ctx = ui.ctx().clone();
+            let _ = std::thread::Builder::new().name("aurora-debris-pictures".into()).spawn(move || {
+                let files = rfd::FileDialog::new()
+                    .set_title(aurora_i18n::tr!("ui-weather-debris-pictures"))
+                    .add_filter(
+                        aurora_i18n::tr!("ui-weather-debris-pictures-type"),
+                        &["png", "jpg", "jpeg", "tga", "bmp", "webp"],
+                    )
+                    .pick_files();
+                if let (Some(files), Ok(mut picked)) = (files, PICKED.lock()) {
+                    *picked = Some((set, files));
+                    ctx.request_repaint();
+                }
+            });
+        }
+    });
+    let mut gone = None;
+    for (i, path) in list.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let name = path
+                .file_name()
+                .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+            let width = ui.available_width() - ui.spacing().interact_size.y - ui.spacing().item_spacing.x;
+            label(ui, p, &name, &path.display().to_string(), width);
+            if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("ui-weather-debris-pictures-remove"), true) {
+                gone = Some(i);
+            }
+        });
+    }
+    if let Some(i) = gone {
+        list.remove(i);
+    }
 }
 
 /// A colour setting (sRGB 0..1): its label, a colour button on the right.
