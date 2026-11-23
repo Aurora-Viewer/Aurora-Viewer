@@ -284,6 +284,8 @@ struct FrameU {
     snow_far: [f32; 4],
     /// Planet curvature (`Curvature::uniform`): xy the main camera, z 1 / 2R.
     curvature: [f32; 4],
+    /// Aurora Weather's fog (fog.rs `frame_terms`; zero: none).
+    fog_look: [[f32; 4]; 7],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -1291,6 +1293,9 @@ struct Pipelines {
     /// lying on what the map says, left every slope bare.
     shelter: wgpu::RenderPipeline,
     shelter_terrain: wgpu::RenderPipeline,
+    /// Aurora Weather's fog: the walls drawn into its flow grid (fog.rs
+    /// `Flow`, object.wgsl `fs_fog_voxel`).
+    fog_voxel: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
@@ -1357,7 +1362,7 @@ struct GpuTimer {
     /// order.
     last_effects: Option<[f32; 4]>,
     /// Last times of the weather (ms), in [`GPU_WEATHER_PARTS`] order.
-    last_weather: Option<[f32; 4]>,
+    last_weather: Option<[f32; 5]>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
@@ -1431,7 +1436,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 39;
+const GPU_MARKS: u32 = 41;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1523,6 +1528,11 @@ const MARK_CLOUDS_END: u32 = 39;
 /// there when they are off); in the effects' range from `MARK_SSAO_END` to
 /// `MARK_WATER_AIR_BEGIN`.
 const MARK_SOFT_END: u32 = 40;
+/// Aurora Weather's fog volume (fog.rs): around its compute, after the
+/// clouds' and before scene pass A (both written together when it is not
+/// drawn).
+const MARK_FOG_BEGIN: u32 = 41;
+const MARK_FOG_END: u32 = 42;
 /// The effects beyond the occlusion, the contact shadows and the soft
 /// shadows (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1539,12 +1549,14 @@ const GPU_EFFECT_PARTS: [&[(u32, u32)]; 4] = [
 ];
 /// What `GpuElement::Weather` is made of (`RenderStats::gpu_weather`): the
 /// shelter map, the wetness and footprints memories, the wet ground (with
-/// the snow lying), the drops and flakes with the distant layers.
-const GPU_WEATHER_PARTS: [(u32, u32); 4] = [
+/// the snow lying), the drops and flakes with the distant layers, the fog's
+/// volume.
+const GPU_WEATHER_PARTS: [(u32, u32); 5] = [
     (MARK_SHELTER_BEGIN, MARK_SHELTER_END),
     (MARK_WEATHER_MEMORY_BEGIN, MARK_WEATHER_MEMORY_END),
     (MARK_WET_BEGIN, MARK_SSR_END),
     (MARK_RAIN_BEGIN, MARK_RAIN_END),
+    (MARK_FOG_BEGIN, MARK_FOG_END),
 ];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
@@ -1565,8 +1577,12 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_WEATHER_MEMORY_END, MARK_COPY_END),
         (MARK_COPY_END, MARK_WET_BEGIN),
     ],
-    // terrain and sky
-    &[(MARK_DEPTH_MSAA_END, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
+    // terrain and sky (the fog's volume is the weather's)
+    &[
+        (MARK_DEPTH_MSAA_END, MARK_FOG_BEGIN),
+        (MARK_FOG_END, MARK_SKY_END),
+        (MARK_SKY_END, MARK_TERRAIN_END),
+    ],
     // objects and avatars (opaque, masked), impostor pictures and cards
     &[
         (MARK_TERRAIN_END, MARK_OBJECTS_END),
@@ -1969,6 +1985,10 @@ struct Dummies {
     white: wgpu::TextureView,
     black: wgpu::TextureView,
     depth: wgpu::TextureView,
+    /// A 1^3 fog volume that lets everything through (0, 0, 0, 1).
+    volume: wgpu::TextureView,
+    /// A 1 x 1 fog ground (never read: `fog_look[6]` says none).
+    ground: wgpu::TextureView,
 }
 
 /// Frame bind groups (group 0) for the different passes.
@@ -2144,6 +2164,15 @@ pub(crate) struct Backend {
     /// made again until ray tracing is turned off and on.
     rt_failed: bool,
     rt_now: bool,
+    /// Aurora Weather's fog (fog.rs), made while it is on.
+    fog: Option<crate::fog::Fog>,
+    /// This frame's fog: the height fog's terms of every view (none: no
+    /// fog, or the camera under the water), and whether the main view
+    /// reads the volume.
+    fog_terms: Option<(crate::types::FogLook, f32)>,
+    fog_volume_now: bool,
+    /// The fog's volume is on: the shelter map is drawn for it.
+    fog_shelter: bool,
     /// The soft sun shadows' pipelines, made with the first frame that
     /// wants them.
     soft: Option<crate::soft_shadows::SoftShadows>,
@@ -3073,7 +3102,7 @@ impl Backend {
     /// to it, where the camera goes, from it); with the shadows off too,
     /// alone in the atlas (low settings keep the rain out of the houses).
     fn rain_shelter(&self, f: &FrameParams) -> bool {
-        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
+        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && (self.rain_wet.active() || self.fog_shelter)
     }
 
     /// How many of the frame's first lights have their projector shadows
@@ -3126,8 +3155,77 @@ impl Backend {
         let by = Vec2::from(by);
         self.rain_wet.shift(by);
         self.snow_trail.shift(by);
+        // (the fog's history is of the old positions: it starts afresh)
+        if let Some(fog) = &mut self.fog {
+            fog.skipped();
+        }
         if let Some(c) = &mut self.shelter_centre {
             *c += by.extend(0.0);
+        }
+    }
+}
+
+impl Backend {
+    /// Aurora Weather's fog this frame (fog.rs): made while it is on, its
+    /// volume's textures while its tier has one (the frame groups bound to
+    /// them again when they change). The height fog's terms of every view
+    /// are kept for `frame_uniforms`. Under the water, and in a cut-out
+    /// photo, none is drawn: the water's fog alone.
+    fn prepare_fog(&mut self, f: &FrameParams, ground: &FogGround, camera_water_level: f32) {
+        self.fog_shelter = f.fog.is_some();
+        let Some(look) = f.fog.filter(|_| !f.cutout && f.camera_pos.z >= camera_water_level) else {
+            self.fog_terms = None;
+            self.fog_volume_now = false;
+            self.fog_shelter = false;
+            // off: everything goes, the frame groups lose its textures
+            if f.fog.is_none() && self.fog.take().is_some() {
+                self.remake_frame_groups();
+            }
+            return;
+        };
+        let made = self.fog.is_none();
+        if made {
+            let queue = &self.queue;
+            self.fog = extra(&mut self.oom, &self.device, self.lost.get(), "fog", |d| {
+                crate::fog::Fog::new(d, queue)
+            });
+        }
+        self.fog_volume_now = false;
+        let Some(fog) = &mut self.fog else {
+            // (refused for now: none at all rather than a fogged ground
+            // under a clear sky)
+            self.fog_terms = None;
+            self.fog_shelter = false;
+            return;
+        };
+        let level = crate::fog::ground_level_at(ground, f.camera_pos.truncate()).unwrap_or(f.water_height);
+        self.fog_terms = Some((look, level));
+        fog.upload_ground(&self.queue, ground);
+        let changed = if look.tier == FogTier::Height {
+            fog.release_targets()
+        } else if !self.oom.extras_ready(Instant::now()) {
+            false
+        } else {
+            let (made, refused) = crate::gpu_alloc::scoped(&self.device, || fog.ensure_targets(&self.device, look.quality));
+            if first_use(&mut self.oom, "fog volume", false, refused && !self.lost.get()) {
+                // refused: the height fog until it can be made
+                fog.release_targets();
+                true
+            } else {
+                made
+            }
+        };
+        self.fog_volume_now = fog.volume().is_some();
+        // (before the uniforms: the scene reads the flow grid where it is now)
+        if self.fog_volume_now && !f.cutout {
+            fog.place_flow(f.camera_pos);
+        }
+        // the shelter map for the fog drawn, the height fog's too (it keeps
+        // the rooms clear)
+        self.fog_shelter = true;
+        // (made this frame: the frame groups take its ground)
+        if changed || made {
+            self.remake_frame_groups();
         }
     }
 }
@@ -4327,6 +4425,40 @@ impl Backend {
                 },
                 count: None,
             },
+            // Aurora Weather's fog volume (fog.rs; 31 and 32 are the sun
+            // glass and the GI's openness, of the lighting's group)
+            wgpu::BindGroupLayoutEntry {
+                binding: 33,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // its flow grid (fog.rs `Flow`): how open the air is
+            wgpu::BindGroupLayoutEntry {
+                binding: 34,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // the ground it pools on (fog.rs `upload_ground`)
+            wgpu::BindGroupLayoutEntry {
+                binding: 35,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ];
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
@@ -4532,7 +4664,64 @@ impl Backend {
                     depth_or_array_layers: 1,
                 },
             );
-            Dummies { white, black, depth }
+            let volume_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("dummy fog volume"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D3,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            // (half floats 0, 0, 0, 1)
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &volume_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&[0u16, 0, 0, 0x3c00]),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(8),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let volume = volume_tex.create_view(&Default::default());
+            let ground = device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("dummy fog ground"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rg32Float,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default());
+            Dummies {
+                white,
+                black,
+                depth,
+                volume,
+                ground,
+            }
         };
 
         let fmt_features = adapter.get_texture_format_features(HDR_FORMAT);
@@ -4694,6 +4883,8 @@ impl Backend {
             &water_effects,
             &stars,
             &milky_way,
+            None,
+            None,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -4795,6 +4986,10 @@ impl Backend {
             rt_build: None,
             rt_failed: false,
             rt_now: false,
+            fog: None,
+            fog_terms: None,
+            fog_volume_now: false,
+            fog_shelter: false,
             soft: None,
             soft_now: false,
             contact_now: false,
@@ -6325,6 +6520,30 @@ impl Backend {
                 ..shadow_desc("rain shelter terrain", Some("fs_shadow_terrain"))
             },
         );
+        // Aurora Weather's fog: the shelter map's casters drawn into the
+        // flow grid's solid cells (no depth; a stand-in target, its writes discarded with the pass)
+        let voxel_layout = crate::fog::voxel_layout(device);
+        let voxel_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fog walls"),
+            bind_group_layouts: &[None, Some(records_layout), Some(tex_layout), Some(&voxel_layout)],
+            immediate_size: 0,
+        });
+        let fog_voxel = batch.add(
+            &module,
+            &voxel_pl,
+            PipeDesc {
+                format: Some(wgpu::TextureFormat::R8Unorm),
+                // (a write to it, discarded with the pass: a fragment shader
+                // with nothing to write could be left out by a driver, and
+                // its storage writes with it)
+                write_mask: wgpu::ColorWrites::RED,
+                depth_format: None,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                depth_bias: level,
+                ..shadow_desc("fog walls", Some("fs_fog_voxel"))
+            },
+        );
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("post"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/post.wgsl").into()),
@@ -6457,6 +6676,7 @@ impl Backend {
             shadow_terrain: shadow_terrain.resolve(&mut done),
             shelter: shelter.resolve(&mut done),
             shelter_terrain: shelter_terrain.resolve(&mut done),
+            fog_voxel: fog_voxel.resolve(&mut done),
             post: post.resolve(&mut done),
             pick: pick.resolve(&mut done),
             pick_terrain: pick_terrain.resolve(&mut done),
@@ -6747,6 +6967,8 @@ impl Backend {
         water_effects: &crate::water_effects::WaterGpu,
         stars: &wgpu::Buffer,
         milky_way: &wgpu::TextureView,
+        fog_volume: Option<(&wgpu::TextureView, &wgpu::TextureView)>,
+        fog_ground: Option<&wgpu::TextureView>,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -6784,6 +7006,26 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 30,
                         resource: wgpu::BindingResource::TextureView(soft.unwrap_or(milky_way)),
+                    },
+                    // the fog volume (main view only: the others take the
+                    // height fog, `fog_look[2].w`)
+                    wgpu::BindGroupEntry {
+                        binding: 33,
+                        resource: wgpu::BindingResource::TextureView(match fog_volume {
+                            Some((v, _)) if std::ptr::eq(buffer, frame_buffer) => v,
+                            _ => &dummies.volume,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 34,
+                        resource: wgpu::BindingResource::TextureView(match fog_volume {
+                            Some((_, flow)) if std::ptr::eq(buffer, frame_buffer) => flow,
+                            _ => &dummies.volume,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 35,
+                        resource: wgpu::BindingResource::TextureView(fog_ground.unwrap_or(&dummies.ground)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 26,
@@ -7240,6 +7482,8 @@ impl Backend {
             &self.water_effects,
             &self.stars,
             &self.milky_way,
+            self.fog.as_ref().and_then(|f| f.volume().map(|v| (v, f.flow_view()))),
+            self.fog.as_ref().map(|f| f.ground_view()),
         );
     }
 
@@ -8195,6 +8439,16 @@ impl Backend {
         // centred on the main camera in every pass (`f` is the main view's,
         // reflections and probes included)
         u.curvature = Curvature::new(f.camera_pos, f.curvature).uniform();
+        // the height fog in every view; the main view may read the volume
+        // instead (render_frame)
+        if let Some((look, ground)) = &self.fog_terms {
+            let forward = crate::light_tiles::view_forward(view);
+            u.fog_look[..4].copy_from_slice(&crate::fog::frame_terms(look, &f.sky, *ground, forward, crate::fog::MODE_HEIGHT));
+            // the ground the fog lies on, in every view (binding 33)
+            if let Some([x, y, side]) = self.fog.as_ref().and_then(|f| f.ground_rect()) {
+                u.fog_look[6] = [x, y, side, 0.0];
+            }
+        }
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
@@ -9601,6 +9855,9 @@ impl Backend {
         // rain prototype: the terrain heights (and where they are, for the
         // uniforms below)
         self.water_effects.upload_rain_ground(&self.queue, &lists.rain_ground);
+        // Aurora Weather's fog: before the uniforms (its terms) and the
+        // shadows (its shelter map)
+        self.prepare_fog(f, &lists.fog_ground, camera_water_level);
         // snow wets nothing (the ground dries as after rain), it lies
         let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
         // cleaned up (the Weather window): the memory starts again, every
@@ -9672,6 +9929,17 @@ impl Backend {
         }
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
+        if self.fog_volume_now {
+            main.fog_look[2][3] = crate::fog::MODE_VOLUME;
+            // the fog's flow grid, for the surfaces in closed rooms
+            if let Some(origin) = self.fog.as_ref().and_then(|f| f.flow_grid()) {
+                let d = crate::fog::FLOW_DIMS;
+                main.fog_look[4] = origin.extend(crate::fog::FLOW_CELL).to_array();
+                main.fog_look[5] = [d[0] as f32, d[1] as f32, d[2] as f32, 0.0];
+            }
+        } else if self.fog_terms.is_some() && self.rain_shelter_map(f).is_some() {
+            main.fog_look[2][3] += crate::fog::MODE_SHELTER;
+        }
         if f.photo_tile != Mat4::IDENTITY {
             main.photo = photo_part(f.photo_tile);
         }
@@ -11011,6 +11279,8 @@ impl Backend {
             self.shelter_drawn = Some((self.shelter_matrix(), Instant::now()));
         }
         let shelter_only = shelter_only && !shelter_kept;
+        // its draws are this frame's (the fog's walls are drawn with them)
+        let shelter_drawn_now = shelter && (f.shadows || shelter_only);
         // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
         let mut shelter_marked = false;
         if f.shadows || shelter_only {
@@ -12033,6 +12303,81 @@ impl Backend {
             clouds.skipped(still.is_some());
         }
         mark(&mut encoder, MARK_CLOUDS_END);
+        // ---- Aurora Weather's fog volume (fog.rs): after the shadows it
+        // reads, before the scene that reads it; then the sky's pipeline
+        mark(&mut encoder, MARK_FOG_BEGIN);
+        if let Some(fog) = &mut self.fog {
+            // its walls, drawn with the shelter map's casters into the flow
+            // grid when due (the shelter map's draws are this frame's)
+            if self.fog_volume_now && shelter_drawn_now && still.is_none() && fog.walls_due(&self.queue, self.anim_now) {
+                let walls = fog.walls();
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("fog walls"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: walls.target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Discard,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_pipeline(&self.pipelines.fog_voxel);
+                let k = self.shelter_slot;
+                for (group, (w, h)) in walls.views {
+                    pass.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
+                    pass.set_scissor_rect(0, 0, w, h);
+                    pass.set_bind_group(3, group, &[]);
+                    let (off, count) = rg.spot[k];
+                    if count > 0 {
+                        pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                        calls.set(calls.get() + 1);
+                    }
+                    draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
+                }
+            }
+            match (&self.fog_terms, self.fog_volume_now) {
+                (Some((look, _)), true) => fog.encode(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    &self.frame_buffer,
+                    &self.shadow_view,
+                    &self.shadow_sampler,
+                    &self.lin_clamp,
+                    look,
+                    fu.view,
+                    fu.proj,
+                    fu.camera_pos,
+                    still.is_some(),
+                ),
+                _ => fog.skipped(),
+            }
+            if self.fog_terms.is_some() {
+                fog.prepare_sky(
+                    &self.device,
+                    &self.frame_buffer,
+                    &self.lin_clamp,
+                    &self.dummies.volume,
+                    scene_samples,
+                    scene_gbuf,
+                    HDR_FORMAT,
+                    GBUF_FORMAT,
+                    DEPTH_FORMAT,
+                );
+            }
+        }
+        mark(&mut encoder, MARK_FOG_END);
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -12113,6 +12458,13 @@ impl Backend {
                 {
                     clouds.draw(&mut pass, scene_samples, scene_gbuf);
                     // (the composite has its own group 0)
+                    pass.set_bind_group(0, &self.groups.a, &[]);
+                }
+                // the weather's fog over the sky and the clouds: dst * T + L
+                if self.fog_terms.is_some()
+                    && let Some(fog) = &self.fog
+                {
+                    fog.draw_sky(&mut pass, scene_samples, scene_gbuf);
                     pass.set_bind_group(0, &self.groups.a, &[]);
                 }
             }
@@ -14452,6 +14804,8 @@ mod tests {
         MARK_WATER_INTERFACE_END,
         MARK_DEPTH_MSAA_END,
         MARK_CLOUDS_END,
+        MARK_FOG_BEGIN,
+        MARK_FOG_END,
         MARK_SKY_END,
         MARK_TERRAIN_END,
         MARK_OBJECTS_END,
