@@ -1045,7 +1045,8 @@ impl Renderer {
 
     /// The skeletons whose ray-traced level had to be built again last
     /// frame and waits for a later one, and the farthest one of them stands
-    /// from where its level was built (m): how far behind it its traced
+    /// from where its level shows it (m; a level follows its anchor, so
+    /// this is what its pose moved it): how far behind it its traced
     /// shadow is.
     pub fn rt_skeletons_waiting(&self) -> (u32, f32) {
         self.rt_waiting
@@ -1055,6 +1056,12 @@ impl Renderer {
     /// matrix `base`: 0 when its levels are those of last frame's pose.
     pub fn rt_avatar_behind(&self, base: u32) -> f32 {
         self.rt_poses.behind(base, &self.rt_palettes)
+    }
+
+    /// Our avatar's palette (its first matrix), whose traced levels are
+    /// built again before any other's (rt_shadows.rs `choose_rebuilds`).
+    pub fn set_rt_own_palette(&mut self, base: Option<u32>) {
+        self.rt_poses.own = base;
     }
 
     /// Whether the ray tracer drew the last frame that came back: not while
@@ -1272,8 +1279,14 @@ impl Renderer {
     }
 
     /// Apply quality settings: pipelines and targets are rebuilt by the
-    /// backend with the next frame, only when needed.
+    /// backend with the next frame, only when needed. The lamps' quality
+    /// `AURORA_RT_LAMPS` forces is applied here, so that the settings the
+    /// frames report are the ones kept (`settings_applied`).
     pub fn apply_settings(&mut self, s: RenderSettings) {
+        let s = RenderSettings {
+            rt_tuning: crate::rt_shadows::forced_tuning(s.rt_tuning),
+            ..s
+        };
         if s.anisotropy != self.settings.anisotropy {
             self.textures.set_anisotropy(&self.device, s.anisotropy);
         }

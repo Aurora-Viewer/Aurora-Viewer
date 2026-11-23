@@ -597,7 +597,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "environment_selector" | "personal_lighting" => "sun-filled",
         "perf" | "performance" => "gauge-filled",
         "photo" | "photo_classic" => "camera-filled",
-        "controls" | "camera_controls" => "video-filled",
+        "controls" | "camera_controls" | "camera_controls_small" => "video-filled",
         "director" => "movie",
         "second_camera" => "device-cctv-filled",
         "movement_controls" => "walk",
