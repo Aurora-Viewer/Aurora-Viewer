@@ -41,6 +41,7 @@ mod histogram;
 pub mod hud;
 mod label_depth;
 pub mod light_tiles;
+pub mod look_thumbs;
 pub mod looks;
 pub mod main_thread;
 mod motion_debug;
@@ -324,6 +325,7 @@ mod shader_tests {
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
             return;
         };
+        let fragment = crate::test_gpu::fragment_inv_w(fragment, &adapter);
         let features = adapter.features() & wgpu::Features::DEPTH_CLIP_CONTROL;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: features,
@@ -638,10 +640,12 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                 reference = Some(row);
                 for x in 0..8 {
                     assert_eq!(data[x], 0.0, "air must not write an interface");
-                    // Clipping a 200 m triangle to this tiny target has sub-mm
-                    // interpolation error, well below the 1 cm sheet spacing.
+                    // Clipping a 200 m triangle to this tiny target leaves an
+                    // interpolation error of about 1 mm (0.00035 at 0.3 m on an
+                    // AMD Vulkan driver), well below the 1 cm sheet spacing
+                    // (0.0078 between the two sheets at 0.3 m).
                     assert!(
-                        (data[7 * 64 + x] - expected).abs() < 0.0002,
+                        (data[7 * 64 + x] - expected).abs() < 0.001,
                         "the nearest interface must win in either order, including before near: delta {delta}, order {order:?}, got {} expected {expected}",
                         data[7 * 64 + x]
                     );
@@ -662,6 +666,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
         let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
         let env = include_str!("shaders/env.wgsl");
         let depth = &env[env.find("fn water_interface_depth(").expect("depth")..env.find("// Event history").expect("end")];
+        let depth = crate::test_gpu::fragment_inv_w(depth, &adapter);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water exclusion regression"),
             source: wgpu::ShaderSource::Wgsl(
@@ -676,7 +681,9 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32
     let corners=array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0),vec2<f32>(3.0,-1.0),vec2<f32>(-1.0,3.0));
     let w=1.0+f32(layer);
     let world=vec3<f32>(corners[v]*w,w);
-    return WaterOut(vec4<f32>(corners[v],0.5,1.0),world);
+    // The clip position the frame's matrix gives this point: the depth
+    // reads the fragment's 1/w, like the viewer's water.
+    return WaterOut(vec4<f32>(corners[v]*w,0.5*w,w),world);
 }}
 {depth}
 "#
@@ -874,7 +881,7 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32
         let source = format!(
             r#"
 struct FogFrame {{camera_pos:vec4<f32>,params:vec4<f32>,water_params:vec4<f32>,water_fog:vec4<f32>,
-    sun_color:vec4<f32>,sun_dir:vec4<f32>,sky_zenith:vec4<f32>,cam_up:vec4<f32>}};
+    sun_color:vec4<f32>,sun_dir:vec4<f32>,sky_zenith:vec4<f32>,cam_up:vec4<f32>,water_air:vec4<f32>}};
 var<private> enhanced:bool;
 var<private> fine_wake:f32;
 var<private> reflection:bool;
@@ -884,6 +891,7 @@ fn water_fx_bed(p:vec2<f32>)->vec2<f32> {{return vec2<f32>(0.0);}}
 fn water_wake_sample(p:vec2<f32>,level:f32)->vec4<f32> {{return vec4<f32>(0.0,0.0,fine_wake,0.0);}}
 var<private> frame:FogFrame;
 @group(0) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+{}
 {}
 {}
 @compute @workgroup_size(1)
@@ -906,6 +914,18 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     if(id.x==15u) {{frame.camera_pos.z=0.1;}}
     if(id.x==18u) {{frame.camera_pos.z=0.001;}}
     if(id.x==19u) {{frame.camera_pos.z=2.0;}}
+    if(id.x >= 20u) {{
+        // Check both sides of the surface, with and without enhanced water.
+        enhanced = (id.x & 1u) == 0u;
+        frame.camera_pos.z = select(-2.0, 2.0, id.x >= 22u);
+        let bed = vec3<f32>(0.0, 0.0, -4.0);
+        frame.water_air.y = 0.0;
+        let visible = water_fogs_source(bed);
+        frame.water_air.y = 1.0;
+        result[id.x * 2u] = vec4<f32>(select(0.0, 1.0, visible),
+            select(0.0, 1.0, water_fogs_source(bed)), select(0.0, 1.0, camera_underwater()), 0.0);
+        return;
+    }}
     let targets=array<vec3<f32>,20>(vec3<f32>(0.0,0.0,2.0),vec3<f32>(0.0,0.0,200.0),
         vec3<f32>(2.0,0.0,2.0),vec3<f32>(200.0,0.0,200.0),
         vec3<f32>(0.0,0.0,-2.0),vec3<f32>(0.0,0.0,-20.0),vec3<f32>(0.0),vec3<f32>(0.0,0.0,-2.0),
@@ -922,6 +942,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
 }}
 "#,
             &function[..end],
+            &common[common.find("fn water_fogs_source(").unwrap()..common.find("// Density of that fog").unwrap()],
             dielectric
         );
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -938,13 +959,13 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         });
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fog samples"),
-            size: 640,
+            size: 768,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fog sample readback"),
-            size: crate::readback::readback_size(640),
+            size: crate::readback::readback_size(768),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -961,14 +982,17 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(20, 1, 1);
+            pass.dispatch_workgroups(24, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 640);
+        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 768);
         queue.submit([encoder.finish()]);
         readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("fog sample readback"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
         let mapped = readback.get_mapped_range(..).expect("mapped fog samples");
         let samples = crate::readback::f32x4s(&mapped);
+        for index in 20..24 {
+            assert_eq!(samples[index * 2], [1.0, 0.0, 0.0, 0.0], "water visibility case {index}");
+        }
         for (a, b) in [(0, 1), (2, 3)] {
             for component in 0..2 {
                 for c in 0..3 {

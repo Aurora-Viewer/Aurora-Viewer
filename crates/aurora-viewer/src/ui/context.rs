@@ -33,6 +33,8 @@ pub use pathfinding::PathfindingUi;
 mod pie;
 
 #[cfg(test)]
+mod group_link_tests;
+#[cfg(test)]
 mod radar_menu_tests;
 #[cfg(test)]
 mod search_menu_tests;
@@ -101,6 +103,12 @@ pub struct ObjectFacts {
     /// Local meshes use the ordinary object menu and build selection, with
     /// only actions that can be carried out without a simulator identity.
     pub local_preview: bool,
+    /// The agent owns the rezzed linkset itself (`owns_rezzed`): "Show in
+    /// inventory" is on its menu.
+    pub owned: bool,
+    /// RLVa `@showinv`: "Show in inventory" is greyed out
+    /// (enable_object_show_original, llviewermenu.cpp).
+    pub inventory_hidden: bool,
     pub local_hud_scale: Option<f32>,
     pub saved_hud_scale: bool,
     pub hud_move_locked: bool,
@@ -314,6 +322,8 @@ pub enum CtxAction {
     LookAtAvatar(Uuid),
     EditPbr(Uuid),
     ObjectProfile(Uuid),
+    /// Search inventory for an object seen in-world.
+    FindInInventory(Uuid),
     /// "View profile" from a list of people known besides the world
     /// (friends list, group members): it opens under RLVa's `@shownames`
     /// too, as these lists name their residents (`NameScope::Roster`).
@@ -622,6 +632,12 @@ pub enum CtxAction {
     GroupChat(Uuid),
     /// Make a group active (ActivateGroup), pin it in the lists, leave it.
     ActivateGroup(Uuid),
+    /// Join a group through the confirmation of LLGroupActions::join, from a
+    /// group link's menu (`group_link_menu`).
+    JoinGroup(Uuid),
+    /// Ask for a group's data (GroupProfileRequest) as a group link's menu
+    /// opens (FSCommon::requestGroupData).
+    RequestGroupData(Uuid),
     PinGroup(Uuid),
     LeaveGroup(Uuid),
     /// Block / unblock a group's chat (exoGroupMuteList).
@@ -753,8 +769,8 @@ pub fn show(
     // eight slices of Firestorm's default pie menu, PieMenu::draw)
     let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::unique(HOVERED)).flatten());
     if hovered != before {
-        if let Some(i) = hovered.filter(|i| *i < 8) {
-            super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i as u8));
+        if let Some(i) = pie_hover_sound(hovered, use_pie, customization.force_list()) {
+            super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i));
         }
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique(HOVERED), hovered));
     }
@@ -953,6 +969,14 @@ pub fn can_pay_resident(world: &World) -> bool {
 /// FSFloaterContacts::refreshUI): the map itself does not open.
 pub fn can_show_on_map(world: &World) -> bool {
     !world.rlva.has("showworldmap")
+}
+
+/// "Show in inventory" of a rezzed object is for a linkset the agent owns
+/// itself. A group-deeded one is owned by the group (its OwnerID), and its
+/// items are not in the agent's inventory, even when the group's object
+/// powers give it the OBJECT_YOU_OWNER flag: that flag is left out here.
+pub fn owns_rezzed(owner_id: Uuid, agent_id: Uuid) -> bool {
+    !agent_id.is_nil() && owner_id == agent_id
 }
 
 fn avatar_menu_reporting(
@@ -1437,6 +1461,81 @@ pub fn group_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) {
     }
 }
 
+/// Which rows of a group link's menu ([`group_link_menu`]) are enabled.
+/// Port of the group cases of FSCommon::checkIsActionEnabled
+/// (indra/newview/fscommon.cpp, the `FSRegistrarUtils::checkIsEnabled`
+/// callbacks of menu_url_group.xml).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GroupLinkItems {
+    /// FS_RGSTR_CHK_GROUP_NOT_ACTIVE: one of ours, not the active one, and
+    /// RlvActions::canChangeActiveGroup.
+    pub activate: bool,
+    /// FS_RGSTR_CHK_CAN_JOIN_GROUP: LLAgent::canJoinGroups,
+    /// canChangeActiveGroup, the group's data known with open enrollment,
+    /// and not one of ours.
+    pub join: bool,
+    /// FS_RGSTR_CHK_CAN_LEAVE_GROUP: one of ours, and not the active group
+    /// under `@setgroup`.
+    pub leave: bool,
+    /// Url.CopyLabel copies the link's label: greyed while the name is
+    /// still the loading placeholder (stricter: the Legacy label is never
+    /// a placeholder).
+    pub copy_name: bool,
+}
+
+impl GroupLinkItems {
+    /// The states for group `id`, whose name is known when `name_known`.
+    pub fn of(world: &World, id: Uuid, name_known: bool) -> Self {
+        let member = world.groups.is_member(&id);
+        let can_change = world.rlva_can_change_group();
+        let open = world.search.groups.get(&id).is_some_and(|g| g.open_enrollment);
+        Self {
+            activate: member && world.groups.active != id && can_change,
+            join: !member && can_change && open && super::group_profile::create::can_join_groups(world),
+            leave: member && world.rlva_can_leave_group(id),
+            copy_name: name_known,
+        }
+    }
+}
+
+/// The right-click menu of a group's name link (menu_url_group.xml): View
+/// info, Activate, Join, Leave, Copy name, Copy SLurl. `name` is None while
+/// the name is unknown. As FSCommon::requestGroupData does when the menu
+/// opens, the group's data is asked for if missing: Join stays greyed until
+/// it is there.
+pub fn group_link_menu(resp: &egui::Response, p: &Palette, world: &World, id: Uuid, name: Option<&str>) {
+    if resp.secondary_clicked() && !world.search.groups.contains_key(&id) {
+        request(&resp.ctx, CtxAction::RequestGroupData(id));
+    }
+    menu::context_menu(resp, p, |ui| {
+        let items = GroupLinkItems::of(world, id, name.is_some());
+        let ctx = ui.ctx().clone();
+        let act = |a: CtxAction| request(&ctx, a);
+        if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-view-info")) {
+            super::group_profile::request_open(ui.ctx(), id);
+        }
+        menu::separator(ui, p);
+        if menu::item_if(ui, p, "circle-check-filled", aurora_i18n::tr!("common-activate"), items.activate) {
+            act(CtxAction::ActivateGroup(id));
+        }
+        if menu::item_if(ui, p, "users-plus", aurora_i18n::tr!("search-group-join"), items.join) {
+            act(CtxAction::JoinGroup(id));
+        }
+        if menu::item_if(ui, p, "logout", aurora_i18n::tr!("ui-contacts-leave-group"), items.leave) {
+            act(CtxAction::LeaveGroup(id));
+        }
+        menu::separator(ui, p);
+        if menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("search-group-copy-name"), items.copy_name)
+            && let Some(name) = name
+        {
+            ui.ctx().copy_text(name.to_owned());
+        }
+        if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl-2")) {
+            ui.ctx().copy_text(format!("secondlife:///app/group/{id}/about"));
+        }
+    });
+}
+
 /// The avatar wearing object `idx`, if it is an attachment.
 pub fn wearer(world: &World, idx: usize) -> Option<Uuid> {
     let mut o = world.objects.get(idx)?;
@@ -1891,9 +1990,34 @@ pub fn grid_link_confirm(ctx: &egui::Context, p: &Palette, address: &str, name: 
     answer
 }
 
+fn pie_hover_sound(hovered: Option<usize>, use_pie: bool, force_list: bool) -> Option<u8> {
+    if use_pie && !force_list {
+        hovered.filter(|i| *i < 8).map(|i| i as u8)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropdown_menus_do_not_play_pie_slice_sounds() {
+        for i in 0..12 {
+            assert_eq!(pie_hover_sound(Some(i), false, false), None);
+            assert_eq!(pie_hover_sound(Some(i), true, true), None);
+        }
+    }
+
+    #[test]
+    fn radial_menus_retain_their_slice_sounds() {
+        for i in 0..8 {
+            assert_eq!(pie_hover_sound(Some(i), true, false), Some(i as u8));
+        }
+        assert_eq!(pie_hover_sound(Some(8), true, false), None);
+        assert_eq!(pie_hover_sound(None, true, false), None);
+    }
 
     #[test]
     fn remote_friend_menu_location_clicks_follow_live_received_rights() {

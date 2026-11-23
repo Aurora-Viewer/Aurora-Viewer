@@ -130,6 +130,9 @@ pub(crate) struct FramePacket {
     /// Pixels whose drawn faces to read back: drawn again in this frame,
     /// answered with a later result (drawn_pick.rs).
     pub drawn: Vec<DrawnRequest>,
+    /// Requests of earlier frames given up since the frame before: not
+    /// drawn for if they still wait.
+    pub drawn_forgotten: Vec<u64>,
     pub capture: Option<Capture>,
     /// The panorama to project from the cube of the six faces, before the
     /// frame is drawn (equirect.rs); answered by a later result.

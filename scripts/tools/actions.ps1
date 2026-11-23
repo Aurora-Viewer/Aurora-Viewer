@@ -97,19 +97,20 @@ function Show-Tasks {
     $dirs = @(Get-ChildItem -LiteralPath $Paths.Work -Directory -Force -ErrorAction SilentlyContinue)
     if (-not $dirs) { Write-Color '  No task in progress.' muted; return @() }
     Write-Color '  Computing (PRs on GitHub, sizes)…' muted_dim
+    # Get-LastBuildTime (scripts\common.ps1): the same last build as the
+    # housekeeping of new-task.ps1
+    . (Join-Path $Paths.Repo 'scripts\common.ps1')
     $rows = foreach ($d in $dirs) {
         $branch = (git -C $d.FullName rev-parse --abbrev-ref HEAD 2>$null)
         $pr = if ($branch) { gh pr view $branch.Trim() --json number,state 2>$null | ConvertFrom-Json }
-        $last = Get-ChildItem -LiteralPath (Join-Path $d.FullName 'target') -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object {
-            Get-Item -LiteralPath (Join-Path $_.FullName 'deps') -Force -ErrorAction SilentlyContinue
-        } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        $last = Get-LastBuildTime (Join-Path $d.FullName 'target')
         [pscustomobject]@{
             Name = $d.Name
             Branch = $branch
             Pr = if ($pr) { "#$($pr.number) $($pr.state.ToLower())" } else { 'no PR' }
             Merged = $pr -and $pr.state -eq 'MERGED'
             Changes = [bool](git -C $d.FullName status --porcelain 2>$null)
-            Build = if ($last) { $last.LastWriteTime.ToString('MM-dd HH:mm') } else { '-' }
+            Build = if ($last) { $last.ToString('MM-dd HH:mm') } else { '-' }
             Size = '{0:N1} GB' -f ((Get-FolderSize (Join-Path $d.FullName 'target')) / 1GB)
         }
     }

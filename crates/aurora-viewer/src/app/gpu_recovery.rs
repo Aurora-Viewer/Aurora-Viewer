@@ -305,6 +305,7 @@ impl App {
         self.note_gpus(&renderer);
         self.screen_rate.poll(&window, Instant::now());
         let egui_state = self.egui_state_for(&window, &renderer);
+        self.cursor_shown.forget();
         self.gfx = Some(Gfx {
             renderer,
             egui_state,

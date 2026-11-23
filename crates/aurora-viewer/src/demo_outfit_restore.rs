@@ -106,7 +106,9 @@ impl OutfitRestoreDemo {
                 .remove(&point)
                 .unwrap_or_default()
                 .iter()
-                .map(|id| local_id(*id))
+                .filter_map(|id| world.worn_attachment(id))
+                .filter_map(|index| world.objects.get(index))
+                .map(|object| object.key.local_id)
                 .collect();
             if !off.is_empty() {
                 world.apply(NetEvent::ObjectsKilled {
@@ -194,11 +196,6 @@ impl OutfitRestoreDemo {
             _ => false,
         }
     }
-}
-
-fn local_id(item: Uuid) -> u32 {
-    // as crate::demo::outfit_attachment numbers them
-    30_000 + (item.as_u128() & 0xffff) as u32
 }
 
 fn wear(world: &mut World, list: &[AttachRequest]) {
