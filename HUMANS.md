@@ -549,3 +549,11 @@ as `aurora.previous.log`. Demo sessions have their own logs
   to stop and report it.
 - You can always ask an agent to explain a change to you, or not to merge a
   PR before you have looked at it.
+- **Weekly security triage.** The `Security` workflow checks the dependencies
+  with `cargo-deny` (the accepted risks and the date each is due are in
+  `deny.toml`), `CodeQL` scans the code and the workflows, and a
+  `Certificates` workflow checks the shipped certificate bundle every week.
+  Take fifteen minutes a week (or ask an agent to) for their runs, the
+  Security tab's code-scanning alerts and the Dependabot pull requests. A
+  maintainer also checks once that secret scanning and push protection are
+  on (Settings › Code security).
