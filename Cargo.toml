@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
-# LOCAL ONLY (task rt-shadows, step 0): the local wgpu fork keeps its own workspace.
-exclude = [".scratch"]
 
 [workspace.package]
 version = "0.1.0"
@@ -91,20 +89,23 @@ type_complexity = "allow"
 # integrated GPUs (`igvk64`) reads past and crashes on at every start
 # (#1302). The organisation's fork `Aurora-Viewer/wgpu` holds the branch
 # `aurora/v30.0.1-empty-pool`: the v30.0.1 tag plus that commit (11 lines in
-# wgpu-hal), pinned by `rev`; never delete or rewrite that branch. The whole
-# family comes from it, so the crates keep sharing one `wgpu-types` and one
-# `naga`. Remove this section with the upgrade.
-# LOCAL ONLY (task rt-shadows, step 0): the fork with the TLAS instance flags,
-# from .scratch/wgpu (branch aurora/rt-instance-flags). Not for a commit.
+# wgpu-hal); never delete or rewrite that branch. The ray tracing needs one
+# more: the TLAS instance flags (facing cull off for double-sided faces,
+# flipped facing for mirrored instances, forced opacity), carried through
+# wgpu-core and wgpu-hal to Vulkan, DX12 and Metal, on the branch
+# `aurora/v30.0.1-rt-instance-flags` (that branch plus one commit), pinned
+# by `rev`; never delete or rewrite it either. The whole family comes from
+# it, so the crates keep sharing one `wgpu-types` and one `naga`. Remove
+# this section with the upgrade (the flags are to be offered upstream).
 [patch.crates-io]
-naga = { path = ".scratch/wgpu/naga" }
-naga-types = { path = ".scratch/wgpu/naga-types" }
-wgpu = { path = ".scratch/wgpu/wgpu" }
-wgpu-core = { path = ".scratch/wgpu/wgpu-core" }
-wgpu-core-deps-apple = { path = ".scratch/wgpu/wgpu-core/platform-deps/apple" }
-wgpu-core-deps-emscripten = { path = ".scratch/wgpu/wgpu-core/platform-deps/emscripten" }
-wgpu-core-deps-wasm = { path = ".scratch/wgpu/wgpu-core/platform-deps/wasm" }
-wgpu-core-deps-windows-linux-android = { path = ".scratch/wgpu/wgpu-core/platform-deps/windows-linux-android" }
-wgpu-hal = { path = ".scratch/wgpu/wgpu-hal" }
-wgpu-naga-bridge = { path = ".scratch/wgpu/wgpu-naga-bridge" }
-wgpu-types = { path = ".scratch/wgpu/wgpu-types" }
+naga = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+naga-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-core = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-core-deps-apple = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-core-deps-emscripten = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-core-deps-wasm = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-core-deps-windows-linux-android = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-hal = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-naga-bridge = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
+wgpu-types = { git = "https://github.com/Aurora-Viewer/wgpu", rev = "6c13013b3f9c8a7e45154d45d120ada0cbe55a23" }
