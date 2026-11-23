@@ -5134,6 +5134,7 @@ outfits-the-outfit-was-sent-but-could-not-be-read = La tenue a été envoyée, m
 world-appearance-the-current-outfit-cannot-be-deleted = La tenue actuelle ne peut pas être supprimée.
 world-appearance-the-outfit-exceeds-the-38-attachment-limit = La tenue dépasse la limite de 38 attachements.
 world-appearance-the-outfit-exceeds-the-limit-of-60-layers-per = La tenue dépasse la limite de 60 calques par type de vêtement.
+world-appearance-clothing-layers-full = Les 60 couches de vêtements sont utilisées. Retirez une couche avant de porter cet article.
 common-boreal-lagoon = Lagune Boréale
 demo-place-aurora-lagoon = Lagune des aurores
 demo-place-aurora-lagoon-boreal-lagoon = Lagune des aurores, Lagune Boréale

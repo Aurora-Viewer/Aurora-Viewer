@@ -5128,6 +5128,7 @@ outfits-the-outfit-was-sent-but-could-not-be-read = The outfit was sent, but cou
 world-appearance-the-current-outfit-cannot-be-deleted = The current outfit cannot be deleted.
 world-appearance-the-outfit-exceeds-the-38-attachment-limit = The outfit exceeds the 38-attachment limit.
 world-appearance-the-outfit-exceeds-the-limit-of-60-layers-per = The outfit exceeds the limit of 60 layers per clothing type.
+world-appearance-clothing-layers-full = All 60 clothing layers are in use. Remove a layer before wearing this item.
 common-boreal-lagoon = Boreal Lagoon
 demo-place-aurora-lagoon = Aurora Lagoon
 demo-place-aurora-lagoon-boreal-lagoon = Aurora Lagoon, Boreal Lagoon

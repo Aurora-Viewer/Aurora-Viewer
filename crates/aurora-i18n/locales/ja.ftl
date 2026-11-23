@@ -5075,6 +5075,7 @@ outfits-the-outfit-was-sent-but-could-not-be-read = アウトフィットを送�
 world-appearance-the-current-outfit-cannot-be-deleted = 現在のアウトフィットは削除できません。
 world-appearance-the-outfit-exceeds-the-38-attachment-limit = アウトフィットの装着アイテム数が上限の38個を超えています。
 world-appearance-the-outfit-exceeds-the-limit-of-60-layers-per = アウトフィットの衣類タイプごとのレイヤー数が上限の60を超えています。
+world-appearance-clothing-layers-full = 衣類レイヤーは上限の60枚に達しています。このアイテムを着用する前に、レイヤーを1枚外してください。
 common-boreal-lagoon = ボレアル・ラグーン
 demo-place-aurora-lagoon = Auroraラグーン
 demo-place-aurora-lagoon-boreal-lagoon = Auroraラグーン、ボレアル・ラグーン
