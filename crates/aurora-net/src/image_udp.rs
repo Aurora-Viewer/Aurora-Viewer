@@ -18,8 +18,18 @@
 //!
 //! The simulator's numbers are bounded: an image larger than
 //! [`MAX_IMAGE_BYTES`], a packet count that does not fit, or a packet index
-//! past that size is ignored, so a broken or hostile simulator cannot make the
-//! viewer keep or reserve unbounded memory.
+//! past that size is ignored, and the packets held before their header are
+//! capped for all the images together ([`MAX_EARLY_PACKETS`]), so a broken or
+//! hostile simulator cannot make the viewer keep or reserve unbounded memory.
+//! Packets that do not add up to the header's size are asked again a few
+//! times, waiting longer each time, then the image is given up as missing.
+//!
+//! `ImageNotInDatabase` marks an image missing only when it comes from the
+//! simulator it was asked of and the image is not already complete. A missing
+//! image is asked again when the viewer acquires it afresh ([`Want::fresh`]),
+//! as `LLVOAvatar::getBakedTextureImage` clears the missing flag
+//! (`setIsMissingAsset(false)`) on every `setTETexture`, or when the avatar's
+//! region changes.
 
 use aurora_msg::msgs::{self, RequestImage};
 use std::collections::BTreeMap;
@@ -45,6 +55,14 @@ pub const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 /// Packets of a [`MAX_IMAGE_BYTES`] image: the 600-byte first packet, then
 /// 1000 bytes each.
 const MAX_PACKETS: usize = 1 + (MAX_IMAGE_BYTES - FIRST_PACKET_SIZE).div_ceil(MAX_IMG_PACKET_SIZE);
+/// Packets held before their image's header, all images together. The
+/// Legacy Viewer drops every one of them (`receiveImagePacket` before the
+/// header cancels); a reordered packet or two is what this keeps.
+pub const MAX_EARLY_PACKETS: usize = 256;
+/// Times packets short of the header's size are asked again before the
+/// image is given up as missing. The first retry waits [`MIN_REQUEST_TIME`],
+/// each next one twice as long.
+const MAX_SHORT_RETRIES: u8 = 3;
 
 /// `IMG_TYPE` (`llimage.h`). A host bake is `TYPE_AVATAR_BAKE`
 /// (`LLTextureFetchWorker::mType` when the host is set).
@@ -59,6 +77,19 @@ pub struct Want {
     pub discard: i8,
     pub priority: f32,
     pub bake: bool,
+    /// The viewer has just acquired the texture (a new entry, or one nothing
+    /// held any more): an earlier `ImageNotInDatabase` is forgotten and the
+    /// image is asked again (`setIsMissingAsset(false)` on `setTETexture`).
+    pub fresh: bool,
+}
+
+/// What a received packet completed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Arrival {
+    /// Every packet, in index order, cut to the header's size.
+    Complete(Vec<u8>),
+    /// The packets never added up to the header's size: given up as missing.
+    GaveUp,
 }
 
 /// One `RequestImage` block.
@@ -100,6 +131,10 @@ struct Slot {
     sent_discard: Option<i8>,
     sent_priority: f32,
     sent_at: Option<Instant>,
+    /// Times the packets came short of the header's size.
+    short: u8,
+    /// Not asked again before this (after packets that came short).
+    not_before: Option<Instant>,
 }
 
 /// Images in flight over UDP, and the requests waiting to leave.
@@ -112,23 +147,39 @@ pub struct Fetch {
 
 impl Fetch {
     /// Replace the set of images we want. One we drop is cancelled.
-    /// `ImageNotInDatabase` stays missing, so a later want does not ask again.
-    pub fn sync(&mut self, wants: &[Want]) {
+    /// `ImageNotInDatabase` stays missing, so a later want does not ask again
+    /// unless it is [`Want::fresh`] or names another region. Returns the
+    /// images wanted that stay missing, for the viewer to be told again (an
+    /// entry that missed the first answer would otherwise wait forever).
+    pub fn sync(&mut self, wants: &[Want]) -> Vec<Uuid> {
         for slot in self.slots.values_mut() {
             slot.seen = slot.missing;
         }
+        let mut still_missing = Vec::new();
         for w in wants {
             if let Some(slot) = self.slots.get_mut(&w.image) {
                 slot.seen = true;
-                if slot.missing && slot.region != w.region {
-                    // Another simulator may have it: the avatar moved, or we did.
+                if slot.missing && (slot.region != w.region || w.fresh) {
+                    // Another simulator may have it (the avatar moved, or we
+                    // did), or the viewer acquired it again.
                     *slot = Slot::new(w);
                     continue;
                 }
                 if slot.missing {
+                    still_missing.push(w.image);
                     continue;
                 }
-                slot.region = w.region;
+                if slot.region != w.region {
+                    // The avatar's new simulator is asked at once, not at the
+                    // next lazy flush, and the old one is told to stop
+                    // (an unfinished bake follows its avatar).
+                    if !slot.done && slot.sent_discard.is_some() {
+                        self.cancels.push((slot.region, w.image));
+                    }
+                    slot.region = w.region;
+                    slot.sent_discard = None;
+                    slot.not_before = None;
+                }
                 slot.discard = w.discard;
                 slot.priority = w.priority;
                 slot.bake = w.bake;
@@ -139,7 +190,10 @@ impl Fetch {
         // A cancel still waiting for an image wanted again is dropped
         // (`LLTextureFetch::addToNetworkQueue` erases it from mCancelQueue),
         // else it would leave after the new request and stop it.
-        self.cancels.retain(|(_, id)| !wants.iter().any(|w| w.image == *id));
+        // A cancel to the region the image is asked of now is meant for that
+        // region's earlier request only.
+        self.cancels
+            .retain(|(region, id)| wants.iter().all(|w| w.image != *id) || self.slots.get(id).is_some_and(|slot| slot.region != *region));
         // A finished transfer is left alone (`removeFromNetworkQueue(worker,
         // false)`); only one still in flight is cancelled.
         let dropped: Vec<(u64, Uuid, bool)> = self
@@ -154,6 +208,7 @@ impl Fetch {
                 self.cancels.push((region, id));
             }
         }
+        still_missing
     }
 
     /// Requests and cancels that are due at `now`. Empty when the last send
@@ -207,8 +262,8 @@ impl Fetch {
     }
 
     /// `ImageData`: packet 0. `None` when it is ignored or the file is not
-    /// complete yet. The bytes are every packet in index order.
-    pub fn header(&mut self, id: Uuid, packets: u16, size: u32, data: Vec<u8>, now: Instant) -> Option<Vec<u8>> {
+    /// complete yet.
+    pub fn header(&mut self, id: Uuid, packets: u16, size: u32, data: Vec<u8>, now: Instant) -> Option<Arrival> {
         let slot = self.slots.get_mut(&id)?;
         if slot.missing || slot.done || slot.header {
             return None;
@@ -232,12 +287,14 @@ impl Fetch {
         slot.parts.retain(|&index, bytes| packet_fits(index, total, bytes));
         // insertPacket resets the request timer as the bytes arrive.
         slot.sent_at = Some(now);
-        assemble(slot)
+        assemble(slot, now)
     }
 
     /// `ImagePacket`. Stored by index even before the header, so a packet
-    /// that overtakes `ImageData` is not thrown away. A duplicate is ignored.
-    pub fn packet(&mut self, id: Uuid, num: u16, data: Vec<u8>, now: Instant) -> Option<Vec<u8>> {
+    /// that overtakes `ImageData` is not thrown away, up to
+    /// [`MAX_EARLY_PACKETS`] for all the images. A duplicate is ignored.
+    pub fn packet(&mut self, id: Uuid, num: u16, data: Vec<u8>, now: Instant) -> Option<Arrival> {
+        let early = self.early_packets();
         let slot = self.slots.get_mut(&id)?;
         if slot.missing || slot.done || data.is_empty() {
             return None;
@@ -251,19 +308,31 @@ impl Fetch {
         if slot.parts.contains_key(&num) {
             return None;
         }
+        if !slot.header && early >= MAX_EARLY_PACKETS {
+            return None;
+        }
         slot.parts.insert(num, data);
         slot.sent_at = Some(now);
-        assemble(slot)
+        assemble(slot, now)
     }
 
-    /// `ImageNotInDatabase` (`LLViewerTextureList` sets the image missing).
-    /// Sticky: there is no retry timer.
+    /// Packets held for images whose header has not arrived.
+    fn early_packets(&self) -> usize {
+        self.slots.values().filter(|slot| !slot.header).map(|slot| slot.parts.len()).sum()
+    }
+
+    /// `ImageNotInDatabase` from `region` (`LLViewerTextureList` sets the
+    /// image missing). Sticky: there is no retry timer, only a fresh want.
     /// An image we never asked for is ignored, as the Legacy Viewer marks
-    /// only an image `findImage` knows.
-    pub fn not_in_database(&mut self, id: Uuid) -> bool {
+    /// only an image `findImage` knows; so is the answer of a simulator the
+    /// image is no longer asked of, and one for an image already complete.
+    pub fn not_in_database(&mut self, id: Uuid, region: u64) -> bool {
         let Some(slot) = self.slots.get_mut(&id) else {
             return false;
         };
+        if slot.region != region || slot.done || slot.missing {
+            return false;
+        }
         slot.missing = true;
         slot.seen = true;
         slot.parts.clear();
@@ -295,6 +364,8 @@ impl Slot {
             sent_discard: None,
             sent_priority: 0.0,
             sent_at: None,
+            short: 0,
+            not_before: None,
         }
     }
 
@@ -302,7 +373,7 @@ impl Slot {
     /// priority moved enough after a second, or ten seconds have passed.
     /// The first request is due because nothing has been sent.
     fn due(&self, now: Instant) -> bool {
-        if self.missing || self.done {
+        if self.missing || self.done || self.not_before.is_some_and(|t| now < t) {
             return false;
         }
         if self.header && self.total > 0 && self.last >= i32::from(self.total) - 1 {
@@ -354,7 +425,7 @@ fn advance(slot: &mut Slot) {
     }
 }
 
-fn assemble(slot: &mut Slot) -> Option<Vec<u8>> {
+fn assemble(slot: &mut Slot, now: Instant) -> Option<Arrival> {
     advance(slot);
     if slot.done || !slot.header || slot.total == 0 || slot.last < i32::from(slot.total) - 1 {
         return None;
@@ -364,17 +435,26 @@ fn assemble(slot: &mut Slot) -> Option<Vec<u8>> {
         bytes.extend_from_slice(slot.parts.get(&index)?);
     }
     if bytes.len() < slot.size as usize {
-        // The packets do not add up to the header's size: ask again.
+        // The packets do not add up to the header's size: ask again from the
+        // start, later each time, then give up rather than download it again
+        // and again.
         slot.parts.clear();
         slot.header = false;
         slot.last = -1;
+        slot.short = slot.short.saturating_add(1);
+        if slot.short > MAX_SHORT_RETRIES {
+            slot.missing = true;
+            slot.seen = true;
+            return Some(Arrival::GaveUp);
+        }
         slot.sent_discard = None;
+        slot.not_before = Some(now + MIN_REQUEST_TIME * (1u32 << (slot.short - 1)));
         return None;
     }
     bytes.truncate(slot.size as usize);
     slot.done = true;
     slot.parts.clear();
-    Some(bytes)
+    Some(Arrival::Complete(bytes))
 }
 
 fn push_chunks(region: u64, items: Vec<ImageRequest>, out: &mut Vec<Batch>) {
@@ -416,6 +496,7 @@ mod tests {
             discard: 3,
             priority: 12.5,
             bake: true,
+            fresh: false,
         }
     }
 
@@ -486,7 +567,7 @@ mod tests {
             .unwrap();
         let mut expect = head;
         expect.extend_from_slice(&tail);
-        assert_eq!(got, expect);
+        assert_eq!(got, Arrival::Complete(expect));
     }
 
     #[test]
@@ -497,10 +578,11 @@ mod tests {
         fetch.sync(std::slice::from_ref(&w));
         let t0 = Instant::now();
         assert_eq!(fetch.take_outbound(t0).len(), 1);
-        fetch.not_in_database(id);
+        assert!(fetch.not_in_database(id, 7));
         assert!(fetch.is_missing(&id));
         assert!(fetch.take_outbound(t0 + Duration::from_secs(600)).is_empty());
-        fetch.sync(std::slice::from_ref(&w));
+        // still missing: the viewer is told again, nothing is asked
+        assert_eq!(fetch.sync(std::slice::from_ref(&w)), vec![id]);
         assert!(fetch.take_outbound(t0 + Duration::from_secs(601)).is_empty());
     }
 
@@ -558,8 +640,128 @@ mod tests {
         assert!(fetch.slots[&id].header);
         assert!(fetch.packet(id, 1, vec![2u8; 1000], t0).is_none());
         assert!(fetch.packet(id, 2, vec![4u8; 10], t0).is_none());
-        let again = fetch.take_outbound(t0 + REQUEST_DELTA);
+        // asked again from the start, but not before a second has passed
+        assert!(fetch.take_outbound(t0 + REQUEST_DELTA).is_empty());
+        let again = fetch.take_outbound(t0 + MIN_REQUEST_TIME);
         assert_eq!(again[0].items[0].packet, 0, "{again:?}");
+    }
+
+    /// Header, middle packet and a short last packet: 2600 bytes announced,
+    /// 1610 sent.
+    fn send_short(fetch: &mut Fetch, id: Uuid, now: Instant) -> Option<Arrival> {
+        assert!(fetch.header(id, 3, 2600, vec![1u8; FIRST_PACKET_SIZE], now).is_none());
+        assert!(fetch.packet(id, 1, vec![2u8; 1000], now).is_none());
+        fetch.packet(id, 2, vec![4u8; 10], now)
+    }
+
+    #[test]
+    fn packets_that_keep_coming_short_are_given_up_with_a_growing_wait() {
+        let mut fetch = Fetch::default();
+        let id = Uuid::from_u128(16);
+        fetch.sync(&[want(16)]);
+        let mut now = Instant::now();
+        assert_eq!(fetch.take_outbound(now).len(), 1);
+        for wait in [1, 2, 4] {
+            assert!(send_short(&mut fetch, id, now).is_none());
+            let wait = Duration::from_secs(wait);
+            assert!(
+                fetch.take_outbound(now + wait - REQUEST_DELTA).is_empty(),
+                "asked again before {wait:?}"
+            );
+            now += wait;
+            assert_eq!(fetch.take_outbound(now).len(), 1, "asked again after {wait:?}");
+        }
+        assert_eq!(send_short(&mut fetch, id, now), Some(Arrival::GaveUp));
+        assert!(fetch.is_missing(&id));
+        assert!(fetch.take_outbound(now + SIM_LAZY_FLUSH).is_empty());
+    }
+
+    #[test]
+    fn a_missing_image_acquired_afresh_is_asked_again() {
+        let mut fetch = Fetch::default();
+        let id = Uuid::from_u128(17);
+        fetch.sync(&[want(17)]);
+        let t0 = Instant::now();
+        fetch.take_outbound(t0);
+        assert!(fetch.not_in_database(id, 7));
+        assert!(fetch.take_outbound(t0 + REQUEST_DELTA).is_empty());
+        let fresh = Want { fresh: true, ..want(17) };
+        assert!(fetch.sync(std::slice::from_ref(&fresh)).is_empty());
+        assert!(!fetch.is_missing(&id));
+        let out = fetch.take_outbound(t0 + REQUEST_DELTA * 2);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].items[0].packet, 0);
+    }
+
+    #[test]
+    fn image_not_in_database_counts_only_from_the_region_asked_and_before_the_end() {
+        let mut fetch = Fetch::default();
+        let id = Uuid::from_u128(18);
+        fetch.sync(&[want(18)]);
+        let t0 = Instant::now();
+        fetch.take_outbound(t0);
+        // another simulator does not decide for the one asked
+        assert!(!fetch.not_in_database(id, 8));
+        assert!(!fetch.is_missing(&id));
+        // a finished image stays finished
+        assert_eq!(
+            fetch.header(id, 1, 300, vec![5u8; 300], t0),
+            Some(Arrival::Complete(vec![5u8; 300]))
+        );
+        assert!(!fetch.not_in_database(id, 7));
+        assert!(!fetch.is_missing(&id));
+    }
+
+    #[test]
+    fn a_want_that_moves_region_is_asked_at_once_and_cancelled_at_the_old_one() {
+        let mut fetch = Fetch::default();
+        let id = Uuid::from_u128(19);
+        fetch.sync(&[want(19)]);
+        let t0 = Instant::now();
+        assert!(fetch.header(id, 2, 610, vec![1u8; FIRST_PACKET_SIZE], t0).is_none());
+        assert_eq!(fetch.take_outbound(t0).len(), 1);
+        let moved = Want { region: 8, ..want(19) };
+        fetch.sync(std::slice::from_ref(&moved));
+        let out = fetch.take_outbound(t0 + REQUEST_DELTA);
+        let by_region: Vec<(u64, i8, u32)> = out
+            .iter()
+            .flat_map(|batch| batch.items.iter().map(|item| (batch.region, item.discard, item.packet)))
+            .collect();
+        // the new simulator continues after the packets already held
+        assert!(by_region.contains(&(8, moved.discard, 1)), "{out:?}");
+        assert!(by_region.contains(&(7, -1, 0)), "{out:?}");
+        assert_eq!(by_region.len(), 2, "{out:?}");
+        // the same region again sends no cancel
+        fetch.sync(std::slice::from_ref(&moved));
+        assert!(fetch.take_outbound(t0 + REQUEST_DELTA * 2).is_empty());
+    }
+
+    #[test]
+    fn packets_before_their_header_are_capped_for_all_images_together() {
+        let mut fetch = Fetch::default();
+        let wants: Vec<Want> = (100..110).map(want).collect();
+        fetch.sync(&wants);
+        let t0 = Instant::now();
+        let mut kept = 0;
+        for w in &wants {
+            for num in 1..=100u16 {
+                fetch.packet(w.image, num, vec![0u8; MAX_IMG_PACKET_SIZE], t0);
+            }
+            kept += fetch.slots[&w.image].parts.len();
+        }
+        assert_eq!(kept, MAX_EARLY_PACKETS);
+        assert_eq!(fetch.early_packets(), MAX_EARLY_PACKETS);
+        // once a header arrives, that image's packets no longer count
+        let first = wants[0].image;
+        let held = fetch.slots[&first].parts.len();
+        assert!(
+            fetch
+                .header(first, 200, 600 + 199 * 1000, vec![1u8; FIRST_PACKET_SIZE], t0)
+                .is_none()
+        );
+        assert_eq!(fetch.early_packets(), MAX_EARLY_PACKETS - held);
+        assert!(fetch.packet(wants[9].image, 101, vec![0u8; MAX_IMG_PACKET_SIZE], t0).is_none());
+        assert_eq!(fetch.early_packets(), MAX_EARLY_PACKETS - held + 1);
     }
 
     #[test]
@@ -591,7 +793,7 @@ mod tests {
     #[test]
     fn image_not_in_database_counts_only_for_an_image_we_asked_for() {
         let mut fetch = Fetch::default();
-        assert!(!fetch.not_in_database(Uuid::from_u128(14)));
+        assert!(!fetch.not_in_database(Uuid::from_u128(14), 7));
         assert!(fetch.slots.is_empty());
     }
 
@@ -602,7 +804,7 @@ mod tests {
         fetch.sync(&[want(15)]);
         let t0 = Instant::now();
         fetch.take_outbound(t0);
-        assert!(fetch.not_in_database(id));
+        assert!(fetch.not_in_database(id, 7));
         let moved = Want { region: 8, ..want(15) };
         fetch.sync(std::slice::from_ref(&moved));
         assert!(!fetch.is_missing(&id));

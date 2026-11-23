@@ -3208,7 +3208,11 @@ impl Session<'_> {
             }
             NetCommand::ClearObjectCache => self.object_cache.clear(),
             NetCommand::SyncHostImages(wants) => {
-                self.images.sync(&wants);
+                // (a want the simulator already answered missing: the viewer
+                // is told again, else its texture would wait for nothing)
+                for id in self.images.sync(&wants) {
+                    emit(self.sh, NetEvent::HostImage { id, bytes: None });
+                }
                 self.flush_host_images(Instant::now());
             }
             NetCommand::Build(b) => self.on_build(b),
@@ -4481,34 +4485,45 @@ impl Session<'_> {
     fn on_image_data(&mut self, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let message: ImageData = pkt.decode()?;
         let id = message.image_id.id;
-        if let Some(bytes) = self.images.header(
+        if let Some(arrival) = self.images.header(
             id,
             message.image_id.packets,
             message.image_id.size,
             message.image_data.data,
             Instant::now(),
         ) {
-            emit(self.sh, NetEvent::HostImage { id, bytes: Some(bytes) });
+            self.emit_host_image(id, arrival);
         }
         Ok(())
+    }
+
+    fn emit_host_image(&self, id: Uuid, arrival: crate::image_udp::Arrival) {
+        let bytes = match arrival {
+            crate::image_udp::Arrival::Complete(bytes) => Some(bytes),
+            crate::image_udp::Arrival::GaveUp => {
+                log::info!("host bake {id}: its packets never added up to its size, given up");
+                None
+            }
+        };
+        emit(self.sh, NetEvent::HostImage { id, bytes });
     }
 
     fn on_image_packet(&mut self, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let message: ImagePacket = pkt.decode()?;
         let id = message.image_id.id;
-        if let Some(bytes) = self
+        if let Some(arrival) = self
             .images
             .packet(id, message.image_id.packet, message.image_data.data, Instant::now())
         {
-            emit(self.sh, NetEvent::HostImage { id, bytes: Some(bytes) });
+            self.emit_host_image(id, arrival);
         }
         Ok(())
     }
 
-    fn on_image_missing(&mut self, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
+    fn on_image_missing(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let message: ImageNotInDatabase = pkt.decode()?;
         let id = message.image_id.id;
-        if self.images.not_in_database(id) {
+        if self.images.not_in_database(id, self.handle_of(from)) {
             emit(self.sh, NetEvent::HostImage { id, bytes: None });
         }
         Ok(())
@@ -4536,7 +4551,7 @@ impl Session<'_> {
         } else if id == ImagePacket::ID {
             return self.on_image_packet(pkt);
         } else if id == ImageNotInDatabase::ID {
-            return self.on_image_missing(pkt);
+            return self.on_image_missing(from, pkt);
         }
         if id == PacketAck::ID {
             let m: PacketAck = pkt.decode()?;

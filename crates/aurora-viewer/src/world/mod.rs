@@ -1023,7 +1023,7 @@ pub(crate) fn source_for_bake(service: &str, region: Option<RegionHandle>, avata
         };
     }
     match region.and_then(usable_host_region) {
-        Some(region) => TexSource::Host { region },
+        Some(region) => TexSource::Host { region, avatar },
         None => TexSource::Asset,
     }
 }
@@ -1040,7 +1040,7 @@ mod bake_source_tests {
         let tex = Uuid::from_u128(2);
         assert_eq!(
             source_for_bake("", Some(0x100), avatar, "head", tex),
-            TexSource::Host { region: 0x100 }
+            TexSource::Host { region: 0x100, avatar }
         );
         assert_eq!(source_for_bake("", None, avatar, "head", tex), TexSource::Asset);
         assert_eq!(source_for_bake("", Some(0), avatar, "head", tex), TexSource::Asset);
