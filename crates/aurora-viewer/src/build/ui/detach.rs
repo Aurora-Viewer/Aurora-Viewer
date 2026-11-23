@@ -534,11 +534,11 @@ mod tests {
         let id = egui::Id::unique(INSPECTOR_ID);
         // inside the viewer's window: 420 x 700
         for _ in 0..2 {
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::Area::new(id).fixed_pos(egui::pos2(50.0, 60.0)).show(ui.ctx(), |ui| {
                     ui.allocate_space(egui::vec2(420.0, 700.0));
                 });
-            });
+            }));
         }
         assert_eq!(main_rect(&ctx).map(|rect| rect.size()), Some(egui::vec2(420.0, 700.0)));
         // sent outside, where it is 500 x 900

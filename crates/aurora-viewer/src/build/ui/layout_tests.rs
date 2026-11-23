@@ -823,13 +823,13 @@ fn settings_take_the_room_of_the_window_outside() {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, i.screen);
     let draw = |i: &mut Inspector, beside: Beside| {
         let ctx = i.ctx.clone();
-        let _ = ctx.run_ui(
+        crate::ui::login::test_output(ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(screen),
                 ..Default::default()
             },
             |ui| settings(ui.ctx(), &p, &mut i.tool, &mut i.world, &mut i.settings, i.mods, beside),
-        );
+        ));
     };
     draw(&mut i, Beside::Outside(None));
     assert!(i.ctx.memory(|m| m.area_rect(id)).is_none(), "no room yet: nothing is drawn");

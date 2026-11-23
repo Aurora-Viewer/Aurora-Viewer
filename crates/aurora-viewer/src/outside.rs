@@ -1451,7 +1451,7 @@ mod tests {
         let (left, live) = (egui::Id::unique("left"), egui::Id::unique("live"));
         let told = |ctx: &egui::Context| ctx.data_mut(|d| d.remove_temp::<bool>(notice_id())).unwrap_or(false);
         // (no host here: egui runs a window outside inside the viewer's pass)
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        crate::ui::login::test_output(ctx.run_ui(Default::default(), |ui| {
             let ctx = ui.ctx();
             ctx.data_mut(|d| d.insert_temp(untold_id(), vec![live]));
             seen(ctx, live);
@@ -1463,7 +1463,7 @@ mod tests {
             // told once: the host names it again when its notice is to draw
             keep(ctx, &p, Kept::Director);
             assert!(!told(ctx));
-        });
+        }));
     }
 
     #[test]
@@ -1525,18 +1525,18 @@ mod tests {
     fn the_focused_window_is_the_one_outside_then_the_viewers_own() {
         let ctx = egui::Context::default();
         let chat = egui::Id::unique("conversations");
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |_| {}));
         assert_eq!(focused_window(&ctx), Some(egui::ViewportId::ROOT));
         publish_front(&ctx, Some(chat));
         assert_eq!(focused_window(&ctx), Some(viewport(chat)));
         publish_front(&ctx, None);
-        let _ = ctx.run_ui(
+        crate::ui::login::test_output(ctx.run_ui(
             egui::RawInput {
                 focused: false,
                 ..Default::default()
             },
             |_| {},
-        );
+        ));
         assert_eq!(focused_window(&ctx), None);
     }
 
@@ -1545,13 +1545,13 @@ mod tests {
         let ctx = egui::Context::default();
         let (chat, people) = (egui::Id::unique("conversations"), egui::Id::unique("people"));
         let at = |time: f64| {
-            let _ = ctx.run_ui(
+            crate::ui::login::test_output(ctx.run_ui(
                 egui::RawInput {
                     time: Some(time),
                     ..Default::default()
                 },
                 |_| {},
-            );
+            ));
         };
         at(10.0);
         publish_front(&ctx, Some(chat));
@@ -1671,13 +1671,13 @@ mod tests {
         let mut text = String::new();
         let mut read = Vec::new();
         for focus in [false, true, true] {
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
                 let field = ui.text_edit_singleline(&mut text);
                 if focus {
                     field.request_focus();
                 }
                 read.push(reads_keys(ui.ctx()));
-            });
+            }));
         }
         assert_eq!(read, [false, true, true]);
     }
@@ -1813,23 +1813,23 @@ mod tests {
             } = viewport;
             let clock = ctx.input(|i| (i.time, i.predicted_dt, i.max_texture_side));
             let input = pass_input(egui::RawInput::default(), ids, (600, 400), 1.0, 1.0, false, clock);
-            let _ = ctx.run_ui(input, |ui| {
+            crate::ui::login::test_output(ctx.run_ui(input, |ui| {
                 *for_pass.borrow_mut() = Some((
                     ui.ctx().cumulative_frame_nr_for(ui.ctx().viewport_id()),
                     ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),
                 ));
                 viewport_ui_cb(ui);
-            });
+            }));
         });
         // (the window goes outside after a few frames of the viewer)
         let mut root = 0;
         for frame in 0..5 {
-            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |ui| {
                 root = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
                 if frame >= 3 {
                     ui.ctx().show_viewport_immediate(id, egui::ViewportBuilder::default(), |_, _| ());
                 }
-            });
+            }));
         }
         let (own, of_root) = kept.borrow_mut().take().expect("the pass outside ran");
         assert_eq!(root, 4);

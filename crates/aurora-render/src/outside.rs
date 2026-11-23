@@ -519,7 +519,10 @@ mod tests {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
             ..Default::default()
         };
-        ctx.run_ui(input, add)
+        let mut out = ctx.run_ui(input, add);
+        // (no renderer takes the font atlas here)
+        out.textures_delta.clear();
+        out
     }
 
     fn triangle() -> std::sync::Arc<egui::Mesh> {

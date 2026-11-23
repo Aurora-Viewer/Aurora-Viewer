@@ -549,7 +549,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let _ = ctx.run_ui(input, |_| {});
+        crate::ui::login::test_output(ctx.run_ui(input, |_| {}));
     }
 
     /// An item dragged in window 1, let go of over window 2: the release
@@ -584,7 +584,7 @@ mod tests {
         // the same cargo, for the same code as during the drag
         assert_eq!(egui::DragAndDrop::payload::<Item>(&ctx).as_deref(), Some(&Item(7)));
         // and it stays, frame after frame
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        crate::ui::login::test_output(ctx.run_ui(egui::RawInput::default(), |_| {}));
         assert!(!carry.frame_start(&ctx));
         assert!(egui::DragAndDrop::has_any_payload(&ctx));
     }
