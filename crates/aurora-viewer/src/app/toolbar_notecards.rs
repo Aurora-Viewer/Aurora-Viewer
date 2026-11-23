@@ -27,7 +27,7 @@ impl App {
             return;
         }
         let default = ToolbarSettings::default();
-        let layout = self.dock_layout.of(&self.skin.layout, self.settings.autohide_chat_bar);
+        let layout = self.dock_layout.of(&self.skin.layout, self.settings.chat_bar.hides());
         let command = self.toolbar_ui.notecards.show(
             ctx,
             p,
@@ -57,7 +57,7 @@ impl App {
         if let Some(profile) = profile {
             ui::toolbar::profile::apply(profile, &mut self.settings);
             if let Some(mut selection) = self.toolbar_ui.notecards.take_selection() {
-                let layout = self.dock_layout.of(&self.skin.layout, self.settings.autohide_chat_bar);
+                let layout = self.dock_layout.of(&self.skin.layout, self.settings.chat_bar.hides());
                 selection.baseline = ui::toolbar::profile::snapshot(
                     self.settings.toolbar.as_ref().unwrap_or(&default),
                     layout,
@@ -208,7 +208,7 @@ impl App {
             self.toolbar_ui.open = false;
             self.toolbar_ui.notecards = Default::default();
             self.inventory_ui.preview = Some(item);
-            self.apply_inventory_action(ui::inventory::InvAction::Preview(item));
+            self.apply_inventory_action(ui::inventory::InvAction::Preview(item, None));
         }
         if self.frame_count == 360
             && mode.starts_with("notecard-roundtrip")

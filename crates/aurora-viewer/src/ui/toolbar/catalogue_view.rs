@@ -93,6 +93,15 @@ pub(super) fn category(command: &str) -> Category {
         | "wearable_favorites"
         | "avatar_align"
         | "face_nearest_avatar"
+        | "ao_mini"
+        | "stand_up"
+        | "fly_override"
+        | "quickjump"
+        | "movelock_options"
+        | "movement_enhancer"
+        | "buy_currency"
+        | "money_tracker"
+        | "experiences"
         | "gestures" => Avatar,
         "conversations" | "speak" | "people" | "friends" | "contact_sets" | "block_list" | "radar" | "group_titles" | "voice"
         | "defaultchatbar" | "bar_chat" | "conversation_log" | "discord" => Communication,
@@ -110,7 +119,17 @@ pub(super) fn category(command: &str) -> Category {
         | "primfeed"
         | "phototools"
         | "phototools_view"
-        | "360capture" => Creation,
+        | "360capture"
+        | "director"
+        | "second_camera"
+        | "inventory_dual"
+        | "build_edit"
+        | "build_create"
+        | "build_land"
+        | "edit_particles"
+        | "ik_edit"
+        | "import"
+        | "blender_live" => Creation,
         "edit_interface"
         | "aurora_menu"
         | "preferences"
@@ -122,6 +141,7 @@ pub(super) fn category(command: &str) -> Category {
         | "name_tags"
         | "hide_interface"
         | "huds"
+        | "gaming_mode"
         | "toolbar_separator"
         | "toolbar_divider"
         | "bar_navigation"
@@ -171,7 +191,22 @@ pub(super) fn alias(command: &str) -> Option<&'static str> {
         "menu:common-me/fly" => "fly",
         "menu:common-me/movelock-title" => "movelock",
         "menu:common-me/marketplace-listings-menu" => "marketplacelistings",
+        "menu:common-me/currency-menu" => "buy_currency",
+        "menu:common-me/tracker" => "money_tracker",
+        "menu:common-me/ui-experiences-title" => "experiences",
+        "menu:common-me/common-stand-up" => "stand_up",
+        "menu:common-me/fly_override" => "fly_override",
+        "menu:common-me/movelock-options" => "movelock_options",
+        "menu:common-me/quickjump" => "quickjump",
+        "menu:common-me/movement-title" => "movement_enhancer",
         "menu:common-build/entry-box" => "build",
+        "menu:common-build/entry-pencil-filled" => "build_edit",
+        "menu:common-build/entry-circle-plus-filled" => "build_create",
+        "menu:common-build/entry-mountain-filled" => "build_land",
+        "menu:common-build/ik-edit-title" => "ik_edit",
+        "menu:common-build/ui-bars-edit-particles" => "edit_particles",
+        "menu:common-build/import-menu" => "import",
+        "menu:common-build/blender-live-title" => "blender_live",
         "menu:common-build/poser-title" => "poser",
         "menu:common-help/bug-title" => "report_bug",
         "menu:common-help/report-abuse-title" => "reporter",

@@ -60,7 +60,12 @@ impl World {
         let index = self.worn_attachment(&item).or_else(|| self.objects.index_of_uuid(&item))?;
         let object = self.objects.get(index)?;
         let parent = self.objects.parent_of(object).and_then(|i| self.objects.get(i))?;
-        if object.is_avatar() || object.attachment_point() == 0 || !parent.is_avatar() || parent.full_id != self.agent_id {
+        if object.is_avatar()
+            || object.is_client_preview()
+            || object.attachment_point() == 0
+            || !parent.is_avatar()
+            || parent.full_id != self.agent_id
+        {
             return None;
         }
         Some(NetCommand::DetachObject {
@@ -466,6 +471,7 @@ mod tests {
         }
         assert!(world.update_attachment_inventory(now + RETRY_GAP * 10, true).is_empty());
         world.apply(NetEvent::InventoryUpdated {
+            bulk: false,
             folders: Vec::new(),
             items: vec![item],
         });
@@ -1218,6 +1224,7 @@ mod tests {
             let lost = with_lost_folder(&mut world, &item);
             item.parent = Uuid::nil();
             let notification = NetEvent::InventoryUpdated {
+                bulk: false,
                 folders: Vec::new(),
                 items: vec![item.clone()],
             };

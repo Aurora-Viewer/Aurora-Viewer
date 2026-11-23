@@ -7,8 +7,11 @@
 pub mod backup;
 pub(crate) mod cx;
 mod pages;
+/// The rows of the Phototools window, borrowed from the pages.
+mod phototools;
 /// Aurora's own marked in its gradient, outside Preferences too.
 pub(crate) use pages::aurora::aurora_word;
+pub use phototools::{PhotoLayer, PhotoState, Section as PhotoSection};
 mod saved_graphics;
 mod scale;
 
@@ -23,6 +26,7 @@ use super::widgets::{Floater, keycap};
 use crate::settings::Settings;
 use crate::theme::Palette;
 use crate::ui::widgets;
+use aurora_i18n::UiUpper;
 use cx::{Counts, Cx, Mode};
 use egui::{Rect, RichText, Sense, Vec2, pos2, vec2};
 use std::collections::{HashMap, HashSet};
@@ -42,6 +46,31 @@ pub enum AudioSection {
     Voice,
     Processing,
     Indicators,
+}
+
+#[derive(Clone, Copy)]
+enum RowFlash {
+    GoTo(egui::Id),
+    Link(egui::Id),
+}
+
+impl RowFlash {
+    fn id(self) -> egui::Id {
+        match self {
+            Self::GoTo(id) | Self::Link(id) => id,
+        }
+    }
+
+    fn strength(self, age: f32) -> Option<f32> {
+        const PULSE: f32 = 0.65;
+        const GAP: f32 = 0.15;
+        let fade = match self {
+            Self::GoTo(_) if age < 1.8 => 1.0 - age / 1.8,
+            Self::Link(_) if age < 3.0 * PULSE + 2.0 * GAP => 1.0 - (age % (PULSE + GAP)) / PULSE,
+            _ => return None,
+        };
+        Some(fade.clamp(0.0, 1.0) * 0.42)
+    }
 }
 
 /// The pages of the window, in the order of the sidebar.
@@ -67,6 +96,7 @@ pub enum Page {
     Inventory,
     Controls,
     Gamepad,
+    GameControls,
     Shortcuts,
     Commands,
     System,
@@ -75,7 +105,7 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 24] = [
+    pub const ALL: [Page; 25] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
@@ -95,6 +125,7 @@ impl Page {
         Page::Inventory,
         Page::Controls,
         Page::Gamepad,
+        Page::GameControls,
         Page::Shortcuts,
         Page::Commands,
         Page::System,
@@ -124,6 +155,7 @@ impl Page {
             Page::Inventory => "inventory",
             Page::Controls => "controls",
             Page::Gamepad => "gamepad",
+            Page::GameControls => "game-controls",
             Page::Shortcuts => "shortcuts",
             Page::Commands => "commands",
             Page::System => "system",
@@ -153,6 +185,7 @@ impl Page {
             Page::Inventory => aurora_i18n::tr!("common-inventory"),
             Page::Controls => aurora_i18n::tr!("ui-options-page-controls"),
             Page::Gamepad => aurora_i18n::tr!("joystick-gamepad"),
+            Page::GameControls => aurora_i18n::tr!("game-control-title"),
             Page::Shortcuts => aurora_i18n::tr!("ui-options-shortcuts"),
             Page::Commands => aurora_i18n::tr!("ui-options-commands"),
             Page::System => aurora_i18n::tr!("ui-options-page-system"),
@@ -183,6 +216,7 @@ impl Page {
             Page::Inventory => aurora_i18n::tr!("ui-options-about-inventory"),
             Page::Controls => aurora_i18n::tr!("ui-options-about-controls"),
             Page::Gamepad => aurora_i18n::tr!("ui-options-about-gamepad"),
+            Page::GameControls => aurora_i18n::tr!("game-control-about"),
             Page::Shortcuts => aurora_i18n::tr!("ui-options-click-a-shortcut-then-press-the-desired-key-or"),
             Page::Commands => aurora_i18n::tr!("ui-options-about-commands"),
             Page::System => aurora_i18n::tr!("ui-options-about-system"),
@@ -213,6 +247,9 @@ impl Page {
             Page::Inventory => "box",
             Page::Controls => "mouse-filled",
             Page::Gamepad => "device-gamepad-filled",
+            // (the gamepad's icon is the Gamepad page's; this one sends to
+            // scripts and maps actions)
+            Page::GameControls => "device-gamepad-2-filled",
             Page::Shortcuts => "keyboard-filled",
             Page::Commands => "square-rounded-chevron-right-filled",
             Page::System => "world-filled",
@@ -295,10 +332,14 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "group-titles" => row(Page::Avatars, 1, tr!("ui-options-group-titles")),
         "plates" => row(Page::Avatars, 0, tr!("ui-options-plate-click")),
         "attention" => row(Page::Chat, 1, tr!("ui-options-flash-on-message")),
+        "tip-toast" | "tip-toast-legacy" => row(Page::Chat, 1, tr!("ui-options-toast-friends-seconds")),
         "keywords" => row(Page::Chat, 2, tr!("ui-options-keywords-on")),
         "spelling" => row(Page::Chat, 6, tr!("ui-options-spelling-on")),
         "auto-replace" => row(Page::Chat, 6, tr!("ui-options-auto-replace-on")),
         "gifs" => row(Page::Chat, 0, tr!("ui-options-gifs-show")),
+        // the conversation options (AURORA_DEMO_CONV_OPTIONS)
+        "conversation-options" => row(Page::Chat, 0, tr!("ui-options-im-tab-order")),
+        "history-fade" => row(Page::Chat, 3, tr!("ui-options-history-fade")),
         "script-errors" => row(Page::Chat, 0, tr!("ui-options-script-errors-in-chat")),
         "crosshair" => row(Page::Camera, 2, tr!("ui-options-crosshair-image")),
         "joystick-zoom" => row(Page::Controls, 1, tr!("joystick-zoom-mode")),
@@ -307,6 +348,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         "remove-aurora" => row(Page::System, 0, tr!("ui-options-remove-aurora")),
         "alerts" => row(Page::Confirmations, 0, tr!("ui-options-driver-warning")),
+        "proxy" => row(Page::Network, 0, tr!("ui-options-proxy-direct-voice")),
         _ => None,
     };
     let audio = match what {
@@ -315,7 +357,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "indicators" => Some(AudioSection::Indicators),
         _ => None,
     };
-    if what == "auto-accept" {
+    if what == "auto-accept" || what == "proxy" {
         st.demo_open_cogs = true;
     }
     if let Some(section) = audio {
@@ -326,6 +368,8 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         st.confirm_reset = Some(ResetAsk::Page(page));
     } else if what == "reset-all-ask" {
         st.confirm_reset = Some(ResetAsk::All);
+    } else if what == "reset-windows-ask" {
+        st.confirm_reset = Some(ResetAsk::Windows);
     } else if what == "modified" || what == "modified-ask" {
         st.modified_view = true;
         if what == "modified-ask" {
@@ -352,6 +396,8 @@ enum Done {
     Modified,
     /// Every setting (the app also forgets the windows' layout).
     All,
+    /// The windows' places and sizes (done at once, by the app).
+    Windows,
 }
 
 /// A reset asked by a button, waiting for its "Reset" in a dialog. `Undo`
@@ -362,11 +408,19 @@ enum ResetAsk {
     Page(Page),
     Modified,
     All,
+    Windows,
 }
 
-/// The settings before a reset, while "Undo" shows.
+/// What "Undo" puts back.
+enum Before {
+    Settings(Box<Settings>),
+    /// The windows' layout, as `ui_layout.ron` holds it.
+    Windows(String),
+}
+
+/// What came before a reset, while "Undo" shows.
 struct Undo {
-    before: Box<Settings>,
+    before: Before,
     text: String,
     shown: f64,
     done: Done,
@@ -387,6 +441,18 @@ pub struct OptionsUi {
     /// RLVa `@sendim`: the Do Not Disturb response is an IM, its field greyed.
     pub rlva_sendim_locked: bool,
     pub joystick: crate::joystick::Snapshot,
+    /// Game Controls: the controllers and the data sent (set by the app).
+    pub game_control: crate::game_control::View,
+    /// The mode whose mappings are edited (None: the live one).
+    game_control_mode: Option<crate::game_control::Mode>,
+    /// A binding waiting for the controller's next input (the app stops
+    /// sending and driving meanwhile).
+    pub game_control_capture: Option<pages::game_controls::Capture>,
+    /// The device of the two device tabs.
+    game_control_device: String,
+    game_control_show_all: bool,
+    /// Auto calibrate under way (sampled by the app).
+    pub game_control_calibration: Option<pages::game_controls::Calibration>,
     pub vr_default_resolution: Option<[u32; 2]>,
     pub flycam_active: bool,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
@@ -412,11 +478,13 @@ pub struct OptionsUi {
     counted: Option<(f64, String)>,
     count_stale: bool,
     /// "Go to" (search, crumbs, links): the page, its tab, the row to light.
-    go_to: Option<(Page, usize, Option<egui::Id>)>,
+    go_to: Option<(Page, usize, Option<RowFlash>)>,
+    /// A received preferences link, resolved against the real rows in the count pass.
+    pending_setting: Option<String>,
     /// The cog to open with a row taken from the search.
     open_parent: Option<egui::Id>,
     /// The row lit after "Go to" (since when), and the scroll to it pending.
-    flash: Option<(egui::Id, f64)>,
+    flash: Option<(RowFlash, f64)>,
     flash_scroll: bool,
     /// A row to light by its label once its page is shown (demo, the other
     /// windows' "Preferences…").
@@ -447,6 +515,9 @@ pub struct OptionsUi {
     /// The account's "Keep Show Friends Only after teleporting", while
     /// logged in (set by the app).
     pub friends_only_keep: Option<bool>,
+    /// The width reserved for a number box, measured once per frame
+    /// (`Cx::new`): the frame, the font, the button padding, the width.
+    number_width: Option<(u64, egui::FontId, f32, f32)>,
     system_fonts: Option<Vec<SystemFont>>,
     font_filter: String,
     /// Disk cache usage (bytes) and whether a clear is running; set by the app.
@@ -515,6 +586,12 @@ pub struct OptionsUi {
     pub chat_log_shared: bool,
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
+    /// Preferences › Network › Proxy: the credentials being typed and the
+    /// direct voice confirmation.
+    proxy: pages::proxy::ProxyPage,
+    /// Entries of the conversation log of the account logged in.
+    pub conversation_log_entries: usize,
+    confirm_clear_conversation_log: bool,
     /// "Reset …?" confirmation open, then the reset it said yes to, done by
     /// the next pass of the window's body.
     confirm_reset: Option<ResetAsk>,
@@ -532,6 +609,22 @@ pub struct OptionsUi {
 }
 
 impl OptionsUi {
+    /// What the app tells Preferences about the world, for a second window
+    /// of borrowed rows (Phototools has its own `OptionsUi`, so that the
+    /// two windows never share the sizes the rows measured): the fields the
+    /// rows of the pages it borrows from read.
+    pub fn share_from(&mut self, from: &OptionsUi) {
+        self.rlva_camera_preset_locked = from.rlva_camera_preset_locked;
+        self.rlva_camera_fov_locked = from.rlva_camera_fov_locked;
+        self.sky_tone_mapped = from.sky_tone_mapped;
+        self.vram = from.vram;
+        if self.gpu_in_use != from.gpu_in_use || self.gpus != from.gpus {
+            self.gpu_in_use.clone_from(&from.gpu_in_use);
+            self.gpus.clone_from(&from.gpus);
+        }
+        self.gpu_notice = from.gpu_notice;
+    }
+
     pub fn joystick_capturing(&self) -> bool {
         self.joystick_capture.is_some()
     }
@@ -590,6 +683,16 @@ impl OptionsUi {
         self.cancel_capture();
     }
 
+    /// Follow a shareable link without changing any of the resident's settings.
+    /// The count pass locates the row, tab and folded parent by a stable path.
+    pub fn open_setting(&mut self, path: String) {
+        self.pending_setting = Some(path);
+        self.open_parent = None;
+        self.count_stale = true;
+        self.reveal = None;
+        self.go_to = None;
+    }
+
     /// Opens the Chat page on the YouTube player's settings (a player's
     /// cog, #848).
     pub fn open_videos(&mut self) {
@@ -646,7 +749,7 @@ impl OptionsUi {
         if let Some(undo) = self.undo.take() {
             match undo.done {
                 Done::Page(page) => r.reset_section = Some(page),
-                Done::Modified => {}
+                Done::Modified | Done::Windows => {}
                 Done::All => r.reset = true,
             }
         }
@@ -655,6 +758,7 @@ impl OptionsUi {
 
 #[derive(Default)]
 pub struct OptionsResult {
+    pub setting_unavailable: bool,
     pub toggle_flycam: bool,
     pub reset_anti_spam: bool,
     pub unblock_anti_spam: Option<(crate::world::anti_spam::Queue, uuid::Uuid)>,
@@ -672,15 +776,28 @@ pub struct OptionsResult {
     pub reset: bool,
     /// The settings of one page went back to their defaults.
     pub reset_section: Option<Page>,
+    /// "Reset window positions and sizes": the app does it after the window
+    /// (`widgets::reset_windows`).
+    pub reset_windows: bool,
+    /// Its undo: the layout to put back (`layout::apply`).
+    pub restore_layout: Option<String>,
     /// The camera settings went back to their defaults: the view follows.
     pub reset_camera: bool,
+    /// "Show the Contacts tab" turned on: a torn-off Contacts goes back
+    /// into Conversations.
+    pub show_contacts_tab_on: bool,
     /// Show the folder of the conversation transcripts.
     pub open_chat_logs: bool,
+    /// Open the World filters window (Graphics › Image).
+    pub open_world_look: bool,
     /// Choose another folder for the cache or the transcripts, or go back
     /// to the default one (the app asks for the folder and moves the files).
     pub folder: Option<(Folder, FolderChoice)>,
     /// Erase the conversation transcripts of the account (confirmed).
     pub erase_chat_logs: bool,
+    /// Clear the conversation log of the account (confirmed,
+    /// PreferenceChatClearLog).
+    pub clear_conversation_log: bool,
     /// The import window opened: look for the Legacy Viewers' folders.
     pub find_legacy_logs: bool,
     /// Import from these folders.
@@ -715,6 +832,9 @@ pub enum Folder {
     ChatLogs,
     /// A Legacy Viewer's transcripts, to import.
     LegacyLogs,
+    /// The interface language file (Language and updates): a file, asked
+    /// for the same way.
+    LanguageFile,
 }
 
 /// The window that shows what will be imported.
@@ -759,7 +879,9 @@ fn media_pack_error(failure: aurora_updater::Failure) -> &'static str {
     match failure {
         Failure::Network | Failure::Busy | Failure::Startup => aurora_i18n::tr!("media-plugins-error-network"),
         Failure::Integrity | Failure::Package => aurora_i18n::tr!("media-plugins-error-integrity"),
-        Failure::Filesystem => aurora_i18n::tr!("media-plugins-error-filesystem"),
+        // the media pack goes to the user's own data folder: `Protected`
+        // (a sandbox or another account's folder) never comes from it
+        Failure::Filesystem | Failure::Protected => aurora_i18n::tr!("media-plugins-error-filesystem"),
         // the media pack goes to the data folder: never a drive root's
         Failure::Unsupported | Failure::DriveRoot => aurora_i18n::tr!("media-plugins-error-unsupported"),
     }
@@ -792,18 +914,10 @@ fn slider_whole(ui: &mut egui::Ui, v: &mut f32, range: std::ops::RangeInclusive<
     .changed()
 }
 
-/// Stepped slider with a named level shown next to it.
-fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool {
-    ui.spacing_mut().slider_width = SLIDER_W - 30.0;
+/// Stepped slider with a named level shown next to it; narrower than
+/// Preferences' width where the row is (the photo's Light panel).
+pub(super) fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool {
     let max = labels.len().saturating_sub(1) as u8;
-    let r = ui.add(
-        egui::Slider::new(v, 0..=max)
-            .custom_parser(aurora_i18n::parse_number)
-            .step_by(1.0)
-            .trailing_fill(true)
-            .show_value(false),
-    );
-    let label = labels.get((*v).min(max) as usize).copied().unwrap_or("");
     let font = egui::FontId::proportional(12.0);
     let width = labels
         .iter()
@@ -814,6 +928,16 @@ fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool 
                 .x
         })
         .fold(0.0, f32::max);
+    let available = ui.available_width() - width - ui.spacing().item_spacing.x;
+    ui.spacing_mut().slider_width = available.clamp(40.0, SLIDER_W - 30.0);
+    let r = ui.add(
+        egui::Slider::new(v, 0..=max)
+            .custom_parser(aurora_i18n::parse_number)
+            .step_by(1.0)
+            .trailing_fill(true)
+            .show_value(false),
+    );
+    let label = labels.get((*v).min(max) as usize).copied().unwrap_or("");
     ui.add_sized(
         vec2(width, ui.spacing().interact_size.y),
         egui::Label::new(RichText::new(label).size(12.0).color(p.violet_pale)).wrap_mode(egui::TextWrapMode::Extend),
@@ -1050,8 +1174,9 @@ pub(super) fn named_combo(
     devices: &[String],
     width: f32,
     default_label: &str,
+    listing: bool,
 ) -> (bool, bool) {
-    choice_combo(ui, id, value, devices, width, default_label, false)
+    choice_combo(ui, id, value, devices, width, default_label, listing)
 }
 
 fn choice_combo(
@@ -1136,7 +1261,7 @@ fn binding_cell(
     }
     let others: Vec<&str> = b
         .as_ref()
-        .map(|b| kb.users(b).into_iter().filter(|x| *x != a).map(crate::keybinds::label).collect())
+        .map(|b| kb.rivals(a, b).into_iter().map(crate::keybinds::label).collect())
         .unwrap_or_default();
     let tip = if capturing {
         aurora_i18n::tr!("ui-options-key-combination-ctrl-shift-alt-or-mouse-button-wheel").to_owned()
@@ -1206,6 +1331,34 @@ pub fn describe_settings() -> Vec<(String, String, String)> {
     out
 }
 
+/// Unambiguous link destinations and their labels in the current UI language.
+type SettingLabels = HashMap<String, Option<String>>;
+
+fn with_setting_labels<R>(read: impl FnOnce(&SettingLabels) -> R) -> R {
+    thread_local! {
+        static LABELS: std::cell::RefCell<(&'static str, SettingLabels)> = Default::default();
+    }
+    LABELS.with_borrow_mut(|(cached_language, labels)| {
+        let language = aurora_i18n::language();
+        if *cached_language != language {
+            labels.clear();
+            for (path, label, _) in describe_settings() {
+                labels.entry(path).and_modify(|entry| *entry = None).or_insert(Some(label));
+            }
+            *cached_language = language;
+        }
+        read(labels)
+    })
+}
+
+pub(super) fn setting_link_label(path: &str) -> String {
+    let preferences = aurora_i18n::tr!("common-preferences");
+    with_setting_labels(|labels| match labels.get(path).and_then(Option::as_ref) {
+        Some(label) => format!("{preferences} › {label}"),
+        None => preferences.to_owned(),
+    })
+}
+
 /// The pages counted (modified rows, search hits), nothing drawn.
 fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut OptionsUi, r: &mut OptionsResult) {
     let query = st.query.clone();
@@ -1215,6 +1368,9 @@ fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mu
     }
     let counts = std::mem::take(&mut cx.counts);
     st.counts = counts;
+    if st.pending_setting.take().is_some() {
+        r.setting_unavailable = true;
+    }
 }
 
 /// How long the counts may wait for a change nothing announced (the app's
@@ -1249,6 +1405,7 @@ fn count_due(st: &OptionsUi, now: f64, input: bool) -> bool {
     input
         || st.count_stale
         || st.reveal.is_some()
+        || st.pending_setting.is_some()
         || st.demo_open_cogs
         || st
             .counted
@@ -1275,6 +1432,32 @@ pub(crate) fn reset_page_settings(page: Page, s: &mut Settings) {
         reset_rows(ui, &p, s, &d, &mut st, &mut r, Some(page));
         st.after_reset(page, s, &mut r);
     });
+}
+
+/// One section of the Phototools window: the rows it borrows from the
+/// pages, drawn in `ui` (`options/phototools.rs`). `st` is Phototools' own
+/// `OptionsUi` (`share_from` gives it the app's fields). The result is
+/// Preferences' own (`changed`, and what a row asks of the app), for the app
+/// to handle like Preferences' result. `photo` is the photo window's layer
+/// while it is open: the rows it overrides are its own.
+pub fn phototools_section(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    s: &mut Settings,
+    st: &mut OptionsUi,
+    section: PhotoSection,
+    photo: Option<&mut PhotoLayer>,
+) -> OptionsResult {
+    let d = st.defaults.take().unwrap_or_else(|| Box::new(Settings::default()));
+    let mut r = OptionsResult::default();
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let mut cx = Cx::new(ui, *p, s, &d, st, &mut r, Mode::Show, "");
+    phototools::draw(&mut cx, section, photo);
+    let changed = cx.changed;
+    drop(cx);
+    r.changed |= changed;
+    st.defaults = Some(d);
+    r
 }
 
 /// Puts the rows of `page` (every page: `None`) back to their defaults.
@@ -1335,6 +1518,8 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         st.finish_undo(&mut r);
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
+    pages::proxy::frame(ctx, p, s, st, *open);
+    clear_conversation_log_modal(ctx, p, st, &mut r, *open);
     reset_modal(ctx, p, st, *open);
     chat_import_modal(ctx, p, st, &mut r, *open);
     backup::restore_modal(ctx, p, s, st, &mut r, *open);
@@ -1385,6 +1570,52 @@ fn erase_logs_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
     });
     if modal.should_close() {
         st.confirm_erase_logs = false;
+    }
+}
+
+/// PreferenceChatClearLog: asked before the conversation log is emptied.
+fn clear_conversation_log_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mut OptionsResult, open: bool) {
+    if !(st.confirm_clear_conversation_log && open) {
+        return;
+    }
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("options_clear_conversation_log")).show(ctx, |ui| {
+        ui.set_width(360.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-options-chat-logs-clear-title"))
+                .size(15.0)
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("ui-options-chat-logs-clear-text"))
+                .size(12.5)
+                .color(p.muted),
+        );
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            use super::widgets::{ActionKind, action_button};
+            let size = Vec2::new(0.0, 26.0);
+            if action_button(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("ui-options-chat-logs-clear-confirm"),
+                ActionKind::Danger,
+                size,
+            )
+            .clicked()
+            {
+                r.clear_conversation_log = true;
+                st.confirm_clear_conversation_log = false;
+            }
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                st.confirm_clear_conversation_log = false;
+            }
+        });
+    });
+    if modal.should_close() {
+        st.confirm_clear_conversation_log = false;
     }
 }
 
@@ -1519,6 +1750,7 @@ fn body(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut
         Some(ResetAsk::Page(page)) => reset_page(ui, p, s, d, st, r, page, now),
         Some(ResetAsk::Modified) => reset_modified(ui, p, s, d, st, r, now),
         Some(ResetAsk::All) => reset_all(s, st, r, now),
+        Some(ResetAsk::Windows) => reset_windows(ui.ctx(), st, r, now),
         None => {}
     }
     // a row asked by its label (demo, another window): its page first,
@@ -1585,14 +1817,7 @@ fn sidebar(
     ui.add_space(12.0);
     let width = ui.available_width();
     ui.horizontal(|ui| {
-        let clear_w = if st.query.is_empty() { 0.0 } else { 26.0 };
-        let field = super::widgets::search_box(
-            ui,
-            p,
-            &mut st.query,
-            aurora_i18n::tr!("ui-options-search-settings"),
-            width - clear_w,
-        );
+        let field = super::widgets::clearable_search_box(ui, p, &mut st.query, aurora_i18n::tr!("ui-options-search-settings"), width);
         if st.focus_search && !ui.is_sizing_pass() && ui.is_enabled() {
             st.focus_search = false;
             field.request_focus();
@@ -1600,9 +1825,6 @@ fn sidebar(
         if field.changed() {
             st.modified_view = false;
             st.cancel_capture();
-        }
-        if !st.query.is_empty() && super::widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-clear"), true) {
-            st.query.clear();
         }
         if field.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             st.query.clear();
@@ -1655,7 +1877,7 @@ fn sidebar(
                 if let Some(title) = page.section() {
                     ui.add_space(10.0);
                     let font = egui::FontId::new(11.0, super::fonts::semibold(ui.ctx()));
-                    let galley = ui.painter().layout_no_wrap(title.to_uppercase(), font, p.violet_light);
+                    let galley = ui.painter().layout_no_wrap(title.ui_upper(), font, p.violet_light);
                     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
                     super::widgets::paint_row_text(ui.painter(), galley, rect.left() + 8.0, rect.center().y, p.violet_light);
                 }
@@ -2017,6 +2239,10 @@ fn reset_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, open: bool)
             aurora_i18n::tr!("ui-options-reset-everything").to_string(),
             aurora_i18n::tr!("ui-options-reset-everything-text").to_string(),
         ),
+        ResetAsk::Windows => (
+            aurora_i18n::tr!("ui-options-reset-windows-title").to_string(),
+            aurora_i18n::tr!("ui-options-reset-windows-text").to_string(),
+        ),
     };
     let modal = crate::ui::widgets::Modal::new(egui::Id::unique("options_reset_confirm")).show(ctx, |ui| {
         ui.set_width(360.0);
@@ -2062,7 +2288,7 @@ fn reset_all(s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult, now: f
     }
     st.finish_undo(r);
     st.undo = Some(Undo {
-        before,
+        before: Before::Settings(before),
         text: aurora_i18n::tr!("ui-options-all-were-reset").to_owned(),
         shown: now,
         done: Done::All,
@@ -2078,7 +2304,7 @@ fn reset_modified(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings
     }
     st.finish_undo(r);
     st.undo = Some(Undo {
-        before,
+        before: Before::Settings(before),
         text: aurora_i18n::tr!("ui-options-modified-were-reset").to_owned(),
         shown: now,
         done: Done::Modified,
@@ -2102,11 +2328,28 @@ fn reset_page(
     st.after_reset(page, s, r);
     st.finish_undo(r);
     st.undo = Some(Undo {
-        before,
+        before: Before::Settings(before),
         text: aurora_i18n::tr!("ui-options-page-was-reset", page = page.name()),
         shown: now,
         done: Done::Page(page),
     });
+}
+
+/// Every window back to its default place and size, expanded, the settings
+/// untouched: the app resets them after this window (`r.reset_windows`),
+/// and "Undo" puts the layout of now back.
+fn reset_windows(ctx: &egui::Context, st: &mut OptionsUi, r: &mut OptionsResult, now: f64) {
+    st.finish_undo(r);
+    r.reset_windows = true;
+    // no undo when the layout cannot be written out (logged)
+    if let Some(layout) = crate::ui::layout::text(ctx) {
+        st.undo = Some(Undo {
+            before: Before::Windows(layout),
+            text: aurora_i18n::tr!("ui-options-windows-were-reset").to_owned(),
+            shown: now,
+            done: Done::Windows,
+        });
+    }
 }
 
 /// "Graphics: default settings · Undo", over the bottom of the rows.
@@ -2134,9 +2377,14 @@ fn undo_bar(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mut OptionsUi
             .clicked()
             && let Some(undo) = st.undo.take()
         {
-            *s = *undo.before;
-            for page in Page::ALL {
-                st.after_reset(page, s, r);
+            match undo.before {
+                Before::Settings(before) => {
+                    *s = *before;
+                    for page in Page::ALL {
+                        st.after_reset(page, s, r);
+                    }
+                }
+                Before::Windows(layout) => r.restore_layout = Some(layout),
             }
         }
     });

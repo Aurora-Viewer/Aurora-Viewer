@@ -140,11 +140,18 @@ pub(crate) fn show(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Sta
                 ui.set_width(size.x - margin.x);
                 ui.horizontal(|ui| {
                     let width = (ui.available_width() - 52.0 - ui.spacing().item_spacing.x * 2.0).max(1.0);
-                    let saved_text = std::mem::replace(&mut panels.nav_edit, state.text.take());
-                    let saved_fresh = std::mem::replace(&mut panels.nav_edit_new, state.fresh);
-                    action = super::location_field_scoped(ui, p, panels, st, &st.slurl, width, field_id());
-                    state.text = std::mem::replace(&mut panels.nav_edit, saved_text);
-                    state.fresh = std::mem::replace(&mut panels.nav_edit_new, saved_fresh);
+                    if st.location_hidden {
+                        // Aurora's own SLURL button: no field while @showloc
+                        // hides the place; the navigation bar's field keeps
+                        // the hidden SLURL like LLLocationInputCtrl
+                        ui.label(aurora_i18n::tr!("toolbar-location-hidden"));
+                    } else {
+                        let saved_text = std::mem::replace(&mut panels.nav_edit, state.text.take());
+                        let saved_fresh = std::mem::replace(&mut panels.nav_edit_new, state.fresh);
+                        action = super::location_field_scoped(ui, p, panels, st, &st.slurl, width, field_id());
+                        state.text = std::mem::replace(&mut panels.nav_edit, saved_text);
+                        state.fresh = std::mem::replace(&mut panels.nav_edit_new, saved_fresh);
+                    }
                     if widgets::action_button_if(
                         ui,
                         p,

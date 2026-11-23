@@ -1,6 +1,12 @@
 //! Shared UI language and Fluent messages, including network notifications.
 //! Selection follows LLUI::getUILanguage (indra/llui/llui.cpp): saved choice,
 //! system language, then English. Aurora has no separate installer language.
+//!
+//! Besides the bundled catalogs, the user may load a catalog file of their
+//! own (Preferences › Language and updates). It is read once at startup
+//! (`install_user_catalog`), so a new file applies at the next launch. The
+//! Legacy Viewer has no such choice: it is an Aurora addition, for
+//! translators and for the languages Aurora does not ship yet.
 
 use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::{FluentArgs, FluentResource};
@@ -19,8 +25,13 @@ struct Catalog {
     plain: HashMap<String, String>,
 }
 
-static CATALOGS: OnceLock<Vec<Catalog>> = OnceLock::new();
+static CATALOGS: OnceLock<Vec<OnceLock<Catalog>>> = OnceLock::new();
+/// The user's own catalog file, installed at most once per process.
+static USER: OnceLock<Catalog> = OnceLock::new();
+/// The selected catalog: an index of `SOURCES`, `USER_INDEX`, or
+/// `usize::MAX` before the first selection.
 static CURRENT: AtomicUsize = AtomicUsize::new(usize::MAX);
+const USER_INDEX: usize = usize::MAX - 1;
 static SYSTEM: OnceLock<String> = OnceLock::new();
 
 /// The money symbol messages show for "L$" (Tea::sActiveCurrency): an
@@ -51,67 +62,214 @@ impl<T> Localized<T> {
     }
 
     pub fn get(&'static self, build: impl FnOnce() -> T) -> &'static T {
-        let catalog = current();
-        let index = catalogs()
-            .iter()
-            .position(|item| item.code == catalog.code)
-            .expect("current catalog is bundled");
-        self.0.get_or_init(|| catalogs().iter().map(|_| OnceLock::new()).collect())[index].get_or_init(build)
+        current();
+        // the user's catalog has the slot after the bundled ones: it may
+        // share a bundled catalog's code, not its texts
+        let index = match CURRENT.load(Ordering::Acquire) {
+            USER_INDEX => SOURCES.len(),
+            index => index,
+        };
+        self.0.get_or_init(|| (0..=SOURCES.len()).map(|_| OnceLock::new()).collect())[index].get_or_init(build)
     }
 }
 
-fn catalogs() -> &'static [Catalog] {
-    CATALOGS.get_or_init(|| {
-        SOURCES
-            .iter()
-            .map(|&(code, source)| {
-                let locale = code.parse().expect("bundled locale filename is a language identifier");
-                let resource = FluentResource::try_new(source.to_owned()).expect("bundled Fluent syntax is checked by tests");
-                let keys: Vec<_> = resource
-                    .entries()
-                    .filter_map(|entry| match entry {
-                        fluent_syntax::ast::Entry::Message(message) => Some(message.id.name.to_owned()),
-                        _ => None,
-                    })
-                    .collect();
-                let mut bundle = FluentBundle::new_concurrent(vec![locale]);
-                bundle.set_use_isolating(false);
-                bundle.add_resource(resource).expect("bundled keys are unique");
-                let mut plain = HashMap::new();
-                for key in keys {
-                    if let Some(pattern) = bundle.get_message(&key).and_then(|message| message.value()) {
-                        let mut errors = Vec::new();
-                        let text = bundle.format_pattern(pattern, None, &mut errors);
-                        if errors.is_empty() {
-                            plain.insert(key, text.into_owned());
-                        }
-                    }
-                }
-                Catalog { code, bundle, plain }
-            })
-            .collect()
+fn bundled(index: usize) -> &'static Catalog {
+    let catalogs = CATALOGS.get_or_init(|| SOURCES.iter().map(|_| OnceLock::new()).collect());
+    catalogs[index].get_or_init(|| {
+        let (code, source) = SOURCES[index];
+        let resource = FluentResource::try_new(source.to_owned()).expect("bundled Fluent syntax is checked by tests");
+        assemble(code, resource, false).0
     })
 }
 
+/// A catalog from its parsed messages, and how many messages it holds. A
+/// bundled catalog's keys are unique (the parity test); in the user's file
+/// a repeated key keeps its last version.
+fn assemble(code: &'static str, resource: FluentResource, user: bool) -> (Catalog, usize) {
+    let locale = code.parse().expect("catalog codes are checked language identifiers");
+    let keys: Vec<_> = resource
+        .entries()
+        .filter_map(|entry| match entry {
+            fluent_syntax::ast::Entry::Message(message) => Some(message.id.name.to_owned()),
+            _ => None,
+        })
+        .collect();
+    let messages = keys.len();
+    let mut bundle = FluentBundle::new_concurrent(vec![locale]);
+    bundle.set_use_isolating(false);
+    if user {
+        bundle.add_resource_overriding(resource);
+    } else {
+        bundle.add_resource(resource).expect("bundled keys are unique");
+    }
+    let mut plain = HashMap::new();
+    for key in keys {
+        if let Some(pattern) = bundle.get_message(&key).and_then(|message| message.value()) {
+            let mut errors = Vec::new();
+            let text = bundle.format_pattern(pattern, None, &mut errors);
+            if errors.is_empty() {
+                plain.insert(key, text.into_owned());
+            }
+        }
+    }
+    (Catalog { code, bundle, plain }, messages)
+}
+
+/// Largest catalog file read: the bundled ones are about 1 MB.
+pub const USER_CATALOG_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The user's catalog file, once installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserCatalog {
+    /// Its language, from the file's name (`de.ftl`); "en" when the name is
+    /// not a language.
+    pub code: &'static str,
+    /// Whether the file's name gave the language.
+    pub named: bool,
+    /// The messages it holds; the others are shown in English.
+    pub messages: usize,
+    /// The entries Fluent could not read, left out.
+    pub errors: usize,
+}
+
+/// Why the user's catalog file was not installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserCatalogError {
+    /// Nothing readable: not one message.
+    Empty,
+    /// A catalog file is installed already in this process.
+    AlreadyInstalled,
+}
+
+/// The language of a catalog file from its name without the extension, as
+/// for the bundled ones: a language identifier whose language is an ISO 639
+/// code (`de`, `pt-BR`, `pt_BR`). None for any other name (`my-translation`).
+pub fn user_catalog_code(stem: &str) -> Option<String> {
+    let code = stem.trim().replace('_', "-");
+    let language = code.split('-').next().unwrap_or_default();
+    let iso = (2..=3).contains(&language.len()) && language.bytes().all(|b| b.is_ascii_alphabetic());
+    // parsed as the bundle's own locale type, which fluent does not re-export
+    let parses = || {
+        code.parse()
+            .map(|locale| FluentBundle::<FluentResource>::new_concurrent(vec![locale]))
+            .is_ok()
+    };
+    (iso && !language.eq_ignore_ascii_case("und") && parses()).then_some(code)
+}
+
+/// Installs the user's catalog file (its name without the extension, and
+/// its text), at most once per process. `select_with` can then choose it;
+/// a message or a variable it lacks uses English, as for the bundled
+/// catalogs. An entry Fluent cannot read is left out, not the whole file.
+pub fn install_user_catalog(stem: &str, source: &str) -> Result<UserCatalog, UserCatalogError> {
+    if USER.get().is_some() {
+        return Err(UserCatalogError::AlreadyInstalled);
+    }
+    let (catalog, info) = user_catalog(stem, source)?;
+    USER.set(catalog).map_err(|_| UserCatalogError::AlreadyInstalled)?;
+    Ok(info)
+}
+
+/// The user's catalog, built without installing it.
+fn user_catalog(stem: &str, source: &str) -> Result<(Catalog, UserCatalog), UserCatalogError> {
+    let named = user_catalog_code(stem);
+    let code: &'static str = match &named {
+        // the bundled English's code: plural rules of English
+        None => "en",
+        // once per process, like the catalog itself
+        Some(code) => Box::leak(code.clone().into_boxed_str()),
+    };
+    // a file saved by Notepad may start with a byte order mark
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
+    let (resource, errors) = match FluentResource::try_new(source.to_owned()) {
+        Ok(resource) => (resource, 0),
+        Err((resource, errors)) => (resource, errors.len()),
+    };
+    let (catalog, messages) = assemble(code, resource, true);
+    if messages == 0 {
+        return Err(UserCatalogError::Empty);
+    }
+    let info = UserCatalog {
+        code,
+        named: named.is_some(),
+        messages,
+        errors,
+    };
+    Ok((catalog, info))
+}
+
+/// The user's catalog, when one is installed.
+pub fn user_catalog_installed() -> bool {
+    USER.get().is_some()
+}
+
+/// Whether the interface uses the user's catalog now.
+pub fn user_catalog_selected() -> bool {
+    current();
+    CURRENT.load(Ordering::Acquire) == USER_INDEX
+}
+
 fn english() -> usize {
-    catalogs()
+    SOURCES
         .iter()
-        .position(|catalog| catalog.code == "en")
+        .position(|&(code, _)| code == "en")
         .expect("English fallback catalog is bundled")
 }
 
 fn index(code: &str) -> Option<usize> {
+    language_index(code, SOURCES.iter().map(|&(code, _)| code))
+}
+
+fn language_index<'a>(code: &str, available: impl Iterator<Item = &'a str> + Clone) -> Option<usize> {
     let normalized = if code.contains('_') {
         std::borrow::Cow::Owned(code.replace('_', "-"))
     } else {
         std::borrow::Cow::Borrowed(code)
     };
-    catalogs()
-        .iter()
-        .position(|catalog| catalog.code.eq_ignore_ascii_case(&normalized))
+    let find = |candidate: &str| available.clone().position(|code| code.eq_ignore_ascii_case(candidate));
+    let mut candidate = normalized.as_ref();
+    while let Some((parent, _)) = candidate.rsplit_once('-') {
+        if let Some(index) = find(candidate) {
+            return Some(index);
+        }
+        if parent.eq_ignore_ascii_case("zh") {
+            let region = candidate.split_once('-')?.1;
+            let script = match region.to_ascii_lowercase().as_str() {
+                "tw" | "hk" | "mo" => "zh-Hant",
+                "cn" | "sg" => "zh-Hans",
+                _ => candidate,
+            };
+            return find(script).or_else(|| find(parent));
+        }
+        candidate = parent;
+    }
+    let chinese = candidate.eq_ignore_ascii_case("zh");
+    find(candidate)
+        .or_else(|| chinese.then(|| find("zh-Hans")).flatten())
+        // Norwegian: `no` (the macrolanguage, which some systems report) and
+        // Nynorsk read the Bokmål catalogue before English
         .or_else(|| {
-            let base = normalized.split('-').next()?;
-            catalogs().iter().position(|catalog| catalog.code.eq_ignore_ascii_case(base))
+            ["no", "nn"]
+                .iter()
+                .any(|code| candidate.eq_ignore_ascii_case(code))
+                .then(|| find("nb"))
+                .flatten()
+        })
+        // Portuguese outside Brazil (Portugal, Angola, Mozambique…) writes
+        // the European way: a region with no catalogue of its own reads
+        // pt-PT; `pt` alone takes the first catalogue, as below
+        .or_else(|| {
+            (candidate.eq_ignore_ascii_case("pt") && normalized.len() > candidate.len())
+                .then(|| find("pt-PT"))
+                .flatten()
+        })
+        // another region of the same language before English (pt-PT reads
+        // pt-BR), as the Legacy Viewer's single `pt` folder serves both;
+        // Chinese scripts are chosen above, never swapped here
+        .or_else(|| {
+            (!chinese)
+                .then(|| available.clone().position(|code| grid_code(code).eq_ignore_ascii_case(candidate)))
+                .flatten()
         })
 }
 
@@ -122,16 +280,7 @@ pub fn resolve_language<'a>(preference: &str, system: &str, available: &'a [&str
     } else {
         preference
     };
-    let normalized = requested.replace('_', "-");
-    available
-        .iter()
-        .find(|code| code.eq_ignore_ascii_case(&normalized))
-        .or_else(|| {
-            let base = normalized.split('-').next().unwrap_or_default();
-            available.iter().find(|code| code.eq_ignore_ascii_case(base))
-        })
-        .copied()
-        .unwrap_or("en")
+    language_index(requested, available.iter().copied()).map_or("en", |index| available[index])
 }
 
 pub fn system_language() -> &'static str {
@@ -140,33 +289,112 @@ pub fn system_language() -> &'static str {
 
 /// The process override is for captures/tests and never changes preferences.
 pub fn select(preference: &str, process_override: Option<&str>) -> bool {
-    let requested = process_override.unwrap_or(preference);
-    let code = if requested.is_empty() || requested == "default" {
-        system_language()
+    select_with(preference, false, process_override)
+}
+
+/// `select`, with the user's catalog file instead of `preference` when
+/// `user` and the file is installed. A process override still wins, so
+/// captures and tests keep their language.
+pub fn select_with(preference: &str, user: bool, process_override: Option<&str>) -> bool {
+    let next = if user && process_override.is_none() && USER.get().is_some() {
+        USER_INDEX
     } else {
-        requested
+        let requested = process_override.unwrap_or(preference);
+        let code = if requested.is_empty() || requested == "default" {
+            system_language()
+        } else {
+            requested
+        };
+        index(code).unwrap_or_else(english)
     };
-    let next = index(code).unwrap_or_else(english);
     CURRENT.swap(next, Ordering::AcqRel) != next
 }
 
 fn current() -> &'static Catalog {
-    let mut index = CURRENT.load(Ordering::Acquire);
-    if index == usize::MAX {
-        select("default", None);
-        index = CURRENT.load(Ordering::Acquire);
+    let mut selected = CURRENT.load(Ordering::Acquire);
+    if selected == usize::MAX {
+        // the system's language, unless a selection came in the meantime
+        let system = index(system_language()).unwrap_or_else(english);
+        let _ = CURRENT.compare_exchange(usize::MAX, system, Ordering::AcqRel, Ordering::Acquire);
+        selected = CURRENT.load(Ordering::Acquire);
     }
-    &catalogs()[index]
+    match (selected, USER.get()) {
+        (USER_INDEX, Some(user)) => user,
+        (USER_INDEX, None) => bundled(english()),
+        _ => bundled(selected),
+    }
+}
+
+/// The catalog of an explicit language: the user's when it is the one in
+/// use and has that language, else the bundled one (then English). English
+/// is always the bundled one: the code asks for it by name for the
+/// reference texts.
+fn catalog_for(language: &str) -> &'static Catalog {
+    if language != "en"
+        && CURRENT.load(Ordering::Acquire) == USER_INDEX
+        && let Some(user) = USER.get()
+        && user.code == language
+    {
+        return user;
+    }
+    bundled(index(language).unwrap_or_else(english))
 }
 
 pub fn language() -> &'static str {
     current().code
 }
 
+/// The language code sent to the grid (`UpdateAgentLanguage`, the currency
+/// and land XML-RPC calls, the viewer statistics, the abuse categories, the
+/// People API, the `[LANGUAGE]` of web pages, the browser's language): the
+/// Legacy Viewer sends its `Language` setting
+/// (LLUI::getUILanguage, indra/llui/llui.cpp), whose values are its
+/// interface folders, such as `zh` and `pt`. Scripts read it through
+/// `llGetAgentLanguage`.
+pub fn grid_language() -> &'static str {
+    grid_code(language())
+}
+
+/// The primary subtag of a catalogue code: `zh-Hans` → `zh`, `pt-BR` → `pt`.
+pub fn grid_code(code: &str) -> &str {
+    code.split(['-', '_']).next().filter(|base| !base.is_empty()).unwrap_or("en")
+}
+
+/// Upper case of an interface text in the language in use: see `upper_in`.
+pub fn upper(text: &str) -> String {
+    upper_in(language(), text)
+}
+
+/// Upper case of `text` in `language`. Turkish and Azerbaijani write the
+/// dotted `i` as `İ` in capitals (only the dotless `ı` becomes `I`), which
+/// `str::to_uppercase` does not know: "bilgi" must read "BİLGİ", not
+/// "BILGI". Every other language takes the standard mapping.
+pub fn upper_in(language: &str, text: &str) -> String {
+    match grid_code(language) {
+        "tr" | "az" => text.replace('i', "İ").to_uppercase(),
+        _ => text.to_uppercase(),
+    }
+}
+
+/// `upper` as a method, for the titles and labels shown in capitals.
+pub trait UiUpper {
+    fn ui_upper(&self) -> String;
+}
+
+impl UiUpper for str {
+    fn ui_upper(&self) -> String {
+        upper(self)
+    }
+}
+
 pub fn available_languages() -> impl Iterator<Item = (&'static str, &'static str)> {
-    catalogs().iter().map(|catalog| {
-        let name = catalog.plain.get("language-name").map_or(catalog.code, String::as_str);
-        (catalog.code, name)
+    SOURCES.iter().map(|&(code, source)| {
+        let name = source
+            .lines()
+            .find_map(|line| line.strip_prefix("language-name = "))
+            .map(str::trim)
+            .unwrap_or(code);
+        (code, name)
     })
 }
 
@@ -175,27 +403,44 @@ pub fn lookup(key: &str) -> Option<&'static str> {
     current()
         .plain
         .get(key)
-        .or_else(|| catalogs()[english()].plain.get(key))
+        .or_else(|| bundled(english()).plain.get(key))
         .map(|text| wrap(text))
 }
 
 /// Recover the key of a borrowed plain label for command metadata. Exact string
 /// addresses disambiguate equal translations belonging to different messages.
+/// Labels come from the catalog in use or its English fallback, so only those
+/// two are indexed: the other languages stay unloaded.
 pub fn key_of(text: &str) -> Option<&'static str> {
-    static KEYS: OnceLock<HashMap<(usize, usize), &'static str>> = OnceLock::new();
-    KEYS.get_or_init(|| {
-        catalogs()
+    type Keys = HashMap<(usize, usize), &'static str>;
+    fn keys(catalog: &'static Catalog) -> Keys {
+        catalog
+            .plain
             .iter()
-            .flat_map(|catalog| {
-                catalog
-                    .plain
-                    .iter()
-                    .map(|(key, value)| ((value.as_ptr() as usize, value.len()), key.as_str()))
-            })
+            .map(|(key, value)| ((value.as_ptr() as usize, value.len()), key.as_str()))
             .collect()
-    })
-    .get(&(text.as_ptr() as usize, text.len()))
-    .copied()
+    }
+    static SELECTED: Localized<Keys> = Localized::new();
+    static ENGLISH: OnceLock<Keys> = OnceLock::new();
+    let address = (text.as_ptr() as usize, text.len());
+    SELECTED
+        .get(|| keys(current()))
+        .get(&address)
+        .or_else(|| ENGLISH.get_or_init(|| keys(bundled(english()))).get(&address))
+        .copied()
+}
+
+/// The system's closest bundled language first, then commonly requested
+/// languages and the remaining entries in language-code order.
+pub fn language_menu_order(items: &mut [(&str, &str)], system: &str) {
+    const COMMON: &[&str] = &[
+        "en", "zh-Hans", "zh-Hant", "es", "pt-BR", "pt", "ja", "fr", "de", "ko", "ru", "hi", "ar",
+    ];
+    let system_code = language_index(system, items.iter().map(|(code, _)| *code)).map(|index| items[index].0);
+    items.sort_unstable_by_key(|&(code, _)| {
+        let rank = COMMON.iter().position(|&item| item == code).unwrap_or(COMMON.len());
+        (Some(code) != system_code, rank, code)
+    });
 }
 
 pub fn text(key: &'static str) -> &'static str {
@@ -262,13 +507,13 @@ fn plain(catalog: &'static Catalog, key: &'static str) -> &'static str {
     catalog
         .plain
         .get(key)
-        .or_else(|| catalogs()[english()].plain.get(key))
+        .or_else(|| bundled(english()).plain.get(key))
         .map_or(key, String::as_str)
 }
 
 /// Resolve a message in an explicit locale, useful for deterministic tests.
 pub fn text_in(language: &str, key: &'static str) -> &'static str {
-    wrap(plain(&catalogs()[index(language).unwrap_or_else(english)], key))
+    wrap(plain(catalog_for(language), key))
 }
 
 fn render(catalog: &Catalog, key: &str, args: &FluentArgs<'_>) -> Option<String> {
@@ -283,11 +528,11 @@ pub fn format(key: &'static str, args: &FluentArgs<'_>) -> String {
 }
 
 pub fn format_in(language: &str, key: &'static str, args: &FluentArgs<'_>) -> String {
-    wrap_owned(format_catalog(&catalogs()[index(language).unwrap_or_else(english)], key, args))
+    wrap_owned(format_catalog(catalog_for(language), key, args))
 }
 
 fn format_catalog(catalog: &Catalog, key: &'static str, args: &FluentArgs<'_>) -> String {
-    render_with_fallback(catalog, &catalogs()[english()], key, args).unwrap_or_else(|| {
+    render_with_fallback(catalog, bundled(english()), key, args).unwrap_or_else(|| {
         log::warn!("Missing localization message or arguments: {key}");
         key.to_owned()
     })
@@ -300,9 +545,11 @@ fn render_with_fallback(catalog: &Catalog, fallback: &Catalog, key: &str, args: 
 /// Display a preformatted numeric value using the catalog's decimal separator.
 /// Call only for numbers: resident names, identifiers and protocol data stay intact.
 pub fn number_text(value: &str) -> String {
-    number_text_in(language(), value)
+    // the catalog in use, whatever its code: the user's file has its own
+    value.replace('.', text("number-decimal-separator"))
 }
 
+#[cfg(test)]
 fn number_text_in(language: &str, value: &str) -> String {
     value.replace('.', text_in(language, "number-decimal-separator"))
 }
@@ -313,12 +560,16 @@ pub fn number(value: f64, precision: usize) -> String {
 
 /// Group displayed integers, including prices and avatar complexity.
 pub fn integer(value: i64) -> String {
-    integer_in(language(), value)
+    grouped(value, text("number-thousands-separator"))
 }
 
+#[cfg(test)]
 fn integer_in(language: &str, value: i64) -> String {
+    grouped(value, text_in(language, "number-thousands-separator"))
+}
+
+fn grouped(value: i64, separator: &str) -> String {
     let digits = value.unsigned_abs().to_string();
-    let separator = text_in(language, "number-thousands-separator");
     let mut result = String::new();
     if value < 0 {
         result.push('-');
@@ -429,6 +680,24 @@ mod tests {
     }
 
     #[test]
+    fn the_grid_gets_the_legacy_viewer_s_language_codes() {
+        for (code, grid) in [
+            ("en", "en"),
+            ("fr", "fr"),
+            ("ja", "ja"),
+            ("de", "de"),
+            ("ru", "ru"),
+            ("zh-Hans", "zh"),
+            ("zh-Hant", "zh"),
+            ("pt-BR", "pt"),
+            ("pt_PT", "pt"),
+            ("", "en"),
+        ] {
+            assert_eq!(grid_code(code), grid, "{code}");
+        }
+    }
+
+    #[test]
     fn switching_language_refreshes_plain_labels_and_cached_tables() {
         static LABELS: Localized<Vec<&str>> = Localized::new();
         select("en", None);
@@ -444,5 +713,26 @@ mod tests {
         select("fr", Some("en"));
         assert_eq!(language(), "en");
         select("default", None);
+    }
+
+    /// English interface text uses American spelling. Message IDs stay
+    /// stable; only the values are checked.
+    #[test]
+    fn english_catalog_values_spell_color() {
+        let source = include_str!("../locales/en.ftl");
+        let mut hits = Vec::new();
+        for (number, line) in source.lines().enumerate() {
+            let value = if let Some((_, value)) = line.split_once(" = ") {
+                value
+            } else if line.starts_with(' ') || line.starts_with('\t') {
+                line
+            } else {
+                continue;
+            };
+            if value.to_ascii_lowercase().contains("colour") {
+                hits.push(number + 1);
+            }
+        }
+        assert!(hits.is_empty(), "en.ftl values still spell colour: {hits:?}");
     }
 }

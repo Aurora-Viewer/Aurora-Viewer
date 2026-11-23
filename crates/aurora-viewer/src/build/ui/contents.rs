@@ -5,7 +5,7 @@
 
 use super::contents_selection;
 use crate::build::BuildTool;
-use crate::build::contents::AT_LSL_TEXT;
+use crate::build::contents::{AT_LSL_TEXT, AT_NOTECARD, item_renameable};
 use crate::build::contents_drop;
 use crate::theme::Palette;
 use crate::ui::inventory::item_icon;
@@ -20,6 +20,8 @@ use egui::{RichText, Vec2};
 fn display_name(i: &TaskItem) -> String {
     if i.asset_type == AT_LSL_TEXT && i.name.starts_with("New Script") {
         i.name.replacen("New Script", aurora_i18n::tr!("common-new-script"), 1)
+    } else if i.asset_type == AT_NOTECARD && i.name.starts_with("New Notecard") {
+        i.name.replacen("New Notecard", aurora_i18n::tr!("common-new-notecard"), 1)
     } else {
         i.name.clone()
     }
@@ -90,8 +92,29 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         {
             tool.request_contents(world, idx, true);
         }
+        let lit = tool.ui.contents_filters_open || tool.ui.contents_filters.active();
+        if crate::ui::widgets::icon_toggle(
+            ui,
+            p,
+            "adjustments-horizontal-filled",
+            aurora_i18n::tr!("build-ui-contents-filters"),
+            lit,
+        ) {
+            tool.ui.contents_filters_open = !tool.ui.contents_filters_open;
+        }
     });
     ui.horizontal(|ui| {
+        // under New script, as floater_tools.xml stacks them; LLPanelContents::getState:
+        // only where the region has CreateTaskInventoryItem
+        if ui
+            .add_enabled(
+                editable && single && BuildTool::contents_create_cap(world, idx),
+                egui::Button::new(RichText::new(aurora_i18n::tr!("common-new-notecard")).size(font_size)),
+            )
+            .clicked()
+        {
+            tool.new_notecard(world, idx);
+        }
         if ui
             .button(RichText::new(aurora_i18n::tr!("common-rights")).size(font_size))
             .on_hover_text(aurora_i18n::tr!("build-ui-contents-change-content-permissions"))
@@ -119,9 +142,11 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let inv = tool.contents.objects.get(&object_id).cloned().unwrap_or_default();
     let items: Vec<TaskItem> = inv.items.iter().filter(|i| !i.is_folder).cloned().collect();
     let filter = tool.ui.contents_filter.trim().to_uppercase();
+    let filters = tool.ui.contents_filters;
     let mut list: Vec<&TaskItem> = items
         .iter()
-        .filter(|i| filter.is_empty() || searchable_name(i).to_uppercase().contains(&filter))
+        .filter(|i| filters.matches(i))
+        .filter(|i| filter.is_empty() || crate::ui::inventory::view::matches_text(&searchable_name(i).to_uppercase(), &filter))
         .collect();
     list.sort_by_key(|i| crate::natural_order::key(&i.name));
     tool.ui
@@ -273,6 +298,9 @@ fn item_row(
     item: &TaskItem,
     editable: bool,
 ) {
+    // the seat held by RLVa takes nothing in and lets nothing out, but its
+    // items keep their names and their scripts their switch
+    let items_editable = editable || tool.contents_items_editable(world, idx);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         widgets::inventory_spacing(ui);
@@ -315,7 +343,7 @@ fn item_row(
         if r.drag_started() && !selected {
             tool.ui.contents_selection.select(ui, object_id, item.item_id, false);
         }
-        let item_modify = item.owner_mask & perm::MODIFY != 0;
+        let item_modify = item_renameable(world, item);
         // A selected row carries the whole selection (LLFolderView::startDrag).
         let dragged = if r.hovered() || r.drag_started() || r.dragged() {
             contents_selection::acted_on(tool, object_id, item)
@@ -331,12 +359,19 @@ fn item_row(
             crate::build::task_inventory::owned(world, object_id, tool.props.get(&object_id)),
         );
         let script = item.asset_type == AT_LSL_TEXT;
+        let preview =
+            matches!(item.asset_type, 0 | 1 | 20) && item.to_inv_item().is_some_and(|it| tool.task_preview_offered(world, idx, &it));
         menu::context_menu(&r, p, |ui| {
             let taken = contents_selection::acted_on(tool, object_id, item);
             let transfers: Result<Vec<_>, _> = taken.iter().map(|it| tool.task_transfer_kind(world, object_id, it)).collect();
             let can_take = transfers.is_ok();
-            let can_open = script || item.asset_type == 7;
-            let no_open = if can_open {
+            // LLTaskInvFVBridge::buildContextMenu: RLVa keeps the item closed
+            // (@viewnote, @viewscript, @viewtexture, a locked attachment).
+            let closed = (script || item.asset_type == 7 || preview) && world.rlva_task_open_blocked(idx, i32::from(item.asset_type));
+            let can_open = (script || item.asset_type == 7 || preview) && !closed;
+            let no_open = if closed {
+                aurora_i18n::tr!("rlva-blocked")
+            } else if can_open {
                 ""
             } else {
                 aurora_i18n::tr!("build-ui-contents-opening-items-inside-an-object-is-not-available-yet")
@@ -351,15 +386,17 @@ fn item_row(
                     tool.ui.open_notecard = Some((object_id, item.item_id));
                 }
             }
+            // Every selected item gets its own window (LLInventoryAction::doToSelected "task_properties";
+            // the Legacy Viewer tabs them in one window, see item_properties::show).
             if menu::item(ui, p, "info-circle-filled", aurora_i18n::tr!("common-properties")) {
-                tool.open_task_item_properties(object_id, item);
+                tool.open_task_items_properties(object_id, &taken);
             }
             if menu::item_if(
                 ui,
                 p,
                 "pencil-filled",
                 aurora_i18n::tr!("common-rename"),
-                editable && item_modify && tool.ui.contents_selection.items.len() == 1,
+                items_editable && item_modify && tool.ui.contents_selection.items.len() == 1,
             ) {
                 contents_selection::begin_rename(tool, world, object_id, item.item_id);
             }
@@ -389,7 +426,7 @@ fn item_row(
                 } else {
                     ("player-play-filled", aurora_i18n::tr!("build-ui-contents-run"))
                 };
-                if menu::item_if(ui, p, icon, label, editable) {
+                if menu::item_if(ui, p, icon, label, items_editable) {
                     tool.set_script_running(world, idx, item.item_id, !on);
                 }
             }
@@ -400,9 +437,9 @@ fn item_row(
                     object: object_id,
                     item: item.item_id,
                 });
-            } else if item.asset_type == 7 {
+            } else if item.asset_type == 7 || preview {
                 tool.ui.open_notecard = Some((object_id, item.item_id));
-            } else if editable && item_modify {
+            } else if items_editable && item_modify {
                 contents_selection::begin_rename(tool, world, object_id, item.item_id);
             }
         }

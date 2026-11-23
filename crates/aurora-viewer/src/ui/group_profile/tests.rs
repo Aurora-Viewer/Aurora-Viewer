@@ -205,7 +205,12 @@ fn managing_members_shows_invite_roles_and_donations() {
         let column = |key: &'static str| {
             texts
                 .iter()
-                .filter(|t| t.starts_with(&aurora_i18n::text(key).to_uppercase()))
+                // the head, maybe with a sort mark after a space (not
+                // Japanese 役割ごと, "by role", which starts with 役割)
+                .filter(|t| {
+                    t.strip_prefix(&aurora_i18n::text(key).to_uppercase())
+                        .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+                })
                 .count()
         };
         assert!(
@@ -234,6 +239,158 @@ fn the_classic_window_keeps_the_general_pane_and_adds_the_members() {
         assert!(has(&texts, key), "{key} in {texts:?}");
     }
     assert!(!has(&texts, "ui-group-profile-me"), "the cards are the Aurora look's");
+}
+
+#[test]
+fn classic_general_flows_past_its_old_height_without_clipping_fields() {
+    let mut world = world(true, MEMBER);
+    world.social.names.insert(crate::demo::DEMO_LOUP, "Orion Resident".into());
+    world.search.groups.get_mut(&DEMO_GROUP1).unwrap().member_title = "Group builder".into();
+    let theme = crate::theme::Theme::default();
+    let p = theme.palette();
+    for width in [320.0, 430.0] {
+        for scale in [1.0, 2.0] {
+            let ctx = egui::Context::default();
+            theme.apply(&ctx, scale);
+            let mut st = opened(&mut world);
+            let images = HashMap::new();
+            let mut emoji = crate::ui::emoji::Emoji::load();
+            let (mut names, mut wanted, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
+            let env = Env {
+                avatar_pics: &images,
+                classic: true,
+                now: 0.0,
+                group_calls: false,
+            };
+            let mut shapes = Vec::new();
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1400.0, 1300.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.set_width(width);
+                        ui.set_height(1200.0);
+                        let mut c = Ctx {
+                            p: &p,
+                            world: &world,
+                            images: &images,
+                            emoji: &mut emoji,
+                            want_names: &mut names,
+                            wanted_images: &mut wanted,
+                            want_groups: &mut groups,
+                        };
+                        let view = view::View::of(&world, DEMO_GROUP1);
+                        st.classic(ui, &mut c, &env, &view, &mut Vec::new());
+                    },
+                );
+                output.textures_delta.clear();
+                shapes = output.shapes;
+            }
+            let rect = |label: &str| {
+                shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        Shape::Text(text) if text.galley.text() == label => {
+                            let ink = widgets::ink_rect(&text.galley).translate(text.pos.to_vec2());
+                            assert!(
+                                !text.galley.elided && shape.clip_rect.contains_rect(ink),
+                                "clipped {label} at {width}/{scale}"
+                            );
+                            assert!(ink.right() <= width, "too wide: {label} at {width}/{scale}");
+                            Some(ink)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("missing {label} at {width}/{scale}"))
+            };
+            assert!(!rect(aurora_i18n::tr!("search-group-founder")).intersects(rect("Orion Resident")));
+            assert!(!rect(aurora_i18n::tr!("search-group-my-title")).intersects(rect("Group builder")));
+            let fee = rect(aurora_i18n::tr!("search-group-fee"));
+            let refresh = rect(aurora_i18n::tr!("search-refresh"));
+            let members = rect(aurora_i18n::tr!("ui-group-profile-members-and-roles"));
+            assert!(fee.bottom() < refresh.top() && refresh.bottom() < members.top());
+        }
+    }
+}
+
+#[test]
+fn classic_requested_section_waits_for_a_late_group_profile() {
+    let mut world = world(true, u64::MAX);
+    let mut profile = world.search.groups.remove(&DEMO_GROUP1).unwrap();
+    profile.charter = "A long group charter.\n".repeat(40);
+    let mut st = opened(&mut world);
+    st.show_member(crate::demo::DEMO_LOUP);
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let p = theme.palette();
+    let images = HashMap::new();
+    let mut emoji = crate::ui::emoji::Emoji::load();
+    let (mut names, mut wanted, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
+    let env = Env {
+        avatar_pics: &images,
+        classic: true,
+        now: 0.0,
+        group_calls: false,
+    };
+    let mut frame = 0;
+    let mut draw = |st: &mut GroupProfileUi, world: &World| {
+        frame += 1;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 700.0))),
+                time: Some(f64::from(frame) / 60.0),
+                ..Default::default()
+            },
+            |ui| {
+                ui.set_width(430.0);
+                ui.set_height(600.0);
+                let mut c = Ctx {
+                    p: &p,
+                    world,
+                    images: &images,
+                    emoji: &mut emoji,
+                    want_names: &mut names,
+                    wanted_images: &mut wanted,
+                    want_groups: &mut groups,
+                };
+                let view = view::View::of(world, DEMO_GROUP1);
+                st.classic(ui, &mut c, &env, &view, &mut Vec::new());
+            },
+        );
+        output.textures_delta.clear();
+        output.shapes
+    };
+    for _ in 0..REVEAL_FRAMES + 5 {
+        draw(&mut st, &world);
+    }
+    assert_eq!(st.reveal, REVEAL_FRAMES, "waiting for the profile must not consume the request");
+    world.search.groups.insert(DEMO_GROUP1, profile);
+    for _ in 0..REVEAL_FRAMES + 30 {
+        draw(&mut st, &world);
+    }
+    assert_eq!(st.reveal, 0);
+    let shapes = draw(&mut st, &world);
+    let title = aurora_i18n::tr!("ui-group-profile-members-and-roles");
+    let (rect, clip) = shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            Shape::Text(text) if text.galley.text() == title => {
+                Some((widgets::ink_rect(&text.galley).translate(text.pos.to_vec2()), shape.clip_rect))
+            }
+            _ => None,
+        })
+        .expect("the requested Members header is visible after the late reply");
+    assert!(
+        clip.contains_rect(rect),
+        "the requested header must not be clipped: {rect:?} in {clip:?}"
+    );
+    assert!(
+        rect.top() - clip.top() < 30.0,
+        "the requested section stays at the top: {rect:?} in {clip:?}"
+    );
 }
 
 #[test]
@@ -958,6 +1115,7 @@ fn post_links_ability_follows_the_region() {
         currency_symbol: String::new(),
         export_supported: false,
         group_chat_post_links: enabled,
+        game_control: false,
     };
     world.apply(features(true));
     assert!(view::View::of(&world, DEMO_GROUP1).post_links);

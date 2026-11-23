@@ -16,6 +16,7 @@ use crate::ui::Panels;
 use crate::ui::icons::Icons;
 use crate::ui::menu;
 use crate::ui::parcel_icons::{GLYPH, ParcelIcon, SLOT_HEIGHT, SLOT_WIDTH};
+use crate::world::tphistory::HistoryItem;
 use egui::{Color32, FontId, Id, Pos2, Rect, Sense, Vec2};
 
 /// Inside the place: room at its left and right ends, and between its parts.
@@ -120,6 +121,13 @@ fn parcel_font(ctx: &egui::Context) -> FontId {
     FontId::new(13.0, crate::ui::fonts::semibold(ctx))
 }
 
+/// The SLURL of the place menu may be copied: under @showloc too, which
+/// gives "(Hidden region)" (LLStatusBar::onContextMenuItemClicked "copy",
+/// llstatusbar.cpp, copies LLSLURL::getSLURLString with no RLVa test).
+pub(super) fn slurl_copy_enabled(st: &StatusInfo) -> bool {
+    !st.slurl.is_empty()
+}
+
 /// The parcel's name (the region's when the parcel has none), the region,
 /// the position.
 fn texts(st: &StatusInfo) -> (String, String, String) {
@@ -143,6 +151,40 @@ fn one_line(name: &str) -> String {
         .filter(|w| !w.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// The parcel name cut into plain text and web links, in order: the
+/// location field of the Legacy Viewer linkifies an address an owner typed
+/// in a parcel name (LLUrlRegistry, LLURLLineEditor), so a URL opens in the
+/// browser instead of the place's menu.
+pub(super) fn link_runs(parcel: &str) -> Vec<(&str, Option<&str>)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for (range, url) in crate::ui::chat::web_links(parcel) {
+        if range.start > at {
+            out.push((&parcel[at..range.start], None));
+        }
+        out.push((&parcel[range.clone()], Some(url)));
+        at = range.end;
+    }
+    if at < parcel.len() {
+        out.push((&parcel[at..], None));
+    }
+    out
+}
+
+/// One run of the parcel name, laid out on one line and cut at `room` with
+/// an ellipsis. A web link keeps the chat links' colour, underlined as the
+/// Legacy Viewer's HTMLLinkColor links.
+fn run_galley(painter: &egui::Painter, text: &str, font: FontId, color: Color32, link: bool, room: f32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+    if link {
+        for section in &mut job.sections {
+            section.format.underline = egui::Stroke::new(1.0, color);
+        }
+    }
+    painter.layout_job(job)
 }
 
 /// The widths of the levels for this frame.
@@ -277,7 +319,10 @@ pub fn island(
     if let Some(a) = place(ui, p, icons, panels, st, loc, detail) {
         action = Some(a);
     }
-    if let Some(a) = star_slot(ui, p, icons, star, st) {
+    // LLLocationInputCtrl::updateAddLandmarkButton: no star under @showloc
+    if !st.location_hidden
+        && let Some(a) = star_slot(ui, p, icons, star, st)
+    {
         action = Some(BarAction::LandmarkStar(a));
     }
     action
@@ -407,18 +452,52 @@ fn place(
     let room = (rights_left - LOC_GAP * 2.0 - x).max(0.0);
     let region_g = painter.layout_no_wrap(region, FontId::proportional(12.0), p.muted);
     let parcel_room = (room - region_g.size().x - LOC_GAP).max(room.min(40.0));
-    // a name longer than the room ends with "…"
-    let mut job = egui::text::LayoutJob::simple_singleline(parcel, parcel_font(ui.ctx()), p.ink);
-    job.wrap = egui::text::TextWrapping::truncate_at_width(parcel_room);
-    let parcel_g = painter.layout_job(job);
-    let parcel_w = parcel_g.size().x;
     // both on one baseline, the parcel's capitals centred in the island
     let baseline = crate::ui::widgets::centered_baseline(&painter, parcel_font(ui.ctx()), cy);
-    crate::ui::widgets::paint_on_baseline(&painter, parcel_g, x, baseline, p.ink);
+    // a name longer than the room ends with "…"; a web address keeps the
+    // chat links' colour and underline, and its visible part (the "…"
+    // included) opens the whole address, shown whole or cut
+    let link_color = crate::ui::colors::text(crate::ui::colors::get().chat_urls);
+    let font = parcel_font(ui.ctx());
+    let mut links: Vec<(Rect, &str)> = Vec::new();
+    let mut parcel_w = 0.0;
+    let mut left = parcel_room;
+    for (text, url) in link_runs(&parcel) {
+        if left <= 0.5 {
+            break;
+        }
+        let color = if url.is_some() { link_color } else { p.ink };
+        let full = painter.layout_no_wrap(text.to_owned(), font.clone(), Color32::PLACEHOLDER).size().x;
+        let fits = full <= left + 0.5;
+        let galley = run_galley(&painter, text, font.clone(), color, url.is_some(), left);
+        let w = galley.size().x;
+        crate::ui::widgets::paint_on_baseline(&painter, galley, x + parcel_w, baseline, color);
+        if let Some(url) = url {
+            let hit = Rect::from_min_size(Pos2::new(x + parcel_w, cy - SLOT / 2.0), Vec2::new(w, SLOT));
+            links.push((hit, url));
+        }
+        parcel_w += w;
+        if !fits {
+            break;
+        }
+        left -= w;
+    }
     x += parcel_w + LOC_GAP;
     let region_room = (rights_left - LOC_GAP * 2.0 - x).max(0.0);
     if region_g.size().x <= region_room + 0.5 {
         crate::ui::widgets::paint_on_baseline(&painter, region_g, x, baseline, p.muted);
+    }
+
+    // a web address in the name opens in the browser, as the Legacy
+    // Viewer's location field does (LLUrlEntryHTTP::handleClick)
+    for (i, (hit, url)) in links.iter().enumerate() {
+        let r = ui.interact(*hit, Id::unique(("bars_place_link", i)), Sense::click());
+        if r.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if r.on_hover_text(*url).clicked() {
+            crate::ui::chat::open_web_link(ui.ctx(), url);
+        }
     }
 
     // the rights: each one says what it is; a click opens About Land
@@ -506,8 +585,12 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
             }
             ui.label(egui::RichText::new(sub.join(" · ")).size(12.0).color(p.muted));
         });
-        // the star: edits this parcel's landmark, or creates one
+        // the star: edits this parcel's landmark, or creates one (none
+        // under @showloc, as the island's)
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if st.location_hidden {
+                return;
+            }
             ui.add_space(4.0);
             let (rect, resp) = ui.allocate_exact_size(Vec2::splat(SLOT), Sense::click());
             ui.painter().rect_filled(
@@ -572,10 +655,9 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
                 copy,
                 crate::ui::widgets::ActionKind::Flat,
                 Vec2::new(button_w, 22.0),
-                !st.location_hidden,
+                slurl_copy_enabled(st),
             )
             .clicked()
-                && !st.location_hidden
             {
                 ui.ctx().copy_text(st.slurl.clone());
             }
@@ -589,9 +671,10 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     if super::demo::get().locations && ui.ctx().cumulative_frame_nr() == super::location_suggest::DEMO_FRAME {
         text = super::location_suggest::DEMO_TYPED.to_owned();
     }
-    // the landmarks and places the text names (hidden with the location)
+    // the landmarks and places the text names (kept under @showloc, as
+    // LLLocationInputCtrl::rebuildLocationHistory has no RLVa test)
     let mut picker = super::location_suggest::Picker::load(ui.ctx(), picker_key);
-    picker.refresh(&st.landmarks, st.tp_session.items, &text, !st.location_hidden);
+    picker.refresh(&st.landmarks, st.tp_session.items, &text, true);
     // the arrows and Enter go to the list before the field takes them
     let field_id = ui.ctx().data(|d| d.get_temp::<Id>(field_key));
     let (mut take, moved) = match field_id {
@@ -622,7 +705,7 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
             ui.ctx().data_mut(|d| d.insert_temp(focused_id, true));
         }
     }
-    picker.refresh(&st.landmarks, st.tp_session.items, dest, !st.location_hidden);
+    picker.refresh(&st.landmarks, st.tp_session.items, dest, true);
     // what the text names, under the field; Enter or a click takes a row
     if !picker.list().is_empty() {
         ui.add_space(4.0);
@@ -656,7 +739,7 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), "Alt+H") {
         action = Some(BarAction::TeleportHistory);
     }
-    if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.can_go_home) {
+    if menu::item_if(ui, p, "home-filled", aurora_i18n::tr!("common-go-home"), st.home_entry) {
         action = Some(BarAction::TeleportHome);
     }
     if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("common-places")) {
@@ -664,13 +747,25 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     }
     if !st.recent.is_empty() {
         menu::heading(ui, p, aurora_i18n::tr!("ui-bars-recent-places"));
-        for r in &st.recent {
-            if menu::item_keys(ui, p, "arrow-back-up", &r.name, &r.region) {
-                action = Some(BarAction::TeleportTo(r.slurl.clone()));
+        for item in &st.recent {
+            let (name, region) = recent_label(&item.title);
+            if menu::item_keys(ui, p, "arrow-back-up", name, region) {
+                action = Some(BarAction::TeleportSavedPlace(item.clone()));
             }
         }
     }
     action
+}
+
+/// The last places of the saved teleport history for the place menu,
+/// newest first, without the one we stand in (its last entry): two, as in
+/// the mockup. Keep each visit's destination even when two positions coincide.
+pub fn recent(items: &[HistoryItem]) -> Vec<HistoryItem> {
+    items.iter().rev().skip(1).take(2).cloned().collect()
+}
+
+fn recent_label(title: &str) -> (&str, &str) {
+    title.rsplit_once(", ").unwrap_or((title, ""))
 }
 
 #[cfg(test)]
@@ -715,6 +810,46 @@ mod address_tests {
 mod tests {
     use super::*;
 
+    fn visit(title: &str, x: f64) -> crate::world::tphistory::HistoryItem {
+        crate::world::tphistory::HistoryItem {
+            title: title.into(),
+            global: glam::DVec3::new(x, 256_000.0, 25.0),
+            date: x,
+            slurl: String::new(),
+        }
+    }
+
+    /// #4370: the Recent rows are the two places before the one we stand
+    /// in, newest first, and teleport by their saved position, since a
+    /// Second Life history item has no SLURL.
+    #[test]
+    fn recent_places_keep_their_position_for_the_teleport() {
+        let items = [
+            visit("Old Garden, Ahern", 1.0),
+            visit("Moon Garden, Lunaria", 2.0),
+            visit("Bare Region", 3.0),
+            visit("Here, Home", 4.0),
+        ];
+        let rows = recent(&items);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(recent_label(&rows[0].title), ("Bare Region", ""));
+        assert_eq!(rows[0].global, items[2].global);
+        assert_eq!(recent_label(&rows[1].title), ("Moon Garden", "Lunaria"));
+        assert_eq!(rows[1].global, items[1].global);
+        assert!(recent(&items[..1]).is_empty());
+    }
+
+    #[test]
+    fn recent_visits_at_the_same_position_keep_the_selected_destination() {
+        let mut first = visit("Garden, North", 10.0);
+        let mut second = visit("Plaza, South", 10.0);
+        first.slurl = "hop://north.example/North/10/20/25".into();
+        second.slurl = "hop://south.example/South/10/20/25".into();
+        let items = [first, second, visit("Current", 12.0)];
+        let rows = recent(&items);
+        assert_eq!(rows, [items[1].clone(), items[0].clone()]);
+    }
+
     fn widths() -> Widths {
         Widths {
             fixed: 400.0,
@@ -755,6 +890,110 @@ mod tests {
         assert_eq!(one_line("  Moon \t\r\n  Garden"), "Moon Garden");
         assert_eq!(one_line("Lunaria Commons"), "Lunaria Commons");
         assert_eq!(one_line("\n"), "");
+    }
+
+    /// A URL an owner typed in a parcel name is a link, the rest the name.
+    #[test]
+    fn a_web_address_in_a_parcel_name_is_a_link() {
+        assert_eq!(
+            link_runs("Aurora Plaza - https://example.org"),
+            vec![("Aurora Plaza - ", None), ("https://example.org", Some("https://example.org")),]
+        );
+        assert_eq!(
+            link_runs("Shop www.example.org now"),
+            vec![("Shop ", None), ("www.example.org", Some("www.example.org")), (" now", None)]
+        );
+    }
+
+    /// The sentence's punctuation is not part of the address.
+    #[test]
+    fn trailing_punctuation_stays_out_of_the_link() {
+        assert_eq!(
+            link_runs("See https://example.org, then"),
+            vec![
+                ("See ", None),
+                ("https://example.org", Some("https://example.org")),
+                (", then", None),
+            ]
+        );
+    }
+
+    /// Place and agent links are not web addresses: they stay text in the
+    /// location field, and a web address after one is still found.
+    #[test]
+    fn only_web_addresses_are_links() {
+        assert_eq!(
+            link_runs("Land secondlife://Region/1/2/3"),
+            vec![("Land secondlife://Region/1/2/3", None)]
+        );
+        assert_eq!(
+            link_runs("Land secondlife://Region/1/2/3 https://example.org now"),
+            vec![
+                ("Land secondlife://Region/1/2/3 ", None),
+                ("https://example.org", Some("https://example.org")),
+                (" now", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn labelled_links_stay_plain_and_a_literal_url_keeps_its_utf8_byte_range() {
+        for label in ["café", "www.a.test"] {
+            let prefix = format!("Île [https://b.test {label}] 茶 ");
+            let url = "https://c.test/été";
+            let name = format!("{prefix}{url}!");
+            assert_eq!(link_runs(&name), vec![(prefix.as_str(), None), (url, Some(url)), ("!", None)]);
+        }
+    }
+
+    /// A name without an address is one plain run.
+    #[test]
+    fn a_name_without_a_link_is_one_run() {
+        assert_eq!(link_runs("Lunaria Commons"), vec![("Lunaria Commons", None)]);
+        assert!(link_runs("").is_empty());
+    }
+
+    /// The Legacy bars make a link clickable from its char rects; a link cut
+    /// by the field keeps a positive rect for the part still shown, so that
+    /// part (and the "…") still opens it. The name is the grid's longest
+    /// (63 bytes), the worst a real parcel can give.
+    #[test]
+    fn a_cut_link_keeps_a_rect_for_its_visible_part() {
+        let name = "Aurora Plaza - https://example.org/really/really/really/more";
+        assert!(name.len() <= 63, "a parcel name the grid accepts");
+        let field = 220.0;
+        let ctx = egui::Context::default();
+        let mut out = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.allocate_ui_with_layout(Vec2::new(field, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_max_width(field);
+                let mut job = egui::text::LayoutJob::default();
+                let format = egui::TextFormat {
+                    font_id: FontId::proportional(12.0),
+                    ..Default::default()
+                };
+                job.append("Aurora Plaza - ", 0.0, format.clone());
+                let start = job.text.chars().count();
+                job.append("https://example.org/really/really/really/more", 0.0, format);
+                let end = job.text.chars().count();
+                let (origin, galley, _) = egui::Label::new(job).truncate().layout_in_ui(ui);
+                let rects = crate::ui::chat::range_rects(&galley, origin, start..end);
+                out = Some((origin, galley, rects));
+            });
+        });
+        output.textures_delta.clear();
+        let (origin, galley, rects) = out.expect("a frame ran");
+        assert!(galley.elided, "the name is cut at the field's width");
+        assert!(galley.size().x <= field + 0.5, "the field keeps its width: {}", galley.size().x);
+        let rect = rects
+            .iter()
+            .find(|r| r.width() > 0.5)
+            .unwrap_or_else(|| panic!("the visible part of the link has a rect: {rects:?}"));
+        assert!(
+            (rect.right() - (origin.x + galley.size().x)).abs() < 1.0,
+            "the cut link covers the …: {rect:?} in {}",
+            galley.size().x
+        );
     }
 
     /// The parcel's name and the region beside it share one baseline,

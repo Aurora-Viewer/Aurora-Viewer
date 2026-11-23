@@ -10,10 +10,11 @@ use crate::ui::skin::{Layout, ToolButton};
 const FORMAT: &str = "aurora-toolbar-interface";
 const MAX_BUTTONS: usize = 512;
 const MAX_MAP: usize = 1024;
-const FIELDS: [&str; 18] = [
+const FIELDS: [&str; 19] = [
     "buttons",
     "locked",
     "vr_button_migrated",
+    "director_button_migrated",
     "left",
     "right",
     "bottom_style",
@@ -231,6 +232,7 @@ pub(crate) fn snapshot(settings: &ToolbarSettings, layout: &Layout, islands: boo
     toolbar.sanitize();
     // This is a complete snapshot: discovery must not append a removed control.
     toolbar.vr_button_migrated = true;
+    toolbar.director_button_migrated = true;
     for (bar, style) in [
         (Bar::Bottom, &mut toolbar.bottom_style),
         (Bar::Left, &mut toolbar.left_style),
@@ -279,6 +281,7 @@ pub(crate) fn read(text: &str) -> Result<Profile, String> {
         return Err(invalid());
     }
     document.toolbar.vr_button_migrated = true;
+    document.toolbar.director_button_migrated = true;
     Ok(Profile {
         base: document.base,
         toolbar: document.toolbar,

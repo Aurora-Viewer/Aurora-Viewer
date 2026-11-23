@@ -1,5 +1,8 @@
 //! LLPreviewNotecard for task inventory: the same document editor, with
 //! object-scoped permissions, downloads and uploads (Firestorm, LGPL 2.1).
+//! The same windows preview a texture, a sound or an animation of an
+//! object's contents (LLTaskTextureBridge, LLTaskSoundBridge and
+//! LLTaskAnimationBridge::openItem, indra/newview/llpanelobjectinventory.cpp).
 
 use super::*;
 use crate::ui::inventory::{InvAction, InventoryUi};
@@ -35,18 +38,21 @@ impl TaskNotecard {
         let mut state = InventoryUi::document(item.id);
         let mut inventory = Inventory::default();
         inventory.add_items(vec![item.clone()]);
-        if item.owner_mask & rules::COPY == 0 {
-            state.load_document(
-                7,
-                false,
-                &Err(aurora_i18n::tr!("app-inventory-you-are-not-allowed-to-read-this-content").into()),
-            );
-        } else if item.asset_id.is_nil() {
-            state.load_document(
-                7,
-                crate::world::inventory::preview::can_edit(&inventory, item.id, 0),
-                &Ok(Vec::new()),
-            );
+        // a texture, a sound or an animation: the preview reads its asset id
+        if item.asset_type == 7 {
+            if item.owner_mask & rules::COPY == 0 {
+                state.load_document(
+                    7,
+                    false,
+                    &Err(aurora_i18n::tr!("app-inventory-you-are-not-allowed-to-read-this-content").into()),
+                );
+            } else if item.asset_id.is_nil() {
+                state.load_document(
+                    7,
+                    crate::world::inventory::preview::can_edit(&inventory, item.id, 0),
+                    &Ok(Vec::new()),
+                );
+            }
         }
         Self { inventory, state }
     }
@@ -69,7 +75,7 @@ impl App {
             .get(&object)?
             .items
             .iter()
-            .find(|it| it.item_id == item && it.asset_type == 7)?;
+            .find(|it| it.item_id == item && matches!(it.asset_type, 0 | 1 | 7 | 20))?;
         let mut item = metadata.to_inv_item()?;
         if let Some(props) = self.build.props.get(&object).filter(|props| !props.name.is_empty()) {
             item.name = aurora_i18n::tr!("notecard-task-title", note = item.name.as_str(), object = props.name.as_str());
@@ -87,6 +93,7 @@ impl App {
 
     pub(super) fn open_task_notecard(&mut self, object: Uuid, item: Uuid) {
         if self.world.rlva.has("viewnote") {
+            self.rlva_view_blocked(7);
             return;
         }
         if self.task_notecards.get(&(object, item)).is_some_and(|d| d.state.preview.is_some()) {
@@ -95,7 +102,38 @@ impl App {
         let Some(metadata) = self.task_notecard_item(object, item) else {
             return;
         };
-        let download = metadata.owner_mask & rules::COPY != 0 && !metadata.asset_id.is_nil();
+        // LLTaskNotecardBridge::openItem (llpanelobjectinventory.cpp): the
+        // notecards of an attachment that cannot be taken off stay closed.
+        if metadata.asset_type == 7
+            && self
+                .world
+                .objects
+                .index_of_uuid(&object)
+                .is_some_and(|i| self.world.rlva_locked_attachment(i))
+        {
+            self.rlva_view_blocked(7);
+            return;
+        }
+        // a preview: the rule of the contents' Open entries, on the raw item;
+        // one RLVa keeps closed (@viewtexture) says so
+        if metadata.asset_type != 7 {
+            let raw = self
+                .build
+                .contents
+                .objects
+                .get(&object)
+                .and_then(|inv| inv.items.iter().find(|it| it.item_id == item))
+                .and_then(aurora_net::build::TaskItem::to_inv_item)
+                .zip(self.world.objects.index_of_uuid(&object));
+            let Some((raw, idx)) = raw.filter(|(raw, idx)| self.build.task_preview_offered(&self.world, *idx, raw)) else {
+                return;
+            };
+            if !self.build.task_preview_allowed(&self.world, idx, &raw) {
+                self.rlva_view_blocked(raw.asset_type);
+                return;
+            }
+        }
+        let download = metadata.asset_type == 7 && metadata.owner_mask & rules::COPY != 0 && !metadata.asset_id.is_nil();
         self.task_notecards.insert((object, item), TaskNotecard::new(metadata));
         if download {
             self.request_task_notecard(object, item);
@@ -172,9 +210,8 @@ impl App {
     }
 
     pub(super) fn show_task_notecards(&mut self, ctx: &egui::Context, p: &Palette) {
-        if self.world.rlva.has("viewnote") {
-            return;
-        }
+        // (`open_task_notecard` refuses @viewnote; what is open stays open,
+        // RlvUIEnabler::filterFloaterViewXXX in rlvui.cpp)
         if let Some((object, item)) = self.build.ui.open_notecard.take() {
             self.open_task_notecard(object, item);
         }
@@ -182,6 +219,7 @@ impl App {
         let mut saves = Vec::new();
         let mut embedded = Vec::new();
         let mut descriptions = Vec::new();
+        let mut forwarded = Vec::new();
         let notecard_view = self.settings.inventory.notecard_view;
         for (object, item) in keys {
             let metadata = self.task_notecard_item(object, item);
@@ -200,6 +238,8 @@ impl App {
             if d.state.preview_source.is_some() {
                 d.state.preview_can_edit = allowed;
             }
+            // RLVa's @viewtexture refuses the textures it embeds as well
+            d.inventory.rlva_preview_mask = self.world.inventory.rlva_preview_mask;
             if metadata.is_none() {
                 d.state.preview_message = aurora_i18n::tr!("notecard-task-unavailable").into();
             }
@@ -233,11 +273,24 @@ impl App {
                 } = action
                 {
                     embedded.push((editor, notecard, marker, copy, object));
+                } else if matches!(action, InvAction::Sound(_) | InvAction::Animation { .. }) {
+                    // the preview's Play buttons: the inventory's own actions,
+                    // and the window remembers what it started
+                    if let InvAction::Animation { asset, local, start } = &action {
+                        d.state.playing = start.then_some((*asset, *local));
+                    }
+                    forwarded.push(action);
                 }
             }
         }
         if self.settings.inventory.notecard_view != notecard_view {
             self.settings.save();
+        }
+        for action in forwarded {
+            match action {
+                InvAction::Animation { asset, local, start } => self.play_preview_animation(asset, local, start),
+                action => self.apply_inventory_action(action),
+            }
         }
         for (editor, notecard, marker, copy, object) in embedded {
             self.open_notecard_attachment(editor, notecard, marker, copy, object);
@@ -298,6 +351,53 @@ impl App {
                 data,
             }),
             Err(reason) => d.state.preview_message = reason,
+        }
+    }
+
+    /// AURORA_DEMO_INVENTORY=task-preview: an object of ours holding a
+    /// texture, a sound and an animation of the demo inventory, all three
+    /// opened from its contents.
+    pub(super) fn demo_task_previews(&mut self) {
+        let Some(object) = self
+            .world
+            .objects
+            .iter()
+            .find(|(_, o)| o.pcode == 9 && o.parent_id == 0)
+            .map(|(_, o)| o.full_id)
+        else {
+            return;
+        };
+        self.build.props.insert(
+            object,
+            aurora_net::build::ObjectProps {
+                object_id: object,
+                owner_id: self.world.agent_id,
+                owner_mask: 0x7fffffff,
+                name: aurora_i18n::tr!("notecard-task-demo-object").into(),
+                ..Default::default()
+            },
+        );
+        let items: Vec<_> = [(8104, 9310, 0, 0), (8105, 9311, 1, 1), (8101, 9312, 20, 19)]
+            .into_iter()
+            .filter_map(|(source, id, asset_type, inv_type)| {
+                let source = self.world.inventory.items.get(&Uuid::from_u128(source))?;
+                Some(aurora_net::build::TaskItem {
+                    item_id: Uuid::from_u128(id),
+                    parent_id: object,
+                    owner_id: self.world.agent_id,
+                    name: source.name.clone(),
+                    asset_type,
+                    inv_type,
+                    asset_id: source.asset_id,
+                    owner_mask: rules::FULL,
+                    ..Default::default()
+                })
+            })
+            .collect();
+        let ids: Vec<_> = items.iter().map(|it| it.item_id).collect();
+        self.build.on_task_inventory(&self.world, object, Some(1), items);
+        for item in ids {
+            self.open_task_notecard(object, item);
         }
     }
 

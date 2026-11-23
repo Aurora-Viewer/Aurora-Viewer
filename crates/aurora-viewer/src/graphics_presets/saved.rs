@@ -71,6 +71,7 @@ impl Saved {
         self.write(&mut quality);
         quality.shadows = quality.shadow_quality > 0;
         Self::read(&quality.sanitized()).write(s);
+        crate::settings::autotune::Hold::chosen(s);
     }
 }
 

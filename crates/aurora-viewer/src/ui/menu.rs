@@ -19,6 +19,7 @@ pub use super::toolbar::commands::identified;
 pub use command::command;
 
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
 
 /// Row height and paddings (LLMenuItemGL: 20 px rows with a check column;
@@ -681,7 +682,10 @@ pub(crate) fn editable_row(
     } else {
         Sense::hover()
     };
-    row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, false, sense)
+    // a sub-menu heading stays lit while its sub-menu is open, as in
+    // [`submenu`]
+    let open = matches!(end, End::Caret) && sub_menu_open(ui);
+    row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, open, sense)
 }
 
 /// An icon-only command remains searchable and accessible by its full label.
@@ -910,11 +914,9 @@ pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
     if filtering() {
         return;
     }
-    let galley = ui.painter().layout_no_wrap(
-        title.to_uppercase(),
-        FontId::new(10.5, super::fonts::semibold(ui.ctx())),
-        p.muted_dim,
-    );
+    let galley = ui
+        .painter()
+        .layout_no_wrap(title.ui_upper(), FontId::new(10.5, super::fonts::semibold(ui.ctx())), p.muted_dim);
     let w = if ui.is_sizing_pass() {
         (galley.size().x + PAD * 2.0).max(MIN_W)
     } else {
@@ -960,6 +962,63 @@ fn track(ui: &Ui, hovered: bool) {
 /// Enabled entry; true when clicked (the menu closes).
 pub fn item(ui: &mut Ui, p: &Palette, icon: &str, label: &str) -> bool {
     item_if(ui, p, icon, label, true)
+}
+
+/// A toolbar catalogue command with a right-click action to add or remove
+/// its toolbar button. `menu::command(…, key).toolbar_command(id)` gives the
+/// same row a stable menu identity for interface customization.
+pub fn toolbar_command(ui: &mut Ui, p: &Palette, id: &'static str) -> bool {
+    catalogue_row(ui, p, id, true, End::None, "")
+}
+
+pub fn toolbar_command_keys(ui: &mut Ui, p: &Palette, id: &'static str, keys: &str) -> bool {
+    toolbar_command_keys_if(ui, p, id, true, keys)
+}
+
+/// A catalogue command with its shortcut in the keys column, greyed out
+/// when `enabled` is false: the button keeps the short label.
+pub fn toolbar_command_keys_if(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, keys: &str) -> bool {
+    catalogue_row(ui, p, id, enabled, End::Keys(keys), "")
+}
+
+pub fn toolbar_command_check(ui: &mut Ui, p: &Palette, id: &'static str, checked: bool) -> bool {
+    catalogue_row(ui, p, id, true, End::Check(checked), "")
+}
+
+pub fn toolbar_command_tip(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, tip: &str) -> bool {
+    catalogue_row(ui, p, id, enabled, End::None, tip)
+}
+
+fn catalogue_row(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, end: End<'_>, tip: &str) -> bool {
+    let Some(command) = super::toolbar::command(id) else { return false };
+    // Unavailable actions can still be added to a toolbar for later use.
+    let response = row_lead_sensed(
+        ui,
+        p,
+        Lead::Icon(command.icon),
+        command.label(),
+        enabled,
+        end,
+        false,
+        Sense::click(),
+    );
+    if ui
+        .ctx()
+        .data(|d| d.get_temp::<bool>(Id::unique("toolbar_menu_demo")))
+        .unwrap_or(false)
+    {
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(Id::unique(("toolbar_menu_command", id)), response.rect));
+    }
+    super::toolbar::command_context(&response, id);
+    let clicked = enabled && response.clicked();
+    if !tip.is_empty() {
+        response.on_hover_text(tip);
+    }
+    if clicked && !super::toolbar::commands::scanning() {
+        ui.close();
+    }
+    clicked
 }
 
 /// Entry greyed out when `enabled` is false (Firestorm's on_enable).
@@ -1072,8 +1131,7 @@ pub(crate) fn command_submenu(
         FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.pop()));
         return hidden(ui);
     }
-    let id = ui.next_auto_id();
-    let open = enabled && Popup::is_id_open(ui.ctx(), egui::containers::menu::SubMenu::id_from_widget_id(id));
+    let open = enabled && sub_menu_open(ui);
     let (icon, display) = command_content(icon, label, mode);
     let resp = row_presented(
         ui,
@@ -1090,6 +1148,17 @@ pub(crate) fn command_submenu(
         egui::containers::menu::SubMenu::new().show(ui, &resp, body);
     }
     resp
+}
+
+/// Whether the sub-menu of the row about to be allocated in `ui` is open:
+/// its row stays lit while it is, so the path taken through the menus shows
+/// (LLMenuItemBranchGL::draw, indra/llui/llmenugl.cpp, highlights a branch
+/// while its branch menu is visible). egui keeps that state in the menu's
+/// `MenuState::open_item`, not in the popup memory that `Popup::is_id_open`
+/// reads, which never saw a sub-menu open.
+fn sub_menu_open(ui: &Ui) -> bool {
+    let id = egui::containers::menu::SubMenu::id_from_widget_id(ui.next_auto_id());
+    egui::containers::menu::MenuState::from_ui(ui, |state, _| state.open_item == Some(id))
 }
 
 /// Entry whose icon is a color dot (the mini-map marks); true when clicked.
@@ -1322,7 +1391,7 @@ pub fn heading(ui: &mut Ui, p: &Palette, text: &str) {
 
 fn heading_line(ui: &mut Ui, p: &Palette, text: &str) {
     let font = FontId::new(10.5, super::fonts::semibold(ui.ctx()));
-    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, p.muted_dim);
+    let galley = ui.painter().layout_no_wrap(text.ui_upper(), font, p.muted_dim);
     let natural = (PAD + galley.size().x + PAD).max(MIN_W);
     let w = if ui.is_sizing_pass() {
         natural
@@ -1702,6 +1771,64 @@ mod tests {
         assert_eq!(above(&[], &mut shown, &mut headed), Above::Nothing);
     }
 
+    /// The row that opened a sub-menu stays lit while the pointer is inside
+    /// that sub-menu, as LLMenuItemBranchGL::draw does: the path taken
+    /// through the menus shows (feedback board, post 648).
+    #[test]
+    fn a_sub_menu_heading_stays_lit_while_its_sub_menu_is_open() {
+        let p = crate::theme::Theme::default().palette();
+        let wash = p.violet.gamma_multiply(0.35);
+        let mut frames = Frames::new();
+        let mut open = true;
+        // (heading lit, the heading's row, the sub-menu's entry if shown)
+        let mut frame = |frames: &mut Frames, events: Vec<egui::Event>| {
+            let mut heading = egui::Rect::NOTHING;
+            let mut child = None;
+            let shapes = frames.shapes(events, |ui| {
+                popup_at(ui.ctx(), Id::unique("path_menu"), egui::pos2(100.0, 100.0), &mut open, &p, |ui| {
+                    item(ui, &p, "copy", "Before");
+                    heading = submenu_heading(ui, &p, "copy", "Pathfinding", true, |ui| {
+                        item(ui, &p, "copy", "Region Objects");
+                        child = Some(ui.min_rect());
+                    })
+                    .rect;
+                    item(ui, &p, "copy", "After");
+                });
+            });
+            let lit = shapes
+                .iter()
+                .any(|s| matches!(s, egui::Shape::Rect(r) if r.rect == heading && r.fill == wash));
+            (lit, heading, child)
+        };
+        for _ in 0..4 {
+            frame(&mut frames, vec![]);
+        }
+        let (lit, heading, shown) = frame(&mut frames, vec![]);
+        assert!(!lit && shown.is_none(), "nothing lit before the pointer comes");
+
+        frame(&mut frames, vec![egui::Event::PointerMoved(heading.center())]);
+        let mut shown = None;
+        for _ in 0..4 {
+            shown = frame(&mut frames, vec![]).2;
+        }
+        let sub = shown.expect("hovering the heading opens its sub-menu");
+
+        // across the heading, into the sub-menu's entry
+        frame(
+            &mut frames,
+            vec![egui::Event::PointerMoved(heading.right_center() - egui::vec2(4.0, 0.0))],
+        );
+        frame(
+            &mut frames,
+            vec![egui::Event::PointerMoved(sub.left_top() + egui::vec2(20.0, 10.0))],
+        );
+        for _ in 0..4 {
+            let (lit, _, shown) = frame(&mut frames, vec![]);
+            assert!(shown.is_some(), "the sub-menu stays open under the pointer");
+            assert!(lit, "the heading stays lit while its sub-menu is open");
+        }
+    }
+
     struct Menus {
         frames: Frames,
         kind: u8,
@@ -1737,6 +1864,7 @@ mod tests {
                             egui::Frame::window(&ctx.global_style()),
                             egui::Rect::from_min_size(egui::pos2(600.0, 200.0), egui::vec2(400.0, 300.0)),
                             egui::vec2(220.0, 120.0),
+                            false,
                             false,
                             |_| {},
                         );

@@ -221,6 +221,107 @@ impl BuildTool {
     }
 }
 
+/// The rights a material saved from the selected faces may give: the masks
+/// of the inventory item it comes from as the agent would hold them as its
+/// new owner, or every right for the blank material; the creation defaults
+/// for materials narrow them before the upload
+/// (`permissions_out.accumulate(floater_perm)`, `material_save_masks`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaterialSave {
+    pub next_owner: u32,
+    pub group: u32,
+    pub everyone: u32,
+}
+
+/// The rights a saved material's item is given: those of its source
+/// narrowed by the creation defaults for materials (LLPermissions::accumulate
+/// then fix, indra/llinventory/llpermissions.cpp: everyone never modifies),
+/// and a next owner with any right may always move it, as the simulator keeps
+/// it on the new item (fixFairUse).
+pub fn material_save_masks(
+    rights: aurora_net::inventory::upload::Permissions,
+    defaults: aurora_net::inventory::upload::Permissions,
+) -> aurora_net::inventory::upload::Permissions {
+    use aurora_net::build::perm;
+    let next_owner = rights.next_owner & defaults.next_owner;
+    aurora_net::inventory::upload::Permissions {
+        next_owner: if next_owner == 0 { 0 } else { next_owner | perm::MOVE },
+        group: rights.group & defaults.group,
+        everyone: rights.everyone & defaults.everyone & !perm::MODIFY,
+    }
+}
+
+impl BuildTool {
+    /// LLMaterialEditor::canSaveObjectsMaterial (can_use_objects_material
+    /// with PERM_COPY and PERM_MODIFY, ItemSource::AGENT,
+    /// indra/newview/llmaterialeditor.cpp): the first face with a material,
+    /// on an object the agent may modify (LLSelectedTEGetMatData, mIsOverride),
+    /// whose contents are not on their way, whose root gives copy and modify;
+    /// and, unless it is the blank material, an item of that asset in the
+    /// agent's inventory (Trash and Library included) with copy and modify.
+    /// None when it may not be saved. Stricter than the Legacy Viewer: the
+    /// group rights of an item do not count (`agent_mask`).
+    pub fn material_save_allowed(&self, world: &World, faces: &[(usize, u8)]) -> Option<MaterialSave> {
+        let (idx, material) = faces
+            .iter()
+            .filter(|&&(idx, _)| self.can_modify(world, idx))
+            .find_map(|&(idx, face)| BuildTool::gltf_asset(world, idx, face).map(|m| (idx, m)))?;
+        let o = world.objects.get(idx)?;
+        // isInventoryPending; PERM_MODIFY refused on a pathfinding object
+        // outside the agent's region (isPermanentEnforced)
+        if self.contents.objects.get(&o.full_id).is_some_and(|inv| inv.loading) || super::linking::permanent(world, idx) {
+            return None;
+        }
+        let both = OBJECT_COPY | OBJECT_MODIFY;
+        if world
+            .objects
+            .get(crate::build::root_of(world, idx))
+            .is_none_or(|root| root.update_flags & both != both)
+        {
+            return None;
+        }
+        if material == crate::scene::meshes::BLANK_MATERIAL {
+            return Some(MaterialSave {
+                next_owner: rules::FULL | aurora_net::build::perm::MOVE,
+                group: rules::FULL | aurora_net::build::perm::MOVE,
+                everyone: rules::FULL | aurora_net::build::perm::MOVE,
+            });
+        }
+        let need = rules::COPY | rules::MODIFY;
+        world
+            .inventory
+            .items
+            .values()
+            .filter(|i| i.asset_type == AT_MATERIAL && i.asset_id == material && rules::agent_mask(i, world.agent_id) & need == need)
+            .min_by_key(|i| i.id)
+            .map(|i| new_owner_masks(i, world.agent_id))
+    }
+}
+
+/// An item's rights once the agent owns what is made from it:
+/// LLPermissions::setOwnerAndGroup(null, agent, null, atomic) then fix
+/// (indra/llinventory/llpermissions.cpp). Another owner's item (a Library
+/// one, a group's) gives its next owner's rights as the base, with transfer
+/// when it may not be copied; the masks then stay within base and owner, and
+/// a base without transfer shares no copy.
+fn new_owner_masks(item: &aurora_net::inventory::InvItem, agent: uuid::Uuid) -> MaterialSave {
+    let owned = !item.group_owned && item.owner == agent;
+    let base = if owned {
+        item.base_mask
+    } else if item.next_owner_mask & rules::COPY == 0 {
+        item.next_owner_mask | rules::TRANSFER
+    } else {
+        item.next_owner_mask
+    };
+    let owner = item.owner_mask & base;
+    let shared = if base & rules::TRANSFER == 0 { !rules::COPY } else { u32::MAX };
+    MaterialSave {
+        next_owner: item.next_owner_mask & base,
+        group: item.group_mask & owner & shared,
+        everyone: item.everyone_mask & owner & !rules::MODIFY & shared,
+    }
+}
+
 /// Why an item could not follow its id into a target's contents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Retain {

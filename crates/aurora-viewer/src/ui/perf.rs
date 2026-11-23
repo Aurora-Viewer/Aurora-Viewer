@@ -336,6 +336,12 @@ fn monitor_rect_id() -> egui::Id {
     egui::Id::unique(("perf", "monitor-rect"))
 }
 
+/// "Reset window positions and sizes": the full view opens again at its
+/// default place and size.
+pub(crate) fn forget_monitor_rect(ctx: &egui::Context) {
+    ctx.data_mut(|d| d.remove::<Rect>(monitor_rect_id()));
+}
+
 /// Performance opened from the system island of Aurora's bars (its frame
 /// rate, its tooltip's network row, the traffic indicator, its right
 /// click): the full view 8 px under the island, its right edge on the

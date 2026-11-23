@@ -51,9 +51,9 @@ fn moved_menu_commands_use_their_native_handlers_and_current_enabled_guards() {
         std::mem::take(&mut action)
     };
     assert!(matches!(invoke("menu:common-build/import-menu", &st), BarAction::Import));
-    st.can_go_home = false;
+    st.home_entry = false;
     assert!(matches!(invoke("menu:common-me/common-go-home", &st), BarAction::None));
-    st.can_go_home = true;
+    st.home_entry = true;
     assert!(matches!(invoke("menu:common-me/common-go-home", &st), BarAction::TeleportHome));
     st.hover_tips.enabled = false;
     let land_tips = "menu:common-world/ui-options-hover-tips/ui-options-hover-tips-land";

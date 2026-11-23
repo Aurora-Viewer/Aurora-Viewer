@@ -18,6 +18,8 @@ mod field_centering_tests;
 #[cfg(test)]
 mod movement_tests;
 pub(crate) use cascade::Group as CascadeGroup;
+#[cfg(test)]
+mod auto_height_tests;
 pub mod color;
 mod copy_on_click;
 pub mod demo;
@@ -28,10 +30,13 @@ pub(crate) mod keycap;
 pub(crate) mod local_texture;
 mod modal_keys;
 pub(crate) mod pills;
+pub(crate) mod reorder;
 mod resize;
 mod restricted_text;
 #[cfg(test)]
 mod restricted_text_tests;
+#[cfg(test)]
+mod solid_background_tests;
 pub use crate::text_validation::Policy as TextPolicy;
 pub use restricted_text::field as restricted_text_field;
 pub use restricted_text::number as restricted_number;
@@ -46,12 +51,12 @@ mod unread;
 mod volume;
 mod workspace;
 pub use color::color_button;
-pub use copy_on_click::copy_on_click;
+pub use copy_on_click::{copied_feedback, copy_on_click, show_copied};
 pub(crate) use modal_keys::{default_button, enter_pressed};
 pub use pills::{
-    clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
-    reveal_search_selection, search_box, search_cleared, search_list_item, search_scroll_to_column, search_scroll_to_row, search_text_edit,
-    search_text_edit_with_margin,
+    chip_row, clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab,
+    pill_tab_wide, reveal_search_selection, search_box, search_cleared, search_list_item, search_scroll_to_column, search_scroll_to_row,
+    search_text_edit, search_text_edit_with_margin,
 };
 pub use text_field::text_field;
 pub use tracks::{
@@ -61,11 +66,11 @@ pub use tracks::{
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
-    Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
-    navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+    FORM_LABEL_W, FORM_SLIDER_W, Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark,
+    form_row, glyph, navigation, navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
 };
 pub(crate) use workspace::{
-    finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
+    INVENTORY_LABEL_PADDING, finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
     organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
     organization_typography, overlay, overlay_frame, paint_world_label,
 };
@@ -74,7 +79,51 @@ pub(crate) use workspace::{
 /// grips consume the press outside their window too, as LLResizeHandle and
 /// LLResizeBar::handleMouseDown do, and egui retains the subsequent drag.
 pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
-    ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos)
+    ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos) || solid_background_at(ctx, pos)
+}
+
+/// The background areas that are panels of their own, by layer id.
+/// The body of a window of automatic height (`Floater::auto_height`) that
+/// scrolls once it is taller than `room`: then exactly `room` tall. Without
+/// the floor, a body taller than the room took the height egui's window
+/// had last frame, so a window squeezed once (the viewer's window made tiny,
+/// a tester's report of 2026-11-17) kept its small height for good.
+pub(crate) fn auto_height_body(room: f32) -> egui::ScrollArea {
+    egui::ScrollArea::vertical()
+        .max_height(room)
+        .min_scrolled_height(room)
+        .auto_shrink([false, true])
+}
+
+#[derive(Clone, Default)]
+struct SolidAreas(std::collections::HashSet<egui::Id>);
+
+fn solid_areas_id() -> egui::Id {
+    egui::Id::unique("aurora_solid_background_areas")
+}
+
+/// The background area `id` (`Order::Background`, kept under the windows) is
+/// a panel of its own, the Director's timeline or a keyframe of it in the
+/// world: a press on it is its own, never the world's. egui leaves a press
+/// on such an area to the world (`is_pointer_over_egui` only counts a
+/// background area outside the root's free room), and the world reads the
+/// press before egui's pass has seen it (`egui_wants_pointer_input` comes
+/// too late): without this, a click on the strip between its buttons walked
+/// the avatar there or stood it up.
+pub(crate) fn solid_background(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<SolidAreas>(solid_areas_id()).0.insert(id);
+    });
+}
+
+/// The topmost area at `pos` (shown last frame, interactable, a window above
+/// it first) is a solid background area (`solid_background`).
+fn solid_background_at(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    let Some(layer) = ctx.memory(|m| m.layer_id_at(pos)) else {
+        return false;
+    };
+    layer.order == egui::Order::Background
+        && ctx.data_mut(|d| d.get_temp_mut_or_default::<SolidAreas>(solid_areas_id()).0.contains(&layer.id))
 }
 
 /// Any floater/bare window is moving or resizing, independently of drawing
@@ -148,7 +197,7 @@ pub(crate) fn two_lines_gap(ui: &egui::Ui, top: &egui::FontId, bottom: &egui::Fo
     ui.fonts_mut(|f| (f.row_height(top) + f.row_height(bottom)) / 2.0 + 1.0).max(base)
 }
 
-fn elided_galley(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f32) -> std::sync::Arc<egui::Galley> {
+pub(crate) fn elided_galley(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f32) -> std::sync::Arc<egui::Galley> {
     let text = text.into();
     if !super::bidi::has_rtl(text.text()) {
         return text.into_galley(ui, Some(egui::TextWrapMode::Truncate), max_width.max(0.0), egui::TextStyle::Body);
@@ -215,6 +264,9 @@ const UNDER_DIVIDER: f32 = 5.0;
 const BODY_CHROME: f32 = FLOATER_MARGIN.top as f32 + FLOATER_MARGIN.bottom as f32 + 2.0 * FLOATER_STROKE;
 /// The least height the scrolled body of a floater keeps.
 const MIN_SCROLLED_BODY: f32 = 80.0;
+/// The outer height egui gives a window it opens without a default height
+/// (`egui::Window::new`): the room a fixed floater first lays its body in.
+const EGUI_WINDOW_HEIGHT: f32 = 420.0;
 
 /// What a floater of the usual layout (title row and divider, no status
 /// row, neither `flush_body` nor `framed_header`) adds around its body:
@@ -306,18 +358,187 @@ fn title_in_reach(
     (asked.is_some() || kept != pos).then_some(kept)
 }
 
+/// LLSpinCtrl::onUpBtn / onDownBtn (indra/llui/llspinctrl.cpp): Alt ×10,
+/// else Ctrl ×0.1, else Shift ×0.01.
+pub(crate) fn spin_key_scale(modifiers: egui::Modifiers) -> f32 {
+    if modifiers.alt {
+        10.0
+    } else if modifiers.ctrl {
+        0.1
+    } else if modifiers.shift {
+        0.01
+    } else {
+        1.0
+    }
+}
+
+/// clamp_precision (indra/llui/llspinctrl.cpp): an arrow or wheel step is
+/// rounded to the field's decimals, so a step finer than the field shows
+/// (Ctrl or Shift on a 0-decimal field) changes nothing instead of leaving
+/// a hidden fraction. In f64, ten at a time like the Legacy Viewer, with
+/// halves rounded up (ll_round: floor(x + 0.5)).
+pub(crate) fn clamp_precision(value: f32, decimals: usize) -> f32 {
+    let mut v = f64::from(value);
+    for _ in 0..decimals {
+        v *= 10.0;
+    }
+    v = (v + 0.5).floor();
+    for _ in 0..decimals {
+        v /= 10.0;
+    }
+    v as f32
+}
+
+/// Points of a trackpad flick that make one notch. Same grain as the shape
+/// editor's category wheel.
+const WHEEL_POINTS_PER_NOTCH: f32 = 55.0;
+
+#[derive(Clone, Copy)]
+struct WheelRemainder(f32);
+
+pub(crate) struct WheelSteps {
+    /// Modifier-scaled notches. Positive raises.
+    pub scaled: f32,
+    /// The same notches, each rounded to an integer. Ctrl and Shift become
+    /// no step on an integer field.
+    pub integer: i32,
+}
+
+impl WheelSteps {
+    fn none() -> Self {
+        Self { scaled: 0.0, integer: 0 }
+    }
+}
+
+/// Notches of the wheel over `rect`. Positive raises. Shared by the
+/// build spinners and the colour picker's number fields (both LLSpinCtrl).
+///
+/// LLSpinCtrl::handleScrollWheel (indra/llui/llspinctrl.cpp) calls onDownBtn
+/// for a positive click count and onUpBtn for a negative one, and returns
+/// true so the panel does not also scroll. The Legacy Viewer negates the
+/// platform wheel (llwindowsdl2.cpp), so rolling it up raises the value.
+/// winit reports that roll as a positive delta.y. Each whole notch is scaled
+/// like onUpBtn. While the pointer stays on an enabled field the smoothed
+/// scroll is eaten, including the frames after the notch, so the build panel
+/// does not creep. A disabled field leaves the wheel to the panel, and so
+/// does a field that does not `take` it (the build window's fields that are
+/// not being typed in, unless its "wheel on hover" option is on). `apply`
+/// is false while a typed draft or a drag owns the value: the wheel is still
+/// eaten, and it does not change the number.
+pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, take: bool, apply: bool) -> WheelSteps {
+    let key = id.with("spinner_wheel_remainder");
+    let hovered = take && ui.is_enabled() && ui.rect_contains_pointer(rect);
+    if !hovered {
+        ui.data_mut(|d| d.remove::<WheelRemainder>(key));
+        return WheelSteps::none();
+    }
+    ui.input_mut(|input| input.smooth_scroll_delta = egui::Vec2::ZERO);
+    if !apply {
+        ui.data_mut(|d| d.remove::<WheelRemainder>(key));
+        return WheelSteps::none();
+    }
+    let mut remainder = ui.data(|d| d.get_temp::<WheelRemainder>(key)).map(|kept| kept.0).unwrap_or(0.0);
+    let mut scaled = 0.0f32;
+    let mut integer = 0i32;
+    ui.input(|input| {
+        for event in &input.events {
+            let egui::Event::MouseWheel {
+                unit, delta, modifiers, ..
+            } = event
+            else {
+                continue;
+            };
+            if delta.y == 0.0 || !delta.y.is_finite() {
+                continue;
+            }
+            let notches = delta.y
+                / match unit {
+                    egui::MouseWheelUnit::Point => WHEEL_POINTS_PER_NOTCH,
+                    egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => 1.0,
+                };
+            if !notches.is_finite() {
+                continue;
+            }
+            remainder += notches;
+            let whole = remainder.trunc().clamp(-100.0, 100.0);
+            remainder -= whole;
+            if whole != 0.0 {
+                let scale = spin_key_scale(*modifiers);
+                scaled += whole * scale;
+                integer = integer.saturating_add((whole as i32).saturating_mul(scale.round() as i32));
+            }
+        }
+    });
+    if remainder == 0.0 {
+        ui.data_mut(|d| d.remove::<WheelRemainder>(key));
+    } else {
+        ui.data_mut(|d| d.insert_temp(key, WheelRemainder(remainder)));
+    }
+    WheelSteps { scaled, integer }
+}
+
+/// LLButton held_down_delay (widgets/button.xml), in seconds.
+const ARROW_HOLD_DELAY: f64 = 0.5;
+/// Repeats after the delay. LLButton::handleHover fires every frame; a
+/// fixed interval is the same pace at any refresh rate.
+const ARROW_HOLD_EVERY: f64 = 0.05;
+/// A stalled frame must not dump a long hold as one jump.
+const ARROW_HOLD_BURST: u32 = 20;
+
+/// How many repeats a hold has earned. The first is at half a second, then
+/// one more every 50 ms.
+pub(crate) fn arrow_hold_repeats(held_for: f64) -> u32 {
+    if !held_for.is_finite() || held_for < ARROW_HOLD_DELAY {
+        return 0;
+    }
+    // Count in whole milliseconds. `(t - 0.5) / 0.05` is not exact in f64:
+    // `0.10 / 0.05` is 1.999…, and floor would skip the repeat that just came due.
+    let elapsed_ms = ((held_for - ARROW_HOLD_DELAY) * 1000.0).round();
+    if !elapsed_ms.is_finite() || elapsed_ms < 0.0 {
+        return 1;
+    }
+    let steps = (elapsed_ms / (ARROW_HOLD_EVERY * 1000.0)).floor();
+    let steps = if steps >= u32::MAX as f64 { u32::MAX } else { steps as u32 };
+    steps.saturating_add(1)
+}
+
+#[derive(Clone, Copy)]
+struct ArrowHold {
+    since: f64,
+    emitted: u32,
+}
+
 /// Two compact increment buttons beside numeric fields (LLSpinCtrl).
 /// Uses theme faces and Tabler glyphs, and inherits disabled state.
-pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i8 {
-    let mut step = 0;
+///
+/// widgets/spinner.xml sets tab_stop="false" on both buttons. `Sense::CLICK`
+/// is clickable and not focusable, so Tab moves from the field to the next
+/// field. A hold repeats onUpBtn/onDownBtn: LLButton::handleHover
+/// (indra/llui/llbutton.cpp) fires the held callback every frame after
+/// held_down_delay, and handleMouseUp steps once more on release. Repeating
+/// every frame is one step per rendered frame, so a high refresh rate runs
+/// away with the value. The repeat here is every 50 ms: the same pace on
+/// every machine, and still a quick walk. The first step stays the release,
+/// so a short click is one step. Dragging off the button ends the repeat.
+/// The release counts only when the press and the release are both on the
+/// button. egui forgets a click-only widget after 0.8 s or 6 px of travel
+/// (`is_pointer_button_down_on` and `clicked()` both go false while the
+/// button is still held). A held arrow outlasts that window, so the repeat
+/// is our own timer and the release step is the button coming up with the
+/// pointer still on it, the same moment as handleMouseUp.
+pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i32 {
+    let mut step = 0i32;
+    let now = ui.input(|i| i.time);
+    let enabled = ui.is_enabled();
     ui.allocate_ui_with_layout(Vec2::new(13.0, height), egui::Layout::top_down(egui::Align::Center), |ui| {
         ui.set_max_width(13.0);
         ui.spacing_mut().item_spacing.y = 0.0;
         for (direction, name, label) in [
-            (1, "caret-up-filled", aurora_i18n::tr!("numeric-increase")),
+            (1i32, "caret-up-filled", aurora_i18n::tr!("numeric-increase")),
             (-1, "caret-down-filled", aurora_i18n::tr!("numeric-decrease")),
         ] {
-            let (rect, response) = ui.allocate_exact_size(Vec2::new(13.0, height * 0.5), Sense::click());
+            // Not focusable: see the function comment and widgets/spinner.xml.
+            let (rect, response) = ui.allocate_exact_size(Vec2::new(13.0, height * 0.5), Sense::CLICK);
             let visuals = ui.style().interact(&response);
             ui.painter().rect_filled(rect, visuals.corner_radius, visuals.bg_fill);
             if let Some(icon) = super::icons::global(name) {
@@ -328,25 +549,157 @@ pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i8 {
                     visuals.fg_stroke.color,
                 );
             }
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-            if response.on_hover_text(label).clicked() {
-                step = direction;
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+            let response = response.on_hover_text(label);
+            if !enabled {
+                continue;
             }
+            let id = response.id.with("spin_arrow_hold");
+            let pointer_here = ui.input(|i| i.pointer.interact_pos()).is_some_and(|at| rect.contains(at));
+            let primary_down = ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+            let tracked = ui.data(|d| d.get_temp::<ArrowHold>(id));
+            // is_pointer_button_down_on stays true while a fresh press is
+            // dragged outside the widget, and it goes false once egui's click
+            // window ends. The hold stops when the pointer leaves. One we
+            // already started keeps going for as long as the button is down.
+            let holding = primary_down && pointer_here && (response.is_pointer_button_down_on() || tracked.is_some());
+            let mut repeats = 0u32;
+            let mut release_step = false;
+            if holding {
+                let mut hold = tracked.unwrap_or(ArrowHold { since: now, emitted: 0 });
+                let due = arrow_hold_repeats(now - hold.since);
+                repeats = due.saturating_sub(hold.emitted).min(ARROW_HOLD_BURST);
+                // Drop repeats a stalled frame would have piled up, so the
+                // value does not fast-forward when the window wakes.
+                hold.emitted = due;
+                let until = if due == 0 {
+                    ARROW_HOLD_DELAY - (now - hold.since)
+                } else {
+                    let into = (now - hold.since - ARROW_HOLD_DELAY).rem_euclid(ARROW_HOLD_EVERY);
+                    ARROW_HOLD_EVERY - into
+                };
+                ui.ctx().request_repaint_after_secs(until.max(0.0) as f32);
+                ui.data_mut(|d| d.insert_temp(id, hold));
+            } else if let Some(hold) = tracked {
+                // Released on the button: the repeat that came due, then one
+                // more step. Leaving while the button is still down just stops.
+                if pointer_here && !primary_down {
+                    let due = arrow_hold_repeats(now - hold.since);
+                    repeats = due.saturating_sub(hold.emitted).min(ARROW_HOLD_BURST);
+                    release_step = true;
+                }
+                ui.data_mut(|d| d.remove::<ArrowHold>(id));
+            } else if response.clicked() {
+                // Press and release in the same frame, before a hold existed.
+                release_step = true;
+            }
+            if release_step {
+                step += direction;
+            }
+            step += direction * repeats as i32;
         }
     });
     step
 }
 
+/// Draft for an optional in-title document name editor. Other floaters do not use it.
+#[derive(Clone, Default)]
+struct FloaterTitleDraft {
+    text: String,
+    focus: bool,
+}
+
+fn clean_floater_title_name(input: &str) -> Option<String> {
+    crate::world::inventory::actions::clean_name(input).ok()
+}
+
+/// Label (or inline input) occupying only the visible document-name glyphs.
+/// The rest of the header remains the ordinary minimize double-click target.
+/// Decide title-edit completion without conflating a click in the field
+/// with an actual click away. Escape has priority over focus loss or Enter.
+fn floater_title_finish(focused: bool, escape: bool, enter: bool, lost_focus: bool) -> Option<bool> {
+    if (focused || lost_focus) && escape {
+        Some(false)
+    } else if focused && enter || lost_focus {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn floater_title_name(
+    ui: &mut egui::Ui,
+    title: RichText,
+    displayed: &str,
+    truncate: bool,
+    draft: &mut Option<FloaterTitleDraft>,
+    finished: &mut Option<bool>,
+    field: egui::Id,
+) -> egui::Rect {
+    if let Some(edit) = draft.as_mut() {
+        // Capture shortcuts before the TextEdit can use Escape to release focus.
+        // That focus loss must never be mistaken for an accepted rename.
+        let focused = ui.memory(|m| m.has_focus(field));
+        let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let response = restricted_text_field(ui, true, &mut edit.text, TextPolicy::PrintableNoPipe, |buffer, _| {
+            egui::TextEdit::singleline(buffer).id(field).char_limit(63).desired_width(225.0)
+        });
+        if edit.focus {
+            response.request_focus();
+            edit.focus = false;
+        }
+        let click_outside = ui.input(|i| {
+            i.pointer.button_pressed(egui::PointerButton::Primary)
+                && i.pointer.interact_pos().is_some_and(|pos| !response.rect.contains(pos))
+        });
+        if let Some(result) = floater_title_finish(focused, escape, enter, response.lost_focus() || focused && click_outside) {
+            *finished = Some(result);
+        }
+        response.rect
+    } else {
+        let label = egui::Label::new(title);
+        let response = ui.add(if truncate { label.truncate() } else { label });
+        // A truncating label may occupy a whole row; target only visible glyphs.
+        let text_width = ui
+            .painter()
+            .layout_no_wrap(
+                displayed.to_owned(),
+                egui::FontId::proportional(TITLE_SIZE),
+                ui.visuals().text_color(),
+            )
+            .size()
+            .x
+            + 8.0;
+        egui::Rect::from_min_size(
+            response.rect.min,
+            Vec2::new(text_width.min(response.rect.width()), response.rect.height()),
+        )
+    }
+}
+/// A completed title rename, requested by the document editor's own floater.
+/// Only the caller performs permission checks and sends a metadata update.
+pub fn take_title_rename(ctx: &egui::Context, window: &str) -> Option<String> {
+    ctx.data_mut(|d| d.remove_temp::<String>(egui::Id::unique(window).with("title_rename_result")))
+}
+
 pub struct Floater<'a> {
     pub id: &'a str,
     pub title: String,
+    /// Document name and permission gate for title double-click rename. Other
+    /// floaters leave this unset and retain ordinary double-click minimizing.
+    title_rename: Option<(String, bool)>,
     /// Optional compact state row within the title bar: glyph, label, theme role.
     pub header_status: Vec<(&'static str, String, Color32)>,
-    /// A text action at the right end of the secondary header row.
-    pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut bool)>,
+    /// A text action at the right end of the secondary header row; a click
+    /// writes the action's rect, for feedback drawn beside it.
+    pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut Option<egui::Rect>)>,
     /// A single-line detail row inside the expanded title section.
     pub header_summary: Option<egui::WidgetText>,
     pub header_summary_action: Option<&'a mut bool>,
+    /// An icon button at the right end of the detail row, under the status
+    /// action: its glyph, tooltip, and whether it was clicked.
+    pub header_summary_icon: Option<(&'a str, &'a str, &'a mut bool)>,
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
@@ -395,6 +748,9 @@ pub struct Floater<'a> {
     /// Its layer: the windows' own (`Middle`), or `Foreground` over an
     /// overlay whose controls sit there (the photo viewfinder's poser).
     pub order: egui::Order,
+    /// No title bar: its close cross in a small box against its right edge
+    /// (see `headless`).
+    pub headless: bool,
     cascade: Option<CascadeGroup>,
     partial_outside: bool,
     /// A chat window: it stays in immersive mode (`hide_windows`).
@@ -406,10 +762,12 @@ impl<'a> Floater<'a> {
         Floater {
             id,
             title: title.into(),
+            title_rename: None,
             header_status: Vec::new(),
             header_status_action: None,
             header_summary: None,
             header_summary_action: None,
+            header_summary_icon: None,
             title_note: None,
             title_note_tooltip: None,
             title_state: None,
@@ -431,10 +789,18 @@ impl<'a> Floater<'a> {
             steady_size: false,
             aspect: None,
             order: egui::Order::Middle,
+            headless: false,
             cascade: None,
             partial_outside: false,
             chat: false,
         }
+    }
+
+    /// Only document editors opt in. A read-only document still reserves its
+    /// name as a non-minimizing double-click target, but cannot rename.
+    pub fn rename_title(mut self, name: impl Into<String>, can_rename: bool) -> Self {
+        self.title_rename = Some((name.into(), can_rename));
+        self
     }
 
     pub fn fixed(mut self) -> Self {
@@ -543,6 +909,15 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// No title bar, only a close cross in a small box against the window's
+    /// right edge, at its top, outside it (the build window's transform
+    /// block taken out): the window is moved by its background, as any
+    /// window by the room its widgets leave, and it cannot be minimized.
+    pub fn headless(mut self) -> Self {
+        self.headless = true;
+        self
+    }
+
     /// Mark the minimized bar while `waiting` (unread messages inside).
     pub fn attention(mut self, waiting: bool) -> Self {
         self.attention = waiting;
@@ -559,7 +934,8 @@ impl<'a> Floater<'a> {
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
-        if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
+        let role = if self.chat { HideKeep::Chat } else { HideKeep::None };
+        if window_hidden(ctx, egui::Id::unique(self.id), *open, role) {
             // its toolbar button still closes it with the interface hidden,
             // as it does the windows it toggles itself
             if close_asked(ctx, self.id) {
@@ -581,8 +957,22 @@ impl<'a> Floater<'a> {
             return None;
         }
         let min_id = egui::Id::unique((self.id, "minimized"));
+        // "Reset window positions and sizes" (`reset_windows`): back to its
+        // default place and size, expanded, at this frame
+        let reset = super::layout::take_reset(ctx, egui::Id::unique(self.id));
+        if reset {
+            ctx.data_mut(|d| {
+                d.remove::<bool>(min_id);
+                d.remove::<Vec2>(egui::Id::unique(self.id).with("expanded_size"));
+            });
+            if self.cascade.is_some() {
+                // it opens again as the first of its group
+                cascade::forget(ctx, egui::Id::unique(self.id));
+            }
+        }
         // persisted with the UI layout (ui_layout.ron)
-        let minimized = ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
+        // a window without a title bar has no bar to be minimized to
+        let minimized = !self.headless && ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
         // minimized with its compact body: sized by that body
         let compact = minimized && self.compact_minimized.is_some();
         if !self.silent {
@@ -590,12 +980,13 @@ impl<'a> Floater<'a> {
         }
         let opacity = super::surface_opacity::window(ctx, self.id, self.chat);
         let shadow = ctx.global_style().visuals.window_shadow;
+        let fill = super::surface_opacity::frame_fill(
+            p,
+            Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
+            opacity,
+        );
         let frame = egui::Frame::new()
-            .fill(super::surface_opacity::frame_fill(
-                p,
-                Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha),
-                opacity,
-            ))
+            .fill(fill)
             .stroke(border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))))
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
             .shadow(egui::Shadow {
@@ -604,6 +995,12 @@ impl<'a> Floater<'a> {
             })
             .inner_margin(if self.framed_header.is_some() {
                 egui::Margin::ZERO
+            } else if self.headless {
+                egui::Margin {
+                    top: 8,
+                    bottom: 8,
+                    ..FLOATER_MARGIN
+                }
             } else if self.flush_body {
                 egui::Margin {
                     left: 0,
@@ -629,10 +1026,17 @@ impl<'a> Floater<'a> {
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut out = None;
         let window_id = egui::Id::unique(self.id);
+        let title_draft_id = window_id.with("title_rename_draft");
+        let title_field_id = window_id.with("title_rename_field");
+        let mut title_draft = ctx.data_mut(|d| d.get_temp::<FloaterTitleDraft>(title_draft_id));
+        if !self.title_rename.as_ref().is_some_and(|(_, allowed)| *allowed) {
+            title_draft = None;
+        }
+        let mut title_finished: Option<bool> = None;
         let expanded_id = window_id.with("expanded_size");
         let restore_id = window_id.with("restore_size");
         let expanded = ctx.data_mut(|d| d.get_persisted::<Vec2>(expanded_id)).unwrap_or(self.default_size);
-        let restore = ctx.data_mut(|d| d.remove_temp::<bool>(restore_id)).unwrap_or(false);
+        let restore = ctx.data_mut(|d| d.remove_temp::<bool>(restore_id)).unwrap_or(false) || (reset && self.resizable);
         let resizable = self.resizable && !minimized;
         // The windows live between the bars (`layout::work_area`): none
         // opens larger than that room, nor outside it.
@@ -640,6 +1044,10 @@ impl<'a> Floater<'a> {
         self.min_size = self.min_size.min(work.size());
         self.default_size = self.default_size.min(work.size());
         self.default_pos = fit_in(work, self.default_pos, self.default_size);
+        if reset && self.cascade.is_none() {
+            super::layout::reanchor(ctx, window_id);
+            ctx.data_mut(|d| d.insert_temp(window_id.with(PLACE_POS), self.default_pos));
+        }
         let opening = self
             .cascade
             .and_then(|group| cascade::prepare(ctx, window_id, group, egui::Rect::from_min_size(self.default_pos, expanded), work));
@@ -669,12 +1077,26 @@ impl<'a> Floater<'a> {
             .frame(frame)
             .default_pos(self.default_pos)
             .resizable(false);
+        // A window sized by its content lays its body out in the room egui's
+        // window had the frame before, and only ever grows past it: squeezed
+        // once (the viewer's window made tiny), that room stayed small, and a
+        // body that fits it (a scroll area, wrapped text) kept the window
+        // small for good (the Director's, Aurora Weather's: the human's
+        // reports of 2026-11-17 and 2026-11-21). It gets at least the room
+        // egui gives a window it opens, which changes nothing until a squeeze.
         if self.auto_height && !minimized {
-            w = w.auto_sized().min_width(self.default_size.x).max_width(self.default_size.x);
+            w = w
+                .auto_sized()
+                .min_width(self.default_size.x)
+                .max_width(self.default_size.x)
+                .min_height(work.height());
         } else if self.resizable && !minimized {
             w = w.default_size(self.default_size).min_size(self.min_size);
         } else if !minimized {
-            w = w.default_width(self.default_size.x);
+            w = w
+                .default_width(self.default_size.x)
+                .min_width(self.default_size.x)
+                .min_height(EGUI_WINDOW_HEIGHT.min(work.height()));
         }
         // LLFloater::setMinimized keeps the expanded geometry. egui's Resize
         // otherwise retains the old height when the body disappears, and then
@@ -779,9 +1201,18 @@ impl<'a> Floater<'a> {
             if resizable || (restore && !self.auto_height) {
                 ui.set_min_size(ui.available_size());
             }
+            if self.headless {
+                // the body alone: the cross is in its box outside the window
+                out = Some(body(ui));
+                if let Some(rect) = held {
+                    outer.advance_cursor_after_rect(rect);
+                }
+                return;
+            }
             // title bar
             let mut buttons_left = f32::INFINITY;
             let mut note_rect = None;
+            let mut title_name_rect = None;
             let mut primary_title_rect = None;
             let framed_header = self.framed_header;
             if framed_header.is_some() {
@@ -800,7 +1231,15 @@ impl<'a> Floater<'a> {
                     let truncate = self.resizable || (minimized && !compact) || self.auto_height;
                     if !truncate {
                         glyph(ui, workspace::window_icon(self.id), p.violet_light, 18.0);
-                        ui.label(title.clone());
+                        title_name_rect = Some(floater_title_name(
+                            ui,
+                            title.clone(),
+                            &self.title,
+                            false,
+                            &mut title_draft,
+                            &mut title_finished,
+                            title_field_id,
+                        ));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
@@ -810,11 +1249,12 @@ impl<'a> Floater<'a> {
                         // a window with a compact body when minimized says
                         // so with the Performance window's compact / full
                         // icons rather than a collapse (#1035)
-                        let (icon, tip) = match (self.compact_minimized.is_some(), minimized) {
-                            (true, true) => ("arrows-maximize", aurora_i18n::tr!("common-full-view")),
-                            (true, false) => ("arrows-minimize", aurora_i18n::tr!("common-compact-view")),
-                            (false, true) => ("minus", aurora_i18n::tr!("common-expand")),
-                            (false, false) => ("minus", aurora_i18n::tr!("common-collapse")),
+                        let icon = minimize_title_icon(self.compact_minimized.is_some(), minimized);
+                        let tip = match (self.compact_minimized.is_some(), minimized) {
+                            (true, true) => aurora_i18n::tr!("common-full-view"),
+                            (true, false) => aurora_i18n::tr!("common-compact-view"),
+                            (false, true) => aurora_i18n::tr!("common-expand"),
+                            (false, false) => aurora_i18n::tr!("common-collapse"),
                         };
                         if title_button(ui, p, icon).on_hover_text(tip).clicked() {
                             toggle_min = true;
@@ -853,7 +1293,15 @@ impl<'a> Floater<'a> {
                                         );
                                     }
                                 }
-                                ui.add(egui::Label::new(title).truncate());
+                                title_name_rect = Some(floater_title_name(
+                                    ui,
+                                    title,
+                                    &self.title,
+                                    true,
+                                    &mut title_draft,
+                                    &mut title_finished,
+                                    title_field_id,
+                                ));
                                 if let Some(note) = &self.title_note {
                                     let response = ui.add(egui::Label::new(RichText::new(note).size(12.0).color(p.muted)).truncate());
                                     note_rect = Some(response.rect);
@@ -881,12 +1329,11 @@ impl<'a> Floater<'a> {
                             let width = (ui.available_width() - 65.0).max(1.0);
                             ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::top_down(egui::Align::Min), status);
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui
+                                let action = ui
                                     .add(egui::Label::new(RichText::new(*label).size(12.0).color(p.violet_light)).sense(Sense::click()))
-                                    .on_hover_text(*tip)
-                                    .clicked()
-                                {
-                                    **clicked = true;
+                                    .on_hover_text(*tip);
+                                if action.clicked() {
+                                    **clicked = Some(action.rect);
                                 }
                                 glyph(ui, icon, p.violet_light, 13.0);
                             });
@@ -904,13 +1351,54 @@ impl<'a> Floater<'a> {
                     } else {
                         Sense::hover()
                     };
-                    if ui
-                        .add(egui::Label::new(summary.clone()).truncate().sense(sense))
-                        .on_hover_text(full_text)
-                        .clicked()
-                        && let Some(clicked) = &mut self.header_summary_action
-                    {
-                        **clicked = true;
+                    let summary_action = &mut self.header_summary_action;
+                    let mut summary_row = |ui: &mut egui::Ui| {
+                        if ui
+                            .add(egui::Label::new(summary.clone()).truncate().sense(sense))
+                            .on_hover_text(&full_text)
+                            .clicked()
+                            && let Some(clicked) = summary_action
+                        {
+                            **clicked = true;
+                        }
+                    };
+                    if let Some((icon, tip, clicked)) = &mut self.header_summary_icon {
+                        ui.horizontal(|ui| {
+                            let size = Vec2::splat(18.0);
+                            let width = (ui.available_width() - size.x - ui.spacing().item_spacing.x).max(1.0);
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(width, size.y),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                &mut summary_row,
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+                                if response.hovered() {
+                                    ui.painter()
+                                        .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                let glyph_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(14.0));
+                                #[cfg(test)]
+                                ui.ctx()
+                                    .data_mut(|d| d.insert_temp(egui::Id::unique(("header_summary_icon", *icon)), glyph_rect));
+                                if let Some(texture) = crate::ui::icons::global(icon) {
+                                    ui.painter().image(
+                                        texture.id(),
+                                        glyph_rect,
+                                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                                        p.violet_light,
+                                    );
+                                }
+                                let response = response.on_hover_text(*tip);
+                                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *tip));
+                                if response.clicked() {
+                                    **clicked = true;
+                                }
+                            });
+                        });
+                    } else {
+                        summary_row(ui);
                     }
                 }
                 title_row
@@ -936,6 +1424,9 @@ impl<'a> Floater<'a> {
             } else {
                 header_content(ui).response
             };
+            // The header layout closure is no longer used; release its
+            // mutable borrow of the inline name editor before hit-testing.
+            drop(header_content);
             // Secondary header controls own their clicks; only the title row
             // is the window's double-click target.
             let mut title_rect = primary_title_rect.unwrap_or(header.rect);
@@ -945,17 +1436,56 @@ impl<'a> Floater<'a> {
             title_rect.max.x = buttons_left;
             // Keep the title buttons outside the double-click target; Window
             // still owns dragging the bar, including when it is minimized.
-            let title_response = ui.interact(title_rect, window_id.with("title_double_click"), Sense::click());
-            if title_response.double_clicked() {
-                toggle_min = true;
-            }
-            // The double-click target owns title-bar hover. Keep its interaction
-            // and restrict the note's tooltip to the note's own rectangle.
-            if let Some(rect) = note_rect
-                && let Some(tooltip) = &self.title_note_tooltip
-                && ui.input(|input| input.pointer.hover_pos().is_some_and(|pos| rect.contains(pos)))
-            {
-                title_response.with_new_rect(rect).on_hover_text(tooltip);
+            // While renaming, do not place the title-bar's invisible click
+            // surface over the TextEdit: it steals caret-placement clicks.
+            // Both remaining bar segments keep double-click minimize/restore.
+            if let Some(field_rect) = title_name_rect.filter(|_| title_draft.is_some()) {
+                let before = egui::Rect::from_min_max(
+                    title_rect.min,
+                    egui::pos2(field_rect.left().clamp(title_rect.left(), title_rect.right()), title_rect.bottom()),
+                );
+                let after = egui::Rect::from_min_max(
+                    egui::pos2(field_rect.right().clamp(title_rect.left(), title_rect.right()), title_rect.top()),
+                    title_rect.max,
+                );
+                for (part, rect) in [
+                    ("title_double_click_before_rename", before),
+                    ("title_double_click_after_rename", after),
+                ] {
+                    if rect.width() > 1.0 && ui.interact(rect, window_id.with(part), Sense::click()).double_clicked() {
+                        toggle_min = true;
+                    }
+                }
+            } else {
+                let title_response = ui.interact(title_rect, window_id.with("title_double_click"), Sense::click());
+                if title_response.double_clicked() {
+                    let on_name = title_response
+                        .interact_pointer_pos()
+                        .is_some_and(|pos| title_name_rect.is_some_and(|rect: egui::Rect| rect.contains(pos)));
+                    if on_name && self.title_rename.is_some() {
+                        // A minimized document restores on double-click,
+                        // whether or not the item has Modify permission.
+                        if minimized || self.title_rename.as_ref().is_some_and(|(_, allowed)| !*allowed) {
+                            toggle_min = true;
+                        } else if title_draft.is_none()
+                            && let Some((name, true)) = &self.title_rename
+                        {
+                            title_draft = Some(FloaterTitleDraft {
+                                text: name.clone(),
+                                focus: true,
+                            });
+                            ctx.request_repaint();
+                        }
+                    } else {
+                        toggle_min = true;
+                    }
+                }
+                if let Some(rect) = note_rect
+                    && let Some(tooltip) = &self.title_note_tooltip
+                    && ui.input(|input| input.pointer.hover_pos().is_some_and(|pos| rect.contains(pos)))
+                {
+                    title_response.with_new_rect(rect).on_hover_text(tooltip);
+                }
             }
             if compact {
                 divider(ui, p);
@@ -976,7 +1506,13 @@ impl<'a> Floater<'a> {
                 if scrolls {
                     let above = ui.cursor().top() - ui.max_rect().top();
                     let room = (work.height() - above - BODY_CHROME).max(MIN_SCROLLED_BODY);
-                    let shown = egui::ScrollArea::vertical().id_salt("floater_body").max_height(room).show(ui, body);
+                    // exactly the room tall while it scrolls, not the
+                    // smaller room a squeeze left (`auto_height_body`)
+                    let shown = egui::ScrollArea::vertical()
+                        .id_salt("floater_body")
+                        .max_height(room)
+                        .min_scrolled_height(room)
+                        .show(ui, body);
                     still_too_tall = shown.content_size.y > room + 0.5;
                     out = Some(shown.inner);
                 } else {
@@ -998,6 +1534,9 @@ impl<'a> Floater<'a> {
                 ctx.data_mut(|d| d.insert_temp(scroll_id, too_tall));
             }
             slot.shown(ctx, response.response.rect, minimized);
+            if self.headless && headless_close(ctx, p, window_id, &response.response, fill, opacity, self.order) {
+                close = true;
+            }
             if self.cascade.is_some() {
                 cascade::shown(ctx, window_id, response.response.rect, minimized);
             }
@@ -1034,6 +1573,24 @@ impl<'a> Floater<'a> {
                 resize::handles_of(ctx, p, &response.response, self.height_only);
             }
         }
+        if let Some(save) = title_finished {
+            if save
+                && let Some(draft) = title_draft.as_ref()
+                && let Some((original, true)) = self.title_rename.as_ref()
+                && let Some(name) = clean_floater_title_name(&draft.text)
+                && name != original.as_str()
+            {
+                ctx.data_mut(|d| d.insert_temp(window_id.with("title_rename_result"), name));
+            }
+            title_draft = None;
+        }
+        ctx.data_mut(|d| {
+            if let Some(draft) = title_draft {
+                d.insert_temp(title_draft_id, draft);
+            } else {
+                d.remove_temp::<FloaterTitleDraft>(title_draft_id);
+            }
+        });
         if close {
             *open = false;
             // LLFloater::closeFloater: "Always unminimize before trying to
@@ -1064,7 +1621,8 @@ impl<'a> Floater<'a> {
 /// placed by the layout (`layout::Slot`), snaps to the other windows when
 /// moved with Alt or resized, and is resized by the same edge handles.
 /// `locked`: the user can neither move nor resize it (it still follows the
-/// viewer's edges and the group it is glued to).
+/// viewer's edges and the group it is glued to). `keep_in_mouselook`: stays
+/// visible when entering mouselook (the mini-map, `LLAgent::endAnimationUpdateUI`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bare_window(
     ctx: &egui::Context,
@@ -1075,10 +1633,12 @@ pub(crate) fn bare_window(
     default: egui::Rect,
     min_size: Vec2,
     locked: bool,
+    keep_in_mouselook: bool,
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let window_id = egui::Id::unique(id);
-    if window_hidden(ctx, window_id, true, false) {
+    let role = if keep_in_mouselook { HideKeep::Mouselook } else { HideKeep::None };
+    if window_hidden(ctx, window_id, true, role) {
         return;
     }
     let drag = if locked {
@@ -1099,7 +1659,11 @@ pub(crate) fn bare_window(
         .resizable(false)
         .constrain(true);
     let slot = super::layout::slot(ctx, window_id);
-    if let Some(pos) = slot.pos {
+    if super::layout::take_reset(ctx, window_id) {
+        // "Reset window positions and sizes": back to its default rect
+        super::layout::reanchor(ctx, window_id);
+        w = w.current_pos(default.min).fixed_size(default.size());
+    } else if let Some(pos) = slot.pos {
         w = w.current_pos(pos);
     }
     if let Some(limits) = slot.limits {
@@ -1153,16 +1717,26 @@ fn on_pixels(ctx: &egui::Context, rect: egui::Rect) -> egui::Rect {
 const PLACE_POS: &str = "place_pos";
 
 /// The windows the hidden interface keeps out of sight (Alt+Shift+U,
+/// Which windows stay shown when [`hide_windows`] hides the interface:
+/// immersive mode (#859) keeps the chat windows; mouselook keeps the mini-map
+/// (`LLAgent::endAnimationUpdateUI`, indra/newview/llagent.cpp).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum HideKeep {
+    #[default]
+    None,
+    Chat,
+    Mouselook,
+}
+
 /// LLFloaterView::hideAllFloaters / showHiddenFloaters): those open on the
 /// frame it was hidden. A window opened afterwards shows; one closed in the
-/// meantime is forgotten. Immersive mode (#859) keeps the chat windows.
+/// meantime is forgotten.
 #[derive(Clone, Default)]
 struct HiddenWindows {
     /// The frame whose open windows are hidden.
     capture: Option<u64>,
     ids: std::collections::HashSet<egui::Id>,
-    /// The chat windows stay (immersive mode).
-    keep_chat: bool,
+    keep: HideKeep,
 }
 
 fn hidden_windows_id() -> egui::Id {
@@ -1174,13 +1748,14 @@ pub fn interface_hidden(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<HiddenWindows>(hidden_windows_id()).is_some())
 }
 
-/// Hide the windows open now (on the next frame), or show them back; with
-/// `keep_chat`, the chat windows stay. Called between two frames.
-pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
+/// Hide the windows open now (on the next frame), or show them back; `keep`
+/// leaves the chat windows (immersive mode) or the mini-map (mouselook).
+/// Called between two frames.
+pub fn hide_windows(ctx: &egui::Context, hide: bool, keep: HideKeep) {
     let state = HiddenWindows {
         capture: hide.then(|| ctx.cumulative_frame_nr()),
         ids: Default::default(),
-        keep_chat,
+        keep,
     };
     ctx.data_mut(|d| {
         if hide {
@@ -1191,15 +1766,14 @@ pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
     });
 }
 
-/// The window `id` (`open` or not, a `chat` window or not) is kept hidden
-/// this frame.
-fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, chat: bool) -> bool {
+/// The window `id` (`open` or not, with its `role`) is kept hidden this frame.
+fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, role: HideKeep) -> bool {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| {
         let Some(mut state) = d.get_temp::<HiddenWindows>(hidden_windows_id()) else {
             return false;
         };
-        if chat && state.keep_chat {
+        if role != HideKeep::None && state.keep == role {
             return false;
         }
         let hidden = if !open {
@@ -1288,6 +1862,17 @@ pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2)
         d.insert_temp(window_id.with("restore_size"), true);
         d.insert_temp(window_id.with(PLACE_POS), pos);
     });
+}
+
+/// "Reset window positions and sizes" (Preferences › Layout): every window
+/// back to its default place and size, expanded, without touching a
+/// setting (`layout::reset_windows`). The groups of preview windows forget
+/// the rect they open at, and the Performance window the one of its full
+/// view.
+pub fn reset_windows(ctx: &egui::Context) {
+    super::layout::reset_windows(ctx);
+    cascade::forget_saved(ctx);
+    super::perf::forget_monitor_rect(ctx);
 }
 
 /// Split what is left of `ui` between a list and the footer under it (its
@@ -1518,7 +2103,61 @@ pub(crate) const EXPAND: &str = "expand";
 /// Temporary frame of a floater asked to close (`close_floater`).
 const CLOSE: &str = "close";
 
+/// Title-bar minimize / expand icon (#3084). Ordinary floaters: minus while
+/// expanded, square while minimized. Compact bodies (Performance) keep the
+/// arrows-maximize / arrows-minimize pair.
+fn minimize_title_icon(compact: bool, minimized: bool) -> &'static str {
+    match (compact, minimized) {
+        (true, true) => "arrows-maximize",
+        (true, false) => "arrows-minimize",
+        (false, true) => "square",
+        (false, false) => "minus",
+    }
+}
+
 /// Title bar button with a Tabler icon (drawn by hand if it is missing).
+/// The close cross of a window without a title bar (`Floater::headless`):
+/// a small box of the window's surface against its right edge, at its top,
+/// drawn just above the window; true when it is clicked.
+fn headless_close(
+    ctx: &egui::Context,
+    p: &Palette,
+    window: egui::Id,
+    shown: &egui::Response,
+    fill: Color32,
+    opacity: f32,
+    order: egui::Order,
+) -> bool {
+    const SIZE: f32 = 22.0;
+    // its left border lies on the window's right border
+    let pos = egui::pos2(shown.rect.right() - FLOATER_STROKE, shown.rect.top());
+    let area = egui::Area::new(window.with("headless_close"))
+        .order(order)
+        .fixed_pos(pos)
+        .movable(false)
+        .constrain(false)
+        .fade_in(false)
+        .show(ctx, |ui| {
+            let glass = ui.painter().add(egui::Shape::Noop);
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(SIZE), Sense::click());
+            let radius = ctx.global_style().visuals.window_corner_radius;
+            // square against the window, rounded like it outside
+            let corners = egui::CornerRadius { nw: 0, sw: 0, ..radius };
+            ui.painter().rect(
+                rect,
+                corners,
+                fill,
+                border_stroke(p, Stroke::new(FLOATER_STROKE, p.muted_dim.gamma_multiply(0.6))),
+                egui::StrokeKind::Inside,
+            );
+            workspace::finish_glass_faded(ui.painter(), glass, rect, p, f32::from(radius.ne), opacity);
+            paint_title_button(ui, p, "x", &response);
+            response.on_hover_text(aurora_i18n::tr!("common-close")).clicked()
+        });
+    ctx.set_sublayer(shown.layer_id, area.response.layer_id);
+    area.inner
+}
+
 fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
     title_button_sized(ui, p, icon, Vec2::splat(16.0))
 }
@@ -1672,6 +2311,18 @@ pub const PICTURE_TINT: Color32 = Color32::WHITE;
 /// Tint of a picture whose control is disabled.
 pub const PICTURE_TINT_DISABLED: Color32 = Color32::from_gray(120);
 
+/// A state written over a picture ("Multiple"), on a backing of its own:
+/// the picture under it may be as light as the text.
+pub(crate) fn picture_label(ui: &egui::Ui, p: &Palette, rect: egui::Rect, text: &str, size: f32) {
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), egui::FontId::proportional(size), p.ink);
+    let at = egui::Rect::from_center_size(rect.center(), galley.size());
+    let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
+    painter.rect_filled(at.expand2(egui::vec2(5.0, 2.0)), inner_radius(ui.visuals()), p.bar);
+    painter.galley(at.min, galley, p.ink);
+}
+
 /// Corners of a small mark inside a control or a line (the knob of a switch,
 /// a key cap, a status square, a letter badge): one pixel tighter than the
 /// windows', so that a mark of a few pixels stays a square.
@@ -1709,24 +2360,7 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     resp
 }
 
-/// Compact padding for values adjoining construction controls.
-const READOUT_PADDING: Vec2 = Vec2::new(4.0, 1.0);
 pub const TEXT_BUTTON_HEIGHT: f32 = 18.0;
-
-/// A non-interactive value with the same neutral face as the adjoining buttons.
-pub fn readout_sized(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, size: Vec2) -> egui::Response {
-    let label = label.into();
-    let response = ui
-        .scope(|ui| {
-            ui.spacing_mut().button_padding = READOUT_PADDING;
-            let face = ui.visuals().widgets.inactive;
-            ui.visuals_mut().widgets.noninteractive = face;
-            ui.add_sized(size, egui::Button::new(label.clone()).sense(egui::Sense::hover()).truncate())
-        })
-        .inner;
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label.text()));
-    response
-}
 
 /// Check box of the interface, with the contract of `ui.checkbox`: the
 /// response is `changed()` when a click flipped `on`. A flat square with the
@@ -1924,23 +2558,79 @@ pub(crate) fn control_font(ui: &egui::Ui, default_size: f32) -> egui::FontId {
 
 /// Flat tab strip. Returns true when the selection changed.
 pub fn tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    tabs_row(ui, p, selected, labels, false, false).0
+}
+
+/// Keep tab labels whole by starting another row when their measured
+/// widths do not fit. Selection still uses the original tab index.
+pub fn wrapping_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    let widths = tab_widths(ui, labels, &control_font(ui, 12.0));
+    let available = ui.available_width();
+    let mut changed = false;
+    let mut start = 0;
+    while start < labels.len() {
+        let mut end = start + 1;
+        let mut width = widths[start];
+        while end < labels.len() && width + TAB_GAP + widths[end] <= available {
+            width += TAB_GAP + widths[end];
+            end += 1;
+        }
+        let mut index = if (start..end).contains(selected) {
+            *selected - start
+        } else {
+            usize::MAX
+        };
+        if tabs(ui, p, &mut index, &labels[start..end]) {
+            *selected = start + index;
+            changed = true;
+        }
+        start = end;
+    }
+    changed
+}
+
+/// The flat tab strip, with the rect of each tab (a tab that opens when
+/// something is dragged over it).
+pub fn tabs_at(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> (bool, Vec<egui::Rect>) {
     tabs_row(ui, p, selected, labels, false, false)
 }
 
 /// The same tab strip at the density of fixed inspector controls.
 pub fn compact_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
+    tabs_row(ui, p, selected, labels, false, true).0
+}
+
+/// The compact tab strip, with the rect of each tab.
+pub fn compact_tabs_at(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> (bool, Vec<egui::Rect>) {
     tabs_row(ui, p, selected, labels, false, true)
 }
 
 /// Equal-width tabs spanning a data inspector, with the usual theme and input handling.
 pub fn stretched_tabs(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)]) -> bool {
-    tabs_row(ui, p, selected, labels, true, false)
+    tabs_row(ui, p, selected, labels, true, false).0
 }
 
-fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&str, bool)], stretched: bool, compact: bool) -> bool {
+const TAB_GAP: f32 = 4.0;
+
+fn tab_widths(ui: &egui::Ui, labels: &[(&str, bool)], font: &egui::FontId) -> Vec<f32> {
+    labels
+        .iter()
+        .map(|(label, _)| ui.fonts_mut(|f| f.layout_no_wrap((*label).to_owned(), font.clone(), Color32::PLACEHOLDER).size().x) + 18.0)
+        .collect()
+}
+
+fn tabs_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    selected: &mut usize,
+    labels: &[(&str, bool)],
+    stretched: bool,
+    compact: bool,
+) -> (bool, Vec<egui::Rect>) {
     let mut changed = false;
+    let mut rects = Vec::with_capacity(labels.len());
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().item_spacing.x = TAB_GAP;
         let n = labels.len().max(1) as f32;
         let font = control_font(ui, 12.0);
         let minimum_height = if compact { 22.0 } else { 30.0 };
@@ -1949,10 +2639,7 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
         } else {
             minimum_height
         };
-        let text_w: Vec<f32> = labels
-            .iter()
-            .map(|(l, _)| ui.fonts_mut(|f| f.layout_no_wrap((*l).to_owned(), font.clone(), Color32::PLACEHOLDER).size().x) + 18.0)
-            .collect();
+        let text_w = tab_widths(ui, labels, &font);
         let gaps = (n - 1.0) * ui.spacing().item_spacing.x;
         let total: f32 = text_w.iter().sum::<f32>() + gaps;
         let compact = ((ui.available_width() - gaps) / (total - gaps)).clamp(0.0, 1.0);
@@ -1965,6 +2652,7 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
                 text_w[i] * compact + extra.min(40.0)
             };
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, height), if *enabled { Sense::click() } else { Sense::hover() });
+            rects.push(rect);
             let sel = *selected == i;
             if sel || (resp.hovered() && *enabled) {
                 let fill = if sel {
@@ -1997,7 +2685,7 @@ fn tabs_row(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, labels: &[(&st
             }
         }
     });
-    changed
+    (changed, rects)
 }
 
 /// Height of a `segmented` choice, room around its segments, and room
@@ -2024,37 +2712,99 @@ pub fn segmented_size(ui: &egui::Ui, options: &[(&str, bool)]) -> Vec2 {
 
 /// Choice between a few options side by side, in one track: the chosen
 /// segment is lit, in the accent when its option is `accent` (Aurora's own
-/// look), in `raised` otherwise (a legacy look). Returns true when the
-/// selection changed.
+/// look), in `raised` otherwise (a legacy look). The lit face slides from
+/// the segment chosen before, as the poser's tracks do (`tracks::icon_track`;
+/// none under Reduce animations). Returns true when the selection changed.
 pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)]) -> bool {
+    segmented_track(ui, p, selected, options, &[], SEGMENT_H)
+}
+
+/// `segmented` with a track `height` tall, to line it up with the fields
+/// and buttons of a taller row.
+pub fn segmented_tall(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, bool)], height: f32) -> bool {
+    segmented_track(ui, p, selected, options, &[], height)
+}
+
+/// `segmented` with some options out of reach: `disabled[i]` is the tooltip
+/// that says why option `i` cannot be chosen (None, or past the end of the
+/// slice: it can). A disabled option is drawn dimmed, takes no hover or click.
+pub fn segmented_with_disabled(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    selected: &mut usize,
+    options: &[(&str, bool)],
+    disabled: &[Option<&str>],
+) -> bool {
+    segmented_track(ui, p, selected, options, disabled, SEGMENT_H)
+}
+
+fn segmented_track(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    selected: &mut usize,
+    options: &[(&str, bool)],
+    disabled: &[Option<&str>],
+    height: f32,
+) -> bool {
     let galleys = segment_galleys(ui, options);
     let widths: Vec<f32> = galleys.iter().map(|g| g.size().x + SEGMENT_PAD_X).collect();
-    let (track, _) = ui.allocate_exact_size(segmented_size(ui, options), Sense::hover());
+    let size = Vec2::new(segmented_size(ui, options).x, height);
+    let (track, _) = ui.allocate_exact_size(size, Sense::hover());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     ui.painter().rect_filled(track, radius, p.bar);
-    let mut changed = false;
+    let off = |i: usize| disabled.get(i).copied().flatten();
+    let mut rects = Vec::with_capacity(widths.len());
     let mut x = track.left() + SEGMENT_PAD;
-    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
-        let rect = egui::Rect::from_min_size(
+    for w in &widths {
+        rects.push(egui::Rect::from_min_size(
             egui::pos2(x, track.top() + SEGMENT_PAD),
-            Vec2::new(widths[i], track.height() - SEGMENT_PAD * 2.0),
+            Vec2::new(*w, track.height() - SEGMENT_PAD * 2.0),
+        ));
+        x += w;
+    }
+    // the lit face, its edges sliding from the segment chosen before (kept
+    // from the track's left, so that moving the window does not slide it);
+    // none on a chosen option that is out of reach
+    if let Some(chosen) = rects.get(*selected).filter(|_| off(*selected).is_none()) {
+        let id = ui.scope_id().with(("segmented-slide", options.len(), options.first().map(|o| o.0)));
+        let time = ui.style().animation_time;
+        let left = ui
+            .ctx()
+            .animate_value_with_time(id.with("left"), chosen.left() - track.left(), time);
+        let right = ui
+            .ctx()
+            .animate_value_with_time(id.with("right"), chosen.right() - track.left(), time);
+        let face = if options[*selected].1 { p.violet } else { p.raised };
+        let lit = egui::Rect::from_x_y_ranges(track.left() + left..=track.left() + right, chosen.y_range());
+        ui.painter().rect_filled(lit, inner_radius(ui.visuals()), face);
+    }
+    let mut changed = false;
+    for (i, ((label, accent), galley)) in options.iter().zip(galleys).enumerate() {
+        let rect = rects[i];
+        let off = off(i);
+        let resp = ui.interact(
+            rect,
+            ui.scope_id().with(("segmented", i, *label)),
+            if off.is_some() { Sense::hover() } else { Sense::click() },
         );
-        x += widths[i];
-        let resp = ui.interact(rect, ui.scope_id().with(("segmented", i, *label)), Sense::click());
         let sel = *selected == i;
-        let (face, text) = match (sel, *accent) {
-            (true, true) => (Some(p.violet), p.on_accent),
-            (true, false) => (Some(p.raised), p.ink),
-            (false, _) if resp.hovered() => (Some(p.raised.gamma_multiply(0.5)), p.ink),
-            (false, _) => (None, p.muted),
+        let text = match (sel, *accent) {
+            _ if off.is_some() => p.muted_dim,
+            (true, true) => p.on_accent,
+            (true, false) => p.ink,
+            (false, _) if resp.hovered() => p.ink,
+            (false, _) => p.muted,
         };
-        if let Some(face) = face {
-            ui.painter().rect_filled(rect, inner_radius(ui.visuals()), face);
+        if !sel && off.is_none() && resp.hovered() {
+            ui.painter()
+                .rect_filled(rect, inner_radius(ui.visuals()), p.raised.gamma_multiply(0.5));
         }
         let at = letters_in_middle(ui.painter(), &galley, rect);
         ui.painter().galley(at, galley, text);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, sel, *label));
-        if resp.clicked() && !sel {
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, off.is_none(), sel, *label));
+        if let Some(tip) = off {
+            resp.on_hover_text(tip);
+        } else if resp.clicked() && !sel {
             *selected = i;
             changed = true;
         }
@@ -2169,6 +2919,17 @@ pub fn icon_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, enable
 /// when clicked.
 pub fn icon_toggle(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, on: bool) -> bool {
     small_icon_button(ui, p, icon, tip, true, on)
+}
+
+/// The A–Z switch of a list drawn from the inventory: lit while `by_name`,
+/// off for the list's own order, `tip` saying which and what a click does;
+/// flips `by_name` and returns true when clicked.
+pub fn sort_by_name_toggle(ui: &mut egui::Ui, p: &Palette, by_name: &mut bool, tip: &str) -> bool {
+    let clicked = icon_toggle(ui, p, "sort-ascending-letters", tip, *by_name);
+    if clicked {
+        *by_name = !*by_name;
+    }
+    clicked
 }
 
 /// Flat icon toggle with a larger glyph and hit target, in logical points.
@@ -2507,6 +3268,78 @@ pub fn action_button_if(
     enabled: bool,
 ) -> egui::Response {
     action_button_keyed(ui, p, icon, label, kind, size, enabled, None)
+}
+
+/// One button of an `index_buttons` row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexState {
+    /// Greyed: nothing to pick there.
+    Disabled,
+    Off,
+    /// Picked for part of what it stands for: a wash of the accent.
+    Mixed,
+    On,
+}
+
+/// A row of numbered buttons 0, 1, 2… sharing `size`, each with its state,
+/// as tight as the row: the flat face of `action_button`, the accent when
+/// on. Returns the index clicked; `tip` gives each one's tooltip.
+pub fn index_buttons(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    size: Vec2,
+    states: &[IndexState],
+    tip: impl Fn(usize) -> String,
+) -> (Option<usize>, Vec<egui::Rect>) {
+    let base = ui.next_auto_id();
+    let (row, _) = ui.allocate_exact_size(size, Sense::hover());
+    let count = states.len().max(1) as f32;
+    let gap = if row.width() / count >= 12.0 { 2.0 } else { 1.0 };
+    let cell = ((row.width() - gap * (count - 1.0)) / count).max(1.0);
+    let font = control_font(ui, (cell * 1.45).clamp(7.0, 12.5).min(row.height() * 0.7));
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let enabled_ui = ui.is_enabled();
+    let mut clicked = None;
+    let mut rects = Vec::with_capacity(states.len());
+    for (index, state) in states.iter().enumerate() {
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(row.left() + index as f32 * (cell + gap), row.top()),
+            Vec2::new(cell, row.height()),
+        );
+        rects.push(rect);
+        let enabled = enabled_ui && *state != IndexState::Disabled;
+        let resp = ui.interact(
+            rect,
+            base.with(("index-button", index)),
+            if enabled { Sense::click() } else { Sense::hover() },
+        );
+        let hot = enabled && resp.hovered();
+        let (fill, ink) = match state {
+            IndexState::On => (if hot { p.violet_light } else { p.violet }, p.on_accent),
+            IndexState::Mixed => (p.violet.gamma_multiply(if hot { 0.5 } else { 0.32 }), p.ink),
+            IndexState::Off | IndexState::Disabled => (if hot { p.raised.lerp_to_gamma(p.ink, 0.16) } else { p.raised }, p.ink),
+        };
+        let fade = if enabled { 1.0 } else { 0.45 };
+        ui.painter().rect_filled(rect, radius, fill.gamma_multiply(fade));
+        if p.high_contrast && matches!(state, IndexState::Off | IndexState::Disabled) {
+            let edge = if hot { p.ink } else { p.muted_dim };
+            ui.painter()
+                .rect_stroke(rect, radius, Stroke::new(1.0, edge.gamma_multiply(fade)), egui::StrokeKind::Inside);
+        }
+        let label = index.to_string();
+        let galley = ui.painter().layout_no_wrap(label.clone(), font.clone(), ink.gamma_multiply(fade));
+        let origin = row_text_origin(ui.painter(), &galley, rect.center().x - galley.size().x / 2.0, rect.center().y);
+        ui.painter().galley(origin, galley, ink.gamma_multiply(fade));
+        if hot {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let on = *state == IndexState::On;
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, &label));
+        if resp.on_hover_text(tip(index)).clicked() {
+            clicked = Some(index);
+        }
+    }
+    (clicked, rects)
 }
 
 /// An inactive action face with a live spinner and readable work status.
@@ -3010,6 +3843,34 @@ pub fn ink_rect(galley: &egui::Galley) -> egui::Rect {
     if ink.is_positive() { ink } else { galley.rect }
 }
 
+/// A dashed outline in `rect`: a place to drop something or a card that
+/// adds one (the profile's Give zone, the photo filters' drop zones).
+pub fn dashed_outline(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
+    let r = rect.shrink(0.75);
+    let path = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+    painter.extend(egui::Shape::dashed_line(&path, egui::Stroke::new(1.5, color), 5.0, 4.0));
+}
+
+/// A place number that turns over in `rect` (the contact sets' tiles and
+/// the photo filters' cards while one is held): `before` slides up and
+/// fades as `now` rises in, `turn` going from 0 to 1, eased out with a
+/// touch of overshoot as it lands.
+pub fn turning_number(ui: &egui::Ui, rect: egui::Rect, now: usize, before: Option<usize>, turn: f32, color: Color32) {
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let font = crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), rect.height() * 0.5, color).font_id;
+    let k = turn.clamp(0.0, 1.0);
+    let e = 1.0 - (1.0 - k).powi(3);
+    let travel = rect.height() * 0.6;
+    if let Some(before) = before.filter(|_| k < 1.0) {
+        let g = painter.layout_no_wrap(aurora_i18n::integer(before as i64), font.clone(), color);
+        let at = rect.center() - Vec2::new(0.0, travel * e);
+        paint_ink_centered(&painter, g, at, color.gamma_multiply(1.0 - e));
+    }
+    let g = painter.layout_no_wrap(aurora_i18n::integer(now as i64), font, color);
+    let at = rect.center() + Vec2::new(0.0, travel * (1.0 - e));
+    paint_ink_centered(&painter, g, at, color.gamma_multiply(e.max(0.15)));
+}
+
 /// Paint a galley so that its visible ink (not egui's text row, which
 /// includes ascender / descender room) is centered on `center`: digits in
 /// round badges then sit exactly in the middle.
@@ -3125,18 +3986,82 @@ pub fn rail_row(
     on: bool,
     depth: usize,
 ) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
+    rail_tree_row(ui, ui.next_auto_id(), p, icon, tint, label, count, on, depth, None).0
+}
+
+/// Width the disclosure caret of `rail_tree_row` adds before the icon.
+const RAIL_CARET_ROOM: f32 = 18.0;
+/// Size of that caret, the one of the Inventory sidebar.
+const RAIL_CARET: f32 = 13.0;
+
+/// `rail_row` for a folder of a tree (the Places rail): when `open` is
+/// `Some`, the folder has sub-folders and a `disclosure_caret` comes before
+/// its icon, as in the Inventory sidebar. The caret is its own click target,
+/// returned beside the row: a click on it folds or unfolds, a click on the
+/// rest of the row chooses the folder.
+#[allow(clippy::too_many_arguments)]
+pub fn rail_tree_row(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    p: &Palette,
+    icon: &str,
+    tint: Color32,
+    label: &str,
+    count: Option<usize>,
+    on: bool,
+    depth: usize,
+    open: Option<bool>,
+) -> (egui::Response, Option<egui::Response>) {
+    let size = Vec2::new(ui.available_width(), 28.0);
+    let (_, bounds) = ui.allocate_space(size);
+    let mut resp = ui.interact(bounds, id, Sense::click());
+    resp.set_intrinsic_size(size);
+    let rect = ui.layout().align_size_within_rect(size, bounds);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));
+    // Even the deepest branch keeps its caret, icon and some of its name
+    // inside the rail, clear of the count (up to 40 points wide + margin).
+    let count_room = if count.is_some() { 50.0 } else { 0.0 };
+    let caret_room = if open.is_some() { RAIL_CARET_ROOM } else { 0.0 };
+    let max_indent = (rect.width() - 10.0 - caret_room - 25.0 - 32.0 - count_room).max(0.0);
+    let x = rect.left() + 10.0 + (depth as f32 * 14.0).min(max_indent);
+    let caret_center = egui::pos2(x + 8.0, rect.center().y);
+    // Registered after the row, so it is the one a click on the caret reaches.
+    let caret = open.map(|open| {
+        let caret = ui.interact(
+            egui::Rect::from_center_size(caret_center, Vec2::splat(RAIL_CARET + 6.0)),
+            resp.id.with("rail_caret"),
+            Sense::click(),
+        );
+        caret.widget_info(|| egui::WidgetInfo::labeled(egui::Role::DisclosureTriangle, ui.is_enabled(), label));
+        ui.ctx().accesskit_node_builder(caret.id, |node| node.set_expanded(open));
+        caret
+    });
+    if resp.gained_focus() || caret.as_ref().is_some_and(|c| c.gained_focus()) {
+        resp.scroll_to_me(None);
+    }
     if !ui.is_rect_visible(rect) {
-        return resp;
+        return (resp, caret);
     }
     let radius = ui.visuals().window_corner_radius;
     if on {
         ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.28));
-    } else if resp.hovered() {
+    } else if resp.hovered() || resp.has_focus() || caret.as_ref().is_some_and(|c| c.hovered()) {
         ui.painter().rect_filled(rect, radius, p.raised);
     }
-    let x = rect.left() + 10.0 + depth as f32 * 14.0;
+    let x = match (open, &caret) {
+        (Some(open), Some(c)) => {
+            let color = if c.hovered() || c.has_focus() {
+                p.ink
+            } else if on {
+                p.violet_pale
+            } else {
+                p.muted_dim
+            };
+            paint_glyph(ui.painter(), disclosure_caret(open), caret_center, RAIL_CARET, color);
+            x + RAIL_CARET_ROOM
+        }
+        _ => x,
+    };
     if let Some(t) = super::icons::global(icon) {
         ui.painter().image(
             t.id(),
@@ -3165,7 +4090,7 @@ pub fn rail_row(
         let w = g.size().x;
         paint_row_text(ui.painter(), g, rect.right() - 10.0 - w, rect.center().y, p.muted);
     }
-    resp
+    (resp, caret)
 }
 
 /// The margin that puts the capitals of a text field in `font` in the middle
@@ -3402,6 +4327,57 @@ pub fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, content:
 }
 
 #[cfg(test)]
+mod floater_title_rename_tests {
+    use super::{clean_floater_title_name, floater_title_finish};
+
+    #[test]
+    fn title_rename_rejects_blank_pipes_controls_and_limits_name_length() {
+        assert_eq!(clean_floater_title_name("  "), None);
+        assert_eq!(clean_floater_title_name("  Hello|World  "), None);
+        assert_eq!(clean_floater_title_name("Bad\nName"), None);
+        assert_eq!(clean_floater_title_name("  Hello  ").as_deref(), Some("Hello"));
+        assert_eq!(clean_floater_title_name(&"x".repeat(70)).unwrap().len(), 63);
+    }
+
+    #[test]
+    fn title_escape_cancels_only_when_the_field_was_focused() {
+        assert_eq!(floater_title_finish(true, true, false, false), Some(false));
+        assert_eq!(floater_title_finish(true, true, true, true), Some(false));
+        assert_eq!(
+            floater_title_finish(false, true, false, true),
+            Some(false),
+            "Escape cancels even when TextEdit has already surrendered focus"
+        );
+        assert_eq!(floater_title_finish(false, true, false, false), None);
+    }
+
+    #[test]
+    fn title_rename_commits_on_focused_enter_or_lost_focus() {
+        assert_eq!(floater_title_finish(true, false, false, false), None);
+        assert_eq!(floater_title_finish(true, false, true, false), Some(true));
+        assert_eq!(floater_title_finish(false, false, true, false), None);
+        assert_eq!(floater_title_finish(true, false, false, true), Some(true));
+    }
+}
+
+#[cfg(test)]
+mod spin_arrow_tests {
+    use super::arrow_hold_repeats;
+
+    #[test]
+    fn arrow_hold_repeats_lands_on_the_50_ms_marks() {
+        assert_eq!(arrow_hold_repeats(0.49), 0);
+        assert_eq!(arrow_hold_repeats(0.50), 1);
+        assert_eq!(arrow_hold_repeats(0.54), 1);
+        assert_eq!(arrow_hold_repeats(0.55), 2);
+        // 0.10 / 0.05 is 1.999… in f64. The repeat at 0.60 s must still count.
+        assert_eq!(arrow_hold_repeats(0.60), 3);
+        assert_eq!(arrow_hold_repeats(0.90), 9);
+        assert_eq!(arrow_hold_repeats(f64::NAN), 0);
+    }
+}
+
+#[cfg(test)]
 mod maturity_tests {
     use super::*;
     use aurora_net::search::{SIM_ACCESS_ADULT, SIM_ACCESS_MATURE, SIM_ACCESS_PG};
@@ -3421,6 +4397,102 @@ mod maturity_tests {
         for (r, letter) in [(SIM_ACCESS_PG, "G"), (SIM_ACCESS_MATURE, "M"), (SIM_ACCESS_ADULT, "A")] {
             let (got, _, _) = maturity_style(&p, super::super::bars::maturity_name(r)).unwrap();
             assert_eq!(got, letter);
+        }
+    }
+}
+
+#[cfg(test)]
+mod segmented_disabled_tests {
+    use super::*;
+    use crate::ui::widgets::elide_tests::Frames;
+
+    /// A disabled option takes no click, whatever else is clicked changes
+    /// the choice.
+    #[test]
+    fn a_disabled_segment_cannot_be_chosen() {
+        let p = crate::theme::Theme::default().palette();
+        let mut chosen = Vec::new();
+        for (disabled, clicks_work) in [(Some("why"), false), (None, true)] {
+            let mut frames = Frames::new();
+            let mut selected = 0usize;
+            let draw = |frames: &mut Frames, events: Vec<egui::Event>, selected: &mut usize| {
+                frames.run(events, |ui| {
+                    segmented_with_disabled(
+                        ui,
+                        &p,
+                        selected,
+                        &[("Aaaa", true), ("Bbbb", true), ("Cccc", true)],
+                        &[None, disabled],
+                    );
+                })
+            };
+            draw(&mut frames, Vec::new(), &mut selected);
+            // the second segment's middle: after the first, in the track
+            let texts = draw(&mut frames, Vec::new(), &mut selected);
+            let b = texts.iter().find(|t| t.source == "Bbbb").expect("the label is drawn").rect.center();
+            draw(&mut frames, vec![egui::Event::PointerMoved(b)], &mut selected);
+            for pressed in [true, false] {
+                draw(
+                    &mut frames,
+                    vec![egui::Event::PointerButton {
+                        pos: b,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: Default::default(),
+                    }],
+                    &mut selected,
+                );
+            }
+            chosen.push((selected, clicks_work));
+        }
+        assert_eq!(chosen, vec![(0, false), (1, true)]);
+    }
+}
+
+#[cfg(test)]
+mod wrapping_tabs_tests {
+    use super::*;
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+
+    #[test]
+    fn wrapped_tab_labels_stay_whole_and_clicks_keep_their_index() {
+        let labels = ["Track", "Camera", "Look", "Output", "Filters", "Library"].map(|label| (label, true));
+        let p = crate::theme::Theme::default().palette();
+        for width in [220.0, 340.0] {
+            for font_size in [12.0, 24.0] {
+                let mut frames = Frames::new();
+                let mut selected = 0;
+                let draw = |frames: &mut Frames, events, selected: &mut usize| {
+                    frames.run(events, |ui| {
+                        ui.set_width(width);
+                        ui.style_mut().override_font_id = Some(egui::FontId::proportional(font_size));
+                        wrapping_tabs(ui, &p, selected, &labels);
+                    })
+                };
+                draw(&mut frames, Vec::new(), &mut selected);
+                let texts = draw(&mut frames, Vec::new(), &mut selected);
+                for (label, _) in &labels {
+                    assert!(!painted(&texts, label).cut, "{label} at width {width}, font {font_size}");
+                }
+                let last = painted(&texts, "Library").rect.center();
+                if width == 220.0 || font_size == 24.0 {
+                    assert!(last.y > painted(&texts, "Track").rect.center().y);
+                }
+                draw(&mut frames, vec![egui::Event::PointerMoved(last)], &mut selected);
+                for pressed in [true, false] {
+                    draw(
+                        &mut frames,
+                        vec![egui::Event::PointerButton {
+                            pos: last,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        }],
+                        &mut selected,
+                    );
+                }
+                assert_eq!(selected, 5);
+            }
         }
     }
 }

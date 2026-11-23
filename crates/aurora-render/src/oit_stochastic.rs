@@ -55,14 +55,35 @@
 //! hair softer than in the sorted order and left a trail behind every
 //! blended face in motion.)
 //!
+//! The resolve and the composite run on the 8 x 8 pixel tiles that hold a
+//! blended face alone: after the total alpha a compute step (`cs_tiles`)
+//! lists them, from the pass's transmittance (every tile while glowing faces
+//! are drawn), and the depth spread, the three steps and the composite are
+//! dispatched or drawn for them through indirect arguments, the targets
+//! they write being cleared first. Where most of the view is listed (the
+//! count read back a few frames late, `whole_after`), or with glowing faces,
+//! they run on the whole view instead, one triangle and a dispatch over it:
+//! drawn over every tile, the depth spread made the stochastic depth pass
+//! of a busy region half as slow again, and the list saves nothing there.
+//!
 //! Everything here is made the first frame the method is on, on the render
 //! thread, and nothing while it is off: the passes' shaders are a module of
 //! their own (the `ST_BEGIN` to `ST_END` part of object.wgsl is left out of
 //! the scene module, `without_st`), their pipelines, buffers and targets
 //! come with the first use, and the targets go when the method is off or
 //! unused for a while. The masks come from a table of random S-choose-R
-//! subsets (`mask_table`), fixed for every launch; the seed is the pixel,
-//! the face's tie-break and the triangle. Needs multisampled targets of at
+//! subsets (`mask_table`), fixed for every launch; the subset's seed is the
+//! pixel, the face's tie-break and the triangle. R itself, floor(alpha S +
+//! xi), is dithered by a 64 x 64 blue-noise tile in which every stratum of
+//! xi appears once (paper section 3.1, "R could be dithered across a
+//! tile"), rotated by the primitive's own offset to keep the layers
+//! decorrelated: the error of R over a neighbourhood is high-frequency, and
+//! its mean stays alpha S. With the temporal blend the dither of a pixel
+//! advances every frame by the golden ratio conjugate (in 24-bit fixed
+//! point, so it stays exact at any frame number) instead of being drawn
+//! again: eight consecutive frames hold eight well spread values of xi
+//! (paper section 5, stratified seeds), and the sum of their R stays within
+//! 1 of 8 alpha S. Needs multisampled targets of at
 //! least 2 samples (every device has 4), and `PRIMITIVE_INDEX` for the
 //! triangle in the seed (without it the seed is per face: coplanar
 //! fragments of one face then occlude instead of blending).
@@ -72,6 +93,26 @@ use bytemuck::{Pod, Zeroable};
 
 /// Seeds per alpha level in the mask table (the paper's width, 2 047).
 pub const SEEDS: u32 = 2048;
+/// The side of the blue-noise tile that dithers R (object.wgsl `ST_TILE`).
+pub const TILE: u32 = 64;
+/// The tile's cells: the strata of xi, each once.
+const TILE_CELLS: usize = (TILE * TILE) as usize;
+/// The tile's ranks, 16 bits each, little-endian: `void_and_cluster` of the
+/// tests made it, a test compares them.
+const TILE_BYTES: &[u8; TILE_CELLS * 2] = include_bytes!("oit_stochastic_tile.bin");
+/// The tiles of the resolve's dispatch to a row (oit_stochastic.wgsl
+/// `TILE_ROW`): its rows are the tiles over this, far under a device's
+/// 65 535 workgroups of a dimension.
+const TILE_ROW: u32 = 256;
+/// The part of the tiles listed (`cs_tiles`, read back a few frames late)
+/// from which the steps run on the whole view instead, as many as from
+/// which they go back to the tiles: drawn over a quad a tile, the stochastic
+/// depth and the passes reading it cost more than over one triangle (a busy
+/// region with every tile listed: the depth pass 6.96 to 10.27 ms), and the
+/// list saves nothing there. Two thresholds, so that a view near one does
+/// not change form every few frames.
+const WHOLE_FROM: (u32, u32) = (3, 5);
+const TILES_UNDER: (u32, u32) = (2, 5);
 /// The most samples a stochastic pass takes (the expand map's size).
 pub const MAX_PASS_SAMPLES: u32 = 8;
 /// The temporal blend's least weight of the current frame (where the
@@ -221,6 +262,61 @@ pub(crate) fn st_object_source_with(src: &str, prim: bool) -> String {
     }
 }
 
+/// `src` (the method's object.wgsl or the resolve's source) with its
+/// `ST_GUARDS` constant set: false turns off the tests for a NaN of the
+/// alpha passes and of the resolve's samples (`AURORA_ST_GUARDS=0`, to
+/// measure what they cost; the history's test stays). Unchanged when on.
+pub(crate) fn with_guards(src: String, on: bool) -> String {
+    if on {
+        return src;
+    }
+    let off = src.replace("const ST_GUARDS: bool = true;", "const ST_GUARDS: bool = false;");
+    debug_assert_ne!(off, src, "no ST_GUARDS constant to turn off");
+    off
+}
+
+/// Whether an `AURORA_ST_GUARDS` value leaves the NaN tests on: only `0`
+/// turns them off, and only in a development build (`dev`, `ci`,
+/// `debugging`): a published viewer keeps its guards whatever is set.
+fn guards_from(value: Option<&str>, development: bool) -> bool {
+    !development || value.map(str::trim) != Some("0")
+}
+
+/// The viewer was built with a development profile (`set_development_build`).
+static DEVELOPMENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Tells the method the viewer's build profile, at start, before any frame:
+/// `AURORA_ST_GUARDS` is read by development builds only.
+pub fn set_development_build(on: bool) {
+    DEVELOPMENT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `AURORA_ST_GUARDS` read once (a measurement switch, docs/TESTING.md).
+fn guards_on() -> bool {
+    static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        guards_from(
+            std::env::var("AURORA_ST_GUARDS").ok().as_deref(),
+            DEVELOPMENT.load(std::sync::atomic::Ordering::Relaxed),
+        )
+    })
+}
+
+/// The most samples an `AURORA_ST_SAMPLES` value allows a pass: 4 or 8;
+/// anything else, or none, leaves the most there is.
+fn samples_cap_from(value: Option<&str>) -> u32 {
+    match value.map(str::trim) {
+        Some("4") => 4,
+        _ => MAX_PASS_SAMPLES,
+    }
+}
+
+/// `AURORA_ST_SAMPLES` read once (a measurement switch, docs/TESTING.md).
+fn samples_cap() -> u32 {
+    static VALUE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| samples_cap_from(std::env::var("AURORA_ST_SAMPLES").ok().as_deref()))
+}
+
 /// The directive the method's module starts with when the triangle index
 /// is read (`enable primitive_index;`), empty otherwise.
 pub(crate) fn enable_directive(device: &wgpu::Device) -> &'static str {
@@ -239,17 +335,11 @@ pub(crate) fn enable_directive_with(prim: bool) -> &'static str {
 /// The scene module's source with the method's passes in (the common
 /// part, object.wgsl, env.wgsl): the module the method's pipelines use.
 pub(crate) fn st_scene_source(device: &wgpu::Device) -> String {
-    // (the passes of the exact blend order stay in the source, unused: without
-    // the attribute a device may not know, as `blend_exact::scene_source`)
-    let object = st_object_source(
-        device,
-        &crate::water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl")),
+    // (the passes of the exact blend order stay in the source, unused)
+    let object = with_guards(
+        st_object_source(device, &crate::object_shader_source(device.features())),
+        guards_on(),
     );
-    let object = if device.features().contains(crate::blend_exact::EARLY_TEST) {
-        object
-    } else {
-        object.replace("@early_depth_test(force)", "")
-    };
     format!(
         "{}{}\n{}\n{}",
         enable_directive(device),
@@ -287,6 +377,27 @@ pub fn mask_table(samples: u32) -> Vec<u32> {
         }
     }
     table
+}
+
+/// The tile of ranks (a permutation of 0..4095, blue noise), `[y * TILE + x]`:
+/// stratum (rank + 0.5) / 4096 of xi, the value that dithers R in a pixel.
+pub fn tile_ranks() -> Vec<u32> {
+    let (pairs, _) = TILE_BYTES.as_chunks::<2>();
+    pairs.iter().map(|&b| u32::from(u16::from_le_bytes(b))).collect()
+}
+
+/// What the masks buffer holds for `samples` bits: the table of masks
+/// (`mask_table`), then the tile (`tile_ranks`), at `(samples + 1) * SEEDS`.
+fn mask_buffer(samples: u32) -> Vec<u32> {
+    let mut words = mask_table(samples);
+    words.extend(tile_ranks());
+    words
+}
+
+/// The sample counts a pass may take: the device's, up to `cap` (a count
+/// the scene itself has stays, so that the passes can share it).
+fn capped(supported: &[u32], scene: u32, cap: u32) -> Vec<u32> {
+    supported.iter().copied().filter(|&n| n <= cap || n == scene).collect()
 }
 
 /// The samples per stochastic pass for a scene of `scene` samples: the most
@@ -405,6 +516,7 @@ pub(crate) struct Shared {
     /// group 3 of the alpha and depth passes: the masks and the parameters
     pub face_layout: wgpu::BindGroupLayout,
     resolve_layout: wgpu::BindGroupLayout,
+    tiles_layout: wgpu::BindGroupLayout,
     module: wgpu::ShaderModule,
     hdr_format: wgpu::TextureFormat,
     depth_format: wgpu::TextureFormat,
@@ -424,6 +536,8 @@ pub(crate) struct Shared {
 
 /// The resolve's pipelines for one sample count of the scene.
 pub(crate) struct Resolve {
+    /// the list of the tiles that hold a blended face
+    tiles: wgpu::ComputePipeline,
     resolve: wgpu::ComputePipeline,
     /// the temporal blend of the resolved colour
     temporal: wgpu::ComputePipeline,
@@ -457,6 +571,39 @@ struct Targets {
     /// per parity of the frame: the resolve's, the temporal blend's, the
     /// smoothing's and the composite's groups
     groups: [[wgpu::BindGroup; 4]; 2],
+    /// the tiles of 8 x 8 pixels that hold a blended face (`cs_tiles`): the
+    /// indirect arguments of the steps and of the quads that draw them
+    /// (8 words), then the list; the steps run there alone
+    tiles: wgpu::Buffer,
+    tiles_group: wgpu::BindGroup,
+    /// per parity of the frame, what the steps write and the tiles leave
+    /// alone: cleared before them (this frame's colour, the total alpha, the
+    /// blended colour)
+    clears: [Vec<wgpu::TextureView>; 2],
+}
+
+/// The count of the listed tiles read back (`cs_tiles`' instance count),
+/// without a wait: copied a frame, mapped after its submission, read by a
+/// later `prepare`.
+struct CountRead {
+    buffer: wgpu::Buffer,
+    state: std::sync::Arc<std::sync::atomic::AtomicU8>,
+    /// the tiles of the view the count was copied for
+    total: std::sync::atomic::AtomicU32,
+}
+
+/// `CountRead::state`: free, a copy encoded, mapping, mapped, failed.
+const READ_IDLE: u8 = 0;
+const READ_ENCODED: u8 = 1;
+const READ_WAITING: u8 = 2;
+const READ_MAPPED: u8 = 3;
+const READ_FAILED: u8 = 4;
+
+/// Whether the steps run on the whole view, from the last count read back:
+/// `whole` the form so far, `listed` of `total` tiles holding a blended face.
+fn whole_after(whole: bool, listed: u32, total: u32) -> bool {
+    let (num, den) = if whole { TILES_UNDER } else { WHOLE_FROM };
+    u64::from(listed) * u64::from(den) >= u64::from(total) * u64::from(num) && total > 0
 }
 
 /// What a frame tells `prepare`.
@@ -507,6 +654,12 @@ pub(crate) struct Stochastic {
     idle: u32,
     /// glowing faces are accumulated this frame
     glow: bool,
+    /// this frame's steps run on the whole view (with glowing faces, which
+    /// list every tile, or once most tiles were listed: `whole_after`)
+    whole: bool,
+    /// the last count read back asked for the whole view
+    wide: bool,
+    count_read: CountRead,
 }
 
 fn entry(binding: u32, visibility: wgpu::ShaderStages, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
@@ -599,14 +752,33 @@ impl Stochastic {
                 ),
                 entry(11, S::COMPUTE, texture(true)),
                 entry(12, S::COMPUTE, texture(false)),
+                entry(
+                    13,
+                    S::COMPUTE | S::VERTEX,
+                    buffer(wgpu::BufferBindingType::Storage { read_only: true }),
+                ),
+            ],
+        });
+        // the step that lists the tiles with a blended face: a layout of its
+        // own, the list is written there and read everywhere else
+        let tiles_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("oit stochastic tiles"),
+            entries: &[
+                entry(0, S::COMPUTE, buffer(wgpu::BufferBindingType::Uniform)),
+                entry(2, S::COMPUTE, texture(true)),
+                entry(12, S::COMPUTE, texture(false)),
+                entry(14, S::COMPUTE, buffer(wgpu::BufferBindingType::Storage { read_only: false })),
             ],
         });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("oit stochastic"),
-            source: wgpu::ShaderSource::Wgsl(crate::water_shader_source(
-                &["oit_stochastic.wgsl"],
-                include_str!("shaders/oit_stochastic.wgsl"),
-            )),
+            source: wgpu::ShaderSource::Wgsl(
+                with_guards(
+                    crate::water_shader_source(&["oit_stochastic.wgsl"], include_str!("shaders/oit_stochastic.wgsl")).into_owned(),
+                    guards_on(),
+                )
+                .into(),
+            ),
         });
         let expand_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("oit stochastic expand"),
@@ -620,13 +792,14 @@ impl Stochastic {
                         multisampled: true,
                     },
                 ),
-                entry(1, S::FRAGMENT, buffer(wgpu::BufferBindingType::Uniform)),
+                entry(1, S::VERTEX | S::FRAGMENT, buffer(wgpu::BufferBindingType::Uniform)),
+                entry(3, S::VERTEX, buffer(wgpu::BufferBindingType::Storage { read_only: true })),
             ],
         });
         let expand_layout_ss = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("oit stochastic expand single sample"),
             entries: &[
-                entry(1, S::FRAGMENT, buffer(wgpu::BufferBindingType::Uniform)),
+                entry(1, S::VERTEX | S::FRAGMENT, buffer(wgpu::BufferBindingType::Uniform)),
                 entry(
                     2,
                     S::FRAGMENT,
@@ -636,6 +809,7 @@ impl Stochastic {
                         multisampled: false,
                     },
                 ),
+                entry(3, S::VERTEX, buffer(wgpu::BufferBindingType::Storage { read_only: true })),
             ],
         });
         let expand_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -650,14 +824,14 @@ impl Stochastic {
                 mapped_at_creation: false,
             })
         };
-        let expand_params = uniform("oit stochastic expand parameters", u64::from(MAX_PASS_SAMPLES * 4));
+        let expand_params = uniform("oit stochastic expand parameters", u64::from(MAX_PASS_SAMPLES * 4 + 16));
         let params = uniform("oit stochastic parameters", std::mem::size_of::<StParams>() as u64);
         let resolve_params = uniform("oit stochastic resolve parameters", std::mem::size_of::<ResolveParams>() as u64);
         // the table of the most samples a pass has: written for the pass's
         // own count when the targets are made
         let masks = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("oit stochastic masks"),
-            size: u64::from((MAX_PASS_SAMPLES + 1) * SEEDS * 4),
+            size: u64::from(((MAX_PASS_SAMPLES + 1) * SEEDS + TILE * TILE) * 4),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -668,11 +842,15 @@ impl Stochastic {
         });
         let single = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
         let small = |label, format| crate::renderer::make_view(device, label, 1, 1, format, 1, single).1;
-        log::info!("oit stochastic: made; pass sample counts the device takes: {pass_supported:?}");
+        log::info!(
+            "oit stochastic: made; pass sample counts the device takes: {pass_supported:?}; workgroups per dimension: {}",
+            device.limits().max_compute_workgroups_per_dimension
+        );
         Stochastic {
             shared: Shared {
                 face_layout,
                 resolve_layout,
+                tiles_layout,
                 module,
                 hdr_format,
                 depth_format,
@@ -700,6 +878,18 @@ impl Stochastic {
             history_ready: false,
             idle: 0,
             glow: false,
+            whole: true,
+            wide: false,
+            count_read: CountRead {
+                buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("oit stochastic tile count"),
+                    size: crate::readback::readback_size(4),
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                state: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(READ_IDLE)),
+                total: std::sync::atomic::AtomicU32::new(0),
+            },
         }
     }
 
@@ -764,12 +954,27 @@ impl Stochastic {
             self.refused = None;
             self.targets = Some(made);
             queue.write_buffer(&self.expand_params, 0, bytemuck::cast_slice(&expand_map(f.samples, pass)));
+            // (after the map: the target's size, for the tiles' quads)
+            queue.write_buffer(
+                &self.expand_params,
+                u64::from(MAX_PASS_SAMPLES * 4),
+                bytemuck::cast_slice(&[f.width, f.height, 0, 0]),
+            );
             if self.mask_pass != pass {
-                queue.write_buffer(&self.masks, 0, bytemuck::cast_slice(&mask_table(pass)));
+                queue.write_buffer(&self.masks, 0, bytemuck::cast_slice(&mask_buffer(pass)));
                 self.mask_pass = pass;
             }
         }
         self.idle = 0;
+        self.read_count();
+        // glowing faces list every tile: the whole view at once
+        let whole = f.glow || self.wide;
+        // (the expand's vertices: one triangle over the view, or a quad a tile)
+        queue.write_buffer(
+            &self.expand_params,
+            u64::from(MAX_PASS_SAMPLES * 4 + 8),
+            bytemuck::cast_slice(&[u32::from(whole)]),
+        );
         self.frame = self.frame.wrapping_add(1);
         let sp = StParams {
             samples: pass,
@@ -785,16 +990,75 @@ impl Stochastic {
             width: f.width,
             height: f.height,
             samples_hw: pass,
-            flags: u32::from(history) | (u32::from(f.glow) << 1) | (u32::from(f.samples == 1) << 2) | (u32::from(kept) << 3),
+            flags: u32::from(history)
+                | (u32::from(f.glow) << 1)
+                | (u32::from(f.samples == 1) << 2)
+                | (u32::from(kept) << 3)
+                | (u32::from(whole) << 4),
             temporal_weight: if history { self.temporal } else { 1.0 },
             trans_samples: f.samples,
             _pad: [0; 2],
             reproj: f.reproj,
         };
         queue.write_buffer(&self.resolve_params, 0, bytemuck::bytes_of(&rp));
+        // the arguments of the tiles, counted again from nothing: the
+        // dispatch's row of `TILE_ROW` workgroups, its rows (raised by
+        // `cs_tiles`) and 1, then the quads' 6 vertices and their
+        // instances (the tile count)
+        if let Some(t) = &self.targets {
+            queue.write_buffer(&t.tiles, 0, bytemuck::cast_slice(&[TILE_ROW, 0, 1, 0, 6, 0, 0, 0]));
+        }
         self.history_ready = true;
         self.glow = f.glow;
+        self.whole = whole;
         true
+    }
+
+    /// The count of listed tiles read back since the last frame, if any:
+    /// the form of the steps follows it (`whole_after`).
+    fn read_count(&mut self) {
+        use std::sync::atomic::Ordering;
+        let read = &self.count_read;
+        match read.state.load(Ordering::Acquire) {
+            READ_MAPPED => {
+                let listed = read
+                    .buffer
+                    .get_mapped_range(..)
+                    .ok()
+                    .and_then(|v| v.get(..4).map(crate::readback::u32_array::<1>))
+                    .map(|[n]| n);
+                read.buffer.unmap();
+                read.state.store(READ_IDLE, Ordering::Release);
+                if let Some(listed) = listed {
+                    let wide = whole_after(self.wide, listed, read.total.load(Ordering::Relaxed));
+                    if wide != self.wide {
+                        log::info!(
+                            "oit stochastic: {listed} of {} tiles listed, the steps run on {}",
+                            read.total.load(Ordering::Relaxed),
+                            if wide { "the whole view" } else { "the tiles" }
+                        );
+                    }
+                    self.wide = wide;
+                }
+            }
+            READ_FAILED => read.state.store(READ_IDLE, Ordering::Release),
+            _ => {}
+        }
+    }
+
+    /// Maps the count copied this frame, once its commands are submitted
+    /// (no wait: a later frame reads it).
+    pub fn after_submit(&self) {
+        use std::sync::atomic::Ordering;
+        let read = &self.count_read;
+        if read.state.load(Ordering::Acquire) != READ_ENCODED {
+            return;
+        }
+        read.state.store(READ_WAITING, Ordering::Release);
+        let state = read.state.clone();
+        read.buffer.map_async(wgpu::MapMode::Read, .., move |r| {
+            state.store(if r.is_ok() { READ_MAPPED } else { READ_FAILED }, Ordering::Release);
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -838,17 +1102,44 @@ impl Stochastic {
             pass,
             U::RENDER_ATTACHMENT | U::COPY_DST | U::TEXTURE_BINDING,
         );
-        let single = U::STORAGE_BINDING | U::TEXTURE_BINDING;
+        let single = U::STORAGE_BINDING | U::TEXTURE_BINDING | U::RENDER_ATTACHMENT;
         // this frame's corrected colour and total alpha, before the blend;
         // then the colour drawn, the blended one smoothed
-        let fresh = make("oit stochastic resolved", wgpu::TextureFormat::Rgba16Float, 1, single).1;
+        let (_, fresh) = make("oit stochastic resolved", wgpu::TextureFormat::Rgba16Float, 1, single);
         // the blended colour: the last frame's is read by the temporal
         // blend alone (otherwise one, the placeholder as its history)
-        let resolved0 = make("oit stochastic blended 0", wgpu::TextureFormat::Rgba16Float, 1, single).1;
-        let resolved1 = history.then(|| make("oit stochastic blended 1", wgpu::TextureFormat::Rgba16Float, 1, single).1);
+        let (_, resolved0) = make("oit stochastic blended 0", wgpu::TextureFormat::Rgba16Float, 1, single);
+        let resolved1_made = history.then(|| make("oit stochastic blended 1", wgpu::TextureFormat::Rgba16Float, 1, single));
+        let resolved1 = resolved1_made.map(|r| r.1);
         // the farthest stochastic depth, the corrected glow, the colour's
         // uncertainty and the nearest stochastic depth
         let (_, aux) = make("oit stochastic total alpha", wgpu::TextureFormat::Rgba16Float, 1, single);
+        let tile_count = u64::from(width.div_ceil(8)) * u64::from(height.div_ceil(8));
+        let tiles = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("oit stochastic tiles"),
+            size: (8 + tile_count) * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let (tiles_trans_ms, tiles_trans_one) = if samples > 1 {
+            (&trans, &self.dummy_rgba_r)
+        } else {
+            (&accum, &trans)
+        };
+        let tiles_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("oit stochastic tiles"),
+            layout: &self.shared.tiles_layout,
+            entries: &[
+                bind(0, self.resolve_params.as_entire_binding()),
+                bind(2, wgpu::BindingResource::TextureView(tiles_trans_ms)),
+                bind(12, wgpu::BindingResource::TextureView(tiles_trans_one)),
+                bind(14, tiles.as_entire_binding()),
+            ],
+        });
+        let clears = [
+            vec![fresh.clone(), aux.clone(), resolved0.clone()],
+            vec![fresh.clone(), aux.clone(), resolved1.clone().unwrap_or_else(|| resolved0.clone())],
+        ];
         let groups = std::array::from_fn(|parity| {
             let (cur, old) = match &resolved1 {
                 Some(r1) if parity == 1 => (r1, &resolved0),
@@ -871,6 +1162,7 @@ impl Stochastic {
                     bind(12, wgpu::BindingResource::TextureView(trans_one)),
                     bind(10, wgpu::BindingResource::TextureView(&depth)),
                     bind(11, wgpu::BindingResource::TextureView(&glow)),
+                    bind(13, tiles.as_entire_binding()),
                 ];
                 all.extend(entries.iter().map(|&(b, v)| bind(b, wgpu::BindingResource::TextureView(v))));
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -930,6 +1222,9 @@ impl Stochastic {
             depth_tex,
             depth,
             groups,
+            tiles,
+            tiles_group,
+            clears,
         }
     }
 
@@ -1026,6 +1321,7 @@ impl Stochastic {
                     entries: &[
                         bind(binding, wgpu::BindingResource::TextureView(scene_depth.1)),
                         bind(1, self.expand_params.as_entire_binding()),
+                        bind(3, t.tiles.as_entire_binding()),
                     ],
                 });
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1033,6 +1329,9 @@ impl Stochastic {
                     color_attachments: &[],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view: &t.depth,
+                        // (cleared, even where no tile is listed: a depth
+                        // loaded from the last frame made the stochastic
+                        // depth pass of a busy region half as slow again)
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Clear(0.0),
                             store: wgpu::StoreOp::Store,
@@ -1045,7 +1344,11 @@ impl Stochastic {
                 });
                 pass.set_pipeline(expand);
                 pass.set_bind_group(0, &group, &[]);
-                pass.draw(0..3, 0..1);
+                if self.whole {
+                    pass.draw(0..3, 0..1);
+                } else {
+                    pass.draw_indirect(&t.tiles, 16);
+                }
             }
             _ => encoder.copy_texture_to_texture(scene_depth.0.as_image_copy(), t.depth_tex.as_image_copy(), scene_depth.0.size()),
         }
@@ -1141,15 +1444,85 @@ impl Stochastic {
         }))
     }
 
-    /// The resolve, the temporal blend, then the smoothing.
+    /// Lists the tiles of 8 x 8 pixels that hold a blended face, from the
+    /// total alpha: what comes after runs on those alone (every tile when
+    /// glowing faces are drawn, their glow needing no alpha).
+    /// On the whole view the list is made only for a count to read back
+    /// (none with glowing faces, which list every tile).
+    pub fn mark_tiles(&self, encoder: &mut wgpu::CommandEncoder, r: &Resolve) {
+        use std::sync::atomic::Ordering;
+        let Some(t) = &self.targets else { return };
+        let free = self.count_read.state.load(Ordering::Acquire) == READ_IDLE;
+        if self.whole && (self.glow || !free) {
+            return;
+        }
+        let (columns, rows) = (t.width.div_ceil(8), t.height.div_ceil(8));
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("oit stochastic tiles"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&r.tiles);
+            pass.set_bind_group(0, &t.tiles_group, &[]);
+            pass.dispatch_workgroups(columns, rows, 1);
+        }
+        if free && !self.glow {
+            // (the instance count, word 5)
+            encoder.copy_buffer_to_buffer(&t.tiles, 20, &self.count_read.buffer, 0, 4);
+            self.count_read.total.store(columns * rows, Ordering::Relaxed);
+            self.count_read.state.store(READ_ENCODED, Ordering::Release);
+        }
+    }
+
+    /// The resolve, the temporal blend, then the smoothing, in the listed
+    /// tiles; what they write elsewhere is cleared (nothing is blended
+    /// there, which is what the steps write for a pixel with nothing).
     pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder, r: &Resolve) {
         let Some(t) = &self.targets else { return };
-        let groups = &t.groups[self.parity()];
-        for (label, pipeline, group) in [
+        let parity = self.parity();
+        let groups = &t.groups[parity];
+        let steps = [
             ("oit stochastic resolve", &r.resolve, &groups[0]),
             ("oit stochastic temporal blend", &r.temporal, &groups[1]),
             ("oit stochastic smoothing", &r.smooth, &groups[2]),
-        ] {
+        ];
+        if self.whole {
+            // every pixel written: nothing to clear
+            for (label, pipeline, group) in steps {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some(label),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, group, &[]);
+                pass.dispatch_workgroups(t.width.div_ceil(8), t.height.div_ceil(8), 1);
+            }
+            return;
+        }
+        // (a pass that clears the three: no feature needed, and a fast clear)
+        let attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = t.clears[parity]
+            .iter()
+            .map(|view| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })
+            })
+            .collect();
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("oit stochastic clear"),
+            color_attachments: &attachments,
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        for (label, pipeline, group) in steps {
             // (a pass each: each reads what the one before it wrote)
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(label),
@@ -1157,19 +1530,27 @@ impl Stochastic {
             });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, group, &[]);
-            pass.dispatch_workgroups(t.width.div_ceil(8), t.height.div_ceil(8), 1);
+            pass.dispatch_workgroups_indirect(&t.tiles, 0);
         }
     }
 
-    /// The composite over the scene, in a scene pass (per sample).
+    /// The composite over the scene, in a scene pass (per sample), a quad
+    /// for each listed tile.
     pub fn composite(&self, pass: &mut wgpu::RenderPass, r: &Resolve) {
         let Some(t) = &self.targets else { return };
         pass.set_pipeline(&r.composite);
         pass.set_bind_group(0, &t.groups[self.parity()][3], &[]);
-        pass.draw(0..3, 0..1);
+        let draw = |pass: &mut wgpu::RenderPass| {
+            if self.whole {
+                pass.draw(0..3, 0..1);
+            } else {
+                pass.draw_indirect(&t.tiles, 16);
+            }
+        };
+        draw(pass);
         if self.glow {
             pass.set_pipeline(&r.composite_glow);
-            pass.draw(0..3, 0..1);
+            draw(pass);
         }
     }
 }
@@ -1177,7 +1558,7 @@ impl Stochastic {
 impl Shared {
     /// The samples per stochastic pass for a scene of `scene` samples.
     pub fn pass_samples(&self, scene: u32) -> u32 {
-        pass_samples(scene, &self.pass_supported)
+        pass_samples(scene, &capped(&self.pass_supported, scene, samples_cap()))
     }
 
     /// The scene module for the sample mask route: `src` (the scene's WGSL
@@ -1282,6 +1663,19 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
             cache: None,
         })
     };
+    let tiles_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("oit stochastic tiles"),
+        bind_group_layouts: &[Some(&shared.tiles_layout)],
+        immediate_size: 0,
+    });
+    let tiles = device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+        label: Some("oit stochastic tiles"),
+        layout: Some(&tiles_pipeline_layout),
+        module: &shared.module,
+        entry_point: Some("cs_tiles"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
     let resolve = compute("oit stochastic resolve", "cs_resolve");
     let temporal = compute("oit stochastic temporal blend", "cs_temporal");
     let smooth = compute("oit stochastic smoothing", "cs_smooth");
@@ -1291,7 +1685,7 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shared.module,
-                entry_point: Some("vs_full"),
+                entry_point: Some("vs_tile"),
                 buffers: &[],
                 compilation_options: Default::default(),
             },
@@ -1375,7 +1769,7 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shared.expand_module,
-                entry_point: Some("vs_full"),
+                entry_point: Some("vs_tile"),
                 buffers: &[],
                 compilation_options: Default::default(),
             },
@@ -1402,6 +1796,7 @@ pub(crate) fn make_resolve(device: &wgpu::Device, shared: &Shared, samples: u32)
         })
     });
     Resolve {
+        tiles,
         resolve,
         temporal,
         smooth,
@@ -1473,6 +1868,412 @@ mod tests {
         assert!(row.iter().any(|&m| m != row[0]));
         // the same every call
         assert_eq!(mask_table(8), mask_table(8));
+    }
+
+    /// The 64 x 64 blue-noise tile by void-and-cluster (Ulichney 1993): the rank
+    /// (0..4095) of every cell, a permutation of the strata. Energies are
+    /// integers, so the result is the same on every platform.
+    fn void_and_cluster() -> Vec<u16> {
+        const W: usize = 64;
+        const N: usize = W * W;
+        const R: i32 = 6;
+        // the toroidal gaussian (sigma 1.5, cut at 4 sigma), in 16.16
+        let mut kernel = Vec::new();
+        for dy in -R..=R {
+            for dx in -R..=R {
+                let w = (-f64::from(dx * dx + dy * dy) / (2.0 * 1.5 * 1.5)).exp();
+                kernel.push((dx, dy, (w * 65536.0).round() as i64));
+            }
+        }
+        let splat = |energy: &mut Vec<i64>, i: usize, sign: i64| {
+            let (x, y) = ((i % W) as i32, (i / W) as i32);
+            for &(dx, dy, w) in &kernel {
+                let j = (y + dy).rem_euclid(W as i32) as usize * W + (x + dx).rem_euclid(W as i32) as usize;
+                energy[j] += sign * w;
+            }
+        };
+        // the first one with the highest (tightest) or lowest (largest void) energy
+        let pick = |energy: &[i64], pattern: &[bool], ones: bool, max: bool| {
+            (0..N)
+                .filter(|&i| pattern[i] == ones)
+                .reduce(|b, i| {
+                    if (max && energy[i] > energy[b]) || (!max && energy[i] < energy[b]) {
+                        i
+                    } else {
+                        b
+                    }
+                })
+                .unwrap_or(0)
+        };
+        // an initial pattern of N / 10 pseudo-random ones
+        let mut state: u64 = 0x1234_5678_9abc_def0;
+        let mut next = move || {
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            z ^ (z >> 31)
+        };
+        let mut cells: Vec<usize> = (0..N).collect();
+        let ones = N / 10;
+        let mut pattern = vec![false; N];
+        let mut energy = vec![0i64; N];
+        for i in 0..ones {
+            let j = i + (next() % (N - i) as u64) as usize;
+            cells.swap(i, j);
+            pattern[cells[i]] = true;
+            splat(&mut energy, cells[i], 1);
+        }
+        // swap the tightest cluster to the largest void until they agree
+        loop {
+            let tight = pick(&energy, &pattern, true, true);
+            pattern[tight] = false;
+            splat(&mut energy, tight, -1);
+            let void = pick(&energy, &pattern, false, false);
+            pattern[void] = true;
+            splat(&mut energy, void, 1);
+            if void == tight {
+                break;
+            }
+        }
+        let mut rank = vec![0u16; N];
+        // ranks ones - 1 .. 0: remove the tightest cluster each time
+        let (mut p, mut e) = (pattern.clone(), energy.clone());
+        for r in (0..ones).rev() {
+            let t = pick(&e, &p, true, true);
+            rank[t] = r as u16;
+            p[t] = false;
+            splat(&mut e, t, -1);
+        }
+        // ranks ones .. N - 1: fill the largest void each time
+        for r in ones..N {
+            let v = pick(&energy, &pattern, false, false);
+            rank[v] = r as u16;
+            pattern[v] = true;
+            splat(&mut energy, v, 1);
+        }
+        rank
+    }
+
+    /// The shader's xi in 24-bit fixed point: the pixel's stratum, the
+    /// primitive's rotation and the frame's fraction of 2^24.
+    fn xi24(rank: u32, rot: u32, frame: u32) -> u32 {
+        ((2 * rank + 1) * 2048 + rot + frame) & 0xff_ffff
+    }
+
+    /// The shader's R: floor(a S + xi) in f32, at most S.
+    fn r_of(a: f32, s: u32, xi: u32) -> u32 {
+        ((a * s as f32 + xi as f32 / 16_777_216.0).floor() as u32).min(s)
+    }
+
+    /// The shader's frame fraction: `frame_seed >> 8`, `frame_seed` being
+    /// `frame * 0x9e3779b9` wrapped to 32 bits (`prepare`).
+    fn frame_fraction(frame: u32) -> u32 {
+        frame.wrapping_mul(0x9e37_79b9) >> 8
+    }
+
+    #[test]
+    fn the_committed_tile_is_the_generated_one_and_a_permutation_of_the_strata() {
+        let generated: Vec<u32> = void_and_cluster().into_iter().map(u32::from).collect();
+        assert_eq!(
+            tile_ranks(),
+            generated,
+            "oit_stochastic_tile.bin is out of date: rewrite it from void_and_cluster"
+        );
+        let mut seen = vec![false; TILE_CELLS];
+        for &r in &generated {
+            assert!(!std::mem::replace(&mut seen[r as usize], true), "rank {r} twice");
+        }
+        assert!(seen.iter().all(|&s| s));
+        // the buffer holds the masks, then the tile, where the shader reads it
+        let words = mask_buffer(8);
+        assert_eq!(words.len(), (9 * SEEDS) as usize + TILE_CELLS);
+        assert_eq!(&words[(9 * SEEDS) as usize..], &generated[..]);
+        assert!(words.len() as u32 * 4 <= (MAX_PASS_SAMPLES + 1) * SEEDS * 4 + TILE * TILE * 4);
+    }
+
+    /// The standard deviation, over the 64 aligned 8 x 8 blocks of a tile,
+    /// of the block's mean xi (0.5 when every block is balanced).
+    fn block_mean_sd(ranks: &[u32]) -> f64 {
+        let mut ss = 0.0;
+        for b in 0..64usize {
+            let (bx, by) = (b % 8 * 8, b / 8 * 8);
+            let sum: f64 = (0..64usize)
+                .map(|i| (f64::from(ranks[(by + i / 8) * 64 + bx + i % 8]) + 0.5) / 4096.0)
+                .sum();
+            ss += (sum / 64.0 - 0.5).powi(2);
+        }
+        (ss / 64.0).sqrt()
+    }
+
+    #[test]
+    fn the_tile_balances_every_8x8_block_better_than_white_noise() {
+        let tile = tile_ranks();
+        // the same strata in a white-noise order (a shuffle by `st_hash`)
+        let mut white: Vec<u32> = (0..TILE_CELLS as u32).collect();
+        let mut h = 12345;
+        for i in (1..white.len()).rev() {
+            h = st_hash(h);
+            white.swap(i, h as usize % (i + 1));
+        }
+        // measured: the tile 0.0105, a white order 0.037 (1 / sqrt(12 * 64)
+        // = 0.036 in theory)
+        let (t, w) = (block_mean_sd(&tile), block_mean_sd(&white));
+        assert!(t < 0.015, "tile {t}");
+        assert!(w > 0.025, "white {w}");
+        // the same in R, for a sweep of alpha and three rotations: the mean
+        // of R over a block against a S (measured: tile rms 0.018, max 0.078;
+        // white order rms 0.049, max 0.19)
+        let (mut st, mut sw, mut n) = (0.0f64, 0.0f64, 0.0f64);
+        let (mut mt, mut mw) = (0.0f64, 0.0f64);
+        for ai in 1..64 {
+            let a = ai as f32 / 64.0;
+            for rot in [0, 5_000_000, 12_345_678] {
+                for b in 0..64usize {
+                    let (bx, by) = (b % 8 * 8, b / 8 * 8);
+                    let mean = |ranks: &[u32]| {
+                        let sum: u32 = (0..64usize)
+                            .map(|i| r_of(a, 8, xi24(ranks[(by + i / 8) * 64 + bx + i % 8], rot, 0)))
+                            .sum();
+                        f64::from(sum) / 64.0 - f64::from(a) * 8.0
+                    };
+                    let (et, ew) = (mean(&tile), mean(&white));
+                    st += et * et;
+                    sw += ew * ew;
+                    mt = mt.max(et.abs());
+                    mw = mw.max(ew.abs());
+                    n += 1.0;
+                }
+            }
+        }
+        let (rt, rw) = ((st / n).sqrt(), (sw / n).sqrt());
+        assert!(rt < 0.025 && mt < 0.1, "tile rms {rt} max {mt}");
+        assert!(rt < rw * 0.6 && mt < mw * 0.7, "white rms {rw} max {mw}");
+    }
+
+    #[test]
+    fn the_mean_of_r_over_the_tile_is_alpha_times_s_for_any_rotation() {
+        let tile = tile_ranks();
+        for s in [2u32, 4, 8] {
+            for ai in 0..=64 {
+                let a = ai as f32 / 64.0;
+                for rot in [0, 1, 999_999, 8_388_608, 16_777_215] {
+                    let sum: u32 = tile.iter().map(|&r| r_of(a, s, xi24(r, rot, 0))).sum();
+                    let mean = f64::from(sum) / TILE_CELLS as f64;
+                    // xi takes the 4096 strata (k + 0.5) / 4096 shifted by the
+                    // rotation: the mean is a S within one stratum
+                    assert!(
+                        (mean - f64::from(a) * f64::from(s)).abs() <= 1.0 / 4096.0 + 1e-6,
+                        "S {s} a {a} rot {rot}: {mean}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn eight_frames_of_the_stratified_dither_sum_to_eight_alpha_s() {
+        let tile = tile_ranks();
+        let (mut weyl_ss, mut hash_ss, mut weyl_max, mut hash_max, mut n) = (0.0f64, 0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for ai in 1..64 {
+            let a = ai as f32 / 64.0;
+            for k in (0..TILE_CELLS).step_by(37) {
+                let rot = st_hash(k as u32 * 77 + 1) >> 8;
+                for f0 in [0u32, 1000, 123_456, 0xffff_fff0] {
+                    let (mut weyl, mut hashed) = (0u32, 0u32);
+                    for f in 0..8u32 {
+                        let frame = f0.wrapping_add(f);
+                        weyl += r_of(a, 8, xi24(tile[k], rot, frame_fraction(frame)));
+                        // the old way: a fresh hash of the frame, every frame
+                        hashed += r_of(a, 8, xi24(tile[k], st_hash(rot ^ st_hash(frame).wrapping_mul(3)) >> 8, 0));
+                    }
+                    let want = f64::from(a) * 64.0;
+                    let (ew, eh) = (f64::from(weyl) - want, f64::from(hashed) - want);
+                    weyl_ss += ew * ew;
+                    hash_ss += eh * eh;
+                    weyl_max = weyl_max.max(ew.abs());
+                    hash_max = hash_max.max(eh.abs());
+                    n += 1.0;
+                }
+            }
+        }
+        let (weyl_rms, hash_rms) = ((weyl_ss / n).sqrt(), (hash_ss / n).sqrt());
+        // measured: stratified max 1.0, rms 0.37; hashed max 4, rms 1.14
+        assert!(weyl_max <= 1.0, "stratified max {weyl_max}");
+        assert!(weyl_rms < 0.5, "stratified rms {weyl_rms}");
+        assert!(
+            weyl_rms < hash_rms * 0.5 && weyl_max < hash_max,
+            "hashed rms {hash_rms} max {hash_max}"
+        );
+    }
+
+    #[test]
+    fn the_frame_fraction_stays_exact_at_any_frame_number() {
+        // frame * 0.6180339887 in 24-bit fixed point, from the integers
+        let exact = |f: u32| (((u64::from(f) * 0x9e37_79b9) & 0xffff_ffff) >> 8) as u32;
+        for f in [0, 1, 2, 7, 1 << 20, (1 << 24) + 3, 123_456_789, u32::MAX - 1, u32::MAX] {
+            assert_eq!(frame_fraction(f), exact(f), "frame {f}");
+            assert!(frame_fraction(f) < 1 << 24);
+        }
+        // one frame later is always the golden ratio conjugate further
+        // (10 368 889.6 of 2^24), to the rounding of the truncated bits
+        for f in [0u32, 5, 1 << 24, 3_000_000_000, u32::MAX] {
+            let step = frame_fraction(f.wrapping_add(1)).wrapping_sub(frame_fraction(f)) & 0xff_ffff;
+            assert!((10_368_889..=10_368_891).contains(&step), "frame {f}: {step}");
+        }
+    }
+
+    #[test]
+    fn the_samples_cap_and_the_guards_read_their_values() {
+        assert_eq!(samples_cap_from(None), 8);
+        assert_eq!(samples_cap_from(Some("8")), 8);
+        assert_eq!(samples_cap_from(Some("4")), 4);
+        assert_eq!(samples_cap_from(Some(" 4 ")), 4);
+        // anything else leaves the most there is
+        for v in ["", "2", "16", "0", "four", "-4"] {
+            assert_eq!(samples_cap_from(Some(v)), 8, "{v:?}");
+        }
+        assert!(guards_from(None, true));
+        assert!(guards_from(Some("1"), true));
+        assert!(guards_from(Some(""), true));
+        assert!(!guards_from(Some("0"), true));
+        assert!(!guards_from(Some(" 0 "), true));
+        // a published build keeps them whatever is set
+        for value in [None, Some("0"), Some(" 0 "), Some("1")] {
+            assert!(guards_from(value, false), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn the_samples_cap_limits_the_passes_but_not_the_scene() {
+        let all = [1, 2, 4, 8];
+        assert_eq!(pass_samples(1, &capped(&all, 1, 8)), 8);
+        assert_eq!(pass_samples(1, &capped(&all, 1, 4)), 4);
+        assert_eq!(pass_samples(4, &capped(&all, 4, 4)), 4);
+        // a scene above the cap keeps its own count (the passes share it)
+        assert_eq!(pass_samples(8, &capped(&all, 8, 4)), 8);
+        // a device without 4 and a cap of 4 is left with what it has
+        assert_eq!(pass_samples(1, &capped(&[1, 2, 8], 1, 4)), 2);
+    }
+
+    #[test]
+    fn the_guards_switch_changes_only_its_constant() {
+        let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+        let resolve = include_str!("shaders/oit_stochastic.wgsl").replace("\r\n", "\n");
+        for src in [object, resolve] {
+            assert_eq!(with_guards(src.clone(), true), src);
+            let off = with_guards(src.clone(), false);
+            assert!(src.contains("const ST_GUARDS: bool = true;"));
+            assert!(off.contains("const ST_GUARDS: bool = false;"));
+            assert_eq!(off.replace("const ST_GUARDS: bool = false;", "const ST_GUARDS: bool = true;"), src);
+        }
+    }
+
+    #[test]
+    fn the_tile_list_is_laid_out_as_the_shaders_and_the_passes_read_it() {
+        let resolve = include_str!("shaders/oit_stochastic.wgsl").replace("\r\n", "\n");
+        let expand = include_str!("shaders/oit_stochastic_expand.wgsl").replace("\r\n", "\n");
+        // 8 words of arguments (the dispatch at 0, the quads' draw at 16
+        // bytes: 6 vertices, then the count), the tiles after them
+        assert!(resolve.contains("const TILE_FIRST = 8u;"));
+        assert!(expand.contains("tile_list[8u + i]"));
+        assert!(resolve.contains("atomicAdd(&tile_out[5], 1u);"));
+        assert!(resolve.contains("@group(0) @binding(13) var<storage, read> tile_list"));
+        assert!(expand.contains("@group(0) @binding(3) var<storage, read> tile_list"));
+        // the expand parameters: the map, then the target's size, then the
+        // whole view's word (`prepare` writes it at the map's end + 8)
+        assert!(expand.contains("size: vec2<u32>,\n    // 1: one triangle"));
+        assert!(expand.contains("whole: u32,\n};"));
+        assert!(expand.contains("if (ep.whole != 0u) {"));
+        assert_eq!(u64::from(MAX_PASS_SAMPLES * 4 + 16), 48);
+        // the whole view: `ResolveParams` flag 16, read by the steps and the
+        // quads' vertices
+        assert!(resolve.contains("return (rp.flags & 16u) != 0u;"));
+        assert!(resolve.contains("fn vs_tile(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> @builtin(position) vec4<f32> {\n    if (whole_view()) {"));
+        assert_eq!(resolve.matches("let g = step_pixel(wg, l);").count(), 3);
+    }
+
+    #[test]
+    fn the_steps_take_the_whole_view_once_most_tiles_are_listed() {
+        let total = 100;
+        // from the tiles: the whole view from 60 % listed
+        assert!(!whole_after(false, 0, total));
+        assert!(!whole_after(false, 59, total));
+        assert!(whole_after(false, 60, total));
+        assert!(whole_after(false, 100, total));
+        // from the whole view: back to the tiles under 40 %, not between
+        assert!(whole_after(true, 59, total));
+        assert!(whole_after(true, 40, total));
+        assert!(!whole_after(true, 39, total));
+        assert!(!whole_after(true, 0, total));
+        // no tile counted (a count of another view): the tiles
+        assert!(!whole_after(true, 0, 0));
+        assert!(!whole_after(false, 5, 0));
+        // a 4K view's tiles do not overflow the product
+        let k4 = 3840u32.div_ceil(8) * 2160u32.div_ceil(8);
+        assert!(whole_after(false, k4, k4));
+        assert!(!whole_after(false, k4 / 2, k4));
+    }
+
+    /// The rows of the resolve's dispatch for a target: the tiles over
+    /// `TILE_ROW`, rounded up.
+    fn tile_rows(width: u32, height: u32) -> u32 {
+        (width.div_ceil(8) * height.div_ceil(8)).div_ceil(TILE_ROW)
+    }
+
+    #[test]
+    fn the_dispatch_of_every_tile_stays_under_the_workgroup_limit() {
+        // 65 535 workgroups a dimension on DX12 and on AMD and Intel Vulkan
+        const LIMIT: u32 = 65_535;
+        assert_eq!(tile_rows(3840, 2160), 507);
+        // 4K, 8K, an ultrawide, and a scaled size (FSR's render size is
+        // smaller than the window: the target is the render's)
+        for (w, h) in [
+            (3840, 2160),
+            (7680, 4320),
+            (3440, 1440),
+            (2560, 1440),
+            (1920, 1080),
+            (1278, 1360),
+            (1, 1),
+        ] {
+            let rows = tile_rows(w, h);
+            assert!((1..=LIMIT).contains(&rows), "{w}x{h}: {rows} rows");
+            // every tile has a slot: the rows hold them, the last partly
+            assert!(rows * TILE_ROW >= w.div_ceil(8) * h.div_ceil(8));
+        }
+        // and the row's own width is a workgroup count
+        const { assert!(TILE_ROW <= LIMIT) };
+        let resolve = include_str!("shaders/oit_stochastic.wgsl").replace("\r\n", "\n");
+        assert!(resolve.contains(&format!("const TILE_ROW = {TILE_ROW}u;")));
+        assert!(resolve.contains("atomicMax(&tile_out[1], i / TILE_ROW + 1u);"));
+        assert!(resolve.contains("atomicAdd(&tile_out[5], 1u);"));
+    }
+
+    /// Writes `oit_stochastic_tile.bin` again from `void_and_cluster`:
+    /// `cargo test --workspace write_the_tile_file -- --ignored`, then commit
+    /// the file (the test above compares it with the generator).
+    #[test]
+    #[ignore = "writes src/oit_stochastic_tile.bin"]
+    fn write_the_tile_file() {
+        let bytes: Vec<u8> = void_and_cluster().into_iter().flat_map(u16::to_le_bytes).collect();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/oit_stochastic_tile.bin");
+        std::fs::write(path, bytes).expect("write the tile file");
+    }
+
+    #[test]
+    fn the_shader_reads_the_tile_where_the_buffer_holds_it() {
+        let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
+        assert!(object.contains(&format!("const ST_TILE: u32 = {TILE}u;")));
+        assert!(object.contains("const ST_SEEDS: u32 = 2048u;"));
+        assert_eq!(SEEDS, 2048);
+        assert!(object.contains("st_masks[(st.samples + 1u) * ST_SEEDS + (px.y & (ST_TILE - 1u)) * ST_TILE"));
+        // the lines the Rust copies above (`xi24`, `frame_fraction`) mirror:
+        // a source-text check, so that they cannot drift unseen (the shader's
+        // own arithmetic is not run by the tests)
+        assert!(object.contains("let xi24 = ((2u * rank + 1u) * 2048u + (layer >> 8u) + frame) & 0xffffffu;"));
+        assert!(object.contains("frame = st.frame_seed >> 8u;"));
+        assert!(object.contains("let dither = f32(xi24) / 16777216.0;"));
     }
 
     /// The shader's `st_hash` (PCG) and its per-pixel, per-layer subset index.

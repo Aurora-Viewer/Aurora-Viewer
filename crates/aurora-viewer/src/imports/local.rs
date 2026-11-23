@@ -6,6 +6,8 @@ use super::*;
 use aurora_render::{StagedTexture, StagingPool};
 use std::time::{Duration, Instant, SystemTime};
 
+pub(super) mod scene;
+
 pub struct Texture {
     pub id: Uuid,
     pub staged: StagedTexture,
@@ -19,6 +21,7 @@ pub struct Prepared {
     pub images: HashMap<Uuid, Arc<aurora_render::preview::Image>>,
     pub material: Option<PbrMaterial>,
     pub meshes: Vec<Mesh>,
+    pub scene_size: Option<glam::Vec3>,
 }
 pub struct Mesh {
     pub id: Uuid,
@@ -31,6 +34,23 @@ pub struct Target {
     pub entry: Uuid,
     pub model: usize,
     pub use_scale: bool,
+    #[serde(default)]
+    pub scene: bool,
+}
+impl Target {
+    pub fn mesh(&self, entry: &Entry) -> Option<(Uuid, Option<glam::Vec3>)> {
+        if self.scene {
+            Some((*entry.local_mesh_ids.last()?, Some(entry.local_scene_size?)))
+        } else {
+            // A reload with fewer models must not bind an old model index
+            // to the assembly appended after the individual assets.
+            let count = entry
+                .local_mesh_ids
+                .len()
+                .checked_sub(usize::from(entry.local_scene_size.is_some()))?;
+            Some((*entry.local_mesh_ids.get(..count)?.get(self.model)?, None))
+        }
+    }
 }
 pub struct Rez {
     pub entry: Uuid,
@@ -94,6 +114,7 @@ impl Imports {
             .into_iter()
             .collect();
         self.local_appearance_targets.clear();
+        self.persistence.attachments.clear();
         self.clear_appearance_targets(objects, &ids, None);
         self.save_local_registry(true);
     }
@@ -112,11 +133,25 @@ pub fn stamp(paths: &[PathBuf]) -> Stamp {
         })
         .collect()
 }
+/// Reloads of a changed file that may fail in a row before the watch gives
+/// up until the file changes again (LL_LOCAL_UPDATE_RETRIES,
+/// indra/newview/lllocalbitmaps.cpp): painting programs lock or rewrite the
+/// file while they export it.
+pub const RELOAD_RETRIES: u8 = 5;
 pub struct Watch {
     pub paths: Vec<PathBuf>,
+    /// The files as last loaded. Like LLLocalBitmap::updateSelf, a new stamp
+    /// is only accepted once its reload has started, and only kept once that
+    /// reload succeeded, so an export is never skipped.
     pub stamp: Stamp,
     pub next: Instant,
     pub pending: bool,
+    /// Failed reloads of the current change (LLLocalBitmap::mUpdateRetries).
+    pub failures: u8,
+    /// Whether the reload under way was started by this watch, not by the
+    /// Reload button: only those are retried quietly, as the Legacy Viewer
+    /// only retries inside its timer (LLLocalBitmapMgr::doUpdates).
+    pub auto: bool,
 }
 impl Watch {
     pub fn new(mut paths: Vec<PathBuf>) -> Self {
@@ -127,7 +162,32 @@ impl Watch {
             paths,
             next: Instant::now() + Duration::from_secs(3),
             pending: false,
+            failures: 0,
+            auto: false,
         }
+    }
+    /// After a successful reload: the stamp seen when the change was noticed
+    /// (`seen`) replaces the one taken after the files were read, path by
+    /// path, so a write that landed during the read is reloaded at the next
+    /// check instead of being taken as already loaded.
+    pub fn reloaded(&mut self, seen: &Stamp) {
+        for (path, value) in &mut self.stamp {
+            if let Some((_, before)) = seen.iter().find(|(seen, _)| seen == path) {
+                *value = *before;
+            }
+        }
+        self.failures = 0;
+    }
+    /// After a failed reload: true while the next check should try again.
+    /// The last stamp tried is forgotten so that the unchanged file still
+    /// counts as changed.
+    pub fn failed(&mut self) -> bool {
+        self.failures = self.failures.saturating_add(1);
+        if self.failures > RELOAD_RETRIES {
+            return false;
+        }
+        self.stamp.clear();
+        true
     }
 }
 fn prepare(
@@ -144,6 +204,7 @@ fn prepare(
         images: HashMap::new(),
         material: None,
         meshes: Vec::new(),
+        scene_size: None,
     };
     let mut textures = Vec::new();
     match source {
@@ -214,6 +275,26 @@ fn prepare(
                     skin,
                 });
             }
+            if scene::supported(draft) {
+                let (lods, size) = scene::assemble(draft, &models).map_err(|e| e.to_string())?;
+                let data = encode::local_asset(&lods).map_err(|e| e.to_string())?;
+                let header = aurora_assets::parse_mesh_header(&data).map_err(|e| e.to_string())?;
+                // Stable for this entry/revision, separate from every individual model.
+                let mut hash = Sha256::new();
+                hash.update(id.as_bytes());
+                hash.update(generation.to_le_bytes());
+                hash.update(b"local-scene");
+                let digest = hash.finalize();
+                let mut bytes = [0u8; 16];
+                bytes.copy_from_slice(&digest[..16]);
+                prepared.meshes.push(Mesh {
+                    id: Uuid::from_bytes(bytes),
+                    data: Arc::new(data),
+                    header,
+                    skin: None,
+                });
+                prepared.scene_size = Some(size);
+            }
         }
         _ => return Err(aurora_i18n::tr!("import-local-images-only").into()),
     }
@@ -260,6 +341,7 @@ impl Imports {
                         entry: entry_id,
                         model: draft.scene.instances.get(entry.local_model).map_or(0, |instance| instance.model),
                         use_scale,
+                        scene: entry.local_scene && scene::supported(draft),
                     },
                 );
                 return;
@@ -385,6 +467,7 @@ impl Imports {
         let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && e.local && !e.local_pending) else {
             return;
         };
+        entry.sync_image_size(self.load_preferences.limit_texture_size);
         let Some(source) = entry.source.clone() else {
             return;
         };
@@ -425,6 +508,7 @@ impl Imports {
             for id in entry.local_mesh_ids.drain(..) {
                 meshes.remove_local(&id);
             }
+            entry.local_scene_size = prepared.scene_size;
             for mesh in prepared.meshes {
                 entry.local_mesh_ids.push(mesh.id);
                 meshes.insert_local(mesh.id, mesh.data, mesh.header, mesh.skin);
@@ -450,7 +534,12 @@ impl Imports {
                 continue;
             }
             watch.pending = true;
-            watch.next = now + Duration::from_secs_f32(self.load_preferences.local_reload_seconds.clamp(0.1, 3600.0));
+            watch.next = now
+                + Duration::from_secs_f32(
+                    self.load_preferences
+                        .local_reload_seconds
+                        .clamp(if entry.source.is_none() { 5.0 } else { 0.1 }, 3600.0),
+                );
             let paths = watch.paths.clone();
             let id = entry.id;
             let tx = self.tx.clone();
@@ -772,6 +861,7 @@ mod tests {
         receive(&mut imports);
         assert!(imports.install_local_meshes(&mut streamer, &jobs));
         let original = imports.entries[0].local_mesh_ids[0];
+        let original_ids = imports.entries[0].local_mesh_ids.clone();
         assert!(streamer.meta(&original).is_some());
         assert!(imports.entries[0].local_published);
         assert!(!imports.entries[0].local_pending);
@@ -783,7 +873,7 @@ mod tests {
             !imports.install_local_meshes(&mut streamer, &jobs),
             "an obsolete result cannot replace the active mesh"
         );
-        assert_eq!(imports.entries[0].local_mesh_ids, [original]);
+        assert_eq!(imports.entries[0].local_mesh_ids, original_ids);
         assert!(
             !imports.entries[0].local_pending,
             "an obsolete result must not prevent a new request"
@@ -796,6 +886,10 @@ mod tests {
         assert_ne!(replacement, original);
         assert!(streamer.meta(&replacement).is_some());
         assert!(streamer.meta(&original).is_none(), "reloading retires the former local mesh");
+        assert!(
+            original_ids.iter().all(|id| streamer.meta(id).is_none()),
+            "retire the complete old assembly too"
+        );
         assert_eq!(imports.entries[0].local_generation, imports.entries[0].preview_generation);
         assert!(imports.local_uploads.is_empty());
     }

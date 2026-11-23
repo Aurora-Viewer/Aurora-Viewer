@@ -166,6 +166,12 @@ impl Catalog {
                     layout::Kind::Action(index)
                 }
             };
+            // Detach and Delete (ours, no Legacy menu has it) sits in the
+            // bottom icon bar, beside the lock (slot 6).
+            let (zone, slot) = match &entry.kind {
+                entries::Kind::Action(CtxAction::DetachDelete(_)) if parent.is_empty() => ("bottom", Some(6)),
+                _ => (zone, None),
+            };
             self.originals.insert(id.clone(), entry.clone());
             self.entries.push(layout::Entry {
                 id,
@@ -175,7 +181,7 @@ impl Catalog {
                 checked: entry.checked,
                 kind,
                 zone: zone.into(),
-                slot: None,
+                slot,
             });
         }
     }
@@ -269,6 +275,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::LookAtAvatar(..) => "LookAtAvatar",
         CtxAction::EditPbr(..) => "EditPbr",
         CtxAction::ObjectProfile(..) => "ObjectProfile",
+        CtxAction::FindInInventory(..) => "FindInInventory",
         CtxAction::SaveAs(_, crate::build::export::Format::Collada) => "SaveCollada",
         CtxAction::SaveAs(_, crate::build::export::Format::Obj) => "SaveObj",
         CtxAction::Pathfinding { characters: false, .. } => "RegionObjects",
@@ -282,6 +289,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::ForgetHudScale(..) => "ForgetHudScale",
         CtxAction::SetHudMoveLock(..) => "SetHudMoveLock",
         CtxAction::Detach(..) => "Detach",
+        CtxAction::DetachDelete(..) => "DetachDelete",
         CtxAction::AttachmentInventory(..) => "AttachmentInventory",
         CtxAction::EditAttachment(..) => "EditAttachment",
         CtxAction::TouchWorn(..) => "TouchWorn",
@@ -309,6 +317,7 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::AnswerTeleport { .. } => "AnswerTeleport",
         CtxAction::AnswerInventoryOffer { .. } => "AnswerInventoryOffer",
         CtxAction::Profile(..) => "Profile",
+        CtxAction::RosterProfile(..) => "RosterProfile",
         CtxAction::SetRender(..) => "SetRender",
         CtxAction::ResetSkeleton { .. } => "ResetSkeleton",
         CtxAction::StopAnimations => "StopAnimations",
@@ -388,11 +397,17 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::RequestTeleport(..) => "RequestTeleport",
         CtxAction::GroupChat(..) => "GroupChat",
         CtxAction::ActivateGroup(..) => "ActivateGroup",
+        CtxAction::JoinGroup(..) => "JoinGroup",
+        CtxAction::RequestGroupData(..) => "RequestGroupData",
         CtxAction::PinGroup(..) => "PinGroup",
         CtxAction::LeaveGroup(..) => "LeaveGroup",
         CtxAction::GroupChatBlocked(..) => "GroupChatBlocked",
         CtxAction::ContactSet(..) => "ContactSet",
         CtxAction::NewContactSet(..) => "NewContactSet",
+        CtxAction::MarkAvatars(..) => "MarkAvatars",
+        CtxAction::MarkCustom { .. } => "MarkCustom",
+        CtxAction::ClearMarks(..) => "ClearMarks",
+        CtxAction::ClearAllMarks => "ClearAllMarks",
     };
     match action {
         CtxAction::TakeOffClothing(kind) | CtxAction::DetachAt(kind) => format!("{base}:{kind}"),
@@ -513,6 +528,32 @@ mod tests {
                 .0
         };
         assert_eq!(sit_stand_id(false), sit_stand_id(true), "posture never moves a customized toggle");
+    }
+
+    #[test]
+    fn our_attachments_detach_and_delete_sits_in_the_bottom_icon_bar_beside_the_lock() {
+        let target = Target::Attachment {
+            key: crate::world::objects::ObjKey { region: 1, local_id: 3 },
+        };
+        let mut facts = Facts::default();
+        facts.object.detach = true;
+        facts.object.attachment_item = Some(Uuid::from_u128(5));
+        let catalog = Catalog::new(&entries::world_menu(&target, &facts, Vec3::ZERO));
+        let entry = catalog
+            .entries
+            .iter()
+            .find(|e| matches!(e.kind, layout::Kind::Action(i) if matches!(catalog.commands[i].kind, entries::Kind::Action(CtxAction::DetachDelete(_)))))
+            .expect("Detach and Delete");
+        assert_eq!(
+            (entry.zone.as_str(), entry.slot, entry.icon.as_str()),
+            ("bottom", Some(6), "trash-x-filled")
+        );
+        let layout = layout::Layout::default();
+        let resolved = layout.resolve(&catalog.entries);
+        let slots = layout.icon_slots("bottom", &resolved["bottom"]);
+        assert_eq!(slots[6].as_ref(), Some(&entry.id), "beside the lock");
+        assert_eq!(slots[7].as_deref(), Some(layout::LOCK));
+        assert!(resolved[layout::TEXT].iter().all(|e| e.id != entry.id), "not also a text row");
     }
 
     #[test]

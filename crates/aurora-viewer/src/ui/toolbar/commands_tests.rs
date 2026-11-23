@@ -1760,7 +1760,7 @@ fn drawer_icons_accept_drops_on_every_edge_open_or_closed_in_both_styles_and_edi
 fn drawer_icon_drops_accept_catalogue_commands_native_controls_and_independent_dividers() {
     for command in [
         "inventory",
-        "menu:common-build/import-menu",
+        "menu:common-build/ui-bars-save-to-object-contents",
         "bar_fps",
         "bar_chat",
         structure::DIVIDER,

@@ -136,6 +136,12 @@ fn contents_cmt_menu_selects_each_display_without_editing_or_sending_commands() 
     assert!(reset.right() < refresh.left());
     assert!((new_script.center().y - reset.center().y).abs() < 1.0);
     assert!((refresh.center().y - reset.center().y).abs() < 1.0);
+    // New notecard opens the second row, under New script (floater_tools.xml)
+    let notecard = text_rect("common-new-notecard");
+    let rights = text_rect("common-rights");
+    assert!(notecard.right() < rights.left());
+    assert!((notecard.center().y - rights.center().y).abs() < 1.0);
+    assert!(notecard.top() > new_script.bottom());
     for (choice, key, count) in [
         (Rights::Both, "inventory-rights-both", 2),
         (Rights::Next, "inventory-rights-next", 1),
@@ -298,7 +304,8 @@ fn contents_readonly_and_filtered_selection_do_not_fall_back_to_object_delete() 
     click(&mut inspector, 0, egui::Modifiers::NONE);
     key(&mut inspector, egui::Key::A, egui::Modifiers::CTRL);
     assert_eq!(inspector.tool.ui.contents_selection.items.len(), 4);
-    inspector.tool.ui.contents_filter = "Entry 003".into();
+    // The Contents panel uses the inventory search syntax, including unordered terms.
+    inspector.tool.ui.contents_filter = "003 + eNtRy".into();
     inspector.show(vec![]);
     assert_eq!(inspector.tool.ui.contents_selection.items.len(), 1);
     inspector.tool.props.get_mut(&object).unwrap().owner_mask &= !perm::MODIFY;

@@ -203,13 +203,13 @@ impl Drop for Github {
 }
 
 fn client() -> Result<reqwest::Client, Failure> {
-    reqwest::Client::builder()
+    aurora_proxy::http_client(|b| b
         .user_agent(aurora_version::user_agent())
         .https_only(true)
         .retry(reqwest::retry::never())
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(20))
-        .build()
+        )
         .map_err(|_| Failure::Network)
 }
 

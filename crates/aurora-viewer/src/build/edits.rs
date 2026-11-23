@@ -44,6 +44,8 @@ pub enum CapPurpose {
     GltfMaterials,
     /// RenderMaterials PUT (normal / specular maps).
     LegacyMaterials,
+    /// CreateTaskInventoryItem for the contents of this object.
+    CreateTaskItem(Uuid),
 }
 
 /// One extra parameter block, with its new value (`None`: not in use).
@@ -148,10 +150,12 @@ impl BuildTool {
     /// during a preview, which replaces its volume (VJLocalMeshObject).
     pub fn num_faces(&self, world: &World, idx: usize) -> usize {
         let Some(o) = world.objects.get(idx) else { return 1 };
-        if let Some(n) = self.face_counts.get(&o.full_id) {
+        let volume = o.visual_volume();
+        if let Some(n) = self.face_counts.get(&o.full_id)
+            && self.face_count_shapes.get(&o.full_id).is_none_or(|shape| *shape == volume)
+        {
             return (*n).clamp(1, aurora_prim::te::MAX_TES);
         }
-        let volume = o.visual_volume();
         if volume.is_mesh() {
             8
         } else if volume.is_sculpt() {
@@ -161,14 +165,38 @@ impl BuildTool {
         }
     }
 
+    /// Whether the face count of `idx` is known for its current shape.
+    pub fn face_count_known(&self, world: &World, idx: usize) -> bool {
+        world.objects.get(idx).is_some_and(|o| {
+            self.face_counts.contains_key(&o.full_id) && self.face_count_shapes.get(&o.full_id) == Some(&o.visual_volume())
+        })
+    }
+
+    /// Keeps `count` as the face count of `idx` for its current shape.
+    pub fn set_face_count(&mut self, world: &World, idx: usize, count: usize) {
+        let Some(o) = world.objects.get(idx) else { return };
+        self.face_counts.insert(o.full_id, count);
+        self.face_count_shapes.insert(o.full_id, o.visual_volume());
+    }
+
+    /// Forgets the face count of the prim `id`: counted again when needed.
+    pub fn forget_face_count(&mut self, id: &uuid::Uuid) {
+        self.face_counts.remove(id);
+        self.face_count_shapes.remove(id);
+    }
+
     /// Selected faces of a selected prim (all of them outside face mode).
+    /// A prim with no entry has all its faces selected; an empty entry keeps
+    /// it selected with none of them (the face buttons 0 to 8 on a prim
+    /// without that face, as LLSelectNode keeps a node whose TEs are all
+    /// unselected).
     pub fn sel_faces(&self, world: &World, idx: usize) -> Vec<u8> {
         let Some(o) = world.objects.get(idx) else {
             return Vec::new();
         };
         match self.faces.get(&o.key) {
-            Some(f) if !f.is_empty() => f.clone(),
-            _ => (0..self.num_faces(world, idx) as u8).collect(),
+            Some(f) => f.clone(),
+            None => (0..self.num_faces(world, idx) as u8).collect(),
         }
     }
 
@@ -181,6 +209,50 @@ impl BuildTool {
             }
         }
         out
+    }
+
+    /// "Select faces with this texture": every face of the selected
+    /// linksets whose `id_of` is `id`, in face selection. Port of
+    /// LLPanelFace::onClickBtnSelectSameTexture (indra/newview/llpanelface.cpp,
+    /// originally LGPL 2.1). A prim with no such face leaves the selection,
+    /// where the Legacy Viewer keeps it selected with no face: here an empty
+    /// face list means all faces. Nothing matches: the selection stays as it
+    /// is.
+    pub fn select_same_faces(
+        &mut self,
+        world: &World,
+        id: uuid::Uuid,
+        mut id_of: impl FnMut(&mut Self, &World, usize, u8) -> Option<uuid::Uuid>,
+    ) {
+        if self.replacement_active() {
+            return;
+        }
+        let mut roots: Vec<usize> = Vec::new();
+        for root in self.sel_prims(world).into_iter().map(|i| super::root_of(world, i)) {
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+        let mut found = Vec::new();
+        for idx in roots.into_iter().flat_map(|root| family(world, root)) {
+            let Some(unit) = Self::unit_of(world, idx, true) else { continue };
+            let n = self.num_faces(world, idx) as u8;
+            let faces: Vec<u8> = (0..n).filter(|&f| id_of(self, world, idx, f) == Some(id)).collect();
+            if !faces.is_empty() {
+                found.push((unit, faces));
+            }
+        }
+        if found.is_empty() {
+            return;
+        }
+        self.deselect_all(world);
+        self.faces.clear();
+        self.selection_linked = true;
+        // `add` puts each unit first: reversed, the first linkset's root stays primary
+        for (unit, faces) in found.into_iter().rev() {
+            self.add(world, unit);
+            self.faces.insert(unit, faces);
+        }
     }
 
     /// LLViewerObject::permModify (indra/newview/llviewerobject.cpp): the

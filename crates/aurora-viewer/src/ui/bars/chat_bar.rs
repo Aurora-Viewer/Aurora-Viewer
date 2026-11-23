@@ -156,7 +156,7 @@ mod tests {
         .expect("existing chat send path");
         assert_eq!(sent.message, "a draft with é");
         assert!(chat.input.is_empty());
-        chat.autohide = true;
+        chat.bar_mode = crate::settings::ChatBar::WhenTyping;
         chat.let_keyboard_go();
         for _ in 0..3 {
             frame(Bar::Right, vec![], false, &mut chat);

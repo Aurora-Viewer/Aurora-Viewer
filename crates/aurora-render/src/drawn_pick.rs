@@ -31,6 +31,7 @@
 //! direction of its texture coordinates (the binormal of a touch) when
 //! they lie on the same face.
 
+use crate::curvature::Curvature;
 use crate::pick::PickPixel;
 use glam::{Mat4, Vec2, Vec3};
 use std::sync::Arc;
@@ -90,6 +91,24 @@ pub enum DrawnMode {
 /// A request: its ticket, pixel and transparency rule.
 pub type DrawnRequest = (u64, u32, u32, DrawnMode);
 pub type DrawnAnswer = (u64, Drawn);
+
+/// The requests no frame has drawn for yet, oldest first. A frame without a
+/// swapchain image takes requests and draws for none (macOS gives no image
+/// to a hidden window), and the frames after it draw for one each: what is
+/// given up has to leave here too, or the hover's requests of a window
+/// hidden for minutes hold back the next clicks until they are all drawn
+/// for (#4513).
+#[derive(Default)]
+struct Waiting(Vec<DrawnRequest>);
+
+impl Waiting {
+    /// What a frame brings: the tickets given up since the frame before,
+    /// all of requests sent earlier, then its own requests.
+    fn update(&mut self, asked: Vec<DrawnRequest>, forgotten: &[u64]) {
+        self.0.retain(|(ticket, ..)| !forgotten.contains(ticket));
+        self.0.extend(asked);
+    }
+}
 
 /// The camera of a frame narrowed to the 2 × 2 pixels at (x, y): applied
 /// after its projection, in clip space.
@@ -182,7 +201,7 @@ pub struct DrawnPick {
     pub views: [wgpu::TextureView; 2],
     pub depth: wgpu::TextureView,
     slots: Vec<Slot>,
-    queue: Vec<DrawnRequest>,
+    waiting: Waiting,
     /// The slot whose copy this frame encoded: to map once submitted.
     encoded: Option<usize>,
     answers: Vec<DrawnAnswer>,
@@ -233,28 +252,29 @@ impl DrawnPick {
             views,
             depth,
             slots,
-            queue: Vec::new(),
+            waiting: Waiting::default(),
             encoded: None,
             answers: Vec::new(),
         }
     }
 
-    /// The requests of a frame join those still waiting.
-    pub fn ask(&mut self, asked: Vec<DrawnRequest>) {
-        self.queue.extend(asked);
+    /// The requests of a frame join those still waiting, less those given
+    /// up since the frame before.
+    pub fn ask(&mut self, asked: Vec<DrawnRequest>, forgotten: &[u64]) {
+        self.waiting.update(asked, forgotten);
     }
 
     /// The request this frame draws for, if any and if a readback is free:
     /// its pixel. One a frame; the others wait for the next.
-    pub fn begin(&mut self, size: (u32, u32), inv_view_proj: Mat4) -> Option<(u32, u32, DrawnMode)> {
-        while let Some(&(ticket, x, y, mode)) = self.queue.first() {
+    pub fn begin(&mut self, size: (u32, u32), inv_view_proj: Mat4, curvature: Curvature) -> Option<(u32, u32, DrawnMode)> {
+        while let Some(&(ticket, x, y, mode)) = self.waiting.0.first() {
             if x >= size.0 || y >= size.1 {
-                self.queue.remove(0);
+                self.waiting.0.remove(0);
                 self.answers.push((ticket, Drawn::default()));
                 continue;
             }
             let i = self.slots.iter().position(|s| s.pending.is_none())?;
-            self.queue.remove(0);
+            self.waiting.0.remove(0);
             self.slots[i].pending = Some((
                 ticket,
                 PickPixel {
@@ -263,6 +283,7 @@ impl DrawnPick {
                     width: size.0,
                     height: size.1,
                     inv_view_proj,
+                    curvature,
                 },
             ));
             self.encoded = Some(i);
@@ -361,6 +382,31 @@ impl DrawnPick {
 mod tests {
     use super::*;
 
+    /// A hidden window: every frame takes requests and draws for none, the
+    /// hover gives its own up and asks again (#4513).
+    #[test]
+    fn requests_given_up_while_nothing_is_drawn_do_not_hold_back_a_click() {
+        let mut waiting = Waiting::default();
+        let mut given_up = Vec::new();
+        for ticket in 0..600 {
+            waiting.update(vec![(ticket, 10, 10, DrawnMode::Left)], &std::mem::take(&mut given_up));
+            given_up.push(ticket);
+        }
+        let click = (600, 20, 20, DrawnMode::Interaction);
+        waiting.update(vec![click], &given_up);
+        assert_eq!(waiting.0, vec![click]);
+    }
+
+    #[test]
+    fn requests_still_wanted_keep_their_turn() {
+        let request = |ticket| (ticket, 1, 2, DrawnMode::Left);
+        let mut waiting = Waiting::default();
+        waiting.update(vec![request(1), request(2), request(3)], &[]);
+        // (9: answered, or drawn for, before it was given up)
+        waiting.update(vec![request(4)], &[2, 9]);
+        assert_eq!(waiting.0, vec![request(1), request(3), request(4)]);
+    }
+
     fn camera() -> (Mat4, Mat4) {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 800.0 / 600.0, 0.1);
         let view = glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, -5.0, 1.5), Vec3::new(0.0, 0.0, 1.0), Vec3::Z);
@@ -389,6 +435,7 @@ mod tests {
                     width: w,
                     height: h,
                     inv_view_proj: vp.inverse(),
+                    curvature: Curvature::FLAT,
                 };
                 let p = px.world(0.02).expect("a point in front of the camera");
                 let screen = pixel(vp * p.extend(1.0), w as f32, h as f32);
@@ -439,6 +486,7 @@ mod tests {
             width: 800,
             height: 600,
             inv_view_proj: vp.inverse(),
+            curvature: Curvature::FLAT,
         };
         // a wall facing the camera (-y), textured with s along x, t along z
         let bytes = target(41, px, vp, 2.0, |p| Vec2::new(p.x * 0.5, p.z * 0.25));

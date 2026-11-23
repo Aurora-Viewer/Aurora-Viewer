@@ -14,6 +14,8 @@ use crate::theme::Palette;
 use crate::ui::context::{self, CtxAction};
 use crate::ui::place_details::Ctx;
 use crate::ui::widgets::{self, ActionKind};
+use crate::world::names::NameScope;
+use aurora_i18n::UiUpper;
 use aurora_net::groups::{BuiltinRole, GroupMember, LastSeen, RoleChange, powers};
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 use uuid::Uuid;
@@ -209,7 +211,7 @@ fn avatar(owner: &mut GroupProfileUi, ui: &egui::Ui, c: &Ctx, env: &Env, rect: R
     }
     widgets::avatar_disc(ui, c.p, rect, pic, name, false);
     // what the scene or the friend list says, else what the group says
-    let status = match crate::ui::presence::of(c.world, &id) {
+    let status = match crate::ui::presence::of_in(c.world, NameScope::Roster, &id) {
         crate::ui::presence::Status::Unknown | crate::ui::presence::Status::Offline if online => crate::ui::presence::Status::Online,
         crate::ui::presence::Status::Unknown => crate::ui::presence::Status::Offline,
         s => s,
@@ -279,7 +281,7 @@ fn confirm_dialog(st: &mut GroupProfileUi, ctx: &egui::Context, c: &Ctx, v: &Vie
         return;
     };
     let p = c.p;
-    let name = |ids: &[Uuid]| c.world.social.name_of(&ids[0]);
+    let name = |ids: &[Uuid]| c.world.social.name_in(NameScope::Roster, &ids[0]);
     let (text, ok, icon) = match &confirm {
         Confirm::Eject(ids) if ids.len() == 1 => (
             aurora_i18n::tr!("ui-group-admin-eject-one", name = name(ids)),
@@ -369,7 +371,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         );
         ui.add_space(4.0);
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         if !compact {
             // room for the pills, Invite and Export
@@ -445,7 +447,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
     }
     if export && let Some(d) = v.data {
         let world = c.world;
-        let csv = admin_members::export_csv(&v.name, d, &|id| world.social.name_of(id));
+        let csv = admin_members::export_csv(&v.name, d, &|id| world.social.name_in(NameScope::Roster, id));
         let file = format!(
             "{}_members.csv",
             v.name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
@@ -483,7 +485,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         let world = c.world;
         st.members.rows = rows(
             v,
-            &|id| world.social.display_name_of(id),
+            &|id| world.social.display_name_in(NameScope::Roster, id),
             &st.members.filter,
             st.members.show,
             st.members.sort,
@@ -492,8 +494,11 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         // the names still unknown are asked (all of them: the filter and
         // the order need them)
         if let Some(d) = d {
-            c.want_names
-                .extend(d.members.keys().filter(|id| world.social.display_name_of(id) == "…"));
+            c.want_names.extend(
+                d.members
+                    .keys()
+                    .filter(|id| world.social.display_name_in(NameScope::Roster, id) == "…"),
+            );
         }
         st.members.made = Some(key);
         st.members.made_at = env.now;
@@ -544,7 +549,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         let mut format =
             crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), 10.5, if on { p.muted } else { p.muted_dim });
         format.extra_letter_spacing = 0.4;
-        job.append(&label.to_uppercase(), 0.0, format);
+        job.append(&label.ui_upper(), 0.0, format);
         let galley = ui.painter().layout_job(job);
         const CARET: f32 = 9.0;
         let caret_w = if on { widgets::caret_room(CARET) } else { 0.0 };
@@ -580,9 +585,10 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         ui.label(egui::RichText::new(aurora_i18n::tr!("common-loading-2")).size(12.5).color(p.muted));
         return;
     };
-    // compact: the count's own line above the buttons
-    let footer_h = if compact { 64.0 } else { 44.0 };
-    let list_h = (ui.available_height() - footer_h).max(ROW_H * 2.0);
+    // Larger fonts can wrap the actions. Reserve their measured height,
+    // keeping the list and its buttons inside their own column.
+    let (mut list_ui, footer) = widgets::above_footer(ui);
+    let list_h = list_ui.available_height();
     let today = today();
     let count = st.members.rows.len();
     let mut open_profile = None;
@@ -592,8 +598,16 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         .id_salt("group_members_rows")
         .max_height(list_h)
         .auto_shrink([false, false])
-        .show_rows(ui, ROW_H, count, |ui, range| {
+        .show_rows(&mut list_ui, ROW_H, count, |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
+            if count == 0 {
+                let text = if d.members_complete {
+                    aurora_i18n::tr!("ui-group-profile-no-member-found")
+                } else {
+                    aurora_i18n::tr!("common-loading-2")
+                };
+                ui.label(egui::RichText::new(text).size(12.5).color(p.muted));
+            }
             for i in range {
                 let (id, name) = st.members.rows[i].clone();
                 let Some(m) = d.members.get(&id) else { continue };
@@ -645,7 +659,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
                     open_profile = Some(id);
                 }
                 crate::ui::menu::context_menu(&resp, p, |ui| {
-                    context::avatar_list_menu(ui, p, c.world, id, context::AvatarList::Name);
+                    context::avatar_roster_menu(ui, p, c.world, id, context::AvatarList::Name);
                 });
                 let mut x = row.left() + tick_w;
                 let mut col = 0;
@@ -720,43 +734,30 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
                 }
             }
         });
-    if count == 0 {
-        let text = if d.members_complete {
-            aurora_i18n::tr!("ui-group-profile-no-member-found")
-        } else {
-            aurora_i18n::tr!("common-loading-2")
-        };
-        ui.label(egui::RichText::new(text).size(12.5).color(p.muted));
-    }
     if let Some(id) = open_profile {
-        context::request(ui.ctx(), CtxAction::Profile(id));
+        context::request(ui.ctx(), CtxAction::RosterProfile(id));
     }
 
     // the selection's buttons
-    ui.add_space(6.0);
-    st.members.checked.retain(|id| d.members.contains_key(id));
-    let targets: Vec<Uuid> = st.members.targets().into_iter().filter(|id| d.members.contains_key(id)).collect();
-    let (can_eject, can_ban) = admin_members::eject_and_ban(d, &me(c, v), &targets);
-    let selected = (targets.len() == 1).then(|| targets[0]);
-    let text = if !targets.is_empty() {
-        aurora_i18n::tr!("ui-group-admin-selected", count = targets.len() as i64)
-    } else {
-        aurora_i18n::tr!(
-            "ui-group-profile-shown",
-            count = count as i64,
-            shown = aurora_i18n::integer(count as i64)
-        )
-    };
-    // compact: the count on its own line, the buttons under it
-    if compact {
-        ui.label(egui::RichText::new(text.as_str()).size(12.0).color(p.muted));
-    }
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 5.0;
-        if !compact {
-            ui.label(egui::RichText::new(text).size(12.0).color(p.muted));
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    footer.show(ui, |ui| {
+        ui.add_space(6.0);
+        st.members.checked.retain(|id| d.members.contains_key(id));
+        let targets: Vec<Uuid> = st.members.targets().into_iter().filter(|id| d.members.contains_key(id)).collect();
+        let (can_eject, can_ban) = admin_members::eject_and_ban(d, &me(c, v), &targets);
+        let selected = (targets.len() == 1).then(|| targets[0]);
+        let text = if !targets.is_empty() {
+            aurora_i18n::tr!("ui-group-admin-selected", count = targets.len() as i64)
+        } else {
+            aurora_i18n::tr!(
+                "ui-group-profile-shown",
+                count = count as i64,
+                shown = aurora_i18n::integer(count as i64)
+            )
+        };
+        // The count stays readable above the actions, even when they wrap.
+        ui.label(egui::RichText::new(text).size(12.0).color(p.muted));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true), |ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
             let size = Vec2::new(0.0, 28.0);
             // Eject / Ban with the abilities (handleMemberSelect's rules)
             if v.can(powers::GROUP_BAN_ACCESS)
@@ -804,7 +805,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
             .clicked()
                 && let Some(id) = selected
             {
-                context::request(ui.ctx(), CtxAction::Profile(id));
+                context::request(ui.ctx(), CtxAction::RosterProfile(id));
             }
             if hint(
                 widgets::action_button_if(
@@ -844,7 +845,10 @@ fn roles_card(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View,
     }
     let selected = targets.first().copied();
     let title = match selected {
-        Some(id) => aurora_i18n::tr!("ui-group-profile-roles-of", name = c.world.social.display_name_of(&id)),
+        Some(id) => aurora_i18n::tr!(
+            "ui-group-profile-roles-of",
+            name = c.world.social.display_name_in(NameScope::Roster, &id)
+        ),
         None => aurora_i18n::tr!("ui-group-profile-roles").to_owned(),
     };
     if selected.is_some() {
@@ -1077,13 +1081,17 @@ pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: 
     let world = c.world;
     let rows = rows(
         v,
-        &|id| world.social.display_name_of(id),
+        &|id| world.social.display_name_in(NameScope::Roster, id),
         &st.members.filter,
         Show::All,
         Sort::Status,
         false,
     );
-    for id in rows.iter().map(|(id, _)| id).filter(|id| world.social.display_name_of(id) == "…") {
+    for id in rows
+        .iter()
+        .map(|(id, _)| id)
+        .filter(|id| world.social.display_name_in(NameScope::Roster, id) == "…")
+    {
         c.want_names.insert(*id);
     }
     let today = today();
@@ -1101,7 +1109,7 @@ pub fn classic_list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: 
                     ui.painter().rect_filled(row, 0.0, p.raised.gamma_multiply(0.35));
                 }
                 if resp.double_clicked() {
-                    context::request(ui.ctx(), CtxAction::Profile(*id));
+                    context::request(ui.ctx(), CtxAction::RosterProfile(*id));
                 }
                 let third = row.width() / 3.0;
                 widgets::paint_elided(

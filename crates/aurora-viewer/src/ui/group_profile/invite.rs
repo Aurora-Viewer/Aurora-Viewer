@@ -14,6 +14,7 @@ use crate::ui::avatar_picker::AvatarPicker;
 use crate::ui::place_details::Ctx;
 use crate::ui::widgets::{self, ActionKind, Floater};
 use crate::world::World;
+use crate::world::names::NameScope;
 use aurora_net::groups::{self, MAX_GROUP_INVITES};
 use egui::{FontId, Pos2, Rect, Sense, Vec2};
 use std::collections::HashMap;
@@ -360,7 +361,7 @@ impl InviteUi {
                         }
                         let mut remove = None;
                         for id in &self.invitees {
-                            let name = c.world.social.display_name_of(id);
+                            let name = c.world.social.display_name_in(NameScope::Roster, id);
                             if name == "…" {
                                 c.want_names.insert(*id);
                             }

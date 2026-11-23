@@ -268,6 +268,7 @@ fn studio_timeline_key_hover_and_drag_move_the_key_under_the_pointer() {
         },
         ..Default::default()
     };
+    editor.clip_seek(20);
     let palette = crate::theme::Theme::default().palette();
     let mut frames = Frames::new();
     let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
@@ -321,6 +322,92 @@ fn studio_timeline_key_hover_and_drag_move_the_key_under_the_pointer() {
     let document = editor.clip.document.as_ref().unwrap();
     assert_eq!(document.frames(Some(head)), vec![15, 30]);
     assert_eq!(editor.clip.drag_key, None);
+    // the playhead's line stays put instead of following the key over the lane
+    assert_eq!(editor.clip.frame, 20);
+}
+
+/// The playhead's frames while the pointer drags along the frame ruler,
+/// from a tenth to nine tenths of the lanes' width.
+pub(super) fn ruler_drag_frames(editor: &mut Editor, world: &World) -> Vec<u32> {
+    use crate::ui::widgets::elide_tests::Frames;
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let (baseline, y) = {
+        let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, world);
+        frames.run(Vec::new(), &mut draw);
+        let shapes = frames.shapes(Vec::new(), &mut draw);
+        let baseline = shapes
+            .iter()
+            .filter_map(|shape| {
+                let egui::Shape::LineSegment { points, .. } = shape else {
+                    return None;
+                };
+                ((points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0).then_some(*points)
+            })
+            .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+            .expect("lane baseline");
+        // the ruler's middle: its visible range ("0–30") is written there
+        let y = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::Shape::Text(text) if text.galley.text().contains('\u{2013}') => Some(text.visual_bounding_rect().center().y),
+                _ => None,
+            })
+            .expect("the ruler's range label");
+        (baseline, y)
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let at = |t: f32| egui::pos2(baseline[0].x + (baseline[1].x - baseline[0].x) * t, y);
+    let mut reached = Vec::new();
+    {
+        let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, world);
+        frames.run(vec![egui::Event::PointerMoved(at(0.1)), button(at(0.1), true)], &mut draw);
+    }
+    for step in 2..=9 {
+        {
+            let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, world);
+            frames.run(vec![egui::Event::PointerMoved(at(step as f32 / 10.0))], &mut draw);
+        }
+        reached.push(editor.clip.frame);
+    }
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, world);
+    frames.run(vec![button(at(0.9), false)], &mut draw);
+    reached
+}
+
+#[test]
+fn dragging_the_ruler_stops_on_every_frame_between_keys() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    let mut rotations = rig.local_rot.clone();
+    for key in [0, 30] {
+        rotations[head] = Quat::from_rotation_z(key as f32 * 0.01) * rig.local_rot[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), key, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let reached = ruler_drag_frames(&mut editor, &world);
+    assert!(reached.windows(2).all(|w| w[0] < w[1]), "{reached:?}");
+    assert!(reached.iter().any(|f| *f != 0 && *f != 30), "{reached:?}");
 }
 
 #[test]
@@ -502,6 +589,14 @@ fn animation_timeline_shortcuts_match_the_documented_commands() {
     );
     assert_eq!(timeline::timeline_shortcut(egui::Key::ArrowRight, none), Some(Shortcut::NextFrame));
     assert_eq!(timeline::timeline_shortcut(egui::Key::K, none), Some(Shortcut::KeyBone));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::A, ctrl), Some(Shortcut::SelectAllKeys));
+    assert_eq!(
+        timeline::timeline_shortcut(egui::Key::Escape, none),
+        Some(Shortcut::ClearKeySelection)
+    );
+    assert_eq!(timeline::timeline_shortcut(egui::Key::R, none), Some(Shortcut::ToggleTool));
+    assert_eq!(timeline::timeline_shortcut(egui::Key::R, ctrl), None);
+    assert_eq!(timeline::timeline_shortcut(egui::Key::A, none), None);
     assert_eq!(timeline::timeline_shortcut(egui::Key::Z, ctrl_alt), None);
     assert_eq!(timeline::timeline_shortcut(egui::Key::V, none), None);
     assert_eq!(timeline::timeline_shortcut(egui::Key::K, ctrl), None);
@@ -663,12 +758,31 @@ fn ruler_and_lanes_share_one_frame_scale() {
 
     let keys = [0, 10, 20, 30];
     assert_eq!(timeline::key_under(&keys, &scale, 108.0), Some(0));
-    assert_eq!(timeline::key_under(&keys, &scale, 215.0), Some(10));
-    assert_eq!(timeline::key_under(&keys, &scale, 216.0), None, "beyond the grab distance");
+    assert_eq!(timeline::key_under(&keys, &scale, 212.0), Some(10));
+    assert_eq!(
+        timeline::key_under(&keys, &scale, 213.0),
+        None,
+        "beyond half a frame past the diamond"
+    );
     assert_eq!(timeline::key_under(&keys, &scale, 157.0), None);
     let zoomed = timeline::FrameScale::new(lane, 10, 20);
     assert_eq!(timeline::key_under(&keys, &zoomed, 100.0), Some(10), "only the visible keys");
     assert_eq!(timeline::key_under(&[0, 30], &zoomed, 107.0), None);
+    assert_eq!(
+        timeline::key_under(&keys, &zoomed, 115.0),
+        Some(10),
+        "the full reach when zoomed in"
+    );
+    // keys a few frames apart, zoomed out: a click between two keys is the
+    // frame under it, not the nearest key
+    let packed = timeline::FrameScale::new(lane, 0, 120);
+    assert_eq!(packed.points_per_frame(), 2.5);
+    assert_eq!(timeline::key_under(&[0, 4, 8], &packed, 112.0), None, "frame 2");
+    assert_eq!(timeline::key_under(&[0, 4, 8], &packed, 111.0), Some(0), "on the diamond");
+    // the playhead line takes a press before a key under it
+    assert!(timeline::on_playhead(&scale, 10.0, 211.0));
+    assert!(timeline::on_playhead(&scale, 12.5, 228.0), "between frames while playing");
+    assert!(!timeline::on_playhead(&scale, 10.0, 213.0));
 }
 
 #[test]
@@ -788,7 +902,7 @@ fn releasing_a_key_drag_commits_the_frame_it_reached() {
     assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![15, 30]);
     assert_eq!(editor.clip.drag_key, None);
     assert_eq!(editor.clip.undo.len(), 1);
-    assert_eq!(editor.clip.frame, 15);
+    assert_eq!(editor.clip.frame, 0, "moving a key leaves the playhead where it was");
 }
 
 #[test]
@@ -957,7 +1071,8 @@ fn leaving_the_clip_editor_discards_pending_auto_key_work() {
 fn animation_editor_disables_pose_only_scale_mode_and_restores_it_on_exit() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
-    let world = World::new(lib.clone());
+    let mut world = World::new(lib.clone());
+    based(&mut world, &rig.local_rot, &rig.local_pos);
     let frame = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
     let mut editor = Editor::default();
     editor.toggle();
@@ -2421,6 +2536,17 @@ fn walking_cycle_round_trips_pelvis_bob_and_opposing_hip_swings() {
     assert!(right_track.rot_keys[1].rotation.dot(rotations[right_hip]).abs() < 0.999);
 }
 
+/// The edit session's base the scene hands over (`World::ik_edit_base`):
+/// the pose `frame` shows under the editor.
+fn based(world: &mut World, rot: &[Quat], positions: &[Vec3]) {
+    world.ik_edit_base = Some(Arc::new(ik::EditBase {
+        pose: ik::LocalPose {
+            rotations: rot.to_vec(),
+            positions: positions.to_vec(),
+        },
+        rest: world.avatar_lib.rig.local_pos.clone(),
+    }));
+}
 fn frame(lib: &AvatarLibrary, rot: &[Quat], positions: &[Vec3], scale: &[Vec3]) -> Frame {
     let model = Mat4::from_rotation_translation(Quat::from_euler(EulerRot::ZYX, 0.4, -0.2, 0.1), Vec3::new(132.0, 126.0, 40.0));
     Frame {
@@ -2605,7 +2731,8 @@ fn keying_a_manually_rotated_bone_keeps_the_pose_after_preview_rebuilds() {
 fn recorded_ik_chains_release_only_their_pose_goals_after_the_new_sample_and_leaving_restores_contacts() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
-    let world = World::new(lib.clone());
+    let mut world = World::new(lib.clone());
+    based(&mut world, &rig.local_rot, &rig.local_pos);
     let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
     let mut editor = Editor::default();
     editor.toggle();
@@ -2690,7 +2817,8 @@ fn recorded_ik_chains_release_only_their_pose_goals_after_the_new_sample_and_lea
 fn current_ik_pose_can_be_added_to_an_existing_draft_and_new_drafts_preserve_previous_keys() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
-    let world = World::new(lib.clone());
+    let mut world = World::new(lib.clone());
+    based(&mut world, &rig.local_rot, &rig.local_pos);
     let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
     let mut editor = Editor::default();
     editor.toggle();
@@ -2722,13 +2850,15 @@ fn current_ik_pose_can_be_added_to_an_existing_draft_and_new_drafts_preserve_pre
 fn creation_records_the_rest_skeleton_never_the_animation_playing_on_the_avatar() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
-    let world = World::new(lib.clone());
+    let mut world = World::new(lib.clone());
     let elbow = rig.names["mElbowLeft"];
     let mut rotations = rig.local_rot.clone();
     rotations[elbow] = Quat::from_euler(EulerRot::ZYX, 0.9, -0.4, 0.7);
     let mut positions = rig.local_pos.clone();
     positions[rig.pelvis] += Vec3::new(0.1, -0.2, 0.3);
     let playing = frame(&lib, &rotations, &positions, &rig.scale);
+    // the scene freezes that animation as the edit session's base
+    based(&mut world, &rotations, &positions);
     let at_rest = |editor: &Editor, time: f32| {
         let document = editor.clip.document.as_ref().unwrap();
         let track = document.tracks.iter().find(|t| t.bone == elbow).unwrap();
@@ -2774,7 +2904,8 @@ fn creation_records_the_rest_skeleton_never_the_animation_playing_on_the_avatar(
 fn creation_bakes_the_contacts_the_user_set_on_the_rest_skeleton() {
     let lib = Arc::new(AvatarLibrary::load());
     let rig = lib.rig.clone();
-    let world = World::new(lib.clone());
+    let mut world = World::new(lib.clone());
+    based(&mut world, &rig.local_rot, &rig.local_pos);
     let wrist = rig.names["mWristLeft"];
     let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
     let mut editor = Editor::default();
@@ -2880,7 +3011,6 @@ fn resetting_the_animation_keeps_the_rest_pose_out_of_the_export() {
     editor.clip.playing = true;
     editor.clip.modified.insert(rig.names["mElbowLeft"]);
     editor.goals.push(Goal {
-        follow: None,
         weight: 1.0,
         bone: rig.names["mElbowLeft"],
         root: rig.names["mElbowLeft"],
@@ -2965,7 +3095,7 @@ fn opening_a_file_with_every_draft_in_use_keeps_the_current_document() {
     state.tick(&jobs, &context, lib.rig.clone(), lib.skeleton.as_ref());
     assert_eq!(state.document.as_ref().unwrap().name, "Opened");
     assert_eq!(state.history.len(), MAX_DRAFTS);
-    assert!(Arc::ptr_eq(state.history.last().unwrap(), &current));
+    assert!(Arc::ptr_eq(&state.history[0], &current), "the document left keeps its place");
     assert!(state.error.is_none());
 
     // and the buttons refuse before the file dialog opens
@@ -3353,4 +3483,932 @@ fn studio_hover_height_stays_out_of_the_frame_the_editors_read() {
     document.record(rig, &hovering, 10, &[pelvis], &[pelvis]).unwrap();
     let keys = &document.tracks[0].motion.pos_keys;
     assert!(keys.iter().all(|key| key.position.abs_diff_eq(Vec3::ZERO, 1e-4)), "{keys:?}");
+}
+
+#[test]
+fn a_click_picks_one_key_ctrl_toggles_and_shift_adds() {
+    let mut picked = BTreeSet::new();
+    let none = egui::Modifiers::NONE;
+    let ctrl = egui::Modifiers {
+        ctrl: true,
+        ..Default::default()
+    };
+    let shift = egui::Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    timeline::pick_key(&mut picked, (1, 10), none, false);
+    timeline::pick_key(&mut picked, (2, 20), shift, false);
+    timeline::pick_key(&mut picked, (3, 30), ctrl, false);
+    assert_eq!(picked, BTreeSet::from([(1, 10), (2, 20), (3, 30)]));
+    timeline::pick_key(&mut picked, (2, 20), ctrl, false);
+    assert_eq!(picked, BTreeSet::from([(1, 10), (3, 30)]), "Ctrl+click takes a picked key out");
+    // grabbing a picked key keeps the others, to drag them along
+    timeline::pick_key(&mut picked, (3, 30), none, true);
+    assert_eq!(picked, BTreeSet::from([(1, 10), (3, 30)]));
+    // grabbing another key, or a plain click, picks it alone
+    timeline::pick_key(&mut picked, (4, 40), none, true);
+    assert_eq!(picked, BTreeSet::from([(4, 40)]));
+    timeline::pick_key(&mut picked, (4, 50), shift, false);
+    timeline::pick_key(&mut picked, (4, 40), none, false);
+    assert_eq!(picked, BTreeSet::from([(4, 40)]));
+}
+
+#[test]
+fn a_box_over_the_lanes_takes_the_keys_it_touches() {
+    let lane = egui::Rect::from_min_size(egui::pos2(100.0, 50.0), egui::vec2(314.0, 22.0));
+    // frames 0..=30, ten points apart past the lane's padding
+    let scale = timeline::FrameScale::new(lane, 0, 30);
+    let x = |frame: f64| scale.x(frame);
+    let keys = [0, 10, 12, 20, 30];
+    let area = egui::Rect::from_min_max(egui::pos2(x(9.0), 0.0), egui::pos2(x(13.0), 60.0));
+    assert_eq!(timeline::keys_in_box(&keys, &scale, lane, area), vec![10, 12]);
+    let touching = egui::Rect::from_min_max(egui::pos2(x(20.0) + 4.0, 55.0), egui::pos2(x(25.0), 56.0));
+    assert_eq!(
+        timeline::keys_in_box(&keys, &scale, lane, touching),
+        vec![20],
+        "a diamond the box touches"
+    );
+    let above = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 40.0));
+    assert!(
+        timeline::keys_in_box(&keys, &scale, lane, above).is_empty(),
+        "a lane the box misses"
+    );
+}
+
+#[test]
+fn dragging_one_of_several_picked_keys_moves_them_all() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for (at, angle) in [(0, 0.0), (10, 0.2), (30, 0.4)] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(angle) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            selected_keys: BTreeSet::from([(head, 0), (head, 10)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+    frames.run(Vec::new(), &mut draw);
+    let shapes = frames.shapes(Vec::new(), &mut draw);
+    let baseline = shapes
+        .iter()
+        .filter_map(|shape| {
+            let egui::Shape::LineSegment { points, .. } = shape else {
+                return None;
+            };
+            ((points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0).then_some(*points)
+        })
+        .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+        .expect("timeline track baseline");
+    let at = |frame: f32| egui::pos2(baseline[0].x + (baseline[1].x - baseline[0].x) * frame / 30.0, baseline[0].y);
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    frames.run(vec![egui::Event::PointerMoved(at(10.0)), button(at(10.0), true)], &mut draw);
+    frames.run(vec![egui::Event::PointerMoved(at(10.0) + egui::vec2(7.0, 0.0))], &mut draw);
+    frames.run(vec![egui::Event::PointerMoved(at(15.0))], &mut draw);
+    frames.run(vec![button(at(15.0), false)], &mut draw);
+    frames.run(Vec::new(), &mut draw);
+
+    let document = editor.clip.document.as_ref().unwrap();
+    assert_eq!(document.frames(Some(head)), vec![5, 15, 30], "both picked keys moved five frames");
+    assert_eq!(
+        editor.clip.selected_keys,
+        BTreeSet::from([(head, 5), (head, 15)]),
+        "and stay picked"
+    );
+    assert_eq!(editor.clip.undo.len(), 1, "one step of the undo history");
+}
+
+#[test]
+fn a_group_drag_that_cannot_move_leaves_undo_and_redo_alone() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for at in [0, 10, 30] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let document = Arc::new(document);
+    let mut editor = Editor {
+        open: true,
+        clip: State {
+            active: true,
+            document: Some(document.clone()),
+            redo: vec![document.clone()],
+            // the group holds a key at frame 0, dragged five frames left
+            selected_keys: BTreeSet::from([(head, 0), (head, 10)]),
+            drag_key: Some((head, 10, 5)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    editor.finish_timeline_key_drag(false);
+    assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![0, 10, 30]);
+    assert!(editor.clip.undo.is_empty(), "nothing moved, nothing to undo");
+    assert_eq!(editor.clip.redo.len(), 1, "the redo history is kept");
+    assert_eq!(editor.clip.drag_key, None);
+}
+
+#[test]
+fn delete_removes_every_picked_key_in_one_undo_step() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for at in [0, 10, 20, 30] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            selected_keys: BTreeSet::from([(head, 10), (head, 20)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::Delete, egui::Modifiers::NONE));
+    assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![0, 30]);
+    assert!(editor.clip.selected_keys.is_empty());
+    assert_eq!(editor.clip.undo.len(), 1);
+    // with nothing picked and no bone selected, Delete is left to the viewer
+    assert!(!editor.handle_timeline_shortcut(&ctx, egui::Key::Delete, egui::Modifiers::NONE));
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::A, egui::Modifiers::COMMAND));
+    assert_eq!(editor.clip.selected_keys, BTreeSet::from([(head, 0), (head, 30)]));
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::Escape, egui::Modifiers::NONE));
+    assert!(editor.clip.selected_keys.is_empty());
+    assert!(!editor.handle_timeline_shortcut(&ctx, egui::Key::Escape, egui::Modifiers::NONE));
+}
+
+#[test]
+fn shift_and_a_drag_from_a_key_boxes_keys_instead_of_moving_it() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for at in [0, 10, 20, 30] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+    frames.run(Vec::new(), &mut draw);
+    let baseline = frames
+        .shapes(Vec::new(), &mut draw)
+        .into_iter()
+        .filter_map(|shape| {
+            let egui::Shape::LineSegment { points, .. } = shape else {
+                return None;
+            };
+            ((points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0).then_some(points)
+        })
+        .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+        .expect("timeline track baseline");
+    let at = |frame: f32| egui::pos2(baseline[0].x + (baseline[1].x - baseline[0].x) * frame / 30.0, baseline[0].y);
+    let shift = egui::Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: shift,
+    };
+    let end = at(21.0) + egui::vec2(0.0, 8.0);
+    // pressed right on the key of frame 10, then dragged past frame 20
+    frames.run(
+        vec![
+            egui::Event::ModifiersChanged(shift),
+            egui::Event::PointerMoved(at(10.0)),
+            button(at(10.0), true),
+        ],
+        &mut draw,
+    );
+    frames.run(vec![egui::Event::PointerMoved(at(14.0) + egui::vec2(0.0, 6.0))], &mut draw);
+    frames.run(vec![egui::Event::PointerMoved(end)], &mut draw);
+    frames.run(vec![button(end, false)], &mut draw);
+    frames.run(vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)], &mut draw);
+
+    assert_eq!(editor.clip.selected_keys, BTreeSet::from([(head, 10), (head, 20)]));
+    assert!(editor.clip.key_box.is_none());
+    let document = editor.clip.document.as_ref().unwrap();
+    assert_eq!(document.frames(Some(head)), vec![0, 10, 20, 30], "no key moved");
+    assert!(editor.clip.undo.is_empty());
+}
+
+#[test]
+fn ctrl_c_with_several_picked_keys_copies_them_and_ctrl_v_pastes_them_at_the_playhead() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 60);
+    for at in [0, 10, 20] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            selected_keys: BTreeSet::from([(head, 10), (head, 20)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::C, egui::Modifiers::COMMAND));
+    assert!(editor.clip.clipboard.is_empty(), "the keys, not the pose");
+    editor.clip.frame = 40;
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::V, egui::Modifiers::COMMAND));
+    assert_eq!(editor.clip.document.as_ref().unwrap().frames(Some(head)), vec![0, 10, 20, 40, 50]);
+    assert_eq!(
+        editor.clip.selected_keys,
+        BTreeSet::from([(head, 40), (head, 50)]),
+        "the pasted keys are picked"
+    );
+    // one picked key (a plain click) still copies the frame's pose
+    editor.clip.selected_keys = BTreeSet::from([(head, 10)]);
+    editor.clip.frame = 10;
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::C, egui::Modifiers::COMMAND));
+    assert!(!editor.clip.clipboard.is_empty());
+    assert!(editor.clip.key_clipboard.is_empty());
+}
+
+#[test]
+fn a_box_dragged_from_under_the_lanes_does_not_move_the_window() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for at in [0, 10, 20, 30] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+    let baseline = |frames: &mut Frames, draw: &mut dyn FnMut(&mut egui::Ui)| {
+        frames
+            .shapes(Vec::new(), draw)
+            .into_iter()
+            .filter_map(|shape| {
+                let egui::Shape::LineSegment { points, .. } = shape else {
+                    return None;
+                };
+                ((points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0).then_some(points)
+            })
+            .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+            .expect("timeline track baseline")
+    };
+    frames.run(Vec::new(), &mut draw);
+    let before = baseline(&mut frames, &mut draw);
+    let at = |frame: f32, below: f32| egui::pos2(before[0].x + (before[1].x - before[0].x) * frame / 30.0, before[0].y + below);
+    let ctrl = egui::Modifiers {
+        ctrl: true,
+        ..Default::default()
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: ctrl,
+    };
+    // from under the only lane, up and across the keys of frames 10 and 20
+    let start = at(8.0, 60.0);
+    let end = at(22.0, -6.0);
+    frames.run(
+        vec![
+            egui::Event::ModifiersChanged(ctrl),
+            egui::Event::PointerMoved(start),
+            button(start, true),
+        ],
+        &mut draw,
+    );
+    frames.run(vec![egui::Event::PointerMoved(start + egui::vec2(10.0, -10.0))], &mut draw);
+    frames.run(vec![egui::Event::PointerMoved(end)], &mut draw);
+    frames.run(vec![button(end, false)], &mut draw);
+    frames.run(vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)], &mut draw);
+    let after = baseline(&mut frames, &mut draw);
+
+    assert_eq!(before, after, "the window stays where it was");
+    assert_eq!(editor.clip.selected_keys, BTreeSet::from([(head, 10), (head, 20)]));
+}
+
+#[test]
+fn a_right_click_over_the_lanes_drops_the_picked_keys() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = &lib.rig;
+    let world = World::new(lib.clone());
+    let head = rig.names["mHead"];
+    let mut document = Document::new();
+    document.range(0, 30);
+    for at in [0, 10, 20, 30] {
+        let mut rotations = rig.local_rot.clone();
+        rotations[head] = Quat::from_rotation_z(at as f32 / 50.0) * rotations[head];
+        document
+            .record(rig, &frame(&lib, &rotations, &rig.local_pos, &rig.scale), at, &[head], &[])
+            .unwrap();
+    }
+    let mut editor = Editor {
+        open: true,
+        selected: Some(head),
+        clip: State {
+            active: true,
+            document: Some(Arc::new(document)),
+            selected_keys: BTreeSet::from([(head, 10), (head, 20)]),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let palette = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut draw = |ui: &mut egui::Ui| editor.studio_timeline_overlay(ui.ctx(), &palette, &world);
+    frames.run(Vec::new(), &mut draw);
+    let lane = frames
+        .shapes(Vec::new(), &mut draw)
+        .into_iter()
+        .filter_map(|shape| {
+            let egui::Shape::LineSegment { points, .. } = shape else {
+                return None;
+            };
+            ((points[0].y - points[1].y).abs() < 0.1 && (points[1].x - points[0].x) > 80.0).then_some(points)
+        })
+        .max_by(|a, b| a[0].y.total_cmp(&b[0].y))
+        .expect("timeline track baseline");
+    let at = egui::pos2((lane[0].x + lane[1].x) / 2.0, lane[0].y - 4.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    frames.run(vec![egui::Event::PointerMoved(at), button(true)], &mut draw);
+    frames.run(vec![button(false)], &mut draw);
+    frames.run(Vec::new(), &mut draw);
+    assert!(editor.clip.selected_keys.is_empty());
+}
+
+#[test]
+fn ctrl_or_shift_click_adds_a_joint_in_the_animation_editor_and_a_plain_click_resets() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (head, left, right) = (rig.names["mHead"], rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    assert_eq!(editor.selected, Some(left));
+    assert_eq!(editor.clip_followers(), vec![right]);
+    assert!(editor.clip_follows(right) && !editor.clip_follows(left));
+    // a second click with the modifier takes it out again
+    editor.clip_click_bone(right, &rig, &original, true);
+    assert!(editor.clip_followers().is_empty());
+    // the selected joint taken out: the follower leads alone
+    editor.clip_click_bone(right, &rig, &original, true);
+    editor.clip_click_bone(left, &rig, &original, true);
+    assert_eq!(editor.selected, Some(right));
+    assert!(editor.clip_followers().is_empty());
+    // a drag on a follower makes it lead and keeps the others
+    editor.clip_click_bone(left, &rig, &original, true);
+    editor.clip_grab_bone(left, &rig, &original);
+    assert_eq!((editor.selected, editor.clip_followers()), (Some(left), vec![right]));
+    // a plain click selects that joint alone
+    editor.clip_click_bone(head, &rig, &original, false);
+    assert_eq!(editor.selected, Some(head));
+    assert!(editor.clip_followers().is_empty());
+}
+
+#[test]
+fn a_joint_selected_from_the_timeline_never_takes_over_the_joints_picked_with_another() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (head, left, right) = (rig.names["mHead"], rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    // a row or a key of another joint: that joint alone, the eyes no longer follow
+    editor.clip_lead_bone(head, &rig, &original);
+    assert_eq!(editor.selected, Some(head));
+    assert!(editor.clip_followers().is_empty());
+    // a row or a key of a joint of the selection: it leads, the other still follows
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    editor.clip_lead_bone(right, &rig, &original);
+    assert_eq!((editor.selected, editor.clip_followers()), (Some(right), vec![left]));
+    // the selected joint's own row or key keeps its followers
+    editor.clip_lead_bone(right, &rig, &original);
+    assert_eq!(editor.clip_followers(), vec![left]);
+    // leaving the animation editor forgets them
+    editor.leave_clip();
+    assert!(editor.clip.together.is_empty());
+}
+
+#[test]
+fn every_other_way_of_selecting_a_joint_keeps_the_joints_picked_together_right() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (head, left, right) = (rig.names["mHead"], rig.names["mEyeLeft"], rig.names["mEyeRight"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    // the joint list, a pole, a binding or a link select through `select`
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    editor.select(head, &rig, &original);
+    assert_eq!(editor.selected, Some(head));
+    assert!(editor.clip_followers().is_empty(), "the eyes do not follow the head");
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    editor.select(right, &rig, &original);
+    assert_eq!((editor.selected, editor.clip_followers()), (Some(right), vec![left]));
+    // Shift + click on the selected joint still hands the lead to a follower
+    editor.clip_click_bone(right, &rig, &original, true);
+    assert_eq!((editor.selected, editor.clip_followers()), (Some(left), vec![]));
+}
+
+#[test]
+fn a_joint_added_to_the_selection_does_not_give_the_selected_joint_its_limbs_pole() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (chest, wrist) = (rig.names["mChest"], rig.names["mWristLeft"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip_click_bone(chest, &rig, &original, false);
+    // Ctrl + click on the wrist's handle adds it: the chest stays selected
+    // and must not start with the arm's pole
+    editor.clip_click_bone(wrist, &rig, &original, true);
+    assert_eq!(editor.selected, Some(chest));
+    assert!(!editor.takes_limb_pole(wrist));
+    // selected alone, the wrist takes its own limb's pole as before
+    editor.clip_click_bone(wrist, &rig, &original, false);
+    assert!(editor.takes_limb_pole(wrist));
+}
+
+#[test]
+fn joints_selected_together_turn_with_the_selected_one_and_are_keyed_with_it() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let world = World::new(lib.clone());
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (left, right) = (rig.names["mShoulderLeft"], rig.names["mShoulderRight"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip_click_bone(left, &rig, &original, false);
+    editor.clip_click_bone(right, &rig, &original, true);
+    editor.mode = Mode::Direct;
+    editor.orient = true;
+    editor.degrees.x += 40.0;
+    editor.commit_manipulation(&rig, &original, true);
+    assert!(editor.authoring.owns(right), "the follower's turn is an authored edit of its own");
+    assert!(editor.clip.modified.contains(&right), "and it counts as changed for Key changes");
+
+    editor.clip.capture = Some(Capture::Bone(left));
+    editor.capture_clip(&world, &original);
+    let mut rest = Document::new();
+    rest.record(&rig, &original, 0, &[left, right], &[]).unwrap();
+    let key = |document: &Document, bone: usize| {
+        document
+            .tracks
+            .iter()
+            .find(|track| track.bone == bone)
+            .and_then(|track| track.motion.rot_keys.iter().find(|key| key.time == 0.0))
+            .map(|key| key.rotation)
+            .expect("a key at frame 0")
+    };
+    let document = editor.clip.document.as_ref().unwrap();
+    let (turned_left, turned_right) = (
+        key(document, left).angle_between(key(&rest, left)),
+        key(document, right).angle_between(key(&rest, right)),
+    );
+    assert!(turned_left > 0.6, "the selected joint turned: {turned_left}");
+    assert!((turned_left - turned_right).abs() < 0.01, "{turned_left} vs {turned_right}");
+}
+
+#[test]
+fn turning_a_joint_with_its_parent_picked_holds_steady_over_a_drag() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let (elbow, wrist) = (rig.names["mElbowLeft"], rig.names["mWristLeft"]);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.clip_click_bone(wrist, &rig, &original, false);
+    editor.clip_click_bone(elbow, &rig, &original, true);
+    editor.mode = Mode::Direct;
+    editor.orient = true;
+    // the shown pose follows the edits a frame later, as in the viewer
+    let mut shown = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let mut turns = Vec::new();
+    for _ in 0..8 {
+        editor.degrees.x += 5.0;
+        editor.commit_manipulation(&rig, &shown, true);
+        let mut rotations = rig.local_rot.clone();
+        for edit in editor.authoring.request(&editor.goals, &[]) {
+            if let Some(rotation) = edit.rotation {
+                rotations[edit.bone] = rotation;
+            }
+        }
+        shown = frame(&lib, &rotations, &rig.local_pos, &rig.scale);
+        turns.push(rotations[elbow].angle_between(rig.local_rot[elbow]));
+    }
+    // the parent turns with the handle on every frame of the drag, instead
+    // of every other one (the joint shook between a turned and a held pose)
+    assert!(turns.windows(2).all(|pair| pair[1] - pair[0] > 0.05), "{turns:?}");
+    // and the selected joint holds the handle's rotation under it
+    let goal = editor.goals.iter().find(|goal| goal.bone == wrist).expect("the wrist's goal");
+    let held = (shown.model.inverse() * shown.joints[wrist]).to_scale_rotation_translation().1;
+    let wanted = goal.rotation.expect("a rotation goal");
+    assert!(held.angle_between(wanted) < 0.01, "{held} vs {wanted}");
+}
+
+#[test]
+fn the_animation_editor_keeps_its_tool_and_shift_does_not_turn_rotate_into_move() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.timeline_open = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.select(rig.names["mHead"], &rig, &original);
+    assert_eq!(editor.tool, Tool::Move);
+    // R switches the gizmo to Rotate
+    let ctx = egui::Context::default();
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::R, egui::Modifiers::NONE));
+    assert_eq!(editor.tool, Tool::Rotate);
+    // another joint keeps it, and Shift (finer) keeps it
+    editor.select(rig.names["mNeck"], &rig, &original);
+    assert_eq!(editor.tool, Tool::Rotate);
+    assert_eq!(editor.active_tool(egui::Modifiers::SHIFT), Tool::Rotate);
+    assert!(editor.gizmo_visible(egui::Modifiers::SHIFT));
+    assert_eq!(editor.active_tool(egui::Modifiers::CTRL), Tool::Rotate);
+    assert!(editor.handle_timeline_shortcut(&ctx, egui::Key::R, egui::Modifiers::NONE));
+    assert_eq!(editor.tool, Tool::Move);
+    // outside the animation editor, Shift still means a free point move
+    editor.clip.active = false;
+    editor.tool = Tool::Rotate;
+    assert_eq!(editor.active_tool(egui::Modifiers::SHIFT), Tool::Move);
+    assert!(!editor.gizmo_visible(egui::Modifiers::SHIFT));
+}
+
+#[test]
+fn an_edited_joints_fields_hold_still_while_the_shown_pose_only_jitters() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let original = frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale);
+    let head = rig.names["mHead"];
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.clip.active = true;
+    editor.clip.rig = Some(rig.clone());
+    editor.clip.document = Some(Arc::new(Document::new()));
+    editor.mode = Mode::Direct;
+    editor.select(head, &rig, &original);
+    editor.orient = true;
+    editor.degrees.z += 20.0;
+    editor.commit_manipulation(&rig, &original, true);
+    assert!(editor.authoring.owns(head));
+    for _ in 0..4 {
+        editor.sync_authored_selection(&original);
+    }
+    let (position, degrees) = (editor.position, editor.degrees);
+    // the shown pose moves by a hair (another motion, rounding): nothing was edited
+    let mut rotations = rig.local_rot.clone();
+    rotations[rig.pelvis] = Quat::from_rotation_z(0.002) * rotations[rig.pelvis];
+    let jittered = frame(&lib, &rotations, &rig.local_pos, &rig.scale);
+    for _ in 0..4 {
+        editor.sync_authored_selection(&jittered);
+    }
+    assert_eq!((editor.position, editor.degrees), (position, degrees));
+    // a seek reads them again
+    editor.clip.cursor += 1.0;
+    editor.sync_authored_selection(&jittered);
+    assert_ne!(editor.degrees, degrees);
+}
+
+#[test]
+fn the_drafts_list_shows_every_draft_in_its_place_while_switching() {
+    let named = |name: &str| {
+        let mut document = Document::new();
+        document.name = name.into();
+        Arc::new(document)
+    };
+    let mut state = State {
+        document: Some(named("A")),
+        ..Default::default()
+    };
+    let old = std::mem::replace(state.document.as_mut().unwrap(), named("B"));
+    state.shelve(old);
+    let old = std::mem::replace(state.document.as_mut().unwrap(), named("C"));
+    state.shelve(old);
+    let names = |state: &State| {
+        state
+            .draft_order()
+            .into_iter()
+            .map(|entry| match entry {
+                Some(index) => state.history[index].name.clone(),
+                None => format!("[{}]", state.document.as_ref().unwrap().name),
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(&state), ["A", "B", "[C]"]);
+    assert!(state.pick_draft(0));
+    assert_eq!(names(&state), ["[A]", "B", "C"]);
+    assert!(state.pick_draft(1));
+    assert_eq!(names(&state), ["A", "[B]", "C"]);
+    assert!(!state.pick_draft(1), "the open draft is already open");
+    assert!(state.pick_draft(2));
+    assert_eq!(names(&state), ["A", "B", "[C]"]);
+}
+
+#[test]
+fn the_animation_editor_buttons_use_icons_the_viewer_carries() {
+    for icon in [
+        "bone-filled",
+        "keyframe-filled",
+        "key-filled",
+        "device-floppy-filled",
+        "file-export",
+        "upload",
+        "restore",
+        "refresh",
+    ] {
+        assert!(crate::ui::icons::embedded(icon), "{icon}");
+    }
+}
+
+/// Joints a pose stand's or an animation layer's animation turns under the
+/// editor, each its own way.
+const ANIMATED: [&str; 7] = [
+    "mShoulderLeft",
+    "mElbowLeft",
+    "mWristLeft",
+    "mNeck",
+    "mHead",
+    "mHipLeft",
+    "mKneeLeft",
+];
+fn animation(rig: &Rig) -> Vec<Quat> {
+    let mut rotations = rig.local_rot.clone();
+    for (i, name) in ANIMATED.iter().enumerate() {
+        let bone = rig.names[*name];
+        rotations[bone] = (rig.local_rot[bone] * Quat::from_euler(EulerRot::ZYX, 0.5 + 0.1 * i as f32, -0.3, 0.4)).normalize();
+    }
+    rotations
+}
+/// Turn `name` by `touch` in its own frame, as a short gizmo drag does.
+fn nudge(editor: &mut Editor, rig: &Rig, shown: &Frame, name: &str, touch: Quat) {
+    let bone = rig.names[name];
+    editor.select(bone, rig, shown);
+    let turned = (shown.model.inverse() * shown.joints[bone]).to_scale_rotation_translation().1;
+    editor.set_rotation(turned * touch);
+    editor.commit_manipulation(rig, shown, true);
+}
+fn key_at_start(editor: &Editor, bone: usize) -> Quat {
+    let document = editor.clip.document.as_ref().expect("a recorded animation");
+    let track = document.tracks.iter().find(|t| t.bone == bone).expect("every joint is recorded");
+    track.motion.rotation_at(0.0).expect("a key at the start")
+}
+
+#[test]
+fn touching_every_joint_over_an_animation_records_the_touches_only() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let mut world = World::new(lib.clone());
+    let playing = animation(&rig);
+    based(&mut world, &playing, &rig.local_pos);
+    let shown = frame(&lib, &playing, &rig.local_pos, &rig.scale);
+    let touch = Quat::from_rotation_x(0.01);
+    let mut editor = Editor::default();
+    editor.toggle();
+    for name in ANIMATED {
+        nudge(&mut editor, &rig, &shown, name, touch);
+    }
+    // "Capture current IK pose" and "Create" record through the same frame
+    editor.new_clip(&world, &shown);
+    for name in ANIMATED {
+        let bone = rig.names[name];
+        let key = key_at_start(&editor, bone);
+        assert!(key.dot(rig.local_rot[bone] * touch).abs() > 0.9999, "{name} keeps the touch");
+        assert!(key.dot(playing[bone]).abs() < 0.99, "{name} leaves the animation out");
+    }
+}
+
+#[test]
+fn edits_follow_the_animation_under_them_when_it_is_excluded() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let mut world = World::new(lib.clone());
+    let playing = animation(&rig);
+    based(&mut world, &playing, &rig.local_pos);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.follow_edit_base(&world);
+    let shown = frame(&lib, &playing, &rig.local_pos, &rig.scale);
+    let touch = Quat::from_rotation_x(0.01);
+    for name in ANIMATED {
+        nudge(&mut editor, &rig, &shown, name, touch);
+    }
+    // Exclude current avatar animations: the base is the rest skeleton
+    based(&mut world, &rig.local_rot, &rig.local_pos);
+    editor.follow_edit_base(&world);
+    editor.new_clip(&world, &frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale));
+    for name in ANIMATED {
+        let bone = rig.names[name];
+        let key = key_at_start(&editor, bone);
+        assert!(key.dot(rig.local_rot[bone] * touch).abs() > 0.9999, "{name} keeps the touch");
+        assert!(key.dot(playing[bone]).abs() < 0.99, "{name} leaves the animation out");
+    }
+}
+
+#[test]
+fn a_contact_set_over_an_animation_follows_it_away() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let mut world = World::new(lib.clone());
+    let playing = animation(&rig);
+    based(&mut world, &playing, &rig.local_pos);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.follow_edit_base(&world);
+    let shown = frame(&lib, &playing, &rig.local_pos, &rig.scale);
+    // a wrist contact left where the animation holds the hand
+    editor.select(rig.names["mWristLeft"], &rig, &shown);
+    editor.commit();
+    assert_eq!(editor.request().goals.len(), 1);
+    based(&mut world, &rig.local_rot, &rig.local_pos);
+    editor.follow_edit_base(&world);
+    editor.new_clip(&world, &frame(&lib, &rig.local_rot, &rig.local_pos, &rig.scale));
+    for name in ["mShoulderLeft", "mElbowLeft"] {
+        let bone = rig.names[name];
+        assert!(
+            key_at_start(&editor, bone).dot(rig.local_rot[bone]).abs() > 0.999,
+            "{name} does not reach for the animation's hand"
+        );
+    }
+}
+
+#[test]
+fn a_new_animation_with_no_edit_yet_needs_no_base() {
+    // Avatar Studio's first Animate, before any edit session gave a base
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let world = World::new(lib.clone());
+    assert!(world.ik_edit_base.is_none());
+    let shown = frame(&lib, &animation(&rig), &rig.local_pos, &rig.scale);
+    let mut editor = Editor::default();
+    editor.toggle();
+    editor.new_clip(&world, &shown);
+    assert!(editor.clip.error.is_none(), "{:?}", editor.clip.error);
+    assert!(editor.clip.active, "the animation editor opens on the first press");
+    let elbow = rig.names["mElbowLeft"];
+    assert!(
+        key_at_start(&editor, elbow).dot(rig.local_rot[elbow]).abs() > 0.9999,
+        "it starts from the rest skeleton"
+    );
+}
+
+#[test]
+fn edits_without_their_base_are_not_recorded() {
+    let lib = Arc::new(AvatarLibrary::load());
+    let rig = lib.rig.clone();
+    let world = World::new(lib.clone());
+    let shown = frame(&lib, &animation(&rig), &rig.local_pos, &rig.scale);
+    let mut editor = Editor::default();
+    editor.toggle();
+    nudge(&mut editor, &rig, &shown, "mElbowLeft", Quat::from_rotation_x(0.01));
+    editor.new_clip(&world, &shown);
+    assert!(editor.clip.document.is_none());
+    assert!(editor.clip.error.is_some());
+}
+
+#[test]
+fn the_scene_hands_the_editor_the_pose_under_its_edits() {
+    let lib = AvatarLibrary::load();
+    let rig = &lib.rig;
+    let playing = animation(rig);
+    let pelvis = Vec3::new(0.0, 0.0, 0.2);
+    let mut pose = ik::Pose::default();
+    pose.edit = ik::EditRequest {
+        active: true,
+        joints: vec![ik::JointEdit {
+            bone: rig.names["mHead"],
+            rotation: Some(Quat::from_rotation_x(0.7)),
+            translation: None,
+            weight: 1.0,
+        }],
+        ..Default::default()
+    };
+    let now = Instant::now();
+    pose.apply(rig, &playing, &rig.local_pos, pelvis, &rig.scale, now, true).unwrap();
+    let base = pose.edit_base.clone().expect("an edit session has a base");
+    assert_eq!(base.pose.rotations, playing, "the animation, without the edit");
+    let offset = pelvis / rig.parent_scale[rig.pelvis];
+    assert!(base.pose.positions[rig.pelvis].abs_diff_eq(rig.local_pos[rig.pelvis] + offset, 1e-6));
+    pose.apply(rig, &playing, &rig.local_pos, pelvis, &rig.scale, now, true).unwrap();
+    assert!(
+        Arc::ptr_eq(&base, pose.edit_base.as_ref().unwrap()),
+        "an unchanged base is not copied again"
+    );
+    pose.edit = ik::EditRequest::default();
+    let _ = pose.apply(rig, &playing, &rig.local_pos, pelvis, &rig.scale, now, true);
+    assert!(pose.edit_base.is_none(), "no base outside an edit session");
 }

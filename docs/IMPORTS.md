@@ -252,6 +252,15 @@ Sources: `llfloatermodelpreview.cpp`, `llmodelpreview.cpp`,
   The preparation and the installation of the mesh data are independent of
   the graphics context held temporarily by the render loop: applying,
   reloading or placing a support prim also works from the interface.
+  New static files default to **All pieces (fit to prim)** in the preview's
+  gear menu. Every piece keeps its authored placement and proportions; the
+  assembly is centered on the support prim and uniformly scaled to fit its
+  bounding box, following its movement, rotation and resizing. Empty space
+  may remain on two axes. Individual models retain the optional imported
+  dimensions. Saved bindings from older versions keep their previous mode.
+  This extends the Legacy Viewer's one-model local application. Assemblies
+  support up to 45 face slots; rigged files and larger assemblies keep the
+  individual-model path. Uploads continue to use the original file's objects.
 - Environments: EEP settings and old Windlight presets, multiple imports.
 - Legacy Viewer linkset backups: rebuilding of the prims and of the contents,
   reuse/upload of the assets, temporary texture options, offset.

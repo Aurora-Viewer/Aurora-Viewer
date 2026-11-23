@@ -31,6 +31,11 @@ impl<K: AsRef<str>> Named<'_, K> {
         item_detail(icon: &str, label: &str, detail: &str);
         check(icon: &str, label: &str, checked: bool, enabled: bool);
         check_keys(icon: &str, label: &str, checked: bool, enabled: bool, keys: &str);
+        toolbar_command(id: &'static str);
+        toolbar_command_keys(id: &'static str, keys: &str);
+        toolbar_command_keys_if(id: &'static str, enabled: bool, keys: &str);
+        toolbar_command_check(id: &'static str, checked: bool);
+        toolbar_command_tip(id: &'static str, enabled: bool, tip: &str);
     }
 
     pub fn submenu(self, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) {
