@@ -4055,6 +4055,9 @@ pub fn rail_tree_row(
     let num_w = num.as_ref().map_or(0.0, |g| g.size().x + 10.0);
     let ink = if tint == p.violet_light { tint } else { p.ink };
     let g = one_line(label, 13.0, ink, rect.right() - num_w - x - 25.0);
+    if g.elided {
+        resp = resp.on_hover_text(label);
+    }
     paint_row_text(ui.painter(), g, x + 25.0, rect.center().y, ink);
     if let Some(g) = num {
         let w = g.size().x;
