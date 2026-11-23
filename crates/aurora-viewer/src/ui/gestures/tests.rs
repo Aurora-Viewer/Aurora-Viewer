@@ -94,7 +94,7 @@ impl Fixture {
             self.draw(Vec::new());
         }
     }
-    fn click(&mut self, label: &str) -> Vec<Action> {
+    fn label_pos(&mut self, label: &str) -> egui::Pos2 {
         fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
             match shape {
                 egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + egui::vec2(3.0, 5.0)),
@@ -102,7 +102,10 @@ impl Fixture {
                 _ => None,
             }
         }
-        let pos = self.draw(Vec::new()).1.iter().find_map(|s| position(&s.shape, label)).expect(label);
+        self.draw(Vec::new()).1.iter().find_map(|s| position(&s.shape, label)).expect(label)
+    }
+    fn click(&mut self, label: &str) -> Vec<Action> {
+        let pos = self.label_pos(label);
         let mut out = Vec::new();
         for pressed in [true, false] {
             out.extend(
@@ -130,6 +133,99 @@ impl Fixture {
             .loaded(self.manager.entries[&id].definition.clone());
         self.settle();
     }
+}
+
+#[test]
+fn gesture_editor_drops_append_select_and_replace_one_step() {
+    let mut f = Fixture::new();
+    let id = Uuid::from_u128(8106);
+    let sound = Uuid::from_u128(9201);
+    let replacement = Uuid::from_u128(9202);
+    let animation = Uuid::from_u128(9203);
+    for (item, kind, label) in [
+        (sound, 1, "First sound"),
+        (replacement, 1, "Second sound"),
+        (animation, 20, "Hand wave"),
+    ] {
+        let mut entry = f.inv.items[&id].clone();
+        entry.id = item;
+        entry.asset_id = item;
+        entry.asset_type = kind;
+        entry.name = label.to_owned();
+        entry.base_mask = rules::FULL;
+        entry.owner_mask = rules::FULL;
+        f.inv.add_items(vec![entry]);
+    }
+    f.editor();
+    let first = editor::step_label(&f.state.editors[&id].definition.as_ref().unwrap().steps[0]);
+    let list = f.label_pos(&first);
+    f.state.editors.get_mut(&id).unwrap().loaded(Gesture::default());
+    f.settle();
+    let drop_at = |f: &mut Fixture, item, pos| {
+        egui::DragAndDrop::set_payload(&f.ctx, crate::ui::inventory::InvDrag(item));
+        f.draw(vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            },
+        ]);
+    };
+    drop_at(&mut f, sound, list);
+    assert_eq!(f.state.editors[&id].step, Some(0));
+    assert!(
+        matches!(f.state.editors[&id].definition.as_ref().unwrap().steps.as_slice(), [Step::Sound { asset, name, flags: 0 }] if *asset == sound && name == "First sound")
+    );
+    let picker = f.label_pos("First sound");
+    drop_at(&mut f, replacement, picker);
+    assert!(
+        matches!(f.state.editors[&id].definition.as_ref().unwrap().steps.as_slice(), [Step::Sound { asset, .. }] if *asset == replacement)
+    );
+    drop_at(&mut f, animation, list);
+    assert_eq!(f.state.editors[&id].step, Some(1));
+    assert!(
+        matches!(&f.state.editors[&id].definition.as_ref().unwrap().steps[1], Step::Animation { asset, name, flags: 0 } if *asset == animation && name == "Hand wave")
+    );
+    // Dropping into a read-only gesture must change neither an existing step nor its list.
+    f.inv.items.get_mut(&id).unwrap().owner_mask &= !rules::MODIFY;
+    let before = f.state.editors[&id].definition.clone();
+    drop_at(&mut f, sound, list);
+    assert_eq!(f.state.editors[&id].definition, before);
+}
+
+#[test]
+fn gesture_assets_require_full_base_and_held_permissions() {
+    let (inv, _) = Fixture::library();
+    let mut item = inv.items[&Uuid::from_u128(8106)].clone();
+    item.asset_type = 1;
+    item.owner = inv.owner;
+    item.base_mask = rules::FULL;
+    item.owner_mask = rules::FULL;
+    assert!(rules::gesture_asset_allowed(&inv, &item));
+    for missing in [rules::COPY, rules::MODIFY, rules::TRANSFER] {
+        item.owner_mask = rules::FULL & !missing;
+        assert!(!rules::gesture_asset_allowed(&inv, &item));
+        item.owner_mask = rules::FULL;
+        item.base_mask = rules::FULL & !missing;
+        assert!(!rules::gesture_asset_allowed(&inv, &item));
+        item.base_mask = rules::FULL;
+    }
+    // Library, group-owned and other residents' items use the everyone mask.
+    item.owner = Uuid::from_u128(888);
+    for group in [true, false] {
+        item.group_owned = group;
+        for everyone in [rules::COPY, rules::FULL] {
+            item.everyone_mask = everyone;
+            assert_eq!(rules::gesture_asset_allowed(&inv, &item), everyone == rules::FULL);
+        }
+    }
+    item.asset_type = 0;
+    assert!(!rules::gesture_asset_allowed(&inv, &item));
+    item.asset_type = 20;
+    item.asset_id = Uuid::nil();
+    assert!(!rules::gesture_asset_allowed(&inv, &item));
 }
 
 #[test]
