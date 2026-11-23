@@ -215,6 +215,12 @@ pub mod flags {
     /// Bit of flags[3], above packed texture animation: local studio scenery
     /// is excluded from the avatar's temporary white reveal.
     pub const STUDIO_STAGE: u32 = 1 << 29;
+    /// Bit of flags[3], above the layer rank: the visible-surface pick
+    /// (Alt-focus, `fs_pick_visible`) keeps the face's clear texels. Set
+    /// for a legacy material in emissive mask mode whatever the face's
+    /// alpha, as LLVOVolume::lineSegmentIntersect ignores texture alpha
+    /// there, also where `EMISSIVE_MASK` is dropped for a transparent face.
+    pub const PICK_IGNORES_ALPHA: u32 = 1 << 28;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -2844,6 +2850,25 @@ mod tests {
         assert_eq!(flags::STUDIO_STAGE & flags::WORLD_BLEND_PICK, 0);
         assert_eq!(flags::OBJECT_MASK_PICK & flags::WORLD_BLEND_PICK, 0);
         assert_eq!(flags::STUDIO_STAGE & (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT), 0);
+        let others = flags::STUDIO_STAGE
+            | flags::OBJECT_MASK_PICK
+            | flags::WORLD_BLEND_PICK
+            | (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT)
+            | 0x00ff_ffff;
+        assert_eq!(flags::PICK_IGNORES_ALPHA & others, 0);
+    }
+
+    /// The visible-surface pick reads the bit with the same value, in the
+    /// same flags word, instead of the emissive mask flag.
+    #[test]
+    fn pick_ignores_alpha_bit_matches_wgsl() {
+        let common = include_str!("shaders/common.wgsl");
+        assert!(common.contains(&format!("const FLAG_PICK_IGNORES_ALPHA: u32 = {}u;", flags::PICK_IGNORES_ALPHA)));
+        let object = include_str!("shaders/object.wgsl");
+        let start = object.find("fn fs_pick_visible(").expect("fs_pick_visible");
+        let body = &object[start..start + object[start..].find("\n}").expect("end")];
+        assert!(body.contains("(rec.flags.w & FLAG_PICK_IGNORES_ALPHA) == 0u"));
+        assert!(!body.contains("FLAG_EMISSIVE_MASK"));
     }
 
     /// The flags the shaders test in `frame.light_mode.z`, by name, with
