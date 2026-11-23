@@ -88,6 +88,9 @@
 //! triangle in the seed (without it the seed is per face: coplanar
 //! fragments of one face then occlude instead of blending).
 
+mod pipeline_build;
+pub(crate) use pipeline_build::PipelineBuild;
+
 use crate::pipeline_cache::CachedPipelines;
 use bytemuck::{Pod, Zeroable};
 
@@ -343,7 +346,7 @@ pub(crate) fn st_scene_source(device: &wgpu::Device) -> String {
     format!(
         "{}{}\n{}\n{}",
         enable_directive(device),
-        crate::common_shader_source(),
+        crate::common_shader_source(&device.limits()),
         object,
         crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
     )
@@ -504,8 +507,6 @@ pub(crate) struct ScenePipes {
 /// Everything a scene sample count needs: the passes' pipelines and the
 /// resolve's.
 pub(crate) struct Pipes {
-    /// the scene's samples these were made for
-    pub samples: u32,
     pub scene: ScenePipes,
     pub resolve: Resolve,
 }
@@ -938,19 +939,18 @@ impl Stochastic {
             // the old ones go first: both sets do not have to fit
             self.targets = None;
             self.history_ready = false;
-            let (made, refused) = crate::gpu_alloc::scoped(device, || {
+            let Some(made) = crate::gpu_alloc::checked(device, || {
                 self.make_targets(device, f.width, f.height, f.samples, pass, history, glow)
-            });
-            if refused {
+            }) else {
                 log::warn!(
-                    "oit stochastic: the memory refused the targets ({}x{}, {} MB): the sorted order is drawn",
+                    "oit stochastic: the targets were refused ({}x{}, {} MB): the sorted order is drawn",
                     f.width,
                     f.height,
                     target_bytes(f.width, f.height, f.samples, pass, history, glow) / (1024 * 1024)
                 );
                 self.refused = Some(key);
                 return false;
-            }
+            };
             self.refused = None;
             self.targets = Some(made);
             queue.write_buffer(&self.expand_params, 0, bytemuck::cast_slice(&expand_map(f.samples, pass)));
@@ -1555,6 +1555,12 @@ impl Stochastic {
     }
 }
 
+/// Both stages of the depth-mask pipelines, which use the same module.
+pub(crate) const MASK_ENTRIES: &[(naga::ShaderStage, &str)] = &[
+    (naga::ShaderStage::Vertex, "vs_main"),
+    (naga::ShaderStage::Fragment, "fs_st_depth_mask"),
+];
+
 impl Shared {
     /// The samples per stochastic pass for a scene of `scene` samples.
     pub fn pass_samples(&self, scene: u32) -> u32 {
@@ -1572,7 +1578,7 @@ impl Shared {
         let wgsl = constants_for_overrides(src, values);
         let (shaders, scene) = &*self.mask_shaders;
         let map = mask_binding_map(scene, &wgsl);
-        shaders.try_create_shader_module_mapped(device, "scene stochastic mask", &wgsl, map)
+        shaders.try_create_shader_module_for(device, "scene stochastic mask", &wgsl, map, MASK_ENTRIES)
     }
 }
 
@@ -1820,6 +1826,63 @@ fn shades_for_alpha(flags: u32, gloss: f32, env: f32, texel_alpha: f32, face_alp
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failed optional pipeline cannot escape and invalidate the frame.
+    /// Exercise the actual resolve and depth-copy/expand paths on the same
+    /// device immediately after a rejected pipeline, both with and without MSAA.
+    #[test]
+    #[ignore = "requires a GPU"]
+    fn stochastic_rejected_pipeline_and_resolve_on_gpu() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).expect("GPU adapter");
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let masks = crate::spirv_fix::SampleMaskShaders::new(&adapter, &device, wgpu::InstanceFlags::empty());
+        let hdr = wgpu::TextureFormat::Rgba16Float;
+        let depth = wgpu::TextureFormat::Depth32Float;
+        let mut st = crate::gpu_alloc::checked(&device, || Stochastic::new(&device, hdr, depth, vec![4], masks, Vec::new()))
+            .expect("shared resources");
+        let rejected = crate::gpu_alloc::checked(&device, || {
+            device.create_compute_pipeline_cached(&wgpu::ComputePipelineDescriptor {
+                label: Some("stochastic test invalid entry"),
+                layout: None,
+                module: &st.shared.module,
+                entry_point: Some("missing_entry_point"),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        });
+        assert!(rejected.is_none(), "an invalid pipeline must never reach the encoder");
+
+        for (samples, history) in [(1, SceneHistory::Taa), (4, SceneHistory::None)] {
+            let pipes = crate::gpu_alloc::checked(&device, || make_resolve(&device, st.shared(), samples)).expect("resolve pipelines");
+            let f = Frame {
+                width: 16,
+                height: 16,
+                samples,
+                reproj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                glow: false,
+                history,
+                cut: false,
+            };
+            assert!(st.prepare(&device, &queue, &f));
+            let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
+            let (scene, scene_view) = crate::renderer::make_view(&device, "stochastic test scene depth", 16, 16, depth, samples, usage);
+            crate::gpu_alloc::checked(&device, || {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                drop(st.begin_alpha(&mut encoder, &scene_view));
+                st.mark_tiles(&mut encoder, &pipes);
+                st.begin_iteration(&device, &mut encoder, (&scene, &scene_view), &pipes, true);
+                st.resolve(&mut encoder, &pipes);
+                queue.submit([encoder.finish()]);
+                st.after_submit();
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("stochastic frame submission");
+            })
+            .expect("stochastic frame was accepted after pipeline rejection");
+        }
+    }
 
     #[test]
     fn only_a_glossy_blended_legacy_material_is_shaded_for_its_alpha() {

@@ -62,6 +62,7 @@ mod preview_mesh;
 pub mod probes;
 pub mod projector_shadows;
 mod readback;
+pub mod render_controls;
 mod render_thread;
 mod renderer;
 mod rlva;
@@ -136,8 +137,7 @@ pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
 pub use label_depth::{WORLD_OVERLAY_NEAR_W, clip_world_line, world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
-pub use renderer::{CASCADES, RenderError};
-// What a tile of a photo draws around what it keeps for the soft shadows.
+pub use renderer::{CASCADES, PORTRAIT_SHADOW_BYTES, RenderError};
 pub use soft_shadows::tile_reach as soft_shadow_tile_reach;
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
@@ -186,8 +186,35 @@ pub(crate) fn water_shader_source(files: &[&str], baked: &'static str) -> std::b
     source.into()
 }
 
-pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
-    water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER)
+/// Group zero uses 22 ordinary sampled textures with the new map. The
+/// exact-order blend reader adds two in group three. Texture page binding
+/// arrays have a separate limit (main_thread::texture_page_limit).
+pub(crate) fn graded_shadow_supported(limits: &wgpu::Limits) -> bool {
+    limits.max_sampled_textures_per_shader_stage >= 25 && limits.max_bindings_per_bind_group >= 31
+}
+
+/// One additional sampled depth texture in the frame group, at binding 31.
+pub fn portrait_shadow_supported(limits: &wgpu::Limits) -> bool {
+    limits.max_sampled_textures_per_shader_stage >= 26 && limits.max_bindings_per_bind_group >= 32
+}
+
+pub(crate) fn common_shader_source(limits: &wgpu::Limits) -> std::borrow::Cow<'static, str> {
+    let mut source = water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER);
+    // The renderer clears the corresponding coverage flags for unavailable
+    // maps. Resolve references in those branches against the bound sun atlas.
+    if !portrait_shadow_supported(limits) {
+        source = source
+            .replace("@group(0) @binding(31) var portrait_shadow_map: texture_depth_2d;", "")
+            .replace("portrait_shadow_map", "shadow_map")
+            .into();
+    }
+    if !graded_shadow_supported(limits) {
+        source = source
+            .replace("@group(0) @binding(30) var detail_shadow_map: texture_depth_2d;", "")
+            .replace("detail_shadow_map", "shadow_map")
+            .into();
+    }
+    source
 }
 
 /// object.wgsl as the device takes it: without the attributes of the early
@@ -290,6 +317,37 @@ mod shader_tests {
     #[test]
     fn asset_preview_shader_is_valid() {
         validate(include_str!("shaders/preview.wgsl"));
+    }
+
+    #[test]
+    fn graded_shadow_layout_respects_adapter_descriptor_limits() {
+        for (sampled, bindings, graded, portrait) in [
+            (24, 32, false, false),
+            (26, 30, false, false),
+            (25, 31, true, false),
+            (25, 32, true, false),
+            (26, 31, true, false),
+            (26, 32, true, true),
+        ] {
+            let limits = wgpu::Limits {
+                max_sampled_textures_per_shader_stage: sampled,
+                max_bindings_per_bind_group: bindings,
+                ..Default::default()
+            };
+            assert_eq!(crate::graded_shadow_supported(&limits), graded);
+            assert_eq!(crate::portrait_shadow_supported(&limits), portrait);
+            let common = crate::common_shader_source(&limits);
+            assert_eq!(common.contains("@binding(30)"), graded);
+            assert_eq!(common.contains("detail_shadow_map"), graded);
+            assert_eq!(common.contains("@binding(31)"), portrait);
+            assert_eq!(common.contains("portrait_shadow_map"), portrait);
+            validate(&format!(
+                "{}\n{}\n{}",
+                common,
+                include_str!("shaders/object.wgsl"),
+                include_str!("shaders/env.wgsl")
+            ));
+        }
     }
 
     #[test]
@@ -1132,7 +1190,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     /// false in common.wgsl) are valid too.
     #[test]
     fn scene_and_ssr_shaders_without_the_soft_path_are_valid() {
-        let common = crate::renderer::common_shader_for(false);
+        let common = crate::renderer::common_shader_for(false, &wgpu::Limits::default());
         validate(&format!(
             "{}\n{}\n{}",
             common,

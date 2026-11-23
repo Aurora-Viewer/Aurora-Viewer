@@ -96,6 +96,8 @@ impl Preset {
                 max_complexity: 35_000,
                 max_particles: 256,
                 shadow_quality: 0,
+                shadow_map_resolution: 0,
+                shadow_resume_quality: 0,
                 projector_shadows: false,
                 projector_shadow_limit: 2,
                 ssao: 0,
@@ -129,6 +131,8 @@ impl Preset {
                 max_complexity: 100_000,
                 max_particles: 2048,
                 shadow_quality: 0,
+                shadow_map_resolution: 0,
+                shadow_resume_quality: 0,
                 projector_shadows: false,
                 projector_shadow_limit: 2,
                 ssao: 0,
@@ -161,6 +165,8 @@ impl Preset {
                 max_complexity: 200_000,
                 max_particles: 4096,
                 shadow_quality: 0,
+                shadow_map_resolution: 0,
+                shadow_resume_quality: 0,
                 projector_shadows: false,
                 projector_shadow_limit: 2,
                 ssao: 1,
@@ -195,6 +201,8 @@ impl Preset {
                 max_complexity: 300_000,
                 max_particles: 4096,
                 shadow_quality: 2,
+                shadow_map_resolution: 0,
+                shadow_resume_quality: 0,
                 projector_shadows: false,
                 projector_shadow_limit: 2,
                 ssao: 1,
@@ -235,6 +243,8 @@ impl Preset {
                 max_complexity: 350_000,
                 max_particles: 8192,
                 shadow_quality: 4,
+                shadow_map_resolution: 0,
+                shadow_resume_quality: 0,
                 projector_shadows: true,
                 projector_shadow_limit: 2,
                 ssao: 2,
@@ -298,6 +308,24 @@ impl Preset {
     /// like the slider of the page). The Glow switch stays the user's
     /// (module comment).
     pub fn apply(self, s: &mut Settings) {
+        crate::settings::shadow_profile::remember_before_global(s);
+        self.apply_legacy_values(s);
+        crate::settings::shadow_profile::select_fixed_tier(s, self.shadow_tier());
+    }
+
+    fn shadow_tier(self) -> crate::settings::shadow_profile::Tier {
+        use crate::settings::shadow_profile::Tier;
+        match self {
+            Preset::Potato | Preset::Low | Preset::Medium => Tier::Off,
+            Preset::High => Tier::High,
+            Preset::Deluxe => Tier::Ultra,
+        }
+    }
+
+    // Migrations of older graphics levels retain their historical write set.
+    // In particular they must not install a new shadow recipe while loading
+    // an otherwise matching profile with a user-defined reach or method.
+    fn apply_legacy_values(self, s: &mut Settings) {
         Values {
             glow: s.glow,
             ..self.values()
@@ -323,7 +351,21 @@ impl Preset {
     /// The level whose settings are exactly those of `s`, if any.
     pub fn matching(s: &Settings) -> Option<Preset> {
         let current = Values::read(s).as_shown();
-        Preset::ALL.into_iter().find(|p| p.values().as_shown() == current)
+        Preset::ALL.into_iter().find(|p| {
+            let mut expected = p.values().as_shown();
+            let (_, contacts, projectors, budget) = p.shadow_tier().global_controls();
+            if s.shadow_profile.is_none() {
+                return matches_shadow_tier(s) && expected == current;
+            }
+            if !crate::settings::shadow_profile::matches_global(s, p.shadow_tier()) {
+                return false;
+            }
+            expected.shadow_quality = current.shadow_quality;
+            expected.effects.contact_shadows = contacts;
+            expected.projector_shadows = projectors;
+            expected.projector_shadow_limit = if projectors { budget } else { 2 };
+            expected == current
+        })
     }
 }
 
@@ -358,13 +400,24 @@ pub(crate) mod mac_mid_high {
     /// Writes the Mac default (a new Mac profile's level, and the one-time
     /// move of a Mac profile still exactly on the former Medium default).
     pub(crate) fn apply(s: &mut Settings) {
+        crate::settings::shadow_profile::remember_before_global(s);
+        apply_legacy_values(s);
+        crate::settings::shadow_profile::select_fixed_tier(s, crate::settings::shadow_profile::Tier::Off);
+    }
+
+    pub(crate) fn apply_legacy_values(s: &mut Settings) {
         values().write(s);
         s.graphics_saved_active = None;
     }
 
     /// Whether the profile is exactly the Mac default.
     pub(crate) fn matches(s: &Settings) -> bool {
-        Values::read(s).as_shown() == values().as_shown()
+        let shadow_matches = if s.shadow_profile.is_some() {
+            crate::settings::shadow_profile::matches_global(s, crate::settings::shadow_profile::Tier::Off)
+        } else {
+            super::matches_shadow_tier(s)
+        };
+        shadow_matches && Values::read(s).as_shown() == values().as_shown()
     }
 
     #[cfg(test)]
@@ -462,7 +515,7 @@ pub(crate) fn upgrade_deluxe(s: &mut Settings) {
         ..deluxe_v18()
     };
     if Values::read(s).as_shown() == former.as_shown() {
-        Preset::Deluxe.apply(s);
+        Preset::Deluxe.apply_legacy_values(s);
     }
 }
 
@@ -485,7 +538,7 @@ pub(crate) fn deluxe_v19() -> Values {
 /// they were.
 pub(crate) fn upgrade_deluxe_effects(s: &mut Settings) {
     if Values::read(s).as_shown() == deluxe_v18().as_shown() {
-        Preset::Deluxe.apply(s);
+        Preset::Deluxe.apply_legacy_values(s);
     }
 }
 
@@ -494,7 +547,7 @@ pub(crate) fn upgrade_deluxe_effects(s: &mut Settings) {
 /// that Deluxe moves to the Deluxe of now (both off); any other keeps them.
 pub(crate) fn upgrade_deluxe_experimental(s: &mut Settings) {
     if Values::read(s).as_shown() == deluxe_v19().as_shown() {
-        Preset::Deluxe.apply(s);
+        Preset::Deluxe.apply_legacy_values(s);
     }
 }
 
@@ -512,7 +565,7 @@ pub(crate) fn high_v19() -> Values {
 /// level or custom, keeps its occlusion.
 pub(crate) fn upgrade_high_gtao(s: &mut Settings) {
     if Values::read(s).as_shown() == high_v19().as_shown() {
-        Preset::High.apply(s);
+        Preset::High.apply_legacy_values(s);
     }
 }
 
@@ -529,7 +582,7 @@ pub(crate) fn upgrade_levels_v21(s: &mut Settings) {
         (deluxe_v20(), Preset::Deluxe),
     ] {
         if current == former.as_shown() {
-            preset.apply(s);
+            preset.apply_legacy_values(s);
             return;
         }
     }
@@ -663,18 +716,8 @@ pub struct Effects {
     pub bloom: bool,
     pub bloom_strength: f32,
     pub contact_shadows: bool,
-    /// Soft sun shadows, experimental: off in every level. A backup or a
-    /// saved preset written before them holds none: off, the default size.
-    #[serde(default)]
-    pub soft_shadows: bool,
-    #[serde(default = "shadow_softness")]
-    pub shadow_softness: f32,
     pub screen_indirect_light: bool,
     pub screen_indirect_intensity: f32,
-}
-
-fn shadow_softness() -> f32 {
-    crate::settings::SHADOW_SOFTNESS
 }
 
 impl Effects {
@@ -683,8 +726,6 @@ impl Effects {
         bloom: false,
         bloom_strength: crate::settings::BLOOM_STRENGTH,
         contact_shadows: false,
-        soft_shadows: false,
-        shadow_softness: crate::settings::SHADOW_SOFTNESS,
         screen_indirect_light: false,
         screen_indirect_intensity: crate::settings::SCREEN_INDIRECT_INTENSITY,
     };
@@ -716,6 +757,11 @@ pub struct Values {
     pub max_complexity: u32,
     pub max_particles: u32,
     pub shadow_quality: u8,
+    /// Zero in historical backups and built-in presets: use the preset tier in the active sun mode.
+    #[serde(default)]
+    pub shadow_map_resolution: u16,
+    #[serde(default)]
+    pub shadow_resume_quality: u8,
     pub projector_shadows: bool,
     #[serde(default = "default_projector_shadow_limit")]
     pub projector_shadow_limit: u8,
@@ -757,6 +803,10 @@ pub struct Values {
     #[serde(default = "all_lights")]
     pub local_light_count: u32,
     pub effects: Effects,
+}
+
+fn matches_shadow_tier(s: &Settings) -> bool {
+    s.shadow_quality == 0 || u32::from(s.shadow_map_size()) == Settings::shadow_resolution_for(s.shadow_quality, s.graded_sun_shadows, 0)
 }
 
 /// Every local light the renderer holds: the levels above Potato.
@@ -849,13 +899,6 @@ impl Values {
                 Effects::OFF.bloom_strength
             },
             contact_shadows: self.shadow_quality > 0 && e.contact_shadows,
-            soft_shadows: self.shadow_quality > 0 && e.soft_shadows,
-            // a size only while the effect is on
-            shadow_softness: if self.shadow_quality > 0 && e.soft_shadows {
-                round(e.shadow_softness, 0.05)
-            } else {
-                Effects::OFF.shadow_softness
-            },
             screen_indirect_light: indirect,
             screen_indirect_intensity: if indirect {
                 round(e.screen_indirect_intensity, 0.1)
@@ -864,6 +907,10 @@ impl Values {
             },
         };
         Values {
+            // A zero preset resolution means the mode's tier-derived size. The effective
+            // pixel comparison is made in the active mode by matches_shadow_tier().
+            shadow_map_resolution: 0,
+            shadow_resume_quality: 0,
             draw_distance: round(self.draw_distance, 1.0),
             lod_factor: round(self.lod_factor, 0.125),
             tree_lod_factor: round(self.tree_lod_factor, 0.125),
@@ -899,6 +946,12 @@ impl Values {
             max_complexity: s.max_complexity,
             max_particles: s.max_particles,
             shadow_quality: s.shadow_quality,
+            shadow_map_resolution: s.shadow_map_size(),
+            shadow_resume_quality: if s.shadow_quality == 0 {
+                s.shadow_resume_quality
+            } else {
+                s.shadow_quality
+            },
             projector_shadows: s.projector_shadows,
             projector_shadow_limit: s.projector_shadow_limit,
             ssao: s.ssao,
@@ -922,8 +975,6 @@ impl Values {
                 bloom: s.bloom,
                 bloom_strength: s.bloom_strength,
                 contact_shadows: s.contact_shadows,
-                soft_shadows: s.soft_shadows,
-                shadow_softness: s.shadow_softness,
                 screen_indirect_light: s.screen_indirect_light,
                 screen_indirect_intensity: s.screen_indirect_intensity,
             },
@@ -937,6 +988,23 @@ impl Values {
         s.max_avatars = self.max_avatars;
         s.max_complexity = self.max_complexity;
         s.max_particles = self.max_particles;
+        // Preserve a remembered pixel size when applying an old/built-in Off preset.
+        let old_size = s.shadow_map_size();
+        let old_tier = s.shadow_quality;
+        s.shadow_map_resolution = if self.shadow_quality == 0 && self.shadow_map_resolution == 0 {
+            old_size
+        } else if self.shadow_map_resolution == 0 {
+            Settings::shadow_resolution_for(self.shadow_quality, s.graded_sun_shadows, 0) as u16
+        } else {
+            self.shadow_map_resolution
+        };
+        if self.shadow_quality > 0 {
+            s.shadow_resume_quality = self.shadow_quality.min(4);
+        } else if self.shadow_resume_quality != 0 {
+            s.shadow_resume_quality = self.shadow_resume_quality.min(4);
+        } else if old_tier > 0 {
+            s.shadow_resume_quality = old_tier.min(4);
+        }
         s.shadow_quality = self.shadow_quality;
         s.shadows = self.shadow_quality > 0;
         s.projector_shadows = self.projector_shadows;
@@ -965,8 +1033,6 @@ impl Values {
         s.bloom = self.effects.bloom;
         s.bloom_strength = self.effects.bloom_strength;
         s.contact_shadows = self.effects.contact_shadows;
-        s.soft_shadows = self.effects.soft_shadows;
-        s.shadow_softness = self.effects.shadow_softness;
         s.screen_indirect_light = self.effects.screen_indirect_light;
         s.screen_indirect_intensity = self.effects.screen_indirect_intensity;
     }
@@ -975,52 +1041,16 @@ impl Values {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn the_soft_shadows_are_off_in_every_level_at_the_default_size() {
-        for preset in Preset::ALL {
-            let e = preset.values().effects;
-            assert!(!e.soft_shadows, "{preset:?}");
-            assert_eq!(e.shadow_softness, crate::settings::SHADOW_SOFTNESS, "{preset:?}");
-            let mut settings = Settings {
-                soft_shadows: true,
-                shadow_softness: 1.7,
-                ..Settings::default()
-            };
-            preset.apply(&mut settings);
-            assert!(!settings.soft_shadows && settings.shadow_softness == crate::settings::SHADOW_SOFTNESS);
-        }
-    }
-
-    #[test]
-    fn a_preset_saved_before_the_soft_shadows_reads_them_off_and_a_size_counts_only_while_on() {
-        let mut settings = Settings::default();
-        Preset::Deluxe.apply(&mut settings);
-        let mut saved = serde_json::to_value(Values::read(&settings)).expect("save preset");
-        let effects = saved.get_mut("effects").and_then(|e| e.as_object_mut()).expect("effects");
-        effects.remove("soft_shadows");
-        effects.remove("shadow_softness");
-        let old: Values = serde_json::from_value(saved).expect("older preset");
-        assert!(!old.effects.soft_shadows);
-        assert_eq!(old.effects.shadow_softness, crate::settings::SHADOW_SOFTNESS);
-        // the size shown is the default while the effect is off
-        let mut v = Values::read(&settings);
-        v.effects.shadow_softness = 1.7;
-        v.effects.soft_shadows = false;
-        assert_eq!(v.as_shown().effects.shadow_softness, crate::settings::SHADOW_SOFTNESS);
-        v.effects.soft_shadows = true;
-        assert!((v.as_shown().effects.shadow_softness - 1.7).abs() < 0.03);
-    }
-
-    #[test]
-    fn the_shadow_softness_and_intensity_are_sanitised() {
+    fn the_p3_source_size_and_shadow_intensity_are_sanitised() {
         for (softness, intensity) in [(f32::NAN, f32::NAN), (-3.0, -1.0), (50.0, 9.0), (f32::INFINITY, f32::NEG_INFINITY)] {
             let s = Settings {
-                shadow_softness: softness,
+                sun_shadow_angular_diameter_deg: softness,
                 shadow_intensity: intensity,
                 ..Settings::default()
             }
             .sanitized();
             assert!(
-                (0.0..=crate::settings::SHADOW_SOFTNESS_MAX).contains(&s.shadow_softness),
+                crate::settings::shadow_profile::SUN_DIAMETER_DEGREES.contains(&s.sun_shadow_angular_diameter_deg),
                 "{softness}"
             );
             assert!((0.0..=1.0).contains(&s.shadow_intensity), "{intensity}");

@@ -512,6 +512,24 @@ pub struct ObjGpu {
 }
 
 impl ObjGpu {
+    fn avatar_shadow_receiver(&self) -> bool {
+        !self.hud && self.owner_avatar.is_some()
+    }
+
+    /// Reparenting a rigid attachment can leave its geometry and materials
+    /// untouched. Update all live faces even during a transform-only sync.
+    fn set_face_owner(&mut self, hud: bool, owner: Option<usize>, mut set_receiver: impl FnMut(u32, bool)) {
+        let was_receiver = self.avatar_shadow_receiver();
+        self.hud = hud;
+        self.owner_avatar = owner;
+        let receiver = self.avatar_shadow_receiver();
+        if receiver != was_receiver {
+            for face in &self.faces {
+                set_receiver(face.record, receiver);
+            }
+        }
+    }
+
     /// Its wanted geometry is bound, or the sphere placeholder stands in
     /// for a sculpt whose map is missing (nothing more is coming).
     pub fn geometry_built(&self) -> bool {
@@ -3703,8 +3721,9 @@ impl Scene {
         g.physical = physical;
         g.posed = posed;
         g.wide = g.wide.filter(|_| posed.is_some());
-        g.hud = m.xf.2;
-        g.owner_avatar = m.owner_avatar;
+        g.set_face_owner(m.xf.2, m.owner_avatar, |record, enabled| {
+            renderer.records.set_avatar_shadow_receiver(record, enabled)
+        });
         if m.mirror != g.mirror {
             g.mirror = m.mirror;
             if m.mirror {
@@ -4006,8 +4025,9 @@ impl Scene {
         // what moves it slid over it
         let moving = self.note_shelter_pose(world, idx, hud);
         let g = &mut self.gpu[idx];
-        g.hud = hud;
-        g.owner_avatar = owner_avatar;
+        g.set_face_owner(hud, owner_avatar, |record, enabled| {
+            renderer.records.set_avatar_shadow_receiver(record, enabled)
+        });
         g.first_person_hidden = first_person_hidden;
         g.physical = moving;
         // reflection probe with the box and mirror flags (LLReflectionProbeParams)
@@ -4336,6 +4356,11 @@ impl Scene {
             // it is held (LLFace::getTexture)
             let mut rlva_pbr_covered = true;
             if let Some(mid) = mat_id {
+                // 64-bit local-only material key for opt-in thin PBR shading;
+                // uses spare identity words, leaving the OIT tie-break alone.
+                let key = aurora_render::pbr_thin_material_key(*mid.as_bytes());
+                rec.identity[1] = key[0];
+                rec.identity[2] = key[1];
                 g.material_ids.push(mid);
                 // render material: the asset with the face's override on
                 // top, or the default material while the asset loads or
@@ -4555,6 +4580,9 @@ impl Scene {
             rec.set_hud_zoom(hud_zoom);
             if !g.hud {
                 rec.flags[3] |= flags::OBJECT_MASK_PICK;
+            }
+            if g.avatar_shadow_receiver() {
+                rec.flags[3] |= flags::AVATAR_SHADOW_RECEIVER;
             }
             rec.set_world_blend_pick(
                 !g.hud
@@ -4945,7 +4973,7 @@ impl Scene {
                 let mut rec = DrawRecord {
                     model: record_model,
                     params: [0.0, 0.0, 0.8, minimum_alpha],
-                    flags: [flags::SKINNED, palette, system_binds, 0],
+                    flags: [flags::SKINNED, palette, system_binds, flags::AVATAR_SHADOW_RECEIVER],
                     // the OIT tie-break: the avatar's id and the part, in a
                     // range of its own above the faces of an object
                     identity: [aurora_render::oit_tie(*o.full_id.as_bytes(), 0x8000 | pi as u32), 0, 0, 0],
@@ -7927,6 +7955,55 @@ mod tests {
         let pose = Mat4::from_rotation_translation(Quat::from_rotation_z(0.3), Vec3::new(0.02, 0.0, 0.05));
         world.avatar_poses.insert(avatar_id, vec![pose; lib.rig.len()]);
         (world, [avatar, hat, child])
+    }
+
+    #[test]
+    fn worn_shadow_receiver_follows_the_avatar_and_linked_children() {
+        let (mut world, [body, hat, child]) = posed_attachment();
+        let region = world.objects.get(body).unwrap().key.region;
+        let mut mover = crate::demo::action_avatar(false);
+        mover.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        mover.local_id = 9151;
+        mover.full_id = Uuid::from_u128(9151);
+        mover.parent_id = 0;
+        mover.velocity = Vec3::X;
+        let moving_prim = world.objects.upsert(region, mover);
+        let owner = |world: &World, i| Scene::wearer_avatar(world, i).map(|(_, idx)| idx);
+        assert_eq!(owner(&world, body), Some(body));
+        assert_eq!(owner(&world, moving_prim), None);
+        let mut hat_update = crate::demo::events()
+            .into_iter()
+            .find_map(|event| match event {
+                aurora_net::NetEvent::ObjectUpdates { objects, .. } => objects.into_iter().find(|o| o.local_id == 9100),
+                _ => None,
+            })
+            .expect("demo hat update");
+        let avatar_local = world.objects.get(body).unwrap().key.local_id;
+        let mut live = [ObjGpu::default(), ObjGpu::default()];
+        for g in &mut live {
+            let face = test_face(Pass::Opaque, false);
+            g.faces.extend([face, FaceDraw { record: 1, ..face }]);
+        }
+        // Both faces of both objects are already live. Only the root gets
+        // a simulator update. Each child's transform sync sees its new owner.
+        for (parent, hud, updates) in [
+            (avatar_local, false, Some(true)),
+            (0, false, Some(false)),
+            (avatar_local, false, Some(true)),
+            (avatar_local, true, Some(false)),
+            (avatar_local, true, None),
+        ] {
+            hat_update.parent_id = parent;
+            assert_eq!(world.objects.upsert(region, hat_update.clone()), hat);
+            for (i, g) in [hat, child].into_iter().zip(&mut live) {
+                let mut changes = vec![];
+                g.set_face_owner(hud, owner(&world, i), |record, flag| changes.push((record, flag)));
+                match updates {
+                    Some(flag) => assert_eq!(changes, [(0, flag), (1, flag)]),
+                    None => assert!(changes.is_empty()),
+                }
+            }
+        }
     }
 
     #[test]

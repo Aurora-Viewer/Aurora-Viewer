@@ -12839,7 +12839,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
 | `AURORA_SOFT_SHADOWS=0`, `1` or `alt` | Soft sun shadows off, on or one second in two for this launch |
 | `AURORA_SHADOW_SOFTNESS=<0-2>`, `AURORA_SHADOW_INTENSITY=<0-1>` | Size of the light of the soft shadows (1 = 2.3 degrees across; the real sun, 0.53 degrees, is a softness of 0.23) and darkness of the sun's shadows (1 = as before) for this launch |
-| `AURORA_SOFT_PROJECTORS=0` | With the soft shadows, the projectors keep their 5-tap shadows (to measure their cost apart) |
+| `AURORA_SOFT_PROJECTORS=1` | Use the optional projector soft filter with soft shadows in the main view. Unset or `0` selects the stock five-tap filter. |
 | `AURORA_PROJECTOR_TRACE=1` | Log projector shadow selection and fades each frame |
 | `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_CONTACT_VARIANT=bend`, `no-early-out`, `no-shared`, `short` or `skip` | Diagnostic: the contact shadows' shader without one of its constructs (GPU hangs of the AMD RX 9000 cards) |
@@ -13305,7 +13305,7 @@ What the inventory must show with these scenarios:
   saved setting: `0` off, `1` on, `alt` off and on by turns, one second
   each (on in odd seconds), the mask kept ready; `prepass` on, but cast by
   the depth prepass alone (opaque and masked faces, terrain), as before the
-  blended faces opaque enough and the impostor cards were drawn into a copy
+  blended texels with at least half coverage and the impostor cards were drawn into a copy
   of it for them (see `AURORA_DEMO_FEET`); `shell` on, each depth taken
   as a shell of 0.5 % of its distance (Bend's window, before issue 988)
   instead of a body as deep as the ray went under it (up to 5 cm, with
@@ -13345,35 +13345,8 @@ What the inventory must show with these scenarios:
   `perf summary` is their GPU time, the copy of the depth and its extra
   casters included (same crowd with `AURORA_DEMO_FEET=blend`,
   2560 × 1369, RTX 4090, 120 fps cap: about 0.17 to 0.26 ms).
-- **`AURORA_SOFT_SHADOWS=0|1|alt`**: the soft sun shadows (Preferences ›
-  Graphics › Soft shadows, experimental; `soft_shadows.rs`) for this
-  launch, without changing the saved setting: `0` off, `1` on, `alt` off and
-  on by turns, one second each (on in odd seconds), the mask kept ready.
-  Percentage-closer soft shadows in compute, once per pixel of the depth
-  prepass: a search of the shadow map finds the casters and their mean
-  distance (read in the minimum depths of blocks of 4, 8 and 16 texels of
-  the atlas, rebuilt each frame, so that no thin caster slips between the texels of a block), the
-  light's size (2.3 degrees across at a softness of 1) gives the
-  penumbra, and 12 rotated taps take the light (32 in a photo), then a
-  bilateral blur in the world's metres removes their noise. The penumbra is
-  never narrower than the filter of before (3 cm across): where it would be, the shadow takes that filter (the same taps for every pixel, so no grain and nothing that crawls with the camera; it ignores the `AURORA_SHADOW_FILTER=gaps` and `AURORA_SHADOW_BIAS=legacy` comparisons), fading into the rotated taps over three times the half width that filter spans in the cascade, and the two cascades of a split are mixed as before where both take it. At the default softness (0.25) a caster less than about 9 m above the receiver gives that filter, so the default is close to the previous shadows by design. A softness of 0 draws no mask at all: exactly the shadows of before. The shading reads the mask where its surface is the one of the
-  prepass; blended faces in front of it, water, reflections and probes keep
-  the filter of before. Off, nothing is created or drawn, the scene's shaders are compiled without the soft path (a variant built in the background when the setting changes, like the samples and SSR) and the casters'
-  culling planes are those of before. **`AURORA_SHADOW_SOFTNESS=<0-2>`**
-  (the slider, active with the soft shadows only; the default is 0.25, a light about 0.6 degrees across, close to the real sun (0.53 degrees, a softness of 0.23); 1 is a light 2.3 degrees
-  across, the look of PR 2288; 0 a light with no
-  size) and
-  **`AURORA_SHADOW_INTENSITY=<0-1>`** (how dark the sun's shadows are, with
-  or without the soft shadows; 1 is as before) override the settings.
-  **`AURORA_SOFT_PROJECTORS=0`** keeps the 5 taps of the projectors' shadows
-  while the sun's are soft (the projectors' soft shadows search their map
-  and filter 12 taps, only under the projectors' cones). `g_soft` of `perf
-  summary` is the mask's GPU time. To measure (the protocol of the PR):
-  `AURORA_DEMO=1 AURORA_DEMO_CROWD=40 AURORA_AUTO_EXPOSURE=0
-  AURORA_PROFILE=1`, a 2560 × 1369 window, five alternated runs of main,
-  the branch with the soft shadows off, on and at softness 2, and the
-  median of each run's medians of `gpu`, `g_objects`, `g_terrain_sky`,
-  `g_transparent`, `g_contact` and `g_soft`.
+- **`AURORA_SOFT_SHADOWS=0|1|alt`** overrides the soft-shadow switch for this launch. `alt` alternates each second. The feature uses P3's directional lookup in the sun and moon shadow maps. Its close-range and moving-caster checks are in the [P3 validation guide](p3-rendering/VALIDATION.md).
+- **`AURORA_SHADOW_INTENSITY=0..1`** controls the intensity of the resulting cast shadow. Stock tiers use the five-tap projector filter. **`AURORA_SOFT_PROJECTORS=1`** enables projector soft filtering in the main view when directional softness is active. To compare costs use identical camera paths, shadow tiers and resolutions, and record total GPU and shadow-pass time.
 - **`AURORA_BLOOM=0|1|alt`**: Aurora's bloom (Preferences › Graphics ›
   Bloom, off by default) for this launch, without changing the saved
   setting: `0` off, `1` on (at the setting's strength, 0.5 when it is off),
@@ -13781,8 +13754,8 @@ What the inventory must show with these scenarios:
   keeps its own (see `AURORA_DEMO_SOFT_BLEND`), unless they lie on a
   solid surface (within 3 cm of it, or a hundredth of their distance
   from the camera, fading out to twice that: `on_occlusion_surface`): a
-  layer that fades out over a skin then takes the skin's occlusion, and
-  its contact shadow by the same rule, whatever its opacity (see
+  layer that fades out over a skin then takes the skin's ambient occlusion
+  whatever its opacity (see
   `AURORA_DEMO_BLEND_AO=layer`). The solid surfaces are the prepass and
   the blended texels from an opacity of 0.95, drawn first and kept as a
   depth of their own (the solid depth): in the occlusion's depth a texel
@@ -13795,8 +13768,8 @@ What the inventory must show with these scenarios:
   line along it. `none`: no blended face takes them and the
   occlusion reads the prepass alone (#556 to #882); `old`: every blended
   face takes those of what lies behind it (before #556); `alt`: `none` one
-  second in two. With the contact shadows on, their pass copies that depth
-  instead of drawing the blended faces a second time. See
+  second in two. The contact-shadow pass copies the opaque/masked prepass
+  and draws blended texels with at least half coverage at their actual depth. See
   `AURORA_DEMO_BLEND_AO`.
 - **`AURORA_DEMO_HALO=1`**: a wide translucent pane (35 % opaque) 3 m
   ahead of the start position (`AURORA_DEMO_POS`), facing the camera, so
@@ -14601,10 +14574,8 @@ parts, against the scene without weather. `--scenes` picks some,
     also counted in `g_effects`;
   - `g_contact`: the sun's contact shadows alone (`AURORA_CONTACT_SHADOWS`),
     also counted in `g_effects`;
-  - `g_soft`: the soft sun shadows alone (`AURORA_SOFT_SHADOWS`, 0 while
-    off), also counted in `g_effects`;
-  - `g_planar`, `g_probe`, `g_copy`, `g_ssr`: the rest of `g_effects`,
-    after the occlusion, the contact shadows and the soft shadows: the planar reflections
+  - `g_soft` is a compatibility field. The independent beta mask pass is absent. P3 directional lookup runs during surface shading.
+  - `g_planar`, `g_probe`, `g_copy`, `g_ssr`: the rest of `g_effects`, including the planar reflections
     (water, mirrors; the refracted water light is counted with them), the
     reflection probe face with its filtering, the copy of the scene for
     refraction and SSR (the cut-out pass and the submerged water particles

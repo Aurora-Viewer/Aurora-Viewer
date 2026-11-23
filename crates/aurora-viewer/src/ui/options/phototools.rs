@@ -155,7 +155,7 @@ const IMAGE_QUALITY: &[Row] = &[
 /// Shadow Detail, "Enable Attached Lights (Face Lights)", then the nearby
 /// lights (RenderLocalLightCount).
 const SHADOWS: &[Row] = &[
-    (Page::Graphics, 1, "shadow_quality"),
+    (Page::Graphics, 1, "shadow_profile"),
     (Page::Graphics, 1, "projector_shadows"),
     (Page::Graphics, 1, "others_attached_lights"),
     (Page::Graphics, 1, "local_light_count"),
@@ -228,7 +228,7 @@ fn photo_row(path: &str) -> Option<PhotoRow> {
         "dof.enabled" => PhotoRow::DofEnabled,
         "dof.f_number" => PhotoRow::DofFNumber,
         "dof.focus" => PhotoRow::DofFocus,
-        "shadow_quality" => PhotoRow::ShadowQuality,
+        "shadow_profile" => PhotoRow::ShadowQuality,
         "ssao" => PhotoRow::AmbientOcclusion,
         "others_attached_lights" => PhotoRow::AttachedLights,
         "exposure" => PhotoRow::Exposure,
@@ -796,12 +796,17 @@ mod tests {
         let e = sweep(tr!("ui-options-shadow-quality"), Section::Shadows, true, &base);
         assert!(e.touched && !e.changed && e.light.shadow_quality.is_some());
         assert!(same(&e.settings, &base), "the saved shadow quality is untouched");
-        let e = sweep(&saved_label("shadow_quality"), Section::Shadows, false, &base);
+        // The tier slider and Custom checkbox occupy separate lines. Use the
+        // slider's displayed value to exercise only the tier selection.
+        use crate::settings::shadow_profile::{self as profile, Tier};
+        let mut high = base.clone();
+        profile::select_fixed_tier(&mut high, Tier::High);
+        let e = sweep(tr!("ui-options-high"), Section::Shadows, false, &high);
         assert!(e.changed && !e.touched && e.light == PhotoLight::default());
-        assert!(
-            only(&base, &e.settings, |s| (s.shadow_quality, s.shadows) = (0, false)),
-            "only the saved level"
-        );
+        let tier = profile::tier(&e.settings);
+        assert_ne!(tier, Tier::High);
+        profile::select_tier(&mut high, tier);
+        assert!(same(&e.settings, &high), "the complete saved P3 tier");
         let e = sweep(tr!("ui-options-ambient-occlusion"), Section::AmbientOcclusion, true, &base);
         assert!(e.touched && !e.changed && e.light.ambient_occlusion.is_some());
         assert!(same(&e.settings, &base), "the saved occlusion is untouched");

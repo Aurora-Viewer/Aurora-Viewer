@@ -114,6 +114,21 @@ pub fn buffer_init(device: &wgpu::Device, label: &str, contents: &[u8], usage: w
     buffer
 }
 
+/// Optional GPU resources built on the calling thread. Any validation,
+/// device-internal or allocation error rejects the entire set. Unlike the
+/// memory recovery path below, an invalid pipeline is a reason to fall back.
+pub fn checked<T>(device: &wgpu::Device, make: impl FnOnce() -> T) -> Option<T> {
+    let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
+    let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let made = make();
+    let errors = [invalid, internal, oom].map(|scope| pollster::block_on(scope.pop()));
+    for error in errors.iter().flatten() {
+        say(error);
+    }
+    errors.iter().all(Option::is_none).then_some(made)
+}
+
 /// Runs `make`, which makes GPU objects with no check of their own (a set
 /// of render targets and what binds them), and says whether the memory
 /// refused them. Whatever came back invalid is `make`'s to drop: unlike

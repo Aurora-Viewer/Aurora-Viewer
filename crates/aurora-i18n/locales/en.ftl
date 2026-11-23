@@ -2605,6 +2605,11 @@ app-graphics-start-failed =
     Details: { $e }
 
     The log of this start: { $log }
+app-gpu-pipeline-stall-title = Aurora Viewer is preparing graphics
+app-gpu-pipeline-stall =
+    This frame has taken { $seconds } seconds. Aurora is waiting for a graphics pipeline. Your driver may need time to compile it, especially on first use.
+
+    Keep waiting? Yes lets compilation continue. No logs you out and closes Aurora.
 app-gpu-stall-title = Aurora Viewer: the graphics card is not responding
 app-gpu-stall =
     The graphics card has not finished an image for { $seconds } seconds. Aurora still works (the world, the sound, the chat go on) but nothing can be drawn until the card answers again.
@@ -4767,6 +4772,8 @@ ui-options-dof-enable = Depth of field
 ui-options-dof-enable-help = Blurs the view except where the camera focuses, like a real lens (Legacy Viewer: off).
 ui-options-dof-edit = Also while editing
 ui-options-dof-edit-help = Keeps the effect while the build tools are open.
+ui-options-dof-blended-depth = Include alpha-blended surfaces
+ui-options-dof-blended-depth-help = Use the depth of visible hair strands and other blended surfaces for depth of field in the world and in photos. Transparent gaps keep the background depth.
 ui-options-dof-focus = Focus
 ui-options-dof-focus-help = The camera's focus point (the Legacy Viewer's default), the point under the pointer, the point last clicked, or the point focused when locked.
 ui-options-dof-focus-camera = Camera
@@ -16150,3 +16157,167 @@ phototools-director-lens = The Director's lens is shown while its window is open
 phototools-view-angle-viewfinder = The viewfinder owns the view angle: yours comes back when it closes.
 ui-options-dof-show-focus-point = Show focus point
 ui-options-dof-show-focus-point-help = A small crosshair on the point the lens focuses on: yellow when it is free, red when it is locked.
+
+# Aurora Rendering Baseline v2.0.0
+ui-options-baseline-contact-diagnostic = Contact diagnostics
+ui-options-baseline-contact-diagnostic-help = Select one contact-shadow view. Filtered mask: white is shadow. Bend candidates and failures interpret only Bend metadata. View-ray outcomes: green is a hit, blue is offscreen, red is no accepted on-screen hit after visiting valid depth; red does not prove the sample budget was exhausted. Incompatible saved modes are inactive. Contact rendering must be active; exposure and postprocessing still affect these visualizations.
+ui-options-baseline-requires-bend = Select the Original (Bend) contact-shadow method.
+ui-options-baseline-requires-view-ray = Select the View-space contact-shadow method.
+ui-options-baseline-diagnostic-off = Off
+ui-options-baseline-contact-mask = Filtered contact mask
+ui-options-baseline-bend-candidates = Bend: ray candidates
+ui-options-baseline-bend-failures = Bend: failure analysis
+ui-options-baseline-view-ray-outcomes = View-ray: outcomes
+ui-options-baseline-diagnostic-inactive = Inactive for the selected method
+
+# BEGIN AURORA_SHADOW_VISIBILITY_V2_1_0
+# Aurora Shadow Visibility v2.1.0
+ui-options-shadow-visibility-diagnostic = Shadow diagnostics
+ui-options-shadow-visibility-diagnostic-help = Main-view sunlight visibility: white is lit, black is shadow. Map excludes contact shadows; effective contact includes optional coherence attenuation; combined uses the darker visibility. Filtered contact occlusion uses the opposite scale: white is shadow. Cascade coverage: red is near, green is middle, blue is far, darkened by combined shadows. View-ray outcomes: green is a hit, blue is offscreen, red is no accepted on-screen hit after visiting valid depth; red does not prove budget exhaustion. Contact modes require active contact rendering. Off leaves separate Dev Toolbox shadow/AO views and environment overrides in effect. Exposure and postprocessing still affect these views.
+ui-options-shadow-visibility-map = Shadow-map visibility
+ui-options-shadow-visibility-contact = Effective contact visibility
+ui-options-shadow-visibility-combined = Combined shadow visibility
+ui-options-shadow-visibility-cascades = Cascade coverage
+ui-options-shadow-visibility-filtered-mask = Filtered contact occlusion
+ui-options-shadow-visibility-requires-contact = Enable contact shadows to use this view.
+ui-options-shadow-visibility-inactive = Inactive with the current contact-shadow settings
+ui-options-shadow-visibility-method-help = Choose the original Bend contact tracer or bounded view-space depth tracing. View-space tracing stops when its sample budget runs out. Both use the existing contact-mask filter.
+ui-options-shadow-visibility-budget-help = Maximum depth pixels traversed along each contact ray. The ray stops when the budget runs out, so its effective reach can be shorter than the configured reach. Larger budgets increase GPU cost.
+# END AURORA_SHADOW_VISIBILITY_V2_1_0
+
+# BEGIN AURORA_SHADOW_RECOVERY_V2_1_1
+ui-options-shadow-recovery-diagnostic-help = Main-view sunlight visibility: white is lit, black is shadow. Map excludes contact shadows; effective contact reads the depth-filtered mask without coherence attenuation; combined uses the darker visibility. Filtered contact occlusion uses the opposite scale: white is shadow. Cascade coverage: red is near, green is middle, blue is far, darkened by combined shadows. View-ray outcomes: green is a hit, blue is offscreen, red is no accepted on-screen hit after visiting valid depth; red does not prove budget exhaustion. Contact modes require active contact rendering. Off leaves separate Dev Toolbox shadow/AO views and environment overrides in effect. Exposure and postprocessing still affect these views. With four levels active, yellow marks the finest map before red, green and blue. In the Bend ray candidates view, magenta marks pixels where raw contact shadow is lower than in v2.3.4 by about 3 percentage points or more, using the same depth samples. Brighter magenta means a larger change.
+ui-options-shadow-recovery-method-help = Choose the original Bend contact tracer or the earlier experimental View-space tracer restored in v2.1.1. View-space samples along the requested physical reach and can miss thin geometry between samples. Both use the existing depth-aware contact-mask filter. Coherence attenuation is retired.
+ui-options-shadow-recovery-budget-help = Maximum sample positions along the view-space ray. Samples are spaced using the requested physical reach and projected pixel size; they do not visit every crossed depth pixel. A larger budget can retain more thin-caster detail at higher GPU cost. Visibility, screen clipping, start offset and sample spacing still limit actual coverage.
+# END AURORA_SHADOW_RECOVERY_V2_1_1
+
+# BEGIN AURORA_NEAR_SHADOW_DETAIL_V2_2_0
+ui-options-near-shadow-detail = Near shadow detail
+ui-options-near-shadow-detail-help = Preserve finer sun and moon shadows close to the camera. Tighter coverage favors close-up detail; farther surfaces use the other shadow cascades. Off restores the previous shadow-map behavior. Contact shadows are controlled separately.
+ui-options-near-shadow-detail-range = Near detail coverage limit
+ui-options-near-shadow-detail-range-help = Maximum coverage of the finest shadow cascade, measured from the camera. Start at 4 m; reduce for close-ups or increase for a wider scene. An already tighter percentage-based setting still takes precedence. Total shadow distance is unchanged.
+# END AURORA_NEAR_SHADOW_DETAIL_V2_2_0
+
+ui-options-graded-sun-shadows = Four-level sun shadows
+ui-options-graded-sun-shadows-help = Give nearby surfaces a separate shadow map and spread the other three maps over the requested distance. Uses extra GPU memory and an additional shadow pass. Also applies to moonlight.
+ui-options-graded-quality-help = Shadow map resolution per level: 512, 1024, 2048 or 4096 pixels per side. Distance is controlled separately.
+ui-options-graded-detail-range = Near detail distance
+ui-options-graded-detail-range-help = Distance from the camera to the end of the finest map. Start at 2 m. Extending the same map reduces its detail density.
+ui-options-graded-reach = Shadow distance
+ui-options-graded-reach-help = How far sun and moon shadows reach. The camera draw distance can limit the actual range.
+ui-options-graded-measured = Active levels, near to far: { $splits } m. Map texel width: { $texels } mm per texel.
+ui-options-graded-waiting = No active four-level shadow pass in the last reported view.
+ui-options-graded-timing = Near detail pass: { $ms } ms GPU.
+
+ui-shadow-enable = Enable shadows
+ui-shadow-enable-help = Enable sun, moon, contact and projector shadows. Turning this off remembers the selected resolution.
+ui-shadow-map-resolution = Shadow map resolution
+ui-shadow-map-resolution-help = Pixels per side of each sun or moon shadow map. Projector maps use half this width. Higher resolutions use more video memory.
+ui-shadow-contact-hardening = Soft sun and moon shadows
+ui-shadow-contact-hardening-help = Sun and moon shadow edges soften as the distance between the caster and the receiving surface increases. This adds filtering work on the GPU.
+ui-shadow-angular-diameter = Light angular diameter
+ui-shadow-angular-diameter-help = Apparent width of the light source in degrees. Earth’s Sun is about 0.53°. Larger values give softer edges.
+ui-shadow-sun = Sun and moon
+ui-shadow-layout = Sun shadow layout
+ui-shadow-three = Three levels
+ui-shadow-four = Four levels
+ui-shadow-reach-three = Three-level shadow distance
+ui-shadow-reach-four = Four-level shadow distance
+ui-shadow-saved-three = Saved three-level settings
+ui-shadow-saved-four = Saved four-level settings
+ui-shadow-saved-help = Edit the settings that will apply when you switch to this layout.
+ui-shadow-smoothing = Edge smoothing
+ui-shadow-smoothing-help = Mild smooths close, middle and far edges in four-level mode. At 512 or 1024 px, the middle and far maps use a narrower filter to preserve thin shadows. The finest map has its own filter. Compare with Sharp in Shadow-map visibility.
+ui-shadow-sharp = Sharp
+ui-shadow-mild = Mild
+ui-shadow-first-custom = Customize first cascade
+ui-shadow-first-custom-help = Choose the first map’s share of the effective shadow distance. The standard share is 8%.
+ui-shadow-first-share = First cascade coverage
+ui-shadow-first-share-help = The first cascade ends at this percentage of the effective shadow distance. Near detail can cap it further.
+ui-shadow-no-measurement = Waiting for an active sun or moon shadow pass.
+ui-shadow-measured = Last view · { $mode } · { $size } px per side. Ends at { $splits } m. Texel width { $texels } mm, nearest first.
+ui-shadow-contact-section = Contact detail
+ui-shadow-method = Contact shadow method
+ui-shadow-bend = Original (Bend)
+ui-shadow-view = View-space (experimental)
+ui-shadow-search-reach = Bend search reach
+ui-shadow-search-help = Maximum screen-space search along the light ray, in pixels. Greater reach increases GPU work.
+ui-shadow-adaptive = Adaptive
+ui-shadow-adaptive-reach = Adaptive search distance
+ui-shadow-adaptive-reach-help = Approximate world-space reach for Bend’s adaptive search. The screen-space search remains bounded to 480 pixels.
+ui-shadow-occluder-depth = Occluder depth
+ui-shadow-occluder-depth-help = Depth behind a visible caster treated as solid by Bend. Larger values can create detached shadows.
+ui-shadow-contact-advanced = Advanced contact settings
+ui-shadow-contact-advanced-help = Adjust contact-ray acceptance and small-hole filtering.
+ui-shadow-adaptive-depth = Adaptive Bend ray depth
+ui-shadow-adaptive-depth-help = Extend the depth window for Bend rays receding from the camera. May add shadows from unrelated surfaces.
+ui-shadow-hole-repair = Repair small holes
+ui-shadow-hole-repair-help = Bridge one- to three-pixel gaps between contact shadows on the same surface. Applies to either contact method.
+ui-shadow-ray-reach = View ray reach
+ui-shadow-ray-reach-help = Maximum ray length in metres. Screen edges and the sample budget can limit the effective search.
+ui-shadow-ray-tolerance = View ray depth tolerance
+ui-shadow-ray-tolerance-help = Maximum accepted depth difference at a sampled surface, in metres.
+ui-shadow-ray-budget = View ray sample budget
+ui-shadow-projectors-section = Projector lights
+ui-shadow-projector-limit = Maximum shadow-casting projectors
+ui-shadow-projector-active = Projectors casting shadows · { $active } / { $limit } allocated · { $size } × { $size } px per map.
+ui-shadow-projector-waiting = Waiting for a shadow frame to measure projector use.
+ui-shadow-diagnostics-section = Shadow diagnostics
+ui-shadow-legend-visibility = White is lit. Black is blocked.
+ui-shadow-legend-mask = White shows contact occlusion. Dark areas receive little or none.
+ui-shadow-legend-three = Red is near, green is middle, blue is far. Mixed colors show overlap.
+ui-shadow-legend-four = Yellow is near detail, red is close, green is middle, blue is far. Mixed colors show overlap.
+ui-shadow-legend-rays = Green is a hit, blue is offscreen, red is an on-screen search without a hit.
+ui-shadow-legend-candidates = Green to orange indicates early to late candidates. A blue tint marks rays whose projected search exits the screen. Magenta shows where raw contact shadow fell by about 3 percentage points or more compared with v2.3.4. Brighter magenta means a larger change.
+ui-shadow-legend-failures = Green or yellow is an accepted shadow. For misses, blue marks a screen exit, orange a near depth match, purple the search cap and dark gray the shorter cutoff.
+
+ui-shadow-profile-help = Choose a shadow quality level. With Custom checked, each level keeps its own edits. Uncheck Custom to use the original settings.
+ui-shadow-profile-distance = Sun shadow distance
+ui-shadow-profile-range = { $name } · { $distance } m
+ui-shadow-profile-manual-range = Manual · { $distance } m
+ui-shadow-profile-distance-help = Adjust the distance covered by sun and moon shadows for this quality level.
+ui-shadow-profile-near = Near
+ui-shadow-profile-balanced = Balanced
+ui-shadow-profile-far = Far
+ui-shadow-profile-reset = Restore default shadow settings for { $tier } only
+ui-shadow-profile-advanced-help = Show individual shadow controls. Hiding them keeps your values active.
+ui-shadow-profile-warning = Changing these controls can make shadows look hollow, detached or unstable. Use the reset arrow beside Custom to restore this level’s defaults.
+ui-shadow-profile-off-help = Shadows are off. Select Low, Medium, High or Ultra to edit that level.
+ui-shadow-profile-paused = Previous advanced settings
+ui-shadow-profile-paused-help = An older profile saved advanced values that were inactive. Applying them replaces this level’s advanced values and keeps its distance and projector choices.
+ui-shadow-profile-apply-paused = Apply previous values
+
+## Rendering experiments
+
+ui-options-p3-ao-thin = Experimental: Thin-object AO compensation
+ui-options-p3-ao-thin-help = Compensates for thin occluders in XeGTAO. Try 0.25 to 0.75 on leaves, wires or hair and check nearby crevices. Zero uses the original response.
+ui-options-p3-thin-group = Experimental: PBR thin-surface lighting
+ui-options-p3-thin-enable = Enable local PBR thin-surface lighting
+ui-options-p3-thin-enable-help = Adjusts how this viewer lights the selected glTF surfaces. The material asset keeps its authored values.
+ui-options-p3-thin-scope = Target scope
+ui-options-p3-thin-scope-help = Target one material UUID or preview all double-sided, alpha-masked PBR materials.
+ui-options-p3-thin-scope-uuid = Specific material UUID
+ui-options-p3-thin-scope-preview = Preview masked + double-sided PBR
+ui-options-p3-thin-uuid = PBR material UUID
+ui-options-p3-thin-uuid-help = Paste a material UUID from the object editor. The renderer matches its first eight bytes. A blank or invalid UUID selects no faces.
+ui-options-p3-thin-ao = Minimum PBR material AO
+ui-options-p3-thin-ao-help = Sets a minimum for the ORM occlusion channel on matching surfaces. Zero uses the material’s authored occlusion.
+ui-options-p3-thin-transmission = Backlight transmission
+ui-options-p3-thin-transmission-help = Approximates sunlight passing through a thin surface. Nearby blockers cast shadows on the transmitted light. Zero disables transmission.
+ui-options-p3-thin-highlight = Highlight matched materials
+ui-options-p3-thin-highlight-help = Tints matching faces magenta so you can check which surfaces receive the lighting adjustment.
+ui-options-p3-legacy-group = Experimental legacy lighting harmonization
+ui-options-p3-legacy-enable = Harmonize legacy lighting
+ui-options-p3-legacy-enable-help = Adjusts diffuse lighting on legacy materials under modern EEP skies in this viewer.
+ui-options-p3-legacy-sun = Normalize sunlight diffuse
+ui-options-p3-legacy-sun-help = Uses a Lambertian diffuse response for legacy sunlight. The authored specular highlight is preserved.
+ui-options-p3-legacy-ambient = Soften diffuse ambient occlusion
+ui-options-p3-legacy-ambient-help = Moves ambient visibility on legacy diffuse surfaces 18% toward full visibility.
+ui-options-p3-legacy-local = Avoid duplicate local highlights
+ui-options-p3-legacy-local-help = Keeps the legacy Blinn–Phong highlight and removes the extra GGX highlight from the local diffuse lighting path.
+ui-options-p3-dof-smooth = Experimental: Smooth near-focus blur
+ui-options-p3-dof-smooth-help = Softens the foreground transition between sharp focus and blur.
+ui-options-p3-dof-strength = Near-focus smoothing strength
+ui-options-p3-dof-strength-help = Sets the foreground blur transition strength, from the original response at 0 to maximum smoothing at 1.
+ui-options-p3-dof-zones = Debug: Show DoF focus zones
+ui-options-p3-dof-zones-help = Shows near blur in red, far blur in blue and focused areas in grey. Also available in Photo mode.

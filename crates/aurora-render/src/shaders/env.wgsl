@@ -982,7 +982,7 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
     let material = terrain_material(in, dx, dy, blend_dx, blend_dy, false, lin_clamp);
     surface_occlusion = normal_map_occlusion(geo, material.normal, in.world_pos, 1.0 / in.clip.w);
     screen_share = 1.0;
-    contact_share = 1.0;
+    contact_surface = true;
     if (material.color.a < material.cutoff) { discard; }
     let n = material.normal;
     let v = normalize(frame.camera_pos.xyz - in.world_pos);
@@ -1012,7 +1012,7 @@ fn terrain_pbr_shaded(in: TerrainPbrOut) -> Shaded {
         color += material.color.rgb * water_caustic_light(in.world_pos, n) * sh;
         color = apply_fog(water_scene_lit(color, own, in.world_pos), in.world_pos);
     }
-    color = debug_view(color, in.world_pos, n, dist, in.clip.xy);
+    color = debug_view(color, in.world_pos, geo, dist, in.clip.xy);
     return Shaded(vec4<f32>(light_tiles_checked(color, in.world_pos, in.clip.xy), 1.0), n, rough, metal);
 }
 
@@ -3171,7 +3171,7 @@ fn snow_cover_lit(clip: vec2<f32>, world: vec3<f32>, lies_at: vec3<f32>, n: vec3
     // the screen-space terms (ambient occlusion, contact shadows) were
     // made from the depth under the snow: what it buries would darken it
     screen_share = 0.0;
-    contact_share = 0.0;
+    contact_surface = false;
     // "Snow settles" off: none drawn, whatever falls (it was read from the
     // puddles' switch, rain_look.x, which is the snow's only while it
     // snows: in rain or clear weather the snow melting away showed)

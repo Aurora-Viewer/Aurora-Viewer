@@ -6,6 +6,29 @@ enable wgpu_binding_array;
 // viewer shaders (skyV.glsl, cloudsV/F.glsl, waterFogF.glsl), Copyright (C)
 // Linden Research, Inc., LGPL 2.1.
 
+// BEGIN AURORA_RENDER_CONTROLS_V2
+const RC_ABI_VERSION: u32 = 1u;
+const RC_MODE_NORMAL: u32 = 0u;
+const RC_MODE_CASCADES: u32 = 1u;
+const RC_MODE_AMBIENT_OCCLUSION: u32 = 2u;
+const RC_MODE_CONTACT_MASK: u32 = 3u;
+const RC_MODE_BEND_CANDIDATES: u32 = 4u;
+const RC_MODE_BEND_FAILURES: u32 = 5u;
+const RC_MODE_VIEW_RAY_OUTCOMES: u32 = 6u;
+const RC_MODE_SHADOW_MAP_VISIBILITY: u32 = 7u;
+const RC_MODE_CONTACT_VISIBILITY: u32 = 8u;
+const RC_MODE_COMBINED_VISIBILITY: u32 = 9u;
+const RC_FLAG_INTEGRITY_COMPOSITE: u32 = 1u;
+const RC_FLAG_HARMONIZE: u32 = 2u;
+const RC_FLAG_HARMONIZE_SUN: u32 = 4u;
+const RC_FLAG_HARMONIZE_AMBIENT: u32 = 8u;
+const RC_FLAG_HARMONIZE_LOCAL: u32 = 16u;
+const RC_FLAG_NEAR_SHADOW_DETAIL: u32 = 32u;
+const RC_BACKEND_NONE: u32 = 0u;
+const RC_BACKEND_BEND: u32 = 1u;
+const RC_BACKEND_VIEW_RAY: u32 = 2u;
+// END AURORA_RENDER_CONTROLS_V2
+
 const MAX_LIGHTS: u32 = 64u;
 const CASCADES: u32 = 3u;
 const PI: f32 = 3.14159265359;
@@ -131,10 +154,17 @@ struct Frame {
     aurora: vec4<f32>,          // the aurora: x how bright (0: none), y its heading (rad, clockwise from north), z its foot's height (0..1), w colours (0 green, 1 violet, 2 red)
     photo: vec4<f32>,           // the main view of a photo tile: its part of the photo (left, top, width, height); zero otherwise
     tex_lod: vec4<f32>,         // x: the material textures' mip bias (FSR drawing the world smaller than the window, fsr.rs mip_bias); 0 otherwise
-    soft: vec4<f32>,            // x: 1 = the soft shadows' mask is read (main view), y: share of the light the sun's shadows let through (1 - intensity), z: projectors' light size in metres (0: the 5-tap filter), main view only
+    soft: vec4<f32>,            // x: reserved, y: share of the light the sun's shadows let through (1 - intensity), z: projectors' light size in metres (0: the 5-tap filter), main view only
     snow_stamp_z: array<vec4<f32>, 4>, // the soles' heights of snow_stamps (m), four to a vec4
     snow_far: vec4<f32>,        // x how far the snow lying is drawn (m), whatever falls (while it snows and while it melts); yzw unused
     curvature: vec4<f32>,       // planet curvature (apply_curvature): xy the main camera (region m), z 1 / 2R (0: flat), w unused
+    pbr_thin_key: vec4<u32>,     // material UUID first 64 bits in xy, target mode z, debug w
+    pbr_thin_gain: vec4<f32>,    // x minimum ORM AO, y transmitted backlighting
+    render_controls: vec4<u32>, // display, private flags, active backend, ABI
+    detail_vp: mat4x4<f32>,
+    detail_params: vec4<f32>, // x: detail end, y: mild edges, z: outer limit of fine overlap, w: tan(directional light angular radius), zero disables PCSS
+    portrait_vp: mat4x4<f32>, // zero unless the camera-local map was rendered this frame
+    portrait_depth: vec4<f32>, // x: local slab start in the original detail map depth
 };
 
 // frame.features.x: "HDR and Emissive" off, the Legacy Viewer's G-buffer has
@@ -225,6 +255,7 @@ const FLAG_OBJECT_MASK_PICK: u32 = 1073741824u; // flags.w, world/worn objects o
 const LAYER_RANK_SHIFT: u32 = 24u;
 const LAYER_RANK_MAX: u32 = 7u;
 const LAYER_DEPTH_STEP: f32 = 9.5367431640625e-7; // 2^-20
+const FLAG_AVATAR_SHADOW_RECEIVER: u32 = 134217728u; // flags.w bit 27, system body or worn world face
 const FLAG_STUDIO_STAGE: u32 = 536870912u; // flags.w bit 29, local scenery, not the avatar reveal
 const PORTAL_HALF_WIDTH: f32 = 1.0;
 const PORTAL_HALF_HEIGHT: f32 = 1.5;
@@ -265,14 +296,16 @@ const PALETTE_STRIDE: u32 = 261u;
 // atlas of 2x2 tiles, cascade i in tile (i % 2, i / 2)
 @group(0) @binding(1) var shadow_map: texture_depth_2d;
 @group(0) @binding(2) var shadow_sampler: sampler_comparison;
+@group(0) @binding(30) var detail_shadow_map: texture_depth_2d;
+@group(0) @binding(31) var portrait_shadow_map: texture_depth_2d;
 @group(0) @binding(3) var ao_tex: texture_2d<f32>;
 @group(0) @binding(4) var lin_clamp: sampler;
 @group(0) @binding(5) var water_refl_tex: texture_2d<f32>;
 @group(0) @binding(6) var mirror_tex: texture_2d<f32>;
 @group(0) @binding(7) var scene_tex: texture_2d<f32>;
 @group(0) @binding(8) var depth_tex: texture_depth_2d;
-// The solid surfaces of the depth the occlusion and the contact shadows
-// were made from (renderer.rs, "solid depth"): the prepass and the blended
+// The solid surfaces of the occlusion depth
+// (renderer.rs, "solid depth"): the prepass and the blended
 // texels solid to the eye, without those that are in that depth while
 // their opacity still rises (blend_screen_share), which would find
 // themselves here. Bound where the blended faces are drawn
@@ -323,9 +356,6 @@ struct ProbeSet {
 @group(0) @binding(12) var probe_irr_tex: texture_cube_array<f32>;
 // the sun's contact shadows (contact_shadows.wgsl): 0 lit, 1 in shadow
 @group(0) @binding(13) var contact_tex: texture_2d<f32>;
-// the sun's soft shadows (soft_shadows.wgsl): per pixel, the light let
-// through (10 bits) and the distance of the surface it was made for (an f16)
-@group(0) @binding(30) var soft_tex: texture_2d<u32>;
 
 @group(1) @binding(0) var<storage, read> records: array<DrawRecord>;
 @group(1) @binding(1) var<storage, read> palettes: array<mat4x4<f32>>;
@@ -1409,6 +1439,9 @@ const SHADOW_PENUMBRA: f32 = 0.03;
 // frame.light_mode.z: the shadow filter of before, with its gaps
 // (AURORA_SHADOW_FILTER=gaps, to compare).
 const SHADOW_FILTER_GAPS: u32 = 0x100u;
+// Opt-in, lower-confidence treatment of isolated screen-space contact hits.
+// Distinct from legacy-harmonization's 0x800000..0x4000000 flags.
+const CONTACT_SHADOW_COHERENCE: u32 = 0x8000000u;
 // frame.light_mode.z: the shadow lookup of an object offset along its
 // normal-mapped normal, as before (AURORA_SHADOW_FILTER=mapped; object.wgsl
 // shadow_normal).
@@ -1437,6 +1470,26 @@ const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
 // frame.light_mode.z: geometric specular anti-aliasing of the objects
 // (AURORA_SPECULAR_AA, specular_aa_roughness)
 const SPECULAR_AA: u32 = 0x8000u;
+
+// Local-only legacy lighting experiment: separate from automatic PBR conversion.
+// renderer.rs writes these bits only when the master switch is enabled.
+const LEGACY_HARMONIZE_ON: u32 = RC_FLAG_HARMONIZE;
+const LEGACY_HARMONIZE_SUN: u32 = RC_FLAG_HARMONIZE_SUN;
+const LEGACY_HARMONIZE_AMBIENT: u32 = RC_FLAG_HARMONIZE_AMBIENT;
+const LEGACY_HARMONIZE_LOCAL: u32 = RC_FLAG_HARMONIZE_LOCAL;
+
+fn harmonize_legacy_sun() -> bool {
+    let need = LEGACY_HARMONIZE_ON | LEGACY_HARMONIZE_SUN;
+    return (frame.render_controls.y & need) == need;
+}
+fn harmonize_legacy_ambient() -> bool {
+    let need = LEGACY_HARMONIZE_ON | LEGACY_HARMONIZE_AMBIENT;
+    return (frame.render_controls.y & need) == need;
+}
+fn harmonize_legacy_local() -> bool {
+    let need = LEGACY_HARMONIZE_ON | LEGACY_HARMONIZE_LOCAL;
+    return (frame.render_controls.y & need) == need;
+}
 
 // Geometric specular anti-aliasing (Kaplanyan & Hoffman 2016, "Stable
 // Geometric Specular Antialiasing with Projected-Space NDF Filtering", in
@@ -1498,23 +1551,332 @@ fn shadow_taps(span: f32, texel: f32) -> u32 {
     return clamp(u32(ceil(span / texel - 1e-3)) + 1u, 4u, 7u);
 }
 
+// Directional percentage-closer soft shadows (Fernando, 2005). Coordinates
+// are local texels, including when the depth texture holds several maps.
+// Both limits are radii. The world-space bound keeps the normal operating
+// range common to overlapping maps; the texel cap bounds custom extreme fits.
+const PCSS_MAX_METRES: f32 = 0.25;
+const PCSS_MAX_TEXELS: f32 = 256.0;
+const PCSS_OCTAGON = array<vec2<f32>, 8>(
+    vec2<f32>(1.0, 0.0), vec2<f32>(-1.0, 0.0), vec2<f32>(0.0, 1.0), vec2<f32>(0.0, -1.0),
+    vec2<f32>(0.707107, 0.707107), vec2<f32>(-0.707107, -0.707107),
+    vec2<f32>(0.707107, -0.707107), vec2<f32>(-0.707107, 0.707107));
+
+// Each pair samples opposite points in an equal-area annulus of the emitter.
+// Fixed light-space orientations give still frames and moving cameras the
+// same filter without requiring temporal accumulation.
+const PCSS_DISK_PAIRS = array<vec2<f32>, 12>(
+    vec2<f32>(0.204124, 0.000000), vec2<f32>(0.128119, 0.329523),
+    vec2<f32>(-0.336561, 0.308318), vec2<f32>(-0.484318, -0.238962),
+    vec2<f32>(0.053537, -0.610028), vec2<f32>(0.650021, -0.189225),
+    vec2<f32>(0.447799, 0.584074), vec2<f32>(-0.410447, 0.675673),
+    vec2<f32>(-0.828760, -0.146596), vec2<f32>(-0.173051, -0.872766),
+    vec2<f32>(0.789261, -0.502063), vec2<f32>(0.789033, 0.579448));
+
+// xy is a unit complex number: rotate without changing the physical radius.
+fn pcss_rotate(offset: vec2<f32>, xy: vec2<f32>) -> vec2<f32> {
+    return vec2<f32>(offset.x * xy.x - offset.y * xy.y, offset.x * xy.y + offset.y * xy.x);
+}
+
+// Return (weighted light-space gap, weight). Work at the raw texel centre,
+// so the slope check also accounts for the rounding of the search position.
+fn pcss_blocker(depth_map: texture_depth_2d, origin: vec2<i32>, position: vec2<f32>,
+        offset: vec2<f32>, receiver_z: f32, bias: f32, slope: vec2<f32>, radius_per_depth: f32) -> vec2<f32> {
+    let tap = vec2<i32>(floor(position + offset));
+    let delta = vec2<f32>(tap) + 0.5 - position;
+    let depth = textureLoad(depth_map, origin + tap, 0);
+    let gap = (receiver_z - depth) + dot(slope, delta);
+    if (depth >= 1.0 || gap <= bias) { return vec2<f32>(0.0); }
+    // Reject shallow neighbours outside their own emitter footprint.
+    let r = gap * radius_per_depth;
+    let weight = 1.0 - smoothstep(r + 0.5, r + 1.5, length(delta));
+    return vec2<f32>(gap * weight, weight);
+}
+
+fn pcss_disk(depth_map: texture_depth_2d, centre: vec2<f32>, inv_dims: vec2<f32>,
+        radius: f32, slope: vec2<f32>, ref_z: f32, rotation: vec2<f32>) -> f32 {
+    var visibility = 0.0;
+    for (var i = 0u; i < 12u; i++) {
+        let offset = pcss_rotate(PCSS_DISK_PAIRS[i], rotation) * radius;
+        let ref_offset = dot(slope, offset);
+        visibility += textureSampleCompareLevel(depth_map, shadow_sampler, (centre + offset) * inv_dims, ref_z + ref_offset);
+        visibility += textureSampleCompareLevel(depth_map, shadow_sampler, (centre - offset) * inv_dims, ref_z - ref_offset);
+    }
+    return visibility / 24.0;
+}
+
+// Returns filtered visibility, weight over the original lookup and disk radius in texels. Subtexel
+// penumbras use the existing thin geometry and avatar receiver handling.
+fn directional_pcss(depth_map: texture_depth_2d, vp: mat4x4<f32>, n: vec3<f32>,
+        uv: vec2<f32>, receiver_z: f32, receiver_bias: f32, origin: vec2<f32>,
+        size: f32, world_texel: f32, depth_per_metre: f32, base_radius: f32) -> vec3<f32> {
+    let tangent = frame.detail_params.w;
+    let texel_depth = world_texel * depth_per_metre;
+    let position = uv * size;
+    let edge = min(position, vec2<f32>(size) - position);
+    let margin = min(edge.x, edge.y) - 0.5;
+    let projected_normal = (vp * vec4<f32>(n, 0.0)).xyz;
+    let facing = projected_normal.z / depth_per_metre;
+    // Depth zero is the nearest possible blocker in an orthographic map.
+    let radius_per_depth = tangent / texel_depth;
+    let search_radius = min(min(PCSS_MAX_TEXELS, PCSS_MAX_METRES / world_texel), receiver_z * radius_per_depth);
+    if (search_radius <= base_radius || margin <= 1.0 || abs(facing) <= 0.05) {
+        return vec3<f32>(0.0);
+    }
+    // Find the plane's reference depth at each raw texel centre, including
+    // the Y flip from light clip space to texture space. This prevents a
+    // continuous sloping receiver from counting as its own blocker.
+    let extent = size * world_texel * 0.5;
+    let slope = vec2<f32>(-projected_normal.x, projected_normal.y) * (extent * texel_depth / facing);
+    let search = min(search_radius, margin);
+    let tile = vec2<i32>(origin);
+    var blockers = pcss_blocker(depth_map, tile, position, vec2<f32>(0.0), receiver_z, receiver_bias, slope, radius_per_depth);
+    // Grow outward from subtexel neighbours, independently of the search
+    // horizon. Rotating alternate rings covers more silhouette directions.
+    // Seven octagons reach 256 texels, including the last clipped ring.
+    var ring = min(search, 1.5);
+    for (var j = 0u; j < 7u; j++) {
+        let rotation = select(vec2<f32>(1.0, 0.0), vec2<f32>(0.92388, 0.382683), (j & 1u) == 1u);
+        for (var i = 0u; i < 8u; i++) {
+            let offset = pcss_rotate(PCSS_OCTAGON[i], rotation) * ring;
+            blockers += pcss_blocker(depth_map, tile, position, offset, receiver_z, receiver_bias, slope, radius_per_depth);
+        }
+        if (ring >= search) { break; }
+        ring = min(search, ring * 2.5);
+    }
+    if (blockers.y <= 0.0) { return vec3<f32>(0.0); }
+    // gap / depth_per_metre is separation along the light in metres.
+    // The light's apparent radius gives the footprint perpendicular to it.
+    let radius = min(search_radius, blockers.x / blockers.y * radius_per_depth);
+    let blend = smoothstep(base_radius, base_radius + 1.0, radius)
+        * smoothstep(radius + 0.5, radius + 2.0, margin) * smoothstep(0.05, 0.15, abs(facing));
+    if (blend <= 0.0) { return vec3<f32>(0.0); }
+    let inv_dims = 1.0 / vec2<f32>(textureDimensions(depth_map));
+    // Bilinear compares use one reference for four texel centres. Cover
+    // their slope residual while keeping the search's physical gap separate.
+    let ref_z = receiver_z - receiver_bias - (abs(slope.x) + abs(slope.y));
+    let centre = origin + position;
+    var sum = pcss_disk(depth_map, centre, inv_dims, radius, slope, ref_z, vec2<f32>(1.0, 0.0));
+    // Wider footprints need more disk directions to resolve a silhouette.
+    // Fade secondary patterns in so switching sample counts is continuous.
+    let middle = smoothstep(5.0, 12.0, radius);
+    let wide = smoothstep(16.0, 32.0, radius);
+    if (middle > 0.0) {
+        sum += middle * pcss_disk(depth_map, centre, inv_dims, radius, slope, ref_z, vec2<f32>(0.5, 0.8660254));
+    }
+    if (wide > 0.0) {
+        sum += wide * pcss_disk(depth_map, centre, inv_dims, radius, slope, ref_z, vec2<f32>(0.5, -0.8660254));
+    }
+    return vec3<f32>(sum / (1.0 + middle + wide), blend, radius);
+}
+
+// Mip 0 retains full-resolution local casters. Each tile of mip 1 contains
+// distant casters clipped against the same light plane. Each slab keeps the
+// nearest-to-light depth independently, including where their silhouettes overlap.
+// The raster viewports restore the original normalized depth in both slabs.
+struct DistantShadow {
+    tile: vec2<i32>,
+    size: i32,
+    position: vec2<f32>,
+    ref_z: f32,
+    slope: vec2<f32>,
+};
+
+fn distant_depth(map: DistantShadow, t: vec2<i32>) -> f32 {
+    return textureLoad(shadow_map, map.tile + clamp(t, vec2<i32>(0), vec2<i32>(map.size - 1)), 1);
+}
+
+fn distant_blocker(map: DistantShadow, position: vec2<f32>, bias: f32) -> vec2<f32> {
+    let t = vec2<i32>(clamp(floor(position), vec2<f32>(0.0), vec2<f32>(f32(map.size - 1))));
+    let delta = vec2<f32>(t) + 0.5 - map.position;
+    let depth = textureLoad(shadow_map, map.tile + t, 1);
+    let gap = map.ref_z - depth + dot(map.slope, delta);
+    if (depth >= 1.0 || gap <= bias) { return vec2<f32>(0.0); }
+    return vec2<f32>(gap, 1.0);
+}
+
+// The central seed must cover the same four remote texels as a bilinear
+// compare. A lone narrow blocker can otherwise disappear as the nearest
+// texel changes while almost half the filter still covers its silhouette.
+fn distant_central_blocker(map: DistantShadow, bias: f32) -> vec2<f32> {
+    let base = floor(map.position - 0.5);
+    let fraction = fract(map.position - 0.5);
+    var central = vec2<f32>(0.0);
+    for (var i = 0u; i < 4u; i++) {
+        let corner = vec2<u32>(i & 1u, i >> 1u);
+        let weights = select(1.0 - fraction, fraction, corner != vec2<u32>(0u));
+        central += distant_blocker(map, base + vec2<f32>(corner), bias) * (weights.x * weights.y);
+    }
+    return central;
+}
+
+// Comparison samplers cannot select mip 1 explicitly. Compare its raw depths
+// at their texel centres and reconstruct bilinear coverage for small footprints.
+fn distant_visibility(map: DistantShadow, position: vec2<f32>, ref_z: f32, radius: f32) -> f32 {
+    let reference = min(ref_z, 1.0);
+    if (radius >= 14.0) {
+        return f32(distant_depth(map, vec2<i32>(floor(position))) >= reference);
+    }
+    let t = vec2<i32>(floor(position - 0.5));
+    let f = fract(position - 0.5);
+    let depth = vec4<f32>(distant_depth(map, t), distant_depth(map, t + vec2<i32>(1, 0)),
+        distant_depth(map, t + vec2<i32>(0, 1)), distant_depth(map, t + vec2<i32>(1, 1)));
+    let lit = select(vec4<f32>(0.0), vec4<f32>(1.0), depth >= vec4<f32>(reference));
+    let bilinear = mix(mix(lit.x, lit.y, f.x), mix(lit.z, lit.w, f.x), f.y);
+    // At wide radii the 72 directions can use individual texels. Introduce
+    // the change gradually and retain four-texel coverage on the coarser maps.
+    let nearest = lit[u32(f.x >= 0.5) + 2u * u32(f.y >= 0.5)];
+    return mix(bilinear, nearest, smoothstep(8.0, 14.0, radius));
+}
+
+struct LocalShadow {
+    position: vec2<f32>,
+    inv_dims: vec2<f32>,
+    ref_z: f32,
+    slope: vec2<f32>,
+    radius: f32,
+    weight: f32,
+    visibility: f32,
+};
+
+// Sample the same emitter direction at the two blocker radii. That direction
+// contributes light only if it clears both depth layers. For an
+// unresolved local edge, use the existing pixel coverage for each direction.
+fn paired_visibility(local_map: texture_depth_2d, local: LocalShadow, remote: DistantShadow,
+        remote_ref: f32, remote_radius: f32, direction: vec2<f32>) -> f32 {
+    let offset = direction * remote_radius;
+    let remote_lit = distant_visibility(remote, remote.position + offset, remote_ref + dot(offset, remote.slope), remote_radius);
+    var local_lit = local.visibility;
+    if (local.weight > 0.0 && local.visibility < 1.0 && remote_lit > 0.0) {
+        let o = local.radius * direction;
+        let sample = textureSampleCompareLevel(local_map, shadow_sampler,
+            (local.position + o) * local.inv_dims, local.ref_z + dot(o, local.slope));
+        local_lit = mix(local_lit, sample, local.weight);
+    }
+    // In the slab overlap the same silhouette can contribute fractional
+    // coverage to both maps. Per direction, shared coverage counts once.
+    return min(local_lit, remote_lit);
+}
+
+fn paired_disk(local_map: texture_depth_2d, local: LocalShadow, remote: DistantShadow,
+        remote_ref: f32, remote_radius: f32, rotation: vec2<f32>) -> f32 {
+    var sum = 0.0;
+    for (var i = 0u; i < 12u; i++) {
+        let d = pcss_rotate(PCSS_DISK_PAIRS[i], rotation);
+        sum += paired_visibility(local_map, local, remote, remote_ref, remote_radius, d);
+        sum += paired_visibility(local_map, local, remote, remote_ref, remote_radius, -d);
+    }
+    return sum / 24.0;
+}
+
+// The close crop uses the original detail tile for distant blockers. Its
+// local and distant grids have independent XY scales and the same depth row.
+fn pcss_compose_grids(local_map: texture_depth_2d, local_visibility: f32, soft: vec3<f32>,
+        vp: mat4x4<f32>, n: vec3<f32>, uv: vec2<f32>, receiver_z: f32, bias: f32,
+        origin: vec2<f32>, slot: u32, size: f32, world_texel: f32, depth_per_metre: f32,
+        far_uv: vec2<f32>, far_size: f32, far_texel: f32, far_bias: f32) -> f32 {
+    if (local_visibility <= 0.0 || textureNumLevels(shadow_map) < 2u) { return local_visibility; }
+    let remote_size = i32(far_size * 0.5);
+    let tile = vec2<i32>(i32(slot % 2u), i32(slot / 2u)) * remote_size;
+    let normal = (vp * vec4<f32>(n, 0.0)).xyz;
+    let facing = normal.z / depth_per_metre;
+    let safe_facing = select(max(0.05, facing), min(-0.05, facing), facing < 0.0);
+    let slope = vec2<f32>(-normal.x, normal.y) * (0.5 * size * world_texel * world_texel * depth_per_metre / safe_facing);
+    let remote = DistantShadow(tile, remote_size, far_uv * f32(remote_size), receiver_z, slope * (2.0 * far_texel / world_texel));
+    let tangent = frame.detail_params.w;
+    let ref_z = remote.ref_z - far_bias - abs(remote.slope.x) - abs(remote.slope.y);
+    // A hard photo override may keep the layered atlas. Sample its bilinear
+    // edge even where the nearest texel is lit, without searching for blockers.
+    var radius = 0.0;
+    if (tangent > 0.0) {
+        let radius_scale = tangent / (2.0 * far_texel * depth_per_metre);
+        let max_radius = min(0.5 * PCSS_MAX_TEXELS, PCSS_MAX_METRES / (2.0 * far_texel));
+        let central = distant_central_blocker(remote, far_bias);
+        var blockers = central;
+        // Interior and perimeter probes cover both the middle and edge of a large blocker.
+        // A narrow silhouette at a distance may lie between the probes.
+        for (var ring = 0u; ring < 2u; ring++) {
+            let radius = max_radius * select(0.45, 1.0, ring == 1u);
+            let rotation = select(vec2<f32>(0.92388, 0.382683), vec2<f32>(1.0, 0.0), ring == 1u);
+            for (var i = 0u; i < 8u; i++) {
+                let probe = remote.position + pcss_rotate(PCSS_OCTAGON[i], rotation) * radius;
+                blockers += distant_blocker(remote, probe, far_bias);
+            }
+        }
+        if (blockers.y <= 0.0) { return local_visibility; }
+        let mean_gap = blockers.x / blockers.y;
+        var gap = mean_gap;
+        // On an inclined continuous sheet the wider search reaches blockers far
+        // above this receiver's own intersection. Use the observed central gap
+        // unless it is much shallower than the distant population (a separate caster).
+        if (central.y > 0.0) {
+            let central_gap = central.x / central.y;
+            let weight = central.y * smoothstep(0.18, 0.38, central_gap / mean_gap);
+            gap = mix(mean_gap, central_gap, weight);
+        }
+        radius = min(max_radius, gap * radius_scale);
+    }
+    if (radius <= 0.001) {
+        return min(local_visibility, distant_visibility(remote, remote.position, ref_z, 0.0));
+    }
+    let local_ref = receiver_z - bias - abs(slope.x) - abs(slope.y);
+    let local = LocalShadow(origin + uv * size, 1.0 / vec2<f32>(textureDimensions(local_map)), local_ref,
+        slope, soft.z, soft.y, local_visibility);
+    var sum = 0.0;
+    var weight = 0.0;
+    for (var ring = 0u; ring < 3u; ring++) {
+        var rotation = vec2<f32>(1.0, 0.0);
+        var w = 1.0;
+        if (ring == 1u) {
+            w = smoothstep(5.0, 12.0, 2.0 * radius);
+            rotation = vec2<f32>(0.5, 0.8660254);
+        }
+        if (ring == 2u) {
+            w = smoothstep(16.0, 32.0, 2.0 * radius);
+            rotation = vec2<f32>(0.5, -0.8660254);
+        }
+        if (w <= 0.0) { break; }
+        sum += w * paired_disk(local_map, local, remote, ref_z, radius, rotation);
+        weight += w;
+    }
+    // Both this integral and the independent local estimate sample a finite
+    // set of directions. Adding a distant blocker cannot reveal a local one.
+    return min(local_visibility, sum / weight);
+}
+
+fn pcss_compose(local_map: texture_depth_2d, local_visibility: f32, soft: vec3<f32>,
+        vp: mat4x4<f32>, n: vec3<f32>, uv: vec2<f32>, receiver_z: f32, bias: f32,
+        origin: vec2<f32>, slot: u32, size: f32, world_texel: f32, depth_per_metre: f32) -> f32 {
+    return pcss_compose_grids(local_map, local_visibility, soft, vp, n, uv, receiver_z, bias,
+        origin, slot, size, world_texel, depth_per_metre, uv, size, world_texel, bias);
+}
+
+fn cascade_normal_offset(cascade: u32) -> f32 {
+    let offset = 0.02 + 0.04 * f32(cascade);
+    if (cascade == 0u && (frame.render_controls.y & RC_FLAG_NEAR_SHADOW_DETAIL) != 0u) {
+        let m = frame.cascade_vp[0];
+        let radius = 1.0 / max(length(vec3<f32>(m[0].x, m[1].x, m[2].x)), 1e-6);
+        return min(offset, 4.0 * radius / f32(textureDimensions(shadow_map).x));
+    }
+    return offset;
+}
+
 // Shadow of one cascade (1 lit, 0 shadowed); -1 when the point is outside
 // its tile, so that a blend never takes light from a cascade that does not
 // see the point.
-fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
-    let bias_n = n * (0.02 + 0.04 * f32(cascade));
+fn cascade_shadow(receiver: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     let m = frame.cascade_vp[cascade];
-    let lp = m * vec4<f32>(world_pos + bias_n, 1.0);
+    // Tile coordinates and world-space texel size come from the actual map,
+    // including its stable fit and user-selected shadow resolution.
+    let texel = 2.0 / f32(textureDimensions(shadow_map).x);
+    let radius = 1.0 / max(length(vec3<f32>(m[0].x, m[1].x, m[2].x)), 1e-6);
+    let near_detail = cascade == 0u && (frame.render_controls.y & RC_FLAG_NEAR_SHADOW_DETAIL) != 0u;
+    let lp = m * vec4<f32>(receiver, 1.0);
     let ndc = lp.xyz / lp.w;
     let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0) {
         return -1.0;
     }
-    // texel of a tile, in tile coordinates
-    let texel = 2.0 / f32(textureDimensions(shadow_map).x);
-    // half extent of the cascade in metres: orthographic, so the first row
-    // of its matrix is the light's right axis divided by it
-    let radius = 1.0 / max(length(vec3<f32>(m[0].x, m[1].x, m[2].x)), 1e-6);
     let half_uv = SHADOW_PENUMBRA * 0.5 / radius;
     // The penumbra spans three spacings of 4 taps, a spacing kept between
     // half a texel and two texels. A bilinear compare tap only blends over
@@ -1524,7 +1886,13 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     // the same span takes as many taps as it covers texels, at most 7 x 7,
     // so that the ramps meet: the same penumbra, without the lines.
     let spacing = clamp(half_uv * (2.0 / 3.0), 0.5 * texel, 2.0 * texel);
-    let span = 3.0 * spacing;
+    var span = 3.0 * spacing;
+    if (near_detail) {
+        // Four taps per axis at half-texel spacing. A fixed texel footprint
+        // preserves thin cast shadows as coverage tightens; its world-space
+        // softness still depends on map density, not on blocker distance.
+        span = min(span, 1.5 * texel);
+    }
     var taps = shadow_taps(span, texel);
     if ((frame.light_mode.z & SHADOW_FILTER_GAPS) != 0u) {
         taps = 4u;
@@ -1551,18 +1919,440 @@ fn cascade_shadow(world_pos: vec3<f32>, n: vec3<f32>, cascade: u32) -> f32 {
     if ((frame.light_mode.z & SHADOW_BIAS_LEGACY) != 0u) {
         receiver_bias = 0.0005;
     }
+    let size = 0.5 * atlas.x;
+    var soft = vec3<f32>(0.0);
+    if (frame.detail_params.w > 0.0) {
+        soft = directional_pcss(shadow_map, m, n, uv, ndc.z, receiver_bias, tile * size,
+            size, 2.0 * radius * texel, depth_per_metre, max(1.0, 0.5 * span / texel));
+    }
+    var local = soft.x;
+    if (soft.y < 1.0) {
+        var sum = 0.0;
+        for (var y = 0u; y < taps; y++) {
+            for (var x = 0u; x < taps; x++) {
+                let o = (vec2<f32>(f32(x), f32(y)) - center) * step;
+                // clamped to the centers of the tile's edge texels: the same
+                // result as the clamp-to-edge of a separate texture, never a
+                // texel of the neighbouring tile
+                let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
+                sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * tile_scale, ndc.z - receiver_bias);
+            }
+        }
+        let original = sum / f32(taps * taps);
+        local = mix(original, soft.x, soft.y);
+    }
+    return pcss_compose(shadow_map, local, soft, m, n, uv, ndc.z, receiver_bias,
+        tile * size, cascade, size, 2.0 * radius * texel, depth_per_metre);
+}
+
+// Four-level directional shadow sampling. Level zero uses a separate depth
+// texture and the other three use the sun atlas. The edge of each map
+// clamps to its own tile even when projector/shelter rows extend the atlas.
+struct GradedShadowMap {
+    vp: mat4x4<f32>,
+    level: u32,
+    size: f32,
+    world_texel: f32,
+};
+
+fn graded_map(level: u32) -> GradedShadowMap {
+    var vp = frame.detail_vp;
+    var size = f32(textureDimensions(detail_shadow_map).x);
+    if (level > 0u) {
+        vp = frame.cascade_vp[level - 1u];
+        size = 0.5 * f32(textureDimensions(shadow_map).x);
+    }
+    let radius = 1.0 / max(length(vec3<f32>(vp[0].x, vp[1].x, vp[2].x)), 1e-6);
+    return GradedShadowMap(vp, level, size, 2.0 * radius / size);
+}
+
+// Only the nearest two maps of the lower-resolution Mild path need this.
+fn graded_near_contact(map: GradedShadowMap) -> bool {
+    return map.level <= 1u && map.size <= 2048.0 && frame.detail_params.y > 0.5
+        && (frame.light_mode.z & SHADOW_BIAS_LEGACY) == 0u;
+}
+
+// Set once per shaded object fragment from its draw record. Terrain,
+// water and other receiver passes keep their per-invocation default.
+var<private> avatar_shadow_receiver: bool = false;
+
+fn graded_offset(map: GradedShadowMap) -> f32 {
+    if (graded_near_contact(map)) { return 0.25 * min(0.02, map.world_texel); }
+    if (map.level == 0u) { return min(0.02, map.world_texel); }
+    return min(0.10, 0.5 * map.world_texel);
+}
+
+// Preserve the nearest layer's existing 16-tap PCF and bias. Coordinates
+// are in detail-map texels to keep each bilinear comparison within the map.
+fn graded_detail_pcf(depth_map: texture_depth_2d, uv: vec2<f32>, ref_z: f32, size: f32) -> f32 {
     var sum = 0.0;
-    for (var y = 0u; y < taps; y++) {
-        for (var x = 0u; x < taps; x++) {
-            let o = (vec2<f32>(f32(x), f32(y)) - center) * step;
-            // clamped to the centers of the tile's edge texels: the same
-            // result as the clamp-to-edge of a separate texture, never a
-            // texel of the neighbouring tile
-            let t = clamp(uv + o, vec2<f32>(0.5 * texel), vec2<f32>(1.0 - 0.5 * texel));
-            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, (t + tile) * tile_scale, ndc.z - receiver_bias);
+    for (var y = 0u; y < 4u; y++) {
+        for (var x = 0u; x < 4u; x++) {
+            let offset = (vec2<f32>(f32(x), f32(y)) - 1.5) * 0.5;
+            let tap = clamp(uv * size + offset, vec2<f32>(0.5), vec2<f32>(size - 0.5));
+            sum += textureSampleCompareLevel(depth_map, shadow_sampler, tap / size, ref_z);
         }
     }
-    return sum / f32(taps * taps);
+    return sum * (1.0 / 16.0);
+}
+
+// A bilinearly shifted 1:2:1 tent has four weights per axis. Read the
+// corresponding raw depths so a close blocker can vary continuously from a
+// sharp contact to a filtered cast shadow as its distance increases.
+fn graded_close_visibility(texel_pos: vec2<f32>, origin: vec2<f32>, size: f32,
+        atlas_size: vec2<f32>, ref_z: f32, texel_depth: f32, depth_per_metre: f32, near_contact: bool, receiver_slope: vec2<f32>) -> f32 {
+    let base = floor(texel_pos - 0.5);
+    let f = texel_pos - 0.5 - base;
+    let weights = array<vec2<f32>, 4>(
+        (1.0 - f) * 0.25, (2.0 - f) * 0.25, (1.0 + f) * 0.25, f * 0.25);
+    let first = vec2<i32>(0);
+    let last = vec2<i32>(i32(size) - 1);
+    var occlusion = 0.0;
+    var contact_occlusion = 0.0;
+    // A thin planted caster can be several texels from its receiver in
+    // shallow sun. Keep the calibrated near response across map densities.
+    let contact_guard = max(4.0 * texel_depth, 0.09 * depth_per_metre);
+    var detached_occlusion = 0.0;
+    var covered_texels = 0u;
+    var depths = vec4<f32>(0.0);
+    for (var y = 0u; y < 4u; y++) {
+        for (var x = 0u; x < 4u; x++) {
+            let tap = clamp(vec2<i32>(base) + vec2<i32>(i32(x) - 1, i32(y) - 1), first, last);
+            let depth = textureLoad(shadow_map, vec2<i32>(origin) + tap, 0);
+            if (near_contact && x >= 1u && x <= 2u && y >= 1u && y <= 2u) {
+                depths[(x - 1u) + 2u * (y - 1u)] = depth;
+            }
+            let gap = ref_z - depth;
+            if (gap > 0.0) {
+                let weight = weights[x].x * weights[y].y;
+                occlusion += weight;
+                if (near_contact) {
+                    detached_occlusion += weight * saturate(gap / contact_guard - 1.0);
+                    covered_texels |= 1u << (4u * y + x);
+                }
+                contact_occlusion += weight * (1.0 - smoothstep(2.0, 4.0, gap / texel_depth));
+            }
+        }
+    }
+    let filtered = saturate(((1.0 - occlusion) - 0.08) / 0.84);
+    var visibility = filtered;
+    if (contact_occlusion > 0.0) {
+        let uv = (origin + clamp(texel_pos, vec2<f32>(0.5), vec2<f32>(size - 0.5))) / atlas_size;
+        let centre = textureSampleCompareLevel(shadow_map, shadow_sampler, uv, ref_z);
+        visibility = mix(filtered, centre, saturate(contact_occlusion / max(occlusion, 1e-4)));
+    }
+    if (near_contact) {
+        // The caster pass adds twice the maximum depth slope per texel. Recover
+        // part of it only where the four central depths support one local plane.
+        let dx = min(abs(depths.y - depths.x), abs(depths.w - depths.z));
+        let dy = min(abs(depths.z - depths.x), abs(depths.w - depths.y));
+        let residual = abs((depths.x - depths.y) - (depths.z - depths.w)) / texel_depth;
+        // A two-column or two-row depth step has zero mixed residual. A
+        // distant caster mixed with the ground must keep its filtered edge.
+        // Positive separation detects a blocker. Differences between two
+        // depths behind the receiver cannot disqualify a real contact.
+        let nearest_depth = min(min(depths.x, depths.y), min(depths.z, depths.w));
+        let detached = smoothstep(contact_guard, 2.0 * contact_guard, ref_z - nearest_depth);
+        var confidence = (1.0 - smoothstep(0.3, 0.8, residual)) * (1.0 - detached);
+        // Reuse the full tent's far-blocker coverage to narrow broad edges
+        // about their stable midpoint. Thin nearby shadows keep their shape.
+        let far_fraction = detached_occlusion / max(occlusion, 1e-4);
+        visibility = mix(visibility, smoothstep(0.18, 0.82, visibility), far_fraction);
+        // A narrow caster can have both its lit borders within one 4x4
+        // footprint. A single straight silhouette has only one such border.
+        // In each central scanline, retain the raw bilinear shadow coverage
+        // when a blocked interior sample lies between two lit endpoints.
+        let rows = ~covered_texels & ~(covered_texels >> 3u) & ((covered_texels >> 1u) | (covered_texels >> 2u));
+        let cols = ~covered_texels & ~(covered_texels >> 12u) & ((covered_texels >> 4u) | (covered_texels >> 8u));
+        let row_support = mix(f32((rows >> 4u) & 1u), f32((rows >> 8u) & 1u), f.y);
+        let col_support = mix(f32((cols >> 1u) & 1u), f32((cols >> 2u) & 1u), f.x);
+        let ridge = max(row_support, col_support) * far_fraction;
+        // Folded avatar receivers use their own normal-matched recovery.
+        if (ridge > 0.0 && !avatar_shadow_receiver) {
+            let central = select(vec4<f32>(1.0), vec4<f32>(0.0), depths < vec4<f32>(ref_z));
+            let centre = mix(mix(central.x, central.y, f.x), mix(central.z, central.w, f.x), f.y);
+            visibility = mix(visibility, min(visibility, centre), ridge);
+        }
+        if (avatar_shadow_receiver) {
+            // Four texels spanning a clothing fold or two nearly coincident
+            // layers can agree on a plane that passes through neither layer.
+            // Recover slope bias only if that plane also follows the receiver.
+            let slope = vec2<f32>((depths.y - depths.x) + (depths.w - depths.z),
+                                  (depths.z - depths.x) + (depths.w - depths.y)) * (0.5 / texel_depth);
+            confidence *= 1.0 - smoothstep(0.15, 0.70, length(slope - receiver_slope));
+        }
+        let depth = mix(mix(depths.x, depths.y, f.x), mix(depths.z, depths.w, f.x), f.y);
+        let recovery = min(1.55 * max(dx, dy), 4.0 * texel_depth);
+        let gap = (ref_z - depth + recovery) / texel_depth;
+        visibility = min(visibility, 1.0 - confidence * smoothstep(0.10, 0.55, gap));
+    }
+    return visibility;
+}
+
+fn graded_original_lookup(map: GradedShadowMap, uv: vec2<f32>, ref_z: f32,
+        receiver_normal: vec3<f32>, near_contact: bool, depth_per_metre: f32) -> f32 {
+    let k = map.level - 1u;
+    let origin = vec2<f32>(f32(k % 2u), f32(k / 2u)) * map.size;
+    let texel_pos = uv * map.size;
+    let first = vec2<f32>(0.5);
+    let last = vec2<f32>(map.size - 0.5);
+    let atlas_size = vec2<f32>(textureDimensions(shadow_map));
+    if (frame.detail_params.y > 0.5) {
+        if (map.level == 1u) {
+            var receiver_slope = vec2<f32>(0.0);
+            if (near_contact && avatar_shadow_receiver) {
+                // The orthographic matrix rows give the light-space axes.
+                // Convert the normal to those axes and orient Y down to match atlas texels.
+                let local = (map.vp * vec4<f32>(receiver_normal, 0.0)).xyz;
+                let radius = 0.5 * map.world_texel * map.size;
+                let facing = -local.z / depth_per_metre;
+                receiver_slope = vec2<f32>(local.x, -local.y) * (radius / max(facing, 0.10));
+            }
+            return graded_close_visibility(texel_pos, origin, map.size, atlas_size, ref_z,
+                max(1e-8, map.world_texel * depth_per_metre), depth_per_metre, near_contact, receiver_slope);
+        }
+        if (map.size <= 1024.0) {
+            // A full-width tent erodes broad cores on the lower-density
+            // middle and far tiles. Keep their original quarter-texel filter.
+            let offsets = array<vec2<f32>, 4>(
+                vec2<f32>(-0.25, -0.25), vec2<f32>(0.25, -0.25),
+                vec2<f32>(-0.25, 0.25), vec2<f32>(0.25, 0.25));
+            var visibility = 0.0;
+            for (var i = 0u; i < 4u; i++) {
+                let tap = clamp(texel_pos + offsets[i], first, last);
+                visibility += textureSampleCompareLevel(shadow_map, shadow_sampler,
+                    (origin + tap) / atlas_size, ref_z);
+            }
+            return visibility * 0.25;
+        }
+        let weights = array<f32, 3>(0.25, 0.5, 0.25);
+        var visibility = 0.0;
+        for (var y = 0u; y < 3u; y++) {
+            for (var x = 0u; x < 3u; x++) {
+                let offset = (vec2<f32>(f32(x), f32(y)) - 1.0) * 1.25;
+                let tap = clamp(texel_pos + offset, first, last);
+                visibility += weights[x] * weights[y] * textureSampleCompareLevel(
+                    shadow_map, shadow_sampler, (origin + tap) / atlas_size, ref_z);
+            }
+        }
+        // Trim weak perimeter contributions on grazing lit surfaces.
+        return saturate((visibility - 0.08) / 0.84);
+    }
+    let tap = clamp(texel_pos, first, last);
+    return textureSampleCompareLevel(shadow_map, shadow_sampler,
+        (origin + tap) / atlas_size, ref_z);
+}
+
+fn graded_bias(map: GradedShadowMap, depth_per_metre: f32) -> f32 {
+    // The general maps use a compact filter and smaller receiver bias.
+    // The caster pass supplies the slope bias.
+    var receiver_bias = select(0.5, 2.0, map.level == 0u) * map.world_texel * depth_per_metre;
+    let near_contact = graded_near_contact(map);
+    if (near_contact) {
+        receiver_bias *= select(0.125, 0.75, avatar_shadow_receiver);
+    }
+    if ((frame.light_mode.z & SHADOW_BIAS_LEGACY) != 0u) {
+        receiver_bias = 0.0005;
+    }
+    return receiver_bias;
+}
+
+fn graded_fine_lookup(depth_map: texture_depth_2d, map: GradedShadowMap, n: vec3<f32>,
+        uv: vec2<f32>, receiver_z: f32, bias: f32, depth_per_metre: f32,
+        remote_uv: vec2<f32>, parent: GradedShadowMap, remote_bias: f32) -> f32 {
+    let origin = vec2<f32>(0.0);
+    var soft = vec3<f32>(0.0);
+    if (frame.detail_params.w > 0.0) {
+        soft = directional_pcss(depth_map, map.vp, n, uv, receiver_z, bias,
+            origin, map.size, map.world_texel, depth_per_metre, 1.0);
+    }
+    var local = soft.x;
+    if (soft.y < 1.0) {
+        local = mix(graded_detail_pcf(depth_map, uv, receiver_z - bias, map.size), soft.x, soft.y);
+    }
+    return pcss_compose_grids(depth_map, local, soft, map.vp, n, uv, receiver_z, bias,
+        origin, 3u, map.size, map.world_texel, depth_per_metre, remote_uv, parent.size, parent.world_texel, remote_bias);
+}
+
+fn graded_lookup(map: GradedShadowMap, biased_pos: vec3<f32>, receiver_normal: vec3<f32>) -> f32 {
+    let lp = map.vp * vec4<f32>(biased_pos, 1.0);
+    let ndc = lp.xyz / lp.w;
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || ndc.z < 0.0 || ndc.z > 1.0) {
+        return -1.0;
+    }
+    let depth_per_metre = length(vec3<f32>(map.vp[0].z, map.vp[1].z, map.vp[2].z));
+    let receiver_bias = graded_bias(map, depth_per_metre);
+    let near_contact = graded_near_contact(map);
+    if (map.level == 0u) {
+        return graded_fine_lookup(detail_shadow_map, map, receiver_normal, uv, ndc.z,
+            receiver_bias, depth_per_metre, uv, map, receiver_bias);
+    }
+    let k = map.level - 1u;
+    let tile = vec2<f32>(f32(k % 2u), f32(k / 2u)) * map.size;
+    var soft = vec3<f32>(0.0);
+    if (frame.detail_params.w > 0.0) {
+        soft = directional_pcss(shadow_map, map.vp, receiver_normal, uv, ndc.z,
+            receiver_bias, tile, map.size, map.world_texel, depth_per_metre, 1.0);
+    }
+    var local = soft.x;
+    if (soft.y < 1.0) {
+        let original = graded_original_lookup(map, uv, ndc.z - receiver_bias, receiver_normal, near_contact, depth_per_metre);
+        local = mix(original, soft.x, soft.y);
+    }
+    return pcss_compose(shadow_map, local, soft, map.vp, receiver_normal, uv, ndc.z, receiver_bias,
+        tile, k, map.size, map.world_texel, depth_per_metre);
+}
+
+// Evaluate the close map only while the whole local filter fits its XY crop.
+// The remote blocker search still covers its full original detail tile.
+fn portrait_lookup(parent: GradedShadowMap, world: vec3<f32>, n: vec3<f32>, distance_to_eye: f32) -> vec3<f32> {
+    let vp = frame.portrait_vp;
+    let size = f32(textureDimensions(portrait_shadow_map).x);
+    let radius = 1.0 / length(vec3<f32>(vp[0].x, vp[1].x, vp[2].x));
+    let map = GradedShadowMap(vp, 0u, size, 2.0 * radius / size);
+    let clip = (vp * vec4<f32>(world, 1.0)).xyz;
+    let margin = radius * (1.0 - max(abs(clip.x), abs(clip.y)));
+    let depth_scale = length(vec3<f32>(vp[0].z, vp[1].z, vp[2].z));
+    let normal = (vp * vec4<f32>(n, 0.0)).xyz;
+    let facing = abs(normal.z) / depth_scale;
+    let bias_margin = max(graded_offset(parent), graded_offset(map));
+    let tangent = frame.detail_params.w;
+    var filter_radius = 0.0;
+    var budget_weight = 1.0;
+    if (tangent > 0.0) {
+        // No local blocker can be farther lightward than the slab start.
+        // At distance r a sloped receiver can add gradient*r to the gap.
+        // Solve r <= (gap + gradient*r)*tan + the blocker tap's 1.5 texels.
+        let gap = max(0.0, (clip.z - frame.portrait_depth.x) / depth_scale) + bias_margin;
+        // Keep the handoff continuous across the PCSS grazing-angle cutoff.
+        let gradient = radius * length(normal.xy) / max(0.05, facing);
+        filter_radius = (gap * tangent + 1.5 * map.world_texel) / max(0.001, 1.0 - gradient * tangent);
+        // Extreme custom fits can exceed this map's PCSS radius in metres.
+        // In that case keep the parent tile's entire local penumbra.
+        let cap = min(PCSS_MAX_METRES, PCSS_MAX_TEXELS * map.world_texel);
+        budget_weight = 1.0 - smoothstep(0.90 * cap, cap, filter_radius);
+    }
+    let guard = filter_radius + bias_margin + 3.0 * map.world_texel;
+    let weight = budget_weight * smoothstep(guard, guard + 0.10, margin)
+        * (1.0 - smoothstep(0.32, 0.45, distance_to_eye));
+    if (weight <= 0.0 || clip.z < 0.0 || clip.z > 1.0) { return vec3<f32>(0.0, 0.0, graded_offset(parent)); }
+    let offset = mix(graded_offset(parent), graded_offset(map), weight);
+    let receiver = world + n * offset;
+    let close_ndc = (vp * vec4<f32>(receiver, 1.0)).xyz;
+    if (close_ndc.z < 0.0 || close_ndc.z > 1.0) { return vec3<f32>(0.0, 0.0, graded_offset(parent)); }
+    let parent_ndc = (parent.vp * vec4<f32>(receiver, 1.0)).xy;
+    let uv_scale = vec2<f32>(0.5, -0.5);
+    let close = graded_fine_lookup(portrait_shadow_map, map, n, 0.5 + close_ndc.xy * uv_scale,
+        close_ndc.z, graded_bias(map, depth_scale), depth_scale, 0.5 + parent_ndc * uv_scale,
+        parent, graded_bias(parent, depth_scale));
+    return vec3<f32>(close, weight, offset);
+}
+
+fn graded_colour(level: u32) -> vec3<f32> {
+    let colours = array<vec3<f32>, 4>(
+        vec3<f32>(1.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0),
+        vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));
+    return colours[level];
+}
+
+// Distance to the fine texture's edge in light space. The inner guard
+// covers grid snapping, both receivers' normal bias and all fine PCF taps.
+fn graded_fine_support(world: vec3<f32>) -> f32 {
+    let fine = graded_map(0u);
+    let close = graded_map(1u);
+    let lp = fine.vp * vec4<f32>(world, 1.0);
+    let ndc = lp.xyz / lp.w;
+    // The extra overlap requests the coarser map before a wide search disk
+    // reaches the fine tile edge. The existing Z guard concerns the receiver.
+    let margin = max(graded_offset(fine), graded_offset(close)) + 3.0 * fine.world_texel;
+    let disk_guard = select(0.0, min(PCSS_MAX_METRES, PCSS_MAX_TEXELS * fine.world_texel), frame.detail_params.w > 0.0);
+    let xy_guard = 2.0 * (margin + disk_guard) / (fine.size * fine.world_texel);
+    let z_scale = length(vec3<f32>(fine.vp[0].z, fine.vp[1].z, fine.vp[2].z));
+    let depth_margin = min(ndc.z, 1.0 - ndc.z) / max(z_scale, 1e-8);
+    return smoothstep(xy_guard, xy_guard + 0.08, 1.0 - max(abs(ndc.x), abs(ndc.y)))
+        * smoothstep(margin, margin + 4.0 * fine.world_texel, depth_margin);
+}
+
+// RGB identifies the contributing maps in the cascade diagnostic. Alpha is
+// sun visibility. The normal offset is continuous across the band and both
+// estimates use the same virtual receiver, as described by Ignacio Castaño
+// in Shadow Mapping Summary. Each map retains its own texel-scaled depth bias.
+fn graded_shadow(world: vec3<f32>, n: vec3<f32>, receiver_distance: f32) -> vec4<f32> {
+    let ends = vec4<f32>(frame.detail_params.x, frame.cascade_splits.xyz);
+    if (receiver_distance > ends.w) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    var level = 0u;
+    if (receiver_distance > ends.x) { level = 1u; }
+    if (receiver_distance > ends.y) { level = 2u; }
+    if (receiver_distance > ends.z) { level = 3u; }
+    var band_weight = 0.0;
+    if (level < 3u) {
+        let starts = vec4<f32>(0.0, ends.xyz);
+        let width = 0.15 * (ends[level] - starts[level]);
+        band_weight = smoothstep(ends[level] - width, ends[level], receiver_distance);
+    }
+    // Keep the same two maps and continuous normal offset. Reliable fine
+    // texels can survive the nominal handoff until their actual footprint
+    // runs out. Near a light-map edge, return to the normal radial blend.
+    let overlap_end = frame.detail_params.z;
+    if (receiver_distance >= 0.85 * ends.x && receiver_distance < overlap_end) {
+        let support = graded_fine_support(world)
+            * (1.0 - smoothstep(mix(ends.x, overlap_end, 0.70), overlap_end, receiver_distance));
+        if (support > 0.0) {
+            level = 0u;
+            band_weight = (1.0 - support) * smoothstep(0.85 * ends.x, ends.x, receiver_distance);
+        }
+    }
+    let map = graded_map(level);
+    let own_offset = graded_offset(map);
+    var visibility = -1.0;
+    var tint = graded_colour(level);
+    var last_tested = level;
+    if (band_weight > 0.0) {
+        let next = graded_map(level + 1u);
+        let offset = mix(own_offset, graded_offset(next), band_weight);
+        let receiver = world + n * offset;
+        visibility = graded_lookup(map, receiver, n);
+        let next_visibility = graded_lookup(next, receiver, n);
+        last_tested = level + 1u;
+        if (next_visibility >= 0.0) {
+            let w = select(1.0, band_weight, visibility >= 0.0);
+            visibility = mix(max(visibility, 0.0), next_visibility, w);
+            tint = mix(tint, graded_colour(level + 1u), w);
+        }
+    } else {
+        // XY support and the distance band share one virtual receiver offset.
+        var close = vec3<f32>(0.0, 0.0, own_offset);
+        if (level == 0u && frame.portrait_vp[3].w > 0.5 && receiver_distance < 0.45) {
+            close = portrait_lookup(map, world, n, receiver_distance);
+        }
+        visibility = close.x;
+        if (close.y < 1.0) {
+            visibility = graded_lookup(map, world + n * close.z, n);
+            if (close.y > 0.0 && visibility >= 0.0) {
+                visibility = mix(visibility, close.x, close.y);
+            }
+        }
+    }
+    // Mirrors may see behind the main camera. Use the first coarser map
+    // that contains that receiver. Invalid samples cannot brighten a valid map.
+    for (var k = last_tested + 1u; k < 4u && visibility < 0.0; k++) {
+        let coarse = graded_map(k);
+        visibility = graded_lookup(coarse, world + n * graded_offset(coarse), n);
+        tint = graded_colour(k);
+    }
+    if (visibility < 0.0) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+    let fade = clamp((ends.w - receiver_distance) / (ends.w * 0.1), 0.0, 1.0);
+    return vec4<f32>(tint, mix(1.0, visibility, fade));
+}
+
+// Lit planar captures share the main camera's fitted maps.
+fn graded_distance(world: vec3<f32>) -> f32 {
+    var eye = frame.camera_pos.xyz;
+    if (in_reflection_pass() && dot(frame.clip_plane.xyz, frame.clip_plane.xyz) > 0.5) {
+        eye -= 2.0 * (dot(frame.clip_plane.xyz, eye) + frame.clip_plane.w) * frame.clip_plane.xyz;
+    }
+    return distance(world, eye);
 }
 
 // The motion of a pixel on the screen from its clip positions, this frame's
@@ -1576,23 +2366,104 @@ fn screen_motion(cur: vec4<f32>, prev: vec4<f32>) -> vec2<f32> {
     return (cur.xy / cur.w - prev.xy / prev.w) * vec2<f32>(0.5, -0.5);
 }
 
-// The view shown instead of the image (frame.light_mode.z, Preferences ›
-// Debug), or `col`.
+// The view shown instead of the image (frame.render_controls.x, Preferences ›
+// Graphics › Light › Shadows or Dev Toolbox), or `col`.
 // 1 (also AURORA_DEBUG_SHADOWS): the cascade each pixel reads — red, green,
-// blue from the finest, mixed where two are blended, black beyond the
+// blue on the base maps, yellow on the optional detail map, mixed where
+// two are blended, black beyond the
 // shadow distance — darkened where the pixel is in shadow. The choice
 // mirrors shadow_factor.
 // 2: the ambient occlusion of the screen alone, light grey where nothing is
 // occluded (and everywhere when the effect is off), whatever the exposure
 // of the sky; cubed, the occlusion being too faint to read as it is.
 fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> vec3<f32> {
-    let view = frame.light_mode.z & 0xffu;
-    if (view == 0u) {
+    let view = frame.render_controls.x;
+    // Visibility views all use white = lit, black = shadow. The map-only
+    // view does not read the contact mask. Effective contact includes the
+    // optional coherence attenuation and each surface's eligibility.
+    if (view == RC_MODE_SHADOW_MAP_VISIBILITY) {
+        return vec3<f32>(shadow_factor(world_pos, n, vertex_depth));
+    }
+    if (view == RC_MODE_CONTACT_VISIBILITY && frame.render_controls.z != RC_BACKEND_NONE) {
+        return vec3<f32>(contact_shadow(frag));
+    }
+    if (view == RC_MODE_COMBINED_VISIBILITY) {
+        return vec3<f32>(sun_visibility(world_pos, n, vertex_depth, frag));
+    }
+    // Contact diagnostics use only the active tracer's metadata.
+    // Third independent diagnostic view. The normal red contact-shadow
+    // visibility channel is not changed by the diagnostic classification.
+    if (view == RC_MODE_BEND_FAILURES && frame.render_controls.z == RC_BACKEND_BEND) {
+        let px = vec2<i32>(frag);
+        let size = vec2<i32>(textureDimensions(contact_tex));
+        if (frame.contact.x < 0.5 || any(px < vec2<i32>(0)) || any(px >= size)) {
+            return vec3<f32>(0.0);
+        }
+        let d = textureLoad(contact_tex, px, 0);
+        if (d.r > 0.005) {
+            // Accepted shadow: green. Pale yellow when its first candidate
+            // was found late along the sampled ray.
+            let late = smoothstep(0.65, 1.0, d.g);
+            return mix(vec3<f32>(0.07, 0.85, 0.22), vec3<f32>(0.95, 0.85, 0.10), late);
+        }
+        if (d.b > 0.5) { return vec3<f32>(0.15, 0.35, 0.95); }
+        if (d.a > 0.25 && d.a < 0.75) { return vec3<f32>(1.0, 0.40, 0.05); }
+        if (d.g > 0.95) { return vec3<f32>(0.67, 0.14, 0.75); }
+        // Grey means no hit before this ray's shorter adaptive cutoff.
+        return vec3<f32>(0.07);
+    }
+    // The second contact-shadow debug view shows diagnostic channels that
+    // the ray kernel supplies, without changing its red visibility mask.
+    if (view == RC_MODE_BEND_CANDIDATES && frame.render_controls.z == RC_BACKEND_BEND) {
+        let px = vec2<i32>(frag);
+        let size = vec2<i32>(textureDimensions(contact_tex));
+        if (frame.contact.x < 0.5 || any(px < vec2<i32>(0)) || any(px >= size)) {
+            return vec3<f32>(0.0);
+        }
+        let d = textureLoad(contact_tex, px, 0);
+        // Candidate diagnostics keep centre-pixel metadata through the
+        // bilateral filter. Four quantization steps are about 3% occlusion.
+        let packed = u32(round(255.0 * d.a));
+        let removed_steps = packed >> 1u;
+        if (removed_steps >= 4u) {
+            let amount = sqrt(f32(removed_steps) / 127.0);
+            return mix(vec3<f32>(0.40, 0.02, 0.32), vec3<f32>(1.0, 0.04, 0.86), amount);
+        }
+        if (d.r <= 0.005 || (packed & 1u) == 0u) { return vec3<f32>(0.02); }
+        let late = smoothstep(0.65, 1.0, d.g);
+        var tint = mix(vec3<f32>(0.05, 0.83, 0.22), vec3<f32>(1.0, 0.38, 0.04), late);
+        if (d.b > 0.5) { tint = mix(tint, vec3<f32>(0.16, 0.36, 1.0), 0.65); }
+        return tint * (0.25 + 0.75 * d.r);
+    }
+    if (view == RC_MODE_CONTACT_MASK && frame.render_controls.z != RC_BACKEND_NONE) {
+        let size = vec2<i32>(textureDimensions(contact_tex));
+        let px = vec2<i32>(frag);
+        if (frame.contact.x < 0.5 || any(px < vec2<i32>(0)) || any(px >= size)) {
+            return vec3<f32>(0.0);
+        }
+        return vec3<f32>(textureLoad(contact_tex, px, 0).r);
+    }
+    if (view == RC_MODE_VIEW_RAY_OUTCOMES && frame.render_controls.z == RC_BACKEND_VIEW_RAY) {
+        let pixel = vec2<i32>(frag);
+        let dims = vec2<i32>(textureDimensions(contact_tex));
+        if (frame.contact.x < 0.5 || any(pixel < vec2<i32>(0)) || any(pixel >= dims)) {
+            return vec3<f32>(0.0);
+        }
+        // v1.6 filter passes diagnostic GBA through unblurred; R is filtered.
+        let raw = textureLoad(contact_tex, pixel, 0);
+        return vec3<f32>(raw.a, raw.g, raw.b); // red: no accepted on-screen hit; green: hit; blue: offscreen
+    }
+    if (view == RC_MODE_NORMAL) {
         return col;
     }
-    if (view == 2u) {
+    if (view == RC_MODE_AMBIENT_OCCLUSION) {
         let ao = screen_ao(frag);
         return vec3<f32>(ao * ao * ao * 0.8 / max(frame.params.x, 1e-3));
+    }
+    if (view != RC_MODE_CASCADES) { return col; }
+    if (frame.detail_params.x > 0.0) {
+        let result = graded_shadow(world_pos, n, graded_distance(world_pos));
+        return result.rgb * (0.12 + 0.88 * result.a);
     }
     let splits = frame.cascade_splits;
     var own_depth = vertex_depth;
@@ -1617,19 +2488,15 @@ fn debug_view(col: vec3<f32>, world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: 
     return w * (0.12 + 0.88 * sun_shadow(world_pos, n, vertex_depth, frag));
 }
 
-// How much of the contact shadows' mask the fragment being shaded takes: 1
-// on the surface of the depth the mask was made from (the prepass, and the
-// blended faces opaque to the eye drawn over it: blend_screen_share), 0 on
-// a more transparent blended face, unless it lies on a solid surface: as
-// `screen_share`, and for the same reason (the skin under a fading layer
-// is in the shadow).
-var<private> contact_share: f32 = 1.0;
+// Contact depth includes opaque/masked receivers and half-covered blended
+// texels when the additional caster pass is enabled.
+var<private> contact_surface: bool = true;
 
 // The sun's contact shadow at a pixel of the main view (contact_shadows.rs):
 // what the shadow map is too coarse to show, taken as the darker of the
 // two (sun_shadow). 1 elsewhere: other views, blended faces, off.
 fn contact_shadow(frag: vec2<f32>) -> f32 {
-    if (frame.contact.x < 0.5 || contact_share <= 0.0 || in_reflection_pass()) {
+    if (frame.contact.x < 0.5 || !contact_surface || in_reflection_pass()) {
         return 1.0;
     }
     let p = vec2<i32>(frag);
@@ -1637,62 +2504,36 @@ fn contact_shadow(frag: vec2<f32>) -> f32 {
     if (any(p < vec2<i32>(0)) || any(p >= size)) {
         return 1.0;
     }
-    return 1.0 - contact_share * textureLoad(contact_tex, p, 0).r;
+    return 1.0 - textureLoad(contact_tex, p, 0).r;
 }
 
-// Whether this shader reads the soft shadows: the sun's mask and the
-// projectors' filter. `true` here; while the option is off the scene's
-// pipelines are compiled from this source with the line below set to `false`
-// (renderer.rs `common_shader_for`), so the soft branches and their
-// registers are not in the shaders of a frame that never takes them. The
-// line is matched as it stands.
+// This compile-time switch controls the optional projector filter.
 const SOFT_PATH: bool = true;
 
-// The sun's soft shadow at a pixel of the main view (soft_shadows.wgsl): the
-// light the mask lets through, or -1 where it does not hold for the surface
-// being shaded: it was made for the surface of the depth prepass at that
-// pixel, so it is read where the two are at the same distance from the
-// camera only (a blended face in front of it, an MSAA sample of another
-// surface, a reflection or a probe, which have `soft.x == 0`).
-fn soft_shadow(world_pos: vec3<f32>, frag: vec2<f32>) -> f32 {
-    // (a blended face outside the occlusion depth keeps the filter of before)
-    if (!SOFT_PATH || frame.soft.x < 0.5 || screen_share <= 0.0) {
-        return -1.0;
-    }
-    let p = vec2<i32>(frag);
-    let size = vec2<i32>(textureDimensions(soft_tex));
-    if (any(p < vec2<i32>(0)) || any(p >= size)) {
-        return -1.0;
-    }
-    // the surface's distance as an f16 in the high 16 bits (negative: the
-    // sky), the light in the low 10, as soft_shadows.wgsl `store` writes
-    let texel = textureLoad(soft_tex, p, 0).x;
-    let stored = unpack2x16float(texel >> 16u).x;
-    let d = distance(world_pos, frame.camera_pos.xyz);
-    if (stored < 0.0 || abs(stored - d) > max(0.01 * d, 0.02)) {
-        return -1.0;
-    }
-    return f32(texel & 1023u) / 1023.0;
+// Contact shadows supplement the mapped visibility. Choosing the darker
+// estimate is monotonic in both inputs and does not darken their overlap
+// twice. Mapped brightness is not a confidence estimate for a contact hit.
+fn combine_sun_visibility(map_visibility: f32, contact_visibility: f32) -> f32 {
+    return min(map_visibility, contact_visibility);
 }
 
-// The sun's shadow of an opaque surface of the main view: the shadow map
-// (its soft mask where that holds), and the contact shadows where they are
-// on, then the shadow intensity (Preferences, or the photo's).
-fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
-    var s = soft_shadow(world_pos, frag);
-    if (s < 0.0) {
-        s = shadow_factor(world_pos, n, vertex_depth);
-    }
+// The map/contact diagnostic reads this geometric result before the artistic
+// intensity adjustment. A disabled directional pass has full visibility.
+fn sun_visibility(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
     if (frame.params.z < 0.5) {
-        return s;
+        return 1.0;
     }
-    s = min(s, contact_shadow(frag));
-    // (a classic sky's sun is min(N.L, shadow), where the lift would hide
-    // under N.L: `classic_shadowed` and `ll_classic_pbr` lift it there)
+    let mapped = shadow_factor(world_pos, n, vertex_depth);
+    return combine_sun_visibility(mapped, contact_shadow(frag));
+}
+
+fn sun_shadow(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32, frag: vec2<f32>) -> f32 {
+    let visibility = sun_visibility(world_pos, n, vertex_depth, frag);
+    // Classic sky applies intensity after min(N·L, visibility).
     if (frame.sky_ll.x < 0.5) {
-        s = shadow_lift(s);
+        return shadow_lift(visibility);
     }
-    return s;
+    return visibility;
 }
 
 // The shadow with the shadow intensity: the share of the light a shadow lets
@@ -1713,6 +2554,9 @@ fn classic_shadowed(nl: f32, shadow: f32) -> f32 {
 fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
     if (frame.params.z < 0.5) {
         return 1.0;
+    }
+    if (frame.detail_params.x > 0.0) {
+        return graded_shadow(world_pos, n, graded_distance(world_pos)).a;
     }
     let splits = frame.cascade_splits;
     // The cascade comes from the pixel's own distance to the camera, as for
@@ -1741,28 +2585,34 @@ fn shadow_factor(world_pos: vec3<f32>, n: vec3<f32>, vertex_depth: f32) -> f32 {
     if (view_depth > splits.z) {
         return 1.0;
     }
-    var s = cascade_shadow(world_pos, n, cascade);
-    // blend into the next cascade over the last 15 % of this one: no visible
-    // border between cascades
+    var t = 0.0;
+    var offset = cascade_normal_offset(cascade);
     if (cascade < 2u) {
         let start = select(0.0, splits.x, cascade == 1u);
         let end = select(splits.x, splits.y, cascade == 1u);
         let band = (end - start) * 0.15;
-        let t = clamp((view_depth - (end - band)) / max(band, 1e-4), 0.0, 1.0);
+        t = clamp((view_depth - (end - band)) / max(band, 1e-4), 0.0, 1.0);
         if (t > 0.0) {
-            let next = cascade_shadow(world_pos, n, cascade + 1u);
-            if (s < 0.0) {
-                s = next;
-            } else if (next >= 0.0) {
-                s = mix(s, next, t);
-            }
+            offset = mix(offset, cascade_normal_offset(cascade + 1u), t);
+        }
+    }
+    // Sample one receiver in both maps, as the four-level layout does.
+    // Separate normal offsets project a thin caster to two different edges.
+    let receiver = world_pos + n * offset;
+    var s = cascade_shadow(receiver, n, cascade);
+    if (t > 0.0) {
+        let next = cascade_shadow(receiver, n, cascade + 1u);
+        if (s < 0.0) {
+            s = next;
+        } else if (next >= 0.0) {
+            s = mix(s, next, t);
         }
     }
     // the mirror also sees behind the main camera, where the near cascades
     // do not reach: a coarser one that does
     if (planar) {
         for (var k = cascade + 1u; k < 3u && s < 0.0; k++) {
-            s = cascade_shadow(world_pos, n, k);
+            s = cascade_shadow(world_pos + n * cascade_normal_offset(k), n, k);
         }
     }
     if (s < 0.0) {
@@ -2040,7 +2890,11 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     let l = normalize(frame.sun_dir.xyz);
     let nl = max(dot(n, l), 0.0);
     if (legacy) {
-        col += diffuse_color * frame.sun_color.rgb * (nl * shadow / 3.0);
+        // Match the PBR diffuse normalization only; do not introduce GGX
+        // specular, roughness guesses, or metallic response on legacy faces.
+        let old_sun = diffuse_color * frame.sun_color.rgb * (nl * shadow / 3.0);
+        let matched_sun = diffuse_color * frame.sun_color.rgb * (nl * shadow * (0.96 / PI));
+        col += select(old_sun, matched_sun, harmonize_legacy_sun());
     } else if (nl > 0.0) {
         let h = normalize(l + v);
         let nh = max(dot(n, h), 0.0);
@@ -2064,18 +2918,35 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
             let lnl = max(dot(n, ll), 0.0);
             if (lnl > 0.0) {
                 let atten = ll_light_atten(dist / radius, lt.color_falloff.w);
-                let h = normalize(ll + v);
-                let nh = max(dot(n, h), 0.0);
-                let vh = max(dot(v, h), 0.0);
-                let f = f_schlick(f0, vh);
-                let spec = d_ggx(nh, a) * v_smith(nv, lnl, a) * f;
-                let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
-                local += (kd + spec) * lt.color_falloff.rgb * lnl * atten;
+                if (legacy && harmonize_legacy_local()) {
+                    // Preserve legacy_local_spec() in object.wgsl; avoid adding
+                    // a second broad GGX highlight inside this diffuse pass.
+                    local += diffuse_color * (0.96 / PI) * lt.color_falloff.rgb * lnl * atten;
+                } else {
+                    let h = normalize(ll + v);
+                    let nh = max(dot(n, h), 0.0);
+                    let vh = max(dot(v, h), 0.0);
+                    let f = f_schlick(f0, vh);
+                    let spec = d_ggx(nh, a) * v_smith(nv, lnl, a) * f;
+                    let kd = (vec3<f32>(1.0) - f) * diffuse_color / PI;
+                    local += (kd + spec) * lt.color_falloff.rgb * lnl * atten;
+                }
             }
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        local += pbr_local_light(projector_at(i, world_pos, n), n, v, f0, a, nv, diffuse_color);
+        let at = projector_at(i, world_pos, n);
+        if (legacy && harmonize_legacy_local()) {
+            // The projector's diffuse beam and ambience are retained while
+            // the authored legacy specular pass supplies its own highlight.
+            let lnl = max(dot(n, at.l), 0.0);
+            if (at.atten > 0.0 && lnl > 0.0) {
+                let intensity = at.color * at.atten + projector_ambiance(at, lnl, 0.0);
+                local += diffuse_color * (0.96 / PI) * lnl * intensity;
+            }
+        } else {
+            local += pbr_local_light(at, n, v, f0, a, nv, diffuse_color);
+        }
     }
     col += local;
     shade_pbr_local = local;
@@ -2103,7 +2974,11 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
             occl = spec_ao;
         }
     }
-    col += diffuse_color * amb * ao * mat_ao;
+    // The original normal, probe irradiance and AO all remain; only the
+    // diffuse term's received occlusion is gently moderated. Reflections
+    // still use their original legacy pipeline and occlusion rules.
+    let diffuse_ao = select(ao, mix(ao, 1.0, 0.18), legacy && harmonize_legacy_ambient());
+    col += diffuse_color * amb * diffuse_ao * mat_ao;
     col += diffuse_color * screen_indirect(frag) * mat_ao;
     if (legacy) {
         return col;
@@ -2398,8 +3273,8 @@ const SOFT_DISK: array<vec2<f32>, 32> = array(
 // closer soft shadows with the map of a perspective projector. A search
 // of the map around the point finds the casters and their mean distance
 // from the projector, the light's size gives the penumbra by similar
-// triangles, and a filter of 12 taps of that width takes the light; 1 when
-// the search finds no caster.
+// triangles, and a filter of 12 taps of that width takes the light. A negative
+// result requests the five-tap filter when the search finds no caster.
 // `uv`, `receiver`: the point in the map and its depth; `z`: its distance
 // along the projector's axis; `origin`, `half`, `dims`, `texel`: the map in
 // the atlas, in pixels (projector_shadow).
@@ -2462,9 +3337,10 @@ fn projector_soft(k: u32, q: vec3<f32>, n: vec3<f32>, uv: vec2<f32>, receiver: f
             }
         }
     }
-    // no caster within the search: lit
+    // The sparse blocker search can miss a narrow silhouette inside the
+    // five-tap footprint. The caller can still resolve it with ordinary PCF.
     if (blockers == 0.0) {
-        return 1.0;
+        return -1.0;
     }
     let width = min(light * ratio / blockers, cap);
     let radius = max(per_metre * width / z, vec2<f32>(1.5 * texel));

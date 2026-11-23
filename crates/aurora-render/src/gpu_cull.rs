@@ -408,6 +408,8 @@ pub struct CullFrame {
     /// z bound index-buffer length in u16 indices, w the projector map of
     /// the rain's shelter (`frame_flags::SPOT_SHELTER`).
     pub groups: [u32; 4],
+    /// Optional detail-map light box, admitted to the close cascade bins.
+    pub detail_planes: [[f32; 4]; 6],
 }
 
 impl CullFrame {
@@ -458,6 +460,7 @@ impl CullFrame {
             eye: view.eye.extend(view.draw_distance).to_array(),
             dist: [view.shadow_distance, view.reflection_distance, view.pixel_scale, merge_size],
             sizes: [0, 0, 0, flags],
+            detail_planes: [[0.0; 4]; 6],
             groups: [0, view.first_person.and_then(|(id, _)| id.checked_add(1)).unwrap_or(0), 0, 0],
         }
     }
@@ -582,10 +585,9 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         let bin = if depth_only { BIN_SHADOW } else { BIN_SHADOW_ALPHA };
         let cascades = frame.cascades.map(|m| Mat4::from_cols_array_2d(&m));
         for (k, cm) in cascades.iter().enumerate() {
-            if in_cascade(cm, c, r)
-                && casts_into(&frame.shadow_planes[k], c, r)
-                && !(depth_only && merged_from_finer(&cascades, &frame.shadow_planes, frame.dist[3], k, c, r))
-            {
+            let base = in_cascade(cm, c, r) && casts_into(&frame.shadow_planes[k], c, r);
+            let detail = k == 0 && frame.detail_planes[0] != [0.0; 4] && sphere_in(&frame.detail_planes, c, r);
+            if (base || detail) && !(depth_only && merged_from_finer(&cascades, &frame.shadow_planes, frame.dist[3], k, c, r)) {
                 m |= 1 << (bin + k);
             }
         }
@@ -1533,11 +1535,11 @@ mod tests {
         assert_eq!(wgsl_fields(src, "SkinBind"), ["inverse_bind", "joint"]);
         assert!(src.contains(&format!("const POSED_RADIUS_MAX: f32 = {POSED_RADIUS_MAX:?};")));
         assert!(src.contains("const POSED_COORD_MAX: f32 = 1.0e6;") && POSED_COORD_MAX == 1.0e6);
-        // Main, water reflection/exterior, mirror, probe and spot frusta;
+        // Main, water reflection/exterior, mirror, probe, detail and spot frusta;
         // the capture's origin; then 4 matrices, 3 x 12 shadow planes and 4 vectors.
         assert_eq!(
             std::mem::size_of::<CullFrame>(),
-            (5 + SPOT_SHADOWS) * 6 * 16 + 16 + 4 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
+            (6 + SPOT_SHADOWS) * 6 * 16 + 16 + 4 * 64 + 3 * SHADOW_PLANES * 16 + 4 * 16
         );
         assert_eq!(
             wgsl_fields(src, "CullFrame"),
@@ -1555,7 +1557,8 @@ mod tests {
                 "eye",
                 "dist",
                 "sizes",
-                "groups"
+                "groups",
+                "detail_planes"
             ]
         );
         assert!(src.contains(&format!("shadow_planes: array<vec4<f32>, {}>,", 3 * SHADOW_PLANES)));
@@ -1844,6 +1847,7 @@ mod tests {
             dist: [64.0, 32.0, 1000.0 / 0.5, 0.0],
             sizes: [0, 4, 0, frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER],
             groups: [0; 4],
+            detail_planes: [[0.0; 4]; 6],
         }
     }
 
@@ -2003,6 +2007,15 @@ mod tests {
         tight.shadow_planes[1][0] = [-1.0, 0.0, 0.0, 5.0];
         assert_eq!(face_bins(&tight, &faces, &objects, &spheres, 0).0 >> BIN_SHADOW & 7, 0b101);
         assert_eq!(face_bins(&tight, &faces, &objects, &spheres, 2).0, 0b111 << BIN_SHADOW_ALPHA);
+        // Only the independent detail box accepts the first object's opaque
+        // face. Both maps reuse bin zero; no other cascade should admit it.
+        let mut separate = frame;
+        for planes in &mut separate.shadow_planes {
+            planes[0] = [-1.0, 0.0, 0.0, -20.0];
+        }
+        assert_eq!(face_bins(&separate, &faces, &objects, &spheres, 0).0 >> BIN_SHADOW & 7, 0);
+        separate.detail_planes = view_planes(Mat4::from_scale(Vec3::splat(0.025))).map(|p| p.to_array());
+        assert_eq!(face_bins(&separate, &faces, &objects, &spheres, 0).0 >> BIN_SHADOW & 7, 1);
         assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 3), (0, false));
         // an avatar not among the nearest: impostor, nothing on the GPU
         assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 4), (0, false));
@@ -2442,6 +2455,10 @@ mod tests {
         // of a finer one left out of the next. Binary scales keep a sphere
         // exactly on a plane from rounding to opposite sides on CPU/GPU.
         frame.cascades = [0.125, 0.03125, 0.015625].map(|s| Mat4::from_scale(Vec3::new(s, s, 0.01)).to_cols_array_2d());
+        // A shifted light box admits additional casters to bin zero. Compare
+        // the actual GPU classifier with the CPU reference for their union.
+        frame.detail_planes =
+            view_planes(Mat4::from_scale(Vec3::splat(0.125)) * Mat4::from_translation(Vec3::new(-12.0, 0.0, 0.0))).map(|p| p.to_array());
         frame.dist[3] = 2048.0;
         // Exterior and reflection share one draw bin but retain independent
         // frusta. Include objects behind the main/reflection camera as well.

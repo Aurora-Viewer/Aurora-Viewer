@@ -274,7 +274,7 @@ pub(super) fn effects(settings: &crate::settings::Settings, drawn: (u8, u8), vr:
     word(shadows, format_args!("shadows{shadow_quality}"));
     word(shadows && settings.projector_shadows, format_args!("projector-shadows"));
     word(shadows && settings.contact_shadows, format_args!("contact-shadows"));
-    word(shadows && settings.soft_shadows, format_args!("soft-shadows"));
+    word(shadows && settings.sun_shadow_contact_hardening, format_args!("soft-shadows"));
     word(ao && settings.ao_method == 0, format_args!("ao-legacy{ssao}"));
     word(ao && settings.ao_method == 1, format_args!("ao-gtao{}", settings.gtao_quality));
     word(settings.ssr, format_args!("ssr"));
@@ -598,7 +598,7 @@ mod tests {
         let mut settings = crate::settings::Settings {
             shadow_quality: 3,
             contact_shadows: true,
-            soft_shadows: true,
+            sun_shadow_contact_hardening: true,
             ssao: 2,
             ao_method: 1,
             gtao_quality: 2,

@@ -281,7 +281,7 @@ pub(super) struct Snapshots {
     pub(super) fov_before: Option<f32>,
     /// The shadow quality and ambient occlusion last given to the renderer
     /// (`photo_render_settings`).
-    pub(super) quality_drawn: Option<(u8, u8)>,
+    pub(super) quality_drawn: Option<(u8, u8, bool)>,
     /// The viewfinder's tilt (radians) when it last closed: the view is
     /// levelled meanwhile, the next opening takes it back (feedback 585:
     /// leaving the photo mode to change a setting lost the angle).
@@ -1401,7 +1401,7 @@ impl App {
             .map_or(0, aurora_render::dof_tile_reach);
         let scale = snapshot::viewfinder_scale(size, renderer.size(), self.settings.render_scale_percent);
         let contact = aurora_render::contact_tile_reach(self.settings.contact_shadows, scale);
-        let soft = aurora_render::soft_shadow_tile_reach(self.settings.soft_shadows);
+        let soft = aurora_render::soft_shadow_tile_reach(self.settings.sun_shadow_contact_hardening);
         let guard = snapshot::TILE_GUARD
             .max(soft)
             .max(aurora_render::bloom_tile_reach(bloom))
@@ -1774,7 +1774,11 @@ impl App {
         self.photo_light();
         // the photo's shadows and occlusion reach the renderer when they
         // change (the window opening and closing included), not every frame
-        let drawn = (self.photo_shadow_quality(), self.photo_ambient_occlusion());
+        let drawn = (
+            self.photo_shadow_quality(),
+            self.photo_ambient_occlusion(),
+            snapshot::light::sun_diameter(&self.settings, &self.snapshots.ui.light, self.panels.snapshot) > 0.0,
+        );
         if self.snapshots.quality_drawn != Some(drawn) {
             self.snapshots.quality_drawn = Some(drawn);
             renderer.apply_settings(self.photo_render_settings());
@@ -2933,9 +2937,9 @@ LUT_3D_SIZE {n}
     /// Light section's rows.
     fn photo_shadow_view(&self) -> crate::ui::snapshot::ShadowView {
         crate::ui::snapshot::ShadowView {
-            softness: self.settings.shadow_softness,
+            softness: self.settings.projector_softness(),
             intensity: self.settings.shadow_intensity,
-            soft: self.settings.soft_shadows,
+            soft: self.settings.sun_shadow_contact_hardening,
         }
     }
 
@@ -3121,6 +3125,10 @@ LUT_3D_SIZE {n}
         let (w, h) = renderer.size();
         let samples = self.msaa_samples(renderer);
         let screen = snapshot::quality::Screen {
+            graded_shadows: self.settings.graded_sun_shadows,
+            portrait_supported: aurora_render::portrait_shadow_supported(&renderer.device.limits()),
+            layered_sun: self.settings.sun_shadow_contact_hardening,
+            max_texture_dimension: renderer.max_texture_dimension(),
             pixels: u64::from(w) * u64::from(h),
             max_samples: renderer.msaa_supported().iter().copied().filter(|&n| n <= 8).max().unwrap_or(1),
             // (the renderer's measure, else the photo plan's fallback)

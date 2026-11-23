@@ -257,6 +257,7 @@ struct Next {
     below: bool,
     /// The enclosing group already names this full-width control.
     section_body: bool,
+    own_reset: bool,
     /// Its `subs` always show under it, without a cog.
     unfolded: bool,
     /// Not greyed behind a cog that is off: another setting uses it too.
@@ -322,6 +323,7 @@ pub(super) struct Cx<'a> {
     greyed: bool,
     /// A conditional branch retained for search and counting, but hidden on its page.
     hidden_on_page: bool,
+    edit_locked: bool,
     /// Another page's rows drawn here too (`borrow`): the settings they
     /// edit; the page's other rows, groups and notes are skipped.
     pick: Option<Vec<&'static str>>,
@@ -399,6 +401,7 @@ impl<'a> Cx<'a> {
             drawn: 0,
             greyed: false,
             hidden_on_page: false,
+            edit_locked: false,
             pick: None,
             row_paths: Vec::new(),
             collected: Vec::new(),
@@ -416,6 +419,13 @@ impl<'a> Cx<'a> {
     /// The next row carries the experimental mark.
     pub fn experimental(&mut self) -> &mut Self {
         self.next.experimental = true;
+        self
+    }
+
+    /// Use the row's own reset instead of offering the page-wide reset for
+    /// a compound setting (the active tier of a set of shadow profiles).
+    pub fn own_reset(&mut self) -> &mut Self {
+        self.next.own_reset = true;
         self
     }
 
@@ -474,6 +484,32 @@ impl<'a> Cx<'a> {
             self.hidden_on_page = hidden;
             self.greyed = before;
         }
+    }
+
+    /// Compare and reset the fields behind this editor against its own preset.
+    pub fn gated_with_defaults(&mut self, enabled: bool, defaults: Option<&'a Settings>, body: impl FnOnce(&mut Self)) {
+        let previous = self.d;
+        self.d = defaults.unwrap_or(previous);
+        self.gated(enabled, body);
+        self.d = previous;
+    }
+
+    /// Hide settings behind an explicit edit mode. Search may display and identify
+    /// those settings, but neither the control nor its reset dot can bypass the mode.
+    pub fn gated(&mut self, enabled: bool, body: impl FnOnce(&mut Self)) {
+        // Phototools borrows individual rows. Show a stock preset's controls
+        // there with their inactive state, so the same row remains reachable.
+        if enabled || self.mode != Mode::Show || self.pick.is_some() {
+            self.enabled(enabled, body);
+        }
+    }
+
+    /// Keep dependent rows in place and prevent input or row resets while inactive.
+    pub fn enabled(&mut self, enabled: bool, body: impl FnOnce(&mut Self)) {
+        let previous = self.edit_locked;
+        self.edit_locked |= !enabled;
+        body(self);
+        self.edit_locked = previous;
     }
 
     /// A search is under way: the rows' `keywords` are read (a page skips
@@ -590,7 +626,7 @@ impl<'a> Cx<'a> {
     /// another row, or another window edits them).
     pub fn track(&mut self, t: &dyn Track) {
         match self.mode {
-            Mode::Reset if !self.rlva_locked(t) => t.reset(self.s, self.d),
+            Mode::Reset if !self.edit_locked && !self.rlva_locked(t) => t.reset(self.s, self.d),
             Mode::Collect => {
                 let mut paths = Vec::new();
                 t.paths(&mut paths);
@@ -643,7 +679,7 @@ impl<'a> Cx<'a> {
         let modified = t.modified(self.s, self.d);
         match self.mode {
             Mode::Reset => {
-                if !self.rlva_locked(t) {
+                if !self.edit_locked && !self.rlva_locked(t) {
                     t.reset(self.s, self.d);
                 }
                 return false;
@@ -1028,7 +1064,8 @@ impl<'a> Cx<'a> {
             self.block = Some((top, shape));
         }
         let cell = self.cell(wide);
-        let parent_off = self.greyed || (!next.live && self.parent.as_ref().is_some_and(|p| p.off)) || self.rlva_locked(t);
+        let parent_off =
+            self.edit_locked || self.greyed || (!next.live && self.parent.as_ref().is_some_and(|p| p.off)) || self.rlva_locked(t);
         let size_key = id.with("control");
         let control = self
             .st
@@ -1227,7 +1264,7 @@ impl<'a> Cx<'a> {
 
         // the modified dot: a click puts the row back to its default
         let mut reset = false;
-        if modified && !self.rlva_locked(t) {
+        if modified && !next.own_reset && !self.edit_locked && !self.rlva_locked(t) {
             let dot = Rect::from_center_size(pos2(cell.left() + GUTTER / 2.0 + 1.0, label_rect.center().y), Vec2::splat(16.0));
             let resp = self
                 .ui

@@ -754,6 +754,18 @@ impl RecordStore {
         }
     }
 
+    /// Worn and dropped attachments can reuse the same face records.
+    pub fn set_avatar_shadow_receiver(&mut self, id: u32, enabled: bool) {
+        if let Some(slot) = self.mirror.get_mut(id as usize) {
+            let bit = crate::types::flags::AVATAR_SHADOW_RECEIVER;
+            let flags = (slot.flags[3] & !bit) | if enabled { bit } else { 0 };
+            if slot.flags[3] != flags {
+                slot.flags[3] = flags;
+                self.mark(id as usize);
+            }
+        }
+    }
+
     /// The rez effect of a record (`DrawRecord::rez`), uploaded only when
     /// it changes.
     pub fn set_rez(&mut self, id: u32, rez: [u32; 4]) {

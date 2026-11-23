@@ -2566,6 +2566,11 @@ app-graphics-start-failed =
     詳細：{ $e }
 
     今回の起動のログ：{ $log }
+app-gpu-pipeline-stall-title = Auroraビューアが描画の準備をしています
+app-gpu-pipeline-stall =
+    このフレームの処理に{ $seconds }秒かかっています。Auroraは描画パイプラインの準備を待っています。特に初回は、ドライバーによるコンパイルに時間がかかることがあります。
+
+    このまま待ちますか？「はい」を選ぶとコンパイルを続けます。「いいえ」を選ぶとログアウトしてAuroraを閉じます。
 app-gpu-stall-title = Auroraビューア：グラフィックカードが応答していません
 app-gpu-stall =
     グラフィックカードが{ $seconds }秒間画像を完成させていません。Auroraは動作を続けています（ワールド、サウンド、チャットは継続）が、カードが再び応答するまで何も描画できません。
@@ -4714,6 +4719,8 @@ ui-options-dof-enable = 被写界深度
 ui-options-dof-enable-help = 実際のレンズのように、カメラが焦点を合わせた場所以外をぼかします（レガシービューアではオフ）。
 ui-options-dof-edit = 編集中も適用
 ui-options-dof-edit-help = 建築ツールが開いている間も効果を維持します。
+ui-options-dof-blended-depth = アルファブレンド面を含める
+ui-options-dof-blended-depth-help = ワールド内と写真の被写界深度に、見えている髪の束や半透明の面の深度を使用します。透明な隙間には背景の深度を使用します。
 ui-options-dof-focus = 焦点
 ui-options-dof-focus-help = カメラの焦点（レガシービューアのデフォルト）、ポインターの下、最後にクリックした場所、または固定時に焦点を合わせた場所を選びます。
 ui-options-dof-focus-camera = カメラ
@@ -16007,3 +16014,167 @@ phototools-director-lens = ディレクターのウィンドウが開いてい�
 phototools-view-angle-viewfinder = 視野角はファインダーが管理しています。ファインダーを閉じると元の値に戻ります。
 ui-options-dof-show-focus-point = フォーカス点を表示
 ui-options-dof-show-focus-point-help = レンズがピントを合わせている点に小さな十字を表示します。自由なときは黄色、ロック中は赤です。
+
+# Aurora Rendering Baseline v2.0.0
+ui-options-baseline-contact-diagnostic = 接触シャドウの診断
+ui-options-baseline-contact-diagnostic-help = 診断表示を１つ選択します。フィルター済みマスクの白は影を示します。Bendの候補と失敗分析はBendのデータだけを使用します。ビュー空間レイの結果では、緑は交差、青は画面外、赤は画面内で有効な深度を調べても採用された交差がないことを示します。赤はサンプル数の上限到達を証明するものではありません。保存された互換性のないモードは無効です。接触シャドウが動作している必要があります。露出と後処理は診断表示にも影響します。
+ui-options-baseline-requires-bend = 接触シャドウの方法でOriginal (Bend)を選択してください。
+ui-options-baseline-requires-view-ray = 接触シャドウの方法でView-spaceを選択してください。
+ui-options-baseline-diagnostic-off = オフ
+ui-options-baseline-contact-mask = フィルター済み接触マスク
+ui-options-baseline-bend-candidates = Bend：レイの候補
+ui-options-baseline-bend-failures = Bend：失敗分析
+ui-options-baseline-view-ray-outcomes = ビュー空間レイ：結果
+ui-options-baseline-diagnostic-inactive = 選択した方法では無効
+
+# BEGIN AURORA_SHADOW_VISIBILITY_V2_1_0
+# Aurora Shadow Visibility v2.1.0
+ui-options-shadow-visibility-diagnostic = 影の診断
+ui-options-shadow-visibility-diagnostic-help = メインビューの日光の可視率を表示します。白は照明あり、黒は影です。シャドウマップは接触影を含まず、実効接触影には任意の整合性による減衰を含みます。合成では暗い方の可視率を使います。フィルター済み接触遮蔽は逆の尺度で、白が影です。カスケードの範囲は近距離が赤、中距離が緑、遠距離が青で、合成した影で暗くなります。ビュー光線の結果は緑がヒット、青が画面外、赤が有効な深度を通った後に画面内で受理されたヒットがないことを示します。赤はサンプル数の上限到達を証明しません。接触影の表示には接触影の描画が必要です。オフでも開発ツールボックスの影と環境遮蔽の表示、および環境変数の指定は有効なままです。露出と後処理はこれらの表示にも適用されます。
+ui-options-shadow-visibility-map = シャドウマップの可視率
+ui-options-shadow-visibility-contact = 実効接触影の可視率
+ui-options-shadow-visibility-combined = 合成した影の可視率
+ui-options-shadow-visibility-cascades = カスケードの範囲
+ui-options-shadow-visibility-filtered-mask = フィルター済み接触遮蔽
+ui-options-shadow-visibility-requires-contact = この表示を使うには接触影を有効にしてください。
+ui-options-shadow-visibility-inactive = 現在の接触影の設定では無効
+ui-options-shadow-visibility-method-help = 元のBend接触影トレーサー、またはビュー空間の深度を上限付きでたどる方式を選びます。ビュー空間方式はサンプル数の上限に達すると停止します。どちらも既存の接触影マスクのフィルターを使います。
+ui-options-shadow-visibility-budget-help = 各接触光線がたどる深度ピクセル数の上限です。上限に達すると光線は停止するため、実際の到達距離は設定した距離より短くなる場合があります。上限を増やすとＧＰＵ負荷が高くなります。
+# END AURORA_SHADOW_VISIBILITY_V2_1_0
+
+# BEGIN AURORA_SHADOW_RECOVERY_V2_1_1
+ui-options-shadow-recovery-diagnostic-help = メインビューの日光の可視性：白は照明あり、黒は影です。シャドウマップ表示には接触影を含みません。有効な接触影は深度に基づくフィルター済みマスクを読み取り、コヒーレンスによる減衰を適用しません。合成表示は暗い方の可視性を使用します。フィルター済み接触オクルージョンは逆の尺度で、白が影です。カスケード範囲は近距離が赤、中距離が緑、遠距離が青で、合成影に応じて暗くなります。視線レイの結果はヒットが緑、画面外が青、有効な深度を調べた後のヒットなしが赤です。赤はサンプル予算切れを意味するとは限りません。接触影の表示には接触影の有効化が必要です。オフでは Dev Toolbox の影/AO 表示や環境変数による指定が引き続き有効です。露出とポストプロセスも表示に影響します。 4 段階モードが有効な場合は、赤・緑・青に先立つ最も細密な範囲を黄色で示します。 Bend のレイ候補表示では、同じ深度サンプルを用いた v2.3.4 の結果と比べて、フィルター前の接触影が約3パーセントポイント以上弱まった画素をマゼンタで示します。明るいマゼンタほど変化が大きいことを示します。
+ui-options-shadow-recovery-method-help = 元の Bend 接触影トレーサー、または v2.1.1 で復元した以前の実験的なビュースペーストレーサーを選択します。ビュースペース方式は指定した物理的な到達距離に沿ってサンプリングするため、サンプル間の細い形状を見落とす場合があります。両方式とも既存の深度に基づく接触影フィルターを使います。コヒーレンスによる減衰は廃止されています。
+ui-options-shadow-recovery-budget-help = ビュースペースレイに沿って調べるサンプル位置の上限です。間隔は指定した物理的な到達距離と投影ピクセルの大きさから決まり、通過するすべての深度ピクセルを調べるわけではありません。予算を増やすと細い形状による影の詳細を保持しやすくなりますが、GPU 負荷も増加します。実際の範囲は可視性、画面端、開始位置のオフセット、サンプル間隔にも制限されます。
+# END AURORA_SHADOW_RECOVERY_V2_1_1
+
+# BEGIN AURORA_NEAR_SHADOW_DETAIL_V2_2_0
+ui-options-near-shadow-detail = 近距離の影の詳細
+ui-options-near-shadow-detail-help = カメラの近くで太陽と月の影の細部を保持します。範囲を狭めると近接撮影の細部を優先し、遠くの面には他のシャドウカスケードを使用します。オフにすると以前のシャドウマップの動作に戻ります。接触影は別の設定で制御します。
+ui-options-near-shadow-detail-range = 近距離の詳細範囲の上限
+ui-options-near-shadow-detail-range-help = カメラから測った、最も細かいシャドウカスケードの最大範囲です。まず 4 m を使用し、近接撮影では小さく、広い場面では大きくしてください。割合による既存の設定がさらに狭い場合は、その設定が優先されます。影全体の描画距離は変わりません。
+# END AURORA_NEAR_SHADOW_DETAIL_V2_2_0
+
+ui-options-graded-sun-shadows = 4段階の日影
+ui-options-graded-sun-shadows-help = 近距離の面には専用のシャドウマップを使用し、残りの3枚を指定距離まで割り当てます。GPUメモリと描画パスを追加で使用します。月光にも適用されます。
+ui-options-graded-quality-help = 各マップの一辺の解像度は512、1024、2048、4096ピクセルです。影の描画距離は別に設定できます。
+ui-options-graded-detail-range = 高精細な影の距離
+ui-options-graded-detail-range-help = カメラから最も細かいマップの終端までの距離です。まずは2 mでお試しください。距離を伸ばすと細部の解像度が下がります。
+ui-options-graded-reach = 影の描画距離
+ui-options-graded-reach-help = 日光と月光による影の最大描画距離です。カメラの描画距離が短い場合はその距離までになります。
+ui-options-graded-measured = 適用中の境界（近い順）：{ $splits } m。各マップの1テクセルの幅：{ $texels } mm。
+ui-options-graded-waiting = 直近の描画では4段階のシャドウパスは有効になっていません。
+ui-options-graded-timing = 近距離の詳細パス：GPU { $ms } ms。
+
+ui-shadow-enable = 影を有効にする
+ui-shadow-enable-help = 太陽・月の影、コンタクトシャドウ、投影光の影を有効にします。オフにしても選んだ解像度は保存されます。
+ui-shadow-map-resolution = シャドウマップ解像度
+ui-shadow-map-resolution-help = 太陽・月の各マップの一辺のピクセル数です。投影光マップの一辺はその半分です。解像度を上げるとビデオメモリの使用量が増えます。
+ui-shadow-contact-hardening = 太陽と月のソフトシャドウ
+ui-shadow-contact-hardening-help = 影を落とす物体と影を受ける面が離れるほど、太陽や月による影の輪郭が柔らかくなります。このフィルターを有効にすると GPU の負荷が高くなります。
+ui-shadow-angular-diameter = 光源の視直径
+ui-shadow-angular-diameter-help = 光源の見かけの直径を度で指定します。地球から見た太陽は約 0.53° です。値を大きくすると影の輪郭が柔らかくなります。
+ui-shadow-sun = 太陽と月
+ui-shadow-layout = 太陽・月の影の分割方式
+ui-shadow-three = 3 段階
+ui-shadow-four = 4 段階
+ui-shadow-reach-three = 3 段階の影の描画距離
+ui-shadow-reach-four = 4 段階の影の描画距離
+ui-shadow-saved-three = 3 段階モードの保存済み設定
+ui-shadow-saved-four = 4 段階モードの保存済み設定
+ui-shadow-saved-help = この方式に切り替えた際に適用する設定を編集します。
+ui-shadow-smoothing = 影の輪郭の平滑化
+ui-shadow-smoothing-help = 4 段階モードの「弱」は近・中・遠距離の影の輪郭を滑らかにします。512 または 1024 px では、細い影を保つため中・遠距離のフィルター幅を狭くします。最も細かいマップには専用のフィルターを使います。「シャドウマップの可視率」で「シャープ」と比較できます。
+ui-shadow-sharp = シャープ
+ui-shadow-mild = 弱
+ui-shadow-first-custom = 最初のカスケードを調整
+ui-shadow-first-custom-help = 有効な描画距離のうち最初のマップが担当する割合を指定します。標準は 8% です。
+ui-shadow-first-share = 最初のカスケードの範囲
+ui-shadow-first-share-help = 最初のマップの終端を有効距離に対する割合で指定します。近距離の上限により、さらに短くなることがあります。
+ui-shadow-no-measurement = 太陽または月の影の描画結果を待っています。
+ui-shadow-measured = 直近の描画 · { $mode } · 一辺 { $size } px。各段階の終端は近い順に { $splits } m、テクセル幅は { $texels } mm です。
+ui-shadow-contact-section = 接触部分のディテール
+ui-shadow-method = コンタクトシャドウ方式
+ui-shadow-bend = 標準 (Bend)
+ui-shadow-view = ビュー空間 (試験的)
+ui-shadow-search-reach = Bend の探索距離
+ui-shadow-search-help = 光線に沿ってスクリーン上を探索する最大距離です。長くすると GPU 負荷が増加します。
+ui-shadow-adaptive = 適応
+ui-shadow-adaptive-reach = 適応探索距離
+ui-shadow-adaptive-reach-help = Bend の適応探索で用いるワールド空間の距離の目安です。スクリーン空間では最大 480 ピクセルです。
+ui-shadow-occluder-depth = 遮蔽物の厚み
+ui-shadow-occluder-depth-help = Bend が画面に映った遮蔽物の背後を内部として扱う厚みです。大きくすると影が離れて見える場合があります。
+ui-shadow-contact-advanced = コンタクトシャドウの詳細設定
+ui-shadow-contact-advanced-help = 光線の判定や小さな抜けの補間を調整します。
+ui-shadow-adaptive-depth = Bend 光線の深度を適応化
+ui-shadow-adaptive-depth-help = カメラから遠ざかる Bend 光線の判定幅を広げます。無関係な面による影が生じる場合があります。
+ui-shadow-hole-repair = 小さな影抜けを補間
+ui-shadow-hole-repair-help = 同じ面のコンタクトシャドウの間にある 1～3 ピクセルの抜けを補間します。どちらの方式にも適用されます。
+ui-shadow-ray-reach = ビュー光線の探索距離
+ui-shadow-ray-reach-help = 光線の最大長をメートルで指定します。画面端やサンプル数によって実際の探索範囲が制限される場合があります。
+ui-shadow-ray-tolerance = ビュー光線の深度許容差
+ui-shadow-ray-tolerance-help = サンプルした面で許容する深度差の上限をメートルで指定します。
+ui-shadow-ray-budget = ビュー光線のサンプル数
+ui-shadow-projectors-section = 投影光
+ui-shadow-projector-limit = 影を投影するライトの上限
+ui-shadow-projector-active = 影を落とす投影光 · 使用中 { $active } 灯 / 確保枠 { $limit } 灯 · マップ 1 枚あたり { $size } × { $size } px。
+ui-shadow-projector-waiting = 影の描画を待っています。描画後に使用中の投影光の数を表示します。
+ui-shadow-diagnostics-section = 影の診断
+ui-shadow-legend-visibility = 白は光が届く部分、黒は遮られた部分です。
+ui-shadow-legend-mask = 白はコンタクトシャドウによる遮蔽、暗い部分は遮蔽が少ないか、ない場所です。
+ui-shadow-legend-three = 赤は近距離、緑は中距離、青は遠距離です。重複範囲では色が混ざります。
+ui-shadow-legend-four = 黄は近接ディテール、赤は近距離、緑は中距離、青は遠距離です。重複範囲では色が混ざります。
+ui-shadow-legend-rays = 緑は検出、青は画面外、赤は画面内の探索で検出なしです。
+ui-shadow-legend-candidates = 早く見つかった候補は緑、遅い候補は橙です。投影した探索範囲が画面外に出る光線には青が混ざります。 v2.3.4 と比べて、フィルター前の接触影が約3パーセントポイント以上弱まった画素をマゼンタで示します。明るいマゼンタほど変化が大きいことを示します。
+ui-shadow-legend-failures = 緑または黄は採用した影です。未検出では青は画面外、橙は深度が近い場合、紫は探索上限、濃い灰色は短い打ち切り範囲です。
+
+ui-shadow-profile-help = 影の品質を選びます。「カスタム」をオンにすると、品質ごとに編集内容が保存されます。オフにすると既定値が使われます。
+ui-shadow-profile-distance = 太陽の影の描画距離
+ui-shadow-profile-range = { $name }（{ $distance } m）
+ui-shadow-profile-manual-range = 手動（{ $distance } m）
+ui-shadow-profile-distance-help = この品質レベルで太陽光と月光による影を描画する距離を調整します。
+ui-shadow-profile-near = 近距離
+ui-shadow-profile-balanced = 標準
+ui-shadow-profile-far = 遠距離
+ui-shadow-profile-reset = 「{ $tier }」の影の設定だけを既定値に戻す
+ui-shadow-profile-advanced-help = 影の詳細設定を表示します。非表示にしても、設定した値は引き続き適用されます。
+ui-shadow-profile-warning = 詳細設定を変更すると、影の中央が抜けたり、影が浮いたりちらついたりすることがあります。「カスタム」の横の矢印で、選択中の品質の既定値に戻せます。
+ui-shadow-profile-off-help = 影はオフです。設定を編集するには、影の品質を低・中・高・ウルトラのいずれかに切り替えてください。
+ui-shadow-profile-paused = 以前の詳細設定
+ui-shadow-profile-paused-help = 以前のプロファイルに、無効のまま保存された詳細設定があります。適用すると、この品質の詳細設定は以前の値に置き換わり、影の距離とプロジェクターの設定は引き継がれます。
+ui-shadow-profile-apply-paused = 以前の値を適用
+
+## Rendering experiments
+
+ui-options-p3-ao-thin = 実験的：細い物体の AO 補正
+ui-options-p3-ao-thin-help = XeGTAO で細い遮蔽物を補正します。葉やワイヤー、髪で 0.25～0.75 を試し、近くのくぼみも確認してください。0 で元の描画になります。
+ui-options-p3-thin-group = 実験的：薄い面の PBR ライティング
+ui-options-p3-thin-enable = 薄い面の PBR ライティングをローカルで有効にする
+ui-options-p3-thin-enable-help = 選択した glTF 面の照明をこのビューアで調整します。マテリアルアセットには作成時の値が保持されます。
+ui-options-p3-thin-scope = 対象範囲
+ui-options-p3-thin-scope-help = マテリアル UUID を指定するか、アルファマスクを使う両面 PBR マテリアルをすべてプレビューします。
+ui-options-p3-thin-scope-uuid = 指定したマテリアル UUID
+ui-options-p3-thin-scope-preview = アルファマスク付き両面 PBR のプレビュー
+ui-options-p3-thin-uuid = PBR マテリアルの UUID
+ui-options-p3-thin-uuid-help = オブジェクトエディターからマテリアル UUID を貼り付けてください。先頭 8 バイトで照合します。空欄または無効な UUID では面は選択されません。
+ui-options-p3-thin-ao = PBR マテリアルの AO 下限
+ui-options-p3-thin-ao-help = 対象面の ORM オクルージョンチャンネルに下限を設定します。0 ではマテリアル本来の値を使います。
+ui-options-p3-thin-transmission = 逆光の透過
+ui-options-p3-thin-transmission-help = 薄い面を通る太陽光を近似します。近くの遮蔽物は透過光にも影を落とします。0 で透過を無効にします。
+ui-options-p3-thin-highlight = 対象マテリアルを強調表示
+ui-options-p3-thin-highlight-help = 対象面をマゼンタで表示し、どの面に照明調整が適用されるかを確認できます。
+ui-options-p3-legacy-group = 実験的：従来マテリアルの照明調整
+ui-options-p3-legacy-enable = 従来マテリアルの照明を調整する
+ui-options-p3-legacy-enable-help = このビューアで、現行の EEP の空の下にある従来マテリアルの拡散照明を調整します。
+ui-options-p3-legacy-sun = 太陽の拡散光を正規化
+ui-options-p3-legacy-sun-help = 従来マテリアルに当たる太陽光にランバート拡散反射を使います。元の鏡面ハイライトは維持されます。
+ui-options-p3-legacy-ambient = 拡散光のアンビエントオクルージョンを緩和
+ui-options-p3-legacy-ambient-help = 従来マテリアルの拡散光に使う環境光の可視性を、完全に見える状態へ 18% 近づけます。
+ui-options-p3-legacy-local = ローカル光源のハイライトの重複を防ぐ
+ui-options-p3-legacy-local-help = 従来の Blinn–Phong ハイライトを維持し、ローカル拡散照明の計算で重複する GGX ハイライトを取り除きます。
+ui-options-p3-dof-smooth = 実験的：手前のピント付近のぼけを滑らかにする
+ui-options-p3-dof-smooth-help = 前景でピントの合った部分からぼけへの移り変わりを滑らかにします。
+ui-options-p3-dof-strength = ピント付近のぼけの滑らかさ
+ui-options-p3-dof-strength-help = 前景のぼけの移り変わりを調整します。0 は元の描画、1 は最も滑らかな描画です。
+ui-options-p3-dof-zones = デバッグ：被写界深度の合焦領域を表示
+ui-options-p3-dof-zones-help = 手前のぼけを赤、奥のぼけを青、ピントが合う領域を灰色で表示します。フォトモードでも使えます。

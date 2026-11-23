@@ -7,6 +7,108 @@ use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::{COMBO_W, blend_order_choice, blend_precisions, preset_choice, stepped, toggle};
 use egui::RichText;
 
+fn saved_diagnostic(s: &crate::settings::Settings) -> aurora_render::render_controls::ContactDiagnostic {
+    use aurora_render::render_controls::{ContactDiagnostic, ContactDiagnosticSwitches};
+    ContactDiagnostic::from_saved(
+        s.shadow_visibility_debug,
+        ContactDiagnosticSwitches {
+            mask: s.experimental_contact_mask_debug,
+            candidates: s.experimental_contact_hit_debug,
+            failures: s.experimental_contact_failure_debug,
+            view_ray: s.contact_view_debug,
+        },
+        s.near_shadow_debug,
+    )
+}
+
+fn shadow_diagnostics(cx: &mut Cx) {
+    use super::super::cx::fields;
+    use aurora_i18n::tr;
+    use aurora_render::render_controls::{ContactBackend, ContactDiagnostic};
+
+    cx.row(
+        tr!("ui-options-shadow-visibility-diagnostic"),
+        tr!("ui-options-shadow-recovery-diagnostic-help"),
+        &fields!(
+            shadow_visibility_debug,
+            experimental_contact_mask_debug,
+            experimental_contact_hit_debug,
+            experimental_contact_failure_debug,
+            contact_view_debug,
+            near_shadow_debug
+        ),
+        |ui, s| {
+            let mut selected = saved_diagnostic(s);
+            // Preferences can know the selected method. The renderer also
+            // gates against live availability and AURORA_CONTACT_VARIANT=skip.
+            let backend = ContactBackend::from_frame(s.contact_shadows && s.shadows, s.contact_ray_method, false);
+            let contact_reason = (backend == ContactBackend::None).then_some(tr!("ui-options-shadow-visibility-requires-contact"));
+            let bend_reason =
+                contact_reason.or_else(|| (backend != ContactBackend::Bend).then_some(tr!("ui-options-baseline-requires-bend")));
+            let view_reason =
+                contact_reason.or_else(|| (backend != ContactBackend::ViewRay).then_some(tr!("ui-options-baseline-requires-view-ray")));
+            let changed = super::super::combo_blocked(
+                ui,
+                &mut selected,
+                &[
+                    (ContactDiagnostic::Off, tr!("ui-options-baseline-diagnostic-off"), None),
+                    (
+                        ContactDiagnostic::ShadowMapVisibility,
+                        tr!("ui-options-shadow-visibility-map"),
+                        None,
+                    ),
+                    (
+                        ContactDiagnostic::ContactVisibility,
+                        tr!("ui-options-shadow-visibility-contact"),
+                        contact_reason,
+                    ),
+                    (
+                        ContactDiagnostic::CombinedVisibility,
+                        tr!("ui-options-shadow-visibility-combined"),
+                        None,
+                    ),
+                    (ContactDiagnostic::Cascades, tr!("ui-options-shadow-visibility-cascades"), None),
+                    (
+                        ContactDiagnostic::Mask,
+                        tr!("ui-options-shadow-visibility-filtered-mask"),
+                        contact_reason,
+                    ),
+                    (
+                        ContactDiagnostic::BendCandidates,
+                        tr!("ui-options-baseline-bend-candidates"),
+                        bend_reason,
+                    ),
+                    (
+                        ContactDiagnostic::BendFailures,
+                        tr!("ui-options-baseline-bend-failures"),
+                        bend_reason,
+                    ),
+                    (
+                        ContactDiagnostic::ViewRayOutcomes,
+                        tr!("ui-options-baseline-view-ray-outcomes"),
+                        view_reason,
+                    ),
+                ],
+            );
+            if !selected.supported_by(backend) {
+                ui.label(tr!("ui-options-shadow-visibility-inactive"));
+            }
+            if changed {
+                let switches = selected.switches();
+                s.shadow_visibility_debug = selected.visibility_setting();
+                s.experimental_contact_mask_debug = switches.mask;
+                s.experimental_contact_hit_debug = switches.candidates;
+                s.experimental_contact_failure_debug = switches.failures;
+                s.contact_view_debug = switches.view_ray;
+                // This former standalone toggle now belongs to the selector.
+                // Separate Dev Toolbox shadow/AO preferences remain untouched.
+                s.near_shadow_debug = false;
+            }
+            changed
+        },
+    );
+}
+
 pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => quality(cx),
@@ -649,6 +751,564 @@ fn quality(cx: &mut Cx) {
     });
 }
 
+fn shadow_tier_labels() -> [&'static str; 5] {
+    use aurora_i18n::tr;
+    [
+        tr!("ui-options-baseline-diagnostic-off"),
+        tr!("ui-options-low"),
+        tr!("common-medium"),
+        tr!("ui-options-high"),
+        tr!("ui-options-ultra"),
+    ]
+}
+
+fn shadow_tier_defaults(tier: crate::settings::shadow_profile::Tier) -> &'static crate::settings::Settings {
+    use crate::settings::{Settings, shadow_profile};
+    use std::sync::OnceLock;
+
+    static TIERS: [OnceLock<Settings>; 5] = [const { OnceLock::new() }; 5];
+    TIERS[tier as usize].get_or_init(|| {
+        let mut defaults = Settings::default();
+        shadow_profile::select_fixed_tier(&mut defaults, tier);
+        defaults
+    })
+}
+
+fn shadow_preferences(cx: &mut Cx) {
+    use crate::settings::shadow_profile::{self as profile, Tier};
+    use aurora_i18n::tr;
+    // Preferences edit the underlying user choices even while Photo Quality
+    // temporarily raises the map size and enables projectors for the camera.
+    crate::snapshot::quality::begin_shadow_edit(cx.s);
+    let changed_before = std::mem::take(&mut cx.changed);
+    let levels = [Tier::Off, Tier::Low, Tier::Medium, Tier::High, Tier::Ultra];
+    let labels = shadow_tier_labels();
+    cx.group(tr!("ui-options-shadows"), |cx| {
+        let palette = cx.p;
+        cx.track(&field!(shadows));
+        cx.track(&field!(shadow_quality));
+        cx.track(&field!(shadow_resume_quality));
+        cx.keywords(&labels.join(" "))
+            .keywords(tr!("ui-options-preset-custom"))
+            .own_reset()
+            .wide()
+            .row(
+                tr!("ui-options-shadow-quality"),
+                tr!("ui-shadow-profile-help"),
+                &Custom {
+                    path: "shadow_profile",
+                    modified: |s: &crate::settings::Settings, d: &crate::settings::Settings| s.shadow_profile != d.shadow_profile,
+                    reset: |s: &mut crate::settings::Settings, _: &crate::settings::Settings| profile::reset_all(s),
+                },
+                |ui, s| {
+                    ui.vertical(|ui| {
+                        let mut index = profile::tier(s) as u8;
+                        let picked = ui.horizontal(|ui| stepped(ui, &palette, &mut index, &labels)).inner;
+                        if picked {
+                            profile::select_tier(s, levels[index as usize]);
+                        }
+                        // Keep the checkbox with its rollback at compact widths and larger text sizes.
+                        let custom_changed = ui
+                            .horizontal(|ui| {
+                                let mut custom = profile::custom_enabled(s);
+                                let toggled = crate::ui::widgets::checkbox(ui, &palette, &mut custom, tr!("ui-options-preset-custom"))
+                                    .on_hover_text(tr!("ui-shadow-profile-help"))
+                                    .changed();
+                                if toggled {
+                                    profile::set_custom_enabled(s, custom);
+                                }
+                                let tip = if index == Tier::Off as u8 {
+                                    tr!("ui-shadow-profile-off-help").to_owned()
+                                } else {
+                                    tr!("ui-shadow-profile-reset", tier = labels[index as usize])
+                                };
+                                let reset = crate::ui::widgets::icon_button(ui, &palette, "restore", &tip, custom && profile::can_reset(s));
+                                if reset {
+                                    profile::reset_to_base(s);
+                                }
+                                toggled || reset
+                            })
+                            .inner;
+                        picked || custom_changed
+                    })
+                    .inner
+                },
+            );
+        cx.row(
+            tr!("ui-options-shadow-intensity"),
+            tr!("ui-options-shadow-intensity-help"),
+            &field!(shadow_intensity),
+            |ui, s| {
+                ui.add_enabled(
+                    s.shadows && s.shadow_quality > 0,
+                    egui::Slider::new(&mut s.shadow_intensity, 0.0..=1.0)
+                        .custom_parser(aurora_i18n::parse_number)
+                        .fixed_decimals(2)
+                        .step_by(0.05)
+                        .trailing_fill(true),
+                )
+                .changed()
+            },
+        );
+        if profile::custom_enabled(cx.s) && profile::tier(cx.s) == Tier::Off {
+            cx.note(tr!("ui-shadow-profile-off-help"));
+        }
+        if cx.s.shadows && profile::tier(cx.s) != Tier::Off && cx.s.projector_shadows {
+            if let Some(maps) = cx.st.shadow_maps {
+                cx.note(&tr!(
+                    "ui-shadow-projector-active",
+                    active = maps.active_projectors.to_string(),
+                    limit = maps.projector_capacity.to_string(),
+                    size = (maps.sun_resolution / 2).to_string()
+                ));
+            } else {
+                cx.note(tr!("ui-shadow-projector-waiting"));
+            }
+        }
+    });
+    let tier = profile::tier(cx.s);
+    // Legacy flat settings do not yet have a preset that can supply their defaults.
+    let defaults = cx.s.shadow_profile.as_ref().map(|_| shadow_tier_defaults(tier));
+    cx.gated_with_defaults(profile::custom_enabled(cx.s) && tier != Tier::Off, defaults, |cx| {
+        cx.group(tr!("ui-options-preset-custom"), |cx| {
+            cx.row(
+                tr!("ui-shadow-profile-distance"),
+                tr!("ui-shadow-profile-distance-help"),
+                &Nothing,
+                |ui, s| {
+                    let names = [
+                        tr!("ui-shadow-profile-near"),
+                        tr!("ui-shadow-profile-balanced"),
+                        tr!("ui-shadow-profile-far"),
+                    ];
+                    let choices = [0, 1, 2].map(|level| {
+                        tr!(
+                            "ui-shadow-profile-range",
+                            name = names[usize::from(level)],
+                            distance = profile::coverage_distance(s, level).to_string()
+                        )
+                    });
+                    let selected = profile::active_coverage(s);
+                    let current = selected.map_or_else(
+                        || tr!("ui-shadow-profile-manual-range", distance = s.shadow_params().1.to_string()),
+                        |level| choices[usize::from(level)].clone(),
+                    );
+                    let mut picked = None;
+                    egui::ComboBox::from_id_salt(ui.scope_id().with("shadow-distance"))
+                        .width(COMBO_W)
+                        .selected_text(current)
+                        .show_ui(ui, |ui| {
+                            for (level, label) in choices.iter().enumerate() {
+                                let level = level as u8;
+                                if ui.selectable_label(selected == Some(level), label.as_str()).clicked() {
+                                    picked = Some(level);
+                                }
+                            }
+                        });
+                    if let Some(level) = picked {
+                        profile::set_coverage(s, level);
+                    }
+                    picked.is_some()
+                },
+            );
+            cx.toggle(
+                tr!("ui-shadow-contact-hardening"),
+                tr!("ui-shadow-contact-hardening-help"),
+                &field!(sun_shadow_contact_hardening),
+            );
+            cx.enabled(cx.s.sun_shadow_contact_hardening, |cx| {
+                cx.row(
+                    tr!("ui-shadow-angular-diameter"),
+                    tr!("ui-shadow-angular-diameter-help"),
+                    &field!(sun_shadow_angular_diameter_deg),
+                    |ui, s| {
+                        ui.add(
+                            egui::Slider::new(
+                                &mut s.sun_shadow_angular_diameter_deg,
+                                crate::settings::shadow_profile::SUN_DIAMETER_DEGREES,
+                            )
+                            .step_by(0.01)
+                            .fixed_decimals(2)
+                            .suffix("°")
+                            .custom_parser(aurora_i18n::parse_number),
+                        )
+                        .changed()
+                    },
+                );
+            });
+            cx.toggle(
+                tr!("ui-options-projector-shadows"),
+                tr!("ui-options-projector-shadows-help"),
+                &field!(projector_shadows),
+            );
+            cx.greyed(!cx.s.shadows || !cx.s.projector_shadows);
+            cx.slider(
+                tr!("ui-shadow-projector-limit"),
+                tr!("ui-options-projector-shadow-limit-help"),
+                &field!(projector_shadow_limit),
+                1..=aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8,
+                "",
+            );
+            cx.greyed(false);
+            let palette = cx.p;
+            cx.row(tr!("common-advanced"), tr!("ui-shadow-profile-advanced-help"), &Nothing, |ui, s| {
+                let mut open = profile::advanced_enabled(s);
+                let checkbox = crate::ui::widgets::checkbox(ui, &palette, &mut open, "");
+                checkbox.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), open, tr!("common-advanced")));
+                if checkbox.changed() {
+                    profile::set_advanced_enabled(s, open);
+                }
+                // Disclosure is transient and doesn't change the active shadow settings.
+                false
+            });
+            if profile::advanced_enabled(cx.s) {
+                cx.note(tr!("ui-shadow-profile-warning"));
+                if profile::has_paused_advanced(cx.s) {
+                    cx.wide().row(
+                        tr!("ui-shadow-profile-paused"),
+                        tr!("ui-shadow-profile-paused-help"),
+                        &Nothing,
+                        |ui, s| {
+                            let restore = ui.button(tr!("ui-shadow-profile-apply-paused")).clicked();
+                            if restore {
+                                profile::restore_paused_advanced(s);
+                            }
+                            restore
+                        },
+                    );
+                }
+            }
+        });
+        cx.gated(profile::advanced_enabled(cx.s), advanced_shadow_preferences);
+    });
+    if cx.changed && profile::custom_enabled(cx.s) {
+        profile::commit_edits(cx.s);
+    }
+    cx.changed |= changed_before;
+    crate::snapshot::quality::end_shadow_edit(cx.s);
+}
+
+fn advanced_shadow_preferences(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-shadow-map-resolution"), |cx| {
+        cx.keywords(tr!("ui-options-shadow-quality")).row(
+            tr!("ui-shadow-map-resolution"),
+            tr!("ui-shadow-map-resolution-help"),
+            &Custom {
+                path: "shadow_map_resolution",
+                modified: |s: &crate::settings::Settings, d: &crate::settings::Settings| s.shadow_map_size() != d.shadow_map_size(),
+                reset: |s: &mut crate::settings::Settings, d: &crate::settings::Settings| s.set_shadow_map_size(d.shadow_map_size()),
+            },
+            |ui, s| {
+                let mut size = s.shadow_map_size();
+                let changed = super::super::combo(
+                    ui,
+                    &mut size,
+                    &[
+                        (512, "512 × 512"),
+                        (1024, "1024 × 1024"),
+                        (2048, "2048 × 2048"),
+                        (4096, "4096 × 4096"),
+                    ],
+                );
+                if changed {
+                    s.set_shadow_map_size(size);
+                }
+                changed
+            },
+        );
+    });
+    cx.group(tr!("ui-shadow-sun"), |cx| {
+        cx.greyed(!cx.s.shadows);
+        cx.combo(
+            tr!("ui-shadow-layout"),
+            tr!("ui-options-graded-sun-shadows-help"),
+            &field!(graded_sun_shadows),
+            &[(false, tr!("ui-shadow-three")), (true, tr!("ui-shadow-four"))],
+        );
+        let graded = cx.s.graded_sun_shadows;
+        if graded {
+            four_level_controls(cx);
+        } else {
+            three_level_controls(cx);
+        }
+        if cx.s.shadows {
+            shadow_map_readout(cx);
+        }
+        let saved = if graded {
+            tr!("ui-shadow-saved-three")
+        } else {
+            tr!("ui-shadow-saved-four")
+        };
+        cx.wide().row(saved, tr!("ui-shadow-saved-help"), &Nothing, |_, _| false);
+        cx.subs(false, |cx| {
+            if graded {
+                three_level_controls(cx);
+            } else {
+                four_level_controls(cx);
+            }
+        });
+    });
+    cx.group(tr!("ui-shadow-contact-section"), |cx| {
+        cx.greyed(!cx.s.shadows);
+        cx.toggle(
+            tr!("ui-options-contact-shadows"),
+            tr!("ui-options-contact-shadows-help"),
+            &field!(contact_shadows),
+        );
+        let contact = cx.s.contact_shadows;
+        cx.conditional(contact, |cx| {
+            cx.combo(
+                tr!("ui-shadow-method"),
+                tr!("ui-options-shadow-recovery-method-help"),
+                &field!(contact_ray_method),
+                &[(0, tr!("ui-shadow-bend")), (1, tr!("ui-shadow-view"))],
+            );
+            let bend = cx.s.contact_ray_method == 0;
+            cx.conditional(bend, bend_controls);
+            cx.conditional(!bend, view_ray_controls);
+            cx.conditional(bend, |cx| {
+                cx.toggle(
+                    tr!("ui-shadow-adaptive-depth"),
+                    tr!("ui-shadow-adaptive-depth-help"),
+                    &field!(contact_integrity_depth),
+                );
+            });
+            cx.toggle(
+                tr!("ui-shadow-hole-repair"),
+                tr!("ui-shadow-hole-repair-help"),
+                &field!(contact_integrity_hole_repair),
+            );
+        });
+    });
+    cx.group(tr!("ui-shadow-diagnostics-section"), |cx| {
+        cx.greyed(!cx.s.shadows);
+        shadow_diagnostics(cx);
+        if cx.s.shadows {
+            shadow_legend(cx);
+        }
+    });
+}
+
+fn four_level_controls(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.slider(
+        tr!("ui-options-graded-detail-range"),
+        tr!("ui-options-graded-detail-range-help"),
+        &field!(graded_shadow_detail_metres),
+        2..=12,
+        " m",
+    );
+    cx.row(
+        tr!("ui-shadow-reach-four"),
+        tr!("ui-options-graded-reach-help"),
+        &field!(graded_shadow_distance),
+        |ui, s| {
+            ui.add(
+                egui::Slider::new(&mut s.graded_shadow_distance, 16..=512)
+                    .logarithmic(true)
+                    .suffix(" m"),
+            )
+            .changed()
+        },
+    );
+    cx.combo(
+        tr!("ui-shadow-smoothing"),
+        tr!("ui-shadow-smoothing-help"),
+        &field!(graded_shadow_edge_smoothing),
+        &[(false, tr!("ui-shadow-sharp")), (true, tr!("ui-shadow-mild"))],
+    );
+}
+
+fn three_level_controls(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.row(
+        tr!("ui-shadow-reach-three"),
+        tr!("ui-options-graded-reach-help"),
+        &Custom {
+            path: "three_level_shadow_distance",
+            modified: |s: &crate::settings::Settings, d: &crate::settings::Settings| {
+                s.three_level_shadow_reach() != d.three_level_shadow_reach()
+            },
+            reset: |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
+                s.three_level_shadow_distance = d.three_level_shadow_reach()
+            },
+        },
+        |ui, s| {
+            let mut reach = s.three_level_shadow_reach();
+            let changed = ui
+                .add(egui::Slider::new(&mut reach, 16..=512).logarithmic(true).suffix(" m"))
+                .changed();
+            if changed {
+                s.three_level_shadow_distance = reach;
+            }
+            changed
+        },
+    );
+    cx.toggle(
+        tr!("ui-options-near-shadow-detail"),
+        tr!("ui-options-near-shadow-detail-help"),
+        &field!(near_shadow_detail),
+    );
+    cx.row(
+        tr!("ui-options-near-shadow-detail-range"),
+        tr!("ui-options-near-shadow-detail-range-help"),
+        &field!(near_shadow_detail_metres),
+        |ui, s| {
+            ui.add_enabled(
+                s.near_shadow_detail,
+                egui::Slider::new(&mut s.near_shadow_detail_metres, 2..=12).suffix(" m"),
+            )
+            .changed()
+        },
+    );
+    cx.toggle(
+        tr!("ui-shadow-first-custom"),
+        tr!("ui-shadow-first-custom-help"),
+        &field!(near_shadow_precision),
+    );
+    cx.row(
+        tr!("ui-shadow-first-share"),
+        tr!("ui-shadow-first-share-help"),
+        &field!(near_shadow_cascade_percent),
+        |ui, s| {
+            ui.add_enabled(
+                s.near_shadow_precision,
+                egui::Slider::new(&mut s.near_shadow_cascade_percent, 3..=12).suffix("%"),
+            )
+            .changed()
+        },
+    );
+}
+
+fn shadow_map_readout(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    let Some(maps) = cx.st.shadow_maps else {
+        cx.note(tr!("ui-shadow-no-measurement"));
+        return;
+    };
+    let levels = || maps.detail.iter().chain(&maps.general);
+    let splits = levels().map(|v| format!("{:.1}", v[0])).collect::<Vec<_>>().join(" / ");
+    let texels = levels().map(|v| format!("{:.1}", 1000.0 * v[1])).collect::<Vec<_>>().join(" / ");
+    let active = if maps.detail.is_some() {
+        tr!("ui-shadow-four")
+    } else {
+        tr!("ui-shadow-three")
+    };
+    cx.note(&tr!(
+        "ui-shadow-measured",
+        mode = active,
+        size = maps.sun_resolution.to_string(),
+        splits = splits,
+        texels = texels
+    ));
+    if maps.detail.is_some()
+        && let Some(ms) = cx.st.graded_detail_gpu_ms
+    {
+        cx.note(&tr!("ui-options-graded-timing", ms = format!("{ms:.2}")));
+    }
+}
+
+fn bend_controls(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.combo(
+        tr!("ui-shadow-search-reach"),
+        tr!("ui-shadow-search-help"),
+        &field!(experimental_contact_reach_mode),
+        &[
+            (0, "60 px"),
+            (1, "120 px"),
+            (2, "240 px"),
+            (3, "480 px"),
+            (4, tr!("ui-shadow-adaptive")),
+        ],
+    );
+    cx.conditional(cx.s.experimental_contact_reach_mode == 4, |cx| {
+        cx.row(
+            tr!("ui-shadow-adaptive-reach"),
+            tr!("ui-shadow-adaptive-reach-help"),
+            &field!(experimental_contact_reach_metres),
+            |ui, s| {
+                ui.add(
+                    egui::Slider::new(&mut s.experimental_contact_reach_metres, 0.10..=1.20)
+                        .suffix(" m")
+                        .step_by(0.05),
+                )
+                .changed()
+            },
+        );
+    });
+    cx.row(
+        tr!("ui-shadow-occluder-depth"),
+        tr!("ui-shadow-occluder-depth-help"),
+        &field!(experimental_contact_occluder_depth_metres),
+        |ui, s| {
+            ui.add(
+                egui::Slider::new(&mut s.experimental_contact_occluder_depth_metres, 0.0..=0.30)
+                    .suffix(" m")
+                    .step_by(0.01),
+            )
+            .changed()
+        },
+    );
+}
+
+fn view_ray_controls(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.row(
+        tr!("ui-shadow-ray-reach"),
+        tr!("ui-shadow-ray-reach-help"),
+        &field!(contact_view_reach),
+        |ui, s| {
+            ui.add(egui::Slider::new(&mut s.contact_view_reach, 0.10..=2.0).suffix(" m").step_by(0.05))
+                .changed()
+        },
+    );
+    cx.row(
+        tr!("ui-shadow-ray-tolerance"),
+        tr!("ui-shadow-ray-tolerance-help"),
+        &field!(contact_view_thickness),
+        |ui, s| {
+            ui.add(
+                egui::Slider::new(&mut s.contact_view_thickness, 0.01..=0.30)
+                    .suffix(" m")
+                    .step_by(0.01),
+            )
+            .changed()
+        },
+    );
+    cx.slider(
+        tr!("ui-shadow-ray-budget"),
+        tr!("ui-options-shadow-recovery-budget-help"),
+        &field!(contact_view_budget),
+        48..=128,
+        "",
+    );
+}
+
+fn shadow_legend(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    use aurora_render::render_controls::ContactDiagnostic;
+    match saved_diagnostic(cx.s) {
+        ContactDiagnostic::Cascades => {
+            let four = cx.st.shadow_maps.map_or(cx.s.graded_sun_shadows, |m| m.detail.is_some());
+            cx.note(if four {
+                tr!("ui-shadow-legend-four")
+            } else {
+                tr!("ui-shadow-legend-three")
+            });
+        }
+        ContactDiagnostic::ShadowMapVisibility | ContactDiagnostic::ContactVisibility | ContactDiagnostic::CombinedVisibility => {
+            cx.note(tr!("ui-shadow-legend-visibility"))
+        }
+        ContactDiagnostic::Mask => cx.note(tr!("ui-shadow-legend-mask")),
+        ContactDiagnostic::ViewRayOutcomes => cx.note(tr!("ui-shadow-legend-rays")),
+        ContactDiagnostic::BendCandidates => cx.note(tr!("ui-shadow-legend-candidates")),
+        ContactDiagnostic::BendFailures => cx.note(tr!("ui-shadow-legend-failures")),
+        ContactDiagnostic::Off => {}
+    }
+}
+
 fn light(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-local-lights"), |cx| {
@@ -667,101 +1327,7 @@ fn light(cx: &mut Cx) {
             &field!(others_attached_lights),
         );
     });
-    cx.group(tr!("ui-options-shadows"), |cx| {
-        let p = cx.p;
-        let levels = [
-            tr!("ui-options-disabled-2"),
-            tr!("ui-options-low"),
-            tr!("common-medium"),
-            tr!("ui-options-high"),
-            tr!("ui-options-ultra"),
-        ];
-        cx.keywords(&levels.join(" ")).row(
-            tr!("ui-options-shadow-quality"),
-            tr!("ui-options-cascaded-shadow-resolution-and-distance"),
-            &field!(shadow_quality),
-            |ui, s| {
-                let changed = stepped(ui, &p, &mut s.shadow_quality, &levels);
-                s.shadows = s.shadow_quality > 0;
-                changed
-            },
-        );
-        // the switch follows the quality (`OptionsUi::after_reset` too)
-        cx.track(&field!(shadows));
-        let off = cx.s.shadow_quality == 0;
-        cx.subs(off, |cx| {
-            cx.toggle(
-                tr!("ui-options-projector-shadows"),
-                tr!("ui-options-projector-shadows-help"),
-                &field!(projector_shadows),
-            );
-            let enabled = cx.s.projector_shadows;
-            cx.row(
-                tr!("ui-options-projector-shadow-limit"),
-                tr!("ui-options-projector-shadow-limit-help"),
-                &field!(projector_shadow_limit),
-                |ui, s| {
-                    ui.add_enabled(
-                        enabled,
-                        egui::Slider::new(
-                            &mut s.projector_shadow_limit,
-                            1..=aurora_render::projector_shadows::MAX_PROJECTOR_SHADOWS as u8,
-                        )
-                        .trailing_fill(true),
-                    )
-                    .changed()
-                },
-            );
-            cx.toggle(
-                tr!("ui-options-contact-shadows"),
-                tr!("ui-options-contact-shadows-help"),
-                &field!(contact_shadows),
-            );
-            cx.experimental().toggle(
-                tr!("ui-options-soft-shadows"),
-                tr!("ui-options-soft-shadows-help"),
-                &field!(soft_shadows),
-            );
-            // the size of the light acts with the soft shadows only
-            let soft = cx.s.soft_shadows;
-            cx.subs(!soft, |cx| {
-                cx.row(
-                    tr!("ui-options-shadow-softness"),
-                    tr!("ui-options-shadow-softness-help"),
-                    &field!(shadow_softness),
-                    |ui, s| {
-                        let slider = ui.add_enabled_ui(soft, |ui| {
-                            ui.add(
-                                egui::Slider::new(&mut s.shadow_softness, 0.0..=crate::settings::SHADOW_SOFTNESS_MAX)
-                                    .custom_parser(aurora_i18n::parse_number)
-                                    .fixed_decimals(2)
-                                    .step_by(0.05)
-                                    .trailing_fill(true),
-                            )
-                            .changed()
-                        });
-                        slider.response.on_disabled_hover_text(tr!("ui-options-shadow-softness-needs-soft"));
-                        slider.inner
-                    },
-                );
-            });
-            cx.row(
-                tr!("ui-options-shadow-intensity"),
-                tr!("ui-options-shadow-intensity-help"),
-                &field!(shadow_intensity),
-                |ui, s| {
-                    ui.add(
-                        egui::Slider::new(&mut s.shadow_intensity, 0.0..=1.0)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .fixed_decimals(2)
-                            .step_by(0.05)
-                            .trailing_fill(true),
-                    )
-                    .changed()
-                },
-            );
-        });
-    });
+    shadow_preferences(cx);
     cx.group(tr!("ui-options-ambient-occlusion"), |cx| {
         cx.stepped(
             tr!("ui-options-ambient-occlusion"),
@@ -792,6 +1358,20 @@ fn light(cx: &mut Cx) {
                 |ui, s| ui.add_enabled_ui(gtao, |ui| stepped(ui, &p, &mut s.gtao_quality, &levels)).inner,
             );
             cx.experimental().row(
+                tr!("ui-options-p3-ao-thin"),
+                tr!("ui-options-p3-ao-thin-help"),
+                &field!(experimental_gtao_thin_compensation),
+                |ui, s| {
+                    ui.add_enabled(
+                        gtao,
+                        egui::Slider::new(&mut s.experimental_gtao_thin_compensation, 0.0..=1.5)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+            cx.experimental().row(
                 tr!("ui-options-screen-indirect-light"),
                 tr!("ui-options-screen-indirect-light-help"),
                 &field!(screen_indirect_light),
@@ -814,6 +1394,70 @@ fn light(cx: &mut Cx) {
                     })
                     .inner
                 },
+            );
+        });
+    });
+    // All controls are independent of the PBR material's actual asset.
+    cx.group(tr!("ui-options-p3-thin-group"), |cx| {
+        cx.experimental().toggle(
+            tr!("ui-options-p3-thin-enable"),
+            tr!("ui-options-p3-thin-enable-help"),
+            &field!(pbr_thin_enabled),
+        );
+        let enabled = cx.s.pbr_thin_enabled;
+        cx.subs(!enabled, |cx| {
+            cx.combo(
+                tr!("ui-options-p3-thin-scope"),
+                tr!("ui-options-p3-thin-scope-help"),
+                &field!(pbr_thin_scope),
+                &[
+                    (0, tr!("ui-options-p3-thin-scope-uuid")),
+                    (1, tr!("ui-options-p3-thin-scope-preview")),
+                ],
+            );
+            let specific = cx.s.pbr_thin_scope == 0;
+            cx.row(
+                tr!("ui-options-p3-thin-uuid"),
+                tr!("ui-options-p3-thin-uuid-help"),
+                &field!(pbr_thin_material_id),
+                |ui, s| {
+                    ui.add_enabled(
+                        specific,
+                        egui::TextEdit::singleline(&mut s.pbr_thin_material_id).desired_width(270.0),
+                    )
+                    .changed()
+                },
+            );
+            cx.row(
+                tr!("ui-options-p3-thin-ao"),
+                tr!("ui-options-p3-thin-ao-help"),
+                &field!(pbr_thin_ao_floor),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.pbr_thin_ao_floor, 0.0..=0.8)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+            cx.row(
+                tr!("ui-options-p3-thin-transmission"),
+                tr!("ui-options-p3-thin-transmission-help"),
+                &field!(pbr_thin_transmission),
+                |ui, s| {
+                    ui.add(
+                        egui::Slider::new(&mut s.pbr_thin_transmission, 0.0..=1.5)
+                            .step_by(0.05)
+                            .trailing_fill(true),
+                    )
+                    .changed()
+                },
+            );
+            cx.toggle(
+                tr!("ui-options-p3-thin-highlight"),
+                tr!("ui-options-p3-thin-highlight-help"),
+                &field!(pbr_thin_debug),
             );
         });
     });
@@ -990,6 +1634,30 @@ fn image(cx: &mut Cx) {
             tr!("ui-options-specular-aa-help"),
             &field!(specular_aa),
         );
+    });
+    cx.group(tr!("ui-options-p3-legacy-group"), |cx| {
+        cx.experimental().toggle(
+            tr!("ui-options-p3-legacy-enable"),
+            tr!("ui-options-p3-legacy-enable-help"),
+            &field!(legacy_light_harmonization),
+        );
+        cx.subs(!cx.s.legacy_light_harmonization, |cx| {
+            cx.toggle(
+                tr!("ui-options-p3-legacy-sun"),
+                tr!("ui-options-p3-legacy-sun-help"),
+                &field!(harmonize_sunlight),
+            );
+            cx.toggle(
+                tr!("ui-options-p3-legacy-ambient"),
+                tr!("ui-options-p3-legacy-ambient-help"),
+                &field!(harmonize_ambient),
+            );
+            cx.toggle(
+                tr!("ui-options-p3-legacy-local"),
+                tr!("ui-options-p3-legacy-local-help"),
+                &field!(harmonize_local_lights),
+            );
+        });
     });
     // the order of the blended faces (scene/blend_order.rs), beyond the
     // Legacy Viewer's sort
@@ -1195,6 +1863,12 @@ fn depth_of_field(cx: &mut Cx) {
             tr!("ui-options-dof-enable-help"),
             &field!(dof.enabled),
         );
+        // The Photo lens can use this preference while the world lens is off.
+        cx.toggle(
+            tr!("ui-options-dof-blended-depth"),
+            tr!("ui-options-dof-blended-depth-help"),
+            &field!(dof.experimental_alpha_depth_proxy),
+        );
         let off = !cx.s.dof.enabled;
         cx.subs(off, |cx| {
             cx.toggle(tr!("ui-options-dof-edit"), tr!("ui-options-dof-edit-help"), &field!(dof.in_edit));
@@ -1249,6 +1923,22 @@ fn depth_of_field(cx: &mut Cx) {
                 tr!("ui-options-dof-quality-help"),
                 &field!(dof.quality),
                 |ui, s| plain_slider(ui, &mut s.dof.quality, 0.25..=1.0, "", 2),
+            );
+            cx.toggle(
+                tr!("ui-options-p3-dof-smooth"),
+                tr!("ui-options-p3-dof-smooth-help"),
+                &field!(dof.experimental_near_transition),
+            );
+            cx.row(
+                tr!("ui-options-p3-dof-strength"),
+                tr!("ui-options-p3-dof-strength-help"),
+                &field!(dof.experimental_near_strength),
+                |ui, s| plain_slider(ui, &mut s.dof.experimental_near_strength, 0.0..=1.0, "", 2),
+            );
+            cx.toggle(
+                tr!("ui-options-p3-dof-zones"),
+                tr!("ui-options-p3-dof-zones-help"),
+                &field!(dof.experimental_dof_zones),
             );
         });
     });

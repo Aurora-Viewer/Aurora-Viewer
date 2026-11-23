@@ -1139,6 +1139,15 @@ impl Renderer {
         self.stalled.then(|| owner.held_for()).flatten()
     }
 
+    /// Sample the pipeline call of this renderer's worker, if any. Queried
+    /// only for a frame that is already stalled.
+    pub fn stalled_pipeline(&self) -> Option<crate::pipeline_cache::PipelineWork> {
+        let Host::Thread { thread: Some(thread), .. } = &self.host else {
+            return None;
+        };
+        crate::pipeline_cache::current_work(thread.thread().id())
+    }
+
     /// Before a frame is built: wait for the render thread to be free, at
     /// most [`STALL_AFTER`] (then [`STALL_POLL`] while it stays stuck).
     /// False when it is still held: the stores keep their writes for the
@@ -1684,6 +1693,9 @@ impl Renderer {
                 gpu_pixels: self.last_stats.gpu_pixels,
                 gpu_elements: self.last_stats.gpu_elements,
                 shadow: ShadowStats {
+                    maps: self.last_stats.shadow.maps,
+                    graded_detail_gpu_ms: self.last_stats.shadow.graded_detail_gpu_ms,
+                    graded_detail_draws: self.last_stats.shadow.graded_detail_draws,
                     gpu_ms: self.last_stats.shadow.gpu_ms,
                     ..Default::default()
                 },
