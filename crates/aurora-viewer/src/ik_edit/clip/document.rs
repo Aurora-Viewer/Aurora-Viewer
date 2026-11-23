@@ -1088,12 +1088,9 @@ impl Document {
 }
 
 /// The position a track's keys start from when its first position key is
-/// recorded after frame 0. `Document::record` stores the pelvis as an offset
-/// from its rest position and every other joint as its position under its
-/// parent, so a loaded track takes the same: no offset for the pelvis (its
-/// rest height here would lift the avatar by it), the rest position else.
+/// recorded after frame 0, in the native asset's parent-relative coordinates.
 fn base_position(rig: &Rig, bone: usize) -> Vec3 {
-    if bone == rig.pelvis { Vec3::ZERO } else { rig.local_pos[bone] }
+    rig.local_pos[bone] - rig.key_origin(bone)
 }
 
 /// A key belongs to the frame its time rounds to, exactly as the timeline

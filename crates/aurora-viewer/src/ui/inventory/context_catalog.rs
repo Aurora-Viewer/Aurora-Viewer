@@ -992,12 +992,17 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         );
     }
     if !trash || all {
+        // LLInvFVBridge::canMenuDelete (isItemRemovable(false)): Delete
+        // stays enabled on a worn selection, and asks to take it off first
+        // ("DeleteWornItems", `confirm_or_run`). No row of its own, as in
+        // the Legacy Viewer.
+        let detach = ready && super::delete::detach_allowed(inv, &ids, prefs, facts);
         c.add(
             "delete",
             "bottom",
             "trash-filled",
             aurora_i18n::tr!("common-delete"),
-            ready && super::delete::allowed(inv, &ids, prefs, facts),
+            ready && (super::delete::allowed(inv, &ids, prefs, facts) || detach),
             Command::Delete(ids, false),
         );
         c.slot("delete", 7);

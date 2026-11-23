@@ -1236,7 +1236,7 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
     if (probes_on()) {
         // (both in one walk of the probes)
         let both = sample_probes_pair(
-            world_pos,
+            probe_point(world_pos, n),
             frag,
             ProbeLookup(r, (1.0 - spec.a) * probe_max_lod(), false),
             ProbeLookup(r, 0.0, false),
@@ -1818,8 +1818,10 @@ fn mask_color(rec: DrawRecord, c: vec4<f32>) -> vec4<f32> {
         }
         return vec4<f32>(c.rgb, 1.0);
     }
-    // sharpen alpha around the cutoff for alpha-to-coverage
-    let a = clamp((c.a - cutoff) / max(fwidth(c.a), 1e-4) + 0.5, 0.0, 1.0);
+    // The Legacy Viewer's alphaMask compares at half an 8-bit step below
+    // the cutoff. A flat texel equal to the cutoff covers every sample.
+    let edge = cutoff - 1.0 / 512.0;
+    let a = clamp((c.a - edge) / max(fwidth(c.a), 1e-4) + 0.5, 0.0, 1.0);
     return vec4<f32>(c.rgb, a);
 }
 

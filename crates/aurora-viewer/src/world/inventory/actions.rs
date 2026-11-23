@@ -28,8 +28,33 @@ pub const FULL: u32 = COPY | MODIFY | TRANSFER;
 /// before the server's reply (no owner yet), or asked before the login (no
 /// agent), counts as the agent's.
 pub fn agent_mask(item: &InvItem, agent: Uuid) -> u32 {
-    let owned = !item.group_owned && (item.owner == agent || item.owner.is_nil() || agent.is_nil());
-    if owned { item.owner_mask } else { item.everyone_mask }
+    if owned_by(item, agent) {
+        item.owner_mask
+    } else {
+        item.everyone_mask
+    }
+}
+
+/// Whether `agent` owns `item` itself, as [`agent_mask`] reads it: not a
+/// group's item, nor someone else's (the Library's account included).
+fn owned_by(item: &InvItem, agent: Uuid) -> bool {
+    !item.group_owned && (item.owner == agent || item.owner.is_nil() || agent.is_nil())
+}
+
+/// The rights an inventory row's label names after the item's name, its
+/// " (no copy)", " (no modify)" and " (no transfer)", which the inventory
+/// search reads with the name: LLItemBridge::getLabelSuffix
+/// (indra/newview/llinventorybridge.cpp) names them only on an item the
+/// agent owns itself, and never on a link (which takes its link tag
+/// instead) nor on a calling card. Returns the bits missing among
+/// [`COPY`], [`MODIFY`] and [`TRANSFER`]; 0 when the label names none.
+pub fn label_missing_rights(item: &InvItem, agent: Uuid) -> u32 {
+    let link = matches!(item.asset_type, 24 | 25);
+    let calling_card = item.asset_type == 2;
+    if link || calling_card || !owned_by(item, agent) {
+        return 0;
+    }
+    FULL & !agent_mask(item, agent)
 }
 
 /// [`agent_mask`] for an item of an object's contents, the same reading
@@ -1184,6 +1209,42 @@ pub fn animation_playable(inv: &Inventory, id: Uuid) -> Option<&InvItem> {
     let owned = !item.group_owned && (item.owner == inv.owner || item.owner.is_nil() || inv.owner.is_nil());
     let playable = item.asset_type == 20 && !item.asset_id.is_nil() && !in_type(inv, original, 14) && (owned || library(inv, original));
     playable.then_some(item)
+}
+
+#[cfg(test)]
+mod label_rights_tests {
+    use super::*;
+
+    #[test]
+    fn the_label_names_missing_rights_only_on_the_agents_own_items() {
+        let agent = Uuid::from_u128(0xA);
+        let library_owner = Uuid::from_u128(0x11B);
+        let cases = [
+            // (case, owner, group owned, asset type, owner mask, everyone mask, missing rights named)
+            ("own, full", agent, false, 0, FULL, 0, 0),
+            ("own, no copy", agent, false, 0, MODIFY | TRANSFER, 0, COPY),
+            ("own, no modify", agent, false, 0, COPY | TRANSFER, 0, MODIFY),
+            ("own, no transfer", agent, false, 0, COPY | MODIFY, 0, TRANSFER),
+            ("own, none", agent, false, 0, 0, 0, FULL),
+            ("group owned", Uuid::from_u128(0x6), true, 0, COPY, 0, 0),
+            ("someone else's", Uuid::from_u128(0xB), false, 0, COPY, 0, 0),
+            ("Library", library_owner, false, 0, FULL, COPY, 0),
+            ("own link", agent, false, 24, 0, 0, 0),
+            ("own folder link", agent, false, 25, 0, 0, 0),
+            ("own calling card", agent, false, 2, 0, 0, 0),
+        ];
+        for (case, owner, group_owned, asset_type, owner_mask, everyone_mask, missing) in cases {
+            let item = InvItem {
+                asset_type,
+                owner,
+                group_owned,
+                owner_mask,
+                everyone_mask,
+                ..Default::default()
+            };
+            assert_eq!(label_missing_rights(&item, agent), missing, "{case}");
+        }
+    }
 }
 
 #[cfg(test)]

@@ -253,7 +253,9 @@ a reference frame and two identical posed frames. The pelvis-unlock setting
 controls root rotation and translation. Native animations and BVH have no
 scale tracks; BVH also omits collision volumes. The Aurora pose document
 retains those channels. **Upload as animation…** reuses the existing native
-encoder and opens the normal import preview. Upload and the simulator price
+encoder and opens the normal import preview. The Poser stays open, with every
+subject's pose and undo history intact, so you can prepare the next subject's
+animation or cancel the import without restarting the pose. Upload and the simulator price
 confirmation still require the human's action; saving never uploads.
 
 ## Consent

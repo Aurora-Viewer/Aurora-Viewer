@@ -367,7 +367,7 @@ impl App {
 
     /// An inventory change, after the listings' questions; `drag` when it
     /// comes from a drop on a folder.
-    fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
+    pub(super) fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
         // the clipboard is shared by both panes: the main window holds it
         let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
         if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
@@ -411,6 +411,32 @@ impl App {
         ui::inventory::resize_for_dual(&self.egui_ctx, self.panels.inventory_dual);
     }
 
+    /// Demo: the Detach and Delete confirmation's button, then where `item`
+    /// is at `log_frame` (worn or active, in the Trash, the wait, the message).
+    pub(super) fn demo_detach_delete_steps(&mut self, label: &str, item: uuid::Uuid, confirm: bool, log: bool) {
+        let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+        if confirm {
+            let actions = self
+                .inventory_ui
+                .demo_confirm_detach_delete(&self.world.inventory, &self.settings.inventory, &facts);
+            log::info!("demo {label}: confirmed at frame {}, {} action(s)", self.frame_count, actions.len());
+            for action in actions {
+                self.apply_inventory_action(action);
+            }
+        }
+        if log {
+            log::info!(
+                "demo {label}: frame {} worn={} active={} trash={} waiting={} message={:?}",
+                self.frame_count,
+                facts.worn.contains(&item),
+                facts.active_gestures.contains(&item),
+                crate::world::inventory::actions::in_type(&self.world.inventory, item, 14),
+                self.inventory_ui.demo_detach_waiting(),
+                self.inventory_ui.message,
+            );
+        }
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         self.apply_inventory_action_from(Uuid::nil(), action);
     }
@@ -438,6 +464,7 @@ impl App {
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
+            InvAction::Notice(text) => self.world.system_message(text),
             InvAction::Edit(change) => self.edit_inventory(change, false, editor),
             InvAction::Delete(deletion) => {
                 if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {
@@ -486,8 +513,13 @@ impl App {
                 }
             }
             InvAction::Appearance(action) => {
+                let asked = removed_items(&action);
                 self.inventory_ui.message.clear();
                 self.apply_appearance_action(action);
+                if !asked.is_empty() && !self.inventory_ui.message.is_empty() {
+                    let reason = self.inventory_ui.message.clone();
+                    self.inventory_ui.detach_refused(&asked, &reason);
+                }
             }
             InvAction::Animation { asset, local, start } => {
                 if start {
@@ -1028,10 +1060,17 @@ impl App {
             .appearance_ui
             .pending
             .is_none_or(|(request, _)| self.world.attachment_inventory.owns(request));
+        let asked = removed_items(&action);
         let (detach, action) = self.world.recover_attachment_removal(action, allow_recovery);
         let recovered = !detach.is_empty();
         for command in detach {
             self.send_from(command, actor);
+        }
+        if recovered {
+            // what the outfit update still has to take off was not detached here
+            let left = action.as_ref().map(removed_items).unwrap_or_default();
+            let detached: Vec<_> = asked.into_iter().filter(|id| !left.contains(id)).collect();
+            self.inventory_ui.take_off_sent(&detached);
         }
         let Some(action) = action else {
             if recovered {
@@ -1086,8 +1125,8 @@ impl App {
                 self.open_outfit_portrait(id, super::outfit_portrait::Kind::Viewfinder);
                 return;
             }
-            crate::world::appearance::Action::OutfitBatch(outfits) => {
-                self.open_outfit_batch(outfits);
+            crate::world::appearance::Action::OutfitBatch(outfits, folder) => {
+                self.open_outfit_batch(outfits, folder);
                 return;
             }
             _ => {}
@@ -1195,6 +1234,17 @@ impl App {
         for action in actions {
             self.apply_inventory_action(action);
         }
+    }
+}
+
+/// The items an outfit action takes off.
+fn removed_items(action: &crate::world::appearance::Action) -> Vec<Uuid> {
+    match action {
+        crate::world::appearance::Action::Remove(item) => vec![*item],
+        crate::world::appearance::Action::RemoveItems(items) | crate::world::appearance::Action::Force { remove: items, .. } => {
+            items.clone()
+        }
+        _ => Vec::new(),
     }
 }
 

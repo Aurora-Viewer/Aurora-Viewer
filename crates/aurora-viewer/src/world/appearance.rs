@@ -64,8 +64,9 @@ pub enum Action {
     /// The photo mode, square, for an outfit's picture.
     OutfitPhotoMode(Uuid),
     /// The batch portraits' window, over these outfits (the showcase's,
-    /// in its order).
-    OutfitBatch(Vec<Uuid>),
+    /// in its order), and the folder of My Outfits they were chosen from
+    /// (the showcase filtered to it), named in the window.
+    OutfitBatch(Vec<Uuid>, Option<Uuid>),
     Wear(Uuid, bool),
     WearOutfits {
         folders: Vec<Uuid>,
@@ -998,7 +999,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         | Action::OutfitSnapshot(_)
         | Action::OutfitPortrait(_)
         | Action::OutfitPhotoMode(_)
-        | Action::OutfitBatch(_)
+        | Action::OutfitBatch(..)
         | Action::Category(..)
         | Action::Folders(_)
         | Action::DeleteFromOutfit { .. }
