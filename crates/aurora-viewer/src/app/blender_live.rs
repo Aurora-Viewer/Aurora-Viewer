@@ -314,6 +314,28 @@ impl App {
                 self.scene.jobs.discard(old);
             }
         }
+        // `static-derez-closed`: the window closes, then the world's menu
+        // derezzes the object, through the same command as the pie menu
+        if self.demo
+            && self.frame_count == 470
+            && std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "static-derez-closed")
+            && let Some(key) = self
+                .blender_live
+                .selected
+                .and_then(|source| self.blender_live.root(source))
+                .and_then(|id| self.world.objects.index_of_uuid(&id))
+                .and_then(|idx| self.world.objects.get(idx))
+                .map(|object| object.key)
+        {
+            self.blender_live.open = false;
+            self.send(NetCommand::Build(aurora_net::build::BuildCmd::DeRez {
+                handle: key.region,
+                local_ids: vec![key.local_id],
+                destination: aurora_net::build::derez::TAKE_INTO_AGENT_INVENTORY,
+                destination_id: uuid::Uuid::nil(),
+                group_id: uuid::Uuid::nil(),
+            }));
+        }
         if self.demo
             && self.frame_count == 450
             && let Ok(mode) = std::env::var("AURORA_DEMO_BLENDER_LIVE")
