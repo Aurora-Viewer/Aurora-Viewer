@@ -14017,6 +14017,7 @@ poser-face = Visage
 poser-hands = Mains
 poser-misc = Autres os
 poser-search = Rechercher un os…
+poser-face-position-drag = Faites glisser pour déplacer l’articulation de 0,1 mm par pixel, ou cliquez pour saisir une position.
 poser-position = Position locale (mètres)
 poser-rotation = Rotation locale (degrés)
 poser-markers = Afficher les repères et les gizmos

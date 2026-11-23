@@ -14012,6 +14012,7 @@ poser-face = Face
 poser-hands = Hands
 poser-misc = Other bones
 poser-search = Find a bone…
+poser-face-position-drag = Drag to move the joint by 0.1 mm per pixel, or click to type a position.
 poser-position = Local position (metres)
 poser-rotation = Local rotation (degrees)
 poser-markers = Show joint markers and gizmos
