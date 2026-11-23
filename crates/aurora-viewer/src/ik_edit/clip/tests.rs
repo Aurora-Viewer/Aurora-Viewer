@@ -1433,6 +1433,21 @@ fn playback_pause_resumes_fractional_time_and_restarts_from_clip_start_at_the_en
 }
 
 #[test]
+fn one_frame_loop_preserves_fades_longer_than_its_period() {
+    let mut document = Document::new();
+    document.range(0, 1);
+    document.meta.looping = true;
+    document.meta.ease_in = 1.25;
+    document.meta.ease_out = 2.5;
+    document.timing();
+    let animation = document.preview().expect("loop preview");
+    assert_eq!((animation.ease_in, animation.ease_out), (1.25, 2.5));
+    document.meta.looping = false;
+    document.timing();
+    assert!(document.meta.ease_in + document.meta.ease_out <= document.meta.duration + 1e-6);
+}
+
+#[test]
 fn edited_loop_metadata_keeps_a_valid_loop_window() {
     let mut document = Document::new();
     document.range(0, 30);
