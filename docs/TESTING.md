@@ -1660,13 +1660,16 @@ when unfocused") is ignored during a screenshot.
   (`app/teleport_screen.rs`). With `AURORA_PROFILE=1` the teleport
   timeline ends `arrived (teleport screen hidden)`, or `…, old screen)`.
 - **`AURORA_DEMO_TELEPORT_FAILED=<reason>|empty[,hypergrid]`** (issue #3416): every
-  teleport the resident asks for (map, landmark, Home, a link) starts, then
-  the region refuses it with that reason as a TeleportFailed would. A code of
+  teleport the resident asks for (map, landmark, Home, a link, in the region
+  or to another one, `AURORA_DEMO_TP=remote` included) starts, then the
+  region refuses it with that reason as a TeleportFailed would. A code of
   the Legacy Viewer's teleport_strings.xml (`noaccess_tport`, `no_host`…)
   shows its readable text; anything else is shown as sent. `,hypergrid` puts
   the agent on another OpenSim grid: `Unauthorized,hypergrid` adds the line
   that explains a refused return home, `Could not resolve Landmark grid
-  gatekeeper,hypergrid` the one for an unreachable grid. `empty` sends an
+  gatekeeper,hypergrid` the one for an unreachable grid.
+  `RegionTPSpecialUsageBlocked` (no region name in the demo) gives the Skill
+  Gaming sentence without a name, its FAQ link clickable. `empty` sends an
   empty reason, as OpenSim's EntityTransferModule does: the popup still
   opens, with "Teleport failed." alone. The popup says "Teleport failed."
   with the reason, OK closes it, and the nearby chat keeps the same wording.

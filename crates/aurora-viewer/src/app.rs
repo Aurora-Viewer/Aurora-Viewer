@@ -2587,7 +2587,8 @@ impl App {
         if self.demo && (self.rlva_selftest_demo_command(&cmd) || self.bridge_demo_command(&cmd)) {
             return;
         }
-        // AURORA_DEMO_TELEPORT_FAILED: the region refuses every teleport
+        // AURORA_DEMO_TELEPORT_FAILED: the region refuses every teleport (a
+        // link to another region is refused in teleport_to_location_looking)
         if self.demo
             && matches!(
                 cmd,
@@ -2596,15 +2597,8 @@ impl App {
                     | NetCommand::TeleportToRegion { .. }
                     | NetCommand::TeleportHome
             )
-            && let Some((reason, _)) = crate::demo::teleport_failure()
+            && self.demo_teleport_refused()
         {
-            self.world.apply(NetEvent::TeleportStarted { flags: 0 });
-            // a TeleportFailed without AlertInfo: the reason is the code
-            self.world.apply(NetEvent::TeleportFailed {
-                code: Some(reason.clone()),
-                reason,
-                region: String::new(),
-            });
             return;
         }
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
@@ -7764,6 +7758,22 @@ impl App {
         self.teleport_to_location_looking(region, pos, Vec3::X)
     }
 
+    /// AURORA_DEMO_TELEPORT_FAILED: the teleport just asked for starts, then
+    /// the region refuses it with a TeleportFailed without AlertInfo (the
+    /// reason is the code). False when the variable is not set.
+    fn demo_teleport_refused(&mut self) -> bool {
+        let Some((reason, _)) = crate::demo::teleport_failure() else {
+            return false;
+        };
+        self.world.apply(NetEvent::TeleportStarted { flags: 0 });
+        self.world.apply(NetEvent::TeleportFailed {
+            code: Some(reason.clone()),
+            reason,
+            region: String::new(),
+        });
+        true
+    }
+
     fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3) -> bool {
         let asked = region.clone();
         let Some(region) = self.grid_region(&region) else {
@@ -7799,6 +7809,9 @@ impl App {
         if local {
             self.send(command);
         } else if self.demo {
+            if self.demo_teleport_refused() {
+                return true;
+            }
             // Only inter-region demo teleports simulate a connection delay.
             aurora_net::transition::begin(
                 aurora_net::transition::Kind::Teleport,
@@ -20576,7 +20589,7 @@ impl App {
                 let closed = self
                     .tp_failure_popup
                     .as_ref()
-                    .is_some_and(|(said, hint)| ui::context::teleport_failed(&ctx, &p, said, *hint));
+                    .is_some_and(|(said, hint)| ui::context::teleport_failed(&ctx, &p, &self.world, said, *hint));
                 if closed {
                     self.tp_failure_popup = None;
                 }

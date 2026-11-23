@@ -1841,7 +1841,7 @@ pub fn suitcase_confirm(
 /// (`world::teleport_failure`): the Legacy Viewer's `CouldNotTeleportReason`
 /// alert, "Teleport failed." and the reason, with the line that explains an
 /// OpenSim Hypergrid refusal under it. True once closed.
-pub fn teleport_failed(ctx: &egui::Context, p: &Palette, reason: &str, hint: Option<&str>) -> bool {
+pub fn teleport_failed(ctx: &egui::Context, p: &Palette, world: &World, reason: &str, hint: Option<&str>) -> bool {
     use egui::RichText;
     let mut closed = false;
     let modal = crate::ui::widgets::Modal::new(egui::Id::unique("teleport_failed")).show(ctx, |ui| {
@@ -1856,7 +1856,9 @@ pub fn teleport_failed(ctx: &egui::Context, p: &Palette, reason: &str, hint: Opt
             );
         });
         ui.add_space(6.0);
-        ui.add(egui::Label::new(RichText::new(reason).size(12.5).color(p.ink)).wrap());
+        // its links clickable, as the alert's text parses them (the Skill
+        // Gaming FAQ of RegionTPSpecialUsageBlocked)
+        super::chat::text_with_links(ui, p, world, NameScope::World.into(), reason, &[], 12.5, p.ink);
         if let Some(hint) = hint {
             ui.add_space(6.0);
             ui.add(egui::Label::new(RichText::new(hint).size(12.0).color(p.muted)).wrap());

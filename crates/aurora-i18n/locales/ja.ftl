@@ -15813,6 +15813,7 @@ teleport-error-no-host = テレポート先が見つかりません。一時的�
 teleport-error-no-inventory-host = インベントリは現在利用できません。
 teleport-error-must-get-age-region = このリージョンに入るには18歳以上である必要があります。
 teleport-error-special-usage-blocked = リージョンに入れません。「{ $region }」はスキルゲーミングリージョンで、入場には一定の条件を満たす必要があります。詳しくは、スキルゲーミングのよくある質問（Skill Gaming FAQ）を参照してください：https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
+teleport-error-special-usage-blocked-unnamed = リージョンに入れません。このリージョンはスキルゲーミングリージョンで、入場には一定の条件を満たす必要があります。詳しくは、スキルゲーミングのよくある質問（Skill Gaming FAQ）を参照してください：https://wiki.secondlife.com/wiki/Linden_Lab_Official:Second_Life_Skill_Gaming_FAQ
 teleport-hint-hypergrid-home-refused = ホームグリッドが帰還を拒否しました。多くの場合、ホームグリッドの Hypergrid アドレス設定が、他のグリッドが使うアドレスと一致していないことが原因です。ホームグリッドの運営者に連絡してください。それまでは、再ログインするとホームに戻れます。
 teleport-hint-hypergrid-unreachable = 相手のグリッドに接続できませんでした。オフラインか、リンクが古いアドレスを指している可能性があります。
 teleport-hint-hypergrid-visitors-refused = そのグリッドは一部のグリッドの住人しか受け入れていません。

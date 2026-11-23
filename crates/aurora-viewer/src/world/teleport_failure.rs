@@ -66,6 +66,11 @@ fn legacy(code: &str, region: &str) -> Option<String> {
         "no_inventory_host" => tr!("teleport-error-no-inventory-host"),
         "MustGetAgeRegion" => tr!("teleport-error-must-get-age-region"),
         "RegionTPSpecialUsageBlocked" => {
+            // the Legacy Viewer leaves "'[REGION_NAME]'" in the text when the
+            // AlertInfo names no region: the sentence without the name instead
+            if region.is_empty() {
+                return Some(tr!("teleport-error-special-usage-blocked-unnamed").to_owned());
+            }
             return Some(tr!("teleport-error-special-usage-blocked", region = region.to_owned()));
         }
         _ => return None,
@@ -89,7 +94,8 @@ pub fn hint(reason: &str, grid: Grid) -> Option<&'static str> {
         "unauthorized" if grid == Grid::OpenSimAway => Some(tr!("teleport-hint-hypergrid-home-refused")),
         "error contacting grid" | "could not resolve landmark grid gatekeeper" => Some(tr!("teleport-hint-hypergrid-unreachable")),
         "destination does not allow visitors from your world" => Some(tr!("teleport-hint-hypergrid-visitors-refused")),
-        "landmark region not found" | "the teleport destination could not be found" => {
+        // GatekeeperService.LoginAgent: the region asked for is not on that grid
+        "landmark region not found" | "destination region not found" | "the teleport destination could not be found" => {
             Some(tr!("teleport-hint-hypergrid-destination-gone"))
         }
         _ if said.contains("gatekeeper") => Some(tr!("teleport-hint-hypergrid-unreachable")),
@@ -118,6 +124,13 @@ mod tests {
         // process_teleport_failed: REASON is the known text, else
         // Info.Reason, so an unknown code with an empty reason shows nothing
         assert_eq!(text("SomeNewTag", "", ""), "");
+    }
+
+    #[test]
+    fn a_skill_gaming_refusal_without_a_region_name_drops_the_name() {
+        let said = text("RegionTPSpecialUsageBlocked", "", "");
+        assert_eq!(said, aurora_i18n::tr!("teleport-error-special-usage-blocked-unnamed"));
+        assert!(!said.contains("''") && !said.contains("[REGION_NAME]"), "{said}");
     }
 
     #[test]
@@ -154,6 +167,8 @@ mod tests {
         );
         let gone = Some(aurora_i18n::tr!("teleport-hint-hypergrid-destination-gone"));
         assert_eq!(hint("landmark region not found", Grid::OpenSimAway), gone);
+        // GatekeeperService.LoginAgent
+        assert_eq!(hint("Destination region not found", Grid::OpenSimHome), gone);
         assert_eq!(hint("The teleport destination could not be found.", Grid::OpenSimHome), gone);
         assert_eq!(hint("Region is full", Grid::OpenSimHome), None);
         assert_eq!(hint("Could not resolve Landmark grid gatekeeper", Grid::SecondLife), None);
