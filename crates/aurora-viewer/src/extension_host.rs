@@ -131,9 +131,18 @@ pub enum Command {
     },
 }
 
+enum WorkerCommand {
+    SetAccountScope(String),
+    /// Reject queued UI/events whose originating account no longer matches the worker.
+    Scoped {
+        account_scope: String,
+        command: Command,
+    },
+}
+
 /// Non-blocking front end to the extension supervisor thread.
 pub struct Service {
-    tx: Sender<Command>,
+    tx: Sender<WorkerCommand>,
     snapshot: Arc<RwLock<Snapshot>>,
     actions: Arc<RwLock<VecDeque<ActionBatch>>>,
 }
@@ -171,7 +180,34 @@ impl Service {
 
     /// Queue one user command without blocking the UI thread.
     pub fn submit(&self, command: Command) -> bool {
-        let scope_change = matches!(&command, Command::SetAccountScope(_));
+        match command {
+            Command::SetAccountScope(scope) => self.enqueue(WorkerCommand::SetAccountScope(scope), true),
+            command => {
+                let Some(scope) = self.snapshot().account_scope else {
+                    self.report_error(tr!("extensions-manager-storage-unavailable").to_owned());
+                    return false;
+                };
+                self.submit_for_scope(&scope, command)
+            }
+        }
+    }
+
+    /// Queue an event or UI action with the account scope that produced it.
+    pub fn submit_for_scope(&self, scope: &str, command: Command) -> bool {
+        if !valid_account_scope(scope) || matches!(&command, Command::SetAccountScope(_)) {
+            self.report_error(tr!("extensions-manager-storage-unavailable").to_owned());
+            return false;
+        }
+        self.enqueue(
+            WorkerCommand::Scoped {
+                account_scope: scope.to_owned(),
+                command,
+            },
+            false,
+        )
+    }
+
+    fn enqueue(&self, command: WorkerCommand, scope_change: bool) -> bool {
         match self.tx.try_send(command) {
             Ok(()) => {
                 if scope_change && let Ok(mut actions) = self.actions.write() {
@@ -256,7 +292,7 @@ fn valid_account_scope(scope: &str) -> bool {
 
 fn run_worker(
     root: PathBuf,
-    rx: crossbeam_channel::Receiver<Command>,
+    rx: crossbeam_channel::Receiver<WorkerCommand>,
     shared: Arc<RwLock<Snapshot>>,
     shared_actions: Arc<RwLock<VecDeque<ActionBatch>>>,
 ) {
@@ -268,9 +304,15 @@ fn run_worker(
     let mut next_request_id = 1u64;
     publish_state(&shared, None, &panels, None);
 
-    for command in rx {
-        let command = match command {
-            Command::SetAccountScope(scope) => {
+    for message in rx {
+        let command = match message {
+            WorkerCommand::Scoped { account_scope, command } => {
+                if active_scope.as_deref() != Some(account_scope.as_str()) {
+                    continue;
+                }
+                command
+            }
+            WorkerCommand::SetAccountScope(scope) => {
                 if !valid_account_scope(&scope) {
                     publish_error(&shared, tr!("extensions-manager-storage-unavailable").to_owned());
                     continue;
@@ -321,7 +363,6 @@ fn run_worker(
                 }
                 continue;
             }
-            other => other,
         };
         let Some(manager) = manager.as_mut() else {
             publish_error(&shared, tr!("extensions-manager-storage-unavailable").to_owned());
@@ -1413,7 +1454,7 @@ mod tests {
     }
 
     #[test]
-    fn persistent_full_access_grant_isolated_between_accounts_and_restores() {
+    fn account_scopes_isolate_grants_and_discard_stale_commands() {
         let temp = TempRoot::new("extension-account-scope");
         let account_a = account_scope_key(
             "https://grid-a.example/login",
@@ -1432,7 +1473,7 @@ mod tests {
         assert!(service.submit(Command::SetAccountScope(account_a.clone())));
         let initial = wait_for_snapshot(&service, &account_a, |snapshot| snapshot.ready || snapshot.error.is_some());
         assert!(initial.ready, "account A manager should open: {:?}", initial.error);
-        assert!(service.submit(Command::ChooseInstall(package_path)));
+        assert!(service.submit(Command::ChooseInstall(package_path.clone())));
         let review = wait_for_snapshot(&service, &account_a, |snapshot| {
             snapshot.pending.is_some() || snapshot.error.is_some()
         });
@@ -1463,6 +1504,63 @@ mod tests {
         );
         assert!(other_account.panels.is_empty());
 
+        assert!(service.submit(Command::ChooseInstall(package_path)));
+        let review_b = wait_for_snapshot(&service, &account_b, |snapshot| {
+            snapshot.pending.is_some() || snapshot.error.is_some()
+        });
+        assert!(
+            review_b.pending.is_some(),
+            "account B package review should be available: {:?}",
+            review_b.error
+        );
+        assert!(service.submit(Command::CommitInstall {
+            permissions: vec![Permission::FullAccess.manifest_key().to_owned()],
+            enable: true,
+            acknowledge_unverified: true,
+            acknowledge_publisher_change: false,
+        }));
+        let installed_b = wait_for_snapshot(&service, &account_b, |snapshot| {
+            (snapshot.installed.len() == 1 && snapshot.panels.len() == 1) || snapshot.error.is_some()
+        });
+        assert!(installed_b.error.is_none(), "account B install failed: {:?}", installed_b.error);
+        assert_eq!(installed_b.installed[0].state, ExtensionState::Enabled);
+        assert_eq!(
+            service.take_actions_for_scope(&account_b).len(),
+            1,
+            "drain account B initialization effects"
+        );
+
+        assert!(service.submit_for_scope(
+            &account_a,
+            Command::PanelAction {
+                id: DEMO_ID.into(),
+                panel_id: "sandbox-demo".into(),
+                control_id: "notify".into(),
+                value: PanelEventValue::Clicked,
+            }
+        ));
+        assert!(service.submit_for_scope(
+            &account_a,
+            Command::NearbyChat(ExtensionEvent::NearbyChat {
+                message_id: 99,
+                speaker: "Account A".into(),
+                text: "stale event".into(),
+            })
+        ));
+        assert!(service.submit_for_scope(&account_b, Command::SafeMode(true)));
+        let after_stale_commands = wait_for_snapshot(&service, &account_b, |snapshot| snapshot.safe_mode || snapshot.error.is_some());
+        assert!(
+            after_stale_commands.error.is_none(),
+            "stale account commands failed: {:?}",
+            after_stale_commands.error
+        );
+        assert!(after_stale_commands.safe_mode);
+        assert_eq!(after_stale_commands.installed[0].state, ExtensionState::Enabled);
+        assert!(
+            service.take_actions_for_scope(&account_b).is_empty(),
+            "stale account effects must not be applied"
+        );
+
         assert!(service.submit(Command::SetAccountScope(account_a.clone())));
         let restored = wait_for_snapshot(&service, &account_a, |snapshot| {
             (snapshot.ready && snapshot.installed.len() == 1 && snapshot.panels.len() == 1) || snapshot.error.is_some()
@@ -1471,14 +1569,10 @@ mod tests {
         assert_eq!(restored.installed[0].state, ExtensionState::Enabled);
         assert_eq!(restored.installed[0].granted_permissions, vec![Permission::FullAccess]);
 
-        // Leave the worker on an empty scope so its final thread shutdown cannot
+        // Leave the worker in safe mode so its final thread shutdown cannot
         // dispatch a fixture Shutdown event after the assertions.
         assert!(service.submit(Command::SetAccountScope(account_b.clone())));
-        let empty_scope = wait_for_snapshot(&service, &account_b, |snapshot| snapshot.ready || snapshot.error.is_some());
-        assert!(
-            empty_scope.ready,
-            "account B manager should remain loadable: {:?}",
-            empty_scope.error
-        );
+        let restored_b = wait_for_snapshot(&service, &account_b, |snapshot| snapshot.ready || snapshot.error.is_some());
+        assert!(restored_b.ready, "account B manager should remain loadable: {:?}", restored_b.error);
     }
 }

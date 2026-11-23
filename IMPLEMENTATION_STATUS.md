@@ -1,6 +1,6 @@
 # Implementation status — Aurora Extension Platform v1
 
-Current milestone: bounded extension-owned key/value storage. `extension.storage` is explicitly granted, separately scoped to the extension and active account/grid, and excluded from the fixed `extension.full_access` bundle. API compatibility/limits, persistent grant-gated storage and the Viewer host round-trip are verified. Draft POC, not production-ready.
+Current milestone: bounded extension-owned key/value storage plus account-scoped worker command dispatch. `extension.storage` remains explicitly granted, scoped to the extension and active account/grid, and excluded from the fixed `extension.full_access` bundle. Stale queued chat, panel and manager commands are rejected worker-side after scope changes. Draft POC, not production-ready.
 
 Verified on the current `feat/extension-sdk-manager-poc` worktree:
 - `cargo test --workspace --locked full_access -- --nocapture`: passed 6 matching tests, 0 failed. API coverage (1), runtime manifest and dispatch/revocation (2), viewer persistence/isolation/catalog/panel paths (3).
@@ -43,3 +43,5 @@ Historical separately recorded focused checks: 54 options tests, 1 wrapping-tabs
 - Exact workspace filters `persistent_extension_storage_is_grant_gated_and_removed_on_uninstall` and `panel_action_persists_only_explicitly_granted_extension_storage` each passed 1 test, confirming the storage lifecycle test and Viewer round-trip in their intended targets.
 - Wasm demo build, `aurora-ext pack`, and `aurora-ext validate` passed for v0.3.0; package requests `ui.panel.register`, `ui.notification.show`, and `extension.storage`.
 - `CARGO_TARGET_DIR=F:/extaurorawork/work/extension-sdk-manager-poc/target cargo run --offline --manifest-path .scratch/storage-smoke/Cargo.toml -- .scratch/aurora-demo-extension-storage.ext`: passed; the packaged Wasm ran through Wasmi, persisted its toggle across manager reopen, and was blocked by safe mode. Harness and package remain in ignored `.scratch`.
+- `cargo test --locked -p aurora-viewer account_scopes_isolate_grants_and_discard_stale_commands -- --nocapture`: passed 1 test, 0 failed; stale A-scoped chat and panel commands were discarded while B's same-ID extension remained enabled and unaffected.
+- `cargo fmt --all -- --check`, strict workspace Clippy, and `git diff --check` passed after account-scope command binding.

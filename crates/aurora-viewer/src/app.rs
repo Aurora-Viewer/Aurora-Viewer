@@ -7316,7 +7316,7 @@ impl App {
             for request in chat_events {
                 let _ = self
                     .extension_host
-                    .submit(crate::extension_host::Command::NearbyChat(request.event));
+                    .submit_for_scope(&scope, crate::extension_host::Command::NearbyChat(request.event));
             }
         }
 
@@ -18069,7 +18069,7 @@ impl App {
         let before_camera = self.settings.camera.clone();
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
         if let Some(command) = res.extension_command.take()
-            && !self.extension_host.submit(command)
+            && !self.extension_host.submit_for_scope(&extension_scope, command)
         {
             self.options_ui.extensions.status = Some(aurora_i18n::tr!("extensions-manager-busy").to_owned());
         }
