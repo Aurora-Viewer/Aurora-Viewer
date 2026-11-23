@@ -6714,6 +6714,7 @@ ui-inventory-recent-note-period = 最新：直近{ $days }日{ $hours }時間。
 ui-land-general-reclaim-land = 土地を取り戻す
 common-collapse = 折りたたむ
 common-window-outside = ビューアのウィンドウの外に出す
+common-window-reset = 位置とサイズをリセット
 common-window-inside = ビューアのウィンドウ内に戻す
 common-window-rename-name = ダブルクリックで名前を変更
 common-carry-hint = クリックでここにドロップ、Escで取り消し

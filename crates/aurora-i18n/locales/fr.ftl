@@ -6781,6 +6781,7 @@ ui-inventory-recent-note-period = Récent : les { $days } j { $hours } h passés
 ui-land-general-reclaim-land = Récupérer le terrain
 common-collapse = Réduire
 common-window-outside = Sortir de la fenêtre du viewer
+common-window-reset = Réinitialiser la position et la taille
 common-window-inside = Ramener dans la fenêtre du viewer
 common-window-rename-name = Double-cliquer pour renommer
 common-carry-hint = Cliquez pour le déposer ici, Échap pour le lâcher

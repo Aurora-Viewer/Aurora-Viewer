@@ -1126,6 +1126,7 @@ impl<'a> Floater<'a> {
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut go_outside = false;
+        let mut reset_one = false;
         let mut out = None;
         let window_id = egui::Id::unique(self.id);
         let title_field_id = window_id.with("title_rename_field");
@@ -1381,6 +1382,16 @@ impl<'a> Floater<'a> {
                         if let Some(h) = self.help {
                             title_button(ui, p, "help-circle-filled").on_hover_text(h);
                         }
+                        // the window alone back to its default place and
+                        // size (#4756): the last button from close, out of
+                        // a quick click's way
+                        let response = title_button(ui, p, RESET_ICON).on_hover_text(aurora_i18n::tr!("common-window-reset"));
+                        #[cfg(test)]
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(egui::Id::unique(("floater_reset", self.id)), response.rect));
+                        if response.clicked() {
+                            reset_one = true;
+                        }
                         if let Some((dot, text)) = &self.title_state {
                             ui.add_space(4.0);
                             ui.label(RichText::new(text).size(12.0).color(p.muted));
@@ -1621,6 +1632,10 @@ impl<'a> Floater<'a> {
                 unminimize_quietly(ctx, self.id);
             }
             crate::outside::want(ctx, window_id, true);
+        } else if reset_one {
+            // taken at the next frame (`layout::take_reset`), as after
+            // Preferences' "Reset windows…"
+            reset_window(ctx, self.id);
         } else if toggle_min {
             ctx.data_mut(|d| d.insert_persisted(min_id, !minimized));
             if self.cascade.is_some() {
@@ -1712,6 +1727,7 @@ impl<'a> Floater<'a> {
         let mut shape = None;
         let mut body = Some(body);
         let mut back = false;
+        let mut reset_one = false;
         // a document's name, renamed by a double click on it as in the
         // title inside: the title of this window is the system's
         let title_field_id = window_id.with("title_rename_field");
@@ -1818,6 +1834,14 @@ impl<'a> Floater<'a> {
                         }
                         if let Some(h) = self.help {
                             title_button(ui, p, "help-circle-filled").on_hover_text(h);
+                        }
+                        // as inside (#4756): back inside the viewer's
+                        // window, at its default place and size
+                        if title_button(ui, p, RESET_ICON)
+                            .on_hover_text(aurora_i18n::tr!("common-window-reset"))
+                            .clicked()
+                        {
+                            reset_one = true;
                         }
                         if let Some((dot, text)) = &self.title_state {
                             ui.add_space(4.0);
@@ -1941,6 +1965,11 @@ impl<'a> Floater<'a> {
         }
         if back {
             crate::outside::want(ctx, window_id, false);
+        }
+        if reset_one {
+            // the next frame brings it inside and takes the reset there
+            // (`show`, `layout::reset_pending`)
+            reset_window(ctx, self.id);
         }
         if let (Some(ratio), Some((head, width))) = (ratio, shape) {
             // the window takes the picture's shape once, at its width,
@@ -2577,6 +2606,20 @@ pub fn reset_windows(ctx: &egui::Context) {
     cascade::forget_saved(ctx);
     super::perf::forget_monitor_rect(ctx);
 }
+
+/// The reset button of a floater's title bar (#4756): `reset_windows` for
+/// the window `id` alone (`layout::reset_window`). The Performance window
+/// forgets the rect of its full view too.
+pub fn reset_window(ctx: &egui::Context, id: &str) {
+    super::layout::reset_window(ctx, egui::Id::unique(id));
+    if id == super::perf::WINDOW {
+        super::perf::forget_monitor_rect(ctx);
+    }
+}
+
+/// The title bar's reset button (`reset_window`): the icon of Preferences'
+/// "Reset windows…".
+const RESET_ICON: &str = "restore";
 
 /// Split what is left of `ui` between a list and the footer under it (its
 /// buttons, a note): the list gets a child exactly as tall as the room the

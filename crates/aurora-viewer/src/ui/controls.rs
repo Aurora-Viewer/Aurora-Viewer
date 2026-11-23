@@ -2792,13 +2792,14 @@ mod tests {
             self.settle();
         }
 
-        /// A double-click on the title bar, left of its buttons.
+        /// A double-click on the title bar, left of its buttons (the reset
+        /// button is the leftmost).
         fn double_click_title(&mut self) {
             let rect = self
                 .ctx
-                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("floater_minimize", WINDOW))))
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("floater_reset", WINDOW))))
                 .expect("the title button drawn");
-            let at = rect.center() - Vec2::new(rect.width() * 3.0, 0.0);
+            let at = rect.center() - Vec2::new(rect.width() * 2.0, 0.0);
             let button = |pressed| egui::Event::PointerButton {
                 pos: at,
                 button: egui::PointerButton::Primary,
