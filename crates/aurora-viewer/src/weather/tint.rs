@@ -72,6 +72,7 @@ impl WeatherSettings {
         self.snow_tint = clear.snow_tint;
         self.snow_opacity = clear.snow_opacity;
         self.snow_size = clear.snow_size;
+        self.puddles = clear.puddles;
         self.fall_speed = clear.fall_speed;
         self.flutter = clear.flutter;
         self.fall_melts = clear.fall_melts;
@@ -108,7 +109,9 @@ impl WeatherSettings {
                 self.precipitation_on = true;
                 self.precipitation = Precipitation::Snow;
                 self.snow_tint = [0.36, 0.35, 0.34];
-                self.snow_size = 0.35;
+                // big soft flakes of ash; no puddles (they would freeze)
+                self.snow_size = 0.75;
+                self.puddles = false;
                 self.fall_speed = 0.6;
                 self.flutter = 1.8;
                 self.fall_melts = false;
@@ -277,6 +280,7 @@ mod tests {
         w.apply_preset(WeatherPreset::Ash);
         assert_eq!(w.precipitation, Precipitation::Snow);
         assert!(!w.fall_melts && w.fall_speed < 1.0 && w.flutter > 1.0);
+        assert!(!w.puddles && w.snow_size > 0.5);
         assert!(w.enabled && w.precipitation_on);
         w.apply_preset(WeatherPreset::BloodRain);
         // Ash's fall is not kept
@@ -290,6 +294,8 @@ mod tests {
         // another preset keeps none of the storm's fog, wind or debris
         w.apply_preset(WeatherPreset::BloodRain);
         assert!(!w.debris_on && !w.tumbleweeds && w.fog_follow_sky && w.wind_max < 0.5);
+        // and the puddles Ash turned off are back
+        assert!(w.puddles);
         // and Plain undoes it all, the main switch as it was
         w.apply_preset(WeatherPreset::DustStorm);
         w.apply_preset(WeatherPreset::Clear);

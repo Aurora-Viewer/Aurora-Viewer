@@ -205,7 +205,9 @@ fn fs_debris(in: DebrisOut, @builtin(front_facing) front: bool) -> @location(0) 
     } else if (kind == DD_SAND) {
         // a soft streak, fading at its ends
         cover = (1.0 - smoothstep(0.4, 1.0, abs(in.uv.x))) * (1.0 - smoothstep(0.5, 1.0, abs(in.uv.y))) * 0.8;
-        base = SAND_COLOUR * (0.85 + 0.3 * f32(variant & 7u) / 7.0);
+        // (a grain's own colour, darker than the sand lying in the light:
+        // it is lit as it is seen, mostly from the sky and the sun's colour)
+        base = SAND_COLOUR * 0.6 * (0.85 + 0.3 * f32(variant & 7u) / 7.0);
     } else if (kind == DD_EMBERS) {
         let r = length(in.uv);
         cover = 1.0 - smoothstep(0.3, 1.0, r);
@@ -215,16 +217,21 @@ fn fs_debris(in: DebrisOut, @builtin(front_facing) front: bool) -> @location(0) 
         emissive = mix(vec3<f32>(1.0, 0.12, 0.01), vec3<f32>(1.0, 0.55, 0.12), heat) * (6.0 * heat + 0.5) * (1.0 - smoothstep(0.0, 0.8, r));
         base = vec3<f32>(0.05);
     } else if (kind == DD_MOTES) {
-        // a speck of dust: seen against the light, where it scatters the
-        // sun toward the eye (a sunbeam), barely elsewhere
+        // a speck of dust: seen where light catches it, a sunbeam or a
+        // lamp, the more seen toward the light (it scatters it forward),
+        // barely in the shade; each its own brightness, twinkling as it
+        // turns
         let r = length(in.uv);
-        cover = (1.0 - smoothstep(0.2, 1.0, r)) * 0.9;
+        cover = 1.0 - smoothstep(0.2, 1.0, r);
         let toward_sun = max(dot(-view, frame.sun_dir.xyz), 0.0);
-        let beam = frame.sun_color.rgb * frame.sun_dir.w * (0.15 + 3.0 * pow(toward_sun, 8.0)) * shadow_factor(in.world, view, in.clip.w);
+        let beam = frame.sun_color.rgb * frame.sun_dir.w * (0.1 + 3.0 * pow(toward_sun, 8.0)) * shadow_factor(in.world, view, in.clip.w);
+        let lamps = rain_lamps(in.world, in.clip.xy, view);
         let sky_light = frame.sky_zenith.rgb * 0.55 + frame.sky_horizon.rgb * 0.45;
-        emissive = vec3<f32>(0.85, 0.8, 0.7) * (beam + sky_light * 0.25);
+        let own = 0.35 + 1.3 * fract(f32(variant) * 0.618034);
+        let twinkle = 0.55 + 0.45 * sin(frame.camera_pos.w * (0.7 + f32(variant & 7u) * 0.35) + f32(variant));
+        emissive = vec3<f32>(0.85, 0.8, 0.72) * (beam + lamps * 1.5 + sky_light * 0.25) * own * twinkle;
         base = vec3<f32>(0.0);
-        cover *= clamp(dot(emissive, vec3<f32>(0.2126, 0.7152, 0.0722)) * 4.0, 0.15, 1.0);
+        cover *= clamp(dot(emissive, vec3<f32>(0.2126, 0.7152, 0.0722)) * 6.0, 0.08, 1.0);
     } else {
         discard;
     }
@@ -242,7 +249,12 @@ fn fs_debris(in: DebrisOut, @builtin(front_facing) front: bool) -> @location(0) 
     // the sun through it, seen against the sun (a leaf glows)
     let behind = pow(max(dot(-view, sun_dir), 0.0), 3.0) * max(-dot(n, sun_dir) * 0.5 + 0.5, 0.0);
     let ambient = frame.sky_zenith.rgb * 0.55 + frame.sky_horizon.rgb * 0.45;
-    var color = base * (ambient * 0.9 + sun * shadow * (lit_face + behind * through * 2.5));
+    // (a streak or a point faces the camera: half its light from the sun
+    // whichever way, as a grain lit on its sunny side)
+    let facing = select(lit_face, 0.5, kind == DD_SAND);
+    // and the lamps around (a leaf under a street light)
+    let lamps_here = select(rain_lamps(in.world, in.clip.xy, view), vec3<f32>(0.0), kind == DD_MOTES || kind == DD_EMBERS);
+    var color = base * (ambient * 0.9 + sun * shadow * (facing + behind * through * 2.5) + lamps_here * 0.8);
     color += emissive;
     // the weather's tint carries to the debris (blood rain, ash...) only
     // through the light; the fog as everything else

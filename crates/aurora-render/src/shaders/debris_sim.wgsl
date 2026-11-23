@@ -253,14 +253,15 @@ struct DsKindParams {
 
 fn ds_kind(kind: u32) -> DsKindParams {
     switch kind {
-        // (sand: it settles within a second or two unless the turbulence
-        // and the hops along the ground keep it going)
-        case DK_SAND: { return DsKindParams(1.8, 3.0, 0.006, 0.8); }
+        // (sand: it starts from the ground in a hop (ds_spawn) and settles
+        // within a second or two unless the turbulence and the hops along
+        // the ground keep it going)
+        case DK_SAND: { return DsKindParams(1.4, 3.0, 0.006, 0.3); }
         case DK_PAPER: { return DsKindParams(1.6, 30.0, 0.22, 1.5); }
         // (buoyant while hot; debris_sim's step makes it fall as it cools)
         case DK_EMBERS: { return DsKindParams(-0.6, 6.0, 0.025, 1.5); }
         // (as light as the air: they hang, close to the camera)
-        case DK_MOTES: { return DsKindParams(0.03, 25.0, 0.0025, 2.5); }
+        case DK_MOTES: { return DsKindParams(0.03, 30.0, 0.0025, 2.5); }
         default: { return DsKindParams(1.4, 28.0, 0.09, 12.0); }
     }
 }
@@ -288,6 +289,12 @@ fn ds_spawn(i: u32, seed: u32) {
     if (ground < -1e8) { return; }
     var z = ground + 0.05 + dr(seed + 4u) * k.height;
     var from_canopy = false;
+    if (kind == DK_MOTES) {
+        // dust hangs around the eye's height, indoors as well as out (a
+        // stale room): no cover rule, only above what is under it
+        z = cam.z + (dr(seed + 4u) - 0.4) * 3.0;
+        if (z < ds_ground(xy, z) + 0.2) { return; }
+    }
     if (kind == DK_LEAVES) {
         // look for foliage at a few places in the ring: leaves come from
         // the trees around, however few they are
@@ -327,11 +334,22 @@ fn ds_spawn(i: u32, seed: u32) {
     }
     let variant = dh(seed + 7u) & 255u;
     let state = kind | (mode << DS_MODE_SHIFT) | (variant << DS_VARIANT_SHIFT);
-    let size = k.size * (0.7 + 0.6 * dr(seed + 8u)) * dp.rates.w;
+    var size = k.size * (0.7 + 0.6 * dr(seed + 8u)) * dp.rates.w;
+    if (kind == DK_MOTES) {
+        // specks of every size, most fine, a few coarse
+        let g = dr(seed + 8u);
+        size = k.size * (0.4 + 2.6 * g * g * g) * dp.rates.w;
+    }
     let yaw = dr(seed + 9u) * 6.2831853;
     let b = i * 4u;
     debris[b] = vec4<f32>(xy, z, 1.0);
-    debris[b + 1u] = vec4<f32>(ds_air(vec3<f32>(xy, z), z - ground) * 0.5, bitcast<f32>(state));
+    // sand leaves the ground in a hop, lifted by the wind (saltation), the
+    // rest with the air
+    var v0 = ds_air(vec3<f32>(xy, z), z - ground) * 0.5;
+    if (kind == DK_SAND) {
+        v0 = vec3<f32>(dp.wind.xy * (0.4 + 0.3 * dr(seed + 11u)), 1.5 + 2.0 * dr(seed + 12u) * (0.5 + dp.wind.z));
+    }
+    debris[b + 1u] = vec4<f32>(v0, bitcast<f32>(state));
     debris[b + 2u] = ds_quat_facing(vec3<f32>(0.0, 0.0, 1.0), yaw);
     debris[b + 3u] = vec4<f32>(dr(seed + 10u) * 6.2831853, size, 0.0, bitcast<f32>(seed));
 }
@@ -366,6 +384,36 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
     let off = p.xy - dp.camera.xy;
     if (kind != dp.look.x || dot(off, off) > REACH * REACH || p.z < dp.camera.z - 60.0) {
         debris[b] = vec4<f32>(0.0);
+        return;
+    }
+
+    if (kind == DK_MOTES) {
+        // dust motes: nearly as light as the air, slow to follow it. In
+        // still air each wanders on its own (a stale room); a breeze takes
+        // them along, gently, its eddies turning them about. They pass
+        // through what they meet (too fine to be seen striking it).
+        let rate = 0.6 + 0.8 * dr(seed + 14u);
+        let t = s.z * rate;
+        let wander = vec3<f32>(
+            sin(t * 0.31 + dr(seed + 31u) * 6.28) + 0.5 * sin(t * 0.83 + dr(seed + 32u) * 6.28),
+            cos(t * 0.27 + dr(seed + 33u) * 6.28) + 0.5 * cos(t * 0.71 + dr(seed + 34u) * 6.28),
+            0.6 * sin(t * 0.19 + dr(seed + 35u) * 6.28) - 0.1
+        ) * (0.015 + 0.025 * dr(seed + 36u));
+        let tt = dp.wind.w;
+        let swirl = ds_curl(p.xyz * 0.35 - vec3<f32>(dp.wind.xy * tt * 0.35, tt * 0.03)) * (0.02 + 0.06 * clamp(length(dp.wind.xy) / 4.0, 0.0, 1.0));
+        let toward = vec3<f32>(dp.wind.xy * 0.7, 0.0) + swirl + wander;
+        let vel = v.xyz + (toward - v.xyz) * (1.0 - exp(-dt * 0.6));
+        var q2 = vec4<f32>(p.xyz + vel * dt, p.w);
+        // they fade in and out, never popping
+        if (s.z < 2.0) { q2.w = max(q2.w, 0.02); }
+        if (s.z > k.life) { q2.w -= dt / 3.0; }
+        if (q2.w <= 0.0) {
+            debris[b] = vec4<f32>(0.0);
+            return;
+        }
+        debris[b] = q2;
+        debris[b + 1u] = vec4<f32>(vel, bitcast<f32>(state));
+        debris[b + 3u] = s;
         return;
     }
 
@@ -457,11 +505,7 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
             let heat = clamp(1.0 - s.z / k.life, 0.0, 1.0);
             acc += vec3<f32>(0.0, 0.0, (1.2 * dp.wind.z + 0.8) * heat * heat - 2.2 * (1.0 - heat));
             s.x += dt * 9.0 * rate;
-        } else if (kind == DK_MOTES) {
-            // dust motes: nearly as light as the air, they hang and wander
-            // with its slightest stirring
-            let wander = vec3<f32>(sin(s.z * 0.7 + f32(seed & 255u)), cos(s.z * 0.53 + f32((seed >> 8u) & 255u)), sin(s.z * 0.31 + f32((seed >> 16u) & 255u)) * 0.5);
-            acc += wander * 0.08;
+
         } else {
             // sand: the turbulence near the ground kicks it up and about
             let kick = vec3<f32>(dr(frame_seed + 21u) - 0.5, dr(frame_seed + 22u) - 0.5, dr(frame_seed + 23u) - 0.5);
@@ -480,9 +524,8 @@ fn cs_debris(@builtin(global_invocation_id) id: vec3<u32>) {
                 // off it, and leave the cell it would enter
                 vel = vec3<f32>(-vel.xy * 0.3, vel.z);
                 to = vec3<f32>(p.xy, p.z);
-            } else if (kind == DK_EMBERS || kind == DK_MOTES) {
-                // an ember that touches the ground goes out; a mote settles
-                // out of sight
+            } else if (kind == DK_EMBERS) {
+                // an ember that touches the ground goes out
                 p.w = 0.0;
             } else if (kind == DK_SAND) {
                 // sand hops along the ground in the wind (saltation); in a

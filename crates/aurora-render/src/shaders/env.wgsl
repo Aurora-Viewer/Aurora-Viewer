@@ -3236,15 +3236,16 @@ fn sand_snakes(world: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
     let along = dot(world.xy, dir);
     let across = dot(world.xy, vec2<f32>(-dir.y, dir.x));
     // broad soft ribbons (half a metre across, a few metres long) drifting
-    // at a third of the wind's speed; thinner ones shimmered and raced
-    let wave = across * 1.1 + 0.6 * sin(along * 0.25 + t * 0.35);
+    // downwind at a third of the wind's speed, their meanders fixed (no
+    // back and forth); thinner ones shimmered and raced
+    let wave = across * 1.1 + 0.6 * sin(along * 0.25);
     let flow = along * 0.18 - t * speed * 0.06;
     let a = snow_noise(vec2<f32>(flow, wave));
     let b = snow_noise(vec2<f32>(flow * 1.7 + 3.0, wave * 1.6 + 7.0));
     let wisp = smoothstep(0.55, 0.95, a * 0.75 + b * 0.25);
     // gone where a pixel spans a ribbon (they would alias)
     let footprint = dist * 1.15 * frame.screen.w / max(abs(dot(normalize(frame.camera_pos.xyz - world), n)), 0.1);
-    let alpha = wisp * sand * (0.4 + 0.6 * weather_gust()) * 0.3 * (1.0 - smoothstep(18.0, 32.0, dist)) * (1.0 - smoothstep(0.15, 0.4, footprint));
+    let alpha = wisp * sand * (0.5 + 0.5 * weather_gust()) * 0.6 * (1.0 - smoothstep(18.0, 32.0, dist)) * (1.0 - smoothstep(0.15, 0.4, footprint));
     if (alpha < 0.003) { return vec4<f32>(0.0); }
     let sky_light = frame.sky_zenith.rgb * 0.6 + frame.sky_horizon.rgb * 0.4;
     let lit = sky_light * 0.6 + frame.sun_color.rgb * frame.sun_dir.w * max(frame.sun_dir.z, 0.0) * 0.8;

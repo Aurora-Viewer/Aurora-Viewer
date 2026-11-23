@@ -51,6 +51,10 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) -> WeatherA
     ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
     summary(ui, p, w);
     ui.add_space(4.0);
+    // the presets set everything together (and turn the weather on): above
+    // the cards, never greyed
+    presets_card(ui, p, w);
+    ui.add_space(4.0);
     // the main switch off, every card is greyed, its settings kept
     ui.add_enabled_ui(w.enabled, |ui| {
         ui.columns(2, |cols| {
@@ -967,23 +971,11 @@ fn fog_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     });
 }
 
-/// "Colour": the presets (tint, fall, fog and wind together), then the raw
-/// settings under them: the colour and opacity of what falls (the rain's
-/// puddles in rain; the snow's fall and melting in snow) and the fog
-/// following that colour.
+/// "Colour": the colour and opacity of what falls (the rain's thickness in
+/// rain; the snow's fall and melting in snow) and the fog following that
+/// colour; the presets above set them too.
 fn tint_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     card(ui, p, "palette", aurora_i18n::tr!("ui-weather-tint"), None, |ui, _| {
-        ui.horizontal_wrapped(|ui| {
-            for preset in crate::weather::WeatherPreset::ALL {
-                if ui
-                    .button(RichText::new(preset.label()).size(LABEL_SIZE))
-                    .on_hover_text(aurora_i18n::tr!("ui-weather-presets-tip"))
-                    .clicked()
-                {
-                    w.apply_preset(preset);
-                }
-            }
-        });
         let snowing = w.snowing();
         let (tint, opacity) = if snowing {
             (&mut w.snow_tint, &mut w.snow_opacity)
@@ -1132,6 +1124,24 @@ fn debris_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             aurora_i18n::tr!("ui-weather-tumbleweeds-tip"),
             &mut w.tumbleweeds,
         );
+    });
+}
+
+/// "Presets": the whole weather at once (what falls and its colour, the
+/// fog, the wind's strength, the debris), full width above the cards.
+fn presets_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    card(ui, p, "wand", aurora_i18n::tr!("ui-weather-presets"), None, |ui, _| {
+        ui.horizontal_wrapped(|ui| {
+            for preset in crate::weather::WeatherPreset::ALL {
+                if ui
+                    .button(RichText::new(preset.label()).size(LABEL_SIZE))
+                    .on_hover_text(aurora_i18n::tr!("ui-weather-presets-tip"))
+                    .clicked()
+                {
+                    w.apply_preset(preset);
+                }
+            }
+        });
     });
 }
 

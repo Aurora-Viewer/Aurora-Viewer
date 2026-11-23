@@ -15774,6 +15774,7 @@ ui-weather-tint = Couleur
 ui-weather-rain-colour = Couleur de la pluie
 ui-weather-snow-colour = Couleur de la neige
 ui-weather-fall-colour-tip = La couleur de ce qui tombe, et de ce qu’il laisse au sol et sur les avatars. Le blanc est la pluie ou la neige ordinaire
+ui-weather-presets = Préréglages
 ui-weather-presets-tip = Règle ensemble la couleur de ce qui tombe, sa chute, le brouillard, la force du vent et les débris ; Ordinaire les remet tous comme au départ
 ui-weather-fall-opacity = Opacité
 ui-weather-fall-opacity-tip = Combien on voit de ce qui tombe : 100 % comme avant, plus bas plus pâle, jusqu’au double

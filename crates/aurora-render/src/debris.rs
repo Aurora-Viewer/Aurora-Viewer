@@ -55,7 +55,7 @@ fn mean_life(kind: DebrisKind) -> f32 {
         DebrisKind::Sand => 3.0,
         DebrisKind::Paper => 32.0,
         DebrisKind::Embers => 6.0,
-        DebrisKind::Motes => 25.0,
+        DebrisKind::Motes => 30.0,
     }
 }
 
@@ -81,7 +81,7 @@ pub fn wanted_share(look: &DebrisLook, wind: Vec2, gust: f32) -> f32 {
         DebrisKind::Sand => windy * 0.45,
         DebrisKind::Paper => windy,
         // motes hang in still air; a wind clears them away
-        DebrisKind::Motes => 0.35 * (1.0 - 0.7 * windy),
+        DebrisKind::Motes => 0.1 * (1.0 - 0.7 * windy),
         _ => 0.15 + 0.85 * windy,
     };
     (look.density.clamp(0.0, 1.0) * base * (0.6 + 0.8 * gust.clamp(0.0, 1.0))).clamp(0.0, 0.95)
