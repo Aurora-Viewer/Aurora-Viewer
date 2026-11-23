@@ -33,14 +33,11 @@ pub enum Grid {
 }
 
 /// The reason as the Legacy Viewer words it: its own text for a code it
-/// knows, else the simulator's text, else the code; `[REGION_NAME]` filled
-/// in whenever the AlertInfo names a region.
+/// knows, else the simulator's text (Info.Reason), even when empty: an
+/// unknown AlertInfo code is never shown. `[REGION_NAME]` is filled in
+/// whenever the AlertInfo names a region.
 pub fn text(code: &str, reason: &str, region: &str) -> String {
-    let said = match legacy(code, region) {
-        Some(text) => text,
-        None if !reason.is_empty() => reason.to_owned(),
-        None => code.to_owned(),
-    };
+    let said = legacy(code, region).unwrap_or_else(|| reason.to_owned());
     // LLStringUtil::format(big_reason, name_args), on whichever text it is
     if region.is_empty() {
         said
@@ -118,7 +115,9 @@ mod tests {
     fn an_unknown_code_shows_what_the_simulator_said() {
         assert_eq!(text("Unauthorized", "Unauthorized", ""), "Unauthorized");
         assert_eq!(text("SomeNewTag", "Readable text", ""), "Readable text");
-        assert_eq!(text("SomeNewTag", "", ""), "SomeNewTag");
+        // process_teleport_failed: REASON is the known text, else
+        // Info.Reason, so an unknown code with an empty reason shows nothing
+        assert_eq!(text("SomeNewTag", "", ""), "");
     }
 
     #[test]
