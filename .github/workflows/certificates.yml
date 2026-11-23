@@ -31,16 +31,15 @@ concurrency:
 jobs:
   bundle:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # the workspace's tests build the viewer too, as check.ps1 does
-      - name: System libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
       - name: Rust stable
         run: rustup toolchain install --profile minimal --no-self-update
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # Restores main's Linux test cache without writing a PR cache that
+      # would evict main's from the 10 GB quota (.github/actions/rust-cache).
+      - uses: ./.github/actions/rust-cache
+        with:
+          name: linux-tests
       - name: Certificate bundle current
-        run: cargo test --workspace --locked the_bundle_holds
+        run: cargo test --profile ci --locked -p aurora-net the_bundle_holds
