@@ -2,20 +2,29 @@
 //! No messages, forces, scripts or physics changes are sent to the grid.
 
 use super::{Scene, anchors, anim, water_contacts};
+use crate::frame_par::Grain;
 use crate::world::World;
 use aurora_render::{WaterEffects, WaterEvent, WaterGround};
 use glam::{Mat4, Vec2, Vec3};
-use rayon::prelude::*;
 use std::collections::HashMap;
 use std::time::Instant;
 use uuid::Uuid;
+
+/// How the two periodic loops are shared with the pool's workers
+/// (frame_par.rs); the costs are those of the dev profile. As plain rayon
+/// loops, called from the main thread, they waited for a worker of the pool:
+/// the ground heights 10 to 16 ms on a busy region, for 0.1 ms of work.
+/// A row of the ground grid: 2 µs.
+const GROUND_GRAIN: Grain = Grain { chunk: 4, per_helper: 8 };
+/// An object of the candidate scan: 24 ns.
+const SCAN_GRAIN: Grain = Grain { chunk: 512, per_helper: 8 };
 
 #[derive(Default)]
 pub struct Effects {
     pub geometry: Option<u8>,
     region: Option<u64>,
     candidates: Vec<usize>,
-    scan_at: f32,
+    scan_at: Option<f32>,
     ground_at: f32,
     ground: WaterGround,
     history: HashMap<(Uuid, u8), Contact>,
@@ -53,6 +62,24 @@ fn water_at(world: &World, p: Vec3) -> Option<f32> {
             .then(|| r.info.as_ref().map(|i| i.water_height))
             .flatten()
     })
+}
+
+/// The objects near the water are looked for again every 0.35 s, whether
+/// the last scan found some or none.
+fn scan_due(last: Option<f32>, time: f32) -> bool {
+    last.is_none_or(|last| time - last > 0.35)
+}
+
+/// The ground grid's 64 x 64 samples at their cells' centres, row by row.
+fn ground_grid(origin: Vec2, extent: f32, sample: impl Fn(Vec2) -> [f32; 2] + Sync) -> Vec<[f32; 2]> {
+    let rows: [usize; 64] = std::array::from_fn(|row| row);
+    crate::frame_par::fold(&rows, GROUND_GRAIN, Vec::new, |mut heights, &row| {
+        heights.extend((0..64).map(|column| sample(origin + (Vec2::new(column as f32, row as f32) + Vec2::splat(0.5)) * extent / 64.0)));
+        heights
+    })
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 impl Effects {
@@ -196,15 +223,11 @@ impl Effects {
         let origin = anchor - Vec2::splat(range);
         if self.ground.extent != extent || self.ground.origin != origin.to_array() || time - self.ground_at > 0.5 {
             self.ground_at = time;
-            let heights: Vec<[f32; 2]> = (0..4096usize)
-                .into_par_iter()
-                .map(|i| {
-                    let xy = origin + (Vec2::new((i % 64) as f32, (i / 64) as f32) + Vec2::splat(0.5)) * extent / 64.0;
-                    let p = xy.extend(0.0);
-                    let w = water_at(world, p).unwrap_or(world.main_water_height());
-                    [world.ground_height(p).unwrap_or(w - 100.0), w]
-                })
-                .collect();
+            let heights = ground_grid(origin, extent, |xy| {
+                let p = xy.extend(0.0);
+                let w = water_at(world, p).unwrap_or(world.main_water_height());
+                [world.ground_height(p).unwrap_or(w - 100.0), w]
+            });
             self.ground = WaterGround {
                 region: world.main_region.unwrap_or(0),
                 origin: origin.to_array(),
@@ -218,27 +241,22 @@ impl Effects {
             self.history.clear();
             return (Vec::new(), Vec::new(), self.ground.clone());
         }
-        if self.candidates.is_empty() || time - self.scan_at > 0.35 {
-            self.scan_at = time;
-            let mut near: Vec<(f32, usize)> = scene
-                .gpu
-                .par_iter()
-                .enumerate()
-                .filter_map(|(i, g)| {
-                    let object = world.objects.get(i)?;
-                    if g.hud || g.owner_avatar.is_some() || object.extra.reflection_probe.is_some() {
-                        return None;
-                    }
-                    let distance = g.center.truncate().distance_squared(eye.truncate());
-                    if distance >= range * range || (!g.is_avatar && g.faces.is_empty()) {
-                        return None;
-                    }
-                    let height = object.scale.z.abs().max(if g.is_avatar { 2.0 } else { 0.0 });
-                    let w = water_at(world, g.center)?;
-                    let nearby_avatar = g.is_avatar && g.center.distance_squared(eye) < range * range;
-                    (nearby_avatar || (!g.is_avatar && (g.center.z - w).abs() < height * 0.5 + 8.0)).then_some((distance, i))
-                })
-                .collect();
+        if scan_due(self.scan_at, time) {
+            self.scan_at = Some(time);
+            let mut near: Vec<(f32, usize)> = crate::frame_par::filter_map_indexed(&scene.gpu, SCAN_GRAIN, |i, g| {
+                let object = world.objects.get(i)?;
+                if g.hud || g.owner_avatar.is_some() || object.extra.reflection_probe.is_some() {
+                    return None;
+                }
+                let distance = g.center.truncate().distance_squared(eye.truncate());
+                if distance >= range * range || (!g.is_avatar && g.faces.is_empty()) {
+                    return None;
+                }
+                let height = object.scale.z.abs().max(if g.is_avatar { 2.0 } else { 0.0 });
+                let w = water_at(world, g.center)?;
+                let nearby_avatar = g.is_avatar && g.center.distance_squared(eye) < range * range;
+                (nearby_avatar || (!g.is_avatar && (g.center.z - w).abs() < height * 0.5 + 8.0)).then_some((distance, i))
+            });
             near.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
             self.candidates = near.into_iter().take(96).map(|(_, i)| i).collect();
             self.visible = water_contacts::visibility(scene, world, &self.candidates);
@@ -247,7 +265,7 @@ impl Effects {
         let mut contacts = Vec::new();
         let body_samples = crate::frame_par::fold(
             &self.candidates,
-            crate::frame_par::Grain { chunk: 4, per_helper: 1 },
+            Grain { chunk: 4, per_helper: 1 },
             Vec::new,
             |mut samples, &idx| {
                 let Some(o) = world.objects.get(idx).filter(|o| o.is_avatar()) else {
@@ -413,6 +431,25 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_scan_that_found_nothing_is_not_run_again_at_the_next_frame() {
+        assert!(scan_due(None, 0.0));
+        assert!(!scan_due(Some(10.0), 10.004));
+        assert!(!scan_due(Some(10.0), 10.3));
+        assert!(scan_due(Some(10.0), 10.4));
+    }
+
+    #[test]
+    fn the_ground_grid_is_sampled_at_its_cells_centres_row_by_row() {
+        let origin = Vec2::new(100.0, -40.0);
+        let grid = ground_grid(origin, 128.0, |xy| [xy.x, xy.y]);
+        assert_eq!(grid.len(), 4096);
+        for (i, sample) in grid.iter().enumerate() {
+            let expected = origin + (Vec2::new((i % 64) as f32, (i / 64) as f32) + Vec2::splat(0.5)) * 128.0 / 64.0;
+            assert_eq!(*sample, [expected.x, expected.y], "sample {i}");
+        }
+    }
+
     #[test]
     fn low_quality_keeps_entry_sheets_and_expires_spent_contact_impulses() {
         use crate::movement::water_jump::{Impact, Kind};

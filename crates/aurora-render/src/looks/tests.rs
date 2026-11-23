@@ -698,6 +698,31 @@ fn looks_shader_is_valid() {
         .expect("valid");
 }
 
+/// The viewer stacks up to `MAX_LAYERS` looks, the same one as often as
+/// wanted: that many of the heaviest still fit in a frame's passes and
+/// histogram curves, so no layer is ever left out of the picture.
+#[test]
+fn eight_of_the_heaviest_look_fit_in_a_frame() {
+    assert_eq!(MAX_LAYERS, 8);
+    let plans: Vec<(&str, Plan)> = legacy_looks()
+        .iter()
+        .map(|(name, ops)| (*name, plan(ops)))
+        .chain(aurora_looks().iter().map(|look| (look.id, plan(&look.ops))))
+        .collect();
+    let (name, passes) = plans
+        .iter()
+        .map(|(n, p)| (*n, p.passes.len()))
+        .max_by_key(|(_, n)| *n)
+        .expect("looks");
+    assert!(MAX_LAYERS * passes <= MAX_PASSES, "{MAX_LAYERS} x {name}: {passes} passes each");
+    let (name, curves) = plans
+        .iter()
+        .map(|(n, p)| (*n, p.curves.len()))
+        .max_by_key(|(_, n)| *n)
+        .expect("looks");
+    assert!(MAX_LAYERS * curves <= MAX_SLOTS, "{MAX_LAYERS} x {name}: {curves} curves each");
+}
+
 #[test]
 fn every_aurora_look_reads_into_its_section() {
     let looks = aurora_looks();
@@ -846,4 +871,71 @@ fn stacked_layers_draw_one_after_the_other() {
     );
     let under = draw(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &stacked, (w, h), &image);
     assert_eq!(first, under);
+}
+
+/// A 360° snapshot's faces are looked at one by one, so only an operation
+/// that depends on a pixel's colour alone is applied to them. This match has
+/// no wildcard: a new operation must be classified here, and with it the
+/// answer of `is_pointwise` is checked for every operation of every look.
+#[test]
+fn only_pointwise_operations_are_applied_to_the_faces_of_a_360_snapshot() {
+    fn pointwise(op: &LookOp) -> bool {
+        match op {
+            LookOp::Sepia
+            | LookOp::GrayScale
+            | LookOp::Saturate(_)
+            | LookOp::Rotate(_)
+            | LookOp::Gamma { .. }
+            | LookOp::Colorize { .. }
+            | LookOp::Contrast { .. }
+            | LookOp::Brightness { .. }
+            | LookOp::ColorTransform(_)
+            | LookOp::Selective { .. }
+            | LookOp::GradientMap(_)
+            | LookOp::Split { .. }
+            | LookOp::Lut => true,
+            // a place in the frame, the neighbours, the depth or the histogram
+            LookOp::Stencil { .. }
+            | LookOp::Linearize { .. }
+            | LookOp::Posterize { .. }
+            | LookOp::Screen { .. }
+            | LookOp::Convolve { .. }
+            | LookOp::Grain { .. }
+            | LookOp::Chroma(_)
+            | LookOp::Distort(_)
+            | LookOp::Bars { .. }
+            | LookOp::Frame { .. }
+            | LookOp::Pixelate(_)
+            | LookOp::Glitch { .. }
+            | LookOp::Paint(_)
+            | LookOp::Clarity { .. }
+            | LookOp::Glow { .. }
+            | LookOp::Fog { .. }
+            | LookOp::DepthBlur { .. }
+            | LookOp::Subject { .. } => false,
+        }
+    }
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
+    let legacy = parse::legacy_looks().iter().map(|(name, ops)| (name.to_string(), ops.clone()));
+    let aurora = parse::aurora_looks().iter().map(|look| (look.id.to_string(), look.ops.clone()));
+    for (name, ops) in legacy.chain(aurora) {
+        let layer = LookLayer {
+            ops: ops.clone(),
+            intensity: 1.0,
+            lut: None,
+        };
+        let expected = ops.iter().all(pointwise);
+        assert_eq!(layer.is_pointwise(), expected, "{name}");
+        for op in ops.iter() {
+            assert_eq!(op.is_pointwise(), pointwise(op), "{name}: {op:?}");
+        }
+        if expected { kept.push(name) } else { dropped.push(name) }
+    }
+    for name in ["Sepia", "BlackAndWhite", "Intense", "keep-red"] {
+        assert!(kept.iter().any(|k| k == name), "{name} is a colour look: {kept:?}");
+    }
+    for name in ["Sharpen", "Spotlight", "Posterize", "fine-grain", "fisheye", "pixel", "haze"] {
+        assert!(dropped.iter().any(|k| k == name), "{name} is not: {dropped:?}");
+    }
 }

@@ -24,6 +24,21 @@ use uuid::Uuid;
 
 const PREFIX: &str = "secondlife:///app/";
 
+/// A setting path is a stable, ASCII field identifier, not translated text.
+fn valid_preference_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 128
+        && !path.starts_with('.')
+        && !path.ends_with('.')
+        && !path.contains("..")
+        && path.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'.')
+}
+
+/// A read-only deep link to a Preferences row; invalid paths cannot be shared.
+pub fn preference_link(path: &str) -> Option<String> {
+    valid_preference_path(path).then(|| format!("{PREFIX}preferences/{path}"))
+}
+
 /// What a verb of `secondlife:///app/agent/<id>/<verb>` does besides showing
 /// the profile (LLAgentHandler::handle).
 #[derive(Debug, Clone, PartialEq)]
@@ -44,6 +59,38 @@ pub enum AgentVerb {
     ReportAbuse,
 }
 
+/// What a link's block verb does, given whether its resident or object is
+/// blocked now (LLAgentHandler::handle, indra/newview/llpanelprofile.cpp:
+/// `mute` only an unblocked resident, `unmute` only a blocked one, the same
+/// for an object's `block` and `unblock`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockStep {
+    /// Not a block verb: it runs as it is.
+    Other,
+    /// Already in the state asked for: nothing happens.
+    Nothing,
+    /// Add the block at once, as the Legacy Viewer does.
+    Block,
+    /// Remove the block only once the user confirms. Stricter than the
+    /// Legacy Viewer, which unblocks at once: the link comes from a text
+    /// someone else wrote (a chat line, a web page, a message outside the
+    /// viewer), and must not lift a block the user set against a harasser
+    /// without them knowing.
+    AskUnblock,
+}
+
+impl AgentVerb {
+    pub fn block_step(&self, blocked: bool) -> BlockStep {
+        match self {
+            Self::Mute | Self::Block(_) if blocked => BlockStep::Nothing,
+            Self::Mute | Self::Block(_) => BlockStep::Block,
+            Self::Unmute | Self::Unblock(_) if blocked => BlockStep::AskUnblock,
+            Self::Unmute | Self::Unblock(_) => BlockStep::Nothing,
+            _ => BlockStep::Other,
+        }
+    }
+}
+
 /// The object of `secondlife:///app/objectim/<id>?name=…&owner=…&slurl=…`,
 /// the inspector's data (LLObjectIMHandler's payload).
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +99,10 @@ pub struct RemoteObject {
     pub name: String,
     pub owner: Uuid,
     pub group_owned: bool,
+    /// `rlv_shownames`: RLVa's `@shownames` hid the owner when the object
+    /// spoke (process_chat_from_simulator and IM_FROM_TASK write it in the
+    /// objectim link; LLInspectRemoteObject then shows `rlvanonym`).
+    pub owner_hidden: bool,
     /// "Region/x/y/z", escaped as in the link; may be empty.
     pub slurl: String,
 }
@@ -108,6 +159,8 @@ pub enum AppLink {
         category: String,
         query: String,
     },
+    /// `preferences/<setting path>` only opens and highlights a setting.
+    Preferences(String),
     AreaSearch(Box<crate::settings::area_search::Filters>),
     Blocked(Blocked),
     /// Any other command, or one whose arguments are wrong: the Legacy
@@ -179,6 +232,7 @@ pub fn parse(url: &str) -> Option<AppLink> {
                 owner: query_value(query, "owner").and_then(|v| id(&v)).unwrap_or_default(),
                 // LLSD asBoolean of the string: "1" / "true"
                 group_owned: query_value(query, "groupowned").is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true")),
+                owner_hidden: query_value(query, "rlv_shownames").is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true")),
                 slurl: query_value(query, "slurl").unwrap_or_default(),
             })
         }),
@@ -223,6 +277,10 @@ pub fn parse(url: &str) -> Option<AppLink> {
             category: token(1).to_owned(),
             query: unescape(token(2)),
         }),
+        "preferences" if tokens.len() == 2 => {
+            let path = token(1);
+            valid_preference_path(path).then(|| AppLink::Preferences(path.to_owned()))
+        }
         "wear_folder" => Some(AppLink::Blocked(Blocked::WearFolder)),
         "add_folder" => Some(AppLink::Blocked(Blocked::AddFolder)),
         "remove_folder" => Some(AppLink::Blocked(Blocked::RemoveFolder)),
@@ -230,6 +288,113 @@ pub fn parse(url: &str) -> Option<AppLink> {
         _ => None,
     };
     Some(link.unwrap_or(AppLink::Unsupported))
+}
+
+/// What a `wear_folder`, `add_folder` or `remove_folder` command asks, read
+/// as LLWearFolderHandler, LLAddFolderHandler and LLRemoveFolderHandler do
+/// (llappearancemgr.cpp: wear_category). They are UNTRUSTED_BLOCK: only a
+/// trusted page (the Avatar Welcome Pack, `ui/avatar_welcome.rs`) runs them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderCommand {
+    pub action: FolderAction,
+    /// `folder_name=`: a folder of the Library, found by its name.
+    pub name: Option<String>,
+    /// `folder_id=`: any folder, used when no Library folder has the name.
+    pub id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderAction {
+    /// `wear_folder`: the folder replaces the outfit.
+    Wear,
+    /// `add_folder`: the folder is added to the outfit.
+    Add,
+    /// `remove_folder`: what the folder holds is taken off (`folder_id` only).
+    Remove,
+}
+
+/// The folder command of `url`, None for any other link. Both
+/// `secondlife:///app/` and `secondlife://app/` (the host form, which
+/// LLSLURL reads as an app command too, and which the welcome pack's page
+/// uses) are read.
+pub fn folder_command(url: &str) -> Option<FolderCommand> {
+    let rest = [PREFIX, "secondlife://app/"]
+        .into_iter()
+        .find(|prefix| url.get(..prefix.len()).is_some_and(|p| p.eq_ignore_ascii_case(prefix)))
+        .map(|prefix| &url[prefix.len()..])?;
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let action = match path.trim_matches('/').to_ascii_lowercase().as_str() {
+        "wear_folder" => FolderAction::Wear,
+        "add_folder" => FolderAction::Add,
+        "remove_folder" => FolderAction::Remove,
+        _ => return None,
+    };
+    let name = query_value(query, "folder_name").filter(|n| !n.is_empty() && action != FolderAction::Remove);
+    let id = query_value(query, "folder_id").and_then(|v| id(&v)).filter(|id| !id.is_nil());
+    Some(FolderCommand { action, name, id })
+}
+
+/// What the Second Life sign-up page asks of the window that shows it:
+/// `secondlife:///app/floaterjoin/<action>/…`, read as LLFloaterJoinHandler
+/// does (indra/newview/llfloaterjoin.cpp, originally LGPL 2.1). Only the
+/// sign-up window acts on them (`ui/signup.rs`).
+#[derive(Clone, PartialEq, Eq)]
+pub enum JoinCommand {
+    /// `close`: the page is done (its "Cancel signup").
+    Close,
+    /// `tos`: the Terms of Service, in a window of their own.
+    TermsOfService,
+    /// `tc`: the Terms and Conditions, in a window of their own.
+    TermsAndConditions,
+    /// `privacy`: the Privacy Policy, in a window of their own.
+    Privacy,
+    /// `join/<username>/<password>`: the account was created; its name and
+    /// password go to the login form.
+    Join { username: String, password: String },
+}
+
+/// Never prints the name nor the password (LLFloaterJoinHandler::isSensitive
+/// keeps the command out of the log).
+impl std::fmt::Debug for JoinCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Close => f.write_str("Close"),
+            Self::TermsOfService => f.write_str("TermsOfService"),
+            Self::TermsAndConditions => f.write_str("TermsAndConditions"),
+            Self::Privacy => f.write_str("Privacy"),
+            Self::Join { .. } => f.write_str("Join { .. }"),
+        }
+    }
+}
+
+/// The sign-up command of `url`, None for any other link. Both app forms are
+/// read, as for the folder commands. The name and password of `join` are
+/// unescaped after the path is split (the page escapes them with
+/// encodeURIComponent, so a `/` in the password is `%2F`).
+pub fn join_command(url: &str) -> Option<JoinCommand> {
+    let rest = [PREFIX, "secondlife://app/"]
+        .into_iter()
+        .find(|prefix| url.get(..prefix.len()).is_some_and(|p| p.eq_ignore_ascii_case(prefix)))
+        .map(|prefix| &url[prefix.len()..])?;
+    let path = rest.split_once('?').map_or(rest, |(path, _)| path);
+    let mut tokens = path.split('/').filter(|t| !t.is_empty());
+    if !tokens.next()?.eq_ignore_ascii_case("floaterjoin") {
+        return None;
+    }
+    Some(match tokens.next()? {
+        "close" => JoinCommand::Close,
+        "tos" => JoinCommand::TermsOfService,
+        "tc" => JoinCommand::TermsAndConditions,
+        "privacy" => JoinCommand::Privacy,
+        "join" => {
+            let (username, password) = (tokens.next()?, tokens.next()?);
+            JoinCommand::Join {
+                username: unescape(username),
+                password: unescape(password),
+            }
+        }
+        _ => return None,
+    })
 }
 
 /// `agent/<id>/<verb>[/<name>]` for the verbs that act (LLAgentHandler).
@@ -261,6 +426,63 @@ mod tests {
 
     fn uid() -> Uuid {
         Uuid::parse_str(ID).expect("test id")
+    }
+
+    #[test]
+    fn generated_preference_links_round_trip() {
+        for path in ["chat_timestamps_nearby", "colors.chat_beyond_range"] {
+            let url = preference_link(path).expect("valid setting path");
+            assert_eq!(parse(&url), Some(AppLink::Preferences(path.to_owned())));
+        }
+        for path in ["", ".secret", "bad..path", "chat/other", "contains space"] {
+            assert!(preference_link(path).is_none(), "{path}");
+        }
+    }
+
+    #[test]
+    fn preferences_links_accept_only_setting_paths() {
+        assert_eq!(
+            parse("secondlife:///app/preferences/chat_timestamps_nearby"),
+            Some(AppLink::Preferences("chat_timestamps_nearby".to_owned()))
+        );
+        assert_eq!(
+            parse("secondlife:///app/preferences/colors.chat_beyond_range"),
+            Some(AppLink::Preferences("colors.chat_beyond_range".to_owned()))
+        );
+        for url in [
+            "secondlife:///app/preferences/",
+            "secondlife:///app/preferences/../../secret",
+            "secondlife:///app/preferences/%2E%2E",
+            "secondlife:///app/preferences/chat/extra",
+            "secondlife:///app/preferences/chat%20name",
+        ] {
+            assert_eq!(parse(url), Some(AppLink::Unsupported), "{url}");
+        }
+    }
+
+    #[test]
+    fn block_verbs_ask_before_unblocking() {
+        let object = || "Sign".to_owned();
+        for blocked in [false, true] {
+            for verb in [
+                AgentVerb::Im,
+                AgentVerb::Pay,
+                AgentVerb::OfferTeleport,
+                AgentVerb::RequestFriend,
+                AgentVerb::RemoveFriend,
+                AgentVerb::ReportAbuse,
+            ] {
+                assert_eq!(verb.block_step(blocked), BlockStep::Other, "{verb:?}");
+            }
+        }
+        assert_eq!(AgentVerb::Mute.block_step(false), BlockStep::Block);
+        assert_eq!(AgentVerb::Mute.block_step(true), BlockStep::Nothing);
+        assert_eq!(AgentVerb::Block(object()).block_step(false), BlockStep::Block);
+        assert_eq!(AgentVerb::Block(object()).block_step(true), BlockStep::Nothing);
+        assert_eq!(AgentVerb::Unmute.block_step(true), BlockStep::AskUnblock);
+        assert_eq!(AgentVerb::Unmute.block_step(false), BlockStep::Nothing);
+        assert_eq!(AgentVerb::Unblock(object()).block_step(true), BlockStep::AskUnblock);
+        assert_eq!(AgentVerb::Unblock(object()).block_step(false), BlockStep::Nothing);
     }
 
     #[test]
@@ -365,5 +587,67 @@ mod tests {
         assert_eq!(parse("secondlife:///app/balance/request"), Some(AppLink::Blocked(Blocked::Balance)));
         // `+` stays a plus, as LLURI::unescape leaves it
         assert_eq!(unescape("a+b%2Bc%C3%A9"), "a+b+cé");
+    }
+
+    #[test]
+    fn folder_commands_read_both_app_forms_and_their_folder() {
+        let wear = folder_command("secondlife://app/wear_folder/?folder_name=Female%20body%20-%20A").expect("wear");
+        assert_eq!(wear.action, FolderAction::Wear);
+        assert_eq!(wear.name.as_deref(), Some("Female body - A"));
+        assert_eq!(wear.id, None);
+        let add = folder_command("SECONDLIFE:///app/add_folder?folder_name=Male look - Club").expect("add");
+        assert_eq!(add.action, FolderAction::Add);
+        assert_eq!(add.name.as_deref(), Some("Male look - Club"));
+        let id = Uuid::from_u128(7);
+        let remove = folder_command(&format!("secondlife:///app/remove_folder/?folder_id={id}&folder_name=x")).expect("remove");
+        assert_eq!(remove.action, FolderAction::Remove);
+        assert_eq!((remove.name, remove.id), (None, Some(id)));
+        // other commands and links are not folder commands
+        assert_eq!(folder_command("secondlife:///app/teleport/Region/1/2/3"), None);
+        assert_eq!(folder_command("https://example.org/wear_folder/?folder_name=x"), None);
+        assert_eq!(folder_command("secondlife://Region/1/2/3"), None);
+    }
+
+    #[test]
+    fn join_commands_are_read_like_the_sign_up_handler() {
+        assert_eq!(join_command("secondlife:///app/floaterjoin/close"), Some(JoinCommand::Close));
+        assert_eq!(join_command("secondlife://app/floaterjoin/tos"), Some(JoinCommand::TermsOfService));
+        assert_eq!(
+            join_command("SecondLife:///app/FloaterJoin/tc/"),
+            Some(JoinCommand::TermsAndConditions)
+        );
+        assert_eq!(
+            join_command("secondlife:///app/floaterjoin/privacy?x=1"),
+            Some(JoinCommand::Privacy)
+        );
+        // escaped after the split: a `/` and spaces in the password stay its own
+        assert_eq!(
+            join_command("secondlife:///app/floaterjoin/join/synthetic.resident/a%2Fb%20c%C3%A9"),
+            Some(JoinCommand::Join {
+                username: "synthetic.resident".into(),
+                password: "a/b cé".into(),
+            })
+        );
+        // the action is case-sensitive, and join needs both values
+        for url in [
+            "secondlife:///app/floaterjoin",
+            "secondlife:///app/floaterjoin/Close",
+            "secondlife:///app/floaterjoin/join/synthetic.resident",
+            "secondlife:///app/floaterjoin/delete",
+            "secondlife:///app/wear_folder/?folder_name=x",
+            "https://join.secondlife.com/floaterjoin/close",
+        ] {
+            assert_eq!(join_command(url), None, "{url}");
+        }
+    }
+
+    #[test]
+    fn a_join_command_never_prints_its_values() {
+        let join = JoinCommand::Join {
+            username: "synthetic.resident".into(),
+            password: "synthetic-secret".into(),
+        };
+        let printed = format!("{join:?}");
+        assert!(!printed.contains("synthetic"), "{printed}");
     }
 }

@@ -105,6 +105,10 @@ pub struct Entry {
     pub outcome: Outcome,
     #[serde(default)]
     pub follow: Follow,
+    /// The notice named its resident whatever RLVa's `@shownames` hides
+    /// (`Notifications::name_resident`): the entry keeps naming them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub named: bool,
 }
 
 fn info() -> Look {
@@ -119,6 +123,12 @@ fn read() -> Outcome {
 struct Saved {
     #[serde(default)]
     entries: Vec<Entry>,
+}
+
+/// [`Saved`] written from the worker's copy, without cloning it.
+#[derive(Serialize)]
+struct SavedRef<'a> {
+    entries: &'a [Entry],
 }
 
 pub fn now_secs() -> u64 {
@@ -179,22 +189,15 @@ impl History {
                     }
                 };
                 let _ = loaded_tx.send(entries);
-                while let Ok(mut entries) = writes.recv() {
-                    // only the latest state matters
-                    while let Ok(newer) = writes.try_recv() {
-                        entries = newer;
+                // only the latest state matters; a refused write is tried
+                // again, and once more when the storage goes (save_retry)
+                crate::save_retry::write_latest("notification history", &writes, |entries| {
+                    if let Some(parent) = path.parent() {
+                        std::fs::create_dir_all(parent)?;
                     }
-                    let save = || -> std::io::Result<()> {
-                        if let Some(parent) = path.parent() {
-                            std::fs::create_dir_all(parent)?;
-                        }
-                        let bytes = serde_json::to_vec(&Saved { entries }).map_err(std::io::Error::other)?;
-                        crate::atomic_file::write(&path, &bytes)
-                    };
-                    if let Err(error) = save() {
-                        log::warn!("Cannot save the notification history: {error}");
-                    }
-                }
+                    let bytes = serde_json::to_vec(&SavedRef { entries }).map_err(std::io::Error::other)?;
+                    crate::atomic_file::write(&path, &bytes)
+                });
             });
         match worker {
             Ok(worker) => History {
@@ -316,6 +319,7 @@ mod tests {
             name_links: Vec::new(),
             outcome: Outcome::Read,
             follow: Follow::Restore,
+            named: false,
         }
     }
 

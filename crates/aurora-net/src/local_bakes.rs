@@ -291,7 +291,7 @@ mod tests {
             llsd_map! { "uploader" => format!("{uploader}/up"), "state" => "upload" },
         )])
         .await;
-        let id = upload(&reqwest::Client::new(), &cap, vec![1, 2, 3]).await;
+        let id = upload(&crate::test_http_client(), &cap, vec![1, 2, 3]).await;
         assert_eq!(id, Ok(asset));
         let asked = asked.await.expect("cap server");
         assert_eq!(asked[0].1["item_id"].as_uuid(), Uuid::nil());
@@ -304,9 +304,9 @@ mod tests {
     async fn an_upload_the_server_does_not_complete_fails() {
         let (uploader, _sent) = crate::outfits::tests::server(vec![(200, llsd_map! { "state" => "error" })]).await;
         let (cap, _asked) = crate::outfits::tests::server(vec![(200, llsd_map! { "uploader" => uploader })]).await;
-        assert!(upload(&reqwest::Client::new(), &cap, vec![1]).await.is_err());
+        assert!(upload(&crate::test_http_client(), &cap, vec![1]).await.is_err());
         assert!(
-            upload(&reqwest::Client::new(), &cap, Vec::new()).await.is_err(),
+            upload(&crate::test_http_client(), &cap, Vec::new()).await.is_err(),
             "an empty bake is refused"
         );
     }

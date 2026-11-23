@@ -157,6 +157,7 @@ impl Session<'_> {
                 }
             }
             NetCommand::ChatSession { method, session } => self.chat_session_request(*method, *session),
+            NetCommand::ModerateText { session, agent, allow } => self.moderate_text(*session, *agent, *allow),
             NetCommand::Call {
                 method,
                 session,
@@ -257,6 +258,29 @@ impl Session<'_> {
                 result,
                 not_found,
             });
+        });
+    }
+
+    /// POST a moderator's "mute update" to ChatSessionRequest
+    /// (LLIMSpeakerMgr::allowTextChat, moderationActionCoro): only a
+    /// failure answers; the change itself comes back as an agent update.
+    fn moderate_text(&mut self, session: uuid::Uuid, agent: uuid::Uuid, allow: bool) {
+        let Some(url) = self.main_cap("ChatSessionRequest") else {
+            log::warn!("ChatSessionRequest: no capability (mute update)");
+            emit(self.sh, NetEvent::SessionModerationFailed { session, forbidden: false });
+            return;
+        };
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let body = crate::social::mute_update_body(session, agent, allow);
+            if let Err(e) = crate::caps::post_llsd(&http, &url, &body).await {
+                log::warn!("ChatSessionRequest mute update for {session}: {e}");
+                let _ = events.send(NetEvent::SessionModerationFailed {
+                    session,
+                    forbidden: matches!(e, crate::caps::CapsError::Status(403)),
+                });
+            }
         });
     }
 

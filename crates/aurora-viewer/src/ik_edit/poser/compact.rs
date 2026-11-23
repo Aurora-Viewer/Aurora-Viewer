@@ -289,19 +289,19 @@ impl Editor {
         let session = self.poser.sessions.get(&self.poser.subject);
         let enabled = session.is_some_and(|s| s.enabled);
         let count = session.map_or(0, |s| (0..rig.len()).filter(|b| s.edited(*b)).count());
-        let initials_of = |id: Uuid| subjects::subject_short_name(world, id);
+        let subject_initials = subjects::subject_short_name(world, &self.poser.subject_names, self.poser.subject);
         let mut others: Vec<(Uuid, String)> = self
             .poseable_others(world)
             .into_iter()
-            .map(|id| (id, subjects::subject_short_name(world, id)))
+            .map(|id| (id, subjects::subject_short_name(world, &self.poser.subject_names, id)))
             .collect();
         // you first, then by name
         others.sort_by(|a, b| (a.0 != world.agent_id, &a.1).cmp(&(b.0 != world.agent_id, &b.1)));
         // you are "You"; a resident by their display name alone
         let name = if self.poser.subject == world.agent_id {
-            subjects::subject_name(world, self.poser.subject)
+            subjects::subject_name(world, &self.poser.subject_names, self.poser.subject)
         } else {
-            subjects::subject_short_name(world, self.poser.subject)
+            subjects::subject_short_name(world, &self.poser.subject_names, self.poser.subject)
         };
         let now = ui.input(|i| i.time);
         // a profile picture is a resident's: an animesh (an object) has none,
@@ -334,7 +334,7 @@ impl Editor {
             let (rect, response) = ui.allocate_exact_size(egui::vec2(HEAD_DISC + 4.0 + nudge, HEAD_DISC + 4.0), Sense::click());
             let disc = egui::Rect::from_center_size(rect.center() + egui::vec2(nudge * 0.5, 0.0), egui::Vec2::splat(HEAD_DISC));
             let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
-            widgets::avatar_disc(ui, p, disc, subject_pic.as_ref(), &initials_of(self.poser.subject), !enabled);
+            widgets::avatar_disc(ui, p, disc, subject_pic.as_ref(), &subject_initials, !enabled);
             let ring = if open || response.hovered() {
                 Some(p.ink.gamma_multiply(0.55))
             } else if enabled {
@@ -417,7 +417,7 @@ impl Editor {
                     if slot < pile.shown {
                         let (id, other) = &others[slot];
                         let posed = self.poser.sessions.get(id).is_some_and(|s| s.enabled);
-                        widgets::avatar_disc(ui, p, rect, other_pics[slot].as_ref(), &initials_of(*id), !posed);
+                        widgets::avatar_disc(ui, p, rect, other_pics[slot].as_ref(), other, !posed);
                         if response.hovered() {
                             ui.painter()
                                 .circle_stroke(rect.center(), OTHER_DISC * 0.5 + 1.0, Stroke::new(1.5, p.ink.gamma_multiply(0.7)));
@@ -726,7 +726,7 @@ impl Editor {
                     .get(&self.poser.subject)
                     .filter(|_| self.poser.transform == 1)
                     .map(|s| s.base.matrices(rig, frame.model)[bone].w_axis.truncate());
-                if self.axis_sliders(ui, p, &mut value, base_point) {
+                if self.axis_sliders(ui, p, &mut value, base_point, &rig.canonical_names[bone]) {
                     self.apply_joint_value(rig, frame, bone, value);
                 }
             });
@@ -1022,6 +1022,10 @@ impl Editor {
             );
             if menu::item(ui, p, "folder-filled", aurora_i18n::text("poser-open-file")) {
                 load = Some(None);
+            }
+            if menu::item(ui, p, "file-import", aurora_i18n::text("poser-import-legacy")) {
+                self.poser.storage.job = Some(storage::Job::ImportLegacyFolder(None));
+                ui.close();
             }
             if let Some(path) = load {
                 // another file loads whole, as the full window's Open file

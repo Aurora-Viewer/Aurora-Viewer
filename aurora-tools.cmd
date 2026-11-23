@@ -7,6 +7,10 @@ rem Alone in a folder, download the installer and install the project there.
 rem (goto rather than ( ) blocks: a path with a parenthesis would break a block)
 title Aurora Tools
 cd /d "%~dp0"
+rem Started from PowerShell 7, cmd hands down its module paths, and Windows
+rem PowerShell then misses cmdlets such as Get-FileHash. It rebuilds this
+rem variable when it is empty; setlocal keeps the change inside this launcher.
+set "PSModulePath="
 if exist "%~dp0scripts\tools\aurora-tools.ps1" goto repo
 if exist "%~dp0aurora-viewer\scripts\tools\aurora-tools.ps1" goto project
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$f = Join-Path $env:TEMP 'aurora-setup.ps1'; irm https://raw.githubusercontent.com/Aurora-Viewer/Aurora-Viewer/main/scripts/setup.ps1 -OutFile $f; & $f"

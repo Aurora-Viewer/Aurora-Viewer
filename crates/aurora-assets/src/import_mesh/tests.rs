@@ -108,6 +108,33 @@ pub(super) fn collada_objects(visual: &str, rigged: bool, identical_controllers:
     )
 }
 
+/// #3348: an exporter wrote count="0" on a full bind-pose array. The Legacy
+/// Viewer reads the values the array holds (LLDAELoader), not the attribute.
+#[test]
+fn collada_float_array_count_attribute_is_not_trusted_over_its_values() {
+    let skeleton = crate::Skeleton::parse(include_bytes!("../../../aurora-viewer/assets/character/avatar_skeleton.xml")).expect("skeleton");
+    let visual = r##"<node id="mPelvis" type="JOINT"/><node><instance_controller url="#a-skin"/></node>"##;
+    let document =
+        collada_objects(visual, true, false, false).replace(r#"<float_array count="16">1 0 0 0"#, r#"<float_array count="0">1 0 0 0"#);
+    assert!(document.contains(r#"count="0""#), "fixture changed");
+    let scene = collada::parse(document.as_bytes(), &skeleton).expect("bind poses with a wrong count attribute");
+    let skin = scene.models[0].skin.as_ref().expect("rigged");
+    assert_eq!(skin.names, ["mPelvis"]);
+    assert_eq!(skin.inverse_bind.len(), 1);
+}
+
+/// A float array shorter than its accessor needs is still refused.
+#[test]
+fn collada_float_array_shorter_than_its_accessor_is_refused() {
+    let skeleton = crate::Skeleton::parse(include_bytes!("../../../aurora-viewer/assets/character/avatar_skeleton.xml")).expect("skeleton");
+    let visual = r##"<node id="mPelvis" type="JOINT"/><node><instance_controller url="#a-skin"/></node>"##;
+    let document = collada_objects(visual, true, false, false).replace(
+        r#"<float_array count="16">1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</float_array>"#,
+        r#"<float_array count="16">1 0 0 0 0 1 0 0</float_array>"#,
+    );
+    assert!(collada::parse(document.as_bytes(), &skeleton).is_err());
+}
+
 #[test]
 fn collada_multiple_objects_keep_geometry_instances_and_nested_transforms() {
     let document = collada_objects(
@@ -256,7 +283,7 @@ fn uploads_carry_the_normalized_scale_their_tangents_are_found_in() {
 }
 
 #[test]
-fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating_the_source() {
+fn automatic_lods_reduce_disconnected_seams_and_preserve_source_materials() {
     let mut source = cube();
     let face = &mut source.faces[0];
     let prototype = face.vertices[0].clone();
@@ -299,7 +326,7 @@ fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating
     let options = process::LodOptions {
         triangles: 100,
         error: 1.0,
-        method: process::Method::Auto,
+        method: process::Method::Legacy,
         crease_angle: None,
         error_only: false,
     };
@@ -307,7 +334,7 @@ fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating
     let precise = process::lod(
         &source,
         process::LodOptions {
-            method: process::Method::Precise,
+            method: process::Method::Reliable,
             ..options
         },
         &cancel,
@@ -349,6 +376,130 @@ fn automatic_lods_reduce_disconnected_seams_without_mixing_materials_or_mutating
 }
 
 #[test]
+fn a_flat_part_gets_a_base_hull_of_at_least_four_points_that_is_not_flat() {
+    // #4213: a walkway quad, two triangles with unshared corners as exported.
+    let corner = |x: f32, y: f32| Vertex {
+        position: [x, y, 0.0],
+        normal: [0.0, 0.0, 1.0],
+        uv: [0.0; 2],
+        joints: [0; 4],
+        weights: [0.0; 4],
+    };
+    let quad = Model {
+        name: "Walk".into(),
+        submodel: 0,
+        center: Vec3::ZERO,
+        size: Vec3::ONE,
+        skin: None,
+        faces: vec![Face {
+            material: 0,
+            vertices: vec![
+                corner(-0.5, -0.5),
+                corner(0.5, -0.5),
+                corner(0.5, 0.5),
+                corner(-0.5, -0.5),
+                corner(0.5, 0.5),
+                corner(-0.5, 0.5),
+            ],
+            indices: vec![0, 1, 2, 3, 4, 5],
+        }],
+    };
+    let hull = process::base_hull(&quad).expect("hull of a flat part");
+    let adaptive =
+        process::adaptive_base_hull(&quad, &[Vec3::ONE], &std::sync::atomic::AtomicBool::new(false)).expect("adaptive flat hull");
+    assert_eq!(adaptive.vertices, hull.vertices, "thin-box fallback remains intact");
+    assert!(hull.vertices.len() >= 4, "the server refuses fewer: {}", hull.vertices.len());
+    let (low, high) = hull
+        .vertices
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(low, high), p| (low.min(p[2]), high.max(p[2])));
+    assert!(high > low, "a hull with volume, not the plane again: {:?}", hull.vertices);
+    for axis in 0..2 {
+        assert!(hull.vertices.iter().any(|p| p[axis] <= -0.5) && hull.vertices.iter().any(|p| p[axis] >= 0.5));
+    }
+}
+
+#[test]
+fn legacy_generation_falls_back_part_by_part_like_the_legacy_viewer() {
+    // A 24 x 24 grid of 1,152 triangles. Shared corners: the precise pass
+    // reaches the target. Every triangle with corners of its own (seams
+    // everywhere): precise cannot, and genMeshOptimizerLODs welds the
+    // positions or goes sloppy; the result still lands near the target.
+    let grid = |shared: bool| {
+        let n = 24u32;
+        let corner = |x: u32, y: u32| Vertex {
+            position: [
+                x as f32 / n as f32 - 0.5,
+                y as f32 / n as f32 - 0.5,
+                ((x * 7 + y * 3) % 5) as f32 * 0.01,
+            ],
+            normal: [0.0, 0.0, 1.0],
+            uv: [x as f32 / n as f32, y as f32 / n as f32],
+            joints: [0; 4],
+            weights: [0.0; 4],
+        };
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        if shared {
+            for y in 0..=n {
+                for x in 0..=n {
+                    vertices.push(corner(x, y));
+                }
+            }
+        }
+        for y in 0..n {
+            for x in 0..n {
+                for [a, b, c] in [[(x, y), (x + 1, y), (x + 1, y + 1)], [(x, y), (x + 1, y + 1), (x, y + 1)]] {
+                    for (cx, cy) in [a, b, c] {
+                        if shared {
+                            indices.push(cy * (n + 1) + cx);
+                        } else {
+                            let mut v = corner(cx, cy);
+                            // a seam: each triangle's own UV island
+                            v.uv[0] += indices.len() as f32;
+                            indices.push(vertices.len() as u32);
+                            vertices.push(v);
+                        }
+                    }
+                }
+            }
+        }
+        Model {
+            name: "Grid".into(),
+            submodel: 0,
+            center: Vec3::ZERO,
+            size: Vec3::ONE,
+            skin: None,
+            faces: vec![Face {
+                material: 0,
+                vertices,
+                indices,
+            }],
+        }
+    };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let options = process::LodOptions {
+        triangles: 1152 / 9,
+        error: 1.0,
+        method: process::Method::Legacy,
+        crease_angle: None,
+        error_only: false,
+    };
+    for shared in [true, false] {
+        let source = grid(shared);
+        let lod = process::lod(&source, options, &cancel).expect("legacy LOD");
+        let triangles = lod.triangles();
+        assert!(
+            triangles > 0 && triangles as f32 <= 128.0 * 1.8,
+            "near the target of 128 (shared corners {shared}): {triangles}"
+        );
+        let face = &lod.faces[0];
+        assert!(face.indices.iter().all(|i| (*i as usize) < face.vertices.len()));
+        assert!(face.vertices.len() <= face.indices.len(), "only the corners in use are kept");
+    }
+}
+
+#[test]
 fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
     let source = cube();
     let hull = process::base_hull(&source).expect("hull");
@@ -373,7 +524,7 @@ fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
         process::LodOptions {
             triangles: 4,
             error: 1.0,
-            method: process::Method::Precise,
+            method: process::Method::Reliable,
             crease_angle: None,
             error_only: false,
         },
@@ -401,28 +552,51 @@ fn convex_physics_is_bounded_and_cancelled_processing_preserves_the_source() {
 }
 
 #[test]
-fn error_mode_welds_identical_exported_corners_and_respects_the_geometric_threshold() {
+fn automatic_error_mode_respects_the_geometric_threshold() {
+    // A curved open surface has useful intermediate reductions. A closed
+    // cube at 100% error can collapse completely, which the Legacy chain
+    // correctly rejects by restoring its source instead.
     let mut source = cube();
     let face = &mut source.faces[0];
-    face.vertices = face.indices.iter().map(|index| face.vertices[*index as usize].clone()).collect();
-    face.indices = (0..face.vertices.len() as u32).collect();
+    let prototype = face.vertices[0].clone();
+    face.vertices = (0..=8)
+        .flat_map(|y| {
+            let prototype = prototype.clone();
+            (0..=8).map(move |x| {
+                let x = x as f32 / 8.0 - 0.5;
+                let y = y as f32 / 8.0 - 0.5;
+                Vertex {
+                    position: [x, y, (x * x + y * y) * 0.4],
+                    ..prototype.clone()
+                }
+            })
+        })
+        .collect();
+    face.indices = (0..8)
+        .flat_map(|y| {
+            (0..8).flat_map(move |x| {
+                let i = y * 9 + x;
+                [i, i + 1, i + 9, i + 1, i + 10, i + 9]
+            })
+        })
+        .collect();
     let options = process::LodOptions {
         triangles: 0,
         error: 0.0,
-        method: process::Method::Auto,
+        method: process::Method::Legacy,
         crease_angle: None,
         error_only: true,
     };
     let cancel = std::sync::atomic::AtomicBool::new(false);
     let faithful = process::lod(&source, options, &cancel).expect("zero error");
-    let loose = process::lod(&source, process::LodOptions { error: 1.0, ..options }, &cancel).expect("large error");
-    assert_eq!(faithful.triangles(), 12);
+    let loose = process::lod(&source, process::LodOptions { error: 0.02, ..options }, &cancel).expect("two percent error");
+    assert!(faithful.triangles() > 1, "zero error must not force the triangle-target floor");
     assert!(
         loose.triangles() < faithful.triangles(),
         "the error threshold changes the actual geometry"
     );
-    assert_eq!(source.faces[0].vertices.len(), 36);
-    assert_eq!(source.triangles(), 12);
+    assert_eq!(source.faces[0].vertices.len(), 81);
+    assert_eq!(source.triangles(), 128);
 }
 
 #[test]

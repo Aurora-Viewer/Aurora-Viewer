@@ -315,6 +315,7 @@ fn chat(source: Uuid, owner: Uuid, source_type: ChatSourceType, text: &str) -> N
         owner_id: owner,
         source_type,
         chat_type: ChatType::Normal,
+        region: None,
         position: glam::Vec3::ZERO,
         message: text.into(),
     })
@@ -431,4 +432,81 @@ fn anti_spam_newline_floods_share_the_bounded_source_table() {
     assert_eq!(r.entries.len(), MAX_SOURCES);
     assert_eq!(r.overflow.len(), 1);
     assert!(r.is_blocked(Queue::Im, Uuid::from_u128(1)));
+}
+
+const A: Uuid = Uuid::from_u128(0xb0_0001);
+const B: Uuid = Uuid::from_u128(0xb0_0002);
+const C: Uuid = Uuid::from_u128(0xb0_0003);
+
+#[test]
+fn a_lone_block_names_its_source() {
+    let mut w = world();
+    w.social.names.insert(A, "Flood Test".into());
+    let t = Instant::now();
+    w.anti_spam_notice(Queue::Chat, A, false, t);
+    // the same source in another category within the burst: still named
+    w.anti_spam_notice(Queue::Sound, A, false, t + Duration::from_secs(2));
+    assert_eq!(w.chat.len(), 1);
+    let kinds = format!("{}, {}", Queue::Chat.label(), Queue::Sound.label());
+    assert_eq!(
+        w.chat[0].text,
+        aurora_i18n::tr!("anti-spam-blocked", source = "Flood Test", kind = kinds)
+    );
+}
+
+#[test]
+fn a_burst_of_blocks_is_one_notice_with_their_count() {
+    let mut w = world();
+    let t = Instant::now();
+    let revision = w.chat_clock.revision;
+    w.anti_spam_notice(Queue::Chat, A, false, t);
+    w.anti_spam_notice(Queue::Chat, B, false, t + Duration::from_secs(3));
+    w.anti_spam_notice(Queue::ScriptDialog, C, false, t + Duration::from_secs(10));
+    assert_eq!(w.chat.len(), 1, "one line for the burst");
+    let kinds = format!("{}, {}", Queue::Chat.label(), Queue::ScriptDialog.label());
+    assert_eq!(
+        w.chat[0].text,
+        aurora_i18n::tr!("anti-spam-blocked-burst", count = 3usize, kinds = kinds)
+    );
+    // the views draw the edited line again
+    assert_ne!(w.chat_clock.revision, revision);
+    // an edit is no new unread line
+    assert_eq!(w.chat_unread, 1);
+}
+
+#[test]
+fn two_bursts_apart_are_two_notices() {
+    let mut w = world();
+    let t = Instant::now();
+    let window = burst_window(w.anti_spam.settings.period);
+    assert_eq!(window, Duration::from_secs(10), "default interval");
+    assert_eq!(burst_window(30), Duration::from_secs(60), "two long intervals");
+    w.anti_spam_notice(Queue::Chat, A, false, t);
+    w.anti_spam_notice(Queue::Chat, B, false, t + Duration::from_secs(1));
+    w.anti_spam_notice(Queue::Chat, C, false, t + window + Duration::from_millis(1));
+    assert_eq!(w.chat.len(), 2);
+    assert!(w.chat[1].text.contains(&C.to_string()), "the second burst's lone source");
+    // a line gone from the chat (cleared) is not edited: a new one says it
+    w.clear_nearby_chat();
+    w.anti_spam_notice(Queue::Sound, A, false, t + window + Duration::from_secs(2));
+    assert_eq!(w.chat.len(), 1);
+    assert!(w.chat[0].text.contains(&A.to_string()));
+}
+
+#[test]
+fn a_flood_of_sources_through_the_real_paths_gives_one_notice() {
+    let mut w = world();
+    for n in 0..12u128 {
+        let source = Uuid::from_u128(0xb1_0000 + n);
+        for _ in 0..11 {
+            w.apply(chat(source, Uuid::nil(), ChatSourceType::Object, "spam"));
+        }
+    }
+    let notices: Vec<_> = w.chat.iter().filter(|l| l.kind == crate::world::ChatKind::System).collect();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(
+        notices[0].text,
+        aurora_i18n::tr!("anti-spam-blocked-burst", count = 12usize, kinds = Queue::Chat.label())
+    );
+    assert_eq!(w.anti_spam.blocks().len(), 12);
 }

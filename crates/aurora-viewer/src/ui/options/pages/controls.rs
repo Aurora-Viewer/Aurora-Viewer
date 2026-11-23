@@ -15,6 +15,11 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-world-mouse-walk-help"),
             &field!(world_mouse_walk),
         );
+        cx.toggle(
+            tr!("ui-options-mmo-mouse-buttons"),
+            tr!("ui-options-mmo-mouse-buttons-help"),
+            &field!(mmo_mouse_buttons),
+        );
         // "Double-click on land" (double_click_action_combo)
         let choices: Vec<(crate::autopilot::DoubleClick, &str)> =
             crate::autopilot::DoubleClick::ALL.iter().map(|a| (*a, a.label())).collect();
@@ -34,6 +39,28 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-block-click-sit"),
             tr!("ui-options-block-click-sit-help"),
             &field!(block_click_sit),
+        );
+    });
+    // The rigged meshes a plain left click acts on (scene/drawn.rs). Off, the
+    // click passes through them, as LLToolPie::handleMouseDown does for all
+    // of them (`pick_rigged = false`); animesh are on at the human's request.
+    cx.group(tr!("ui-options-rigged-clicks"), |cx| {
+        // (a search for "rigged" lists it with the other two)
+        let section = tr!("ui-options-rigged-clicks").to_string();
+        cx.keywords(&section).toggle(
+            tr!("ui-options-rigged-click-animesh"),
+            tr!("ui-options-rigged-click-animesh-help"),
+            &field!(rigged_click_animesh),
+        );
+        cx.toggle(
+            tr!("ui-options-rigged-click-own"),
+            tr!("ui-options-rigged-click-own-help"),
+            &field!(rigged_click_own),
+        );
+        cx.toggle(
+            tr!("ui-options-rigged-click-others"),
+            tr!("ui-options-rigged-click-others-help"),
+            &field!(rigged_click_others),
         );
     });
     cx.group(tr!("ui-options-keyboard"), |cx| {

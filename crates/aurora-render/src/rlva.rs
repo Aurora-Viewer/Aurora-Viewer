@@ -163,78 +163,82 @@ impl Spheres {
         output: &wgpu::TextureView,
     ) -> usize {
         let targets = self.targets.as_ref().expect("prepare called before scene composition");
-        let total = effects
-            .iter()
-            .take(6)
-            .map(|effect| if matches!(effect.mode, 1 | 2) { 2 } else { 1 })
-            .sum::<usize>();
+        let total = effects.iter().take(6).count();
         let mut source = &targets.views[0];
-        let mut count = 0;
-        for effect in effects.iter().take(6) {
-            let passes = if matches!(effect.mode, 1 | 2) { 2 } else { 1 };
-            for axis in 0..passes {
-                let params = Params {
-                    inv_vp: inv_vp.to_cols_array_2d(),
-                    origin: effect.origin.extend(1.0).to_array(),
-                    range: effect.range,
-                    effect: effect.params,
-                    mode: [effect.mode, effect.extend, axis, 0],
-                    screen: [size.0 as f32, size.1 as f32, 0.0, 0.0],
-                };
-                queue.write_buffer(&self.uniforms[count], 0, bytemuck::bytes_of(&params));
-                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("RLVa sphere input"),
-                    layout: &self.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(source),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(depth),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: self.uniforms[count].as_entire_binding(),
-                        },
-                    ],
-                });
-                let target = if count + 1 == total {
-                    output
-                } else {
-                    &targets.views[(count + 1) % 2]
-                };
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("RLVa sphere"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: target,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &group, &[]);
-                pass.draw(0..3, 0..1);
-                drop(pass);
-                source = target;
-                count += 1;
-            }
+        for (count, effect) in effects.iter().take(6).enumerate() {
+            // RlvSphereEffect::run renders the two blur passes (1,0) then
+            // (0,1) from the same source into the same target
+            // (LLShaderEffectParams::step only swaps once per effect): the
+            // second overwrites the first, and what shows is the vertical
+            // blur alone. One vertical pass draws that same image.
+            let axis = sphere_pass_axis(effect.mode);
+            let params = Params {
+                inv_vp: inv_vp.to_cols_array_2d(),
+                origin: effect.origin.extend(1.0).to_array(),
+                range: effect.range,
+                effect: effect.params,
+                mode: [effect.mode, effect.extend, axis, 0],
+                screen: [size.0 as f32, size.1 as f32, 0.0, 0.0],
+            };
+            queue.write_buffer(&self.uniforms[count], 0, bytemuck::bytes_of(&params));
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("RLVa sphere input"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(source),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.uniforms[count].as_entire_binding(),
+                    },
+                ],
+            });
+            let target = if count + 1 == total {
+                output
+            } else {
+                &targets.views[(count + 1) % 2]
+            };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("RLVa sphere"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.draw(0..3, 0..1);
+            drop(pass);
+            source = target;
         }
         total
     }
+}
+
+/// The blur direction of a sphere's one pass: vertical for the two blurs
+/// (BLUR_DIRECTION (0, 1), the pass that shows in the Legacy Viewer), none
+/// of the other modes reads it.
+pub(crate) fn sphere_pass_axis(mode: u32) -> u32 {
+    u32::from(matches!(mode, 1 | 2))
 }
 
 #[cfg(test)]

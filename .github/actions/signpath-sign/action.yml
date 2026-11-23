@@ -1,0 +1,75 @@
+name: Sign with SignPath
+description: >
+  Signs a Windows exe with SignPath (docs/UPDATES.md, "Code signing"): the
+  exe is uploaded alone as an artifact of the run, which makes it a zip with
+  the exe at its root (the artifact configuration of
+  .signpath/artifact-configuration.xml, slug initial), submitted to the
+  SignPath project Aurora-Viewer under the given signing policy, and the
+  signed exe SignPath returns replaces the original. Signing only adds a
+  certificate to the file: its code and debug id do not change. The job
+  needs the actions: read permission: SignPath reads the job and downloads
+  the artifact with its token.
+inputs:
+  exe:
+    description: "Path of the exe to sign, replaced by the signed one"
+    required: true
+  version:
+    description: "Product version written in the exe, which the artifact configuration checks"
+    required: true
+  signing-policy:
+    description: "test-signing (test certificate, no approval) or release-signing"
+    required: true
+  organization-id:
+    description: "SignPath organization id (the SIGNPATH_ORGANIZATION_ID variable)"
+    required: true
+  api-token:
+    description: "API token of the SignPath CI user (the SIGNPATH_API_TOKEN secret)"
+    required: true
+  trusted:
+    description: "'true' requires a signature Windows trusts; the test certificate chains to no trusted root"
+    required: true
+  timeout:
+    description: "Seconds to wait for the request, approval included"
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: unsigned
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: unsigned-${{ inputs.signing-policy }}
+        path: ${{ inputs.exe }}
+        if-no-files-found: error
+        retention-days: 1
+    # the step's log links the request in SignPath, where an approver
+    # accepts it when the policy asks for an approval
+    - uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+      with:
+        api-token: ${{ inputs.api-token }}
+        organization-id: ${{ inputs.organization-id }}
+        project-slug: Aurora-Viewer
+        signing-policy-slug: ${{ inputs.signing-policy }}
+        artifact-configuration-slug: initial
+        github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+        parameters: |
+          version: "${{ inputs.version }}"
+        wait-for-completion: true
+        wait-for-completion-timeout-in-seconds: ${{ inputs.timeout }}
+        output-artifact-directory: ${{ runner.temp }}/signpath-signed
+    - shell: pwsh
+      env:
+        EXE: ${{ inputs.exe }}
+        TRUSTED: ${{ inputs.trusted }}
+        SIGNED_DIR: ${{ runner.temp }}/signpath-signed
+      run: |
+        $name = Split-Path -Leaf $env:EXE
+        $signed = Get-ChildItem -LiteralPath $env:SIGNED_DIR -Recurse -File -Filter $name | Select-Object -First 1
+        if (-not $signed) { throw "SignPath returned no $name" }
+        $signature = Get-AuthenticodeSignature -LiteralPath $signed.FullName
+        if (-not $signature.SignerCertificate) { throw "$name is not signed: $($signature.Status) $($signature.StatusMessage)" }
+        if ($signature.Status -eq 'HashMismatch') { throw "The signature of $name does not match the file" }
+        if ($env:TRUSTED -eq 'true' -and $signature.Status -ne 'Valid') {
+          throw "The signature of $name is not trusted: $($signature.Status) $($signature.StatusMessage)"
+        }
+        "signed by $($signature.SignerCertificate.Subject), $($signature.Status)"
+        Copy-Item -LiteralPath $signed.FullName -Destination $env:EXE -Force
