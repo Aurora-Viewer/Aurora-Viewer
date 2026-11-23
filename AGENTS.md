@@ -849,7 +849,10 @@ the review comment.
 - The human can publish or delete a release themselves, with the "Manage
   releases" choice of `aurora-tools.cmd`; they can also ask you to.
 - A release is made **when the human asks for it** ("release 0.4.0"), never
-  on your own initiative. If they give no number, propose one from the labels
+  on your own initiative, and only by an admin of the repository: the
+  version tags' ruleset and the Release and Nightly workflows refuse anyone
+  else, betas included. If your human is not an admin, say so instead of
+  trying. If they give no number, propose one from the labels
   of the PRs merged since the last version and wait for their agreement.
   Then:
 

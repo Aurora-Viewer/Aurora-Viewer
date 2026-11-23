@@ -10473,7 +10473,6 @@ build-compact-summary-details = { " - " }{ $capacity }    { $counts }
 build-compact-link-action = Зв'язати
 build-compact-unlink-action = Роз'єднати
 build-compact-link-value = Частина { $number }
-build-compact-face-value = Грань { $number }
 build-compact-move = Перемістити
 build-compact-rotate = Обернути (Ctrl)
 build-compact-stretch = Розтягнути (Ctrl+Shift)
