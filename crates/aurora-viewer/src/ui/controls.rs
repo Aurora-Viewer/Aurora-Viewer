@@ -2278,7 +2278,7 @@ mod tests {
         let mut run = |controls: &mut ControlsUi, camera: &mut bool, movement: &mut bool, compact: &mut Compact| {
             for _ in 0..3 {
                 time += 0.1;
-                let _ = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1000.0))),
                         time: Some(time),
@@ -2288,6 +2288,7 @@ mod tests {
                         controls.show(ui.ctx(), &p, camera, movement, compact, false, &view);
                     },
                 );
+                output.textures_delta.clear();
             }
         };
         let minimized = || widgets::floater_minimized(&ctx, WINDOW);
@@ -2417,7 +2418,7 @@ mod tests {
             };
             let (controls, camera, movement, compact, p) =
                 (&mut self.controls, &mut self.camera, &mut self.movement, &mut self.compact, &self.p);
-            let _ = self.ctx.run_ui(
+            let mut output = self.ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1000.0))),
                     time: Some(self.time),
@@ -2428,6 +2429,7 @@ mod tests {
                     controls.show(ui.ctx(), p, camera, movement, compact, false, &view);
                 },
             );
+            output.textures_delta.clear();
         }
 
         /// The toolbar's camera (or Move) button, then one frame only.
