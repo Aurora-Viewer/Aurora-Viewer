@@ -11007,6 +11007,10 @@ impl App {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
             crate::demo::snow_spin::tick(&mut self.world, self.frame_count);
+            crate::demo::footprints::tick(&mut self.scene, self.frame_count);
+            if let Some((eye, at)) = crate::demo::footprints::view(self.frame_count) {
+                self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
+            }
             if let Some((eye, at)) = crate::demo::snow_spin::view(self.frame_count) {
                 self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera);
             }
@@ -11349,6 +11353,7 @@ impl App {
         self.update_weather_now();
         if self.demo {
             crate::demo::snow_spin::weather(self.frame_count, &mut self.weather_now);
+            crate::demo::footprints::weather(self.frame_count, &mut self.weather_now);
         }
         self.update_audio();
         self.update_wind_sound(dt);

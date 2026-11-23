@@ -142,6 +142,10 @@ pub mod env;
 pub mod experience;
 #[path = "demo_floating_text.rs"]
 pub mod floating_text;
+/// A trail of footprints in the snow, then Footprints turned off
+/// (AURORA_DEMO_FOOTPRINTS_OFF, #4019).
+#[path = "demo_footprints.rs"]
+pub mod footprints;
 /// A prop derezzed and particles started while the photo mode holds the
 /// world still (AURORA_DEMO_FREEZE_WORLD).
 #[path = "demo_freeze_world.rs"]
