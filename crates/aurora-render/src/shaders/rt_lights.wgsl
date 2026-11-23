@@ -3,14 +3,14 @@
 // `cs_lights`, a pixel of the depth prepass at a time: the light it traces,
 // by resampled importance sampling (Talbot 2005) over the point lights that
 // reach it, each weighed by the diffuse light it would give unshadowed
-// (every light once when no more than `CANDIDATES` reach it), then with
+// (every light once when no more than `candidates` reach it), then with
 // ReSTIR (Bitterli et al. 2020) merged with the pixel's choice last frame;
 // then one shadow ray toward it. A light has a size (`light_size`): the ray
 // goes to a point of the disc it shows the pixel, another each frame, so
 // its shadow has a penumbra, narrow at the foot of what casts it and wider
 // away from it. The choice and what the ray found are written to `mid`.
 // `cs_lights_reuse`: the share of the local light that arrives, from the
-// pixel's own sample and `NEIGHBOURS` around it on the same surface, as
+// pixel's own sample and `neighbours` around it on the same surface, as
 // Tokuyoshi's visibility reuse (AMD, "Efficient Visibility Reuse for
 // Real-time ReSTIR", 2024): each sample's light was drawn in proportion to
 // its unshadowed light, so the visibilities found, weighed by how much
@@ -37,11 +37,15 @@
 // (rt_history.wgsl `light_changed`) the history holds a few frames, so a
 // lamp switched on has its shadows at once.
 // The sun's soft shadow shares this history: `cs_lights_reuse` averages
-// the sun's ray of each frame (rt_shadows.wgsl) beside the share, and where
-// a shadow moved off a still surface (a walking avatar's, off the floor)
-// keeps the history within what this frame's rays found around the pixel,
-// as AMD's FidelityFX shadow denoiser does, so the floor clears at once
-// instead of holding a trail.
+// the sun's ray of each frame (rt_shadows.wgsl) beside the share. Where a
+// shadow moved off a still surface (a walking avatar's, off the floor) or
+// onto it, the sun's history and the share's are kept within what this
+// frame's rays found around the pixel, as AMD's FidelityFX shadow denoiser
+// does (`lamp_range`), so the floor clears at once instead of holding a
+// trail. The colour the glass gives the sun
+// (rt_shadows.wgsl `out_glass`, its ray as noisy as the shadow's) is
+// averaged the same way beside it (`glass_history`), then over the rays
+// that arrived (`glass_of`).
 // `cs_lights_filter`: the denoised tint and sun, written with the contact
 // shadows into the mask the frame binds: `.r` the sun's shadow (1 in
 // shadow, the darker of the traced and the contact shadow), `.gba` the
@@ -51,9 +55,30 @@
 // it (rt_history.wgsl `smooth_normal`), as the shading lights them; the
 // rays of a triangle turned from its light take rt_common.wgsl `shadows`.
 //
-// A light's rays stop where they enter its own prim (`source.x` about its
-// centre), so its bulb or its lamp's body does not shadow it. Projectors
-// keep their shadow maps.
+// A light's own prim does not shadow it (its bulb, its lamp's body, a strip
+// light's tube): a ray goes the opaque way up to the sphere about the
+// light that holds its prim (`source.x`), then on to the light past every
+// face but those of its prim (`source.w`, rt_common.wgsl `shadows_but`),
+// so what stands inside that sphere beside the prim still casts. With
+// `EMITTER_SPHERE` (`AURORA_RT_EMITTER=sphere`, rt_shadows.rs `source`)
+// the rays stop at the sphere, for a comparison.
+//
+// A projector is one of the lights drawn and shared like the others, over
+// its frustum, weighed by its colour without its texture, its rays aimed
+// at the apex of its frustum (`light_target`, `light_aim`): the tint then
+// shadows its beam (common.wgsl `projector_at`) in its shadow map's place:
+// the map is no longer drawn (renderer.rs `traced_projectors`), so the
+// faces this pass does not see (the blended ones, the reflections) take
+// the beam unshadowed, as the Legacy Viewer's blended faces (alphaF.glsl).
+// The Legacy Viewer shadows two projectors, by
+// maps (spotLightF.glsl, pipeline.cpp RenderShadowDetail); traced, every
+// projector of the list casts, at any distance.
+//
+// Glass: a ray that nothing stops goes on through the blended faces on its
+// way (`lamp_trace`), and what they leave of the light's red, green and
+// blue is the sample's visibility in place of its 1 (`mid`'s z, packed),
+// which the share takes by its luminance and the tint by colour: a lamp
+// behind a red pane lights red.
 
 // After rt_common.wgsl, rt_view.wgsl, rt_light.wgsl, rt_history.wgsl and
 // wgpu_ray_query's enable (rt_shadows.rs `source`).
@@ -89,25 +114,44 @@ struct Params {
     columns: array<vec4<u32>, 16>,
     rows: array<vec4<u32>, 16>,
     slices: array<vec4<u32>, 16>,
+    // x: the lamps' softness, Preferences' (`light_size`: 0 sharp); y, z:
+    // the ray tracing quality's candidates and neighbours (`candidates`,
+    // `neighbours`).
+    tuning: vec4<f32>,
 };
 
-// Candidates a pixel draws among the lights reaching it.
+// Candidates a pixel draws among the lights reaching it, at most, and
+// those the ray tracing quality asks for (rt_shadows.rs `LampQuality`):
+// fewer weigh fewer lights, and leave the choice noisier.
 const CANDIDATES: u32 = 8u;
+
+fn candidates() -> u32 {
+    return clamp(u32(params.tuning.y), 1u, CANDIDATES);
+}
 // The most a choice kept from last frame counts for, against this frame's.
 const CONFIDENCE_MAX: f32 = 20.0;
 // Frames the share's history averages at most; on a surface that moved on
 // its own, whose shadows sweep over it, fewer.
 const HISTORY: f32 = 12.0;
 const HISTORY_MOVING: f32 = 4.0;
+// The least cosine between a pixel's normal and its history's
+// (`history_pixel`): a curve's turn over a frame of motion stays above it,
+// the other wall of a corner does not.
+const HISTORY_FACING: f32 = 0.7;
 const MAX_LIGHTS: u32 = 64u;
 // Rays a pixel traces on a frame with no history (cs_lights).
 const RESET_RAYS: u32 = 8u;
-// The neighbours whose samples a pixel reuses, and how far they are at most
-// (pixels).
+// The neighbours whose samples a pixel reuses, at most, and how far they
+// are at most (pixels); those the ray tracing quality asks for
+// (`neighbours`), spread over the same radius.
 const NEIGHBOURS: u32 = 4u;
 const REUSE_RADIUS: f32 = 8.0;
+
+fn neighbours() -> u32 {
+    return min(u32(params.tuning.z), NEIGHBOURS);
+}
 // How far around a pixel (pixels each way) this frame's sun rays bound its
-// history.
+// history, and the lamps' rays the share's (`lamp_range`).
 const SUN_RANGE: i32 = 2;
 // A light's radius (m): its prim's, within these. The Legacy Viewer's point
 // lights cast no shadow: the size is this pass's own, a lamp's bulb at
@@ -145,8 +189,9 @@ const MID_DRAWN: u32 = 0x200u;
 // A pixel's sample, from cs_lights to cs_lights_reuse: x the light's index
 // with `MID_SEEN` when its ray found it and `MID_DRAWN` when there is one,
 // and its confidence, y its weight, z the width of the penumbra where its
-// ray was stopped (m, 0 where it was not; y and it f32 bits), or on a
-// frame with no history what its rays found (`pack_reset`), w the normal
+// ray was stopped (m; y and it f32 bits), where it was not what the glass
+// left of its light (pack4x8unorm, `lamp_trace`), or on a frame with no
+// history what its rays found (`pack_reset`), w the normal
 // (rt_history.wgsl `pack_normal`, pack2x16snorm).
 @group(0) @binding(15) var out_mid: texture_storage_2d<rgba32uint, write>;
 @group(0) @binding(16) var mid: texture_2d<u32>;
@@ -164,6 +209,18 @@ const MID_DRAWN: u32 = 0x200u;
 @group(0) @binding(17) var prev_tint: texture_2d<f32>;
 @group(0) @binding(18) var out_tint: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(19) var tint_tex: texture_2d<f32>;
+// What the glass leaves of the sun: this frame's ray (rt_shadows.wgsl
+// `out_glass`) and its history, rgb the colour times the light and a the
+// light (cs_lights_reuse, `glass_history`), then what the frame binds
+// (cs_lights_filter, the frame's binding 31: common.wgsl `sun_glass`).
+@group(0) @binding(20) var sun_glass_now: texture_2d<f32>;
+@group(0) @binding(21) var prev_glass: texture_2d<f32>;
+@group(0) @binding(22) var out_glass_history: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(23) var glass_kept: texture_2d<f32>;
+@group(0) @binding(24) var out_glass: texture_storage_2d<rgba8unorm, write>;
+// cs_lights_filter: this frame's guide as cs_lights_reuse wrote it
+// (`out_guide`): the surfaces (`glass_of`).
+@group(0) @binding(26) var guide_now: texture_2d<f32>;
 
 // common.wgsl `ll_light_atten`.
 fn light_atten(d: f32, falloff: f32) -> f32 {
@@ -172,11 +229,22 @@ fn light_atten(d: f32, falloff: f32) -> f32 {
     return x * x * 2.0;
 }
 
-// The diffuse light point light `i` gives `world` facing `n`, unshadowed
-// (its luminance): what a choice is weighed by. 0 for a projector.
+// Where light `i`'s rays aim: a point light's centre, a projector's apex.
+fn light_aim(i: u32) -> vec3<f32> {
+    let lt = lights[i];
+    return select(lt.pos_radius.xyz, lt.apex.xyz, lt.source.y > 0.5);
+}
+
+// The diffuse light light `i` gives `world` facing `n`, unshadowed (its
+// luminance): what a choice is weighed by. A projector's within its
+// frustum only, from its apex, without its texture (common.wgsl
+// `projector_at`: the reach from the light's centre, the direction from
+// the apex).
 fn light_target(i: u32, world: vec3<f32>, n: vec3<f32>) -> f32 {
     let lt = lights[i];
-    if (lt.source.y > 0.5) {
+    // a projector whose shadows are off (rt_shadows.rs `traced_lights`):
+    // never drawn, its beam the maps' (common.wgsl `projector_at`)
+    if (lt.source.y > 1.5) {
         return 0.0;
     }
     let to_l = lt.pos_radius.xyz - world;
@@ -185,13 +253,35 @@ fn light_target(i: u32, world: vec3<f32>, n: vec3<f32>) -> f32 {
     if (dist >= radius) {
         return 0.0;
     }
-    let nl = dot(n, to_l / max(dist, 1e-4));
-    if (nl <= 0.0) {
-        return 0.0;
+    var l = to_l / max(dist, 1e-4);
+    if (lt.source.y > 0.5) {
+        let tc = lt.beam * vec4<f32>(world, 1.0);
+        if (tc.z < 0.0 || tc.w <= 0.0) {
+            return 0.0;
+        }
+        let uv = tc.xy / tc.w;
+        if (any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) {
+            return 0.0;
+        }
+        l = normalize(lt.apex.xyz - world);
     }
+    // A light behind the surface still counts, by `BEHIND`: the rays' normal
+    // is the mesh's, or the depth's on an edge (rt_history.wgsl
+    // `smooth_normal`), and the shading's own normal map or an edge's real
+    // normal may still face a light it turns from. A pixel no light reached
+    // was not shadowed at all (`cs_lights_reuse`: nothing to shadow), so a
+    // lamp behind a wall lit the rims of an avatar and the edges of the
+    // room in its colour (2026-11-22, grid report). Its ray is traced now,
+    // and the wall stops it.
+    let nl = max(dot(n, l), BEHIND);
     let lum = dot(lt.color_falloff.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
     return lum * light_atten(dist / radius, lt.color_falloff.w) * nl;
 }
+
+// The weight of a light behind the surface (`light_target`), as if it
+// came at 87°: small, so that its visibility weighs little in the share of
+// the lights the surface faces.
+const BEHIND: f32 = 0.05;
 
 // Point light `i`'s colour over its luminance: `light_target` times it is
 // the red, green and blue the light gives.
@@ -201,8 +291,8 @@ fn light_tint(i: u32) -> vec3<f32> {
 }
 
 // What a frame with no history found (`mid`'s z): how many of its
-// `RESET_RAYS` arrived (4 bits), then the tint (9 bits a colour: the mask
-// keeps 8).
+// `RESET_RAYS` arrived, each by the luminance the glass left of it,
+// rounded (4 bits), then the tint (9 bits a colour: the mask keeps 8).
 fn pack_reset(arrived: f32, tint: vec3<f32>) -> u32 {
     let t = vec3<u32>(round(clamp(tint, vec3<f32>(0.0), vec3<f32>(1.0)) * 511.0));
     return u32(arrived) | (t.r << 4u) | (t.g << 13u) | (t.b << 22u);
@@ -300,8 +390,9 @@ fn reset_light(r: u32, start: f32, total: f32, reaching: vec2<u32>, world: vec3<
     return to;
 }
 
+// (times Preferences' softness: 0 a point, whose shadows are sharp)
 fn light_size(i: u32) -> f32 {
-    return clamp(lights[i].source.x, LIGHT_SIZE_MIN, LIGHT_SIZE_MAX);
+    return clamp(lights[i].source.x, LIGHT_SIZE_MIN, LIGHT_SIZE_MAX) * params.tuning.x;
 }
 
 // The share of a frame in light `i`'s history: one of `HISTORY` for a
@@ -313,39 +404,181 @@ fn light_size(i: u32) -> f32 {
 // second: 9 levels of 255 off at worst with the 12 frames, 6 within a
 // diameter, 4 within a quarter; the shadow's grain the same.)
 fn light_fresh(i: u32) -> f32 {
-    return clamp(2.0 * lights[i].source.z / light_size(i), 1.0 / HISTORY, 1.0);
+    return clamp(2.0 * lights[i].source.z / max(light_size(i), LIGHT_SIZE_MIN), 1.0 / HISTORY, 1.0);
+}
+
+// The shadow ray of a lamp (`light_ray`) from `origin`, a pixel of the
+// view, along `dir`: xyz what the glass on its way leaves of the light's
+// red, green and blue (rt_common.wgsl `glass_passes`, the rule of PR
+// #3821), w how far something stopped it (any of what does, not the
+// nearest), or -1 when nothing did. Two stretches: up to `reach`, where it
+// enters the sphere about the lamp's prim, then with `past` on to `last`
+// past that prim, whose faces never stop it (`own`, rt_common.wgsl
+// `shadows_but`): every face of that stretch is a candidate the shader
+// tests, which costs more than the opaque traversal. `curved`: rt_common.wgsl
+// `shadows`. A pane met within `lying` of the ray's way (m) lies on the
+// surface (`lying_on`). The still faces' level and, with `posed`, the
+// moving faces' (a pane being carried); worn glass is not traced yet
+// (rt_shadows.rs `look`).
+//
+// The panes ride along with what stops the ray (`lamp_meets`): candidates
+// weighed and never committed, so what stops it is the same as with the
+// opaque faces alone, and a ray nothing stops has met every pane of its
+// way. One traversal of each level and stretch instead of two. Not for a
+// curved pixel, whose ray meets the faces from both sides where the panes
+// are met from their front (`SHADOW_CULL`): its glass keeps a ray of its
+// own. One query serves every trace: a pass pays for each ray query its
+// shader holds, run or not.
+fn lamp_trace(origin: vec3<f32>, dir: vec3<f32>, reach: f32, last: f32, past: bool, posed: bool, curved: bool, own: f32, lying: f32) -> vec4<f32> {
+    var through = vec3<f32>(1.0);
+    // (the light's own panes let it through wherever the ray meets them)
+    let own_pane = select(0.0, own, past);
+    let mask = select(SOLID | GLASS, SOLID, curved);
+    var rq: ray_query;
+    if (reach > 0.0) {
+        // (the curved pixel's own mesh is sorted by `shadows`, so its ray
+        // meets the faces from both sides)
+        let flags = select(RAY_FLAG_TERMINATE_ON_FIRST_HIT | SHADOW_CULL, RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_NO_OPAQUE, curved);
+        let ray = RayDesc(flags, mask, 0.0, reach, origin, dir);
+        rayQueryInitialize(&rq, scene_tlas, ray);
+        while (rayQueryProceed(&rq)) {
+            if (lamp_meets(rayQueryGetCandidateIntersection(&rq), false, dir, curved, 0.0, own_pane, lying, &through)) {
+                rayQueryConfirmIntersection(&rq);
+            }
+        }
+        var hit = rayQueryGetCommittedIntersection(&rq);
+        if (hit.kind == RAY_QUERY_INTERSECTION_NONE && posed) {
+            rayQueryInitialize(&rq, posed_tlas, ray);
+            while (rayQueryProceed(&rq)) {
+                if (lamp_meets(rayQueryGetCandidateIntersection(&rq), true, dir, curved, 0.0, own_pane, lying, &through)) {
+                    rayQueryConfirmIntersection(&rq);
+                }
+            }
+            hit = rayQueryGetCommittedIntersection(&rq);
+        }
+        if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
+            return vec4<f32>(0.0, 0.0, 0.0, hit.t);
+        }
+    }
+    let near = max(reach, 0.0);
+    if (past) {
+        let flags = RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_NO_OPAQUE | select(SHADOW_CULL, RAY_FLAG_NONE, curved);
+        let ray = RayDesc(flags, mask, near, last, origin, dir);
+        rayQueryInitialize(&rq, scene_tlas, ray);
+        while (rayQueryProceed(&rq)) {
+            if (lamp_meets(rayQueryGetCandidateIntersection(&rq), false, dir, curved, own, own_pane, lying, &through)) {
+                rayQueryConfirmIntersection(&rq);
+            }
+        }
+        var hit = rayQueryGetCommittedIntersection(&rq);
+        if (hit.kind == RAY_QUERY_INTERSECTION_NONE && posed) {
+            rayQueryInitialize(&rq, posed_tlas, ray);
+            while (rayQueryProceed(&rq)) {
+                if (lamp_meets(rayQueryGetCandidateIntersection(&rq), true, dir, curved, own, own_pane, lying, &through)) {
+                    rayQueryConfirmIntersection(&rq);
+                }
+            }
+            hit = rayQueryGetCommittedIntersection(&rq);
+        }
+        if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
+            return vec4<f32>(0.0, 0.0, 0.0, hit.t);
+        }
+    }
+    // a curved pixel's glass, over the same way: every pane is a
+    // candidate, none is committed
+    let far = select(reach, last, past);
+    if (curved && far > 0.0) {
+        let ray = RayDesc(SHADOW_CULL, GLASS, 0.0, far, origin, dir);
+        rayQueryInitialize(&rq, scene_tlas, ray);
+        while (rayQueryProceed(&rq)) {
+            through *= pane_passes(rayQueryGetCandidateIntersection(&rq), false, dir, own_pane, lying);
+        }
+        if (posed) {
+            rayQueryInitialize(&rq, posed_tlas, ray);
+            while (rayQueryProceed(&rq)) {
+                through *= pane_passes(rayQueryGetCandidateIntersection(&rq), true, dir, own_pane, lying);
+            }
+        }
+    }
+    return vec4<f32>(through, -1.0);
+}
+
+// Whether a candidate of a lamp's ray stops it (rt_common.wgsl
+// `shadows_but`, `own` the prim it passes on its last stretch). A pane of
+// glass (a blended face: the `GLASS` instances, none of them posed or
+// merged, rt_shadows.rs `look`) never does: what it leaves of the light
+// multiplies `through` (`pane_passes`, `own_pane` the prim whose panes let
+// it through).
+fn lamp_meets(c: RayIntersection, posed: bool, dir: vec3<f32>, curved: bool, own: f32, own_pane: f32, lying: f32, through: ptr<function, vec3<f32>>) -> bool {
+    if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
+        return false;
+    }
+    let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+    if ((record_vec(h.record, RECORD_FLAGS).x & FLAG_ALPHA_BLEND) != 0u) {
+        *through *= pane_passes(c, posed, dir, own_pane, lying);
+        return false;
+    }
+    return shadows_but(c, posed, dir, curved, own);
+}
+
+// `glass_passes`, 1 for a pane of the light's own prim (`own`) and for one
+// nearer than `lying` (`lying_on`).
+fn pane_passes(c: RayIntersection, posed: bool, dir: vec3<f32>, own: f32, lying: f32) -> vec3<f32> {
+    if (c.kind == RAY_QUERY_INTERSECTION_TRIANGLE && c.t < lying) {
+        return vec3<f32>(1.0);
+    }
+    if (own > 0.5 && c.kind == RAY_QUERY_INTERSECTION_TRIANGLE) {
+        let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+        if (f32(cull_face(h.record).object + 1u) == own) {
+            return vec3<f32>(1.0);
+        }
+    }
+    return glass_passes(c, posed, dir);
 }
 
 // The ray from `origin` to the point `u` (two numbers in 0..1) of the disc
-// light `i` shows it: -1 when nothing stands in its way, else the width of
-// the penumbra there (m): the light's width seen through what stopped the
-// ray, from as far behind it as the pixel is. `flat` is the normal of the
-// pixel's triangle.
-fn light_blocked(i: u32, origin: vec3<f32>, flat: vec3<f32>, u: vec2<f32>) -> f32 {
+// light `i` shows it: w -1 when nothing stands in its way, xyz then what
+// the glass on its way leaves of the light (`lamp_trace`); else w the
+// width of the penumbra there (m): the light's width seen through what
+// stopped the ray, from as far behind it as the pixel is. `flat` is the
+// normal of the pixel's triangle.
+fn light_ray(i: u32, origin: vec3<f32>, flat: vec3<f32>, u: vec2<f32>) -> vec4<f32> {
     let lt = lights[i];
     let size = light_size(i);
+    // the sphere about the light's prim, and the disc the rays aim at (a
+    // projector's about its apex)
     let centre = lt.pos_radius.xyz - origin;
-    let axis = centre / max(length(centre), 1e-6);
+    let aim = light_aim(i) - origin;
+    let axis = aim / max(length(aim), 1e-6);
     let side = normalize(cross(axis, select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(axis.z) > 0.9)));
     let up = cross(axis, side);
     let r = size * sqrt(u.x);
     let phi = 2.0 * PI * u.y;
-    let toward = centre + (side * cos(phi) + up * sin(phi)) * r;
+    let toward = aim + (side * cos(phi) + up * sin(phi)) * r;
     let span = length(toward);
     let dir = toward / max(span, 1e-6);
-    // up to where the ray enters the light's own prim
+    // up to where the ray enters the sphere that holds the light's own
+    // prim, then (`EMITTER_SPHERE` aside) on to the light past that prim
+    // alone, short of the light's point by a centimetre
     let body = max(lt.source.x, max(size, 0.05));
     let along = dot(centre, dir);
     let beside = dot(centre, centre) - along * along;
-    let reach = min(along - sqrt(max(body * body - beside, 0.0)), span);
-    if (reach <= 0.0) {
-        return -1.0;
+    let inside = body * body - beside;
+    // (a projector's ray may pass beside its prim's sphere)
+    let reach = select(span, min(along - sqrt(max(inside, 0.0)), span), inside > 0.0);
+    let posed = params.mode.y > 0.5;
+    let curved = dot(flat, dir) <= 0.0;
+    let last = span - 0.01;
+    let own = lt.source.w;
+    let past = !EMITTER_SPHERE && own > 0.5 && last > max(reach, 0.0);
+    // (the glass but the layers lying on the surface, `lying_on`)
+    let lying = lying_on(flat, dir, distance(origin, params.camera.xyz));
+    let traced = lamp_trace(origin, dir, reach, last, past, posed, curved, own, lying);
+    if (traced.w < 0.0) {
+        return traced;
     }
-    let t = blocked_at(origin, dir, reach, params.mode.y > 0.5, dot(flat, dir) <= 0.0);
-    if (t < 0.0) {
-        return -1.0;
-    }
-    return min(2.0 * size * t / max(span - t, 0.05), 4.0);
+    let t = traced.w;
+    return vec4<f32>(vec3<f32>(0.0), min(2.0 * size * t / max(span - t, 0.05), 4.0));
 }
 
 // The number that draws a pixel's light this frame: with rt_view.wgsl
@@ -371,13 +604,19 @@ fn unpack_normal(e: vec2<f32>) -> vec3<f32> {
     return normalize(n);
 }
 
-// Last frame's pixel of the same surface, or -1.
-fn history_pixel(pixel: vec2<i32>, world: vec3<f32>, dist: f32) -> vec3<i32> {
+// Last frame's pixel of the same surface, or -1: as far from last frame's
+// eye as this point was, and turned the same way as `n`. On distance
+// alone, the pixel by a room's corner took the other wall's history, which
+// is as far: its light slid along the corner as the view moved (2026-11-22,
+// grid report), and the anti-aliasing's history spread it further.
+fn history_pixel(pixel: vec2<i32>, world: vec3<f32>, dist: f32, n: vec3<f32>) -> vec3<i32> {
     let came = back_of(pixel, world, dist);
     if (params.mode.w > 0.5 && came.at.x >= 0.0) {
         let b = clamp(vec2<i32>(came.at), vec2<i32>(0), vec2<i32>(params.screen.xy) - vec2<i32>(1));
-        let was = textureLoad(prev_guide, b, 0).z;
-        if (was > 0.0 && abs(was - came.expected) < came.tolerance) {
+        let guide = textureLoad(prev_guide, b, 0);
+        let was = guide.z;
+        if (was > 0.0 && abs(was - came.expected) < came.tolerance
+            && dot(unpack_normal(guide.xy), n) > HISTORY_FACING) {
             return vec3<i32>(b, select(0, 1, came.moving));
         }
     }
@@ -427,7 +666,8 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     var chosen_target = 0.0;
     var sum = 0.0;
     var confidence = 0.0;
-    let few = count <= CANDIDATES;
+    let draws = candidates();
+    let few = count <= draws;
     if (count > 0u) {
         if (few) {
             let at = turn(id.xy, u32(params.mode.z)) * total;
@@ -444,11 +684,11 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             sum = total;
         } else {
-            for (var k = 0u; k < CANDIDATES; k++) {
+            for (var k = 0u; k < draws; k++) {
                 let entry = min(u32(rand(&seed) * f32(count)), count - 1u);
                 let i = nth_light(reaching, entry);
                 let p = light_target(i, world, n);
-                let weight = p * f32(count) / f32(CANDIDATES);
+                let weight = p * f32(count) / f32(draws);
                 sum += weight;
                 if (rand(&seed) * sum < weight) {
                     chosen = i;
@@ -460,7 +700,7 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // last frame's choice, of the same lights (ReSTIR's temporal reuse),
     // where the lights are too many to draw among them all
-    let back = history_pixel(pixel, world, dist);
+    let back = history_pixel(pixel, world, dist, n);
     if (!few && params.mode.w > 2.5 && back.x >= 0) {
         let prev = textureLoad(prev_choice, back.xy, 0);
         let row = u32(prev.x);
@@ -491,19 +731,22 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
         let reset = params.mode.w < 0.5;
         let rays = select(1u, RESET_RAYS, reset);
         let start = turn(id.xy, u32(params.mode.z));
-        // which of the rays arrived (a bit each)
+        // which of the rays arrived (a bit each), and what the glass left
+        // of their light (0 for one stopped)
         var arrived = 0u;
+        var through: array<vec3<f32>, RESET_RAYS>;
         var penumbra = 0.0;
         for (var r = 0u; r < rays; r++) {
             var to = chosen;
             if (reset) {
                 to = reset_light(r, start, total, reaching, world, n);
             }
-            let blocked = light_blocked(to, origin, flat, fract(at + f32(r) * vec2<f32>(0.7548777, 0.5698403)));
-            if (blocked < 0.0) {
+            let ray = light_ray(to, origin, flat, fract(at + f32(r) * vec2<f32>(0.7548777, 0.5698403)));
+            if (ray.w < 0.0) {
                 arrived |= 1u << r;
+                through[r] = ray.xyz;
             } else {
-                penumbra = blocked;
+                penumbra = ray.w;
             }
         }
         found = bitcast<u32>(penumbra);
@@ -513,17 +756,19 @@ fn cs_lights(@builtin(global_invocation_id) id: vec3<u32>) {
             // be more for every traced frame to keep across them
             var sent = vec3<f32>(0.0);
             var got = vec3<f32>(0.0);
+            var lit = 0.0;
             for (var r = 0u; r < RESET_RAYS; r++) {
                 let tint = light_tint(reset_light(r, start, total, reaching, world, n));
                 sent += tint;
-                got += select(vec3<f32>(0.0), tint, (arrived & (1u << r)) != 0u);
+                got += tint * through[r];
+                lit += dot(through[r], LUMA);
             }
             // (a colour none of the lights drawn has takes the share)
-            let count = f32(countOneBits(arrived));
-            let share = count / f32(RESET_RAYS);
-            found = pack_reset(count, select(vec3<f32>(share), got / max(sent, vec3<f32>(1e-6)), sent > vec3<f32>(0.0)));
+            let share = lit / f32(RESET_RAYS);
+            found = pack_reset(round(lit), select(vec3<f32>(share), got / max(sent, vec3<f32>(1e-6)), sent > vec3<f32>(0.0)));
         } else if (arrived != 0u) {
             word |= MID_SEEN;
+            found = pack4x8unorm(vec4<f32>(through[0], 0.0));
         }
     }
     textureStore(out_mid, pixel, vec4<u32>(word, bitcast<u32>(w), found, pack2x16snorm(pack_normal(n))));
@@ -542,6 +787,7 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         textureStore(out_choice, pixel, vec4<f32>(0.0));
         textureStore(out_share, pixel, vec4<f32>(1.0, 1.0, 0.0, 0.0));
         textureStore(out_guide, pixel, vec4<f32>(0.0));
+        textureStore(out_glass_history, pixel, vec4<f32>(1.0, 1.0, 1.0, 0.0));
         if (tinted) {
             textureStore(out_tint, pixel, vec4<f32>(1.0, 1.0, 1.0, 0.0));
         }
@@ -592,7 +838,9 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         // light, its weight here (ReSTIR's p̂ · W · M) and its visibility
         var light: array<u32, 5>;
         var weight: array<f32, 5>;
-        var seen: array<f32, 5>;
+        // what arrived of its light's red, green and blue (0 stopped, 1
+        // through no glass)
+        var seen: array<vec3<f32>, 5>;
         var confidence: array<f32, 5>;
         // how far the sample's pixel is (pixels), and the widest penumbra
         // their rays found (m)
@@ -601,14 +849,15 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         var samples = 0u;
         let angle = rand(&seed) * 2.0 * PI;
         // one light: its visibility from here is the share
-        let around = select(NEIGHBOURS, 0u, count == 1u);
+        let spread = neighbours();
+        let around = select(spread, 0u, count == 1u);
         for (var k = 0u; k <= around; k++) {
             var q = pixel;
             var m = own;
             var far = 0.0;
             if (k > 0u) {
                 // a golden-angle spiral, turned anew for each pixel and frame
-                let r = REUSE_RADIUS * sqrt((f32(k) - 0.5) / f32(NEIGHBOURS));
+                let r = REUSE_RADIUS * sqrt((f32(k) - 0.5) / f32(spread));
                 let a = angle + f32(k) * 2.39996;
                 q = pixel + vec2<i32>(round(vec2<f32>(cos(a), sin(a)) * r));
                 far = length(vec2<f32>(q - pixel));
@@ -634,9 +883,10 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
             // no sample stands for more than all the light here (one drawn
             // where its light hardly reaches would, where it reaches well)
             weight[samples] = min(light_target(row, world, n) * bitcast<f32>(m.y), total) * conf;
-            seen[samples] = select(0.0, 1.0, (m.x & MID_SEEN) != 0u);
+            let arrived = (m.x & MID_SEEN) != 0u;
+            seen[samples] = select(vec3<f32>(0.0), unpack4x8unorm(m.z).xyz, arrived);
             away[samples] = far;
-            penumbra = max(penumbra, bitcast<f32>(m.z));
+            penumbra = max(penumbra, select(bitcast<f32>(m.z), 0.0, arrived));
             confidence[samples] = conf;
             samples += 1u;
         }
@@ -665,7 +915,7 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         // ray from here to another of the lights showed no difference, for
         // a fifth of the pass.)
         let own_light = select(0xFFFFFFFFu, own.x & 0xFFu, (own.x & MID_DRAWN) != 0u);
-        let own_seen = select(0.0, 1.0, (own.x & MID_SEEN) != 0u);
+        let own_seen = select(vec3<f32>(0.0), unpack4x8unorm(own.z).xyz, (own.x & MID_SEEN) != 0u);
         let pixel_size = pixel_width(pixel, depth);
         let soft = 0.5 * penumbra / max(pixel_size, 1e-6);
         var arrived = 0.0;
@@ -677,7 +927,7 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         var reached_by = vec3<f32>(0.0);
         for (var k = 0u; k < samples; k++) {
             let v = select(seen[k], own_seen, light[k] == own_light && away[k] > soft);
-            arrived += weight[k] * v;
+            arrived += weight[k] * dot(v, LUMA);
             reached += weight[k];
             let by = weight[k] * light_tint(light[k]);
             arrived_by += by * v;
@@ -701,7 +951,9 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     let sun_now = 1.0 - textureLoad(sun_tex, pixel, 0).g;
     var sun = sun_now;
     var sun_frames = 1.0;
-    let back = history_pixel(pixel, world, dist);
+    // and the colour the glass gives it, the same way (`glass_history`)
+    var glass = vec4<f32>(textureLoad(sun_glass_now, pixel, 0).rgb, sun_now);
+    let back = history_pixel(pixel, world, dist, n);
     if (back.x >= 0) {
         let h = textureLoad(prev_share, back.xy, 0);
         let longest = select(HISTORY, HISTORY_MOVING, back.z > 0);
@@ -713,10 +965,31 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
             kept = min(kept, params.changes.z);
         }
         frames = min(h.a + 1.0, kept);
-        share = mix(h.r, sample, 1.0 / frames);
+        var was_share = h.r;
+        var was_tint = vec3<f32>(0.0);
+        if (tinted) {
+            was_tint = textureLoad(prev_tint, back.xy, 0).rgb;
+        }
+        if (total > 0.0 && abs(was_share - sample) > 0.002) {
+            // a history this frame's rays disagree with, as the sun's below:
+            // a penumbra's mixed rays (or the rays of lights that differ
+            // there) leave it be, rays that all agree around the pixel (the
+            // shadow of an avatar going by on a still wall, a still floor)
+            // bring it and its tint to them at once, and its length down by
+            // as much (2026-11-22, grid report of beta10: the own avatar's
+            // shadow from a street lamp trailed across a wall)
+            let range = lamp_range(pixel, size);
+            if (range.lo.w <= range.hi.w) {
+                let within = clamp(was_share, range.lo.w, range.hi.w);
+                frames = max(frames * (1.0 - abs(within - was_share)), 1.0);
+                was_share = within;
+                was_tint = clamp(was_tint, range.lo.rgb, range.hi.rgb);
+            }
+        }
+        share = mix(was_share, sample, 1.0 / frames);
         moment = mix(textureLoad(prev_guide, back.xy, 0).w, moment, 1.0 / frames);
         if (tinted) {
-            tint = mix(textureLoad(prev_tint, back.xy, 0).rgb, tint, 1.0 / frames);
+            tint = mix(was_tint, tint, 1.0 / frames);
         }
 
         var was = h.g;
@@ -748,12 +1021,154 @@ fn cs_lights_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         sun = mix(was, sun_now, 1.0 / sun_frames);
         // (the mask has 8 bits: nearer than that to lit or dark is it)
         sun = select(sun, round(sun), abs(sun - round(sun)) < 0.002);
+        glass = glass_history(pixel, size, glass_back(pixel, world, dist), glass, sun_frames);
     }
     textureStore(out_share, pixel, vec4<f32>(share, sun, sun_frames, frames));
+    textureStore(out_glass_history, pixel, glass);
     textureStore(out_guide, pixel, vec4<f32>(pack_normal(n), dist, moment));
     if (tinted) {
         textureStore(out_tint, pixel, vec4<f32>(tint, 0.0));
     }
+}
+
+// What this frame's lamp rays found around `pixel` (`SUN_RANGE` each way,
+// every other pixel of the square, as the sun's): the least and the most of
+// what arrived of their lights' red, green and blue (0 for a ray stopped,
+// what the glass left of it otherwise), and of its luminance in `w`. A
+// pixel no light was drawn at counts for nothing; `lo.w > hi.w` when none
+// was. A pixel's share and tint weigh rays from as far as `REUSE_RADIUS`
+// (`cs_lights_reuse`): these bounds pull its history only towards what the
+// rays nearest it found.
+struct LampRange {
+    lo: vec4<f32>,
+    hi: vec4<f32>,
+};
+
+fn lamp_range(pixel: vec2<i32>, size: vec2<i32>) -> LampRange {
+    var lo = vec4<f32>(1.0e9);
+    var hi = vec4<f32>(-1.0e9);
+    for (var y = -SUN_RANGE; y <= SUN_RANGE; y++) {
+        for (var x = -SUN_RANGE; x <= SUN_RANGE; x++) {
+            if (((x + y) & 1) != 0) {
+                continue;
+            }
+            let q = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
+            let m = textureLoad(mid, q, 0);
+            if ((m.x & MID_DRAWN) == 0u) {
+                continue;
+            }
+            let rgb = select(vec3<f32>(0.0), unpack4x8unorm(m.z).xyz, (m.x & MID_SEEN) != 0u);
+            let v = vec4<f32>(rgb, dot(rgb, LUMA));
+            lo = min(lo, v);
+            hi = max(hi, v);
+        }
+    }
+    return LampRange(lo, hi);
+}
+
+// Last frame's glass history where `pixel`'s surface stood, read between
+// the four pixels about that point (bilinear) of those that were of the
+// same surface (`history_pixel`'s test): the nearest pixel's alone, as the
+// share's, would draw a pane's coloured edge in steps where the view
+// moves. -1 where none was.
+fn glass_back(pixel: vec2<i32>, world: vec3<f32>, dist: f32) -> vec4<f32> {
+    let came = back_of(pixel, world, dist);
+    if (params.mode.w < 0.5 || came.at.x < 0.0) {
+        return vec4<f32>(-1.0);
+    }
+    let p = came.at - vec2<f32>(0.5);
+    let base = vec2<i32>(floor(p));
+    let f = p - floor(p);
+    var sum = vec4<f32>(0.0);
+    var weight = 0.0;
+    for (var k = 0; k < 4; k++) {
+        let o = vec2<i32>(k & 1, k >> 1u);
+        let q = base + o;
+        if (any(q < vec2<i32>(0)) || any(q >= vec2<i32>(params.screen.xy))) {
+            continue;
+        }
+        let was = textureLoad(prev_guide, q, 0).z;
+        if (was <= 0.0 || abs(was - came.expected) >= came.tolerance) {
+            continue;
+        }
+        let w = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
+        sum += textureLoad(prev_glass, q, 0) * w;
+        weight += w;
+    }
+    if (weight < 1e-3) {
+        return vec4<f32>(-1.0);
+    }
+    return sum / weight;
+}
+
+// The colour the glass gives the sun at `pixel` times its light (a stopped
+// ray's is 0, rt_shadows.wgsl), and that light (a), averaged over the
+// frames as the sun's shadow is (cs_lights_reuse, `frames` its length):
+// its ray goes to another point of the sun's disc each frame, so a pane's
+// edge is a penumbra of colour. Both are averaged alike, so that their
+// ratio is the colour of the rays that arrived (`glass_of`). A history
+// this frame's rays around the pixel disagree with (a pane carried off)
+// comes to them at once, its length down by as much. `was` is
+// `glass_back`'s, `now` this frame's ray.
+fn glass_history(pixel: vec2<i32>, size: vec2<i32>, back: vec4<f32>, now: vec4<f32>, frames_in: f32) -> vec4<f32> {
+    if (back.a < 0.0) {
+        return now;
+    }
+    var was = back;
+    var frames = frames_in;
+    let d = abs(was - now);
+    if (max(max(d.r, d.g), max(d.b, d.a)) > 0.002) {
+        var lo = now;
+        var hi = now;
+        for (var y = -SUN_RANGE; y <= SUN_RANGE; y++) {
+            for (var x = -SUN_RANGE; x <= SUN_RANGE; x++) {
+                // (every other pixel of the square, as the sun's)
+                if (((x + y) & 1) != 0) {
+                    continue;
+                }
+                let q = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
+                let v = vec4<f32>(textureLoad(sun_glass_now, q, 0).rgb, 1.0 - textureLoad(sun_tex, q, 0).g);
+                lo = min(lo, v);
+                hi = max(hi, v);
+            }
+        }
+        let within = clamp(was, lo, hi);
+        let m = abs(within - was);
+        frames = max(frames * (1.0 - max(max(m.r, m.g), max(m.b, m.a))), 1.0);
+        was = within;
+    }
+    return mix(was, now, 1.0 / frames);
+}
+
+// The colour the glass gives the sunlight that arrives at `pixel`: the
+// glass history's colour times the light over its light, over the pixels of its 3 × 3 on the same surface, which smooths what the
+// history's reprojection leaves of the rays' grain where the view moves.
+// A stopped ray counting white would pale a pane's colour within the
+// penumbra of another shadow; over the light, it does not count. Where
+// hardly any light arrives the colour fades to 1: it lights nothing there.
+fn glass_of(pixel: vec2<i32>) -> vec3<f32> {
+    let size = vec2<i32>(params.screen.xy);
+    let centre = textureLoad(guide_now, pixel, 0);
+    if (centre.z <= 0.0) {
+        return vec3<f32>(1.0);
+    }
+    let n = unpack_normal(centre.xy);
+    var colour = vec3<f32>(0.0);
+    var light = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let q = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
+            let g = textureLoad(guide_now, q, 0);
+            if (g.z <= 0.0 || abs(g.z - centre.z) > 0.01 + 0.02 * centre.z || dot(n, unpack_normal(g.xy)) < 0.9) {
+                continue;
+            }
+            let kept = textureLoad(glass_kept, q, 0);
+            colour += kept.rgb;
+            light += kept.a;
+        }
+    }
+    let through = clamp(colour / max(light, 1e-4), vec3<f32>(0.0), vec3<f32>(1.0));
+    return mix(vec3<f32>(1.0), through, clamp(light * 20.0, 0.0, 1.0));
 }
 
 @compute @workgroup_size(8, 8)
@@ -770,4 +1185,5 @@ fn cs_lights_filter(@builtin(global_invocation_id) id: vec3<u32>) {
         tint = clamp(textureLoad(tint_tex, pixel, 0).rgb, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     textureStore(out_mask, pixel, vec4<f32>(max(shadow, ray.r), tint));
+    textureStore(out_glass, pixel, vec4<f32>(glass_of(pixel), 1.0));
 }
