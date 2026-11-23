@@ -1079,19 +1079,21 @@ struct Pipelines {
     mask: wgpu::RenderPipeline,
     mask_2s: wgpu::RenderPipeline,
     /// The four above in their lean variants (`SCENE_VARIANT` 1 to 4,
-    /// scene_variant.rs): opaque, opaque 2s, mask, mask 2s in each.
-    lean: [[wgpu::RenderPipeline; 4]; 4],
+    /// scene_variant.rs): opaque, opaque 2s, mask, mask 2s in each. This and
+    /// the other `lean_*` are made on Metal only (`scene_variant::
+    /// specialised`), all or none.
+    lean: Option<[[wgpu::RenderPipeline; 4]; 4]>,
     /// `blend`, `blend_depth` and `blend_depth_color` in the same lean
     /// variants.
-    lean_blend: [[SidedPipelines; 3]; 4],
+    lean_blend: Option<[[SidedPipelines; 3]; 4]>,
     /// `blend` lean, specialised to a material class
     /// (`scene_variant::material_class`): [legacy material, PBR, neither] in
     /// each variant.
-    lean_blend_material: [[SidedPipelines; 3]; 4],
+    lean_blend_material: Option<[[SidedPipelines; 3]; 4]>,
     /// `lean` specialised to the material classes 1 to 3 (as
     /// `lean_blend_material`): [variant][class - 1][opaque, opaque 2s, mask,
     /// mask 2s].
-    lean_material: [[[wgpu::RenderPipeline; 4]; 3]; 4],
+    lean_material: Option<[[[wgpu::RenderPipeline; 4]; 3]; 4]>,
     water: wgpu::RenderPipeline,
     water_unclipped: Option<wgpu::RenderPipeline>,
     water_mask: wgpu::RenderPipeline,
@@ -2000,6 +2002,9 @@ pub(crate) struct Backend {
     /// What the renderer was made from, kept until its start is over: made,
     /// then the user's settings applied by a frame, with nothing refused.
     seed: Option<Box<BackendInit>>,
+    /// The scene pipelines are specialised (Metal: `scene_variant::
+    /// specialised`), their lean variants made with the others.
+    specialise: bool,
     /// Video memory refused part of what the start makes outside the render
     /// targets (the placeholders, probes, shadow atlases, culling and
     /// particle buffers…, or the atlases the settings make again): the
@@ -3894,6 +3899,7 @@ impl Backend {
     }
 
     fn make(init: BackendInit, egui_later: bool) -> Result<Backend, RenderError> {
+        let specialise = crate::scene_variant::specialised(init.adapter.get_info().backend);
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         let xr_seed = init.xr.as_ref().map(|_| Box::new(init.clone()));
         let second_seed = (!init.external).then(|| Box::new(init.clone()));
@@ -4433,6 +4439,7 @@ impl Backend {
             format,
             settings.gbuffer(),
             soft_path(&settings),
+            specialise,
         );
         let ssao = Self::make_ssao(&device);
         let gtao = crate::gtao::Gtao::new(&device);
@@ -4588,6 +4595,7 @@ impl Backend {
             ui_blur: None,
             oom,
             seed: None,
+            specialise,
             remake: false,
             targets_shrunk: false,
             ui_targets_backoff: crate::gpu_alloc::Backoff::default(),
@@ -5036,6 +5044,7 @@ impl Backend {
         surface_format: wgpu::TextureFormat,
         ssr: bool,
         soft: bool,
+        specialise: bool,
     ) -> Pipelines {
         // (without the stochastic transparency's passes: its own module,
         // `make_st`, when the method is first on)
@@ -5175,66 +5184,70 @@ impl Backend {
         // their lean variants (SCENE_VARIANT 1 to 4, scene_variant.rs)
         let lean_opaque = [1.0, 2.0, 3.0, 4.0].map(|v| [("SCENE_VARIANT", v)]);
         let lean_mask = [1.0, 2.0, 3.0, 4.0].map(|v| [a2c[0], ("SCENE_VARIANT", v)]);
-        let lean = [0, 1, 2, 3].map(|v| {
-            [
-                pipe(PipeDesc {
-                    gbuf: ssr,
-                    constants: &lean_opaque[v],
-                    ..base("opaque lean", "vs_main", g("fs_opaque", "fs_opaque_g"))
-                }),
-                pipe(PipeDesc {
-                    cull: None,
-                    gbuf: ssr,
-                    constants: &lean_opaque[v],
-                    ..base("opaque 2s lean", "vs_main", g("fs_opaque", "fs_opaque_g"))
-                }),
-                pipe(PipeDesc {
-                    a2c: samples > 1,
-                    gbuf: ssr,
-                    constants: &lean_mask[v],
-                    ..base("mask lean", "vs_main", g("fs_mask", "fs_mask_g"))
-                }),
-                pipe(PipeDesc {
-                    a2c: samples > 1,
-                    cull: None,
-                    gbuf: ssr,
-                    constants: &lean_mask[v],
-                    ..base("mask 2s lean", "vs_main", g("fs_mask", "fs_mask_g"))
-                }),
-            ]
+        let lean = specialise.then(|| {
+            [0, 1, 2, 3].map(|v| {
+                [
+                    pipe(PipeDesc {
+                        gbuf: ssr,
+                        constants: &lean_opaque[v],
+                        ..base("opaque lean", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                    }),
+                    pipe(PipeDesc {
+                        cull: None,
+                        gbuf: ssr,
+                        constants: &lean_opaque[v],
+                        ..base("opaque 2s lean", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                    }),
+                    pipe(PipeDesc {
+                        a2c: samples > 1,
+                        gbuf: ssr,
+                        constants: &lean_mask[v],
+                        ..base("mask lean", "vs_main", g("fs_mask", "fs_mask_g"))
+                    }),
+                    pipe(PipeDesc {
+                        a2c: samples > 1,
+                        cull: None,
+                        gbuf: ssr,
+                        constants: &lean_mask[v],
+                        ..base("mask 2s lean", "vs_main", g("fs_mask", "fs_mask_g"))
+                    }),
+                ]
+            })
         });
         // and specialised to the material classes 1 to 3
         let lean_opaque_material = [1.0, 2.0, 3.0, 4.0].map(|v| [1.0, 2.0, 3.0].map(|c| [("SCENE_VARIANT", v), ("MATERIAL_CLASS", c)]));
         let lean_mask_material =
             [1.0, 2.0, 3.0, 4.0].map(|v| [1.0, 2.0, 3.0].map(|c| [a2c[0], ("SCENE_VARIANT", v), ("MATERIAL_CLASS", c)]));
-        let lean_material = [0, 1, 2, 3].map(|v| {
-            [0, 1, 2].map(|c| {
-                [
-                    pipe(PipeDesc {
-                        gbuf: ssr,
-                        constants: &lean_opaque_material[v][c],
-                        ..base("opaque lean material", "vs_main", g("fs_opaque", "fs_opaque_g"))
-                    }),
-                    pipe(PipeDesc {
-                        cull: None,
-                        gbuf: ssr,
-                        constants: &lean_opaque_material[v][c],
-                        ..base("opaque 2s lean material", "vs_main", g("fs_opaque", "fs_opaque_g"))
-                    }),
-                    pipe(PipeDesc {
-                        a2c: samples > 1,
-                        gbuf: ssr,
-                        constants: &lean_mask_material[v][c],
-                        ..base("mask lean material", "vs_main", g("fs_mask", "fs_mask_g"))
-                    }),
-                    pipe(PipeDesc {
-                        a2c: samples > 1,
-                        cull: None,
-                        gbuf: ssr,
-                        constants: &lean_mask_material[v][c],
-                        ..base("mask 2s lean material", "vs_main", g("fs_mask", "fs_mask_g"))
-                    }),
-                ]
+        let lean_material = specialise.then(|| {
+            [0, 1, 2, 3].map(|v| {
+                [0, 1, 2].map(|c| {
+                    [
+                        pipe(PipeDesc {
+                            gbuf: ssr,
+                            constants: &lean_opaque_material[v][c],
+                            ..base("opaque lean material", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                        }),
+                        pipe(PipeDesc {
+                            cull: None,
+                            gbuf: ssr,
+                            constants: &lean_opaque_material[v][c],
+                            ..base("opaque 2s lean material", "vs_main", g("fs_opaque", "fs_opaque_g"))
+                        }),
+                        pipe(PipeDesc {
+                            a2c: samples > 1,
+                            gbuf: ssr,
+                            constants: &lean_mask_material[v][c],
+                            ..base("mask lean material", "vs_main", g("fs_mask", "fs_mask_g"))
+                        }),
+                        pipe(PipeDesc {
+                            a2c: samples > 1,
+                            cull: None,
+                            gbuf: ssr,
+                            constants: &lean_mask_material[v][c],
+                            ..base("mask 2s lean material", "vs_main", g("fs_mask", "fs_mask_g"))
+                        }),
+                    ]
+                })
             })
         });
         // pass B
@@ -5374,34 +5387,36 @@ impl Backend {
                 [("BLEND_EARLY_DISCARD", 1.0), ("WATER_CLIP", 1.0), ("SCENE_VARIANT", v)],
             ]
         });
-        let lean_blend = [0, 1, 2, 3].map(|v| {
-            let [plain, early] = &lean_blend_constants[v];
-            [
-                sided_pipe(PipeDesc {
-                    blend: Some(suppress),
-                    write_mask: wgpu::ColorWrites::ALL,
-                    depth_write: false,
-                    depth_compare: static_compare,
-                    constants: plain,
-                    ..base("blend lean", "vs_main", "fs_blend")
-                }),
-                sided_pipe(PipeDesc {
-                    blend: Some(suppress),
-                    write_mask: wgpu::ColorWrites::ALL,
-                    depth_write: true,
-                    depth_compare: wgpu::CompareFunction::Greater,
-                    constants: early,
-                    ..base("blend rigged lean", "vs_main", "fs_blend")
-                }),
-                sided_pipe(PipeDesc {
-                    blend: Some(suppress),
-                    write_mask: wgpu::ColorWrites::ALL,
-                    depth_write: false,
-                    depth_compare: wgpu::CompareFunction::GreaterEqual,
-                    constants: early,
-                    ..base("blend rigged colour lean", "vs_main", "fs_blend")
-                }),
-            ]
+        let lean_blend = specialise.then(|| {
+            [0, 1, 2, 3].map(|v| {
+                let [plain, early] = &lean_blend_constants[v];
+                [
+                    sided_pipe(PipeDesc {
+                        blend: Some(suppress),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: false,
+                        depth_compare: static_compare,
+                        constants: plain,
+                        ..base("blend lean", "vs_main", "fs_blend")
+                    }),
+                    sided_pipe(PipeDesc {
+                        blend: Some(suppress),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: true,
+                        depth_compare: wgpu::CompareFunction::Greater,
+                        constants: early,
+                        ..base("blend rigged lean", "vs_main", "fs_blend")
+                    }),
+                    sided_pipe(PipeDesc {
+                        blend: Some(suppress),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: false,
+                        depth_compare: wgpu::CompareFunction::GreaterEqual,
+                        constants: early,
+                        ..base("blend rigged colour lean", "vs_main", "fs_blend")
+                    }),
+                ]
+            })
         });
         // and the plain one specialised to the material classes 1 to 3
         let lean_blend_material_constants = [1.0, 2.0, 3.0, 4.0].map(|v| {
@@ -5414,15 +5429,17 @@ impl Backend {
                 ]
             })
         });
-        let lean_blend_material = [0, 1, 2, 3].map(|v| {
-            [0, 1, 2].map(|class| {
-                sided_pipe(PipeDesc {
-                    blend: Some(suppress),
-                    write_mask: wgpu::ColorWrites::ALL,
-                    depth_write: false,
-                    depth_compare: static_compare,
-                    constants: &lean_blend_material_constants[v][class],
-                    ..base("blend lean material", "vs_main", "fs_blend")
+        let lean_blend_material = specialise.then(|| {
+            [0, 1, 2, 3].map(|v| {
+                [0, 1, 2].map(|class| {
+                    sided_pipe(PipeDesc {
+                        blend: Some(suppress),
+                        write_mask: wgpu::ColorWrites::ALL,
+                        depth_write: false,
+                        depth_compare: static_compare,
+                        constants: &lean_blend_material_constants[v][class],
+                        ..base("blend lean material", "vs_main", "fs_blend")
+                    })
                 })
             })
         });
@@ -7415,6 +7432,7 @@ impl Backend {
                     self.config.format,
                     s.gbuffer(),
                     soft,
+                    self.specialise,
                 );
                 let impostors = Impostors::make_pipelines(
                     &self.device,
@@ -7447,6 +7465,7 @@ impl Backend {
             self.impostors.layout.clone(),
         ];
         let format = self.config.format;
+        let specialise = self.specialise;
         let spawned = std::thread::Builder::new().name("aurora-pipelines".into()).spawn(move || {
             let [frame, records, tex, shadow, post, bloom, gbuf, impostor] = &layouts;
             let scene = Self::make_pipelines(
@@ -7461,6 +7480,7 @@ impl Backend {
                 format,
                 ssr,
                 soft,
+                specialise,
             );
             let impostors = Impostors::make_pipelines(&device, impostor, frame, records, tex, samples, ssr, soft);
             // (refused when other settings came meanwhile: the set is dropped)
@@ -11424,13 +11444,18 @@ impl Backend {
         // the variant of the scene shader's pipelines this frame, opaque and
         // blended alike: a lean one when no face can take a path it leaves
         // out (scene_variant.rs)
-        let variant = crate::scene_variant::choose(crate::scene_variant::FrameState {
-            light_mode: scene_light_mode,
-            classic: scene_classic,
-            water_effects: self.water_effects.shown_flags,
-            rez: rez_records || (f.rez_gradient[1][3] >= 0.5 && textures_loading),
-            portal_records,
-        });
+        // (always the full one where they are not specialised: Vulkan)
+        let variant = if self.pipelines.lean.is_some() {
+            crate::scene_variant::choose(crate::scene_variant::FrameState {
+                light_mode: scene_light_mode,
+                classic: scene_classic,
+                water_effects: self.water_effects.shown_flags,
+                rez: rez_records || (f.rez_gradient[1][3] >= 0.5 && textures_loading),
+                portal_records,
+            })
+        } else {
+            0
+        };
         stats.scene_variant = variant;
         // ---- scene pass A: sky, terrain, opaque, masked
         {
@@ -11520,17 +11545,17 @@ impl Backend {
             draw(&mut pass, &self.pipelines.terrain_pbr, rg.terrain_pbr);
             draw(&mut pass, &self.pipelines.terrain_pbr, rg.terrain_mask);
             pass_mark(&mut pass, MARK_TERRAIN_END);
-            let [opaque, opaque_2s, mask, mask_2s] = match variant {
-                0 => [
+            let [opaque, opaque_2s, mask, mask_2s] = match (variant, &self.pipelines.lean) {
+                (v @ 1.., Some(lean)) => {
+                    let l = &lean[v as usize - 1];
+                    [&l[0], &l[1], &l[2], &l[3]]
+                }
+                _ => [
                     &self.pipelines.opaque,
                     &self.pipelines.opaque_2s,
                     &self.pipelines.mask,
                     &self.pipelines.mask_2s,
                 ],
-                v => {
-                    let l = &self.pipelines.lean[v as usize - 1];
-                    [&l[0], &l[1], &l[2], &l[3]]
-                }
             };
             let scene_pipes = [
                 (opaque, rg.opaque),
@@ -11543,10 +11568,9 @@ impl Backend {
                 // the CPU lists in runs of one material class, each with its
                 // class's pipeline (`scene_variant::material_class`); the GPU
                 // bins stay generic
-                if variant == 0 || r.1 == 0 {
-                    draw(&mut pass, pipe, r);
-                } else {
-                    let mats = &self.pipelines.lean_material[variant as usize - 1];
+                let lean_material = self.pipelines.lean_material.as_ref().filter(|_| variant != 0 && r.1 != 0);
+                if let Some(lean_material) = lean_material {
+                    let mats = &lean_material[variant as usize - 1];
                     for (run, class) in material_runs(&lists.scene_material[b], 0..r.1) {
                         let p = match class {
                             1..=3 => &mats[usize::from(class - 1)][b],
@@ -11554,6 +11578,8 @@ impl Backend {
                         };
                         draw(&mut pass, p, (r.0 + u64::from(run.start) * stride, run.end - run.start));
                     }
+                } else {
+                    draw(&mut pass, pipe, r);
                 }
                 draw_bin(&mut pass, Some(pipe), b, b);
             }
@@ -11927,25 +11953,24 @@ impl Backend {
         let rest_from = if exact.is_some() { bn } else { n_depth };
         // the blended faces' pipelines in this frame's variant of the scene
         // shader (scene_variant.rs; `blend_late` is a comparison, full only)
-        let [blend_lean, blend_depth_pipe, blend_depth_color_pipe] = match variant {
-            0 => [
+        let [blend_lean, blend_depth_pipe, blend_depth_color_pipe] = match (variant, &self.pipelines.lean_blend) {
+            (v @ 1.., Some(lean)) => {
+                let l = &lean[v as usize - 1];
+                [&l[0], &l[1], &l[2]]
+            }
+            _ => [
                 &self.pipelines.blend,
                 &self.pipelines.blend_depth,
                 &self.pipelines.blend_depth_color,
             ],
-            v => {
-                let l = &self.pipelines.lean_blend[v as usize - 1];
-                [&l[0], &l[1], &l[2]]
-            }
         };
         let late = self.pipelines.blend_late.as_ref().filter(|_| f.blend_late_discard);
         let blend_pipe = late.unwrap_or(blend_lean);
         // the lean pipelines specialised to the faces' material classes
         // (`scene_variant::material_class`; not the comparison of `late`)
-        let blend_material = match variant {
-            0 => None,
-            _ if late.is_some() => None,
-            v => Some(&self.pipelines.lean_blend_material[v as usize - 1]),
+        let blend_material = match (variant, &self.pipelines.lean_blend_material) {
+            (v @ 1.., Some(lean)) if late.is_none() => Some(&lean[v as usize - 1]),
+            _ => None,
         };
         // a range of blended faces in runs of one material class, each with
         // its class's pipelines (the generic `pipe` for class 0)

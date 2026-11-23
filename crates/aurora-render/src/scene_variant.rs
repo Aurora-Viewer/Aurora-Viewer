@@ -18,8 +18,13 @@
 //! their order, in runs of one class: a face never changes place, so what
 //! covers what (and the order of the blended faces) is unchanged.
 //!
+//! Metal only (`specialised`): the occupancy problem is Apple's, and on
+//! Vulkan most opaque faces go through the GPU-culled bins, which stay
+//! generic. Elsewhere the lean pipelines are never made and every frame
+//! draws with the full variant, as before.
+//!
 //! `AURORA_SCENE_VARIANT=full` keeps the full variant and the generic
-//! pipelines, `lean` takes the lean ones whenever allowed (the default), for a
+//! pipelines on Metal too (the lean ones are then not made), for a
 //! comparison.
 
 /// Debug views (`debug_view`, common.wgsl): the low byte of
@@ -27,6 +32,17 @@
 const DEBUG_VIEW: u32 = 0xff;
 /// `LEGACY_NAN_CHECK` of object.wgsl.
 const LEGACY_NAN_CHECK: u32 = 0x40_0000;
+
+/// Whether the scene pipelines are specialised on this backend: Metal,
+/// unless `AURORA_SCENE_VARIANT=full`. When not, the lean pipelines are not
+/// made and `choose` is not asked.
+pub(crate) fn specialised(backend: wgpu::Backend) -> bool {
+    backend_specialised(backend) && !forced_full()
+}
+
+fn backend_specialised(backend: wgpu::Backend) -> bool {
+    backend == wgpu::Backend::Metal
+}
 
 /// What decides the variant, as the frame's uniforms hold it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -50,7 +66,7 @@ pub(crate) struct FrameState {
 /// sky, 2 lean with a sky with a probe ambiance, 3 and 4 the same with the
 /// rez grid.
 pub(crate) fn choose(s: FrameState) -> u32 {
-    let v = if forced_full() { 0 } else { variant(s) };
+    let v = variant(s);
     // the log says when the variant changes, and why
     static LAST: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
     if LAST.swap(v, std::sync::atomic::Ordering::Relaxed) != v {
@@ -76,7 +92,7 @@ fn variant(s: FrameState) -> u32 {
 /// blended pass holds fewer registers; the light is the same.
 pub(crate) fn material_class(flags: u32) -> u8 {
     use crate::types::flags;
-    if flags & (flags::FULLBRIGHT | flags::PORTAL_EFFECT) != 0 || forced_full() {
+    if flags & (flags::FULLBRIGHT | flags::PORTAL_EFFECT) != 0 {
         0
     } else if flags & flags::PBR != 0 {
         2
@@ -106,6 +122,20 @@ fn forced_full() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_metal_takes_the_specialised_pipelines() {
+        assert!(backend_specialised(wgpu::Backend::Metal));
+        for other in [
+            wgpu::Backend::Vulkan,
+            wgpu::Backend::Dx12,
+            wgpu::Backend::Gl,
+            wgpu::Backend::BrowserWebGpu,
+            wgpu::Backend::Noop,
+        ] {
+            assert!(!backend_specialised(other), "{other:?}");
+        }
+    }
 
     #[test]
     fn blended_faces_take_the_pipeline_of_their_material() {
