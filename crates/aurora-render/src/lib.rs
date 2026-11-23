@@ -319,6 +319,7 @@ mod shader_tests {
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
             return;
         };
+        let fragment = crate::test_gpu::fragment_inv_w(fragment, &adapter);
         let features = adapter.features() & wgpu::Features::DEPTH_CLIP_CONTROL;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: features,
@@ -659,6 +660,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
         let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
         let env = include_str!("shaders/env.wgsl");
         let depth = &env[env.find("fn water_interface_depth(").expect("depth")..env.find("// Event history").expect("end")];
+        let depth = crate::test_gpu::fragment_inv_w(depth, &adapter);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water exclusion regression"),
             source: wgpu::ShaderSource::Wgsl(
