@@ -1805,9 +1805,10 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         // softenLightF: scol = max(shadow, emissive). The sun lights only
         // faces turned to it (min(n.l^1.2, shadow), the PBR sun under n.l >
         // 0): turned away, the shadow changes nothing but a legacy
-        // material's environment and highlights, and its taps are skipped
+        // material's environment and highlights, and the lean variants
+        // (Metal) skip its taps; the full one keeps them, as before
         var sh = 1.0;
-        if (dot(m.n, frame.sun_dir.xyz) > 0.0 || (!rec_pbr(rec.flags.x) && (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0))) {
+        if (!scene_lean() || dot(m.n, frame.sun_dir.xyz) > 0.0 || (!rec_pbr(rec.flags.x) && (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0))) {
             sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
         }
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
@@ -1820,9 +1821,14 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         } else {
             col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
             col = legacy_light(col, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, shadow_lift(sh), ll_sun_linear(a), 1.0);
-            // ll_local_diffuse + legacy_local_spec x ll_local_scale, in one walk
-            let both = ll_local_legacy(m.color.rgb, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy);
-            local = both[0] + both[1] * ll_local_scale();
+            if (scene_lean()) {
+                // the same in one walk of the lights (lean variants, Metal)
+                let both = ll_local_legacy(m.color.rgb, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy);
+                local = both[0] + both[1] * ll_local_scale();
+            } else {
+                local = ll_local_diffuse(m.color.rgb, m.n, in.world_pos, in.clip.xy)
+                    + legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy) * ll_local_scale();
+            }
         }
         col = (col + m.emissive) * ll_final_scale() + local;
         // (ll_haze scales what it is given by a.atten, then adds its glow)
