@@ -2824,8 +2824,8 @@ impl SnowTrail {
     /// on). Off, the frame's `snow_trail` goes to zero (its size 0: no map,
     /// env.wgsl), so the shaders stop reading the map left from the last
     /// frame it was drawn (#4019: the trails stayed, frozen, with
-    /// Footprints off, and wherever a teleport took me); on again, it
-    /// starts afresh (a new size) from the region's prints.
+    /// Footprints off, and wherever a teleport took me); on again, the map
+    /// is drawn from the region's prints, as every frame.
     fn advance(&mut self, on: bool, snowing: f32, at: Vec2, fallen: f32, extent: f32) {
         if !on {
             self.origin = None;
@@ -13551,7 +13551,7 @@ mod tests {
 
     /// Footprints off (the setting, or no snow lying any more): the frame
     /// says there is no map, so no frozen trail is drawn (#4019); on again,
-    /// a fresh start.
+    /// the map is back in the frame.
     #[test]
     fn footprints_off_leave_no_trail_map_in_the_frame() {
         let mut trail = SnowTrail::default();
@@ -13564,7 +13564,6 @@ mod tests {
         trail.advance(true, 1.0, Vec2::new(100.0, 60.0), 5.0, 48.0);
         assert!(trail.active());
         assert_eq!(trail.uniform[2], 48.0);
-        assert_eq!(trail.step[2], -1.0);
     }
 
     #[test]

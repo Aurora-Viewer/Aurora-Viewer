@@ -54,7 +54,7 @@ pub fn view(frame: u64) -> Option<(Vec3, Vec3)> {
 /// the settings, which the demo shares with the viewer's own file).
 pub fn weather(frame: u64, now: &mut crate::weather::WeatherSettings) {
     if off_frame().is_some_and(|f| frame >= f) {
-        if frame == off_frame().unwrap_or_default() {
+        if off_frame() == Some(frame) {
             log::info!("demo footprints: Footprints off at frame {frame}");
         }
         now.snow_footprints = false;
