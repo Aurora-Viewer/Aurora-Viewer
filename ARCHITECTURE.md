@@ -1063,6 +1063,20 @@ object stops the tracking. The Preferences intensity control
 scales that translation from 0% to 500%; 100% is the default and the unscaled
 behavior.
 
+`world/parcel_env.rs` follows the agent's parcel for the environments saved per
+parcel: it knows the parcel by its region's UUID (RegionHandshake) and its local
+id (ParcelProperties), as the Legacy Viewer's media autoplay does
+(LLViewerParcelMediaAutoPlay), and asks the server nothing. A save also keeps the
+parcel's area and bounding box and is not put on once they differ (a join or a
+division gives a local id out again). It tells `EnvSelector` to set the local
+environment aside and bring it back (`hold_parcel`, `settle_parcel`). The saves
+hold asset ids, so they live in the account's `parcel_environments-<grid>.json`
+(`Saves`, written off the frame thread like `favorites.rs`; in memory in the
+demo), never in the shared settings nor in a settings backup; Preferences lists
+them from `OptionsUi::parcel_environments`, names only. The session's
+`local_environment_data.bin` keeps the set-aside environment, never a parcel's.
+`demo_parcel_env.rs` is its demo.
+
 `world/parcel_visibility.rs` owns saved parcel-isolation modes, region UUID/local
 parcel identities and exact bitmap membership. Independent same-owner and
 same-group options walk adjoining cells, including connected region borders.
