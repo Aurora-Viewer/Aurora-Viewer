@@ -10,7 +10,7 @@
 //! pages at once), counted for the sidebar's chips (`Count`), put back to
 //! their default (`Reset`), or listed for the tests (`Collect`).
 
-use super::{OptionsResult, OptionsUi, Page};
+use super::{OptionsResult, OptionsUi, Page, RowFlash, with_setting_labels};
 use crate::settings::Settings;
 use crate::theme::Palette;
 use aurora_i18n::UiUpper;
@@ -116,11 +116,11 @@ impl<M: Fn(&Settings, &Settings) -> bool, R: Fn(&mut Settings, &Settings)> Track
 
 /// `field!(lookat.private)`: the [`F`] of a setting.
 macro_rules! field {
-    ($($f:ident).+) => {
+    ($first:ident $(.$rest:ident)*) => {
         $crate::ui::options::cx::F {
-            path: stringify!($($f).+),
-            get: |s: &$crate::settings::Settings| &s.$($f).+,
-            get_mut: |s: &mut $crate::settings::Settings| &mut s.$($f).+,
+            path: concat!(stringify!($first) $(, ".", stringify!($rest))*),
+            get: |s: &$crate::settings::Settings| &s.$first $(.$rest)*,
+            get_mut: |s: &mut $crate::settings::Settings| &mut s.$first $(.$rest)*,
         }
     };
 }
@@ -316,11 +316,17 @@ pub(super) struct Cx<'a> {
     pub counts: Counts,
     /// Rows declared so far (the number on a cog).
     rows_seen: usize,
+    /// Rows drawn (a borrowed pass draws only the rows it picked).
+    pub drawn: usize,
     /// The rows of the group are greyed (`greyed`).
     greyed: bool,
+    /// A conditional branch retained for search and counting, but hidden on its page.
+    hidden_on_page: bool,
     /// Another page's rows drawn here too (`borrow`): the settings they
     /// edit; the page's other rows, groups and notes are skipped.
     pick: Option<Vec<&'static str>>,
+    // Reuse the row's path buffer across this page pass.
+    row_paths: Vec<&'static str>,
     pub collected: Vec<(Page, &'static str)>,
     /// `Mode::Collect`: each setting a row edits, with its label and hint.
     pub described: Vec<(&'static str, String, String)>,
@@ -343,18 +349,29 @@ impl<'a> Cx<'a> {
         // DragValue uses interact_size.x for its button AND text editor.
         // Reserve its slot before measuring the right-aligned controls:
         // changing digits, units or a named value must not move the rail.
+        // Measured once per frame and font: Phototools makes several `Cx`
+        // in a frame (one per collapsing section).
         let number_width = if mode.draws() {
             let font = ui.style().drag_value_text_style.resolve(ui.style());
-            [
-                i32::MIN.to_string(),
-                format!("65536{}", aurora_i18n::tr!("bandwidth-kbps-suffix")),
-                aurora_i18n::tr!("ui-options-away-disabled").to_owned(),
-                aurora_i18n::tr!("ui-options-unlimited").to_owned(),
-            ]
-            .into_iter()
-            .map(|text| ui.painter().layout_no_wrap(text, font.clone(), p.ink).size().x)
-            .fold(0.0, f32::max)
-                + 2.0 * ui.spacing().button_padding.x
+            let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
+            let pad = ui.spacing().button_padding.x;
+            match &st.number_width {
+                Some((at, f, width, padding)) if *at == pass && *f == font && *padding == pad => *width,
+                _ => {
+                    let width = [
+                        i32::MIN.to_string(),
+                        format!("65536{}", aurora_i18n::tr!("bandwidth-kbps-suffix")),
+                        aurora_i18n::tr!("ui-options-away-disabled").to_owned(),
+                        aurora_i18n::tr!("ui-options-unlimited").to_owned(),
+                    ]
+                    .into_iter()
+                    .map(|text| ui.painter().layout_no_wrap(text, font.clone(), p.ink).size().x)
+                    .fold(0.0, f32::max)
+                        + 2.0 * pad;
+                    st.number_width = Some((pass, font, width, pad));
+                    width
+                }
+            }
         } else {
             0.0
         };
@@ -379,8 +396,11 @@ impl<'a> Cx<'a> {
             block: None,
             counts: Counts::default(),
             rows_seen: 0,
+            drawn: 0,
             greyed: false,
+            hidden_on_page: false,
             pick: None,
+            row_paths: Vec::new(),
             collected: Vec::new(),
             described: Vec::new(),
             changed: false,
@@ -447,8 +467,11 @@ impl<'a> Cx<'a> {
     pub fn conditional(&mut self, visible: bool, body: impl FnOnce(&mut Self)) {
         if self.mode != Mode::Show || visible {
             let before = self.greyed;
+            let hidden = self.hidden_on_page;
             self.greyed |= !visible;
+            self.hidden_on_page |= !visible;
             body(self);
+            self.hidden_on_page = hidden;
             self.greyed = before;
         }
     }
@@ -485,7 +508,9 @@ impl<'a> Cx<'a> {
     }
 
     /// A titled group of rows: a small-caps title and its line, then the
-    /// rows in two columns.
+    /// rows in two columns. An empty `title` is an untitled group: no title
+    /// bar and no space after it, for a window whose collapsing sections
+    /// name their rows (Phototools).
     pub fn group(&mut self, title: &str, body: impl FnOnce(&mut Self)) {
         if self.pick.is_some() {
             // a borrowed row joins the group it is shown in
@@ -499,14 +524,16 @@ impl<'a> Cx<'a> {
         self.end_block();
         self.end_line();
         let before = std::mem::replace(&mut self.group, title.to_owned());
-        if self.mode == Mode::Show {
+        // an untitled group (Phototools' collapsing sections name theirs)
+        // draws no title bar
+        if self.mode == Mode::Show && !title.is_empty() {
             self.group_title(title);
         }
         self.group_untitled = matches!(self.mode, Mode::Search | Mode::Modified);
         body(self);
         self.end_block();
         self.end_line();
-        if self.mode == Mode::Show || (self.mode.draws() && !self.group_untitled) {
+        if !title.is_empty() && (self.mode == Mode::Show || (self.mode.draws() && !self.group_untitled)) {
             self.ui.add_space(14.0);
         }
         self.group = before;
@@ -630,6 +657,17 @@ impl<'a> Cx<'a> {
                 return false;
             }
             Mode::Count => {
+                if !self.hidden_on_page
+                    && self.st.pending_setting.as_deref().is_some_and(|wanted| {
+                        self.row_paths.clear();
+                        t.paths(&mut self.row_paths);
+                        self.row_paths.contains(&wanted) && with_setting_labels(|labels| labels.get(wanted).is_some_and(Option::is_some))
+                    })
+                {
+                    self.st.go_to = Some((self.page, self.tab, Some(RowFlash::Link(id))));
+                    self.st.open_parent = self.parent.as_ref().map(|p| p.id);
+                    self.st.pending_setting = None;
+                }
                 if modified {
                     Counts::add(&mut self.counts.modified, self.page);
                 }
@@ -658,7 +696,7 @@ impl<'a> Cx<'a> {
                 .is_some_and(|(page, tab, l)| page == self.page && tab == self.tab && l == label)
         {
             self.st.reveal = None;
-            self.st.flash = Some((id, self.ui.input(|i| i.time)));
+            self.st.flash = Some((RowFlash::GoTo(id), self.ui.input(|i| i.time)));
             self.st.flash_scroll = true;
         }
         if self.group_untitled {
@@ -666,6 +704,7 @@ impl<'a> Cx<'a> {
             self.crumb();
             self.group_untitled = false;
         }
+        self.drawn += 1;
         let changed = self.draw_row(id, label, hint, t, modified, &next, body);
         self.changed |= changed;
         changed
@@ -1086,7 +1125,34 @@ impl<'a> Cx<'a> {
         if !section_body {
             self.ui.painter().galley(label_pos, galley.clone(), ink);
         }
-        if !hint.is_empty() {
+        // A section body has no separate label: its control owns this space.
+        let link_path = if section_body || self.hidden_on_page {
+            None
+        } else {
+            self.row_paths.clear();
+            t.paths(&mut self.row_paths);
+            with_setting_labels(|labels| {
+                self.row_paths
+                    .iter()
+                    .copied()
+                    .find(|path| labels.get(*path).is_some_and(Option::is_some))
+            })
+        };
+        if let Some(path) = link_path {
+            let label_response = self.ui.interact(label_rect, id.with("label"), Sense::click());
+            let label_response = if hint.is_empty() {
+                label_response
+            } else {
+                label_response.on_hover_text(hint)
+            };
+            crate::ui::menu::context_menu(&label_response, &p, |ui| {
+                if crate::ui::menu::item(ui, &p, "link-filled", aurora_i18n::tr!("ui-options-copy-setting-link"))
+                    && let Some(url) = crate::slapp::preference_link(path)
+                {
+                    ui.ctx().copy_text(url);
+                }
+            });
+        } else if !hint.is_empty() {
             self.ui.interact(label_rect, id.with("label"), Sense::hover()).on_hover_text(hint);
         }
         let mut after = label_rect.right() + 6.0;
@@ -1109,7 +1175,7 @@ impl<'a> Cx<'a> {
             let ink = if resp.hovered() { p.ink } else { p.muted };
             crate::ui::widgets::paint_glyph(self.ui.painter(), "arrow-right", go.center(), 13.0, ink);
             if resp.clicked() {
-                self.st.go_to = Some((self.page, self.tab, Some(id)));
+                self.st.go_to = Some((self.page, self.tab, Some(RowFlash::GoTo(id))));
                 self.st.open_parent = self.parent.as_ref().map(|p| p.id);
             }
         }
@@ -1182,12 +1248,12 @@ impl<'a> Cx<'a> {
 
         // the row's face: hovered, or lit a moment after "Go to"
         let hovered = self.ui.rect_contains_pointer(row) && self.ui.is_enabled();
-        let flash = self.st.flash.filter(|(f, _)| *f == id).map(|(_, at)| at);
+        let flash = self.st.flash.filter(|(target, _)| target.id() == id);
         let now = ctx.input(|i| i.time);
         let radius = self.ui.visuals().widgets.inactive.corner_radius;
-        if let Some(at) = flash {
+        if let Some((target, at)) = flash {
             let age = (now - at) as f32;
-            if age < 1.8 {
+            if let Some(strength) = target.strength(age) {
                 // asked again for a quarter of a second: a window opened by
                 // "Preferences…" lays out its first frames without keeping
                 // a scroll, which left a row far down the page out of sight
@@ -1195,7 +1261,6 @@ impl<'a> Cx<'a> {
                     self.ui.scroll_to_rect(row, Some(egui::Align::Center));
                     self.st.flash_scroll = age < 0.25;
                 }
-                let strength = (1.0 - age / 1.8).clamp(0.0, 1.0) * 0.42;
                 self.ui
                     .painter()
                     .set(background, Shape::rect_filled(row, radius, p.violet.gamma_multiply(strength)));
@@ -1266,5 +1331,28 @@ mod tests {
         assert_eq!(&label[a..b], "Écume");
         assert_eq!(found_in("Bulles", &w), None);
         assert_eq!(found_in("Nombre", &words("ombre")), None);
+    }
+
+    /// An untitled group draws no title bar and leaves no space after it; a
+    /// titled one does.
+    #[test]
+    fn an_untitled_group_adds_neither_a_title_nor_space() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let height = |title: &str| {
+            let mut s = Settings::default();
+            let d = Settings::default();
+            let mut st = OptionsUi::default();
+            let mut r = OptionsResult::default();
+            let mut used = 0.0;
+            super::super::run_ui(&ctx, egui::RawInput::default(), |ui| {
+                let mut cx = Cx::new(ui, p, &mut s, &d, &mut st, &mut r, Mode::Show, "");
+                cx.group(title, |_| {});
+                used = cx.ui.min_rect().height();
+            });
+            used
+        };
+        assert_eq!(height(""), 0.0);
+        assert!(height("Title") >= 26.0 + 14.0);
     }
 }

@@ -144,6 +144,59 @@ struct Region {
     view: View,
     pose: Option<Pose>,
 }
+
+/// A window that shows previews: the viewer's own, or one of the interface
+/// outside it (outside.rs, by its key). They share the cache, and each is
+/// drawn when its own picture changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Shower {
+    Viewer,
+    Outside(u64),
+}
+
+/// What each window showed in its last pass: a target is kept while one of
+/// them shows it. A window outside is not drawn at every frame of the
+/// viewer, and what it shows must not go with the viewer's next frame.
+pub(crate) struct Shown<K>(HashMap<Shower, HashSet<K>>);
+
+impl<K> Default for Shown<K> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+impl<K: Eq + std::hash::Hash> Shown<K> {
+    pub fn set(&mut self, shower: Shower, seen: HashSet<K>) {
+        self.0.insert(shower, seen);
+    }
+
+    pub fn has(&self, key: &K) -> bool {
+        self.0.values().any(|seen| seen.contains(key))
+    }
+
+    /// The windows outside that are gone show nothing any more; whether
+    /// one went.
+    pub fn keep_outside(&mut self, alive: impl Fn(u64) -> bool) -> bool {
+        let before = self.0.len();
+        self.0.retain(|shower, _| match shower {
+            Shower::Viewer => true,
+            Shower::Outside(key) => alive(*key),
+        });
+        self.0.len() != before
+    }
+}
+
+/// Whether two callbacks of one place show the same preview: the same
+/// model, view and pose. `None`: not both previews.
+pub(crate) fn same(a: &egui::PaintCallback, b: &egui::PaintCallback) -> Option<bool> {
+    let (a, b) = (a.callback.downcast_ref::<Region>()?, b.callback.downcast_ref::<Region>()?);
+    let same_pose = match (&a.pose, &b.pose) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    };
+    Some(a.id == b.id && Arc::ptr_eq(&a.model, &b.model) && a.view == b.view && same_pose)
+}
 pub fn paint(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: &mut View, size: egui::Vec2) -> egui::Response {
     paint_with_pose(ui, id, model, view, size, None)
 }
@@ -266,6 +319,7 @@ struct Target {
 pub(crate) struct Cache {
     pipeline: Option<Pipelines>,
     targets: HashMap<egui::Id, Target>,
+    shown: Shown<egui::Id>,
     /// The panorama viewers (panorama.rs), drawn the same way.
     pano: crate::panorama::Cache,
     meshes: crate::preview_mesh::Cache,
@@ -736,8 +790,12 @@ pub(crate) fn target_size(size: egui::Vec2, scale: f32) -> [u32; 2] {
 }
 
 impl Cache {
+    /// The previews of `shower`'s pass become meshes of their targets,
+    /// drawn first when they changed. What no window shows any more goes.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
+        shower: Shower,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
@@ -745,7 +803,7 @@ impl Cache {
         primitives: &mut [egui::ClippedPrimitive],
         scale: f32,
     ) {
-        self.meshes.render(device, encoder, egui, primitives, scale);
+        self.meshes.render(shower, device, encoder, egui, primitives, scale);
         let mut seen = HashSet::new();
         let mut pano_seen = HashSet::new();
         for primitive in primitives {
@@ -800,15 +858,33 @@ impl Cache {
             );
             primitive.primitive = egui::epaint::Primitive::Mesh(mesh);
         }
+        self.shown.set(shower, seen);
+        self.pano.show(shower, pano_seen);
+        self.prune(egui);
+    }
+
+    /// The windows outside that are gone (`alive`: by key) show nothing
+    /// any more: their previews go.
+    pub fn keep_outside(&mut self, alive: impl Fn(u64) -> bool, egui: &mut egui_wgpu::Renderer) {
+        self.meshes.keep_outside(&alive, egui);
+        // (each is asked: no `||`, which would stop at the first)
+        let gone = [self.shown.keep_outside(&alive), self.pano.keep_outside(&alive)];
+        if gone.contains(&true) {
+            self.prune(egui);
+        }
+    }
+
+    fn prune(&mut self, egui: &mut egui_wgpu::Renderer) {
+        let shown = &self.shown;
         self.targets.retain(|id, target| {
-            if seen.contains(id) {
+            if shown.has(id) {
                 true
             } else {
                 egui.free_texture(&target.texture);
                 false
             }
         });
-        self.pano.retain(&pano_seen, egui);
+        self.pano.retain(egui);
         // Image UUIDs are immutable; all min/max views share their GPU maps.
         // Weak owners bound the cache to the images still held by previews.
         if let Some(pipeline) = &mut self.pipeline {

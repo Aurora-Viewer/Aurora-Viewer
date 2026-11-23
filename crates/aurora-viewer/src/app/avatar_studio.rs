@@ -50,7 +50,7 @@ impl App {
             self.world.avatar_studio = false;
             return;
         }
-        let restricted = self.world.rlva.camera_restricted();
+        let restricted = self.world.rlva_studio_refused();
         let switch = if !self.in_world() || self.world.teleporting || renderer.vr_engaged() || restricted {
             self.panels.avatar_studio = false;
             self.studio_transition.cancel();
@@ -307,6 +307,8 @@ impl App {
                     radius: 12.0,
                     falloff: 0.5,
                     projector: None,
+                    source_radius: 0.0,
+                    source_id: 0,
                 })
                 .collect();
         }
@@ -371,7 +373,8 @@ impl App {
     }
 
     pub(super) fn studio_overlay(&mut self, ctx: &egui::Context) {
-        if !self.avatar_studio.active || self.viewfinder_on() {
+        // nothing of it while the UI is not drawn (Ctrl+Alt+F1)
+        if !self.avatar_studio.active || self.viewfinder_on() || self.interface.ui_off {
             return;
         }
         let mut reset = false;

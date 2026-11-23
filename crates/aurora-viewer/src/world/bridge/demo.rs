@@ -288,6 +288,7 @@ impl Demo {
                 completed.folders.clear();
                 Some(vec![
                     NetEvent::InventoryUpdated {
+                        bulk: false,
                         folders: Vec::new(),
                         items,
                     },
@@ -387,6 +388,7 @@ impl Demo {
                 item.asset_id = Uuid::new_v4();
                 Some(vec![
                     NetEvent::InventoryUpdated {
+                        bulk: false,
                         folders: Vec::new(),
                         items: vec![item],
                     },
@@ -397,6 +399,7 @@ impl Demo {
                 ])
             }
             NetCommand::FetchItems { items, .. } if items.contains(&bridge.item) => Some(vec![NetEvent::InventoryUpdated {
+                bulk: false,
                 folders: Vec::new(),
                 items: items.iter().filter_map(|id| world.inventory.items.get(id).cloned()).collect(),
             }]),

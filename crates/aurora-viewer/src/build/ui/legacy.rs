@@ -205,14 +205,30 @@ fn edit_options(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mu
     });
 }
 
-fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, s: &BuildSettings, mods: Mods) {
+fn selection(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &BuildSettings, mods: Mods) {
     if tool.selection.is_empty() {
         common::small(ui, p, aurora_i18n::tr!("build-compact-select-hint"));
         return;
     }
-    // The row stays when it is empty: the counts do not move with the mode.
-    let part = tool.legacy_part_line(world, s, mods).unwrap_or_else(|| " ".into());
-    ui.add(egui::Label::new(RichText::new(part).size(11.0).color(p.ink)).truncate());
+    if tool.face_picking() {
+        // the face buttons 0 to 8 replace the "Faces:" line, Invert and All
+        // after them; the link number follows in the other edit modes
+        let link = (!tool.face_mode()).then(|| tool.legacy_part_line(world, s, mods)).flatten();
+        ui.horizontal(|ui| {
+            let height = 18.0 * common::font_scale(ui);
+            let actions = 2.0 * (height + ui.spacing().item_spacing.x);
+            let size = vec2((ui.available_width() - actions).clamp(1.0, 9.0 * 22.0), height);
+            super::layout::face_buttons(ui, p, tool, world, mods, size);
+            super::layout::face_actions(ui, p, tool, world, egui::Vec2::splat(height));
+        });
+        if let Some(link) = link {
+            ui.add(egui::Label::new(RichText::new(link).size(11.0).color(p.ink)).truncate());
+        }
+    } else {
+        // The row stays when it is empty: the counts do not move with the mode.
+        let part = tool.legacy_part_line(world, s, mods).unwrap_or_else(|| " ".into());
+        ui.add(egui::Label::new(RichText::new(part).size(11.0).color(p.ink)).truncate());
+    }
     let impact = tool
         .land_impact(world)
         .map(|v| aurora_i18n::integer(v.round() as i64))
@@ -305,7 +321,7 @@ pub(super) fn body(
                 selection(&mut summary, p, tool, world, s, mods);
                 if tool.tool != Tool::Land {
                     let mut tab = tab_index(tool.tab);
-                    if widgets::tabs(
+                    let (clicked, rects) = widgets::tabs_at(
                         ui,
                         p,
                         &mut tab,
@@ -316,7 +332,17 @@ pub(super) fn body(
                             (aurora_i18n::tr!("build-legacy-texture"), true),
                             (aurora_i18n::tr!("build-compact-contents"), true),
                         ],
-                    ) {
+                    );
+                    // inventory held over a tab opens it (floater_tools.xml's
+                    // open_tabs_on_drag_and_drop, LLTabContainer::handleDragAndDrop)
+                    let held = rects.iter().enumerate().find_map(|(index, rect)| {
+                        let id = egui::Id::unique("legacy-build-drag-open").with(index);
+                        crate::ui::inventory::drag::navigation::tab_held_over(ui, *rect, id).then_some(index)
+                    });
+                    if let Some(held) = held {
+                        tab = held;
+                    }
+                    if clicked || held.is_some() {
                         tool.tab = [6, 5, 2, 3, 4][tab];
                     }
                 }

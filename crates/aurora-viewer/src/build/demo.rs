@@ -14,6 +14,8 @@
 //!   to linked editing and click the requested part (ready stops before switching).
 //!   faces | faces-invisible | faces-ready: plain / Shift face clicks on
 //!   three prims of two objects (ready stops before the face clicks).
+//!   mixed-face,object:<id>,<face>: select one prim, then pick one of its
+//!   faces (AURORA_DEMO_PBR_MIXED, #4467).
 //!   faces-picker | faces-picker-material: select one face and keep its picker open.
 //!   faces-picker-local | faces-picker-material-local: the same, on its Local tab.
 //!   faces-picker-normal-local | faces-picker-specular-local: local legacy maps.
@@ -33,6 +35,7 @@
 //!   contents-copy | contents-move | contents-move-plain | contents-ready:
 //!   take an item into inventory or show the move warning (ready stops).
 //!   contents-properties: open a task item in the shared properties panel.
+//!   contents-properties-multi: open three items at once, one window each.
 //!   contents-multi | contents-rename-ready: show task multi-selection or rename.
 //!   contents-move-many: drop every item into inventory at once (two no-copy
 //!   items share one move warning).
@@ -94,7 +97,8 @@ pub enum Step {
     CreationPreview(usize),
     Delete,
     Contents,
-    ContentsProperties,
+    /// Properties of the first n items, one window each.
+    ContentsProperties(usize),
     ContentsSelection(bool),
     /// "New notecard" then "New script" in the Contents tab.
     ContentsNew,
@@ -562,7 +566,8 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             215 => vec![Step::Open(Tool::Edit, EditMode::Move, 6)],
             220 => object.into_iter().map(Step::Select).collect(),
             225 => vec![Step::Contents],
-            260 if parts[0] == "contents-properties" => vec![Step::ContentsProperties],
+            260 if parts[0] == "contents-properties" => vec![Step::ContentsProperties(1)],
+            260 if parts[0] == "contents-properties-multi" => vec![Step::ContentsProperties(3)],
             260 if matches!(parts[0], "contents-multi" | "contents-rename-ready") => {
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }
@@ -610,6 +615,20 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             295 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(Some(1))],
             320 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(Some(2))],
             345 if parts[0].starts_with("mesh-inspector-cycle") => vec![Step::MeshLod(None)],
+            _ => Vec::new(),
+        };
+    }
+    if parts[0] == "mixed-face" {
+        // `mixed-face,object:<id>,<face>`: select a whole prim, then pick one
+        // of its faces, for AURORA_DEMO_PBR_MIXED (#4467).
+        let face = parts.get(2).and_then(|part| part.parse::<u8>().ok());
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Face, 6)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            240 => match (object, face) {
+                (Some(idx), Some(face)) => vec![Step::Face(idx, face, false)],
+                _ => Vec::new(),
+            },
             _ => Vec::new(),
         };
     }

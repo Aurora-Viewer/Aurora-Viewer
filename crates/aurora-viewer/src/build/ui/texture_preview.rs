@@ -917,6 +917,60 @@ mod tests {
     }
 
     #[test]
+    fn faces_picked_by_all_invert_or_a_face_button_under_the_open_picker_make_it_tentative() {
+        // The face buttons pick faces in every edit mode, and All / Invert
+        // pick many at once: under an open picker, the faces they bring in
+        // are compared like any other selection change, and OK waits for a
+        // choice once they differ (LLFloaterTexturePicker::draw).
+        use crate::build::{EditMode, Tool};
+        fixture(|world, tool, env, prims| {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            tool.open = true;
+            tool.tool = Tool::Edit;
+            let all_faces = |world: &World| -> Vec<Uuid> {
+                prims
+                    .iter()
+                    .flat_map(|&idx| world.objects.get(idx).unwrap().te.as_ref().unwrap().faces.iter().map(|f| f.texture))
+                    .collect()
+            };
+            let before = all_faces(world);
+            let selection = tool.selection.clone();
+            let mut time = 0.0;
+            type Pick = fn(&mut BuildTool, &mut World);
+            let picks: [(&str, Pick); 3] = [
+                ("all", |tool, world| tool.select_all_faces(world)),
+                ("invert", |tool, world| tool.invert_faces(world)),
+                ("face button with Ctrl+Shift", |tool, world| tool.pick_face_button(world, 0, true)),
+            ];
+            for mode in [EditMode::Move, EditMode::Face] {
+                for (name, pick) in picks {
+                    tool.edit_mode = mode;
+                    tool.selection = selection.clone();
+                    tool.selection_linked = false;
+                    // face 0 of the first prim alone; the second stays
+                    // selected with no face, as a face button leaves it
+                    tool.faces.clear();
+                    tool.faces.insert(selection[0], vec![0]);
+                    tool.faces.insert(selection[1], Vec::new());
+                    let first = super::super::texture::selected(tool, world)[0].te.texture;
+                    open_from_swatch(tool, PickTarget::Diffuse, first);
+                    settle(&ctx, tool, world, env, time);
+                    assert!(!tool.ui.picker.tentative(), "{name} in {mode:?}: one face is never tentative");
+                    pick(tool, world);
+                    let positions = settle(&ctx, tool, world, env, time + 1.0);
+                    assert!(tool.ui.picker.open && tool.ui.picker.tentative(), "{name} in {mode:?}");
+                    click(&ctx, tool, world, env, time + 2.0, positions[aurora_i18n::tr!("common-ok")]);
+                    assert!(tool.ui.picker.open, "{name} in {mode:?}: OK waits for a choice");
+                    assert_eq!(all_faces(world), before, "{name} in {mode:?}: no face took the first one's texture");
+                    tool.cancel_texture_picker(world, env);
+                    time += 3.0;
+                }
+            }
+        });
+    }
+
+    #[test]
     fn local_picker_choices_and_cancel_never_send_local_ids_to_the_simulator() {
         use crate::world::objects::LocalAppearance;
         fixture(|world, tool, env, prims| {
@@ -1876,6 +1930,25 @@ mod tests {
             tool.apply_inventory_surface(world, env, idx, &[1], pbr_map, false, true);
             assert_eq!(BuildTool::gltf_asset(world, idx, 1), None);
             assert_eq!(texture(world, idx, 1), pbr_map);
+        });
+    }
+
+    #[test]
+    fn a_blinn_phong_preview_face_does_not_divert_a_drop_on_another_face() {
+        fixture(|world, tool, env, prims| {
+            let idx = prims[0];
+            let material = Uuid::from_u128(1910);
+            let map = Uuid::from_u128(1911);
+            tool.apply_inventory_surface(world, env, idx, &[1], material, true, false);
+            let diffuse = texture(world, idx, 1);
+            // Face 0 alone is shown in Blinn-Phong (#4467): a texture dropped
+            // on face 1 still goes into its PBR override, not on the diffuse.
+            world.objects.set_blinn_phong_faces(idx, 1 << 0, true);
+            tool.apply_inventory_surface(world, env, idx, &[1], map, false, false);
+            assert_eq!(BuildTool::gltf_override(world, idx, 1).textures[0], map);
+            assert_eq!(texture(world, idx, 1), diffuse);
+            assert!(world.objects.get(idx).unwrap().is_blinn_phong_preview(0));
+            assert!(!world.objects.get(idx).unwrap().is_blinn_phong_preview(1));
         });
     }
 

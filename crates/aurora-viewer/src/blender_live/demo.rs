@@ -78,3 +78,58 @@ pub fn static_fixture(rig: &Rig, linked: bool) -> Result<protocol::Prepared, Str
     snapshot.sources.extend(rigged.sources);
     Ok(snapshot)
 }
+
+/// `AURORA_DEMO_BLENDER_LIVE=sleeves`: one rigged object of eight tubes, the
+/// upper arms and thighs weighted to the shoulders and hips, the forearms and
+/// shins to the elbows and knees, so the Avatar tab's bend shows on the
+/// avatar and in Quick look.
+pub fn sleeves_fixture(rig: &Rig) -> Result<protocol::Prepared, String> {
+    let at = |name: &str| -> Result<Vec3, String> {
+        let joint = rig.names.get(name).copied().ok_or_else(|| format!("No {name} joint"))?;
+        Ok(rig.default_world_inv[joint].inverse().w_axis.truncate())
+    };
+    let segments = [
+        ("mShoulderLeft", "mElbowLeft"),
+        ("mElbowLeft", "mWristLeft"),
+        ("mShoulderRight", "mElbowRight"),
+        ("mElbowRight", "mWristRight"),
+        ("mHipLeft", "mKneeLeft"),
+        ("mKneeLeft", "mAnkleLeft"),
+        ("mHipRight", "mKneeRight"),
+        ("mKneeRight", "mAnkleRight"),
+    ];
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut joints = Vec::new();
+    let mut inverse_bind = Vec::new();
+    for (index, (from, to)) in segments.into_iter().enumerate() {
+        let joint = rig.names.get(from).copied().ok_or_else(|| format!("No {from} joint"))?;
+        joints.push(from);
+        inverse_bind.push(rig.default_world_inv[joint].to_cols_array());
+        // a box around the bone, a little thicker than the limb
+        let (a, b) = (at(from)?, at(to)?);
+        let (low, high) = (a.min(b) - Vec3::splat(0.07), a.max(b) + Vec3::splat(0.07));
+        let center = (low + high) * 0.5;
+        let base = vertices.len() as u32;
+        for i in 0..8 {
+            let p = Vec3::new(
+                if i & 1 == 0 { low.x } else { high.x },
+                if i & 2 == 0 { low.y } else { high.y },
+                if i & 4 == 0 { low.z } else { high.z },
+            );
+            vertices.push(serde_json::json!({ "position": p.to_array(), "normal": (p - center).normalize().to_array(), "uv": [0.0, 0.0], "joints": [index,0,0,0], "weights": [1.0,0.0,0.0,0.0] }));
+        }
+        indices.extend(
+            [
+                0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5,
+            ]
+            .map(|i| base + i),
+        );
+    }
+    let sleeves = serde_json::json!({
+        "name": "Live sleeves", "joints": joints, "inverse_bind": inverse_bind,
+        "faces": [{ "color": [0.95, 0.55, 0.20, 1.0], "vertices": vertices, "indices": indices }]
+    });
+    let bytes = serde_json::to_vec(&serde_json::json!({"protocol":1,"revision":1,"meshes":[sleeves]})).map_err(|e| e.to_string())?;
+    protocol::prepare(&bytes, &rig.names.keys().cloned().collect())
+}

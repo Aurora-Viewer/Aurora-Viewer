@@ -196,6 +196,10 @@ pub struct View {
     filter: String,
     find: String,
     layout: Layout,
+    /// Emotes join their sender's group in the Aurora layout (Preferences >
+    /// Chat), as asked for the next sync and as the rows were built.
+    group_emotes: bool,
+    grouped_emotes: bool,
     first_unread: Option<u64>,
     /// The blocked lines' mode and how many folds were opened.
     blocked: (crate::settings::BlockedChat, usize),
@@ -297,10 +301,12 @@ pub struct Grouping<'a> {
     prev_day: Option<Slt>,
     today: Slt,
     layout: Layout,
+    group_emotes: bool,
 }
 
 /// An emote ("/me waves") is said by its sender's name: in Aurora's
-/// workspace it stands alone, with its own head.
+/// workspace it stands alone, with its own head, unless Preferences > Chat
+/// groups emotes with the sender's messages.
 fn is_emote(line: &ChatLine) -> bool {
     line.text.starts_with("/me ") || line.text.starts_with("/me'")
 }
@@ -317,7 +323,15 @@ impl<'a> Grouping<'a> {
             prev_day: None,
             today,
             layout,
+            group_emotes: false,
         }
+    }
+
+    /// Emotes go through the same sender and time checks as the other
+    /// lines in the Aurora layout, instead of standing alone.
+    pub fn grouping_emotes(mut self, on: bool) -> Grouping<'a> {
+        self.group_emotes = on;
+        self
     }
 
     pub fn look(&mut self, line: &'a ChatLine) -> Look {
@@ -336,7 +350,10 @@ impl<'a> Grouping<'a> {
         }
         let (gap, emotes_alone) = match self.layout {
             Layout::Classic => (GROUP_SECONDS, false),
-            Layout::Aurora | Layout::Compact => (WORKSPACE_GROUP_SECONDS, true),
+            // Compact names the sender on every row, so an emote there already
+            // reads as part of the run: grouping it would only drop a 2 px gap.
+            Layout::Aurora => (WORKSPACE_GROUP_SECONDS, !self.group_emotes),
+            Layout::Compact => (WORKSPACE_GROUP_SECONDS, true),
         };
         let emote = emotes_alone && is_emote(line);
         look.header = emote
@@ -442,6 +459,12 @@ impl View {
         self.rows[start..].iter().filter(|r| keep(r.line)).count()
     }
 
+    /// Whether emotes join their sender's group in the Aurora layout;
+    /// the rows follow at the next `sync`.
+    pub fn set_group_emotes(&mut self, on: bool) {
+        self.group_emotes = on;
+    }
+
     /// Bring the rows up to date with the conversation. True when the set
     /// of rows matching the find text may have changed.
     pub fn sync(&mut self, s: &Source, width: f32) -> bool {
@@ -454,7 +477,8 @@ impl View {
             || self.filter != s.filter
             || self.find != s.find
             || self.layout != s.layout
-            || self.blocked != (s.blocked.mode, s.blocked.opened.len());
+            || self.blocked != (s.blocked.mode, s.blocked.opened.len())
+            || self.grouped_emotes != self.group_emotes;
         if !layout_changed
             && self.revision == s.clock.revision
             && self.len == s.lines.len()
@@ -481,6 +505,7 @@ impl View {
         s.find.clone_into(&mut self.find);
         self.layout = s.layout;
         self.blocked = (s.blocked.mode, s.blocked.opened.len());
+        self.grouped_emotes = self.group_emotes;
         self.first_unread = s.first_unread;
         self.today = today_key;
 
@@ -488,7 +513,7 @@ impl View {
         self.rows.clear();
         self.hits.clear();
         self.unmeasured = 0;
-        let mut grouping = Grouping::with(today, s.layout);
+        let mut grouping = Grouping::with(today, s.layout).grouping_emotes(self.group_emotes);
         let (shown, folds): (Vec<usize>, Vec<usize>) = blocked_rows(s.lines, first, s.blocked, !s.filter.is_empty())
             .into_iter()
             .filter(|&(i, _)| s.filter.is_empty() || matches(&s.lines[i], s.filter))
@@ -1028,6 +1053,34 @@ mod tests {
         let mut g = Grouping::new(today);
         let classic: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
         assert_eq!(classic, [true, true, false, false, true]);
+    }
+
+    /// With emotes grouped (Preferences > Chat), an emote joins its
+    /// sender's group in the Aurora layout and the next line goes on in it;
+    /// another sender's emote and the time gap still open a group. Compact
+    /// and the option off leave each emote alone.
+    #[test]
+    fn grouped_emotes_join_their_senders_group() {
+        let lines = [
+            line("Jane", "one", 0),
+            line("Jane", "/me waves", 10),
+            line("Jane", "after the emote", 20),
+            line("Bob", "/me nods", 30),
+            line("Bob", "/me' s hat falls", 40),
+            line("Bob", "/me laughs", 40 + 480),
+        ];
+        let today = Slt::of(lines[0].time);
+        let mut g = Grouping::with(today, Layout::Aurora).grouping_emotes(true);
+        let looks: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(looks, [true, false, false, true, false, true]);
+        // Compact keeps its rows as they are: the option is the Aurora style's
+        let mut g = Grouping::with(today, Layout::Compact).grouping_emotes(true);
+        let compact: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(compact, [true, true, true, true, true, true]);
+        // off, the default: each emote and the line after it stand alone
+        let mut g = Grouping::with(today, Layout::Aurora);
+        let off: Vec<bool> = lines.iter().map(|l| g.look(l).header).collect();
+        assert_eq!(off, [true, true, true, true, true, true]);
     }
 
     /// A whisper, then a shout, then a normal line of ours: each under its
