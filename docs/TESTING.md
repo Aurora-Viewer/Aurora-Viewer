@@ -2341,11 +2341,19 @@ status and detailed-panel validation messages retain their own presentation.
 Append `+notice` to `AURORA_DEMO_BUILD_TAB` to trigger a synthetic build status
 at frame 700; a frame-900 capture shows the card over the demo world.
 In the two-column options block, Select a face and Edit linked parts can each
-use either column, just like the other options. Their
-previous/value/next controls share a separate horizontal row with Global, Local,
-Reference and Settings below the action row. Link/Face readouts show a dash when
-inactive or unavailable. This row stays horizontal when transform values are
-folded or expanded, and Settings remains reachable when actions are hidden.
+use either column, just like the other options. Edit linked parts, once on,
+reads "Link n" (a dash when no single prim is selected) with its own small
+◄ ► at the row's right, the row keeping its height. Below the action row, one
+row holds the face arrows and buttons, Invert and All, then Global, Local and
+Reference at the right edge, all as tall; the Settings gear is in the header,
+under UUID. Shift+click on a section's button shows it in the right half of a
+window widened for two, its button half lit; Shift+click on it again gives the
+one-section width back, and `AURORA_DEMO_BUILD_SIZE=760,820` opens with two.
+The face buttons 0 to 8 between the face arrows are
+greyed in Align, under the other tools and for a face no selected prim has
+(Move, Rotate and Stretch pick faces too and keep their handles), lit for a face
+every prim that has it has selected, half-lit for one some of them have. This row stays horizontal when transform values are
+folded or expanded, and Settings remains reachable in every tool.
 Check normal and Organize modes: reordering must not alter option values, and
 organizing must not step parts/faces or change the coordinate reference.
 While organizing, the two columns have no headings. Existing empty cells and
@@ -3288,9 +3296,9 @@ opens the native Shape section on a mesh with four different generated LODs.
 The counts come from its actual geometries. Capture after frame 710.
 Suffixes `-high`, `-medium`, `-low`, `-lowest` force that LOD locally; compare
 the visible geometry and active row, then restore Default. `-readonly` keeps
-the information/menu available without Modify rights. Link/face numbers belong
-between the respective footer arrows; select multiple faces to check the list
-and its full hover text. Inspection resets on selection/asset/tool changes or
+the information/menu available without Modify rights. The link number and the
+face buttons belong between the respective footer arrows; select multiple faces
+to check that their buttons light. Inspection resets on selection/asset/tool changes or
 closing construction, stays across editing sections, never changes object
 data/global preferences and keeps HUDs at high LOD.
 `mesh-inspector-cycle` switches lowest/high/low/medium/default at frames

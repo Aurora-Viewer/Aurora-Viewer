@@ -10309,7 +10309,6 @@ build-compact-summary-details = { " - " }{ $capacity }    { $counts }
 build-compact-link-action = Bağla
 build-compact-unlink-action = Bağlantıyı Kopar
 build-compact-link-value = Bağlantı { $number }
-build-compact-face-value = Yüz { $number }
 build-compact-move = Taşı
 build-compact-rotate = Döndür (Ctrl)
 build-compact-stretch = Uzat (Ctrl+Shift)
