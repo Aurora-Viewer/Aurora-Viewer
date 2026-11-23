@@ -14,6 +14,7 @@ mod compact;
 pub(crate) mod contents;
 pub(crate) mod contents_permissions;
 mod contents_selection;
+mod detach;
 pub(crate) mod export;
 mod features;
 mod floaters;
@@ -25,9 +26,11 @@ mod legacy;
 mod notecards;
 pub use notecards::{loaded as layout_notecard_loaded, saved as layout_notecard_saved};
 mod mesh;
+mod name_focus;
 mod object;
 pub(crate) mod particles;
 mod replace;
+mod second_tab;
 mod shape_preview;
 pub(in crate::build) mod texture;
 mod texture_preview;
@@ -84,7 +87,12 @@ pub enum Request {
     /// Read a transform vector from the system clipboard (0 position, 1 size,
     /// 2 rotation); shared by Aurora's actions and the Legacy "p" button.
     PasteVector(usize),
-    CopyKeys,
+    /// The Legacy-style "Copy Keys" button: its copy feedback, shown beside
+    /// the button.
+    CopyKeys {
+        feedback: egui::Id,
+        anchor: egui::Rect,
+    },
     Script {
         object: Uuid,
         item: Uuid,
@@ -161,6 +169,51 @@ pub enum Confirm {
     Probe,
 }
 
+/// The Contents list filters, after the inventory's (types and required
+/// rights), the rights being the next owner's: what someone would get from
+/// these items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContentsFilters {
+    /// One bit per inventory type (LLInventoryType); every bit: no filter.
+    pub types: u32,
+    /// Rights the next owner must get (copy, modify, transfer bits).
+    pub next_owner: u32,
+}
+
+impl Default for ContentsFilters {
+    fn default() -> Self {
+        Self {
+            types: u32::MAX,
+            next_owner: 0,
+        }
+    }
+}
+
+impl ContentsFilters {
+    pub fn active(&self) -> bool {
+        *self != Self::default()
+    }
+
+    /// The item passes the filters. Objects stored as a coalesced set count
+    /// as objects, as in the inventory; the next owner's rights are the
+    /// next-owner mask within the base mask.
+    pub fn matches(&self, item: &aurora_net::build::TaskItem) -> bool {
+        let kind = if item.inv_type == 17 { 6 } else { i32::from(item.inv_type) };
+        if self.types != u32::MAX && (!(0..32).contains(&kind) || self.types & (1_u32 << kind) == 0) {
+            return false;
+        }
+        item.next_owner_mask & item.base_mask & self.next_owner == self.next_owner
+    }
+}
+
+/// The material of the selected faces, waiting for its name (the Legacy
+/// Viewer's SaveMaterialAs notification).
+pub struct MaterialSaveDraft {
+    pub name: String,
+    pub data: Vec<u8>,
+    pub rights: crate::build::texture_copy::MaterialSave,
+}
+
 /// State of the floater kept between frames.
 #[derive(Default)]
 pub struct FloaterState {
@@ -177,6 +230,26 @@ pub struct FloaterState {
     color_focused: bool,
     /// Texture tab: 0 Classic (Blinn-Phong), 1 PBR, 2 Media.
     pub tex_tab: usize,
+    /// A block being dragged out of the build window with Alt.
+    pub detach_drag: Option<crate::build::layout::Block>,
+    /// Each detached window's rect when the button went down, to tell a
+    /// move by its title (put back when dropped on the build window).
+    detach_press: std::collections::BTreeMap<crate::build::layout::Block, egui::Rect>,
+    /// The section shown beside the active one (Aurora style).
+    pub second: second_tab::State,
+    /// Section tabs taken out of the build window (shown or not).
+    pub detached_tabs: Vec<usize>,
+    /// Section tabs shown this frame in a window of their own.
+    pub detached_shown: Vec<usize>,
+    /// The build window's body height last frame, and the height its shared
+    /// controls need without any section (`detach::fit_window`).
+    body_height: Option<f32>,
+    sectionless_body: Option<f32>,
+    /// Windows just taken out, fitting their height to their content for
+    /// these many more frames.
+    detach_fit: std::collections::BTreeMap<crate::build::layout::Block, u8>,
+    /// "Save material as": the name being typed, and what Save will store.
+    pub material_save: Option<MaterialSaveDraft>,
     /// PBR transform channel (All, Color, Normal, (O)RM, Emissive).
     pub pbr_channel: usize,
     /// Blinn-Phong UV channel (Diffuse, Normal, Specular).
@@ -191,6 +264,9 @@ pub struct FloaterState {
     /// "For sale" ticked / sale type / price not applied yet (Apply).
     pub sale_draft: Option<(bool, u8, i32)>,
     pub contents_filter: String,
+    /// The Contents filters: item types and the next owner's rights.
+    pub contents_filters: ContentsFilters,
+    pub contents_filters_open: bool,
     /// Independent from every personal/folder inventory window.
     pub contents_rights: crate::ui::inventory::permissions::Rights,
     /// The language picked for "New script"; None follows the region (Lua
@@ -227,8 +303,8 @@ pub struct FloaterState {
     pub planar_align: bool,
     pub bulk_perms_open: bool,
     pub bulk: contents_permissions::BulkState,
-    /// Contents item whose properties are shown.
-    pub item_properties: Option<item_properties::TaskProperties>,
+    /// Contents items whose properties windows are open, oldest first.
+    pub item_properties: Vec<item_properties::TaskProperties>,
     /// CantSelectReflectionProbe shown once.
     pub probe_warned: bool,
     /// Images the swatches want loaded (drained by the app).
@@ -246,6 +322,18 @@ pub struct FloaterState {
 /// Width of the label column of the tabs.
 const LABEL_W: f32 = 112.0;
 pub(crate) const INSPECTOR_ID: &str = "build_tools_inspector_c3";
+
+/// The label of the copy feedback once "Copy UUID" or "Copy Keys" copied
+/// `count` object ids.
+pub(crate) fn copied_keys_label(count: usize) -> String {
+    aurora_i18n::tr!("build-ui-copied-object-uuids", count = count)
+}
+
+/// The build window's rect, which keeps its copy feedback inside it.
+pub(crate) fn window_rect(ctx: &egui::Context) -> egui::Rect {
+    ctx.memory(|m| m.area_rect(egui::Id::unique(INSPECTOR_ID)))
+        .unwrap_or_else(|| ctx.content_rect())
+}
 
 /// LLButton::handleMouseDown (indra/llui/llbutton.cpp) takes the keyboard
 /// focus on the press, so a field of the build window commits its typed
@@ -327,6 +415,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
     for ev in pressed {
         let egui::Event::Key {
             key,
+            physical_key,
             pressed: true,
             repeat,
             modifiers: m,
@@ -340,7 +429,9 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
             shift: m.shift,
             alt: m.alt,
         };
-        if let Some(command) = Shortcut::from_key(key, mods, tool.open) {
+        // Position for 1–5; consume the logical key so AZERTY's `'` is taken.
+        let shortcut_key = keyboard::position_key(key, physical_key);
+        if let Some(command) = Shortcut::from_key(shortcut_key, mods, tool.open) {
             // The picker owns Escape in stages (pipette, then dialog).
             // Leave its event intact instead of consuming a no-op Close.
             if command == Shortcut::Close && (tool.ui.color_picker.is_open() || crate::ui::texture_picker::pipette::armed(ctx)) {
@@ -378,8 +469,16 @@ pub fn show(
         tool.ui.layout.open = false;
         tool.ui.layout.organizing = false;
         tool.ui.layout.drag = None;
+        detach::hide(tool);
+        detach::park(ctx, s);
         return false;
     }
+    // Sampled before a press can surrender the field: an empty click while
+    // the window already holds the keyboard commits that field, and does
+    // not select it again.
+    name_focus::note(ctx);
+    name_focus::keep_through_release(ctx);
+    let restore_text = name_focus::pending(ctx);
     press_takes_build_field_focus(ctx);
     let before = s.clone();
     let property_lines_before = *env.property_lines;
@@ -456,27 +555,30 @@ pub fn show(
     }
     if !s.legacy_window
         && tool.tool == Tool::Edit
-        && !s
-            .layout
-            .in_panel(crate::build::layout::Panel::Navigation)
-            .iter()
-            .any(|item| layout::section(*item) == Some(tool.tab))
+        && (detach::tab_detached(s, tool.tab) || !s.layout.in_bars().iter().any(|item| layout::section(*item) == Some(tool.tab)))
     {
-        tool.tab = s
-            .layout
-            .in_panel(crate::build::layout::Panel::Navigation)
-            .iter()
-            .find_map(|item| layout::section(*item))
+        // A section in a window of its own leaves the build window to the
+        // next one still in it (none: the build window shows no section).
+        let navigation = s.layout.in_bars();
+        let mut tabs = navigation.iter().filter_map(|item| layout::section(*item));
+        tool.tab = tabs
+            .clone()
+            .find(|tab| !detach::tab_detached(s, *tab))
+            .or_else(|| detach::tab_detached(s, tool.tab).then_some(tool.tab))
+            .or_else(|| tabs.next())
             .unwrap_or(6);
     }
+    second_tab::update(tool, s, width);
+    detach::prepare(tool, s);
+    detach::park(ctx, s);
     tool.ui.layout.targets.clear();
     tool.ui.layout.zones.clear();
     tool.ui.layout.footer_cells.clear();
     let mut open = true;
     let mut legacy_toggle_sections = false;
-    let mut copy_uuid = false;
+    let mut copy_uuid: Option<egui::Rect> = None;
     let mut summary_clicked = false;
-    let mut toggle_settings = false;
+    let mut settings_clicked = false;
     if s.legacy_window {
         tool.ui.layout.organizing = false;
         tool.ui.layout.drag = None;
@@ -505,15 +607,17 @@ pub fn show(
             aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"),
             &mut copy_uuid,
         ));
+        // the build settings, under UUID (the human's request, 2026-11-22)
+        floater.header_summary_icon = Some(("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut settings_clicked));
         if tool.tool == Tool::Edit {
             floater.header_summary = Some(compact::selection_summary(p, tool, world).into());
             if !tool.selection.is_empty() {
                 floater.header_summary_action = Some(&mut summary_clicked);
             }
+        } else {
+            // the selection line's room, so the bars do not move between tools
+            floater.header_summary = Some(egui::RichText::new(" ").size(common::BODY).into());
         }
-    }
-    if !s.legacy_window && !matches!(tool.tool, Tool::Edit | Tool::Create) {
-        floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
     }
     // Keep the user's Build size. Large Appearance › Text size reflows inside
     // the floater (shape fields and Legacy Texture slots); it must not shove
@@ -523,6 +627,10 @@ pub fn show(
     } else {
         compact::minimum_size(tool, s)
     };
+    if detach::sectionless(tool, s) {
+        // Its height is set to its shared controls (detach::fit_window).
+        floater.min_size.y = 100.0;
+    }
     if !s.expanded {
         floater.default_size.x = ctx
             .data(|d| d.get_temp::<Vec2>(egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size")))
@@ -537,8 +645,27 @@ pub fn show(
             compact::body(ui, p, tool, world, s, mods, env);
         }
     });
+    if restore_text {
+        name_focus::apply(ctx);
+    }
+    if !s.legacy_window {
+        detach::fit_window(ctx, tool, s);
+    }
+    if let Some(size) = widgets::take_floater_resize(ctx, INSPECTOR_ID) {
+        second_tab::resized(tool, size.x);
+    }
+    if let Some(width) = second_tab::take_request(tool) {
+        let height = egui::AreaState::load(ctx, egui::Id::unique(INSPECTOR_ID))
+            .and_then(|state| state.size)
+            .unwrap_or(workspace::DEFAULT_SIZE)
+            .y;
+        widgets::size_floater(ctx, INSPECTOR_ID, Vec2::new(width, height));
+    }
     if summary_clicked {
         tool.ui.weights_open = !tool.ui.weights_open;
+    }
+    if settings_clicked {
+        layout::toggle_settings(tool);
     }
     if let Some((target, asset, item)) = tool.ui.slot_drop.take() {
         let sel = texture::selected(tool, world);
@@ -547,12 +674,17 @@ pub fn show(
             Err(text) => world.system_notice(text, crate::world::notice_topics::Topic::Items),
         }
     }
-    if copy_uuid && !tool.selection.is_empty() {
-        ctx.copy_text(tool.copy_keys(world, s, mods.shift));
+    let uuid_feedback = egui::Id::unique(INSPECTOR_ID).with("copy_uuid");
+    if let Some(anchor) = copy_uuid
+        && !tool.selection.is_empty()
+    {
+        let (keys, count) = tool.copy_keys_with_count(world, s, mods.shift);
+        if count > 0 {
+            ctx.copy_text(keys);
+            widgets::show_copied(ctx, uuid_feedback, anchor, copied_keys_label(count));
+        }
     }
-    if toggle_settings {
-        tool.ui.layout.open = !tool.ui.layout.open;
-    }
+    widgets::copied_feedback(ctx, p, uuid_feedback, window_rect(ctx));
     if !tool.ui.layout.open {
         tool.ui.layout.organizing = false;
         tool.ui.layout.drag = None;
@@ -561,6 +693,8 @@ pub fn show(
         tool.ui.layout.open = true;
         tool.ui.grid_options_open = false;
     }
+    detach::finish(ctx, p, tool, s);
+    detach::windows(ctx, p, tool, world, s, mods, env);
     layout::settings(ctx, p, tool, world, s, mods);
     layout::finish(ctx, p, tool, s);
     notecards::show(ctx, p, tool, world, s);
@@ -679,50 +813,70 @@ impl BuildTool {
         }
     }
 
-    /// ◄ ► (LLToolsSelectNextPartFace): next / previous face with the face
-    /// tool, else next / previous prim of the linkset with "Linked edit";
-    /// `include` (Shift) adds it to the selection.
+    /// Ctrl+, / Ctrl+. and the Legacy style's ◄ ► (LLToolsSelectNextPartFace,
+    /// indra/newview/lltoolmgr.cpp): with "Edit linked" outside "Select
+    /// face", the next / previous prim of the linkset; else the face arrows'
+    /// step (`select_next_face`), as their ◄ ► do in the Aurora style (the
+    /// human's choice, 2026-11-23). `include` (Shift) adds to the selection.
     pub fn select_next_part(&mut self, world: &mut World, s: &mut BuildSettings, next: bool, include: bool) {
         let face_mode = self.tool == Tool::Edit && self.edit_mode == EditMode::Face;
-        if !(s.edit_linked || face_mode) {
-            return;
-        }
-        let Some(key) = self.selection.first().copied() else { return };
-        let Some(idx) = world.objects.index_of(&key) else { return };
-        if face_mode {
-            let n = self.num_faces(world, idx) as i32;
-            let cur = self.last_face.map(|f| f as i32).unwrap_or(-1);
-            let all = self.faces.get(&key).is_none_or(|f| f.len() as i32 >= n);
-            // A sole selected face is already the cursor, not a bulk selection.
-            let f = if all && next && (n > 1 || self.selection.len() > 1) {
-                0
-            } else if next {
-                cur + 1
-            } else {
-                cur - 1
+        if s.edit_linked && !face_mode {
+            let Some(idx) = self.selection.first().and_then(|key| world.objects.index_of(key)) else {
+                return;
             };
-            if (0..n).contains(&f) {
-                if !include {
-                    let others: Vec<_> = self.selection.iter().copied().filter(|other| *other != key).collect();
-                    self.deselect(world, &others);
-                    self.faces.clear();
-                }
-                let entry = self.faces.entry(key).or_default();
-                if !entry.contains(&(f as u8)) {
-                    entry.push(f as u8);
-                }
-                self.last_face = Some(f as u8);
-                return;
-            }
-            if !s.edit_linked {
-                // wrap around the faces of the same prim
-                let f = if next { 0 } else { n - 1 };
-                self.faces.insert(key, vec![f as u8]);
-                self.last_face = Some(f as u8);
-                return;
-            }
+            self.step_link(world, idx, next, include, false);
+        } else {
+            self.select_next_face(world, s.edit_linked, next, include);
         }
-        // next / previous prim: root first, then the children in order
+    }
+
+    /// The faces of the one prim that has faces picked, one by one
+    /// (LLToolsSelectNextPartFace's face step): past its last face, the next
+    /// / previous prim of the linkset with "Edit linked", else around the
+    /// same prim. A sole selected face is already the cursor, not a bulk
+    /// selection.
+    pub(in crate::build) fn step_prim_face(&mut self, world: &mut World, idx: usize, edit_linked: bool, next: bool, include: bool) {
+        let Some(key) = world.objects.get(idx).map(|o| o.key) else { return };
+        let n = self.num_faces(world, idx) as i32;
+        let cur = self.last_face.map(|f| f as i32).unwrap_or(-1);
+        let all = self.faces.get(&key).is_none_or(|f| f.len() as i32 >= n);
+        let f = if all && next && (n > 1 || self.selection.len() > 1) {
+            0
+        } else if next {
+            cur + 1
+        } else {
+            cur - 1
+        };
+        if (0..n).contains(&f) {
+            if !include {
+                let others: Vec<_> = self.selection.iter().copied().filter(|other| *other != key).collect();
+                self.deselect(world, &others);
+                // the prims left with it (its linkset kept whole) keep no face
+                for prim in self.sel_prims(world) {
+                    if let Some(other) = world.objects.get(prim).map(|o| o.key).filter(|other| *other != key) {
+                        self.faces.insert(other, Vec::new());
+                    }
+                }
+                self.faces.insert(key, Vec::new());
+            }
+            let entry = self.faces.entry(key).or_default();
+            if !entry.contains(&(f as u8)) {
+                entry.push(f as u8);
+            }
+            self.last_face = Some(f as u8);
+        } else if edit_linked {
+            self.step_link(world, idx, next, include, true);
+        } else {
+            // around the faces of the same prim
+            let f = if next { 0 } else { n - 1 };
+            self.faces.insert(key, vec![f as u8]);
+            self.last_face = Some(f as u8);
+        }
+    }
+
+    /// The next / previous prim of `idx`'s linkset, root first, then the
+    /// children in order; `with_face`: picked with its first / last face.
+    fn step_link(&mut self, world: &mut World, idx: usize, next: bool, include: bool, with_face: bool) {
         let root = super::root_of(world, idx);
         let list: Vec<usize> = super::family(world, root)
             .into_iter()
@@ -743,7 +897,7 @@ impl BuildTool {
         }
         self.selection_linked = true;
         self.add(world, unit);
-        if face_mode {
+        if with_face {
             let f = if next {
                 0
             } else {
@@ -758,11 +912,11 @@ impl BuildTool {
         if !s.edit_linked {
             return;
         }
-        let mode = self.edit_mode;
-        self.edit_mode = EditMode::Move;
-        self.select_next_part(world, s, next, include);
-        self.edit_mode = mode;
-        if mode == EditMode::Face {
+        let Some(idx) = self.selection.first().and_then(|key| world.objects.index_of(key)) else {
+            return;
+        };
+        self.step_link(world, idx, next, include, false);
+        if self.edit_mode == EditMode::Face {
             if !include {
                 self.faces.clear();
             }
@@ -775,15 +929,18 @@ impl BuildTool {
 
     /// "Copy UUID": the roots' ids, or every selected prim with
     /// Shift / "Linked edit" (LLFloaterTools::onClickBtnCopyKeys).
-    pub fn copy_keys(&self, world: &World, s: &BuildSettings, all_prims: bool) -> String {
+    /// Also returns how many ids it holds, for the copy feedback.
+    pub fn copy_keys_with_count(&self, world: &World, s: &BuildSettings, all_prims: bool) -> (String, usize) {
         let idxs = if all_prims || s.edit_linked {
             self.sel_prims(world)
         } else {
             self.roots(world)
         };
-        idxs.iter()
+        let ids: Vec<String> = idxs
+            .iter()
             .filter_map(|&i| world.objects.get(i).map(|o| o.full_id.to_string()))
-            .collect::<Vec<_>>()
-            .join(&s.copy_key_separator)
+            .collect();
+        let count = ids.len();
+        (ids.join(&s.copy_key_separator), count)
     }
 }

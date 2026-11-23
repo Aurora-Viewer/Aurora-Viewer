@@ -116,6 +116,8 @@ pub struct Viewfinder {
     reel_slot: Option<(Rect, f32)>,
     /// The reel's tray being dragged: where it is (kept once let go).
     reel_drag: Option<Pos2>,
+    /// The filters panel being dragged: where it is (kept once let go).
+    looks_drag: Option<Pos2>,
     fly: Option<(f64, Rect)>,
     /// When the last photo landed on the tray, while the pile pulses.
     pulse: Option<f64>,
@@ -650,6 +652,8 @@ impl Viewfinder {
         }
         if self.looks {
             self.looks_panel(ctx, p, screen, s, panel, &mut out);
+            // after the panel, which says what is pointed at this frame
+            self.look_preview(ctx, p, frame, s, panel);
         }
         if self.light {
             self.light_panel(ctx, p, screen, panel, view, &mut out);
@@ -2572,6 +2576,14 @@ fn tiles(s: &Settings, panel: &SnapshotUi, f: &Frame) -> Vec<(&'static str, Stri
         .to_owned(),
         Box::new(|s, _| {
             s.viewfinder.hints = !s.viewfinder.hints;
+            None
+        }),
+    ));
+    v.push((
+        aurora_i18n::tr!("photo-vf-keep-framing"),
+        yes_no(s.viewfinder.keep_framing),
+        Box::new(|s, _| {
+            s.viewfinder.keep_framing = !s.viewfinder.keep_framing;
             None
         }),
     ));

@@ -70,6 +70,19 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// Per-item rename permission. The caller also checks the object's
+/// editing rights and RLVa restrictions.
+pub(crate) fn item_renameable(world: &World, item: &TaskItem) -> bool {
+    if item.is_folder {
+        return false;
+    }
+    if world.god_level > 0 {
+        return true;
+    }
+    let member = !item.group_id.is_nil() && world.groups.is_member(&item.group_id);
+    crate::world::inventory::actions::task_script_mask(item, world.agent_id, member) & perm::MODIFY != 0
+}
+
 impl BuildTool {
     /// The object the Contents tab shows: the primary selected prim
     /// (its root unless "Linked edit").
@@ -159,16 +172,22 @@ impl BuildTool {
     /// Whether an item of the object `idx`'s contents opens in a preview
     /// (`actions::task_preview_allowed`), and RLVa lets it be seen.
     pub fn task_preview_allowed(&self, world: &World, idx: usize, item: &aurora_net::inventory::InvItem) -> bool {
+        world.inventory.can_preview(item.asset_type) && self.task_preview_offered(world, idx, item)
+    }
+
+    /// Whether its Open entry shows: the permissions only. RLVa greys the
+    /// entry out rather than hiding it (LLTaskInvFVBridge::buildContextMenu;
+    /// `World::rlva_task_open_blocked`).
+    pub fn task_preview_offered(&self, world: &World, idx: usize, item: &aurora_net::inventory::InvItem) -> bool {
         let group = world.groups.group(&item.group_id);
-        world.inventory.can_preview(item.asset_type)
-            && crate::world::inventory::actions::task_preview_allowed(
-                item,
-                world.agent_id,
-                group.is_some(),
-                group.is_some_and(|g| g.powers & GP_OBJECT_MANIPULATE != 0),
-                self.can_modify(world, idx),
-                world.god_level,
-            )
+        crate::world::inventory::actions::task_preview_allowed(
+            item,
+            world.agent_id,
+            group.is_some(),
+            group.is_some_and(|g| g.powers & GP_OBJECT_MANIPULATE != 0),
+            self.can_modify(world, idx),
+            world.god_level,
+        )
     }
 
     /// LLPanelContents::getState: may we add to / reset this object's contents?
@@ -340,16 +359,26 @@ impl BuildTool {
     }
 
     /// UpdateTaskInventory with a new name (LLTaskInvFVBridge::renameItem).
+    /// Both the Contents panel and script editor use the same rename guards.
     pub fn rename_item(&mut self, world: &World, idx: usize, item_id: Uuid, name: &str) {
+        if !self.contents_items_editable(world, idx) {
+            return;
+        }
+        let Ok(name) = crate::world::inventory::actions::clean_name(name) else {
+            return;
+        };
         let Some(o) = world.objects.get(idx) else { return };
         let (handle, local_id, object_id) = (o.key.region, o.key.local_id, o.full_id);
         let Some(inv) = self.contents.objects.get_mut(&object_id) else {
             return;
         };
-        let Some(item) = inv.items.iter_mut().find(|i| i.item_id == item_id) else {
+        let Some(item) = inv.items.iter_mut().find(|i| i.item_id == item_id && item_renameable(world, i)) else {
             return;
         };
-        item.name = name.chars().filter(|c| *c != '|').take(63).collect();
+        if item.name == name {
+            return;
+        }
+        item.name = name;
         let item = Box::new(item.clone());
         self.send(BuildCmd::UpdateTaskInventory { handle, local_id, item });
         self.contents_changed(object_id);
@@ -542,6 +571,133 @@ mod tests {
         assert!(tool.status.contains("Denied"));
         tool.on_task_item_created(object, Err("timeout".into()));
         assert!(tool.status.contains("timeout"));
+    }
+
+    #[test]
+    fn task_item_rename_respects_effective_permissions() {
+        let (mut world, _, _) = fixture(false);
+        let me = Uuid::from_u128(1001);
+        let other = Uuid::from_u128(1002);
+        let group = Uuid::from_u128(1003);
+        world.agent_id = me;
+        world.god_level = 0;
+
+        let mut item = TaskItem {
+            owner_id: me,
+            owner_mask: perm::MODIFY,
+            ..Default::default()
+        };
+
+        // The owner may rename with Modify, but not without it.
+        assert!(item_renameable(&world, &item));
+        item.owner_mask = 0;
+        assert!(!item_renameable(&world, &item));
+
+        // Someone else's owner mask does not give us permission.
+        item.owner_id = other;
+        item.owner_mask = perm::MODIFY;
+        assert!(!item_renameable(&world, &item));
+
+        // Everyone's Modify permission does.
+        item.everyone_mask = perm::MODIFY;
+        assert!(item_renameable(&world, &item));
+        item.everyone_mask = 0;
+
+        // Group permission works only for a member.
+        item.group_id = group;
+        item.group_mask = perm::MODIFY;
+        assert!(!item_renameable(&world, &item));
+
+        world.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: "Rename test".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+
+        assert!(item_renameable(&world, &item));
+        item.group_mask = 0;
+        assert!(!item_renameable(&world, &item));
+
+        // Group-owned contents use owner rights for a member.
+        item.group_owned = true;
+        assert!(item_renameable(&world, &item));
+        world.groups.groups.clear();
+        assert!(!item_renameable(&world, &item));
+
+        // God-level access overrides the item mask, but not folders.
+        world.god_level = 1;
+        assert!(item_renameable(&world, &item));
+        item.is_folder = true;
+        assert!(!item_renameable(&world, &item));
+    }
+
+    #[test]
+    fn task_rename_enforces_object_item_and_name_guards() {
+        let (mut world, mut tool, idx) = fixture(false);
+        let object = world.objects.get(idx).unwrap().full_id;
+        let item_id = Uuid::from_u128(12345);
+
+        tool.contents.objects.entry(object).or_default().items.push(TaskItem {
+            item_id,
+            name: "Original".into(),
+            owner_mask: perm::MODIFY,
+            ..Default::default()
+        });
+
+        // A permitted rename sends one task inventory update.
+        world.god_level = 1;
+        assert!(tool.contents_items_editable(&world, idx));
+        tool.rename_item(&world, idx, item_id, "  Renamed  ");
+
+        assert_eq!(tool.contents.objects[&object].items[0].name, "Renamed");
+        assert_eq!(
+            tool.out
+                .iter()
+                .filter(|command| matches!(
+                    command,
+                    aurora_net::NetCommand::Build(BuildCmd::UpdateTaskInventory { item, .. })
+                        if item.item_id == item_id && item.name == "Renamed"
+                ))
+                .count(),
+            1
+        );
+        tool.out.clear();
+
+        // A god can rename an item without its Modify permission.
+        tool.contents.objects.get_mut(&object).unwrap().items[0].owner_mask = 0;
+        tool.rename_item(&world, idx, item_id, "God override");
+        assert_eq!(tool.contents.objects[&object].items[0].name, "God override");
+        assert_eq!(tool.out.len(), 1);
+        tool.out.clear();
+
+        tool.rename_item(&world, idx, item_id, "Renamed");
+        assert_eq!(tool.contents.objects[&object].items[0].name, "Renamed");
+        tool.out.clear();
+
+        // Invalid, unchanged, and folder names must not be sent.
+        tool.contents.objects.get_mut(&object).unwrap().items[0].owner_mask = perm::MODIFY;
+        for name in ["", "Invalid|Name", "Bad\nName", "Renamed"] {
+            tool.rename_item(&world, idx, item_id, name);
+            assert_eq!(tool.contents.objects[&object].items[0].name, "Renamed");
+            assert!(tool.out.is_empty());
+        }
+
+        tool.contents.objects.get_mut(&object).unwrap().items[0].is_folder = true;
+        tool.rename_item(&world, idx, item_id, "Folder rename");
+        assert!(tool.out.is_empty());
+        tool.contents.objects.get_mut(&object).unwrap().items[0].is_folder = false;
+
+        // Object-level permission is also required.
+        world.god_level = 0;
+        world.objects.get_mut(idx).unwrap().update_flags = 0;
+        assert!(!tool.contents_items_editable(&world, idx));
+        tool.rename_item(&world, idx, item_id, "Not allowed");
+        assert_eq!(tool.contents.objects[&object].items[0].name, "Renamed");
+        assert!(tool.out.is_empty());
     }
 
     #[test]

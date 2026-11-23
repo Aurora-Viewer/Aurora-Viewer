@@ -7,71 +7,44 @@ use super::super::{
 };
 use std::borrow::Cow;
 use uuid::Uuid;
-mod matcher;
 
-/// The stand-ins of a hidden name, by their message: the `anonyms` list of
-/// the Legacy Viewer's rlva_strings.xml, in its order, which
-/// RlvStrings::getAnonym indexes.
-const ANONYMS: [&str; 28] = [
-    "rlva-anonym-a-resident",
-    "rlva-anonym-this-resident",
-    "rlva-anonym-that-resident",
-    "rlva-anonym-an-individual",
-    "rlva-anonym-this-individual",
-    "rlva-anonym-that-individual",
-    "rlva-anonym-a-person",
-    "rlva-anonym-this-person",
-    "rlva-anonym-that-person",
-    "rlva-anonym-a-stranger",
-    "rlva-anonym-this-stranger",
-    "rlva-anonym-that-stranger",
-    "rlva-anonym-a-being",
-    "rlva-anonym-this-being",
-    "rlva-anonym-that-being",
-    "rlva-anonym-an-agent",
-    "rlva-anonym-this-agent",
-    "rlva-anonym-that-agent",
-    "rlva-anonym-a-soul",
-    "rlva-anonym-this-soul",
-    "rlva-anonym-that-soul",
-    "rlva-anonym-somebody",
-    "rlva-anonym-some-people",
-    "rlva-anonym-someone",
-    "rlva-anonym-mysterious-one",
-    "rlva-anonym-an-unknown-being",
-    "rlva-anonym-unidentified-one",
-    "rlva-anonym-an-unknown-person",
-];
+mod anonyms;
 
 /// RlvStrings::getAnonym (rlvcommon.cpp): the bytes of the name summed in a
 /// U32 as the signed `char` they are there, so that a name outside ASCII
-/// lands on the same stand-in, modulo the list.
-pub fn anonym_index(name: &str) -> usize {
-    let hash = name.bytes().fold(0u32, |hash, byte| hash.wrapping_add(byte as i8 as u32));
-    hash as usize % ANONYMS.len()
+/// lands on the same stand-in.
+fn anonym_hash(name: &str) -> u32 {
+    name.bytes().fold(0u32, |hash, byte| hash.wrapping_add(byte as i8 as u32))
+}
+
+/// The stand-in RlvStrings::getAnonym gives the legacy name `name` in the
+/// interface language `language`: the hash modulo the whole list, the
+/// English stand-ins and the language's own (`anonyms::list`).
+pub fn anonym_in(language: &str, name: &str) -> &'static str {
+    let list = anonyms::list(language);
+    list[anonym_hash(name) as usize % list.len()]
 }
 
 /// The stand-in of the resident whose legacy name ("First Last", as
 /// LLAvatarName::getLegacyName) is `name`: the same one as in the Legacy
-/// Viewer, so that two viewers side by side tell the same strangers apart.
+/// Viewer in the same interface language, so that two viewers side by side
+/// tell the same strangers apart. The legacy first name stays empty, as the
+/// Legacy Viewer shows the stand-in alone wherever it would write the
+/// legacy name (LLAvatarName::getUserName of an RLVa-hidden name).
 pub fn anonymous_named(name: &str) -> &'static AvatarName {
     static NAMES: aurora_i18n::Localized<Vec<AvatarName>> = aurora_i18n::Localized::new();
     let names = NAMES.get(|| {
-        ANONYMS
-            .iter()
-            .map(|key| {
-                let label = aurora_i18n::text(key);
-                AvatarName {
-                    username: label.to_owned(),
-                    display_name: label.to_owned(),
-                    legacy_first: label.to_owned(),
-                    is_default: true,
-                    ..Default::default()
-                }
+        anonyms::list(aurora_i18n::language())
+            .into_iter()
+            .map(|label| AvatarName {
+                username: label.to_owned(),
+                display_name: label.to_owned(),
+                is_default: true,
+                ..Default::default()
             })
             .collect()
     });
-    &names[anonym_index(name)]
+    &names[anonym_hash(name) as usize % names.len()]
 }
 
 /// The stand-in of a resident whose name is not known yet: by the id as
@@ -86,10 +59,14 @@ pub fn anonymous(id: Uuid) -> &'static AvatarName {
 /// a resident whose name is hidden.
 static PLAIN_APPEARANCE: std::sync::LazyLock<std::sync::Arc<Appearance>> = std::sync::LazyLock::new(Default::default);
 
+/// What RlvUtil::filterLocation and RlvUtil::filterNames
+/// (indra/newview/rlvcommon.cpp) replace in a text, as they do it: one
+/// `boost::replace_all_regex(text, regex("\b" + name + "\b", icase),
+/// replacement)` after the other, each over what the ones before left.
 #[derive(Default, Clone)]
 pub struct TextFilter {
+    /// The passes, in their order: a name as it is written, what replaces it.
     replacements: Vec<(String, String)>,
-    matcher: std::sync::OnceLock<std::sync::Arc<matcher::Matcher>>,
     private_names: bool,
     allowed_names: std::collections::HashSet<Uuid>,
 }
@@ -107,7 +84,8 @@ impl TextFilter {
         if !self.private_names && self.replacements.is_empty() {
             return;
         }
-        let mut filter = self.clone();
+        // the names the notice links come first, then the filter's own
+        let mut filter = TextFilter::default();
         for link in links {
             if let super::super::notification_history::NameTarget::Avatar(id) = link.target
                 && self.private_names
@@ -117,11 +95,10 @@ impl TextFilter {
                 if *title == link.name {
                     *title = replacement.clone();
                 }
-                let original = link.name.to_lowercase();
                 if !filter
                     .replacements
                     .iter()
-                    .any(|(name, value)| *name == original && value == replacement)
+                    .any(|(name, value)| name.eq_ignore_ascii_case(&link.name) && value == replacement)
                 {
                     filter.add(&link.name, replacement);
                 }
@@ -130,7 +107,7 @@ impl TextFilter {
                 link.name = text;
             }
         }
-        filter.replacements.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
+        filter.replacements.extend(self.replacements.iter().cloned());
         if let Cow::Owned(text) = filter.apply(title) {
             *title = text;
         }
@@ -141,70 +118,108 @@ impl TextFilter {
         }
     }
 
+    /// A pass that replaces `original`. RlvUtil::filterLocation sets no
+    /// minimum length; an empty name, whose `\b\b` would match between any
+    /// two words there, is left out.
     fn add(&mut self, original: &str, replacement: &str) {
-        if original.chars().count() > 2 && !original.eq_ignore_ascii_case(replacement) {
-            let needle = original.to_lowercase();
-            self.replacements.push((needle, replacement.to_owned()));
-            let _ = self.matcher.take();
+        if !original.is_empty() {
+            self.replacements.push((original.to_owned(), replacement.to_owned()));
         }
     }
 
-    /// A resident's name, as RlvUtil::filterNames (rlvcommon.cpp) takes
-    /// it: more than two bytes long (`std::string::length`), and as it is
-    /// written, not as an address would escape it.
-    fn add_name(&mut self, original: &str, replacement: &str) {
-        if original.len() > 2 {
-            self.add(original, replacement);
-        }
-    }
-
-    /// Longest first, so that a name is replaced before a part of it.
-    fn sort(&mut self) {
-        self.replacements
-            .sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
-        self.replacements.dedup();
-    }
-
-    fn reuse_matcher(&mut self, previous: &Self) {
-        if self.replacements == previous.replacements
-            && let Some(matcher) = previous.matcher.get()
-        {
-            let _ = self.matcher.set(matcher.clone());
-        }
-    }
-
+    /// Every pass, one after the other (`boost::replace_all_regex`): a
+    /// match is the name as written, ASCII letters in any case
+    /// (`regex::icase`), between two `\b`; the search goes on after the
+    /// replacement, and the next pass reads the text this one wrote.
     pub fn apply<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        if self.replacements.is_empty() {
-            return Cow::Borrowed(text);
-        }
-        let matcher = self
-            .matcher
-            .get_or_init(|| std::sync::Arc::new(matcher::Matcher::new(&self.replacements)));
-        let mut out: Option<String> = None;
-        let mut copied = 0;
-        let mut offset = 0;
-        while offset < text.len() {
-            let remaining = &text[offset..];
-            let boundary = offset == 0 || !text[..offset].chars().next_back().is_some_and(matcher::word);
-            if let Some((count, index)) = boundary.then(|| matcher.at(remaining)).flatten() {
-                let out = out.get_or_insert_with(|| String::with_capacity(text.len()));
-                out.push_str(&text[copied..offset]);
-                out.push_str(&self.replacements[index].1);
-                offset += count;
-                copied = offset;
-            } else {
-                let c = remaining.chars().next().expect("nonempty suffix");
-                offset += c.len_utf8();
+        let mut out = Cow::Borrowed(text);
+        for (needle, replacement) in &self.replacements {
+            if let Some(replaced) = replace_all_words(&out, needle, replacement) {
+                out = Cow::Owned(replaced);
             }
         }
-        match out {
-            Some(mut out) => {
-                out.push_str(&text[copied..]);
-                Cow::Owned(out)
-            }
-            None => Cow::Borrowed(text),
+        out
+    }
+}
+
+/// A word character of `\b`: ASCII letters, digits and `_` as boost's
+/// classic traits have them, and the letters and digits beyond ASCII, which
+/// the Legacy Viewer's regex classifies by the platform's own traits.
+fn word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// `\b` at byte `at` of `text`: a word character on one side only.
+fn word_boundary(text: &str, at: usize) -> bool {
+    text[..at].chars().next_back().is_some_and(word) != text[at..].chars().next().is_some_and(word)
+}
+
+/// `boost::replace_all_regex(text, regex("\b" + needle + "\b", icase),
+/// replacement)`, None when nothing matches. The needle is valid UTF-8 and
+/// only ASCII bytes are compared without case, so a match starts and ends
+/// on a character.
+fn replace_all_words(text: &str, needle: &str, replacement: &str) -> Option<String> {
+    let (bytes, wanted) = (text.as_bytes(), needle.as_bytes());
+    let first = *wanted.first()?;
+    let mut out: Option<String> = None;
+    let (mut copied, mut at) = (0, 0);
+    while at + wanted.len() <= bytes.len() {
+        if bytes[at].eq_ignore_ascii_case(&first)
+            && bytes[at..at + wanted.len()].eq_ignore_ascii_case(wanted)
+            && text.is_char_boundary(at)
+            && word_boundary(text, at)
+            && word_boundary(text, at + wanted.len())
+        {
+            let out = out.get_or_insert_with(|| String::with_capacity(text.len()));
+            out.push_str(&text[copied..at]);
+            out.push_str(replacement);
+            at += wanted.len();
+            copied = at;
+        } else {
+            at += 1;
         }
     }
+    let mut out = out?;
+    out.push_str(&text[copied..]);
+    Some(out)
+}
+
+/// `escape_for_regex` (indra/newview/rlvcommon.cpp): a backslash before
+/// each of `.^$|()[]{}*+?\`. RlvUtil::filterNames measures and compares the
+/// display name so written.
+fn escape_for_regex(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if ".^$|()[]{}*+?\\".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Where the APP_HEADER_REGEX header (indra/llui/llurlentry.h) that ends
+/// `before` starts, the `/app` that follows it left out:
+/// `(((hop|x-grid-location-info)://[-\w\.\:\@]+/app)|((hop|secondlife):///app))`.
+fn app_header_start(before: &str) -> Option<usize> {
+    for scheme in ["secondlife://", "hop://"] {
+        if before.ends_with(scheme) {
+            return Some(before.len() - scheme.len());
+        }
+    }
+    let host = before
+        .bytes()
+        .rev()
+        .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':' | b'@'))
+        .count();
+    let rest = before[..before.len() - host].strip_suffix("://")?;
+    if host == 0 {
+        return None;
+    }
+    ["x-grid-location-info", "hop"]
+        .into_iter()
+        .find(|scheme| rest.ends_with(scheme))
+        .map(|scheme| rest.len() - scheme.len())
 }
 
 impl World {
@@ -215,7 +230,7 @@ impl World {
         if private {
             allowed.insert(self.agent_id);
             for (_, option) in self.rlva.rules_for("shownames", Uuid::nil()) {
-                if let Ok(id) = Uuid::parse_str(option)
+                if let Some(id) = super::numeric::uuid_set(option).filter(|id| !id.is_nil())
                     && self.rlva_can_name(id)
                 {
                     allowed.insert(id);
@@ -225,15 +240,10 @@ impl World {
         self.social.avatar_names.set_rlva_privacy(private, allowed);
         let nearby = if private { self.rlva_nearby_avatars() } else { Default::default() };
         self.social.avatar_names.set_rlva_nearby(nearby);
-        let mut names = self.rlva_name_filter(false);
-        names.sort();
-        names.reuse_matcher(&self.rlva_name_privacy);
-        let mut filter = self.rlva_text_filter(false);
-        filter.reuse_matcher(&self.rlva_privacy);
+        let names = self.rlva_name_filter(false);
+        let filter = self.rlva_text_filter(false);
         let mut places = TextFilter::default();
         self.rlva_hide_places(&mut places);
-        places.sort();
-        places.reuse_matcher(&self.rlva_place_privacy);
         // The notices that came since the last pass are rewritten now, once
         // (`Notifications::settle`): one already shown keeps its text when a
         // restriction comes or goes, as the Legacy Viewer's notifications
@@ -273,9 +283,7 @@ impl World {
         self.rlva_name_privacy = names;
         self.rlva_place_privacy = places;
         self.rlva_hover_privacy = if self.rlva.has("shownearby") {
-            let mut filter = self.rlva_text_filter(true);
-            filter.reuse_matcher(&self.rlva_hover_privacy);
-            filter
+            self.rlva_text_filter(true)
         } else {
             self.rlva_privacy.clone()
         };
@@ -301,6 +309,23 @@ impl World {
         names.anonymous(&id)
     }
 
+    /// The stand-in of a resident who came with the name `from_name` (the
+    /// legacy name a chat line or an offer carries): the one of the cached
+    /// name, else the one of `from_name` itself, never the id's.
+    /// `RlvStrings::getAnonym(chat.mFromName)` when LLAvatarNameCache::get
+    /// fails, in process_chat_from_simulator (indra/newview/llviewermessage.cpp),
+    /// and `getAnonym(info->mFromName)` in LLIMProcessing::processNewMessage
+    /// (indra/newview/llimprocessing.cpp).
+    pub fn rlva_anonymous_from(&self, id: Uuid, from_name: &str) -> &'static AvatarName {
+        let names = &self.social.avatar_names;
+        names.want(&id);
+        if names.raw(&id).is_some() {
+            names.anonymous(&id)
+        } else {
+            anonymous_named(from_name)
+        }
+    }
+
     /// What an `rlvanonym` link shows, one the viewer did not write itself
     /// (a text that holds `secondlife:///app/agent/<id>/rlvanonym`).
     /// LLUrlEntryAgentRLVAnonymizedName (indra/llui/llurlentry.cpp) is an
@@ -313,9 +338,10 @@ impl World {
         let names = &self.social.avatar_names;
         names.want(&id);
         match names.raw(&id) {
-            _ if !self.rlva.enabled() => aurora_i18n::tr!("status-unknown").to_owned(),
+            // LLTrans "Unknown" and "AvatarNameWaiting"
+            _ if !self.rlva.enabled() => aurora_i18n::tr!("rlva-anonym-unknown").to_owned(),
             Some(name) => anonymous_named(&name.legacy_name()).display_name.clone(),
-            None => "…".to_owned(),
+            None => aurora_i18n::tr!("rlva-anonym-waiting").to_owned(),
         }
     }
 
@@ -361,7 +387,7 @@ impl World {
             ChatKind::Local(_) | ChatKind::Im => {
                 let speaker = self.rlva_speaker(source);
                 if speaker == Speaker::Hidden && scope == NameScope::World && matches!(kind, ChatKind::Local(_)) {
-                    (speaker, self.rlva_anonymous(source).display_name.clone())
+                    (speaker, self.rlva_anonymous_from(source, &from).display_name.clone())
                 } else {
                     (speaker, from)
                 }
@@ -400,9 +426,14 @@ impl World {
         if line.origin != Origin::Live || !self.rlva.enabled() {
             return;
         }
-        let (speaker, from) = self.rlva_sender(scope, line.kind, line.source, std::mem::take(&mut line.from));
-        line.speaker = speaker;
-        line.from = from;
+        // a sender already hidden (`World::on_chat` decides it first) keeps
+        // the stand-in of the name it came with, which another pass would
+        // take for the name
+        if line.speaker != Speaker::Hidden {
+            let (speaker, from) = self.rlva_sender(scope, line.kind, line.source, std::mem::take(&mut line.from));
+            line.speaker = speaker;
+            line.from = from;
+        }
         if line.kind.is_automated()
             && let Cow::Owned(text) = self.rlva_filter_text_in(line.kind.text_in(scope), &line.text)
         {
@@ -422,40 +453,44 @@ impl World {
     /// that ends its line, or that `/` or `?` follows, is one
     /// (`/mention(?=/|\?|$)`): a mention followed by a space or by more
     /// text stays a link, which names its resident
-    /// (LLUrlEntryAgentMention has no RLVa test).
+    /// (LLUrlEntryAgentMention has no RLVa test). Every header of
+    /// APP_HEADER_REGEX (indra/llui/llurlentry.h) starts one:
+    /// `secondlife:///app`, `hop:///app` and `hop://` or
+    /// `x-grid-location-info://` with a grid's host.
     pub fn rlva_freeze_mentions<'a>(&self, text: &'a str) -> Cow<'a, str> {
-        const PREFIX: &str = "secondlife:///app/agent/";
+        const PATH: &str = "/app/agent/";
         const SUFFIX: &str = "/mention";
         if !self.rlva.has("shownames") || !text.contains(SUFFIX) {
             return Cow::Borrowed(text);
         }
-        let end = PREFIX.len() + 36 + SUFFIX.len();
         let mut out = String::with_capacity(text.len());
-        let mut changed = false;
-        let mut rest = text;
-        while let Some(i) = rest.find(PREFIX) {
-            let link = &rest[i..];
-            let id = link.get(PREFIX.len()..PREFIX.len() + 36).and_then(|u| Uuid::parse_str(u).ok());
-            let ends = link.get(PREFIX.len() + 36..end) == Some(SUFFIX)
-                && matches!(link[end..].chars().next(), None | Some('/' | '?' | '\n' | '\r'));
-            match id {
-                Some(id) if ends && !self.rlva_can_name(id) => {
-                    out.push_str(&rest[..i]);
-                    out.push('@');
-                    out.push_str(&self.rlva_anonymous(id).display_name);
-                    rest = &link[end..];
-                    changed = true;
-                }
-                _ => {
-                    out.push_str(&rest[..i + PREFIX.len()]);
-                    rest = &link[PREFIX.len()..];
-                }
+        let mut copied = 0;
+        let mut from = 0;
+        while let Some(found) = text[from..].find(PATH) {
+            let at = from + found;
+            from = at + PATH.len();
+            let Some(start) = app_header_start(&text[..at]) else {
+                continue;
+            };
+            let link = &text[from..];
+            let id = link.get(..36).and_then(|u| Uuid::parse_str(u).ok());
+            let ends = link.get(36..36 + SUFFIX.len()) == Some(SUFFIX)
+                && matches!(link[36 + SUFFIX.len()..].chars().next(), None | Some('/' | '?' | '\n' | '\r'));
+            if let Some(id) = id
+                && ends
+                && !self.rlva_can_name(id)
+            {
+                out.push_str(&text[copied..start]);
+                out.push('@');
+                out.push_str(&self.rlva_anonymous(id).display_name);
+                from += 36 + SUFFIX.len();
+                copied = from;
             }
         }
-        if !changed {
+        if copied == 0 {
             return Cow::Borrowed(text);
         }
-        out.push_str(rest);
+        out.push_str(&text[copied..]);
         Cow::Owned(out)
     }
 
@@ -502,12 +537,10 @@ impl World {
         self.avatar_marks.get(id).filter(|_| self.rlva_can_name(*id))
     }
 
+    /// RlvUtil::isNearbyRegion (indra/newview/rlvcommon.cpp) under
+    /// `@showloc`: a region around, its name written the same way.
     pub fn rlva_private_region(&self, region: &str) -> bool {
-        self.rlva.has("showloc")
-            && self
-                .regions
-                .values()
-                .any(|r| !r.name.is_empty() && r.name.eq_ignore_ascii_case(region))
+        self.rlva_hides_region(region)
     }
 
     /// LLAvatarActions::canOfferTeleport permits a location reveal only to
@@ -517,7 +550,7 @@ impl World {
             || self
                 .rlva
                 .rules_for("tplure", Uuid::nil())
-                .any(|(_, option)| Uuid::parse_str(option).ok() == Some(id))
+                .any(|(_, option)| !option.is_empty() && super::numeric::uuid_set(option) == Some(id))
             || self
                 .social
                 .friends
@@ -529,8 +562,15 @@ impl World {
     /// an ineligible resident does not cancel invitations to eligible ones.
     pub fn rlva_filter_teleport_offer(&self, recipients: &mut Vec<Uuid>) {
         if self.rlva.has("showloc") {
-            recipients.retain(|id| self.rlva_can_offer_teleport(*id));
+            recipients.retain(|id| self.rlva_answers_teleport_request(*id) || self.rlva_can_offer_teleport(*id));
         }
+    }
+
+    /// teleport_request_callback (llviewermessage.cpp): the offer that
+    /// answers a teleport request we accepted goes to send_lures directly,
+    /// never through LLAvatarActions::canOfferTeleport, @showloc or not.
+    pub fn rlva_answers_teleport_request(&self, id: Uuid) -> bool {
+        self.teleport_invites.request_answers.contains(&id)
     }
 
     fn rlva_refresh_location_history(&mut self) {
@@ -540,19 +580,25 @@ impl World {
         }
         self.rlva_location_hidden = hidden;
         if hidden {
-            if let Some(current) = self.tp_history.replace_current_region(aurora_i18n::tr!("rlva-hidden-region")) {
+            // RlvUIEnabler::onToggleShowLoc (indra/newview/rlvui.cpp): the
+            // persistent history forgets its last place when it is the
+            // session's last one (compareByTitleAndGlobalPos: the same
+            // title, MAX_GLOBAL_POS_OFFSET 5 m), and the current place
+            // becomes Hidden::Parcel (LLTeleportHistory::updateCurrentLocation)
+            if let Some(back) = self.tp_history.session().items.last() {
                 let global = glam::DVec3::new(
-                    (current.handle >> 32) as f64 + f64::from(current.position.x),
-                    f64::from(current.handle as u32) + f64::from(current.position.y),
-                    f64::from(current.position.z),
+                    (back.handle >> 32) as f64 + f64::from(back.position.x),
+                    f64::from(back.handle as u32) + f64::from(back.position.y),
+                    f64::from(back.position.z),
                 );
                 if let Some(last) = self.tp_storage.items.last()
-                    && last.title.ends_with(&current.region)
+                    && last.title == back.title()
                     && last.global.distance(global) < 5.0
                 {
                     self.tp_storage.remove(self.tp_storage.items.len() - 1);
                 }
             }
+            let _ = self.tp_history.replace_current_region(aurora_i18n::tr!("rlva-hidden-parcel"));
         } else {
             let _ = self.tp_history.replace_current_region(&self.region_name());
             if let Some(global) = self.agent_global() {
@@ -606,15 +652,21 @@ impl World {
         }
     }
 
+    /// The text filter of LLFloaterIMNearbyChatHandler::processChat and
+    /// LLHUDText::setString (indra/newview/llhudtext.cpp): RlvUtil::filterLocation,
+    /// then RlvUtil::filterNames (indra/newview/rlvcommon.cpp).
     pub fn rlva_text_filter(&self, clear_nearby: bool) -> TextFilter {
-        let mut filter = self.rlva_name_filter(clear_nearby);
+        let mut filter = TextFilter::default();
         self.rlva_hide_places(&mut filter);
-        filter.sort();
+        let names = self.rlva_name_filter(clear_nearby);
+        filter.replacements.extend(names.replacements);
+        filter.private_names = names.private_names;
+        filter.allowed_names = names.allowed_names;
         filter
     }
 
     /// `rlva_text_filter` without the places: what RlvUtil::filterNames
-    /// (indra/newview/rlvcommon.cpp) alone replaces. Not sorted.
+    /// (indra/newview/rlvcommon.cpp) alone replaces.
     fn rlva_name_filter(&self, clear_nearby: bool) -> TextFilter {
         let mut filter = TextFilter::default();
         if !self.rlva.enabled() {
@@ -624,59 +676,75 @@ impl World {
         if filter.private_names {
             filter.allowed_names.insert(self.agent_id);
             for (_, option) in self.rlva.rules_for("shownames", Uuid::nil()) {
-                if let Ok(id) = Uuid::parse_str(option)
+                if let Some(id) = super::numeric::uuid_set(option).filter(|id| !id.is_nil())
                     && self.rlva_can_name(id)
                 {
                     filter.allowed_names.insert(id);
                 }
             }
         }
-        if self.rlva.has("shownames") || clear_nearby {
-            for sighting in super::super::radar::sightings(self) {
-                let id = sighting.id;
-                if id == self.agent_id || (!clear_nearby && self.rlva_can_name(id)) {
-                    continue;
+        if !self.rlva.has("shownames") && !clear_nearby {
+            return filter;
+        }
+        // LLWorld::getAvatars, oneself among them: the agent's own name is
+        // erased with the others' when `@shownearby` clears them, and is
+        // shown under `@shownames` (RlvActions::canShowName)
+        let me = (!self.agent_id.is_nil()).then_some(self.agent_id);
+        let around = super::super::radar::sightings(self)
+            .into_iter()
+            .map(|s| s.id)
+            .filter(|id| *id != self.agent_id);
+        // (`fFilterLegacy &=`: one legacy name too short stops the legacy
+        // names of the avatars after it)
+        let mut filter_legacy = true;
+        for id in me.into_iter().chain(around) {
+            if !clear_nearby && self.rlva_can_name(id) {
+                continue;
+            }
+            self.social.avatar_names.want(&id);
+            let replacement = if clear_nearby {
+                String::new()
+            } else {
+                self.social.avatar_names.anonymous(&id).display_name.clone()
+            };
+            // The display name (a contact set's alias when it has one) and
+            // the legacy name, "Resident" included: "Jane Resident" is one
+            // stand-in, not "<stand-in> Resident". The display name counts
+            // as `escape_for_regex` writes it, the legacy name as it is.
+            if let (Some(name), Some(display)) = (
+                self.social.avatar_names.raw(&id),
+                self.social.avatar_names.rlva_filter_display_name(&id),
+            ) {
+                let legacy = name.legacy_name();
+                let escaped = escape_for_regex(&display);
+                let filter_display = escaped.len() > 2;
+                filter_legacy &= legacy.len() > 2;
+                // a display name inside the legacy name goes after it
+                // (`boost::icontains(strLegacyName, strDisplayName)`)
+                let inside = legacy.to_ascii_lowercase().contains(&escaped.to_ascii_lowercase());
+                let mut passes = [(filter_display, display), (filter_legacy, legacy)];
+                if inside {
+                    passes.reverse();
                 }
-                self.social.avatar_names.want(&id);
-                let replacement = if clear_nearby {
-                    String::new()
-                } else {
-                    self.social.avatar_names.anonymous(&id).display_name.clone()
-                };
-                // RlvUtil::filterNames: the display name and the legacy
-                // name of each avatar around, nothing else (not the
-                // account name "jane.doe", nor a name escaped in an
-                // address). Until the name service answers, the legacy
-                // name the avatar's object came with stands for both.
-                if let Some(name) = self.social.avatar_names.raw(&id) {
-                    // the whole legacy name, "Resident" included:
-                    // "Jane Resident" is one stand-in, not "<stand-in> Resident"
-                    filter.add_name(&name.legacy_name(), &replacement);
-                    filter.add_name(&name.display_name, &replacement);
-                } else {
-                    if let Some(name) = self.social.names.get(&id) {
-                        filter.add_name(name, &replacement);
-                    }
-                    if let Some(name) = self
-                        .objects
-                        .index_of_uuid(&id)
-                        .and_then(|i| self.objects.get(i))
-                        .and_then(|o| o.display_name())
-                    {
-                        filter.add_name(&name, &replacement);
+                for (wanted, original) in passes {
+                    if wanted {
+                        filter.add(&original, &replacement);
                     }
                 }
             }
+            // a name not cached yet is left as it is
+            // (`LLAvatarNameCache::get` fails), like the Legacy Viewer
         }
         filter
     }
 
-    /// What `@showloc` hides of a text: the regions around and the parcel.
+    /// RlvUtil::filterLocation (indra/newview/rlvcommon.cpp): what
+    /// `@showloc` hides of a text, each region around in turn, then the
+    /// parcel, as they are written (never as an address escapes them).
     fn rlva_hide_places(&self, filter: &mut TextFilter) {
         if self.rlva.has("showloc") {
             for region in self.regions.values() {
                 filter.add(&region.name, aurora_i18n::tr!("rlva-hidden-region"));
-                filter.add(&aurora_net::land::uri_escape(&region.name), aurora_i18n::tr!("rlva-hidden-region"));
             }
             filter.add(&self.parcel_name, aurora_i18n::tr!("rlva-hidden-parcel"));
         }
@@ -788,19 +856,24 @@ mod tests {
         }));
     }
 
-    /// The stand-in `index` in any language: another test may change the
-    /// interface language while this one runs.
-    fn is_anonym(text: &str, index: usize) -> bool {
+    /// The stand-in of the legacy name `name` in any language: another test
+    /// may change the interface language while this one runs.
+    fn is_anonym(text: &str, name: &str) -> bool {
+        ["en", "fr", "ja"].iter().any(|language| anonym_in(language, name) == text)
+    }
+
+    /// Whether two names share a stand-in in one of the tested languages,
+    /// which would let `is_anonym` mistake one for the other.
+    fn same_anonym(a: &str, b: &str) -> bool {
         ["en", "fr", "ja"]
             .iter()
-            .any(|language| aurora_i18n::text_in(language, ANONYMS[index]) == text)
+            .any(|language| anonym_in(language, a) == anonym_in(language, b))
     }
 
     #[test]
     fn rlva_anonyms_are_the_legacy_list_picked_by_the_sum_of_the_name() {
-        let english: Vec<&str> = ANONYMS.iter().map(|key| aurora_i18n::text_in("en", key)).collect();
         assert_eq!(
-            english,
+            anonyms::list("en"),
             [
                 "A resident",
                 "This resident",
@@ -832,21 +905,53 @@ mod tests {
                 "An unknown person",
             ]
         );
-        for language in ["fr", "ja"] {
-            let translated: std::collections::HashSet<&str> = ANONYMS.iter().map(|key| aurora_i18n::text_in(language, key)).collect();
-            assert_eq!(translated.len(), ANONYMS.len(), "{language}: two strangers must not read the same");
-            assert!(ANONYMS.iter().all(|key| !translated.contains(key)), "{language}: a missing message");
-        }
-        assert_eq!(anonym_index(""), 0, "a name not known yet is \"A resident\" there");
-        assert_eq!(anonym_index("A"), 65 % 28);
+        // RlvStrings::initClass: the English file, then the interface
+        // language's own, repeated entries included (Legacy xui/fr)
+        let french = anonyms::list("fr");
+        assert_eq!(french.len(), 56);
+        assert_eq!(french[..28], anonyms::list("en")[..]);
+        assert_eq!((french[28], french[29], french[30]), ("Un résident", "Ce résident", "Ce résident"));
+        assert_eq!(anonyms::list("ja")[28], "住民");
+        assert_eq!(anonyms::list("ru")[28], "Житель");
+        // one Chinese interface in the Legacy Viewer, the Traditional one
+        assert_eq!(anonyms::list("zh-Hans"), anonyms::list("zh-Hant"));
+        assert_eq!(anonyms::list("zh-Hant")[28], "一位居民");
+        // no `anonyms` in the Legacy de and pt files: English alone
+        assert_eq!(anonyms::list("de"), anonyms::list("en"));
+        assert_eq!(anonyms::list("pt-BR"), anonyms::list("en"));
+        assert_eq!(anonyms::list("pl").len(), 35);
+        assert_eq!(anonym_in("en", ""), "A resident", "a name not known yet");
+        assert_eq!(anonym_in("en", "A"), "A stranger", "65 % 28 = 9");
+        assert_eq!(anonym_in("fr", "A"), "A stranger", "65 % 56 = 9: English in French too");
+        // 74 + 97 + 110 + 101 = 382, 382 % 28 = 18, 382 % 56 = 46
+        assert_eq!(anonym_in("en", "Jane"), "A soul");
+        assert_eq!(anonym_in("fr", "Jane"), "Une âme");
+        assert_eq!(anonym_in("ja", "Jane"), "魂");
         // 74 + 97 + 110 + 101 + 32 + 68 + 111 + 101 = 694
-        assert_eq!(anonym_index("Jane Doe"), 694 % 28);
-        assert_eq!(anonym_index("eoD enaJ"), anonym_index("Jane Doe"), "a sum, whatever the order");
-        // a signed char: 0xC3 0x89 is -61 - 119, which wraps in the U32
-        assert_eq!(anonym_index("É"), (-180i32 as u32 % 28) as usize);
-        assert_eq!(anonym_index("É"), 20);
+        assert_eq!(anonym_in("en", "Jane Doe"), "Some people", "694 % 28 = 22");
+        assert_eq!(
+            anonym_in("en", "eoD enaJ"),
+            anonym_in("en", "Jane Doe"),
+            "a sum, whatever the order"
+        );
+        // a signed char: 0xC3 0x89 is -61 - 119, which wraps in the U32:
+        // 20 modulo 28 and modulo 56
+        assert_eq!(anonym_in("en", "É"), "That soul");
+        assert_eq!(anonym_in("fr", "É"), "That soul");
         let id = Uuid::from_u128(42);
-        assert!(is_anonym(&anonymous(id).display_name, anonym_index(&id.to_string())));
+        assert!(is_anonym(&anonymous(id).display_name, &id.to_string()));
+        // the stand-in alone, never "A resident Resident"
+        let hidden = anonymous_named("Jane Doe");
+        assert!(hidden.legacy_first.is_empty() && hidden.legacy_last.is_empty());
+        let mut options = crate::world::names::NameOptions::default();
+        for trim_resident in [false, true] {
+            options.trim_resident = trim_resident;
+            assert_eq!(hidden.user_name_for_display(&options), hidden.display_name);
+            assert_eq!(hidden.complete(&options), hidden.display_name);
+            assert_eq!(hidden.tag_lines(&options).0, hidden.display_name);
+        }
+        assert_eq!(hidden.user_name(), hidden.display_name);
+        assert_eq!(hidden.legacy_name(), hidden.display_name);
     }
 
     #[test]
@@ -876,8 +981,8 @@ mod tests {
         world.rlva.configure(true);
         restrict(&mut world, "shownames=n");
         world.refresh_rlva_privacy();
-        let jane = anonym_index("Jane Doe");
-        assert_ne!(jane, anonym_index("Jane"));
+        let jane = "Jane Doe";
+        assert!(!same_anonym(jane, "Jane"));
         assert!(is_anonym(&world.social.avatar_names.get(&id).unwrap().display_name, jane));
         assert!(is_anonym(&world.rlva_anonymous(id).display_name, jane));
         assert!(is_anonym(&world.avatar_name(&id).unwrap(), jane));
@@ -886,8 +991,8 @@ mod tests {
             is_anonym(filtered.strip_suffix(" waves").expect("the rest is kept"), jane),
             "{filtered}"
         );
-        let solo = anonym_index("Solo Resident");
-        assert_ne!(solo, anonym_index("Solo"));
+        let solo = "Solo Resident";
+        assert!(!same_anonym(solo, "Solo"));
         assert!(is_anonym(&world.rlva_anonymous(resident).display_name, solo));
         // a notification's link: by the cached name, not by what the link shows
         let mut title = String::from("Janey");
@@ -903,10 +1008,7 @@ mod tests {
         assert!(!body.contains("Janey"));
         // not cached: by the id, until the name comes
         let unknown = Uuid::from_u128(0xdead);
-        assert!(is_anonym(
-            &world.rlva_anonymous(unknown).display_name,
-            anonym_index(&unknown.to_string())
-        ));
+        assert!(is_anonym(&world.rlva_anonymous(unknown).display_name, &unknown.to_string()));
         cache(&mut world, unknown, "Jane", "Doe");
         assert!(is_anonym(&world.rlva_anonymous(unknown).display_name, jane));
     }
@@ -950,29 +1052,43 @@ mod tests {
         assert!(world.rlva_shown_friend(&friend));
     }
 
+    /// RlvUtil::filterLocation and RlvUtil::filterNames
+    /// (indra/newview/rlvcommon.cpp): one `replace_all_regex` of
+    /// `\bname\b` after the other, in their order, ASCII letters in any case.
     #[test]
-    fn rlva_privacy_matcher_keeps_longest_unicode_matches_and_reuses_unchanged_patterns() {
+    fn rlva_privacy_filter_replaces_each_name_in_turn_between_word_boundaries() {
         let mut filter = TextFilter::default();
         filter.add("Secret Region", "hidden");
         filter.add("Secret Region Annex", "annex");
-        filter.add_name("Élodie Meadows", "anonymous");
-        // two bytes or less: not a name RlvUtil::filterNames replaces
-        filter.add_name("Jo", "anonymous");
+        filter.add("Élodie Meadows", "anonymous");
+        // the first pass wins: the longer name after it finds nothing left
         assert_eq!(
             filter.apply("SECRET REGION ANNEX / Secret Region / ÉLODIE MEADOWS"),
-            "annex / hidden / anonymous"
+            "hidden ANNEX / hidden / anonymous"
         );
         // a name is replaced as it is written, not as an address escapes it
-        assert!(matches!(filter.apply("Élodie%20Meadows and Jo"), Cow::Borrowed(_)));
+        assert!(matches!(filter.apply("Élodie%20Meadows"), Cow::Borrowed(_)));
         assert!(matches!(filter.apply("%C3%89lodie%20Meadows"), Cow::Borrowed(_)));
         assert!(matches!(filter.apply("Secret Regional and Élodie Meadowson"), Cow::Borrowed(_)));
-        let mut same = TextFilter::default();
-        same.replacements.clone_from(&filter.replacements);
-        same.reuse_matcher(&filter);
-        assert!(std::sync::Arc::ptr_eq(filter.matcher.get().unwrap(), same.matcher.get().unwrap()));
-        same.add("Another Place", "elsewhere");
-        assert_eq!(same.apply("Another Place"), "elsewhere");
-        assert!(!std::sync::Arc::ptr_eq(filter.matcher.get().unwrap(), same.matcher.get().unwrap()));
+        // `icase` folds ASCII alone
+        assert!(matches!(filter.apply("élodie meadows"), Cow::Borrowed(_)));
+        // a later pass rewrites what an earlier one wrote
+        let mut chain = TextFilter::default();
+        chain.add("Moon", "(Hidden region)");
+        chain.add("Hidden", "A soul");
+        assert_eq!(chain.apply("Moon"), "(A soul region)");
+        // `\b` is a change between a word character and another: a name
+        // that starts or ends with punctuation needs a word next to it
+        let mut odd = TextFilter::default();
+        odd.add("~Bob~", "A being");
+        assert_eq!(odd.apply("hi ~Bob~ there"), "hi ~Bob~ there");
+        assert_eq!(odd.apply("x~Bob~y"), "xA beingy");
+        // no minimum length (RlvUtil::filterLocation): a two-letter place
+        let mut short = TextFilter::default();
+        short.add("Ab", "(Hidden parcel)");
+        short.add("", "(Hidden region)");
+        assert_eq!(short.apply("in Ab now"), "in (Hidden parcel) now");
+        assert_eq!(escape_for_regex("J.(x)"), "J\\.\\(x\\)");
     }
 
     #[test]
@@ -1086,8 +1202,9 @@ mod tests {
         assert!(!filtered.contains("ÉLODIE MEADOWS"));
         assert!(!filtered.contains("Secret Region") && !filtered.contains("Secret Parcel"));
         assert!(filtered.contains("Élodie Meadowson"), "only full names match");
+        // RlvUtil::filterLocation reads the name as written, not escaped
         assert!(
-            !world
+            world
                 .rlva_filter_text("secondlife://Secret%20Region/128/128/30")
                 .contains("Secret%20Region")
         );
@@ -1645,7 +1762,7 @@ mod tests {
             .from
             .strip_suffix(&kept)
             .unwrap_or_else(|| panic!("the place stays: {}", said.from));
-        assert!(is_anonym(who, anonym_index("Near Tester")), "{who}");
+        assert!(is_anonym(who, "Near Tester"), "{who}");
         assert_eq!(world.chat_object(&said).expect("its origin").name, said.from);
         // its IM, the owner standing around
         world.apply(aurora_net::NetEvent::InstantMessage(aurora_net::InstantMessage {
@@ -1666,7 +1783,7 @@ mod tests {
             .from
             .strip_suffix(&kept)
             .unwrap_or_else(|| panic!("the place stays: {}", said.from));
-        assert!(is_anonym(who, anonym_index("Near Tester")), "{who}");
+        assert!(is_anonym(who, "Near Tester"), "{who}");
         assert_eq!(world.chat_object(&said).expect("its origin").name, said.from);
         // under `@showloc` alone the name is as the object has it
         restrict(&mut world, "shownames=y");
@@ -1686,22 +1803,29 @@ mod tests {
         let (mut world, _) = shownames_world();
         let (id, name) = [(FRIEND, "Friend Tester"), (MEMBER, "Member Tester"), (MAKER, "Maker Tester")]
             .into_iter()
-            .find(|(id, name)| anonym_index(name) != anonym_index(&id.to_string()))
+            .find(|(id, name)| !same_anonym(name, &id.to_string()))
             .expect("a resident whose id and name give two stand-ins");
         let label = world.rlva_anonym_label(id);
-        assert!(is_anonym(&label, anonym_index(name)), "{label}");
+        assert!(is_anonym(&label, name), "{label}");
         let text = format!("see secondlife:///app/agent/{id}/rlvanonym now");
         let shown = resolved_text_in(&world, NameScope::World, &text);
         let label = shown.strip_prefix("see ").and_then(|s| s.strip_suffix(" now")).expect("plain text");
-        assert!(is_anonym(label, anonym_index(name)), "{shown}");
-        // a name still to come: the link waits for it, like any avatar link
-        assert_eq!(world.rlva_anonym_label(Uuid::from_u128(0xABCD)), "\u{2026}");
+        assert!(is_anonym(label, name), "{shown}");
+        // a name still to come: the link waits for it, like any avatar
+        // link, with LLTrans "AvatarNameWaiting"
+        let waiting = world.rlva_anonym_label(Uuid::from_u128(0xABCD));
+        assert!(
+            [("en", "(Loading...)"), ("fr", "(Chargement...)"), ("ja", "（待機中）")]
+                .iter()
+                .any(|(language, text)| aurora_i18n::text_in(language, "rlva-anonym-waiting") == *text && waiting == *text),
+            "{waiting}"
+        );
         world.rlva.configure(false);
         let off = world.rlva_anonym_label(id);
         assert!(
-            ["en", "fr", "ja"]
+            [("en", "(Unknown)"), ("fr", "(Inconnu)"), ("ja", "（不明）")]
                 .iter()
-                .any(|language| aurora_i18n::text_in(language, "status-unknown") == off),
+                .any(|(language, text)| aurora_i18n::text_in(language, "rlva-anonym-unknown") == *text && off == *text),
             "{off}"
         );
     }
@@ -2063,5 +2187,194 @@ mod tests {
             Some("Jane Doe"),
             "the cached name wins, as before"
         );
+    }
+
+    // ---- names and location parity with RlvUtil::filterNames,
+    // filterLocation and filterMentions (indra/newview/rlvcommon.cpp)
+
+    fn cache_name(world: &mut World, id: Uuid, first: &str, last: &str, display: &str) {
+        let name = aurora_net::AvatarNameData {
+            id,
+            username: format!("{first}.{last}").to_lowercase(),
+            display_name: display.into(),
+            legacy_first: first.into(),
+            legacy_last: last.into(),
+            ..Default::default()
+        };
+        world.social.avatar_names.on_display_names(&[name], &[], None);
+    }
+
+    /// process_chat_from_simulator (indra/newview/llviewermessage.cpp): a
+    /// hidden speaker whose name is not cached is the stand-in of the name
+    /// the line came with (`getAnonym(chat.mFromName)`), not of the id.
+    #[test]
+    fn an_uncached_hidden_speaker_is_the_stand_in_of_the_name_the_line_came_with() {
+        let (mut world, _) = shownames_world();
+        let far = Uuid::from_u128(0xFA2);
+        assert!(world.social.avatar_names.raw(&far).is_none());
+        assert!(!same_anonym("Far Speaker", &far.to_string()));
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Far Speaker".into(),
+            source_id: far,
+            owner_id: far,
+            source_type: aurora_net::ChatSourceType::Agent,
+            chat_type: aurora_net::ChatType::Normal,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "hello".into(),
+        }));
+        let said = world.chat.back().expect("the line").clone();
+        assert_eq!(said.speaker, Speaker::Hidden);
+        assert!(is_anonym(&said.from, "Far Speaker"), "{}", said.from);
+        // LLIMProcessing::processNewMessage: an offer's `getAnonym(info->mFromName)`
+        assert!(is_anonym(
+            &world.rlva_anonymous_from(far, "Far Speaker").display_name,
+            "Far Speaker"
+        ));
+        cache_name(&mut world, far, "Jane", "Doe", "Janey");
+        assert!(is_anonym(&world.rlva_anonymous_from(far, "Far Speaker").display_name, "Jane Doe"));
+    }
+
+    /// RlvUtil::filterMentions: every APP_HEADER_REGEX header
+    /// (indra/llui/llurlentry.h) starts a mention.
+    #[test]
+    fn a_mention_with_any_app_header_becomes_the_stand_in() {
+        let (world, near) = shownames_world();
+        let stand_in = format!("@{}", world.rlva_anonymous(near).display_name);
+        for header in [
+            "secondlife:///app",
+            "hop:///app",
+            "hop://grid.example:8002/app",
+            "x-grid-location-info://grid.example/app",
+            "x-grid-location-info://user@grid-2.example/app",
+        ] {
+            let text = format!("hi {header}/agent/{near}/mention");
+            assert_eq!(world.rlva_freeze_mentions(&text), format!("hi {stand_in}"), "{header}");
+            let upper = format!("{header}/agent/{}/mention?x", near.to_string().to_uppercase());
+            assert_eq!(world.rlva_freeze_mentions(&upper), format!("{stand_in}?x"), "{header}");
+        }
+        for kept in [
+            format!("https://grid.example/app/agent/{near}/mention"),
+            format!("x-grid-location-info:///app/agent/{near}/mention"),
+            format!("secondlife:///app/agent/{near}/mention more"),
+        ] {
+            assert!(matches!(world.rlva_freeze_mentions(&kept), Cow::Borrowed(_)), "{kept}");
+        }
+    }
+
+    /// LLAvatarNameCache::get with LGGContactSets::checkCustomName
+    /// (indra/llmessage/llavatarnamecache.cpp): RlvUtil::filterNames
+    /// replaces a contact set's alias and the legacy name, not the display
+    /// name the alias hides.
+    #[test]
+    fn the_name_filter_replaces_a_contact_sets_alias_not_the_display_name() {
+        let (mut world, near) = shownames_world();
+        cache_name(&mut world, near, "Near", "Tester", "Nearly");
+        world
+            .social
+            .avatar_names
+            .set_aliases(std::collections::HashMap::from([(near, "Bestie".to_owned())]));
+        world.refresh_rlva_privacy();
+        let stand_in = world.rlva_anonymous(near).display_name.clone();
+        assert_eq!(world.rlva_filter_text("Near Tester, Nearly"), format!("{stand_in}, Nearly"));
+        // the alias is in quotes, which `\b` takes next to a word only
+        assert_eq!(world.rlva_filter_text("a'Bestie'b"), format!("a{stand_in}b"));
+        assert!(matches!(world.rlva_filter_text("'Bestie' waves"), Cow::Borrowed(_)));
+        // a removed display name: "First Last", "Resident" included
+        let removed = crate::world::contact_sets::DN_REMOVED.to_owned();
+        world
+            .social
+            .avatar_names
+            .set_aliases(std::collections::HashMap::from([(near, removed)]));
+        assert_eq!(
+            world.social.avatar_names.rlva_filter_display_name(&near).as_deref(),
+            Some("Near Tester")
+        );
+    }
+
+    /// RlvUtil::filterNames: a display name of more than two bytes as
+    /// `escape_for_regex` writes it ("雪花" is six), and a display name
+    /// inside the legacy name replaced after it.
+    #[test]
+    fn the_name_filter_measures_bytes_and_replaces_the_longer_legacy_name_first() {
+        let (mut world, near) = shownames_world();
+        cache_name(&mut world, near, "Snow", "Flake", "雪花");
+        world.refresh_rlva_privacy();
+        let filtered = world.rlva_filter_text("雪花 waves");
+        assert!(!filtered.contains("雪花"), "{filtered}");
+        cache_name(&mut world, near, "Jane", "Doe", "Jane");
+        world.refresh_rlva_privacy();
+        let stand_in = world.rlva_anonymous(near).display_name.clone();
+        assert_eq!(world.rlva_filter_text("Jane Doe waves"), format!("{stand_in} waves"));
+        assert_eq!(world.rlva_filter_text("Jane waves"), format!("{stand_in} waves"));
+    }
+
+    /// LLWorld::getAvatars counts the agent: under `@shownearby` the hover
+    /// texts lose its name too (LLHUDText::setString, `fClearMatches`).
+    #[test]
+    fn shownearby_clears_the_agents_own_name_from_hover_texts() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let me = world.agent_id;
+        cache_name(&mut world, me, "Self", "Tester", "Selfie");
+        world.rlva.configure(true);
+        restrict(&mut world, "shownearby=n");
+        world.refresh_rlva_privacy();
+        assert_eq!(world.rlva_hover_privacy.apply("Selfie and Self Tester"), " and ");
+        restrict(&mut world, "shownearby=y");
+        restrict(&mut world, "shownames=n");
+        world.refresh_rlva_privacy();
+        assert!(
+            matches!(world.rlva_privacy.apply("Selfie"), Cow::Borrowed(_)),
+            "oneself stays named"
+        );
+    }
+
+    /// RlvUtil::filterLocation has no minimum length, and
+    /// RlvUtil::isNearbyRegion compares a region's name as it is written.
+    #[test]
+    fn showloc_hides_a_short_place_and_knows_a_region_by_its_exact_name() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.unwrap();
+        world.regions.get_mut(&handle).unwrap().name = "Ab".into();
+        world.parcel_name = "Cd".into();
+        world.rlva.configure(true);
+        restrict(&mut world, "showloc=n");
+        world.refresh_rlva_privacy();
+        let filtered = world.rlva_filter_text("from Ab to Cd");
+        assert!(!filtered.contains("Ab") && !filtered.contains("Cd"), "{filtered}");
+        assert!(world.rlva_private_region("Ab"));
+        assert!(!world.rlva_private_region("ab"), "the exact name only");
+    }
+
+    /// RlvUtil::filterNames takes a name only from LLAvatarNameCache::get:
+    /// the name an avatar's object or the chat came with is not filtered
+    /// until the name service gives it.
+    #[test]
+    fn the_name_filter_leaves_a_name_the_cache_does_not_have_yet() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let (id, name) = world
+            .objects
+            .avatars()
+            .filter(|(_, o)| o.full_id != world.agent_id && world.social.avatar_names.raw(&o.full_id).is_none())
+            .find_map(|(_, o)| o.display_name().filter(|n| n.len() > 2).map(|n| (o.full_id, n)))
+            .expect("an avatar around whose name is not cached");
+        world.social.names.insert(id, name.clone());
+        world.rlva.configure(true);
+        restrict(&mut world, "shownames=n");
+        world.refresh_rlva_privacy();
+        let text = format!("hello {name}");
+        assert!(matches!(world.rlva_filter_text(&text), Cow::Borrowed(_)), "{text}");
+        cache_name(&mut world, id, "Late", "Comer", &name);
+        world.refresh_rlva_privacy();
+        assert!(!world.rlva_filter_text(&text).contains(name.as_str()));
     }
 }

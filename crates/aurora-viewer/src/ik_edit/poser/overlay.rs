@@ -91,6 +91,11 @@ impl Editor {
         {
             self.sync_pose_bone(bone, &frame);
         }
+        // the poser opened: frame the whole avatar, once (a tab, a side or a
+        // drag only changes the selection and never asks)
+        if std::mem::take(&mut self.poser.open_frame_pending) {
+            self.request_poser_framing(rig.pelvis, crate::camera::PoserFraming::Open);
+        }
         // Process tabs first: hidden groups must lose their handles this frame.
         self.poser_ui(ctx, p, world, &frame);
         if self.poser.active && self.poser.markers {

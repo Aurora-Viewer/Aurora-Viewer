@@ -392,14 +392,11 @@ pub(super) fn preview(
     ctx: &egui::Context,
     p: &Palette,
     st: &mut InventoryUi,
-    inv: &crate::world::inventory::Inventory,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
 ) {
-    // a texture preview already open closes when @viewtexture applies, as
-    // RlvUIEnabler::onToggleViewXXX closes the "preview_texture" floaters
-    if !inv.can_preview(0) {
-        st.attachment_preview = None;
-    }
+    // (@viewtexture refuses to open it, `App::open_notecard_attachment`; one
+    // already open stays: RlvUIEnabler::filterFloaterViewXXX, rlvui.cpp,
+    // validates the opening of "preview_texture" alone)
     let Some(item) = &st.attachment_preview else { return };
     let mut open = true;
     super::super::widgets::Floater::new(
@@ -410,13 +407,15 @@ pub(super) fn preview(
     )
     .show(ctx, p, &mut open, |ui| {
         st.wanted_images.insert(item.asset_id);
-        if let Some(image) = images.get(&item.asset_id) {
-            ui.add(egui::Image::new(image).max_size(ui.available_size()).fit_to_original_size(1.0));
-        } else {
-            ui.spinner();
-            ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
+        // The description heads the window, as in LLPreviewTexture's
+        // floater_preview_texture.xml; the picture fills the rest and follows
+        // the window's size, like a texture opened from the inventory (it was
+        // capped at the texture's own pixel size).
+        if !item.desc.is_empty() {
+            ui.label(&item.desc);
         }
-        ui.label(&item.desc);
+        let display = crate::ui::texture_library::texture_view::Display::default();
+        crate::ui::texture_library::texture_view::picture(ui, p, images.get(&item.asset_id), None, &display, None);
     });
     if !open {
         st.attachment_preview = None;

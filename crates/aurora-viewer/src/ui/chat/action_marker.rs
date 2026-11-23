@@ -28,6 +28,7 @@ pub(super) enum Action {
     Map,
     Channel,
     Search,
+    Preferences,
     Blocked,
     Unsupported,
     Place,
@@ -59,6 +60,7 @@ impl Action {
             AppLink::WorldMap { .. } => Self::Map,
             AppLink::Chat { .. } => Self::Channel,
             AppLink::Search { .. } | AppLink::AreaSearch(_) => Self::Search,
+            AppLink::Preferences(_) => Self::Preferences,
             AppLink::Blocked(_) => Self::Blocked,
             AppLink::Unsupported => Self::Unsupported,
         }
@@ -90,6 +92,7 @@ impl Action {
             Self::Event => "calendar-event-filled",
             Self::Map => "map",
             Self::Search => "search-filled",
+            Self::Preferences => "settings-filled",
             Self::Unsupported => "help-circle-filled",
         }
     }

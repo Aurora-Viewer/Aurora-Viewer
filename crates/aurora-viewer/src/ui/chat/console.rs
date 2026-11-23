@@ -110,19 +110,11 @@ pub(super) fn rows(ctx: &egui::Context, line: &ChatLine, job: BubbleJob) -> usiz
     ctx.fonts_mut(|f| crate::ui::bidi::layout(f, job.job, base).galley.rows.len())
 }
 
-/// The colour of a head's name: ours in the theme's teal, an object's in
-/// its kind's colour, a resident's in ink (the Conversations thread's).
-fn name_color(p: &Palette, line: &ChatLine, world: &World) -> Color32 {
-    if let Some(color) = crate::ui::colors::contact_sender_color(line, world) {
-        return color;
-    }
-    if is_object(line.kind) {
-        return crate::ui::colors::sender_color(line);
-    }
-    if line.kind.is_own() {
-        return p.teal;
-    }
-    p.ink
+/// The colour of a head's name: the senders' colour of Preferences ›
+/// Emitter (Avatars, ours included, or Objects), as in the Conversations
+/// thread (`thread::name_color`), unless a contact set colours it.
+fn name_color(line: &ChatLine, world: &World) -> Color32 {
+    crate::ui::colors::contact_sender_color(line, world).unwrap_or_else(|| crate::ui::colors::sender_color(line))
 }
 
 /// The recent nearby chat in cards (see the module).
@@ -299,7 +291,7 @@ fn card<'a>(
                 let font = egui::FontId::new(chat_size(ui.ctx(), 12.5), crate::ui::fonts::semibold(ui.ctx()));
                 let galley = ui
                     .painter()
-                    .layout(first.from.clone(), font, name_color(p, first, world), text_w * 0.6);
+                    .layout(first.from.clone(), font, name_color(first, world), text_w * 0.6);
                 let (r, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                 ui.painter().galley(r.min, galley, p.ink);
                 names.push((r, first));

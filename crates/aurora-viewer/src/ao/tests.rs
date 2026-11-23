@@ -36,6 +36,66 @@ pub(super) fn step(set: &Set, state: State, index: usize) -> Uuid {
 }
 
 #[test]
+fn movement_defaults_stay_running_on_region_except_for_special_pose_owners() {
+    let now = Instant::now();
+    let movement = [
+        State::Walking,
+        State::Running,
+        State::Crouching,
+        State::CrouchWalk,
+        State::Falling,
+        State::FlyingDown,
+        State::FlyingUp,
+        State::Flying,
+        State::FlyingSlow,
+        State::Hovering,
+    ];
+    let raw = [];
+    let ordinary = frame(&raw);
+    for state in movement {
+        assert!(!runtime::stop_region_signal(state, &ordinary), "{state:?}");
+    }
+    for state in [
+        State::Standing,
+        State::Sitting,
+        State::GroundSit,
+        State::Jumping,
+        State::TurningLeft,
+    ] {
+        assert!(runtime::stop_region_signal(state, &ordinary), "{state:?}");
+    }
+
+    // Each special hold decides for itself: the water and anchor holds own
+    // the whole pose, the run hold only the fall it bridges, and the native
+    // running hand-off nothing.
+    let hold = signal(State::Walking, now);
+    let mut swim = frame(&raw);
+    swim.swim_hold = Some((State::SwimmingForward, hold));
+    let mut water_walk = frame(&raw);
+    water_walk.water_walk_hold = Some((State::Walking, hold));
+    let mut outro = frame(&raw);
+    outro.swim_outro = true;
+    let mut anchor = frame(&raw);
+    anchor.anchor_hold = Some(hold);
+    for special in [&swim, &water_walk, &outro, &anchor] {
+        for state in movement {
+            assert!(runtime::stop_region_signal(state, special), "{state:?}");
+        }
+    }
+    let mut run = frame(&raw);
+    run.run_hold = Some(signal(State::Running, now));
+    run.native_running = true;
+    for state in movement {
+        assert_eq!(runtime::stop_region_signal(state, &run), state == State::Falling, "{state:?}");
+    }
+    let mut native = frame(&raw);
+    native.native_running = true;
+    for state in movement {
+        assert!(!runtime::stop_region_signal(state, &native), "{state:?}");
+    }
+}
+
+#[test]
 fn ao_choices_survive_settings_restart_reordering_groups_tracks_and_inactive_states() {
     let (_, mut set) = fixture();
     let config = set.states.get_mut(&State::Standing).expect("standing");
@@ -73,6 +133,7 @@ fn ao_choices_survive_settings_restart_reordering_groups_tracks_and_inactive_sta
         Account {
             enabled: true,
             selected: set.id,
+            mini_open: true,
             animations: runtime.take_choices(Some(&set)).expect("new selection"),
         },
     );
@@ -86,6 +147,7 @@ fn ao_choices_survive_settings_restart_reordering_groups_tracks_and_inactive_sta
     assert_eq!(account.animations[&standing_folder], group);
     assert_eq!(account.animations[&track_id], track_link);
     assert_eq!(account.animations[&walking_folder], walk);
+    assert!(account.mini_open, "the mini window preference survives a restart");
     let standing = set.states.get_mut(&State::Standing).expect("standing");
     standing.steps.swap(0, 1);
     standing.tracks[0].members.swap(0, 1);
@@ -776,18 +838,113 @@ fn locomotion_changes_stop_owned_and_replaced_system_animations_and_preserve_ges
     );
     let raw = [signal(State::Walking, now + Duration::from_secs(2)), gesture];
     let (_, cmd) = runtime.update(Some(&set), frame(&raw), now + Duration::from_secs(2), |_| true, |_| 0);
-    assert_eq!(
-        cmd,
-        vec![
-            (old.id, false),
-            (State::Walking.motion(), false),
-            (step(&set, State::Walking, 0), true)
-        ]
-    );
+    assert_eq!(cmd, vec![(old.id, false), (step(&set, State::Walking, 0), true)]);
     runtime.paused = true;
     let (pose, cmd) = runtime.update(Some(&set), frame(&raw), now + Duration::from_secs(3), |_| true, |_| 0);
     assert_eq!(pose, raw);
-    assert_eq!(cmd, vec![(step(&set, State::Walking, 0), false), (State::Walking.motion(), true)]);
+    assert_eq!(cmd, vec![(step(&set, State::Walking, 0), false)]);
+}
+
+#[test]
+fn ordinary_walk_and_run_overrides_leave_region_movement_running() {
+    let (_, set) = fixture();
+    let now = Instant::now();
+    for state in [State::Walking, State::Running] {
+        let mut runtime = Runtime::default();
+        let mut raw = vec![signal(state, now)];
+        let (pose, commands) = runtime.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
+        assert!(pose.iter().any(|animation| animation.id == step(&set, state, 0)));
+        let mut stopped_default = commands.contains(&(state.motion(), false));
+        echo_simulator_commands(&mut raw, &commands, state, now);
+
+        // OpenSimulator changes a default animation to STAND when it receives
+        // STOP. Since ordinary walk/run must never be stopped, repeated
+        // simulator echoes leave the selected locomotion state intact.
+        for elapsed in [100, 1_000, 3_000] {
+            let at = now + Duration::from_millis(elapsed);
+            let (pose, commands) = runtime.update(Some(&set), frame(&raw), at, |_| true, |_| 0);
+            assert_eq!(runtime.current, Some(state));
+            assert!(pose.iter().any(|animation| animation.id == step(&set, state, 0)));
+            stopped_default |= commands.contains(&(state.motion(), false));
+            echo_simulator_commands(&mut raw, &commands, state, at);
+        }
+        assert!(!stopped_default);
+    }
+}
+
+#[test]
+fn ordinary_ground_run_with_the_run_hold_leaves_the_stock_run_on_the_region() {
+    // A normal run on supported ground: the movement enhancer's run hold and
+    // the native running hand-off are both set for the whole run.
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let run = signal(State::Running, now);
+    let mut runtime = Runtime::default();
+    let mut raw = vec![run];
+    let mut stopped_default = false;
+    for elapsed in [0, 100, 1_000, 3_000] {
+        let at = now + Duration::from_millis(elapsed);
+        let mut f = frame(&raw);
+        f.run_hold = Some(run);
+        f.native_running = true;
+        let (pose, commands) = runtime.update(Some(&set), f, at, |_| true, |_| 0);
+        assert_eq!(runtime.current, Some(State::Running));
+        assert!(pose.iter().any(|animation| animation.id == step(&set, State::Running, 0)));
+        assert!(!pose.iter().any(|animation| animation.id == run.id), "the local AO masks stock RUN");
+        stopped_default |= commands.contains(&(run.id, false));
+        echo_simulator_commands(&mut raw, &commands, State::Running, at);
+    }
+    assert!(!stopped_default, "a STOP of RUN resets OpenSimulator to STAND");
+    assert!(raw.contains(&run), "observers keep the region's run");
+}
+
+#[test]
+fn a_flickering_run_hold_never_starts_the_stock_fall_again() {
+    // Bumpy ground: the run hold comes and goes while the region reports a
+    // fall. The fall the hold stopped is forgotten without a START.
+    let (_, set) = fixture();
+    let now = Instant::now();
+    let run = signal(State::Running, now);
+    let fall = signal(State::Falling, now + Duration::from_millis(50));
+    let mut runtime = Runtime::default();
+    let mut f = frame(std::slice::from_ref(&run));
+    f.run_hold = Some(run);
+    runtime.update(Some(&set), f, now, |_| true, |_| 0);
+    let mut raw = vec![fall];
+    let mut starts = 0;
+    let mut stops = 0;
+    for (i, hold) in [true, false, true, false, true].into_iter().enumerate() {
+        let at = now + Duration::from_millis(100 + 100 * i as u64);
+        let mut f = frame(&raw);
+        f.run_hold = hold.then_some(run);
+        let (_, commands) = runtime.update(Some(&set), f, at, |_| true, |_| 0);
+        starts += commands.iter().filter(|change| **change == (fall.id, true)).count();
+        stops += commands.iter().filter(|change| **change == (fall.id, false)).count();
+        // Second Life ends a stopped fall without a replacement default.
+        for (id, start) in &commands {
+            if !*start {
+                raw.retain(|animation| animation.id != *id);
+            }
+        }
+    }
+    assert_eq!(starts, 0, "no START of a stock motion");
+    assert_eq!(stops, 1, "one STOP, not a START / STOP pair per flicker");
+}
+
+fn echo_simulator_commands(raw: &mut Vec<PlayingAnimation>, commands: &[(Uuid, bool)], state: State, now: Instant) {
+    for (id, start) in commands {
+        if *start {
+            if *id != state.motion() && !raw.iter().any(|animation| animation.id == *id) {
+                raw.push(PlayingAnimation::from_signal(*id, 2, now, None));
+            }
+        } else if *id == state.motion() {
+            // OpenSimulator resets a stopped default movement animation to STAND.
+            raw.retain(|animation| animation.id != state.motion() && animation.id != State::Standing.motion());
+            raw.push(signal(State::Standing, now));
+        } else {
+            raw.retain(|animation| animation.id != *id);
+        }
+    }
 }
 
 #[test]
@@ -870,7 +1027,7 @@ fn typing_is_concurrent_and_completed_nonloops_do_not_restart() {
     r.finished(walk);
     let raw = [raw[0], signal(State::Typing, now + Duration::from_secs(1))];
     let (_, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(1), |_| true, |_| 0);
-    assert_eq!(cmd, vec![(step(&set, State::Typing, 0), true), (State::Walking.motion(), true)]);
+    assert_eq!(cmd, vec![(step(&set, State::Typing, 0), true)]);
     let (pose, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(2), |_| true, |_| 0);
     assert!(cmd.is_empty());
     assert!(!pose.iter().any(|a| a.id == walk));
@@ -954,7 +1111,7 @@ fn animation_groups_and_tracks_cycle_independently_of_locomotion() {
     let raw = [signal(State::Walking, now)];
     let (pose, cmd) = r.update(Some(&set), frame(&raw), now, |_| true, |_| 0);
     assert_eq!(cmd.iter().filter(|(_, start)| *start).count(), 4);
-    assert!(cmd.contains(&(State::Walking.motion(), false)));
+    assert!(!cmd.contains(&(State::Walking.motion(), false)));
     assert!(pose.iter().any(|p| p.id == a));
     assert!(pose.iter().any(|p| p.id == b));
     let (_, cmd) = r.update(Some(&set), frame(&raw), now + Duration::from_secs(1), |_| true, |_| 0);

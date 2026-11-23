@@ -475,6 +475,10 @@ pub enum Action {
     /// Hide or show the interface (Firestorm's View › Show User Interface,
     /// Alt+Shift+U, `View.ToggleUI`).
     ToggleInterface,
+    /// The whole interface drawn or not (#4092): the Legacy Viewer's
+    /// Advanced › Rendering Features › UI, Ctrl+Alt+F1 (Ctrl+Shift+F1 on
+    /// Linux), `Advanced.ToggleFeature` "ui" (menu_viewer.xml, ToggleUI).
+    ToggleUiFeature,
     /// The world's hover tips on or off (the Legacy Viewer's Show Tips,
     /// Ctrl+Shift+T, `View.ShowHoverTips`).
     HoverTips,
@@ -533,6 +537,9 @@ pub enum Action {
     /// "Snapshot to Disk" (Firestorm Ctrl+`): a photo with the settings of
     /// the photo window, without it.
     PhotoToDisk,
+    /// The Phototools window (menu_viewer.xml `phototools_item_call`,
+    /// shortcut="alt|P").
+    Phototools,
     /// World › Environment's fixed times of day and Use Shared Environment
     /// (menu_viewer.xml: `World.EnvSettings` sunrise / noon / sunset /
     /// midnight / region, Ctrl+Shift+U / Y / N / X / J).
@@ -736,6 +743,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::Performance, aurora_i18n::tr!("common-performance")),
                     (Action::Preferences, aurora_i18n::tr!("common-preferences")),
                     (Action::ToggleInterface, aurora_i18n::tr!("keybinds-hide-interface")),
+                    (Action::ToggleUiFeature, aurora_i18n::tr!("keybinds-ui-feature")),
                     (Action::HoverTips, aurora_i18n::tr!("ui-options-hover-tips")),
                     (Action::Import, aurora_i18n::tr!("keybinds-import-files")),
                     (Action::MuteAll, aurora_i18n::tr!("keybinds-mute-all-sound")),
@@ -775,6 +783,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::PhotoWindow, aurora_i18n::tr!("keybinds-photo-window")),
                     (Action::PhotoToDisk, aurora_i18n::tr!("keybinds-photo-to-disk")),
+                    (Action::Phototools, aurora_i18n::tr!("toolbar-command-phototools")),
                 ],
             ),
             (
@@ -1003,6 +1012,20 @@ impl KeyBindings {
             (Action::Preferences, [kmod(K::KeyP, true, false), None]),
             // menu_viewer.xml: Show User Interface, shortcut="alt|shift|U"
             (Action::ToggleInterface, [kalt(K::KeyU, false, true), None]),
+            // menu_viewer.xml: Rendering Features › UI, shortcut="control|alt|F1",
+            // shortcut_linux="control|shift|F1" (the desktops of Linux take
+            // Ctrl+Alt+F1 to switch consoles)
+            (
+                Action::ToggleUiFeature,
+                [
+                    if cfg!(target_os = "linux") {
+                        kmod(K::F1, true, true)
+                    } else {
+                        kalt(K::F1, true, false)
+                    },
+                    None,
+                ],
+            ),
             // menu_viewer.xml: Show Tips, shortcut="control|shift|T"
             (Action::HoverTips, [kmod(K::KeyT, true, true), None]),
             (Action::Import, [kmod(K::KeyU, true, false), None]),
@@ -1111,6 +1134,7 @@ impl KeyBindings {
             (Action::RefreshAttachments, [kalt(K::KeyR, false, true), None]),
             (Action::PhotoWindow, [kmod(K::KeyS, true, true), None]),
             (Action::PhotoToDisk, [kmod(K::Backquote, true, false), None]),
+            (Action::Phototools, [kalt(K::KeyP, false, false), None]),
             // menu_viewer.xml: World › Environment
             (Action::EnvSunrise, [kmod(K::KeyU, true, true), None]),
             (Action::EnvMidday, [kmod(K::KeyY, true, true), None]),
@@ -1461,11 +1485,24 @@ impl EditHistory {
     }
 }
 
-/// The same logical letters/punctuation and non-Latin physical fallback as
-/// egui-winit, restricted to keys used by the fixed editing accelerators.
+/// Logical letters and punctuation used by the fixed editing accelerators,
+/// with the same non-Latin physical fallback as egui-winit. The number row
+/// and numpad 1–5 follow the key position instead. The Legacy Viewer's
+/// LLKeyboardWin32 constructor (indra/llwindow/llkeyboardwin32.cpp) maps
+/// `'0'..'9'` and numpad `0x60..0x69` by virtual key, and menu_viewer.xml
+/// binds the build tools to `control|1` through `control|5`. A French
+/// AZERTY layout types `'` on the 4 key; that character must not hide Create.
 pub fn native_shortcut_key(key: &winit::keyboard::Key, code: KeyCode) -> Option<egui::Key> {
     use egui::Key as E;
     use winit::keyboard::{Key, KeyCode as K, NamedKey};
+    match code {
+        K::Digit1 | K::Numpad1 => return Some(E::Num1),
+        K::Digit2 | K::Numpad2 => return Some(E::Num2),
+        K::Digit3 | K::Numpad3 => return Some(E::Num3),
+        K::Digit4 | K::Numpad4 => return Some(E::Num4),
+        K::Digit5 | K::Numpad5 => return Some(E::Num5),
+        _ => {}
+    }
     let logical = match key {
         Key::Character(letter) => E::from_name(letter),
         Key::Named(NamedKey::Escape) => Some(E::Escape),
@@ -1483,11 +1520,6 @@ pub fn native_shortcut_key(key: &winit::keyboard::Key, code: KeyCode) -> Option<
         K::KeyX => Some(E::X),
         K::KeyZ => Some(E::Z),
         K::KeyY => Some(E::Y),
-        K::Digit1 | K::Numpad1 => Some(E::Num1),
-        K::Digit2 | K::Numpad2 => Some(E::Num2),
-        K::Digit3 | K::Numpad3 => Some(E::Num3),
-        K::Digit4 | K::Numpad4 => Some(E::Num4),
-        K::Digit5 | K::Numpad5 => Some(E::Num5),
         K::Period | K::NumpadDecimal => Some(E::Period),
         K::Comma => Some(E::Comma),
         K::Escape => Some(E::Escape),
@@ -2743,6 +2775,7 @@ mod tests {
             (Action::ResyncAnimations, (true, false, false), [K::KeyS; 4]),
             (Action::RefreshAttachments, (false, true, true), [K::KeyR; 4]),
             (Action::PhotoWindow, (true, true, false), [K::KeyS; 4]),
+            (Action::Phototools, (false, false, true), [K::KeyP; 4]),
             (Action::SitGround, (false, true, true), [K::KeyS; 4]),
             (Action::EnvSunrise, (true, true, false), [K::KeyU; 4]),
             (Action::EnvMidday, (true, true, false), [K::KeyY, K::KeyY, K::KeyY, K::KeyZ]),
@@ -2868,6 +2901,28 @@ mod tests {
         assert_eq!(
             kb.get(Action::ResyncAnimations),
             KeyBindings::default().get(Action::ResyncAnimations)
+        );
+    }
+
+    #[test]
+    fn alt_p_opens_phototools_and_leaves_move_lock_and_preferences_alone() {
+        let kb = KeyBindings::default();
+        let p = Input::key(letter(KeyCode::KeyP));
+        let alt = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        assert_eq!(kb.triggered(&p, alt), Some(Action::Phototools));
+        assert_eq!(kb.triggered(&p, Mods { ctrl: true, ..alt }), Some(Action::MoveLock));
+        assert_eq!(
+            kb.triggered(
+                &p,
+                Mods {
+                    ctrl: true,
+                    ..Default::default()
+                }
+            ),
+            Some(Action::Preferences)
         );
     }
 
