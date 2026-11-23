@@ -572,7 +572,7 @@ impl InspectUi {
             let text = match selected {
                 Some(row) if open => aurora_i18n::tr!("inspect-outlined", name = row.name.trim()),
                 _ if self.tab == 2 => aurora_i18n::tr!("inspect-hint-details").to_owned(),
-                _ => aurora_i18n::tr!("inspect-hint").to_owned(),
+                _ => aurora_i18n::tr!("inspect-hint-right").to_owned(),
             };
             widgets::status_dot(ui, p.violet);
             ui.label(RichText::new(text).size(11.5).color(p.muted));
@@ -649,7 +649,7 @@ mod tests {
         crate::ui::widgets::steady_tests::assert_window_steady(
             "inspect",
             &[Vec2::new(420.0, 600.0), Vec2::new(360.0, 380.0)],
-            aurora_i18n::tr!("inspect-hint"),
+            aurora_i18n::tr!("inspect-hint-right"),
             || InspectUi {
                 open: true,
                 subject: Subject::Avatar(Uuid::from_u128(99)),

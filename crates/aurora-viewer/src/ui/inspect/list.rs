@@ -242,46 +242,30 @@ fn card(
         crate::ui::sheet::icon_at(ui, chevron, egui::pos2(right - 7.0, rect.center().y), 14.0, tint);
         right -= 22.0;
         let mut on_action = false;
+        // pointed at, the creator's picture gives way to the Profile button;
+        // a right click on the line moves the camera to the object
         let quick = (pointed || resp.has_focus()) && !open;
         if quick {
-            let buttons = [
-                (
-                    "eye-filled",
-                    aurora_i18n::tr!("inspect-look-at"),
-                    aurora_i18n::tr!("inspect-look-at-tip"),
-                    true,
-                ),
-                (
-                    "user-filled",
-                    aurora_i18n::tr!("common-profile"),
-                    aurora_i18n::tr!("inspect-profile-tip"),
-                    row.creator.is_some(),
-                ),
-            ];
-            for (i, (icon, label, tip, enabled)) in buttons.iter().enumerate().rev() {
-                let r = Rect::from_center_size(egui::pos2(right - QUICK / 2.0, rect.center().y), Vec2::splat(QUICK));
-                right -= QUICK + 2.0;
-                let b = ui.interact(
-                    r,
-                    ui.scope_id().with(("inspect_quick", item.root, i)),
-                    if *enabled { Sense::click() } else { Sense::hover() },
-                );
-                on_action |= b.hovered();
-                quick_icon(ui, p, r, icon, b.hovered(), *enabled);
-                b.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, *enabled, label));
-                let b = b.on_hover_text(*tip);
-                if b.clicked() {
-                    if i == 0 {
-                        actions.push(Action::LookAt(item.root));
-                    } else if let Some(who) = row.creator {
-                        actions.push(Action::Profile {
-                            who,
-                            named_here_alone: row.creator_named_here_alone,
-                        });
-                    }
-                }
+            let enabled = row.creator.is_some();
+            let r = Rect::from_center_size(egui::pos2(right - QUICK / 2.0, rect.center().y), Vec2::splat(QUICK));
+            right -= QUICK + 6.0;
+            let b = ui.interact(
+                r,
+                ui.scope_id().with(("inspect_profile", item.root)),
+                if enabled { Sense::click() } else { Sense::hover() },
+            );
+            on_action = b.hovered();
+            quick_icon(ui, p, r, "user-filled", b.hovered(), enabled);
+            b.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, aurora_i18n::tr!("common-profile")));
+            let b = b.on_hover_text(aurora_i18n::tr!("inspect-profile-tip"));
+            if b.clicked()
+                && let Some(who) = row.creator
+            {
+                actions.push(Action::Profile {
+                    who,
+                    named_here_alone: row.creator_named_here_alone,
+                });
             }
-            right -= 6.0;
         } else if opts.creator == CreatorShown::Picture {
             let pic = Rect::from_center_size(egui::pos2(right - PICTURE / 2.0, rect.center().y), Vec2::splat(PICTURE));
             if let Some(id) = row.creator {
@@ -351,6 +335,9 @@ fn card(
         }
         let label = spoken(row, item, point.as_deref().filter(|_| state.avatar()));
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+        if resp.secondary_clicked() {
+            actions.push(Action::LookAt(item.root));
+        }
         if resp.clicked() && !on_action {
             state.opened = if open { None } else { Some(item.root) };
             state.selected = Some(item.root);
@@ -385,11 +372,11 @@ fn badge(ui: &egui::Ui, p: &Palette, right: f32, y: f32, value: u32, tier: Tier)
     r.left()
 }
 
-/// Side of a quick action on a card's line: the 24 px minimum target of
+/// Side of the Profile button on a card's line: the 24 px minimum target of
 /// WCAG 2.2, around a 16 px icon.
 const QUICK: f32 = 24.0;
 
-/// A quiet action on a card's line: an icon alone (its name is the tooltip
+/// The quiet button of a card's line: an icon alone (its name is the tooltip
 /// and what a screen reader says), a face only when pointed at.
 fn quick_icon(ui: &egui::Ui, p: &Palette, r: Rect, icon: &str, hovered: bool, enabled: bool) {
     if hovered && enabled {
