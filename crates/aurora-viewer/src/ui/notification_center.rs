@@ -97,8 +97,11 @@ pub struct Moment {
     pub hovered: bool,
     /// Do not disturb: the bell is paused.
     pub dnd: bool,
-    /// Mouselook or the photo's full frame: nothing over the view.
+    /// Mouselook or the photo's full frame: nothing over the view...
     pub hidden: bool,
+    /// ...but the scripted objects' windows, in mouselook
+    /// (`notifications::clear_view_shows`, #4363).
+    pub scripts_in_view: bool,
     /// The full list is open.
     pub open: bool,
     /// The friends' toasts stand at the top right, where the cards unroll:
@@ -126,10 +129,10 @@ pub fn dnd_shows(n: &Notification) -> bool {
     matches!(n.data, Data::Dialog { .. } | Data::TextBox { .. })
 }
 
-/// A scripted object's window out of the way of the list, the clear view or
-/// do not disturb, which can be shown now.
+/// A scripted object's window out of the way of the list, the clear view
+/// (mouselook lets it out) or do not disturb, which can be shown now.
 fn may_show(n: &Notification, m: &Moment) -> bool {
-    !m.open && !m.hidden && (!m.dnd || dnd_shows(n))
+    !m.open && super::notifications::clear_view_shows(n, m.hidden, m.scripts_in_view) && (!m.dnd || dnd_shows(n))
 }
 
 /// Rolls out as a card: what is listed, and a message kept out of the bell
@@ -183,13 +186,19 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
     if let Some(last) = list.list.iter().map(|n| n.id).max() {
         c.last_seen = c.last_seen.max(last);
     }
-    if m.open || m.hidden {
+    if m.open || (m.hidden && !m.scripts_in_view) {
         // the list shows everything / the view stays clear: no card stays out
         c.peek.clear();
-    } else if m.dnd {
-        // the bell is paused: only the script menus stay out (#491)
-        c.peek
-            .retain(|p| p.pinned && list.list.iter().find(|n| n.id == p.id).is_none_or(dnd_shows));
+    } else {
+        if m.hidden {
+            // mouselook: only the scripted objects' windows stay out (#4363)
+            c.peek.retain(|p| p.pinned);
+        }
+        if m.dnd {
+            // the bell is paused: only the script menus stay out (#491)
+            c.peek
+                .retain(|p| p.pinned && list.list.iter().find(|n| n.id == p.id).is_none_or(dnd_shows));
+        }
     }
     // a scripted object's window stays out until answered: when it arrives,
     // and again once the list closes, the view clears or do not disturb
@@ -377,6 +386,7 @@ pub fn show(
             hovered,
             dnd,
             hidden: env.hidden,
+            scripts_in_view: env.scripts_in_view,
             open: nui.open,
             under_bell: env.presence_at == PresencePosition::TopRight,
         },

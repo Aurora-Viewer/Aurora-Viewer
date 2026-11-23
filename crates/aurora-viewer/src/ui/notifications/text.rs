@@ -342,6 +342,7 @@ mod tests {
                             images: &HashMap::new(),
                             emoji: &mut emoji,
                             hidden: false,
+                            scripts_in_view: false,
                             message_seconds: 30.0,
                             tip_seconds: 10.0,
                             restart: None,

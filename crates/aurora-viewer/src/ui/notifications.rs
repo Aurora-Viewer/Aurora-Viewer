@@ -63,6 +63,9 @@ pub struct ToastEnv<'a> {
     pub images: &'a HashMap<Uuid, egui::TextureHandle>,
     pub emoji: &'a mut super::emoji::Emoji,
     pub hidden: bool,
+    /// While `hidden`, the scripted objects' windows still show
+    /// (`clear_view_shows`): mouselook, not the photo's full frame.
+    pub scripts_in_view: bool,
     /// Seconds a message toast stays (NotificationToastLifeTime).
     pub message_seconds: f64,
     /// Seconds a friend's online / offline toast stays
@@ -89,6 +92,20 @@ pub struct ToastEnv<'a> {
 pub fn open_conversations(ctx: &egui::Context, open: &mut bool) {
     super::widgets::open_floater(ctx, "conversations", open);
     ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("conversations")));
+}
+
+/// Whether the toast or card of `n` may show while the view is kept clear
+/// (`hidden`: mouselook, the photo's full frame). In mouselook
+/// (`scripts_in_view`) a scripted object's window still does: an llDialog
+/// menu, an llTextBox, the questions that wait for an answer
+/// (`Notification::stays_until_answered`), which Alt lets the mouse click.
+/// The Legacy Viewer keeps every script floater on screen when it puts the
+/// other windows away for mouselook (LLAgent::changeCameraToMouselook and
+/// LLAgent::changeCameraToDefault, `script_floater` in their skip list,
+/// indra/newview/llagent.cpp); the other notices stay away until mouselook
+/// ends (#4363).
+pub fn clear_view_shows(n: &Notification, hidden: bool, scripts_in_view: bool) -> bool {
+    !hidden || (scripts_in_view && n.stays_until_answered())
 }
 
 /// How long the toast of `n` stays.
@@ -959,7 +976,8 @@ fn button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool, size
 /// (LLScreenChannel::addToast; #491). A scripted object's window
 /// (`Notification::stays_until_answered`) has no time: its toast stays
 /// until answered, whatever comes after it, and is only kept in while the
-/// list is open, the view must stay clear or do not disturb holds it.
+/// list is open, the view must stay clear (the photo's full frame; mouselook
+/// still draws it, `clear_view_shows`) or do not disturb holds it.
 fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_seconds: f64, tip_seconds: f64, hidden: bool, dnd: bool) {
     // new arrivals become toasts (unless the list is open or the view must
     // stay clear, or they were already seen where they arrived: a card in
@@ -1009,13 +1027,16 @@ fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_
 /// The toasts drawn (oldest first) and how many wait behind them: the
 /// scripted windows first (the newest three), the newest others in the
 /// room left, as Aurora's center does (`notification_center::visible`). In
-/// do not disturb only the script menus come out; the rest waits there.
-fn shown_toasts(list: &Notifications, nui: &NotifUi, dnd: bool) -> (Vec<u64>, usize) {
+/// do not disturb only the script menus come out; the rest waits there. In
+/// mouselook (`scripts_only`) only the scripted windows
+/// (`clear_view_shows`).
+fn shown_toasts(list: &Notifications, nui: &NotifUi, dnd: bool, scripts_only: bool) -> (Vec<u64>, usize) {
     let drawn: Vec<(u64, bool)> = nui
         .toasts
         .iter()
         .filter_map(|(id, _)| list.list.iter().find(|n| n.id == *id))
         .filter(|n| !dnd || super::notification_center::dnd_shows(n))
+        .filter(|n| clear_view_shows(n, scripts_only, true))
         .map(|n| (n.id, n.stays_until_answered()))
         .collect();
     let mut keep: Vec<u64> = drawn.iter().rev().filter(|t| t.1).take(MAX_TOASTS).map(|t| t.0).collect();
@@ -1150,7 +1171,7 @@ pub fn show(
         if clicked_out {
             nui.open = false;
         }
-    } else if !nui.toasts.is_empty() && !env.hidden {
+    } else if !nui.toasts.is_empty() && (!env.hidden || env.scripts_in_view) {
         let screen = ctx.content_rect();
         egui::Area::new(egui::Id::unique("notification_toasts"))
             .fade_in(false)
@@ -1160,7 +1181,7 @@ pub fn show(
                 // ToastGap between the toasts of the channel
                 // (LLScreenChannel::redrawToasts)
                 ui.spacing_mut().item_spacing.y = env.toast_gap;
-                let (ids, behind) = shown_toasts(list, nui, dnd);
+                let (ids, behind) = shown_toasts(list, nui, dnd, env.hidden);
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
                         let r = if close_script_prompt(ctx, n, true) {
@@ -1338,6 +1359,7 @@ mod tests {
                             images: &images,
                             emoji: &mut emoji,
                             hidden: false,
+                            scripts_in_view: false,
                             message_seconds: 30.0,
                             tip_seconds: TOAST_TIP,
                             restart: None,
@@ -1366,7 +1388,7 @@ mod tests {
                     assert!(answer.is_empty(), "hiding sends nothing");
                     assert!(nui.hidden.contains(&id));
                     assert!(list.listed().any(|n| n.id == id));
-                    assert!(!shown_toasts(&list, &nui, false).0.contains(&id));
+                    assert!(!shown_toasts(&list, &nui, false, false).0.contains(&id));
                     nui.open = true;
                     assert!(frame(&mut list, &mut nui, vec![key(false, command)]).is_empty());
                     assert!(frame(&mut list, &mut nui, vec![]).is_empty());
@@ -1561,6 +1583,7 @@ mod tests {
                             images: &images,
                             emoji: &mut emoji,
                             hidden: false,
+                            scripts_in_view: false,
                             message_seconds: 30.0,
                             tip_seconds: TOAST_TIP,
                             restart: None,
@@ -2245,7 +2268,7 @@ mod tests {
         // the oldest information gave way, not a scripted window
         assert_eq!(ids(&nui), [windows.clone(), infos[1..].to_vec()].concat());
         // the newest three scripted windows drawn, the rest behind
-        assert_eq!(shown_toasts(&list, &nui, false), (windows[1..].to_vec(), 4));
+        assert_eq!(shown_toasts(&list, &nui, false, false), (windows[1..].to_vec(), 4));
         // long after: only they are left
         update_toasts(&mut list, &mut nui, TOAST_OFFER * 4.0, 30.0, TOAST_TIP, false, false);
         assert_eq!(ids(&nui), windows);
@@ -2254,13 +2277,13 @@ mod tests {
         list.mark_all_read();
         update_toasts(&mut list, &mut nui, 200.0, 30.0, TOAST_TIP, false, false);
         assert_eq!(ids(&nui), windows);
-        // mouselook keeps them (drawn once it ends); do not disturb draws
-        // only the text box
+        // the clear view keeps them (drawn once it ends); do not disturb
+        // draws only the text box
         update_toasts(&mut list, &mut nui, 201.0, 30.0, TOAST_TIP, true, false);
         assert_eq!(ids(&nui), windows);
         update_toasts(&mut list, &mut nui, 202.0, 30.0, TOAST_TIP, false, true);
-        assert_eq!(shown_toasts(&list, &nui, true), (vec![windows[0]], 0));
-        assert_eq!(shown_toasts(&list, &nui, false).0, windows[1..].to_vec());
+        assert_eq!(shown_toasts(&list, &nui, true, false), (vec![windows[0]], 0));
+        assert_eq!(shown_toasts(&list, &nui, false, false).0, windows[1..].to_vec());
         // hidden by its cross: stays in the list, not brought back
         nui.toasts.retain(|t| t.0 != windows[3]);
         nui.hidden.insert(windows[3]);
@@ -2271,6 +2294,53 @@ mod tests {
         list.list.retain(|n| n.id != windows[0]);
         update_toasts(&mut list, &mut nui, 204.0, 30.0, TOAST_TIP, false, false);
         assert_eq!(ids(&nui), windows[1..3].to_vec());
+    }
+
+    /// #4363: in mouselook a scripted object's window still toasts (Alt
+    /// frees the mouse to click it), as the Legacy Viewer keeps its script
+    /// floaters; the information around it stays away. The photo's full
+    /// frame shows none.
+    #[test]
+    fn mouselook_draws_only_the_scripted_windows() {
+        let mut list = Notifications::default();
+        let mut nui = NotifUi::default();
+        let windows = super::super::notification_center::tests::scripted_windows(&mut list);
+        let info = list.push(Kind::Info, "Lune paid you L$50", "", Data::None);
+        let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, TOAST_TIP, false, false);
+        // mouselook: the scripted windows only, the newest three, the
+        // fourth behind "+ 1 more"
+        update_toasts(&mut list, &mut nui, 0.1, 30.0, TOAST_TIP, true, false);
+        assert_eq!(shown_toasts(&list, &nui, false, true), (windows[1..].to_vec(), 1));
+        for n in &list.list {
+            let scripted = windows.contains(&n.id);
+            assert_eq!(clear_view_shows(n, true, true), scripted, "mouselook: {}", n.title);
+            assert!(!clear_view_shows(n, true, false), "the photo's full frame: {}", n.title);
+            assert!(clear_view_shows(n, false, false), "a clear view is not asked: {}", n.title);
+        }
+        // a menu arriving in mouselook toasts there and then
+        let menu = list.push(
+            Kind::Script,
+            "Fountain",
+            "Pick a colour",
+            Data::Dialog {
+                sender: ([127, 0, 0, 1], 13000).into(),
+                object: Uuid::from_u128(9),
+                object_name: "Fountain".into(),
+                own_object: false,
+                channel: -5,
+                buttons: vec!["Violet".into()],
+            },
+        );
+        update_toasts(&mut list, &mut nui, 0.2, 30.0, TOAST_TIP, true, false);
+        let (shown, behind) = shown_toasts(&list, &nui, false, true);
+        assert_eq!(shown, vec![windows[2], windows[3], menu]);
+        assert_eq!(behind, 2);
+        // the information toasted before is not drawn, and is back once
+        // mouselook ends if its time has not run out
+        assert!(!shown.contains(&info) && !shown.contains(&message));
+        update_toasts(&mut list, &mut nui, 0.3, 30.0, TOAST_TIP, false, false);
+        assert!(nui.toasts.iter().any(|t| t.0 == message));
     }
 
     /// Run the Conversations floater for a few frames.
