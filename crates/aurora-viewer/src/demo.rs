@@ -142,6 +142,9 @@ pub mod env;
 pub mod experience;
 #[path = "demo_floating_text.rs"]
 pub mod floating_text;
+/// AURORA_DEMO_FOG: Aurora Weather's fog under a fixed sky, with props.
+#[path = "demo_fog.rs"]
+pub mod fog;
 /// A prop derezzed and particles started while the photo mode holds the
 /// world still (AURORA_DEMO_FREEZE_WORLD).
 #[path = "demo_freeze_world.rs"]
@@ -5285,6 +5288,10 @@ pub fn events() -> Vec<NetEvent> {
     // ordinary point light (fixed ids). The first lights the wall through
     // its image; the ground stays dark outside the frustums. `point`: the
     // projectors without their texture, as plain point lights, to compare.
+    // AURORA_DEMO_FOG: the fog scenario's props (demo_fog.rs)
+    for o in fog::objects() {
+        add(o);
+    }
     if let Ok(mode) = std::env::var("AURORA_DEMO_PROJECTOR") {
         let floor = height(cx, cy) + 0.35;
         let wall = [0.82, 0.82, 0.82, 1.0];
@@ -9146,7 +9153,7 @@ pub fn sun_override() -> Option<Vec3> {
     static SUN: std::sync::OnceLock<Option<Vec3>> = std::sync::OnceLock::new();
     *SUN.get_or_init(|| match std::env::var("AURORA_DEMO_SUN").ok() {
         Some(v) => parse_sun(&v),
-        None => soft_shadows::sun(),
+        None => fog::sun().or_else(soft_shadows::sun),
     })
 }
 
@@ -9355,6 +9362,10 @@ pub fn projector_bench_done() -> bool {
 
 /// Fixed framing of the #1494 offline fixture, or a repeatable camera sweep.
 pub fn projector_camera(frame: u64) -> Option<(Vec3, Vec3)> {
+    // (AURORA_DEMO_FOG's camera, placed the same way)
+    if let Some(view) = fog::camera_at(frame) {
+        return Some(view);
+    }
     let mode = std::env::var("AURORA_DEMO_PROJECTOR").ok()?;
     if !mode.starts_with("cluster") {
         return None;

@@ -24,6 +24,7 @@ pub mod drawn;
 pub mod face_pattern;
 pub mod fetch_priority;
 pub(crate) mod flexible;
+mod fog_ground;
 mod foot_scope;
 mod foot_support;
 pub mod geometry_need;
@@ -1052,6 +1053,8 @@ pub struct Scene {
     /// Rain prototype: the terrain's heights around the camera
     /// (`rain_ground.rs`).
     rain_ground: rain_ground::RainGroundCache,
+    /// Aurora Weather's fog: the ground it pools on (`fog_ground.rs`).
+    fog_ground: fog_ground::FogGroundCache,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
@@ -1821,6 +1824,7 @@ impl Scene {
             light_scratch: Default::default(),
             spot_shadows: Default::default(),
             rain_ground: Default::default(),
+            fog_ground: Default::default(),
             mirror_objects: Default::default(),
             shelter_holds: Default::default(),
             selection_wire: Default::default(),

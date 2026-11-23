@@ -31,6 +31,7 @@ mod drawn_pick;
 mod equirect;
 mod exposure;
 mod film_readback;
+mod fog;
 pub mod frame_priority;
 mod fsr;
 pub mod gi;

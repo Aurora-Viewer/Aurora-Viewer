@@ -662,6 +662,8 @@ pub struct DrawLists {
     pub water_ground: crate::WaterGround,
     /// Rain prototype: the terrain's heights around the camera.
     pub rain_ground: crate::RainGround,
+    /// Aurora Weather's fog: the ground it pools on.
+    pub fog_ground: FogGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
     pub blend: Vec<DrawCmd>,
     /// The blended faces under the water while the camera is above it, back
@@ -882,6 +884,7 @@ impl DrawLists {
         self.water_contacts.clone_from(&src.water_contacts);
         self.water_ground.clone_from(&src.water_ground);
         self.rain_ground.clone_from(&src.rain_ground);
+        self.fog_ground.clone_from(&src.fog_ground);
         self.glow.clone_from(&src.glow);
         self.glow_alpha.clone_from(&src.glow_alpha);
         self.debug_red.clone_from(&src.debug_red);
@@ -940,6 +943,7 @@ impl DrawLists {
         self.water_contacts.clear();
         self.water_ground = Default::default();
         self.rain_ground = Default::default();
+        self.fog_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();
         self.blend_double_sided.clear();
@@ -1753,6 +1757,64 @@ impl Default for RainLook {
     }
 }
 
+/// How Aurora Weather's fog is drawn (fog.rs): its cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FogTier {
+    /// Height fog worked out on each surface, no volume: nearly free.
+    Height,
+    /// The froxel volume, lit by the sun (its shadows: god rays) and the sky.
+    Volumetric,
+    /// The volume lit by the local lights too (neon through fog).
+    #[default]
+    VolumetricLights,
+}
+
+/// Aurora Weather's fog for a frame (fog.rs). `FrameParams::fog` None: no
+/// fog, nothing allocated nor run, the image of before.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FogLook {
+    pub tier: FogTier,
+    /// The weather's quality (0 low, 1 medium, 2 high): the volume's
+    /// resolution and reach.
+    pub quality: u32,
+    /// How thick, 0..1 (the slider; fog.rs `base_extinction`).
+    pub density: f32,
+    /// The region's sky haze scales it: a hazy sky, a thicker fog.
+    pub from_sky: bool,
+    /// How fast it thins with height above the ground it pools on (m: the
+    /// height over which it falls to a third).
+    pub height: f32,
+    /// Its own colour (linear RGB, the light it scatters); None: white, the
+    /// sky's light alone colours it as it does the haze.
+    pub color: Option<[f32; 3]>,
+    /// The scattering's lean toward the light (Henyey-Greenstein g, 0
+    /// even to 0.9 a tight glow around each light).
+    pub anisotropy: f32,
+    /// How far the wind has carried it (m, world x and y).
+    pub drift: [f32; 2],
+    /// Seconds of the UTC day: the noise's slow change, the same for every
+    /// viewer at the same moment.
+    pub clock: f32,
+    /// The south-west corner of the camera's region on the grid (m): the
+    /// noise is anchored to the grid, the same wisps at the same place.
+    pub region_origin: [f64; 2],
+}
+
+/// Aurora Weather's fog: the ground it pools on, in a square around the
+/// camera (`FOG_GROUND_SIZE` cells a side, row by row from `origin`). Per
+/// cell: x the terrain (or the water above it), y that ground smoothed over
+/// tens of metres, the level the fog fills up to. Empty: none (the camera's
+/// ground level everywhere).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FogGround {
+    pub origin: [f32; 2],
+    pub extent: f32,
+    pub heights: std::sync::Arc<[[f32; 2]]>,
+}
+
+/// Cells a side of [`FogGround`].
+pub const FOG_GROUND_SIZE: u32 = 256;
+
 /// A photo drawn in tiles reads GTAO's depth of the whole photo beyond
 /// each tile: a tile drawn alone has no scene past its guard band, and near
 /// the camera GTAO's radius (0.73 m) spans thousands of pixels, so its
@@ -1936,6 +1998,8 @@ pub struct FrameParams {
     /// Volumetric clouds in the place of the Legacy Viewer's flat layer
     /// (clouds.rs); None: the Legacy layer, with nothing else running.
     pub clouds: Option<CloudsFrame>,
+    /// Aurora Weather's fog (fog.rs); None: none, at no cost.
+    pub fog: Option<FogLook>,
     /// Planet curvature (curvature.rs, Aurora's own): the planet's radius
     /// in metres; None: the flat regions, as the Legacy Viewer draws them.
     pub curvature: Option<f32>,
@@ -2194,8 +2258,9 @@ pub struct RenderStats {
     pub gpu_effects: Option<[f32; 4]>,
     /// GPU time of [`GpuElement::Weather`] in parts (ms): the shelter map,
     /// the wetness and footprints memories, the wet ground (with the snow
-    /// lying), the drops and flakes with the distant layers.
-    pub gpu_weather: Option<[f32; 4]>,
+    /// lying), the drops and flakes with the distant layers, the fog's
+    /// volume.
+    pub gpu_weather: Option<[f32; 5]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those
@@ -2290,7 +2355,8 @@ pub enum GpuElement {
     /// Blended faces and particles.
     Transparent,
     /// Aurora Weather: the shelter map, the memories, the wet ground and
-    /// the snow lying, the drops and flakes (`RenderStats::gpu_weather`).
+    /// the snow lying, the drops and flakes, the fog's volume
+    /// (`RenderStats::gpu_weather`).
     Weather,
     /// Glow, TAA, tone mapping, SMAA.
     Post,
