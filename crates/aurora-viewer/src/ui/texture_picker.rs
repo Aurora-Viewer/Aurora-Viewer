@@ -987,10 +987,14 @@ impl TexturePicker {
                                 // FSPanelFace::onTextureSelectionChanged /
                                 // onPbrSelectionChanged: LivePreviewUnavailable(PBR)
                                 // when TextureLivePreview is on. The Legacy
-                                // Viewer also shows it for an item it then
-                                // previews (setCanApply(true, true) follows):
-                                // here only when the click applies nothing.
-                                self.live_preview_warning = (!previewable && self.warn_live_preview)
+                                // Viewer also shows it for a no-transfer or
+                                // no-modify item it then previews
+                                // (setCanApply(true, true) follows): here only
+                                // for a no-copy item, which a click never
+                                // applies (a no-transfer one refused on this
+                                // object has the footer's owner-only line).
+                                let no_copy = !local && !can_preview(&world.inventory, id);
+                                self.live_preview_warning = (no_copy && self.warn_live_preview)
                                     .then(|| ui.input(|i| i.time) + ui.ctx().options(|o| o.input_options.max_double_click_delay));
                             }
                         }
@@ -1190,7 +1194,7 @@ impl TexturePicker {
     }
 
     /// LivePreviewUnavailable / LivePreviewUnavailablePBR (notifications.xml,
-    /// "okignore"): the chosen item cannot be previewed, OK applies it.
+    /// "okignore"): the chosen item is no-copy, only OK applies it.
     fn live_preview_alert(&mut self, ctx: &egui::Context, p: &Palette) {
         let Some(at) = self.live_preview_warning else {
             return;
@@ -1985,6 +1989,7 @@ pub(crate) mod tests {
         let items = [
             (2u128, "No-copy texture", actions::MODIFY | actions::TRANSFER),
             (3, "Full texture", actions::FULL),
+            (4, "No-transfer texture", actions::COPY | actions::MODIFY),
         ];
         for (n, name, owner_mask) in items {
             let id = Uuid::from_u128(n);
@@ -2012,7 +2017,7 @@ pub(crate) mod tests {
                 },
                 state: crate::world::inventory::FetchState::Fetched,
                 children: Vec::new(),
-                items: vec![Uuid::from_u128(2), Uuid::from_u128(3)],
+                items: vec![Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4)],
                 library: false,
             },
         );
@@ -2045,6 +2050,15 @@ pub(crate) mod tests {
         assert!(!ui.labels.contains_key(warning));
         assert!(picker.stop_warning_live_preview, "the caller turns its setting off");
         assert!(picker.open, "the warning leaves the picker open, OK still applies the item");
+        // a no-transfer item refused on this object: the footer says why, no alert
+        picker.stop_warning_live_preview = false;
+        picker.owned_target = false;
+        ui.click("No-transfer texture", |ctx, p| draw(&mut picker, &mut world, ctx, p));
+        for _ in 0..6 {
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+        }
+        assert!(picker.take_preview().is_none());
+        assert!(!ui.labels.contains_key(warning), "only a no-copy item is warned of");
     }
 
     fn frame(
