@@ -1006,8 +1006,13 @@ mod object_count_tests {
             values: vec![(sim_stat::NUMTASKS, 31_200.0)],
             object_capacity: 30_000,
         };
-        for (value, expected) in [(true, aurora_i18n::integer(31_200)), (false, aurora_i18n::tr!("common-loading").to_owned())] {
-            if !value { stats.values.clear(); }
+        for (value, expected) in [
+            (true, aurora_i18n::integer(31_200)),
+            (false, aurora_i18n::tr!("common-loading").to_owned()),
+        ] {
+            if !value {
+                stats.values.clear();
+            }
             let facts = fact_list(&palette, &world, None, Some(&stats));
             let objects = facts.iter().find(|fact| fact.key == aurora_i18n::tr!("common-objects")).unwrap();
             assert_eq!(objects.value, expected);
