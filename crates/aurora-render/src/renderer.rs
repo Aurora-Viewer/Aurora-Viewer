@@ -635,11 +635,18 @@ impl FrameU {
 
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
-/// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4)>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+/// shadows (reflections, probe faces and impostor pictures draw none), nor
+/// for a projector among the first `traced` lights, whose shadows the
+/// traced lights' pass draws (`Renderer::traced_projectors`).
+fn spot_shadow_views(
+    f: &FrameParams,
+    limit: usize,
+    shelter: Option<(usize, Mat4)>,
+    traced: usize,
+) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
         let s = f.spot_shadows[k].filter(|_| k < limit);
-        let s = s.filter(|_| f.shadows)?;
+        let s = s.filter(|s| f.shadows && projector_map_drawn(s.light, traced))?;
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
         Some((s, light.projector?.shadow_matrix))
     });
@@ -659,6 +666,21 @@ fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4
         ));
     }
     views
+}
+
+/// Whether the traced passes light and shadow by the frame's light,
+/// `sun_dir`: the one that shades, the moon's at night as the shadow maps'
+/// (world/env.rs: the sun when it is up, else the moon, else straight down;
+/// LLEnvironment::getLightDirection). Tracing only while the sun was
+/// visible let the moon through every roof.
+fn traced_light_up(sun_dir: Vec3) -> bool {
+    sun_dir.z > 0.0
+}
+
+/// Whether the shadow map of the projector at `light` in the frame's list is
+/// drawn while the first `traced` lights are traced: only past them.
+fn projector_map_drawn(light: u32, traced: usize) -> bool {
+    light as usize >= traced
 }
 
 /// With the shadows off, how long the shelter map drawn alone is kept while
@@ -1121,6 +1143,9 @@ struct Targets {
     /// The contact shadows' mask (contact_shadows.rs), when they are on or
     /// `AURORA_CONTACT_SHADOWS` keeps it ready.
     contact: Option<crate::contact_shadows::Targets>,
+    /// The ray-traced shadows' mask (rt_shadows.rs), when the device traces:
+    /// bound in the contact mask's place.
+    rt: Option<crate::rt_shadows::Targets>,
     water_refl: Option<ReflTarget>,
     water_air: Option<ReflTarget>,
     mirror: Option<ReflTarget>,
@@ -1263,6 +1288,9 @@ struct Pipelines {
     /// The visible part of the subject's faces (part_pick.rs).
     part_pick: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
+    /// SSR's composite of the traced reflections (rt_shadows.rs), when they
+    /// are on.
+    ssr_rt: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
     pre_portal: wgpu::RenderPipeline,
@@ -1356,6 +1384,13 @@ struct GpuTimer {
     last_pixels: u64,
     /// The world pixels of each readback slot's frame.
     slot_pixels: [std::cell::Cell<u64>; 3],
+    /// What a photo of `last_pixels` is planned by: `last_ms` and the
+    /// rounds its traced passes run that the view's frame does not
+    /// (rt_shadows.rs `STILL_ROUNDS`).
+    last_photo_ms: Option<f32>,
+    /// Those rounds, for each readback slot's frame (0: a frame that
+    /// traces nothing over frames, or a photo's own).
+    slot_rounds: [std::cell::Cell<u32>; 3],
     /// Marks between and inside passes are written
     /// (TIMESTAMP_QUERY_INSIDE_ENCODERS + TIMESTAMP_QUERY_INSIDE_PASSES).
     marks: bool,
@@ -1648,6 +1683,8 @@ impl GpuTimer {
             last_ms: None,
             last_pixels: 0,
             slot_pixels: Default::default(),
+            last_photo_ms: None,
+            slot_rounds: Default::default(),
             marks: device
                 .features()
                 .contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES),
@@ -1679,8 +1716,15 @@ impl GpuTimer {
                     let ts = crate::readback::u64_array::<{ GPU_TIMESTAMPS as usize }>(&view[..GPU_TIMESTAMPS as usize * 8]);
                     let ms = |a: u32, b: u32| crate::readback::elapsed_gpu_ms(&ts, a, b, self.period_ns);
                     if ts[1] > ts[0] {
-                        self.last_ms = Some(ms(0, 1));
+                        let all = ms(0, 1);
+                        self.last_ms = Some(all);
                         self.last_pixels = self.slot_pixels[slot].get();
+                        // the traced passes are in the contact shadows'
+                        // range, with the levels' builds, which a photo
+                        // does once: counted with them, the estimate errs
+                        // slow; the whole frame without the marks
+                        let round = if self.marks { ms(MARK_SSAO_END, MARK_CONTACT_END) } else { all };
+                        self.last_photo_ms = Some(crate::rt_shadows::still_gpu_ms(all, round, self.slot_rounds[slot].get()));
                         if self.marks {
                             let mut e = [0.0; GpuElement::ALL.len()];
                             for (t, ranges) in e.iter_mut().zip(GPU_ELEMENTS) {
@@ -1927,7 +1971,7 @@ fn taa_motion_now() -> bool {
 }
 
 /// AURORA_PROFILE: the summary also wants the time each step waited.
-fn profile() -> bool {
+pub(crate) fn profile() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("AURORA_PROFILE").is_some())
 }
@@ -2150,6 +2194,15 @@ pub(crate) struct Backend {
     clouds: Option<crate::clouds::Clouds>,
     /// This frame draws the volumetric clouds over the sky.
     clouds_now: bool,
+    /// The ray-traced sun shadows (AURORA_RT_SHADOWS), and whether this
+    /// frame traces them.
+    rt: Option<crate::rt_shadows::RtShadows>,
+    /// The ray tracer, or what an effect turned on needs, being made.
+    rt_build: Option<RtBuild>,
+    /// The worker making it stopped (a panic) or could not start: nothing is
+    /// made again until ray tracing is turned off and on.
+    rt_failed: bool,
+    rt_now: bool,
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
@@ -2316,6 +2369,9 @@ pub(crate) struct Backend {
     gpu_frames: std::sync::Arc<crate::pacing::GpuFrames<wgpu::SubmissionIndex>>,
     /// Where the replay of the journal stages its buffer writes.
     write_staging: crate::write_staging::WriteStaging,
+    /// The surfaces of the interface's windows outside the viewer's
+    /// (outside.rs); the window's renderer alone has any.
+    outside: crate::outside::Surfaces,
 }
 
 impl Drop for Backend {
@@ -2329,6 +2385,7 @@ impl Drop for Backend {
     fn drop(&mut self) {
         if self.lost.get() {
             log::warn!("GPU device lost: the window surface is left to the process");
+            self.outside.leak();
             return;
         }
         self.wait_pipeline_workers();
@@ -3042,6 +3099,22 @@ impl Backend {
         rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
     }
 
+    /// How many of the frame's first lights have their projector shadows
+    /// traced this frame (common.wgsl `projector_at`, `PROJECTORS_TRACED`):
+    /// their shadow maps are not drawn. The faces the traced pass does not
+    /// see read the maps: without them a blended face takes such a
+    /// projector unshadowed, as the Legacy Viewer's (alphaF.glsl
+    /// `calcPointLightOrSpotLight`, only spotLightF.glsl reads the maps),
+    /// and so do the reflections. 0 while the lights are not traced.
+    fn traced_projectors(&self) -> usize {
+        let tuning = self.settings.rt_tuning;
+        let traced = self.rt_now
+            && tuning.projectors
+            && self.rt.as_ref().is_some_and(|r| r.traces_lights())
+            && self.targets.rt.as_ref().is_some_and(|t| t.lights.is_some());
+        if traced { crate::rt_shadows::traced_count(tuning) } else { 0 }
+    }
+
     /// The projector map the shelter is drawn into this frame, if it is,
     /// and its view-projection.
     fn rain_shelter_map(&self, f: &FrameParams) -> Option<(usize, Mat4)> {
@@ -3337,8 +3410,8 @@ fn extra<T>(
 /// the main view when it is drawn (not hidden by the debug filter), not
 /// under the water (the sky is seen through its fog), nor in a cut-out
 /// photo (no sky).
-fn clouds_wanted(cutout: bool, hide_sky: bool, camera_z: f32, water_level: f32) -> bool {
-    !cutout && !hide_sky && camera_z >= water_level
+fn clouds_wanted(cutout: bool, hide_sky: bool, camera_z: f32, water_level: Option<f32>) -> bool {
+    !cutout && !hide_sky && water_level.is_none_or(|height| camera_z >= height)
 }
 
 /// The clouds' size-bound targets for `size` (and a still's) are made,
@@ -3470,6 +3543,23 @@ struct PipelineBuild {
     soft: bool,
     started: std::time::Instant,
     done: std::sync::mpsc::Receiver<(Pipelines, ImpostorPipelines)>,
+}
+
+/// What a worker thread made for ray tracing: the ray tracer, or the parts
+/// of it an effect turned on later needs.
+enum RtMade {
+    Tracer(Box<crate::rt_shadows::RtShadows>),
+    Parts(Box<crate::rt_shadows::Parts>),
+}
+
+/// The ray tracer being made on a worker thread
+/// (`Backend::follow_ray_tracing`). Its compute pipelines are the driver's
+/// to compile, like the scene's ([`PipelineBuild`]): made on the render
+/// thread when Preferences turned ray tracing on, they held the picture.
+/// The frames keep the shadow maps and the screen-space effects meanwhile.
+struct RtBuild {
+    started: std::time::Instant,
+    done: std::sync::mpsc::Receiver<RtMade>,
 }
 
 impl Impostors {
@@ -4269,8 +4359,18 @@ impl Backend {
             },
             // the contact shadows' mask (contact_shadows.rs)
             float_tex(13),
+            // Reserved for the previous screen-space sun filter. The PCSS
+            // path reads the shadow maps directly; keep the shared binding
+            // slots stable beside the traced sun and indirect light.
+            float_tex(30),
+            // what the glass leaves of the traced sun's red, green and blue
+            // (rt_shadows.wgsl, common.wgsl `sun_glass`)
+            float_tex(31),
             // GTAO's screen-space indirect light (gtao.rs)
             float_tex(14),
+            // how open each place is, from the traced probes (rt_gi.wgsl
+            // `cs_gi_sky`, common.wgsl `screen_open`)
+            float_tex(32),
             // the night sky's stars (stars.rs)
             wgpu::BindGroupLayoutEntry {
                 binding: 24,
@@ -4296,10 +4396,10 @@ impl Backend {
         ];
         let detail_supported = crate::graded_shadow_supported(&device.limits());
         if detail_supported {
-            frame_entries.push(tex_entry(30, wgpu::TextureSampleType::Depth));
+            frame_entries.push(tex_entry(33, wgpu::TextureSampleType::Depth));
         }
         if crate::portrait_shadow_supported(&device.limits()) {
-            frame_entries.push(tex_entry(31, wgpu::TextureSampleType::Depth));
+            frame_entries.push(tex_entry(34, wgpu::TextureSampleType::Depth));
         }
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
@@ -4377,9 +4477,12 @@ impl Backend {
                 float_tex(3),
             ],
         });
+        // the G-buffer, and the traced reflections ssr.wgsl's `fs_ssr_rt`
+        // reads: the mirror ray's, the glossy ones and the metals' base
+        // colour (black textures without them)
         let gbuf_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("gbuffer"),
-            entries: &[float_tex(0)],
+            entries: &[float_tex(0), float_tex(1), float_tex(2), float_tex(3)],
         });
 
         let mk_frame_buffer = |label| {
@@ -4562,6 +4665,8 @@ impl Backend {
         lost_at_start(&lost, &surface)?;
         let water_effects = crate::water_effects::WaterGpu::new(&device, 1);
         let contact = crate::contact_shadows::ContactShadows::new(&device, &adapter.get_info());
+        // (made when the settings turn ray tracing on: `follow_ray_tracing`)
+        let rt = None;
         lost_at_start(&lost, &surface)?;
         let glow = Glow::new(&device, &post_layout);
         let smaa = Smaa::new(&device, &queue, [&post_layout, &bloom.post_layout], format);
@@ -4579,6 +4684,7 @@ impl Backend {
                 config.height,
                 msaa_samples,
                 &settings,
+                external,
                 refuse,
             )
         });
@@ -4744,6 +4850,10 @@ impl Backend {
             contact,
             clouds: None,
             clouds_now: false,
+            rt,
+            rt_build: None,
+            rt_failed: false,
+            rt_now: false,
             contact_now: false,
             gtao_normals_now: false,
             motion_now: false,
@@ -4840,6 +4950,7 @@ impl Backend {
             lost,
             gpu_frames,
             write_staging: Default::default(),
+            outside: Default::default(),
         };
         r.rebuild_bind_groups();
         Ok(r)
@@ -5947,7 +6058,7 @@ impl Backend {
             crate::part_pick::FORMAT,
             wgpu::ColorWrites::RED,
         ));
-        let ssr_pipe = ssr.then(|| {
+        let ssr_pipes = ssr.then(|| {
             let src = format!(
                 "{}\n{}",
                 common_shader_for(soft, &device.limits()),
@@ -5962,20 +6073,33 @@ impl Backend {
                 bind_group_layouts: &[Some(frame_layout), None, None, Some(gbuf_layout)],
                 immediate_size: 0,
             });
-            make_pipeline(
-                device,
-                &m,
-                &pl,
-                PipeDesc {
-                    vb: Vb::None,
-                    cull: None,
-                    blend: Some(premultiplied()),
-                    depth_write: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    ..base("ssr", "vs_ssr", "fs_ssr")
-                },
-            )
+            let composite = |label: &'static str, fs: &'static str| {
+                make_pipeline(
+                    device,
+                    &m,
+                    &pl,
+                    PipeDesc {
+                        vb: Vb::None,
+                        cull: None,
+                        blend: Some(premultiplied()),
+                        depth_write: false,
+                        depth_compare: wgpu::CompareFunction::Always,
+                        ..base(label, "vs_ssr", fs)
+                    },
+                )
+            };
+            // (on a device that can trace: the option is turned on at any
+            // time)
+            let traced = device
+                .features()
+                .contains(crate::rt_shadows::FEATURES)
+                .then(|| composite("ssr traced", "fs_ssr_rt"));
+            (composite("ssr", "fs_ssr"), traced)
         });
+        let (ssr_pipe, ssr_rt) = match ssr_pipes {
+            Some((a, b)) => (Some(a), b),
+            None => (None, None),
+        };
         // depth prepass (single sample)
         let pre = |label: &'static str, vs: &'static str, fs: Option<&'static str>, cull: Option<wgpu::Face>| {
             pipe(PipeDesc {
@@ -6395,6 +6519,7 @@ impl Backend {
             part_mask: part_mask.resolve(&mut done),
             part_pick: part_pick.resolve(&mut done),
             ssr: ssr_pipe.resolve(&mut done),
+            ssr_rt: ssr_rt.resolve(&mut done),
             pre_opaque: pre_opaque.resolve(&mut done),
             pre_opaque_2s: pre_opaque_2s.resolve(&mut done),
             pre_portal: pre_portal.resolve(&mut done),
@@ -6510,6 +6635,7 @@ impl Backend {
         height: u32,
         samples: u32,
         s: &RenderSettings,
+        external: bool,
         refuse: bool,
     ) -> Targets {
         let (w, h) = (width.max(1), height.max(1));
@@ -6612,7 +6738,16 @@ impl Backend {
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
             .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
-        let solid_depth = ao_depth.as_ref().map(|_| {
+        let rt = crate::rt_shadows::Targets::new(
+            device,
+            w,
+            h,
+            crate::rt_shadows::traced(device, external, s.ray_tracing),
+            s.rt_tuning.gi_step,
+        );
+        // AO and the traced mask distinguish blended texels on a solid
+        // surface. Bend instead traces its own half-coverage depth.
+        let solid_depth = (ao_depth.is_some() || (rt.is_some() && contact.is_some())).then(|| {
             make_view(
                 device,
                 "solid depth",
@@ -6669,6 +6804,7 @@ impl Backend {
             ao_depth,
             solid_depth,
             contact,
+            rt,
             depth_ss_tex,
             water_refl,
             water_air,
@@ -6696,7 +6832,7 @@ impl Backend {
         stars: &wgpu::Buffer,
         milky_way: &wgpu::TextureView,
     ) -> FrameGroups {
-        // Bindings 31 and 30 are the optional prefix, in descending order.
+        // Bindings 34 and 33 are the optional prefix, in descending order.
         let limits = device.limits();
         let first_binding = usize::from(!crate::portrait_shadow_supported(&limits)) + usize::from(!crate::graded_shadow_supported(&limits));
         let mk = |label: &str,
@@ -6708,7 +6844,9 @@ impl Backend {
                   depth: &wgpu::TextureView,
                   occlusion: &wgpu::TextureView,
                   contact: &wgpu::TextureView,
+                  glass: &wgpu::TextureView,
                   il: &wgpu::TextureView,
+                  open: &wgpu::TextureView,
                   sample_water: bool,
                   sample_mask: bool| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -6716,11 +6854,11 @@ impl Backend {
                 layout,
                 entries: &[
                     wgpu::BindGroupEntry {
-                        binding: 31,
+                        binding: 34,
                         resource: wgpu::BindingResource::TextureView(portrait_shadow.unwrap_or(&dummies.depth)),
                     },
                     wgpu::BindGroupEntry {
-                        binding: 30,
+                        binding: 33,
                         resource: wgpu::BindingResource::TextureView(detail_shadow.unwrap_or(&dummies.depth)),
                     },
                     wgpu::BindGroupEntry {
@@ -6815,8 +6953,20 @@ impl Backend {
                         resource: wgpu::BindingResource::TextureView(contact),
                     },
                     wgpu::BindGroupEntry {
+                        binding: 30,
+                        resource: wgpu::BindingResource::TextureView(&dummies.white),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 31,
+                        resource: wgpu::BindingResource::TextureView(glass),
+                    },
+                    wgpu::BindGroupEntry {
                         binding: 14,
                         resource: wgpu::BindingResource::TextureView(il),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 32,
+                        resource: wgpu::BindingResource::TextureView(open),
                     },
                     wgpu::BindGroupEntry {
                         binding: 15,
@@ -6869,13 +7019,30 @@ impl Backend {
         .unwrap_or(&dummies.white);
         let water = t.water_refl.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
         let mirror = t.mirror.as_ref().map(|r| &r.color).unwrap_or(&dummies.black);
-        let contact = t.contact.as_ref().map(|c| &c.result).unwrap_or(&dummies.black);
-        let il = t
-            .gtao
-            .as_ref()
-            .and_then(|g| g.indirect.as_ref())
-            .map(|i| &i.result)
-            .unwrap_or(&dummies.black);
+        // the traced mask holds the contact shadows too (rt_shadows.wgsl)
+        let contact =
+            t.rt.as_ref()
+                .map(|r| &r.result)
+                .or(t.contact.as_ref().map(|c| &c.result))
+                .unwrap_or(&dummies.black);
+        // the colour the glass gives the traced sun (rt_shadows.wgsl)
+        let glass = t.rt.as_ref().map(|r| &r.glass).unwrap_or(&dummies.white);
+        // the traced indirect light in GTAO's place (rt_gi.wgsl)
+        let il =
+            t.rt.as_ref()
+                .and_then(|r| r.gi.as_ref())
+                .map(|g| &g.result)
+                .or(t.gtao.as_ref().and_then(|g| g.indirect.as_ref()).map(|i| &i.result))
+                .unwrap_or(&dummies.black);
+        // how open each place is (rt_gi.wgsl `cs_gi_sky`; white: open)
+        let open = t.rt.as_ref().and_then(|r| r.gi.as_ref()).map(|g| &g.sky).unwrap_or(&dummies.white);
+        // how open the places the reflections are drawn from are (rt_gi.wgsl
+        // `gi_points`)
+        let points =
+            t.rt.as_ref()
+                .and_then(|r| r.gi.as_ref())
+                .map(|g| &g.points)
+                .unwrap_or(&dummies.white);
         // the solid surfaces of the depth the occlusion and the contact
         // shadows read (a dummy without either: nothing reads it)
         let occlusion = t.solid_depth.as_ref().map_or(&dummies.depth, |(_, view)| view);
@@ -6890,7 +7057,9 @@ impl Backend {
                 &dummies.depth,
                 &dummies.depth,
                 &dummies.black,
+                &dummies.white,
                 &dummies.black,
+                &dummies.white,
                 false,
                 false,
             ),
@@ -6904,7 +7073,9 @@ impl Backend {
                 &dummies.depth,
                 &dummies.depth,
                 contact,
+                glass,
                 il,
+                open,
                 false,
                 true,
             ),
@@ -6918,7 +7089,9 @@ impl Backend {
                 &dummies.depth,
                 occlusion,
                 contact,
+                glass,
                 il,
+                open,
                 false,
                 true,
             ),
@@ -6932,7 +7105,9 @@ impl Backend {
                 &t.depth_ss,
                 occlusion,
                 contact,
+                glass,
                 il,
+                open,
                 true,
                 true,
             ),
@@ -6947,7 +7122,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                 ),
@@ -6961,7 +7138,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                 ),
@@ -6975,7 +7154,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                 ),
@@ -6989,7 +7170,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                 ),
@@ -7003,7 +7186,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                 ),
@@ -7017,7 +7202,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                 ),
@@ -7031,7 +7218,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                 ),
@@ -7045,7 +7234,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                 ),
@@ -7059,7 +7250,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                 ),
@@ -7118,13 +7311,24 @@ impl Backend {
     fn rebuild_bind_groups(&mut self) {
         self.remake_frame_groups();
         self.gbuf_group = self.targets.gbuf.as_ref().map(|g| {
+            let traced = self.targets.rt.as_ref().and_then(|t| t.reflect.as_ref());
+            let black = &self.dummies.black;
+            let views = [
+                g,
+                traced.map_or(black, |t| &t.sharp),
+                traced.map_or(black, |t| &t.gloss),
+                traced.map_or(black, |t| &t.base),
+            ];
+            let entries = views.map(wgpu::BindingResource::TextureView);
+            let entries: Vec<wgpu::BindGroupEntry<'_>> = entries
+                .into_iter()
+                .zip(0..)
+                .map(|(resource, binding)| wgpu::BindGroupEntry { binding, resource })
+                .collect();
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("gbuffer"),
                 layout: &self.gbuf_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(g),
-                }],
+                entries: &entries,
             })
         });
         self.ssao_groups = self.targets.ao.as_ref().map(|(raw, _, _, _)| {
@@ -7293,6 +7497,7 @@ impl Backend {
             size.1,
             self.msaa_samples,
             &self.settings,
+            self.external,
             refuse,
         );
         let smaa = (self.settings.aa == AntiAliasing::Smaa).then(|| {
@@ -7540,7 +7745,11 @@ impl Backend {
             || s.ao_method != self.settings.ao_method
             || s.screen_indirect != self.settings.screen_indirect
             || s.contact_shadows != self.settings.contact_shadows
+            || crate::rt_shadows::traced(&self.device, self.external, s.ray_tracing)
+                != crate::rt_shadows::traced(&self.device, self.external, self.settings.ray_tracing)
             || s.soft_shadows != self.settings.soft_shadows
+            // (the traced indirect light's textures are of its grid)
+            || s.rt_tuning.gi_step != self.settings.rt_tuning.gi_step
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
@@ -7607,6 +7816,7 @@ impl Backend {
                 .atlas_changed(&self.device, &self.sun_atlas.base, res, SHADOW_FORMAT);
         }
         self.settings = s;
+        self.follow_ray_tracing();
         if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
             // FSR in the place of the TAA pass, or the TAA pass again
             if !taa_was || fsr_ratio(s.aa).is_some() != self.taa.as_ref().is_some_and(|t| t.fsr.is_some()) {
@@ -7625,6 +7835,93 @@ impl Backend {
             self.rebuild_targets();
         } else if shadows_dirty || probes_dirty || detail_dirty {
             self.rebuild_bind_groups_checked("TAA history after a shadow or probe change");
+        }
+    }
+
+    /// The ray tracer follows the settings: made when they turn ray
+    /// tracing on, dropped with the levels it built when they turn it off
+    /// (its targets go with the others, `make_targets`). It is made on a
+    /// worker thread ([`RtBuild`]), as is what an effect turned on later
+    /// needs: called again at each frame until the worker is done. A worker
+    /// that stops without its result (a panic) leaves ray tracing as it is,
+    /// the frames on the shadow maps: made again on the render thread, it
+    /// would hold the picture and likely stop there too.
+    fn follow_ray_tracing(&mut self) {
+        let options = crate::rt_shadows::traced(&self.device, self.external, self.settings.ray_tracing);
+        if !options.shadows {
+            // (one still being made is dropped as its worker ends)
+            self.rt_build = None;
+            self.rt_failed = false;
+            if self.rt.take().is_some() {
+                log::info!("ray tracing off");
+            }
+            return;
+        }
+        if let Some(build) = &self.rt_build {
+            match build.done.try_recv() {
+                Ok(made) => {
+                    let spent = build.started.elapsed().as_millis();
+                    self.rt_build = None;
+                    self.take_ray_tracing(made, spent);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    log::error!(
+                        "the ray tracer's worker stopped: nothing more is made for ray tracing until it is turned off and on again"
+                    );
+                    self.rt_build = None;
+                    self.rt_failed = true;
+                }
+            }
+        }
+        if let Some(rt) = &mut self.rt {
+            rt.set_options(options);
+        }
+        if self.rt_build.is_some() || self.rt_failed {
+            return;
+        }
+        let make: Box<dyn FnOnce() -> RtMade + Send> = match &self.rt {
+            None => {
+                let (device, queue, textures) = (self.device.clone(), self.queue.clone(), self.tex_layout.clone());
+                Box::new(move || RtMade::Tracer(Box::new(crate::rt_shadows::RtShadows::new(&device, &queue, &textures, options))))
+            }
+            Some(rt) => match rt.parts_maker(&self.device, &self.queue, &self.tex_layout, options) {
+                Some(parts) => Box::new(move || RtMade::Parts(Box::new(parts()))),
+                None => return,
+            },
+        };
+        let started = std::time::Instant::now();
+        let (tx, done) = std::sync::mpsc::sync_channel(1);
+        let spawned = std::thread::Builder::new().name("aurora-ray-tracer".into()).spawn(move || {
+            // (refused when ray tracing was turned off meanwhile: dropped)
+            let _ = tx.send(make());
+        });
+        match spawned {
+            Ok(worker) => {
+                self.pipeline_workers.retain(|w| !w.is_finished());
+                self.pipeline_workers.push(worker);
+                self.rt_build = Some(RtBuild { started, done });
+            }
+            Err(e) => {
+                log::error!("cannot start the ray tracer's worker: {e}");
+                self.rt_failed = true;
+            }
+        }
+    }
+
+    /// What was made for ray tracing, in `spent` ms, takes its place.
+    fn take_ray_tracing(&mut self, made: RtMade, spent: u128) {
+        match made {
+            RtMade::Tracer(rt) => {
+                log::info!("ray tracer made in {spent} ms on a worker");
+                self.rt = Some(*rt);
+            }
+            RtMade::Parts(parts) => {
+                log::info!("ray tracer: the effects turned on made in {spent} ms on a worker");
+                if let Some(rt) = &mut self.rt {
+                    rt.take(*parts);
+                }
+            }
         }
     }
 
@@ -8088,6 +8385,7 @@ impl Backend {
         }
         // SL uses the clamped light norm's GL z component (world x) here
         let ks = 1.0 / f.sky.light_norm.x.max(0.3);
+        u.water_air[1] = f32::from(u8::from(f.hide_water));
         u.water_fog = lin(w.fog_color.max(Vec3::ZERO)).extend(kd.max(0.0)).to_array();
         u.water_params = [ks, w.fresnel_scale, w.fresnel_offset, w.blur_multiplier];
         u.water_waves = [w.wave1.x, w.wave1.y, w.wave2.x, w.wave2.y];
@@ -8152,7 +8450,7 @@ impl Backend {
             }
         }
         u.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
-        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f))
+        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f), self.traced_projectors())
             .into_iter()
             .enumerate()
             .filter_map(|(k, v)| Some((k, v?)))
@@ -8192,6 +8490,7 @@ impl Backend {
             // egui-wgpu gets meshes, not callbacks it does not know
             crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
             self.previews.render(
+                crate::preview::Shower::Viewer,
                 &self.device,
                 &self.queue,
                 &mut encoder,
@@ -8262,7 +8561,10 @@ impl Backend {
             equirect: None,
             histogram: self.histogram.take(),
             thumbnails: self.thumbnails.take(),
+            // (`render` fills it once the windows outside are drawn)
+            outside: Vec::new(),
             films,
+            rt: self.rt.as_ref().map_or(0, |rt| rt.made),
             spent,
         }
     }
@@ -8282,6 +8584,11 @@ impl Backend {
         // is taken: its tiles (and the 360° faces) draw the sorted order
         if let Some((st, _)) = self.st.ready_mut() {
             st.release();
+        }
+        // the view's last lit frame outlives its targets: the photo's
+        // traced indirect light reads it
+        if let (Some(rt), Some(t)) = (&mut self.rt, &self.targets.rt) {
+            rt.hold_screen(t, &self.targets.scene_copy, &self.targets.depth_ss);
         }
         self.config.width = s.width;
         self.config.height = s.height;
@@ -8527,6 +8834,7 @@ impl Backend {
             params: packet.params.clone(),
             lists: other_lists,
             ui: None,
+            outside: Default::default(),
             surface: packet.surface,
             settings: packet.settings,
             hover: None,
@@ -8542,6 +8850,7 @@ impl Backend {
             // (moved above, every renderer once)
             world_shift: [0.0; 2],
             input_at: None,
+            rt: None,
         };
         let bounded = |value: f32, min: f32, max: f32| if value.is_finite() { value.clamp(min, max) } else { 1.0 };
         let grade = [
@@ -8625,9 +8934,36 @@ impl Backend {
             );
             self.cube = None;
         }
+        let outside = std::mem::take(&mut packet.outside);
+        let index = packet.index;
         let mut result = self.render_frame(packet);
         result.equirect = self.equirect_reads.poll();
+        self.draw_outside(outside, index, &mut result);
         result
+    }
+
+    /// The interface's windows outside the viewer's (outside.rs), once the
+    /// viewer's own frame is submitted and presented: the texture changes
+    /// of the interface are applied, and egui's buffers are free.
+    fn draw_outside(&mut self, packet: crate::outside::Packet, index: u64, result: &mut FrameResult) {
+        if self.lost.get() {
+            return;
+        }
+        self.outside.take(&self.device, &self.st_init.adapter, self.config.format, packet);
+        let second_view = self.second_view_texture();
+        let drawn = self.outside.draw(
+            &self.device,
+            &self.queue,
+            &self.lost,
+            &mut self.egui,
+            &mut self.previews,
+            second_view,
+            self.look_thumbs.as_ref(),
+            index,
+        );
+        result.stats.outside_windows = drawn.windows;
+        result.stats.outside_ms = drawn.ms;
+        result.outside = self.outside.take_events();
     }
 
     fn render_frame(&mut self, packet: FramePacket) -> FrameResult {
@@ -8824,6 +9160,7 @@ impl Backend {
             Ok(mut fresh) if !fresh.remake => {
                 log::info!("renderer: made again, whole ({took} ms)");
                 fresh.egui.0 = self.egui.0.take();
+                fresh.outside = std::mem::take(&mut self.outside);
                 // (a set still compiling is the new one's to wait for: the
                 // old one's drop would hold this frame for it)
                 fresh.adopt_pipeline_workers(self);
@@ -8876,6 +9213,8 @@ impl Backend {
             params,
             lists: draw_lists,
             ui: mut egui_frame,
+            // (taken by `render` before the frame)
+            outside: _,
             surface,
             settings,
             hover,
@@ -8892,6 +9231,7 @@ impl Backend {
             motion_cut,
             world_shift,
             input_at,
+            rt: rt_faces,
         } = packet;
         let external_output = output.is_some();
         self.film_reads.begin(match wanted {
@@ -8952,6 +9292,11 @@ impl Backend {
         stats.present_mode = Some(self.config.present_mode);
         if settings != self.settings {
             self.apply_frame_settings(settings);
+        }
+        // (at each frame until its worker is done, whatever else the
+        // settings wait for)
+        if self.rt_build.is_some() {
+            self.follow_ray_tracing();
         }
         // the start is over: made, and its settings applied, with nothing
         // refused
@@ -9378,6 +9723,7 @@ impl Backend {
 
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
+        self.rt_now = f.shadows && self.rt.is_some() && self.targets.rt.is_some() && rt_faces.is_some();
         self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
         self.motion_now = self.gtao_normals_now || self.taa.is_some();
         // nothing kept the matrices while nothing read the motion: the
@@ -9504,12 +9850,22 @@ impl Backend {
             air.clip_plane = [0.0, 0.0, 1.0, -f.water_height];
             self.queue.write_buffer(&self.refl_buffers[7], 0, bytemuck::bytes_of(&air));
         }
-        let contact_backend = self.contact.diagnostic_backend(self.contact_now, self.settings.contact_ray_method);
-
+        // The traced mask replaces contact_tex and uses its other channels
+        // for local lights. They cannot be read as Bend/ViewRay diagnostics.
+        let contact_backend = self
+            .contact
+            .diagnostic_backend(self.contact_now && !self.rt_now, self.settings.contact_ray_method);
+        if self.rt_now {
+            // the traced mask stands for the shadow map where it is read
+            main.contact[0] = 1.0;
+            main.contact[2] = 1.0;
+        }
+        // Blended faces are included in the contact depth, and solid ones
+        // receive the traced mask when ray tracing is active.
+        let contact_blend = self.contact_now && crate::contact_shadows::Override::from_env().all_casters();
         if self.contact_now {
             main.contact[0] = 1.0;
-            // the blended faces opaque enough are in the depth it read
-            if crate::contact_shadows::Override::from_env().all_casters() {
+            if contact_blend {
                 main.contact[1] = 1.0;
             }
         }
@@ -9537,6 +9893,14 @@ impl Backend {
         let indirect_now = self.targets.gtao_shown
             && self.targets.gtao.as_ref().is_some_and(|g| g.indirect.is_some())
             && gtao_indirect_now(self.settings.screen_indirect);
+        // the traced indirect light, bound in its place when it is on
+        let rt_gi_now = self.rt_now
+            && self.rt.as_ref().is_some_and(|r| r.lights_indirectly())
+            && self.targets.rt.as_ref().is_some_and(|t| t.gi.is_some());
+        // the point lights' traced share, in the traced mask's `.b`
+        let rt_lights_now = self.rt_now
+            && self.rt.as_ref().is_some_and(|r| r.traces_lights())
+            && self.targets.rt.as_ref().is_some_and(|t| t.lights.is_some());
         if let Some(m) = &mirror {
             let n = m.normal.normalize_or(Vec3::Z);
             main.mirror_plane = n.extend(-n.dot(m.point)).to_array();
@@ -9560,6 +9924,8 @@ impl Backend {
             main.light_sets = light_tiles::bin(fu.view, fu.proj, eye, size, lights);
             main.light_sets.mode[1] = u32::from(light_culling == LightCulling::Check || f.debug.check_light_sets);
         }
+        // (the traced lamps walk the same sets, rt_lights.wgsl `lights_near`)
+        let traced_light_sets = main.light_sets;
         stats.light_tiles = light_tiles_on;
         // reflection probes by screen tile and depth, for the main view
         // (probes::tiles), and how its fragments walk them (sample_probes_pair)
@@ -9718,8 +10084,27 @@ impl Backend {
             _ => 0,
         };
         // (common.wgsl SCREEN_INDIRECT)
-        if indirect_now {
+        if indirect_now || rt_gi_now {
             main.light_sets.mode[2] |= 0x400;
+        }
+        // (common.wgsl TRACED_SKY: the traced probes' sight of the sky in
+        // the indirect light's alpha)
+        if let Some(rt) = self.rt.as_mut() {
+            rt.want_probes(self.settings.rt_tuning.probes);
+            rt.tune_gi(self.settings.rt_tuning);
+        }
+        let traced_sky = rt_gi_now && self.rt.as_ref().is_some_and(|r| r.sees_the_sky());
+        if traced_sky {
+            main.light_sets.mode[3] |= 0x100;
+        }
+        // (common.wgsl LOCAL_TRACED, TRACED_LIGHTS_SHIFT, PROJECTORS_TRACED)
+        if rt_lights_now {
+            let tuning = self.settings.rt_tuning;
+            let lights = crate::rt_shadows::traced_count(tuning) as u32;
+            main.light_sets.mode[2] |= 0x100_0000 | (lights - 1) << 25;
+            if tuning.projectors {
+                main.light_sets.mode[2] |= 0x8000_0000;
+            }
         }
         // (common.wgsl SPECULAR_AA)
         if specular_aa_now(self.settings.specular_aa) {
@@ -9731,7 +10116,8 @@ impl Backend {
         // cut-out photo (no sky), nor with the sky hidden. A photo, a tile of one or any other still
         // is traced once in full (clouds.rs `StillSpec`), with no history.
         // Until the noise is made the sky shader keeps the Legacy layer.
-        let still = (snapshot.is_some() || f.photo_tile != Mat4::IDENTITY).then(|| {
+        let rt_still = snapshot.is_some() || f.photo_tile != Mat4::IDENTITY;
+        let still = rt_still.then(|| {
             let photo = self.gtao.photo.unwrap_or((self.config.width, self.config.height));
             crate::clouds::StillSpec {
                 origin: crate::clouds::still_origin(photo_part(f.photo_tile), photo),
@@ -9740,7 +10126,7 @@ impl Backend {
         let cloud_params = f
             .clouds
             .as_ref()
-            .filter(|_| clouds_wanted(f.cutout, f.hide_sky, f.camera_pos.z, camera_water_level))
+            .filter(|_| clouds_wanted(f.cutout, f.hide_sky, f.camera_pos.z, (!f.hide_water).then_some(camera_water_level)))
             .and_then(|c| {
                 let rotation = Mat4::from_mat3(glam::Mat3::from_mat4(f.view));
                 crate::clouds::Params::new(f, c, f.proj * rotation, inv_view_proj_rot(f.proj, f.view))
@@ -9780,7 +10166,8 @@ impl Backend {
         // The default OFF path writes none of these flags (pixel-identical to upstream).
         // No per-face flags, texture data, or simulator state is modified.
         self.queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&main));
-
+        let fu_sun_color = main.sun_color;
+        let fu_sky = [main.sky_zenith, main.sky_horizon, main.ground_color];
         // a pixel whose drawn faces are asked: the same camera, narrowed to it
         let main_vp = Mat4::from_cols_array_2d(&main.view_proj);
         // (asked in window pixels: a photo frame answers none of them)
@@ -9878,6 +10265,10 @@ impl Backend {
                 [w, h, 1.0 / w, 1.0 / h]
             })
         };
+        // The places the probe's capture and the mirror are drawn from, whose
+        // openness their faces take with the traced probes (rt_gi.wgsl
+        // `gi_points`, common.wgsl `reflection_open`; TRACED_SKY tells them)
+        let mut gi_points: [Option<Vec3>; 2] = [None; 2];
         if do_water_refl {
             let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05, false);
             // The mirror flips z after the bend: a point bent down by the
@@ -9895,6 +10286,13 @@ impl Backend {
             let n = m.normal.normalize_or(Vec3::Z);
             let mut u = refl_frame(self, n, -n.dot(m.point), 0.01, true);
             u.sky_star_pass = star_pass(&self.targets.mirror);
+            // (half a metre in front of it, on the camera's side: on its
+            // plane the place is the mirror's own panel)
+            if traced_sky {
+                u.light_sets.mode[3] |= 0x100;
+                let side = if n.dot(f.camera_pos - m.point) < 0.0 { -n } else { n };
+                gi_points[1] = Some(m.point + side * 0.5);
+            }
             mirror_vp = Mat4::from_cols_array_2d(&u.view_proj);
             mirror_eye = Vec3::from_slice(&u.camera_pos[..3]);
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
@@ -9925,6 +10323,10 @@ impl Backend {
             u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = [0.0; 4];
             u.light_sets.mode[2] |= radiance_bits | crate::probes::capture_lighting::DOME;
+            if traced_sky {
+                u.light_sets.mode[3] |= 0x100;
+                gi_points[0] = Some(c.origin);
+            }
             // the sun stops at the roofs (display_cube_face, generateSunShadow)
             if !c.sky_only && irr_capture && f.shadows {
                 if c.face == 0 {
@@ -9992,7 +10394,7 @@ impl Backend {
         // projector shadow maps of the frame (none without shadows)
         let shelter_map = self.rain_shelter_map(f);
         let spot_vp: [Option<Mat4>; SPOT_SHADOWS] =
-            spot_shadow_views(f, self.shadow_count as usize, shelter_map).map(|v| v.map(|(_, m)| m));
+            spot_shadow_views(f, self.shadow_count as usize, shelter_map, self.traced_projectors()).map(|v| v.map(|(_, m)| m));
         // The texture has two depth layers until the allocation changes. Fill both even
         // during a hard photo override so hard lookup and mirrors cannot read a stale mip.
         let layered_sun = f.shadows && self.sun_atlas.remote.is_some();
@@ -10171,6 +10573,22 @@ impl Backend {
                 self.settings.contact_integrity_depth,
                 self.settings.contact_integrity_hole_repair,
             );
+        }
+        // what the traced reflections read after the scene copy
+        let rt_clip_from_world = fu.proj * fu.view;
+        let fu_camera = fu.camera_pos;
+        if let (true, Some(rt), Some(t)) = (self.rt_now, &mut self.rt, &self.targets.rt) {
+            rt.write(
+                &self.queue,
+                t,
+                fu.proj * fu.view,
+                fu.camera_pos,
+                f.sun_dir,
+                traced_light_up(f.sun_dir),
+                self.contact_now,
+                self.settings.rt_tuning.sun_softness,
+            );
+            rt.write_texture_clock(&self.queue, [self.anim_now[2], self.anim_now[3]]);
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
@@ -10612,6 +11030,7 @@ impl Backend {
             stats.shadow_draws += stats.shadow.graded_detail_draws;
         }
         let mut water_settings = self.settings.water_effects;
+        water_settings.enabled &= !f.hide_water;
         water_settings.particle_budget = water_settings.particle_budget.saturating_sub(n_particles);
         if self.water_effects.prepare(
             &self.device,
@@ -10655,6 +11074,11 @@ impl Backend {
         if let (Some(t), Some(slot)) = (&self.timer, timer_slot) {
             t.slot_pixels[slot].set(u64::from(world_size.0) * u64::from(world_size.1));
             t.slot_shadow_detail[slot].set(detail.is_some());
+            let rounds = match (self.rt_now && !rt_still, &self.rt, &self.targets.rt) {
+                (true, Some(rt), Some(targets)) => rt.still_rounds(targets) - 1,
+                _ => 0,
+            };
+            t.slot_rounds[slot].set(rounds);
         }
         let mut first_pass = true;
         let mut take_first = || {
@@ -11265,7 +11689,7 @@ impl Backend {
         // The contact mask traces true surface depth at half coverage. AO
         // and DoF can represent a different depth for the same blended texel.
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
-            let more = crate::contact_shadows::Override::from_env().all_casters() && (n_blend > 0 || n_sprites > 0);
+            let more = contact_blend && (n_blend > 0 || n_sprites > 0);
             if more {
                 encoder.copy_texture_to_texture(
                     self.targets.depth_ss_tex.as_image_copy(),
@@ -11298,6 +11722,120 @@ impl Backend {
                 }
             }
             self.contact.encode(&mut encoder, t, more);
+        }
+        // The depth the ray-traced mask is made from. Where `frame.contact.y`
+        // tells a blended face solid to the eye that the mask is its own
+        // (object.wgsl `contact_share`), it is the solid depth, which holds
+        // those faces: traced from the prepass, the mask held there the
+        // shadow of what lies behind the face.
+        let rt_blend = self.rt_now && contact_blend && n_blend > 0;
+        // AO may already have populated this texture. Otherwise only the
+        // active tracer needs it: keep its solid coverage separate from
+        // Bend's half-coverage depth above and DoF's finer hair coverage.
+        if let (true, false, Some((solid_tex, solid_view))) = (rt_blend, blend_in_ao_depth, &self.targets.solid_depth) {
+            encoder.copy_texture_to_texture(
+                self.targets.depth_ss_tex.as_image_copy(),
+                solid_tex.as_image_copy(),
+                self.targets.depth_ss_tex.size(),
+            );
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("traced shadow solid depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: solid_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.a);
+            draw_sided(&mut pass, &self.pipelines.pre_solid, rg.blend, 0);
+            draw_under(&mut pass, &self.pipelines.pre_solid, rg.blend_under);
+        }
+        let rt_mask_depth = match &self.targets.solid_depth {
+            Some((_, solid)) if rt_blend => solid,
+            _ => &self.targets.depth_ss,
+        };
+        if let (true, Some(rt), Some(t), Some(faces)) = (self.rt_now, &mut self.rt, &self.targets.rt, &rt_faces) {
+            let contact = match (self.contact_now, &self.targets.contact) {
+                (true, Some(c)) => &c.result,
+                _ => &self.dummies.black,
+            };
+            rt.encode(&self.device, &self.queue, &mut encoder, t, rt_mask_depth, contact, &scene, faces);
+            // A photo (a tile of one, a 360° face, an offline film's frame)
+            // has no frame before it: its passes run their rounds over its
+            // view (rt_shadows.rs `STILL_ROUNDS`). The small frame that
+            // records a tiled photo's context is read for its depth alone.
+            let rounds = match rt_still {
+                false => 1,
+                true if f.photo_context == crate::types::PhotoContext::Record => 1,
+                true => rt.still_rounds(t),
+            };
+            if !rt_still && !rt_gi_now {
+                rt.release_screen();
+            }
+            // moved surfaces keep their history through the prepass's motion
+            let rt_motion_drawn = motion_view(self.motion_now, &self.targets, self.taa.as_ref());
+            let rt_motion = rt_motion_drawn.unwrap_or(&self.dummies.black);
+            // (the sun's soft shadow too, whether the lights are traced or not)
+            let light = crate::rt_shadows::TraceLight {
+                light_sets: traced_light_sets,
+                clip_from_world: rt_clip_from_world,
+                camera: fu_camera,
+                sun_dir: f.sun_dir,
+                sun_up: traced_light_up(f.sun_dir),
+                sun_color: fu_sun_color,
+                sky_zenith: fu_sky[0],
+                sky_horizon: fu_sky[1],
+                ground_color: fu_sky[2],
+                pbr_occlusion: pbr_occlusion_now(),
+            };
+            for n in 0..rounds {
+                let round = if rt_still {
+                    crate::rt_shadows::Round::Still(n)
+                } else {
+                    crate::rt_shadows::Round::Live
+                };
+                if n > 0 {
+                    rt.retrace(&self.device, &self.queue, &mut encoder, t, rt_mask_depth, contact, &scene, round);
+                }
+                rt.encode_lights(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    t,
+                    &light,
+                    &f.lights,
+                    rt_mask_depth,
+                    rt_motion_drawn,
+                    &self.dummies.black,
+                    &scene,
+                    round,
+                    self.settings.rt_tuning,
+                );
+                if rt_gi_now {
+                    rt.encode_gi(
+                        &self.device,
+                        &self.queue,
+                        &mut encoder,
+                        t,
+                        &light,
+                        &f.lights[..f.lights.len().min(MAX_LIGHTS)],
+                        crate::gtao::intensity_override().unwrap_or(self.settings.screen_indirect_intensity),
+                        &self.targets.depth_ss,
+                        rt_motion,
+                        &self.targets.scene_copy,
+                        &scene,
+                        round,
+                        gi_points,
+                    );
+                }
+            }
         }
         mark(&mut encoder, MARK_CONTACT_END);
         // ---- FSR: the blended faces drawn over what lies behind them, even
@@ -12047,6 +12585,43 @@ impl Backend {
             },
             size,
         );
+        // the traced reflections, in SSR's place: they read the copy where
+        // the view sees what they hit
+        let rt_reflect = self.settings.ssr && self.rt_now && self.pipelines.ssr_rt.is_some();
+        let rt_reflect = rt_reflect
+            && match (&mut self.rt, &self.targets.rt, &self.targets.gbuf) {
+                (Some(rt), Some(t), Some(gbuf)) if rt.reflects() => {
+                    let light = crate::rt_shadows::TraceLight {
+                        light_sets: traced_light_sets,
+                        clip_from_world: rt_clip_from_world,
+                        camera: fu_camera,
+                        sun_dir: f.sun_dir,
+                        sun_up: traced_light_up(f.sun_dir),
+                        sun_color: fu_sun_color,
+                        sky_zenith: fu_sky[0],
+                        sky_horizon: fu_sky[1],
+                        ground_color: fu_sky[2],
+                        pbr_occlusion: pbr_occlusion_now(),
+                    };
+                    rt.encode_reflections(
+                        &self.device,
+                        &self.queue,
+                        &mut encoder,
+                        t,
+                        &light,
+                        &self.targets.depth_ss,
+                        gbuf,
+                        motion_view(self.motion_now, &self.targets, self.taa.as_ref()),
+                        &self.dummies.black,
+                        &self.targets.scene_copy,
+                        &scene,
+                        &self.probes,
+                        rt_still,
+                    );
+                    true
+                }
+                _ => false,
+            };
 
         mark(&mut encoder, MARK_COPY_END);
 
@@ -12316,7 +12891,8 @@ impl Backend {
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b", !split && !st_on, false);
             bind_mesh(&mut pass, &self.groups.b);
-            if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, &self.pipelines.ssr, &self.gbuf_group) {
+            let ssr_pipe = if rt_reflect { &self.pipelines.ssr_rt } else { &self.pipelines.ssr };
+            if let (true, Some(ssr), Some(gbg)) = (self.settings.ssr, ssr_pipe, &self.gbuf_group) {
                 pass.set_pipeline(ssr);
                 pass.set_bind_group(3, gbg, &[]);
                 pass.draw(0..3, 0..1);
@@ -13371,8 +13947,15 @@ impl Backend {
                 crate::label_depth::skip(labels);
             }
             crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
-            self.previews
-                .render(&self.device, &self.queue, &mut encoder, &mut self.egui, &mut ui.primitives, scale);
+            self.previews.render(
+                crate::preview::Shower::Viewer,
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &mut self.egui,
+                &mut ui.primitives,
+                scale,
+            );
             crate::look_thumbs::resolve(self.look_thumbs.as_ref(), &mut ui.primitives);
             extra_cmds = self
                 .egui
@@ -13706,6 +14289,7 @@ impl Backend {
 
         stats.gpu_ms = self.timer.as_ref().and_then(|t| t.last_ms);
         stats.gpu_pixels = self.timer.as_ref().map_or(0, |t| t.last_pixels);
+        stats.gpu_photo_ms = self.timer.as_ref().and_then(|t| t.last_photo_ms);
         stats.target_bytes_per_pixel = self
             .target_bytes
             .filter(|&(bytes, pixels)| bytes > 0 && pixels > 0)
@@ -14066,6 +14650,24 @@ mod tests {
     }
 
     #[test]
+    fn the_moon_is_traced_at_night() {
+        // the sun up, then the moon at night: both traced
+        assert!(traced_light_up(Vec3::new(0.3, 0.2, 0.68)));
+        assert!(traced_light_up(Vec3::new(-0.1, 0.35, 0.93)));
+        // neither up (straight down): nothing to trace
+        assert!(!traced_light_up(Vec3::NEG_Z));
+    }
+
+    #[test]
+    fn a_traced_projector_draws_no_shadow_map() {
+        // nothing traced: every projector keeps its map
+        assert!(projector_map_drawn(0, 0) && projector_map_drawn(5, 0));
+        // the first 4 lights traced: theirs go, the ones past them stay
+        assert!(!projector_map_drawn(0, 4) && !projector_map_drawn(3, 4));
+        assert!(projector_map_drawn(4, 4) && projector_map_drawn(63, 4));
+    }
+
+    #[test]
     fn the_shelter_map_follows_the_camera_a_metre_at_a_time() {
         // walking 10 m in 1 cm steps: drawn again (with the shadows off)
         // about once a metre, as when it was snapped to whole metres; on
@@ -14325,11 +14927,15 @@ mod tests {
 
     #[test]
     fn the_clouds_are_asked_for_only_over_a_drawn_sky() {
-        assert!(clouds_wanted(false, false, 30.0, 20.0));
-        assert!(clouds_wanted(false, false, 20.0, 20.0));
-        assert!(!clouds_wanted(true, false, 30.0, 20.0), "cut-out photo");
-        assert!(!clouds_wanted(false, true, 30.0, 20.0), "sky hidden: no trace for nothing");
-        assert!(!clouds_wanted(false, false, 19.0, 20.0), "under the water");
+        assert!(clouds_wanted(false, false, 30.0, Some(20.0)));
+        assert!(clouds_wanted(false, false, 20.0, Some(20.0)));
+        assert!(!clouds_wanted(true, false, 30.0, Some(20.0)), "cut-out photo");
+        assert!(!clouds_wanted(false, true, 30.0, Some(20.0)), "sky hidden: no trace for nothing");
+        assert!(!clouds_wanted(false, false, 19.0, Some(20.0)), "under the water");
+        assert!(
+            clouds_wanted(false, false, 19.0, None),
+            "hidden water leaves the sky visible below sea level"
+        );
     }
 
     #[test]
@@ -14457,8 +15063,8 @@ mod tests {
                 .map_err(|e| e.emit_to_string(src))
         };
         let limits = wgpu::Limits {
-            max_sampled_textures_per_shader_stage: 26,
-            max_bindings_per_bind_group: 32,
+            max_sampled_textures_per_shader_stage: 31,
+            max_bindings_per_bind_group: 35,
             ..Default::default()
         };
         if let Err(e) = valid(&Impostors::shader_source(wgpu::Features::empty(), true, &limits)) {

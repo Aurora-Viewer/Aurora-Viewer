@@ -79,7 +79,7 @@ pub(super) fn controls(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, st: &mu
         let mut demo_list = false;
         // Capture the production popup and name dialog without native pointer
         // automation. These two states are confined to offline demo runs.
-        if std::env::var_os("AURORA_DEMO").is_some() && ui.ctx().cumulative_frame_nr() >= 300 {
+        if std::env::var_os("AURORA_DEMO").is_some() && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 300 {
             let mode = std::env::var("AURORA_DEMO_OPTIONS").unwrap_or_default();
             let id = egui::Id::unique("graphics_profile_demo_opened");
             if mode == "graphics:profiles-list" {

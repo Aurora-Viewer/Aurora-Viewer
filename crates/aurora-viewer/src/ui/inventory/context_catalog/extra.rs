@@ -437,14 +437,22 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             .filter(|entry| matches!(entry.id.as_str(), "wear" | "add") || entry.id.starts_with("attach:"))
             .map(|entry| entry.id.clone())
             .collect();
+        let wear_entries: Vec<_> = ids
+            .iter()
+            .filter_map(|&id| {
+                let original = rules::original(inv, id)?;
+                Some((original, crate::world::appearance::wear_entry(inv, id, original)))
+            })
+            .collect();
         for key in keys {
             let point = key.strip_prefix("attach:").and_then(|point| point.parse().ok()).unwrap_or(0);
             let replace_items = key == "wear";
             let mut batch = Vec::new();
-            let ordinary: Vec<_> = selected
+            let ordinary: Vec<_> = wear_entries
                 .iter()
-                .filter(|item| !rules::library(inv, item.id))
-                .map(|item| item.id)
+                .copied()
+                .filter(|(original, _)| !rules::library(inv, *original))
+                .map(|(_, entry)| entry)
                 .collect();
             if !ordinary.is_empty() {
                 batch.push(InvAction::Appearance(Wear::WearItems {
@@ -462,15 +470,15 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             }
             if selected.len() > 1 && selected.iter().any(|item| rules::library(inv, item.id)) {
                 batch = vec![InvAction::WearSelection {
-                    items: selected.iter().map(|item| item.id).collect(),
+                    items: wear_entries.iter().map(|&(_, entry)| entry).collect(),
                     replace: replace_items,
                     point,
                 }];
             }
             // RLVa greys what a lock forbids, as LLObjectBridge and
             // LLWearableBridge::buildContextMenu do with ERlvWearMask.
-            let unlocked = selected.iter().all(|item| {
-                let wear = facts.rlva.wear(inv, item.id, point);
+            let unlocked = wear_entries.iter().all(|&(_, entry)| {
+                let wear = facts.rlva.wear(inv, entry, point);
                 if replace_items { wear.replace } else { wear.add }
             });
             let enabled = wearable
@@ -864,6 +872,32 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn inventory_wear_and_add_pass_the_clothing_link_from_the_selected_outfit() {
+        let mut inv = seed();
+        crate::world::appearance::seed_demo(&mut inv, Uuid::from_u128(2));
+        let shirt = Uuid::from_u128(722);
+        let folder = Uuid::from_u128(704);
+        let entry = inv.folders[&folder].items[0];
+        let link = inv.items.get_mut(&entry).unwrap();
+        link.asset_id = shirt;
+        link.desc = "@400".into();
+        let menu = super::super::build(
+            &inv,
+            entry,
+            &InventoryUi::default(),
+            &InventoryPreferences::default(),
+            &Facts::default(),
+        );
+        for (key, replace) in [("wear", true), ("add", false)] {
+            let command = menu.entries.iter().find(|e| e.id == key && e.enabled).expect("wearable menu entry");
+            let Kind::Action(index) = command.kind else { panic!("action") };
+            assert!(matches!(&menu.commands[index], Some(super::super::Command::Batch(batch))
+                if matches!(&batch[..], [InvAction::Appearance(Wear::WearItems { items, replace: mode, point: 0 })]
+                    if items == &[entry] && *mode == replace)));
         }
     }
 

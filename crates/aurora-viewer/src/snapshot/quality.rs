@@ -15,7 +15,7 @@
 //! 6 / 7; MSAA 8x at 3440 x 1369 and the rest of the boost wanted about
 //! 1.4 GB more, and the GPU was lost 1.4 s later). See [`plan`].
 
-use crate::graphics_presets::{Preset, Values};
+use crate::graphics_presets::Values;
 use crate::scene::texture_budget::MAX_PRESSURE;
 use crate::settings::Settings;
 use std::collections::BTreeSet;
@@ -244,7 +244,7 @@ fn photo_maxima() -> Values {
         reflection_probes: 3,
         probe_count: 256,
         anisotropy: 16,
-        ..Preset::Deluxe.values()
+        ..crate::graphics_presets::deluxe_v45()
     }
 }
 

@@ -4,9 +4,15 @@ The P3 v2.4.3 rendering changes were originally tested on Aurora `v0.9.13-beta.2
 
 [Complete change register and review notes](CHANGES.md) · [Validation and reproduction](VALIDATION.md)
 
+## Integration with Aurora ray tracing
+
+The contribution integrates upstream `1ab3bac1` while retaining the shadow-map recipes described below. Where ray tracing covers a surface, Aurora's traced visibility, glass tint and global-illumination openness remain active. Other surfaces retain the P3 directional-map fallback. Harmonize and local thin-surface lighting retain the traced light's tint.
+
+**Deluxe (RT)** combines High's other graphics settings with ray-traced effects and the Ultra fallback shadow tier. Choosing High explicitly restores the High tier. Saved settings use schema 48 so older official schema-47 writers preserve the added shadow-profile fields. Migrations distinguish historical Deluxe, current Aurora profiles, and profiles saved by the reviewed rendering client.
+
 ## Shadow controls
 
-In Graphics, choose a shadow quality level. Each enabled stock level uses graded directional maps, Bend screen-space contact shadows, and **Soft sun and moon shadows**. The last option gives a wider penumbra when a caster is farther from its receiving surface. **Light angular diameter** controls the apparent width of the emitter. The slightly wider Low and Medium defaults soften visible steps at those resolutions.
+In Graphics, choose a shadow quality level. With ray tracing off, each enabled stock level uses graded directional maps, Bend screen-space contact shadows, and **Soft sun and moon shadows**. The last option gives a wider penumbra when a caster is farther from its receiving surface. **Light angular diameter** controls the apparent width of the emitter. The slightly wider Low and Medium defaults soften visible steps at those resolutions.
 
 | Stock level | Map setting | Balanced sun shadow distance | Light angular diameter | Shadow-casting projector limit |
 | --- | ---: | ---: | ---: | ---: |
@@ -19,7 +25,7 @@ The projector limit is a budget for simultaneous shadow casters. Available atlas
 
 ## How the directional maps and contact shadows interact
 
-Contact shadows include blended texels from 50% coverage. A glasses rim at 75% opacity contributes its own depth and can receive a contact shadow. The ambient-occlusion and photo-focus passes keep their separate rules for translucent surfaces.
+Raster contact shadows include blended texels from 50% coverage. A glasses rim at 75% opacity contributes its own depth and can receive a contact shadow. Ray tracing and ambient occlusion use their separate solid-surface depth rule; the lens independently includes strands from 10% effective opacity. Enabling ray tracing does not replace the Bend or lens depth buffers.
 
 - **Different caster heights.** Layered soft shadows draw nearby and distant blockers into separate light-depth ranges. The remote layer uses tiles at half the local tile width and height. The filter samples both layers in corresponding directions across the sun disk and bounds the result by the local visibility. This addresses a moving overhead caster causing an already-shadowed point to brighten. Casters falling within one depth range still share a blocker estimate.
 - **Very close receivers.** An optional camera-centred 1024 × 1024 depth map covers a 50 cm square perpendicular to the light. Its 0.49 mm texels can better align a thin rim’s directional shadow with its screen-space contact shadow. The crop snaps to the parent light-space grid and retains its depth projection. The shader still looks up distant blockers in the larger map. The effect fades across the outer 10 cm of the crop and over 32–45 cm of camera-to-surface distance. Optical zoom alone leaves that distance unchanged.

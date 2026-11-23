@@ -5,6 +5,9 @@ use super::*;
 use crate::scene::anim::{AnimStreamer, BoundAnim, Controller, Rig};
 use std::time::{Duration, Instant};
 
+/// Editable looping fades in the Legacy animation preview spinners.
+pub(crate) const MAX_LOOP_FADE_INPUT: f32 = 10.0;
+
 pub struct Player {
     pub bound: Option<Arc<BoundAnim>>,
     pub request: Option<Uuid>,

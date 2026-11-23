@@ -619,10 +619,15 @@ pub(crate) fn import_upstream_controls(s: &mut Settings, beta: &serde_json::Valu
     }
 
     let controls = (s.contact_shadows, s.projector_shadows, s.projector_shadow_limit);
-    let stock = crate::graphics_presets::Preset::ALL.into_iter().find(|p| {
-        let v = p.values();
+    let matches = |v: crate::graphics_presets::Values| {
         v.shadow_quality == s.shadow_quality && (v.effects.contact_shadows, v.projector_shadows, v.projector_shadow_limit) == controls
-    });
+    };
+    let stock = crate::graphics_presets::Preset::ALL
+        .into_iter()
+        .find(|p| matches(p.values()))
+        // Deluxe (RT) now has High's map quality. Older profiles can still
+        // hold the former Deluxe's stock shadows, which belong to Ultra.
+        .or_else(|| matches(crate::graphics_presets::deluxe_v45()).then_some(crate::graphics_presets::Preset::Deluxe));
     let factory = s.shadow_quality == 3 && controls == (false, true, 2);
     let tier = match stock {
         Some(crate::graphics_presets::Preset::High) => Tier::High,
@@ -936,6 +941,26 @@ pub(crate) fn loaded(s: &mut Settings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upstream_deluxe_shadows_import_as_ultra_before_and_after_ray_tracing() {
+        use crate::graphics_presets::{Preset, deluxe_v45};
+        let document = serde_json::json!({ "soft_shadows": false, "shadow_softness": crate::settings::SHADOW_SOFTNESS });
+        for (values, expected) in [
+            (deluxe_v45(), Tier::Ultra),
+            (Preset::Deluxe.values(), Tier::Ultra),
+            (Preset::High.values(), Tier::High),
+        ] {
+            let mut s = Settings::default();
+            values.write(&mut s);
+            let traced = s.ray_tracing;
+            assert!(import_upstream_controls(&mut s, &document, true));
+            assert_eq!(tier(&s), expected);
+            assert!(!custom_enabled(&s));
+            assert_eq!(s.ray_tracing, traced);
+            assert_eq!(Tuning::read(&s), expected.recipe());
+        }
+    }
 
     #[test]
     fn four_custom_tiers_are_independent_and_reset_only_the_selected_tier() {

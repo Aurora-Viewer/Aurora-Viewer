@@ -239,6 +239,7 @@ const FLAG_ALPHA_BLEND:u32={blend}u;
 const FLAG_PBR:u32={pbr}u;
 const FLAG_TERRAIN:u32={terrain}u;
 const FLAG_EMISSIVE_MASK:u32={emissive}u;
+const FLAG_PICK_IGNORES_ALPHA:u32={ignores_alpha}u;
 override WORLD_LEFT_PICK:bool=false;
 struct DrawRecord {{flags:vec4<u32>,tex:vec4<u32>,base_color:vec4<f32>,params:vec4<f32>}};
 @group(0) @binding(0) var<storage,read> records:array<DrawRecord>;
@@ -260,6 +261,7 @@ fn sample_tex(t:u32,uv:vec2<f32>)->vec4<f32> {{return vec4<f32>(1.0,1.0,1.0,f32(
         pbr = flags::PBR,
         terrain = flags::TERRAIN,
         emissive = flags::EMISSIVE_MASK,
+        ignores_alpha = flags::PICK_IGNORES_ALPHA,
     );
     let _gpu = crate::test_gpu::lock();
     let instance = wgpu::Instance::default();
