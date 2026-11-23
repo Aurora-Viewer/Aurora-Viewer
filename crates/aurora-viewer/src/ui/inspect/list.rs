@@ -259,19 +259,16 @@ fn card(
                 ),
             ];
             for (i, (icon, label, tip, enabled)) in buttons.iter().enumerate().rev() {
-                let width = ghost_width(ui, label);
-                let r = Rect::from_min_max(
-                    egui::pos2(right - width, rect.center().y - 13.0),
-                    egui::pos2(right, rect.center().y + 13.0),
-                );
-                right -= width + 4.0;
+                let r = Rect::from_center_size(egui::pos2(right - QUICK / 2.0, rect.center().y), Vec2::splat(QUICK));
+                right -= QUICK + 2.0;
                 let b = ui.interact(
                     r,
                     ui.scope_id().with(("inspect_quick", item.root, i)),
                     if *enabled { Sense::click() } else { Sense::hover() },
                 );
                 on_action |= b.hovered();
-                ghost(ui, p, r, icon, label, b.hovered(), *enabled);
+                quick_icon(ui, p, r, icon, b.hovered(), *enabled);
+                b.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, *enabled, label));
                 let b = b.on_hover_text(*tip);
                 if b.clicked() {
                     if i == 0 {
@@ -284,6 +281,7 @@ fn card(
                     }
                 }
             }
+            right -= 6.0;
         } else if opts.creator == CreatorShown::Picture {
             let pic = Rect::from_center_size(egui::pos2(right - PICTURE / 2.0, rect.center().y), Vec2::splat(PICTURE));
             if let Some(id) = row.creator {
@@ -387,15 +385,13 @@ fn badge(ui: &egui::Ui, p: &Palette, right: f32, y: f32, value: u32, tier: Tier)
     r.left()
 }
 
-fn ghost_width(ui: &egui::Ui, label: &str) -> f32 {
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.0), egui::Color32::PLACEHOLDER);
-    galley.size().x + 16.0 + 6.0 + 20.0
-}
+/// Side of a quick action on a card's line: the 24 px minimum target of
+/// WCAG 2.2, around a 16 px icon.
+const QUICK: f32 = 24.0;
 
-/// A quiet action on a card's line: icon and label, a face only when pointed at.
-fn ghost(ui: &egui::Ui, p: &Palette, r: Rect, icon: &str, label: &str, hovered: bool, enabled: bool) {
+/// A quiet action on a card's line: an icon alone (its name is the tooltip
+/// and what a screen reader says), a face only when pointed at.
+fn quick_icon(ui: &egui::Ui, p: &Palette, r: Rect, icon: &str, hovered: bool, enabled: bool) {
     if hovered && enabled {
         ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, p.raised);
     }
@@ -404,9 +400,7 @@ fn ghost(ui: &egui::Ui, p: &Palette, r: Rect, icon: &str, label: &str, hovered: 
         (true, true) => p.ink,
         (true, false) => p.muted,
     };
-    crate::ui::sheet::icon_at(ui, icon, egui::pos2(r.left() + 18.0, r.center().y), 16.0, ink);
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), egui::FontId::proportional(12.0), ink);
-    widgets::paint_ink_left(ui.painter(), galley, egui::pos2(r.left() + 32.0, r.center().y), ink);
+    crate::ui::sheet::icon_at(ui, icon, r.center(), 16.0, ink);
 }
 
 /// An opened card: description, Made by and Worn on (Owned by for objects
