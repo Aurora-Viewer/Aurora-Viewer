@@ -292,10 +292,11 @@ impl App {
             }
             self.blender_live.owner = Some(self.world.agent_id);
         }
-        // Quick look in front of the windows a demo opens over it
+        // Quick look and the warnings in front of the windows a demo opens over it
         if self.demo
             && (400..=440).contains(&self.frame_count)
-            && std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look")
+            && (std::env::var("AURORA_DEMO_BLENDER_LIVE_TAB").is_ok_and(|tab| tab == "quick-look")
+                || std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| mode == "warnings"))
         {
             crate::ui::widgets::bring_floater_front(&self.egui_ctx, "blender_live");
         }
