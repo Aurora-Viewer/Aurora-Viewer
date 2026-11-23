@@ -1,5 +1,7 @@
 //! Materials use CreateInventoryItem followed by UpdateMaterialAgentInventory,
-//! as LLMaterialEditor::createInventoryItem (Firestorm, originally LGPL 2.1).
+//! as LLMaterialEditor::createInventoryItem (Firestorm, originally LGPL 2.1);
+//! the new item's name and rights go through AIS, or UpdateInventoryItem on a
+//! grid without it (update_inventory_item, indra/newview/llviewerinventory.cpp).
 //! The callback owns its request; unrelated inventory creations cannot finish it.
 
 use super::*;
@@ -86,11 +88,68 @@ const SETTINGS_NEXT_OWNER: u32 = 0x0008_0000 | 0x4000 | 0x2000;
 /// owner rights for a recovered script.
 const SCRIPT_RECOVERY_NEXT_OWNER: u32 = 0x0008_0000 | 0x2000;
 
+/// The capabilities of a material upload (LLObjectsMaterialItemCallback::fire,
+/// indra/newview/llmaterialeditor.cpp).
+#[derive(Debug, Default, PartialEq)]
+struct MaterialCaps {
+    /// UpdateMaterialAgentInventory, then FetchInventory2 to read the saved item.
+    upload: String,
+    fetch: String,
+    /// InventoryAPIv3 and FetchInventoryDescendents2 for the item's name and
+    /// rights; `None` on a grid without AIS (OpenSim), where they go over the
+    /// circuit instead.
+    ais: Option<(String, String)>,
+}
+
+impl MaterialCaps {
+    /// update_inventory_item (indra/newview/llviewerinventory.cpp, `[UDP-Msg]`)
+    /// picks AIS whenever the region offers InventoryAPIv3 (AISAPI::isAvailable),
+    /// UpdateInventoryItem otherwise. Only the material upload itself is required.
+    fn choose(upload: Option<String>, fetch: Option<String>, ais: Option<String>, descendants: Option<String>) -> Option<Self> {
+        let (upload, fetch) = upload.zip(fetch)?;
+        let ais = match ais {
+            Some(ais) => Some((ais, descendants?)),
+            None => None,
+        };
+        Some(Self { upload, fetch, ais })
+    }
+}
+
+/// The `[UDP-Msg]` branch of update_inventory_item(id, updates, NULL) that
+/// LLObjectsMaterialItemCallback::fire sends when the new material item's
+/// name or rights differ from the upload's: the server's item with the new
+/// name and rights, a null transaction and callback 0, as the Legacy Viewer
+/// sends it (LLViewerInventoryItem::packMessage). `None` when nothing changes.
+fn material_item_update(
+    agent: Uuid,
+    session: Uuid,
+    item: &InvItem,
+    name: &str,
+    rights: crate::inventory::upload::Permissions,
+) -> Option<UpdateInventoryItem> {
+    let named = InvItem {
+        name: name.to_owned(),
+        ..item.clone()
+    };
+    let update = permission_update(&named, rights, 0);
+    let changed = field_str(&update.name) != item.name
+        || (update.next_owner_mask, update.group_mask, update.everyone_mask) != (item.next_owner_mask, item.group_mask, item.everyone_mask);
+    if !changed {
+        return None;
+    }
+    let mut message = UpdateInventoryItem::default();
+    message.agent_data.agent_id = agent;
+    message.agent_data.session_id = session;
+    message.agent_data.transaction_id = Uuid::nil();
+    message.inventory_data.push(update);
+    Some(message)
+}
+
 struct Pending {
     started: Instant,
     request: Uuid,
     upload: Request,
-    caps: (String, String, String, String),
+    caps: MaterialCaps,
     legacy_asset: Option<Uuid>,
     permissions_applied: bool,
 }
@@ -365,12 +424,13 @@ impl Session<'_> {
             });
             return;
         }
-        let caps = self
-            .main_cap("UpdateMaterialAgentInventory")
-            .zip(self.main_cap("FetchInventory2"))
-            .zip(self.main_cap("InventoryAPIv3"))
-            .zip(self.main_cap("FetchInventoryDescendents2"));
-        let Some((((cap, fetch), ais), descendants)) = caps else {
+        let caps = MaterialCaps::choose(
+            self.main_cap("UpdateMaterialAgentInventory"),
+            self.main_cap("FetchInventory2"),
+            self.main_cap("InventoryAPIv3"),
+            self.main_cap("FetchInventoryDescendents2"),
+        );
+        let Some(caps) = caps else {
             emit(
                 self.sh,
                 NetEvent::AssetUploaded {
@@ -422,7 +482,7 @@ impl Session<'_> {
                 started: Instant::now(),
                 request,
                 upload,
-                caps: (cap, fetch, ais, descendants),
+                caps,
                 legacy_asset: None,
                 permissions_applied: false,
             },
@@ -740,32 +800,43 @@ impl Session<'_> {
         let events = self.sh.events.clone();
         let owner = self.agent_id();
         let item = item.clone();
+        let valid = !item.id.is_nil() && item.parent == pending.upload.folder && item.asset_type == 57 && item.owner == owner;
+        // Without AIS the name and rights go over the circuit before the
+        // material, in the order of LLObjectsMaterialItemCallback::fire.
+        if valid
+            && pending.caps.ais.is_none()
+            && let Some(message) = material_item_update(owner, self.session_id(), &item, &pending.upload.name, pending.upload.permissions)
+        {
+            self.send_main(&message, true);
+        }
         tokio::spawn(async move {
             let request = pending.request;
             let result = async {
-                if item.id.is_nil() || item.parent != pending.upload.folder || item.asset_type != 57 || item.owner != owner {
+                if !valid {
                     return Err(Error::Response);
                 }
-                let (cap, fetch, ais, descendants) = pending.caps;
-                let rights = pending.upload.permissions;
-                let change = Mutation {
-                    operations: vec![Operation::Patch {
-                        id: item.id,
-                        folder: false,
-                        body: aurora_llsd::llsd_map! {
-                            "name" => pending.upload.name.as_str(), "desc" => pending.upload.description.as_str(),
-                            "permissions" => aurora_llsd::llsd_map! { "next_owner_mask" => rights.next_owner as i32,
-                                "group_mask" => rights.group as i32, "everyone_mask" => rights.everyone as i32 }
-                        },
-                    }],
-                    refresh: vec![item.parent],
-                    ..Default::default()
-                };
+                let MaterialCaps { upload: cap, fetch, ais } = pending.caps;
                 // LLObjectsMaterialItemCallback::fire (indra/newview/llmaterialeditor.cpp)
                 // uploads the material whatever becomes of the name and rights
                 // update: an item left without its material would never load.
-                if let Err(reason) = crate::inventory::operations::mutate(&http, &ais, &descendants, owner, change).await {
-                    log::warn!("material item name and rights not confirmed, its material is sent anyway: {reason}");
+                if let Some((ais, descendants)) = ais {
+                    let rights = pending.upload.permissions;
+                    let change = Mutation {
+                        operations: vec![Operation::Patch {
+                            id: item.id,
+                            folder: false,
+                            body: aurora_llsd::llsd_map! {
+                                "name" => pending.upload.name.as_str(), "desc" => pending.upload.description.as_str(),
+                                "permissions" => aurora_llsd::llsd_map! { "next_owner_mask" => rights.next_owner as i32,
+                                    "group_mask" => rights.group as i32, "everyone_mask" => rights.everyone as i32 }
+                            },
+                        }],
+                        refresh: vec![item.parent],
+                        ..Default::default()
+                    };
+                    if let Err(reason) = crate::inventory::operations::mutate(&http, &ais, &descendants, owner, change).await {
+                        log::warn!("material item name and rights not confirmed, its material is sent anyway: {reason}");
+                    }
                 }
                 let saved = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, item.id, 57, pending.upload.data)
                     .await
@@ -835,6 +906,92 @@ mod tests {
                 messages: vec!["server rejected blend map".into()],
             })
         );
+    }
+
+    #[test]
+    fn material_rights_use_ais_when_offered_and_the_circuit_otherwise() {
+        let cap = |name: &str| Some(name.to_owned());
+        assert_eq!(
+            MaterialCaps::choose(cap("up"), cap("fetch"), cap("ais"), cap("desc")),
+            Some(MaterialCaps {
+                upload: "up".into(),
+                fetch: "fetch".into(),
+                ais: Some(("ais".into(), "desc".into())),
+            })
+        );
+        // OpenSim: no InventoryAPIv3, the upload still starts (#4253)
+        for descendants in [None, cap("desc")] {
+            assert_eq!(
+                MaterialCaps::choose(cap("up"), cap("fetch"), None, descendants),
+                Some(MaterialCaps {
+                    upload: "up".into(),
+                    fetch: "fetch".into(),
+                    ais: None,
+                })
+            );
+        }
+        assert_eq!(MaterialCaps::choose(None, cap("fetch"), cap("ais"), cap("desc")), None);
+        assert_eq!(MaterialCaps::choose(cap("up"), None, None, None), None);
+        assert_eq!(MaterialCaps::choose(cap("up"), cap("fetch"), cap("ais"), None), None);
+    }
+
+    #[test]
+    fn material_udp_update_renames_and_applies_rights_like_the_legacy_viewer() {
+        let (agent, session) = (Uuid::from_u128(5), Uuid::from_u128(6));
+        let item = InvItem {
+            id: Uuid::from_u128(1),
+            parent: Uuid::from_u128(2),
+            creator: agent,
+            owner: agent,
+            asset_type: 57,
+            inv_type: 26,
+            name: "Material".into(),
+            desc: "PBR".into(),
+            owner_mask: 0x7fff_ffff,
+            base_mask: 0x7fff_ffff,
+            next_owner_mask: 0x7fff_ffff,
+            created_at: 12,
+            ..Default::default()
+        };
+        let rights = crate::inventory::upload::Permissions {
+            next_owner: 0x8_2000,
+            group: 0,
+            everyone: PERM_COPY,
+        };
+        let message = material_item_update(agent, session, &item, "Brick", rights).unwrap();
+        assert_eq!(message.agent_data.agent_id, agent);
+        assert_eq!(message.agent_data.session_id, session);
+        assert_eq!(message.agent_data.transaction_id, Uuid::nil());
+        let [data] = message.inventory_data.as_slice() else {
+            panic!("one InventoryData block");
+        };
+        let renamed = InvItem {
+            name: "Brick".into(),
+            ..item.clone()
+        };
+        assert_eq!(*data, permission_update(&renamed, rights, 0));
+        assert_eq!((data.item_id, data.folder_id, data.callback_id), (item.id, item.parent, 0));
+        assert_eq!(data.transaction_id, Uuid::nil());
+        assert_eq!((data.type_, data.inv_type), (57, 26));
+        assert_eq!(
+            (field_str(&data.name), field_str(&data.description)),
+            ("Brick".to_owned(), "PBR".to_owned())
+        );
+        assert_eq!(
+            (data.next_owner_mask, data.group_mask, data.everyone_mask),
+            (0x8_2000, 0, PERM_COPY)
+        );
+
+        // fire only updates when the name or the rights differ
+        let applied = InvItem {
+            name: "Brick".into(),
+            next_owner_mask: 0x8_2000,
+            group_mask: 0,
+            everyone_mask: PERM_COPY,
+            ..item.clone()
+        };
+        assert!(material_item_update(agent, session, &applied, "Brick", rights).is_none());
+        assert!(material_item_update(agent, session, &applied, "Stone", rights).is_some());
     }
 
     #[test]
