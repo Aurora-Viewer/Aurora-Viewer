@@ -289,6 +289,123 @@ fn a_delete_runs_every_step_through_the_transcript_thread() {
     clean(&w, &root);
 }
 
+/// The account's own name, never the resident's: its Legacy Viewer folder
+/// is `ada_example`.
+const ACCOUNT: Option<(&str, &str)> = Some(("Ada", "Example"));
+
+/// A World logged in with the account's name, the Legacy layout on or off,
+/// in the app's order: the transcripts' folder, then the service.
+fn named_world(root: &Path, shared: bool) -> World {
+    let mut w = World::new(Arc::new(AvatarLibrary::load()));
+    w.chat_log = chat_log::ChatLog::in_folder(root.join("accounts"));
+    w.chat_log.set_grid("agni".into());
+    w.chat_log.set_legacy_layout(shared);
+    w.agent_id = ME;
+    w.chat_log.login_named(ME, ACCOUNT);
+    w.chat_service.enabled = true;
+    w.chat_service_start_in(service_dir(root));
+    w
+}
+
+/// A delete that did not finish (a crash, or a sweep that failed): the
+/// archive and the pending cutoff, written by runDelete's first step.
+fn pending_delete(root: &Path) {
+    archive(root, &[row(1, "from the service")]);
+    let mut s = Storage::new(service_dir(root), ME);
+    assert!(s.begin_delete_state(UUID_EPOCH + (BASE + 10) * 10_000_000).is_some());
+}
+
+/// What the Legacy Viewer wrote in the account's folder: both spellings of
+/// the resident's transcript.
+fn legacy_folder(root: &Path) -> PathBuf {
+    let dir = root.join("accounts").join("ada_example");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Jane Doe.txt"), "[2026/10/11 09:00]  Jane Doe: the legacy spelling\r\n").unwrap();
+    std::fs::write(dir.join("jane_doe.txt"), "[2026/10/12 10:00]  Jane Doe: the username spelling\r\n").unwrap();
+    dir
+}
+
+/// Every file of a folder with its bytes, by name.
+fn listing(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), std::fs::read(e.path()).unwrap()))
+        .collect();
+    files.sort();
+    files
+}
+
+/// The delete finished on the service's own files only, without a notice.
+fn assert_finished_on_service_files(w: &mut World, root: &Path) {
+    assert_eq!(w.chat_service.take_deleted(), Some(true));
+    assert_eq!(w.chat_service.swept_files(), 0, "no transcript removed");
+    let dir = service_dir(root);
+    assert!(!dir.join(archive_name(JANE)).exists(), "the archive is swept");
+    let state = std::fs::read_to_string(dir.join(STATE_NAME)).unwrap();
+    assert!(state.contains("<boolean>0</boolean>"), "cleanup is no longer pending: {state}");
+    let failed = aurora_i18n::tr!("chat-service-delete-failed").to_string();
+    assert!(!w.alerts.contains(&failed));
+}
+
+#[test]
+fn a_delete_resumed_in_a_shared_folder_keeps_every_legacy_transcript() {
+    let root = temp();
+    pending_delete(&root);
+    let legacy = legacy_folder(&root);
+    let before = listing(&legacy);
+    let mut w = named_world(&root, true);
+    assert!(w.chat_log.shared());
+    assert_eq!(w.chat_log.dir(), Some(legacy.as_path()));
+    w.chat_service_settle();
+    assert_finished_on_service_files(&mut w, &root);
+    assert_eq!(listing(&legacy), before, "the Legacy Viewer's folder is left as it was");
+    clean(&w, &root);
+}
+
+#[test]
+fn a_delete_that_reaches_a_shared_folder_keeps_every_transcript() {
+    let root = temp();
+    archive(&root, &[row(1, "from the service")]);
+    let legacy = legacy_folder(&root);
+    let before = listing(&legacy);
+    let mut w = named_world(&root, false);
+    let own = w.chat_log.file_of("Jane Doe").unwrap();
+    std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+    std::fs::write(&own, "[2026/10/13 11:00]  Jane Doe: in Aurora's folder\r\n").unwrap();
+    assert!(w.request_history_delete());
+    // the folder is shared before the sweep (Preferences › Chat): the sweep
+    // takes the folder placed then, and keeps its transcripts
+    w.chat_log.set_legacy_layout(true);
+    assert!(w.chat_log.shared());
+    w.chat_service_settle();
+    assert_finished_on_service_files(&mut w, &root);
+    assert_eq!(listing(&legacy), before, "the Legacy Viewer's folder is left as it was");
+    assert!(own.exists(), "the sweep never goes back to the folder of the click");
+    assert!(!w.request_history_delete(), "no new delete while sharing");
+    clean(&w, &root);
+}
+
+#[test]
+fn a_delete_resumed_in_aurora_s_own_folder_still_erases_its_transcripts() {
+    let root = temp();
+    pending_delete(&root);
+    let legacy = legacy_folder(&root);
+    let before = listing(&legacy);
+    let mut w = named_world(&root, false);
+    assert!(!w.chat_log.shared());
+    let own = w.chat_log.file_of("Jane Doe").unwrap();
+    std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+    std::fs::write(&own, "[2026/10/13 11:00]  Jane Doe: in Aurora's folder\r\n").unwrap();
+    w.chat_service_settle();
+    assert_eq!(w.chat_service.take_deleted(), Some(true));
+    assert!(!own.exists(), "the plaintext is swept");
+    assert_eq!(w.chat_service.swept_files(), 1);
+    assert!(!service_dir(&root).join(archive_name(JANE)).exists(), "the archive is swept");
+    assert_eq!(listing(&legacy), before, "a folder not placed is never swept");
+    clean(&w, &root);
+}
+
 #[test]
 fn the_loading_line_waits_for_the_first_read_and_the_first_fetch() {
     let mut v = DirectView {
