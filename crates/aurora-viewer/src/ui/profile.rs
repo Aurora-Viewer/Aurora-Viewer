@@ -2581,6 +2581,85 @@ mod tests {
     use super::*;
 
     #[test]
+    fn classic_profile_double_click_opens_member_and_nonmember_groups() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(4516);
+        let p = crate::theme::Theme::default().palette();
+        let mut emoji = super::super::emoji::Emoji::load();
+        let images = HashMap::new();
+        for (resident, member) in [(world.agent_id, true), (Uuid::from_u128(4517), false)] {
+            let id = Uuid::from_u128(resident.as_u128() + 10);
+            let name = "Builders";
+            world.profiles.merge_groups(
+                resident,
+                vec![aurora_net::profile::ProfileGroup {
+                    id,
+                    name: name.into(),
+                    insignia: Uuid::nil(),
+                }],
+            );
+            if member {
+                world.groups.groups.push(aurora_net::GroupMembership {
+                    id,
+                    name: name.into(),
+                    insignia: Uuid::nil(),
+                    powers: 0,
+                    accept_notices: false,
+                    list_in_profile: true,
+                    contribution: 0,
+                });
+            }
+            let c = TabCtx {
+                p: &p,
+                world: &world,
+                images: &images,
+                own: resident == world.agent_id,
+            };
+            let mut w = Window::new(resident);
+            let mut actions = Vec::new();
+            let mut draw = |ui: &mut egui::Ui| {
+                second_life_tab(
+                    ui,
+                    &c,
+                    &mut emoji,
+                    &images,
+                    &mut w,
+                    "Resident",
+                    &mut HashSet::new(),
+                    &mut HashSet::new(),
+                    &mut actions,
+                    &mut None,
+                );
+            };
+            let mut frames = Frames::new();
+            frames.run(Vec::new(), &mut draw);
+            let texts = frames.run(Vec::new(), &mut draw);
+            let pos = painted(&texts, name).rect.center();
+            for pressed in [true, false, true, false] {
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    &mut draw,
+                );
+            }
+            assert_eq!(
+                super::super::group_profile::take_open_request(&frames.ctx),
+                Some(id),
+                "member {member}"
+            );
+            assert!(!actions.iter().any(|a| matches!(a, ProfileAction::GroupChat(_))));
+        }
+    }
+
+    #[test]
     fn classic_pick_and_classified_pictures_open_the_read_only_preview() {
         use crate::ui::widgets::elide_tests::Frames;
         let p = crate::theme::Theme::default().palette();
