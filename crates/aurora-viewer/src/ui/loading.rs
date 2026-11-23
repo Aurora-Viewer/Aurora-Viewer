@@ -94,11 +94,11 @@ impl PlaceFacts {
         let map_shown = !world.rlva.has("showworldmap");
         let nearby_shown = !world.rlva.has("shownearby");
         let sim = world.map.sims.get(&key).filter(|_| map_shown);
-        let (size_x, size_y) = main
-            .and_then(|handle| world.regions.get(&handle))
-            .map(|region| (region.heightmap.size_x, region.heightmap.size_y))
-            .or_else(|| sim.map(|sim| (sim.size_x, sim.size_y)))
-            .unwrap_or((256, 256));
+        let (size_x, size_y) = region_size(
+            main.and_then(|handle| world.regions.get(&handle))
+                .map(|region| (region.heightmap.size_x, region.heightmap.size_y)),
+            sim.map(|sim| (sim.size_x, sim.size_y)),
+        );
         let (cells_x, cells_y) = super::map_tiles::region_cells(size_x, size_y);
         facts.maturity = match main.and_then(|h| world.regions.get(&h)).and_then(|r| r.info.as_ref()) {
             Some(info) => super::bars::maturity_name(info.sim_access),
@@ -122,6 +122,19 @@ impl PlaceFacts {
         }
         facts
     }
+}
+
+/// The region's size for its picture and pin: the larger of the heightmap's
+/// (once there) and the map block's, so a region the heightmap still has at
+/// its first 256 m does not show its south-west tile first; 256 m when
+/// neither is known, at most `world::MAX_REGION_SIZE` a side.
+fn region_size(heightmap: Option<(u32, u32)>, map: Option<(u32, u32)>) -> (u32, u32) {
+    let (x, y) = match (heightmap, map) {
+        (Some(h), Some(m)) => (h.0.max(m.0), h.1.max(m.1)),
+        (one, other) => one.or(other).unwrap_or((256, 256)),
+    };
+    let most = crate::world::MAX_REGION_SIZE;
+    (x.clamp(256, most), y.clamp(256, most))
 }
 
 /// The loading screen's map frame for a `w` x `h` region picture: as large
@@ -813,5 +826,24 @@ mod tests {
         let rect = Rect::from_min_size(Pos2::ZERO, size);
         assert!(pin_at(rect, uv, (0.1, 0.5)).is_none());
         assert!(pin_at(rect, uv, (0.5, 0.5)).is_some());
+    }
+
+    /// A region's size is the larger of the heightmap's and the map
+    /// block's, within 256 m and the largest region.
+    #[test]
+    fn the_region_size_takes_the_larger_and_stays_in_bounds() {
+        assert_eq!(
+            region_size(Some((256, 256)), Some((512, 256))),
+            (512, 256),
+            "heightmap not grown yet"
+        );
+        assert_eq!(region_size(Some((1024, 512)), None), (1024, 512));
+        assert_eq!(region_size(None, Some((512, 768))), (512, 768));
+        assert_eq!(region_size(None, None), (256, 256));
+        assert_eq!(
+            region_size(None, Some((65520, 0))),
+            (4096, 256),
+            "a map block's size past any region"
+        );
     }
 }

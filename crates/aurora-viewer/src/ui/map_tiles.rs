@@ -75,8 +75,15 @@ type Composed = (PictureKey, Vec<u64>, Option<egui::ColorImage>);
 struct Entry {
     tile: Tile,
     used: Instant,
-    /// A region picture stitches this tile: keep its pixels.
+    /// A region picture stitches this tile: keep its pixels. Cleared, with
+    /// the pixels, once no picture has asked for it for UNUSED_DROP.
     keep: bool,
+    /// When a region picture last asked for the tile.
+    kept: Instant,
+    /// When reading the pixels of a tile already drawn failed: it stays a
+    /// gap in the region pictures until MISSING_RETRY has passed, its
+    /// texture still drawn.
+    refetch_failed: Option<Instant>,
 }
 
 type Key = (u32, u32, u32);
@@ -151,7 +158,10 @@ impl MapTiles {
         self.touch(level, x, y, load, false).map(|(tex, _)| tex)
     }
 
-    /// Level-1 tiles of one region, north up, as a single texture.
+    /// Level-1 tiles of one region, north up, as a single texture, for the
+    /// loading screen and the About Land and Region/Estate headers (the
+    /// minimap draws its tiles itself). Follows Catznip's minimap overlay
+    /// (`[SL:KB] World-MinimapOverlay`, Kitty Barnett, originally LGPL 2.1):
     /// `LLViewerRegion::getWorldMapTiles` (llviewerregion.cpp) asks for
     /// `map-1-(gridX+x)-(gridY+y)` on every 256 m cell, and `LLNetMap` draws
     /// each cell in place with the higher grid Y further north
@@ -177,6 +187,10 @@ impl MapTiles {
                         if let Some(e) = self.tiles.get_mut(&key)
                             && let Tile::Ready(tex, None) = &e.tile
                         {
+                            if e.refetch_failed.is_some_and(|at| at.elapsed() < MISSING_RETRY) {
+                                // its last read failed: a gap for now
+                                continue;
+                            }
                             e.tile = Tile::Refetch(tex.clone(), false);
                             self.queue.push_back(key);
                         }
@@ -221,7 +235,10 @@ impl MapTiles {
         let key = (level, x, y);
         if let Some(e) = self.tiles.get_mut(&key) {
             e.used = now;
-            e.keep |= keep;
+            if keep {
+                e.keep = true;
+                e.kept = now;
+            }
             return match &e.tile {
                 Tile::Ready(tex, pixels) => Ok((tex.clone(), pixels.clone())),
                 Tile::Refetch(tex, _) => Ok((tex.clone(), None)),
@@ -243,6 +260,8 @@ impl MapTiles {
                 tile: Tile::Queued,
                 used: now,
                 keep,
+                kept: now,
+                refetch_failed: None,
             },
         );
         self.queue.push_back(key);
@@ -256,8 +275,9 @@ impl MapTiles {
             let Some(e) = self.tiles.get_mut(&key) else {
                 continue;
             };
-            e.tile = match img {
-                Some(ci) => {
+            e.tile = match (img, std::mem::replace(&mut e.tile, Tile::Loading)) {
+                (Some(ci), _) => {
+                    e.refetch_failed = None;
                     // one buffer for the texture upload and the kept pixels
                     let image = Arc::new(ci);
                     let pixels = e.keep.then(|| {
@@ -270,7 +290,13 @@ impl MapTiles {
                     let tex = ctx.load_texture(format!("map-{}-{}-{}", key.0, key.1, key.2), image, egui::TextureOptions::LINEAR);
                     Tile::Ready(tex, pixels)
                 }
-                None => Tile::Missing(Instant::now()),
+                // a tile already drawn keeps its texture when its pixels
+                // cannot be read again (map server down, timeout)
+                (None, Tile::Refetch(tex, _)) => {
+                    e.refetch_failed = Some(Instant::now());
+                    Tile::Ready(tex, None)
+                }
+                (None, _) => Tile::Missing(Instant::now()),
             };
         }
         while let Ok((key, stamps, image)) = self.composed_rx.try_recv() {
@@ -320,9 +346,17 @@ impl MapTiles {
             self.tiles
                 .retain(|_, e| matches!(e.tile, Tile::Loading | Tile::Refetch(_, true)) || now.duration_since(e.used) < UNUSED_DROP);
         }
-        // a picture holds a texture up to MAX_PICTURE square: none is kept
-        // once no window draws it
+        // a picture holds a texture up to MAX_PICTURE square, and its tiles
+        // their pixels: neither is kept once no window draws it
         self.pictures.retain(|_, picture| now.duration_since(picture.used) < UNUSED_DROP);
+        for e in self.tiles.values_mut() {
+            if e.keep && now.duration_since(e.kept) >= UNUSED_DROP {
+                e.keep = false;
+                if let Tile::Ready(_, pixels) = &mut e.tile {
+                    *pixels = None;
+                }
+            }
+        }
     }
 
     fn start(&mut self, key: Key) {
@@ -367,9 +401,12 @@ fn fxhash(s: &str) -> u32 {
 }
 
 /// How many 256 m map cells a region covers. Smaller than one cell still
-/// has one tile (`LLViewerRegion::getWorldMapTiles`).
+/// has one tile (`LLViewerRegion::getWorldMapTiles`); a map block's size
+/// past the largest region (`world::MAX_REGION_SIZE`, as the heightmap is
+/// capped) is not a region's.
 pub fn region_cells(size_x: u32, size_y: u32) -> (u32, u32) {
-    ((size_x / 256).max(1), (size_y / 256).max(1))
+    let most = crate::world::MAX_REGION_SIZE / 256;
+    ((size_x / 256).clamp(1, most), (size_y / 256).clamp(1, most))
 }
 
 /// Arrival point on the region picture, 0..1 from the south-west corner.
@@ -569,6 +606,8 @@ mod tests {
                 tile: Tile::Ready(tex.clone(), pixels),
                 used: Instant::now(),
                 keep,
+                kept: Instant::now(),
+                refetch_failed: None,
             },
         );
         tex
@@ -633,6 +672,62 @@ mod tests {
         let tex = ready(&ctx, &mut tiles, (1, 21, 20), true);
         tiles.tiles.get_mut(&(1, 21, 20)).expect("tile").tile = Tile::Refetch(tex, true);
         assert_eq!(tiles.region_picture(20, 20, 2, 1).map(|t| t.id()), Ok(picture.id()));
+    }
+
+    /// A map block's size is capped at the largest region, as the
+    /// heightmap is: 65520 m would be 65 025 cells asked every frame.
+    #[test]
+    fn region_cells_stop_at_the_largest_region() {
+        assert_eq!(region_cells(65520, 65520), (16, 16));
+        assert_eq!(region_cells(4096, 512), (16, 2));
+        assert_eq!(region_cells(0, 128), (1, 1));
+    }
+
+    /// The pixels a picture kept are released once no picture has asked
+    /// for them for UNUSED_DROP; the texture stays for the world map.
+    #[test]
+    fn kept_pixels_are_released_with_their_picture() {
+        let ctx = egui::Context::default();
+        let (mut tiles, _rt) = configured();
+        let _ = ready(&ctx, &mut tiles, (1, 20, 20), true);
+        let _ = ready(&ctx, &mut tiles, (1, 21, 20), true);
+        let _ = composed(&ctx, &mut tiles, 20, 20, 2, 1);
+        tiles.update(&ctx);
+        assert!(
+            matches!(tiles.tiles[&(1, 20, 20)].tile, Tile::Ready(_, Some(_))),
+            "kept while drawn"
+        );
+        let long_ago = Instant::now().checked_sub(UNUSED_DROP * 2).expect("uptime");
+        for e in tiles.tiles.values_mut() {
+            e.kept = long_ago;
+        }
+        tiles.pictures.get_mut(&(20, 20, 2, 1)).expect("picture").used = long_ago;
+        tiles.update(&ctx);
+        assert!(tiles.pictures.is_empty());
+        for key in [(1, 20, 20), (1, 21, 20)] {
+            let e = &tiles.tiles[&key];
+            assert!(!e.keep && matches!(e.tile, Tile::Ready(_, None)), "{key:?}: texture only");
+        }
+    }
+
+    /// A tile already drawn whose pixels cannot be read again keeps its
+    /// texture, and is a gap in the region picture until MISSING_RETRY
+    /// instead of being asked again every frame.
+    #[test]
+    fn a_failed_reread_keeps_the_texture_and_leaves_a_gap() {
+        let ctx = egui::Context::default();
+        let (mut tiles, _rt) = configured();
+        let shown = ready(&ctx, &mut tiles, (1, 20, 20), false);
+        let _ = ready(&ctx, &mut tiles, (1, 21, 20), true);
+        let _ = tiles.region_picture(20, 20, 2, 1);
+        tiles.update(&ctx);
+        assert!(matches!(tiles.tiles[&(1, 20, 20)].tile, Tile::Refetch(_, true)));
+        tiles.tx.send(((1, 20, 20), None)).expect("channel");
+        tiles.update(&ctx);
+        assert_eq!(tiles.get(1, 20, 20, true).map(|t| t.id()), Ok(shown.id()), "still drawn");
+        let picture = composed(&ctx, &mut tiles, 20, 20, 2, 1);
+        assert_eq!(picture.size(), [2, 1], "composed with a gap");
+        assert!(tiles.queue.iter().all(|key| *key != (1, 20, 20)), "not asked again at once");
     }
 
     #[test]
