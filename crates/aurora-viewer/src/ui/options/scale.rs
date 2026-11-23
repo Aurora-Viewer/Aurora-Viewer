@@ -195,7 +195,7 @@ impl ScaleSlider {
             ),
             Kind::Text => (1.0, "×", 2..=2, aurora_i18n::tr!("ui-options-text-size"), ""),
         };
-        let frame = ui.ctx().cumulative_frame_nr();
+        let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
         let previous = *saved;
         let had_gesture = self.gesture.is_some();
         let mut gesture = self

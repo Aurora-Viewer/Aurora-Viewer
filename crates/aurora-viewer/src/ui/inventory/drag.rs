@@ -63,7 +63,7 @@ impl egui::Plugin for PressLatch {
     }
 
     fn on_begin_pass(&mut self, ui: &mut egui::Ui) {
-        if ui.input(|i| i.pointer.any_pressed()) {
+        if ui.input(|i| i.pointer.primary_pressed()) {
             self.dragged = false;
         }
     }
@@ -187,6 +187,25 @@ fn feedback_id() -> egui::Id {
     egui::Id::unique("inventory_move_drag_feedback")
 }
 
+/// The pointer is over the world: inside the viewer's window, and over no
+/// window of the interface. A held drag still tells where the pointer is
+/// beyond the edges of the window it began in; nothing of the world is
+/// there, and what is let go of there is carried to the viewer's other
+/// windows (`outside::carry`), not dropped.
+pub(crate) fn over_world(ctx: &egui::Context) -> bool {
+    in_world(
+        ctx.is_pointer_over_egui(),
+        ctx.input(|i| i.pointer.interact_pos()),
+        ctx.content_rect(),
+    )
+}
+
+/// `over_world`, from what the interface says: a window of the interface
+/// is under the pointer, where the pointer is, and the viewer's window.
+pub(crate) fn in_world(over_interface: bool, at: Option<egui::Pos2>, window: egui::Rect) -> bool {
+    !over_interface && at.is_none_or(|at| window.contains(at))
+}
+
 /// How many entries a drag of inventory carries while one is in progress (a
 /// folder counts as one). Used by drop targets that take inventory cargo.
 pub(crate) fn carried_count(ctx: &egui::Context) -> Option<usize> {
@@ -219,7 +238,7 @@ pub(crate) fn carried_ids(ctx: &egui::Context) -> Option<Vec<Uuid>> {
 /// The cursor a destination outside the inventory windows gives the cargo
 /// held over it this pass (an object's Contents tab).
 pub(crate) fn feedback(ctx: &egui::Context, cursor: egui::CursorIcon) {
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(feedback_id(), Feedback { pass, cursor }));
 }
 
@@ -247,7 +266,7 @@ pub(crate) fn give_target_on(ctx: &egui::Context, layer: egui::LayerId, zone: eg
         return None;
     }
     let ids = give_ids(ctx)?;
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| {
         d.insert_temp(
             feedback_id(),
@@ -278,7 +297,7 @@ pub(super) fn target(
     actions: &mut Vec<InvAction>,
 ) {
     let Some(cargo) = Cargo::hover(ui, r) else { return };
-    let pass = ui.ctx().cumulative_pass_nr();
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
     if ui
         .ctx()
         .data(|d| d.get_temp::<Feedback>(feedback_id()).is_some_and(|f| f.pass == pass))
@@ -317,7 +336,7 @@ pub(super) fn target(
                 // A folder let go on its own row is a click that slipped past
                 // the threshold: refused without a word, as the Legacy Viewer
                 // only shows TooltipDragOntoSelf while hovering.
-                Err(_) if cargo.ids().contains(&to) => {}
+                Err(_) if cargo.ids() == [to] => {}
                 Err(reason) => st.message = reason,
             }
         }
@@ -326,10 +345,10 @@ pub(super) fn target(
 
 /// Resolve feedback after all windows, like the object-inventory drag cursor.
 pub(crate) fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
-    if !ctx.input(|i| i.pointer.primary_down()) {
+    if !crate::outside::carry::dragging(ctx) {
         return None;
     }
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<Feedback>(feedback_id()))
         .filter(|f| f.pass == pass)
         .map(|f| f.cursor)
@@ -340,7 +359,10 @@ pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
     let Some(cargo) = egui::DragAndDrop::payload::<SelectionDrag>(ctx) else {
         return;
     };
-    let Some(pointer) = ctx.input(|i| i.pointer.interact_pos().filter(|_| i.pointer.primary_down())) else {
+    let Some(pointer) = ctx
+        .input(|i| i.pointer.interact_pos())
+        .filter(|_| crate::outside::carry::dragging(ctx))
+    else {
         return;
     };
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("inventory_drag_count")));

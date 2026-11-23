@@ -344,7 +344,7 @@ fn chat_island(
     if smile_resp.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
         chat.bar_emoji_open = !chat.bar_emoji_open;
     }
-    if super::demo::get().open == Some(super::demo::Open::Emoji) && ui.ctx().cumulative_frame_nr() == 300 {
+    if super::demo::get().open == Some(super::demo::Open::Emoji) && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300 {
         chat.bar_emoji_open = true;
     }
 

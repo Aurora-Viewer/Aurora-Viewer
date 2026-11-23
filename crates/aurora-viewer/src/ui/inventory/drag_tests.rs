@@ -554,6 +554,27 @@ fn inventory_drag_cancelled_with_escape_does_not_start_again() {
         false,
     );
     assert!(!egui::DragAndDrop::has_any_payload(&f.ctx), "Escape cancels the drag");
+    // A different button can be pressed while the original left press is
+    // still held. Only a new left press may re-arm this drag.
+    f.frame(
+        vec![egui::Event::PointerButton {
+            pos: pos + Vec2::new(4.0, 0.0),
+            button: egui::PointerButton::Secondary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        false,
+    );
+    assert!(drag::dragged_this_press(&f.ctx));
+    f.frame(
+        vec![egui::Event::PointerButton {
+            pos: pos + Vec2::new(4.0, 0.0),
+            button: egui::PointerButton::Secondary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        false,
+    );
     f.hover(pos + Vec2::new(0.0, 5.0));
     assert!(!egui::DragAndDrop::has_any_payload(&f.ctx), "and it does not start again");
     let to = f.row(20);
@@ -631,4 +652,15 @@ fn inventory_double_click_attaches_an_object_then_detaches_it_once_worn() {
     // a single click only selects
     f.click(101, false);
     assert!(f.actions.is_empty());
+}
+
+/// A held drag tells where the pointer is beyond the window's edges.
+#[test]
+fn beyond_the_viewers_window_the_pointer_is_not_over_the_world() {
+    let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+    assert!(drag::in_world(false, Some(egui::pos2(400.0, 300.0)), window));
+    assert!(!drag::in_world(false, Some(egui::pos2(900.0, 300.0)), window));
+    assert!(!drag::in_world(false, Some(egui::pos2(400.0, -20.0)), window));
+    // over a window of the interface, as before
+    assert!(!drag::in_world(true, Some(egui::pos2(400.0, 300.0)), window));
 }

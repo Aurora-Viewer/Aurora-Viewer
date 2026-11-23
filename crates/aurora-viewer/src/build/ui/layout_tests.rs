@@ -810,6 +810,41 @@ fn snap_checkbox_and_inline_choices_fit_one_column_without_changing_row_height()
     assert_eq!(i.settings.snap_mode(), SnapMode::Off, "Organization must not enable Snap");
 }
 
+/// Outside the viewer's window nothing is beside the build window: the
+/// settings take the room its own window keeps at its right, and draw
+/// nothing until the system has made that room.
+#[test]
+fn settings_take_the_room_of_the_window_outside() {
+    use super::super::super::layout::{Beside, settings};
+    let mut i = Inspector::new();
+    i.tool.ui.layout.open = true;
+    let p = crate::theme::Theme::default().palette();
+    let id = egui::Id::unique("construction-settings");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, i.screen);
+    let draw = |i: &mut Inspector, beside: Beside| {
+        let ctx = i.ctx.clone();
+        crate::ui::login::test_output(ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ui| settings(ui.ctx(), &p, &mut i.tool, &mut i.world, &mut i.settings, i.mods, beside),
+        ));
+    };
+    draw(&mut i, Beside::Outside(None));
+    assert!(i.ctx.memory(|m| m.area_rect(id)).is_none(), "no room yet: nothing is drawn");
+    // the room of a window 702 by 700 whose own width is 344
+    let room = egui::Rect::from_min_max(egui::pos2(352.0, 8.0), egui::pos2(694.0, 692.0));
+    for _ in 0..3 {
+        draw(&mut i, Beside::Outside(Some(room)));
+    }
+    let panel = i.ctx.memory(|m| m.area_rect(id)).unwrap();
+    assert!(room.expand(0.5).contains_rect(panel), "{room:?} {panel:?}");
+    assert_eq!(panel.left(), room.left());
+    assert!((panel.bottom() - room.bottom()).abs() < 0.5, "{panel:?}");
+    assert!((panel.width() - room.width()).abs() < 0.5, "{panel:?}");
+}
+
 #[test]
 fn settings_follow_the_free_side_and_bottom_of_the_inspector() {
     let mut i = Inspector::new();
