@@ -546,7 +546,7 @@ fn the_demo_order_is_shown_for_the_launch_and_never_saved() {
         actions.extend(a);
         texts = t;
     }
-    let y_of = |label: &str| {
+    let y_of = |label: &'static str| {
         let head = aurora_i18n::text(label).to_uppercase();
         texts.iter().find(|(_, t)| *t == head).map(|(pos, _)| pos.y).expect("section")
     };
