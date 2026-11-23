@@ -5697,7 +5697,7 @@ impl App {
             Action::StopAnimations => self.stop_animations(false),
             Action::ResyncAnimations => self.scene.resync_animations(Instant::now()),
             Action::RefreshAttachments => self.refresh_attachments(),
-            Action::PhotoWindow => ui::widgets::toggle_floater(&self.egui_ctx, ui::snapshot::WINDOW, &mut self.panels.snapshot),
+            Action::PhotoWindow => self.photo_window_shortcut(),
             Action::PhotoToDisk => self.photo_to_disk(),
             Action::Phototools => ui::widgets::toggle_floater(&self.egui_ctx, ui::phototools::WINDOW, &mut self.panels.phototools),
             Action::EnvSunrise | Action::EnvMidday | Action::EnvSunset | Action::EnvMidnight | Action::EnvShared => {

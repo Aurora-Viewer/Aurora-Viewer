@@ -2682,6 +2682,34 @@ LUT_3D_SIZE {n}
         self.panels.snapshot && (self.snapshots.ui.full_frame || self.viewfinder_on())
     }
 
+    /// Ctrl+Shift+S (Action::PhotoWindow). Port of the "Take Snapshot" menu
+    /// item, `Floater.Show` "snapshot" (menu_viewer.xml), and of
+    /// LLFloaterSnapshot::onOpen (indra/newview/llfloatersnapshot.cpp): the
+    /// key opens the photo window, or brings an open one forward with a
+    /// fresh preview, and never closes it (#4625); the viewfinder is the
+    /// exception ([`photo_shortcut`]). The toolbar button and the menus stay
+    /// toggles, as the Legacy Viewer's toolbar command is.
+    pub(super) fn photo_window_shortcut(&mut self) {
+        let style = self.photo_style();
+        match photo_shortcut(self.panels.snapshot, style) {
+            PhotoShortcut::Leave => self.panels.snapshot = false,
+            PhotoShortcut::Show => {
+                let id = if style == crate::settings::PhotoWindowStyle::Legacy {
+                    crate::ui::snapshot::CLASSIC_WINDOW
+                } else {
+                    crate::ui::snapshot::WINDOW
+                };
+                if self.panels.snapshot {
+                    crate::ui::widgets::bring_floater_front(&self.egui_ctx, id);
+                } else {
+                    crate::ui::widgets::open_floater(&self.egui_ctx, id, &mut self.panels.snapshot);
+                }
+                // (the viewfinder needs none: its view is live)
+                self.snapshots.preview_wanted = true;
+            }
+        }
+    }
+
     /// Escape leaves the full-frame view, then brings the free camera back,
     /// instead of resetting the camera. In the viewfinder: a menu open
     /// closes, the free camera comes back, the first person view ends, then
@@ -3517,6 +3545,27 @@ pub(super) fn env_view<'a>(
     }
 }
 
+/// What Ctrl+Shift+S does to the photo mode ([`App::photo_window_shortcut`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PhotoShortcut {
+    /// Open the window, or bring it forward with a fresh preview.
+    Show,
+    /// Leave the viewfinder.
+    Leave,
+}
+
+/// The Legacy and Panel windows only open, as the Legacy Viewer's
+/// `Floater.Show`. The viewfinder (the Aurora style) is a full-screen mode
+/// with a live view and no preview to refresh: the key that entered it
+/// leaves it, as M does mouselook.
+fn photo_shortcut(open: bool, style: crate::settings::PhotoWindowStyle) -> PhotoShortcut {
+    if open && style == crate::settings::PhotoWindowStyle::Aurora {
+        PhotoShortcut::Leave
+    } else {
+        PhotoShortcut::Show
+    }
+}
+
 /// A picture shared with another reader (the photo window's panorama),
 /// handed to the texture encoder without a copy.
 struct SharedRgba(std::sync::Arc<Vec<u8>>);
@@ -3524,5 +3573,23 @@ struct SharedRgba(std::sync::Arc<Vec<u8>>);
 impl AsRef<[u8]> for SharedRgba {
     fn as_ref(&self) -> &[u8] {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::PhotoWindowStyle;
+
+    /// Ctrl+Shift+S opens the windowed photo styles and keeps them open
+    /// (#4625); only the viewfinder is left by it.
+    #[test]
+    fn photo_shortcut_opens_and_never_closes_a_photo_window() {
+        for style in [PhotoWindowStyle::Legacy, PhotoWindowStyle::Panel, PhotoWindowStyle::Aurora] {
+            assert_eq!(photo_shortcut(false, style), PhotoShortcut::Show, "{style:?} closed");
+        }
+        assert_eq!(photo_shortcut(true, PhotoWindowStyle::Legacy), PhotoShortcut::Show);
+        assert_eq!(photo_shortcut(true, PhotoWindowStyle::Panel), PhotoShortcut::Show);
+        assert_eq!(photo_shortcut(true, PhotoWindowStyle::Aurora), PhotoShortcut::Leave);
     }
 }
