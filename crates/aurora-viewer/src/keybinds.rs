@@ -119,8 +119,12 @@ fn learned(k: &str) -> Option<String> {
 }
 
 fn key_label(k: &str) -> String {
+    key_label_on(k, cfg!(target_os = "macos"))
+}
+
+fn key_label_on(k: &str, mac: bool) -> String {
     match k {
-        "AltLeft" | "AltRight" => return "ALT".into(),
+        "AltLeft" | "AltRight" => return (if mac { "Option" } else { "ALT" }).into(),
         "ControlLeft" | "ControlRight" => return "Ctrl".into(),
         "ShiftLeft" | "ShiftRight" => return aurora_i18n::tr!("keybinds-shift").into(),
         _ => {}
@@ -1798,6 +1802,15 @@ mod tests {
 
     /// LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
     /// French keyboards print Début. Japanese keyboards print Home.
+    #[test]
+    fn standalone_alt_keys_use_platform_labels() {
+        for key in ["AltLeft", "AltRight"] {
+            assert_eq!(key_label_on(key, true), "Option");
+            assert_eq!(key_label_on(key, false), "ALT");
+        }
+        assert_eq!(key_label("AltLeft"), if cfg!(target_os = "macos") { "Option" } else { "ALT" });
+    }
+
     #[test]
     fn the_home_key_is_labelled_home() {
         assert_eq!(aurora_i18n::text_in("en", "keybinds-origin"), "Home");
