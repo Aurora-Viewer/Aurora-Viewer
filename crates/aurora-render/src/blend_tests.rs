@@ -51,6 +51,9 @@ fn eval_material(v:VsOut,front:bool)->Material {{return Material(records[v.recor
 fn legacy_may_glare(r:DrawRecord,m:Material,p:vec3<f32>,f:vec2<f32>)->bool {{return false;}}
 fn shade_material(v:VsOut,m:Material)->Material {{return m;}}
 fn rez_alpha(r:DrawRecord,v:VsOut)->f32 {{return 1.0;}}
+// the generic pipeline's answers (MATERIAL_CLASS 0, the full SCENE_VARIANT)
+fn rec_portal_effect(f:u32)->bool {{return (f & FLAG_PORTAL_EFFECT) != 0u;}}
+fn scene_rez()->bool {{return true;}}
 fn depth_normal(n:vec3<f32>,front:bool,cur:vec4<f32>,prev:vec4<f32>,c:f32)->vec4<f32> {{return vec4<f32>(1.0);}}
 fn normal_composition(r:DrawRecord)->f32 {{return 0.0;}}
 {fragments}
