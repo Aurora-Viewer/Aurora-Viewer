@@ -19241,6 +19241,8 @@ impl App {
                 self.toolbar_ui.favorites_access = self.favorites_access();
                 self.toolbar_ui.flash_nearby = self.flash_nearby();
                 self.chat_ui.flash_nearby = self.flash_nearby();
+                self.chat_ui.has_open_ims = !self.world.social.ims.is_empty();
+                self.toolbar_ui.has_open_ims = self.chat_ui.has_open_ims;
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
                 let mut demo_toolbar = None;
                 // AURORA_DEMO_TOOLBAR=custom|side|labels|right: the mockup's
@@ -19505,6 +19507,9 @@ impl App {
                     match choice {
                         ui::chat::ButtonMenu::Open => {
                             ui::widgets::open_floater(ui.ctx(), "conversations", &mut self.panels.chat);
+                        }
+                        ui::chat::ButtonMenu::CloseAll => {
+                            self.chat_ui.request_close_all(&mut self.world, self.settings.confirm_close_all_ims)
                         }
                         ui::chat::ButtonMenu::NearbyFlash(on) => {
                             self.settings.flash_conversations_nearby = on;
@@ -20104,15 +20109,9 @@ impl App {
                         ui::chat::ConvAction::SendSysinfo(to) => a.sysinfo.push(to),
                         ui::chat::ConvAction::OfferTeleport(id) => a.offer_tp.push(id),
                         ui::chat::ConvAction::ToggleBlock(id) => a.ctx_action = Some(ui::context::CtxAction::ToggleBlock(id)),
-                        ui::chat::ConvAction::Close(id) => {
-                            self.world.conversation_closed(&id);
-                            self.world.leave_session(id);
-                            self.chat_ui.forget(id);
-                            // closed from the list, another conversation may be shown
-                            if self.chat_ui.selected == Some(id) {
-                                self.chat_ui.selected = None;
-                                self.chat_ui.show_profile = false;
-                            }
+                        ui::chat::ConvAction::Close(id) => self.chat_ui.close_im(&mut self.world, id),
+                        ui::chat::ConvAction::CloseAll => {
+                            self.chat_ui.request_close_all(&mut self.world, self.settings.confirm_close_all_ims)
                         }
                         ui::chat::ConvAction::Call(id) => a.ctx_action = Some(ui::context::CtxAction::Call(id)),
                         ui::chat::ConvAction::HangUp => self.world.end_call(),
@@ -20569,6 +20568,12 @@ impl App {
                 }
                 self.land_moderation_ui(&ctx, &p);
                 self.god_kick_ui(&ctx, &p);
+                if self.chat_ui.close_all_dialog(&ctx, &p, &mut self.world) {
+                    self.settings.confirm_close_all_ims = false;
+                    if !self.demo {
+                        self.settings.save();
+                    }
+                }
                 self.group_chat_moderation_ui(&ctx, &p);
                 self.unblock_link_question(&ctx, &p);
                 if let Some((ids, text)) = self.delete_confirm.clone()

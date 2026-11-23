@@ -78,6 +78,11 @@ pub fn page(cx: &mut Cx) {
             &field!(confirm_teleports),
         );
         cx.toggle(
+            tr!("ui-chat-confirm-close-all-ims"),
+            tr!("ui-chat-confirm-close-all-ims-help"),
+            &field!(confirm_close_all_ims),
+        );
+        cx.toggle(
             tr!("ui-options-confirm-inventory-delete"),
             tr!("ui-options-confirm-inventory-delete-help"),
             &field!(inventory.confirm_delete),
