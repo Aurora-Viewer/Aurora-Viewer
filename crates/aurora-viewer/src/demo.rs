@@ -188,6 +188,9 @@ pub mod hud;
 /// the window title (AURORA_DEMO_IM_ANNOUNCE).
 #[path = "demo_im_announce.rs"]
 pub mod im_announce;
+/// Violet Wolf's outfit for Inspect (AURORA_DEMO_INSPECT).
+#[path = "demo_inspect.rs"]
+pub mod inspect;
 /// Keyword alerts on lines of every kind (AURORA_DEMO_KEYWORDS).
 #[path = "demo_keywords.rs"]
 pub mod keywords;
@@ -6912,6 +6915,9 @@ pub fn events() -> Vec<NetEvent> {
     // (AURORA_DEMO_AVATAR_CACHE sends them later, demo_avatar_cache.rs)
     if !avatar_cache::enabled() {
         avatars.extend(wolf_attachments(false));
+        if inspect::enabled() {
+            avatars.extend(inspect::outfit());
+        }
     }
     let start = Vec3::new(132.0, 126.0, height(140.0, 130.0) + 0.35 + 0.84);
     // AURORA_DEMO_POS="x,y" moves the start position (captures)

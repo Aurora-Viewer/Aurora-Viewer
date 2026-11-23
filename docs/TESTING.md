@@ -6847,6 +6847,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_LINE_MENU=1\|object` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`), or an object line's in any style (with `AURORA_DEMO_OBJECT_CHAT`) |
 | `AURORA_DEMO_CONV_MODERATE=menu\|eject\|ban\|banned\|error\|ban-all\|unban-all\|ban-all-run\|profile` | A group chat's moderator options on a member: the menu, the eject and ban questions, a ban sent, a refused text mute, a ban in all our groups and its report, the profile's menu (with `AURORA_DEMO_CONV=aurora:group`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|classic\|form\|publish\|new-pick]` | An avatar's profile window |
+| `AURORA_DEMO_INSPECT=wolf\|self\|objects[:open\|creators\|details\|view]` | Inspect on what Violet Wolf or the demo agent wears, or on six plaza objects |
 | `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
 | `AURORA_DEMO_SHARE=multi[:n=<count>]` | Dozens of Orion-like friends (default 80) for inventory Share multi-select (#3074) |
 | `AURORA_DEMO_GIVE=profile\|avatar\|texture[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
@@ -6907,6 +6908,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_POSE_STAND=open\|cycle` | The toolbar's pose stand: its window and the poses it plays |
 
 ### Details
+
+- **`AURORA_DEMO_INSPECT=wolf|self|objects[:option]`** opens Inspect once the objects
+  are in view: `wolf` (default) on Violet Wolf's hat and orb, `self` on the
+  demo agent's chest, facial and skull attachments, `objects` on the first six
+  objects of the plaza (Objects tab, Owned by on the cards, Owner and Created in
+  Details). Check the summary card, the body-area sections, an opened card
+  (Made by, Worn on, the figure tiles with their share, the prims), the hover
+  Look at / Profile, the View panel and the Details table. `:open` opens the
+  third object's card, `:creators` and `:details` show those tabs, `:view` the
+  View panel.
 
 - **`AURORA_DEMO_RLVA`**: `enabled` opens Preferences > RLVa and
   applies synthetic object restrictions at frame 700. `disabled` delivers

@@ -4833,14 +4833,6 @@ inspect-owner-profile-tip = Profilen til eieren av det markerte objektet
 inspect-creator-profile = Se skaperens profil…
 inspect-creator-profile-tip = Profilen til den opprinnelige skaperen av det markerte objektet
 inspect-options = Viste kolonner
-inspect-totals = Totalstatistikk
-inspect-totals-objects = { $objects ->
-    [one] { $objects } objekt
-   *[other] { $objects } objekter
-    }, { $prims ->
-    [one] { $prims } prim
-   *[other] { $prims } primer
-    }
 inspect-totals-visible = Synlige flater
 inspect-totals-complexity = Kompleksitet
 inspect-totals-textures = Teksturer

@@ -1247,6 +1247,13 @@ geometry, expires after 30 seconds, and cancels on failure, manual movement,
 Escape, Stop or closing the controller. A recovered pilot requires at least
 one metre of actual travel before another automatic recovery can be requested.
 
+`ui/inspect/` draws Inspect: `mod.rs` the window (summary card, search with
+its View panel, the Outfit / Creators / Details switch), `model.rs` the prims
+gathered into objects (body areas, sort orders, badge tiers, shares),
+`list.rs` the one-line object cards and the Creators tab, `details.rs` the
+Legacy prim table with its totals. `app/inspect.rs` selects the prims, builds
+their rows and answers the window's actions (profiles, Look at).
+
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
 window and cache its filtered, sorted, virtualized object rows.
 `ui/area_search/controls.rs` places Results, Search, Filters and Ranges in shared tabs on the left, showing

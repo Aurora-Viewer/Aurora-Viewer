@@ -866,8 +866,11 @@ pub struct Settings {
     /// FSUseStandalonePlaceDetailsFloater: landmarks, place links and history
     /// entries open in their own window instead of the Places window.
     pub standalone_place_details: bool,
-    /// FSInspectColumnConfig: columns of the Inspect window (ui/inspect.rs).
+    /// FSInspectColumnConfig: columns of the Inspect window's Details table (ui/inspect).
     pub inspect_columns: u32,
+    /// The Inspect window's View panel: order, creator on the rows, what
+    /// else the rows show (Aurora's own).
+    pub inspect_view: crate::ui::inspect::InspectView,
     /// LandmarksSortedByDate: the Landmarks tab of Places sorted by date.
     pub landmarks_by_date: bool,
     /// FSTPHistoryTZ: the time zone of the teleport history's days, chosen
@@ -2583,6 +2586,7 @@ impl Default for Settings {
             show_movement_controls: false,
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
+            inspect_view: Default::default(),
             landmarks_by_date: true,
             tp_history_zone: HistoryZone::Slt,
             confirm_teleports: true,

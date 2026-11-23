@@ -182,6 +182,11 @@ impl DemoSim {
                 .unwrap_or(crate::demo::DEMO_AGENT);
             // the lamp of AURORA_DEMO_OBJECT_EXPORT: mostly our own work
             let creator_id = local_id.and_then(crate::demo::object_export::creator).unwrap_or(DEMO_CREATOR);
+            // Violet Wolf's outfit of AURORA_DEMO_INSPECT: named and credited
+            let outfit = local_id.and_then(crate::demo::inspect::props);
+            let creator_id = outfit.map_or(creator_id, |o| o.2);
+            let name = outfit.map_or(name, |o| o.0.to_owned());
+            let description = outfit.map_or_else(String::new, |o| o.1.to_owned());
             ObjectProps {
                 object_id: id,
                 full: true,
@@ -209,7 +214,7 @@ impl DemoSim {
                 folder_id,
                 from_task_id,
                 name,
-                description: String::new(),
+                description,
                 touch_name: touch_name.into(),
                 sit_name: sit_name.into(),
             }

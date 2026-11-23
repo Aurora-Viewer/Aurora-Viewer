@@ -4969,19 +4969,6 @@ inspect-owner-profile-tip = Профиль владельца выделенно
 inspect-creator-profile = Открыть профиль создателя…
 inspect-creator-profile-tip = Профиль первоначального создателя выделенного объекта
 inspect-options = Отображаемые столбцы
-inspect-totals = Сводная статистика
-inspect-totals-objects =
-    { $objects ->
-        [one] { $objects } объект
-        [few] { $objects } объекта
-        [many] { $objects } объектов
-       *[other] { $objects } объекта
-    }, { $prims ->
-        [one] { $prims } прим
-        [few] { $prims } прима
-        [many] { $prims } примов
-       *[other] { $prims } прима
-    }
 inspect-totals-visible = Видимые грани
 inspect-totals-complexity = Сложность
 inspect-totals-textures = Текстуры

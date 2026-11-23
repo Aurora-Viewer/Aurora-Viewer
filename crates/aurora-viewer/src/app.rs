@@ -10101,6 +10101,7 @@ impl App {
         wanted.extend(self.pay_ui.wanted_pics.drain());
         wanted.extend(self.inventory_ui.wanted_pics.drain());
         wanted.extend(self.conversation_log_ui.wanted_pics.drain());
+        wanted.extend(self.inspect_ui.wanted_pics.drain());
         let portrait = self.appearance_ui.wanted_outfit_portrait.take();
         self.scene.textures.show_outfit_portrait(portrait);
         if let Some(image) = portrait
@@ -21274,20 +21275,8 @@ impl App {
                 ) {
                     self.settings.save();
                 }
-                if self.inspect_ui.open {
-                    let (rows, totals) = self.inspect_rows();
-                    let mut columns = self.settings.inspect_columns;
-                    if let Some(id) = self.inspect_ui.show(&ctx, &p, &rows, &totals, &mut columns) {
-                        self.profile_ui.open(&mut self.world, id);
-                    }
-                    if columns != self.settings.inspect_columns {
-                        self.settings.inspect_columns = columns;
-                        self.settings.save();
-                    }
-                    if !self.inspect_ui.open {
-                        self.inspect_closed();
-                    }
-                }
+                self.demo_inspect();
+                self.inspect_window(&ctx, &p);
                 self.blacklist_window(&ctx, &p);
                 self.group_titles_window(&ctx, &p);
                 self.world_look_window(&ctx, &p);

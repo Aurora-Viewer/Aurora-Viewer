@@ -4974,17 +4974,81 @@ inspect-owner-profile-tip = 選択したオブジェクトの所有者のプロ�
 inspect-creator-profile = 作成者のプロフィールを表示…
 inspect-creator-profile-tip = 選択したオブジェクトの元の作成者のプロフィール
 inspect-options = 表示する列
-inspect-totals = 合計統計
-inspect-totals-objects = { $objects ->
-    [one] { $objects }個のオブジェクト
-   *[other] { $objects }個のオブジェクト
-    }、{ $prims ->
-    [one] { $prims }個のプリム
-   *[other] { $prims }個のプリム
-    }
 inspect-totals-visible = 表示中の面
 inspect-totals-complexity = 複雑度
 inspect-totals-textures = テクスチャ
+inspect-tab-outfit = コーデ
+inspect-tab-objects = オブジェクト
+inspect-tab-creators = クリエイター
+inspect-tab-details = 詳細
+inspect-objects-title = { $count ->
+   *[other] { $count }個のオブジェクト
+    }
+inspect-summary-items = { $count ->
+   *[other] { $count }個のアイテム
+    }
+inspect-summary-prims = { $count ->
+   *[other] { $count }個のプリム
+    }
+inspect-summary-creators = { $count ->
+   *[other] { $count }人のクリエイター
+    }
+inspect-open-profile = プロフィールを開く
+inspect-within-limit = 上限内
+inspect-over-limit = 上限超過
+inspect-limit-tip = あなたの複雑さの上限：{ $limit }
+inspect-view = 表示
+inspect-view-count = 表示・{ $count }
+inspect-view-tip = 並び順、クリエイター、行に表示する内容
+inspect-search = アイテムやクリエイターを検索
+inspect-search-prims = プリムやクリエイターを検索
+inspect-view-sort = 並び順
+inspect-sort-area = 部位
+inspect-sort-listed = 一覧順
+inspect-sort-name = 名前
+inspect-sort-heaviest = 重い順
+inspect-sort-newest = 新しい順
+inspect-view-creator = 行のクリエイター
+inspect-creator-picture = 写真
+inspect-creator-name = 名前
+inspect-creator-hidden = 非表示
+inspect-view-show = ほかに表示
+inspect-show-worn-on = 装着部位
+inspect-show-complexity = 複雑さ
+inspect-view-done = 完了
+inspect-hint = アイテムをクリックするとクリエイターと詳細を表示します
+inspect-hint-details = プリムをクリックすると輪郭を表示します
+inspect-outlined = { $name }の輪郭をワールドに表示中
+inspect-area-head = 頭
+inspect-area-body = 体
+inspect-area-arms = 腕と手
+inspect-area-legs = 脚と足
+inspect-area-hud = HUD
+inspect-area-other = その他
+inspect-area-world = オブジェクト
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = 複雑さ { $value }
+inspect-no-match = 「{ $query }」に一致するものはありません。
+inspect-spoken-worn = { $name }、{ $point }に装着、複雑さ { $complexity }、作成者 { $creator }
+inspect-spoken-object = { $name }、所有者 { $owner }、複雑さ { $complexity }、作成者 { $creator }
+inspect-made-by-tip = 作成者：{ $name }
+inspect-look-at = 見る
+inspect-look-at-tip = カメラを移動する
+inspect-profile-tip = クリエイターのプロフィールを開く
+inspect-made-by = 作成者
+inspect-owned-by = 所有者
+inspect-worn-on = 装着部位
+inspect-technical = 技術的な詳細
+inspect-prims-count = { $count ->
+   *[other] { $count }個のプリム
+    }
+inspect-prims-hint = プリムをクリックするとワールドに輪郭を表示します
+inspect-share-outfit = コーデの{ $percent }%
+inspect-share-selection = 選択の{ $percent }%
+inspect-tile-tmem = テクスチャメモリ
+inspect-tile-vram = VRAM
+inspect-tile-prims = プリム
 ui-login-installed = インストール済み
 world-inventory-demo-instructions = 手順
 build-ui-features-intensity = 強度

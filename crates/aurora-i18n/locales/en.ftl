@@ -5045,17 +5045,86 @@ inspect-owner-profile-tip = Profile of the highlighted object's owner
 inspect-creator-profile = See Creator Profile…
 inspect-creator-profile-tip = Profile of the highlighted object's original creator
 inspect-options = Columns shown
-inspect-totals = Total stats
-inspect-totals-objects = { $objects ->
-    [one] { $objects } object
-   *[other] { $objects } objects
-    }, { $prims ->
-    [one] { $prims } prim
-   *[other] { $prims } prims
-    }
 inspect-totals-visible = Visible faces
 inspect-totals-complexity = Complexity
 inspect-totals-textures = Textures
+inspect-tab-outfit = Outfit
+inspect-tab-objects = Objects
+inspect-tab-creators = Creators
+inspect-tab-details = Details
+inspect-objects-title = { $count ->
+    [one] { $count } object
+   *[other] { $count } objects
+    }
+inspect-summary-items = { $count ->
+    [one] { $count } item
+   *[other] { $count } items
+    }
+inspect-summary-prims = { $count ->
+    [one] { $count } prim
+   *[other] { $count } prims
+    }
+inspect-summary-creators = { $count ->
+    [one] { $count } creator
+   *[other] { $count } creators
+    }
+inspect-open-profile = Open the profile
+inspect-within-limit = Within your limit
+inspect-over-limit = Above your limit
+inspect-limit-tip = Your complexity limit: { $limit }
+inspect-view = View
+inspect-view-count = View · { $count }
+inspect-view-tip = Order, creator and what the rows show
+inspect-search = Search items or creators
+inspect-search-prims = Search prims or creators
+inspect-view-sort = Sort by
+inspect-sort-area = Body
+inspect-sort-listed = As listed
+inspect-sort-name = Name
+inspect-sort-heaviest = Heaviest
+inspect-sort-newest = Newest
+inspect-view-creator = Creator on the rows
+inspect-creator-picture = Picture
+inspect-creator-name = Name
+inspect-creator-hidden = Hidden
+inspect-view-show = Also show
+inspect-show-worn-on = Worn on
+inspect-show-complexity = Complexity
+inspect-view-done = Done
+inspect-hint = Click an item for its creator and details
+inspect-hint-details = Click a prim to outline it
+inspect-outlined = { $name } is outlined in the world
+inspect-area-head = Head
+inspect-area-body = Body
+inspect-area-arms = Arms and hands
+inspect-area-legs = Legs and feet
+inspect-area-hud = HUD
+inspect-area-other = Other
+inspect-area-world = Objects
+inspect-thousands = { $n }k
+inspect-megabytes = { $n } MB
+inspect-section-complexity = { $value } complexity
+inspect-no-match = Nothing matches “{ $query }”.
+inspect-spoken-worn = { $name }, worn on { $point }, complexity { $complexity }, made by { $creator }
+inspect-spoken-object = { $name }, owned by { $owner }, complexity { $complexity }, made by { $creator }
+inspect-made-by-tip = Made by { $name }
+inspect-look-at = Look at
+inspect-look-at-tip = Move the camera to it
+inspect-profile-tip = Open the creator's profile
+inspect-made-by = Made by
+inspect-owned-by = Owned by
+inspect-worn-on = Worn on
+inspect-technical = Technical details
+inspect-prims-count = { $count ->
+    [one] { $count } prim
+   *[other] { $count } prims
+    }
+inspect-prims-hint = Click a prim to outline it in the world
+inspect-share-outfit = { $percent }% of the outfit
+inspect-share-selection = { $percent }% of the selection
+inspect-tile-tmem = Texture memory
+inspect-tile-vram = VRAM
+inspect-tile-prims = Prims
 ui-login-installed = Installed
 world-inventory-demo-instructions = Instructions
 build-ui-features-intensity = Intensity

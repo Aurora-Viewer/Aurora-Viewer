@@ -4834,14 +4834,6 @@ inspect-owner-profile-tip = Vurgulanan nesnenin sahibinin profili
 inspect-creator-profile = Oluşturanın Profilini Gör…
 inspect-creator-profile-tip = Vurgulanan nesnenin ilk oluşturanının profili
 inspect-options = Gösterilen sütunlar
-inspect-totals = Toplam istatistikler
-inspect-totals-objects = { $objects ->
-    [one] { $objects } nesne
-   *[other] { $objects } nesne
-    }, { $prims ->
-    [one] { $prims } prim
-   *[other] { $prims } prim
-    }
 inspect-totals-visible = Görünür yüzler
 inspect-totals-complexity = Karmaşıklık
 inspect-totals-textures = Dokular

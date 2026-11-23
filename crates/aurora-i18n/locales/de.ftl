@@ -4877,15 +4877,6 @@ inspect-owner-profile-tip = Profil des Eigentümers des hervorgehobenen Objekts
 inspect-creator-profile = Erstellerprofil anzeigen…
 inspect-creator-profile-tip = Profil des ursprünglichen Erstellers des hervorgehobenen Objekts
 inspect-options = Angezeigte Spalten
-inspect-totals = Gesamtstatistik
-inspect-totals-objects =
-    { $objects ->
-        [one] { $objects } Objekt
-       *[other] { $objects } Objekte
-    }, { $prims ->
-        [one] { $prims } Prim
-       *[other] { $prims } Prims
-    }
 inspect-totals-visible = Sichtbare Flächen
 inspect-totals-complexity = Komplexität
 inspect-totals-textures = Texturen

@@ -5051,17 +5051,86 @@ inspect-owner-profile-tip = Profil du propriétaire de l'objet en surbrillance
 inspect-creator-profile = Voir le profil du créateur…
 inspect-creator-profile-tip = Profil du créateur d'origine de l'objet en surbrillance
 inspect-options = Colonnes affichées
-inspect-totals = Totaux
-inspect-totals-objects = { $objects ->
-    [one] { $objects } objet
-   *[other] { $objects } objets
-    }, { $prims ->
-    [one] { $prims } prim
-   *[other] { $prims } prims
-    }
 inspect-totals-visible = Faces visibles
 inspect-totals-complexity = Complexité
 inspect-totals-textures = Textures
+inspect-tab-outfit = Tenue
+inspect-tab-objects = Objets
+inspect-tab-creators = Créateurs
+inspect-tab-details = Détails
+inspect-objects-title = { $count ->
+    [one] { $count } objet
+   *[other] { $count } objets
+    }
+inspect-summary-items = { $count ->
+    [one] { $count } élément
+   *[other] { $count } éléments
+    }
+inspect-summary-prims = { $count ->
+    [one] { $count } prim
+   *[other] { $count } prims
+    }
+inspect-summary-creators = { $count ->
+    [one] { $count } créateur
+   *[other] { $count } créateurs
+    }
+inspect-open-profile = Ouvrir le profil
+inspect-within-limit = Dans votre limite
+inspect-over-limit = Au-dessus de votre limite
+inspect-limit-tip = Votre limite de complexité : { $limit }
+inspect-view = Affichage
+inspect-view-count = Affichage · { $count }
+inspect-view-tip = Ordre, créateur et ce que montrent les lignes
+inspect-search = Chercher un élément ou un créateur
+inspect-search-prims = Chercher une prim ou un créateur
+inspect-view-sort = Trier par
+inspect-sort-area = Corps
+inspect-sort-listed = Tel quel
+inspect-sort-name = Nom
+inspect-sort-heaviest = Plus lourds
+inspect-sort-newest = Plus récents
+inspect-view-creator = Créateur sur les lignes
+inspect-creator-picture = Photo
+inspect-creator-name = Nom
+inspect-creator-hidden = Masqué
+inspect-view-show = Montrer aussi
+inspect-show-worn-on = Porté sur
+inspect-show-complexity = Complexité
+inspect-view-done = Terminé
+inspect-hint = Cliquez un élément pour son créateur et ses détails
+inspect-hint-details = Cliquez une prim pour la souligner
+inspect-outlined = { $name } est souligné dans le monde
+inspect-area-head = Tête
+inspect-area-body = Corps
+inspect-area-arms = Bras et mains
+inspect-area-legs = Jambes et pieds
+inspect-area-hud = HUD
+inspect-area-other = Autre
+inspect-area-world = Objets
+inspect-thousands = { $n } k
+inspect-megabytes = { $n } Mo
+inspect-section-complexity = complexité { $value }
+inspect-no-match = Rien ne correspond à « { $query } ».
+inspect-spoken-worn = { $name }, porté sur { $point }, complexité { $complexity }, créé par { $creator }
+inspect-spoken-object = { $name }, appartenant à { $owner }, complexité { $complexity }, créé par { $creator }
+inspect-made-by-tip = Créé par { $name }
+inspect-look-at = Regarder
+inspect-look-at-tip = Amener la caméra dessus
+inspect-profile-tip = Ouvrir le profil du créateur
+inspect-made-by = Créé par
+inspect-owned-by = Appartient à
+inspect-worn-on = Porté sur
+inspect-technical = Détails techniques
+inspect-prims-count = { $count ->
+    [one] { $count } prim
+   *[other] { $count } prims
+    }
+inspect-prims-hint = Cliquez une prim pour la souligner dans le monde
+inspect-share-outfit = { $percent } % de la tenue
+inspect-share-selection = { $percent } % de la sélection
+inspect-tile-tmem = Mémoire des textures
+inspect-tile-vram = VRAM
+inspect-tile-prims = Prims
 ui-login-installed = Installée
 world-inventory-demo-instructions = Instructions
 build-ui-features-intensity = Intensité

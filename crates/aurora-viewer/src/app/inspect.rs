@@ -3,7 +3,7 @@
 //! sends for selected prims, the scene for geometry and textures. Follows
 //! LLFloaterInspect::onOpen / refresh (indra/newview/llfloaterinspect.cpp).
 use super::*;
-use crate::ui::inspect::{Row, Totals};
+use crate::ui::inspect::{Action, Row, Subject, Totals};
 use crate::world::names::NameScope;
 use aurora_net::RegionHandle;
 use aurora_net::build::BuildCmd;
@@ -39,7 +39,7 @@ impl App {
             return;
         }
         self.inspect_wire(false);
-        self.inspect_ui.inspect(roots);
+        self.inspect_ui.inspect(roots, Subject::Objects);
         // names, owners and dates come with the selection of each prim
         self.inspect_wire(true);
     }
@@ -53,7 +53,7 @@ impl App {
             return;
         }
         self.inspect_wire(false);
-        self.inspect_ui.inspect(roots);
+        self.inspect_ui.inspect(roots, Subject::Avatar(id));
         self.inspect_wire(true);
     }
 
@@ -129,22 +129,37 @@ impl App {
             prims: prims.len() as u32,
             ..Totals::default()
         };
-        // a linkset at a time, for its complexity
+        // a linkset at a time, for its complexity, kept on its root's row
+        let mut complexity: HashMap<usize, u32> = HashMap::new();
         let mut linkset: Vec<usize> = Vec::new();
         for (i, (idx, root)) in prims.iter().enumerate() {
             if *root && !linkset.is_empty() {
-                totals.complexity += self.scene.linkset_complexity(&self.world, &linkset);
+                let value = self.scene.linkset_complexity(&self.world, &linkset);
+                complexity.insert(linkset[0], value);
+                totals.complexity += value;
                 linkset.clear();
             }
             linkset.push(*idx);
             if i + 1 == prims.len() {
-                totals.complexity += self.scene.linkset_complexity(&self.world, &linkset);
+                let value = self.scene.linkset_complexity(&self.world, &linkset);
+                complexity.insert(linkset[0], value);
+                totals.complexity += value;
             }
         }
         let mut textures: HashSet<Uuid> = HashSet::new();
         let mut rows = Vec::with_capacity(prims.len());
         let loading = aurora_i18n::tr!("common-loading-2");
+        let mut point = 0;
         for (idx, root) in prims {
+            if root {
+                // the attachment point of the linkset (0: in the world)
+                point = self
+                    .world
+                    .objects
+                    .get(idx)
+                    .filter(|o| o.is_attachment())
+                    .map_or(0, |o| o.attachment_point());
+            }
             let Some(id) = self.world.objects.get(idx).map(|o| o.full_id) else {
                 continue;
             };
@@ -156,6 +171,8 @@ impl App {
                 faces: stats.faces,
                 vertices: stats.vertices,
                 triangles: stats.triangles,
+                point,
+                complexity: complexity.get(&idx).copied().unwrap_or(0),
                 ..Row::default()
             };
             for texture in &stats.textures {
@@ -201,6 +218,126 @@ impl App {
         }
         totals.textures = textures.len() as u32;
         (rows, totals)
+    }
+}
+
+impl App {
+    /// The Inspect window this frame, and what it asks for.
+    pub(super) fn inspect_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        if !self.inspect_ui.open {
+            return;
+        }
+        let (rows, totals) = self.inspect_rows();
+        let (name, profile) = match self.inspect_ui.subject {
+            Subject::Avatar(id) => {
+                self.world.social.want_name(id);
+                (
+                    self.world.social.name_in(NameScope::World, &id),
+                    self.world.rlva_shows_name(NameScope::World, id).then_some(id),
+                )
+            }
+            Subject::Objects => (String::new(), None),
+        };
+        let mut columns = self.settings.inspect_columns;
+        let mut view = self.settings.inspect_view;
+        let actions = self.inspect_ui.show(
+            ctx,
+            p,
+            crate::ui::inspect::Frame {
+                rows: &rows,
+                totals: &totals,
+                subject_name: &name,
+                subject_profile: profile,
+                pics: &self.avatar_pics,
+                point_names: &self.world.avatar_lib.attach_names,
+                max_complexity: self.settings.max_complexity,
+                columns: &mut columns,
+                view: &mut view,
+            },
+        );
+        if columns != self.settings.inspect_columns || view != self.settings.inspect_view {
+            self.settings.inspect_columns = columns;
+            self.settings.inspect_view = view;
+            self.settings.save();
+        }
+        for action in actions {
+            match action {
+                Action::Profile {
+                    who,
+                    named_here_alone: false,
+                } => self.profile_ui.open(&mut self.world, who),
+                Action::Profile {
+                    who,
+                    named_here_alone: true,
+                } => {
+                    crate::ui::profile::request_open_in(ctx, NameScope::Roster, who);
+                }
+                Action::LookAt(id) => self.inspect_look_at(id),
+            }
+        }
+        if !self.inspect_ui.open {
+            self.inspect_closed();
+        }
+    }
+
+    /// AURORA_DEMO_INSPECT=wolf|self|objects[:open|creators|details|view]:
+    /// Inspect on what Violet Wolf or the demo agent wears, or on objects of
+    /// the plaza, once they are in view.
+    pub(super) fn demo_inspect(&mut self) {
+        if !self.demo || self.inspect_ui.demo_done {
+            return;
+        }
+        let Ok(scenario) = std::env::var("AURORA_DEMO_INSPECT") else {
+            self.inspect_ui.demo_done = true;
+            return;
+        };
+        let (who, option) = scenario.split_once(':').unwrap_or((scenario.as_str(), ""));
+        match who {
+            "objects" => {
+                let ids: Vec<Uuid> = self
+                    .world
+                    .objects
+                    .iter()
+                    .filter(|(_, o)| !o.is_avatar() && !o.is_attachment() && o.parent_id == 0)
+                    .map(|(_, o)| o.full_id)
+                    .take(6)
+                    .collect();
+                if ids.len() < 6 {
+                    return;
+                }
+                self.inspect_objects(&ids);
+            }
+            who => {
+                let id = if who == "self" {
+                    crate::demo::DEMO_AGENT
+                } else {
+                    crate::demo::DEMO_LOUP
+                };
+                if worn_roots(&self.world, &id).len() < 2 {
+                    return;
+                }
+                self.inspect_avatar(id);
+            }
+        }
+        // `:open` the third object's card, `:creators`, `:details`, `:view`
+        self.inspect_ui.demo(option);
+        self.inspect_ui.demo_done = true;
+    }
+
+    /// Look at: the menu's Zoom on the object, the camera following it (an
+    /// attachment: its avatar), as Area Search's Zoom.
+    fn inspect_look_at(&mut self, id: Uuid) {
+        let now = std::time::Instant::now();
+        let Some(position) = self
+            .world
+            .objects
+            .index_of_uuid(&id)
+            .and_then(|idx| crate::scene::Scene::object_transform(&self.world, idx, now, 0))
+            .map(|xf| xf.0)
+        else {
+            return;
+        };
+        self.on_ctx_action(crate::ui::context::CtxAction::Zoom(position, Some(id)));
     }
 }
 

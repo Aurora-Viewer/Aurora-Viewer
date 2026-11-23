@@ -4877,15 +4877,6 @@ inspect-owner-profile-tip = Perfil do proprietário do objeto destacado
 inspect-creator-profile = Ver perfil do criador…
 inspect-creator-profile-tip = Perfil do criador original do objeto destacado
 inspect-options = Colunas mostradas
-inspect-totals = Estatísticas totais
-inspect-totals-objects =
-    { $objects ->
-        [one] { $objects } objeto
-       *[other] { $objects } objetos
-    }, { $prims ->
-        [one] { $prims } prim
-       *[other] { $prims } prims
-    }
 inspect-totals-visible = Faces visíveis
 inspect-totals-complexity = Complexidade
 inspect-totals-textures = Texturas
