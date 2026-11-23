@@ -4286,6 +4286,7 @@ ui-options-input-used-for-voice = Input used for voice
 ui-environment-sky-environment = Sky environment
 ui-environment-water-environment = Water environment
 build-ui-features-convex-hull = Convex hull
+build-ui-features-physics-none-root-hint = Only the child prims of a linkset can use the physics shape None: the root prim, or a prim on its own, keeps Prim or Convex hull.
 common-environment = Environment
 ui-environment-shared-environment = Shared environment
 ui-options-shared-environment-region-parcel-eep-day-cycle = Shared environment = region / parcel EEP day cycle
@@ -14916,6 +14917,7 @@ blender-live-levels-note = Prepared in Blender from each object's LiveMesh setti
 blender-live-quick-look-tip = Quick look: see this object larger
 blender-live-quick-look-drag = Drag to turn it, double-click to face it again.
 blender-live-quick-look-changed = Changed in Blender { $ago } ago.
+blender-live-quick-look-bend = Bent as in the Avatar tab: elbows { $elbows }°, knees { $knees }°.
 blender-live-undo = Undo
 blender-live-undo-derez = Derezzed { $name } · still in Blender’s list
 blender-live-undo-detach = Detached { $name } · still in Blender’s list

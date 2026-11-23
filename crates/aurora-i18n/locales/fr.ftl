@@ -4289,6 +4289,7 @@ ui-options-input-used-for-voice = Entrée utilisée pour la voix
 ui-environment-sky-environment = Env. ciel
 ui-environment-water-environment = Env. eau
 build-ui-features-convex-hull = Enveloppe convexe
+build-ui-features-physics-none-root-hint = Seules les primitives enfants d'un groupe lié peuvent prendre la forme physique Aucun : la primitive racine, ou une primitive seule, garde Prim ou Enveloppe convexe.
 common-environment = Environnement
 ui-environment-shared-environment = Environnement partagé
 ui-options-shared-environment-region-parcel-eep-day-cycle = Environnement partagé = cycle EEP de la région / parcelle
@@ -14921,6 +14922,7 @@ blender-live-levels-note = Préparés dans Blender d’après les réglages Live
 blender-live-quick-look-tip = Aperçu rapide : voir cet objet en plus grand
 blender-live-quick-look-drag = Faites glisser pour le tourner, double-cliquez pour le remettre de face.
 blender-live-quick-look-changed = Modifié dans Blender il y a { $ago }.
+blender-live-quick-look-bend = Plié comme dans l’onglet Avatar : coudes { $elbows }°, genoux { $knees }°.
 blender-live-undo = Annuler
 blender-live-undo-derez = { $name } dérezzé · toujours dans la liste de Blender
 blender-live-undo-detach = { $name } détaché · toujours dans la liste de Blender

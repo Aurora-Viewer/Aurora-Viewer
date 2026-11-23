@@ -1369,7 +1369,9 @@ each card's time comes from a per-source digest made on the transport thread,
 `PreparedSource::digest`; its live thumbnail, `blender_live/thumbnail.rs`, is
 an unskinned `aurora_render::preview::Model` capped at 20,000 triangles and
 128-pixel textures, built on the job pool once the digest has settled, and
-shown larger in Quick look, with a sweep while `Thumbnails::updating`) and
+shown larger in Quick look, with a sweep while `Thumbnails::updating`; a
+rigged part is skinned as a change from the skeleton's rest, so Quick look
+bends it with `thumbnail::bent_pose` without rebuilding it) and
 the folded Connection section; Place the selected static object's placement
 (a Derez, Detach, Drop or Attach keeps the previous placements of the root
 and its prims in `objects::Undo`, for the Undo toast under the status line); Avatar the elbow and knee bend
