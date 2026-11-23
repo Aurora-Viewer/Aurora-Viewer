@@ -15937,7 +15937,6 @@ large-surface-frame-max-hint = Максимальная суммарная пл�
 ui-options-attached-particles = Частицы от надетых объектов
 ui-options-attached-particles-hint = Отображает частицы от объектов, надетых на аватары, например искры, дым и огонь.
 ui-options-draw-distance-stepping = Плавное увеличение дальности прорисовки
-ui-options-draw-distance-stepping-hint = После входа и телепортации в другой регион дальность прорисовки начинается с 32 м и удваивается, пока не достигнет заданного вами значения. Ближние объекты загружаются первыми.
 panorama-reset = Сбросить вид
 panorama-enlarge = Увеличить
 panorama-leave-full = Выйти из увеличенного режима

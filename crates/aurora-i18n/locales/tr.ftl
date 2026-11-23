@@ -15440,7 +15440,6 @@ large-surface-frame-max-hint = En büyükleri gizlenmeden önce çizilen büyük
 ui-options-attached-particles = Giyilen nesnelerin parçacıkları
 ui-options-attached-particles-hint = Avatarların giydiklerinin parçacıklarını çizer: parıltılar, duman, ateş.
 ui-options-draw-distance-stepping = Kademeli çizme mesafesi
-ui-options-draw-distance-stepping-hint = Oturum açtıktan ve başka bir bölgeye ışınlandıktan sonra çizme mesafesi 32 m'den başlar ve sizin ayarınıza kadar ikiye katlanarak artar; böylece yakındakiler önce yüklenir.
 panorama-reset = Görünümü sıfırla
 panorama-enlarge = Büyüt
 panorama-leave-full = Büyütülmüş görünümden çık

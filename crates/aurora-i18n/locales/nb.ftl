@@ -15423,7 +15423,6 @@ large-surface-frame-max-hint = Overflaten av store objekter som tegnes før de s
 ui-options-attached-particles = Partikler fra objekter avatarer har på
 ui-options-attached-particles-hint = Tegn partiklene fra det avatarer har på seg: gnister, røyk, ild.
 ui-options-draw-distance-stepping = Gradvis visningsavstand
-ui-options-draw-distance-stepping-hint = Etter pålogging og etter en teleport til en annen region starter visningsavstanden på 32 m og dobles opp til din, slik at det som er nær, lastes inn først.
 panorama-reset = Tilbakestill visningen
 panorama-enlarge = Forstørr
 panorama-leave-full = Forlat den forstørrede visningen

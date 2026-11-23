@@ -15766,7 +15766,6 @@ large-surface-frame-max-hint = Площа великих об'єктів, яка
 ui-options-attached-particles = Частинки від вдягнутих об'єктів
 ui-options-attached-particles-hint = Малювати частинки того, що носять аватари: іскри, дим, вогонь.
 ui-options-draw-distance-stepping = Поступова дальність промальовування
-ui-options-draw-distance-stepping-hint = Після входу й після телепорту в інший регіон дальність промальовування починається з 32 м і подвоюється до вашого значення, щоб найближче завантажувалося першим.
 panorama-reset = Скинути вигляд
 panorama-enlarge = Збільшити
 panorama-leave-full = Вийти зі збільшеного вигляду

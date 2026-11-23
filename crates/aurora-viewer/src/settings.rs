@@ -729,14 +729,16 @@ pub struct Settings {
     /// FSRenderFarClipStepping: after the login and a teleport to another
     /// region, the draw distance starts at 32 m and grows back to the
     /// user's as the load allows (settings/draw_stepping.rs; off): doubling
-    /// every 2 s while the arrival is quiet and the frames fast, and
-    /// stepping back one level when frames stay heavy.
+    /// every 2 s while the arrival is quiet and the frames fast, more slowly
+    /// while they are not, and stepping back one level when frames stay
+    /// heavy.
     pub draw_distance_stepping: bool,
     /// FSRenderFarClipSteppingInterval: 20 s, 5 to 30 (Debug Settings only):
     /// the pace of the steps while objects are still arriving or the frames
     /// are slow (the Legacy Viewer's fixed pace).
     pub draw_distance_stepping_interval: u32,
-    /// The steps under way; the file keeps the user's draw distance.
+    /// The steps, under way or watching after reaching the user's
+    /// distance; the file keeps the user's draw distance.
     #[serde(skip)]
     pub draw_stepping: Option<draw_stepping::Stepping>,
     /// Autotune, the Performance window's target frame rate

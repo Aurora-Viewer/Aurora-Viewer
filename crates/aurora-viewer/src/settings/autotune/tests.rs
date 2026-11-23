@@ -707,6 +707,35 @@ fn a_change_of_the_avatars_during_the_steps_is_the_users() {
 }
 
 #[test]
+fn the_steps_at_the_users_distance_leave_autotune_alone() {
+    let mut s = Settings {
+        draw_distance: 256.0,
+        draw_distance_stepping: true,
+        ..Settings::default()
+    };
+    let mut steps = crate::settings::draw_stepping::begin(&mut s, Instant::now()).expect("on");
+    assert!(crate::settings::draw_stepping::holds_draw_distance(&s), "under way: paused");
+    // the steps reach the user's distance and keep watching
+    steps.step = steps.user;
+    s.draw_stepping = Some(steps);
+    s.draw_distance = steps.user;
+    assert!(!crate::settings::draw_stepping::holds_draw_distance(&s), "watching: not paused");
+    let mut h = Hold::new(&s);
+    let max_avatars = s.max_avatars;
+    h.write(
+        &mut s,
+        Tuned {
+            draw_distance: 100.0,
+            max_avatars,
+        },
+    );
+    assert_eq!(s.draw_distance, 100.0, "Autotune writes again");
+    assert_eq!(h.user(&s).draw_distance, 256.0);
+    s.autotune_hold = Some(h);
+    assert_eq!(s.to_saved().draw_distance, 256.0);
+}
+
+#[test]
 fn a_level_chosen_while_it_runs_is_the_users_even_at_the_tuned_values() {
     let mut s = Settings {
         draw_distance: 256.0,

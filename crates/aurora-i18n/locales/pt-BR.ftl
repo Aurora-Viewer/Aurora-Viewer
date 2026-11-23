@@ -15583,7 +15583,6 @@ large-surface-frame-max-hint = Área total das superfícies dos objetos grandes 
 ui-options-attached-particles = Partículas de objetos vestidos
 ui-options-attached-particles-hint = Exibe partículas de objetos anexados aos avatares, como faíscas, fumaça e fogo.
 ui-options-draw-distance-stepping = Aumento gradual da distância de renderização
-ui-options-draw-distance-stepping-hint = Após entrar ou se teleportar para outra região, a distância de renderização começa em 32 m e é dobrada até atingir o valor configurado. Assim, os objetos mais próximos carregam primeiro.
 panorama-reset = Restaurar a vista
 panorama-enlarge = Ampliar
 panorama-leave-full = Sair da vista ampliada
