@@ -6475,6 +6475,18 @@ impl World {
             .then_some(line)
     }
 
+    /// The name a message's notice gives its sender: the complete name in
+    /// every kind of session, as on_avatar_name_cache_toast writes FROM
+    /// (indra/newview/llimview.cpp). A group or conference line keeps the
+    /// legacy name the server sent (#3538); that name stands in until the
+    /// display name is known.
+    pub(crate) fn sender_name(&self, line: &ChatLine) -> String {
+        self.social
+            .avatar_names
+            .complete_in(names::NameScope::Roster, &line.source)
+            .unwrap_or_else(|| line.from.clone())
+    }
+
     /// `m` makes the Conversations button flash while the window is closed
     /// (FSFloaterIMContainer::addFlashingSession, from notify_of_message in
     /// llimview.cpp): a resident's message, never in do not disturb. Group
@@ -6505,28 +6517,18 @@ impl World {
         };
         let (from, text) = (line.source, line.text.clone());
         let group = m.kind != ImKind::Private;
-        // the sender's complete name in every kind of session, as
-        // on_avatar_name_cache_toast writes FROM (indra/newview/llimview.cpp):
-        // a group or conference line keeps the legacy name the server sent
-        // (#3538); that name stands in until the display name is known
-        let name = self
-            .social
-            .avatar_names
-            .complete_in(names::NameScope::Roster, &from)
-            .unwrap_or_else(|| line.from.clone());
+        let name = self.sender_name(line);
         // an emote reads "Jane waves", as LLToastIMPanel writes it
         let emote = attention::emote_line(&name, &text);
         let (title, body) = if group {
             (self.session_title(&m.session), emote.unwrap_or_else(|| format!("{name}: {text}")))
         } else {
-            (name, emote.unwrap_or(text))
+            (name.clone(), emote.unwrap_or(text))
         };
         let notification = self.notifications.push_message(m.session, from, title, body, prefs.im_in_bell);
-        self.notifications.link_name(
-            notification,
-            self.social.name_in(names::NameScope::Roster, &from),
-            notifications::NameTarget::Avatar(from),
-        );
+        // the name as written in the toast, so that it stays a link
+        self.notifications
+            .link_name(notification, name, notifications::NameTarget::Avatar(from));
         if m.kind == ImKind::Group {
             self.notifications.link_name(
                 notification,

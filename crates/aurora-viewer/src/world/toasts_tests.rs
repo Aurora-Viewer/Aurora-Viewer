@@ -515,7 +515,15 @@ fn group_and_conference_toasts_name_the_sender_by_the_complete_name() {
             "{kind:?}"
         );
         let n = w.notifications.list.last().expect("the toast");
-        assert_ne!(n.title, "Captain Tom (Tom Smith)", "{kind:?}: the session keeps the title");
+        assert_eq!(n.title, w.session_title(&session), "{kind:?}: the session keeps the title");
+        // the name written is the one that opens Tom's profile
+        assert!(
+            n.name_links
+                .iter()
+                .any(|l| l.name == "Captain Tom (Tom Smith)" && l.target == super::notifications::NameTarget::Avatar(TOM)),
+            "{kind:?}: {:?}",
+            n.name_links
+        );
 
         let mut w = world();
         w.notifications.toasts.group_im = true;
@@ -530,5 +538,32 @@ fn group_and_conference_toasts_name_the_sender_by_the_complete_name() {
         w.social.avatar_names.options.use_display_names = false;
         receive_named(&mut w, session, TOM, "Tom Smith", "meeting at 9", kind, false);
         assert_eq!(messages(&w), vec![(session, 1, "Tom Smith: meeting at 9".into())], "{kind:?}");
+    }
+}
+
+/// #3538: a group or conference line that mentions us is told to the
+/// system with the sender named as on its toast.
+#[test]
+fn a_mention_in_a_group_or_conference_is_told_with_the_complete_name() {
+    for kind in [ImKind::Group, ImKind::Conference] {
+        let session = if kind == ImKind::Group { GROUP } else { Uuid::from_u128(0x6300) };
+        let mut w = world();
+        tom_has_a_display_name(&mut w);
+        let text = format!("secondlife:///app/agent/{ME}/mention are you coming?");
+        receive_named(&mut w, session, TOM, "Tom Smith", &text, kind, false);
+        w.message_attention(&ImMessage {
+            kind,
+            session,
+            new_session: false,
+            mention: true,
+        });
+        let notice = w
+            .attention
+            .iter()
+            .find(|a| a.cause == attention::Cause::Mention)
+            .and_then(|a| a.notice.clone())
+            .expect("the mention is told to the system");
+        assert_eq!(notice.title, w.session_title(&session), "{kind:?}");
+        assert_eq!(notice.body, format!("Captain Tom (Tom Smith): {text}"), "{kind:?}");
     }
 }
