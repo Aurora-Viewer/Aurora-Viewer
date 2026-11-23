@@ -1529,7 +1529,9 @@ pub struct Settings {
     /// floater_moveview.xml) instead of `ui/controls.rs`.
     pub classic_controls: bool,
     /// The Controls window opens compact on the camera: its joysticks, zoom
-    /// and roll (the title button's compact / full, kept: #3904).
+    /// and roll (the title button's compact / full, kept: #3904). With
+    /// `classic_controls`, the camera opens in the Legacy Viewer's small
+    /// camera window instead (`FSUseSmallCameraFloater`).
     pub compact_controls: bool,
     /// The Controls window's Movement tab opens compact: the movement
     /// buttons and walk / run / fly (its title button, kept: #3904).

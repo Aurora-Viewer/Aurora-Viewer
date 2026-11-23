@@ -787,7 +787,8 @@ pub struct Floater<'a> {
     pub headless: bool,
     /// Its body's margins in place of the floater's own (`margin`).
     pub margin: Option<egui::Margin>,
-    /// A window without a title bar shows no close cross (`without_close`).
+    /// A window without a title bar shows no close cross, and Ctrl+W passes
+    /// over it (`without_close`).
     pub closable: bool,
     cascade: Option<CascadeGroup>,
     partial_outside: bool,
@@ -980,8 +981,11 @@ impl<'a> Floater<'a> {
 
     /// Without a title bar, and without the close cross beside it either:
     /// the window closes by what opened it (its toolbar button, its menu
-    /// entry, Ctrl+W), as the Legacy Viewer's small camera window
-    /// (floater_fs_camera_small.xml, `can_close="false"`).
+    /// entry), as the Legacy Viewer's small camera window
+    /// (floater_fs_camera_small.xml, `can_close="false"`). Ctrl+W passes
+    /// over it to the window behind, and Ctrl+Shift+W still closes it
+    /// (LLFloaterView::getFrontmostClosableFloater skips a floater that is
+    /// not closeable; closeAllChildren does not).
     pub fn without_close(mut self) -> Self {
         self.headless = true;
         self.closable = false;
@@ -1110,9 +1114,14 @@ impl<'a> Floater<'a> {
                 FLOATER_MARGIN
             });
         // Ctrl+W closes it as its cross does, when it is the frontmost.
-        // Ctrl+Shift+W closes every window.
+        // Ctrl+Shift+W closes every window, one without a close cross too,
+        // which Ctrl+W passes over (`without_close`).
         let mut close = super::close_key::take(ctx, egui::Id::unique(self.id)) || close_asked(ctx, self.id);
-        super::close_key::shown(ctx, egui::Id::unique(self.id));
+        if self.closable {
+            super::close_key::shown(ctx, egui::Id::unique(self.id));
+        } else {
+            super::close_key::shown_extra(ctx, egui::Id::unique(self.id));
+        }
         // the toolbar button, a menu entry or a shortcut asked to expand it
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);

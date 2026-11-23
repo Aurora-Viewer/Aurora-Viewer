@@ -17,7 +17,10 @@
 //! conversation shown instead (LLMultiFloater::closeDockedFloater); Close
 //! All still closes that window. The mini-map hides its title bar but is a
 //! window like the others (`LLFloaterMap`, `floater_map.xml`), so Close
-//! Window takes it. Script prompts are windows of their own while they show
+//! Window takes it. A window without a close cross (the small camera,
+//! `Floater::without_close`) is passed over for the one behind, as
+//! getFrontmostClosableFloater skips a floater that is not closeable;
+//! Close All still closes it ([`shown_extra`]). Script prompts are windows of their own while they show
 //! as toasts: Close Window takes the newest before the windows behind it
 //! ([`shown_prompt`]); kept in the notification list, Close All still closes
 //! them ([`shown_extra`]).

@@ -49,8 +49,10 @@ const ZOOM_BUTTON: f32 = 18.0;
 // buttons in the orbit joystick's bottom corners.
 const SMALL_WIDTH: f32 = 165.0;
 /// Its body: the window less its margins and its border.
-const SMALL_BODY: f32 = SMALL_WIDTH - 2.0 * SMALL_PAD - 2.0;
+const SMALL_BODY: f32 = SMALL_WIDTH - 2.0 * SMALL_INSET;
 const SMALL_PAD: f32 = 2.0;
+/// Where the body starts in the window: its margin and its border.
+const SMALL_INSET: f32 = SMALL_PAD + 1.0;
 /// The top row's 22 px take the Legacy window's top (its buttons at 0, its
 /// joysticks at 25), so 1 px above them where it has none.
 const SMALL_MARGIN: egui::Margin = egui::Margin {
@@ -339,7 +341,10 @@ impl ControlsUi {
             if *camera && compact.camera {
                 // the Legacy Viewer's small camera window (#677 on the
                 // feedback board): no title bar, moved by its background,
-                // closed by its toolbar button, menu entry or Ctrl+W
+                // closed by its toolbar button or menu entry (Ctrl+W
+                // passes over it, as `without_close` says). Its size is
+                // fixed: the Legacy Viewer's can be enlarged (can_resize,
+                // 165×77 at least), a difference noted in TASKS.md
                 Floater::new(
                     CLASSIC_CAMERA_SMALL,
                     aurora_i18n::tr!("controls-camera-title"),
@@ -841,7 +846,9 @@ fn compact_choice(by_title: bool, now: bool, free: bool) -> Option<bool> {
 /// the camera presets' Camera controls). Compact, the window shows
 /// the tab it is on (#3904): the button of that tab closes it with
 /// `toggle`, as it closes the full window; the other tab's button turns
-/// to it (#1815), in that tab's saved form (`ControlsUi::show`). `classic`: Legacy's two windows, each its own.
+/// to it (#1815), in that tab's saved form (`ControlsUi::show`). `classic`: Legacy's two windows, each its own,
+/// the camera's the small one when `small_camera` (Compact camera controls,
+/// as the Legacy Viewer's `FSUseSmallCameraFloater`).
 pub fn request(
     ctx: &egui::Context,
     camera: &mut bool,
@@ -1454,33 +1461,24 @@ fn small_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
         (CameraPreset::Shoulder, "user-scan"),
     ];
     for (rect, (preset, icon)) in at.views.into_iter().zip(presets) {
-        let button = small_button(ui, p, rect, icon, view.preset == preset);
+        let button = small_button(ui, p, rect, icon, &view_tip(preset), view.preset == preset);
         view_menu(&button, p, view, preset, out);
-        if button.on_hover_text(view_tip(preset)).clicked() {
+        if button.clicked() {
             out.actions.push(ControlAction::Preset(preset));
         }
     }
     let [object, mouselook, reset] = at.tools;
-    if small_button(ui, p, object, "box", view.object_view)
-        .on_hover_text(aurora_i18n::tr!("controls-object-view-tip"))
-        .clicked()
-    {
+    if small_button(ui, p, object, "box", aurora_i18n::tr!("controls-object-view-tip"), view.object_view).clicked() {
         out.actions.push(ControlAction::ObjectView);
     }
     let look = match pad_binding(view.keys, Action::Mouselook) {
         Some(b) => format!("{} ({})", aurora_i18n::tr!("common-mouselook"), b.label()),
         None => aurora_i18n::tr!("common-mouselook").to_owned(),
     };
-    if small_button(ui, p, mouselook, "eye-filled", view.mouselook)
-        .on_hover_text(look)
-        .clicked()
-    {
+    if small_button(ui, p, mouselook, "eye-filled", &look, view.mouselook).clicked() {
         out.actions.push(ControlAction::Mouselook);
     }
-    if small_button(ui, p, reset, "refresh", false)
-        .on_hover_text(aurora_i18n::tr!("controls-reset-view"))
-        .clicked()
-    {
+    if small_button(ui, p, reset, "refresh", aurora_i18n::tr!("controls-reset-view"), false).clicked() {
         out.actions.push(ControlAction::ResetOrbit);
     }
     let orbit = joystick(ui, p, at.sticks.orbit, "rotate-360", aurora_i18n::tr!("controls-orbit-tip"));
@@ -1573,7 +1571,11 @@ fn small_zoom(ui: &mut egui::Ui, p: &Palette, rail: Rect, zoom: f32) -> Option<f
         egui::Stroke::new(2.0, p.raised),
     );
     let thumb = Rect::from_center_size(egui::pos2(rail.center().x, y), SMALL_ZOOM_THUMB);
-    let ink = if resp.dragged() || resp.hovered() || resp.has_focus() { p.violet } else { p.ink };
+    let ink = if resp.dragged() || resp.hovered() || resp.has_focus() {
+        p.violet
+    } else {
+        p.ink
+    };
     painter.rect_filled(thumb, widgets::inner_radius(ui.visuals()), ink);
     resp.widget_info(|| egui::WidgetInfo::slider(true, f64::from(zoom), label));
     let dy = resp.drag_delta().y;
@@ -1588,7 +1590,7 @@ fn small_zoom(ui: &mut egui::Ui, p: &Palette, rail: Rect, zoom: f32) -> Option<f
 pub struct SmallCamera {
     /// Front, side, rear and over the shoulder.
     pub views: [Rect; 4],
-    /// Object view, mouselook and reset view, against the right edge.
+    /// Object view, mouselook and reset view, right after the views.
     pub tools: [Rect; 3],
     pub sticks: SticksRow,
     pub roll_left: Rect,
@@ -1599,11 +1601,11 @@ impl SmallCamera {
     pub fn new(min: Pos2) -> SmallCamera {
         let button = |left: f32| Rect::from_min_size(egui::pos2(left, min.y), Vec2::splat(SMALL_BUTTON));
         let step = SMALL_BUTTON + SMALL_BUTTON_GAP;
-        // floater_fs_camera_small.xml's buttons_view 3 px in, buttons 3 px
-        // from the right edge
-        let views = std::array::from_fn(|i| button(min.x + 3.0 + i as f32 * step));
-        let right = min.x + SMALL_BODY - 3.0;
-        let tools = std::array::from_fn(|i| button(right - (3 - i) as f32 * step + SMALL_BUTTON_GAP));
+        // floater_fs_camera_small.xml, from the window's left edge: the
+        // views at 5 (buttons_view, 76 wide), the tools 4 px after them, at
+        // 85 to 143; the body starts SMALL_INSET in
+        let views = std::array::from_fn(|i| button(min.x + 5.0 - SMALL_INSET + i as f32 * step));
+        let tools = std::array::from_fn(|i| button(min.x + 85.0 - SMALL_INSET + i as f32 * step));
         let row = Rect::from_min_size(egui::pos2(min.x, min.y + SMALL_ROW), Vec2::new(SMALL_BODY, SMALL_STICK));
         let sticks = SticksRow::sized(row, SMALL_STICK, SMALL_ZOOM_W);
         let o = sticks.orbit;
@@ -1619,8 +1621,11 @@ impl SmallCamera {
 }
 
 /// One of the small camera window's 18 px buttons: its icon on the field,
-/// on the accent while `on` (the view shown, object view, mouselook).
-fn small_button(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, on: bool) -> egui::Response {
+/// on the accent while `on` (the view shown, object view, mouselook), named
+/// `tip` for its tooltip and screen readers. Placed at `rect`, unlike
+/// `widgets::icon_toggle_sized`, and its response kept for the views'
+/// right click.
+fn small_button(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str, on: bool) -> egui::Response {
     let resp = ui.interact(rect, ui.scope_id().with(("small", icon)), Sense::click());
     let fill = if on {
         p.violet
@@ -1631,6 +1636,8 @@ fn small_button(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, on: bool
     };
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, fill);
     paint_icon(ui, icon, rect.center(), 14.0, if on { p.on_accent } else { p.ink });
+    let resp = resp.on_hover_text(tip);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, tip));
     resp
 }
 
@@ -2737,6 +2744,8 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
+                    // as App does at the start of the interface's frame
+                    crate::ui::close_key::begin(ui.ctx());
                     controls.show(ui.ctx(), p, camera, movement, compact, classic, &view);
                 },
             );
@@ -2946,6 +2955,43 @@ mod tests {
         assert!(camera, "open again");
     }
 
+    /// Ctrl+W passes over the small window, which has no close cross, and
+    /// closes the window behind it; Ctrl+Shift+W closes it with the others
+    /// (LLFloaterView::getFrontmostClosableFloater skips a floater that is
+    /// not closeable, closeAllChildren does not).
+    #[test]
+    fn ctrl_w_passes_over_the_small_window_and_close_all_takes_it() {
+        let mut h = Harness::new(Compact {
+            camera: true,
+            movement: true,
+        });
+        h.classic = true;
+        h.press(false);
+        h.press(true);
+        h.settle();
+        h.ctx
+            .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(CLASSIC_CAMERA_SMALL)));
+        h.settle();
+        assert!(h.camera && h.movement, "both open");
+        let w = |modifiers, pressed| egui::Event::Key {
+            key: egui::Key::W,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers,
+        };
+        h.frame(vec![w(egui::Modifiers::COMMAND, true)]);
+        h.frame(vec![w(egui::Modifiers::COMMAND, false)]);
+        assert!(h.camera, "the small window stays, on top");
+        assert!(!h.movement, "the window behind it closed");
+        h.frame(vec![w(egui::Modifiers::COMMAND, true)]);
+        h.frame(vec![w(egui::Modifiers::COMMAND, false)]);
+        assert!(h.camera, "alone, it still stays");
+        h.frame(vec![w(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, true)]);
+        h.frame(Vec::new());
+        assert!(!h.camera, "Close All closes it");
+    }
+
     /// The small window's parts, as floater_fs_camera_small.xml places them:
     /// all in its body, none over another, the roll buttons in the orbit
     /// joystick's bottom corners.
@@ -2973,6 +3019,10 @@ mod tests {
             assert_eq!(roll.bottom(), s.orbit.bottom());
         }
         assert_eq!((at.roll_left.left(), at.roll_right.right()), (s.orbit.left(), s.orbit.right()));
+        // from the window's left edge: the views at 5 to 83, the tools at 85 to 143
+        let x = |r: Rect| (r.left() + SMALL_INSET, r.right() + SMALL_INSET);
+        assert_eq!((x(at.views[0]).0, x(at.views[3]).1), (5.0, 83.0));
+        assert_eq!((x(at.tools[0]).0, x(at.tools[2]).1), (85.0, 143.0));
     }
 
     /// The small window's controls, a frame with `events` at `mouselook`.
