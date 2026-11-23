@@ -701,6 +701,8 @@ pub struct InventoryUi {
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
+    /// A local copy, cut or cancellation changed the shared clipboard in this pane.
+    clipboard_edited: bool,
     cut_rows: clipboard::CutRows,
     #[cfg(windows)]
     clipboard_sequence: Option<u32>,
@@ -2655,6 +2657,7 @@ pub fn show(
         dual.focus_search = *open && dual.focus_search;
         dual.clipboard.clone_from(&st.clipboard);
         dual.cut = st.cut;
+        dual.clipboard_edited = false;
         dual.pending = st.pending;
         dual.progress.clone_from(&st.progress);
         dual.copy_jobs.clone_from(&st.copy_jobs);
@@ -2853,6 +2856,10 @@ pub fn show(
         st.wanted_hover_images.extend(dual.wanted_hover_images.drain());
         st.preferences_dirty |= dual.preferences_dirty;
         dual.preferences_dirty = false;
+        if dual.clipboard_edited {
+            st.clipboard.clone_from(&dual.clipboard);
+            st.cut = dual.cut;
+        }
         st.consume_clipboard |= dual.consume_clipboard;
         dual.consume_clipboard = false;
         st.windows.append(&mut dual.windows);
