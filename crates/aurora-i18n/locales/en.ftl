@@ -5060,14 +5060,6 @@ inspect-summary-items = { $count ->
     [one] { $count } item
    *[other] { $count } items
     }
-inspect-summary-prims = { $count ->
-    [one] { $count } prim
-   *[other] { $count } prims
-    }
-inspect-summary-creators = { $count ->
-    [one] { $count } creator
-   *[other] { $count } creators
-    }
 inspect-open-profile = Open the profile
 inspect-within-limit = Within your limit
 inspect-over-limit = Above your limit

@@ -224,9 +224,12 @@ impl InspectView {
 pub struct Frame<'a> {
     pub rows: &'a [Row],
     pub totals: &'a Totals,
-    /// The wearer as the world names them (their stand-in under RLVa's
-    /// `@shownames`), for an avatar.
+    /// The wearer's display name as the world shows it (their stand-in
+    /// under RLVa's `@shownames`), for an avatar.
     pub subject_name: &'a str,
+    /// Their username ("orion.example") under the name; None when the world
+    /// hides them, or for objects.
+    pub subject_username: Option<&'a str>,
     /// The wearer whose profile the card's button opens; None when the world
     /// hides them.
     pub subject_profile: Option<Uuid>,
@@ -396,11 +399,6 @@ impl InspectUi {
     /// complexity against the user's limit.
     fn summary(&mut self, ui: &mut egui::Ui, p: &Palette, frame: &Frame<'_>, items: &[model::Item], actions: &mut Vec<Action>) {
         let radius = ui.visuals().window_corner_radius;
-        let creators = items
-            .iter()
-            .filter_map(|i| frame.rows[i.first].creator)
-            .collect::<HashSet<_>>()
-            .len();
         egui::Frame::new()
             .fill(p.bar)
             .corner_radius(radius)
@@ -431,17 +429,9 @@ impl InspectUi {
                         }
                     };
                     ui.add_space(4.0);
-                    let mut parts = Vec::new();
-                    if self.avatar() {
-                        parts.push(aurora_i18n::tr!("inspect-summary-items", count = items.len()));
-                        parts.push(aurora_i18n::tr!("inspect-summary-creators", count = creators));
-                    }
-                    parts.push(aurora_i18n::tr!("inspect-summary-prims", count = frame.rows.len()));
-                    if !self.avatar() {
-                        parts.push(aurora_i18n::tr!("inspect-summary-creators", count = creators));
-                    }
-                    // the box first, from the right: the name and the line
+                    // the box first, from the right: the name and the username
                     // take what is left, on one line each, cut short with "…"
+                    // (the counts are on the tabs below)
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
                             ui.add_space(((row_h - box_h) / 2.0).max(0.0));
@@ -471,7 +461,9 @@ impl InspectUi {
                                         });
                                     }
                                 });
-                                ui.add(egui::Label::new(figures_line(ui, p, &parts)).truncate());
+                                if let Some(username) = frame.subject_username {
+                                    ui.add(egui::Label::new(RichText::new(username).size(12.0).color(p.muted)).truncate());
+                                }
                                 let measured = ui.min_rect().height() - pad;
                                 if (measured - text_h).abs() > 0.5 {
                                     ui.data_mut(|d| d.insert_temp(text_id, measured));
@@ -685,62 +677,6 @@ fn profile_link(ui: &mut egui::Ui, p: &Palette) -> bool {
     resp.on_hover_text(tip).clicked()
 }
 
-/// The summary line, "12 items · 4 creators · 31 prims": the figures in
-/// the text's semi-bold ink, the words muted, whatever the language puts
-/// around the number.
-fn figures_line(ui: &egui::Ui, p: &Palette, parts: &[String]) -> egui::text::LayoutJob {
-    let bold = egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
-    let plain = egui::FontId::proportional(11.5);
-    let mut job = egui::text::LayoutJob::default();
-    let push = |job: &mut egui::text::LayoutJob, text: &str, figure: bool| {
-        let (font, color) = if figure { (bold.clone(), p.ink) } else { (plain.clone(), p.muted) };
-        job.append(
-            text,
-            0.0,
-            egui::TextFormat {
-                font_id: font,
-                color,
-                valign: egui::Align::BOTTOM,
-                ..Default::default()
-            },
-        );
-    };
-    for (i, part) in parts.iter().enumerate() {
-        if i > 0 {
-            push(&mut job, "  ·  ", false);
-        }
-        for (figure, run) in figure_runs(part) {
-            push(&mut job, run, figure);
-        }
-    }
-    job
-}
-
-/// `text` cut into runs of figures (digits, and the separators between
-/// two digits) and of the rest.
-fn figure_runs(text: &str) -> Vec<(bool, &str)> {
-    let chars: Vec<(usize, char)> = text.char_indices().collect();
-    let digit = |i: usize| chars.get(i).is_some_and(|c| c.1.is_ascii_digit());
-    let mut runs = Vec::new();
-    let mut start = 0;
-    let mut current = None;
-    for (i, &(at, c)) in chars.iter().enumerate() {
-        let separator = matches!(c, ',' | '.' | '\u{202F}' | '\u{A0}') && i > 0 && digit(i - 1) && digit(i + 1);
-        let figure = c.is_ascii_digit() || separator;
-        if let Some(was) = current
-            && was != figure
-        {
-            runs.push((was, &text[start..at]));
-            start = at;
-        }
-        current = Some(figure);
-    }
-    if let Some(was) = current {
-        runs.push((was, &text[start..]));
-    }
-    runs
-}
-
 /// How a profile button opens `who`: handed back to the app, which opens it
 /// as the world names people, or asked as a place that names its people asks
 /// (`profile::request_open_in`) for the creator this window names while the
@@ -752,15 +688,6 @@ pub fn profile_route(who: Option<Uuid>, named_here_alone: bool) -> (Option<Uuid>
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn figures_are_cut_from_their_words() {
-        assert_eq!(figure_runs("12 items"), [(true, "12"), (false, " items")]);
-        assert_eq!(figure_runs("1,204 prims"), [(true, "1,204"), (false, " prims")]);
-        assert_eq!(figure_runs("12個のアイテム"), [(true, "12"), (false, "個のアイテム")]);
-        assert_eq!(figure_runs("items, 3"), [(false, "items, "), (true, "3")]);
-        assert_eq!(figure_runs(""), []);
-    }
 
     /// The window keeps its size, its footer inside it.
     #[test]
@@ -796,6 +723,7 @@ mod tests {
                         rows: &rows,
                         totals: &Totals::default(),
                         subject_name: "Mira Solvane",
+                        subject_username: Some("mira.solvane"),
                         subject_profile: Some(Uuid::from_u128(99)),
                         pics: &pics,
                         point_names: &names,

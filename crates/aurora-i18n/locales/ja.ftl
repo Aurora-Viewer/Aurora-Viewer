@@ -4987,12 +4987,6 @@ inspect-objects-title = { $count ->
 inspect-summary-items = { $count ->
    *[other] { $count }個のアイテム
     }
-inspect-summary-prims = { $count ->
-   *[other] { $count }個のプリム
-    }
-inspect-summary-creators = { $count ->
-   *[other] { $count }人のクリエイター
-    }
 inspect-open-profile = プロフィールを開く
 inspect-within-limit = 上限内
 inspect-over-limit = 上限超過

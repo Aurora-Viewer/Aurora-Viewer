@@ -228,15 +228,19 @@ impl App {
             return;
         }
         let (rows, totals) = self.inspect_rows();
-        let (name, profile) = match self.inspect_ui.subject {
+        let (name, username, profile) = match self.inspect_ui.subject {
             Subject::Avatar(id) => {
                 self.world.social.want_name(id);
+                let shown = self.world.rlva_shows_name(NameScope::World, id);
                 (
-                    self.world.social.name_in(NameScope::World, &id),
-                    self.world.rlva_shows_name(NameScope::World, id).then_some(id),
+                    self.world.social.display_name_in(NameScope::World, &id),
+                    shown
+                        .then(|| crate::ui::profile::web_username(&self.world, NameScope::World, &id))
+                        .flatten(),
+                    shown.then_some(id),
                 )
             }
-            Subject::Objects => (String::new(), None),
+            Subject::Objects => (String::new(), None, None),
         };
         let mut columns = self.settings.inspect_columns;
         let mut view = self.settings.inspect_view;
@@ -247,6 +251,7 @@ impl App {
                 rows: &rows,
                 totals: &totals,
                 subject_name: &name,
+                subject_username: username.as_deref(),
                 subject_profile: profile,
                 pics: &self.avatar_pics,
                 point_names: &self.world.avatar_lib.attach_names,
