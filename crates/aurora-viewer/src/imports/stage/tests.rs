@@ -14,7 +14,7 @@ fn world() -> crate::world::World {
 }
 
 fn local(source: Source) -> Entry {
-    let mut entry = Entry::new("cached-source.gltf".into(), Ok(source), Default::default());
+    let mut entry = Entry::new("cached-source.gltf".into(), Ok(source), Preferences::default().texture());
     entry.local = true;
     entry.local_published = true;
     entry.local_restore_active = true;
@@ -125,6 +125,11 @@ fn material_snapshots_keep_distinct_submaterials_from_the_same_file_and_follow_s
             ]),
         });
         entry.name = format!("Material {index}");
+        entry.image_size_limit = if index == 0 {
+            ImageSizeLimit::Size1024
+        } else {
+            ImageSizeLimit::Size2048
+        };
         entry.material_index = index;
         imports.entries.push(entry);
     }
@@ -139,6 +144,9 @@ fn material_snapshots_keep_distinct_submaterials_from_the_same_file_and_follow_s
             panic!("material")
         };
         assert_eq!(copy.material_index, index);
+        assert_eq!(copy.image_size_limit, imports.entries[index].image_size_limit);
+        let maximum = if index == 0 { 1024 } else { 2048 };
+        assert_eq!((copy.options.max_width, copy.options.max_height), (maximum, maximum));
         assert_eq!(value.metallic_factor, index as f32 * 0.5);
         assert!(images[0].is_some());
         assert_eq!(
@@ -152,7 +160,7 @@ fn material_snapshots_keep_distinct_submaterials_from_the_same_file_and_follow_s
 }
 
 #[test]
-fn local_staging_obeys_selection_loading_confirmation_and_atomic_capacity_limits() {
+fn local_staging_obeys_selection_loading_and_confirmation_without_batch_caps() {
     let world = world();
     let mut imports = Imports {
         choice: Choice::Local,
@@ -176,11 +184,12 @@ fn local_staging_obeys_selection_loading_confirmation_and_atomic_capacity_limits
         entry.selected = false;
         imports.entries.push(entry);
     }
-    assert_eq!(imports.stage_local_uploads(&world, &Default::default(), &Default::default()), 0);
-    assert_eq!(imports.entries.len(), 512);
-    assert_eq!(imports.choice, Choice::Local);
-    assert_eq!(imports.message, aurora_i18n::tr!("import-batch-limit"));
+    assert_eq!(imports.stage_local_uploads(&world, &Default::default(), &Default::default()), 1);
+    assert_eq!(imports.entries.len(), 513);
+    assert_eq!(imports.choice, Choice::Bulk);
+    assert!(imports.message.is_empty());
     imports.entries.clear();
+    imports.choice = Choice::Local;
     let image = Arc::new(DecodedImage {
         width: 1024,
         height: 1024,
@@ -193,8 +202,8 @@ fn local_staging_obeys_selection_loading_confirmation_and_atomic_capacity_limits
         entry.selected = index == 0;
         imports.entries.push(entry);
     }
-    assert_eq!(imports.stage_local_uploads(&world, &Default::default(), &Default::default()), 0);
-    assert_eq!(imports.entries.len(), 256, "the retained input budget also rejects the whole batch");
+    assert_eq!(imports.stage_local_uploads(&world, &Default::default(), &Default::default()), 1);
+    assert_eq!(imports.entries.len(), 257, "shared pixels do not prevent preparing an upload");
     assert!(imports.queue.is_empty() && imports.spent == 0);
 }
 

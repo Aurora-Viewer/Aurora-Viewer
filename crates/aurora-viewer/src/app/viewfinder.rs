@@ -26,10 +26,13 @@ impl App {
     /// The HUDs show (and take clicks): Preferences' switch and, in
     /// immersive mode, its button (#1190); a HUD locked by RLVa keeps them
     /// shown; in the viewfinder the photo's own, so that the screen shows
-    /// what the photo will hold.
+    /// what the photo will hold; none while the Director's track plays
+    /// with "Hide HUDs" (a HUD locked by RLVa still shows).
     pub(super) fn huds_shown(&self) -> bool {
         let wanted = self.settings.show_huds && (!self.interface.immersive || self.settings.immersive_huds);
-        (wanted || self.world.rlva_has_locked_hud()) && (!self.viewfinder_on() || self.settings.snapshot.huds)
+        (wanted || self.world.rlva_has_locked_hud())
+            && (!self.viewfinder_on() || self.settings.snapshot.huds)
+            && !self.director_hides_huds()
     }
 
     fn vf_now(&self) -> f64 {
@@ -47,6 +50,60 @@ impl App {
         (at.x * w as f32, at.y * h as f32)
     }
 
+    /// While the viewfinder shows: its view, for the next opening once it
+    /// closes. None in mouselook: the view is the avatar's aim, which a
+    /// later opening outside mouselook could not take.
+    fn vf_keep_view(&mut self) {
+        let Some(origin) = self.world.main_origin() else {
+            return;
+        };
+        self.snapshots.view_kept = (!self.camera.mouselook()).then(|| vf::KeptView {
+            eye: crate::camera::presets::to_global(origin, self.camera.position),
+            at: crate::camera::presets::to_global(origin, self.camera.target),
+            fov: self.settings.camera.fov,
+            free: self.camera.free().is_some(),
+        });
+    }
+
+    /// The viewfinder opens: the camera goes back to the view it had when
+    /// it last closed (`vf_keep_view`), with its field of view, flown by
+    /// the free camera again if it was. Not in mouselook, nor while RLVa
+    /// holds the camera (as for a preset), nor past the draw distance (as
+    /// for a place preset): the view stays where it is then.
+    fn vf_view_back(&mut self) {
+        let Some(kept) = self.snapshots.view_kept else {
+            return;
+        };
+        if !self.in_world() || self.camera.mouselook() || self.world.rlva.camera_preset_locked(uuid::Uuid::nil()) {
+            return;
+        }
+        let Some(origin) = self.world.main_origin() else {
+            return;
+        };
+        let reach = self.settings.draw_distance.max(64.0);
+        let Some((eye, at)) = kept.back(origin, self.world.agent.position, reach) else {
+            log::info!("viewfinder: the view it closed on is out of reach, kept where it is");
+            return;
+        };
+        if kept.fov.is_finite() {
+            self.settings.camera.fov = kept.fov;
+        }
+        if kept.free && self.camera.free().is_none() {
+            self.snapshots.ui.free.on = true;
+            self.photo_free_camera();
+        }
+        let shown = vf::KeptView::shown(eye, at, self.camera.position, self.camera.target);
+        match self.camera.free_mut() {
+            Some(free) => *free = crate::camera::FreeCamera::from_view(eye, at),
+            None if shown => {}
+            None => self.camera.set_view(eye, at, &mut self.world.agent, &self.settings.camera),
+        }
+        log::info!(
+            "viewfinder: view back at {eye:.1?}{}",
+            if self.camera.free().is_some() { " (free camera)" } else { "" }
+        );
+    }
+
     /// Each frame, before it is laid out: the depth that came back under
     /// the AF point, the hunt, the lens in AF-C and MF, the histogram.
     pub(super) fn viewfinder_frame(&mut self, renderer: &mut Renderer) {
@@ -62,10 +119,26 @@ impl App {
             log::info!("viewfinder: depth of field on (first opening)");
         }
         match (self.viewfinder_on(), self.snapshots.fov_before) {
-            (true, None) => self.snapshots.fov_before = Some(self.settings.camera.fov),
+            (true, None) => {
+                self.snapshots.fov_before = Some(self.settings.camera.fov);
+                // "Keep the framing" off: the photo mode opens on the camera
+                // as it is (the framing is still noted, for when it is on)
+                let keep = self.settings.snapshot.viewfinder.keep_framing;
+                if keep {
+                    self.vf_view_back();
+                }
+                // the tilt it had when it closed, unless the camera controls
+                // tilted the view meanwhile (theirs is kept)
+                if keep && self.camera.roll == 0.0 && self.snapshots.roll_kept != 0.0 {
+                    self.camera.roll = self.snapshots.roll_kept;
+                    log::info!("viewfinder: tilt back to {:.1}°", self.camera.roll.to_degrees());
+                }
+            }
             (false, Some(fov)) => {
-                // Only closing the viewfinder resets its roll; ordinary camera
-                // controls also own roll while the viewfinder is closed.
+                // Only closing the viewfinder levels the view; ordinary camera
+                // controls also own roll while the viewfinder is closed. Its
+                // tilt is kept for the next opening.
+                self.snapshots.roll_kept = self.camera.roll;
                 self.camera.roll = 0.0;
                 self.snapshots.fov_before = None;
                 if (self.settings.camera.fov - fov).abs() > 1e-6 {
@@ -74,7 +147,10 @@ impl App {
                     log::info!("viewfinder: field of view back to {:.1}°", fov.to_degrees());
                 }
             }
-            _ => {}
+            // (not on the opening frame: the view taken back moves the
+            // camera at its next update)
+            (true, Some(_)) => self.vf_keep_view(),
+            (false, None) => {}
         }
         if !self.viewfinder_on() {
             let v = &mut self.snapshots.vf;
@@ -327,15 +403,11 @@ impl App {
         }
     }
 
-    /// What the lens takes on an avatar's head, whichever way its face is
-    /// turned: the side of the head nearest the camera (the face, or the
-    /// back of the head), not the mHead bone, which sits at the base of the
-    /// skull a hand behind the face: at f/1.8 close up, the face would blur.
+    /// What the lens takes on an avatar's head: its nearer eye, or the back
+    /// of its head from behind (`vf::face_focus`).
     fn vf_head(&self, id: &uuid::Uuid, now: Instant) -> Option<glam::Vec3> {
-        // the head's middle, about where the face box is centred
-        let centre = self.scene.head_world(&self.world, id, now)? + glam::Vec3::Z * 0.09;
-        let toward = (self.camera.position - centre).normalize_or_zero();
-        Some(centre + toward * HEAD_RADIUS)
+        let face = self.scene.face_world(&self.world, id, now)?;
+        Some(vf::face_focus(self.camera.position, face.head, face.forward, face.eyes))
     }
 
     /// The name the AF frame shows over an avatar's head: its display name
@@ -525,12 +597,14 @@ impl App {
             self.build.deselect_all(&self.world);
             self.flush_build();
         }
-        // A poser handle or a shown HUD under the pointer keeps the press
+        // A poser handle, IK manipulator or shown HUD under the pointer keeps the press
         // (#1389): the Legacy Viewer's snapshot floater takes no scene
         // clicks, so a HUD's poses and the poser stay usable while framing.
         // The world's press path then decides between the two, as outside
         // the viewfinder.
-        if poser_owns || (self.huds_shown() && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some()) {
+        if (self.ik_editor.open && self.ik_editor.manipulator_owns_pointer())
+            || (self.huds_shown() && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some())
+        {
             return false;
         }
         let Some(mut gfx) = self.gfx.take() else {
@@ -1167,9 +1241,6 @@ fn free_pad_axes(pad: &crate::ui::viewfinder::Pad) -> (egui::Vec2, egui::Vec2, f
         -pad.pan.y,
     )
 }
-
-/// About half a head's depth (m): from its middle to the face.
-const HEAD_RADIUS: f32 = 0.09;
 
 /// The viewfinder's sounds (`snapshot::viewfinder`).
 #[derive(Debug, Clone, Copy)]

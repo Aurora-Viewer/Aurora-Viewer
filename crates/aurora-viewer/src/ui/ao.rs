@@ -12,6 +12,7 @@ mod category;
 mod combinations;
 mod editor;
 mod migration;
+pub mod mini;
 pub mod prototype;
 pub mod quick;
 #[cfg(test)]
@@ -24,6 +25,8 @@ pub enum Action {
     Import(Uuid),
     Migrate,
     ReloadMigration,
+    FinishRecovery(inventory::Recovery),
+    ShowRecovery(Uuid),
     Reload,
     Preferences,
     MovementPreferences,
@@ -137,7 +140,7 @@ fn push(out: &mut Vec<Action>, state: &mut AoUi, result: Result<Mutation, String
     }
 }
 
-fn toggle(ui: &mut egui::Ui, p: &Palette, key: &'static str, value: &mut bool) -> bool {
+pub(super) fn toggle(ui: &mut egui::Ui, p: &Palette, key: &'static str, value: &mut bool) -> bool {
     ui.horizontal(|ui| {
         let changed = widgets::switch(ui, p, value).changed();
         let label = ui.add(egui::Label::new(aurora_i18n::text(key)).sense(egui::Sense::click()));
@@ -151,7 +154,7 @@ fn toggle(ui: &mut egui::Ui, p: &Palette, key: &'static str, value: &mut bool) -
     .inner
 }
 
-fn enabled(ui: &mut egui::Ui, p: &Palette, runtime: &mut Runtime, account: &mut Account) -> bool {
+pub(super) fn enabled(ui: &mut egui::Ui, p: &Palette, runtime: &mut Runtime, account: &mut Account) -> bool {
     let changed = toggle(ui, p, "ao-enabled", &mut account.enabled);
     if changed && account.enabled {
         runtime.stands = true;
@@ -270,6 +273,8 @@ pub fn show(
                         }
                         if widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), true) {
                             state.remove = Some(set.id);
+                            // the question left folded to its title bar opens again
+                            widgets::bring_floater_front(ui.ctx(), "ao_remove");
                         }
                     }
                 });
@@ -292,6 +297,32 @@ pub fn show(
                     egui::ScrollArea::vertical().max_height(85.0).show(ui, |ui| {
                         for warning in &state.warnings {
                             ui.label(warning);
+                        }
+                    });
+                });
+            }
+            for recovery in inventory::recoveries(inv) {
+                let name = inv
+                    .folders
+                    .get(&recovery.source)
+                    .map_or("Aurora AO".to_owned(), |f| f.info.name.clone());
+                widgets::surface(ui, p, |ui| {
+                    let notice = if recovery.duplicate {
+                        aurora_i18n::tr!("ao-duplicate-native", folder = name.as_str(), count = recovery.sets)
+                    } else {
+                        aurora_i18n::tr!("ao-unfinished-import", folder = name.as_str(), count = recovery.sets)
+                    };
+                    ui.label(RichText::new(notice).color(p.warn));
+                    ui.horizontal(|ui| {
+                        // Like the other AO buttons: an edit already running
+                        // would drop the click.
+                        ui.add_enabled_ui(!state.busy() && !catalog.loading, |ui| {
+                            if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-finish-import")).clicked() {
+                                out.push(Action::FinishRecovery(recovery));
+                            }
+                        });
+                        if widgets::flat_button(ui, p, aurora_i18n::tr!("ao-show-in-inventory")).clicked() {
+                            out.push(Action::ShowRecovery(recovery.source));
                         }
                     });
                 });

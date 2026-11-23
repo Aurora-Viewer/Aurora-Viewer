@@ -23,6 +23,7 @@ on:
       - scripts/nightly-prune.ps1
       - scripts/test-nightly.ps1
       - scripts/tools/nightly.ps1
+      - .github/actions/release-admin/**
 
 permissions:
   contents: write
@@ -44,6 +45,9 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           filter: blob:none
+      # by hand, an admin only, before any tag is pushed (the Release
+      # workflow checks it again)
+      - uses: ./.github/actions/release-admin
       - name: Next beta tag
         id: next
         shell: pwsh
@@ -53,6 +57,12 @@ jobs:
     needs: tag
     if: needs.tag.outputs.tag != ''
     uses: ./.github/workflows/release.yml
+    # what its jobs ask for: a called workflow gets no more than this. Its
+    # Windows job reads the run's artifacts for code signing, which a beta
+    # skips; the permission is checked before the run all the same.
+    permissions:
+      contents: write
+      actions: read
     with:
       tag: ${{ needs.tag.outputs.tag }}
 
@@ -77,3 +87,8 @@ jobs:
       - name: Fixture tests
         shell: pwsh
         run: ./scripts/test-nightly.ps1
+      # the workflow token can read a permission (anyone's: the pull
+      # request's author need not be an admin)
+      - uses: ./.github/actions/release-admin
+        with:
+          enforce: 'false'

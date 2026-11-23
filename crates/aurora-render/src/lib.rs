@@ -10,10 +10,16 @@ pub mod adapter_choice;
 mod alpha_mask_tests;
 pub mod arena;
 pub mod bc7;
+mod blend_exact;
+#[cfg(test)]
+mod blend_exact_tests;
 #[cfg(test)]
 mod blend_tests;
 mod bloom;
+mod clouds;
+pub mod clouds_noise;
 mod contact_shadows;
+pub mod curvature;
 mod cutout;
 // (Vulkan only: Metal textures stay with wgpu's allocator)
 #[cfg_attr(target_os = "macos", path = "dedicated_none.rs")]
@@ -22,7 +28,9 @@ mod device_lost;
 pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic, loss_details};
 mod dof;
 mod drawn_pick;
+mod equirect;
 mod exposure;
+mod film_readback;
 pub mod frame_priority;
 mod fsr;
 pub mod gpu_alloc;
@@ -33,13 +41,16 @@ mod histogram;
 pub mod hud;
 mod label_depth;
 pub mod light_tiles;
+pub mod look_thumbs;
 pub mod looks;
 pub mod main_thread;
 mod motion_debug;
 mod motion_history;
 mod occlusion;
+pub mod oit_stochastic;
 pub mod pacing;
 mod packet;
+pub mod panorama;
 mod part_pick;
 mod pick;
 pub mod pipeline_cache;
@@ -54,11 +65,14 @@ mod readback;
 mod render_thread;
 mod renderer;
 mod rlva;
+pub mod second_view;
 mod selection;
 pub mod shadow_cull;
 mod shadow_merge;
+mod soft_shadows;
 #[cfg(test)]
 mod specular_aa;
+pub mod spirv_fix;
 pub mod stars;
 pub mod start_progress;
 pub mod stereo_view;
@@ -69,6 +83,7 @@ mod test_gpu;
 pub mod tex_anim;
 pub mod textures;
 pub mod thread_cpu;
+pub mod thumbnail;
 pub mod types;
 mod ui_blur;
 mod ui_frame;
@@ -82,6 +97,7 @@ pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
+pub use thumbnail::{THUMBNAIL_MAX, Thumbnail};
 pub use vr_control::{HeadPose, VrState};
 /// Whether a VR headset is ready now (`xr_device::headset_ready`), for the
 /// restart that brings VR when the headset came after startup; not probed
@@ -103,24 +119,29 @@ mod xr_device;
 mod xr_device;
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 mod xr_frame;
-pub use water_effects::{WaterEffects, WaterEvent, WaterGround};
+pub use water_effects::{RAIN_GROUND_SIZE, RainGround, WaterEffects, WaterEvent, WaterGround};
 
 pub use arena::MeshAlloc;
 // What a tile of a photo draws around what it keeps, for the bloom, the
 // depth of field and the contact shadows (snapshot tiles in the viewer).
 pub use bloom::tile_reach as bloom_tile_reach;
+pub use clouds::type_of_shadow as clouds_type_of_shadow;
 pub use contact_shadows::tile_reach as contact_tile_reach;
 pub use dof::tile_reach as dof_tile_reach;
 pub use drawn_pick::{Drawn, DrawnFace, DrawnMode};
+pub use equirect::{Answer as EquirectAnswer, CAPTURE_CAMERAS, CaptureCamera, EquirectJob, pixel_direction};
+pub use film_readback::{FilmFrame, FilmRequest, overlay_rect};
 pub use gpu_cull::set_whole_chunk_uploads;
 pub use histogram::HISTOGRAM_BINS;
 pub use hud::HudView;
-pub use label_depth::{world_label_at, world_line_at};
+pub use label_depth::{WORLD_OVERLAY_NEAR_W, clip_world_line, world_label_at, world_line_at};
 pub use main_thread::{GpuInfo, Renderer, VulkanLimits};
 pub use renderer::{CASCADES, RenderError};
+// What a tile of a photo draws around what it keeps for the soft shadows.
+pub use soft_shadows::tile_reach as soft_shadow_tile_reach;
 pub use textures::{MASK_CUTOFF, MipLevel, alpha_coverage, build_mips, build_mips_alpha_weighted, preserve_alpha_coverage};
 pub use types::*;
-pub use ui_blur::blurred_backdrop;
+pub use ui_blur::{blurred_backdrop, set_ui_blur};
 pub use ui_frame::{EguiFrame, EguiHandOver, vr_hint_marker};
 pub use ui_glass::{glass_diamond, glass_panel, glass_panel_faded, glass_region};
 pub use ui_world::end_world_labels;
@@ -167,6 +188,24 @@ pub(crate) fn water_shader_source(files: &[&str], baked: &'static str) -> std::b
 
 pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
     water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER)
+}
+
+/// object.wgsl as the device takes it: without the attributes of the early
+/// depth test (`fs_blend_once`; `fs_depth_occlusion`, which then runs for
+/// the texels the depth would have ruled out, and writes the same) where
+/// the device does not know them, as on Metal. naga refuses a whole module
+/// for one entry point it cannot read, so every module made from
+/// object.wgsl (the scene, the stochastic transparency, the impostors)
+/// takes it from here (#3751).
+pub(crate) fn object_shader_source(features: wgpu::Features) -> String {
+    let source = water_shader_source(&["object.wgsl"], include_str!("shaders/object.wgsl"));
+    if features.contains(blend_exact::EARLY_TEST) {
+        source.into_owned()
+    } else {
+        source
+            .replace("@early_depth_test(force)", "")
+            .replace("@early_depth_test(less_equal)", "")
+    }
 }
 
 #[cfg(test)]
@@ -281,6 +320,7 @@ mod shader_tests {
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
             return;
         };
+        let fragment = crate::test_gpu::fragment_inv_w(fragment, &adapter);
         let features = adapter.features() & wgpu::Features::DEPTH_CLIP_CONTROL;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             required_features: features,
@@ -291,6 +331,7 @@ mod shader_tests {
             r#"
 struct ProbeFrame {{view_proj:mat4x4<f32>}};
 @group(0) @binding(0) var<uniform> frame:ProbeFrame;
+fn world_clip(p:vec3<f32>)->vec4<f32> {{return frame.view_proj*vec4<f32>(p,1.0);}}
 struct VsIn {{@builtin(vertex_index) vertex:u32,@builtin(instance_index) layer:u32}};
 struct WaterOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>,@location(1) level:f32}};
 struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
@@ -594,10 +635,12 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                 reference = Some(row);
                 for x in 0..8 {
                     assert_eq!(data[x], 0.0, "air must not write an interface");
-                    // Clipping a 200 m triangle to this tiny target has sub-mm
-                    // interpolation error, well below the 1 cm sheet spacing.
+                    // Clipping a 200 m triangle to this tiny target leaves an
+                    // interpolation error of about 1 mm (0.00035 at 0.3 m on an
+                    // AMD Vulkan driver), well below the 1 cm sheet spacing
+                    // (0.0078 between the two sheets at 0.3 m).
                     assert!(
-                        (data[7 * 64 + x] - expected).abs() < 0.0002,
+                        (data[7 * 64 + x] - expected).abs() < 0.001,
                         "the nearest interface must win in either order, including before near: delta {delta}, order {order:?}, got {} expected {expected}",
                         data[7 * 64 + x]
                     );
@@ -618,6 +661,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
         let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
         let env = include_str!("shaders/env.wgsl");
         let depth = &env[env.find("fn water_interface_depth(").expect("depth")..env.find("// Event history").expect("end")];
+        let depth = crate::test_gpu::fragment_inv_w(depth, &adapter);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("water exclusion regression"),
             source: wgpu::ShaderSource::Wgsl(
@@ -625,13 +669,16 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
                     r#"
 struct Frame {{view_proj:mat4x4<f32>}};
 @group(0) @binding(0) var<uniform> frame:Frame;
+fn world_clip(p:vec3<f32>)->vec4<f32> {{return frame.view_proj*vec4<f32>(p,1.0);}}
 struct WaterOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
 struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
 @vertex fn vertex(@builtin(vertex_index) v:u32,@builtin(instance_index) layer:u32)->WaterOut {{
     let corners=array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0),vec2<f32>(3.0,-1.0),vec2<f32>(-1.0,3.0));
     let w=1.0+f32(layer);
     let world=vec3<f32>(corners[v]*w,w);
-    return WaterOut(vec4<f32>(corners[v],0.5,1.0),world);
+    // The clip position the frame's matrix gives this point: the depth
+    // reads the fragment's 1/w, like the viewer's water.
+    return WaterOut(vec4<f32>(corners[v]*w,0.5*w,w),world);
 }}
 {depth}
 "#
@@ -829,7 +876,7 @@ struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32
         let source = format!(
             r#"
 struct FogFrame {{camera_pos:vec4<f32>,params:vec4<f32>,water_params:vec4<f32>,water_fog:vec4<f32>,
-    sun_color:vec4<f32>,sun_dir:vec4<f32>,sky_zenith:vec4<f32>,cam_up:vec4<f32>}};
+    sun_color:vec4<f32>,sun_dir:vec4<f32>,sky_zenith:vec4<f32>,cam_up:vec4<f32>,water_air:vec4<f32>}};
 var<private> enhanced:bool;
 var<private> fine_wake:f32;
 var<private> reflection:bool;
@@ -839,6 +886,7 @@ fn water_fx_bed(p:vec2<f32>)->vec2<f32> {{return vec2<f32>(0.0);}}
 fn water_wake_sample(p:vec2<f32>,level:f32)->vec4<f32> {{return vec4<f32>(0.0,0.0,fine_wake,0.0);}}
 var<private> frame:FogFrame;
 @group(0) @binding(0) var<storage,read_write> result:array<vec4<f32>>;
+{}
 {}
 {}
 @compute @workgroup_size(1)
@@ -861,6 +909,18 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     if(id.x==15u) {{frame.camera_pos.z=0.1;}}
     if(id.x==18u) {{frame.camera_pos.z=0.001;}}
     if(id.x==19u) {{frame.camera_pos.z=2.0;}}
+    if(id.x >= 20u) {{
+        // Check both sides of the surface, with and without enhanced water.
+        enhanced = (id.x & 1u) == 0u;
+        frame.camera_pos.z = select(-2.0, 2.0, id.x >= 22u);
+        let bed = vec3<f32>(0.0, 0.0, -4.0);
+        frame.water_air.y = 0.0;
+        let visible = water_fogs_source(bed);
+        frame.water_air.y = 1.0;
+        result[id.x * 2u] = vec4<f32>(select(0.0, 1.0, visible),
+            select(0.0, 1.0, water_fogs_source(bed)), select(0.0, 1.0, camera_underwater()), 0.0);
+        return;
+    }}
     let targets=array<vec3<f32>,20>(vec3<f32>(0.0,0.0,2.0),vec3<f32>(0.0,0.0,200.0),
         vec3<f32>(2.0,0.0,2.0),vec3<f32>(200.0,0.0,200.0),
         vec3<f32>(0.0,0.0,-2.0),vec3<f32>(0.0,0.0,-20.0),vec3<f32>(0.0),vec3<f32>(0.0,0.0,-2.0),
@@ -877,6 +937,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
 }}
 "#,
             &function[..end],
+            &common[common.find("fn water_fogs_source(").unwrap()..common.find("// Density of that fog").unwrap()],
             dielectric
         );
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -893,13 +954,13 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
         });
         let output = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fog samples"),
-            size: 640,
+            size: 768,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fog sample readback"),
-            size: crate::readback::readback_size(640),
+            size: crate::readback::readback_size(768),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -916,14 +977,17 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
             let mut pass = encoder.begin_compute_pass(&Default::default());
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &group, &[]);
-            pass.dispatch_workgroups(20, 1, 1);
+            pass.dispatch_workgroups(24, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 640);
+        encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, 768);
         queue.submit([encoder.finish()]);
         readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("fog sample readback"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
         let mapped = readback.get_mapped_range(..).expect("mapped fog samples");
         let samples = crate::readback::f32x4s(&mapped);
+        for index in 20..24 {
+            assert_eq!(samples[index * 2], [1.0, 0.0, 0.0, 0.0], "water visibility case {index}");
+        }
         for (a, b) in [(0, 1), (2, 3)] {
             for component in 0..2 {
                 for c in 0..3 {
@@ -1085,6 +1149,20 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     #[test]
     fn ssr_shader_is_valid() {
         validate(&format!("{}\n{}", crate::COMMON_SHADER, include_str!("shaders/ssr.wgsl")));
+    }
+
+    /// The variants compiled while the soft shadows are off (`SOFT_PATH`
+    /// false in common.wgsl) are valid too.
+    #[test]
+    fn scene_and_ssr_shaders_without_the_soft_path_are_valid() {
+        let common = crate::renderer::common_shader_for(false);
+        validate(&format!(
+            "{}\n{}\n{}",
+            common,
+            include_str!("shaders/object.wgsl"),
+            include_str!("shaders/env.wgsl")
+        ));
+        validate(&format!("{}\n{}", common, include_str!("shaders/ssr.wgsl")));
     }
 
     #[test]

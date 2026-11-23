@@ -17,7 +17,6 @@ pub(super) struct State {
     pub new_editor: bool,
     pending: BTreeMap<Uuid, Load>,
     saves: BTreeMap<Uuid, Save>,
-    failed: BTreeSet<(Uuid, Uuid)>,
     cof: BTreeSet<Uuid>,
     generation: Option<u64>,
     scan_generation: Option<u64>,
@@ -35,6 +34,9 @@ struct Load {
     active: Option<bool>,
     requested: bool,
     inform: bool,
+    /// The resident asked for it (open, play, their own activation), unlike
+    /// the window's background loads, the login restore and outfit changes.
+    user: bool,
 }
 struct Save {
     item: Uuid,
@@ -58,6 +60,7 @@ impl State {
         }
         load.open |= open;
         load.play |= play;
+        load.user |= open || play;
         if active.is_some() {
             load.active = active;
             load.inform = inform;
@@ -75,6 +78,21 @@ impl State {
             load.play = false;
         }
         self.manager.active.remove(&item)
+    }
+
+    /// LLGestureMgr::onLoadComplete: a gesture that cannot be read is logged
+    /// and left out alone ("Unable to load gesture"); its row says why. The
+    /// window's message names it only for a load the resident started.
+    fn load_failed(&mut self, item: Uuid, asset: Uuid, name: &str, user: bool, error: String) {
+        log::warn!("gesture {item} \"{name}\" (asset {asset}) not loaded: {error}");
+        if user {
+            self.ui.message = aurora_i18n::tr!("gesture-load-failed-named", name = name, reason = error.as_str());
+        }
+        if let Some(editor) = self.ui.editors.get_mut(&item) {
+            editor.message.clone_from(&error);
+        }
+        self.ui.failed.insert((item, asset), error);
+        self.manager.active.remove(&item);
     }
 
     fn take_load(&mut self, item: Uuid, asset: Uuid) -> Option<Load> {
@@ -147,7 +165,7 @@ impl App {
             }
             return;
         }
-        self.gesture_state.failed.remove(&(id, asset));
+        self.gesture_state.ui.failed.remove(&(id, asset));
         self.gesture_state.queue_load(id, asset, open, play, active, inform);
         self.world.active_gestures.clone_from(&self.gesture_state.manager.active);
         if asset.is_nil() {
@@ -186,12 +204,8 @@ impl App {
                 }
             }
             Err(error) => {
-                self.gesture_state.failed.insert((item, asset));
-                self.gesture_state.ui.message.clone_from(&error);
-                if let Some(editor) = self.gesture_state.ui.editors.get_mut(&item) {
-                    editor.message = error;
-                }
-                self.gesture_state.manager.active.remove(&item);
+                let name = self.world.inventory.items.get(&item).map_or("", |it| it.name.as_str());
+                self.gesture_state.load_failed(item, asset, name, load.user, error);
                 self.world.active_gestures.clone_from(&self.gesture_state.manager.active);
             }
         }
@@ -247,7 +261,7 @@ impl App {
     }
 
     pub(super) fn gesture_play(&mut self, id: Uuid, key: Option<u8>) {
-        if self.world.rlva.has("sendgesture") {
+        if !gesture_allowed(&self.world.rlva) {
             return;
         }
         if let Some(definition) = self.gesture_state.manager.entries.get(&id).map(|e| e.definition.clone()) {
@@ -258,6 +272,12 @@ impl App {
     }
 
     fn gesture_preview(&mut self, id: Uuid, definition: Gesture, key: Option<u8>) {
+        // LLGestureMgr::playGesture (indra/newview/llgesturemgr.cpp) stops
+        // every play under @sendgesture, the gesture editor's Preview
+        // (LLPreviewGesture::onClickPreview) included
+        if !gesture_allowed(&self.world.rlva) {
+            return;
+        }
         for step in &definition.steps {
             match step {
                 Step::Animation { asset, flags, .. } if flags & ANIM_STOP == 0 && !asset.is_nil() => {
@@ -367,6 +387,9 @@ impl App {
                     }
                     if on {
                         self.gesture_request(id, false, false, Some(true), true);
+                        if let Some(load) = self.gesture_state.pending.get_mut(&id) {
+                            load.user = true;
+                        }
                     } else {
                         self.gesture_active(id, false, true);
                     }
@@ -389,8 +412,25 @@ impl App {
                 self.panels.inventory = true;
             }
             Action::Delete(ids) => {
-                self.inventory_ui.dialog = Some(crate::ui::inventory::EditDialog::Delete(ids, false));
-                self.panels.inventory = true;
+                // LLFloaterGesture::onDeleteSelected moves the gestures to the
+                // Trash without a question (indra/newview/llfloatergesture.cpp).
+                // Aurora asks as for any inventory Delete, until "Do not
+                // show again" is ticked (#3507).
+                let worn = crate::ui::appearance::items::worn_labels(&self.world).into_keys().collect();
+                let mut actions = Vec::new();
+                if crate::ui::inventory::delete_from_window(
+                    &self.world.inventory,
+                    &mut self.inventory_ui,
+                    &self.settings.inventory,
+                    worn,
+                    &mut actions,
+                    ids,
+                ) {
+                    self.panels.inventory = true;
+                }
+                for action in actions {
+                    self.apply_inventory_action(action);
+                }
             }
             Action::ShowInventory(id) => {
                 self.inventory_ui.show_original(&self.world.inventory, id);
@@ -424,7 +464,8 @@ impl App {
             Action::Refresh => {
                 self.gesture_state.scan_generation = None;
                 self.gesture_state.manager.changed();
-                self.gesture_state.failed.clear();
+                self.gesture_state.ui.failed.clear();
+                self.gesture_state.ui.message.clear();
                 self.gesture_state
                     .manager
                     .entries
@@ -435,6 +476,23 @@ impl App {
 
     pub(super) fn update_gestures(&mut self) {
         self.seed_gesture_demo();
+        if self.demo && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "delete") {
+            static STEP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            const FRAMES: [u64; 4] = [600, 650, 700, 900];
+            let step = STEP.load(std::sync::atomic::Ordering::Relaxed);
+            if step < FRAMES.len() && self.frame_count >= FRAMES[step] {
+                STEP.store(step + 1, std::sync::atomic::Ordering::Relaxed);
+                let item = Uuid::from_u128(8106);
+                if step == 1 {
+                    let facts = crate::ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+                    let asked = self
+                        .inventory_ui
+                        .ask_detach_delete(&self.world.inventory, &self.settings.inventory, &facts, item);
+                    log::info!("demo gesture delete: Detach and Delete asked: {asked:?}");
+                }
+                self.demo_detach_delete_steps("gesture delete", item, step == 2, step != 1);
+            }
+        }
         if self.demo
             && !self.gesture_state.demo_played
             && self.frame_count >= 650
@@ -588,7 +646,7 @@ impl App {
                     self.world.inventory.items.get(id).is_some_and(|it| {
                         !self.gesture_state.manager.entries.contains_key(id)
                             && !self.gesture_state.pending.contains_key(id)
-                            && !self.gesture_state.failed.contains(&(*id, it.asset_id))
+                            && !self.gesture_state.ui.failed.contains_key(&(*id, it.asset_id))
                     })
                 })
                 .take(capacity)
@@ -755,23 +813,16 @@ impl App {
                         editor.open = false;
                     }
                 }
-                let similar = if self.gesture_state.manager.active.contains(&item) {
-                    self.gesture_state.manager.similar(item, &save.definition)
-                } else {
-                    Vec::new()
-                };
-                for id in similar {
-                    self.gesture_active(id, false, true);
-                }
-                let effects = self.gesture_state.manager.stop(item);
-                self.gesture_effects(effects);
-                self.gesture_state.manager.entries.insert(
+                // LLPreviewGesture::onSaveComplete → replaceGesture: no other
+                // gesture is deactivated, whatever its shortcut (#4167)
+                let effects = self.gesture_state.manager.replace(
                     item,
                     Entry {
                         asset,
                         definition: save.definition,
                     },
                 );
+                self.gesture_effects(effects);
                 if self.gesture_state.manager.active.contains(&item) {
                     self.send(NetCommand::SetGestureActive { item, asset, active: true });
                 }
@@ -1202,6 +1253,11 @@ fn demo_replay_gestures(sound: Uuid) -> Vec<(u128, &'static str, Gesture)> {
     ]
 }
 
+/// RlvActions::canPlayGestures (indra/newview/rlvactions.cpp).
+fn gesture_allowed(rlva: &crate::world::rlva::Rlva) -> bool {
+    !rlva.has("sendgesture")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1269,6 +1325,29 @@ mod tests {
         inv.items.remove(&item);
         assert_eq!(state.unavailable(&inv), [item]);
     }
+    /// #2500: opening the window loads every listed gesture; one that cannot
+    /// be read is marked on its row only, and the window's message names a
+    /// gesture only for a load the resident started.
+    #[test]
+    fn a_background_load_failure_leaves_the_window_message_empty() {
+        let mut state = State::default();
+        let (item, asset) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let error = aurora_i18n::tr!("gesture-invalid").to_owned();
+        let fail = |state: &mut State, open, play, active, inform| {
+            state.queue_load(item, asset, open, play, active, inform);
+            let load = state.take_load(item, asset).expect("pending load");
+            state.load_failed(item, asset, "Wave", load.user, error.clone());
+        };
+        // the window's scan, then an outfit change activating it
+        fail(&mut state, false, false, None, false);
+        fail(&mut state, false, false, Some(true), true);
+        assert_eq!(state.ui.message, "");
+        assert_eq!(state.ui.failed.get(&(item, asset)), Some(&error));
+        assert!(!state.manager.active.contains(&item));
+        fail(&mut state, false, true, Some(true), true);
+        let message = &state.ui.message;
+        assert!(message.contains("Wave") && message.contains(&error), "{message}");
+    }
     #[test]
     fn activation_can_be_cancelled_before_loading_and_stale_results_do_not_replace_new_requests() {
         let mut state = State::default();
@@ -1286,5 +1365,17 @@ mod tests {
         state.queue_load(item, new, true, false, None, false);
         assert!(state.take_load(item, old).is_none());
         assert_eq!(state.take_load(item, new).expect("new load").asset, new);
+    }
+
+    /// LLGestureMgr::playGesture: @sendgesture stops the editor's Preview
+    /// too, which plays the gesture through `gesture_preview`.
+    #[test]
+    fn rlva_sendgesture_stops_every_gesture_play() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(1);
+        world.rlva.configure(true);
+        assert!(gesture_allowed(&world.rlva));
+        world.rlva_console_input("@sendgesture=n");
+        assert!(!gesture_allowed(&world.rlva));
     }
 }

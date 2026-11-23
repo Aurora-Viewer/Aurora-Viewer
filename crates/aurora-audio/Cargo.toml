@@ -9,6 +9,7 @@ description = "Audio output engine for Aurora Viewer: volume-channel mixer, parc
 
 [dependencies]
 sonora = "0.2.0"
+aurora-proxy = { version = "0.1.0", path = "../aurora-proxy" }
 aurora-version = { version = "0.1.0", path = "../aurora-version" }
 # realtime: the device callbacks run in the multimedia scheduler's "Audio"
 # task (MMCSS) on Windows, and at realtime priority on the ALSA host on Linux,
@@ -29,6 +30,9 @@ serde_json = "1.0.154"
 symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "aac", "ogg", "vorbis", "wav", "pcm", "id3v2"] }
 thiserror = "2.0.21"
 url = "2"
+# the end of validity of an expired radio certificate, which the Windows
+# verifier does not report (tls.rs)
+x509-parser = "0.18.1"
 
 [dev-dependencies]
 rcgen = "0.14.10"

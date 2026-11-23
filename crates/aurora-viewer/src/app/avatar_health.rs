@@ -69,7 +69,12 @@ impl App {
     /// Viewer never enters customise mode for it. With the customise
     /// animation turned off (an Aurora choice), our avatar keeps its pose.
     pub(super) fn update_avatar_health(&mut self) {
-        let editing = (self.shape_ui.open || self.wearable_ui.open) && !self.world.agent_id.is_nil() && self.settings.customize_animation;
+        // LLAgentCamera::changeCameraToCustomizeAvatar (llagentcamera.cpp)
+        // returns before anything when RLVa keeps the avatar seated
+        // (RlvActions::canStand): no forced stand, no customise mode.
+        let held = self.world.agent.is_sitting() && self.world.rlva.has("unsit");
+        let editing =
+            (self.shape_ui.open || self.wearable_ui.open) && !self.world.agent_id.is_nil() && self.settings.customize_animation && !held;
         if editing && !self.avatar_health.customizing {
             // changeCameraToCustomizeAvatar: "force stand up" first
             // (LLAgent::standUp, AGENT_CONTROL_STAND_UP)

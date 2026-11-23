@@ -15,9 +15,28 @@ pub(super) const DECODE_PIXELS: f32 = 2048.0;
 struct Input {
     ids: [Uuid; 4],
     materials: Option<bool>,
+    /// `@setcam_textures` (`camera_override`).
+    camera_texture: Option<Uuid>,
     transforms: [TerrainTransform; 4],
     paintmap: Option<Uuid>,
     size: [u32; 2],
+}
+
+/// What `@setcam_textures` does to the ground: the four detail textures of
+/// a textured ground are all replaced by the override, as
+/// LLDrawPoolTerrain::renderFullShaderTextures binds
+/// `LLViewerFetchedTexture::sDefaultDiffuseImagep` for each of them while
+/// `LLPipeline::sRenderTextures` is off
+/// (LLViewerObjectList::setAllObjectDefaultTextures, llviewerobjectlist.cpp,
+/// called by the RLVa handler of `RLV_MODIFIER_SETCAM_TEXTURE`,
+/// rlvhandler.cpp). A ground painted with PBR materials keeps them, as
+/// renderFullShaderPBR has no such switch. `None` leaves the region's own
+/// textures.
+fn camera_override(ids: [Uuid; 4], pbr: bool, texture: Option<Uuid>) -> [Uuid; 4] {
+    match texture {
+        Some(id) if !pbr => [id; 4],
+        _ => ids,
+    }
 }
 
 #[derive(Default)]
@@ -117,7 +136,7 @@ impl SurfaceGpu {
             }
             self.slots = layers;
         } else {
-            self.slots = input.ids.map(|id| {
+            self.slots = camera_override(input.ids, false, input.camera_texture).map(|id| {
                 if !id.is_nil() {
                     wanted.push(id);
                 }
@@ -259,6 +278,7 @@ impl Scene {
             }
         }
         let handles = terrain_region_order(world, eye);
+        let camera_texture = world.rlva.camera_texture();
         let mut built = 0;
         for handle in handles {
             let Some(offset) = world.region_offset(handle) else { continue };
@@ -284,6 +304,7 @@ impl Scene {
             let input = Input {
                 ids: local.map_or(info.terrain_detail, |s| s.ids),
                 materials: local.map(|s| s.materials),
+                camera_texture,
                 transforms: local.map_or(region.terrain_surface.transforms, |s| s.transforms),
                 paintmap: region.terrain_surface.paintmap.as_ref().map(|p| p.id),
                 size: [region.heightmap.size_x, region.heightmap.size_y],
@@ -355,6 +376,21 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_camera_texture_replaces_every_ground_texture_and_leaves_the_region_alone_without_one() {
+        let region = [Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4)];
+        let grey = aurora_prim::te::IMG_DEFAULT;
+        // no @setcam_textures: the region's own textures
+        assert_eq!(camera_override(region, false, None), region);
+        assert_eq!(camera_override(region, true, None), region);
+        // the empty form is the flat grey, an explicit id is used as given
+        assert_eq!(camera_override(region, false, Some(grey)), [grey; 4]);
+        let given = Uuid::from_u128(9);
+        assert_eq!(camera_override(region, false, Some(given)), [given; 4]);
+        // a PBR-material ground keeps its materials (renderFullShaderPBR)
+        assert_eq!(camera_override(region, true, Some(grey)), region);
+    }
 
     #[test]
     fn terrain_layer_records_preserve_factors_and_reference_texture_transforms() {

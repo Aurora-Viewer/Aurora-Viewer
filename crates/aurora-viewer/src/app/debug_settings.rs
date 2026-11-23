@@ -12,7 +12,8 @@ impl App {
         // the same rules as `options_ui.rlva_*`, and any restriction at all
         let locks = crate::settings::registry::Locks {
             camera_preset: self.world.rlva.camera_preset_locked(uuid::Uuid::nil()),
-            camera_fov: self.world.rlva.camera_owner().is_some(),
+            // (CameraAngle stays the user's under @setcam, as Preferences)
+            camera_fov: false,
             sendim: self.world.rlva.has("sendim"),
             restricted: !self.world.rlva.restrictions().is_empty(),
         };

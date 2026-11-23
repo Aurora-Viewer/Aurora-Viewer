@@ -320,6 +320,42 @@ fn mesh_import_parity_gltf_binds_use_parent_rest_and_missing_sl_bones() {
 }
 
 #[test]
+fn mesh_import_parity_gltf_bind_turned_from_rest_lands_where_the_file_rests() {
+    // LLGLTFLoader::computeViewerBindMatrix: an exporter's joints carry no
+    // rotation of their own (Y-up), and the torso is bound turned about the
+    // source's Z axis, the way an A-pose arm is. At the viewer rest, the
+    // vertex must land where the file's own rest pose puts it, with the
+    // ordinary axes and with the XY turn of checkForXYrotation.
+    let rig = skeleton();
+    let ordinary = Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    let pelvis = rig.find("mPelvis").expect("pelvis");
+    let torso = rig.find("mTorso").expect("torso");
+    for basis in [ordinary, Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2) * ordinary] {
+        let at = |joint: usize| Mat4::from_translation(basis.inverse().transform_point3(rig.joints[joint].world_position()));
+        let (pelvis_global, torso_global) = (at(pelvis), at(torso));
+        let turn = Mat4::from_rotation_z(0.7);
+        let bytes: Vec<_> = [pelvis_global.inverse(), (torso_global * turn).inverse()]
+            .into_iter()
+            .flat_map(|m| m.to_cols_array().into_iter().flat_map(f32::to_le_bytes))
+            .collect();
+        let json = json!({"asset":{"version":"2.0"},"buffers":[{"uri":"bind.bin","byteLength":bytes.len()}],
+        "bufferViews":[{"buffer":0,"byteLength":bytes.len()}],"accessors":[{"bufferView":0,"componentType":5126,"count":2,"type":"MAT4"}],
+        "nodes":[{"name":"mPelvis","matrix":pelvis_global.to_cols_array(),"children":[1]},
+            {"name":"mTorso","matrix":(pelvis_global.inverse()*torso_global).to_cols_array()}],
+        "skins":[{"joints":[0,1],"inverseBindMatrices":0}]});
+        let doc = Document::parse_mesh(json.to_string().as_bytes(), |_| Ok(bytes.clone())).expect("document");
+        let nodes = doc.json["nodes"].as_array().expect("nodes");
+        let globals = gltf_skin::globals(nodes).expect("global rests");
+        let skin = gltf_skin::read(&doc, 0, nodes, &globals, basis, &rig, &mut Vec::new()).expect("converted skin");
+        let bound = Vec3::new(0.1, 0.2, 0.3);
+        let file_rest = basis.transform_point3((torso_global * (torso_global * turn).inverse()).transform_point3(bound));
+        let viewer_rest = (rig.joints[torso].world * skin.inverse_bind[1]).transform_point3(basis.transform_point3(bound));
+        assert!(viewer_rest.distance(file_rest) < 0.0001, "{viewer_rest:?} != {file_rest:?}");
+        assert!(skin.inverse_bind[0].abs_diff_eq(rig.joints[pelvis].world.inverse(), 0.0001));
+    }
+}
+
+#[test]
 fn mesh_import_parity_gltf_large_source_palette_prunes_after_usage() {
     let rig = skeleton();
     let mut doc = simple_gltf(json!([{"mesh":0,"skin":0}]), json!([0]));
