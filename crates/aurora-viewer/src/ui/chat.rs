@@ -3098,9 +3098,18 @@ impl Copied<'_> {
 /// the window's layer.
 ///
 /// At the press, as the Legacy Viewer does, and again at its release when
-/// it is a click: egui takes the keyboard from a widget clicked away from
-/// then (`SurrenderFocusOn::Clicks`, applied at the end of the pass by
-/// `click_away_focus.rs`), unless a focus is asked during that pass.
+/// it is a click. The second request is needed: egui takes the keyboard
+/// from a widget clicked away from at the release
+/// (`SurrenderFocusOn::Clicks`), and `click_away_focus.rs` applies that at
+/// the end of the click's pass unless a focus was asked during it, so the
+/// field given the keyboard at the press would lose it again. Like every
+/// `Memory::request_focus`, each request interrupts an IME composition in
+/// progress (a press already ends one in the field it leaves).
+///
+/// A deliberate difference: LLFloater::setFocus keeps the focus in a child
+/// that has it and otherwise restores the last focused control; here a
+/// press on what takes no keyboard always gives it to the message field,
+/// as the report asks.
 fn press_focuses_field(ui: &egui::Ui, before: Option<egui::Id>, field: egui::Id) {
     let ctx = ui.ctx();
     let at = ui.input(|i| {
@@ -7322,7 +7331,7 @@ mod tests {
             // a field of the screen behind the window (the world's side)
             let other_id = egui::Id::unique("field_behind_conversations");
             let mut other = String::new();
-            let mut frame = |st: &mut ChatUi, events| {
+            let mut frame = |st: &mut ChatUi, events: Vec<egui::Event>| {
                 frames.run(events, |ui| {
                     ui.add(egui::TextEdit::singleline(&mut other).id(other_id));
                     let mut open = true;
@@ -7342,44 +7351,82 @@ mod tests {
                         None,
                         &mut open,
                     );
-                });
+                })
             };
-            let press = |at: egui::Pos2, pressed: bool| egui::Event::PointerButton {
-                pos: at,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: Default::default(),
-            };
-            for _ in 0..3 {
+            /// A press and its release at `at`, the pointer brought there.
+            fn click<R>(frame: &mut impl FnMut(&mut ChatUi, Vec<egui::Event>) -> R, st: &mut ChatUi, at: egui::Pos2) -> R {
+                let press = |pressed| egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                frame(st, vec![egui::Event::PointerMoved(at), press(true)]);
+                frame(st, vec![press(false)])
+            }
+            for _ in 0..2 {
                 frame(&mut st, Vec::new());
             }
+            let texts = frame(&mut st, Vec::new());
             let field = egui::Id::unique(("conv_input", Some(a)));
             let focused = |id| ctx.memory(|m| m.has_focus(id));
             assert!(focused(field), "{style:?}: the window opened");
             // the field behind takes the keyboard
             let behind = ctx.read_response(other_id).expect("the field behind").rect.center();
-            frame(&mut st, vec![egui::Event::PointerMoved(behind), press(behind, true)]);
-            frame(&mut st, vec![press(behind, false)]);
+            click(&mut frame, &mut st, behind);
             assert!(focused(other_id), "{style:?}: a field outside the window keeps its press");
-            // the window's title bar: nothing there takes the keyboard
             let window = ctx
                 .memory(|m| m.area_rect(egui::Id::unique("conversations")))
                 .expect("the Conversations window");
             assert!(!window.contains(behind), "{style:?}: the field behind is in sight");
-            let title = egui::pos2(window.center().x, window.top() + 10.0);
-            frame(&mut st, vec![egui::Event::PointerMoved(title), press(title, true)]);
-            frame(&mut st, vec![press(title, false)]);
-            assert!(focused(field), "{style:?}: the title bar's press gives the field the keyboard");
+            // the places the report names, the keyboard behind the window
+            // before each: the title bar, the list of conversations under
+            // its entries, the strip between the lines and the field
+            let nearby = texts
+                .iter()
+                .filter(|t| t.source == aurora_i18n::tr!("common-nearby-chat") && window.contains(t.rect.center()))
+                .map(|t| t.rect)
+                .min_by(|x, y| x.left().total_cmp(&y.left()))
+                .expect("the list's Nearby chat entry");
+            let input = ctx.read_response(field).expect("the conversation's field").rect;
+            for (place, at) in [
+                ("the title bar", egui::pos2(window.center().x, window.top() + 10.0)),
+                ("the list", egui::pos2(nearby.center().x, nearby.bottom() + 120.0)),
+                ("the strip above the field", egui::pos2(input.center().x, input.top() - 4.0)),
+            ] {
+                assert!(window.contains(at) && !input.contains(at), "{style:?}: {place} at {at:?}");
+                click(&mut frame, &mut st, behind);
+                assert!(focused(other_id), "{style:?}");
+                click(&mut frame, &mut st, at);
+                assert!(
+                    focused(field),
+                    "{style:?}: a press on {place} at {at:?} gives the field the keyboard"
+                );
+            }
             frame(&mut st, vec![egui::Event::Text("hi".into())]);
             assert_eq!(st.draft_mut(Some(a)), "hi", "{style:?}");
             // a field of the window pressed keeps the keyboard
             if style.workspace() {
                 let search = ctx.read_response(sidebar::search_id()).expect("the column's search").rect.center();
-                frame(&mut st, vec![egui::Event::PointerMoved(search), press(search, true)]);
-                frame(&mut st, vec![press(search, false)]);
+                click(&mut frame, &mut st, search);
                 assert!(focused(sidebar::search_id()), "{style:?}: the search keeps its press");
                 assert!(!focused(field), "{style:?}");
             }
+            // the conversation in a window of its own: its title bar
+            st.demo_pop_out(&ctx, Some(a), egui::pos2(40.0, 120.0), egui::vec2(420.0, 300.0));
+            for _ in 0..3 {
+                frame(&mut st, Vec::new());
+            }
+            let own = ctx
+                .memory(|m| m.area_rect(egui::Id::unique(popout::floater_id(Some(a)).as_str())))
+                .expect("the conversation's own window");
+            assert!(!own.contains(behind) && !own.intersects(window), "{style:?}: {own:?}");
+            click(&mut frame, &mut st, behind);
+            assert!(focused(other_id), "{style:?}");
+            click(&mut frame, &mut st, egui::pos2(own.center().x, own.top() + 10.0));
+            assert!(focused(field), "{style:?}: its own window's title bar gives its field the keyboard");
+            frame(&mut st, vec![egui::Event::Text("!".into())]);
+            assert_eq!(st.draft_mut(Some(a)), "hi!", "{style:?}");
             drop(frame);
             assert!(other.is_empty(), "{style:?}: nothing typed went behind the window");
         }
