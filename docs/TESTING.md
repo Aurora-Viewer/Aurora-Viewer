@@ -12633,9 +12633,10 @@ What the inventory must show with these scenarios:
   so are `file:` and `blob:`), `music` starts the
   parcel music on `radio.example.org` (the log has no `parcel music:` line
   before the answer), `music-again` the same, its question closed with
-  the X ("Not now") at frame 400, then the radio turned off (500) and on
-  again (560) as its button does: the question about `radio.example.org`
-  is back by frame 620 (#4390; the log says `media filter: asking again`),
+  the X ("Not now") at frame 400, then the radio's button clicked once
+  (500) as a click does: the radio stays on and the question about
+  `radio.example.org` is back by frame 560 (#4390; the log says `media
+  filter: asking again`),
   `list` puts three sites in the list of Preferences ›
   Preferences › Media (`AURORA_DEMO_OPTIONS=media`). In the demo the
   list and the answers stay in memory: no run changes the demo account's

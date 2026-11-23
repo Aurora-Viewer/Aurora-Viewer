@@ -475,6 +475,16 @@ impl MediaFilter {
             .retain(|o| !session.contains_key(&o.url) && rule_for(rules, &o.url, &o.domain).is_none());
     }
 
+    /// `url` is refused by an answer of this session alone (the banner's
+    /// X, or Deny with "Only this time"), not by the list.
+    pub fn session_refused(&self, url: &str) -> bool {
+        let url = url.trim();
+        match target(url) {
+            Target::Site(host) => rule_for(&self.rules, url, &host).is_none() && self.session.get(url) == Some(&Action::Deny),
+            Target::Blank | Target::Refused(_) => false,
+        }
+    }
+
     /// The resident plays `url` by hand (the radio turned on, a media's
     /// Play): a refusal of this session alone ("Not now", the banner's X, or
     /// Deny with "Only this time") is forgotten, so the question shows
@@ -567,8 +577,10 @@ mod tests {
         f.answer(station, false, Remember::Once);
         assert_eq!(f.check(station, Source::Music), Verdict::Deny);
         assert!(f.question().is_none());
-        // the radio turned on by hand: the question again
+        assert!(f.session_refused(station), "refused for this session only");
+        // the radio's button pressed: the question again
         f.ask_again(&format!(" {station} "));
+        assert!(!f.session_refused(station));
         assert_eq!(f.check(station, Source::Music), Verdict::Ask);
         assert_eq!(f.question().map(|q| q.url.as_str()), Some(station));
         f.answer(station, true, Remember::Once);
@@ -580,6 +592,7 @@ mod tests {
         f.apply(Edit::Set("blocked.example".into(), Action::Deny));
         let blocked = "https://blocked.example/live";
         assert_eq!(f.check(blocked, Source::Music), Verdict::Deny);
+        assert!(!f.session_refused(blocked), "the list refuses it, not this session");
         f.ask_again(blocked);
         assert_eq!(f.check(blocked, Source::Music), Verdict::Deny);
         assert!(f.question().is_none());
@@ -589,6 +602,11 @@ mod tests {
         assert_eq!(f.check(page, Source::PrimMedia), Verdict::Ask);
         f.answer(page, false, Remember::Once);
         assert_eq!(f.check(page, Source::PrimMedia), Verdict::Deny);
+        // a list's rule wins over this session's answer
+        f.apply(Edit::Set("video.example".into(), Action::Deny));
+        assert!(!f.session_refused(page));
+        f.apply(Edit::Remove("video.example".into()));
+        assert!(f.session_refused(page));
         f.ask_again(page);
         assert_eq!(f.check(page, Source::PrimMedia), Verdict::Ask);
     }

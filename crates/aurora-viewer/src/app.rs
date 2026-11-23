@@ -7211,8 +7211,16 @@ impl App {
     }
 
     /// The radio's button: the music on or off. Turned on by hand, a "Not
-    /// now" of this session asks again (`MediaFilter::ask_again`, #4390).
+    /// now" of this session asks again (`MediaFilter::ask_again`, #4390);
+    /// so does a click on a radio on but held by such an answer alone, which
+    /// stays on instead of stopping. A radio playing, or refused by the
+    /// list, stops as before.
     fn toggle_music_by_hand(&mut self) {
+        let station = self.parcel_music.station();
+        if self.music_status == ui::audio::MusicStatus::Blocked && self.world.media_filter.session_refused(station) {
+            self.world.media_filter.ask_again(station);
+            return;
+        }
         self.parcel_music.toggle();
         if self.parcel_music.requested() {
             self.world.media_filter.ask_again(self.parcel_music.station());
@@ -14984,12 +14992,9 @@ impl App {
             }
         }
         // AURORA_DEMO_MEDIA_FILTER=music-again: the music's question closed
-        // with its X ("Not now") at frame 400, then the radio turned off
-        // (500) and on again (560) as its button does: the question is back
-        if self.demo
-            && matches!(self.frame_count, 400 | 500 | 560)
-            && std::env::var("AURORA_DEMO_MEDIA_FILTER").as_deref() == Ok("music-again")
-        {
+        // with its X ("Not now") at frame 400, then the radio's button
+        // clicked once (500): the question is back, the radio still on
+        if self.demo && matches!(self.frame_count, 400 | 500) && std::env::var("AURORA_DEMO_MEDIA_FILTER").as_deref() == Ok("music-again") {
             if self.frame_count == 400 {
                 if let Some(url) = self.world.media_filter.question().map(|q| q.url.clone()) {
                     self.world.media_filter.answer(&url, false, crate::media::filter::Remember::Once);
