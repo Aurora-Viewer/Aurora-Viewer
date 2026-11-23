@@ -698,6 +698,31 @@ fn looks_shader_is_valid() {
         .expect("valid");
 }
 
+/// The viewer stacks up to `MAX_LAYERS` looks, the same one as often as
+/// wanted: that many of the heaviest still fit in a frame's passes and
+/// histogram curves, so no layer is ever left out of the picture.
+#[test]
+fn eight_of_the_heaviest_look_fit_in_a_frame() {
+    assert_eq!(MAX_LAYERS, 8);
+    let plans: Vec<(&str, Plan)> = legacy_looks()
+        .iter()
+        .map(|(name, ops)| (*name, plan(ops)))
+        .chain(aurora_looks().iter().map(|look| (look.id, plan(&look.ops))))
+        .collect();
+    let (name, passes) = plans
+        .iter()
+        .map(|(n, p)| (*n, p.passes.len()))
+        .max_by_key(|(_, n)| *n)
+        .expect("looks");
+    assert!(MAX_LAYERS * passes <= MAX_PASSES, "{MAX_LAYERS} x {name}: {passes} passes each");
+    let (name, curves) = plans
+        .iter()
+        .map(|(n, p)| (*n, p.curves.len()))
+        .max_by_key(|(_, n)| *n)
+        .expect("looks");
+    assert!(MAX_LAYERS * curves <= MAX_SLOTS, "{MAX_LAYERS} x {name}: {curves} curves each");
+}
+
 #[test]
 fn every_aurora_look_reads_into_its_section() {
     let looks = aurora_looks();

@@ -525,7 +525,7 @@ fn glow_row(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
 }
 
 /// Width of the tint strip beside a map square, and the gap before it.
-const TINT_W: f32 = 16.0;
+const TINT_W: f32 = 32.0;
 const TINT_GAP: f32 = 7.0;
 
 /// The tint of a map, as a narrow strip beside its square (the Legacy

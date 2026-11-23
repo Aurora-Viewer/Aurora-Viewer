@@ -3986,14 +3986,17 @@ pub fn show(
     }
     // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`),
     // over the entries without a window of their own
-    if *open && !enlarged {
+    let order = (*open && !enlarged).then(|| {
         let mut order = if style.workspace() {
             sidebar::tab_order(world, st)
         } else {
             keys::legacy_order(world, st)
         };
         order.retain(|c| !st.popped.contains(*c));
-        keys::handle(ctx, st, &order, &mut actions);
+        order
+    });
+    if let Some(order) = &order {
+        keys::handle(ctx, st, order, &mut actions);
     }
     let title = match st.selected {
         // the workspace's head names the conversation (the mockup's title)
@@ -4237,6 +4240,19 @@ pub fn show(
         }
         _ => true,
     });
+    // the conversation shown closed with the mouse (its cross in the list,
+    // its menu, its header): the one below it shows next, or the one above
+    // at the end of the list, as Ctrl+W does (#4373)
+    if let Some(order) = &order
+        && !st.contacts
+        && let Some(closed) = st.selected
+        && order.contains(&Some(closed))
+        && actions.iter().any(|a| matches!(a, ConvAction::Close(id) if *id == closed))
+    {
+        let next = keys::after_close(order, closed);
+        st.select_tab(next);
+        st.reveal = next;
+    }
     select_main(st, open);
     let env = popout::Env {
         p,
