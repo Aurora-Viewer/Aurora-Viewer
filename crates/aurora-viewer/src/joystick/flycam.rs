@@ -15,6 +15,15 @@ pub fn vr_axes(mut axes: [f32; 7], head_rotation: Quat) -> [f32; 7] {
     axes
 }
 
+/// Whether the joystick flycam takes the movement keys: in VR only, where
+/// they fly the rig. On a screen it flies with the device alone and the keys
+/// still walk the avatar below (#4613): LLViewerJoystick::toggleFlycam only
+/// overrides the camera, and agent_push_forward & co
+/// (indra/newview/llviewerinput.cpp) move the agent whatever the flycam.
+pub fn takes_keys(vr: bool) -> bool {
+    vr
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Flycam {
     pub position: Vec3,
@@ -103,6 +112,12 @@ impl Flycam {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_keys_fly_the_flycam_in_vr_only() {
+        assert!(takes_keys(true), "VR: the keys fly the rig");
+        assert!(!takes_keys(false), "on a screen the keys walk the avatar (#4613)");
+    }
 
     #[test]
     fn reset_view_preserves_position_heading_and_zoom() {

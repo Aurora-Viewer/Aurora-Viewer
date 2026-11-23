@@ -9470,13 +9470,22 @@ impl App {
             self.game_control_flycam_step(&i, dt);
             return;
         }
-        if self.joystick.active {
+        let flycam = self.joystick.active;
+        if flycam {
             i.turn_held = turn_held(&mut self.turn_since, &i);
             self.joystick_flycam_step(&i, dt);
-            return;
+            if crate::joystick::flycam::takes_keys(self.vr_camera.is_some()) {
+                self.input = MoveInput::default();
+                self.fb_since = None;
+                self.lr_since = None;
+                self.up_since = None;
+                return;
+            }
         }
-        let joystick_up =
-            self.camera.free().is_none() && (self.joystick.motion.axes[2] > 0.0 || self.joystick.motion.jump || self.joystick.motion.rise);
+        // Under the flycam the device flies the camera and the keyboard still
+        // walks the avatar below (#4613); the flycam keeps the camera.
+        let motion = self.joystick.motion.for_avatar(flycam);
+        let joystick_up = self.camera.free().is_none() && (motion.axes[2] > 0.0 || motion.jump || motion.rise);
         let player_movement_input = i.forward
             || i.back
             || i.strafe_left
@@ -9485,9 +9494,9 @@ impl App {
             || i.turn_right
             || i.up
             || i.down
-            || self.joystick.motion.player_movement_input()
+            || motion.player_movement_input()
             || (self.mouse_mode == MouseMode::Steer && self.right_drag);
-        i.down |= self.joystick.motion.crouch;
+        i.down |= motion.crouch;
         i.down = self.crouch_toggle.apply(
             self.settings.crouch_toggle,
             // A swimmer descends with the key, as in flight (crouch_toggle.rs).
@@ -9502,7 +9511,7 @@ impl App {
         if self.avatar_studio.active && self.camera.free().is_none() {
             i = MoveInput::default();
         }
-        let gamepad = self.joystick.motion.gamepad && self.joystick.motion.moving();
+        let gamepad = motion.gamepad && motion.moving();
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
             // stays where it is (no walk, turn, jump or flight start).
@@ -9557,8 +9566,8 @@ impl App {
         i.nudge_lr = since(&mut self.lr_since, i.strafe_left || i.strafe_right);
         // Native joystick translation uses moveAt/moveLeft, without the
         // keyboard's initial nudge (LLViewerJoystick::agentPush/Slide).
-        i.nudge_fb &= self.joystick.motion.axes[0] == 0.0;
-        i.nudge_lr &= self.joystick.motion.axes[1] == 0.0;
+        i.nudge_fb &= motion.axes[0] == 0.0;
+        i.nudge_lr &= motion.axes[1] == 0.0;
         if i.up {
             self.world.agent.record_jump_input(now);
         }
@@ -9596,8 +9605,9 @@ impl App {
         } else {
             i.resets_camera(self.crouch_toggle.latched())
         };
-        let gamepad_movement = gamepad && self.joystick.motion.player_movement_input();
+        let gamepad_movement = gamepad && motion.player_movement_input();
         if self.vr_mode.is_none()
+            && !flycam
             && moving
             && !self.input.resets_camera(self.crouch_toggle.latched())
             && let Some(yaw) = self.camera.gamepad_pan_movement_yaw()
@@ -9606,7 +9616,9 @@ impl App {
         }
         // "Keep the camera still while posing" keeps the camera where the
         // user put it: moving still walks, only the camera reset is skipped.
-        let movement_resets_camera = moving && !self.settings.camera.keeps_still(self.ik_editor.posing());
+        // (not under the flycam: resetting the view would end it, where
+        // LLAgent::moveAt's resetView leaves the joystick's camera on)
+        let movement_resets_camera = moving && !flycam && !self.settings.camera.keeps_still(self.ik_editor.posing());
         if movement_resets_camera && self.mouse_mode != MouseMode::FocusOrbit && self.vr_mode != Some(crate::camera::VrView::Avatar) {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.
@@ -9627,6 +9639,10 @@ impl App {
             }
         }
         self.input = i;
+        if flycam {
+            // the avatar's camera controls wait for the flycam's end
+            return;
+        }
         self.joystick_avatar_camera(moving, player_movement_input, dt);
         // camera keys (Alt + arrows...), ramping up like get_orbit_rate
         use crate::keybinds::Action as A;

@@ -752,6 +752,13 @@ impl Motion {
             || self.avatar_pan_side != 0.0
             || self.avatar_cycle != 0
     }
+
+    /// What of the device moves the avatar: nothing under the flycam, which
+    /// flies with it, as LLViewerJoystick::moveFlycam takes moveAvatar's
+    /// place while mOverrideCamera is set (indra/newview/llviewerjoystick.cpp).
+    pub fn for_avatar(self, flycam: bool) -> Self {
+        if flycam { Self::default() } else { self }
+    }
 }
 
 #[derive(Default)]
@@ -1187,6 +1194,36 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #4613: under the flycam the stick flies the camera alone; the
+    /// keyboard's walk is kept (`flycam::takes_keys`), the device adds none.
+    #[test]
+    fn the_flycam_keeps_the_device_from_the_avatar() {
+        let mut motion = Motion {
+            gamepad: true,
+            crouch: true,
+            rise: true,
+            ..Default::default()
+        };
+        motion.axes[0] = 0.8;
+        motion.axes[2] = 0.5;
+        assert!(
+            motion.for_avatar(false).player_movement_input(),
+            "without the flycam the stick walks"
+        );
+        let under = motion.for_avatar(true);
+        assert!(!under.player_movement_input() && !under.moving() && !under.gamepad);
+        let mut keys = crate::agent::MoveInput {
+            forward: true,
+            turn_left: true,
+            ..Default::default()
+        };
+        under.apply_avatar(&mut keys);
+        assert!(
+            keys.forward && keys.turn_left && !keys.up && !keys.down,
+            "the keys walk on, the stick adds nothing"
+        );
+    }
 
     #[test]
     fn vr_forward_zone_keeps_small_side_input_out_of_digital_walk() {
