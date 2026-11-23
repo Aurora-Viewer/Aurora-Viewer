@@ -23741,6 +23741,8 @@ impl ApplicationHandler for App {
                         | "recent-date"
                         | "aurora-recent-date"
                         | "worn"
+                        | "search-worn"
+                        | "aurora-search-worn"
                         | "filtered"
                         | "large"
                         | "keyboard-click-top"
@@ -23871,7 +23873,7 @@ impl ApplicationHandler for App {
                         // Aurora's window at each width, on the demo object
                         // of the right-click tests, a favourite beside it.
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
-                        if view.starts_with("aurora-worn") {
+                        if view.starts_with("aurora-worn") || view == "aurora-search-worn" {
                             self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(715));
                             self.inventory_ui.selected = None;
                             self.inventory_ui.selection.clear();
@@ -24000,6 +24002,10 @@ impl ApplicationHandler for App {
                     }
                     if view == "worn" {
                         self.inventory_ui.tab = 3;
+                    }
+                    if view.ends_with("search-worn") {
+                        // #4423: the worn tag is searched with the name
+                        self.inventory_ui.search = aurora_i18n::tr!("common-worn").to_lowercase();
                     }
                     if matches!(view.as_str(), "received-big" | "received-big-open") {
                         self.inventory_ui.tab = 1;
