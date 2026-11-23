@@ -4205,7 +4205,14 @@ fn menu_row_right_click_adds_and_removes_its_toolbar_command_without_running_it(
         .center();
     click(&mut bench, row, egui::PointerButton::Secondary);
     assert!(!shown(&bench, "toolbar-add-from-menu"));
-    assert!(shown(&bench, "toolbar-interface-edit"), "its context still opens");
+    assert!(shown(&bench, "toolbar-button-icons"), "its context still opens");
+    // hovering another row of the menu closes the context, the menu stays
+    let import = menu_point(&bench, aurora_i18n::tr!("import-menu"));
+    for _ in 0..3 {
+        bench.frame(vec![egui::Event::PointerMoved(import)]);
+    }
+    assert!(!shown(&bench, "toolbar-button-icons"), "the context closes on another row");
+    assert!(shown(&bench, "import-menu"), "the wolf menu stays open");
     // locked bars keep the entry, greyed out, and ignore it
     bench.settings.locked = true;
     let import = menu_point(&bench, aurora_i18n::tr!("import-menu"));

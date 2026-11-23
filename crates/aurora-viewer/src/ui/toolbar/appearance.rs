@@ -429,6 +429,17 @@ impl ToolbarUi {
                 pos: response.interact_pointer_pos().unwrap_or(response.rect.left_bottom()),
                 frame: response.ctx.cumulative_frame_nr(),
             });
+        } else if response.hovered()
+            && self
+                .menu_row_context
+                .as_ref()
+                .is_some_and(|context| context.button.command != button.command)
+        {
+            // the menu behind follows the pointer to another row or submenu:
+            // the context of the row left behind closes instead of staying
+            // open, then hidden under that submenu
+            self.menu_row_context = None;
+            response.ctx.request_repaint();
         }
     }
 
