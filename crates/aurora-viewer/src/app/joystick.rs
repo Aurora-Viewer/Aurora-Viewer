@@ -461,9 +461,8 @@ impl App {
         }
     }
 
-    /// The flycam's camera, flown by the device, and by the keys too in VR
-    /// (`flycam::takes_keys`); the caller leaves the keys to the avatar
-    /// otherwise.
+    /// The flycam's camera, flown by the device, and by the keys too in VR;
+    /// on a screen the caller leaves the keys to the avatar (#4613).
     pub(super) fn joystick_flycam_step(&mut self, keys: &MoveInput, dt: f32) {
         if self.joystick_input_focused()
             && !self.options_ui.joystick_capturing()

@@ -1196,7 +1196,7 @@ mod tests {
     use super::*;
 
     /// #4613: under the flycam the stick flies the camera alone; the
-    /// keyboard's walk is kept (`flycam::takes_keys`), the device adds none.
+    /// keyboard's walk is kept, the device adds none.
     #[test]
     fn the_flycam_keeps_the_device_from_the_avatar() {
         let mut motion = Motion {
