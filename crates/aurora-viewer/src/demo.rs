@@ -5179,12 +5179,13 @@ pub fn events() -> Vec<NetEvent> {
         let across = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
         let center = Vec3::new(138.5, 125.5, 0.0);
         let floor = height(cx, cy) + 0.35;
+        let alpha = panel_alpha(std::env::var("AURORA_DEMO_PANEL_ALPHA").ok().as_deref());
         for (k, (tex, mat, label)) in alpha_panels().iter().enumerate() {
             let p = center + across * ((k as f32 - 2.5) * 2.1);
             let mut t = TextureEntry::default();
             for f in t.faces.iter_mut() {
                 f.texture = *tex;
-                f.color = [1.0, 1.0, 1.0, 1.0];
+                f.color = [1.0, 1.0, 1.0, alpha];
                 f.material_id = mat.unwrap_or(Uuid::nil());
             }
             add(prim(
@@ -9956,6 +9957,31 @@ fn panel_scale(k: usize, label: &str) -> Vec3 {
         Ok("tall") if bumpy => Vec3::new(0.06, 0.45, 1.8),
         Ok("wide") if bumpy => Vec3::new(0.06, 1.8, 0.45),
         _ => Vec3::new(0.06, 1.8, 1.8),
+    }
+}
+
+/// Face alpha of the alpha-mode test panels: AURORA_DEMO_PANEL_ALPHA=<0..1>
+/// (0.98 is the build floater's 2 % transparency, #4517); opaque without it
+/// or with a value that does not parse.
+fn panel_alpha(spec: Option<&str>) -> f32 {
+    spec.and_then(|s| s.trim().parse::<f32>().ok())
+        .filter(|a| a.is_finite())
+        .map_or(1.0, |a| a.clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod panel_alpha_tests {
+    use super::panel_alpha;
+
+    #[test]
+    fn the_panel_alpha_is_opaque_unless_a_valid_value_is_given() {
+        assert_eq!(panel_alpha(None), 1.0);
+        assert_eq!(panel_alpha(Some("0.98")), 0.98);
+        assert_eq!(panel_alpha(Some(" 0.5 ")), 0.5);
+        assert_eq!(panel_alpha(Some("2")), 1.0);
+        assert_eq!(panel_alpha(Some("-1")), 0.0);
+        assert_eq!(panel_alpha(Some("NaN")), 1.0);
+        assert_eq!(panel_alpha(Some("half")), 1.0);
     }
 }
 
