@@ -1698,6 +1698,10 @@ when unfocused") is ignored during a screenshot.
   The departure's arrival also says "Teleport completed from" and a link to
   the plaza in nearby chat (FSShowBackSLURL; capture at frame 900); the
   return says nothing, the far region having no name.
+  The particles keep their place in the world: captured at frame 790, just
+  after the departure, our avatar is alone above the water, with none of
+  the fountain's particles around it (they stay 25 km away, over the
+  plaza); at frame 1500 the fountain plays on the plaza again.
 - **`AURORA_DEMO_AGENT_JITTER=<mm>`**: our avatar receives five times a
   second (at 60 fps) a position correction of at most this size, like those
   a simulator sends to an avatar standing at altitude. With
@@ -2337,11 +2341,19 @@ status and detailed-panel validation messages retain their own presentation.
 Append `+notice` to `AURORA_DEMO_BUILD_TAB` to trigger a synthetic build status
 at frame 700; a frame-900 capture shows the card over the demo world.
 In the two-column options block, Select a face and Edit linked parts can each
-use either column, just like the other options. Their
-previous/value/next controls share a separate horizontal row with Global, Local,
-Reference and Settings below the action row. Link/Face readouts show a dash when
-inactive or unavailable. This row stays horizontal when transform values are
-folded or expanded, and Settings remains reachable when actions are hidden.
+use either column, just like the other options. Edit linked parts, once on,
+reads "Link n" (a dash when no single prim is selected) with its own small
+◄ ► at the row's right, the row keeping its height. Below the action row, one
+row holds the face arrows and buttons, Invert and All, then Global, Local and
+Reference at the right edge, all as tall; the Settings gear is in the header,
+under UUID. Shift+click on a section's button shows it in the right half of a
+window widened for two, its button half lit; Shift+click on it again gives the
+one-section width back, and `AURORA_DEMO_BUILD_SIZE=760,820` opens with two.
+The face buttons 0 to 8 between the face arrows are
+greyed in Align, under the other tools and for a face no selected prim has
+(Move, Rotate and Stretch pick faces too and keep their handles), lit for a face
+every prim that has it has selected, half-lit for one some of them have. This row stays horizontal when transform values are
+folded or expanded, and Settings remains reachable in every tool.
 Check normal and Organize modes: reordering must not alter option values, and
 organizing must not step parts/faces or change the coordinate reference.
 While organizing, the two columns have no headings. Existing empty cells and
@@ -3284,9 +3296,9 @@ opens the native Shape section on a mesh with four different generated LODs.
 The counts come from its actual geometries. Capture after frame 710.
 Suffixes `-high`, `-medium`, `-low`, `-lowest` force that LOD locally; compare
 the visible geometry and active row, then restore Default. `-readonly` keeps
-the information/menu available without Modify rights. Link/face numbers belong
-between the respective footer arrows; select multiple faces to check the list
-and its full hover text. Inspection resets on selection/asset/tool changes or
+the information/menu available without Modify rights. The link number and the
+face buttons belong between the respective footer arrows; select multiple faces
+to check that their buttons light. Inspection resets on selection/asset/tool changes or
 closing construction, stays across editing sections, never changes object
 data/global preferences and keeps HUDs at high LOD.
 `mesh-inspector-cycle` switches lowest/high/low/medium/default at frames
@@ -4090,7 +4102,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns; `far`: an animesh carried far by its animation and one worn far from its point |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-derez-closed\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|sleeves\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
 | `AURORA_DEMO_BLENDER_LIVE_TAB=place\|avatar\|import\|plugins\|quick-look\|sweep` | Opens the LiveMesh window of the Blender demo on that tab, Quick look, or a card's update sweep |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
@@ -4120,13 +4132,16 @@ the linked set. `static-linked-child` selects only the child with Edit linked.
 `static-linked-hud`, `static-linked-attached` and `static-linked-detached`
 exercise whole-family attachment or removal. `static-linked-menu` opens the
 native object menu on the child, preserving whole-linkset selection;
-`static-linked-hud-menu` exercises the worn local menu. Check the single root,
+`static-linked-hud-menu` exercises the worn local menu. `static-derez-closed` closes the window and turns the camera to the green object at frame 450, then derezzes it at frame 700 through the world menu's command: the object goes and the Undo toast shows over the world, above the toolbar; Undo brings it back. Check the single root,
 indented prim numbers and object/prim counts. The Edit linked checkbox belongs to
 the native build tools and context menu; it is absent from the LiveMesh
 window. `AURORA_DEMO_BLENDER_LIVE_TAB` opens the window on its Place, Avatar,
 Import or Plugins tab instead of Objects (with `static-linked`, Place shows
 the selected root's placement); `quick-look` opens Quick look on the selected
-object, under the Objects cards and their live thumbnails; `sweep` has
+object, under the Objects cards and their live thumbnails (with
+`AURORA_DEMO_BLENDER_LIVE=sleeves`, a rigged object of arm and leg tubes,
+and the Avatar tab's bend set to 90° elbows and 60° knees, so the bend shows
+on the avatar and in Quick look); `sweep` has
 Blender send the selected object again every eight frames from frame 400, as
 during a drag, so its card's update sweep keeps running. `static-hud` attaches it at HUD Center;
 `static-attached` attaches it to the right hand; `static-detached` removes its
@@ -7103,7 +7118,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   a price line.
 - **`AURORA_DEMO_IMPORTS=inspectors`** loads every type, including local
   previews, in the same window. Queue selection replaces the former type tabs.
-- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-native-metadata|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
+- **`AURORA_DEMO_IMPORTS=texture|destination|material|material-cube|material-aurora|material-maps|material-loading|material-zoom|material-texture-zoom|mesh|mesh-normals|mesh-zoom|mesh-low|mesh-error|mesh-physics|mesh-degenerate|mesh-options|mesh-avatar|mesh-avatar-rigged|mesh-journal|permissions|animation|animation-native-metadata|animation-own|sound|bulk|bulk-mesh-denied|bulk-upload|bulk-failed|local|local-mesh|local-mesh-applied|local-mesh-removed`**:
   writes files specific to this launch into `.scratch/import-demo/<uuid>/`
   then opens the chosen flow: RGBA image, PBR material, Collada cube,
   BVH / `.anim` animations and synthetic WAV sound. Check the settings, the
@@ -7274,6 +7289,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   of 51 fictitious L$. Uploaded files leave the list after acknowledgement;
   reopening stays empty. Local previews and unselected / failed /
   cancelled drafts remain; no real transfer or payment.
+  `bulk-failed` is `bulk` on a server that leaves the first upload without
+  an answer once, as after an HTTP 500: untick `mesh-demo` (or calculate its
+  fee), press Import and confirm. The failed
+  row shows its error and is no longer ticked, the rows behind it are
+  cancelled, and the price and Import follow the rows that are left: after
+  "Resume remaining files", and for a file added afterwards. "Resume this
+  draft" on the failed row ticks it again.
   `mesh-physics` shows the physics shape and its edges; `mesh-degenerate`
   injects a triangle defect, which must appear in the preview and block
   the quote with a diagnostic. The convex analysis must allow it to be solved.
@@ -9207,7 +9229,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `target` of the worktree, dev profile, then restoration of the normal binary
   at its Git version; no tag or release published. `AURORA_UPDATE_TEST_ROOT` is
   only accepted for an exe in its `install` subfolder, with an
-  `aurora-update-test.json` marker defining a loopback HTTP feed. Settings,
+  `aurora-update-test.json` marker defining a loopback HTTP feed and the
+  public half of a key the script makes for the run: its releases are signed
+  like the real ones (`scripts/sign-release.ps1`, openssl from Git for
+  Windows), and the loopback feed trusts that key only, never GitHub's
+  feed. Settings,
   cache and logs are isolated under this root; login and credential vault inert.
   `AURORA_UPDATE_TEST_VERSION` is reserved for these binaries and refused in
   release or with `AURORA_VERSION_TAG`. The synthetic binaries refuse any normal
@@ -9218,6 +9244,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `-Beta` serves `0.2.101-beta.20261025.1` as a GitHub pre-release and starts
   the isolated profile on the Beta channel: the offer shows; Preferences ›
   Language and updates › Versions › Stable hides it, Beta brings it back.
+  `-Unsigned` publishes 0.2.101 as a release made by hand on GitHub, without
+  its signatures: Check for updates must answer "up to date", and the log
+  says `update v0.2.101: not offered, … signature is missing`.
   The script needs PowerShell 7 (`pwsh`).
   Add `-ClearCache` and/or `-ResetSettings` to the script to test the
   publishing choices. The dialog must announce the effects before download
@@ -9244,7 +9273,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (`python3 scripts/test-update-linux.py`) prepares the same two packages as
   `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` in `.scratch` and serves the
   tarball on loopback: the same checks, with `--beta`, `--clear-cache`,
-  `--reset-settings` and `--required` in place of the switches, and no
+  `--reset-settings`, `--required` and `--unsigned` in place of the switches, and no
   server PID to stop: the feed runs inside the script, which keeps serving
   while the viewer it launched, or the one the update restarted, runs and
   stops three seconds after the last of them is closed — a Check for updates

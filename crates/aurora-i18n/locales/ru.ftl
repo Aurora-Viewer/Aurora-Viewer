@@ -10564,7 +10564,6 @@ build-compact-summary-details = { " - " }{ $capacity }    { $counts }
 build-compact-link-action = Связать
 build-compact-unlink-action = Разъединить
 build-compact-link-value = Связь { $number }
-build-compact-face-value = Грань { $number }
 build-compact-move = Переместить
 build-compact-rotate = Повернуть (Ctrl)
 build-compact-stretch = Растянуть (Ctrl+Shift)

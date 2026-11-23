@@ -29,6 +29,7 @@ mod mesh;
 mod object;
 pub(crate) mod particles;
 mod replace;
+mod second_tab;
 mod shape_preview;
 pub(in crate::build) mod texture;
 mod texture_preview;
@@ -233,6 +234,8 @@ pub struct FloaterState {
     /// Each detached window's rect when the button went down, to tell a
     /// move by its title (put back when dropped on the build window).
     detach_press: std::collections::BTreeMap<crate::build::layout::Block, egui::Rect>,
+    /// The section shown beside the active one (Aurora style).
+    pub second: second_tab::State,
     /// Section tabs taken out of the build window (shown or not).
     pub detached_tabs: Vec<usize>,
     /// Section tabs shown this frame in a window of their own.
@@ -558,6 +561,7 @@ pub fn show(
             .or_else(|| tabs.next())
             .unwrap_or(6);
     }
+    second_tab::update(tool, s, width);
     detach::prepare(tool, s);
     detach::park(ctx, s);
     tool.ui.layout.targets.clear();
@@ -567,6 +571,7 @@ pub fn show(
     let mut legacy_toggle_sections = false;
     let mut copy_uuid: Option<egui::Rect> = None;
     let mut summary_clicked = false;
+    let mut settings_clicked = false;
     if s.legacy_window {
         tool.ui.layout.organizing = false;
         tool.ui.layout.drag = None;
@@ -595,6 +600,8 @@ pub fn show(
             aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"),
             &mut copy_uuid,
         ));
+        // the build settings, under UUID (the human's request, 2026-11-22)
+        floater.header_summary_icon = Some(("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut settings_clicked));
         if tool.tool == Tool::Edit {
             floater.header_summary = Some(compact::selection_summary(p, tool, world).into());
             if !tool.selection.is_empty() {
@@ -637,8 +644,21 @@ pub fn show(
     if !s.legacy_window {
         detach::fit_window(ctx, tool, s);
     }
+    if let Some(size) = widgets::take_floater_resize(ctx, INSPECTOR_ID) {
+        second_tab::resized(tool, size.x);
+    }
+    if let Some(width) = second_tab::take_request(tool) {
+        let height = egui::AreaState::load(ctx, egui::Id::unique(INSPECTOR_ID))
+            .and_then(|state| state.size)
+            .unwrap_or(workspace::DEFAULT_SIZE)
+            .y;
+        widgets::size_floater(ctx, INSPECTOR_ID, Vec2::new(width, height));
+    }
     if summary_clicked {
         tool.ui.weights_open = !tool.ui.weights_open;
+    }
+    if settings_clicked {
+        layout::toggle_settings(tool);
     }
     if let Some((target, asset, item)) = tool.ui.slot_drop.take() {
         let sel = texture::selected(tool, world);
@@ -784,50 +804,70 @@ impl BuildTool {
         }
     }
 
-    /// ◄ ► (LLToolsSelectNextPartFace): next / previous face with the face
-    /// tool, else next / previous prim of the linkset with "Linked edit";
-    /// `include` (Shift) adds it to the selection.
+    /// Ctrl+, / Ctrl+. and the Legacy style's ◄ ► (LLToolsSelectNextPartFace,
+    /// indra/newview/lltoolmgr.cpp): with "Edit linked" outside "Select
+    /// face", the next / previous prim of the linkset; else the face arrows'
+    /// step (`select_next_face`), as their ◄ ► do in the Aurora style (the
+    /// human's choice, 2026-11-23). `include` (Shift) adds to the selection.
     pub fn select_next_part(&mut self, world: &mut World, s: &mut BuildSettings, next: bool, include: bool) {
         let face_mode = self.tool == Tool::Edit && self.edit_mode == EditMode::Face;
-        if !(s.edit_linked || face_mode) {
-            return;
-        }
-        let Some(key) = self.selection.first().copied() else { return };
-        let Some(idx) = world.objects.index_of(&key) else { return };
-        if face_mode {
-            let n = self.num_faces(world, idx) as i32;
-            let cur = self.last_face.map(|f| f as i32).unwrap_or(-1);
-            let all = self.faces.get(&key).is_none_or(|f| f.len() as i32 >= n);
-            // A sole selected face is already the cursor, not a bulk selection.
-            let f = if all && next && (n > 1 || self.selection.len() > 1) {
-                0
-            } else if next {
-                cur + 1
-            } else {
-                cur - 1
+        if s.edit_linked && !face_mode {
+            let Some(idx) = self.selection.first().and_then(|key| world.objects.index_of(key)) else {
+                return;
             };
-            if (0..n).contains(&f) {
-                if !include {
-                    let others: Vec<_> = self.selection.iter().copied().filter(|other| *other != key).collect();
-                    self.deselect(world, &others);
-                    self.faces.clear();
-                }
-                let entry = self.faces.entry(key).or_default();
-                if !entry.contains(&(f as u8)) {
-                    entry.push(f as u8);
-                }
-                self.last_face = Some(f as u8);
-                return;
-            }
-            if !s.edit_linked {
-                // wrap around the faces of the same prim
-                let f = if next { 0 } else { n - 1 };
-                self.faces.insert(key, vec![f as u8]);
-                self.last_face = Some(f as u8);
-                return;
-            }
+            self.step_link(world, idx, next, include, false);
+        } else {
+            self.select_next_face(world, s.edit_linked, next, include);
         }
-        // next / previous prim: root first, then the children in order
+    }
+
+    /// The faces of the one prim that has faces picked, one by one
+    /// (LLToolsSelectNextPartFace's face step): past its last face, the next
+    /// / previous prim of the linkset with "Edit linked", else around the
+    /// same prim. A sole selected face is already the cursor, not a bulk
+    /// selection.
+    pub(in crate::build) fn step_prim_face(&mut self, world: &mut World, idx: usize, edit_linked: bool, next: bool, include: bool) {
+        let Some(key) = world.objects.get(idx).map(|o| o.key) else { return };
+        let n = self.num_faces(world, idx) as i32;
+        let cur = self.last_face.map(|f| f as i32).unwrap_or(-1);
+        let all = self.faces.get(&key).is_none_or(|f| f.len() as i32 >= n);
+        let f = if all && next && (n > 1 || self.selection.len() > 1) {
+            0
+        } else if next {
+            cur + 1
+        } else {
+            cur - 1
+        };
+        if (0..n).contains(&f) {
+            if !include {
+                let others: Vec<_> = self.selection.iter().copied().filter(|other| *other != key).collect();
+                self.deselect(world, &others);
+                // the prims left with it (its linkset kept whole) keep no face
+                for prim in self.sel_prims(world) {
+                    if let Some(other) = world.objects.get(prim).map(|o| o.key).filter(|other| *other != key) {
+                        self.faces.insert(other, Vec::new());
+                    }
+                }
+                self.faces.insert(key, Vec::new());
+            }
+            let entry = self.faces.entry(key).or_default();
+            if !entry.contains(&(f as u8)) {
+                entry.push(f as u8);
+            }
+            self.last_face = Some(f as u8);
+        } else if edit_linked {
+            self.step_link(world, idx, next, include, true);
+        } else {
+            // around the faces of the same prim
+            let f = if next { 0 } else { n - 1 };
+            self.faces.insert(key, vec![f as u8]);
+            self.last_face = Some(f as u8);
+        }
+    }
+
+    /// The next / previous prim of `idx`'s linkset, root first, then the
+    /// children in order; `with_face`: picked with its first / last face.
+    fn step_link(&mut self, world: &mut World, idx: usize, next: bool, include: bool, with_face: bool) {
         let root = super::root_of(world, idx);
         let list: Vec<usize> = super::family(world, root)
             .into_iter()
@@ -848,7 +888,7 @@ impl BuildTool {
         }
         self.selection_linked = true;
         self.add(world, unit);
-        if face_mode {
+        if with_face {
             let f = if next {
                 0
             } else {
@@ -863,11 +903,11 @@ impl BuildTool {
         if !s.edit_linked {
             return;
         }
-        let mode = self.edit_mode;
-        self.edit_mode = EditMode::Move;
-        self.select_next_part(world, s, next, include);
-        self.edit_mode = mode;
-        if mode == EditMode::Face {
+        let Some(idx) = self.selection.first().and_then(|key| world.objects.index_of(key)) else {
+            return;
+        };
+        self.step_link(world, idx, next, include, false);
+        if self.edit_mode == EditMode::Face {
             if !include {
                 self.faces.clear();
             }

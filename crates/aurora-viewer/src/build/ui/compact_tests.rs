@@ -120,7 +120,7 @@ fn construction_clears_forbidden_vectors_for_both_styles_and_the_complete_select
         inspector.settings.transform_expanded = true;
         inspector.tool.tab = 5;
         inspector.screen = vec2(1600.0, 1400.0);
-        resize_inspector(&mut inspector, vec2(700.0, 1160.0));
+        resize_inspector(&mut inspector, vec2(700.0, 1190.0));
         let idx = inspector.world.objects.index_of(&inspector.tool.selection[0]).unwrap();
         let id = inspector.world.objects.get(idx).unwrap().full_id;
         for (rights, linked, known, expected) in [
@@ -210,7 +210,7 @@ fn construction_hides_forbidden_geometry_and_feature_parameters() {
         inspector.settings.legacy_window = legacy;
         inspector.settings.transform_expanded = false;
         inspector.screen = vec2(1600.0, 1400.0);
-        resize_inspector(&mut inspector, vec2(700.0, 1160.0));
+        resize_inspector(&mut inspector, vec2(700.0, 1190.0));
         let idx = inspector.world.objects.index_of(&inspector.tool.selection[0]).unwrap();
         let object = inspector.world.objects.get_mut(idx).unwrap();
         object.volume.path.curve_type = aurora_prim::params::LL_PCODE_PATH_FLEXIBLE;
@@ -530,16 +530,34 @@ fn mesh_inspector_is_interactive_without_modify_and_selection_numbers_stay_with_
     inspector.tool.faces.insert(key, [0, 2, 5].into_iter().collect());
     let (_, texts) = inspector.show(Vec::new());
     for (item, number) in [(Item::Face, "0, 2, 5"), (Item::Linked, "0")] {
+        // the link number is in the "Edit linked parts" option
         let target = inspector
             .ctx
             .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_part_navigation", item))))
-            .unwrap();
-        let label = if item == Item::Face {
-            aurora_i18n::tr!("build-compact-face-value", number = number)
-        } else {
-            aurora_i18n::tr!("build-compact-link-value", number = number)
-        };
-        assert!(texts.iter().any(|(text, rect)| text == &label && target.contains_rect(*rect)));
+            .unwrap_or(egui::Rect::EVERYTHING);
+        if item == Item::Face {
+            // the face buttons 0 to 8, those three on
+            assert!((0..9).all(|face| {
+                texts
+                    .iter()
+                    .any(|(text, rect)| text == &face.to_string() && target.contains_rect(*rect))
+            }));
+            let on = inspector
+                .tool
+                .face_buttons(&inspector.world)
+                .map(|state| state == crate::build::face_buttons::FaceButton::On);
+            assert_eq!(
+                on.iter()
+                    .enumerate()
+                    .filter(|(_, on)| **on)
+                    .map(|(face, _)| face)
+                    .collect::<Vec<_>>(),
+                number.split(", ").map(|n| n.parse::<usize>().unwrap()).collect::<Vec<_>>()
+            );
+            continue;
+        }
+        let label = aurora_i18n::tr!("build-compact-link-value", number = number);
+        assert!(texts.iter().any(|(text, rect)| text == &label && target.contains(rect.center())));
     }
     for _ in 0..12 {
         let (next, _) = inspector.show(Vec::new());
@@ -1379,6 +1397,8 @@ struct Inspector {
     text_fonts: Vec<(String, f32)>,
     /// A window drawn before the build tools that takes Escape for itself.
     escape_taken_first: bool,
+    /// The keys the build tools are given as held.
+    mods: Mods,
 }
 
 impl Inspector {
@@ -1409,6 +1429,7 @@ impl Inspector {
             inventory_surface: None,
             numeric_drag: None,
             escape_taken_first: false,
+            mods: Mods::default(),
             native_pixels_per_point: 1.0,
             screen: egui::vec2(1280.0, 900.0),
             text_fonts: Vec::new(),
@@ -1456,7 +1477,7 @@ impl Inspector {
                 &mut self.tool,
                 &mut self.world,
                 &mut self.settings,
-                Mods::default(),
+                self.mods,
                 &mut env,
             );
         });
@@ -1618,7 +1639,7 @@ fn create_panel_holds_still_at_every_width_around_its_scroll_bar() {
     // viewport. Keep the marker visible while the shape grid crosses the
     // scroll-bar threshold at the current construction layout's height.
     for width in (300..=450).step_by(3) {
-        resize_inspector(&mut inspector, vec2(width as f32, 820.0));
+        resize_inspector(&mut inspector, vec2(width as f32, 850.0));
         let first = place(&inspector.show(vec![]).1);
         assert!(first.is_some(), "Create options missing at width {width}");
         for _ in 0..4 {
@@ -1823,7 +1844,7 @@ fn navigation_sets_the_resize_floor_and_settings_glyph_stays_square() {
         }
         let glyph = inspector
             .ctx
-            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("compact_icon_glyph", "settings-filled"))))
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("header_summary_icon", "settings-filled"))))
             .unwrap();
         assert_eq!(glyph.width(), glyph.height());
         assert!(window.contains_rect(glyph));

@@ -10282,7 +10282,6 @@ build-compact-summary-details = { " - " }{ $capacity }    { $counts }
 build-compact-link-action = 联结
 build-compact-unlink-action = 取消联结
 build-compact-link-value = 联结 { $number }
-build-compact-face-value = 面 { $number }
 build-compact-move = 移动
 build-compact-rotate = 旋转（Ctrl）
 build-compact-stretch = 拉伸（Ctrl+Shift）

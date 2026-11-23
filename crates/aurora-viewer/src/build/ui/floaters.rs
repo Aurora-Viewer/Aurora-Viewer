@@ -125,6 +125,78 @@ pub(super) fn handle_controls(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSetti
     });
 }
 
+/// What Shift+click and Ctrl+click on an object do with the Edit tool
+/// (BuildSettings::shift_click / ctrl_click, face_buttons.rs): add or take
+/// out the object, the Legacy Viewer's only behaviour, or select the
+/// clicked face; and Ctrl+right click, with the tools open or not
+/// (BuildSettings::ctrl_right_click): the menu or its "Edit".
+pub(super) fn click_controls(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+    use crate::build::face_buttons::ModifierClick;
+    let items = [
+        (aurora_i18n::tr!("build-ui-floaters-click-object"), ModifierClick::Object),
+        (aurora_i18n::tr!("build-ui-floaters-click-face"), ModifierClick::Face),
+    ];
+    let label_width = 112.0_f32.min(ui.available_width() * 0.45);
+    for (id, setting, text) in [
+        (
+            "build_shift_click",
+            &mut s.shift_click,
+            aurora_i18n::tr!("build-ui-floaters-shift-click"),
+        ),
+        (
+            "build_ctrl_click",
+            &mut s.ctrl_click,
+            aurora_i18n::tr!("build-ui-floaters-ctrl-click"),
+        ),
+    ] {
+        ui.horizontal(|ui| {
+            ui.allocate_ui_with_layout(
+                Vec2::new(label_width, 20.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_width(label_width);
+                    label(ui, p, text)
+                },
+            );
+            let width = (ui.available_width() - 4.0).max(60.0);
+            if let Some(choice) = super::common::combo(ui, id, Some(*setting), &items, width, true) {
+                *setting = choice;
+            }
+        });
+    }
+    small(ui, p, aurora_i18n::tr!("build-ui-floaters-clicks-hint"));
+    let items = [
+        (
+            aurora_i18n::tr!("build-ui-floaters-right-click-menu"),
+            crate::build::CtrlRightClick::Menu,
+        ),
+        (
+            aurora_i18n::tr!("build-ui-floaters-right-click-edit"),
+            crate::build::CtrlRightClick::Edit,
+        ),
+    ];
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            Vec2::new(label_width, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(label_width);
+                label(ui, p, aurora_i18n::tr!("build-ui-floaters-ctrl-right-click"))
+            },
+        );
+        let width = (ui.available_width() - 4.0).max(60.0);
+        if let Some(choice) = super::common::combo(ui, "build_ctrl_right_click", Some(s.ctrl_right_click), &items, width, true) {
+            s.ctrl_right_click = choice;
+        }
+    });
+    crate::ui::widgets::checkbox(
+        ui,
+        p,
+        &mut s.double_click_linked,
+        RichText::new(aurora_i18n::tr!("build-ui-floaters-double-click-linked")).size(super::common::BODY),
+    );
+}
+
 /// The Build 1 preferences' "Limit select distance" and "Limit drag
 /// distance" (panel_preferences_firestorm.xml): a switch and its distance in
 /// metres, greyed while the switch is off.
