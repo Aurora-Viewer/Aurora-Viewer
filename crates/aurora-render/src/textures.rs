@@ -1293,10 +1293,17 @@ impl TextureTable {
         let capacity = capacity.max(RESERVED + 1);
         let page_capacity = page_capacity(bindable, partial);
         let max_layers = limits.max_texture_array_layers.clamp(1, MAX_LAYERS);
+        // the ray-traced passes read the textures under their hits
+        // (rt_shadows.rs)
+        let stages = if device.features().contains(crate::rt_shadows::FEATURES) {
+            wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE
+        } else {
+            wgpu::ShaderStages::FRAGMENT
+        };
         let layout_entries = vec![
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: stages,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     view_dimension: wgpu::TextureViewDimension::D2Array,
@@ -1307,13 +1314,13 @@ impl TextureTable {
             // the entries after the pages: `OTHER_DESCRIPTORS`
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: stages,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                visibility: stages,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,

@@ -543,8 +543,14 @@ fn note_new_line(ui: &egui::Ui, world: &World, st: &mut ChatUi, read: Option<(us
     };
     let unread = read.map_or(0, |(unread, _)| unread);
     let looked = ui.input(|i| i.focused) && !st.views.get(&st.selected).is_some_and(view::View::is_paused);
-    st.new_lines
-        .frame(st.selected, ui.ctx().cumulative_frame_nr(), looked, first, lines, unread);
+    st.new_lines.frame(
+        st.selected,
+        ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT),
+        looked,
+        first,
+        lines,
+        unread,
+    );
 }
 
 /// Where the "New" line of each conversation sits (the human's rule of

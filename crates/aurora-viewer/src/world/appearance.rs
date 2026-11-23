@@ -569,7 +569,8 @@ fn wear_link(
         if layers == Layers::ReplaceAll {
             current.retain(|l| !same_type(l));
         }
-        if layers == Layers::ReplaceTop || !can_add_clothing(inv, current, kind) {
+        let has_room = can_add_clothing(inv, current, kind);
+        if layers == Layers::ReplaceTop || !has_room {
             let top = current
                 .iter()
                 .enumerate()
@@ -578,6 +579,10 @@ fn wear_link(
                 .map(|(i, _)| i);
             if let Some(top) = top {
                 current.remove(top);
+            } else if !has_room {
+                // At the total limit there is no layer of this type to replace.
+                // Refuse before a COF write rather than removing an unrelated layer.
+                return Err(aurora_i18n::tr!("world-appearance-clothing-layers-full").into());
             }
         }
     }
@@ -2970,6 +2975,28 @@ mod tests {
         }
         demo_replace(&mut inv, agent, cof, &links);
         assert_eq!(count(&inv, &folder_links(&inv, cof)), 60);
+        let missing_kind = (4..=16)
+            .find(|kind| {
+                !links.iter().any(|l| {
+                    inv.items
+                        .get(&l.target)
+                        .is_some_and(|it| it.asset_type == 5 && it.flags & 0xff == *kind)
+                })
+            })
+            .expect("a clothing type absent from this outfit");
+        let first = clothing(&mut inv, 9991, missing_kind, "First of this type");
+        for replace in [false, true] {
+            let result = plan(
+                &inv,
+                Action::WearItem {
+                    item: first,
+                    replace,
+                    point: 0,
+                },
+                &HashMap::new(),
+            );
+            assert!(result.is_err(), "a full outfit cannot add its first layer of an unrelated type");
+        }
         let tattoo = clothing(&mut inv, 9990, 14, "Third tattoo");
         let worn = wear(&inv, tattoo, false);
         assert!(worn.contains(&tattoo));

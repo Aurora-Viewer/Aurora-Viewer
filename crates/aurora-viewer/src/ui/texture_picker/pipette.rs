@@ -30,7 +30,7 @@ fn store(ctx: &Context, state: State) {
 
 pub(crate) fn owner(ctx: &Context) -> Option<Id> {
     let (id, frame, _) = load(ctx).owner?;
-    (ctx.cumulative_frame_nr() <= frame + 1).then_some(id)
+    (ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) <= frame + 1).then_some(id)
 }
 
 pub(crate) fn armed(ctx: &Context) -> bool {
@@ -43,7 +43,7 @@ fn arm(ctx: &Context, id: Id, materials: bool) {
         state = State::default();
         super::super::widgets::color::pipette::release(ctx);
     }
-    state.owner = Some((id, ctx.cumulative_frame_nr(), materials));
+    state.owner = Some((id, ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT), materials));
     store(ctx, state);
 }
 
