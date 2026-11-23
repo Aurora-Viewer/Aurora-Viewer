@@ -7289,7 +7289,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   reopening stays empty. Local previews and unselected / failed /
   cancelled drafts remain; no real transfer or payment.
   `bulk-failed` is `bulk` on a server that leaves the first upload without
-  an answer once, as after an HTTP 500: press Import and confirm. The failed
+  an answer once, as after an HTTP 500: untick `mesh-demo` (or calculate its
+  fee), press Import and confirm. The failed
   row shows its error and is no longer ticked, the rows behind it are
   cancelled, and the price and Import follow the rows that are left: after
   "Resume remaining files", and for a file added afterwards. "Resume this

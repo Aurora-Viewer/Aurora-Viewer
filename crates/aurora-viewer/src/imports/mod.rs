@@ -333,6 +333,8 @@ pub struct Entry {
     pub source_folders: Vec<String>,
     pub upload_path: Option<Vec<String>>,
     pub selected: bool,
+    /// The tick a failed step took: `restore_draft` gives it back.
+    pub reselect: bool,
     pub source: Option<Source>,
     pub options: import_texture::Options,
     pub image_size_limit: ImageSizeLimit,
@@ -386,15 +388,16 @@ pub enum Status {
     Cancelled,
 }
 impl Entry {
-    /// An upload that failed. The row leaves the selection, like a file that
-    /// could not be read: a selected row with an error holds the price and
-    /// the upload of the whole queue (`total`), the files added later
-    /// included. do_bulk_upload (llviewermenufile.cpp) sends each file as its
-    /// own request, so one failure never holds the others. `restore_draft`
-    /// selects it again.
+    /// A step of the row's upload failed (encoding, the upload itself, a map
+    /// it needs). The row leaves the selection: a selected row with an error
+    /// holds the price and the upload of the whole queue (`total`), the
+    /// files added later included, which is meant for a file to fix, not
+    /// for an answer of the server. do_bulk_upload (llviewermenufile.cpp)
+    /// sends each file as its own request, so one failure never holds the
+    /// others. `restore_draft` gives the tick back.
     fn failed(&mut self, reason: String) {
         self.status = Status::Error(reason);
-        self.selected = false;
+        self.reselect |= std::mem::take(&mut self.selected);
     }
     /// Keep the cached preparation options and preview revisions in step with
     /// the effective limit; the original decoded pixels remain available.
@@ -455,6 +458,7 @@ impl Entry {
             source_folders: Vec::new(),
             upload_path: None,
             selected: source.is_some(),
+            reselect: false,
             empty_alpha: empty_alpha
                 .unwrap_or_else(|| matches!(&source,Some(Source::Texture(image)) if import_texture::empty_alpha(image))),
             sound: sound::Editor::new(source.as_ref()),
@@ -1050,7 +1054,7 @@ impl Imports {
                 draft.invalidate_quote();
             }
             entry.status = Status::Ready;
-            entry.selected = true;
+            entry.selected |= std::mem::take(&mut entry.reselect);
             entry.preview_error = None;
             entry.preview_pending = false;
             entry.preview_generation += 1;

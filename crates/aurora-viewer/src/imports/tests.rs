@@ -153,7 +153,7 @@ fn a_failed_upload_leaves_the_files_added_after_it_priced() {
 }
 
 #[test]
-fn a_failed_free_material_is_left_out_while_the_batch_goes_on() {
+fn a_material_whose_free_map_failed_is_left_out_while_the_batch_goes_on() {
     let (mut imports, request, _, _) = failed_map_batch(0);
 
     imports.uploaded(request, Err(Error::Unknown));
@@ -171,6 +171,20 @@ fn restoring_a_failed_upload_selects_it_again() {
     imports.restore_draft(failed);
     assert!(imports.entries[0].selected && matches!(imports.entries[0].status, Status::Ready));
     assert_eq!(imports.total(&prices()), Some(10));
+}
+
+#[test]
+fn restoring_a_draft_left_unselected_by_hand_keeps_it_unselected() {
+    let mut imports = Imports::default();
+    // (a reload that fails keeps the row's last source and its selection)
+    let mut entry = Entry::new("edited.png".into(), Ok(Source::Texture(image(16, 16))), Default::default());
+    entry.selected = false;
+    entry.status = Status::Error("Invalid".into());
+    let id = entry.id;
+    imports.entries.push(entry);
+    imports.restore_draft(id);
+    assert!(matches!(imports.entries[0].status, Status::Ready));
+    assert!(!imports.entries[0].selected);
 }
 
 #[test]
