@@ -13117,7 +13117,6 @@ texture-library-no-copy-drop-question = 移動該項目？
 texture-library-no-copy-drop-move = 移動
 texture-library-worn-drop-all-faces = 所有面
 texture-library-worn-drop-linked = 所有聯結項目
-texture-library-applied = 已套用紋理或材質。
 texture-library-no-results = 沒有匹配的資源。
 texture-library-demo-wood = 木材
 texture-library-demo-stone = 石材

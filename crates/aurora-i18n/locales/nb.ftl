@@ -13138,7 +13138,6 @@ texture-library-no-copy-drop-question = Vil du flytte gjenstanden?
 texture-library-no-copy-drop-move = Flytt
 texture-library-worn-drop-all-faces = Alle flater
 texture-library-worn-drop-linked = Alle sammenkoblede deler
-texture-library-applied = Tekstur eller materiale brukt.
 texture-library-no-results = Ingen samsvarende ressurser.
 texture-library-demo-wood = Tre
 texture-library-demo-stone = Stein

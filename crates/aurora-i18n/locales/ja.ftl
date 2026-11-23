@@ -13300,7 +13300,6 @@ texture-library-no-copy-drop-question = アイテムを移動しますか？
 texture-library-no-copy-drop-move = 移動
 texture-library-worn-drop-all-faces = すべての面
 texture-library-worn-drop-linked = リンクされたすべてのアイテム
-texture-library-applied = テクスチャまたはマテリアルを適用しました。
 texture-library-no-results = 一致するリソースはありません。
 texture-library-demo-wood = 木
 texture-library-demo-stone = 石

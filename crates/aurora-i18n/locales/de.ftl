@@ -13283,7 +13283,6 @@ texture-library-no-copy-drop-question = Das Objekt verschieben?
 texture-library-no-copy-drop-move = Verschieben
 texture-library-worn-drop-all-faces = Alle Flächen
 texture-library-worn-drop-linked = Alle verknüpften Objekte
-texture-library-applied = Textur oder Material angewendet.
 texture-library-no-results = Keine passenden Ressourcen.
 texture-library-demo-wood = Holz
 texture-library-demo-stone = Stein

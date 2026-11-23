@@ -13434,7 +13434,6 @@ texture-library-no-copy-drop-question = Перемістити предмет?
 texture-library-no-copy-drop-move = Перемістити
 texture-library-worn-drop-all-faces = Усі грані
 texture-library-worn-drop-linked = Усі зв'язані частини
-texture-library-applied = Текстуру або матеріал застосовано.
 texture-library-no-results = Немає відповідних ресурсів.
 texture-library-demo-wood = Дерево
 texture-library-demo-stone = Камінь

@@ -13414,7 +13414,6 @@ texture-library-no-copy-drop-question = Déplacer l’élément ?
 texture-library-no-copy-drop-move = Déplacer
 texture-library-worn-drop-all-faces = Toutes les faces
 texture-library-worn-drop-linked = Tous les éléments liés
-texture-library-applied = Texture ou matériau appliqué.
 texture-library-no-results = Aucune ressource ne correspond.
 texture-library-demo-wood = Bois
 texture-library-demo-stone = Pierre

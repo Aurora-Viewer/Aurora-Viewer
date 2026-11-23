@@ -13409,7 +13409,6 @@ texture-library-no-copy-drop-question = Move the item?
 texture-library-no-copy-drop-move = Move
 texture-library-worn-drop-all-faces = All faces
 texture-library-worn-drop-linked = All linked items
-texture-library-applied = Texture or material applied.
 texture-library-no-results = No matching resources.
 texture-library-demo-wood = Wood
 texture-library-demo-stone = Stone

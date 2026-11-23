@@ -13456,7 +13456,6 @@ texture-library-no-copy-drop-question = Przenieść przedmiot?
 texture-library-no-copy-drop-move = Przenieś
 texture-library-worn-drop-all-faces = Wszystkie strony
 texture-library-worn-drop-linked = Wszystkie scalone części
-texture-library-applied = Zastosowano teksturę lub materiał.
 texture-library-no-results = Brak pasujących zasobów.
 texture-library-demo-wood = Drewno
 texture-library-demo-stone = Kamień

@@ -13154,7 +13154,6 @@ texture-library-no-copy-drop-question = Öğe taşınsın mı?
 texture-library-no-copy-drop-move = Taşı
 texture-library-worn-drop-all-faces = Tüm yüzler
 texture-library-worn-drop-linked = Tüm bağlı öğeler
-texture-library-applied = Doku veya malzeme uygulandı.
 texture-library-no-results = Eşleşen kaynak yok.
 texture-library-demo-wood = Ahşap
 texture-library-demo-stone = Taş

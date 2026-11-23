@@ -13121,7 +13121,6 @@ texture-library-no-copy-drop-question = 移动该项目？
 texture-library-no-copy-drop-move = 移动
 texture-library-worn-drop-all-faces = 所有面
 texture-library-worn-drop-linked = 所有联结项目
-texture-library-applied = 已应用纹理或材质。
 texture-library-no-results = 没有匹配的资源。
 texture-library-demo-wood = 木材
 texture-library-demo-stone = 石材
