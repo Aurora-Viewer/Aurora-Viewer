@@ -140,7 +140,9 @@ permission rule hides it.
   (RlvUIEnabler::canViewParcelProperties and canViewRegionProperties). The
   question is asked again for what the window shows, and a parcel that has
   not arrived yet keeps the window hidden instead of closing it
-  (`world/rlva/land_gate.rs`).
+  (`world/rlva/land_gate.rs`); an open window keeps drawing while its next
+  parcel loads only in the same region. A refused About Land leaves the
+  selection to the Buy access question and the Buy Land window.
 - Inventory: detach, addattach/remattach, addoutfit/remoutfit,
   sharedwear/unwear, unsharedwear/unwear. COF changes are checked as deltas;
   native detach and attach messages are checked too. Scripted removal honors

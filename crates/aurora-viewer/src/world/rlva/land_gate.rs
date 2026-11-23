@@ -15,13 +15,20 @@
 //! - the question is asked again every frame for the parcel the window shows,
 //!   not once when it opens: an About Land window open on the agent's land
 //!   would turn into the land of someone else when the ground menu's "About
-//!   Land" selects another parcel, and the Legacy Viewer lets it show;
-//! - `LLParcelSelection::hasOthersSelected` refuses a right click on a
-//!   group's land even for a member with the power (the simulator counts the
-//!   squares of a group as "other"); the button opens that same parcel, so
-//!   Aurora asks only that the selection is one parcel
-//!   (`PARCEL_RESULT_MULTIPLE` is refused), which is what that test is for.
+//!   Land" selects another parcel, and the Legacy Viewer lets it show. While
+//!   that next parcel loads, the window keeps drawing only when it stays in
+//!   the same region; a selection in another region hides it, since the
+//!   window would show that region's name and flags (the classic Covenant
+//!   tab) before the answer;
+//! - `LLParcelSelection::hasOthersSelected` refuses a selection that holds
+//!   squares owned by others (`mSelectedOtherCount`), and the simulator
+//!   counts the squares of a group's land as others', so a right click on a
+//!   group's land is refused even for a member with the power, where the
+//!   button opens that same parcel. Aurora does not read that count: the
+//!   owner test below refuses another resident's parcel, and a selection of
+//!   several parcels (`PARCEL_RESULT_MULTIPLE`) is refused.
 use super::super::World;
+use crate::world::land::powers;
 use aurora_net::land::PARCEL_RESULT_MULTIPLE;
 use aurora_net::{GroupMembership, ParcelInfo, RegionInfo};
 use std::time::{Duration, Instant};
@@ -29,7 +36,7 @@ use uuid::Uuid;
 
 /// `GP_LAND_RETURN` (indra/newview/roles_constants.h): return the objects
 /// set to the group, those not set to it and those the group owns.
-pub const GP_LAND_RETURN: u64 = (1 << 33) | (1 << 34) | (1 << 48);
+pub const GP_LAND_RETURN: u64 = powers::LAND_RETURN_GROUP_SET | powers::LAND_RETURN_NON_GROUP | powers::LAND_RETURN_GROUP_OWNED;
 
 /// How long a window waits for the parcel or the region before it gives up
 /// and stays closed.
@@ -88,6 +95,12 @@ impl World {
         parcel_verdict(self.agent_id, &self.groups.groups, parcel.map(|p| &**p))
     }
 
+    /// The region of the parcel About Land shows (see
+    /// [`World::rlva_parcel_verdict`]).
+    pub fn rlva_parcel_region(&self) -> Option<u64> {
+        self.land.sel.as_ref().map(|sel| sel.handle).or(self.main_region)
+    }
+
     pub fn rlva_region_verdict(&self) -> LandVerdict {
         region_verdict(self.agent_id, self.main().and_then(|r| r.info.as_deref()))
     }
@@ -98,7 +111,8 @@ impl World {
 pub enum GateView {
     /// Not asked for.
     Closed,
-    /// Asked for, the answer is not known yet: nothing is drawn.
+    /// Asked for, the answer is not known yet: nothing is drawn, and the
+    /// window is left as it is (not closed, so it keeps its selection).
     Hidden,
     /// Allowed: the window is drawn.
     Shown,
@@ -113,22 +127,40 @@ pub struct LandGate {
     waiting_since: Option<Instant>,
     /// The last answer, to log it once when it changes.
     last: Option<LandVerdict>,
-    /// The window was drawn on the last frame: while its next parcel loads
-    /// it keeps drawing (a window with no parcel shows nothing of it), so
-    /// that closing it for a frame does not drop the selection.
-    shown: bool,
+    /// The window was drawn on the last frame, and the region it showed:
+    /// while its next parcel loads in that same region it keeps drawing (a
+    /// window with no parcel shows nothing of it), so that its parcel can
+    /// change without a flicker.
+    shown: Option<Option<u64>>,
 }
 
 impl LandGate {
     /// `requested`: the window's panel flag; `restricted`: `@showloc` is
-    /// set; `verdict`: the question, for what the window would show now.
-    pub fn step(&mut self, name: &str, requested: bool, restricted: bool, verdict: impl FnOnce() -> LandVerdict, now: Instant) -> GateView {
-        let view = self.decide(name, requested, restricted, verdict, now);
-        self.shown = view == GateView::Shown;
+    /// set; `region`: the region of what the window would show now;
+    /// `verdict`: the question, for what the window would show now.
+    pub fn step(
+        &mut self,
+        name: &str,
+        requested: bool,
+        restricted: bool,
+        region: Option<u64>,
+        verdict: impl FnOnce() -> LandVerdict,
+        now: Instant,
+    ) -> GateView {
+        let view = self.decide(name, requested, restricted, region, verdict, now);
+        self.shown = (view == GateView::Shown).then_some(region);
         view
     }
 
-    fn decide(&mut self, name: &str, requested: bool, restricted: bool, verdict: impl FnOnce() -> LandVerdict, now: Instant) -> GateView {
+    fn decide(
+        &mut self,
+        name: &str,
+        requested: bool,
+        restricted: bool,
+        region: Option<u64>,
+        verdict: impl FnOnce() -> LandVerdict,
+        now: Instant,
+    ) -> GateView {
         if !requested {
             self.waiting_since = None;
             self.last = None;
@@ -155,7 +187,11 @@ impl LandGate {
             LandVerdict::Unknown => {
                 let since = *self.waiting_since.get_or_insert(now);
                 if now.duration_since(since) < WAIT {
-                    if self.shown { GateView::Shown } else { GateView::Hidden }
+                    if self.shown == Some(region) {
+                        GateView::Shown
+                    } else {
+                        GateView::Hidden
+                    }
                 } else {
                     log::info!("@showloc {name}: nothing arrived in {} s, refused", WAIT.as_secs());
                     self.waiting_since = None;
@@ -230,8 +266,13 @@ mod tests {
     #[test]
     fn a_group_parcel_opens_with_one_of_the_return_powers_only() {
         let land = parcel(GROUP);
-        // GP_LAND_RETURN_GROUP_SET, _NON_GROUP and _GROUP_OWNED, each alone
-        for power in [1u64 << 33, 1 << 34, 1 << 48] {
+        // GP_LAND_RETURN_GROUP_SET, _NON_GROUP and _GROUP_OWNED (bits 33, 34
+        // and 48), each alone
+        for power in [
+            powers::LAND_RETURN_GROUP_SET,
+            powers::LAND_RETURN_NON_GROUP,
+            powers::LAND_RETURN_GROUP_OWNED,
+        ] {
             assert_eq!(parcel_verdict(ME, &[group(GROUP, power)], Some(&land)), LandVerdict::Allowed);
         }
         // the other powers (manage the allowed and banned lists, eject and
@@ -285,9 +326,25 @@ mod tests {
         assert_eq!(region_verdict(ME, None), LandVerdict::Unknown);
     }
 
-    /// One frame at `t` seconds after `t0`.
+    const HERE: Option<u64> = Some(1);
+    const NEIGHBOUR: Option<u64> = Some(2);
+
+    /// One frame at `t` seconds after `t0`, in the agent's region.
     fn frame(gate: &mut LandGate, t0: Instant, t: u64, requested: bool, restricted: bool, v: LandVerdict) -> GateView {
-        gate.step("test", requested, restricted, || v, t0 + Duration::from_secs(t))
+        frame_in(gate, t0, t, HERE, v, requested, restricted)
+    }
+
+    /// One frame at `t` seconds after `t0`, on a parcel of `region`.
+    fn frame_in(
+        gate: &mut LandGate,
+        t0: Instant,
+        t: u64,
+        region: Option<u64>,
+        v: LandVerdict,
+        requested: bool,
+        restricted: bool,
+    ) -> GateView {
+        gate.step("test", requested, restricted, region, || v, t0 + Duration::from_secs(t))
     }
 
     #[test]
@@ -316,6 +373,42 @@ mod tests {
         // parcel to show while it loads, then closes
         assert_eq!(frame(&mut gate, t0, 1, true, true, LandVerdict::Unknown), GateView::Shown);
         assert_eq!(frame(&mut gate, t0, 2, true, true, LandVerdict::Refused), GateView::Refused);
+    }
+
+    #[test]
+    fn an_open_window_hides_while_a_parcel_of_another_region_loads() {
+        let (mut gate, t0) = (LandGate::default(), Instant::now());
+        assert_eq!(frame_in(&mut gate, t0, 0, HERE, LandVerdict::Allowed, true, true), GateView::Shown);
+        // the ground menu selects a parcel of the neighbouring region: the
+        // window would show that region's name before the answer
+        assert_eq!(
+            frame_in(&mut gate, t0, 1, NEIGHBOUR, LandVerdict::Unknown, true, true),
+            GateView::Hidden
+        );
+        assert_eq!(
+            frame_in(&mut gate, t0, 2, NEIGHBOUR, LandVerdict::Unknown, true, true),
+            GateView::Hidden
+        );
+        // it is someone else's: refused; had it been allowed, it shows
+        assert_eq!(
+            frame_in(&mut gate, t0, 3, NEIGHBOUR, LandVerdict::Refused, true, true),
+            GateView::Refused
+        );
+        let (mut gate, t0) = (LandGate::default(), Instant::now());
+        assert_eq!(frame_in(&mut gate, t0, 0, HERE, LandVerdict::Allowed, true, true), GateView::Shown);
+        assert_eq!(
+            frame_in(&mut gate, t0, 1, NEIGHBOUR, LandVerdict::Unknown, true, true),
+            GateView::Hidden
+        );
+        assert_eq!(
+            frame_in(&mut gate, t0, 2, NEIGHBOUR, LandVerdict::Allowed, true, true),
+            GateView::Shown
+        );
+        // back to a parcel loading in the region it now shows: it keeps drawing
+        assert_eq!(
+            frame_in(&mut gate, t0, 3, NEIGHBOUR, LandVerdict::Unknown, true, true),
+            GateView::Shown
+        );
     }
 
     #[test]
