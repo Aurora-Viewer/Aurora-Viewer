@@ -2624,6 +2624,39 @@ mod tests {
         assert_eq!(listed_pick_sel(None, &[]), None);
     }
 
+    /// One frame of our classic Favorites tab with two picks, New clicked
+    /// (the demo's click, on the button's own path): the draft is selected
+    /// and kept, not replaced by the first pick (#4685).
+    #[test]
+    fn classic_new_pick_beside_existing_picks_is_selected() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = Uuid::from_u128(4685);
+        world.profiles.merge_picks(
+            world.agent_id,
+            vec![(Uuid::from_u128(1), "Beach".into()), (Uuid::from_u128(2), "Workshop".into())],
+        );
+        let p = crate::theme::Theme::default().palette();
+        let mut emoji = super::super::emoji::Emoji::load();
+        let images = HashMap::new();
+        let c = TabCtx {
+            p: &p,
+            world: &world,
+            images: &images,
+            own: true,
+        };
+        let mut w = Window::new(world.agent_id);
+        w.tab = TAB_PICKS;
+        w.demo_new_pick = true;
+        let mut actions = Vec::new();
+        Frames::new().run(Vec::new(), &mut |ui: &mut egui::Ui| {
+            picks_tab(ui, &c, &mut emoji, &mut w, &mut HashSet::new(), &mut HashSet::new(), &mut actions);
+        });
+        assert!(!w.demo_new_pick, "New was clicked");
+        assert_eq!(w.pick_sel, Some(Uuid::nil()));
+        assert!(w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil()), "the draft is kept");
+    }
+
     #[test]
     fn classic_profile_double_click_opens_member_and_nonmember_groups() {
         use crate::ui::widgets::elide_tests::{Frames, painted};
