@@ -7795,7 +7795,6 @@ ui-inventory-thumbnail-image-uuid = UUID зображення
 ui-inventory-thumbnail-invalid-image-uuid = Неправильний UUID зображення.
 ui-texture-picker-invalid-uuid = Неправильний UUID
 ui-texture-picker-confirm-no-copy = Текстура без копіювання: підтвердьте кнопкою OK.
-ui-texture-picker-no-live-preview = Для текстури без копіювання або без передавання немає живого попереднього перегляду: підтвердьте кнопкою OK.
 ui-texture-picker-owner-only = Текстуру без передавання можна накласти лише на об'єкт, яким ви володієте і який не продається.
 ui-texture-picker-preview = Попередній перегляд
 ui-texture-picker-adjust-list-width = Змінити ширину списку

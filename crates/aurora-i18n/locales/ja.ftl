@@ -7758,7 +7758,6 @@ ui-inventory-thumbnail-image-uuid = 画像のＵＵＩＤ
 ui-inventory-thumbnail-invalid-image-uuid = 画像のＵＵＩＤが無効です。
 ui-texture-picker-invalid-uuid = ＵＵＩＤが無効です
 ui-texture-picker-confirm-no-copy = コピー不可のテクスチャ：ＯＫで確定してください。
-ui-texture-picker-no-live-preview = コピー不可または再販・譲渡不可のテクスチャはライブプレビューできません：ＯＫで確定してください。
 ui-texture-picker-owner-only = 再販・譲渡不可のテクスチャは、自分が所有し販売中でないオブジェクトにのみ使えます。
 ui-texture-picker-preview = プレビュー
 ui-texture-picker-adjust-list-width = リストの幅を調整

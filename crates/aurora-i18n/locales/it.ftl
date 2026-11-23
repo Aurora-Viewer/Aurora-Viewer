@@ -7657,7 +7657,6 @@ ui-inventory-thumbnail-image-uuid = UUID dell'immagine
 ui-inventory-thumbnail-invalid-image-uuid = UUID dell'immagine non valido.
 ui-texture-picker-invalid-uuid = UUID non valido
 ui-texture-picker-confirm-no-copy = Texture non copiabile: confermare con OK.
-ui-texture-picker-no-live-preview = Nessuna anteprima dal vivo per una texture non copiabile o non trasferibile: confermare con OK.
 ui-texture-picker-owner-only = Una texture non trasferibile può essere applicata solo a un oggetto di propria proprietà che non è in vendita.
 ui-texture-picker-preview = Anteprima
 ui-texture-picker-adjust-list-width = Regola la larghezza dell'elenco

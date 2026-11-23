@@ -7830,7 +7830,6 @@ ui-inventory-thumbnail-image-uuid = Image UUID
 ui-inventory-thumbnail-invalid-image-uuid = Invalid image UUID.
 ui-texture-picker-invalid-uuid = Invalid UUID
 ui-texture-picker-confirm-no-copy = No-copy texture: confirm with OK.
-ui-texture-picker-no-live-preview = No live preview for a no-copy or no-transfer texture: confirm with OK.
 ui-texture-picker-owner-only = A no-transfer texture can only go on an object you own that is not for sale.
 ui-texture-picker-preview = Preview
 ui-texture-picker-adjust-list-width = Adjust list width

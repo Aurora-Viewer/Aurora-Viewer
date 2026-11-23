@@ -7657,7 +7657,6 @@ ui-inventory-thumbnail-image-uuid = Bilde-UUID
 ui-inventory-thumbnail-invalid-image-uuid = Ugyldig bilde-UUID.
 ui-texture-picker-invalid-uuid = Ugyldig UUID
 ui-texture-picker-confirm-no-copy = Tekstur som ikke kan kopieres: bekreft med OK.
-ui-texture-picker-no-live-preview = Ingen direkte forhåndsvisning for en tekstur som ikke kan kopieres eller overføres: bekreft med OK.
 ui-texture-picker-owner-only = En tekstur som ikke kan overføres, kan bare legges på et objekt du eier som ikke er til salgs.
 ui-texture-picker-preview = Forhåndsvisning
 ui-texture-picker-adjust-list-width = Juster bredden på listen

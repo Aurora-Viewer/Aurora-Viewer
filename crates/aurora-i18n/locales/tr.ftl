@@ -7671,7 +7671,6 @@ ui-inventory-thumbnail-image-uuid = Resim UUID'si
 ui-inventory-thumbnail-invalid-image-uuid = Resim UUID'si geçersiz.
 ui-texture-picker-invalid-uuid = Geçersiz UUID
 ui-texture-picker-confirm-no-copy = Kopyalanamaz doku: Tamam ile onaylayın.
-ui-texture-picker-no-live-preview = Kopyalanamaz veya aktarılamaz bir doku için canlı önizleme yok: Tamam ile onaylayın.
 ui-texture-picker-owner-only = Aktarılamaz bir doku yalnızca size ait ve satılık olmayan bir nesneye uygulanabilir.
 ui-texture-picker-preview = Önizleme
 ui-texture-picker-adjust-list-width = Liste genişliğini ayarla

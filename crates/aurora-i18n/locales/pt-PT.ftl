@@ -7686,7 +7686,6 @@ ui-inventory-thumbnail-image-uuid = UUID da imagem
 ui-inventory-thumbnail-invalid-image-uuid = UUID de imagem inválido.
 ui-texture-picker-invalid-uuid = UUID inválido
 ui-texture-picker-confirm-no-copy = Textura sem cópia: confirme com OK.
-ui-texture-picker-no-live-preview = Sem pré-visualização em tempo real para uma textura sem cópia ou sem transferência: confirme com OK.
 ui-texture-picker-owner-only = Uma textura sem transferência só pode ir para um objeto seu que não esteja à venda.
 ui-texture-picker-preview = Pré-visualização
 ui-texture-picker-adjust-list-width = Ajustar a largura da lista

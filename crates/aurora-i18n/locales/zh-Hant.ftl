@@ -7640,7 +7640,6 @@ ui-inventory-thumbnail-image-uuid = 影像 UUID
 ui-inventory-thumbnail-invalid-image-uuid = 無效的影像 UUID。
 ui-texture-picker-invalid-uuid = 無效的 UUID
 ui-texture-picker-confirm-no-copy = 不可複製的紋理：請點選“確定”以確認。
-ui-texture-picker-no-live-preview = 不可複製或不可轉讓的紋理無法即時預覽：請點選“確定”以確認。
 ui-texture-picker-owner-only = 不可轉讓的紋理只能用於您擁有且未出售的物件。
 ui-texture-picker-preview = 預覽
 ui-texture-picker-adjust-list-width = 調整清單寬度
