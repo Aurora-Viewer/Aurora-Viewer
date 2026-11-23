@@ -630,7 +630,8 @@ impl ParticleSource {
 
     /// The particles `gone` names by their place leave at once, a ribbon's
     /// chain patched as when they expire (`update_particles`): those of a
-    /// region that left the world (LLViewerPartSim::cleanupRegion).
+    /// region that left the world (LLViewerPartSim::cleanupRegion,
+    /// indra/newview/llviewerpartsim.cpp).
     pub fn remove_particles(&mut self, gone: impl Fn(Vec3) -> bool) {
         let n = self.particles.len();
         let mut w = 0;
@@ -1465,8 +1466,56 @@ mod tests {
         assert_eq!(ps[ps.len() - 1].prev_pos, ctx.pos);
     }
 
+    /// A source that stopped keeps the place it had (its object went with
+    /// the place left, the usual case at a teleport): the particles that
+    /// follow it or are drawn to its target stay there after a shift, where
+    /// an unmoved source would bring them back around the avatar.
+    #[test]
+    fn a_shift_moves_a_stopped_source_with_what_follows_it() {
+        for flags in [LL_PART_FOLLOW_SRC_MASK, LL_PART_TARGET_POS_MASK, LL_PART_TARGET_LINEAR_MASK] {
+            let data = PartSysData {
+                crc: 1,
+                pattern: LL_PART_SRC_PATTERN_DROP,
+                burst_rate: 0.05,
+                burst_part_count: 1,
+                part: PartData {
+                    flags,
+                    max_age: 10.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let ctx = SourceContext {
+                pos: Vec3::new(10.0, 20.0, 30.0),
+                target: Some(Vec3::new(14.0, 20.0, 31.0)),
+                ..Default::default()
+            };
+            let stopped = || {
+                let mut src = ParticleSource::new(data, 5);
+                src.update(0.06, &ctx, &mut usize::MAX);
+                src.stop();
+                src
+            };
+            let offset = Vec3::new(-256.0, 512.0, 0.0);
+            let (mut stayed, mut shifted) = (stopped(), stopped());
+            assert!(!stayed.particles().is_empty());
+            shifted.shift(offset);
+            for src in [&mut stayed, &mut shifted] {
+                src.update(0.1, &SourceContext::default(), &mut 0);
+            }
+            for (a, b) in stayed.particles().iter().zip(shifted.particles()) {
+                assert!(
+                    (a.pos + offset - b.pos).length() < 1e-3,
+                    "flags {flags:#x}: {} then {}",
+                    a.pos,
+                    b.pos
+                );
+            }
+        }
+    }
+
     /// LLViewerPartSim::cleanupRegion: the particles of a place go at once,
-    /// and what is left of a ribbon does not reach across the hole.
+    /// and the next link of a ribbon whose newest went begins a new chain.
     #[test]
     fn the_particles_of_a_place_are_removed_and_a_ribbon_is_cut_there() {
         let (mut src, ctx) = ribbon(8);

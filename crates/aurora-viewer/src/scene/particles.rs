@@ -312,8 +312,11 @@ impl ParticleManager {
     /// llviewerpartsim.cpp); left where they were, the particles of the
     /// place left showed around the avatar at its arrival. And the
     /// particles in a region that left the world go with it at once, as
-    /// with LLViewerPartSim::cleanupRegion (called by ~LLViewerRegion):
-    /// they no longer count in the limit of the place of arrival.
+    /// with LLViewerPartSim::cleanupRegion (called by ~LLViewerRegion,
+    /// llviewerregion.cpp): they no longer count in the limit of the
+    /// place of arrival. (After a teleport the region left stays until its
+    /// simulator closes it: until then its particles are far away, where
+    /// the new origin put them.)
     fn follow_world(&mut self, world: &World) {
         let Some(origin) = world.main_origin() else {
             return;
@@ -355,7 +358,7 @@ impl ParticleManager {
         }));
     }
 
-    /// Release every source (region change, logout).
+    /// Release every source (logout).
     pub fn clear(&mut self, textures: &mut TextureStreamer) {
         for (_, s) in self.sources.drain() {
             textures.release(&s.texture);
@@ -1063,6 +1066,28 @@ mod tests {
             }
             assert!(places(&manager).is_empty(), "region first: {region_first}");
         }
+    }
+
+    /// The new origin and the end of the region left seen at the same
+    /// frame (a simulator that closes at once, frames skipped at the
+    /// arrival): the region's place moved with its particles, so they go
+    /// and those of the place of arrival stay.
+    #[test]
+    fn a_region_gone_at_the_frame_of_the_new_origin_takes_its_own_particles() {
+        let mut world = world_of(&[HOME]);
+        let mut manager = manager_with_a_particle(Vec3::new(120.0, 130.0, 40.0));
+        // a particle that the new origin puts at (100, 100) of the arrival
+        let mut carried = pick_source(0, glam::Vec2::ONE, Vec3::ZERO);
+        let there = Vec3::new(100.0 + 254_976.0, 100.0 + 509_952.0, 20.0);
+        carried.ps.shift(there - carried.ps.particles()[0].pos);
+        manager.sources.insert(Uuid::from_u128(73), carried);
+        manager.follow_world(&world);
+        let arrival = world_of(&[FAR]);
+        world.main_region = arrival.main_region;
+        world.regions.remove(&HOME);
+        world.regions.extend(arrival.regions);
+        manager.follow_world(&world);
+        assert_eq!(places(&manager), [Vec3::new(100.0, 100.0, 20.0)]);
     }
 
     /// The neighbour disconnects: its particles go, those of the regions
