@@ -188,6 +188,8 @@ pub(super) struct Snapshots {
     /// What the preview was drawn for (photo size, interface, HUDs).
     preview_for: Option<((u32, u32), bool, bool)>,
     pub(super) preview_wanted: bool,
+    /// The photo window was open last frame (its opening asks a preview).
+    was_open: bool,
     camera: Option<[f32; 7]>,
     camera_moved: Option<Instant>,
     saving: Option<save::Saving>,
@@ -456,6 +458,7 @@ impl Default for Snapshots {
             preview: None,
             preview_for: None,
             preview_wanted: false,
+            was_open: false,
             camera: None,
             camera_moved: None,
             saving: None,
@@ -1762,6 +1765,12 @@ impl App {
 
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
     pub(super) fn photo_update(&mut self, renderer: &mut Renderer) {
+        // every opening (toolbar, menu, shortcut, Phototools…) draws a fresh
+        // preview, as LLFloaterSnapshot::onOpen's updateSnapshot(true); the
+        // preview's own guards (frozen, viewfinder, 360°) still hold it
+        if just_opened(&mut self.snapshots.was_open, self.panels.snapshot) {
+            self.snapshots.preview_wanted = true;
+        }
         if std::mem::take(&mut self.snapshots.to_disk) {
             self.snapshots.quiet = !self.panels.snapshot;
             self.photo_take(renderer, None);
@@ -3570,6 +3579,13 @@ fn photo_shortcut(open: bool, style: crate::settings::PhotoWindowStyle) -> Photo
     }
 }
 
+/// `open` rose since the last frame; `was` follows it.
+fn just_opened(was: &mut bool, open: bool) -> bool {
+    let opened = open && !*was;
+    *was = open;
+    opened
+}
+
 /// The floater of a photo window style: the Legacy one has its own.
 fn photo_window_id(style: crate::settings::PhotoWindowStyle) -> &'static str {
     if style == crate::settings::PhotoWindowStyle::Legacy {
@@ -3604,6 +3620,18 @@ mod tests {
         assert_eq!(photo_shortcut(true, PhotoWindowStyle::Legacy), PhotoShortcut::Show);
         assert_eq!(photo_shortcut(true, PhotoWindowStyle::Panel), PhotoShortcut::Show);
         assert_eq!(photo_shortcut(true, PhotoWindowStyle::Aurora), PhotoShortcut::Leave);
+    }
+
+    /// Only the frame the window opens asks a preview (#4625: the toolbar's
+    /// opening refreshes it too).
+    #[test]
+    fn photo_window_opening_is_seen_once() {
+        let mut was = false;
+        assert!(!just_opened(&mut was, false));
+        assert!(just_opened(&mut was, true));
+        assert!(!just_opened(&mut was, true), "still open");
+        assert!(!just_opened(&mut was, false));
+        assert!(just_opened(&mut was, true), "opened again");
     }
 
     /// The Legacy style's window is its own floater: the toolbar and the
