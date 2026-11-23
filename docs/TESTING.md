@@ -12238,7 +12238,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>`, `1` or `fade` | Music of the demo parcel |
 | `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
-| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `data`, `script`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
+| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `data`, `script`, `music`, `music-again`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1`, `hud` or `parcel-open\|parcel-local\|parcel-source` | World/HUD chime or parcel sound isolation; interface and media sounds audible |
 | `AURORA_DEMO_SOUND_OCCLUSION=1` | Three looping sounds: in the open, behind a wall, shut in a box; each one's occlusion in the log |
 | `AURORA_SOUND_OCCLUSION=0` or `1` | "Muffle sounds behind walls" forced off or on for this launch, without saving it |
@@ -12632,7 +12632,11 @@ What the inventory must show with these scenarios:
   `javascript:` URL (refused without a question, told in the local chat;
   so are `file:` and `blob:`), `music` starts the
   parcel music on `radio.example.org` (the log has no `parcel music:` line
-  before the answer), `list` puts three sites in the list of Preferences ›
+  before the answer), `music-again` the same, its question closed with
+  the X ("Not now") at frame 400, then the radio turned off (500) and on
+  again (560) as its button does: the question about `radio.example.org`
+  is back by frame 620 (#4390; the log says `media filter: asking again`),
+  `list` puts three sites in the list of Preferences ›
   Preferences › Media (`AURORA_DEMO_OPTIONS=media`). In the demo the
   list and the answers stay in memory: no run changes the demo account's
   `medialist.xml`, and an answer does not save the profile. `AURORA_DEMO_MEDIA=<https URL>` or

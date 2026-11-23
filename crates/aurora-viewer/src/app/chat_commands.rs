@@ -137,11 +137,15 @@ impl App {
                 parcel.media_url = url;
                 parcel.media.mime = mime;
                 self.media.stop_parcel();
+                if let Some(url) = self.media.play_url(&crate::media::MediaKey::Parcel, &self.world) {
+                    self.world.media_filter.ask_again(&url);
+                }
                 self.media.play_parcel(&self.world, &self.settings.media);
             }
             Command::Music(url) => {
                 // startInternetStreamWithAutoFade: until the parcel stream changes.
                 self.parcel_music.play(url);
+                self.world.media_filter.ask_again(self.parcel_music.station());
                 self.remember_music_choice();
             }
             Command::KeyToName(id) => {

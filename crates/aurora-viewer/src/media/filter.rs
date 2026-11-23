@@ -475,6 +475,27 @@ impl MediaFilter {
             .retain(|o| !session.contains_key(&o.url) && rule_for(rules, &o.url, &o.domain).is_none());
     }
 
+    /// The resident plays `url` by hand (the radio turned on, a media's
+    /// Play): a refusal of this session alone ("Not now", the banner's X, or
+    /// Deny with "Only this time") is forgotten, so the question shows
+    /// again on the next check (#4390). The list's rules stay as they are.
+    /// A difference from the Legacy Viewer, whose alert has no "Not now":
+    /// LLViewerParcelMedia::filterAudioUrl (indra/newview/llviewerparcelmedia.cpp)
+    /// keeps the refused URL in mAudioLastURL and stays silent when the same
+    /// stream is played again.
+    pub fn ask_again(&mut self, url: &str) {
+        let url = url.trim();
+        if self.session.get(url) != Some(&Action::Deny) {
+            return;
+        }
+        log::info!("media filter: asking again about a site refused for this session");
+        self.session.remove(url);
+        self.just_denied.remove(url);
+        if self.denied_music.as_deref() == Some(url) {
+            self.denied_music = None;
+        }
+    }
+
     /// A change from the preferences' list.
     pub fn apply(&mut self, edit: Edit) {
         match edit {
@@ -535,6 +556,41 @@ mod tests {
         assert_eq!(filter.questions.len(), 1);
         filter.answer("https://new.example/live", true, Remember::Once);
         assert_eq!(filter.check("https://new.example/live", Source::Music), Verdict::Allow);
+    }
+
+    #[test]
+    fn playing_by_hand_asks_again_after_not_now_but_keeps_the_list() {
+        let mut f = MediaFilter::default();
+        let station = "https://radio.example/live";
+        assert_eq!(f.check(station, Source::Music), Verdict::Ask);
+        // the banner's X: "Not now"
+        f.answer(station, false, Remember::Once);
+        assert_eq!(f.check(station, Source::Music), Verdict::Deny);
+        assert!(f.question().is_none());
+        // the radio turned on by hand: the question again
+        f.ask_again(&format!(" {station} "));
+        assert_eq!(f.check(station, Source::Music), Verdict::Ask);
+        assert_eq!(f.question().map(|q| q.url.as_str()), Some(station));
+        f.answer(station, true, Remember::Once);
+        assert_eq!(f.check(station, Source::Music), Verdict::Allow);
+        // an allowance of this session is kept
+        f.ask_again(station);
+        assert_eq!(f.check(station, Source::Music), Verdict::Allow);
+        // a saved refusal stays a refusal
+        f.apply(Edit::Set("blocked.example".into(), Action::Deny));
+        let blocked = "https://blocked.example/live";
+        assert_eq!(f.check(blocked, Source::Music), Verdict::Deny);
+        f.ask_again(blocked);
+        assert_eq!(f.check(blocked, Source::Music), Verdict::Deny);
+        assert!(f.question().is_none());
+        assert_eq!(f.rules().len(), 1);
+        // a media's Play does the same
+        let page = "https://video.example/clip";
+        assert_eq!(f.check(page, Source::PrimMedia), Verdict::Ask);
+        f.answer(page, false, Remember::Once);
+        assert_eq!(f.check(page, Source::PrimMedia), Verdict::Deny);
+        f.ask_again(page);
+        assert_eq!(f.check(page, Source::PrimMedia), Verdict::Ask);
     }
 
     #[test]

@@ -768,6 +768,15 @@ impl MediaManager {
         self.impls.iter_mut().find(|m| m.key == *key)
     }
 
+    /// The URL a Play by hand of `key` loads: the parcel's media (as
+    /// `play_parcel` reads it), or the prim media's own.
+    pub fn play_url(&self, key: &MediaKey, world: &World) -> Option<String> {
+        match key {
+            MediaKey::Parcel => world.parcel.as_ref().map(|p| effective_parcel_url(&p.media, &p.media_url)),
+            MediaKey::Prim { .. } => self.find(key).map(|m| m.url.clone()),
+        }
+    }
+
     pub fn focused(&self) -> Option<&MediaImpl> {
         self.focus.and_then(|k| self.find(&k))
     }

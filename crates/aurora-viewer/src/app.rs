@@ -6979,7 +6979,7 @@ impl App {
                 }
                 self.media.play_parcel(&self.world, &self.settings.media);
             }
-            "music" => {
+            "music" | "music-again" => {
                 if let Some(parcel) = self.world.parcel.as_mut() {
                     Arc::make_mut(parcel).music_url = "http://radio.example.org:8000/live".into();
                 }
@@ -7208,6 +7208,16 @@ impl App {
                 crate::world::notice_topics::Topic::Warning,
             );
         }
+    }
+
+    /// The radio's button: the music on or off. Turned on by hand, a "Not
+    /// now" of this session asks again (`MediaFilter::ask_again`, #4390).
+    fn toggle_music_by_hand(&mut self) {
+        self.parcel_music.toggle();
+        if self.parcel_music.requested() {
+            self.world.media_filter.ask_again(self.parcel_music.station());
+        }
+        self.remember_music_choice();
     }
 
     fn remember_music_choice(&mut self) {
@@ -14973,6 +14983,21 @@ impl App {
                 self.world.media_filter.answer(&url, true, crate::media::filter::Remember::Once);
             }
         }
+        // AURORA_DEMO_MEDIA_FILTER=music-again: the music's question closed
+        // with its X ("Not now") at frame 400, then the radio turned off
+        // (500) and on again (560) as its button does: the question is back
+        if self.demo
+            && matches!(self.frame_count, 400 | 500 | 560)
+            && std::env::var("AURORA_DEMO_MEDIA_FILTER").as_deref() == Ok("music-again")
+        {
+            if self.frame_count == 400 {
+                if let Some(url) = self.world.media_filter.question().map(|q| q.url.clone()) {
+                    self.world.media_filter.answer(&url, false, crate::media::filter::Remember::Once);
+                }
+            } else {
+                self.toggle_music_by_hand();
+            }
+        }
         // AURORA_DEMO_URL_FLOATER=1: at frame 300 the simulator's llOpenFloater
         // ("URLFloater", read by aurora-net's url_floater) asks for a web
         // window on an unknown address: the link question comes up
@@ -16484,10 +16509,7 @@ impl App {
         }
         match a.audio.unwrap_or(ui::audio::AudioAction::None) {
             ui::audio::AudioAction::None => {}
-            ui::audio::AudioAction::ToggleMusic => {
-                self.parcel_music.toggle();
-                self.remember_music_choice();
-            }
+            ui::audio::AudioAction::ToggleMusic => self.toggle_music_by_hand(),
             ui::audio::AudioAction::ToggleMedia => self.toggle_all_media(),
             // applied to the audio engine each frame; saved with the settings on exit
             ui::audio::AudioAction::Changed => {}
