@@ -1935,7 +1935,7 @@ mod tests {
         let frame = |ctx: &egui::Context, width: f32, events| {
             let body = Rect::from_min_size(Pos2::ZERO, Vec2::new(width, 400.0));
             let mut displayed = 0.0;
-            let _ = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(body),
                     events,
@@ -1945,6 +1945,7 @@ mod tests {
                     displayed = folder_rail_width(ui, &p, body);
                 },
             );
+            output.textures_delta.clear();
             displayed
         };
         let button = |pos, pressed| egui::Event::PointerButton {
