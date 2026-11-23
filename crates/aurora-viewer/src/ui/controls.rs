@@ -23,6 +23,7 @@ pub const CLASSIC_MOVEMENT: &str = "movement_controls";
 
 const WIDTH: f32 = 300.0;
 /// The body's width inside the window's margins (`widgets::Floater`).
+#[cfg(test)]
 const INNER: f32 = WIDTH - 24.0;
 /// The minimized window's body: the joysticks and the zoom.
 const COMPACT_WIDTH: f32 = 2.0 * STICK + ZOOM_W + 3.0 * 12.0;
@@ -41,10 +42,13 @@ const ZOOM_BUTTON: f32 = 18.0;
 /// Room between two items of a row of buttons.
 const ROW_GAP: f32 = 4.0;
 const BUTTON_H: f32 = 26.0;
-/// Width of `widgets::icon_button`, the delete button of a saved position.
-const SHOT_DELETE_W: f32 = 20.0;
+/// Width of `widgets::icon_button` (the delete button of a saved position,
+/// the classic window's buttons after its preset list).
+const ICON_BUTTON_W: f32 = 20.0;
 /// Room between the body's rows.
 const BODY_GAP: f32 = 8.0;
+/// The camera position window's button, in both styles.
+const POSITION_ICON: &str = "adjustments-horizontal-filled";
 /// A key list's row (`caps_rows`).
 const KEY_ROW_H: f32 = 16.0;
 
@@ -92,19 +96,19 @@ pub struct ControlsUi {
 /// The name being typed for a new camera position (the Legacy Viewer's
 /// LLFloaterSaveCameraPreset, inline).
 #[derive(Default)]
-struct ShotNaming {
-    open: bool,
+pub(crate) struct ShotNaming {
+    pub(crate) open: bool,
     /// Give the field the keyboard once, on its next frame. A request on
     /// every frame interrupts the input method each time (egui's
     /// `Memory::request_focus`, which egui-winit turns into
     /// `set_ime_allowed` off then on): a Japanese name could not be
     /// composed and the IME stalled the viewer (#3889).
     focus: bool,
-    name: String,
+    pub(crate) name: String,
 }
 
 impl ShotNaming {
-    fn start(&mut self) {
+    pub(crate) fn start(&mut self) {
         self.open = true;
         self.focus = true;
     }
@@ -176,6 +180,8 @@ pub enum ControlAction {
     SaveView(CameraPreset),
     /// The view back to its template.
     RestoreView(CameraPreset),
+    /// "Position...": the camera position window (`ui::camera_position`).
+    Position,
 }
 
 #[derive(Default)]
@@ -189,6 +195,62 @@ pub struct Output {
     pub free_look: Vec2,
 }
 
+/// The Legacy Viewer's camera panel uses icon-only preset cells
+/// (skins/default/xui/en/floater_camera.xml). Aurora also names them:
+/// measure those labels instead of assuming the default font still fits.
+fn controls_width(ctx: &egui::Context, view: &View, classic: bool) -> f32 {
+    let text = |label: &str, font: FontId| ctx.fonts_mut(|f| f.layout_no_wrap(label.to_owned(), font, egui::Color32::PLACEHOLDER).size().x);
+    let regular = |label: &str, size| text(label, FontId::proportional(size));
+    let button_height = (ctx.fonts_mut(|f| f.row_height(&FontId::proportional(12.5))) + 8.0).max(BUTTON_H);
+    let shot = [
+        aurora_i18n::tr!("controls-shots-none"),
+        aurora_i18n::tr!("controls-shots"),
+        aurora_i18n::tr!("controls-use-preset"),
+    ]
+    .into_iter()
+    .map(|label| regular(label, 12.5))
+    .fold(0.0_f32, f32::max)
+        + 46.0
+        // the Position and save squares
+        + 2.0 * (button_height + ROW_GAP);
+    let tabs = if classic {
+        0.0
+    } else {
+        2.0 * tab_min_width(ctx, view.free.is_some()) + ROW_GAP
+    };
+    (if classic { 250.0_f32 } else { WIDTH }).max(tabs + 24.0).max(shot + 24.0)
+}
+
+fn tab_min_width(ctx: &egui::Context, free: bool) -> f32 {
+    let camera = if free {
+        aurora_i18n::tr!("controls-free-title")
+    } else {
+        aurora_i18n::tr!("controls-tab-camera")
+    };
+    let font = FontId::new(12.5, crate::ui::fonts::semibold(ctx));
+    [camera, aurora_i18n::tr!("controls-tab-movement")]
+        .into_iter()
+        .map(|label| {
+            ctx.fonts_mut(|f| {
+                f.layout_no_wrap(label.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+                    .size()
+                    .x
+            }) + 44.0
+        })
+        .fold(0.0_f32, f32::max)
+}
+
+/// A button's height at the interface's text size (also the camera
+/// position window's).
+pub(crate) fn control_height(ui: &egui::Ui) -> f32 {
+    (ui.painter()
+        .layout_no_wrap("Ag".into(), widgets::control_font(ui, 12.5), egui::Color32::PLACEHOLDER)
+        .size()
+        .y
+        + 8.0)
+        .max(BUTTON_H)
+}
+
 impl ControlsUi {
     /// The Aurora window (`camera` / `movement`: the toolbar's View and
     /// Movement, the World menu's entries; either opens it on its tab), or
@@ -198,7 +260,7 @@ impl ControlsUi {
         // the free camera keeps Aurora's window (Firestorm has none)
         if classic && view.free.is_none() {
             if *camera {
-                let size = Vec2::new(250.0, 210.0);
+                let size = Vec2::new(controls_width(ctx, view, true), 210.0);
                 Floater::new(
                     CLASSIC_CAMERA,
                     aurora_i18n::tr!("controls-camera-title"),
@@ -239,7 +301,7 @@ impl ControlsUi {
                 WINDOW,
                 title,
                 Pos2::new(screen.left() + 24.0, screen.bottom() - 460.0),
-                Vec2::new(WIDTH, 420.0),
+                Vec2::new(controls_width(ctx, view, false), 420.0),
             )
             .fixed()
             .auto_height()
@@ -273,13 +335,19 @@ impl ControlsUi {
     }
 
     fn body(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
-        ui.set_width(INNER);
         ui.spacing_mut().item_spacing.y = BODY_GAP;
-        // the two tabs in pills, each half of the width; the free camera
-        // takes the first and greys the other
+        let width = ui.available_width();
+        let tab_min = tab_min_width(ui.ctx(), view.free.is_some());
+        let tab_width = if width >= 2.0 * tab_min + ROW_GAP {
+            (width - ROW_GAP) / 2.0
+        } else {
+            width
+        };
+        // Two equal tabs, stacked if the screen cannot fit both labels;
+        // the free camera takes the first and greys the other.
         let free = view.free.is_some();
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::splat(ROW_GAP);
             for (tab, icon, label) in [
                 (Tab::Camera, "video-filled", aurora_i18n::tr!("controls-tab-camera")),
                 (Tab::Movement, "walk", aurora_i18n::tr!("controls-tab-movement")),
@@ -291,7 +359,7 @@ impl ControlsUi {
                 };
                 let enabled = !free || tab == Tab::Camera;
                 let why = aurora_i18n::tr!("controls-free-movement-off");
-                if widgets::pill_tab_wide(ui, p, icon, label, self.tab == tab, INNER / 2.0, enabled, why).clicked() {
+                if widgets::pill_tab_wide(ui, p, icon, label, self.tab == tab, tab_width, enabled, why).clicked() {
                     self.tab = tab;
                 }
             }
@@ -304,30 +372,51 @@ impl ControlsUi {
     }
 
     fn camera_tab(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
-        sticks(ui, p, view, out, INNER);
+        let width = ui.available_width();
+        sticks(ui, p, view, out, width);
         roll_controls(ui, p, view, out);
         // the four views of Preferences › Camera, in one click
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = ROW_GAP;
-            let w = (INNER - 3.0 * ROW_GAP) / 4.0;
-            for (preset, icon) in [
-                (CameraPreset::Rear, "user"),
-                (CameraPreset::Front, "user-circle"),
-                (CameraPreset::Side, "user-square"),
-                (CameraPreset::Shoulder, "user-scan"),
-            ] {
-                let chip = view_chip(ui, p, icon, short_view(preset), view.preset == preset, w);
-                view_menu(&chip, p, view, preset, out);
-                if chip.on_hover_text(view_tip(preset)).clicked() {
-                    out.actions.push(ControlAction::Preset(preset));
+        let presets = [
+            (CameraPreset::Rear, "user"),
+            (CameraPreset::Front, "user-circle"),
+            (CameraPreset::Side, "user-square"),
+            (CameraPreset::Shoulder, "user-scan"),
+        ];
+        let widest = presets
+            .iter()
+            .map(|(preset, _)| {
+                ui.painter()
+                    .layout_no_wrap(short_view(*preset).to_owned(), FontId::proportional(11.0), p.ink)
+                    .size()
+                    .x
+                    + 16.0
+            })
+            .fold(0.0_f32, f32::max);
+        let columns = ((width + ROW_GAP) / (widest + ROW_GAP)).floor().clamp(1.0, 4.0) as usize;
+        let chip_width = (width - ROW_GAP * (columns - 1) as f32) / columns as f32;
+        for row in presets.chunks(columns) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = ROW_GAP;
+                for &(preset, icon) in row {
+                    let chip = view_chip(ui, p, icon, short_view(preset), view.preset == preset, chip_width);
+                    view_menu(&chip, p, view, preset, out);
+                    if chip.on_hover_text(view_tip(preset)).clicked() {
+                        out.actions.push(ControlAction::Preset(preset));
+                    }
                 }
-            }
-        });
-        // two equal buttons and the reset; the saved positions below on the
-        // same columns
-        let grid = ButtonGrid::new(INNER);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = ROW_GAP;
+            });
+        }
+        // Equal action buttons wrap before their text would collide. The
+        // saved positions below still fill the row up to its square button.
+        let height = control_height(ui);
+        let grid = ButtonGrid::with_height(width, height);
+        let key = pad_binding(view.keys, Action::Mouselook);
+        let button_min = widgets::action_button_keyed_content(ui, "box", aurora_i18n::tr!("controls-object-view"), None).max(
+            widgets::action_button_keyed_content(ui, "eye-filled", aurora_i18n::tr!("common-mouselook"), key.as_ref()),
+        ) + 12.0;
+        let button_width = grid.button.max(button_min).min(width);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::splat(ROW_GAP);
             let object = widgets::action_button(
                 ui,
                 p,
@@ -338,7 +427,7 @@ impl ControlsUi {
                 } else {
                     widgets::ActionKind::Flat
                 },
-                Vec2::new(grid.button, BUTTON_H),
+                Vec2::new(button_width, height),
             )
             .on_hover_text(aurora_i18n::tr!("controls-object-view-tip"));
             if object.clicked() {
@@ -350,7 +439,7 @@ impl ControlsUi {
                 "eye-filled",
                 aurora_i18n::tr!("common-mouselook"),
                 widgets::ActionKind::Flat,
-                Vec2::new(grid.button, BUTTON_H),
+                Vec2::new(button_width, height),
                 true,
                 pad_binding(view.keys, Action::Mouselook).as_ref(),
             );
@@ -366,13 +455,15 @@ impl ControlsUi {
         self.shots(ui, p, view, out, &grid);
     }
 
-    /// The saved camera positions (Firestorm's camera presets): a field as
-    /// wide as the two buttons above, the save button under the reset.
+    /// The saved camera positions (Firestorm's camera presets): a field,
+    /// the Position button, and the save button under the reset.
     fn shots(&mut self, ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output, grid: &ButtonGrid) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = ROW_GAP;
             if self.naming.open {
-                name_row(ui, p, &mut self.naming, grid.field, out);
+                if let Some(name) = name_row(ui, p, &mut self.naming, grid.field) {
+                    out.actions.push(ControlAction::SaveShot(name));
+                }
                 return;
             }
             let text = if view.shots.is_empty() {
@@ -380,22 +471,24 @@ impl ControlsUi {
             } else {
                 aurora_i18n::tr!("controls-shots")
             };
+            let height = control_height(ui);
+            let field_width = grid.field - height - ROW_GAP;
             let field = widgets::action_button(
                 ui,
                 p,
                 "bookmark-filled",
                 text,
                 widgets::ActionKind::Flat,
-                Vec2::new(grid.field, BUTTON_H),
+                Vec2::new(field_width, height),
             );
             egui::Popup::menu(&field).show(|ui| {
-                ui.set_min_width(grid.field);
+                ui.set_min_width(field_width);
                 for (i, shot) in view.shots.iter().enumerate() {
                     ui.horizontal(|ui| {
                         // the row takes the menu's width less the delete
                         // button: a full-width row pushed the button out and
                         // the menu widened by that much every frame (#718)
-                        let room = ui.available_width() - SHOT_DELETE_W - ui.spacing().item_spacing.x;
+                        let room = ui.available_width() - ICON_BUTTON_W - ui.spacing().item_spacing.x;
                         let used = ui.scope(|ui| {
                             ui.set_max_width(room);
                             // the icon tells what holds the preset's camera
@@ -410,6 +503,10 @@ impl ControlsUi {
                     });
                 }
             });
+            // camera_position_btn of floater_camera.xml ("Position...")
+            if square_button(ui, p, POSITION_ICON, aurora_i18n::tr!("controls-position-tip")) {
+                out.actions.push(ControlAction::Position);
+            }
             if square_button(ui, p, "device-floppy-filled", aurora_i18n::tr!("controls-shot-save-tip")) {
                 self.naming.start();
             }
@@ -429,8 +526,13 @@ pub struct ButtonGrid {
 }
 
 impl ButtonGrid {
+    #[cfg(test)]
     pub fn new(width: f32) -> ButtonGrid {
-        let button = (width - BUTTON_H - 2.0 * ROW_GAP) / 2.0;
+        Self::with_height(width, BUTTON_H)
+    }
+
+    fn with_height(width: f32, height: f32) -> ButtonGrid {
+        let button = (width - height - 2.0 * ROW_GAP) / 2.0;
         ButtonGrid {
             button,
             field: 2.0 * button + ROW_GAP,
@@ -627,7 +729,8 @@ fn roll_controls(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) 
     ui.add_enabled_ui(!view.mouselook, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = ROW_GAP;
-            let readout_width = ui.available_width() - 2.0 * (BUTTON_H + ROW_GAP);
+            let height = control_height(ui);
+            let readout_width = ui.available_width() - 2.0 * (height + ROW_GAP);
             for (icon, label, direction) in [
                 ("rotate-2", aurora_i18n::tr!("controls-roll-left"), -1.0),
                 ("rotate-clockwise-2", aurora_i18n::tr!("controls-roll-right"), 1.0),
@@ -642,7 +745,7 @@ fn roll_controls(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) 
                         "tilt-shift-filled",
                         &text,
                         widgets::ActionKind::Flat,
-                        Vec2::new(readout_width, BUTTON_H),
+                        Vec2::new(readout_width, height),
                     )
                     .on_hover_text(aurora_i18n::tr!("controls-roll-level"))
                     .clicked()
@@ -650,7 +753,7 @@ fn roll_controls(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) 
                         out.actions.push(ControlAction::LevelRoll);
                     }
                 }
-                let response = widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, Vec2::splat(BUTTON_H))
+                let response = widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, Vec2::splat(height))
                     // A sustained press belongs to this control, including pointer
                     // jitter: a click-only button lets the floater acquire its drag.
                     .interact(Sense::click_and_drag())
@@ -708,20 +811,32 @@ fn sticks(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output, width: 
     if slider.changed() {
         out.actions.push(ControlAction::Zoom(zoom));
     }
-    // their names under the joysticks
-    for (stick, name) in [
-        (at.orbit, aurora_i18n::tr!("controls-orbit")),
-        (at.pan, aurora_i18n::tr!("controls-pan")),
-    ] {
-        ui.painter().text(
-            egui::pos2(stick.center().x, row.bottom() + CAPTION_H / 2.0),
-            egui::Align2::CENTER_CENTER,
-            name,
-            egui::FontId::proportional(11.0),
-            p.muted,
-        );
+    let captions = stick_captions(
+        ui,
+        p,
+        &at,
+        row.bottom(),
+        [aurora_i18n::tr!("controls-orbit"), aurora_i18n::tr!("controls-pan")],
+    );
+    ui.allocate_rect(Rect::from_min_size(row.min, Vec2::new(width, STICK + captions)), Sense::hover());
+}
+
+/// Captions stay in their own joystick's column and reserve their actual
+/// height, including wrapped lines with large fonts or long translations.
+fn stick_captions(ui: &egui::Ui, p: &Palette, at: &SticksRow, top: f32, names: [&str; 2]) -> f32 {
+    let mut height = CAPTION_H;
+    // Each caption also owns the gaps on both sides of its joystick:
+    // these columns end at the zoom rail and at the row's outer edges.
+    let gap = (at.zoom.left() - at.orbit.right()).max(0.0);
+    for (stick, name) in [at.orbit, at.pan].into_iter().zip(names) {
+        let galley = ui
+            .painter()
+            .layout(name.to_owned(), FontId::proportional(11.0), p.muted, stick.width() + 2.0 * gap);
+        height = height.max(galley.size().y + ROW_GAP);
+        let pos = egui::pos2(stick.center().x - galley.size().x / 2.0, top + ROW_GAP / 2.0);
+        ui.painter().galley(pos, galley, p.muted);
     }
-    ui.allocate_rect(Rect::from_min_size(row.min, Vec2::new(width, STICK + CAPTION_H)), Sense::hover());
+    height
 }
 
 /// The free camera's tab (the mockup's third state): the banner and its way
@@ -730,7 +845,7 @@ fn sticks(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output, width: 
 fn free_tab(ui: &mut egui::Ui, p: &Palette, view: &View, free: FreeView, out: &mut Output) {
     banner(ui, p, view, out);
     ui.spacing_mut().item_spacing.y = FREE_GAP;
-    free_sticks(ui, p, view, out, INNER, true);
+    free_sticks(ui, p, view, out, ui.available_width(), true);
     speed_row(ui, p, free, out);
     collisions_row(ui, p, free, out);
     // the keys, as the keyboard drives the free camera
@@ -866,16 +981,8 @@ fn free_sticks(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output, wi
     } else {
         aurora_i18n::tr!("controls-free-move-short")
     };
-    for (stick, name) in [(at.orbit, walk), (at.pan, aurora_i18n::tr!("controls-free-look"))] {
-        ui.painter().text(
-            egui::pos2(stick.center().x, row.bottom() + CAPTION_H / 2.0),
-            egui::Align2::CENTER_CENTER,
-            name,
-            egui::FontId::proportional(11.0),
-            p.muted,
-        );
-    }
-    ui.allocate_rect(block, Sense::hover());
+    let captions = stick_captions(ui, p, &at, row.bottom(), [walk, aurora_i18n::tr!("controls-free-look")]);
+    ui.allocate_rect(Rect::from_min_size(block.min, Vec2::new(width, STICK + captions)), Sense::hover());
 }
 
 /// The free camera's speed: its name, a slider and the value typed or shown.
@@ -968,7 +1075,7 @@ fn movement_tab(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
     // its layout
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = ROW_GAP;
-        let w = (INNER - ROW_GAP) / 2.0;
+        let w = (ui.available_width() - ROW_GAP) / 2.0;
         let stop = widgets::action_button_keyed(
             ui,
             p,
@@ -1093,8 +1200,8 @@ fn mode_locked(view: &View, action: &ControlAction) -> bool {
 /// then its presets (floater_camera.xml).
 fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: &mut ShotNaming, out: &mut Output) {
     ui.spacing_mut().item_spacing.y = 6.0;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(3.0, ROW_GAP);
         for preset in [CameraPreset::Front, CameraPreset::Side, CameraPreset::Rear, CameraPreset::Shoulder] {
             let button = widgets::flat_button(ui, p, short_view(preset));
             view_menu(&button, p, view, preset, out);
@@ -1117,12 +1224,15 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: &mut Shot
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         if naming.open {
-            let width = ui.available_width() - BUTTON_H - ROW_GAP;
-            name_row(ui, p, naming, width, out);
+            let width = ui.available_width() - control_height(ui) - ROW_GAP;
+            if let Some(name) = name_row(ui, p, naming, width) {
+                out.actions.push(ControlAction::SaveShot(name));
+            }
             return;
         }
         egui::ComboBox::from_id_salt("camera_shots_classic")
-            .width(ui.available_width() - 76.0)
+            // room for the Position, save and reset buttons after it
+            .width(ui.available_width() - 76.0 - ICON_BUTTON_W - 4.0)
             .selected_text(aurora_i18n::tr!("controls-use-preset"))
             .show_ui(ui, |ui| {
                 for (i, shot) in view.shots.iter().enumerate() {
@@ -1131,6 +1241,10 @@ fn classic_camera(ui: &mut egui::Ui, p: &Palette, view: &View, naming: &mut Shot
                     }
                 }
             });
+        // camera_position_btn of floater_camera.xml ("Position...")
+        if widgets::icon_button(ui, p, POSITION_ICON, aurora_i18n::tr!("controls-position-tip"), true) {
+            out.actions.push(ControlAction::Position);
+        }
         // save_preset_btn of floater_camera.xml ("Save as Preset")
         if widgets::icon_button(ui, p, "device-floppy-filled", aurora_i18n::tr!("controls-shot-save-tip"), true) {
             naming.start();
@@ -1186,9 +1300,12 @@ fn classic_movement(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Outpu
 /// (`CameraPreset::from_preset_name`, in the app). The field takes the
 /// keyboard once as it opens, like the dialog's line editor; a click
 /// elsewhere then keeps it.
-fn name_row(ui: &mut egui::Ui, p: &Palette, naming: &mut ShotNaming, width: f32, out: &mut Output) {
+///
+/// Gives the name typed when it is saved (also the camera position
+/// window's).
+pub(crate) fn name_row(ui: &mut egui::Ui, p: &Palette, naming: &mut ShotNaming, width: f32) -> Option<String> {
     let edit = ui.add_sized(
-        Vec2::new(width, BUTTON_H),
+        Vec2::new(width, control_height(ui)),
         egui::TextEdit::singleline(&mut naming.name).hint_text(aurora_i18n::tr!("controls-shot-name")),
     );
     if std::mem::take(&mut naming.focus) {
@@ -1200,14 +1317,16 @@ fn name_row(ui: &mut egui::Ui, p: &Palette, naming: &mut ShotNaming, width: f32,
         naming.open = false;
     }
     if (square_button(ui, p, "check", aurora_i18n::tr!("controls-shot-save")) || enter) && !typed.is_empty() {
-        out.actions.push(ControlAction::SaveShot(typed));
         naming.open = false;
         naming.name.clear();
-    } else if enter {
+        return Some(typed);
+    }
+    if enter {
         // an empty name saves nothing and the editor keeps the keyboard
         // (LLFloaterSaveCameraPreset::onBtnSave returns on an empty name)
         naming.focus = true;
     }
+    None
 }
 
 /// A view's right click, in both styles: the camera where it is becomes
@@ -1379,7 +1498,7 @@ fn hold_icon(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str, 
 
 /// A square icon button as tall as the row's buttons (the reset, the save).
 fn square_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str) -> bool {
-    widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, Vec2::splat(BUTTON_H))
+    widgets::action_button(ui, p, icon, "", widgets::ActionKind::Flat, Vec2::splat(control_height(ui)))
         .on_hover_text(tip)
         .clicked()
 }
@@ -1472,7 +1591,12 @@ fn mode_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool
 
 /// A view's chip, its icon over its name: lit while it is the one in use.
 fn view_chip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool, width: f32) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 42.0), Sense::click());
+    let ink = if on { p.ink } else { p.muted };
+    let galley = ui
+        .painter()
+        .layout(label.to_owned(), FontId::proportional(11.0), ink, (width - 8.0).max(1.0));
+    let height = (17.0 + ROW_GAP + galley.size().y + 8.0).max(42.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
     let fill = match (on, resp.hovered()) {
         (true, _) => p.violet.gamma_multiply(0.35),
         (false, true) => p.raised.gamma_multiply(1.3),
@@ -1484,14 +1608,9 @@ fn view_chip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: bool, 
         ui.painter()
             .rect_stroke(rect, radius, egui::Stroke::new(1.0, p.violet_light), egui::StrokeKind::Inside);
     }
-    paint_icon(ui, icon, rect.center() - Vec2::new(0.0, 8.0), 17.0, p.ink);
-    ui.painter().text(
-        rect.center() + Vec2::new(0.0, 10.0),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::proportional(11.0),
-        if on { p.ink } else { p.muted },
-    );
+    paint_icon(ui, icon, egui::pos2(rect.center().x, rect.top() + 4.0 + 8.5), 17.0, p.ink);
+    let pos = egui::pos2(rect.center().x - galley.size().x / 2.0, rect.bottom() - 4.0 - galley.size().y);
+    ui.painter().galley(pos, galley, ink);
     resp
 }
 
@@ -1628,7 +1747,11 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                ui.horizontal(|ui| name_row(ui, p, naming, 200.0, &mut out));
+                ui.horizontal(|ui| {
+                    if let Some(name) = name_row(ui, p, naming, 200.0) {
+                        out.actions.push(ControlAction::SaveShot(name));
+                    }
+                });
             },
         );
         // no renderer here: the font atlas would trip TexturesDelta's drop check
@@ -2030,6 +2153,155 @@ mod tests {
         assert!(close(g.field, 2.0 * g.button + ROW_GAP));
         assert!(close(g.field + ROW_GAP, g.square_left));
         assert!(close(g.square_left + BUTTON_H, INNER));
+    }
+
+    #[test]
+    fn camera_labels_fit_at_normal_and_double_text_size() {
+        for scale in [1.0, 2.0] {
+            for classic in [false, true] {
+                let ctx = egui::Context::default();
+                let theme = crate::theme::Theme::default();
+                theme.apply(&ctx, scale);
+                let p = theme.palette();
+                let keys = KeyBindings::default();
+                let views = SavedViews::default();
+                let view = View {
+                    zoom: 0.5,
+                    roll: 0.0,
+                    preset: CameraPreset::Rear,
+                    shots: &[],
+                    views: &views,
+                    flying: false,
+                    always_run: false,
+                    seated: false,
+                    run_locked: false,
+                    fly_locked: false,
+                    stand_locked: false,
+                    mouselook: false,
+                    object_view: false,
+                    keys: &keys,
+                    free: None,
+                };
+                let mut controls = ControlsUi::default();
+                let (mut camera, mut movement) = (true, false);
+                let mut output = None;
+                for frame in 0..4 {
+                    let mut frame_output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, 1000.0))),
+                            time: Some(f64::from(frame) * 0.1),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            controls.show(ui.ctx(), &p, &mut camera, &mut movement, classic, &view);
+                        },
+                    );
+                    frame_output.textures_delta.clear();
+                    output = Some(frame_output);
+                }
+                let mut labels = vec![
+                    aurora_i18n::tr!("controls-orbit"),
+                    aurora_i18n::tr!("controls-pan"),
+                    short_view(CameraPreset::Rear),
+                    short_view(CameraPreset::Front),
+                    short_view(CameraPreset::Side),
+                    short_view(CameraPreset::Shoulder),
+                ];
+                if !classic {
+                    labels.extend([
+                        aurora_i18n::tr!("controls-tab-camera"),
+                        aurora_i18n::tr!("controls-tab-movement"),
+                        aurora_i18n::tr!("controls-object-view"),
+                        aurora_i18n::tr!("common-mouselook"),
+                        aurora_i18n::tr!("controls-shots-none"),
+                    ]);
+                }
+                let output = output.unwrap();
+                let bounds: Vec<_> = labels
+                    .iter()
+                    .map(|label| {
+                        output
+                            .shapes
+                            .iter()
+                            .find_map(|shape| match &shape.shape {
+                                egui::Shape::Text(text) if text.galley.text() == *label => {
+                                    Some((*label, Rect::from_min_size(text.pos, text.galley.size())))
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| panic!("missing {label}, scale={scale}, classic={classic}"))
+                    })
+                    .collect();
+                for (index, (label, rect)) in bounds.iter().enumerate() {
+                    assert!(
+                        rect.left() >= 0.0 && rect.right() <= 900.0,
+                        "{label}: {rect:?}, scale={scale}, classic={classic}"
+                    );
+                    for (other, other_rect) in &bounds[index + 1..] {
+                        assert!(
+                            !rect.shrink(0.5).intersects(other_rect.shrink(0.5)),
+                            "{label} {rect:?} overlaps {other} {other_rect:?}, scale={scale}, classic={classic}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn french_stick_captions_use_their_whole_columns_at_double_text_size() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 2.0);
+        let p = theme.palette();
+        let row = Rect::from_min_size(egui::pos2(10.0, 10.0), Vec2::new(414.0, STICK));
+        let at = SticksRow::new(row);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            stick_captions(ui, &p, &at, row.bottom(), ["Orbite", "Panoramique"]);
+        });
+        output.textures_delta.clear();
+        for (name, left, right) in [
+            ("Orbite", row.left(), at.zoom.left()),
+            ("Panoramique", at.zoom.right(), row.right()),
+        ] {
+            let text = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == name => Some(text),
+                    _ => None,
+                })
+                .expect("the joystick caption");
+            assert_eq!(text.galley.rows.len(), 1, "{name} should fit on one line");
+            let bounds = Rect::from_min_size(text.pos, text.galley.size());
+            assert!(
+                bounds.left() >= left && bounds.right() <= right,
+                "{name}: {bounds:?} leaves its column {left}..{right}"
+            );
+        }
+    }
+
+    #[test]
+    fn control_tab_face_contains_double_size_text() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 2.0);
+        let p = theme.palette();
+        let label = aurora_i18n::tr!("controls-tab-movement");
+        let mut rect = Rect::NOTHING;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            rect = widgets::pill_tab_wide(ui, &p, "walk", label, true, tab_min_width(ui.ctx(), false), true, "").rect;
+        });
+        output.textures_delta.clear();
+        let text = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => Some(Rect::from_min_size(text.pos, text.galley.size())),
+                _ => None,
+            })
+            .expect("the tab label");
+        assert!(rect.contains_rect(text), "{rect:?} must contain {text:?}");
     }
 
     /// The free camera's tab against the mockup (maquette-camera, variant

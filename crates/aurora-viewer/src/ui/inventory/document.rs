@@ -279,6 +279,15 @@ impl InventoryUi {
             })
         };
         if let Some((editor, loading)) = existing {
+            // Reopening an existing document should activate it too, even if
+            // another application field currently holds keyboard focus.
+            if kind == 7 {
+                if self.ui_id == editor {
+                    self.notecard_focus_pending = true;
+                } else if let Some(window) = self.windows.iter_mut().find(|w| w.state.ui_id == editor) {
+                    window.state.notecard_focus_pending = true;
+                }
+            }
             let id = self
                 .tab_hosts
                 .focus(editor)
@@ -396,6 +405,7 @@ impl InventoryUi {
         self.preview_can_edit = false;
         self.preview_source = None;
         self.notecard_view = Default::default();
+        self.notecard_focus_pending = false;
         self.notecard_markdown = Default::default();
         self.notecard_find.hide();
         self.attachment_preview = None;
@@ -419,6 +429,9 @@ impl InventoryUi {
             self.preview_message.clone_from(reason);
             return;
         }
+        // A newly loaded document is ready to take focus on its first
+        // interactive frame, not while an egui floater is sizing itself.
+        let was_loaded = self.preview_text.as_ref().is_some_and(Result::is_ok);
         self.preview_source = None;
         self.preview_can_edit = false;
         let result = result.as_ref().map_err(Clone::clone).and_then(|data| {
@@ -436,6 +449,9 @@ impl InventoryUi {
         });
         if let Ok(text) = &result {
             self.preview_original.clone_from(text);
+        }
+        if kind == 7 && result.is_ok() && !was_loaded {
+            self.notecard_focus_pending = true;
         }
         self.preview_text = Some(result);
     }

@@ -1281,6 +1281,11 @@ impl Camera {
         }
         self.zoom_fraction = 1.0;
         self.fov_zoom = 0.0;
+        // LLAgentCamera::switchCameraPreset returns focus to the avatar without resetting its axes.
+        if !self.focus_on_avatar {
+            self.set_focus_on_avatar(true, true, false, agent, s);
+            self.set_focus_global(None, None, None, s);
+        }
         self.reset_view(agent, s, true, true, false, false);
     }
 
@@ -6445,6 +6450,31 @@ mod tests {
             "back to the rear view: {:?} vs {rest:?}",
             cam.position
         );
+    }
+
+    #[test]
+    fn a_camera_preset_returns_from_an_object_without_turning_the_avatar() {
+        for view in [CameraPreset::Front, CameraPreset::Rear, CameraPreset::Side] {
+            let (mut world, mut cam, mut s, _) = focused_object();
+            world.agent.yaw = 1.25;
+            let position = world.agent.position;
+            assert!(!cam.focus_on_avatar && cam.focus_object.is_some());
+            s.apply_view(view, &SavedViews::default());
+            cam.reset_to_defaults(&mut world.agent, &s);
+            settle(&mut cam, &mut world, &s);
+            assert_eq!(world.agent.yaw, 1.25);
+            assert_eq!(world.agent.position, position);
+            assert!(cam.focus_on_avatar && cam.focus_object.is_none() && cam.focus_geom.is_none());
+            let pan = CameraKeys {
+                pan_right: 1.0,
+                ..Default::default()
+            };
+            cam.apply_keys(pan, true, &mut world.agent, &s, 0.1);
+            assert!(!cam.focus_on_avatar);
+            cam.reset_to_defaults(&mut world.agent, &s);
+            assert!(cam.focus_on_avatar);
+            assert_eq!(world.agent.yaw, 1.25);
+        }
     }
 
     #[test]

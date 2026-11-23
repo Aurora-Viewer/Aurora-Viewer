@@ -20,7 +20,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
                     1 => 0,
                     _ => 2,
                 };
-                if widgets::compact_tabs(
+                let (clicked, rects) = widgets::compact_tabs_at(
                     ui,
                     p,
                     &mut tab,
@@ -29,7 +29,18 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: 
                         (aurora_i18n::tr!("build-ui-texture-blinn-phong"), true),
                         (aurora_i18n::tr!("extra-media"), true),
                     ],
-                ) {
+                );
+                // inventory held over PBR or Blinn-Phong opens it (the texture
+                // panel's open_tabs_on_drag_and_drop, panel_fs_tools_texture.xml)
+                let mut held = false;
+                for (index, rect) in rects.iter().enumerate().take(2) {
+                    let id = egui::Id::unique("legacy-build-drag-open-texture").with(index);
+                    if crate::ui::inventory::drag::navigation::tab_held_over(ui, *rect, id) {
+                        tab = index;
+                        held = true;
+                    }
+                }
+                if clicked || held {
                     tool.ui.tex_tab = match tab {
                         0 => 1,
                         1 => 0,
@@ -537,11 +548,11 @@ pub(super) fn pbr_surface(
     });
 }
 
-fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, sel: &[Sel], env: &Env) {
+fn footer(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, sel: &[Sel], env: &mut Env) {
     let (canvas, _) = ui.allocate_exact_size(vec2(ui.available_width(), 68.0), egui::Sense::hover());
     let mut left = child(ui, canvas, 0.0, 0.0, canvas.width() - 96.0, 68.0, "legacy-face-parameters");
     left.spacing_mut().interact_size.y = 16.0;
-    repeats_meter(&mut left, p, tool, world, sel);
+    repeats_meter(&mut left, p, tool, world, env, sel);
     if let Some(value) = check(
         &mut left,
         p,

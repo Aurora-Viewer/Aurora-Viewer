@@ -43,7 +43,9 @@ impl BuildTool {
     /// Whether the section of `tab` is on screen this frame: the build
     /// window's own section, or a detached window that is shown.
     pub fn section_visible(&self, tab: usize) -> bool {
-        (self.tab == tab && !self.ui.detached_tabs.contains(&tab)) || self.ui.detached_shown.contains(&tab)
+        (self.tab == tab && !self.ui.detached_tabs.contains(&tab))
+            || self.ui.detached_shown.contains(&tab)
+            || self.ui.second.shown == Some(tab)
     }
 }
 
