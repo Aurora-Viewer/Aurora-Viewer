@@ -144,7 +144,9 @@ fn fs_ssr_rt(in: SsrOut) -> @location(0) vec4<f32> {
     let hemi = mix(mix(frame.ground_color.rgb, frame.sky_horizon.rgb, clamp(up * 2.0, 0.0, 1.0)),
                    frame.sky_zenith.rgb, clamp(up * 2.0 - 1.0, 0.0, 1.0));
     let spec_ao = specular_occlusion(in.clip.xy, r, rough, screen_ao(in.clip.xy));
-    var env = mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, rough) * (1.0 - 0.75 * rough);
+    // (the sky's, darkened where the traced probes do not see the sky, as
+    // `shade_pbr` darkens it)
+    var env = mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, rough) * (1.0 - 0.75 * rough) * screen_sky(in.clip.xy);
     if (probes_on()) {
         let s = sample_probes(p, in.clip.xy, r, rough * probe_max_lod());
         if (s.w > 0.0) {

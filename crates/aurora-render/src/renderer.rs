@@ -554,11 +554,18 @@ fn irradiance_pass_uniforms(u: &mut FrameU, light_scale: f32, lights: usize) {
 
 /// The projector shadow maps of a frame: each projector of the frame's list
 /// that casts shadows, with the view-projection of its map. None without
-/// shadows (reflections, probe faces and impostor pictures draw none).
-fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4)>) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
+/// shadows (reflections, probe faces and impostor pictures draw none), nor
+/// for a projector among the first `traced` lights, whose shadows the
+/// traced lights' pass draws (`Renderer::traced_projectors`).
+fn spot_shadow_views(
+    f: &FrameParams,
+    limit: usize,
+    shelter: Option<(usize, Mat4)>,
+    traced: usize,
+) -> [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] {
     let mut views: [Option<(SpotShadow, Mat4)>; SPOT_SHADOWS] = std::array::from_fn(|k| {
         let s = f.spot_shadows[k].filter(|_| k < limit);
-        let s = s.filter(|_| f.shadows)?;
+        let s = s.filter(|s| f.shadows && projector_map_drawn(s.light, traced))?;
         let light = f.lights.get(s.light as usize).filter(|_| (s.light as usize) < MAX_LIGHTS)?;
         Some((s, light.projector?.shadow_matrix))
     });
@@ -578,6 +585,21 @@ fn spot_shadow_views(f: &FrameParams, limit: usize, shelter: Option<(usize, Mat4
         ));
     }
     views
+}
+
+/// Whether the traced passes light and shadow by the frame's light,
+/// `sun_dir`: the one that shades, the moon's at night as the shadow maps'
+/// (world/env.rs: the sun when it is up, else the moon, else straight down;
+/// LLEnvironment::getLightDirection). Tracing only while the sun was
+/// visible let the moon through every roof.
+fn traced_light_up(sun_dir: Vec3) -> bool {
+    sun_dir.z > 0.0
+}
+
+/// Whether the shadow map of the projector at `light` in the frame's list is
+/// drawn while the first `traced` lights are traced: only past them.
+fn projector_map_drawn(light: u32, traced: usize) -> bool {
+    light as usize >= traced
 }
 
 /// With the shadows off, how long the shelter map drawn alone is kept while
@@ -2977,6 +2999,22 @@ impl Backend {
         rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
     }
 
+    /// How many of the frame's first lights have their projector shadows
+    /// traced this frame (common.wgsl `projector_at`, `PROJECTORS_TRACED`):
+    /// their shadow maps are not drawn. The faces the traced pass does not
+    /// see read the maps: without them a blended face takes such a
+    /// projector unshadowed, as the Legacy Viewer's (alphaF.glsl
+    /// `calcPointLightOrSpotLight`, only spotLightF.glsl reads the maps),
+    /// and so do the reflections. 0 while the lights are not traced.
+    fn traced_projectors(&self) -> usize {
+        let tuning = self.settings.rt_tuning;
+        let traced = self.rt_now
+            && tuning.projectors
+            && self.rt.as_ref().is_some_and(|r| r.traces_lights())
+            && self.targets.rt.as_ref().is_some_and(|t| t.lights.is_some());
+        if traced { crate::rt_shadows::traced_count(tuning) } else { 0 }
+    }
+
     /// The projector map the shelter is drawn into this frame, if it is,
     /// and its view-projection.
     fn rain_shelter_map(&self, f: &FrameParams) -> Option<(usize, Mat4)> {
@@ -4161,8 +4199,14 @@ impl Backend {
             },
             // the contact shadows' mask (contact_shadows.rs)
             float_tex(13),
+            // what the glass leaves of the traced sun's red, green and blue
+            // (rt_shadows.wgsl, common.wgsl `sun_glass`)
+            float_tex(31),
             // GTAO's screen-space indirect light (gtao.rs)
             float_tex(14),
+            // how open each place is, from the traced probes (rt_gi.wgsl
+            // `cs_gi_sky`, common.wgsl `screen_open`)
+            float_tex(32),
             // the night sky's stars (stars.rs)
             wgpu::BindGroupLayoutEntry {
                 binding: 24,
@@ -6480,7 +6524,13 @@ impl Backend {
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
             .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
-        let rt = crate::rt_shadows::Targets::new(device, w, h, crate::rt_shadows::traced(device, external, s.ray_tracing));
+        let rt = crate::rt_shadows::Targets::new(
+            device,
+            w,
+            h,
+            crate::rt_shadows::traced(device, external, s.ray_tracing),
+            s.rt_tuning.gi_step,
+        );
         // the blended faces opaque enough are in the occlusion depth when it
         // holds them (`blend_in_ao_depth`)
         let soft = soft
@@ -6579,7 +6629,9 @@ impl Backend {
                   depth: &wgpu::TextureView,
                   occlusion: &wgpu::TextureView,
                   contact: &wgpu::TextureView,
+                  glass: &wgpu::TextureView,
                   il: &wgpu::TextureView,
+                  open: &wgpu::TextureView,
                   sample_water: bool,
                   sample_mask: bool,
                   soft: Option<&wgpu::TextureView>| {
@@ -6685,8 +6737,16 @@ impl Backend {
                         resource: wgpu::BindingResource::TextureView(contact),
                     },
                     wgpu::BindGroupEntry {
+                        binding: 31,
+                        resource: wgpu::BindingResource::TextureView(glass),
+                    },
+                    wgpu::BindGroupEntry {
                         binding: 14,
                         resource: wgpu::BindingResource::TextureView(il),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 32,
+                        resource: wgpu::BindingResource::TextureView(open),
                     },
                     wgpu::BindGroupEntry {
                         binding: 15,
@@ -6745,6 +6805,8 @@ impl Backend {
                 .map(|r| &r.result)
                 .or(t.contact.as_ref().map(|c| &c.result))
                 .unwrap_or(&dummies.black);
+        // the colour the glass gives the traced sun (rt_shadows.wgsl)
+        let glass = t.rt.as_ref().map(|r| &r.glass).unwrap_or(&dummies.white);
         // the traced indirect light in GTAO's place (rt_gi.wgsl)
         let il =
             t.rt.as_ref()
@@ -6752,6 +6814,15 @@ impl Backend {
                 .map(|g| &g.result)
                 .or(t.gtao.as_ref().and_then(|g| g.indirect.as_ref()).map(|i| &i.result))
                 .unwrap_or(&dummies.black);
+        // how open each place is (rt_gi.wgsl `cs_gi_sky`; white: open)
+        let open = t.rt.as_ref().and_then(|r| r.gi.as_ref()).map(|g| &g.sky).unwrap_or(&dummies.white);
+        // how open the places the reflections are drawn from are (rt_gi.wgsl
+        // `gi_points`)
+        let points =
+            t.rt.as_ref()
+                .and_then(|r| r.gi.as_ref())
+                .map(|g| &g.points)
+                .unwrap_or(&dummies.white);
         let soft = t.soft.as_ref().map(|s| s.result());
         // the solid surfaces of the depth the occlusion and the contact
         // shadows read (a dummy without either: nothing reads it)
@@ -6767,7 +6838,9 @@ impl Backend {
                 &dummies.depth,
                 &dummies.depth,
                 &dummies.black,
+                &dummies.white,
                 &dummies.black,
+                &dummies.white,
                 false,
                 false,
                 None,
@@ -6782,7 +6855,9 @@ impl Backend {
                 &dummies.depth,
                 &dummies.depth,
                 contact,
+                glass,
                 il,
+                open,
                 false,
                 true,
                 soft,
@@ -6797,7 +6872,9 @@ impl Backend {
                 &dummies.depth,
                 occlusion,
                 contact,
+                glass,
                 il,
+                open,
                 false,
                 true,
                 soft,
@@ -6812,7 +6889,9 @@ impl Backend {
                 &t.depth_ss,
                 occlusion,
                 contact,
+                glass,
                 il,
+                open,
                 true,
                 true,
                 soft,
@@ -6828,7 +6907,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6843,7 +6924,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                     None,
@@ -6858,7 +6941,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                     None,
@@ -6873,7 +6958,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6888,7 +6975,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6903,7 +6992,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6918,7 +7009,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6933,7 +7026,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6948,7 +7043,9 @@ impl Backend {
                     &dummies.depth,
                     &dummies.depth,
                     &dummies.black,
+                    &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                     None,
@@ -7474,6 +7571,8 @@ impl Backend {
             || crate::rt_shadows::traced(&self.device, self.external, s.ray_tracing)
                 != crate::rt_shadows::traced(&self.device, self.external, self.settings.ray_tracing)
             || s.soft_shadows != self.settings.soft_shadows
+            // (the traced indirect light's textures are of its grid)
+            || s.rt_tuning.gi_step != self.settings.rt_tuning.gi_step
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
@@ -8082,7 +8181,7 @@ impl Backend {
             }
         }
         u.spot_lights = [[-1; 4]; SPOT_SHADOWS / 4];
-        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f))
+        for (k, (spot, vp)) in spot_shadow_views(f, self.shadow_count as usize, self.rain_shelter_map(f), self.traced_projectors())
             .into_iter()
             .enumerate()
             .filter_map(|(k, v)| Some((k, v?)))
@@ -9614,9 +9713,24 @@ impl Backend {
         if indirect_now || rt_gi_now {
             main.light_sets.mode[2] |= 0x400;
         }
-        // (common.wgsl LOCAL_TRACED)
+        // (common.wgsl TRACED_SKY: the traced probes' sight of the sky in
+        // the indirect light's alpha)
+        if let Some(rt) = self.rt.as_mut() {
+            rt.want_probes(self.settings.rt_tuning.probes);
+            rt.tune_gi(self.settings.rt_tuning);
+        }
+        let traced_sky = rt_gi_now && self.rt.as_ref().is_some_and(|r| r.sees_the_sky());
+        if traced_sky {
+            main.light_sets.mode[3] |= 0x100;
+        }
+        // (common.wgsl LOCAL_TRACED, TRACED_LIGHTS_SHIFT, PROJECTORS_TRACED)
         if rt_lights_now {
-            main.light_sets.mode[2] |= 0x1000000;
+            let tuning = self.settings.rt_tuning;
+            let lights = crate::rt_shadows::traced_count(tuning) as u32;
+            main.light_sets.mode[2] |= 0x100_0000 | (lights - 1) << 25;
+            if tuning.projectors {
+                main.light_sets.mode[2] |= 0x8000_0000;
+            }
         }
         // (common.wgsl SPECULAR_AA)
         if specular_aa_now(self.settings.specular_aa) {
@@ -9767,6 +9881,10 @@ impl Backend {
                 [w, h, 1.0 / w, 1.0 / h]
             })
         };
+        // The places the probe's capture and the mirror are drawn from, whose
+        // openness their faces take with the traced probes (rt_gi.wgsl
+        // `gi_points`, common.wgsl `reflection_open`; TRACED_SKY tells them)
+        let mut gi_points: [Option<Vec3>; 2] = [None; 2];
         if do_water_refl {
             let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05, false);
             // The mirror flips z after the bend: a point bent down by the
@@ -9784,6 +9902,13 @@ impl Backend {
             let n = m.normal.normalize_or(Vec3::Z);
             let mut u = refl_frame(self, n, -n.dot(m.point), 0.01, true);
             u.sky_star_pass = star_pass(&self.targets.mirror);
+            // (half a metre in front of it, on the camera's side: on its
+            // plane the place is the mirror's own panel)
+            if traced_sky {
+                u.light_sets.mode[3] |= 0x100;
+                let side = if n.dot(f.camera_pos - m.point) < 0.0 { -n } else { n };
+                gi_points[1] = Some(m.point + side * 0.5);
+            }
             mirror_vp = Mat4::from_cols_array_2d(&u.view_proj);
             mirror_eye = Vec3::from_slice(&u.camera_pos[..3]);
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
@@ -9814,6 +9939,10 @@ impl Backend {
             u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = [0.0; 4];
             u.light_sets.mode[2] |= radiance_bits | crate::probes::capture_lighting::DOME;
+            if traced_sky {
+                u.light_sets.mode[3] |= 0x100;
+                gi_points[0] = Some(c.origin);
+            }
             // the sun stops at the roofs (display_cube_face, generateSunShadow)
             if !c.sky_only && irr_capture && f.shadows {
                 if c.face == 0 {
@@ -9881,7 +10010,7 @@ impl Backend {
         // projector shadow maps of the frame (none without shadows)
         let shelter_map = self.rain_shelter_map(f);
         let spot_vp: [Option<Mat4>; SPOT_SHADOWS] =
-            spot_shadow_views(f, self.shadow_count as usize, shelter_map).map(|v| v.map(|(_, m)| m));
+            spot_shadow_views(f, self.shadow_count as usize, shelter_map, self.traced_projectors()).map(|v| v.map(|(_, m)| m));
         for (i, m) in cascades.iter().copied().map(Some).chain(spot_vp).enumerate() {
             let Some(m) = m else { continue };
             let u = ShadowU {
@@ -9997,9 +10126,11 @@ impl Backend {
                 fu.proj * fu.view,
                 fu.camera_pos,
                 f.sun_dir,
-                f.sun_visible > 0.0,
+                traced_light_up(f.sun_dir),
                 self.contact_now,
+                self.settings.rt_tuning.sun_softness,
             );
+            rt.write_texture_clock(&self.queue, [self.anim_now[2], self.anim_now[3]]);
         }
         if let (true, Some(t)) = (self.targets.gtao_shown, &mut self.targets.gtao) {
             let prev = self.prev_view_proj.unwrap_or(unjittered_vp);
@@ -11110,7 +11241,7 @@ impl Backend {
                 clip_from_world: rt_clip_from_world,
                 camera: fu_camera,
                 sun_dir: f.sun_dir,
-                sun_up: f.sun_visible > 0.0,
+                sun_up: traced_light_up(f.sun_dir),
                 sun_color: fu_sun_color,
                 sky_zenith: fu_sky[0],
                 sky_horizon: fu_sky[1],
@@ -11138,6 +11269,7 @@ impl Backend {
                     &self.dummies.black,
                     &scene,
                     round,
+                    self.settings.rt_tuning,
                 );
                 if rt_gi_now {
                     rt.encode_gi(
@@ -11153,6 +11285,7 @@ impl Backend {
                         &self.targets.scene_copy,
                         &scene,
                         round,
+                        gi_points,
                     );
                 }
             }
@@ -11941,7 +12074,7 @@ impl Backend {
                         clip_from_world: rt_clip_from_world,
                         camera: fu_camera,
                         sun_dir: f.sun_dir,
-                        sun_up: f.sun_visible > 0.0,
+                        sun_up: traced_light_up(f.sun_dir),
                         sun_color: fu_sun_color,
                         sky_zenith: fu_sky[0],
                         sky_horizon: fu_sky[1],
@@ -13845,6 +13978,24 @@ mod tests {
                 assert!(m.levels < 16);
             }
         }
+    }
+
+    #[test]
+    fn the_moon_is_traced_at_night() {
+        // the sun up, then the moon at night: both traced
+        assert!(traced_light_up(Vec3::new(0.3, 0.2, 0.68)));
+        assert!(traced_light_up(Vec3::new(-0.1, 0.35, 0.93)));
+        // neither up (straight down): nothing to trace
+        assert!(!traced_light_up(Vec3::NEG_Z));
+    }
+
+    #[test]
+    fn a_traced_projector_draws_no_shadow_map() {
+        // nothing traced: every projector keeps its map
+        assert!(projector_map_drawn(0, 0) && projector_map_drawn(5, 0));
+        // the first 4 lights traced: theirs go, the ones past them stay
+        assert!(!projector_map_drawn(0, 4) && !projector_map_drawn(3, 4));
+        assert!(projector_map_drawn(4, 4) && projector_map_drawn(63, 4));
     }
 
     #[test]
