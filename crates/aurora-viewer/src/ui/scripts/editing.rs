@@ -540,12 +540,14 @@ pub(crate) fn next_match(ranges: &[Range<usize>], selection: Range<usize>, up: b
 /// 0.37 only scrolls a TextEdit to its cursor after a keyboard change, so a
 /// drag never reached the lines outside the view. `visible` is the text's
 /// visible area and `content` the whole laid-out text, both on screen.
-/// Within 16 px of an edge, the rate starts at 130 px/s and gains 156 px/s
-/// every second, up to 1300 px/s: the scroll_container defaults (100, 120
-/// and 1000) made 30% faster, as a script is often taller than one view.
+/// Within 16 px of an edge, the rate starts at 260 px/s and gains 156 px/s
+/// every second, up to 1040 px/s: the text editor's scroller (200 and 800
+/// px/s in LLTextBase::LLTextBase, indra/llui/lltextbase.cpp, with
+/// AUTO_SCROLL_RATE_ACCEL's 120) made 30% faster, as a script is often
+/// taller than one view.
 pub(super) fn drag_autoscroll(ui: &egui::Ui, response: &egui::Response, visible: egui::Rect, content: egui::Rect, horizontal: bool) {
-    const MIN_RATE: f32 = 130.0;
-    const MAX_RATE: f32 = 1300.0;
+    const MIN_RATE: f32 = 260.0;
+    const MAX_RATE: f32 = 1040.0;
     const ACCELERATION: f32 = 156.0;
     const ZONE: f32 = 16.0;
     let rate_id = response.id.with("drag_autoscroll_rate");
