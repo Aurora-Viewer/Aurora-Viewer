@@ -1528,6 +1528,12 @@ pub struct Settings {
     /// Firestorm's camera and movement windows (floater_camera.xml,
     /// floater_moveview.xml) instead of `ui/controls.rs`.
     pub classic_controls: bool,
+    /// The Controls window opens compact on the camera: its joysticks, zoom
+    /// and roll (the title button's compact / full, kept: #3904).
+    pub compact_controls: bool,
+    /// The Controls window's Movement tab opens compact: the movement
+    /// buttons and walk / run / fly (its title button, kept: #3904).
+    pub compact_movement_controls: bool,
     /// Camera presets, saved from the Controls window (Firestorm's camera
     /// presets) or the viewfinder (`camera::presets`); kept apart from
     /// `camera`, which "Reset" sets back.
@@ -2776,6 +2782,8 @@ impl Default for Settings {
             disable_glass: false,
             interface_colors: Default::default(),
             classic_controls: false,
+            compact_controls: false,
+            compact_movement_controls: false,
             camera_shots: Vec::new(),
             camera_views: Default::default(),
             plates_friends_only_full: false,
