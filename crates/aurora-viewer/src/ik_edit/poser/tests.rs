@@ -98,7 +98,10 @@ fn poser_face_position_press_keeps_the_value_and_drag_moves_in_tenths_of_a_milli
         let rows = frames.run(Vec::new(), |ui| draw(ui, &mut value));
         let at = painted(&rows, "X").rect.right_center() + egui::vec2(60.0, 0.0);
         let button = |pos, pressed| egui::Event::PointerButton {
-            pos, pressed, button: egui::PointerButton::Primary, modifiers: egui::Modifiers::NONE,
+            pos,
+            pressed,
+            button: egui::PointerButton::Primary,
+            modifiers: egui::Modifiers::NONE,
         };
         frames.run(vec![egui::Event::PointerMoved(at), button(at, true)], |ui| draw(ui, &mut value));
         assert_eq!(value, Vec3::splat(initial), "pressing away from the center leaves the pose alone");

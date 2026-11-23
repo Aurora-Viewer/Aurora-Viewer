@@ -188,7 +188,11 @@ impl Editor {
                     // An absolute track moves the lip as soon as it is pressed.
                     // A relative field starts at the displayed position (or delta)
                     // and moves a tenth of a millimetre per logical pixel.
-                    let center = if self.poser.delta { 0.0 } else { base_point.unwrap_or_default()[axis] };
+                    let center = if self.poser.delta {
+                        0.0
+                    } else {
+                        base_point.unwrap_or_default()[axis]
+                    };
                     ui.add(
                         egui::DragValue::new(&mut value[axis])
                             .min_size(egui::vec2(ui.available_width(), ui.spacing().interact_size.y))
