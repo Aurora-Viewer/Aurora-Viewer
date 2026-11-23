@@ -904,6 +904,12 @@ height change. Your hover height is remembered per avatar.
 
 ### Photos
 
+In **Camera Controls › Lens**, choose 24 mm (Wide angle), 35 mm, 50 mm, 85 mm
+(Portrait), or 135 mm. These presets change the field of view while keeping
+the camera position and target. **Reset viewing angle** restores the default
+lens. The distance slider moves the camera separately. The Lens menu is
+available in both camera layouts and in the free-camera tab.
+
 Open the photo mode from the toolbar or with **Ctrl+Shift+S**. It opens in
 the **viewfinder**: the world full screen under a camera's overlay, its
 display switched between Full, Essential and Hidden with **I**. Click the
