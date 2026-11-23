@@ -1874,10 +1874,7 @@ impl<'a> Floater<'a> {
                     // scrolls where the screen is too small for that
                     // (`outside::fitting`), as inside a small viewer
                     let above = ui.cursor().top();
-                    let shown = egui::ScrollArea::vertical()
-                        .id_salt("floater_body")
-                        .auto_shrink([false, true])
-                        .show(ui, |ui| body.take().map(|body| body(ui)));
+                    let shown = sized_body(ui, |ui| body.take().map(|body| body(ui)));
                     let sides = f32::from(margin.left) + f32::from(margin.right);
                     content = Some(Vec2::new(
                         if auto_height {
@@ -1939,6 +1936,26 @@ fn letterboxed(room: Vec2, ratio: f32) -> Vec2 {
 /// at the zoom `zoom`: at another the same points are another size.
 fn asked_at(asked: Option<(Vec2, f32)>, zoom: f32) -> Option<Vec2> {
     asked.and_then(|(size, at)| (at == zoom).then_some(size))
+}
+
+/// How much taller than its room the content of a window outside may be
+/// before it scrolls, in points.
+const OUTSIDE_SLACK: f32 = 1.0;
+
+/// The body of a window outside sized by its content: it scrolls where the
+/// screen is too small for it, and only there. The system gives a window
+/// whole pixels, a fraction of a point under or over the size asked: a
+/// content that fraction taller than its room does not scroll, since the
+/// scroll bar would take its strip from the content's width, a content
+/// that wraps would be taller for it, and its window would follow it up
+/// and down at every frame.
+fn sized_body<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> egui::scroll_area::ScrollAreaOutput<R> {
+    // (more room below, what is above staying where it is)
+    ui.expand_to_include_y(ui.max_rect().bottom() + OUTSIDE_SLACK);
+    egui::ScrollArea::vertical()
+        .id_salt("floater_body")
+        .auto_shrink([false, true])
+        .show(ui, body)
 }
 
 /// Whether a window outside of the size `size` is asked to take the size

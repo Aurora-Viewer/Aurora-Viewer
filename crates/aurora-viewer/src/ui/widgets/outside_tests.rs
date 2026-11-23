@@ -490,6 +490,43 @@ fn a_window_outside_draws_at_its_own_width_beside_its_room() {
     assert_eq!(crate::outside::take_resizes(&frames.ctx), [(id, Vec2::new(500.0, 300.0), false)]);
 }
 
+/// A content a fraction of a point taller than the room its window has (the
+/// system gives whole pixels) does not scroll: the scroll bar would narrow
+/// it, and a content that wraps would grow and shrink with its window at
+/// every frame. A content really taller than its room scrolls. The content
+/// stays under what is above it (the window's header).
+#[test]
+fn a_window_outside_a_fraction_short_of_its_content_does_not_scroll() {
+    // the content's width and top, under a header 30 high, in a room 200
+    // high left under it
+    let drawn = |tall: f32| {
+        let mut frames = elide_tests::Frames::new();
+        let mut seen = (0.0, 0.0);
+        // (the bar shows from the frame after the one that measures)
+        for _ in 0..4 {
+            frames.run(Vec::new(), |ui| {
+                let room = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), Vec2::new(300.0, 230.0));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(room), |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    // (the viewer's scroll bars: a strip of their own beside the content)
+                    ui.spacing_mut().scroll = reserved_scroll_style();
+                    ui.allocate_space(Vec2::new(300.0, 30.0));
+                    sized_body(ui, |ui| {
+                        seen = (ui.available_width(), ui.cursor().top());
+                        ui.allocate_space(Vec2::new(10.0, tall));
+                    });
+                });
+            });
+        }
+        seen
+    };
+    assert_eq!(drawn(180.0), (300.0, 50.0));
+    assert_eq!(drawn(200.6), (300.0, 50.0), "0.6 point short, as at an interface scale of 0.8333");
+    let (width, top) = drawn(203.0);
+    assert!(width < 300.0, "taller than its room: the scroll bar has its strip");
+    assert_eq!(top, 50.0);
+}
+
 /// Ctrl+Shift+W in the viewer's window closes a window outside with the
 /// others; Ctrl+W there closes the front window inside, never this one.
 /// (Without a host, egui runs the window outside in the viewer's pass: it

@@ -282,6 +282,16 @@ fn fitting(size: egui::Vec2, room: Option<egui::Vec2>) -> egui::Vec2 {
     room.map_or(size, |room| egui::vec2(size.x.min(room.x), size.y.min(room.y * SCREEN_SHARE)))
 }
 
+/// The size `size` (in the interface's points) to ask of the system at the
+/// zoom `zoom`: in whole units, and never under the size. A system counts
+/// a window in whole units of its own (Wayland) or in whole pixels, and a
+/// window given a fraction less than what it shows would scroll it.
+fn whole(size: egui::Vec2, zoom: f32) -> winit::dpi::LogicalSize<f32> {
+    // (a product a hair over a whole number is that number)
+    let up = |points: f32| (points * zoom - 0.01).ceil();
+    winit::dpi::LogicalSize::new(up(size.x), up(size.y))
+}
+
 /// The window `window` is in its window outside and that one has the
 /// system's focus: it is the front window, and the keyboard is its own.
 pub(crate) fn in_focus(ctx: &egui::Context, window: egui::Id) -> bool {
@@ -758,8 +768,7 @@ impl Outside {
                     let room = monitor.size().to_logical::<f32>(monitor.scale_factor());
                     egui::vec2(room.width / zoom, room.height / zoom)
                 });
-                let size = fitting(size, room);
-                let size = winit::dpi::LogicalSize::new(size.x * zoom, size.y * zoom);
+                let size = whole(fitting(size, room), zoom);
                 // a held size is the least and the most the system allows:
                 // both are lifted for the change, then set to the new size
                 if held {
@@ -1597,6 +1606,12 @@ mod tests {
         assert_eq!(fitting(egui::vec2(1600.0, 300.0), room), egui::vec2(1280.0, 300.0));
         // (a system that does not tell the screen: as asked)
         assert_eq!(fitting(egui::vec2(400.0, 1100.0), None), egui::vec2(400.0, 1100.0));
+        // asked of the system in whole units, never under the size: 359.4
+        // points at an interface scale of 0.8333 are 299.47 units, and a
+        // window of 299 would be shorter than what it shows
+        assert_eq!(whole(egui::vec2(300.0, 359.4), 0.8333), winit::dpi::LogicalSize::new(250.0, 300.0));
+        assert_eq!(whole(egui::vec2(300.0, 360.0), 1.1), winit::dpi::LogicalSize::new(330.0, 396.0));
+        assert_eq!(whole(egui::vec2(256.0, 203.5), 1.0), winit::dpi::LogicalSize::new(256.0, 204.0));
     }
 
     /// A restart: the layout is written at exit and read at the next start.
