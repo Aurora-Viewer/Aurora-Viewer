@@ -134,10 +134,12 @@ pub async fn mutate(
         .map_err(|_| aurora_i18n::tr!("outfits-the-outfit-was-sent-but-could-not-be-read").to_owned())?;
     let mut contents = crate::inventory::parse_fetch_response(&response);
     contents.sort_by_key(|c| refresh.iter().position(|id| *id == c.folder_id).unwrap_or(usize::MAX));
-    if refresh
+    let unread: Vec<_> = refresh
         .iter()
-        .any(|id| !contents.iter().any(|c| c.folder_id == *id && c.version >= 0))
-    {
+        .filter(|id| !contents.iter().any(|c| c.folder_id == **id && c.version >= 0))
+        .collect();
+    if !unread.is_empty() {
+        log::warn!("outfit change: the read-back after the slam lacks folder(s) {unread:?} (missing or without a version)");
         return Err(aurora_i18n::tr!("outfits-the-outfit-is-incomplete-refresh-before-trying-again").into());
     }
     Ok(contents)
@@ -217,9 +219,10 @@ where
             // A folder the read leaves out is not an empty one: diffed as
             // empty, every wanted link would be added a second time.
             let Some(content) = current.iter().find(|content| content.folder_id == *folder && content.version >= 0) else {
+                log::warn!("outfit change: folder {folder} is missing from the read before the diff (or has no version): nothing sent");
                 return Err(aurora_i18n::tr!("outfits-the-outfit-is-incomplete-refresh-before-trying-again").into());
             };
-            link_diff(&content.items, links)
+            link_diff(*folder, &content.items, links)
         };
         for link in add {
             send_edit(UdpEdit::Link {
@@ -253,23 +256,36 @@ where
     let removed: std::collections::HashSet<Uuid> = removed.into_iter().collect();
     const RETRIES: u32 = 5;
     let mut previous = None;
+    let mut unlinked = Vec::new();
+    let mut unread = Vec::new();
     for attempt in 0..=RETRIES {
         let mut contents = fetch(refresh.clone()).await?;
-        let linked = slams.iter().all(|(folder, links)| {
-            links.iter().all(|link| {
-                contents
+        unlinked = slams
+            .iter()
+            .flat_map(|(folder, links)| {
+                let contents = &contents;
+                links
                     .iter()
-                    .filter(|c| c.folder_id == *folder)
-                    .flat_map(|c| &c.items)
-                    .any(|item| item.asset_id == link.target && is_link(item.asset_type))
+                    .filter(move |link| {
+                        !contents
+                            .iter()
+                            .filter(|c| c.folder_id == *folder)
+                            .flat_map(|c| &c.items)
+                            .any(|item| item.asset_id == link.target && is_link(item.asset_type))
+                    })
+                    .map(move |link| (*folder, link.target))
             })
-        });
+            .collect();
+        let linked = unlinked.is_empty();
         let gone = removed
             .iter()
             .all(|id| !contents.iter().flat_map(|c| &c.items).any(|item| item.id == *id));
-        let complete = refresh
+        unread = refresh
             .iter()
-            .all(|id| contents.iter().any(|c| c.folder_id == *id && c.version >= 0));
+            .filter(|id| !contents.iter().any(|c| c.folder_id == **id && c.version >= 0))
+            .copied()
+            .collect();
+        let complete = unread.is_empty();
         let read = read_signature(&contents);
         let settled = previous.as_ref() == Some(&read);
         previous = Some(read);
@@ -292,6 +308,12 @@ where
             tokio::time::sleep(std::time::Duration::from_millis(200 << attempt.min(3))).await;
         }
     }
+    // (folder, target) of every link still missing, and the folders the
+    // last read left out: a report is then readable from the log alone
+    log::warn!(
+        "outfit change: not confirmed after {RETRIES} retries: {} link(s) never read back {unlinked:?}, folder(s) missing from the read {unread:?}",
+        unlinked.len()
+    );
     Err(aurora_i18n::tr!("outfits-the-outfit-is-incomplete-refresh-before-trying-again").into())
 }
 
@@ -317,19 +339,30 @@ fn read_signature(contents: &[FolderContents]) -> Vec<(Uuid, i32, Vec<Uuid>)> {
 /// real item consumes its entries too, but only links are ever removed. What
 /// is left of the wanted links is added.
 ///
+/// Only what the folder holds counts: the items whose parent is `folder`, as
+/// collectDescendents reads them from the inventory model. OpenSim's
+/// FetchInventoryDescendents2 (FetchInvDescHandler::ProcessLinks) lists the
+/// original of every link before the links, with its own parent: taken for
+/// an item of the folder, it consumed the wanted entry of its own link, and
+/// that link was then removed. Every kept link of an outfit change went, the
+/// read-back waited for links that would never come back, and the Current
+/// Outfit ended up without its objects and body parts.
+///
 /// A kept link whose wanted description is a clothing layer order
 /// (`@<type * 100 + index>`, build_order_string) that it does not hold yet
 /// comes back with it, for an update: updateClothingOrderingInfo
 /// (llappearancemgr.cpp) rewrites only those. Descriptions are compared as the
 /// link holds them (`link_desc`).
 fn link_diff<'a>(
+    folder: Uuid,
     current: &[crate::inventory::InvItem],
     wanted: &'a [OutfitLink],
 ) -> (Vec<Uuid>, Vec<&'a OutfitLink>, Vec<crate::inventory::InvItem>) {
     let mut pending: Vec<&OutfitLink> = wanted.iter().collect();
     let mut remove = Vec::new();
     let mut redescribe = Vec::new();
-    for item in current {
+    // a listing without parent_id files the item in the folder it lists
+    for item in current.iter().filter(|item| item.parent == folder || item.parent.is_nil()) {
         let link = is_link(item.asset_type);
         let linked = if link { item.asset_id } else { item.id };
         let Some(first) = pending.iter().find(|wanted| wanted.target == linked) else {
@@ -865,6 +898,64 @@ pub(crate) mod tests {
         assert_eq!((*parent, *target), (folder, b));
     }
 
+    /// The original of a link, as OpenSim's FetchInvDescHandler::ProcessLinks
+    /// lists it before the links of the folder: in its own folder.
+    fn original(item: Uuid, parent: Uuid) -> Llsd {
+        llsd_map! {
+            "item_id" => item, "parent_id" => parent, "asset_id" => Uuid::from_u128(999),
+            "name" => "Hair", "type" => 13, "inv_type" => 18,
+        }
+    }
+
+    /// Wearing outfit B (b, c, d) over A (a, b, c) on OpenSim: the read lists
+    /// the originals first. b and c keep their links, a is taken off, d is
+    /// linked; the read-back holds B's links at once, with no wait.
+    #[tokio::test]
+    async fn an_opensim_listing_keeps_the_links_of_the_next_outfit() {
+        let (cof, clothing) = (Uuid::from_u128(10), Uuid::from_u128(20));
+        let (a, b, c, d) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
+        let (ia, ib, ic, id) = (Uuid::from_u128(11), Uuid::from_u128(12), Uuid::from_u128(13), Uuid::from_u128(14));
+        let listing = |version, links: Vec<(Uuid, Uuid)>| {
+            let mut items: Vec<Llsd> = links.iter().map(|(_, target)| original(*target, clothing)).collect();
+            items.extend(links.iter().map(|(item, target)| worn_link(cof, *item, *target)));
+            cof_reply(cof, version, items)
+        };
+        let (url, task) = server(vec![
+            (200, listing(1, vec![(ia, a), (ib, b), (ic, c)])),
+            (200, listing(3, vec![(ib, b), (ic, c), (id, d)])),
+        ])
+        .await;
+        let (edits, send) = recorder();
+        let started = std::time::Instant::now();
+        let result = mutate_udp(
+            &reqwest::Client::new(),
+            None,
+            &format!("{url}/fetch"),
+            Uuid::nil(),
+            kept(cof, &[b, c, d]),
+            send,
+            &|_| {},
+        )
+        .await;
+        task.abort();
+        let contents = result.expect("the outfit change completes");
+        assert!(started.elapsed() < std::time::Duration::from_millis(150), "no retry");
+        let edits = edits.lock().expect("edits");
+        let [UdpEdit::Link { parent, target, .. }, UdpEdit::RemoveItem(removed)] = edits.as_slice() else {
+            panic!("d is linked and a is taken off, nothing else: {edits:?}");
+        };
+        assert_eq!((*parent, *target, *removed), (cof, d, ia));
+        let mut linked: Vec<_> = contents
+            .iter()
+            .filter(|folder| folder.folder_id == cof)
+            .flat_map(|folder| &folder.items)
+            .filter(|item| item.parent == cof && is_link(item.asset_type))
+            .map(|item| item.asset_id)
+            .collect();
+        linked.sort();
+        assert_eq!(linked, [b, c, d]);
+    }
+
     /// The first read after a removal can still list the old link. That read is not applied.
     #[tokio::test]
     async fn a_stale_read_is_not_the_result() {
@@ -1044,9 +1135,12 @@ pub(crate) mod tests {
         assert_eq!(links, [(assigned, target, false), (cof, assigned, true)], "{edits:?}");
     }
 
+    const FOLDER: Uuid = Uuid::from_u128(100);
+
     fn current(id: u128, target: Uuid, asset_type: i32, desc: &str) -> crate::inventory::InvItem {
         crate::inventory::InvItem {
             id: Uuid::from_u128(id),
+            parent: FOLDER,
             asset_id: target,
             asset_type,
             desc: desc.into(),
@@ -1071,24 +1165,25 @@ pub(crate) mod tests {
         let (a, x) = (Uuid::from_u128(1), Uuid::from_u128(2));
         let (once, twice, real_wanted) = ([wanted(a, "")], [wanted(a, ""), wanted(a, "")], [wanted(x, "")]);
         // a duplicate wanted entry adds no second link
-        let (remove, add, redescribe) = link_diff(&[current(11, a, 24, "")], &twice);
+        let (remove, add, redescribe) = link_diff(FOLDER, &[current(11, a, 24, "")], &twice);
         assert!(remove.is_empty() && add.is_empty() && redescribe.is_empty(), "{add:?}");
         // a real item in the folder is not linked to again, and never removed
         let real = crate::inventory::InvItem {
             id: x,
+            parent: FOLDER,
             asset_type: 13,
             ..Default::default()
         };
-        let (remove, add, _) = link_diff(std::slice::from_ref(&real), &real_wanted);
+        let (remove, add, _) = link_diff(FOLDER, std::slice::from_ref(&real), &real_wanted);
         assert!(remove.is_empty() && add.is_empty(), "{remove:?} {add:?}");
-        let (remove, add, _) = link_diff(&[real], &[]);
+        let (remove, add, _) = link_diff(FOLDER, &[real], &[]);
         assert!(remove.is_empty() && add.is_empty());
         // a second current link to one item is removed
-        let (remove, add, _) = link_diff(&[current(11, a, 24, ""), current(12, a, 24, "")], &once);
+        let (remove, add, _) = link_diff(FOLDER, &[current(11, a, 24, ""), current(12, a, 24, "")], &once);
         assert_eq!(remove, [Uuid::from_u128(12)]);
         assert!(add.is_empty());
         // wanted twice and missing: both entries are linked, as link_inventory_items does
-        assert_eq!(link_diff(&[], &twice).1.len(), 2);
+        assert_eq!(link_diff(FOLDER, &[], &twice).1.len(), 2);
     }
 
     /// Only a layer order the link does not hold yet is written, compared as
@@ -1103,11 +1198,11 @@ pub(crate) mod tests {
             ("old text".to_owned(), "a creator's text"),
             ("@801".to_owned(), "@801"),
         ] {
-            let (_, _, redescribe) = link_diff(&[current(11, a, 24, &held)], &[wanted(a, desc)]);
+            let (_, _, redescribe) = link_diff(FOLDER, &[current(11, a, 24, &held)], &[wanted(a, desc)]);
             assert!(redescribe.is_empty(), "{desc:?}: {redescribe:?}");
         }
         for held in ["@800", "", "© Maker"] {
-            let (_, _, redescribe) = link_diff(&[current(11, a, 24, held)], &[wanted(a, "@801")]);
+            let (_, _, redescribe) = link_diff(FOLDER, &[current(11, a, 24, held)], &[wanted(a, "@801")]);
             let [item] = redescribe.as_slice() else {
                 panic!("{held:?}: {redescribe:?}");
             };

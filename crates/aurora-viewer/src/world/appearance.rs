@@ -2239,6 +2239,54 @@ mod tests {
         assert!(change.links.iter().any(|l| l.target == gone));
     }
 
+    /// An outfit whose every link is broken (an OpenSim outfit of deleted
+    /// items) is still worn, as updateCOF does: the current body parts stay,
+    /// the clothing and attachments go, the outfit becomes the base outfit,
+    /// and no link to a missing original is sent (the read-back would wait
+    /// for it).
+    #[test]
+    fn an_outfit_of_broken_links_keeps_the_body_parts_and_sends_no_broken_link() {
+        let mut inv = fixture();
+        let outfit = Uuid::from_u128(704);
+        let cof = cof(&inv).expect("COF");
+        let gone: Vec<_> = folder_links(&inv, outfit)
+            .into_iter()
+            .filter(|l| !l.folder)
+            .map(|l| l.target)
+            // the current body parts stay in the inventory
+            .filter(|target| {
+                !(inv.items.get(target).is_some_and(|it| it.asset_type == 13)
+                    && folder_links(&inv, cof).iter().any(|l| l.target == *target))
+            })
+            .collect();
+        assert!(!gone.is_empty());
+        for id in &gone {
+            inv.items.remove(id);
+        }
+        inv.items_missing(gone.clone());
+        let body: Vec<_> = folder_links(&inv, cof)
+            .into_iter()
+            .filter(|l| inv.items.get(&l.target).is_some_and(|it| it.asset_type == 13))
+            .map(|l| l.target)
+            .collect();
+        assert!(!body.is_empty());
+        let (change, sync) = plan(&inv, Action::Wear(outfit, false), &HashMap::new()).expect("worn without the missing items");
+        assert!(sync);
+        assert!(change.links.iter().all(|l| !gone.contains(&l.target)), "no broken link is sent");
+        for id in &body {
+            assert!(change.links.iter().any(|l| l.target == *id), "body part {id} kept");
+        }
+        assert!(
+            change
+                .links
+                .iter()
+                .all(|l| l.folder || inv.items.get(&l.target).is_some_and(|it| it.asset_type == 13)),
+            "clothing and attachments taken off: {:?}",
+            change.links
+        );
+        assert!(change.links.iter().any(|l| l.folder && l.target == outfit), "the base outfit");
+    }
+
     #[test]
     fn a_broken_link_in_the_current_outfit_no_longer_blocks_outfit_changes() {
         let mut inv = fixture();
