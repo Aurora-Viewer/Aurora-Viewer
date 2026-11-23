@@ -688,19 +688,17 @@ pub(crate) fn editable_row(
     row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, open, sense)
 }
 
-/// An icon-only command remains searchable and accessible by its full label.
-#[allow(clippy::too_many_arguments)]
+/// A catalogue menu row: always its icon and its label, so it needs no
+/// tooltip repeating the label.
 pub(crate) fn command_row(
     ui: &mut Ui,
     p: &Palette,
     icon: &str,
     label: &str,
-    mode: super::toolbar::ButtonMode,
     enabled: bool,
     checked: Option<bool>,
     editable: bool,
 ) -> egui::Response {
-    let (icon, display) = command_content(icon, label, mode);
     let sense = if editable {
         Sense::click_and_drag()
     } else if enabled {
@@ -709,15 +707,7 @@ pub(crate) fn command_row(
         Sense::hover()
     };
     let end = checked.map_or(End::None, End::Check);
-    row_presented(ui, p, Lead::Icon(icon), label, display, enabled, end, false, sense)
-}
-
-fn command_content<'a>(icon: &'a str, label: &'a str, mode: super::toolbar::ButtonMode) -> (&'a str, &'a str) {
-    use super::toolbar::ButtonMode;
-    (
-        if mode == ButtonMode::TextOnly { "" } else { icon },
-        if mode == ButtonMode::IconsOnly { "" } else { label },
-    )
+    row_presented(ui, p, Lead::Icon(icon), label, label, enabled, end, false, sense)
 }
 
 /// One absolute cell of an editable menu toolbar, including its empty cells.
@@ -1097,16 +1087,14 @@ pub fn submenu(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool,
 /// [`submenu`] that returns its own row, for a heading that is also an
 /// action when clicked (the import menu).
 pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, body: impl FnOnce(&mut Ui)) -> egui::Response {
-    command_submenu(ui, p, icon, label, super::toolbar::ButtonMode::IconsWithText, enabled, body)
+    command_submenu(ui, p, icon, label, enabled, body)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn command_submenu(
     ui: &mut Ui,
     p: &Palette,
     icon: &str,
     label: &str,
-    mode: super::toolbar::ButtonMode,
     enabled: bool,
     body: impl FnOnce(&mut Ui),
 ) -> egui::Response {
@@ -1123,13 +1111,12 @@ pub(crate) fn command_submenu(
         return hidden(ui);
     }
     let open = enabled && sub_menu_open(ui);
-    let (icon, display) = command_content(icon, label, mode);
     let resp = row_presented(
         ui,
         p,
         Lead::Icon(icon),
         label,
-        display,
+        label,
         enabled,
         End::Caret,
         open,

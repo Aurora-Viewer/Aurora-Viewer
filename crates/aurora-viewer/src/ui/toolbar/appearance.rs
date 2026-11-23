@@ -93,25 +93,16 @@ impl ContextPicker {
         }
         let mut value = settings.appearance.get(key).cloned().unwrap_or_default();
         let before = value.clone();
-        for (mode, icon, label) in [
-            (
-                Some(ButtonMode::IconsOnly),
-                "layout-grid-filled",
-                aurora_i18n::tr!("toolbar-button-icons"),
-            ),
-            (Some(ButtonMode::TextOnly), "typography", aurora_i18n::tr!("toolbar-button-text")),
-            (
-                Some(ButtonMode::IconsWithText),
-                "list-details-filled",
-                aurora_i18n::tr!("toolbar-button-icons-text"),
-            ),
-            (None, "layers-subtract", aurora_i18n::tr!("toolbar-button-inherit")),
-        ] {
-            if menu::check(ui, p, icon, label, value.mode == mode, !locked) {
+        // the Aurora menu's rows always show their icon and label
+        let modes = if is_menu_key(key) { &[][..] } else { &MODES[..] };
+        for &(mode, icon, label) in modes {
+            if menu::check(ui, p, icon, aurora_i18n::text(label), value.mode == mode, !locked) {
                 value.mode = mode;
             }
         }
-        menu::separator(ui, p);
+        if !modes.is_empty() {
+            menu::separator(ui, p);
+        }
         if icon_editable(&button.command) {
             let response = ui
                 .add_enabled_ui(!locked, |ui| {
@@ -358,8 +349,22 @@ impl Editor {
 }
 
 pub fn menu_key(command: &str) -> String {
-    format!("menu-entry:{command}")
+    format!("{MENU_KEY}{command}")
 }
+
+const MENU_KEY: &str = "menu-entry:";
+
+fn is_menu_key(key: &str) -> bool {
+    key.starts_with(MENU_KEY)
+}
+
+/// The display choices of a toolbar button's right click.
+const MODES: [(Option<ButtonMode>, &str, &str); 4] = [
+    (Some(ButtonMode::IconsOnly), "layout-grid-filled", "toolbar-button-icons"),
+    (Some(ButtonMode::TextOnly), "typography", "toolbar-button-text"),
+    (Some(ButtonMode::IconsWithText), "list-details-filled", "toolbar-button-icons-text"),
+    (None, "layers-subtract", "toolbar-button-inherit"),
+];
 
 pub fn publish(ctx: &egui::Context, settings: &ToolbarSettings) {
     ctx.data_mut(|data| {
@@ -522,8 +527,10 @@ impl ToolbarUi {
             ui.label(egui::RichText::new(super::label(&button)).strong());
             ui.add_space(8.0);
             ui.add_enabled_ui(!settings.locked, |ui| {
-                Editor::modes(ui, p, &mut value);
-                ui.add_space(10.0);
+                if !is_menu_key(&key) {
+                    Editor::modes(ui, p, &mut value);
+                    ui.add_space(10.0);
+                }
                 self.appearance_editor.picker(ui, p, &button, &mut value);
             });
         });

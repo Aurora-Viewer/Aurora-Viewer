@@ -1158,6 +1158,7 @@ fn customization_contexts_share_one_final_edit_interface_action_and_preserve_set
                 }
                 let preceding = aurora_i18n::text(match source {
                     "drawer" => "toolbar-drawer-settings",
+                    "menu" => "toolbar-icon-change",
                     _ => "toolbar-button-inherit",
                 });
                 let preceding = bench.text.iter().rev().find(|(text, _)| text == preceding).expect("context row").1;
@@ -4026,9 +4027,17 @@ fn locked_menu_rows_do_not_start_a_layout_drag() {
 }
 
 #[test]
-fn a_menu_entry_right_click_offers_direct_display_choices_and_saves_its_own_mode() {
+fn a_menu_entry_right_click_has_no_display_choices_and_no_label_tooltip() {
     const IMPORT: &str = "menu:common-build/import-menu";
     let mut bench = Bench::default();
+    // a mode saved before the choice was removed is ignored
+    bench.settings.appearance.insert(
+        appearance::menu_key(IMPORT),
+        appearance::Appearance {
+            mode: Some(ButtonMode::IconsOnly),
+            icon: None,
+        },
+    );
     for _ in 0..3 {
         bench.frame(Vec::new());
     }
@@ -4037,6 +4046,16 @@ fn a_menu_entry_right_click_offers_direct_display_choices_and_saves_its_own_mode
         .data(|data| data.get_temp::<Rect>(egui::Id::unique(("main_menu_entry", IMPORT))))
         .expect("menu row")
         .center();
+    // hovering long enough for a tooltip shows the label once, on the row
+    for _ in 0..12 {
+        bench.frame(vec![egui::Event::PointerMoved(source)]);
+    }
+    let labels = bench
+        .text
+        .iter()
+        .filter(|(text, _)| text == aurora_i18n::tr!("import-menu"))
+        .count();
+    assert_eq!(labels, 1, "the row shows its label and no tooltip repeats it");
     for pressed in [true, false] {
         bench.frame(vec![
             egui::Event::PointerMoved(source),
@@ -4058,22 +4077,21 @@ fn a_menu_entry_right_click_offers_direct_display_choices_and_saves_its_own_mode
             .is_none(),
         "normal context choices do not open an appearance floater"
     );
-    let text_mode = bench
-        .text
-        .iter()
-        .find(|(text, _)| text == aurora_i18n::tr!("toolbar-button-text"))
-        .expect("text-only radio")
-        .1
-        .center();
-    bench.pointer(text_mode, Some(true));
-    bench.pointer(text_mode, Some(false));
-    assert_eq!(
-        bench.settings.appearance[&appearance::menu_key(IMPORT)].mode,
-        Some(ButtonMode::TextOnly)
-    );
+    // the Aurora menu's rows always show icon and label: no display choice
+    for key in [
+        "toolbar-button-icons",
+        "toolbar-button-text",
+        "toolbar-button-icons-text",
+        "toolbar-button-inherit",
+    ] {
+        assert!(
+            !bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key)),
+            "menu row offers {key}"
+        );
+    }
     assert!(
-        !bench.settings.appearance.contains_key(IMPORT),
-        "the toolbar copy keeps its own bar default"
+        bench.text.iter().any(|(text, _)| text == aurora_i18n::tr!("toolbar-icon-change")),
+        "its icon stays editable"
     );
     assert!(commands::take_request(&bench.ctx).is_none(), "customizing never activates Import");
 }
@@ -4205,13 +4223,13 @@ fn menu_row_right_click_adds_and_removes_its_toolbar_command_without_running_it(
         .center();
     click(&mut bench, row, egui::PointerButton::Secondary);
     assert!(!shown(&bench, "toolbar-add-from-menu"));
-    assert!(shown(&bench, "toolbar-button-icons"), "its context still opens");
+    assert!(shown(&bench, "toolbar-icon-change"), "its context still opens");
     // hovering another row of the menu closes the context, the menu stays
     let import = menu_point(&bench, aurora_i18n::tr!("import-menu"));
     for _ in 0..3 {
         bench.frame(vec![egui::Event::PointerMoved(import)]);
     }
-    assert!(!shown(&bench, "toolbar-button-icons"), "the context closes on another row");
+    assert!(!shown(&bench, "toolbar-icon-change"), "the context closes on another row");
     assert!(shown(&bench, "import-menu"), "the wolf menu stays open");
     // locked bars keep the entry, greyed out, and ignore it
     bench.settings.locked = true;

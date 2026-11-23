@@ -270,19 +270,18 @@ fn show_children(
             .unwrap_or_default();
         let icon = appearance.icon.as_deref().unwrap_or(&button.icon);
         let label = super::label(button);
-        let mode = appearance.mode.unwrap_or(super::ButtonMode::IconsWithText);
         let checked = if button.command == "location_bar" {
             Some(crate::ui::bars::location_popup::is_open(ui.ctx()))
         } else {
             entry.checked
         };
         let response = if entry.group {
-            menu::command_submenu(ui, p, icon, label, mode, true, |ui| {
+            menu::command_submenu(ui, p, icon, label, true, |ui| {
                 show_children(ui, p, toolbar, settings, catalogue, &button.command, visited);
             })
             .interact(egui::Sense::click_and_drag())
         } else {
-            menu::command_row(ui, p, icon, label, mode, entry.enabled, checked, !settings.locked)
+            menu::command_row(ui, p, icon, label, entry.enabled, checked, !settings.locked)
         };
         if response.rect.is_positive() {
             rects.push(response.rect);
@@ -290,7 +289,6 @@ fn show_children(
         }
         ui.ctx()
             .data_mut(|data| data.insert_temp(Id::unique(("main_menu_entry", &button.command)), response.rect));
-        response.clone().on_hover_text(label);
         if !settings.locked && response.drag_started_by(egui::PointerButton::Primary) {
             response.dnd_set_drag_payload(Drag {
                 button: button.clone(),
