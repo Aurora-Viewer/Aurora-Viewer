@@ -286,8 +286,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
         // an object keeps the color of objects; a resident's text reads on
         // the bubble like any text of the interface
         (false, None) if object => super::super::colors::chat_color(line, world),
-        // a keyword's colour shows on any bubble (Preferences › Chat)
-        (false, None) => super::super::colors::keyword_color(line).unwrap_or(p.ink),
+        // a keyword's colour shows on any bubble (Preferences › Chat): the
+        // override below applies it
+        (false, None) => p.ink,
     };
 
     // a contact set's colour, unless a keyword's wins (getChatColor applies
