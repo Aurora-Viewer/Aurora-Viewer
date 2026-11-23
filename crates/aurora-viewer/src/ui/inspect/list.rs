@@ -69,7 +69,12 @@ fn heading(ui: &mut egui::Ui, p: &Palette, title: &str, count: usize, complexity
     ui.horizontal(|ui| {
         ui.set_height(22.0);
         ui.add_space(6.0);
-        ui.label(RichText::new(title).size(12.5).strong().color(p.ink));
+        ui.label(
+            RichText::new(title)
+                .size(12.5)
+                .family(crate::ui::fonts::semibold(ui.ctx()))
+                .color(p.ink),
+        );
         ui.label(
             RichText::new(aurora_i18n::tr!("inspect-summary-items", count = count))
                 .size(11.5)
@@ -129,7 +134,12 @@ fn creators(
                 widgets::avatar_picture(ui, p, pic, creator.and_then(|id| frame.pics.get(&id)), &name, false);
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.label(RichText::new(&name).size(13.0).strong().color(p.ink));
+                    ui.label(
+                        RichText::new(&name)
+                            .size(13.0)
+                            .family(crate::ui::fonts::semibold(ui.ctx()))
+                            .color(p.ink),
+                    );
                     let complexity: u32 = items.iter().map(|i| i.complexity).sum();
                     let line = [
                         aurora_i18n::tr!("inspect-summary-items", count = items.len()),
@@ -466,7 +476,7 @@ fn body(
                 ui.label(
                     RichText::new(aurora_i18n::tr!("inspect-technical"))
                         .size(11.5)
-                        .strong()
+                        .family(crate::ui::fonts::semibold(ui.ctx()))
                         .color(p.muted),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -573,7 +583,15 @@ fn person_card(
             ui.set_width(text_w);
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.label(RichText::new(label).size(11.0).color(p.muted));
-            ui.add(egui::Label::new(RichText::new(name).size(12.5).strong().color(p.ink)).truncate());
+            ui.add(
+                egui::Label::new(
+                    RichText::new(name)
+                        .size(12.5)
+                        .family(crate::ui::fonts::semibold(ui.ctx()))
+                        .color(p.ink),
+                )
+                .truncate(),
+            );
         });
         if can_open
             && let Some(id) = who
@@ -597,7 +615,15 @@ fn place_card(ui: &mut egui::Ui, p: &Palette, point: &str) -> bool {
             ui.set_width(text_w);
             ui.spacing_mut().item_spacing.y = 0.0;
             ui.label(RichText::new(aurora_i18n::tr!("inspect-worn-on")).size(11.0).color(p.muted));
-            ui.add(egui::Label::new(RichText::new(point).size(12.5).strong().color(p.ink)).truncate());
+            ui.add(
+                egui::Label::new(
+                    RichText::new(point)
+                        .size(12.5)
+                        .family(crate::ui::fonts::semibold(ui.ctx()))
+                        .color(p.ink),
+                )
+                .truncate(),
+            );
         });
         look = widgets::icon_toggle_sized(ui, p, "eye-filled", aurora_i18n::tr!("inspect-look-at-tip"), false, 28.0);
     });
@@ -639,7 +665,12 @@ pub(super) fn tiles(ui: &mut egui::Ui, p: &Palette, list: &[(String, &str, Optio
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(value).size(13.5).strong().color(p.ink));
+                                ui.label(
+                                    RichText::new(value)
+                                        .size(13.5)
+                                        .family(crate::ui::fonts::semibold(ui.ctx()))
+                                        .color(p.ink),
+                                );
                                 if let Some((percent, _)) = share {
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let percent = aurora_i18n::tr!("inspect-percent", percent = *percent);

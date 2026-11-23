@@ -421,29 +421,45 @@ impl InspectUi {
                         }
                     };
                     ui.add_space(4.0);
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 2.0;
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(&title).size(15.0).strong().color(p.ink));
-                            if let Some(id) = frame.subject_profile
-                                && widgets::icon_button(ui, p, "external-link-filled", aurora_i18n::tr!("inspect-open-profile"), true)
-                            {
-                                actions.push(Action::Profile {
-                                    who: id,
-                                    named_here_alone: false,
-                                });
-                            }
-                        });
-                        let first = if self.avatar() {
-                            aurora_i18n::tr!("inspect-summary-items", count = items.len())
-                        } else {
-                            aurora_i18n::tr!("inspect-summary-prims", count = frame.rows.len())
-                        };
-                        let line = [first, aurora_i18n::tr!("inspect-summary-creators", count = creators)].join("  ·  ");
-                        ui.label(RichText::new(line).size(12.0).color(p.muted));
-                    });
+                    let mut parts = Vec::new();
+                    if self.avatar() {
+                        parts.push(aurora_i18n::tr!("inspect-summary-items", count = items.len()));
+                        parts.push(aurora_i18n::tr!("inspect-summary-creators", count = creators));
+                    }
+                    parts.push(aurora_i18n::tr!("inspect-summary-prims", count = frame.rows.len()));
+                    if !self.avatar() {
+                        parts.push(aurora_i18n::tr!("inspect-summary-creators", count = creators));
+                    }
+                    let limit = self.avatar().then_some(frame.max_complexity);
+                    // the box first, from the right: the name and the line
+                    // take what is left, on one line each, cut short with "…"
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        complexity_box(ui, p, frame.totals.complexity, self.avatar().then_some(frame.max_complexity));
+                        complexity_box(ui, p, frame.totals.complexity, limit);
+                        ui.add_space(6.0);
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 4.0;
+                                    let bold = crate::ui::fonts::semibold(ui.ctx());
+                                    let room = (ui.available_width() - 24.0).max(20.0);
+                                    ui.scope(|ui| {
+                                        ui.set_max_width(room);
+                                        let name = RichText::new(&title).size(15.0).family(bold).color(p.ink);
+                                        ui.add(egui::Label::new(name).truncate());
+                                    });
+                                    if let Some(id) = frame.subject_profile
+                                        && profile_link(ui, p)
+                                    {
+                                        actions.push(Action::Profile {
+                                            who: id,
+                                            named_here_alone: false,
+                                        });
+                                    }
+                                });
+                                ui.add(egui::Label::new(figures_line(ui, p, &parts)).truncate());
+                            });
+                        });
                     });
                 });
             });
@@ -489,7 +505,12 @@ impl InspectUi {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 let heading = |ui: &mut egui::Ui, text: &str| {
-                    ui.label(RichText::new(text).size(11.5).strong().color(p.muted));
+                    ui.label(
+                        RichText::new(text)
+                            .size(11.5)
+                            .family(crate::ui::fonts::semibold(ui.ctx()))
+                            .color(p.muted),
+                    );
                 };
                 heading(ui, aurora_i18n::tr!("inspect-view-sort"));
                 let first = if self.avatar() {
@@ -584,23 +605,25 @@ impl InspectUi {
 /// user's RenderAvatarMaxComplexity (0: no limit), beyond which the
 /// Legacy Viewer draws them as a jelly doll.
 fn complexity_box(ui: &mut egui::Ui, p: &Palette, complexity: u32, limit: Option<u32>) {
-    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let bold = crate::ui::fonts::semibold(ui.ctx());
     egui::Frame::new()
-        .fill(p.field)
-        .corner_radius(radius)
+        .fill(p.raised.gamma_multiply(0.5))
+        .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(egui::Margin::symmetric(9, 5))
         .show(ui, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.spacing_mut().item_spacing.y = 1.0;
                 ui.label(
-                    RichText::new(aurora_i18n::tr!("inspect-totals-complexity"))
-                        .size(11.0)
+                    RichText::new(aurora_i18n::tr!("inspect-totals-complexity").to_uppercase())
+                        .size(10.5)
+                        .extra_letter_spacing(0.7)
+                        .family(bold.clone())
                         .color(p.muted),
                 );
                 ui.label(
                     RichText::new(aurora_i18n::integer(i64::from(complexity)))
-                        .size(13.5)
-                        .strong()
+                        .size(14.0)
+                        .family(bold)
                         .color(p.ink),
                 );
                 if let Some(limit) = limit {
@@ -619,6 +642,77 @@ fn complexity_box(ui: &mut egui::Ui, p: &Palette, complexity: u32, limit: Option
         });
 }
 
+/// The quiet link beside the name in the summary card: a small icon, a face
+/// only when pointed at.
+fn profile_link(ui: &mut egui::Ui, p: &Palette) -> bool {
+    let (r, resp) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+    let hovered = resp.hovered();
+    if hovered {
+        ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, p.raised);
+    }
+    let ink = if hovered { p.ink } else { p.muted };
+    crate::ui::sheet::icon_at(ui, "external-link-filled", r.center(), 14.0, ink);
+    let tip = aurora_i18n::tr!("inspect-open-profile");
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, tip));
+    resp.on_hover_text(tip).clicked()
+}
+
+/// The summary line, "12 items · 4 creators · 31 prims": the figures in
+/// the text's semi-bold ink, the words muted, whatever the language puts
+/// around the number.
+fn figures_line(ui: &egui::Ui, p: &Palette, parts: &[String]) -> egui::text::LayoutJob {
+    let bold = egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
+    let plain = egui::FontId::proportional(11.5);
+    let mut job = egui::text::LayoutJob::default();
+    let push = |job: &mut egui::text::LayoutJob, text: &str, figure: bool| {
+        let (font, color) = if figure { (bold.clone(), p.ink) } else { (plain.clone(), p.muted) };
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat {
+                font_id: font,
+                color,
+                valign: egui::Align::BOTTOM,
+                ..Default::default()
+            },
+        );
+    };
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            push(&mut job, "  ·  ", false);
+        }
+        for (figure, run) in figure_runs(part) {
+            push(&mut job, run, figure);
+        }
+    }
+    job
+}
+
+/// `text` cut into runs of figures (digits, and the separators between
+/// two digits) and of the rest.
+fn figure_runs(text: &str) -> Vec<(bool, &str)> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let digit = |i: usize| chars.get(i).is_some_and(|c| c.1.is_ascii_digit());
+    let mut runs = Vec::new();
+    let mut start = 0;
+    let mut current = None;
+    for (i, &(at, c)) in chars.iter().enumerate() {
+        let separator = matches!(c, ',' | '.' | '\u{202F}' | '\u{A0}') && i > 0 && digit(i - 1) && digit(i + 1);
+        let figure = c.is_ascii_digit() || separator;
+        if let Some(was) = current
+            && was != figure
+        {
+            runs.push((was, &text[start..at]));
+            start = at;
+        }
+        current = Some(figure);
+    }
+    if let Some(was) = current {
+        runs.push((was, &text[start..]));
+    }
+    runs
+}
+
 /// How a profile button opens `who`: handed back to the app, which opens it
 /// as the world names people, or asked as a place that names its people asks
 /// (`profile::request_open_in`) for the creator this window names while the
@@ -630,6 +724,15 @@ pub fn profile_route(who: Option<Uuid>, named_here_alone: bool) -> (Option<Uuid>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn figures_are_cut_from_their_words() {
+        assert_eq!(figure_runs("12 items"), [(true, "12"), (false, " items")]);
+        assert_eq!(figure_runs("1,204 prims"), [(true, "1,204"), (false, " prims")]);
+        assert_eq!(figure_runs("12個のアイテム"), [(true, "12"), (false, "個のアイテム")]);
+        assert_eq!(figure_runs("items, 3"), [(false, "items, "), (true, "3")]);
+        assert_eq!(figure_runs(""), []);
+    }
 
     /// The window keeps its size, its footer inside it.
     #[test]
