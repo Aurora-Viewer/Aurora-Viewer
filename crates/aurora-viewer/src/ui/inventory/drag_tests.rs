@@ -534,6 +534,56 @@ fn inventory_drag_ignores_a_long_press_and_a_slip_onto_the_next_row() {
     assert!(f.actions.is_empty() && f.state.message.is_empty());
 }
 
+/// One drag per press: Escape cancels it for good, even while the press is
+/// still short enough for egui to call it a click.
+#[test]
+fn inventory_drag_cancelled_with_escape_does_not_start_again() {
+    let mut f = Fixture::new();
+    let pos = f.row(10);
+    f.button(pos, true, false);
+    f.hover(pos + Vec2::new(0.0, 4.0));
+    assert!(egui::DragAndDrop::has_any_payload(&f.ctx));
+    f.frame(
+        vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        false,
+    );
+    assert!(!egui::DragAndDrop::has_any_payload(&f.ctx), "Escape cancels the drag");
+    f.hover(pos + Vec2::new(0.0, 5.0));
+    assert!(!egui::DragAndDrop::has_any_payload(&f.ctx), "and it does not start again");
+    let to = f.row(20);
+    f.hover(to);
+    f.button(to, false, false);
+    assert!(f.actions.is_empty());
+    // the next press drags again
+    let pos = f.row(10);
+    f.button(pos, true, false);
+    f.hover(pos + Vec2::new(0.0, 4.0));
+    assert!(egui::DragAndDrop::has_any_payload(&f.ctx));
+}
+
+/// A drop within egui's click distance is no click: the dragged selection
+/// stays selected (LLFolderView keeps it after a drag).
+#[test]
+fn inventory_drag_short_drop_keeps_the_selection() {
+    let mut f = Fixture::new();
+    f.click(100, false);
+    f.click(101, true);
+    let pos = f.row(100);
+    f.button(pos, true, false);
+    let to = pos + Vec2::new(0.0, 4.0);
+    f.hover(to);
+    assert!(egui::DragAndDrop::has_any_payload(&f.ctx), "the selection is carried");
+    f.button(to, false, false);
+    assert!(f.actions.is_empty());
+    assert_eq!(f.state.selection, HashSet::from([id(100), id(101)]));
+}
+
 #[test]
 fn inventory_drag_same_parent_is_a_no_op_and_does_not_move_to_the_enclosing_root() {
     let mut f = Fixture::new();
