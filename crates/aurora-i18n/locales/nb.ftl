@@ -8808,6 +8808,7 @@ build-ui-texture-suction = sugekopper
 build-ui-texture-weave = vev
 fetch-redirect-failed = Omdirigeringen mislyktes
 world-mod-declined = avslått
+fetch-invalid-url = Ugyldig URL
 fetch-request-failed = Forespørselen mislyktes
 session-land-unreadable-response = uleselig svar
 session-land-no-land-resources = Regionen tilbyr ikke funksjonen LandResources.

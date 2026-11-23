@@ -8822,6 +8822,7 @@ build-ui-texture-suction = vakum
 build-ui-texture-weave = dokuma
 fetch-redirect-failed = Yönlendirme başarısız oldu
 world-mod-declined = reddedildi
+fetch-invalid-url = Geçersiz URL
 fetch-request-failed = İstek başarısız oldu
 session-land-unreadable-response = okunamayan yanıt
 session-land-no-land-resources = Bölge LandResources yeteneğini sağlamıyor.

@@ -8879,6 +8879,7 @@ build-ui-texture-suction = sucção
 build-ui-texture-weave = trama
 fetch-redirect-failed = Falha no redirecionamento
 world-mod-declined = recusado
+fetch-invalid-url = URL inválida
 fetch-request-failed = Falha na solicitação
 session-land-unreadable-response = resposta ilegível
 session-land-no-land-resources = A região não fornece o recurso LandResources.

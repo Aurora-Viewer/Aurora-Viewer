@@ -8853,6 +8853,7 @@ build-ui-texture-suction = 吸盤
 build-ui-texture-weave = 織物
 fetch-redirect-failed = リダイレクトに失敗しました
 world-mod-declined = 拒否しました
+fetch-invalid-url = ＵＲＬが無効です
 fetch-request-failed = リクエストに失敗しました
 session-land-unreadable-response = 読み取れないレスポンス
 session-land-no-land-resources = リージョンはLandResourcesのケーパビリティを提供していません。

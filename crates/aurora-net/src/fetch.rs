@@ -291,7 +291,7 @@ fn describe_transport_error(e: &reqwest::Error) -> String {
         "body read failed"
     } else if e.is_builder() {
         // A URL libcurl would also refuse (a path with no host). Not retried.
-        "invalid URL"
+        aurora_i18n::tr!("fetch-invalid-url")
     } else if e.is_request() {
         aurora_i18n::tr!("fetch-request-failed")
     } else {
@@ -694,7 +694,7 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32, pace
     // the scheme libcurl would guess when the grid omitted it.
     let url = crate::curl_url::ensure_scheme(&req.url);
     let mut rb = http
-        .get(&url)
+        .get(url.as_ref())
         .header(reqwest::header::ACCEPT, req.accept)
         .timeout(Duration::from_secs(60));
     if let Some(range) = req.range {
@@ -1109,7 +1109,7 @@ mod tests {
     async fn a_path_only_capability_is_an_invalid_url() {
         let r = fetch("/cap/x".into(), None, FAST).await;
         let err = r.data.expect_err("no host");
-        assert!(err.contains("invalid URL"), "{err}");
+        assert!(err.contains(aurora_i18n::tr!("fetch-invalid-url")), "{err}");
         assert_eq!(r.status, 0);
     }
 

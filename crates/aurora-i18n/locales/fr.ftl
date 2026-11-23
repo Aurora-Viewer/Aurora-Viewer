@@ -8938,6 +8938,7 @@ build-ui-texture-bricks = briques
 build-ui-texture-gravel = gravier
 fetch-redirect-failed = redirect failed
 world-mod-declined = refusé
+fetch-invalid-url = URL non valide
 fetch-request-failed = request failed
 session-land-unreadable-response = réponse illisible
 session-land-no-land-resources = La région ne fournit pas la capability LandResources.

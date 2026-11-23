@@ -444,7 +444,7 @@ pub async fn resolve_seed(
                         let s = val.to_string_value();
                         if !s.is_empty() {
                             // `CURLOPT_URL` with no default protocol (urlapi.c `guess_scheme`).
-                            caps.insert(k.clone(), crate::curl_url::ensure_scheme(&s));
+                            caps.insert(k.clone(), crate::curl_url::ensure_scheme_owned(s));
                         }
                     }
                     if attempt > 1 {

@@ -8791,6 +8791,7 @@ build-ui-texture-suction = 吸盤
 build-ui-texture-weave = 編織
 fetch-redirect-failed = 重新導向失敗
 world-mod-declined = 已拒絕
+fetch-invalid-url = 無效的 URL
 fetch-request-failed = 請求失敗
 session-land-unreadable-response = 無法讀取的回應
 session-land-no-land-resources = 該區域未提供 LandResources 能力。

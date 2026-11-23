@@ -8,15 +8,31 @@
 //! `imap.`, `smtp.` or `pop3.`, and `http` for every other host. A value that
 //! starts with `/` is left alone: libcurl still has no host for it.
 
+use std::borrow::Cow;
+
 /// `MAX_SCHEME_LEN` in libcurl's urlapi.
 const MAX_SCHEME_LEN: usize = 40;
 
 /// The URL libcurl would request. Already-absolute strings and path-only
-/// strings are returned unchanged.
-pub(crate) fn ensure_scheme(url: &str) -> String {
-    if url.is_empty() || url.starts_with('/') || has_scheme_slash(url) {
-        return url.to_owned();
+/// strings are returned unchanged, without a copy.
+pub(crate) fn ensure_scheme(url: &str) -> Cow<'_, str> {
+    if is_left_alone(url) {
+        Cow::Borrowed(url)
+    } else {
+        Cow::Owned(with_guessed_scheme(url))
     }
+}
+
+/// [`ensure_scheme`] for a string already owned: no copy when it is kept.
+pub(crate) fn ensure_scheme_owned(url: String) -> String {
+    if is_left_alone(&url) { url } else { with_guessed_scheme(&url) }
+}
+
+fn is_left_alone(url: &str) -> bool {
+    url.is_empty() || url.starts_with('/') || has_scheme_slash(url)
+}
+
+fn with_guessed_scheme(url: &str) -> String {
     let mut out = String::with_capacity(url.len() + 8);
     out.push_str(guessed_scheme(host_of(url)));
     out.push_str("://");
@@ -62,7 +78,12 @@ fn guessed_scheme(host: &str) -> &'static str {
     ];
     PREFIXES
         .iter()
-        .find(|(prefix, _)| host.len() >= prefix.len() && host[..prefix.len()].eq_ignore_ascii_case(prefix))
+        // (bytes: the host comes from the grid and may cut a character in two)
+        .find(|(prefix, _)| {
+            host.as_bytes()
+                .get(..prefix.len())
+                .is_some_and(|h| h.eq_ignore_ascii_case(prefix.as_bytes()))
+        })
         .map_or("http", |(_, scheme)| *scheme)
 }
 
@@ -90,5 +111,23 @@ mod tests {
         assert_eq!(ensure_scheme("smtp.example/"), "smtp://smtp.example/");
         assert_eq!(ensure_scheme("pop3.example"), "pop3://pop3.example");
         assert_eq!(ensure_scheme("ldap.example/dc=example"), "ldap://ldap.example/dc=example");
+    }
+
+    #[test]
+    fn a_kept_url_is_not_copied() {
+        assert!(matches!(ensure_scheme("https://a.example/cap"), Cow::Borrowed(_)));
+        assert!(matches!(ensure_scheme("/cap/x"), Cow::Borrowed(_)));
+        assert_eq!(ensure_scheme_owned("a.example/cap".into()), "http://a.example/cap");
+        assert_eq!(ensure_scheme_owned("https://a.example/cap".into()), "https://a.example/cap");
+    }
+
+    /// Grid data: the prefix length may fall inside a multi-byte character.
+    #[test]
+    fn a_multi_byte_host_does_not_panic() {
+        assert_eq!(ensure_scheme("dicté.grid/cap"), "http://dicté.grid/cap");
+        assert_eq!(ensure_scheme("ftp€x/cap"), "http://ftp€x/cap");
+        assert_eq!(ensure_scheme("pop€/cap"), "http://pop€/cap");
+        assert_eq!(ensure_scheme("é"), "http://é");
+        assert_eq!(ensure_scheme("u@ïmap./x"), "http://u@ïmap./x");
     }
 }

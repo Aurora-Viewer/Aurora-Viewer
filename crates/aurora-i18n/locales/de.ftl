@@ -8879,6 +8879,7 @@ build-ui-texture-suction = Saugnäpfe
 build-ui-texture-weave = Gewebe
 fetch-redirect-failed = Die Umleitung ist fehlgeschlagen
 world-mod-declined = abgelehnt
+fetch-invalid-url = Ungültige URL
 fetch-request-failed = Die Anfrage ist fehlgeschlagen
 session-land-unreadable-response = unleserliche Antwort
 session-land-no-land-resources = Die Region bietet nicht die LandResources-Funktion.

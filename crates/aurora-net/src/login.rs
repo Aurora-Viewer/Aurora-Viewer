@@ -551,7 +551,7 @@ fn parse_success(v: Llsd) -> Result<LoginResponse, LoginError> {
         region_size_y: size("region_size_y"),
         // The login seed is handed to `CURLOPT_URL` as received
         // (`LLViewerRegion::setSeedCapability`). A missing scheme is guessed.
-        seed_capability: crate::curl_url::ensure_scheme(v["seed_capability"].as_str()),
+        seed_capability: crate::curl_url::ensure_scheme(v["seed_capability"].as_str()).into_owned(),
         look_at: parse_ll_vector(v["look_at"].as_str()).unwrap_or(Vec3::X),
         message: v["message"].as_str().to_owned(),
         agent_appearance_service: v["agent_appearance_service"].as_str().to_owned(),

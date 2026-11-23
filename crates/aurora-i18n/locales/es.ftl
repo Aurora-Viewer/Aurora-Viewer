@@ -8849,6 +8849,7 @@ build-ui-texture-suction = Ventosas
 build-ui-texture-weave = Tejido
 fetch-redirect-failed = La redirección falló
 world-mod-declined = rechazado
+fetch-invalid-url = URL no válida
 fetch-request-failed = La solicitud falló
 session-land-unreadable-response = respuesta ilegible
 session-land-no-land-resources = La región no ofrece la capacidad LandResources.

@@ -8962,6 +8962,7 @@ build-ui-texture-suction = przyssawki
 build-ui-texture-weave = splot
 fetch-redirect-failed = Nie udało się przekierować
 world-mod-declined = odrzuca
+fetch-invalid-url = Nieprawidłowy adres URL
 fetch-request-failed = Żądanie nie powiodło się
 session-land-unreadable-response = nieczytelna odpowiedź
 session-land-no-land-resources = Region nie udostępnia capability LandResources.
