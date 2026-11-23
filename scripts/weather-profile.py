@@ -53,13 +53,22 @@ SCENES = {
     "snow-lying-low": ("snow lying, Low", {"AURORA_SNOW": "0.7", "AURORA_SNOW_LYING": "1", "AURORA_WEATHER_QUALITY": "low"}),
     "night": ("night, no aurora", dict(NIGHT)),
     "aurora": ("northern lights", {**NIGHT, "AURORA_NORTHERN_LIGHTS": "0.9,0,1"}),
+    # the debris (the fog off: its own cost apart); the forest is the leaves'
+    # reference
+    "forest": ("forest, no debris", {"AURORA_DEMO_PLANTS": "dense", "AURORA_FOG": "off"}),
+    "leaves": ("forest, leaves falling", {"AURORA_DEMO_PLANTS": "dense", "AURORA_WEATHER_PRESET": "autumn", "AURORA_FOG": "off"}),
+    "leaves-low": ("forest, leaves falling, Low", {"AURORA_DEMO_PLANTS": "dense", "AURORA_WEATHER_PRESET": "autumn", "AURORA_FOG": "off", "AURORA_WEATHER_QUALITY": "low"}),
+    "leaves-stream": ("leaves on the wind, no trees", {"AURORA_WEATHER_PRESET": "autumn", "AURORA_DEBRIS": "leaves,stream", "AURORA_FOG": "off"}),
+    "sand": ("dust storm: sand, drifts, tumbleweeds", {"AURORA_WEATHER_PRESET": "dust-storm", "AURORA_FOG": "off"}),
+    "paper": ("paper", {"AURORA_WEATHER_PRESET": "autumn", "AURORA_DEBRIS": "paper", "AURORA_FOG": "off"}),
+    "embers": ("embers", {"AURORA_WEATHER_PRESET": "autumn", "AURORA_DEBRIS": "embers", "AURORA_FOG": "off"}),
 }
 
 # what a scene does not set: no weather (the demo's saved settings may hold some)
 NEUTRAL = {"AURORA_RAIN": "0", "AURORA_SNOW_DEEP": "0", "AURORA_WEATHER_QUALITY": "high"}
 
 # the columns, from each summary line
-KEYS = ["fps", "frame", "gpu", "g_weather", "g_shelter", "g_weather_memory", "g_wet_ground", "g_drops", "g_terrain_sky"]
+KEYS = ["fps", "frame", "gpu", "g_weather", "g_shelter", "g_weather_memory", "g_wet_ground", "g_drops", "g_debris", "g_terrain_sky"]
 # the first summaries: loading, shaders, the snow memory filling
 WARMUP = 6
 NUMBER = re.compile(r"(\w+)=(-?\d+(?:\.\d+)?)")
@@ -111,7 +120,9 @@ def run(exe: Path, scene: str, seconds: float, logs: Path, size: str, preset: st
     env = dict(os.environ)
     # nothing left over from the shell's own tests
     for k in list(env):
-        if k.startswith(("AURORA_RAIN", "AURORA_SNOW", "AURORA_THUNDER", "AURORA_NORTHERN", "AURORA_WEATHER", "AURORA_DEMO_NIGHT")):
+        if k.startswith(
+            ("AURORA_RAIN", "AURORA_SNOW", "AURORA_THUNDER", "AURORA_NORTHERN", "AURORA_WEATHER", "AURORA_DEMO_NIGHT", "AURORA_DEBRIS", "AURORA_FOG", "AURORA_DEMO_PLANTS", "AURORA_DEMO_TUMBLEWEEDS")
+        ):
             del env[k]
     env.update({"AURORA_DEMO": "1", "AURORA_PROFILE": "1", "AURORA_LOG_NAME": log_name(scene)})
     env.update({"AURORA_WINDOW_SIZE": size, "AURORA_GRAPHICS_PRESET": preset})
@@ -120,7 +131,8 @@ def run(exe: Path, scene: str, seconds: float, logs: Path, size: str, preset: st
     # this run's numbers only
     (logs / f"{log_name(scene)}.log").unlink(missing_ok=True)
     print(f"  {scene}: {seconds:.0f} s", flush=True)
-    proc = subprocess.Popen([str(exe), "--title", f"Profile {scene}"], env=env)
+    # (the tag: the agents' windows go where they disturb no one, AGENTS.md section 4)
+    proc = subprocess.Popen([str(exe), "--title", f"Profile {scene} [AUTOMATION - DO NOT TOUCH]"], env=env)
     try:
         time.sleep(seconds)
     finally:
@@ -151,16 +163,17 @@ def table(results: dict) -> str:
 
     base = results.get("base", {}).get("gpu")
     night = results.get("night", {}).get("gpu")
-    head = "| Scene | fps | frame ms | GPU ms | vs base | weather | shelter | memory | wet ground | drops | samples |"
-    out = [head, "|---" * 11 + "|"]
+    forest = results.get("forest", {}).get("gpu")
+    head = "| Scene | fps | frame ms | GPU ms | vs base | weather | shelter | memory | wet ground | drops | debris | samples |"
+    out = [head, "|---" * 12 + "|"]
     for scene, r in results.items():
-        ref = night if scene == "aurora" else base
+        ref = night if scene == "aurora" else forest if scene.startswith("leaves") and scene != "leaves-stream" else base
         delta = None if r.get("gpu") is None or ref is None else r["gpu"] - ref
         what = SCENES[scene][0]
         out.append(
             f"| {what} | {cell(r['fps'], 0)} | {cell(r['frame'])} | {cell(r['gpu'])} | "
             f"{'–' if delta is None else f'{delta:+.2f}'} | {cell(r['g_weather'], 3)} | {cell(r['g_shelter'], 3)} | "
-            f"{cell(r['g_weather_memory'], 3)} | {cell(r['g_wet_ground'], 3)} | {cell(r['g_drops'], 3)} | {r['samples']} |"
+            f"{cell(r['g_weather_memory'], 3)} | {cell(r['g_wet_ground'], 3)} | {cell(r['g_drops'], 3)} | {cell(r['g_debris'], 3)} | {r['samples']} |"
         )
     out.append("")
     out.append("Medians over each scene's seconds (the first ones left out). \"vs base\": GPU time against the scene")

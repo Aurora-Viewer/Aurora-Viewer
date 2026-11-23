@@ -441,7 +441,7 @@ struct Period {
     /// The rest of g_effects: planar reflections, probe, scene copy, SSR.
     gpu_effects: [f32; 4],
     /// g_weather in parts: shelter map, memories, wet ground, drops.
-    gpu_weather: [f32; 5],
+    gpu_weather: [f32; 6],
     gpu_frames: u32,
     /// Parts of the shadows and depth GPU time (`ShadowStats::gpu_ms`).
     gpu_shadow: [f32; 5],
@@ -1058,7 +1058,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         let _ = write!(out, " g_{key}={:.3}", ms / gpu_n);
     }
     // g_weather in parts
-    for (key, ms) in ["shelter", "weather_memory", "wet_ground", "drops", "fog"]
+    for (key, ms) in ["shelter", "weather_memory", "wet_ground", "drops", "fog", "debris"]
         .iter()
         .zip(p.gpu_weather)
     {

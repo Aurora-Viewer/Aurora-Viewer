@@ -2382,7 +2382,7 @@ pub struct RenderStats {
     /// the wetness and footprints memories, the wet ground (with the snow
     /// lying), the drops and flakes with the distant layers, the fog's
     /// volume.
-    pub gpu_weather: Option<[f32; 5]>,
+    pub gpu_weather: Option<[f32; 6]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those

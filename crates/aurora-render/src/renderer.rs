@@ -1315,7 +1315,7 @@ struct GpuTimer {
     /// order.
     last_effects: Option<[f32; 4]>,
     /// Last times of the weather (ms), in [`GPU_WEATHER_PARTS`] order.
-    last_weather: Option<[f32; 5]>,
+    last_weather: Option<[f32; 6]>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
@@ -1389,7 +1389,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 41;
+const GPU_MARKS: u32 = 42;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1486,6 +1486,10 @@ const MARK_SOFT_END: u32 = 40;
 /// drawn).
 const MARK_FOG_BEGIN: u32 = 41;
 const MARK_FOG_END: u32 = 42;
+/// Aurora Weather's debris (debris.rs): its canopy map and its simulation,
+/// after the clouds and before the fog (`MARK_FOG_BEGIN` ends it); written
+/// every frame.
+const MARK_DEBRIS_BEGIN: u32 = 43;
 /// The effects beyond the occlusion, the contact shadows and the soft
 /// shadows (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1502,14 +1506,15 @@ const GPU_EFFECT_PARTS: [&[(u32, u32)]; 4] = [
 ];
 /// What `GpuElement::Weather` is made of (`RenderStats::gpu_weather`): the
 /// shelter map, the wetness and footprints memories, the wet ground (with
-/// the snow lying), the drops and flakes with the distant layers, the fog's
-/// volume.
-const GPU_WEATHER_PARTS: [(u32, u32); 5] = [
+/// the snow lying), the drops and flakes with the distant layers and the
+/// debris drawn, the fog's volume, the debris' canopy map and simulation.
+const GPU_WEATHER_PARTS: [(u32, u32); 6] = [
     (MARK_SHELTER_BEGIN, MARK_SHELTER_END),
     (MARK_WEATHER_MEMORY_BEGIN, MARK_WEATHER_MEMORY_END),
     (MARK_WET_BEGIN, MARK_SSR_END),
     (MARK_RAIN_BEGIN, MARK_RAIN_END),
     (MARK_FOG_BEGIN, MARK_FOG_END),
+    (MARK_DEBRIS_BEGIN, MARK_FOG_BEGIN),
 ];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
@@ -1530,9 +1535,9 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_WEATHER_MEMORY_END, MARK_COPY_END),
         (MARK_COPY_END, MARK_WET_BEGIN),
     ],
-    // terrain and sky (the fog's volume is the weather's)
+    // terrain and sky (the fog's volume and the debris are the weather's)
     &[
-        (MARK_DEPTH_MSAA_END, MARK_FOG_BEGIN),
+        (MARK_DEPTH_MSAA_END, MARK_DEBRIS_BEGIN),
         (MARK_FOG_END, MARK_SKY_END),
         (MARK_SKY_END, MARK_TERRAIN_END),
     ],
@@ -12115,6 +12120,7 @@ impl Backend {
         mark(&mut encoder, MARK_CLOUDS_END);
         // ---- Aurora Weather's fog volume (fog.rs): after the shadows it
         // reads, before the scene that reads it; then the sky's pipeline
+        mark(&mut encoder, MARK_DEBRIS_BEGIN);
         // ---- Aurora Weather's canopy map (debris.rs): the shelter map's
         // casters again, from above, into its own small target, for the
         // leaves to fall from foliage (with its draws, this frame's)
@@ -12161,6 +12167,22 @@ impl Backend {
                 calls.set(calls.get() + 1);
             }
             draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
+        }
+        // ---- Aurora Weather's debris (debris.rs): after the shadows (the
+        // shelter map it lands on), before the scene that draws it
+        if let (Some(look), Some(debris)) = (f.debris.filter(|_| !f.cutout && debris_shelter), &mut self.debris) {
+            debris.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.frame_buffer,
+                &self.shadow_view,
+                &look,
+                f.camera_pos,
+                (Vec2::from(f.rain_look.wind), f.rain_look.gust),
+                f.time,
+                self.debris_dt,
+            );
         }
         mark(&mut encoder, MARK_FOG_BEGIN);
         if let Some(fog) = &mut self.fog {
@@ -12235,22 +12257,6 @@ impl Backend {
             }
         }
         mark(&mut encoder, MARK_FOG_END);
-        // ---- Aurora Weather's debris (debris.rs): after the shadows (the
-        // shelter map it lands on), before the scene that draws it
-        if let (Some(look), Some(debris)) = (f.debris.filter(|_| !f.cutout && debris_shelter), &mut self.debris) {
-            debris.encode(
-                &self.device,
-                &self.queue,
-                &mut encoder,
-                &self.frame_buffer,
-                &self.shadow_view,
-                &look,
-                f.camera_pos,
-                (Vec2::from(f.rain_look.wind), f.rain_look.gust),
-                f.time,
-                self.debris_dt,
-            );
-        }
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -12859,12 +12865,13 @@ impl Backend {
                 pass.set_pipeline(&self.pipelines.rain_far);
                 pass.draw(0..3, 0..1);
             }
-            pass_mark(pass, MARK_RAIN_END);
+            // the debris (its GPU time in the drops', `g_drops`)
             if let Some(debris) = debris_draw {
                 pass.set_pipeline(&self.pipelines.debris);
                 pass.set_vertex_buffer(0, debris.instances().slice(..));
                 pass.draw(0..crate::debris::VERTICES, 0..debris.pool());
             }
+            pass_mark(pass, MARK_RAIN_END);
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
                 pass.set_pipeline(&self.pipelines.particles);
@@ -14709,6 +14716,7 @@ mod tests {
         MARK_WATER_INTERFACE_END,
         MARK_DEPTH_MSAA_END,
         MARK_CLOUDS_END,
+        MARK_DEBRIS_BEGIN,
         MARK_FOG_BEGIN,
         MARK_FOG_END,
         MARK_SKY_END,
