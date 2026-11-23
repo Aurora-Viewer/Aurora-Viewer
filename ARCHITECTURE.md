@@ -4225,7 +4225,8 @@ the same list in Aurora's look (rows grouped by chat range, compact density, sor
 actions over the row under the pointer), `ui/people/sheet.rs` the sheet of the person held,
 at the right (rights of a friendship, what the radar knows, the avatar menu under "…"; the window
 widens for it before its frame and gives the width back, "Nickname and contact sets"),
-`ui/people/friends.rs`, `groups.rs` (with a group's sheet), `sets.rs`, `recent.rs` and
+`ui/people/friends.rs`, `groups.rs` (with a group's sheet; its rows switch our notices, chat
+and profile listing, the chat's refusal by a preference from `GroupChats::chat_refusal`), `sets.rs`, `recent.rs` and
 `blocked.rs` the other tabs of Aurora's look (the Contacts tab's rights, actions and dialogs,
 reused from `ui/contacts.rs`). Aurora's rich rows do not receive the Legacy table's presentation
 settings: search, pictures and rights are always available, names follow the global name

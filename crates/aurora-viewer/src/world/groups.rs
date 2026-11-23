@@ -109,6 +109,16 @@ pub struct GroupChats {
     pub out: Vec<NetCommand>,
 }
 
+/// Which preference refuses a group's chat (`GroupChats::chat_refusal`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatRefusal {
+    /// "No group chats" (FSMuteAllGroups).
+    AllGroups,
+    /// "Groups without notices" (FSMuteGroupWhenNoticesDisabled), the
+    /// group's notices being off.
+    WithoutNotices,
+}
+
 /// Whether a group notice also writes a line in its group's chat, and what
 /// the line holds (LLHandlerUtil::logGroupNoticeToIMGroup,
 /// indra/newview/llnotificationhandlerutil.cpp, originally LGPL 2.1). Both
@@ -155,6 +165,20 @@ impl GroupChats {
 
     pub fn is_member(&self, id: &Uuid) -> bool {
         self.group(id).is_some()
+    }
+
+    /// The preference that refuses the chat of `g` whatever its own block:
+    /// "No group chats" first, then "Groups without notices" while its
+    /// notices are off (FSMuteAllGroups, FSMuteGroupWhenNoticesDisabled in
+    /// LLViewerChatterBoxInvitation::post, indra/newview/llimview.cpp).
+    pub fn chat_refusal(&self, g: &GroupMembership) -> Option<ChatRefusal> {
+        if self.mute_all_groups {
+            Some(ChatRefusal::AllGroups)
+        } else if self.mute_when_notices_off && !g.accept_notices {
+            Some(ChatRefusal::WithoutNotices)
+        } else {
+            None
+        }
     }
 
     /// Snooze a group chat until `until`; a second snooze moves the end.
@@ -595,7 +619,7 @@ impl World {
         let Some(g) = self.groups.group(session) else {
             return false;
         };
-        self.mutes.group_chat_muted(session) || self.groups.mute_all_groups || (self.groups.mute_when_notices_off && !g.accept_notices)
+        self.mutes.group_chat_muted(session) || self.groups.chat_refusal(g).is_some()
     }
 
     /// Show known membership names immediately. No join, history request or

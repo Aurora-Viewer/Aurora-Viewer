@@ -11583,9 +11583,16 @@ impl App {
             for cmd in std::mem::take(&mut self.world.outfit.commands) {
                 self.send(cmd);
             }
-            // block list, groups and group chat sessions
-            self.world.groups.mute_all_groups = self.settings.mute_all_groups;
-            self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices;
+            // block list, groups and group chat sessions;
+            // AURORA_DEMO_PEOPLE=groups-no-chats|groups-without-notices turn
+            // a refusal on for the run, the settings untouched
+            let (no_chats, without_notices) = if self.demo {
+                crate::demo::people::group_chat_refusal()
+            } else {
+                (false, false)
+            };
+            self.world.groups.mute_all_groups = self.settings.mute_all_groups || no_chats;
+            self.world.groups.mute_when_notices_off = self.settings.mute_groups_without_notices || without_notices;
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
             self.world.groups.notices_in_chat = crate::world::groups::NoticesInChat {
