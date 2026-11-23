@@ -333,6 +333,8 @@ pub struct Entry {
     pub source_folders: Vec<String>,
     pub upload_path: Option<Vec<String>>,
     pub selected: bool,
+    /// The tick a failed step took: `restore_draft` gives it back.
+    pub reselect: bool,
     pub source: Option<Source>,
     pub options: import_texture::Options,
     pub image_size_limit: ImageSizeLimit,
@@ -386,6 +388,17 @@ pub enum Status {
     Cancelled,
 }
 impl Entry {
+    /// A step of the row's upload failed (encoding, the upload itself, a map
+    /// it needs). The row leaves the selection: a selected row with an error
+    /// holds the price and the upload of the whole queue (`total`), the
+    /// files added later included, which is meant for a file to fix, not
+    /// for an answer of the server. do_bulk_upload (llviewermenufile.cpp)
+    /// sends each file as its own request, so one failure never holds the
+    /// others. `restore_draft` gives the tick back.
+    fn failed(&mut self, reason: String) {
+        self.status = Status::Error(reason);
+        self.reselect |= std::mem::take(&mut self.selected);
+    }
     /// Keep the cached preparation options and preview revisions in step with
     /// the effective limit; the original decoded pixels remain available.
     pub fn sync_image_size(&mut self, limit_texture_size: bool) -> bool {
@@ -445,6 +458,7 @@ impl Entry {
             source_folders: Vec::new(),
             upload_path: None,
             selected: source.is_some(),
+            reselect: false,
             empty_alpha: empty_alpha
                 .unwrap_or_else(|| matches!(&source,Some(Source::Texture(image)) if import_texture::empty_alpha(image))),
             sound: sound::Editor::new(source.as_ref()),
@@ -584,6 +598,8 @@ pub struct Imports {
     pub demo_mode: String,
     pub demo_local_applied: bool,
     pub demo_upload_started: bool,
+    /// `bulk-failed` has answered its one failure.
+    pub demo_upload_failed: bool,
     pub demo_animation_positioned: bool,
     pub own_avatar_preview: Option<Uuid>,
     pub animation_model_cache: HashMap<Uuid, std::sync::Weak<animation_model::Model>>,
@@ -644,6 +660,7 @@ impl Default for Imports {
             demo_mode: String::new(),
             demo_local_applied: false,
             demo_upload_started: false,
+            demo_upload_failed: false,
             demo_animation_positioned: false,
             own_avatar_preview: None,
             animation_model_cache: HashMap::new(),
@@ -1037,6 +1054,7 @@ impl Imports {
                 draft.invalidate_quote();
             }
             entry.status = Status::Ready;
+            entry.selected |= std::mem::take(&mut entry.reselect);
             entry.preview_error = None;
             entry.preview_pending = false;
             entry.preview_generation += 1;
@@ -1093,7 +1111,7 @@ impl Imports {
     }
     fn fail(&mut self, entry: Option<Uuid>, reason: String) {
         if let Some(entry) = entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
-            entry.status = Status::Error(reason.clone());
+            entry.failed(reason.clone());
         }
         self.message = reason;
         self.cancel_remaining();
@@ -1167,7 +1185,7 @@ impl Imports {
         };
         for entry in &mut self.entries {
             if failed.contains(&entry.id) {
-                entry.status = Status::Error(reason.clone());
+                entry.failed(reason.clone());
             }
         }
         self.queue

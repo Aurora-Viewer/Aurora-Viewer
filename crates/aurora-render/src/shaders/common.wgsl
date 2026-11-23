@@ -53,7 +53,7 @@ struct Frame {
     water_normal: vec4<f32>,    // normal scale xyz, w underwater fog density
     water_air_vp: mat4x4<f32>,
     water_air_inv_vp: mat4x4<f32>,
-    water_air: vec4<f32>,       // x: exterior capture available
+    water_air: vec4<f32>,       // x: exterior capture available, y: water rendering type hidden
     mirror_plane: vec4<f32>,    // n.xyz, d (0 normal = no mirror)
     mirror_box: mat4x4<f32>,    // world -> mirror probe box ([-0.5, 0.5]^3)
     mirror_view_proj: mat4x4<f32>, // the mirror pass's camera (mirror_tex)
@@ -1313,7 +1313,7 @@ fn water_fog_view(pos_rel:vec3<f32>,kd:f32)->WaterFog {
 }
 
 fn camera_underwater() -> bool {
-    if(in_reflection_pass()) { return false; }
+    if(frame.water_air.y > 0.5 || in_reflection_pass()) { return false; }
     let depth = frame.cam_up.w-frame.camera_pos.z;
     // Outside the bounded wake height the side is already known. Ordinary
     // above-water materials need no additional texture fetch for this test.
@@ -1379,7 +1379,7 @@ fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
 // it: where a faint blended face lay just under the surface, the bed behind
 // it lost its fog, and a sheet crossing the water plane showed its triangles.
 fn water_fogs_source(world_pos: vec3<f32>) -> bool {
-    return camera_underwater() || world_pos.z < camera_water_level();
+    return frame.water_air.y < 0.5 && (camera_underwater() || world_pos.z < camera_water_level());
 }
 
 // Density of that fog: the under-water one from below (and for the enhanced

@@ -1819,8 +1819,10 @@ fn mask_color(rec: DrawRecord, c: vec4<f32>) -> vec4<f32> {
         }
         return vec4<f32>(c.rgb, 1.0);
     }
-    // sharpen alpha around the cutoff for alpha-to-coverage
-    let a = clamp((c.a - cutoff) / max(fwidth(c.a), 1e-4) + 0.5, 0.0, 1.0);
+    // The Legacy Viewer's alphaMask compares at half an 8-bit step below
+    // the cutoff. A flat texel equal to the cutoff covers every sample.
+    let edge = cutoff - 1.0 / 512.0;
+    let a = clamp((c.a - edge) / max(fwidth(c.a), 1e-4) + 0.5, 0.0, 1.0);
     return vec4<f32>(c.rgb, a);
 }
 

@@ -13,11 +13,13 @@ pub mod protocol;
 pub(crate) mod shape;
 #[cfg(test)]
 mod tests;
+mod thumbnail;
 mod token;
 mod transport;
 mod ui;
 
 pub use demo::fixture as demo_fixture;
+pub use demo::sleeves_fixture as demo_sleeves_fixture;
 pub use demo::static_fixture as demo_static_fixture;
 pub(crate) use installer::{Removal as AddonRemoval, remove_everywhere as remove_addon_everywhere};
 
@@ -127,6 +129,20 @@ pub struct Live {
     /// the last snapshot came: the cards' and the status line's times.
     pub changed: HashMap<Uuid, (u64, std::time::Instant)>,
     pub received_at: Option<std::time::Instant>,
+    /// The cards' live thumbnails (`thumbnail.rs`).
+    thumbnails: thumbnail::Thumbnails,
+    /// The source shown in Quick look, and its camera.
+    quick_look: Option<Uuid>,
+    quick_view: aurora_render::preview::View,
+    /// Quick look's pose: the Avatar tab's bend it was made for (degrees),
+    /// and the skeleton bent (`thumbnail::bent_pose`).
+    quick_pose: ((u32, u32), Option<aurora_render::preview::Pose>),
+    /// The last placement change, while its Undo toast shows.
+    pub undo: Option<objects::Undo>,
+    /// Set by the toast's Undo; applied with the frame's placement changes.
+    pub undo_requested: bool,
+    /// Reduce animations: the thumbnails' update sweep stands still.
+    pub still: bool,
 }
 impl Default for Live {
     fn default() -> Self {
@@ -167,6 +183,13 @@ impl Default for Live {
             bend: Default::default(),
             changed: HashMap::new(),
             received_at: None,
+            thumbnails: Default::default(),
+            quick_look: None,
+            quick_view: Default::default(),
+            quick_pose: ((0, 0), None),
+            undo: None,
+            undo_requested: false,
+            still: false,
         }
     }
 }
@@ -338,9 +361,52 @@ impl Live {
         self.import = Default::default();
         self.received_at = None;
         self.changed.clear();
+        self.thumbnails.clear();
+        self.quick_look = None;
+        self.undo = None;
+        self.undo_requested = false;
         self.start_requested = false;
         self.server = None;
         self.clear = true;
+    }
+
+    /// Builds the thumbnails of the objects that changed, on the job pool;
+    /// only while the window is open (closed, nothing is drawn).
+    pub fn update_thumbnails(
+        &mut self,
+        jobs: &crate::scene::jobs::Jobs,
+        lib: &std::sync::Arc<crate::scene::avatar::AvatarLibrary>,
+        ctx: &egui::Context,
+    ) {
+        if !self.open {
+            return;
+        }
+        self.thumbnails.set_rig(lib);
+        // Quick look bends its rigged parts as the Avatar tab bends ours
+        let key = (self.bend.elbows.to_bits(), self.bend.knees.to_bits());
+        if self.quick_pose.0 != key {
+            self.quick_pose = (key, thumbnail::bent_pose(&lib.rig, self.bend.elbows, self.bend.knees));
+        }
+        let Some(snapshot) = &self.snapshot else {
+            self.thumbnails.clear();
+            return;
+        };
+        let groups = thumbnail::Group::of(&snapshot.sources, &self.changed, |id| self.state(id) != SourceState::Removed);
+        let wait = self.thumbnails.update(&groups, &snapshot.images, std::time::Instant::now(), |job| {
+            let ctx = ctx.clone();
+            jobs.execute(move || {
+                job();
+                ctx.request_repaint();
+            });
+        });
+        if let Some(wait) = wait {
+            ctx.request_repaint_after(wait);
+        }
+    }
+
+    /// Opens Quick look on `source` (the demo's `quick-look` tab).
+    pub fn open_quick_look(&mut self, source: Uuid) {
+        self.quick_look = Some(source);
     }
 
     pub fn take_latest(&mut self) -> Option<protocol::Prepared> {
