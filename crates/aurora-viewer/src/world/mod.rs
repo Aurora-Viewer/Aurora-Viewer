@@ -6756,7 +6756,17 @@ impl World {
     /// Turn the drawn bodies of the standing avatars toward where they face
     /// or travel (LLVOAvatar::updateRootPositionAndRotation). Returns our
     /// own avatar's turn (+1 left, -1 right, 0) for the control flags.
-    pub fn update_bodies(&mut self, now: Instant, dt: f32, cam_at: Vec3, mouselook: bool, step_back: bool, turn_speed: f32) -> i8 {
+    pub fn update_bodies(
+        &mut self,
+        now: Instant,
+        dt: f32,
+        cam_at: Vec3,
+        mouselook: bool,
+        step_back: bool,
+        turn_speed: f32,
+        rotate_threshold_slow: f32,
+        rotate_threshold_fast: f32,
+    ) -> i8 {
         let mut own_turn = 0;
         let mut seen = std::collections::HashSet::new();
         for (_, o) in self.objects.avatars() {
@@ -6787,6 +6797,8 @@ impl World {
                     flying: a.flying,
                     step_back: walking,
                     turn_speed,
+                    rotate_threshold_slow,
+                    rotate_threshold_fast,
                 }
             } else {
                 body::Input {
@@ -6797,6 +6809,8 @@ impl World {
                     flying: false,
                     step_back: walking,
                     turn_speed,
+                    rotate_threshold_slow: 60.0,
+                    rotate_threshold_fast: 2.0,
                 }
             };
             let no_rotate = self

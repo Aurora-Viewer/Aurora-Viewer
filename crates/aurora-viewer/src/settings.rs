@@ -1625,6 +1625,12 @@ pub struct Settings {
     /// standing, 0 (the default lag) to 100 % (world/body.rs; Debug Settings
     /// only).
     pub avatar_turn_speed: f32,
+    /// AvatarRotateThresholdSlow: minimum body-facing difference at low
+    /// movement speeds, in degrees (Legacy Viewer; Debug Settings only).
+    pub avatar_rotate_threshold_slow: f32,
+    /// AvatarRotateThresholdFast: minimum body-facing difference at high
+    /// movement speeds, in degrees (Legacy Viewer; Debug Settings only).
+    pub avatar_rotate_threshold_fast: f32,
     /// Hold Up to start flying (agent_jump, indra/newview/llviewerinput.cpp).
     /// Aurora splits AutomaticFly into independent takeoff/landing choices;
     /// both default to on.
@@ -2813,6 +2819,8 @@ impl Default for Settings {
             walk_backwards_without_turning: false,
             turn_to_selected: true,
             avatar_turn_speed: 0.0,
+            avatar_rotate_threshold_slow: 60.0,
+            avatar_rotate_threshold_fast: 2.0,
             automatic_fly: true,
             automatic_land: true,
             fly_after_teleport: false,
@@ -3775,6 +3783,16 @@ impl Settings {
         } else {
             0.0
         };
+        self.avatar_rotate_threshold_slow = if self.avatar_rotate_threshold_slow.is_finite() {
+            self.avatar_rotate_threshold_slow.clamp(0.0, 180.0)
+        } else {
+            60.0
+        };
+        self.avatar_rotate_threshold_fast = if self.avatar_rotate_threshold_fast.is_finite() {
+            self.avatar_rotate_threshold_fast.clamp(0.0, 180.0)
+        } else {
+            2.0
+        };
         // the ranges of the Legacy Viewer's Build preferences
         let b = &mut self.build;
         b.new_prim_transparency = if b.new_prim_transparency.is_finite() {
@@ -4369,6 +4387,43 @@ mod tests {
         assert!(!old.avatars);
         assert!(old.enabled);
         assert!(!old.all_objects);
+    }
+
+    #[test]
+    fn avatar_rotation_thresholds_default_persist_and_sanitize() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.avatar_rotate_threshold_slow, 60.0);
+        assert_eq!(defaults.avatar_rotate_threshold_fast, 2.0);
+
+        let mut old = serde_json::to_value(&defaults).expect("serialize defaults");
+        old.as_object_mut().expect("settings object").remove("avatar_rotate_threshold_slow");
+        old.as_object_mut().expect("settings object").remove("avatar_rotate_threshold_fast");
+
+        let migrated: Settings = serde_json::from_value(old).expect("load older settings");
+        assert_eq!(migrated.avatar_rotate_threshold_slow, 60.0);
+        assert_eq!(migrated.avatar_rotate_threshold_fast, 2.0);
+
+        let mut changed = Settings::default();
+        changed.avatar_rotate_threshold_slow = 13.5;
+        changed.avatar_rotate_threshold_fast = 37.25;
+
+        let saved = serde_json::to_value(&changed).expect("save custom thresholds");
+        let loaded: Settings = serde_json::from_value(saved).expect("reload custom thresholds");
+        assert_eq!(loaded.avatar_rotate_threshold_slow, 13.5);
+        assert_eq!(loaded.avatar_rotate_threshold_fast, 37.25);
+
+        changed.avatar_rotate_threshold_slow = -10.0;
+        changed.avatar_rotate_threshold_fast = 200.0;
+        let clamped = changed.sanitized();
+        assert_eq!(clamped.avatar_rotate_threshold_slow, 0.0);
+        assert_eq!(clamped.avatar_rotate_threshold_fast, 180.0);
+
+        let mut invalid = Settings::default();
+        invalid.avatar_rotate_threshold_slow = f32::NAN;
+        invalid.avatar_rotate_threshold_fast = f32::INFINITY;
+        let repaired = invalid.sanitized();
+        assert_eq!(repaired.avatar_rotate_threshold_slow, 60.0);
+        assert_eq!(repaired.avatar_rotate_threshold_fast, 2.0);
     }
 
     #[test]
