@@ -43,7 +43,9 @@ main a few days before a stable version, to catch crashes before everyone.
 - **Builds.** The Nightly workflow (`.github/workflows/nightly.yml`) runs
   every 12 hours, at 11:00 and 23:00 UTC: noon and midnight in France in
   winter (CET), 1 pm and 1 am in summer (CEST), since a GitHub schedule is
-  in UTC only; and on demand ("Run workflow" on main). A run whose commit
+  in UTC only; and on demand ("Run workflow" on main, by an admin of the
+  repository: anyone else's run, or a beta tag they push, stops before
+  anything is tagged or published). A run whose commit
   already has a version tag (nothing new since the last beta or release)
   does nothing. When main has a commit without a version tag, `scripts/nightly-tag.ps1` pushes
   the next beta tag on it and the Release workflow builds and publishes it

@@ -180,6 +180,7 @@ pub(crate) fn packet(main: &FramePacket, job: &SecondViewJob) -> FramePacket {
         hover: None,
         picks: Vec::new(),
         drawn: Vec::new(),
+        drawn_forgotten: Vec::new(),
         capture: None,
         equirect: None,
         histogram: None,

@@ -407,13 +407,15 @@ pub(super) fn preview(
     )
     .show(ctx, p, &mut open, |ui| {
         st.wanted_images.insert(item.asset_id);
-        if let Some(image) = images.get(&item.asset_id) {
-            ui.add(egui::Image::new(image).max_size(ui.available_size()).fit_to_original_size(1.0));
-        } else {
-            ui.spinner();
-            ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
+        // The description heads the window, as in LLPreviewTexture's
+        // floater_preview_texture.xml; the picture fills the rest and follows
+        // the window's size, like a texture opened from the inventory (it was
+        // capped at the texture's own pixel size).
+        if !item.desc.is_empty() {
+            ui.label(&item.desc);
         }
-        ui.label(&item.desc);
+        let display = crate::ui::texture_library::texture_view::Display::default();
+        crate::ui::texture_library::texture_view::picture(ui, p, images.get(&item.asset_id), None, &display, None);
     });
     if !open {
         st.attachment_preview = None;

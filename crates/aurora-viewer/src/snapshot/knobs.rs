@@ -95,7 +95,7 @@ pub fn knobs(id: &str) -> &'static [Knob] {
         }
         "teal-orange" => {
             const K: &[Knob] = &[
-                range("photo-knob-strength", 0, &[0], 0.0, 1.0),
+                range("photo-knob-toning", 0, &[0], 0.0, 1.0),
                 color("photo-knob-shadows", 0, &[1, 2, 3]),
                 color("photo-knob-lights", 0, &[4, 5, 6]),
                 range(SATURATION, 1, &[0], 0.5, 1.8),
@@ -112,7 +112,7 @@ pub fn knobs(id: &str) -> &'static [Knob] {
         }
         "cross-process" => {
             const K: &[Knob] = &[
-                range("photo-knob-strength", 0, &[0], 0.0, 1.0),
+                range("photo-knob-toning", 0, &[0], 0.0, 1.0),
                 range(CONTRAST, 1, &[0], 1.0, 1.6),
                 range(SATURATION, 2, &[0], 0.5, 1.8),
             ];
@@ -136,7 +136,7 @@ pub fn knobs(id: &str) -> &'static [Knob] {
         }
         "halation" => {
             const K: &[Knob] = &[
-                range("photo-knob-strength", 0, &[0], 0.0, 2.0),
+                range("photo-knob-glow", 0, &[0], 0.0, 2.0),
                 range("photo-knob-radius", 0, &[1], 0.002, 0.04),
                 range("photo-knob-threshold", 0, &[2], 0.3, 0.95),
                 color("photo-knob-tint", 0, &[3, 4, 5]),
@@ -187,7 +187,7 @@ pub fn knobs(id: &str) -> &'static [Knob] {
             K
         }
         "chromatic" => {
-            const K: &[Knob] = &[range("photo-knob-strength", 0, &[0], 0.0, 0.03)];
+            const K: &[Knob] = &[range("photo-knob-fringes", 0, &[0], 0.0, 0.03)];
             K
         }
         "fisheye" => {
@@ -218,7 +218,7 @@ pub fn knobs(id: &str) -> &'static [Knob] {
         }
         "dreamy" => {
             const K: &[Knob] = &[
-                range("photo-knob-strength", 0, &[0], 0.0, 2.0),
+                range("photo-knob-glow", 0, &[0], 0.0, 2.0),
                 range("photo-knob-radius", 0, &[1], 0.005, 0.05),
                 range("photo-knob-threshold", 0, &[2], 0.2, 0.95),
             ];
@@ -271,7 +271,7 @@ pub fn knobs(id: &str) -> &'static [Knob] {
         }
         "clarity" => {
             const K: &[Knob] = &[
-                range("photo-knob-strength", 0, &[0], 0.0, 2.0),
+                range("photo-knob-local-contrast", 0, &[0], 0.0, 2.0),
                 range("photo-knob-radius", 0, &[1], 0.005, 0.05),
             ];
             K

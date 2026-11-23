@@ -16,6 +16,7 @@ use crate::ui::Panels;
 use crate::ui::icons::Icons;
 use crate::ui::menu;
 use crate::ui::parcel_icons::{GLYPH, ParcelIcon, SLOT_HEIGHT, SLOT_WIDTH};
+use crate::world::tphistory::HistoryItem;
 use egui::{Color32, FontId, Id, Pos2, Rect, Sense, Vec2};
 
 /// Inside the place: room at its left and right ends, and between its parts.
@@ -729,18 +730,70 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     }
     if !st.recent.is_empty() {
         menu::heading(ui, p, aurora_i18n::tr!("ui-bars-recent-places"));
-        for r in &st.recent {
-            if menu::item_keys(ui, p, "arrow-back-up", &r.name, &r.region) {
-                action = Some(BarAction::TeleportTo(r.slurl.clone()));
+        for item in &st.recent {
+            let (name, region) = recent_label(&item.title);
+            if menu::item_keys(ui, p, "arrow-back-up", name, region) {
+                action = Some(BarAction::TeleportSavedPlace(item.clone()));
             }
         }
     }
     action
 }
 
+/// The last places of the saved teleport history for the place menu,
+/// newest first, without the one we stand in (its last entry): two, as in
+/// the mockup. Keep each visit's destination even when two positions coincide.
+pub fn recent(items: &[HistoryItem]) -> Vec<HistoryItem> {
+    items.iter().rev().skip(1).take(2).cloned().collect()
+}
+
+fn recent_label(title: &str) -> (&str, &str) {
+    title.rsplit_once(", ").unwrap_or((title, ""))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn visit(title: &str, x: f64) -> crate::world::tphistory::HistoryItem {
+        crate::world::tphistory::HistoryItem {
+            title: title.into(),
+            global: glam::DVec3::new(x, 256_000.0, 25.0),
+            date: x,
+            slurl: String::new(),
+        }
+    }
+
+    /// #4370: the Recent rows are the two places before the one we stand
+    /// in, newest first, and teleport by their saved position, since a
+    /// Second Life history item has no SLURL.
+    #[test]
+    fn recent_places_keep_their_position_for_the_teleport() {
+        let items = [
+            visit("Old Garden, Ahern", 1.0),
+            visit("Moon Garden, Lunaria", 2.0),
+            visit("Bare Region", 3.0),
+            visit("Here, Home", 4.0),
+        ];
+        let rows = recent(&items);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(recent_label(&rows[0].title), ("Bare Region", ""));
+        assert_eq!(rows[0].global, items[2].global);
+        assert_eq!(recent_label(&rows[1].title), ("Moon Garden", "Lunaria"));
+        assert_eq!(rows[1].global, items[1].global);
+        assert!(recent(&items[..1]).is_empty());
+    }
+
+    #[test]
+    fn recent_visits_at_the_same_position_keep_the_selected_destination() {
+        let mut first = visit("Garden, North", 10.0);
+        let mut second = visit("Plaza, South", 10.0);
+        first.slurl = "hop://north.example/North/10/20/25".into();
+        second.slurl = "hop://south.example/South/10/20/25".into();
+        let items = [first, second, visit("Current", 12.0)];
+        let rows = recent(&items);
+        assert_eq!(rows, [items[1].clone(), items[0].clone()]);
+    }
 
     fn widths() -> Widths {
         Widths {

@@ -1490,7 +1490,7 @@ mod tests {
         let p = crate::theme::Theme::default().palette();
         let icons = Icons::default();
         let info = LoginInfo::preview_release("0.3.0");
-        for size in [Vec2::new(1000.0, 700.0), Vec2::new(1600.0, 900.0)] {
+        for size in [Vec2::new(1000.0, 700.0), Vec2::new(1280.0, 600.0), Vec2::new(1600.0, 900.0)] {
             let ctx = egui::Context::default();
             let mut settings = Settings::default();
             let mut form = LoginForm::default();

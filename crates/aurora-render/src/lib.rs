@@ -41,6 +41,7 @@ mod histogram;
 pub mod hud;
 mod label_depth;
 pub mod light_tiles;
+pub mod look_thumbs;
 pub mod looks;
 pub mod main_thread;
 mod motion_debug;

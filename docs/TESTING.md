@@ -486,9 +486,9 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_PHOTO_GAZE=look[:<percent>]\|turn\|orbit\|others` | With the photo window open: "Look at camera" on (at a "Look intensity"), "Turn to camera" pressed, the camera going round the avatar while it looks at it, or the nearby avatars allowing posing and looking at the camera |
 | `AURORA_DEMO_PHOTO_ROLL=<n>[:quick][:delete][:send][:upload][:item][:mail][:apply][:applied][:moved][:toolbar][:apart]` | The photo reel filled with `n` photos, then its quick view, a deletion asked, a photo sent again (inventory, e-mail), applied to the profile, the tray moved or the toolbar's Photo roll |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep][-back]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
-| `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora, a LUT or a creator's LUT), the chosen one's strength and settings, the before / after line, the filter panel |
+| `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:open][:menu][:replace][:folded][:favorites][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora, a LUT or a creator's LUT), the last one's strength and settings, the before / after line, the filter panel and its cards' states |
 | `AURORA_DEMO_WORLD_LOOK=<look>[+<look>…][:window]` | The world filters switched on with those looks, on the whole 3D view outside the photo mode, and their window (see Details) |
-| `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|views\|classic-views\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, a view saved and given back, or driving the photo window's free camera |
+| `AURORA_DEMO_CONTROLS=camera\|roll\|movement\|compact\|compact-move\|classic\|views\|classic-views\|position\|classic-position\|free\|free-compact` | The Controls window open on a tab, the Legacy Viewer's two windows, a view saved and given back, the camera position window, or driving the photo window's free camera |
 | `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
 `AURORA_DEMO_RENDER_TEXTURE`: with demo mode and `AURORA_CAPTURE`, the capture
@@ -1024,7 +1024,14 @@ filter. With `viewfinder`, the whole frame shows the filter live; with
 `open` or `classic`, the view and the preview do; with `save:…`, the file
 is drawn with it (`Posterize` with `AURORA_DEMO_SNAPSHOT_TILE=1024`: the 15
 tiles share the histogram curves, no seam along their borders). Capture
-from frame 700.
+from frame 700. The panel's states: `open` opens every card to its
+settings, `menu` shows the last card's ⋯ actions, `replace` turns Replace
+on (the last card chosen, outlined), `folded` folds the effects catalogue,
+`favorites` stars the stack's looks and shows the ★ list.
+The catalogue's tiles show their pictures from about frame 640 (a still of
+the photo's frame, then one look a frame); dragging, the place numbers and
+the drop on the catalogue are tested by hand. The stack holds 8 looks at
+most: a longer list keeps its first 8.
 
 `AURORA_DEMO_WORLD_LOOK` (no photo window needed): at frame 600 the world
 filters (Preferences › Graphics › Image) are switched on with those looks
@@ -1065,7 +1072,12 @@ Viewer's camera window) save a view (#2755): the camera turned away at 610
 and saved as the Front view at 620, as the view's right click does, the Rear
 view at 640 and the Front view again at 660; the log gives the camera when
 saved and at 700, at the same place. The view is kept in the demo profile's
-settings: a second run starts with it. `free` opens the photo window with its "Free camera" switch on:
+settings: a second run starts with it. `position` (Aurora's window) and
+`classic-position` (the Legacy Viewer's camera window) also open the camera
+position window of the Position button (#4587) at 600; at 640 the camera
+offset's Z rises by 0.5 m, as five Ctrl + wheel clicks do: the window's Z
+field follows at once and the preset becomes Custom. The log gives the
+offset at 600 and 640. `free` opens the photo window with its "Free camera" switch on:
 the Controls window opens by itself on its camera tab, which drives the free
 camera (the "Free camera / The avatar stays put" banner with Back and its
 key, the move and look joysticks with up / down and their keys between them,
@@ -4079,6 +4091,7 @@ To check with these scenarios:
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh); `points`: a bar rigged to an attachment point the animation turns; `far`: an animesh carried far by its animation and one worn far from its point |
 | `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply\|plugins\|installer-choose\|installer-check\|installer-install\|installer-done\|installer-error` | Local Blender bridge, static object placement, LOD import, shape transfer and installer feedback |
+| `AURORA_DEMO_BLENDER_LIVE_TAB=place\|avatar\|import\|plugins\|quick-look\|sweep` | Opens the LiveMesh window of the Blender demo on that tab, Quick look, or a card's update sweep |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_IK_EDIT=<mode>` | Local pose and animation editor (IK Edit, Poser, native animation creation) |
@@ -4110,9 +4123,15 @@ native object menu on the child, preserving whole-linkset selection;
 `static-linked-hud-menu` exercises the worn local menu. Check the single root,
 indented prim numbers and object/prim counts. The Edit linked checkbox belongs to
 the native build tools and context menu; it is absent from the LiveMesh
-window. `static-hud` attaches it at HUD Center;
+window. `AURORA_DEMO_BLENDER_LIVE_TAB` opens the window on its Place, Avatar,
+Import or Plugins tab instead of Objects (with `static-linked`, Place shows
+the selected root's placement); `quick-look` opens Quick look on the selected
+object, under the Objects cards and their live thumbnails; `sweep` has
+Blender send the selected object again every eight frames from frame 400, as
+during a drag, so its card's update sweep keeps running. `static-hud` attaches it at HUD Center;
 `static-attached` attaches it to the right hand; `static-detached` removes its
-draw object while retaining the source row. Check numeric/gizmo transforms,
+draw object while retaining the source row; these three show the Undo
+toast under the status line for 8 s. Check numeric/gizmo transforms,
 body/HUD menus, detach/rez, source visibility and geometry updates, with the
 rigged shell remaining on the avatar.
 The listener accepts the Blender extension on port 17655. Check that live

@@ -59,6 +59,9 @@ log = "0.4.34"
 png = "0.18.1"
 md5 = "0.8.1"
 memmap2 = "0.9.11"
+# The LiveMesh thumbnails reduce a heavy object (already in the workspace,
+# through aurora-assets)
+meshopt = "0.7.0"
 parking_lot = "0.13.0"
 # CommonMark parsing for notecard previews; MIT licensed, no HTML runtime.
 pulldown-cmark = { version = "0.13.4", default-features = false }
