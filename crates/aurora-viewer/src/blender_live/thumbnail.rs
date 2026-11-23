@@ -16,7 +16,8 @@
 //!   and the card keeps its last picture until the hand stops.
 
 use super::protocol::{PreparedImage, PreparedSource};
-use aurora_render::preview::{Image, Model, Part, Vertex};
+use crate::scene::{anim::Rig, avatar::AvatarLibrary};
+use aurora_render::preview::{Image, Model, Part, Pose, Skin, Vertex};
 use glam::Vec3;
 use std::collections::HashMap;
 use std::sync::{Arc, mpsc};
@@ -82,6 +83,10 @@ pub struct Thumbnails {
     models: HashMap<Uuid, (u64, Arc<Model>)>,
     /// By source: the digest a job is building.
     pending: HashMap<Uuid, u64>,
+    /// By card: the digest of its sources now (the last `update`).
+    current: HashMap<Uuid, u64>,
+    /// The skeleton the rigged parts are weighted to, for Quick look's bend.
+    rig: Option<Arc<AvatarLibrary>>,
     tx: mpsc::Sender<Built>,
     rx: mpsc::Receiver<Built>,
 }
@@ -92,6 +97,8 @@ impl Default for Thumbnails {
         Self {
             models: HashMap::new(),
             pending: HashMap::new(),
+            current: HashMap::new(),
+            rig: None,
             tx,
             rx,
         }
@@ -110,7 +117,25 @@ impl Thumbnails {
         self.models.get(&source).is_none_or(|(built, _)| *built != digest)
     }
 
+    /// Whether a card's update is on its way: Blender sent a change its
+    /// picture does not show yet (settling or being built). The card's
+    /// sweep runs while it is.
+    pub fn updating(&self, card: Uuid) -> bool {
+        self.current.get(&card).is_some_and(|&digest| self.stale(card, digest))
+    }
+
+    /// The avatar library whose skeleton the rigged parts are weighted to.
+    /// A new one (another skeleton) rebuilds every thumbnail.
+    pub fn set_rig(&mut self, lib: &Arc<AvatarLibrary>) {
+        if self.rig.as_ref().is_none_or(|old| !Arc::ptr_eq(old, lib)) {
+            self.rig = Some(lib.clone());
+            self.models.clear();
+            self.pending.clear();
+        }
+    }
+
     pub fn clear(&mut self) {
+        self.current.clear();
         self.models.clear();
         self.pending.clear();
         while self.rx.try_recv().is_ok() {}
@@ -136,6 +161,7 @@ impl Thumbnails {
                 self.models.insert(id, (digest, model));
             }
         }
+        self.current = groups.iter().map(|g| (g.id, g.digest)).collect();
         self.models.retain(|id, _| groups.iter().any(|g| g.id == *id));
         self.pending.retain(|id, _| groups.iter().any(|g| g.id == *id));
         let mut wait: Option<Duration> = None;
@@ -155,8 +181,9 @@ impl Thumbnails {
             let group = group.clone();
             let images = images.to_vec();
             let tx = self.tx.clone();
+            let lib = self.rig.clone();
             run(Box::new(move || {
-                let model = build(&group.sources, &images);
+                let model = build(&group.sources, &images, lib.as_ref().map(|lib| &*lib.rig));
                 let _ = tx.send((group.id, group.digest, Arc::new(model)));
             }));
         }
@@ -166,8 +193,9 @@ impl Thumbnails {
 
 /// The thumbnail model of a card's sources: their geometry in the rest
 /// pose, placed by their instances and their offsets from the root, with
-/// their base colours and base colour textures.
-pub fn build(sources: &[(PreparedSource, Vec3)], images: &[PreparedImage]) -> Model {
+/// their base colours and base colour textures. With `rig`, a rigged
+/// part is weighted to its joints (`skin`), so Quick look can bend it.
+pub fn build(sources: &[(PreparedSource, Vec3)], images: &[PreparedImage], rig: Option<&Rig>) -> Model {
     let total: usize = sources
         .iter()
         .flat_map(|(source, _)| {
@@ -192,6 +220,7 @@ pub fn build(sources: &[(PreparedSource, Vec3)], images: &[PreparedImage]) -> Mo
             };
             let transform = glam::Mat4::from_translation(*offset) * instance.transform;
             let normals = transform.inverse().transpose();
+            let skin = rig.and_then(|rig| skin(rig, model.skin.as_ref()?));
             for (slot, face) in model.faces.iter().enumerate() {
                 let indices = reduced(face, keep);
                 if indices.is_empty() {
@@ -214,8 +243,10 @@ pub fn build(sources: &[(PreparedSource, Vec3)], images: &[PreparedImage]) -> Mo
                 let vertices: Vec<Vertex> = face
                     .vertices
                     .iter()
-                    .map(|v| {
-                        Vertex::new(
+                    .map(|v| Vertex {
+                        joints: v.joints.map(u32::from),
+                        weights: if skin.is_some() { v.weights } else { [0.0; 4] },
+                        ..Vertex::new(
                             transform.transform_point3(Vec3::from_array(v.position)).to_array(),
                             normals.transform_vector3(Vec3::from_array(v.normal)).normalize_or_zero().to_array(),
                             [v.uv[0], 1.0 - v.uv[1]],
@@ -228,13 +259,45 @@ pub fn build(sources: &[(PreparedSource, Vec3)], images: &[PreparedImage]) -> Mo
                     indices: indices.into(),
                     textures: [base, None, None, None],
                     material,
-                    skin: None,
+                    skin: skin.clone(),
                 });
             }
         }
     }
     let (center, radius) = crate::imports::preview::bounds(&parts);
     Model { parts, center, radius }
+}
+
+/// A rigged model's skin for the preview, as a change from the rest pose:
+/// each joint's inverse bind is the skeleton's own rest inverse and its
+/// rest matrix the identity. Without a pose, the part draws as Blender
+/// sent it (the card's picture); with `pose` (the skeleton's world matrices
+/// bent), each vertex follows its joints' turn from their rest, whatever
+/// bind the mesh was made with. `None` when a joint is not the skeleton's.
+fn skin(rig: &Rig, skin: &aurora_assets::import_mesh::Skin) -> Option<Arc<Skin>> {
+    let joints = skin
+        .names
+        .iter()
+        .map(|name| rig.names.get(name).copied().filter(|&j| j < rig.default_world_inv.len()))
+        .collect::<Option<Vec<_>>>()?;
+    Some(Arc::new(Skin {
+        inverse_bind: joints.iter().map(|&j| rig.default_world_inv[j]).collect(),
+        rest: vec![glam::Mat4::IDENTITY; joints.len()],
+        joints,
+    }))
+}
+
+/// Quick look's pose: the skeleton at rest with the Avatar tab's elbow and
+/// knee bend (`PreviewBend`, as on our avatar), or `None` with no bend.
+pub fn bent_pose(rig: &Rig, elbows: f32, knees: f32) -> Option<Pose> {
+    let bend = crate::scene::anim::PreviewBend {
+        elbows,
+        knees,
+        hold: false,
+    };
+    let rotations = bend.apply(rig, &rig.local_rot)?;
+    let world = rig.world_with(&rotations, Vec3::ZERO, &rig.local_pos, &rig.scale);
+    Some(world.iter().map(glam::Mat4::to_cols_array_2d).collect())
 }
 
 /// A face's indices, reduced to `keep` of its triangles past the cap.
@@ -317,6 +380,7 @@ mod tests {
         thumbnails.update(&groups(&first, start), &first.images, start, inline);
         let model = thumbnails.get(id).expect("built");
         assert!(!model.parts.is_empty() && model.radius > 0.0);
+        assert!(!thumbnails.updating(id), "a card that shows its state has no sweep");
         // the same state: the same model, no new job
         let mut jobs = 0;
         thumbnails.update(&groups(&first, start), &first.images, start, |_| jobs += 1);
@@ -329,13 +393,16 @@ mod tests {
         assert_eq!(jobs, 0, "nothing is built during a drag");
         assert_eq!(wait, Some(SETTLE));
         assert!(Arc::ptr_eq(&model, &thumbnails.get(id).expect("kept while settling")));
+        assert!(thumbnails.updating(id), "the sweep runs while the update is on its way");
         let later = start + SETTLE;
         thumbnails.update(&groups(&second, start), &second.images, later, inline);
         thumbnails.update(&groups(&second, start), &second.images, later, inline);
         assert!(!Arc::ptr_eq(&model, &thumbnails.get(id).expect("rebuilt")));
+        assert!(!thumbnails.updating(id), "the sweep stops with the new picture");
         // a card that leaves is forgotten
         thumbnails.update(&[], &[], later, inline);
         assert!(thumbnails.get(id).is_none());
+        assert!(!thumbnails.updating(id));
     }
 
     #[test]
@@ -347,8 +414,8 @@ mod tests {
         assert!(cards.iter().all(|g| g.sources[0].0.link.is_none()), "one card per root");
         let child = &linkset.sources[1];
         assert_eq!(child.1, Vec3::from_array(child.0.link.expect("linked").offset));
-        let alone = build(&linkset.sources[..1], &prepared.images);
-        let whole = build(&linkset.sources, &prepared.images);
+        let alone = build(&linkset.sources[..1], &prepared.images, None);
+        let whole = build(&linkset.sources, &prepared.images, None);
         assert!(whole.parts.len() > alone.parts.len(), "the prim is drawn with its root");
         assert!(whole.radius > alone.radius, "and beside it");
         // a prim's change changes its card's digest
@@ -388,7 +455,7 @@ mod tests {
         let prepared = sources(&value);
         let total: usize = prepared.sources[0].scene.models.iter().map(|m| m.triangles()).sum();
         assert!(total > MAX_TRIANGLES, "{total}");
-        let model = build(&[(prepared.sources[0].clone(), Vec3::ZERO)], &prepared.images);
+        let model = build(&[(prepared.sources[0].clone(), Vec3::ZERO)], &prepared.images, None);
         let drawn: usize = model.parts.iter().map(|p| p.indices.len() / 3).sum();
         assert!(drawn <= MAX_TRIANGLES && drawn > MAX_TRIANGLES / 4, "{drawn} triangles drawn");
     }
@@ -405,5 +472,57 @@ mod tests {
         let image = small_image(&pixels);
         assert_eq!(image.size, [128, 64]);
         assert_eq!(&image.rgba[..4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn quick_look_bends_a_rigged_part_at_its_joints_and_nothing_else() {
+        use glam::Mat4;
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let rig: &Rig = &lib.rig;
+        let elbow = rig.names["mElbowLeft"];
+        let pelvis = rig.names["mPelvis"];
+        let rest = |j: usize| rig.default_world_inv[j].inverse();
+        // a sleeve corner at the wrist, weighted to the left elbow, and a
+        // hem corner weighted to the pelvis
+        let wrist = rest(rig.names["mWristLeft"]).w_axis.truncate();
+        let hip = rest(pelvis).w_axis.truncate();
+        let corner = |p: Vec3, joint: u8| serde_json::json!({"position":p.to_array(),"normal":[0.0,0.0,1.0],"uv":[0.0,0.0],"joints":[joint,0,0,0],"weights":[1.0,0.0,0.0,0.0]});
+        let value = serde_json::json!({"protocol":1,"revision":1,"meshes":[{
+            "name":"Sleeve","joints":["mElbowLeft","mPelvis"],
+            "inverse_bind":[Mat4::IDENTITY.to_cols_array(), Mat4::IDENTITY.to_cols_array()],
+            "faces":[{"color":[0.3,0.2,0.8,1.0],"vertices":[corner(wrist, 0), corner(hip, 1), corner(hip + Vec3::X * 0.1, 1)],"indices":[0,1,2]}]
+        }]});
+        let supported = ["mElbowLeft", "mPelvis"].map(String::from).into();
+        let prepared = super::super::protocol::prepare(&serde_json::to_vec(&value).expect("JSON"), &supported).expect("snapshot");
+        let sources = [(prepared.sources[0].clone(), Vec3::ZERO)];
+        // without the skeleton the part is drawn as sent, unweighted
+        let flat = build(&sources, &prepared.images, None);
+        assert!(flat.parts.iter().all(|part| part.skin.is_none()));
+        let model = build(&sources, &prepared.images, Some(rig));
+        let part = &model.parts[0];
+        let skin = part.skin.as_ref().expect("weighted to the skeleton");
+        assert_eq!(skin.joints, vec![elbow, pelvis]);
+        assert!(
+            skin.rest.iter().all(|m| *m == Mat4::IDENTITY),
+            "unposed, the card's picture is unchanged"
+        );
+        let flat_positions: Vec<_> = flat.parts[0].vertices.iter().map(|v| v.position).collect();
+        let positions: Vec<_> = part.vertices.iter().map(|v| v.position).collect();
+        assert_eq!(flat_positions, positions);
+        // no bend: no pose
+        assert!(bent_pose(rig, 0.0, 0.0).is_none());
+        let pose = bent_pose(rig, 90.0, 0.0).expect("bent");
+        let bone = |i: usize| Mat4::from_cols_array_2d(&pose[skin.joints[i]]) * skin.inverse_bind[i];
+        let moved = bone(0).transform_point3(Vec3::from_array(positions[0]));
+        assert!(moved.distance(wrist) > 0.1, "the wrist turns with the elbow: {moved} from {wrist}");
+        let elbow_at = rest(elbow).w_axis.truncate();
+        assert!(
+            (moved.distance(elbow_at) - wrist.distance(elbow_at)).abs() < 1e-3,
+            "around the elbow"
+        );
+        for corner in &positions[1..] {
+            let p = Vec3::from_array(*corner);
+            assert!(bone(1).transform_point3(p).abs_diff_eq(p, 1e-4), "the hips stay");
+        }
     }
 }

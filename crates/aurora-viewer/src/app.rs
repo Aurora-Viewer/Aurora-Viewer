@@ -635,6 +635,7 @@ pub struct App {
     hud_drag: Option<crate::build::hud_drag::HudDrag>,
     interactions: crate::interaction::Interactions,
     cursors: crate::cursors::Cursors,
+    cursor_shown: crate::cursors::Shown,
     /// Demo mode: answers to the build tools' commands.
     build_demo: crate::build::demo_sim::DemoSim,
     /// Cursor position in physical pixels.
@@ -2032,6 +2033,7 @@ impl App {
             hud_drag: None,
             interactions: Default::default(),
             cursors: crate::cursors::Cursors::with_palette(&palette),
+            cursor_shown: Default::default(),
             build_demo: Default::default(),
             cursor_pos: (0.0, 0.0),
             last_tap: None,
@@ -8514,6 +8516,8 @@ impl App {
             self.flush_build();
             return true;
         }
+        // the second press of a double click (BuildSettings::double_click_linked)
+        self.build.double_press = self.double_press;
         let used = self.build.mouse_down(
             &mut self.world,
             &mut self.settings.build,
@@ -12860,7 +12864,7 @@ impl App {
             },
             selection_scale: self.egui_ctx.pixels_per_point(),
             face_select_texture: {
-                let wanted = self.build.face_mode() || !self.scene.pattern_faces.is_empty();
+                let wanted = self.build.face_mode() || self.build.picks_faces() || !self.scene.pattern_faces.is_empty();
                 self.scene.face_select_texture(&mut gfx.renderer, wanted)
             },
             vr_origin: self.world.main_region,
@@ -13630,8 +13634,24 @@ impl App {
                 self.plate_hover,
             );
         }
+        // a picture is sent from `cursor_shown`, once: egui-winit would send
+        // it again at every frame (cursors.rs)
+        let picture = full
+            .platform_output
+            .cursor_image
+            .take()
+            .and_then(|image| self.cursor_shown.cursor(event_loop, &image));
+        let icon = full.platform_output.cursor_icon;
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
+        match (self.cursor_shown.step(picture.as_ref().map(|(number, _)| *number), icon), picture) {
+            (crate::cursors::Change::Picture, Some((_, cursor))) => {
+                gfx.window.set_cursor_visible(true);
+                gfx.window.set_cursor(cursor);
+            }
+            (crate::cursors::Change::System, _) => crate::cursors::set_system(&gfx.window, icon),
+            _ => {}
+        }
         self.perf.ui_ms = t_ui.elapsed().as_secs_f32() * 1000.0;
         self.frame_profile.lap(Lap::Hover);
         self.evict_ui_images(&full.shapes);
@@ -21765,6 +21785,7 @@ impl ApplicationHandler for App {
             || (self.demo && std::env::var_os("AURORA_DEMO_CAMERA_LIMITS").is_some());
         self.screen_rate.poll(&window, Instant::now());
         let egui_state = self.egui_state_for(&window, &renderer);
+        self.cursor_shown.forget();
         self.gfx = Some(Gfx {
             window,
             shown: false,
@@ -25036,6 +25057,7 @@ impl ApplicationHandler for App {
                     repaint: true,
                 }
             } else {
+                self.cursor_shown.event(&event);
                 g.egui_state.on_window_event(&g.window, &event)
             };
         let events = &mut g.egui_state.egui_input_mut().events;

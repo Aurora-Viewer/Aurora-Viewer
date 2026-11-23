@@ -711,6 +711,7 @@ dependencies = [
  "flate2",
  "log",
  "reqwest",
+ "ring",
  "semver",
  "serde",
  "serde_json",

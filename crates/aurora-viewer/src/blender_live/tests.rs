@@ -1065,6 +1065,84 @@ fn blender_live_static_controls_request_derez_rez_and_hud_attachment_for_the_sel
 }
 
 #[test]
+fn blender_live_undo_toast_shows_over_the_world_while_the_window_is_closed() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
+    let palette = theme.palette();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut live = Live::default();
+    let snapshot = prepare(&static_triangle()).expect("source");
+    live.receive(snapshot.clone());
+    live.prepare_placements(&snapshot, &world);
+    let source = live.selected.expect("selected");
+    live.place_object(source, objects::Action::Rez, &world);
+    // the world's menu derezzes it while the window is closed
+    live.place_object(source, objects::Action::Derez, &world);
+    assert!(live.undo.is_some());
+    let mut time = 0.0;
+    let mut frame = |live: &mut Live, events| {
+        time += 1.0 / 60.0;
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1000.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                super::ui::show(live, ui.ctx(), &palette, true);
+            },
+        );
+        out.textures_delta.clear();
+        out
+    };
+    let undo = aurora_i18n::tr!("blender-live-undo");
+    let positions = |out: &egui::FullOutput| -> Vec<egui::Pos2> {
+        out.shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == undo => Some(text.pos + text.galley.size() * 0.5),
+                _ => None,
+            })
+            .collect()
+    };
+    for _ in 0..4 {
+        frame(&mut live, vec![]);
+    }
+    let out = frame(&mut live, vec![]);
+    let shown = positions(&out);
+    assert_eq!(shown.len(), 1, "one toast, over the world");
+    assert!(shown[0].y > 800.0, "above the toolbar, at the bottom of the window");
+    let at = shown[0];
+    let click = |pressed| {
+        vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+    frame(&mut live, click(true));
+    frame(&mut live, click(false));
+    assert!(live.undo_requested, "its Undo works like the window's");
+    live.undo_requested = false;
+    // open, the toast is the window's only
+    live.open = true;
+    for _ in 0..4 {
+        frame(&mut live, vec![]);
+    }
+    let out = frame(&mut live, vec![]);
+    let shown = positions(&out);
+    assert_eq!(shown.len(), 1, "no second toast over the world");
+    assert!(shown[0].y < 800.0, "in the window");
+}
+
+#[test]
 fn blender_live_attachment_namespace_survives_rekey_without_colliding_with_simulator_objects() {
     use crate::world::objects::{ObjectStore, PREVIEW_REGION};
     let mut store = ObjectStore::default();
@@ -1296,4 +1374,63 @@ fn blender_live_change_times_follow_each_source() {
     assert!(live.changed[&ids[1]].1 > first[1].1, "and a new time");
     live.stop();
     assert!(live.changed.is_empty() && live.received_at.is_none(), "Stop forgets the times");
+}
+
+#[test]
+fn blender_live_placement_changes_are_undone_with_their_prims_and_states() {
+    use glam::Vec3;
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let root = Uuid::from_u128(1);
+    let child = Uuid::from_u128(2);
+    let snapshot = prepare(&linked_objects()).expect("snapshot");
+    let mut live = Live::default();
+    live.receive(snapshot.clone());
+    live.prepare_placements(&snapshot, &world);
+    live.place_object(root, objects::Action::Rez, &world);
+    assert!(live.undo.is_none(), "a Rez has no toast");
+    live.states.insert(child, SourceState::Hidden);
+    let (root_before, child_before) = (live.placements[&root], live.placements[&child]);
+    // Derez of a prim moves its whole linkset; Undo puts both back
+    live.place_object(child, objects::Action::Derez, &world);
+    let undo = live.undo.as_ref().expect("toast");
+    assert_eq!(undo.source, root);
+    assert!(matches!(undo.action, objects::Action::Derez));
+    assert_eq!(live.placements[&child].location, objects::Location::Detached);
+    live.revision = Some(4);
+    live.undo_placement();
+    assert!(live.undo.is_none());
+    assert_eq!(live.revision, None, "the preview is rebuilt");
+    assert!(live.placement_dirty.contains(&root));
+    for (id, before) in [(root, root_before), (child, child_before)] {
+        let after = live.placements[&id];
+        assert_eq!(after.location, objects::Location::World);
+        assert!(after.position.abs_diff_eq(before.position, 1e-6));
+    }
+    assert_eq!(live.state(child), SourceState::Hidden, "a hidden prim stays hidden");
+    // an Attach is undone to its place in the world
+    live.place_object(root, objects::Action::Attach(31), &world);
+    assert!(matches!(live.undo.as_ref().map(|u| u.action), Some(objects::Action::Attach(31))));
+    assert_eq!(live.placements[&root].position, Vec3::ZERO);
+    live.undo_placement();
+    assert_eq!(live.placements[&root].location, objects::Location::World);
+    assert!(live.placements[&root].position.abs_diff_eq(root_before.position, 1e-6));
+    // a move of the fields is not a placement change
+    let p = live.placements[&root];
+    live.place_object(
+        root,
+        objects::Action::Transform {
+            position: p.position + Vec3::X,
+            rotation: p.rotation,
+            scale: p.scale,
+        },
+        &world,
+    );
+    assert!(live.undo.is_none());
+    // the toast closes on its own, and Stop forgets it
+    live.place_object(root, objects::Action::Derez, &world);
+    let at = live.undo.as_ref().expect("toast").at;
+    assert!(!live.undo.as_ref().expect("toast").expired(at));
+    assert!(live.undo.as_ref().expect("toast").expired(at + objects::Undo::SHOWN));
+    live.stop();
+    assert!(live.undo.is_none());
 }

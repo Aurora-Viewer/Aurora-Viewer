@@ -183,7 +183,7 @@ pub(super) fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &World
     finish_if_hidden_or_blurred(ctx, tool, world);
     if !tool.open
         || (tool.tool != Tool::Edit && !(tool.ui.legacy_window && tool.tool != Tool::Land))
-        || tool.tab != 4
+        || (tool.tab != 4 && tool.ui.second.shown != Some(4))
         || ctx.text_edit_focused()
     {
         return false;
