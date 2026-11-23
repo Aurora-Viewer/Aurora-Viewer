@@ -195,7 +195,10 @@ fn blender_live_object_warnings_are_bounded_and_never_refuse_the_snapshot() {
     assert_eq!(prepared.warnings[1].source, None);
     assert_eq!(prepared.warnings[1].kind, WarningKind::NotSent);
     let reason = &prepared.warnings[1].reason;
-    assert!(reason.starts_with("limit r") && !reason.contains('\n'), "control characters become spaces");
+    assert!(
+        reason.starts_with("limit r") && !reason.contains('\n'),
+        "control characters become spaces"
+    );
     assert_eq!(reason.chars().count(), 512);
     // many warnings are cut, not refused
     value["warnings"] = serde_json::json!(vec![serde_json::json!({"name": "n", "kind": "not-sent", "reason": ""}); 200]);
@@ -1134,7 +1137,9 @@ fn blender_live_cards_show_blenders_warnings_and_list_what_it_could_not_send() {
     let textures = aurora_i18n::tr!("blender-live-warning-textures");
     let not_sent = aurora_i18n::tr!("blender-live-warning-not-sent");
     assert!(
-        shown.iter().any(|t| t.starts_with(textures) && t.ends_with("Bake procedural shaders to UV image textures for live materials")),
+        shown
+            .iter()
+            .any(|t| t.starts_with(textures) && t.ends_with("Bake procedural shaders to UV image textures for live materials")),
         "the textured object's card says why: {shown:?}"
     );
     for name in ["Sculpted rock", "Hair cards"] {
@@ -1144,7 +1149,11 @@ fn blender_live_cards_show_blenders_warnings_and_list_what_it_could_not_send() {
     // the next revision without warnings clears them
     live.receive(prepare(&static_triangle()).expect("plain"));
     let shown = texts(&mut live);
-    assert!(!shown.iter().any(|t| t.starts_with(textures) || t.starts_with(not_sent) || t == "Hair cards"));
+    assert!(
+        !shown
+            .iter()
+            .any(|t| t.starts_with(textures) || t.starts_with(not_sent) || t == "Hair cards")
+    );
 }
 
 #[test]
