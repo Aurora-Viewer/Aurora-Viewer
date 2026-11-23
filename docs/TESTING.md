@@ -12895,8 +12895,14 @@ What the inventory must show with these scenarios:
   of the image (captures of both at the same frame, with
   `AURORA_FPS_LIMIT=8` so that both are at the same scene time), of the
   frame rate (`gpu_frame=` and `scene_lean=` of the perf summary) and of the
-  start (`pipelines: … made … in … ms` in the log). The log also says when
-  the variant changes, and why (`scene variant …`). No effect on Vulkan.
+  start (`pipelines: … made … in … ms` in the log). The lean pipelines are
+  compiled after the start, with the set for the user's settings or by a
+  worker of their own (`lean scene pipelines ready in … ms`); until then the
+  frames draw with the full shader (`scene_lean=0%`). For a start with an
+  empty Metal shader cache, as after an update, change a constant of
+  `object.wgsl` on disk and launch with `AURORA_DEMO_WATER_SHADERS=1`. The
+  log also says when the variant changes, and why (`scene variant …`). No
+  effect on Vulkan.
 - **`AURORA_DEMO_VIEWER_STATS=1`** (`aurora_net::viewer_stats`,
   `app/viewer_stats.rs`): on the grid the session posts Linden Lab's viewer
   statistics to the region's `ViewerStats` capability once the agent has
