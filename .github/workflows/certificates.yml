@@ -1,0 +1,46 @@
+name: Certificates
+
+# The certificate bundle's test: a certificate expires (or a new one is added)
+# without any code changing, so it runs every week as well as when the bundle
+# or the test changes. The test pins `lindenlab.pem` (sim_tls.rs): Linden Lab's
+# authority alone, expired but kept on purpose, and no other certificate that
+# is expired or expires within 90 days.
+on:
+  pull_request:
+    paths:
+      - '**/*.pem'
+      - 'crates/aurora-net/src/sim_tls.rs'
+      - '.github/workflows/certificates.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/*.pem'
+      - 'crates/aurora-net/src/sim_tls.rs'
+      - '.github/workflows/certificates.yml'
+  schedule:
+    - cron: '47 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certificates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # the workspace's tests build the viewer too, as check.ps1 does
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
+      - name: Rust stable
+        run: rustup toolchain install --profile minimal --no-self-update
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Certificate bundle current
+        run: cargo test --workspace --locked the_bundle_holds

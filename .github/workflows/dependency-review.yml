@@ -1,0 +1,30 @@
+name: Dependency review
+
+# The dependency-graph comparison of a pull request: a crate added with a high
+# or critical advisory fails it. Licences are not checked here: cargo-deny
+# (security.yml) checks them against packaging/licenses/about.toml, the list
+# that writes THIRD-PARTY-LICENSES.md.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: dependency-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+        with:
+          fail-on-severity: high
+          license-check: false
+          # no write token on a pull request from a fork
+          comment-summary-in-pr: never

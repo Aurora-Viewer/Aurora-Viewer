@@ -1,0 +1,91 @@
+# cargo-deny: the dependencies' advisories, licences, sources and bans.
+# Run by .github/workflows/security.yml on pull requests that change Cargo
+# files, on main, and weekly (an advisory can land without a commit).
+#
+# The licence allowlist mirrors packaging/licenses/about.toml, which stays the
+# source of truth for THIRD-PARTY-LICENSES.md; keep the two in sync.
+#
+# The advisory ignores are deliberate, accepted risks. Each names the reason
+# and the date it must be looked at again; remove it as soon as the crate can
+# be updated.
+
+[graph]
+# The systems the viewer is published for (about.toml): a crate only used for
+# another target is not shipped and need not be reviewed.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+]
+
+[advisories]
+# Report every unmaintained or unsound crate, including transitive ones: the
+# ones we accept are listed below, the others must be dealt with.
+unmaintained = "all"
+unsound = "all"
+# A yanked version is reported but does not fail the job: the next dependency
+# update fixes it (async-executor 1.14.0 and clipboard-win 5.4.1 today).
+yanked = "warn"
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained (no CVE: timestamps only); migrate to jiff/time, review 2027-02-01" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz is unmaintained (no CVE: timezone names); follows chrono, review 2027-02-01" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained (no CVE: bundled and user-chosen fonts only); migrate to skrifa, review 2027-02-01" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant is merged into zbus 6; blocks on secret-service supporting zbus 6, review 2027-02-01" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names is merged into zbus 6; blocks on secret-service supporting zbus 6, review 2027-02-01" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is merged into zbus 6; blocks on secret-service supporting zbus 6, review 2027-02-01" },
+    # heapless 0.8.0, pulled by parry3d -> rstar 0.13. rstar only uses
+    # heapless::binary_heap, which none of these advisories touch; the fix
+    # needs parry3d to move to rstar 0.14 (heapless 0.9). Review 2027-02-01.
+    { id = "RUSTSEC-2026-0574", reason = "heapless: not the API rstar uses; blocked on parry3d -> rstar 0.14" },
+    { id = "RUSTSEC-2026-0575", reason = "heapless: not the API rstar uses; blocked on parry3d -> rstar 0.14" },
+    { id = "RUSTSEC-2026-0576", reason = "heapless: not the API rstar uses; blocked on parry3d -> rstar 0.14" },
+    { id = "RUSTSEC-2026-0577", reason = "heapless: not the API rstar uses; blocked on parry3d -> rstar 0.14" },
+    { id = "RUSTSEC-2026-0578", reason = "heapless: not the API rstar uses; blocked on parry3d -> rstar 0.14" },
+    { id = "RUSTSEC-2026-0579", reason = "heapless: not the API rstar uses; blocked on parry3d -> rstar 0.14" },
+    { id = "RUSTSEC-2026-0580", reason = "heapless: not the API rstar uses; blocked on parry3d -> rstar 0.14" },
+    { id = "RUSTSEC-2026-0581", reason = "heapless: not the API rstar uses; blocked on parry3d -> rstar 0.14" },
+    { id = "RUSTSEC-2026-0582", reason = "heapless: not the API rstar uses; blocked on parry3d -> rstar 0.14" },
+]
+
+[licenses]
+# The same list as packaging/licenses/about.toml (GPL-3.0-compatible only).
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "GPL-3.0-or-later",
+]
+confidence-threshold = 0.93
+
+[licenses.private]
+# Aurora's own crates are not published and carry the repository's licence.
+ignore = true
+
+[bans]
+# The viewer ships duplicates (two versions of a crate during a transition);
+# they are reviewed in the licence file, not forbidden here.
+multiple-versions = "warn"
+# Internal path dependencies carry no version (`aurora-llsd = { path = … }`):
+# they are not published, so a wildcard says nothing about a supply chain.
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/Aurora-Viewer/wgpu"]
