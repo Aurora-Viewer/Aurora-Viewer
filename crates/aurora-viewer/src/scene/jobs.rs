@@ -526,6 +526,80 @@ pub fn classify_alpha(rgba: &[u8]) -> AlphaKind {
     }
 }
 
+/// Aurora Weather's foliage classifier (debris.rs, the canopy map):
+/// whether an RGBA8 image `w` x `h` (a level of about 32 to 64 px) looks
+/// like leaves: holes in its alpha (masked or blended, neither all solid nor
+/// all clear), many fine edges between solid and clear texels (leaves, not
+/// a decal or a window), and the average colour of its solid texels in the
+/// range of foliage hues, green through autumn's yellow, orange and red
+/// browns, neither grey nor blue. Run once per texture (`TextureStreamer`
+/// keeps the verdict by id); a fence or a lace curtain of a leafy colour
+/// can pass, which the exclusion list is for.
+pub fn classify_foliage(rgba: &[u8], w: u32, h: u32) -> bool {
+    let (w, h) = (w as usize, h as usize);
+    if w < 4 || h < 4 || rgba.len() < w * h * 4 {
+        return false;
+    }
+    let solid = |x: usize, y: usize| rgba[(y * w + x) * 4 + 3] >= 128;
+    let (mut opaque, mut edges) = (0usize, 0usize);
+    let mut sum = [0f64; 3];
+    for y in 0..h {
+        for x in 0..w {
+            if solid(x, y) {
+                opaque += 1;
+                let i = (y * w + x) * 4;
+                for c in 0..3 {
+                    sum[c] += f64::from(rgba[i + c]);
+                }
+            }
+            if x + 1 < w && solid(x, y) != solid(x + 1, y) {
+                edges += 1;
+            }
+            if y + 1 < h && solid(x, y) != solid(x, y + 1) {
+                edges += 1;
+            }
+        }
+    }
+    let n = w * h;
+    let cover = opaque as f32 / n as f32;
+    if !(0.12..=0.97).contains(&cover) || opaque == 0 {
+        return false;
+    }
+    // edges for every texel: a few big shapes have under 0.1 (a disc a
+    // third of the image wide, 0.08), a mass of leaves several times that
+    // (at this level's size)
+    if (edges as f32 / n as f32) < 0.12 {
+        return false;
+    }
+    let [r, g, b] = sum.map(|c| (c / opaque as f64 / 255.0) as f32);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    if max < 0.04 || max - min < 0.06 || (max - min) / max < 0.15 {
+        // black or grey
+        return false;
+    }
+    let hue = if max == r {
+        60.0 * ((g - b) / (max - min)).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / (max - min) + 2.0)
+    } else {
+        60.0 * ((r - g) / (max - min) + 4.0)
+    };
+    // red-brown (autumn) through yellow and green to teal-green
+    hue <= 165.0 || hue >= 350.0
+}
+
+/// The level of `mips` (RGBA8 or BC7 blocks, told apart by their size) the
+/// foliage classifier reads: the largest of 64 px or less, as RGBA8.
+pub fn foliage_level(mips: &[(u32, u32, Vec<u8>)]) -> Option<(Vec<u8>, u32, u32)> {
+    let (w, h, data) = mips.iter().find(|(w, h, _)| (*w).max(*h) <= 64).or(mips.last())?;
+    let (w, h) = (*w, *h);
+    let rgba_len = (w as usize) * (h as usize) * 4;
+    if data.len() == rgba_len {
+        return Some((data.clone(), w, h));
+    }
+    aurora_render::bc7::decode_level(data, w, h).map(|px| (px, w, h))
+}
+
 /// Expand 1-4 component pixels to RGBA8.
 pub fn to_rgba(components: u8, data: &[u8], pixels: usize) -> Vec<u8> {
     let c = components.max(1) as usize;
@@ -714,6 +788,53 @@ mod tests {
         assert_eq!(vertices[2].joints, [9, 7, 3, 9]);
         let (faces, _, _) = mesh_to_faces(&[face], None, Some(&[]));
         assert!(faces[0].as_ref().unwrap().skin.is_none(), "an empty palette cannot skin vertices");
+    }
+
+    /// A 32 x 32 image: `leaf(x, y)` solid or clear, solid texels `rgb`.
+    fn image(rgb: [u8; 3], leaf: impl Fn(usize, usize) -> bool) -> Vec<u8> {
+        let mut px = Vec::with_capacity(32 * 32 * 4);
+        for y in 0..32 {
+            for x in 0..32 {
+                let a = if leaf(x, y) { 255 } else { 0 };
+                px.extend_from_slice(&[rgb[0], rgb[1], rgb[2], a]);
+            }
+        }
+        px
+    }
+
+    #[test]
+    fn foliage_is_a_leafy_colour_with_many_fine_holes() {
+        // speckled leaves: a hash pattern, about half solid
+        let speckled = |x: usize, y: usize| (x * 7 + y * 13 + (x * y) % 5) % 3 != 0;
+        assert!(classify_foliage(&image([60, 110, 30], speckled), 32, 32), "green leaves");
+        assert!(classify_foliage(&image([170, 90, 20], speckled), 32, 32), "autumn leaves");
+        // the same holes in grey (a chain-link fence) or blue: not leaves
+        assert!(!classify_foliage(&image([120, 120, 120], speckled), 32, 32), "grey");
+        assert!(!classify_foliage(&image([40, 60, 160], speckled), 32, 32), "blue");
+        // a green decal: one solid disc in the middle, few edges
+        let disc = |x: usize, y: usize| (x as f32 - 15.5).hypot(y as f32 - 15.5) < 10.0;
+        assert!(!classify_foliage(&image([60, 110, 30], disc), 32, 32), "a decal");
+        // all solid or all clear: no holes
+        assert!(!classify_foliage(&image([60, 110, 30], |_, _| true), 32, 32));
+        assert!(!classify_foliage(&image([60, 110, 30], |_, _| false), 32, 32));
+        // too small or short data
+        assert!(!classify_foliage(&[0; 16], 2, 2));
+    }
+
+    #[test]
+    fn the_foliage_level_is_the_largest_of_64_px_or_less_in_rgba() {
+        let mips = vec![
+            (128, 128, vec![0u8; 128 * 128 * 4]),
+            (64, 64, vec![7u8; 64 * 64 * 4]),
+            (32, 32, vec![0u8; 32 * 32 * 4]),
+        ];
+        let (px, w, h) = foliage_level(&mips).expect("a level");
+        assert_eq!((w, h, px[0]), (64, 64, 7));
+        // BC7 blocks are decoded
+        let bc7 = vec![(8, 8, vec![0u8; 4 * 16])];
+        let (px, w, h) = foliage_level(&bc7).expect("decoded");
+        assert_eq!((w, h, px.len()), (8, 8, 8 * 8 * 4));
+        assert!(foliage_level(&[]).is_none());
     }
 
     #[test]

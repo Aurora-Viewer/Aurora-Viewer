@@ -195,6 +195,9 @@ pub struct WeatherSettings {
     /// Tumbleweeds roll across open ground (their own switch, with any
     /// debris or none).
     pub tumbleweeds: bool,
+    /// Textures never taken as foliage (false positives of the classifier,
+    /// `scene::jobs::classify_foliage`): kept on this computer only.
+    pub debris_not_foliage: Vec<uuid::Uuid>,
     pub quality: WeatherQuality,
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
@@ -262,6 +265,7 @@ impl Default for WeatherSettings {
             debris_density: debris::DEBRIS_DENSITY_DEFAULT,
             debris_stream: false,
             tumbleweeds: false,
+            debris_not_foliage: Vec::new(),
             quality: WeatherQuality::High,
             touched: false,
             former_region_weather: None,

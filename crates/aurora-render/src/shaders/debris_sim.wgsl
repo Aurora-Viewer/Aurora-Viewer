@@ -30,9 +30,9 @@ struct DebrisParams {
 
 @group(1) @binding(0) var<storage, read_write> debris: array<vec4<f32>>;
 @group(1) @binding(1) var<uniform> dp: DebrisParams;
-// The canopy map (debris.rs `Canopy`): per texel of the shelter map's
-// square x the top of the foliage there (m), 0 where the top is not
-// foliage; y the height under it to fall from (m).
+// The canopy map (debris.rs, object.wgsl `fs_canopy`): per texel of the
+// shelter map's square x 1 where the topmost surface is foliage, y its
+// height (m).
 @group(1) @binding(2) var debris_canopy: texture_2d<f32>;
 
 const DK_LEAVES: u32 = 1u;
@@ -124,7 +124,10 @@ fn ds_canopy(xy: vec2<f32>) -> vec2<f32> {
     let uv = ds_uv(xy);
     if (any(uv < vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) { return vec2<f32>(0.0); }
     let size = vec2<f32>(textureDimensions(debris_canopy));
-    return textureLoad(debris_canopy, vec2<i32>(uv * size), 0).xy;
+    let c = textureLoad(debris_canopy, vec2<i32>(uv * size), 0).xy;
+    if (c.x < 0.5) { return vec2<f32>(0.0); }
+    // its top, and leaves from up to 2 m under it
+    return vec2<f32>(c.y, 2.0);
 }
 
 // The surface's facing at `xy` (from its heights a texel around).
@@ -231,7 +234,7 @@ fn ds_kind(kind: u32) -> DsKindParams {
         case DK_SAND: { return DsKindParams(0.9, 3.0, 0.006, 1.2); }
         case DK_PAPER: { return DsKindParams(1.6, 30.0, 0.22, 1.5); }
         case DK_EMBERS: { return DsKindParams(-0.6, 5.0, 0.025, 1.5); }
-        default: { return DsKindParams(1.4, 28.0, 0.075, 12.0); }
+        default: { return DsKindParams(1.4, 28.0, 0.09, 12.0); }
     }
 }
 
@@ -259,7 +262,19 @@ fn ds_spawn(i: u32, seed: u32) {
     var z = ground + 0.05 + dr(seed + 4u) * k.height;
     var from_canopy = false;
     if (kind == DK_LEAVES) {
-        let canopy = ds_canopy(xy);
+        // look for foliage at a few places in the ring: leaves come from
+        // the trees around, however few they are
+        var canopy = ds_canopy(xy);
+        for (var t = 0u; t < 6u && canopy.x <= 0.0; t++) {
+            let rt = mix(lo, dp.rates.z, sqrt(dr(seed + 30u + t * 2u)));
+            let at = dr(seed + 31u + t * 2u) * 6.2831853;
+            let tried = cam.xy + vec2<f32>(cos(at), sin(at)) * rt;
+            let c = ds_canopy(tried);
+            if (c.x > 0.0) {
+                xy = tried;
+                canopy = c;
+            }
+        }
         if (canopy.x > 0.0) {
             // just under the canopy's top, among its leaves
             z = canopy.x - 0.3 - dr(seed + 4u) * min(canopy.y, 2.0);

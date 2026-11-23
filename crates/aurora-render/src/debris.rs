@@ -111,6 +111,7 @@ pub struct Debris {
     /// The canopy map (debris_sim.wgsl `debris_canopy`), drawn by the
     /// renderer with the shelter map's casters; until then, empty.
     canopy_view: wgpu::TextureView,
+    canopy_depth: wgpu::TextureView,
     canopy_drawn: bool,
     pool: u32,
     frame: u32,
@@ -229,6 +230,22 @@ impl Debris {
             view_formats: &[],
         });
         let canopy_view = canopy.create_view(&Default::default());
+        let canopy_depth = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("debris canopy depth"),
+                size: wgpu::Extent3d {
+                    width: CANOPY_PX,
+                    height: CANOPY_PX,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
         Debris {
             sim,
             frame_layout,
@@ -236,6 +253,7 @@ impl Debris {
             params,
             particles,
             canopy_view,
+            canopy_depth,
             canopy_drawn: false,
             pool,
             frame: 0,
@@ -246,6 +264,14 @@ impl Debris {
     /// The pool's size: a new quality makes a new `Debris`.
     pub fn pool(&self) -> u32 {
         self.pool
+    }
+
+    /// The canopy map's target and its depth, for the renderer to draw the
+    /// shelter map's casters into (object.wgsl `fs_canopy`); from then on
+    /// the leaves fall from it.
+    pub fn canopy_targets(&mut self) -> (&wgpu::TextureView, &wgpu::TextureView) {
+        self.canopy_drawn = true;
+        (&self.canopy_view, &self.canopy_depth)
     }
 
     /// The particles, as the instance buffer of `vs_debris`.

@@ -3699,6 +3699,23 @@ fn fs_fog_voxel(in: ShadowOut) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0);
 }
 
+// ---------------------------------------------------------- the canopy map
+// Aurora Weather's debris (debris.rs): the shelter map's casters drawn from
+// above again into a small target with a depth of its own, so that each
+// texel keeps the topmost surface: x 1 where it is foliage (a foliage
+// texture or a Linden tree, never a worn object), y its height. Leaves
+// start just under the foliage there.
+@fragment
+fn fs_canopy(in: ShadowOut) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
+    let alpha = sample_tex_unbiased(rec.tex.x, in.uv).a * rec.base_color.a;
+    if ((rec.flags.x & FLAG_ALPHA_BLEND) != 0u && alpha < 0.02) { discard; }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && alpha < rec.params.w) { discard; }
+    let leafy = (rec.flags.w & FLAG_FOLIAGE) != 0u && (rec.flags.x & FLAG_ANCHORED) == 0u;
+    return vec4<f32>(select(0.0, 1.0, leafy), in.world_pos.z, 0.0, 0.0);
+}
+
 // --------------------------------------------------------------- particles
 
 const PART_EMISSIVE: u32 = 1u;

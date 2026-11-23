@@ -3583,6 +3583,8 @@ impl Scene {
     fn reclassify_slots(&mut self, renderer: &mut Renderer, slots: &[u32]) {
         let alpha = &self.textures.alpha_by_slot;
         let channel = &self.textures.alpha_channel_by_slot;
+        // Aurora Weather's foliage (the canopy map): marked on the records
+        let foliage = &self.textures.foliage_by_slot;
         for &slot in slots {
             for &(_, idx) in self.slot_users.range((slot, 0)..=(slot, u32::MAX)) {
                 let idx = idx as usize;
@@ -3597,7 +3599,7 @@ impl Scene {
                         continue;
                     }
                     let (pass, pool) = face_mode(f, alpha, channel, object_auto_mask);
-                    if pass == f.pass && pool == f.glow_pool {
+                    if pass == f.pass && pool == f.glow_pool && !foliage.get(slot as usize).copied().unwrap_or(false) {
                         continue;
                     }
                     any = true;
@@ -3609,12 +3611,15 @@ impl Scene {
                     let (record, face) = (f.record, cull_face(f, idx, fi == 0));
                     // (`object_auto_mask`: neither rigged nor a HUD, the
                     // objects whose blended faces take a rank of their own)
-                    if (mode_changed || object_auto_mask)
+                    if (mode_changed || object_auto_mask || foliage.get(slot as usize).copied().unwrap_or(false))
                         && let Some(mut r) = renderer.records.get(record).copied()
                     {
                         r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
                         if object_auto_mask {
                             r.set_layer_rank(stacked_layer_rank(pass, f.te_index));
+                        }
+                        if foliage.get(slot as usize).copied().unwrap_or(false) {
+                            r.flags[3] |= flags::FOLIAGE;
                         }
                         renderer.records.set(record, r);
                     }
@@ -3643,6 +3648,7 @@ impl Scene {
         self.fresh_usage.insert(idx);
         let alpha = &self.textures.alpha_by_slot;
         let channel = &self.textures.alpha_channel_by_slot;
+        let foliage = &self.textures.foliage_by_slot;
         let mut last_slot = None;
         // (an object appearing keeps its rez effect through a rebuild)
         // (and its geometry may have been what it waited for)
@@ -3666,12 +3672,16 @@ impl Scene {
             } else {
                 0
             };
-            if (mode != 0 || rank != 0)
+            let leafy = foliage.get(f.base_slot as usize).copied().unwrap_or(false);
+            if (mode != 0 || rank != 0 || leafy)
                 && let Some(mut r) = renderer.records.get(f.record).copied()
             {
                 r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
                 if object_auto_mask {
                     r.set_layer_rank(rank);
+                }
+                if leafy {
+                    r.flags[3] |= flags::FOLIAGE;
                 }
                 renderer.records.set(f.record, r);
             }
@@ -4327,6 +4337,10 @@ impl Scene {
             // material (LLDrawPoolTree, setMinimumAlpha(0.5))
             if plant.is_some() {
                 rec.params[3] = 0.5;
+            }
+            // a Linden tree is always foliage (Aurora Weather's leaves)
+            if o.is_tree() {
+                rec.flags[3] |= flags::FOLIAGE;
             }
             // LLVOVolume: prims of the "light" material are fullbright
             if o.prim_material == LL_MCODE_LIGHT {

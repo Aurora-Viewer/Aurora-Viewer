@@ -3605,6 +3605,13 @@ The debris (the Debris card) is `weather/debris.rs` (its settings made into
 and the gust, landing on the shelter map's top surface and never blowing
 under cover) and drawn by `vs_debris` / `fs_debris` (`shaders/debris.wgsl`,
 in the scene module, with the rain); none of it exists while it is off.
+Leaves fall from foliage: `scene::jobs::classify_foliage` judges each texture
+once (by id, from a level of 64 px or less, in `TextureStreamer`'s uploads:
+holes in its alpha, many fine edges, a leafy average colour; an exclusion
+list for false positives), Linden trees always count, and the faces get the
+`FOLIAGE` record flag; the canopy map (`fs_canopy` in `shaders/object.wgsl`)
+draws the shelter map's casters again from above to keep, per texel, whether
+the topmost surface is foliage (never a worn object) and its height.
 
 ## Life of a frame
 

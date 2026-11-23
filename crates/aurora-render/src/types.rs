@@ -215,6 +215,9 @@ pub mod flags {
     /// Bit of flags[3], above packed texture animation: local studio scenery
     /// is excluded from the avatar's temporary white reveal.
     pub const STUDIO_STAGE: u32 = 1 << 29;
+    /// Bit of flags[3]: a foliage texture or a Linden tree (Aurora Weather's
+    /// canopy map, object.wgsl `fs_canopy`; worn objects never count).
+    pub const FOLIAGE: u32 = 1 << 28;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;

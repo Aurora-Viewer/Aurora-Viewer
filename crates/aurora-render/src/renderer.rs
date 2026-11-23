@@ -1244,6 +1244,8 @@ struct Pipelines {
     /// lying on what the map says, left every slope bare.
     shelter: wgpu::RenderPipeline,
     shelter_terrain: wgpu::RenderPipeline,
+    /// Aurora Weather's canopy map (debris.rs, object.wgsl `fs_canopy`).
+    canopy: wgpu::RenderPipeline,
     /// Aurora Weather's fog: the walls drawn into its flow grid (fog.rs
     /// `Flow`, object.wgsl `fs_fog_voxel`).
     fog_voxel: wgpu::RenderPipeline,
@@ -6455,6 +6457,18 @@ impl Backend {
                 ..shadow_desc("rain shelter", Some("fs_shadow"))
             },
         );
+        // Aurora Weather's debris: the canopy map (debris.rs, `fs_canopy`):
+        // the topmost surface, nearest the top first
+        let canopy = batch.add(
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                format: Some(crate::debris::CANOPY_FORMAT),
+                depth_compare: wgpu::CompareFunction::Less,
+                depth_bias: level,
+                ..shadow_desc("debris canopy", Some("fs_canopy"))
+            },
+        );
         let shelter_terrain = batch.add(
             &module,
             &shadow_pl,
@@ -6619,6 +6633,7 @@ impl Backend {
             shadow_terrain: shadow_terrain.resolve(&mut done),
             shelter: shelter.resolve(&mut done),
             shelter_terrain: shelter_terrain.resolve(&mut done),
+            canopy: canopy.resolve(&mut done),
             fog_voxel: fog_voxel.resolve(&mut done),
             post: post.resolve(&mut done),
             pick: pick.resolve(&mut done),
@@ -12097,6 +12112,53 @@ impl Backend {
         mark(&mut encoder, MARK_CLOUDS_END);
         // ---- Aurora Weather's fog volume (fog.rs): after the shadows it
         // reads, before the scene that reads it; then the sky's pipeline
+        // ---- Aurora Weather's canopy map (debris.rs): the shelter map's
+        // casters again, from above, into its own small target, for the
+        // leaves to fall from foliage (with its draws, this frame's)
+        if shelter_drawn_now
+            && still.is_none()
+            && f.debris.is_some_and(|d| d.kind == crate::types::DebrisKind::Leaves)
+            && let Some(debris) = &mut self.debris
+        {
+            let (target, depth) = debris.canopy_targets();
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("debris canopy"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(1, &self.records_bind_group, &[]);
+            pass.set_bind_group(2, &scene.textures, &[]);
+            pass.set_vertex_buffer(0, scene.vertices.slice(..));
+            pass.set_vertex_buffer(1, scene.skin.slice(..));
+            pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+            pass.set_pipeline(&self.pipelines.canopy);
+            let k = self.shelter_slot;
+            pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
+            let (off, count) = rg.spot[k];
+            if count > 0 {
+                pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                calls.set(calls.get() + 1);
+            }
+            draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
+        }
         mark(&mut encoder, MARK_FOG_BEGIN);
         if let Some(fog) = &mut self.fog {
             // its walls, drawn with the shelter map's casters into the flow

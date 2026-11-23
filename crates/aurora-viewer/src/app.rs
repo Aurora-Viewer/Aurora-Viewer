@@ -13089,7 +13089,14 @@ impl App {
             curvature: self.settings.planet_radius(),
             look: None,
             look_thumbs: None,
-            debris: self.weather_now.debris_look(self.weather_now.quality_index()),
+            debris: {
+                // the exclusion list, for the textures classified from now
+                let excluded = &mut self.scene.textures.foliage_excluded;
+                if excluded.len() != self.weather_now.debris_not_foliage.len() {
+                    *excluded = self.weather_now.debris_not_foliage.iter().copied().collect();
+                }
+                self.weather_now.debris_look(self.weather_now.quality_index())
+            },
             fog: self.weather_now.fog_look(
                 self.fog_drift.at,
                 crate::weather::fog::utc_clock(),
