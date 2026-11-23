@@ -2636,6 +2636,10 @@ pub fn show(
         }
     }
     let inv = &mut world.inventory;
+    // What the right pane was handed of the shared clipboard: a Copy, Cut or
+    // paste made in it is given back to the main pane once it is drawn, as the
+    // other windows do, or the next frame's copy above would erase it (#4570).
+    let mut dual_clipboard = None;
     if let Some(dual) = dual.as_deref_mut() {
         if !*open {
             dual.pending_delete = None;
@@ -2648,6 +2652,7 @@ pub fn show(
         dual.focus_search = *open && dual.focus_search;
         dual.clipboard.clone_from(&st.clipboard);
         dual.cut = st.cut;
+        dual_clipboard = Some((dual.clipboard.clone(), dual.cut));
         dual.pending = st.pending;
         dual.progress.clone_from(&st.progress);
         dual.copy_jobs.clone_from(&st.copy_jobs);
@@ -2846,6 +2851,10 @@ pub fn show(
         st.wanted_hover_images.extend(dual.wanted_hover_images.drain());
         st.preferences_dirty |= dual.preferences_dirty;
         dual.preferences_dirty = false;
+        if dual_clipboard.is_some_and(|before| before != (dual.clipboard.clone(), dual.cut)) {
+            st.clipboard.clone_from(&dual.clipboard);
+            st.cut = dual.cut;
+        }
         st.consume_clipboard |= dual.consume_clipboard;
         dual.consume_clipboard = false;
         st.windows.append(&mut dual.windows);

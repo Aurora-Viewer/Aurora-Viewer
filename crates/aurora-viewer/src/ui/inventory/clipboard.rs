@@ -1294,6 +1294,38 @@ mod tests {
         }
     }
 
+    /// #4570: a Copy or Cut in the right pane of the dual layout reaches
+    /// the shared clipboard, so it survives the next frame and pastes in
+    /// either pane.
+    #[test]
+    fn dual_pane_copy_and_cut_reach_the_shared_clipboard() {
+        for cut in [false, true] {
+            let mut h = Harness::new();
+            h.prefs.dual_panel = true;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(1400.0, 900.0));
+            h.dual.show_original(&h.world.inventory, id(8100));
+            h.dual.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let row = h
+                .ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", h.dual.ui_id, id(8100)))))
+                .expect("right pane row");
+            h.click(row.left_center() + egui::vec2(80.0, 0.0), Default::default());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.dual))));
+            assert!(h.st.clipboard.is_empty());
+            h.frame(vec![if cut { Event::Cut } else { Event::Copy }]);
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            assert_eq!(h.st.clipboard, vec![id(8100)], "cut: {cut}");
+            assert_eq!(h.st.cut, cut);
+            assert_eq!(h.dual.clipboard, vec![id(8100)], "the right pane keeps it too");
+            assert_eq!(h.dual.cut, cut);
+            assert!(holds_marker(&h.st, &id(8100).to_string()), "Ctrl+V finds its marker");
+        }
+    }
+
     #[test]
     fn enter_on_the_selected_inventory_object_opens_it_like_a_double_click() {
         use crate::world::appearance::Action as Wear;
