@@ -94,18 +94,29 @@ pub fn open_conversations(ctx: &egui::Context, open: &mut bool) {
     ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("conversations")));
 }
 
+/// A window the Legacy Viewer opens as a script floater
+/// (LLScriptFloaterManager's type map, indra/newview/llscriptfloater.cpp):
+/// an llDialog menu or an llTextBox (ScriptDialog), an llLoadURL link
+/// (LoadWebPage), an object's llGiveInventory (ObjectGiveItem). A
+/// permission question (ScriptQuestion) is a toast there, not one of them.
+pub fn script_floater(n: &Notification) -> bool {
+    matches!(
+        n.data,
+        Data::Dialog { .. } | Data::TextBox { .. } | Data::Url(_) | Data::Inventory { task: true, .. }
+    )
+}
+
 /// Whether the toast or card of `n` may show while the view is kept clear
 /// (`hidden`: mouselook, the photo's full frame). In mouselook
-/// (`scripts_in_view`) a scripted object's window still does: an llDialog
-/// menu, an llTextBox, the questions that wait for an answer
-/// (`Notification::stays_until_answered`), which Alt lets the mouse click.
-/// The Legacy Viewer keeps every script floater on screen when it puts the
-/// other windows away for mouselook (LLAgent::changeCameraToMouselook and
-/// LLAgent::changeCameraToDefault, `script_floater` in their skip list,
-/// indra/newview/llagent.cpp); the other notices stay away until mouselook
-/// ends (#4363).
+/// (`scripts_in_view`) a script floater still does (`script_floater`),
+/// which Alt lets the mouse click: the Legacy Viewer keeps every script
+/// floater on screen when it puts the other windows away for mouselook
+/// (LLAgent::changeCameraToMouselook and LLAgent::changeCameraToDefault,
+/// `script_floater` in their skip list, indra/newview/llagent.cpp). The
+/// other notices, a permission question included, stay away until
+/// mouselook ends (#4363).
 pub fn clear_view_shows(n: &Notification, hidden: bool, scripts_in_view: bool) -> bool {
-    !hidden || (scripts_in_view && n.stays_until_answered())
+    !hidden || (scripts_in_view && script_floater(n))
 }
 
 /// How long the toast of `n` stays.
@@ -1028,7 +1039,7 @@ fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_
 /// scripted windows first (the newest three), the newest others in the
 /// room left, as Aurora's center does (`notification_center::visible`). In
 /// do not disturb only the script menus come out; the rest waits there. In
-/// mouselook (`scripts_only`) only the scripted windows
+/// mouselook (`scripts_only`) only the script floaters
 /// (`clear_view_shows`).
 fn shown_toasts(list: &Notifications, nui: &NotifUi, dnd: bool, scripts_only: bool) -> (Vec<u64>, usize) {
     let drawn: Vec<(u64, bool)> = nui
@@ -2296,10 +2307,10 @@ mod tests {
         assert_eq!(ids(&nui), windows[1..3].to_vec());
     }
 
-    /// #4363: in mouselook a scripted object's window still toasts (Alt
-    /// frees the mouse to click it), as the Legacy Viewer keeps its script
-    /// floaters; the information around it stays away. The photo's full
-    /// frame shows none.
+    /// #4363: in mouselook a script floater still toasts (Alt frees the
+    /// mouse to click it), as the Legacy Viewer keeps them; the permission
+    /// question (a toast there) and the information stay away. The photo's
+    /// full frame shows none.
     #[test]
     fn mouselook_draws_only_the_scripted_windows() {
         let mut list = Notifications::default();
@@ -2308,12 +2319,13 @@ mod tests {
         let info = list.push(Kind::Info, "Lune paid you L$50", "", Data::None);
         let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
         update_toasts(&mut list, &mut nui, 0.0, 30.0, TOAST_TIP, false, false);
-        // mouselook: the scripted windows only, the newest three, the
-        // fourth behind "+ 1 more"
+        // mouselook: the script floaters only (the text box, the link, the
+        // object's offer), not the permission question (windows[1])
         update_toasts(&mut list, &mut nui, 0.1, 30.0, TOAST_TIP, true, false);
-        assert_eq!(shown_toasts(&list, &nui, false, true), (windows[1..].to_vec(), 1));
+        let floaters = vec![windows[0], windows[2], windows[3]];
+        assert_eq!(shown_toasts(&list, &nui, false, true), (floaters.clone(), 0));
         for n in &list.list {
-            let scripted = windows.contains(&n.id);
+            let scripted = floaters.contains(&n.id);
             assert_eq!(clear_view_shows(n, true, true), scripted, "mouselook: {}", n.title);
             assert!(!clear_view_shows(n, true, false), "the photo's full frame: {}", n.title);
             assert!(clear_view_shows(n, false, false), "a clear view is not asked: {}", n.title);
@@ -2335,7 +2347,7 @@ mod tests {
         update_toasts(&mut list, &mut nui, 0.2, 30.0, TOAST_TIP, true, false);
         let (shown, behind) = shown_toasts(&list, &nui, false, true);
         assert_eq!(shown, vec![windows[2], windows[3], menu]);
-        assert_eq!(behind, 2);
+        assert_eq!(behind, 1);
         // the information toasted before is not drawn, and is back once
         // mouselook ends if its time has not run out
         assert!(!shown.contains(&info) && !shown.contains(&message));

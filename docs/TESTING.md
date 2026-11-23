@@ -3277,9 +3277,11 @@ llRequestPermissions question, an llLoadURL link and an object's
 llGiveInventory), then four pieces of information. The windows stay out
 until answered, in both notification styles: the newest three shown, the
 others behind "+ N more", the information folding away after its time;
-open and close the list and they come out again. In mouselook they stay
-drawn and the information does not (#4363): with `AURORA_DEMO_CAMERA=ml`
-and a capture at frame 650, the windows at the top right over the view;
+open and close the list and they come out again. In mouselook the menu,
+the text box, the link and the object's offer stay drawn, the permission
+question and the information do not (#4363): with `AURORA_DEMO_CAMERA=ml`
+and a capture at frame 650, those three newest at the top right, "+ 1 more"
+under them;
 with `AURORA_DEMO_CAMERA=ml-alt` Alt frees the cursor from frame 620 to
 click them (`alt free=true` in the log). `repeat`: a fountain's menu sent three times on one channel, once on
 another, and a game table's menu on the first channel, as a HUD or vendor
