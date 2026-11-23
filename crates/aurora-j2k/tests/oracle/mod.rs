@@ -389,13 +389,47 @@ pub enum Verdict {
     Differ { comp: usize, at: usize, count: usize },
 }
 
-pub fn compare(oracle: &Option<Vec<Plane>>, ours: &Result<aurora_j2k::Image, aurora_j2k::Error>) -> Verdict {
+/// Whether the codestream's main header chooses the irreversible 9/7
+/// wavelet (the transformation byte of its COD marker).
+pub fn lossy(cs: &[u8]) -> bool {
+    let mut i = 2;
+    while i + 4 <= cs.len() && cs[i] == 0xFF {
+        let marker = cs[i + 1];
+        // (SOT, SOD: the main header is over)
+        if marker == 0x90 || marker == 0x93 {
+            break;
+        }
+        if marker == 0x52 {
+            return cs.get(i + 13) == Some(&0);
+        }
+        i += 2 + usize::from(u16::from_be_bytes([cs[i + 2], cs[i + 3]]));
+    }
+    false
+}
+
+/// How far a sample of this decoder may be from OpenJPEG's and still count
+/// as the same. Nothing on x86-64, where OpenJPEG's 9/7 wavelet and colour
+/// transform run its SSE code, which this decoder follows operation for
+/// operation. Elsewhere OpenJPEG runs its plain C code, in which a compiler
+/// may fuse a product and a sum into one operation (clang does on AArch64):
+/// a rounding then falls the other way now and then, and OpenJPEG's own
+/// lossy samples are one unit off its x86-64 ones in a few places. This
+/// decoder's are the same on every platform (the test
+/// `a_lossy_codestream_decodes_alike_on_every_platform`), so there the
+/// comparison allows that unit, on lossy codestreams only.
+fn tolerance(cs: &[u8]) -> u64 {
+    if cfg!(target_arch = "x86_64") || !lossy(cs) { 0 } else { 1 }
+}
+
+/// Compares what both decoders made of `cs` (see [`tolerance`]).
+pub fn compare(cs: &[u8], oracle: &Option<Vec<Plane>>, ours: &Result<aurora_j2k::Image, aurora_j2k::Error>) -> Verdict {
     match (oracle, ours) {
         (None, Err(_)) => Verdict::Same,
         (Some(a), Ok(img)) => {
             let b = planes_of(img);
             let mut first = None;
             let mut count = 0;
+            let mut furthest = 0u64;
             for (c, (pa, pb)) in a.iter().zip(&b).enumerate() {
                 if (pa.w, pa.h) != (pb.w, pb.h) {
                     return Verdict::Differ {
@@ -408,12 +442,13 @@ pub fn compare(oracle: &Option<Vec<Plane>>, ours: &Result<aurora_j2k::Image, aur
                     if x != y {
                         count += 1;
                         first.get_or_insert((c, i));
+                        furthest = furthest.max((i64::from(*x) - i64::from(*y)).unsigned_abs());
                     }
                 }
             }
             match first {
-                None => Verdict::Same,
-                Some((comp, at)) => Verdict::Differ { comp, at, count },
+                Some((comp, at)) if furthest > tolerance(cs) => Verdict::Differ { comp, at, count },
+                _ => Verdict::Same,
             }
         }
         (o, r) => Verdict::Outcome {

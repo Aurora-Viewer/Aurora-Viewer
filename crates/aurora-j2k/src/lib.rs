@@ -30,6 +30,16 @@
 //! to its caller: the JP2 file format (a caller hands it the codestream of
 //! the `jp2c` box) and the conversion of samples that are not 8-bit.
 //!
+//! # Platforms
+//!
+//! The samples are the same wherever the decoder runs: it never fuses a
+//! product and a sum into one operation, so its floats do not depend on the
+//! processor. They are OpenJPEG's on x86-64, whose SSE code this decoder
+//! follows operation for operation. Elsewhere OpenJPEG runs plain C code
+//! that a compiler may fuse (clang does on AArch64), and its own lossy
+//! samples can then be one unit off, in a few places, from what it gives
+//! on x86-64 and from what this decoder gives everywhere.
+//!
 //! # Limits
 //!
 //! Every [`Limits`] field is checked from the headers before what it bounds

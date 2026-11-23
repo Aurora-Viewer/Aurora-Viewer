@@ -14008,7 +14008,9 @@ What the inventory must show with these scenarios:
   `texture load:` line. Without it, `aurora-j2k` decodes and OpenJPEG only
   takes what it refuses (the log then has `aurora-j2k: …; decoding with
   OpenJPEG` at the debug level, target `aurora_assets::j2k`). Whole
-  textures have the same pixels either way; a texture whose download is
+  textures have the same pixels either way on x86-64 (on Apple Silicon
+  OpenJPEG's own lossy pixels can be one unit off in a few places, where
+  `aurora-j2k` has the x86-64 ones); a texture whose download is
   still partial can be finer with `aurora-j2k`, which keeps the code-blocks
   of the packet the bytes end in where OpenJPEG drops them. Offline, on a
   folder of `.j2c` files (a demo cache's `tex`, never the sealed store):

@@ -206,7 +206,7 @@ fn main() {
             let a = oracle::decode(&cs, u32::from(reduce));
             let b = ours(dec, &cs, reduce, args.threads);
             bump(&whole.requests);
-            match oracle::compare(&a, &b) {
+            match oracle::compare(&cs, &a, &b) {
                 Verdict::Same => bump(if a.is_some() { &whole.same } else { &whole.both_refused }),
                 Verdict::Outcome { oracle, ours: _ } => {
                     bump(if oracle { &whole.outcome_oracle_only } else { &whole.outcome_ours_only });
@@ -237,7 +237,7 @@ fn main() {
                 let a = oracle::decode(part, u32::from(reduce));
                 let b = ours(dec, part, reduce, args.threads);
                 bump(&cut.requests);
-                match oracle::compare(&a, &b) {
+                match oracle::compare(part, &a, &b) {
                     Verdict::Same => bump(if a.is_some() { &cut.same } else { &cut.both_refused }),
                     Verdict::Outcome { oracle, ours: _ } => {
                         bump(if oracle { &cut.outcome_oracle_only } else { &cut.outcome_ours_only });
