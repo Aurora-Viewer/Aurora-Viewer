@@ -395,7 +395,8 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         "top",
         "cut",
         aurora_i18n::tr!("common-cut"),
-        ready && movable,
+        // LLInvFVBridge::canMenuCut: removable too, RLVa's folder locks included
+        ready && movable && ids.iter().all(|id| facts.rlva.removable(inv, *id)),
         Command::Copy(ids.clone(), true),
     );
     let paste = ready && single && to.is_some_and(|to| clipboard::paste_allowed(inv, st, to, prefs, facts));
@@ -611,6 +612,14 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                         aurora_i18n::tr!("common-apply-to-myself-only"),
                         single && !it.asset_id.is_nil(),
                         InvAction::Environment(it.asset_id, it.flags),
+                    );
+                    c.invoke(
+                        "apply-save-parcel",
+                        TEXT,
+                        "map-pin-filled",
+                        aurora_i18n::tr!("parcel-environment-apply-save"),
+                        single && crate::world::inventory::actions::environment_applies_locally(it) && !facts.environment_locked,
+                        InvAction::EnvironmentSaveParcel(it.asset_id, it.flags),
                     );
                 }
             }
@@ -991,12 +1000,17 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         );
     }
     if !trash || all {
+        // LLInvFVBridge::canMenuDelete (isItemRemovable(false)): Delete
+        // stays enabled on a worn selection, and asks to take it off first
+        // ("DeleteWornItems", `confirm_or_run`). No row of its own, as in
+        // the Legacy Viewer.
+        let detach = ready && super::delete::detach_allowed(inv, &ids, prefs, facts);
         c.add(
             "delete",
             "bottom",
             "trash-filled",
             aurora_i18n::tr!("common-delete"),
-            ready && super::delete::allowed(inv, &ids, prefs, facts),
+            ready && (super::delete::allowed(inv, &ids, prefs, facts) || detach),
             Command::Delete(ids, false),
         );
         c.slot("delete", 7);
@@ -1085,10 +1099,14 @@ fn item_attachments(
                 && !rules::in_type(inv, *id, 14)
                 && inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13))
         });
+    // The entries clicked (links or items), one per original when the
+    // selection is complete: a link is worn by its own folder's locks.
+    let entries = if selected.len() == ids.len() { ids } else { selected };
     // RLVa: what a lock forbids is greyed (ERlvWearMask in LLObjectBridge
-    // and LLWearableBridge::buildContextMenu, llinventorybridge.cpp).
+    // and LLWearableBridge::buildContextMenu, llinventorybridge.cpp, which
+    // ask for the entry itself: canAttach(item), canWear(item)).
     let rlva = |point: u8, replace: bool| {
-        selected.iter().all(|id| {
+        entries.iter().all(|id| {
             let wear = facts.rlva.wear(inv, *id, point);
             if replace { wear.replace } else { wear.add }
         })
@@ -1113,7 +1131,7 @@ fn item_attachments(
             aurora_i18n::tr!("common-add"),
             wear && rlva(0, false) && selected.iter().all(|id| inv.items.get(id).is_some_and(|it| it.asset_type != 13)),
             InvAction::Appearance(Wear::WearItems {
-                items: selected.to_vec(),
+                items: entries.to_vec(),
                 replace: false,
                 point: 0,
             }),
@@ -1142,7 +1160,7 @@ fn item_attachments(
                         &label,
                         wear && objects && rlva(*point, false),
                         Command::Invoke(InvAction::Appearance(Wear::WearItems {
-                            items: selected.to_vec(),
+                            items: entries.to_vec(),
                             replace: false,
                             point: *point,
                         })),
@@ -1368,6 +1386,83 @@ mod tests {
     }
 
     #[test]
+    fn the_parcel_save_row_is_greyed_while_rlva_holds_the_environment() {
+        let mut inv = inventory();
+        let item = Uuid::from_u128(8103);
+        let settings = inv.items.get_mut(&item).expect("demo item");
+        settings.asset_type = 56;
+        settings.inv_type = 56;
+        settings.asset_id = Uuid::from_u128(4243);
+        let enabled = |facts: &Facts| {
+            let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), facts);
+            c.entries
+                .iter()
+                .find(|e| e.id == "apply-save-parcel")
+                .expect("parcel save row")
+                .enabled
+        };
+        assert!(enabled(&facts()));
+        let locked = Facts {
+            environment_locked: true,
+            ..facts()
+        };
+        assert!(!enabled(&locked));
+    }
+
+    #[test]
+    fn the_parcel_save_row_takes_a_no_copy_or_no_modify_environment() {
+        use crate::world::inventory::actions::{COPY, MODIFY, TRANSFER};
+        let item = Uuid::from_u128(8103);
+        for mask in [MODIFY | TRANSFER, COPY | TRANSFER, 0] {
+            let mut inv = inventory();
+            let settings = inv.items.get_mut(&item).expect("demo item");
+            settings.asset_type = 56;
+            settings.inv_type = 56;
+            settings.asset_id = Uuid::from_u128(4243);
+            settings.base_mask = mask;
+            settings.owner_mask = mask;
+            let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), &facts());
+            let row = c.entries.iter().find(|e| e.id == "apply-save-parcel").expect("parcel save row");
+            assert!(row.enabled, "mask {mask:#x}");
+        }
+    }
+
+    #[test]
+    fn the_parcel_save_row_takes_an_environment_whoever_owns_it() {
+        // AGENTS.md §2's owner cases, with no permission and with all
+        let me = Uuid::from_u128(2);
+        let group = Uuid::from_u128(4244);
+        let item = Uuid::from_u128(8103);
+        let facts = Facts { agent: me, ..facts() };
+        for (case, owner, group_owned, library) in [
+            ("mine", me, false, false),
+            ("group-owned", group, true, false),
+            ("someone else's", Uuid::from_u128(4245), false, false),
+            ("the Library's", Uuid::from_u128(4246), false, true),
+        ] {
+            for mask in [crate::world::inventory::actions::FULL, 0] {
+                let mut inv = inventory();
+                let settings = inv.items.get_mut(&item).expect("demo item");
+                settings.asset_type = 56;
+                settings.inv_type = 56;
+                settings.asset_id = Uuid::from_u128(4243);
+                settings.base_mask = mask;
+                settings.owner_mask = mask;
+                settings.owner = owner;
+                settings.group_owned = group_owned;
+                settings.group_id = if group_owned { group } else { Uuid::nil() };
+                let parent = settings.parent;
+                if library {
+                    inv.folders.get_mut(&parent).expect("demo folder").library = true;
+                }
+                let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), &facts);
+                let row = c.entries.iter().find(|e| e.id == "apply-save-parcel").expect("parcel save row");
+                assert!(row.enabled, "{case}, mask {mask:#x}");
+            }
+        }
+    }
+
+    #[test]
     fn landmark_destination_actions_use_link_targets_and_require_one_available_asset() {
         let mut inv = inventory();
         let item = Uuid::from_u128(8103);
@@ -1473,6 +1568,7 @@ mod tests {
             "play-local",
             "play-sound",
             "apply-environment",
+            "apply-save-parcel",
             "gesture-active",
             "about-landmark",
             "copy-landmark-slurl",

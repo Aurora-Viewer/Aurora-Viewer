@@ -656,7 +656,7 @@ impl WorldMapUi {
         }
         let fade = if dragging { 0.55 } else { 1.0 };
         let card = self.place_card(ui, p, world, tiles, cam, pictures, map, fade, actions);
-        self.nav(ui, p, map, fade, world.rlva_can_teleport_home(), actions);
+        self.nav(ui, p, map, fade, world.rlva_home_button_enabled(), actions);
         self.layers(ui, p, opts, map, fade);
         if let Some(tab) = self.ov.drawer {
             let top = map.top() + EDGE + self.ov.sizes.get("search").map_or(40.0, |s| s.y) + GAP;
@@ -1266,7 +1266,7 @@ impl WorldMapUi {
                 let region = place.map_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned(), |p| p.1);
                 widgets::paint_elided(ui, &region, pos2(x, rect.bottom() - 12.5), w, small, p.muted);
                 // greyed under RLVa @tplm (LLLandmarksPanel "teleport")
-                let allowed = world.rlva_can_teleport_landmark();
+                let allowed = world.rlva_landmark_button_enabled();
                 if go_resp.hovered() && allowed {
                     ui.painter().rect_filled(go, ui.visuals().widgets.inactive.corner_radius, p.raised);
                 }
@@ -1306,9 +1306,9 @@ impl WorldMapUi {
                     body,
                     p.ink,
                 );
-                // greyed when RLVa would refuse it (LLTeleportHistoryPanel:
-                // canTeleportToLocation)
-                let allowed = world.rlva_can_teleport_global(h.global);
+                // greyed as LLTeleportHistoryPanel greys it
+                // (canTeleportToLocation, whatever the distance)
+                let allowed = world.rlva_can_teleport_location();
                 if go_resp.hovered() && allowed {
                     ui.painter().rect_filled(go, ui.visuals().widgets.inactive.corner_radius, p.raised);
                 }
@@ -1710,16 +1710,11 @@ impl WorldMapUi {
             .and_then(|(item, ..)| world.inventory.items.get(item))
             .map_or(Uuid::nil(), |i| i.thumbnail);
         let tex = self.thumbnail(tiles, pictures, thumb_id, region.as_ref().map(|r| r.0));
-        // what its buttons do
-        // greyed when RLVa would refuse it: @tplm for a landmark, the
-        // position's rules for a tracked place
-        let can_teleport = if landmark.is_some() {
-            world.rlva_can_teleport_landmark()
-        } else {
-            track
-                .as_ref()
-                .is_some_and(|t| !t.pending && !t.invalid && world.rlva_can_teleport_global(glam::DVec3::new(t.x, t.y, t.z as f64)))
-        };
+        // what its buttons do: the map's Teleport button follows the
+        // tracking alone (LLFloaterWorldMap::draw); RLVa refuses the
+        // teleport itself, with its notice (teleportViaLandmark,
+        // teleportViaLocation)
+        let can_teleport = landmark.is_some() || track.as_ref().is_some_and(|t| !t.pending && !t.invalid);
         let local = |t: &crate::world::worldmap::Track, (sx, sy): (u32, u32)| {
             glam::Vec3::new((t.x - sx as f64 * 256.0) as f32, (t.y - sy as f64 * 256.0) as f32, t.z)
         };

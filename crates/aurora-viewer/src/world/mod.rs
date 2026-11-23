@@ -82,6 +82,7 @@ pub mod outfit;
 pub mod outfit_backup;
 pub mod outfit_folders;
 pub mod outfit_paste;
+pub mod parcel_env;
 pub mod parcel_visibility;
 pub mod parked;
 pub mod particle_filters;
@@ -142,6 +143,8 @@ mod group_notice_tests;
 mod last_speaker_tests;
 #[cfg(test)]
 mod object_name_tests;
+#[cfg(test)]
+pub(crate) mod rlva_location_tests;
 #[cfg(test)]
 mod toasts_tests;
 
@@ -803,6 +806,8 @@ pub struct World {
     /// Full description of that parcel (navigation bar icons, media, voice).
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
     pub parcel_visibility: parcel_visibility::Visibility,
+    /// Environments saved for parcels.
+    pub parcel_env: parcel_env::ParcelEnv,
     /// The photo's isolation (`snapshot::isolate`): read with the parcel
     /// filter by `parcel_object_visibility`.
     pub photo_isolation: crate::snapshot::isolate::Isolation,
@@ -881,6 +886,9 @@ pub struct World {
     /// not TeleportFinish): the camera may stay where it is
     /// (`Camera::on_teleport_arrival`).
     pub arrived_by_local_teleport: bool,
+    /// The last arrival was in another region than the one before (a
+    /// teleport away or a border crossing), not the login.
+    pub arrived_in_another_region: bool,
     /// Inventory folders asked again after a failed fetch since the agent
     /// last changed region (`InventoryFetchFailed`).
     inventory_retried: HashSet<Uuid>,
@@ -939,10 +947,11 @@ pub struct World {
     /// fully, 2 always fully (Settings::render_exceptions), copied from the
     /// settings each frame for the menus of the people lists.
     pub render_exceptions: std::collections::HashMap<Uuid, u8>,
-    /// The SLURL of the place a teleport leaves, taken at its TeleportFinish
-    /// (LLAgent::setTeleportState(TELEPORT_MOVING) saves the "back" SLURL
-    /// there) and said on its arrival.
-    tp_back_slurl: Option<String>,
+    /// The place a teleport leaves (grid, region, position), taken at its
+    /// TeleportFinish (LLAgent::setTeleportState(TELEPORT_MOVING) saves the
+    /// "back" SLURL there) and said on its arrival, its SLURL made then as
+    /// the Legacy Viewer's getSLURLString is.
+    tp_back_slurl: Option<(Option<String>, String, Vec3)>,
     /// The account's list of open private and group conversations (open_ims.rs).
     open_ims_path: Option<std::path::PathBuf>,
     /// Conversations of the last session, read at login, that the app
@@ -1207,6 +1216,7 @@ impl World {
             sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
             parcel_visibility: Default::default(),
+            parcel_env: Default::default(),
             photo_isolation: Default::default(),
             concealed_attachment: Uuid::nil(),
             avatar_studio: false,
@@ -1227,6 +1237,7 @@ impl World {
             arrived_by_crossing: false,
             local_teleport: false,
             arrived_by_local_teleport: false,
+            arrived_in_another_region: false,
             inventory_retried: HashSet::new(),
             origin_shift: Vec3::ZERO,
             left_behind_since: None,
@@ -1369,23 +1380,74 @@ impl World {
     }
 
     /// LLAgentUI::buildSLURL (indra/newview/llagentui.cpp): where the agent
-    /// is now, on the main region's grid. None before the first arrival,
-    /// with no region name yet, or under RLVa `@showloc` (stricter than the
-    /// Legacy Viewer, whose line names the place left even then).
+    /// is now, on the main region's grid. None before the first arrival or
+    /// with no region name yet. Under RLVa `@showloc` a connected region is
+    /// "(Hidden region)" (`rlva_slurl_on`).
     pub(crate) fn back_slurl(&self) -> Option<String> {
-        if !self.arrived_once || self.rlva.has("showloc") {
+        let (grid, region, pos) = self.back_place()?;
+        Some(self.rlva_slurl_on(grid.as_deref(), &region, pos))
+    }
+
+    /// Where the agent is now: grid, region and position of `back_slurl`.
+    fn back_place(&self) -> Option<(Option<String>, String, Vec3)> {
+        if !self.arrived_once {
             return None;
         }
         let handle = self.main_region?;
         let name = self.regions.get(&handle).map(|r| r.name.as_str()).filter(|n| !n.is_empty())?;
-        Some(crate::slurl::make_on(self.grid_of(handle).as_deref(), name, self.agent.position))
+        Some((self.grid_of(handle), name.to_owned(), self.agent.position))
+    }
+
+    /// LLSLURL::getSLURLString (indra/newview/llslurl.cpp, fsslurl.cpp):
+    /// the SLURL of a place on `grid`, "(Hidden region)" with no position
+    /// under RLVa `@showloc` for a region the agent is connected to
+    /// (RlvUtil::isNearbyRegion, rlvcommon.cpp: the exact name).
+    pub(crate) fn rlva_slurl_on(&self, grid: Option<&str>, region: &str, pos: Vec3) -> String {
+        if self.rlva_hides_region(region) {
+            crate::slurl::hidden_on(grid, aurora_i18n::tr!("rlva-hidden-region"))
+        } else {
+            crate::slurl::make_on(grid, region, pos)
+        }
+    }
+
+    /// The region a teleport offer names ("Join me in [REGION]"): "(Hidden)"
+    /// under RLVa `@showloc` (handle_lure, indra/newview/llviewermessage.cpp:
+    /// Hidden::Generic, not Hidden::Region).
+    pub fn rlva_lure_region(&self) -> String {
+        if self.rlva.has("showloc") {
+            aurora_i18n::tr!("rlva-hidden-generic").to_owned()
+        } else {
+            self.region_name()
+        }
+    }
+
+    /// RLVa `@showloc` hides `region`, one the agent is connected to:
+    /// `hasBehaviour(RLV_BHVR_SHOWLOC) && RlvUtil::isNearbyRegion`
+    /// (rlvcommon.cpp: the exact name of a region of LLWorld).
+    pub(crate) fn rlva_hides_region(&self, region: &str) -> bool {
+        self.rlva.has("showloc") && !region.is_empty() && self.regions.values().any(|r| r.name == region)
+    }
+
+    /// What `slurl::make` hides under RLVa `@showloc`: the "(Hidden
+    /// region)" label and the names of the regions the agent is connected
+    /// to (`slurl::set_hidden_regions`); None without the restriction.
+    pub fn rlva_slurl_hidden_regions(&self) -> Option<(String, Vec<String>)> {
+        self.rlva.has("showloc").then(|| {
+            (
+                aurora_i18n::tr!("rlva-hidden-region").to_owned(),
+                self.regions.values().map(|r| r.name.clone()).filter(|n| !n.is_empty()).collect(),
+            )
+        })
     }
 
     /// process_agent_movement_complete (indra/newview/llviewermessage.cpp,
     /// FSShowBackSLURL): the teleport's "completed_from" message
     /// (teleport_strings.xml) in nearby chat, a ChatSystemMessageTip.
+    /// Under RLVa `@showloc` the line is said too, the place left
+    /// "(Hidden region)" while still connected (`rlva_slurl_on`, as
+    /// getSLURLString makes `[T_SLURL]` there).
     fn say_back_slurl(&mut self, slurl: &str) {
-        if !self.show_back_slurl || self.rlva.has("showloc") {
+        if !self.show_back_slurl {
             return;
         }
         self.system_notice(
@@ -3453,7 +3515,8 @@ impl World {
                 // to another region (MainRegionChanged comes first) only the
                 // arrival's list stays; the simulators still connected send
                 // theirs again.
-                if self.region_left.take().is_some_and(|left| left != handle) && !self.arrived_by_crossing {
+                self.arrived_in_another_region = self.region_left.take().is_some_and(|left| left != handle);
+                if self.arrived_in_another_region && !self.arrived_by_crossing {
                     self.coarse.retain(|h, _| *h == handle);
                 }
                 self.movement_complete = true;
@@ -3469,7 +3532,7 @@ impl World {
                     // @showloc: the session keeps neither the name nor the
                     // way back to the place (LLTeleportHistory::updateCurrentLocation)
                     let entry = if self.rlva.has("showloc") {
-                        tphistory::TpEntry::hidden(aurora_i18n::tr!("rlva-hidden-region"), at)
+                        tphistory::TpEntry::hidden(aurora_i18n::tr!("rlva-hidden-parcel"), at)
                     } else {
                         tphistory::TpEntry {
                             region: self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default(),
@@ -3503,7 +3566,8 @@ impl World {
                     self.friends_only_teleport_arrival();
                     self.tp_cancel.on_end();
                 }
-                if let Some(slurl) = self.tp_back_slurl.take().filter(|_| self.teleporting) {
+                if let Some((grid, region, pos)) = self.tp_back_slurl.take().filter(|_| self.teleporting) {
+                    let slurl = self.rlva_slurl_on(grid.as_deref(), &region, pos);
                     self.say_back_slurl(&slurl);
                 }
                 self.teleporting = false;
@@ -3891,7 +3955,7 @@ impl World {
                 }
                 // the region left is still the main one: the session changes
                 // it right after this event (switch_region)
-                self.tp_back_slurl = self.back_slurl();
+                self.tp_back_slurl = self.back_place();
                 self.teleporting = true;
                 let remote = Some(handle) != self.main_region;
                 // TeleportStart has no destination. Unlike Firestorm's
@@ -4095,7 +4159,12 @@ impl World {
                 experience,
                 region,
             } => {
+                let requested = questions;
                 let (questions, auto_accept) = self.rlva_script_permissions(task_id, questions);
+                // process_script_question keeps what RLVa stripped for the
+                // answer (RlvUtil::filterScriptQuestions, "rlv_blocked")
+                let notice = self.rlva_permission_notice(requested, questions, &object_name);
+                self.rlva_hold_permission_notice(task_id, item_id, notice);
                 if auto_accept && experience.is_nil() {
                     self.rlva.out.push(aurora_net::NetCommand::ScriptAnswer {
                         task_id,
@@ -4103,6 +4172,8 @@ impl World {
                         questions,
                         region,
                     });
+                    // forceResponse(YES): answered yes at once
+                    self.rlva_answer_permission_notice(task_id, item_id, true);
                     return None;
                 }
                 // process_script_question: an experience's question waits
@@ -4910,9 +4981,13 @@ impl World {
                 }
                 None
             }
-            NetEvent::InventoryUpdated { folders, items } => {
+            NetEvent::InventoryUpdated { folders, items, bulk } => {
                 self.reveal_added(&folders, &items);
-                self.inventory.server_updated(folders, items);
+                if bulk {
+                    self.inventory.bulk_updated(folders, items);
+                } else {
+                    self.inventory.server_updated(folders, items);
+                }
                 None
             }
             NetEvent::InventoryDelivery { transaction, folders } => {
@@ -5089,30 +5164,43 @@ impl World {
     }
 
     fn on_chat(&mut self, c: ChatMessage) {
+        // process_chat_from_simulator (llviewermessage.cpp) returns for a
+        // blocked object, or an object of a blocked owner, before anything
+        // else: its RLVa commands never reach RlvHandler either.
+        if c.source_type == aurora_net::ChatSourceType::Object && self.chat_blocked(&c) {
+            return;
+        }
         let controller_allowed = self.rlva_controller_chat_allowed(c.source_id);
         if c.source_type == aurora_net::ChatSourceType::Object
             && c.chat_type == aurora_net::ChatType::OwnerSay
             && c.message.starts_with('@')
             && controller_allowed
         {
-            self.rlva_bind_controller(c.source_id);
             self.rlva_prepare_version(c.source_id, &c.message);
         }
-        if controller_allowed && self.rlva.receive(&c) {
+        let inventory = &self.inventory;
+        let shared_folder = |path: &str| rlva::shared_folder_exists(inventory, path);
+        if controller_allowed && self.rlva.receive_with(&c, Some(&shared_folder)) {
             self.rlva_resolve_sources();
-            self.eep.rlva_locked = self.rlva.has("setenv");
-            let environment_owner = self.rlva.rules_for("setenv", Uuid::nil()).next().map(|(id, _)| id);
-            if self.eep.rlva_locked
-                && self.rlva.environment.is_none()
-                && let Some(actor) = environment_owner
-            {
-                self.rlva.environment = Some((actor, self.eep.current().0));
-            }
+            self.rlva_sync_environment_lock();
             self.inventory.rlva_preview_mask = self.rlva.preview_mask();
             self.refresh_rlva_privacy();
             self.rlva_watchdog_tick(Instant::now());
+            // RestrainedLoveDebug: process_chat_from_simulator shows what
+            // ran, failed or was retained as the object's chat line
+            let Some(line) = self.rlva.take_debug_line() else {
+                return;
+            };
+            let mut c = c;
+            c.message = line;
+            self.on_chat_line(c);
             return;
         }
+        self.on_chat_line(c);
+    }
+
+    /// An object's or a resident's chat line, past the RLVa commands.
+    fn on_chat_line(&mut self, c: ChatMessage) {
         let mut c = c;
         // `@shownames` and `@showloc` rewrite what an object or the system
         // says, never what a resident typed ("avatar => filter only their
@@ -5193,7 +5281,17 @@ impl World {
         };
         // IDEVO: avatars by their complete name ("Jane Doe (janedoe)")
         let from = match c.source_type {
-            ChatSourceType::Agent => self.social.avatar_names.complete(&c.source_id).unwrap_or(c.from_name),
+            ChatSourceType::Agent => {
+                // a name not cached yet stays the one the line came with:
+                // under `@shownames` its stand-in is RlvStrings::getAnonym
+                // of it (`rlva_sender`), not the one `complete` gives the id
+                let names = &self.social.avatar_names;
+                let complete = names.complete(&c.source_id);
+                match names.raw(&c.source_id) {
+                    Some(_) => complete.unwrap_or(c.from_name),
+                    None => c.from_name,
+                }
+            }
             ChatSourceType::Object => object_speaker_name(c.from_name, self.mark_unnamed_objects),
             _ => c.from_name,
         };
@@ -5740,7 +5838,22 @@ impl World {
         } else {
             None
         };
-        self.ask_attention(attention::Cause::Message, notice);
+        // an offer is told as one; an alert, a notice or an answer as a notice
+        let cause = if matches!(
+            im.dialog,
+            d::LURE_USER
+                | d::GODLIKE_LURE_USER
+                | d::TELEPORT_REQUEST
+                | d::FRIENDSHIP_OFFERED
+                | d::INVENTORY_OFFERED
+                | d::TASK_INVENTORY_OFFERED
+                | d::GROUP_INVITATION
+        ) {
+            attention::Cause::Offer
+        } else {
+            attention::Cause::Message
+        };
+        self.ask_attention(cause, notice);
         true
     }
 
@@ -5998,6 +6111,19 @@ impl World {
                 self.notifications.ask_group_fee(id);
             }
             return (Vec::new(), None);
+        }
+        // script_question_cb: a yes says what RLVa stripped from the
+        // question (RlvUtil::notifyBlocked with its "rlv_blocked")
+        if let Some(notifications::Data::Permissions { task, item, .. }) = &data
+            && matches!(
+                r,
+                notifications::Response::Accept
+                    | notifications::Response::Decline
+                    | notifications::Response::Block
+                    | notifications::Response::BlockExperience
+            )
+        {
+            self.rlva_answer_permission_notice(*task, *item, matches!(r, notifications::Response::Accept));
         }
         // notify_cautioned_script_question: the answer to a caution
         // question is told in the nearby chat
@@ -6324,7 +6450,7 @@ impl World {
                     body: String::new(),
                     open: attention::Open::Conversation(id),
                 };
-                self.ask_attention(attention::Cause::Notice, Some(notice));
+                self.ask_attention(attention::Cause::Presence(online), Some(notice));
             }
             // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
             // asked for: the toast already says it
@@ -6336,7 +6462,7 @@ impl World {
                     self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 }
                 // the name is a link to the resident (social::online_chat_line)
-                self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::People);
+                self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::Radar);
             }
         }
     }
@@ -8389,8 +8515,10 @@ mod motion_tests {
     }
 
     /// FSShowBackSLURL: a teleport through TeleportFinish says, on its
-    /// arrival, the SLURL of the place left; a local teleport, a failed one,
-    /// the setting off or RLVa `@showloc` say nothing.
+    /// arrival, the SLURL of the place left; a local teleport, a failed one
+    /// or the setting off say nothing. Under RLVa `@showloc` the place left,
+    /// still connected, is "(Hidden region)" (LLSLURL::getSLURLString in
+    /// process_agent_movement_complete, llviewermessage.cpp).
     #[test]
     fn a_teleport_to_another_region_says_where_it_came_from() {
         fn back_lines(world: &World) -> Vec<String> {
@@ -8461,6 +8589,9 @@ mod motion_tests {
         assert!(world.rlva.has("showloc"));
         hop(&mut world, handle, false);
         assert!(back_lines(&world).is_empty(), "@showloc");
+        let hidden = format!("http://maps.secondlife.com/secondlife/{}", aurora_i18n::tr!("rlva-hidden-region"));
+        let said: Vec<&str> = world.chat.iter().map(|l| l.text.as_str()).filter(|t| t.contains(&hidden)).collect();
+        assert_eq!(said.len(), 1, "the place left, hidden: {said:?}");
     }
 
     #[test]
@@ -10172,7 +10303,7 @@ mod motion_tests {
             position: Vec3::new(255.0, 50.0, 30.0),
             look_at: Vec3::Y,
         });
-        assert!(world.arrived_by_crossing);
+        assert!(world.arrived_by_crossing && world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(256.5, 50.0, 30.0));
         assert_eq!(world.take_origin_shift(), Vec3::new(256.0, 0.0, 0.0));
     }
@@ -10190,7 +10321,7 @@ mod motion_tests {
             position: Vec3::new(200.0, 20.0, 40.0),
             look_at: Vec3::Y,
         });
-        assert!(!world.arrived_by_crossing);
+        assert!(!world.arrived_by_crossing && world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(200.0, 20.0, 40.0));
         assert_eq!(world.agent.velocity, Vec3::ZERO);
     }
@@ -10204,7 +10335,7 @@ mod motion_tests {
             position: Vec3::new(200.0, 50.0, 30.0),
             look_at: Vec3::Y,
         });
-        assert!(!world.arrived_by_crossing);
+        assert!(!world.arrived_by_crossing && !world.arrived_in_another_region);
         assert_eq!(world.agent.position, Vec3::new(200.0, 50.0, 30.0));
     }
 

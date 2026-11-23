@@ -87,7 +87,14 @@ impl PlaceFacts {
         let Some(key) = grid else {
             return facts;
         };
-        let sim = world.map.sims.get(&key);
+        // what the world map tells of the place (its tile, its classification
+        // and head count before the arrival) follows @showworldmap
+        // (RlvActions::canShowWorldMap, rlvactions.cpp), the residents around
+        // once there @shownearby (RlvActions::canShowNearbyAgents): the
+        // nearest Legacy pictures of them, the progress view naming none
+        let map_shown = !world.rlva.has("showworldmap");
+        let nearby_shown = !world.rlva.has("shownearby");
+        let sim = world.map.sims.get(&key).filter(|_| map_shown);
         let (size_x, size_y) = main
             .and_then(|handle| world.regions.get(&handle))
             .map(|region| (region.heightmap.size_x, region.heightmap.size_y))
@@ -99,8 +106,8 @@ impl PlaceFacts {
             None => sim.map_or("", |s| super::bars::maturity_name(s.access)),
         };
         facts.residents = match main {
-            Some(handle) => world.coarse.get(&handle).map(Vec::len).filter(|n| *n > 0),
-            None => {
+            Some(handle) if nearby_shown => world.coarse.get(&handle).map(Vec::len).filter(|n| *n > 0),
+            None if map_shown => {
                 world.map.want_agents(key);
                 world
                     .map
@@ -108,9 +115,12 @@ impl PlaceFacts {
                     .get(&key)
                     .map(|spots| spots.iter().map(|(_, _, count)| (*count).max(0) as usize).sum())
             }
+            _ => None,
         };
-        facts.tile = tiles.region_picture(ctx, key.0, key.1, cells_x, cells_y).ok();
-        facts.pin = position.map(|pos| super::map_tiles::region_pin(pos.x, pos.y, size_x as f32, size_y as f32));
+        if map_shown {
+            facts.tile = tiles.region_picture(ctx, key.0, key.1, cells_x, cells_y).ok();
+            facts.pin = position.map(|pos| super::map_tiles::region_pin(pos.x, pos.y, size_x as f32, size_y as f32));
+        }
         facts
     }
 }
@@ -735,5 +745,33 @@ mod tests {
         }
         let pressed = click(at).into_iter().any(|events| frame(events).0);
         assert!(pressed, "the click on Cancel reached the screen behind it");
+    }
+
+    /// The facts the world map tells (tile, arrival pin, a remote head
+    /// count) follow @showworldmap, the residents around the arrival
+    /// @shownearby; the name stays without @showloc.
+    #[test]
+    fn rlva_map_and_nearby_rules_hide_their_facts() {
+        let mut world = crate::world::rlva_location_tests::showloc_world();
+        world.rlva_console_input("@showloc=y");
+        let here = world.region_name();
+        let main = world.main_region.expect("arrived");
+        world
+            .coarse
+            .insert(main, vec![(uuid::Uuid::from_u128(77), glam::Vec3::new(10.0, 10.0, 20.0))]);
+        let point = glam::Vec3::new(128.0, 64.0, 30.0);
+        let mut tiles = crate::ui::map_tiles::MapTiles::new();
+        let facts = PlaceFacts::gather(&egui::Context::default(), &mut world, &mut tiles, &here, Some(point), true);
+        assert!(facts.residents.is_some() && facts.pin.is_some());
+        world.rlva_console_input("@shownearby=n");
+        let facts = PlaceFacts::gather(&egui::Context::default(), &mut world, &mut tiles, &here, Some(point), true);
+        assert!(facts.residents.is_none(), "@shownearby");
+        assert!(facts.pin.is_some() && facts.position == "128, 64, 30");
+        world.rlva_console_input("@shownearby=y");
+        world.rlva_console_input("@showworldmap=n");
+        let facts = PlaceFacts::gather(&egui::Context::default(), &mut world, &mut tiles, &here, Some(point), true);
+        assert!(facts.tile.is_none() && facts.pin.is_none(), "@showworldmap");
+        assert!(facts.residents.is_some(), "the residents around are not the map's");
+        assert_eq!(banner_place(&world, ""), (here, None));
     }
 }

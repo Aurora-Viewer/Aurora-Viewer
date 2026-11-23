@@ -5,7 +5,8 @@
 //! window is open. The computer is read in the background
 //! (`system_info.rs`) when the window opens, then again every few seconds
 //! for the viewer's memory. The region and the position follow RLVa's
-//! @showloc, as the Legacy Viewer's AboutPositionRLVShowLoc.
+//! @showloc, as the Legacy Viewer's AboutPositionRLVShowLoc
+//! (`place_rows`).
 //!
 //! The same text, in English, goes to a resident in a conversation: the
 //! conversation menu's "Send system information", asked first
@@ -253,13 +254,6 @@ impl App {
         });
         if let Some(region) = self.world.main() {
             let hidden = self.world.rlva.has("showloc");
-            let place = |text: String| {
-                if hidden {
-                    crate::ui::about::Value::Key("about-hidden-rlva")
-                } else {
-                    crate::ui::about::Value::Text(text)
-                }
-            };
             let at = self.world.agent.position;
             // On OpenSim, the grid we are on now: after a Hypergrid teleport
             // the visited one, by its saved name or its address.
@@ -269,21 +263,13 @@ impl App {
             sections.push(Section {
                 icon: "map-pin-filled",
                 title: "about-section-location",
-                rows: vec![
-                    Row::text("about-grid", grid),
-                    Row {
-                        label: "about-region",
-                        value: place(region.name.clone()),
-                    },
-                    Row {
-                        label: "about-position",
-                        value: place(format!("{:.1}, {:.1}, {:.1}", at.x, at.y, at.z)),
-                    },
-                    match self.world.estate.versions.get(&region.handle) {
+                rows: std::iter::once(Row::text("about-grid", grid))
+                    .chain(place_rows(hidden, &region.name, at))
+                    .chain(std::iter::once(match self.world.estate.versions.get(&region.handle) {
                         Some(version) => Row::text("about-simulator", version.clone()),
                         None => Row::key("about-simulator", "about-unknown"),
-                    },
-                ],
+                    }))
+                    .collect(),
             });
             let ping = self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed);
             let loss = crate::net_profile::loss_percent(&self.net_profile.last);
@@ -303,6 +289,21 @@ impl App {
 
 /// The demo sends a made-up computer and graphics card: a demo capture of
 /// the text never shows the PC it runs on.
+/// The region and the position of the Location card. Under RLVa
+/// `@showloc` the region is "(Hidden region)" and the position is left
+/// out, the server version kept (LLAppViewer::getViewerInfo with
+/// AboutPositionRLVShowLoc, indra/newview/llappviewer.cpp: "You are in
+/// [REGION]").
+pub(super) fn place_rows(hidden: bool, region: &str, at: glam::Vec3) -> Vec<Row> {
+    if hidden {
+        return vec![Row::key("about-region", "rlva-hidden-region")];
+    }
+    vec![
+        Row::text("about-region", region),
+        Row::text("about-position", format!("{:.1}, {:.1}, {:.1}", at.x, at.y, at.z)),
+    ]
+}
+
 fn demo_hardware(sections: &mut [Section]) {
     for row in sections.iter_mut().flat_map(|section| section.rows.iter_mut()) {
         let text = match row.label {

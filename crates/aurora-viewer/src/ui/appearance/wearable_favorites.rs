@@ -591,7 +591,7 @@ fn list_area(
                 } else {
                     response
                         .clone()
-                        .on_hover_ui(|ui| tooltip(ui, p, inv, it, texture, worn, point.as_deref()))
+                        .on_hover_ui(|ui| tooltip(ui, p, inv, it, tooltip_picture(inv, texture), worn, point.as_deref()))
                 };
                 // the menu acts on the originals of the rows picked
                 let picked: Vec<Uuid> = if st.wearable_favorites.selection.contains(e.link) {
@@ -684,13 +684,17 @@ fn kind(it: &InvItem) -> String {
     }
 }
 
+/// The tooltip's larger picture: none under RLVa's @viewtexture
+/// (LLInspectTextureUtil::createInventoryToolTip, llinspecttexture.cpp).
+fn tooltip_picture<'a>(inv: &Inventory, texture: Option<&'a egui::TextureHandle>) -> Option<&'a egui::TextureHandle> {
+    texture.filter(|_| inv.can_preview(0))
+}
+
 /// The picture of a favorite: the original's own inventory picture, else
-/// the link's (LLViewerInventoryItem::getThumbnailUUID); none while RLVa
-/// forbids previews, as the inventory's picture tooltips.
+/// the link's (LLViewerInventoryItem::getThumbnailUUID). RLVa's @viewtexture
+/// leaves the row's, as it leaves the inventory's tiles (LLThumbnailCtrl asks
+/// nothing of RLVa), and takes the tooltip's (`tooltip_picture`).
 fn picture(inv: &Inventory, entry: &model::Entry) -> Option<Uuid> {
-    if !inv.can_preview(0) {
-        return None;
-    }
     [entry.target, entry.link]
         .into_iter()
         .filter_map(|id| inv.items.get(&id))
@@ -1255,5 +1259,34 @@ mod tests {
         // done or failed: the plan decides whether the button shows again
         st.import_settled(false);
         assert!(!st.import_hidden());
+    }
+
+    /// RLVa's @viewtexture leaves a favorite's row picture, as the inventory's
+    /// tiles (LLThumbnailCtrl), and takes the tooltip's
+    /// (LLInspectTextureUtil::createInventoryToolTip).
+    #[test]
+    fn rlva_viewtexture_leaves_the_row_picture_and_takes_the_tooltip_one() {
+        let mut inv = Inventory::default();
+        let (item, thumbnail) = (Uuid::from_u128(0x7401), Uuid::from_u128(0x7402));
+        inv.items.insert(
+            item,
+            InvItem {
+                id: item,
+                thumbnail,
+                ..Default::default()
+            },
+        );
+        let entry = model::Entry { link: item, target: item };
+        let ctx = egui::Context::default();
+        let image = ctx.load_texture(
+            "favorite",
+            egui::ColorImage::filled([4, 4], egui::Color32::GRAY),
+            Default::default(),
+        );
+        assert_eq!(picture(&inv, &entry), Some(thumbnail));
+        assert!(tooltip_picture(&inv, Some(&image)).is_some());
+        inv.rlva_preview_mask = 1;
+        assert_eq!(picture(&inv, &entry), Some(thumbnail), "the row keeps it");
+        assert!(tooltip_picture(&inv, Some(&image)).is_none(), "the tooltip loses it");
     }
 }
