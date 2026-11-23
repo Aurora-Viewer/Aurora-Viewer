@@ -19529,7 +19529,6 @@ impl App {
                 }
                 ui::layout::set_window_edges(ui.ctx(), edges);
                 ui::layout::frame(ui.ctx(), &p, self.settings.snap_windows);
-                ui::toolbar::show_command_context(ui.ctx(), &p, bar_layout, toolbar_settings);
                 self.toolbar_ui
                     .show(ui.ctx(), &p, bar_layout, toolbar_settings, self.settings.toolbar_selection.as_ref());
                 let conversation_slot =

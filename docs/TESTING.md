@@ -6530,9 +6530,10 @@ Use `AURORA_DEMO_BARS=islands` and `AURORA_DEMO_MENU_SEARCH=Import`
 The existing search scenario opens the wolf menu and types the query; the
 new scenario right-clicks the Import result at frames 650–651. `menu-add`
 starts without its button, `menu-remove` includes it in the bottom bar.
-Capture frames 620 and 750: the filtered result, then the Add/Remove popup,
-which must remain readable after the parent menu closes. The fixture's
-layout changes are temporary and do not alter saved toolbars.
+Capture frames 620 and 660: the filtered result, then the row's right-click
+menu with Add (or Remove) to the toolbar above its appearance entries, the
+wolf menu still open behind it. The fixture's layout changes are temporary
+and do not alter saved toolbars.
 
 Combine the face modes below with `AURORA_DEMO_ACTIONS=face-drops`, which
 seeds the static action cubes without running the action-click scenario.

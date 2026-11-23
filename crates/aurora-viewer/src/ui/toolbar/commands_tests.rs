@@ -2253,7 +2253,7 @@ impl Bench {
                     Rect::from_min_max(egui::pos2(52.0, 52.0), self.screen.to_pos2() - Vec2::new(52.0, 56.0)),
                 );
                 self.state.show(&ctx, &p, &layout, &self.settings, None);
-                self.state.commit(&layout, &mut self.settings);
+                self.state.commit_with_menus(&ctx, &layout, &mut self.settings);
             },
         );
         self.text.clear();
@@ -4116,4 +4116,101 @@ fn a_real_menu_drag_can_return_an_entry_to_another_submenu() {
         .position(|entry| entry.button.command == IMPORT)
         .expect("moved Import");
     assert_eq!(children[inserted + 1].button.command, "menu:common-build/poser-title");
+}
+
+#[test]
+fn menu_row_right_click_adds_and_removes_its_toolbar_command_without_running_it() {
+    fn click(bench: &mut Bench, point: Pos2, button: egui::PointerButton) {
+        for pressed in [true, false] {
+            bench.frame(vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ]);
+        }
+        for _ in 0..3 {
+            bench.frame(Vec::new());
+        }
+    }
+    // the islands' wolf menu, a remembered dropdown like in the viewer: a
+    // context menu nested in it used to replace it and vanish with it
+    fn open_wolf(bench: &mut Bench) {
+        let wolf = bench
+            .ctx
+            .read_response(Id::unique("bars_island_menu"))
+            .expect("wolf button")
+            .rect
+            .center();
+        click(bench, wolf, egui::PointerButton::Primary);
+        assert!(egui::Popup::is_any_open(&bench.ctx), "the wolf menu opens");
+    }
+    let shown = |bench: &Bench, key: &'static str| bench.text.iter().any(|(text, _)| text == aurora_i18n::text(key));
+    let layout = Layout::default();
+    let mut bench = Bench {
+        native_top: true,
+        menu_open: false,
+        ..Default::default()
+    };
+    bench.settings.locked = false;
+    // a row with no toolbar command of its own has no Add entry
+    let plain = "menu:common-me/avatar-health-menu/avatar-health-stop-animations";
+    bench
+        .settings
+        .menu_layout
+        .insert(String::new(), vec!["menu:common-build/import-menu".into(), plain.into()]);
+    for _ in 0..4 {
+        bench.frame(Vec::new());
+    }
+    assert_eq!(bench.settings.location("import", &layout), None);
+    for remove in [false, true] {
+        open_wolf(&mut bench);
+        let import = menu_point(&bench, aurora_i18n::tr!("import-menu"));
+        click(&mut bench, import, egui::PointerButton::Secondary);
+        let (key, other) = if remove {
+            ("toolbar-remove-from-menu", "toolbar-add-from-menu")
+        } else {
+            ("toolbar-add-from-menu", "toolbar-remove-from-menu")
+        };
+        assert!(shown(&bench, key), "remove={remove}");
+        assert!(!shown(&bench, other), "remove={remove}");
+        assert!(
+            shown(&bench, "import-menu"),
+            "the wolf menu stays open behind its row's context, remove={remove}"
+        );
+        let entry = menu_point(&bench, aurora_i18n::text(key));
+        click(&mut bench, entry, egui::PointerButton::Primary);
+        assert!(!shown(&bench, key), "the context closes after its choice");
+        assert!(!shown(&bench, "import-menu"), "and the wolf menu with it");
+        assert_eq!(commands::take_request(&bench.ctx), None, "a toolbar edit never runs Import");
+        assert!(matches!(bench.action, bars::BarAction::None));
+        assert_eq!(
+            bench.settings.location("import", &layout),
+            if remove { None } else { Some(Bar::Bottom) }
+        );
+        if !remove {
+            let button = bench.settings.bar(Bar::Bottom, &layout).last().expect("added button");
+            assert_eq!(button.command, "import", "the command, never its menu path");
+            assert!(button.tooltip.is_empty());
+        }
+    }
+    open_wolf(&mut bench);
+    let row = bench
+        .ctx
+        .data(|data| data.get_temp::<Rect>(Id::unique(("main_menu_entry", plain))))
+        .expect("plain row")
+        .center();
+    click(&mut bench, row, egui::PointerButton::Secondary);
+    assert!(!shown(&bench, "toolbar-add-from-menu"));
+    assert!(shown(&bench, "toolbar-interface-edit"), "its context still opens");
+    // locked bars keep the entry, greyed out, and ignore it
+    bench.settings.locked = true;
+    let import = menu_point(&bench, aurora_i18n::tr!("import-menu"));
+    click(&mut bench, import, egui::PointerButton::Secondary);
+    let entry = menu_point(&bench, aurora_i18n::tr!("toolbar-add-from-menu"));
+    click(&mut bench, entry, egui::PointerButton::Primary);
+    assert_eq!(bench.settings.location("import", &layout), None);
 }

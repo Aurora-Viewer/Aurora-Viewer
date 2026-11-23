@@ -298,7 +298,7 @@ fn show_children(
                 members: Vec::new(),
             });
         }
-        toolbar.menu_appearance_context(&response, p, button, settings.locked);
+        toolbar.menu_appearance_context(&response, button);
         if !entry.group && response.clicked() && entry.enabled && !ToolbarUi::intercepting(ui.ctx()) {
             request(ui.ctx(), &button.command);
             ui.close();

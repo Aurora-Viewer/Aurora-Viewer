@@ -379,6 +379,14 @@ pub fn settings(ctx: &egui::Context) -> Arc<ToolbarSettings> {
         .unwrap_or_default()
 }
 
+/// The menu row whose right-click popup is open, and where it was made.
+#[derive(Clone)]
+pub(super) struct MenuRowContext {
+    button: ToolButton,
+    pos: egui::Pos2,
+    frame: u64,
+}
+
 impl ToolbarUi {
     pub fn prepare(&self, ctx: &egui::Context, settings: &ToolbarSettings) {
         publish(ctx, settings);
@@ -410,24 +418,54 @@ impl ToolbarUi {
         self.appearance_context_for(response, p, button, locked, &button.command);
     }
 
-    pub fn menu_appearance_context(&mut self, response: &egui::Response, p: &Palette, button: &ToolButton, locked: bool) {
-        self.appearance_context_for(response, p, button, locked, &menu_key(&button.command));
+    /// A menu row's right click opens a popup of its own: egui keeps one
+    /// remembered popup open at a time, so a context menu nested in the
+    /// dropdown would replace the dropdown and vanish with it. The dropdown
+    /// stays open behind it until a choice or a click elsewhere.
+    pub fn menu_appearance_context(&mut self, response: &egui::Response, button: &ToolButton) {
+        if response.secondary_clicked() {
+            self.menu_row_context = Some(MenuRowContext {
+                button: button.clone(),
+                pos: response.interact_pointer_pos().unwrap_or(response.rect.left_bottom()),
+                frame: response.ctx.cumulative_frame_nr(),
+            });
+        }
+    }
+
+    pub(super) fn show_menu_row_context(&mut self, ctx: &egui::Context, p: &Palette, settings: &ToolbarSettings) {
+        let Some(context) = self.menu_row_context.clone() else {
+            return;
+        };
+        let key = menu_key(&context.button.command);
+        let mut open = true;
+        menu::popup_at(ctx, egui::Id::unique("toolbar_menu_row_context"), context.pos, &mut open, p, |ui| {
+            if super::menu_membership_item(ui, p, &context.button.command, settings) {
+                menu::separator(ui, p);
+            }
+            self.appearance_items(ui, p, &context.button, settings.locked, &key);
+        });
+        // the right click on another row that closed it opened that row's
+        if !open && context.frame != ctx.cumulative_frame_nr() {
+            self.menu_row_context = None;
+        }
     }
 
     fn appearance_context_for(&mut self, response: &egui::Response, p: &Palette, button: &ToolButton, locked: bool, key: &str) {
-        menu::context_menu_of_button(response, p, |ui| {
-            if self.open {
-                if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-appearance"), !locked) {
-                    self.appearance_editor.select_as(button, key);
-                }
-            } else {
-                let settings = settings(ui.ctx());
-                if let Some(value) = self.context_icon_picker.options(ui, p, button, key, &settings, locked) {
-                    self.pending = Some(Edit::Appearance(key.into(), value));
-                }
+        menu::context_menu_of_button(response, p, |ui| self.appearance_items(ui, p, button, locked, key));
+    }
+
+    fn appearance_items(&mut self, ui: &mut egui::Ui, p: &Palette, button: &ToolButton, locked: bool, key: &str) {
+        if self.open {
+            if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("toolbar-button-appearance"), !locked) {
+                self.appearance_editor.select_as(button, key);
             }
-            self.interface_edit_menu(ui, p, Some(&button.command));
-        });
+        } else {
+            let settings = settings(ui.ctx());
+            if let Some(value) = self.context_icon_picker.options(ui, p, button, key, &settings, locked) {
+                self.pending = Some(Edit::Appearance(key.into(), value));
+            }
+        }
+        self.interface_edit_menu(ui, p, Some(&button.command));
     }
 
     pub fn edit_button(&mut self, button: &ToolButton) {

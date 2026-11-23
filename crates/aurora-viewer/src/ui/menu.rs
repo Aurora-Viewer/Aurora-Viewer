@@ -1002,15 +1002,6 @@ fn catalogue_row(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, end:
         false,
         Sense::click(),
     );
-    if ui
-        .ctx()
-        .data(|d| d.get_temp::<bool>(Id::unique("toolbar_menu_demo")))
-        .unwrap_or(false)
-    {
-        ui.ctx()
-            .data_mut(|d| d.insert_temp(Id::unique(("toolbar_menu_command", id)), response.rect));
-    }
-    super::toolbar::command_context(&response, id);
     let clicked = enabled && response.clicked();
     if !tip.is_empty() {
         response.on_hover_text(tip);

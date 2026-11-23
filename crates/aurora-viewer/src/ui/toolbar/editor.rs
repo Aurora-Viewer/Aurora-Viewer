@@ -487,6 +487,7 @@ impl ToolbarUi {
         }
         self.show_appearance(ctx, p, settings);
         self.show_context_appearance(ctx, p, settings);
+        self.show_menu_row_context(ctx, p, settings);
         super::drawers::show_settings(ctx, p, self, settings, layout);
         super::surface_drop::show(ctx, p, self, settings, layout);
         super::drop_preview::show(ctx, p, self, settings, layout);
@@ -2025,9 +2026,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
     // With AURORA_DEMO_MENU_SEARCH set to the translated Import label,
     // right-click its real search result after the menu opens. Capture 750.
     if matches!(mode, "menu-add" | "menu-remove") {
-        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("toolbar_menu_demo"), true));
         if matches!(frame, 650 | 651)
-            && let Some(rect) = ctx.data(|d| d.get_temp::<Rect>(egui::Id::unique(("toolbar_menu_command", "import"))))
+            && let Some(rect) = ctx
+                .data(|d| d.get_temp::<Rect>(egui::Id::unique(("main_menu_entry", "menu:common-build/import-menu"))))
+                .filter(|rect| rect.is_positive())
         {
             let pos = rect.center();
             return vec![

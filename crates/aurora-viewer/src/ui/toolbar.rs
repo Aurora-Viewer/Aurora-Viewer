@@ -45,56 +45,34 @@ struct MenuEdit {
     remove: bool,
 }
 
-#[derive(Clone)]
-struct MenuContext {
-    command: &'static str,
-    pos: egui::Pos2,
-}
-
-pub fn command_context(response: &Response, command: &'static str) {
-    if response.secondary_clicked() {
-        response.ctx.data_mut(|d| {
-            d.insert_temp(
-                egui::Id::unique("menu_toolbar_context"),
-                MenuContext {
-                    command,
-                    pos: response.interact_pointer_pos().unwrap_or(response.rect.left_bottom()),
-                },
-            )
+/// A menu row's Add / Remove (LLToolBarView::hasCommand): a row that stands
+/// for a toolbar command, directly or through its editor alias, adds that
+/// command at the end of the bottom bar, never its menu path. Returns whether
+/// the entry was shown.
+pub(crate) fn menu_membership_item(ui: &mut egui::Ui, p: &Palette, row: &str, settings: &ToolbarSettings) -> bool {
+    let Some(command) = catalogue_view::alias(row)
+        .and_then(catalogue::find)
+        .or_else(|| catalogue::find(row))
+        .filter(|command| command.ready)
+    else {
+        return false;
+    };
+    let remove = settings.location(command.id, &Layout::default()).is_some();
+    let label = if remove {
+        aurora_i18n::tr!("toolbar-remove-from-menu")
+    } else {
+        aurora_i18n::tr!("toolbar-add-from-menu")
+    };
+    if menu::item_if(ui, p, if remove { "trash-filled" } else { "plus" }, label, !settings.locked) {
+        ui.ctx().data_mut(|d| {
+            d.get_temp_mut_or_default::<Vec<MenuEdit>>(egui::Id::unique("menu_toolbar_edits"))
+                .push(MenuEdit {
+                    command: command.id,
+                    remove,
+                });
         });
     }
-}
-
-/// The context menu belongs to the toolbar, so closing its originating
-/// dropdown or searching that dropdown cannot dismiss or filter its rows.
-/// It reads the saved bars only while it is shown.
-pub fn show_command_context(ctx: &egui::Context, p: &Palette, layout: &Layout, settings: &ToolbarSettings) {
-    let id = egui::Id::unique("menu_toolbar_context");
-    let Some(context) = ctx.data(|d| d.get_temp::<MenuContext>(id)) else {
-        return;
-    };
-    let remove = settings.location(context.command, layout).is_some();
-    let locked = settings.locked;
-    let mut open = true;
-    menu::popup_at(ctx, id, context.pos, &mut open, p, |ui| {
-        let label = if remove {
-            aurora_i18n::tr!("toolbar-remove-from-menu")
-        } else {
-            aurora_i18n::tr!("toolbar-add-from-menu")
-        };
-        if menu::item_if(ui, p, if remove { "trash-filled" } else { "plus" }, label, !locked) {
-            ui.ctx().data_mut(|d| {
-                d.get_temp_mut_or_default::<Vec<MenuEdit>>(egui::Id::unique("menu_toolbar_edits"))
-                    .push(MenuEdit {
-                        command: context.command,
-                        remove,
-                    });
-            });
-        }
-    });
-    if !open {
-        ctx.data_mut(|d| d.remove::<MenuContext>(id));
-    }
+    true
 }
 
 /// One of LLToolBarView's toolbars.
@@ -743,6 +721,7 @@ pub struct ToolbarUi {
     appearance_editor: appearance::Editor,
     drawer_appearance_editor: appearance::Editor,
     context_icon_picker: appearance::ContextPicker,
+    menu_row_context: Option<appearance::MenuRowContext>,
     pub(crate) selected: Option<String>,
     drawer_editor: Option<String>,
     pub(crate) drawer_action: Option<crate::ui::bars::BarAction>,
@@ -761,6 +740,7 @@ impl ToolbarUi {
         self.appearance_editor = Default::default();
         self.drawer_appearance_editor = Default::default();
         self.context_icon_picker = Default::default();
+        self.menu_row_context = None;
         egui::DragAndDrop::clear_payload(ctx);
         egui::Popup::close_all(ctx);
     }
