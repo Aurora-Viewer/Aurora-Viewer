@@ -386,6 +386,16 @@ pub enum Status {
     Cancelled,
 }
 impl Entry {
+    /// An upload that failed. The row leaves the selection, like a file that
+    /// could not be read: a selected row with an error holds the price and
+    /// the upload of the whole queue (`total`), the files added later
+    /// included. do_bulk_upload (llviewermenufile.cpp) sends each file as its
+    /// own request, so one failure never holds the others. `restore_draft`
+    /// selects it again.
+    fn failed(&mut self, reason: String) {
+        self.status = Status::Error(reason);
+        self.selected = false;
+    }
     /// Keep the cached preparation options and preview revisions in step with
     /// the effective limit; the original decoded pixels remain available.
     pub fn sync_image_size(&mut self, limit_texture_size: bool) -> bool {
@@ -584,6 +594,8 @@ pub struct Imports {
     pub demo_mode: String,
     pub demo_local_applied: bool,
     pub demo_upload_started: bool,
+    /// `bulk-failed` has answered its one failure.
+    pub demo_upload_failed: bool,
     pub demo_animation_positioned: bool,
     pub own_avatar_preview: Option<Uuid>,
     pub animation_model_cache: HashMap<Uuid, std::sync::Weak<animation_model::Model>>,
@@ -644,6 +656,7 @@ impl Default for Imports {
             demo_mode: String::new(),
             demo_local_applied: false,
             demo_upload_started: false,
+            demo_upload_failed: false,
             demo_animation_positioned: false,
             own_avatar_preview: None,
             animation_model_cache: HashMap::new(),
@@ -1037,6 +1050,7 @@ impl Imports {
                 draft.invalidate_quote();
             }
             entry.status = Status::Ready;
+            entry.selected = true;
             entry.preview_error = None;
             entry.preview_pending = false;
             entry.preview_generation += 1;
@@ -1093,7 +1107,7 @@ impl Imports {
     }
     fn fail(&mut self, entry: Option<Uuid>, reason: String) {
         if let Some(entry) = entry.and_then(|id| self.entries.iter_mut().find(|e| e.id == id)) {
-            entry.status = Status::Error(reason.clone());
+            entry.failed(reason.clone());
         }
         self.message = reason;
         self.cancel_remaining();
@@ -1167,7 +1181,7 @@ impl Imports {
         };
         for entry in &mut self.entries {
             if failed.contains(&entry.id) {
-                entry.status = Status::Error(reason.clone());
+                entry.failed(reason.clone());
             }
         }
         self.queue
