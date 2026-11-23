@@ -928,8 +928,15 @@ impl TexturePicker {
                             ui.painter().add(egui::Shape::convex_polygon(points, p.muted, egui::Stroke::NONE));
                         }
                         x += 12.0;
+                        // a system folder (the Trash, My Suitcase) keeps its
+                        // inventory icon
                         let icon = if folder {
-                            if row_open { "folder-open-filled" } else { "folder-filled" }
+                            let kind = if local {
+                                -1
+                            } else {
+                                inv.folders.get(&id).map_or(-1, |f| f.info.type_default)
+                            };
+                            super::inventory::tree::folder_icon(kind, row_open)
                         } else if self.materials {
                             "droplet-filled"
                         } else {
