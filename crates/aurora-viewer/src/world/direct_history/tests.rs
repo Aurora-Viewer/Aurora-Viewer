@@ -8,6 +8,8 @@ use crate::world::chat_log::service::csv::ArchiveScan;
 use crate::world::chat_log::service::message::TimeSource;
 use crate::world::chat_service::storage::{STATE_NAME, archive_name};
 use crate::world::groups::SessionInfo;
+use crate::world::mutes::{Mute, MuteType};
+use crate::world::status::AUTO_RESPONSE;
 use aurora_net::InstantMessage;
 use aurora_net::chat_service::{HistoryRow, TimeUuidKey, UUID_EPOCH, direct_conversation_id, format_time_uuid};
 use std::path::{Path, PathBuf};
@@ -54,13 +56,26 @@ fn im(text: &str, offline: bool, timestamp: u32) -> InstantMessage {
 /// 2026-08-12 12:00 UTC.
 const BASE: u64 = 1_786_536_000;
 
+/// Jane's automatic response (IM_DO_NOT_DISTURB_AUTO_RESPONSE).
+fn auto_response(text: &str) -> InstantMessage {
+    InstantMessage {
+        dialog: AUTO_RESPONSE,
+        ..im(text, false, 0)
+    }
+}
+
 /// Row `n`, `n` seconds after `BASE`.
 fn row(n: u64, text: &str) -> HistoryRow {
+    row_at(BASE + n, text, 0)
+}
+
+/// A row of Jane's recorded at `secs` (UTC seconds), of IM dialog `dialog`.
+fn row_at(secs: u64, text: &str, dialog: u8) -> HistoryRow {
     let key = TimeUuidKey {
-        ticks: UUID_EPOCH + (BASE + n) * 10_000_000,
+        ticks: UUID_EPOCH + secs * 10_000_000,
         tail: [i8::MIN, 0, 0, 0, 0, 0, 0, 0],
     };
-    let created = chrono::DateTime::from_timestamp((BASE + n) as i64, 0).unwrap();
+    let created = chrono::DateTime::from_timestamp(secs as i64, 0).unwrap();
     HistoryRow {
         conversation_id: direct_conversation_id(ME, JANE),
         msg_id: format_time_uuid(&key),
@@ -68,7 +83,7 @@ fn row(n: u64, text: &str) -> HistoryRow {
         from_id: JANE,
         from_name: "Jane Doe".into(),
         message: text.into(),
-        dialog: 0,
+        dialog: dialog.into(),
         created_at: created.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
     }
 }
@@ -142,6 +157,83 @@ fn an_offline_message_is_captured_at_its_send_time_with_its_own_text() {
     assert_eq!(c.context.time_source, Some(TimeSource::Receipt));
     assert_eq!(c.context.original_text.as_deref(), Some("now"));
     assert!(c.timestamp > 0);
+    clean(&w, &root);
+}
+
+/// An automatic response's live line: `text` after its translated
+/// "(auto-response)" prefix.
+fn assert_auto_response_line(line: &(String, Origin), text: &str) {
+    assert_eq!(line.1, Origin::Live, "{line:?}");
+    assert!(line.0.ends_with(text) && line.0 != text, "the prefix is kept: {line:?}");
+}
+
+#[test]
+fn an_automatic_response_and_its_service_row_show_once() {
+    let root = temp();
+    // the service records the response a few seconds after it arrived
+    let now = u64::from(grid_now());
+    archive(&root, &[row(1, "from the service"), row_at(now + 3, "Busy", AUTO_RESPONSE)]);
+    let mut w = world(&root);
+    w.on_im(auto_response("Busy"));
+    w.chat_service_settle();
+    w.poll_transcripts();
+    w.chat_service_settle();
+    let lines = texts(&w);
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(lines[0], ("from the service".to_owned(), Origin::Log));
+    assert_auto_response_line(&lines[1], "Busy");
+    // captured like an ordinary IM: the raw body, the receipt clock
+    let c = &w.chat_service.views[&JANE].captures[0];
+    assert_eq!(c.context.original_text.as_deref(), Some("Busy"));
+    assert_eq!(c.context.time_source, Some(TimeSource::Receipt));
+    clean(&w, &root);
+}
+
+#[test]
+fn an_ordinary_im_and_an_automatic_response_with_the_same_text_take_one_row_each() {
+    let root = temp();
+    let now = u64::from(grid_now());
+    archive(
+        &root,
+        &[
+            // the same words months before: neither takes it
+            row(1, "Busy"),
+            row_at(now + 2, "Busy", 0),
+            row_at(now + 3, "Busy", AUTO_RESPONSE),
+        ],
+    );
+    let mut w = world(&root);
+    w.on_im(im("Busy", false, 0));
+    w.on_im(auto_response("Busy"));
+    w.chat_service_settle();
+    w.poll_transcripts();
+    w.chat_service_settle();
+    let lines = texts(&w);
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert_eq!(lines[0], ("Busy".to_owned(), Origin::Log));
+    assert_eq!(lines[1], ("Busy".to_owned(), Origin::Live));
+    assert_auto_response_line(&lines[2], "Busy");
+    clean(&w, &root);
+}
+
+#[test]
+fn a_blocked_resident_s_automatic_response_is_neither_shown_nor_captured() {
+    let root = temp();
+    let mut w = world(&root);
+    let jane = Mute {
+        id: JANE,
+        name: "Jane Doe".into(),
+        kind: MuteType::Agent,
+        flags: 0,
+    };
+    w.mutes.add(jane, 0).expect("blocked");
+    // dropped before its own handling, as LLIMProcessing::processNewMessage
+    // returns on is_muted
+    w.on_im(auto_response("Busy"));
+    w.chat_service_settle();
+    assert!(!w.social.has_session(&JANE));
+    assert!(!w.chat_service.views.contains_key(&JANE));
+    assert!(!w.social.auto_responded.contains(&JANE));
     clean(&w, &root);
 }
 
