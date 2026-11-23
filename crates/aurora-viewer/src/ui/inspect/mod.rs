@@ -413,7 +413,7 @@ impl InspectUi {
                     // text block as the last frame measured it), and the box
                     // and the text get the margins that centre them on it
                     let text_id = ui.scope_id().with("inspect_summary_text");
-                    let box_h = complexity_box_height(ui, limit.is_some());
+                    let box_h = complexity_box_height(ui);
                     let text_h = ui.data(|d| d.get_temp::<f32>(text_id)).unwrap_or(box_h);
                     let row_h = box_h.max(38.0).max(text_h);
                     ui.set_min_height(row_h);
@@ -620,12 +620,14 @@ impl InspectUi {
     }
 }
 
-/// The complexity of the inspected objects; for an avatar, against the
-/// user's RenderAvatarMaxComplexity (0: no limit), beyond which the
-/// Legacy Viewer draws them as a jelly doll.
+/// The complexity of the inspected objects. For an avatar above the user's
+/// RenderAvatarMaxComplexity (0: no limit), beyond which the Legacy Viewer
+/// draws them as a jelly doll, the figure turns orange; the tooltip says
+/// which side of the limit it is.
 fn complexity_box(ui: &mut egui::Ui, p: &Palette, complexity: u32, limit: Option<u32>) {
     let bold = crate::ui::fonts::semibold(ui.ctx());
-    egui::Frame::new()
+    let above = limit.is_some_and(|limit| limit != 0 && complexity > limit);
+    let shown = egui::Frame::new()
         .fill(p.raised.gamma_multiply(0.5))
         .corner_radius(ui.visuals().window_corner_radius)
         .inner_margin(egui::Margin::symmetric(9, 5))
@@ -643,34 +645,29 @@ fn complexity_box(ui: &mut egui::Ui, p: &Palette, complexity: u32, limit: Option
                     RichText::new(aurora_i18n::integer(i64::from(complexity)))
                         .size(14.0)
                         .family(bold)
-                        .color(p.ink),
+                        .color(if above { p.warn } else { p.ink }),
                 );
-                if let Some(limit) = limit {
-                    let (text, color) = if limit == 0 || complexity <= limit {
-                        (aurora_i18n::tr!("inspect-within-limit"), p.success)
-                    } else {
-                        (aurora_i18n::tr!("inspect-over-limit"), p.warn)
-                    };
-                    ui.label(RichText::new(text).size(11.0).color(color))
-                        .on_hover_text(aurora_i18n::tr!(
-                            "inspect-limit-tip",
-                            limit = aurora_i18n::integer(i64::from(limit))
-                        ));
-                }
             });
         });
+    if let Some(limit) = limit.filter(|limit| *limit != 0) {
+        let side = if above {
+            aurora_i18n::tr!("inspect-over-limit")
+        } else {
+            aurora_i18n::tr!("inspect-within-limit")
+        };
+        let tip = format!(
+            "{side}\n{}",
+            aurora_i18n::tr!("inspect-limit-tip", limit = aurora_i18n::integer(i64::from(limit)))
+        );
+        shown.response.on_hover_text(tip);
+    }
 }
 
-/// Height of `complexity_box`: its margins and its two or three lines.
-fn complexity_box_height(ui: &egui::Ui, with_limit: bool) -> f32 {
+/// Height of `complexity_box`: its margins and its two lines.
+fn complexity_box_height(ui: &egui::Ui) -> f32 {
     let bold = crate::ui::fonts::semibold(ui.ctx());
-    ui.ctx().fonts_mut(|f| {
-        let mut h = 10.0 + f.row_height(&egui::FontId::new(10.5, bold.clone())) + 1.0 + f.row_height(&egui::FontId::new(14.0, bold));
-        if with_limit {
-            h += 1.0 + f.row_height(&egui::FontId::proportional(11.0));
-        }
-        h
-    })
+    ui.ctx()
+        .fonts_mut(|f| 10.0 + f.row_height(&egui::FontId::new(10.5, bold.clone())) + 1.0 + f.row_height(&egui::FontId::new(14.0, bold)))
 }
 
 /// The quiet link beside the name in the summary card: a small icon, a face
