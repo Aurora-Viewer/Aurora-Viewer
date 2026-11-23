@@ -144,7 +144,7 @@ impl State {
         } else {
             self.order.extend(new);
         }
-        let pass = ctx.cumulative_pass_nr();
+        let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
         if self.laid_out.is_none_or(|last| last + 1 < pass) {
             self.offsets.clear();
             self.targets.clear();
@@ -424,7 +424,7 @@ impl State {
         }
         // the frame after a drop has started every slide
         self.seeding.clear();
-        self.laid_out = Some(ui.ctx().cumulative_pass_nr());
+        self.laid_out = Some(ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT));
         let grab = self.grab?;
         let source = match grab.conversation {
             Some(id) => self.rows.iter().find(|row| row.id == id).map(|row| row.rect),

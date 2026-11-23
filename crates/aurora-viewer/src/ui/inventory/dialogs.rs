@@ -806,8 +806,8 @@ pub(super) fn preview(
                             .fit_to_original_size(1.0)
                             .sense(egui::Sense::click_and_drag()),
                     );
-                    if drag_inventory.items.get(&id).is_some_and(|item| item.asset_type == 0) {
-                        response.dnd_set_drag_payload(InvDrag(id));
+                    if drag_inventory.items.get(&id).is_some_and(|item| item.asset_type == 0) && super::drag::begins(ui, &response) {
+                        egui::DragAndDrop::set_payload(ui.ctx(), InvDrag(id));
                     }
                     ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_texture_preview", st.ui_id, id)), response.rect));
                 } else {

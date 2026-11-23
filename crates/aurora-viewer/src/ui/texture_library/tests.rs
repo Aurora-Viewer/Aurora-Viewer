@@ -217,7 +217,9 @@ fn texture_library_header_switch_and_toolbar_restore_keep_the_active_state() {
         show(vec![], &mut ui, &mut prefs, &mut open);
     }
     let rect = ctx.memory(|m| m.area_rect(egui::Id::unique(VERTICAL))).expect("vertical window");
-    let switch = egui::pos2(rect.right() - 63.0, rect.top() + 18.0);
+    // (third from the cross: the minimize button, then the one that sends
+    // the window outside the viewer's)
+    let switch = egui::pos2(rect.right() - 85.0, rect.top() + 18.0);
     for pressed in [true, false] {
         show(
             vec![

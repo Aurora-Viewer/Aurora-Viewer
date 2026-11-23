@@ -402,7 +402,7 @@ pub fn search_text_edit_with_margin(
 fn note_search_clear(ui: &egui::Ui, response: &egui::Response, emptied: bool) {
     if emptied && response.changed() {
         let key = egui::Id::unique("search_selection_reveal").with(ui.layer_id());
-        let frame = ui.ctx().cumulative_frame_nr();
+        let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ui.ctx().data_mut(|data| data.insert_temp(key, frame));
         ui.ctx().request_repaint();
     }
@@ -417,7 +417,7 @@ pub fn search_cleared(ui: &egui::Ui) -> bool {
     let key = egui::Id::unique("search_selection_reveal").with(ui.layer_id());
     ui.ctx()
         .data(|data| data.get_temp::<u64>(key))
-        .is_some_and(|frame| ui.ctx().cumulative_frame_nr().saturating_sub(frame) <= 1)
+        .is_some_and(|frame| ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT).saturating_sub(frame) <= 1)
 }
 
 /// For ordinary lists, reveal a selected row without moving keyboard focus.

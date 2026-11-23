@@ -215,6 +215,12 @@ pub mod flags {
     /// Bit of flags[3], above packed texture animation: local studio scenery
     /// is excluded from the avatar's temporary white reveal.
     pub const STUDIO_STAGE: u32 = 1 << 29;
+    /// Bit of flags[3], above the layer rank: the visible-surface pick
+    /// (Alt-focus, `fs_pick_visible`) keeps the face's clear texels. Set
+    /// for a legacy material in emissive mask mode whatever the face's
+    /// alpha, as LLVOVolume::lineSegmentIntersect ignores texture alpha
+    /// there, also where `EMISSIVE_MASK` is dropped for a transparent face.
+    pub const PICK_IGNORES_ALPHA: u32 = 1 << 28;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -1024,6 +1030,17 @@ pub struct PointLight {
     pub falloff: f32,
     /// A light with a texture lights its frustum only, through the texture.
     pub projector: Option<Projector>,
+    /// Half the diagonal of the prim the light shines from (m): what lies
+    /// that near the light (its bulb, its lamp's body) does not shadow it in
+    /// the traced light (rt_lights.wgsl). 0 for lights of no prim.
+    pub source_radius: f32,
+    /// What the light shines from, the same number at every frame, for what
+    /// follows a light from a frame to the next (how far it moved, for the
+    /// history of its traced shadow): its prim's object index plus one, the
+    /// `CullFace::object` of the prim's faces plus one, which its traced
+    /// rays pass (rt_lights.wgsl `light_blocked`). 0 for lights of no prim,
+    /// which stay where they are.
+    pub source_id: u32,
 }
 
 /// Frustum and texture of a projector (a prim light with a light texture),
@@ -1198,6 +1215,145 @@ pub enum AoMethod {
     Gtao { quality: u8 },
 }
 
+/// What is ray-traced (rt_shadows.rs), on a device opened with ray
+/// queries ([`RayTracingSupport`]): Preferences › Graphics › Ray tracing,
+/// experimental and off by default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RayTracing {
+    /// The sun's and the moon's shadows of the main view, in the shadow
+    /// maps' place (with the sun shadows only). The others trace the scene
+    /// it builds: none without it.
+    pub shadows: bool,
+    /// The local lights' shadows.
+    pub lights: bool,
+    /// The indirect light, in the screen-space one's place.
+    pub indirect: bool,
+    /// The reflections, in the screen-space ones' place (with `ssr` only).
+    pub reflections: bool,
+}
+
+/// What Preferences › Graphics › Ray tracing sets of the traced shadows
+/// beside the effects ([`RayTracing`]): nothing a change of it makes anew.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RtTuning {
+    /// The sun's shadows' softness: the size of the disc its rays aim at,
+    /// 1 the real sun's (half a degree), 0 sharp.
+    pub sun_softness: f32,
+    /// The lamps' shadows' softness: their size, 1 as rt_lights.wgsl
+    /// measures it from the prim (`light_size`), 0 sharp.
+    pub lamp_softness: f32,
+    /// How many of the frame's first lights (the nearest and brightest,
+    /// `LightList`'s order) cast traced shadows; the others light
+    /// unshadowed, as the Legacy Viewer's point lights.
+    pub lamps: u32,
+    /// The lamps' cost against their noise, for the ray tracing quality
+    /// (rt_shadows.rs `LampQuality`; the defaults are its High, the
+    /// pass as it was before them): the lights a pixel weighs to draw the
+    /// one it traces, when more reach it (rt_lights.wgsl `candidates`, 1 to
+    /// 8), the neighbours whose samples it reuses (`neighbours`, 0 to 4),
+    /// and the denoiser's à-trous passes over their share (1 to 4).
+    pub lamp_candidates: u32,
+    pub lamp_reuse: u32,
+    pub lamp_denoise: u32,
+    /// The projectors cast traced shadows (the Legacy Viewer's "Sun/Moon +
+    /// Projectors" shadow detail, Aurora's projector shadows option).
+    pub projectors: bool,
+    /// The traced indirect light's global illumination probes (gi.rs):
+    /// more bounces, and the sky's light shut out of closed rooms.
+    /// `AURORA_GI=0` leaves them out whatever this says.
+    pub probes: bool,
+    // The traced indirect light's cost, set by the ray tracing quality
+    // (High is the default, as before the qualities: Medium 3, 1024, 2;
+    // Low 4, 512, 1). Each lowers its cost and keeps it on.
+    /// The screen pixels a side of a traced pixel of the indirect light
+    /// (rt_gi.wgsl `params.grid`): 2, one ray for each 2x2; 3 and 4 trace a
+    /// ninth and a sixteenth of the screen's pixels, upsampled through the
+    /// depth as at 2. Every pass of it follows (the reuse, the denoiser, the
+    /// probes' sight of the sky). Changing it makes its textures anew.
+    pub gi_step: u32,
+    /// The global illumination probes updated a frame (gi.rs `BUDGET` at
+    /// most): fewer, and each follows a change of the light more slowly.
+    pub gi_probe_updates: u32,
+    /// The neighbours whose picks the indirect light's reuse weighs
+    /// (rt_gi.wgsl `NEIGHBOURS`, 1 or 2): one shadow ray each.
+    pub gi_neighbours: u32,
+}
+
+impl Default for RtTuning {
+    fn default() -> Self {
+        RtTuning {
+            sun_softness: 1.0,
+            lamp_softness: 1.0,
+            lamps: 64,
+            lamp_candidates: 8,
+            lamp_reuse: 4,
+            lamp_denoise: 4,
+            projectors: true,
+            probes: true,
+            gi_step: 2,
+            gi_probe_updates: crate::gi::BUDGET,
+            gi_neighbours: 2,
+        }
+    }
+}
+
+/// The traced indirect light's knobs of each ray tracing quality, Low,
+/// Medium then High (`RtTuning::gi_step`, `gi_probe_updates`,
+/// `gi_neighbours`): High is the image before the qualities. Medium traces
+/// 4/9 of its rays and Low a quarter; Low also updates a quarter of the
+/// probes a frame and weighs one neighbour's pick.
+pub const GI_QUALITIES: [(u32, u32, u32); 3] = [
+    (4, crate::gi::BUDGET / 4, 1),
+    (3, crate::gi::BUDGET / 2, 2),
+    (2, crate::gi::BUDGET, 2),
+];
+
+impl RtTuning {
+    /// This tuning with the traced indirect light of quality `quality`
+    /// (0 Low, 1 Medium, 2 High; past 2, High): [`GI_QUALITIES`].
+    pub fn with_gi_quality(self, quality: usize) -> Self {
+        let (gi_step, gi_probe_updates, gi_neighbours) = GI_QUALITIES[quality.min(GI_QUALITIES.len() - 1)];
+        RtTuning {
+            gi_step,
+            gi_probe_updates,
+            gi_neighbours,
+            ..self
+        }
+    }
+
+    /// `AURORA_RT_GI_QUALITY=low|medium|high` (docs/TESTING.md): the
+    /// indirect light's quality for this launch, to measure each.
+    pub fn gi_quality_from_env() -> Option<usize> {
+        gi_quality_named(std::env::var("AURORA_RT_GI_QUALITY").ok()?.as_str())
+    }
+}
+
+fn gi_quality_named(name: &str) -> Option<usize> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "low" => Some(0),
+        "medium" => Some(1),
+        "high" => Some(2),
+        _ => None,
+    }
+}
+
+/// Whether the device can ray-trace: what Preferences › Graphics › Ray
+/// tracing shows of the graphics card.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RayTracingSupport {
+    /// The device was opened with ray queries: the options apply at once.
+    Ready,
+    /// The graphics card has ray queries and the device was opened without
+    /// them, for a launch that never traces (`AURORA_RT_SHADOWS=0`).
+    NotOpened,
+    /// The device is the VR runtime's: no ray tracing in a run set up for
+    /// VR.
+    Vr,
+    /// The graphics card or its driver has no ray queries.
+    #[default]
+    Unsupported,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderSettings {
     /// Requested per-eye XR size, bounded by runtime limits.
@@ -1248,6 +1404,9 @@ pub struct RenderSettings {
     pub mirror_scale: f32,
     /// Screen-space reflections on glossy surfaces.
     pub ssr: bool,
+    pub ray_tracing: RayTracing,
+    /// The traced shadows' softness and lamps.
+    pub rt_tuning: RtTuning,
     /// Rain prototype: the G-buffer of the screen-space reflections is drawn
     /// while it rains, even with them off, for the wet surfaces' smooth
     /// facings and materials (the reflections themselves only with `ssr`).
@@ -1301,6 +1460,8 @@ impl Default for RenderSettings {
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
             ssr: false,
+            ray_tracing: RayTracing::default(),
+            rt_tuning: RtTuning::default(),
             rain_surfaces: false,
             anisotropy: 8,
             probe_slots: 32,
@@ -1769,6 +1930,8 @@ pub struct FrameParams {
     /// The sky's rendering type is hidden (the viewer's Advanced ›
     /// Rendering types): the view starts from `clear_color` instead.
     pub hide_sky: bool,
+    /// Hide the water's optical effects with its surface (Advanced › Rendering types).
+    pub hide_water: bool,
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
@@ -1972,6 +2135,10 @@ pub struct RenderStats {
     /// The world pixels of the frame `gpu_ms` measures (a photo frame's are
     /// the photo's).
     pub gpu_pixels: u64,
+    /// The GPU time a photo of `gpu_pixels` is planned by: `gpu_ms`, and
+    /// the rounds a photo's traced passes run that the view's frame does
+    /// not (the ray-traced lamps' shadows and indirect light).
+    pub gpu_photo_ms: Option<f32>,
     /// Video memory the render targets that follow the image's size take
     /// for each of its pixels, with the MSAA samples, the effects and the
     /// TAA history of the current settings: measured with wgpu's counters
@@ -2049,6 +2216,11 @@ pub struct RenderStats {
     pub ui_shapes: u32,
     pub ui_meshes: u32,
     pub ui_vertices: u32,
+    /// Windows of the interface outside the viewer's drawn after this
+    /// frame (outside.rs), and the render thread's time on them (ms),
+    /// their swapchains' images and presentations included.
+    pub outside_windows: u32,
+    pub outside_ms: f32,
     /// Draw commands recorded (multi-draws, fullscreen and sprite draws).
     pub draw_calls: u32,
     /// Bytes of draw records and joint palettes sent to the GPU this frame.
@@ -2160,6 +2332,25 @@ impl GpuElement {
 
 #[cfg(test)]
 mod tests {
+    /// High is the default (the image before the qualities); each quality
+    /// is cheaper than the one above.
+    #[test]
+    fn gi_qualities_go_down_from_high() {
+        let high = super::RtTuning::default();
+        assert_eq!(high.with_gi_quality(2), high);
+        assert_eq!(high.with_gi_quality(9), high);
+        let low = high.with_gi_quality(0);
+        assert_eq!((low.gi_step, low.gi_probe_updates, low.gi_neighbours), (4, 512, 1));
+        assert_eq!((low.lamps, low.probes), (high.lamps, high.probes));
+        for q in 0..2 {
+            let (a, b) = (super::GI_QUALITIES[q], super::GI_QUALITIES[q + 1]);
+            assert!(a.0 > b.0 && a.1 < b.1 && a.2 <= b.2, "{a:?} {b:?}");
+        }
+        assert_eq!(super::gi_quality_named(" Medium "), Some(1));
+        assert_eq!(super::gi_quality_named("low"), Some(0));
+        assert_eq!(super::gi_quality_named("ultra"), None);
+    }
+
     use super::*;
 
     #[test]
@@ -2659,5 +2850,111 @@ mod tests {
         assert_eq!(flags::STUDIO_STAGE & flags::WORLD_BLEND_PICK, 0);
         assert_eq!(flags::OBJECT_MASK_PICK & flags::WORLD_BLEND_PICK, 0);
         assert_eq!(flags::STUDIO_STAGE & (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT), 0);
+        let others = flags::STUDIO_STAGE
+            | flags::OBJECT_MASK_PICK
+            | flags::WORLD_BLEND_PICK
+            | (flags::LAYER_RANK_MAX << flags::LAYER_RANK_SHIFT)
+            | 0x00ff_ffff;
+        assert_eq!(flags::PICK_IGNORES_ALPHA & others, 0);
+    }
+
+    /// The visible-surface pick reads the bit with the same value, in the
+    /// same flags word, instead of the emissive mask flag.
+    #[test]
+    fn pick_ignores_alpha_bit_matches_wgsl() {
+        let common = include_str!("shaders/common.wgsl");
+        assert!(common.contains(&format!("const FLAG_PICK_IGNORES_ALPHA: u32 = {}u;", flags::PICK_IGNORES_ALPHA)));
+        let object = include_str!("shaders/object.wgsl");
+        let start = object.find("fn fs_pick_visible(").expect("fs_pick_visible");
+        let body = &object[start..start + object[start..].find("\n}").expect("end")];
+        assert!(body.contains("(rec.flags.w & FLAG_PICK_IGNORES_ALPHA) == 0u"));
+        assert!(!body.contains("FLAG_EMISSIVE_MASK"));
+    }
+
+    /// The flags the shaders test in `frame.light_mode.z`, by name, with
+    /// their value. The low byte is a number, not a flag: left out.
+    fn light_mode_flags(sources: &[&str]) -> Vec<(String, u32)> {
+        const READ: &str = "light_mode.z & ";
+        let mut names: Vec<&str> = Vec::new();
+        for src in sources {
+            for (at, _) in src.match_indices(READ) {
+                let rest = &src[at + READ.len()..];
+                let end = rest
+                    .find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+                    .unwrap_or(rest.len());
+                let name = &rest[..end];
+                if name.starts_with(|c: char| c.is_ascii_uppercase()) && !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        names
+            .into_iter()
+            .map(|name| {
+                let declared = format!("const {name}: u32 = 0x");
+                let value = sources.iter().find_map(|src| {
+                    let rest = &src[src.find(&declared)? + declared.len()..];
+                    u32::from_str_radix(&rest[..rest.find('u')?], 16).ok()
+                });
+                (
+                    name.to_owned(),
+                    value.unwrap_or_else(|| panic!("{name} is declared in hexadecimal")),
+                )
+            })
+            .collect()
+    }
+
+    /// The pairs of `flags` that have a bit in common.
+    fn sharing_a_bit(flags: &[(String, u32)]) -> Vec<(&str, &str)> {
+        let mut pairs = Vec::new();
+        for (k, (a, bits)) in flags.iter().enumerate() {
+            for (b, other) in &flags[k + 1..] {
+                if bits & other != 0 {
+                    pairs.push((a.as_str(), b.as_str()));
+                }
+            }
+        }
+        pairs
+    }
+
+    /// Each flag of `frame.light_mode.z` has a bit of its own. Two changes
+    /// that each take the next free one merge without a conflict, and each
+    /// option then turns the other on.
+    #[test]
+    fn the_flags_of_the_light_mode_word_share_no_bit() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/shaders");
+        let sources: Vec<String> = std::fs::read_dir(&dir)
+            .expect("the shaders' folder")
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .filter(|path| path.extension().is_some_and(|e| e == "wgsl"))
+            .map(|path| std::fs::read_to_string(&path).expect("a shader's source"))
+            .collect();
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let flags = light_mode_flags(&sources);
+        assert!(flags.len() >= 16, "the flags are found: {flags:?}");
+        for (name, bits) in &flags {
+            assert_eq!(bits.count_ones(), 1, "{name} is one bit");
+            assert!(*bits > 0xff, "{name} is clear of the view's number");
+        }
+        assert_eq!(sharing_a_bit(&flags), []);
+        // the traced lights' count, a number in the word's top bits, takes
+        // none of theirs either (common.wgsl `light_traced`)
+        let common = include_str!("shaders/common.wgsl");
+        let number = |name: &str| -> u32 {
+            let declared = format!("const {name}: u32 = ");
+            let rest = &common[common.find(&declared).expect(name) + declared.len()..];
+            let digits = rest[..rest.find('u').expect(name)].trim_start_matches("0x");
+            u32::from_str_radix(digits, if rest.starts_with("0x") { 16 } else { 10 }).expect(name)
+        };
+        let count = number("TRACED_LIGHTS_BITS") << number("TRACED_LIGHTS_SHIFT");
+        assert!(number("TRACED_LIGHTS_BITS") + 1 >= 64, "the 64 lamps of High fit");
+        for (name, bits) in &flags {
+            assert_eq!(bits & count, 0, "{name} is clear of the traced lights' count");
+        }
+
+        let clash = "const A: u32 = 0x800000u;\nconst B: u32 = 0x800000u;\nconst C: u32 = 0x400u;\n\
+                     if ((frame.light_mode.z & A) != 0u && (frame.light_mode.z & 0xffu) == 1u) {}\n\
+                     if ((frame.light_mode.z & B) != 0u || (frame.light_mode.z & C) != 0u) {}";
+        assert_eq!(sharing_a_bit(&light_mode_flags(&[clash])), [("A", "B")]);
     }
 }

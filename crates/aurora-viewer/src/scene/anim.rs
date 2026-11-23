@@ -140,6 +140,18 @@ impl Rig {
         self.parent.len()
     }
 
+    /// Origin of a native translation key in the rig's local coordinates.
+    /// mPelvis and Avatar Center hang from the omitted mRoot, whose rest
+    /// translation is folded into their joints. Every other key is
+    /// already relative to its joint's parent.
+    pub(crate) fn key_origin(&self, bone: usize) -> Vec3 {
+        if bone == self.pelvis || self.parent[bone].is_none() && self.names.get("Avatar Center") == Some(&bone) {
+            self.local_pos[self.pelvis]
+        } else {
+            Vec3::ZERO
+        }
+    }
+
     /// LLVOAvatar::initAttachmentPoints (indra/newview/llvoavatar.cpp,
     /// originally LGPL 2.1): every body attachment point is an
     /// LLViewerJointAttachment, a joint below its bone that
@@ -1821,8 +1833,9 @@ impl Controller {
                     self.pelvis_offset = Some(pos);
                     self.tag_pelvis_offset = top;
                 } else if let Some(rest) = rest_pos.get(j) {
-                    self.pos_delta[j] = pos - *rest;
-                    self.tag_pos_delta[j] = top - rest.z;
+                    let origin = rig.key_origin(j);
+                    self.pos_delta[j] = origin + pos - *rest;
+                    self.tag_pos_delta[j] = origin.z + top - rest.z;
                 }
             }
             if j != rig.pelvis
@@ -2334,6 +2347,37 @@ mod tests {
                 assert!(!manager.is_playing(item));
             }
         }
+    }
+
+    #[test]
+    fn avatar_center_keys_use_the_root_even_with_a_pelvis_override() {
+        let mut rig = rig();
+        rig.add_attachment_points(&[("Avatar Center".to_owned(), None, Vec3::ZERO, Quat::IDENTITY)]);
+        let center = rig.names["Avatar Center"];
+        let mut base = SkeletonBase {
+            local_pos: rig.local_pos.clone(),
+            scale: rig.scale.clone(),
+        };
+        base.local_pos[rig.pelvis].z += 0.35;
+        let offset = Vec3::new(0.5, -0.1, 0.22);
+        let mut animation = swing(&rig).anim.clone();
+        animation.joints = vec![aurora_assets::JointMotion {
+            joint_name: "Avatar Center".into(),
+            priority: 4,
+            rot_keys: Vec::new(),
+            pos_keys: vec![aurora_assets::anim::PosKey {
+                time: 0.0,
+                position: offset,
+            }],
+        }];
+        let motion = Arc::new(BoundAnim::bind(animation, &rig));
+        let start = Instant::now();
+        let mut controller = Controller::default();
+        controller.sync(&[signal(Uuid::from_u128(42), 1, start)], start, |_| Some(motion.clone()));
+        let mut out = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        controller.evaluate(&rig, start + Duration::from_millis(500), Some(&base), &mut out);
+        let center_world = Mat4::from_cols_array_2d(&out[center]).w_axis.truncate();
+        assert!(center_world.abs_diff_eq(rig.local_pos[rig.pelvis] + offset, 1e-5));
     }
 
     #[test]

@@ -403,11 +403,13 @@ impl World {
             }),
             Action::SweepTranscripts { ticket } => {
                 // the plaintext first (deleteTranscriptContent), then the
-                // service's files; no transcript folder is a failure
-                let dir = self.chat_log.dir().map(std::path::Path::to_path_buf);
+                // service's files; no transcript folder is a failure, and a
+                // folder shared with the Legacy Viewer keeps every
+                // transcript, the delete finishing on the service's files
+                let sweep = self.chat_log.service_sweep();
                 let swept = self.chat_service.swept.clone();
                 self.storage_job(Reply::Swept(ticket, false), move |s| {
-                    let erased = dir.map(|d| super::chat_log::store::erase(&d));
+                    let erased = sweep.map(|w| w.run());
                     if let Some(Ok(n)) = &erased {
                         swept.store(*n, std::sync::atomic::Ordering::Relaxed);
                     }
