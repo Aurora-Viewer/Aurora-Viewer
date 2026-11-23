@@ -68,6 +68,102 @@ mod tests {
     use super::*;
 
     #[test]
+    fn graded_lookup_loop_preserves_invalid_map_and_band_rules() {
+        // Exhaust every valid/invalid map combination, both band endpoints,
+        // and portrait coverage. The values distinguish every map's result.
+        for level in 0..4 {
+            for mask in 0..16 {
+                for band in [0.0_f32, 0.1, 0.5, 1.0] {
+                    if level == 3 && band > 0.0 {
+                        continue;
+                    }
+                    for close in [0.0_f32, 0.3, 1.0] {
+                        let values: [f32; 4] = std::array::from_fn(|k| if mask & (1 << k) == 0 { -1.0 } else { 0.1 + k as f32 * 0.2 });
+                        let mix = |a: f32, b: f32, w: f32| a * (1.0 - w) + b * w;
+                        let mut old = values[level];
+                        let mut last = level;
+                        if band > 0.0 {
+                            last += 1;
+                            if values[last] >= 0.0 {
+                                old = mix(old.max(0.0), values[last], if old >= 0.0 { band } else { 1.0 });
+                            }
+                        } else if close >= 1.0 {
+                            old = 0.4;
+                        } else if close > 0.0 && old >= 0.0 {
+                            old = mix(old, 0.4, close);
+                        }
+                        for value in values.iter().skip(last + 1) {
+                            if old >= 0.0 {
+                                break;
+                            }
+                            old = *value;
+                        }
+                        let mut new = -1.0_f32;
+                        for (k, value) in values.iter().enumerate().skip(level) {
+                            let sample = if k == level && band <= 0.0 && close >= 1.0 { 0.4 } else { *value };
+                            if k == level {
+                                new = sample;
+                                if band <= 0.0 && close > 0.0 && new >= 0.0 {
+                                    new = mix(new, 0.4, close);
+                                }
+                                if band > 0.0 {
+                                    continue;
+                                }
+                            } else if band > 0.0 && k == level + 1 {
+                                if sample >= 0.0 {
+                                    new = mix(new.max(0.0), sample, if new >= 0.0 { band } else { 1.0 });
+                                }
+                            } else {
+                                new = sample;
+                            }
+                            if new >= 0.0 {
+                                break;
+                            }
+                        }
+                        assert_eq!(
+                            old.to_bits(),
+                            new.to_bits(),
+                            "level={level} mask={mask} band={band} portrait={close}"
+                        );
+                    }
+                }
+            }
+        }
+        let common = include_str!("shaders/common.wgsl");
+        let body = &common[common.find("fn graded_shadow(").expect("graded")..common.find("fn graded_distance(").expect("end")];
+        assert_eq!(body.matches("graded_lookup(").count(), 1);
+    }
+
+    #[test]
+    fn directional_disk_patterns_preserve_weights_and_order() {
+        fn smooth(a: f32, b: f32, x: f32) -> f32 {
+            let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        }
+        for step in 0..=65536 {
+            let radius = step as f32 / 256.0;
+            let middle = smooth(5.0, 12.0, radius);
+            let wide = smooth(16.0, 32.0, radius);
+            let mut original = vec![(0, 1.0_f32)];
+            if middle > 0.0 {
+                original.push((1, middle));
+            }
+            if wide > 0.0 {
+                original.push((2, wide));
+            }
+            let patterns = 1 + u32::from(middle > 0.0) + u32::from(wide > 0.0);
+            let dynamic: Vec<_> = (0..patterns)
+                .map(|pattern| (pattern, [1.0, middle, wide][pattern as usize]))
+                .collect();
+            assert_eq!(original, dynamic, "radius {radius}");
+        }
+        let common = include_str!("shaders/common.wgsl").replace("\r\n", "\n");
+        let body = &common[common.find("fn directional_pcss(").expect("PCSS")..common.find("struct DistantShadow").expect("end of PCSS")];
+        assert_eq!(body.matches("pcss_disk(").count(), 1, "one static disk callsite");
+        assert!(body.contains("pattern < patterns"));
+    }
+
+    #[test]
     fn five_tap_projectors_are_stock_and_soft_projectors_require_opt_in() {
         for input in [None, Some("0"), Some(""), Some("invalid")] {
             assert!(!projector_filter_requested(input));

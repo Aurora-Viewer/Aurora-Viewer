@@ -1,5 +1,12 @@
 # Aurora Viewer architecture
 
+Directional shadow filtering in common.wgsl uses one receiver-bounded disk
+pattern callsite and one graded-map lookup callsite. The latter visits the
+selected map, its overlap neighbour and only invalid-map fallbacks in order;
+the shared overlap receiver offset and portrait coverage are retained. This
+bounds static shader expansion in native pipeline compilers without reducing
+samples, map coverage or the directional shadow features.
+
 `imports::ImageSizeLimit` separates a draft's Default/1024/2048 choice from
 the shared persisted image limit beside Import. Effective options feed previews,
 quotes, deduplication and encoding; changing the general limit updates inherited

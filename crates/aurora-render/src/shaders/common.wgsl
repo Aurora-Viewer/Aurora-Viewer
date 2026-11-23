@@ -1656,16 +1656,26 @@ fn directional_pcss(depth_map: texture_depth_2d, vp: mat4x4<f32>, n: vec3<f32>,
     // their slope residual while keeping the search's physical gap separate.
     let ref_z = receiver_z - receiver_bias - (abs(slope.x) + abs(slope.y));
     let centre = origin + position;
-    var sum = pcss_disk(depth_map, centre, inv_dims, radius, slope, ref_z, vec2<f32>(1.0, 0.0));
-    // Wider footprints need more disk directions to resolve a silhouette.
-    // Fade secondary patterns in so switching sample counts is continuous.
+    // Keep one static disk callsite: duplicating this filtered shadow body
+    // multiplies driver optimizer work at every graded/cascade callsite.
+    // The receiver-dependent bound avoids constant-rotation copies while
+    // retaining directions, weights and accumulation order.
     let middle = smoothstep(5.0, 12.0, radius);
     let wide = smoothstep(16.0, 32.0, radius);
-    if (middle > 0.0) {
-        sum += middle * pcss_disk(depth_map, centre, inv_dims, radius, slope, ref_z, vec2<f32>(0.5, 0.8660254));
-    }
-    if (wide > 0.0) {
-        sum += wide * pcss_disk(depth_map, centre, inv_dims, radius, slope, ref_z, vec2<f32>(0.5, -0.8660254));
+    let patterns = 1u + select(0u, 1u, middle > 0.0) + select(0u, 1u, wide > 0.0);
+    var sum = 0.0;
+    for (var pattern = 0u; pattern < patterns; pattern++) {
+        var rotation = vec2<f32>(1.0, 0.0);
+        var weight = 1.0;
+        if (pattern == 1u) {
+            rotation = vec2<f32>(0.5, 0.8660254);
+            weight = middle;
+        }
+        if (pattern == 2u) {
+            rotation = vec2<f32>(0.5, -0.8660254);
+            weight = wide;
+        }
+        sum += weight * pcss_disk(depth_map, centre, inv_dims, radius, slope, ref_z, rotation);
     }
     return vec3<f32>(sum / (1.0 + middle + wide), blend, radius);
 }
@@ -2304,42 +2314,46 @@ fn graded_shadow(world: vec3<f32>, n: vec3<f32>, receiver_distance: f32) -> vec4
         }
     }
     let map = graded_map(level);
-    let own_offset = graded_offset(map);
+    var close = vec3<f32>(0.0, 0.0, graded_offset(map));
+    if (band_weight <= 0.0 && level == 0u && frame.portrait_vp[3].w > 0.5 && receiver_distance < 0.45) {
+        close = portrait_lookup(map, world, n, receiver_distance);
+    }
+    var offset = close.z;
+    if (band_weight > 0.0) {
+        offset = mix(graded_offset(map), graded_offset(graded_map(level + 1u)), band_weight);
+    }
     var visibility = -1.0;
     var tint = graded_colour(level);
-    var last_tested = level;
-    if (band_weight > 0.0) {
-        let next = graded_map(level + 1u);
-        let offset = mix(own_offset, graded_offset(next), band_weight);
-        let receiver = world + n * offset;
-        visibility = graded_lookup(map, receiver, n);
-        let next_visibility = graded_lookup(next, receiver, n);
-        last_tested = level + 1u;
-        if (next_visibility >= 0.0) {
-            let w = select(1.0, band_weight, visibility >= 0.0);
-            visibility = mix(max(visibility, 0.0), next_visibility, w);
-            tint = mix(tint, graded_colour(level + 1u), w);
+    // Visit the own map, its band neighbour, then only the first valid
+    // coarser fallback. A single static lookup keeps the driver's inlined
+    // shadow graph bounded without changing map order or receiver offsets.
+    for (var k = level; k < 4u; k++) {
+        let current = graded_map(k);
+        var receiver_offset = graded_offset(current);
+        if (k == level || (band_weight > 0.0 && k == level + 1u)) {
+            receiver_offset = offset;
         }
-    } else {
-        // XY support and the distance band share one virtual receiver offset.
-        var close = vec3<f32>(0.0, 0.0, own_offset);
-        if (level == 0u && frame.portrait_vp[3].w > 0.5 && receiver_distance < 0.45) {
-            close = portrait_lookup(map, world, n, receiver_distance);
+        var sample = close.x;
+        if (k != level || band_weight > 0.0 || close.y < 1.0) {
+            sample = graded_lookup(current, world + n * receiver_offset, n);
         }
-        visibility = close.x;
-        if (close.y < 1.0) {
-            visibility = graded_lookup(map, world + n * close.z, n);
-            if (close.y > 0.0 && visibility >= 0.0) {
+        if (k == level) {
+            visibility = sample;
+            if (band_weight <= 0.0 && close.y > 0.0 && visibility >= 0.0) {
                 visibility = mix(visibility, close.x, close.y);
             }
+            if (band_weight > 0.0) { continue; }
+        } else if (band_weight > 0.0 && k == level + 1u) {
+            if (sample >= 0.0) {
+                let w = select(1.0, band_weight, visibility >= 0.0);
+                visibility = mix(max(visibility, 0.0), sample, w);
+                tint = mix(tint, graded_colour(k), w);
+            }
+        } else {
+            visibility = sample;
+            tint = graded_colour(k);
         }
-    }
-    // Mirrors may see behind the main camera. Use the first coarser map
-    // that contains that receiver. Invalid samples cannot brighten a valid map.
-    for (var k = last_tested + 1u; k < 4u && visibility < 0.0; k++) {
-        let coarse = graded_map(k);
-        visibility = graded_lookup(coarse, world + n * graded_offset(coarse), n);
-        tint = graded_colour(k);
+        if (visibility >= 0.0) { break; }
     }
     if (visibility < 0.0) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
     let fade = clamp((ends.w - receiver_distance) / (ends.w * 0.1), 0.0, 1.0);

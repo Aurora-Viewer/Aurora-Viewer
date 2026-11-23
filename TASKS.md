@@ -1,6 +1,7 @@
 # Aurora Viewer — task tracking
 
 - 🟡 Rendering quality profiles, material lighting and focus on blended surfaces. [Controls and comparisons](docs/p3-rendering/README.md) · [GPU regression scenes](docs/p3-rendering/VALIDATION.md). Partly addresses #3571 through per-tier shadow distance choices.
+  - 🟡 Native shadow compiler mitigation (task rendering-cold-start): consolidate adaptive disk and graded-map calls behind receiver-bounded loops without reducing samples, map coverage, portrait support or lighting. RTX 5090 Vulkan opaque impostor compile: 406.97 s original, 16.39 s mitigated; matched offline Focus and ShadowSlope captures complete. Strict workspace Clippy and shader validation pass; the full suite exposes an identical baseline terrain-ramp precision failure on the WSL adapter. Human visual validation and the final baked native package remain pending.
   - ⬜ Compare stock and Custom shadow tiers, directional and contact visibility, a near mesh during camera rotation, and glasses during a pullback. Check physical-GPU frame times and peak VRAM with the same scene and camera.
   - ⬜ Compare modern-sky legacy lighting and the targeted thin-surface PBR controls separately. Check thin-object GTAO, saved profile behavior, and world and Photo focus on blended hair across AA modes, including native 2× and 8× MSAA where supported.
   - ⬜ Validate cold and warm driver-cache login and toggling stochastic alpha on Windows. Record human validation on the final contribution tree and compare the same scene with the Legacy Viewer where practical.
