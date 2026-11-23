@@ -341,14 +341,15 @@ pub(super) fn editor(
                 id.with(("attachment", index)),
                 egui::Sense::click_and_drag(),
             );
-            // LLViewerTextEditor::handleMouseUp opens items on a single click.
-            if response.clicked() {
-                result.open = Some(marker);
-            }
             // handleHover begins a drag past the threshold. Only an object
             // has somewhere to go here: the world (dropObject).
-            if response.drag_started() && attachment.item.asset_type == 6 {
+            if super::drag::begins(ui, &response) && attachment.item.asset_type == 6 {
                 result.drag = Some(marker);
+            }
+            // LLViewerTextEditor::handleMouseUp opens items on a single
+            // click, never on the release of a drag.
+            if response.clicked() && !super::drag::dragged_this_press(ui.ctx()) {
+                result.open = Some(marker);
             }
             response
                 .clone()

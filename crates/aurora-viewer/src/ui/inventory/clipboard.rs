@@ -33,6 +33,7 @@ impl InventoryUi {
     /// Cancel the shared cut in every inventory window. Copy remains reusable.
     pub fn cancel_cut(&mut self) {
         if self.cut {
+            self.clipboard_edited = true;
             self.clipboard.clear();
             self.cut = false;
             self.consume_clipboard = false;
@@ -236,6 +237,7 @@ pub(super) fn store(ctx: &egui::Context, st: &mut InventoryUi, ids: Vec<Uuid>, c
     }
     st.clipboard = ids;
     st.cut = cut;
+    st.clipboard_edited = true;
     st.consume_clipboard = false;
 }
 
@@ -1293,6 +1295,61 @@ mod tests {
             h.frame(vec![arrow(true, false)]);
             assert_ne!(h.dual.selected, Some(id(8100)));
             assert_eq!(h.st.selected, Some(id(8100)));
+        }
+    }
+
+    /// #4570: a Copy or Cut in the right pane of the dual layout reaches
+    /// the shared clipboard, so it survives the next frame and pastes in
+    /// either pane.
+    #[test]
+    fn dual_pane_copy_and_cut_reach_the_shared_clipboard() {
+        for cut in [false, true] {
+            let mut h = Harness::new();
+            h.prefs.dual_panel = true;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(1400.0, 900.0));
+            h.dual.show_original(&h.world.inventory, id(8100));
+            h.dual.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let row = h
+                .ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", h.dual.ui_id, id(8100)))))
+                .expect("right pane row");
+            h.click(row.left_center() + egui::vec2(80.0, 0.0), Default::default());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.dual))));
+            assert!(h.st.clipboard.is_empty());
+            h.frame(vec![if cut { Event::Cut } else { Event::Copy }]);
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            assert_eq!(h.st.clipboard, vec![id(8100)], "cut: {cut}");
+            assert_eq!(h.st.cut, cut);
+            assert_eq!(h.dual.clipboard, vec![id(8100)], "the right pane keeps it too");
+            assert_eq!(h.dual.cut, cut);
+            assert!(holds_marker(&h.st, &id(8100).to_string()), "Ctrl+V finds its marker");
+            h.st.show_original(&h.world.inventory, id(8001));
+            h.st.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let dest = h
+                .ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", h.st.ui_id, id(8001)))))
+                .expect("left destination row");
+            h.click(dest.left_center() + egui::vec2(80.0, 0.0), Default::default());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st))));
+            let actions = h.paste();
+            let [InvAction::Edit(change)] = &actions[..] else {
+                panic!("one paste in the left pane")
+            };
+            if cut {
+                assert!(change.copies.is_empty());
+                assert!(
+                    matches!(&change.operations[..], [aurora_net::inventory::operations::Operation::Patch { id: item, folder: false, body }] if *item == id(8100) && body["parent_id"].as_uuid() == id(8001))
+                );
+            } else {
+                assert!(change.copies.len() == 1 && change.copies[0].parent == id(8001));
+            }
         }
     }
 
