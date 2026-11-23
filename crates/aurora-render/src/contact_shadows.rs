@@ -449,8 +449,8 @@ fn without_shared(mut src: String) -> String {
     cut(
         &mut src,
         "    // ---- early out of a wavefront",
-        "    if (skip_pixel) {\n        store_lit(write_xy);\n        return;\n    }\n",
-        "    let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;\n    if (skip_pixel) {\n        store_lit(write_xy);\n        return;\n    }\n    let wave = Wave(start_xy, end_xy, xy_delta, x_axis_major, reverse_direction, major_axis_start, ma_light_frac, direction, z_sign);\n",
+        "    if (skip_pixel) {\n        return;\n    }\n",
+        "    let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;\n    if (skip_pixel) {\n        return;\n    }\n    let wave = Wave(start_xy, end_xy, xy_delta, x_axis_major, reverse_direction, major_axis_start, ma_light_frac, direction, z_sign);\n",
     );
     let reads = src.matches("depth_data[sample_index + i]").count();
     assert_eq!(reads, 3, "contact shadows variant: the shared reads");
@@ -526,9 +526,10 @@ pub(crate) struct ContactShadows {
     /// This frame's samples: those of `photo` when it is not Bend's.
     samples: (i32, i32),
     pipeline_layout: wgpu::PipelineLayout,
-    /// Every pixel lit, and the combine buffer zeroed. `atomicMax` needs
-    /// that zero; `write_mask` then stores the buffer. `Skip` dispatches
-    /// this and nothing else.
+    /// Every pixel lit, and the combine buffer zeroed, first in every
+    /// frame. `atomicMax` needs that zero; `write_mask` then stores the
+    /// buffer. `Skip`, and an image whose combine buffer does not fit,
+    /// dispatch this and nothing else.
     clear: wgpu::ComputePipeline,
     /// Writes the combine buffer into the mask, after the wavefronts.
     combine: wgpu::ComputePipeline,
@@ -658,8 +659,19 @@ pub(crate) fn combine_bytes(width: u32, height: u32) -> u64 {
 /// buffer must fit one storage binding and one buffer of the device. Only
 /// 128 MB is guaranteed (about 33.5 Mpx); a photo pass is planned within
 /// it (tiles beyond), and a larger window draws no contact shadow.
-pub fn max_pixels(limits: &wgpu::Limits) -> u64 {
+pub(crate) fn max_pixels(limits: &wgpu::Limits) -> u64 {
     limits.max_buffer_size.min(limits.max_storage_buffer_binding_size) / 4
+}
+
+/// The most pixels one pass of a photo may have for its contact shadows
+/// ([`max_pixels`]): no limit when they are off (`on`, the setting;
+/// `AURORA_CONTACT_SHADOWS` included), as [`tile_reach`].
+pub fn pass_max_pixels(on: bool, limits: &wgpu::Limits) -> u64 {
+    if Override::from_env().needed(on) {
+        max_pixels(limits)
+    } else {
+        u64::MAX
+    }
 }
 
 const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -955,11 +967,12 @@ impl ContactShadows {
     /// The dispatches of `write`, after the depth prepass (`more`: after
     /// the blended faces and the cards were drawn into `depth`), in one
     /// pass: wgpu orders its dispatches. `clear` lights the mask and zeros
-    /// the combine buffer first (`atomicMax` needs that zero; the light
-    /// pixel, which no wavefront writes, stays lit). The wavefronts then
-    /// `atomicMax` the darker shadow, unless this is `Skip` or the combine
-    /// buffer does not fit; `write_mask` stores one value per pixel when it
-    /// does. The filter softens that mask into `result`, over the same depth.
+    /// the combine buffer first (`atomicMax` needs that zero; the pixels no
+    /// wavefront writes, the light's own one and the sky, stay lit). The
+    /// wavefronts then `atomicMax` the darker shadow and `write_mask` stores
+    /// one value per pixel, unless this is `Skip` or the combine buffer does
+    /// not fit: `clear` alone has then written the mask. The filter softens
+    /// that mask into `result`, over the same depth.
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets, more: bool) {
         let (group, filter_group) = if more {
             (&t.group_more, &t.filter_group_more)
@@ -983,8 +996,6 @@ impl ContactShadows {
                 pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
                 pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
             }
-        }
-        if t.fits {
             pass.set_pipeline(&self.combine);
             pass.set_bind_group(0, group, &[0]);
             pass.dispatch_workgroups(groups.0, groups.1, groups.2);
@@ -1299,6 +1310,9 @@ mod tests {
             ..minimum
         };
         assert_eq!(max_pixels(&small_buffer), (1 << 20) / 4);
+        // a photo is planned within it only with the contact shadows on
+        assert_eq!(pass_max_pixels(true, &minimum), max_pixels(&minimum));
+        assert_eq!(pass_max_pixels(false, &minimum), u64::MAX);
     }
 
     /// Neighbouring wavefronts of the GPU test's light share pixels. The

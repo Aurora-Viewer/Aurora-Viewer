@@ -6,8 +6,10 @@
 // combines with the sun's shadow map (`contact_shadow` in common.wgsl).
 // Every pixel of the screen is written each frame. `clear` lights the mask
 // and zeros the combine buffer; the wavefronts `atomicMax` the darker
-// shadow into that buffer, and `write_mask` stores it. `Skip` dispatches
-// `clear` only.
+// shadow into that buffer, and `write_mask` stores it. The wavefronts never
+// write the mask themselves: a pixel they leave (the sky, the light's own
+// one) keeps the zero of `clear`, lit. `Skip`, and an image whose combine
+// buffer does not fit the device, dispatch `clear` only.
 //
 // Original notice:
 //
@@ -100,14 +102,6 @@ var<workgroup> depth_data: array<f32, READ_COUNT * WAVE_SIZE>;
 // Several live invocations set this concurrently. Atomic writes avoid a
 // workgroup data race before the uniform load's barrier (zero at the start).
 var<workgroup> any_live: atomic<u32>;
-
-// A pixel lit, when it is on the target.
-fn store_lit(p: vec2<i32>) {
-    let size = vec2<i32>(textureDimensions(out_tex));
-    if (all(p >= vec2<i32>(0)) && all(p < size)) {
-        textureStore(out_tex, p, vec4<f32>(0.0));
-    }
-}
 
 fn load_depth(p: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(depth_tex));
@@ -212,13 +206,12 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     }
 
     // ---- early out of a wavefront with nothing but sky (DepthBounds 0, 1),
-    // its pixels lit
+    // its pixels left lit (`clear`)
     let skip_pixel = sampling_depth[0] >= NEAR_DEPTH || sampling_depth[0] <= FAR_DEPTH;
     if (!skip_pixel) {
         atomicOr(&any_live, 1u);
     }
     if (workgroupUniformLoad(&any_live) == 0u) {
-        store_lit(write_xy);
         return;
     }
 
@@ -233,7 +226,6 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
     }
     workgroupBarrier();
     if (skip_pixel) {
-        store_lit(write_xy);
         return;
     }
 
@@ -284,19 +276,10 @@ fn write_mask(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(out_tex, vec2<i32>(id.xy), vec4<f32>(v, 0.0, 0.0, 0.0));
 }
 
-// The pixel under the light's point, which no wavefront writes, lit (one
-// invocation). Emptying the whole target first instead took 0.02 ms of the
-// pass's 0.25 at 1920 x 1080 (demo plaza, RTX 4090).
-@compute @workgroup_size(1, 1, 1)
-fn clear_light() {
-    let p = floor(params.light.xy);
-    if (all(p >= vec2<f32>(0.0)) && all(p < vec2<f32>(textureDimensions(out_tex)))) {
-        store_lit(vec2<i32>(p));
-    }
-}
-
-// Every pixel lit, for `AURORA_CONTACT_VARIANT=skip`, which dispatches no
-// wavefront (wgpu's clear_texture needs a device feature).
+// Every pixel lit and the combine buffer zeroed, first in every frame
+// (`atomicMax` needs the zero; wgpu's clear_texture needs a device
+// feature). It alone writes the mask when no wavefront runs (`Skip`, a
+// combine buffer past the device's limit).
 @compute @workgroup_size(8, 8, 1)
 fn clear(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = textureDimensions(out_tex);
