@@ -124,7 +124,7 @@ fn key_label(k: &str) -> String {
 
 fn key_label_on(k: &str, mac: bool) -> String {
     match k {
-        "AltLeft" | "AltRight" => return (if mac { "Option" } else { "ALT" }).into(),
+        "AltLeft" | "AltRight" => return (if mac { "⌥ Option" } else { "ALT" }).into(),
         "ControlLeft" | "ControlRight" => return "Ctrl".into(),
         "ShiftLeft" | "ShiftRight" => return aurora_i18n::tr!("keybinds-shift").into(),
         _ => {}
@@ -1805,10 +1805,10 @@ mod tests {
     #[test]
     fn standalone_alt_keys_use_platform_labels() {
         for key in ["AltLeft", "AltRight"] {
-            assert_eq!(key_label_on(key, true), "Option");
+            assert_eq!(key_label_on(key, true), "⌥ Option");
             assert_eq!(key_label_on(key, false), "ALT");
         }
-        assert_eq!(key_label("AltLeft"), if cfg!(target_os = "macos") { "Option" } else { "ALT" });
+        assert_eq!(key_label("AltLeft"), if cfg!(target_os = "macos") { "⌥ Option" } else { "ALT" });
     }
 
     #[test]
