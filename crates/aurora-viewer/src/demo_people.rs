@@ -137,6 +137,12 @@ fn width_override() -> Option<f32> {
     (width.is_finite() && width >= 220.0).then_some(width)
 }
 
+/// The group whose sheet `groups` opens: none in a window narrowed by
+/// `groups:<width>`, so that the rows keep that width.
+pub fn group_sheet() -> Option<Uuid> {
+    (mode() == Some(Mode::Groups) && width_override().is_none()).then_some(super::DEMO_GROUP1)
+}
+
 /// The modes of the tabs after Near you.
 fn contacts_mode() -> bool {
     matches!(
@@ -422,6 +428,14 @@ fn every_badge(state: &mut State) {
 pub fn legacy() -> bool {
     // AURORA_DEMO_RADAR_MARKS=legacy shows its marks in the same table
     mode() == Some(Mode::Legacy) || crate::ui::avatar_marks::demo_legacy()
+}
+
+/// Whether People shows the Legacy look in a demo run whose preference
+/// (`Settings::classic_people`) says `classic`: `legacy` forces it, and
+/// every other scenario of this module shows Aurora's look it was made
+/// for, for this run only (the settings untouched).
+pub fn classic_look(classic: bool) -> bool {
+    legacy() || (classic && mode().is_none())
 }
 
 /// The first friend of the demo buddy list (a display name "Nova ♪").

@@ -20856,7 +20856,7 @@ impl App {
                 }
                 // Conversations › Contacts in Aurora's look of People: its
                 // friends tab
-                let people_aurora = !self.settings.classic_people && !(self.demo && crate::demo::people::legacy());
+                let people_aurora = !self.people_classic();
                 let friends_before = self.settings.friends_list.clone();
                 // its Groups pill is the Legacy look's Groups tab, kept in
                 // the settings
@@ -21120,6 +21120,7 @@ impl App {
                 // (the floater's map rings nobody); the map is drawn above
                 // the rows, so it could not see a newer selection anyway
                 self.people_map_ui.set_selected(self.people_ui.map_selection());
+                let people_aurora = !self.people_classic();
                 let mut people_map = |ui: &mut egui::Ui, size: egui::Vec2| {
                     let acts = self.people_map_ui.draw(
                         ui,
@@ -21159,7 +21160,7 @@ impl App {
                         images: &self.ui_images,
                     },
                     &mut people_map,
-                    !self.settings.classic_people && !(self.demo && crate::demo::people::legacy()),
+                    people_aurora,
                 );
                 if self.settings.radar.alert_sounds != people_before.0.alert_sounds {
                     self.settings.audio.ui.set_radar_sounds(self.settings.radar.alert_sounds);
@@ -23464,7 +23465,9 @@ impl ApplicationHandler for App {
                     self.people_ui.open_sheet(id);
                 }
                 if crate::demo::people::mode() == Some(crate::demo::people::Mode::Groups) {
-                    self.people_ui.open_group_sheet(crate::demo::DEMO_GROUP1);
+                    if let Some(group) = crate::demo::people::group_sheet() {
+                        self.people_ui.open_group_sheet(group);
+                    }
                     self.world.group_data.open(crate::demo::DEMO_GROUP1, true);
                 }
                 // the mock-up's window

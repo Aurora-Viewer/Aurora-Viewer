@@ -479,7 +479,8 @@ fn setting_switch(ui: &egui::Ui, c: &mut Ctx, g: &GroupMembership, s: Setting, c
     let tint = if setting_lit(state) {
         p.muted
     } else {
-        p.muted_dim.gamma_multiply(0.6)
+        // dimmer than a friend's right not received (0.7): off at a glance
+        p.muted_dim.gamma_multiply(0.5)
     };
     super::radar::icon(ui, s.icon(), cell, BADGE, tint);
     let resp = resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand);

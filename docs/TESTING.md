@@ -10619,7 +10619,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_PEOPLE_FILTER=<text>`**: combine with a People scenario to prefill its search. With `rows` or `legacy`, `tesstouch` and `tesstouch Resident` must find the resident displayed as `Tess ✧`; `TESS` must find the same resident. An empty filter restores all rows; unrelated text shows no matches. This deliberately searches display, legacy and account names regardless of the chosen name format, while retaining contact aliases and RLVa anonymity.
 - **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy|friends|groups|sets|recent|blocked|blocked-empty`**: People › Near you in
   Aurora's look, with the residents of the People mock-up (names, ranges,
-  states, arrivals), alone on screen. `rows`: the rich rows grouped by
+  states, arrivals), alone on screen. Every mode but `legacy` shows Aurora's
+  look for the run even when Preferences › Aurora picks the Legacy one (the
+  settings untouched); `legacy` shows the Legacy one. `rows`: the rich rows grouped by
   range (whisper 10 m, say 20 m, shout 100 m, beyond), Tess selected with
   her quick actions out as under the pointer. `sheet`: the window at the
   mock-up's 860 × 600 with Nova's sheet (the rights she has and the ones
@@ -10653,7 +10655,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   a set's symbol after the name where the set has one, its colour's dot
   otherwise, #1104), `groups` (860 × 500: "No active group", Aurora Builders active,
   pinned, two notices unread and its sheet open, the market's chat
-  blocked, "3 groups out of 42"; `groups-hover` puts the Northern Wolves under the pointer, its Activate out, and `groups-hover-active` the active Aurora Builders, its Deactivate. Each group's row ends with its notices, chat and profile listing switches (#4714): Aurora Builders all on, the Northern Wolves' notices off, the market's chat blocked and hidden from the profile, each off dimmed; a click switches one without selecting the row, the sheet's Settings follow. `groups-no-chats` and `groups-without-notices` turn that preference of Preferences › Chat on for the run, the settings untouched: every chat switch, or the Northern Wolves' alone, dimmed with the preference in its tooltip. a narrower window (`groups:<width>`, 220 or more) folds the badges into "+n" first, then the profile listing's and the notices' switches, the chat's last, the names keeping their minimum), `sets` (520 × 430: Family, Clubbing and
+  blocked, "3 groups out of 42"; `groups-hover` puts the Northern Wolves under the pointer, its Activate out, and `groups-hover-active` the active Aurora Builders, its Deactivate. Each group's row ends with its notices, chat and profile listing switches (#4714): Aurora Builders all on, the Northern Wolves' notices off, the market's chat blocked and hidden from the profile, each off dimmed; a click switches one without selecting the row, the sheet's Settings follow. `groups-no-chats` and `groups-without-notices` turn that preference of Preferences › Chat on for the run, the settings untouched: every chat switch, or the Northern Wolves' alone, dimmed with the preference in its tooltip. a narrower window without the sheet (`groups:<width>`, 220 or more; try `groups:340` or `groups-hover:300`) folds the badges into "+n" first, then the profile listing's and the notices' switches, the chat's last, the names keeping their minimum), `sets` (520 × 430: Family, Clubbing and
   Shop, the wolf's nickname, a non-friend, Nova chosen with her quick
   actions out: move, take out, menu), `recent` (420 × 300: four residents
   met lately, how long ago and where) and `blocked` (420 × 300: a resident
