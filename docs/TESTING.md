@@ -12770,6 +12770,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PRESENT_MODE=<mode>` | Forces the present mode of the swapchain |
 | `AURORA_WINDOW_HOLD=0` | No frames while a mouse button is held on the window frame or the system menu is open, as before (Windows) |
 | `AURORA_CPU_CULL=1` | Draw lists built on the CPU |
+| `AURORA_SCENE_VARIANT=full` | Metal: the scene pass's full shader and generic pipelines, as on Vulkan, instead of the specialised ones |
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
@@ -12884,6 +12885,18 @@ What the inventory must show with these scenarios:
 
 ### Details
 
+- **`AURORA_SCENE_VARIANT=full`** (`aurora-render/src/scene_variant.rs`):
+  on Metal the scene pass draws with pipelines specialised to the frame
+  (lean variants without the paths no face can take: portal clip, debug
+  views, NaN check, water effects, the other sky's branch, the rez effect
+  while nothing rezzes) and to the faces' material class (legacy material,
+  PBR, neither). With the variable the lean pipelines are not made and every
+  frame draws with the full shader, as Vulkan always does: for a comparison
+  of the image (captures of both at the same frame, with
+  `AURORA_FPS_LIMIT=8` so that both are at the same scene time), of the
+  frame rate (`gpu_frame=` and `scene_lean=` of the perf summary) and of the
+  start (`pipelines: … made … in … ms` in the log). The log also says when
+  the variant changes, and why (`scene variant …`). No effect on Vulkan.
 - **`AURORA_DEMO_VIEWER_STATS=1`** (`aurora_net::viewer_stats`,
   `app/viewer_stats.rs`): on the grid the session posts Linden Lab's viewer
   statistics to the region's `ViewerStats` capability once the agent has
@@ -14615,6 +14628,11 @@ parts, against the scene without weather. `--scenes` picks some,
     frame, 64 at most), `light_tiles` (share of the frames where it only
     walks those of its screen tile and of its depth) and `probes`
     (reflection probes);
+  - `gpu_frame`: the GPU time of the whole frame, from timestamps at its
+    first and last pass, the only GPU figure on Apple GPUs (which time
+    pass boundaries only: the `g_*` stay at 0 there); `scene_lean`: the
+    share of the frames drawn with a lean variant of the scene pipelines
+    (Metal, `AURORA_SCENE_VARIANT`; 0 % on Vulkan);
   - the detail of `g_shadows_depth`: `g_cull` (GPU culling of all the
     views), `g_shadow0` to `g_shadow2` (the shadow cascades, from the
     nearest to the farthest) and `g_depth` (depth prepass and occlusion).
