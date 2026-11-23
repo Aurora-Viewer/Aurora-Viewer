@@ -206,6 +206,7 @@ pub(crate) fn reset_windows(ctx: &egui::Context) {
     windows(ctx, |w| {
         w.placed.clear();
         w.links.clear();
+        w.parked_moves.clear();
         w.resets += 1;
         w.reset_done.clear();
         w.live.followed = None;
@@ -219,6 +220,11 @@ pub(crate) fn reset_windows(ctx: &egui::Context) {
 /// window then takes its default place, size and expanded state.
 pub(crate) fn take_reset(ctx: &egui::Context, id: Id) -> bool {
     windows(ctx, |w| w.resets > 0 && w.reset_done.insert(id.value()))
+}
+
+/// `take_reset` would answer true for `id`, without taking it.
+pub(crate) fn reset_pending(ctx: &egui::Context, id: Id) -> bool {
+    windows(ctx, |w| w.resets > 0 && !w.reset_done.contains(&id.value()))
 }
 
 /// Remove the file; a background save still on its way, older than
@@ -547,6 +553,15 @@ struct Windows {
     resets: u64,
     #[serde(default)]
     reset_done: BTreeSet<u64>,
+    /// Windows hidden for a while by their owner, not closed by the user
+    /// (the blocks taken out of the build window): their groups wait for
+    /// them, and a group dragged meanwhile takes them along (`park`).
+    #[serde(default)]
+    parked: BTreeSet<u64>,
+    /// Where each parked window goes when it shows again, its group having
+    /// moved while it was hidden.
+    #[serde(default)]
+    parked_moves: BTreeMap<u64, Pos2>,
     #[serde(skip)]
     live: Live,
 }
@@ -653,7 +668,7 @@ pub(crate) fn slot(ctx: &egui::Context, id: Id) -> Slot {
         let followed = usable(screen).then(|| w.follow(key, screen, room)).flatten();
         let preserve_anchor = followed.is_some() || !sized || w.live.settle.contains_key(&key);
         let limits = w.live.limits.filter(|(window, _)| *window == key).map(|(_, limits)| limits);
-        let mut pos = w.live.places.remove(&key).or(followed);
+        let mut pos = w.live.places.remove(&key).or(followed).or_else(|| w.parked_moves.remove(&key));
         if sized {
             // measured last frame: back where it belongs, unless it is
             // given another place now
@@ -757,6 +772,19 @@ impl Slot {
 }
 
 /// An explicit placement follows the same rule as a completed mouse move.
+/// Window `id` is parked (or no longer): hidden by its owner while closed,
+/// it keeps the windows it is glued to, and follows them if they are moved
+/// meanwhile; shown again, it is glued to them as before.
+pub(crate) fn park(ctx: &egui::Context, id: Id, parked: bool) {
+    windows(ctx, |w| {
+        if parked {
+            w.parked.insert(id.value());
+        } else if w.parked.remove(&id.value()) {
+            w.parked_moves.remove(&id.value());
+        }
+    });
+}
+
 pub(crate) fn reanchor(ctx: &egui::Context, id: Id) {
     windows(ctx, |w| {
         w.live.reanchor_after_show.insert(id.value());

@@ -90,25 +90,42 @@ impl ExitPrompt {
             }
             ui.set_width(width);
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 10.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_top(|ui| {
                 widgets::glyph(ui, "power", p.danger, 20.0);
-                ui.label(RichText::new(aurora_i18n::tr!("exit-title")).size(17.0).strong().color(p.ink));
+                ui.add(egui::Label::new(RichText::new(aurora_i18n::tr!("exit-title")).size(17.0).strong().color(p.ink)).wrap());
             });
-            ui.label(
-                RichText::new(if busy {
-                    aurora_i18n::tr!("exit-waiting")
-                } else if can_logout {
-                    aurora_i18n::tr!("exit-world-body")
-                } else {
-                    aurora_i18n::tr!("exit-login-body")
-                })
-                .size(13.0)
-                .color(p.muted),
+            ui.add(
+                egui::Label::new(
+                    RichText::new(if busy {
+                        aurora_i18n::tr!("exit-waiting")
+                    } else if can_logout {
+                        aurora_i18n::tr!("exit-world-body")
+                    } else {
+                        aurora_i18n::tr!("exit-login-body")
+                    })
+                    .size(13.0)
+                    .color(p.muted),
+                )
+                .wrap(),
             );
             ui.add_space(6.0);
             ui.add_enabled_ui(!busy, |ui| {
-                ui.horizontal(|ui| {
-                    let size = Vec2::new((width - 16.0) / 3.0, 32.0);
+                let widest = [
+                    ("x", aurora_i18n::tr!("common-cancel")),
+                    ("logout", aurora_i18n::tr!("exit-logout")),
+                    ("power", aurora_i18n::tr!("exit-quit")),
+                ]
+                .into_iter()
+                .map(|(icon, label)| widgets::action_button_fit(ui, icon, label))
+                .fold(0.0_f32, f32::max);
+                let row_width = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
+                let horizontal = widest <= row_width;
+                // Keep every label whole. When three equal buttons do not
+                // fit, preserve their reading and keyboard order in a stack.
+                let font = widgets::control_font(ui, 12.5);
+                let height = (ui.fonts_mut(|f| f.row_height(&font)) + 2.0 * ui.spacing().button_padding.y).max(32.0);
+                let size = Vec2::new(if horizontal { row_width } else { ui.available_width() }, height);
+                let buttons = |ui: &mut egui::Ui| {
                     if clicked(widgets::action_button(
                         ui,
                         p,
@@ -138,7 +155,12 @@ impl ExitPrompt {
                     )) {
                         action = Some(Action::Quit);
                     }
-                });
+                };
+                if horizontal {
+                    ui.horizontal_top(buttons);
+                } else {
+                    ui.vertical(buttons);
+                }
             });
         });
         // Clicking the blurred backdrop leaves the choice open. Escape is
@@ -161,6 +183,7 @@ mod tests {
         ctx: egui::Context,
         prompt: ExitPrompt,
         frame: usize,
+        screen_width: f32,
         can_logout: bool,
         background_clicked: bool,
     }
@@ -172,7 +195,7 @@ mod tests {
             let mut action = None;
             let mut output = self.ctx.run_ui(
                 egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(self.screen_width, 600.0))),
                     time: Some(self.frame as f64 / 60.0),
                     events,
                     ..Default::default()
@@ -190,6 +213,7 @@ mod tests {
                 ctx: egui::Context::default(),
                 prompt: ExitPrompt::default(),
                 frame: 0,
+                screen_width: 800.0,
                 can_logout,
                 background_clicked: false,
             };
@@ -241,6 +265,79 @@ mod tests {
         let mut f = Fixture::new(false);
         assert_eq!(f.click_label(aurora_i18n::text("exit-logout")), None);
         assert!(f.prompt.open);
+    }
+
+    #[test]
+    fn exit_labels_stay_separate_and_clickable_with_large_text_and_a_narrow_window() {
+        let buttons = [
+            ("common-cancel", Action::Cancel),
+            ("exit-logout", Action::Logout),
+            ("exit-quit", Action::Quit),
+        ];
+        for width in [320.0, 800.0] {
+            for scale in [1.0, 2.0] {
+                let mut f = Fixture::new(true);
+                f.screen_width = width;
+                crate::theme::Theme::default().apply(&f.ctx, scale);
+                for _ in 0..3 {
+                    f.show(vec![]);
+                }
+                let (_, shapes) = f.show(vec![]);
+                let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 600.0));
+                for shape in &shapes {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && text.galley.text() != "background"
+                    {
+                        let ink = widgets::ink_rect(&text.galley).translate(text.pos.to_vec2());
+                        assert!(!text.galley.elided, "text shortened at {width}/{scale}");
+                        assert!(
+                            shape.clip_rect.contains_rect(ink) && screen.contains_rect(ink),
+                            "text clipped at {width}/{scale}: {ink:?}"
+                        );
+                    }
+                }
+                let rects: Vec<_> = buttons
+                    .iter()
+                    .map(|(key, _)| {
+                        let label = aurora_i18n::text(key);
+                        shapes
+                            .iter()
+                            .find_map(|s| match &s.shape {
+                                egui::Shape::Text(t) if t.galley.text() == label => {
+                                    assert!(!t.galley.elided, "label shortened at {width}/{scale}: {label}");
+                                    let ink = widgets::ink_rect(&t.galley).translate(t.pos.to_vec2());
+                                    assert!(s.clip_rect.contains_rect(ink), "label clipped at {width}/{scale}: {label}");
+                                    let face = shapes
+                                        .iter()
+                                        .filter_map(|s| match &s.shape {
+                                            egui::Shape::Rect(r) if r.rect.contains(ink.center()) => Some(r.rect),
+                                            _ => None,
+                                        })
+                                        .min_by(|a, b| a.area().total_cmp(&b.area()))
+                                        .expect("button face is visible");
+                                    assert!(face.contains_rect(ink), "label outside its button at {width}/{scale}: {label}");
+                                    Some(ink)
+                                }
+                                _ => None,
+                            })
+                            .expect("button label is visible")
+                    })
+                    .collect();
+                for (i, rect) in rects.iter().enumerate() {
+                    assert!(
+                        rect.left() >= 0.0 && rect.right() <= width,
+                        "label outside screen at {width}/{scale}: {rect:?}"
+                    );
+                    assert!(
+                        rects[i + 1..].iter().all(|other| !rect.intersects(*other)),
+                        "labels overlap at {width}/{scale}: {rects:?}"
+                    );
+                }
+                for (label, action) in buttons {
+                    assert_eq!(f.click_label(aurora_i18n::text(label)), Some(action));
+                }
+            }
+        }
     }
 
     #[test]

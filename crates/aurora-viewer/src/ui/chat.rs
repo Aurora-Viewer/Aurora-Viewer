@@ -86,6 +86,8 @@ enum ChatField {
 
 #[derive(Default)]
 pub struct ChatUi {
+    /// Keyboard events for the next nearby line when two sends share a frame.
+    deferred_bar_input: Vec<egui::Event>,
     pub input: String,
     pub focus_request: bool,
     /// `start_gesture` resumes a nonempty draft at its existing caret.
@@ -93,8 +95,9 @@ pub struct ChatUi {
     /// The slash press reserved for `start_gesture`, until its release.
     gesture_key_down: Option<winit::keyboard::KeyCode>,
     pub has_focus: bool,
-    /// The local chat field keeps the keyboard after a message is sent
-    /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
+    /// The local chat field keeps the keyboard after a message is sent,
+    /// and an empty Enter leaves it there (Preferences › Chat; the Legacy
+    /// Viewer's CloseChatOnReturn off, FSNearbyChatControl::autohide).
     pub keep_focus: bool,
     /// No button back to the latest messages (Preferences › Chat ›
     /// Conversations, `Settings::chat_latest_button` off): `latest.rs`.
@@ -1004,40 +1007,77 @@ impl SendKey {
     }
 }
 
-/// Classify the send key once: releasing a modifier later in the same
-/// frame must change neither permission to send, OOC wrapping nor volume.
-/// FSNearbyChatControl / FSFloaterIM::handleKeyHere (indra/newview) read
-/// the event's mask. The ((OOC)), shout and whisper keys are the user's
-/// (`shortcuts.rs`: Alt+Enter, then none by default); Enter
-/// otherwise sends at the selected volume, an Alt chord left unclaimed
-/// (AltGr). The New line key never comes here: `input::prepare` made it
-/// a line break.
-fn send_enter(i: &egui::InputState, keys: &shortcuts::ChatKeys) -> Option<SendKey> {
+/// Honor the configurable chat shortcuts and the modifiers of this event.
+fn classify_send(event: &egui::Event, keys: &shortcuts::ChatKeys) -> Option<SendKey> {
     use crate::keybinds::Action;
-    i.events.iter().find_map(|event| {
-        let egui::Event::Key {
-            key,
-            physical_key,
-            pressed: true,
-            modifiers,
-            ..
-        } = event
-        else {
-            return None;
-        };
-        let hit = |a| keys.hit(a, *key, *physical_key, *modifiers);
-        if hit(Action::ChatOoc) {
-            Some(SendKey::Ooc)
-        } else if hit(Action::ChatShout) {
-            Some(SendKey::Shout)
-        } else if hit(Action::ChatWhisper) {
-            Some(SendKey::Whisper)
-        } else if *key == egui::Key::Enter && !modifiers.alt {
-            Some(SendKey::Normal)
-        } else {
-            None
-        }
-    })
+    let egui::Event::Key {
+        key,
+        physical_key,
+        pressed: true,
+        modifiers,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    let hit = |a| keys.hit(a, *key, *physical_key, *modifiers);
+    if hit(Action::ChatOoc) {
+        Some(SendKey::Ooc)
+    } else if hit(Action::ChatShout) {
+        Some(SendKey::Shout)
+    } else if hit(Action::ChatWhisper) {
+        Some(SendKey::Whisper)
+    } else if *key == egui::Key::Enter && !modifiers.alt {
+        Some(SendKey::Normal)
+    } else {
+        None
+    }
+}
+
+fn send_enter(i: &egui::InputState, keys: &shortcuts::ChatKeys) -> Option<SendKey> {
+    i.events.iter().find_map(|event| classify_send(event, keys))
+}
+
+/// The editor must not insert the next draft into the outgoing message,
+/// even when the caret is in the middle of a selection at send time.
+#[derive(Default)]
+struct BarSend {
+    first: Option<SendKey>,
+    another: bool,
+    next_draft: String,
+}
+
+fn bar_send(ui: &egui::Ui, keep_focus: bool, deferred: &mut Vec<egui::Event>) -> BarSend {
+    let bindings = shortcuts::get(ui.ctx());
+    let mut send = BarSend::default();
+    ui.input_mut(|i| {
+        i.events.retain(|event| {
+            let key = classify_send(event, &bindings);
+            if send.first.is_none() {
+                send.first = key;
+                return true;
+            }
+            // The bar can produce one outgoing line per UI pass. Replay a
+            // second send or an edit of the next line in the next pass.
+            match event {
+                egui::Event::Key { pressed: true, .. } if key.is_some() && !keep_focus && !send.another => {
+                    send.another = true;
+                }
+                egui::Event::Text(text) | egui::Event::Paste(text) if deferred.is_empty() => {
+                    send.next_draft.push_str(text);
+                }
+                egui::Event::Key { pressed: true, .. }
+                | egui::Event::Paste(_)
+                | egui::Event::Text(_)
+                | egui::Event::Cut
+                | egui::Event::Copy
+                | egui::Event::Ime(_) => deferred.push(event.clone()),
+                _ => return true,
+            }
+            false
+        })
+    });
+    send
 }
 
 /// An OOC line as FSNearbyChat::sendChat (fsnearbychathub.cpp) and
@@ -1159,15 +1199,15 @@ fn message_emphasis(kind: ChatKind, italics: bool) -> super::fonts::TextEmphasis
 }
 
 /// The same message tone in the conversation thread and its nearby-chat card.
+/// An emote takes the colour of its sender's other lines, keyword included:
+/// LLViewerChat::getChatColor (indra/newview/llviewerchat.cpp) has no colour
+/// of its own for `/me`, only the italics (`message_emphasis`).
 fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> Color32 {
     if let Some(color) = super::colors::contact_chat_color(line, world) {
         return color;
     }
-    let tone = history_tone(p, line.origin);
-    if line.text.starts_with("/me ") || line.text.starts_with("/me'") {
-        return tone.unwrap_or(p.violet_pale);
-    }
-    tone.or_else(|| super::colors::keyword_color(line))
+    history_tone(p, line.origin)
+        .or_else(|| super::colors::keyword_color(line))
         .unwrap_or_else(|| match line.kind.volume() {
             Some(ChatType::Whisper) => p.muted,
             Some(ChatType::Shout) => p.ink,
@@ -1232,9 +1272,12 @@ fn shown_name<'a>(line: &crate::world::ChatLine, name: &'a str) -> &'a str {
     conversation_options::you(&conversation_options::current(), line).unwrap_or(name)
 }
 
-/// A system line's text as shown, in brackets with the option.
-fn system_text(text: &str) -> Cow<'_, str> {
-    conversation_options::system_text(&conversation_options::current(), text)
+/// Whether a system line is drawn in brackets: the option, but never the
+/// radar's own lines, which the Legacy Viewer's chat leaves plain (its
+/// CHAT_TYPE_RADAR, `notice_topics::Topic::Radar`).
+fn system_brackets(world: &World, line: &crate::world::ChatLine) -> bool {
+    let radar = world.notice_topics.of(line) == crate::world::notice_topics::Topic::Radar;
+    conversation_options::system_brackets(&conversation_options::current(), radar)
 }
 
 /// The day a group of lines was said, between two lines of different days
@@ -1635,11 +1678,12 @@ fn line_job(
     }
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     // the pills of the islands (the bars mockup's `.toasts`): a resident's
-    // name in semi-bold light violet, no colon, a system line in italics;
-    // every other colour stays the kind's
+    // name in semi-bold, in the senders' colour (Preferences › Emitter ›
+    // Avatars), no colon, a system line in italics; every other colour
+    // stays the kind's
     let resident = matches!(line.kind, ChatKind::Local(_) | ChatKind::Own(_));
     let mut name_fmt = match pill {
-        Some(family) => super::fonts::semibold_format(family, size, if resident { p.violet_light } else { col }),
+        Some(family) => super::fonts::semibold_format(family, size, if resident { super::colors::sender_color(line) } else { col }),
         None if compact => egui::TextFormat {
             color: super::colors::sender_color(line),
             font_id: egui::FontId::proportional(size),
@@ -2546,7 +2590,84 @@ pub(crate) fn chat_text_marked(
     emphasis: impl Into<super::fonts::TextEmphasis>,
     mark: Option<Mark>,
 ) {
-    let emphasis = emphasis.into();
+    chat_text_all(
+        ui,
+        p,
+        emoji,
+        world,
+        scope,
+        want_names,
+        text,
+        size,
+        color,
+        emphasis.into(),
+        mark,
+        false,
+    );
+}
+
+/// `chat_text_marked` for a system line, in brackets around it when
+/// `brackets`. The Legacy Viewer's chat appends them as their own runs
+/// (FSChatHistory::appendMessage): written into the text, they read as a link
+/// given its own text, `[secondlife:///app/agent/<id>/about entered the
+/// region.]`, whose label takes the resident's name away.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn chat_text_bracketed(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    scope: TextScope,
+    want_names: &mut HashSet<uuid::Uuid>,
+    text: &str,
+    size: f32,
+    color: Color32,
+    emphasis: impl Into<super::fonts::TextEmphasis>,
+    mark: Option<Mark>,
+    brackets: bool,
+) {
+    chat_text_all(
+        ui,
+        p,
+        emoji,
+        world,
+        scope,
+        want_names,
+        text,
+        size,
+        color,
+        emphasis.into(),
+        mark,
+        brackets,
+    );
+}
+
+/// The pair around a system line in `brackets`, in reading order. A line that
+/// reads from the right takes the pair turned around: drawn as pieces of
+/// their own, the brackets miss the mirroring the bidi pass gives the text.
+fn bracket_pair(brackets: bool, rtl: bool) -> (&'static str, &'static str) {
+    match (brackets, rtl) {
+        (false, _) => ("", ""),
+        (true, false) => ("[", "]"),
+        (true, true) => ("]", "["),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn chat_text_all(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    scope: TextScope,
+    want_names: &mut HashSet<uuid::Uuid>,
+    text: &str,
+    size: f32,
+    color: Color32,
+    emphasis: super::fonts::TextEmphasis,
+    mark: Option<Mark>,
+    brackets: bool,
+) {
     // `@shownames` and `@showloc` rewrite the text and the labels of what no
     // resident typed, those of an avatar link included (RlvUtil::filterNames
     // and filterLocation run on the raw text of an object's line; `wording`
@@ -2560,12 +2681,17 @@ pub(crate) fn chat_text_marked(
     let segs = segments(text);
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(filtered.as_ref(), m.needle).is_empty());
-    if mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
+    if !brackets && mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
         emoji.rich_text(ui, filtered.as_ref(), size, color, emphasis);
         return;
     }
     let k = super::colors::get();
-    super::emoji::text_rows_in(ui, size, super::bidi::rtl_paragraph(text), |ui| {
+    let rtl = super::bidi::rtl_paragraph(text);
+    let (open, close) = bracket_pair(brackets, rtl);
+    super::emoji::text_rows_in(ui, size, rtl, |ui| {
+        if !open.is_empty() {
+            emoji.inline(ui, open, size, color, emphasis);
+        }
         for s in segs {
             match s {
                 Seg::Text(t) => marked_run(ui, emoji, &hide(t), size, color, emphasis, mark),
@@ -2627,6 +2753,9 @@ pub(crate) fn chat_text_marked(
                     );
                 }
             }
+        }
+        if !close.is_empty() {
+            emoji.inline(ui, close, size, color, emphasis);
         }
     });
 }
@@ -2826,19 +2955,34 @@ pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::Ch
     if line.origin != Origin::Live || line.anonymous() {
         return line.from.clone();
     }
-    let own = line.kind.is_own();
-    let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-    let names = &world.social.avatar_names;
-    let cached = if object {
-        None
-    } else {
-        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
-    };
-    match cached {
-        Some(n) => n.display(&names.options),
-        None if own => own_name.to_owned(),
+    match cached_chat_sender(world, line) {
+        Some(n) => n.display(&world.social.avatar_names.options),
+        None if line.kind.is_own() => own_name.to_owned(),
         None => line.from.clone(),
     }
+}
+
+fn cached_chat_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
+    if line.origin != Origin::Live || line.anonymous() || matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
+        return None;
+    }
+    let id = if line.kind.is_own() { &world.agent_id } else { &line.source };
+    world.social.avatar_names.get_in(NameScope::Roster, id)
+}
+
+/// Visible header label in Aurora, Compact and Bubbles. Preserve the text
+/// of emotes, saved transcripts and names frozen under RLVa.
+fn chat_header_name(world: &World, line: &crate::world::ChatLine, name: &str) -> String {
+    if let Some(alias) = conversation_options::you(&conversation_options::current(), line) {
+        return alias.to_owned();
+    }
+    if let Some(username) = cached_chat_sender(world, line).and_then(|n| n.chat_username(&world.social.avatar_names.options))
+        && !username.is_empty()
+        && !username.eq_ignore_ascii_case(name)
+    {
+        return format!("{name} ({username})");
+    }
+    name.to_owned()
 }
 
 /// The text of a message and whether it is in italics: an emote is the
@@ -2939,10 +3083,10 @@ impl Copied<'_> {
     }
 }
 
-/// The selection of the lines (`select.rs`), as in Firestorm's transcript:
+/// The selection of the lines (`select.rs`), as in the Legacy Viewer's transcript:
 /// a drag selects across them (never moving the window), a double click
-/// selects a word, a click without a drag clears it; a press gives them the
-/// keyboard, then Ctrl+A selects the
+/// selects a word, a triple click selects a paragraph, a click without a drag
+/// clears it; a press gives them the keyboard, then Ctrl+A selects the
 /// whole conversation, Ctrl+C (Ctrl+Insert) copies the selection, Escape
 /// clears it, and what is typed goes to the conversation's field.
 fn select_lines(
@@ -2999,6 +3143,17 @@ fn select_lines(
         && let Some((seq, range, text)) = select::word_at(drawn, pos)
     {
         sel.select_in_row(seq, range, text);
+    }
+    // a triple click selects the paragraph under the pointer, as the
+    // triple-click block of LLTextBase::handleMouseDown
+    // (indra/llui/lltextbase.cpp) selects the logical line in the Legacy
+    // Viewer's transcript (FSChatHistory, an LLTextEditor); it is copied as a
+    // drag over it, the first paragraph with the "[time] Name: " prefix
+    if content.triple_clicked()
+        && let Some(pos) = content.interact_pointer_pos().filter(|p| area.contains(*p))
+        && let Some((seq, range, text)) = select::paragraph_at(drawn, pos)
+    {
+        sel.select_paragraph(seq, range, text);
     }
     // (no text cursor over the lines, though a drag selects them: the
     // arrow, the hand on links and names; the human's choice of 2026-10-16)
@@ -3415,18 +3570,19 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                 ui.label(header_time(ui, p, time));
             }
             ui.vertical(|ui| {
-                chat_text_marked(
+                chat_text_bracketed(
                     ui,
                     p,
                     env.emoji,
                     world,
                     line.wording(env.names),
                     env.want_names,
-                    &system_text(&line.text),
+                    &line.text,
                     super::fonts::chat_size(ui.ctx(), 12.5),
                     tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
                     true,
                     mark,
+                    system_brackets(world, line),
                 );
             });
         });
@@ -3436,11 +3592,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
-    let cached = if object || logged || line.anonymous() {
-        None
-    } else {
-        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
-    };
+    let cached = cached_chat_sender(world, line);
     let name = match cached {
         Some(n) => n.display(&names.options),
         None if own && !logged => env.own_name.to_owned(),
@@ -3885,14 +4037,17 @@ pub fn show(
     }
     // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`),
     // over the entries without a window of their own
-    if *open && !enlarged {
+    let order = (*open && !enlarged).then(|| {
         let mut order = if style.workspace() {
             sidebar::tab_order(world, st)
         } else {
             keys::legacy_order(world, st)
         };
         order.retain(|c| !st.popped.contains(*c));
-        keys::handle(ctx, st, &order, &mut actions);
+        order
+    });
+    if let Some(order) = &order {
+        keys::handle(ctx, st, order, &mut actions);
     }
     let title = match st.selected {
         // the workspace's head names the conversation (the mockup's title)
@@ -4136,6 +4291,19 @@ pub fn show(
         }
         _ => true,
     });
+    // the conversation shown closed with the mouse (its cross in the list,
+    // its menu, its header): the one below it shows next, or the one above
+    // at the end of the list, as Ctrl+W does (#4373)
+    if let Some(order) = &order
+        && !st.contacts
+        && let Some(closed) = st.selected
+        && order.contains(&Some(closed))
+        && actions.iter().any(|a| matches!(a, ConvAction::Close(id) if *id == closed))
+    {
+        let next = keys::after_close(order, closed);
+        st.select_tab(next);
+        st.reveal = next;
+    }
     select_main(st, open);
     let env = popout::Env {
         p,
@@ -5258,9 +5426,12 @@ pub(crate) fn cursor_to_end(ctx: &egui::Context, id: egui::Id, text: &str) {
 /// The local chat's field, the Legacy Viewer's chat bar (LLFloaterIMNearbyChat):
 /// Enter says, the Shout and Whisper keys (`shortcuts.rs`, none by
 /// default) shout and whisper, Alt+Enter sends ((OOC)), `/channel` and the
-/// gestures' completion; Enter on an empty field returns to movement. Shared
-/// by the full-width bar and the chat island (`bars/dock.rs`), which draws
-/// its own frame (`build` dresses the field) and shows emoji pictures.
+/// gestures' completion. With `keep_focus` (CloseChatOnReturn off,
+/// FSNearbyChatControl::autohide), Enter on an empty field leaves the
+/// keyboard there; without it, that Enter returns to movement. A second
+/// Enter in the same pass takes the bar back. Shared by the full-width bar
+/// and the chat island (`bars/dock.rs`), which draws its own frame (`build`
+/// dresses the field) and shows emoji pictures.
 pub(crate) fn bar_input(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -5278,13 +5449,26 @@ pub(crate) fn bar_input(
     // written in the empty field they crowded the bar (the human's request)
     let build = identified(|edit| build(edit).desired_width(field_width));
     let mut emoji = emoji;
+    let mut send = BarSend::default();
     let output = ui
         .horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            let deferred = std::mem::take(&mut st.deferred_bar_input);
+            if !deferred.is_empty() && ui.memory(|m| m.has_focus(bar_input_id())) {
+                ui.input_mut(|i| {
+                    i.events.splice(0..0, deferred);
+                });
+            }
             input::prepare(ui, bar_input_id(), true);
             let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
             let nav = super::emoji::codes::keys(ui, bar_input_id());
             let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
+            if !st.focus_request && ui.memory(|m| m.has_focus(bar_input_id())) {
+                send = bar_send(ui, st.keep_focus, &mut st.deferred_bar_input);
+                if !st.deferred_bar_input.is_empty() {
+                    ui.ctx().request_repaint();
+                }
+            }
             let minimum = ui.spacing().interact_size.y;
             let mut output = input::show(ui, emoji.as_deref_mut(), bar_input_id(), &mut st.input, field_width, minimum, build);
             if recalled {
@@ -5337,45 +5521,47 @@ pub(crate) fn bar_input(
     if resp.gained_focus() {
         st.last_field = ChatField::Bar;
     }
-    // The editor leaves ordinary Enter to this send path.
-    let send = if !focusing && (resp.has_focus() || resp.lost_focus()) {
-        {
-            let keys = shortcuts::get(ui.ctx());
-            ui.input(|i| send_enter(i, &keys))
-        }
-    } else {
-        None
-    };
-    let enter = send.is_some();
+    let enter = send.first.is_some();
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
     let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote) && st.selector_channel().unwrap_or(0) == 0;
     st.local_field(&resp, said, enter);
-    if enter {
-        resp.surrender_focus();
-    }
-    if let Some(send) = send
-        && !st.input.trim().is_empty()
-    {
-        st.last_field = ChatField::Bar;
-        st.input_history.entry(None).or_default().record(bar_input_id(), &st.input);
-        let mut text = st.suggest.expand(None, st.input.trim());
-        if send == SendKey::Ooc {
-            text = ooc(&text);
+    if let Some(key) = send.first {
+        let body = std::mem::replace(&mut st.input, send.next_draft);
+        cursor_to_end(ui.ctx(), resp.id, &st.input);
+        if !body.trim().is_empty() {
+            st.last_field = ChatField::Bar;
+            st.input_history.entry(None).or_default().record(bar_input_id(), &body);
+            let mut text = st.suggest.expand(None, body.trim());
+            if key == SendKey::Ooc {
+                text = ooc(&text);
+            }
+            let (channel, message) = channel::resolve(&text, st.selector_channel());
+            out = Some(OutgoingChat {
+                message,
+                channel,
+                chat_type: key.chat_type(ChatType::Normal),
+            });
+            // CloseChatOnReturn off keeps the keyboard. A second Enter in
+            // this pass is start-chat even when that preference is off
+            // (the bar was let go by the first Enter).
+            if st.keep_focus || send.another {
+                if !resp.has_focus() {
+                    st.focus_request = true;
+                }
+            } else {
+                resp.surrender_focus();
+            }
+        } else if st.keep_focus {
+            // FSNearbyChatControl::autohide(true) calls setFocus(false)
+            // only when CloseChatOnReturn is on. Escape and a click in
+            // the world still leave.
+        } else {
+            resp.surrender_focus();
+            if send.another {
+                st.focus_request = true;
+            }
         }
-        let (channel, message) = channel::resolve(&text, st.selector_channel());
-        out = Some(OutgoingChat {
-            message,
-            channel,
-            chat_type: send.chat_type(ChatType::Normal),
-        });
-        st.input.clear();
-        if st.keep_focus {
-            // ready for the next message; only Enter on the empty bar or a
-            // click elsewhere gives the keyboard back to the world
-            st.focus_request = true;
-        }
     }
-    // Enter on an empty bar returns to movement (like the Legacy Viewer).
     out
 }
 
@@ -6360,6 +6546,62 @@ mod tests {
         assert_eq!(segments("[https://example.org]")[1], Seg::Url("https://example.org"));
     }
 
+    /// #4386: a system line's brackets are drawn around it, not written into
+    /// the text its links are found in. Written in, `[<link> entered the
+    /// region.]` reads as a link given its own text and the resident's name
+    /// is lost; the Legacy Viewer appends them as their own runs
+    /// (FSChatHistory::appendMessage).
+    #[test]
+    fn a_system_line_keeps_the_name_of_the_link_it_starts_with() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let p = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = uuid::Uuid::from_u128(0x2A);
+        world.social.names.insert(id, "Nova Example".to_owned());
+        let text = format!("secondlife:///app/agent/{id}/about entered the region.");
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut frames = Frames::new();
+        let texts = frames.run(Vec::new(), |ui| {
+            let mut want = HashSet::new();
+            chat_text_bracketed(
+                ui,
+                &p,
+                &mut emoji,
+                &world,
+                NameScope::Roster.into(),
+                &mut want,
+                &text,
+                13.0,
+                p.ink,
+                false,
+                None,
+                true,
+            );
+        });
+        let drawn = |needle: &str| texts.iter().any(|t| t.source.contains(needle));
+        assert!(drawn("Nova Example"), "the resident's name is a link of the line");
+        assert!(drawn("entered the region."), "the rest of the line stays text");
+        // the brackets stand on their own, outside the link
+        assert!(texts.iter().any(|t| t.source == "["), "an opening bracket");
+        assert!(texts.iter().any(|t| t.source == "]"), "a closing bracket");
+        // the way it was, brackets written in: one link given its own text,
+        // the resident's name taken by the rest of the line
+        let wrapped = format!("[{text}]");
+        assert!(
+            matches!(segments(&wrapped).as_slice(), [Seg::Labelled(label, _)] if label == "entered the region."),
+            "the line written in brackets is a link given its own text"
+        );
+    }
+
+    #[test]
+    fn brackets_around_a_line_that_reads_from_the_right_are_turned_around() {
+        assert_eq!(bracket_pair(false, false), ("", ""));
+        assert_eq!(bracket_pair(false, true), ("", ""));
+        assert_eq!(bracket_pair(true, false), ("[", "]"));
+        // (a piece of its own misses the mirroring the bidi pass gives a run)
+        assert_eq!(bracket_pair(true, true), ("]", "["));
+    }
+
     /// Long texts with many brackets or many link starts and few spaces are
     /// split into links in linear time: a profile's About is cut every
     /// frame it is shown.
@@ -6489,11 +6731,11 @@ mod tests {
     }
 
     /// The islands' chat pills (the bars mockup): a resident's name in
-    /// semi-bold light violet followed by the text without a colon, an
-    /// object's name in its kind's colour, a system line in italics; the
+    /// semi-bold, in the senders' colour (Emitter › Avatars), followed by
+    /// the text without a colon, an object's name in its kind's colour, a system line in italics; the
     /// full-width bar's lines keep "Name: text" and their colours.
     #[test]
-    fn chat_pills_name_residents_in_violet_without_a_colon() {
+    fn chat_pills_name_residents_in_the_senders_colour_without_a_colon() {
         let p = crate::theme::Theme::default().palette();
         let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let family = egui::FontFamily::Proportional;
@@ -6526,7 +6768,7 @@ mod tests {
         let pill = job(&said, Some(&family));
         assert_eq!(pill.text, "Orion ExempleBienvenue");
         let name = &pill.sections[0];
-        assert_eq!(name.format.color, p.violet_light);
+        assert_eq!(name.format.color, crate::ui::colors::sender_color(&said));
         assert_eq!(pill.sections.last().map(|s| s.leading_space), Some(4.0));
         assert_eq!(pill.sections.last().map(|s| s.format.color), Some(p.ink));
         let bar = job(&said, None);
@@ -6538,6 +6780,42 @@ mod tests {
         let pill = job(&online, Some(&family));
         assert!(pill.sections.iter().all(|s| s.format.italics));
         assert!(!job(&online, None).sections.iter().any(|s| s.format.italics));
+    }
+
+    /// An emote is in its sender's message colour, ours ("My messages") and
+    /// another resident's ("Others") alike, as LLViewerChat::getChatColor.
+    #[test]
+    fn emotes_use_their_senders_message_colour_in_chat_cards() {
+        let p = crate::theme::Theme::default().palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut line = crate::world::ChatLine {
+            time: std::time::UNIX_EPOCH,
+            from: "Resident".into(),
+            text: String::new(),
+            kind: ChatKind::OWN,
+            source: uuid::Uuid::nil(),
+            origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
+        };
+        let mine = message_color(&line, &p, &world);
+        for text in ["/me waves", "/me's hat"] {
+            line.text = text.into();
+            assert_eq!(message_color(&line, &p, &world), mine);
+        }
+        line.origin = Origin::Log;
+        assert_eq!(Some(message_color(&line, &p, &world)), history_tone(&p, Origin::Log));
+        line.origin = Origin::Live;
+        line.kind = ChatKind::Local(ChatType::Normal);
+        line.source = uuid::Uuid::from_u128(7);
+        line.text = "hello".into();
+        let theirs = message_color(&line, &p, &world);
+        assert_ne!(theirs, mine);
+        for text in ["/me waves", "/me's hat"] {
+            line.text = text.into();
+            assert_eq!(message_color(&line, &p, &world), theirs);
+        }
     }
 
     /// The pills' sender names: a resident's profile (ours for our own

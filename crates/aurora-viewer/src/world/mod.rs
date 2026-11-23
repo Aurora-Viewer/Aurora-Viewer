@@ -82,6 +82,7 @@ pub mod outfit;
 pub mod outfit_backup;
 pub mod outfit_folders;
 pub mod outfit_paste;
+pub mod parcel_env;
 pub mod parcel_visibility;
 pub mod parked;
 pub mod particle_filters;
@@ -805,6 +806,8 @@ pub struct World {
     /// Full description of that parcel (navigation bar icons, media, voice).
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
     pub parcel_visibility: parcel_visibility::Visibility,
+    /// Environments saved for parcels.
+    pub parcel_env: parcel_env::ParcelEnv,
     /// The photo's isolation (`snapshot::isolate`): read with the parcel
     /// filter by `parcel_object_visibility`.
     pub photo_isolation: crate::snapshot::isolate::Isolation,
@@ -1213,6 +1216,7 @@ impl World {
             sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
             parcel_visibility: Default::default(),
+            parcel_env: Default::default(),
             photo_isolation: Default::default(),
             concealed_attachment: Uuid::nil(),
             avatar_studio: false,
@@ -4977,9 +4981,13 @@ impl World {
                 }
                 None
             }
-            NetEvent::InventoryUpdated { folders, items } => {
+            NetEvent::InventoryUpdated { folders, items, bulk } => {
                 self.reveal_added(&folders, &items);
-                self.inventory.server_updated(folders, items);
+                if bulk {
+                    self.inventory.bulk_updated(folders, items);
+                } else {
+                    self.inventory.server_updated(folders, items);
+                }
                 None
             }
             NetEvent::InventoryDelivery { transaction, folders } => {
@@ -6454,7 +6462,7 @@ impl World {
                     self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
                 }
                 // the name is a link to the resident (social::online_chat_line)
-                self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::People);
+                self.system_notice(social::online_chat_line(id, online), notice_topics::Topic::Radar);
             }
         }
     }

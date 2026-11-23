@@ -706,6 +706,12 @@ pub struct Settings {
     /// Viewer always does; Preferences › Avatars › Animations). Off, our
     /// avatar keeps its pose. Camera framing is controlled independently.
     pub customize_animation: bool,
+    /// FSPlayDefaultBentoAnimation: a priority 0 Bento pose plays under
+    /// every other animation, so hands, mouth, wings and tail fall back to
+    /// a natural pose instead of staying stuck where the last animation
+    /// left them (off, as in the Legacy Viewer; Preferences › Avatars ›
+    /// Animations).
+    pub bento_idle: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
@@ -1045,10 +1051,11 @@ pub struct Settings {
     /// name)", so that its line cannot pass for a resident's (FSMarkObjects,
     /// off; Preferences > Chat).
     pub mark_unnamed_objects: bool,
-    /// The local chat bar keeps the keyboard after a message is sent; Enter
-    /// on the empty bar gives it back to the world (the Legacy Viewer's
-    /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
-    /// off, the bar lets go after sending.
+    /// The local chat bar keeps the keyboard after a message is sent, and
+    /// an empty Enter leaves it there (the Legacy Viewer's CloseChatOnReturn
+    /// off, FSNearbyChatControl::autohide). On by default (human choice of
+    /// 2026-10-16, empty Enter kept since #3349). Off, sending lets the
+    /// keyboard go and the next Enter takes the bar back.
     pub chat_keep_focus: bool,
     /// Aurora extension, Enter toggles typing: Enter on an empty field gives
     /// the keyboard back to the world in every conversation too (IMs and
@@ -1521,6 +1528,12 @@ pub struct Settings {
     /// Firestorm's camera and movement windows (floater_camera.xml,
     /// floater_moveview.xml) instead of `ui/controls.rs`.
     pub classic_controls: bool,
+    /// The Controls window opens compact on the camera: its joysticks, zoom
+    /// and roll (the title button's compact / full, kept: #3904).
+    pub compact_controls: bool,
+    /// The Controls window's Movement tab opens compact: the movement
+    /// buttons and walk / run / fly (its title button, kept: #3904).
+    pub compact_movement_controls: bool,
     /// Camera presets, saved from the Controls window (Firestorm's camera
     /// presets) or the viewfinder (`camera::presets`); kept apart from
     /// `camera`, which "Reset" sets back.
@@ -2265,6 +2278,15 @@ pub struct AudioSettings {
     pub mute_when_minimized: bool,
     /// Output device name (empty = system default).
     pub output_device: String,
+    /// Voice-only output device, the counterpart of the Legacy Viewer's
+    /// `VoiceOutputAudioDevice` (`LLPanelVoiceDeviceSettings`,
+    /// indra/newview/llpanelvoicedevicesettings.cpp). Two deliberate
+    /// differences: empty follows Aurora's `output_device`, where the Legacy
+    /// Viewer's "Default" is the system's default playout device
+    /// (indra/llwebrtc/llwebrtc.cpp); and a chosen device that is missing is
+    /// kept, voice playing on `output_device` until it comes back, where the
+    /// Legacy Viewer's panel rewrites the setting to "Default".
+    pub voice_output_device: String,
     /// Microphone name (empty = system default).
     pub input_device: String,
     /// Connect to voice chat.
@@ -2347,6 +2369,7 @@ impl Default for AudioSettings {
             stream_title_history: 10,
             mute_when_minimized: false,
             output_device: String::new(),
+            voice_output_device: String::new(),
             input_device: String::new(),
             voice_enabled: true,
             mic_hold: false,
@@ -2455,6 +2478,7 @@ impl Default for Settings {
             shape_height_feet: false,
             customize_animation: true,
             appearance_camera_movement: true,
+            bento_idle: false,
             imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
@@ -2758,6 +2782,8 @@ impl Default for Settings {
             disable_glass: false,
             interface_colors: Default::default(),
             classic_controls: false,
+            compact_controls: false,
+            compact_movement_controls: false,
             camera_shots: Vec::new(),
             camera_views: Default::default(),
             plates_friends_only_full: false,
@@ -3708,6 +3734,11 @@ impl Settings {
             toolbar.sanitize();
         }
         self.snapshot.sanitize();
+        // the world filters keep the photo stack's rules (8 looks at most,
+        // strengths up to 100): a longer or edited file would otherwise
+        // show "10 of 8", and a card opened would clamp its strength and
+        // switch the world filters on with no edit
+        crate::snapshot::looks::sanitize(&mut self.world_look.looks);
         self.dof.sanitize();
         self.game_control.sanitize();
         self.exposure = self.exposure.clamp(0.25, 4.0);
@@ -4293,6 +4324,51 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    /// A settings file whose world filters break the stack's rules (more
+    /// than 8 looks, a strength past 100) is brought back to them on load,
+    /// as the photo stack is, and stays off.
+    #[test]
+    fn loaded_world_filters_keep_to_the_stacks_rules() {
+        use crate::snapshot::looks::{Layer, MAX_LAYERS, WorldLook};
+        let settings = super::Settings {
+            world_look: WorldLook {
+                on: false,
+                looks: (0..12)
+                    .map(|_| Layer {
+                        id: "Sepia".into(),
+                        strength: 250,
+                        on: true,
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .sanitized();
+        assert_eq!(settings.world_look.looks.len(), MAX_LAYERS);
+        assert!(settings.world_look.looks.iter().all(|l| l.strength == 100));
+        assert!(!settings.world_look.on);
+    }
+
+    #[test]
+    fn voice_output_device_defaults_to_audio_output_and_survives_settings_round_trip() {
+        use super::Settings;
+
+        assert!(Settings::default().audio.voice_output_device.is_empty());
+        // An older settings file has no voice-specific output choice. Empty
+        // means the selected normal output remains in use.
+        let old: Settings = serde_json::from_str(r#"{"audio":{"output_device":"Speakers"}}"#).expect("older preferences");
+        assert_eq!(old.audio.output_device, "Speakers");
+        assert!(old.audio.voice_output_device.is_empty());
+
+        let mut settings = old;
+        settings.audio.voice_output_device = "Headset".into();
+        let saved = serde_json::to_vec(&settings).expect("save preferences");
+        let restored: Settings = serde_json::from_slice(&saved).expect("restore preferences");
+        assert_eq!(restored.audio.output_device, "Speakers");
+        assert_eq!(restored.audio.voice_output_device, "Headset");
+    }
+
     #[test]
     fn avatar_only_hover_tips_are_off_by_default_and_for_older_preferences() {
         use super::HoverTips;

@@ -1769,9 +1769,15 @@ pub struct FrameParams {
     /// The sky's rendering type is hidden (the viewer's Advanced ›
     /// Rendering types): the view starts from `clear_color` instead.
     pub hide_sky: bool,
+    /// Hide the water's optical effects with its surface (Advanced › Rendering types).
+    pub hide_water: bool,
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
+    /// The photo filters' catalogue pictures (look_thumbs.rs): a new still
+    /// and one look drawn on it; None: none, at no cost (their images are
+    /// let go after a while).
+    pub look_thumbs: Option<crate::look_thumbs::ThumbRequest>,
     /// Volumetric clouds in the place of the Legacy Viewer's flat layer
     /// (clouds.rs); None: the Legacy layer, with nothing else running.
     pub clouds: Option<CloudsFrame>,

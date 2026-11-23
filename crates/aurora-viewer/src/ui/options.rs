@@ -47,6 +47,31 @@ pub enum AudioSection {
     Indicators,
 }
 
+#[derive(Clone, Copy)]
+enum RowFlash {
+    GoTo(egui::Id),
+    Link(egui::Id),
+}
+
+impl RowFlash {
+    fn id(self) -> egui::Id {
+        match self {
+            Self::GoTo(id) | Self::Link(id) => id,
+        }
+    }
+
+    fn strength(self, age: f32) -> Option<f32> {
+        const PULSE: f32 = 0.65;
+        const GAP: f32 = 0.15;
+        let fade = match self {
+            Self::GoTo(_) if age < 1.8 => 1.0 - age / 1.8,
+            Self::Link(_) if age < 3.0 * PULSE + 2.0 * GAP => 1.0 - (age % (PULSE + GAP)) / PULSE,
+            _ => return None,
+        };
+        Some(fade.clamp(0.0, 1.0) * 0.42)
+    }
+}
+
 /// The pages of the window, in the order of the sidebar.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum Page {
@@ -431,6 +456,11 @@ pub struct OptionsUi {
     pub flycam_active: bool,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
     pub anti_spam_version: u64,
+    /// The environments saved for parcels on this grid (set by the app from
+    /// the account's file): names only, never an asset id.
+    pub parcel_environments: Vec<crate::world::parcel_env::Row>,
+    /// "Remove every environment saved for a parcel?" confirmation open.
+    confirm_remove_parcel_environments: bool,
     /// The page shown and its tab.
     pub page: Page,
     pub tab: usize,
@@ -452,11 +482,13 @@ pub struct OptionsUi {
     counted: Option<(f64, String)>,
     count_stale: bool,
     /// "Go to" (search, crumbs, links): the page, its tab, the row to light.
-    go_to: Option<(Page, usize, Option<egui::Id>)>,
+    go_to: Option<(Page, usize, Option<RowFlash>)>,
+    /// A received preferences link, resolved against the real rows in the count pass.
+    pending_setting: Option<String>,
     /// The cog to open with a row taken from the search.
     open_parent: Option<egui::Id>,
     /// The row lit after "Go to" (since when), and the scroll to it pending.
-    flash: Option<(egui::Id, f64)>,
+    flash: Option<(RowFlash, f64)>,
     flash_scroll: bool,
     /// A row to light by its label once its page is shown (demo, the other
     /// windows' "Preferences…").
@@ -655,6 +687,16 @@ impl OptionsUi {
         self.cancel_capture();
     }
 
+    /// Follow a shareable link without changing any of the resident's settings.
+    /// The count pass locates the row, tab and folded parent by a stable path.
+    pub fn open_setting(&mut self, path: String) {
+        self.pending_setting = Some(path);
+        self.open_parent = None;
+        self.count_stale = true;
+        self.reveal = None;
+        self.go_to = None;
+    }
+
     /// Opens the Chat page on the YouTube player's settings (a player's
     /// cog, #848).
     pub fn open_videos(&mut self) {
@@ -720,9 +762,15 @@ impl OptionsUi {
 
 #[derive(Default)]
 pub struct OptionsResult {
+    pub setting_unavailable: bool,
     pub toggle_flycam: bool,
     pub reset_anti_spam: bool,
     pub unblock_anti_spam: Option<(crate::world::anti_spam::Queue, uuid::Uuid)>,
+    /// The environment saved for this parcel (region UUID, local id) is
+    /// removed.
+    pub forget_parcel_environment: Option<(uuid::Uuid, i32)>,
+    /// Every environment saved for a parcel on this grid is removed.
+    pub forget_all_parcel_environments: bool,
     /// Settings that need the general application path (rendering, network,
     /// crash recovery, theme). UI zoom has its own per-frame path below.
     pub changed: bool,
@@ -1135,8 +1183,9 @@ pub(super) fn named_combo(
     devices: &[String],
     width: f32,
     default_label: &str,
+    listing: bool,
 ) -> (bool, bool) {
-    choice_combo(ui, id, value, devices, width, default_label, false)
+    choice_combo(ui, id, value, devices, width, default_label, listing)
 }
 
 fn choice_combo(
@@ -1291,6 +1340,34 @@ pub fn describe_settings() -> Vec<(String, String, String)> {
     out
 }
 
+/// Unambiguous link destinations and their labels in the current UI language.
+type SettingLabels = HashMap<String, Option<String>>;
+
+fn with_setting_labels<R>(read: impl FnOnce(&SettingLabels) -> R) -> R {
+    thread_local! {
+        static LABELS: std::cell::RefCell<(&'static str, SettingLabels)> = Default::default();
+    }
+    LABELS.with_borrow_mut(|(cached_language, labels)| {
+        let language = aurora_i18n::language();
+        if *cached_language != language {
+            labels.clear();
+            for (path, label, _) in describe_settings() {
+                labels.entry(path).and_modify(|entry| *entry = None).or_insert(Some(label));
+            }
+            *cached_language = language;
+        }
+        read(labels)
+    })
+}
+
+pub(super) fn setting_link_label(path: &str) -> String {
+    let preferences = aurora_i18n::tr!("common-preferences");
+    with_setting_labels(|labels| match labels.get(path).and_then(Option::as_ref) {
+        Some(label) => format!("{preferences} › {label}"),
+        None => preferences.to_owned(),
+    })
+}
+
 /// The pages counted (modified rows, search hits), nothing drawn.
 fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut OptionsUi, r: &mut OptionsResult) {
     let query = st.query.clone();
@@ -1300,6 +1377,9 @@ fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mu
     }
     let counts = std::mem::take(&mut cx.counts);
     st.counts = counts;
+    if st.pending_setting.take().is_some() {
+        r.setting_unavailable = true;
+    }
 }
 
 /// How long the counts may wait for a change nothing announced (the app's
@@ -1334,6 +1414,7 @@ fn count_due(st: &OptionsUi, now: f64, input: bool) -> bool {
     input
         || st.count_stale
         || st.reveal.is_some()
+        || st.pending_setting.is_some()
         || st.demo_open_cogs
         || st
             .counted
@@ -1446,6 +1527,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         st.finish_undo(&mut r);
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
+    remove_parcel_environments_modal(ctx, p, st, &mut r, *open);
     pages::proxy::frame(ctx, p, s, st, *open);
     clear_conversation_log_modal(ctx, p, st, &mut r, *open);
     reset_modal(ctx, p, st, *open);
@@ -1498,6 +1580,53 @@ fn erase_logs_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
     });
     if modal.should_close() {
         st.confirm_erase_logs = false;
+    }
+}
+
+/// Graphics › Parcels › Remove all: asked before every environment saved for
+/// a parcel on this grid is removed.
+fn remove_parcel_environments_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mut OptionsResult, open: bool) {
+    if !(st.confirm_remove_parcel_environments && open) {
+        return;
+    }
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("options_remove_parcel_environments")).show(ctx, |ui| {
+        ui.set_width(360.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("parcel-environment-remove-all-title"))
+                .size(15.0)
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("parcel-environment-remove-all-text"))
+                .size(12.5)
+                .color(p.muted),
+        );
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            use super::widgets::{ActionKind, action_button};
+            let size = Vec2::new(0.0, 26.0);
+            if action_button(
+                ui,
+                p,
+                "trash-filled",
+                aurora_i18n::tr!("parcel-environment-remove-all"),
+                ActionKind::Danger,
+                size,
+            )
+            .clicked()
+            {
+                r.forget_all_parcel_environments = true;
+                st.confirm_remove_parcel_environments = false;
+            }
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                st.confirm_remove_parcel_environments = false;
+            }
+        });
+    });
+    if modal.should_close() {
+        st.confirm_remove_parcel_environments = false;
     }
 }
 

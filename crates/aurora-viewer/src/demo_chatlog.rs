@@ -116,6 +116,13 @@ pub fn service_skew() -> bool {
     std::env::var("AURORA_DEMO_CHATLOG").is_ok_and(|value| value == "service:skew")
 }
 
+/// `service:self` (#4499): `service` whose conversation list also holds a
+/// direct conversation with the demo account itself, as the grid listed
+/// for one account.
+fn service_self() -> bool {
+    std::env::var("AURORA_DEMO_CHATLOG").is_ok_and(|value| value == "service:self")
+}
+
 /// When `service:skew`'s live IM was received, on the grid's clock, in
 /// seconds: the service's copy of it.
 static LIVE_RECEIVED: std::sync::Mutex<Option<u64>> = std::sync::Mutex::new(None);
@@ -585,18 +592,23 @@ pub fn service_reply(agent: Uuid, id: u64, url: &str, body: Option<&aurora_llsd:
     };
     match (url, body) {
         (SERVICE_LIST_URL, None) => {
-            let list = [PEER, ORION, TESS]
+            let direct = |resident: Uuid, last_msg_id: String| {
+                let mut entry = Llsd::new_map();
+                entry.insert("conversation_type", "direct");
+                entry.insert("conversation_id", aurora_net::chat_service::direct_conversation_id(agent, resident));
+                entry.insert("other_participant_id", resident.to_string());
+                entry.insert("last_msg_id", last_msg_id);
+                entry
+            };
+            let mut list = [PEER, ORION, TESS]
                 .into_iter()
-                .filter_map(|resident| {
-                    let newest = service_history(agent, resident).into_iter().next()?;
-                    let mut entry = Llsd::new_map();
-                    entry.insert("conversation_type", "direct");
-                    entry.insert("conversation_id", aurora_net::chat_service::direct_conversation_id(agent, resident));
-                    entry.insert("other_participant_id", resident.to_string());
-                    entry.insert("last_msg_id", newest.msg_id);
-                    Some(entry)
-                })
+                .filter_map(|resident| Some(direct(resident, service_history(agent, resident).into_iter().next()?.msg_id)))
                 .collect::<Vec<_>>();
+            if service_self() {
+                // Nova's token: a skipped entry's token is never used.
+                let token = list.first().map(|e| e.get("last_msg_id").as_str().to_owned()).unwrap_or_default();
+                list.insert(list.len().min(1), direct(agent, token));
+            }
             ok(Llsd::Array(list))
         }
         (SERVICE_HISTORY_URL, Some(body)) => {

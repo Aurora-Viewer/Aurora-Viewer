@@ -848,7 +848,7 @@ thread_local! {
 
 /// Decode a codestream with `aurora-j2k`: the first four components, as
 /// [`convert_image`] keeps them of an OpenJPEG decode.
-fn decode_native(cs: &[u8], reduce: u8) -> Result<DecodedImage, aurora_j2k::Error> {
+fn decode_native(cs: &[u8], reduce: u8, local_import: bool) -> Result<DecodedImage, aurora_j2k::Error> {
     let options = aurora_j2k::Options {
         reduce,
         components: 4,
@@ -877,7 +877,7 @@ fn decode_native(cs: &[u8], reduce: u8) -> Result<DecodedImage, aurora_j2k::Erro
                     data: &p.data,
                 })
                 .collect();
-            planes_to_image(&views, reduce).map_err(|_| aurora_j2k::Error::Data("decoded components"))
+            planes_to_image(&views, reduce, local_import).map_err(|_| aurora_j2k::Error::Data("decoded components"))
         }
     }
 }
@@ -885,10 +885,27 @@ fn decode_native(cs: &[u8], reduce: u8) -> Result<DecodedImage, aurora_j2k::Erro
 /// [`decode_j2k`], with the time spent in each of its two stages
 /// (measurements: `examples/j2k_bench.rs`).
 pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, DecodeTimings), AssetError> {
+    decode_j2k_inner(data, discard, false)
+}
+
+/// Local import sources may be larger than network textures. Decode only
+/// the wavelet levels needed for a 2K upload; retain at least that much
+/// detail so a later 1K -> 2K change never enlarges a previously reduced
+/// upload. The same tile, coding-layout and memory checks still apply.
+pub(crate) fn decode_j2k_for_import(data: &[u8]) -> Result<DecodedImage, AssetError> {
+    let info = j2k_info(data).ok_or(AssetError::J2k("JPEG2000 main header"))?;
+    decode_j2k_inner(data, import_discard(info), true).map(|(image, _)| image)
+}
+
+fn import_discard(info: J2kInfo) -> u8 {
+    ((info.width.max(info.height) / 2048).max(1).ilog2() as u8).min(info.levels)
+}
+
+fn decode_j2k_inner(data: &[u8], discard: u8, local_import: bool) -> Result<(DecodedImage, DecodeTimings), AssetError> {
     let start = Instant::now();
     let cs = locate_codestream(data).ok_or(AssetError::J2k("not a JPEG2000 codestream"))?;
     let info = parse_main_header(cs).ok_or(AssetError::Truncated("JPEG2000 main header"))?;
-    if info.width > MAX_DIMENSION || info.height > MAX_DIMENSION || info.width as u64 * info.height as u64 > MAX_PIXELS {
+    if !local_import && (info.width > MAX_DIMENSION || info.height > MAX_DIMENSION || info.width as u64 * info.height as u64 > MAX_PIXELS) {
         return Err(AssetError::TooLarge("JPEG2000 image dimensions"));
     }
     if u16::from(info.components) > MAX_HEADER_COMPONENTS {
@@ -897,7 +914,7 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
     let reduce = discard.min(info.levels);
     let siz = check_decode_memory(cs, reduce)?;
     if !openjpeg_forced() {
-        match decode_native(cs, reduce) {
+        match decode_native(cs, reduce, local_import) {
             Ok(out) => {
                 return Ok((
                     out,
@@ -912,7 +929,11 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
         }
     }
     // (a tile-part can never need more than about twice the raw pixels)
-    let plausible = (info.width as usize * info.height as usize * usize::from(info.components)).saturating_mul(2) + (1 << 16);
+    let plausible = (info.width as usize)
+        .saturating_mul(info.height as usize)
+        .saturating_mul(usize::from(info.components))
+        .saturating_mul(2)
+        .saturating_add(1 << 16);
     let bounded = bound_tile_parts(cs, plausible);
     let cs = bounded.as_deref().unwrap_or(cs);
     // Disable any TLM tile-part index: OpenJPEG 2.5.3 can write past it (see
@@ -987,7 +1008,7 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
     // `opj_read_header`/`opj_decode`; it is not mutated while borrowed.
     let img = unsafe { &*image.0 };
     let codec = start.elapsed();
-    let out = convert_image(img, &siz, reduce)?;
+    let out = convert_image(img, &siz, reduce, local_import)?;
     let convert = start.elapsed().saturating_sub(codec);
     Ok((out, DecodeTimings { codec, convert }))
 }
@@ -1011,7 +1032,7 @@ fn component_size(siz: &Siz, sub: (u8, u8), reduce: u8) -> (u64, u64) {
 /// components are checked against the codestream's own SIZ (`siz`, decoded
 /// at `reduce`) before their planes are read: the same component count, and
 /// planes no larger than the SIZ gives them.
-fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<DecodedImage, AssetError> {
+fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8, local_import: bool) -> Result<DecodedImage, AssetError> {
     if img.numcomps == 0 || img.comps.is_null() {
         return Err(AssetError::J2k("decoded image has no components"));
     }
@@ -1035,27 +1056,29 @@ fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<Decode
         width = width.max(c.w);
         height = height.max(c.h);
     }
-    if width > MAX_DIMENSION || height > MAX_DIMENSION {
+    if !local_import && (width > MAX_DIMENSION || height > MAX_DIMENSION) {
         return Err(AssetError::TooLarge("decoded JPEG2000 dimensions"));
     }
-    let views: Vec<PlaneView<'_>> = used
-        .iter()
-        .map(|c| {
-            // SAFETY: `data` is non-null and OpenJPEG allocates `w * h` samples for
-            // each decoded component (dimensions already reduced by the resolution
-            // factor); `w` and `h` were checked above against the SIZ, so the
-            // slice never spans more than the header's own component size.
-            let data = unsafe { std::slice::from_raw_parts(c.data as *const i32, c.w as usize * c.h as usize) };
-            PlaneView {
-                w: c.w,
-                h: c.h,
-                prec: c.prec,
-                signed: c.sgnd != 0,
-                data,
-            }
-        })
-        .collect();
-    planes_to_image(&views, comps[0].factor.min(255) as u8)
+    let mut views: Vec<PlaneView<'_>> = Vec::with_capacity(used.len());
+    for c in used {
+        let samples = (c.w as usize)
+            .checked_mul(c.h as usize)
+            .filter(|&samples| samples <= isize::MAX as usize / std::mem::size_of::<i32>())
+            .ok_or(AssetError::TooLarge("decoded JPEG2000 component samples"))?;
+        // SAFETY: `data` is non-null and OpenJPEG allocates `w * h` samples for
+        // each decoded component (dimensions already reduced by the resolution
+        // factor); `w` and `h` were checked above against the SIZ, so the
+        // slice never spans more than the header's own component size.
+        let data = unsafe { std::slice::from_raw_parts(c.data as *const i32, samples) };
+        views.push(PlaneView {
+            w: c.w,
+            h: c.h,
+            prec: c.prec,
+            signed: c.sgnd != 0,
+            data,
+        });
+    }
+    planes_to_image(&views, comps[0].factor.min(255) as u8, local_import)
 }
 
 /// One decoded component: `w * h` samples of `prec` bits, rows top to
@@ -1070,8 +1093,9 @@ struct PlaneView<'a> {
 
 /// Convert component planes (at most four) to interleaved 8-bit pixels of
 /// the largest component's size: precisions other than 8 bits and signed
-/// samples scaled to 8 bits, sub-sampled components stretched.
-fn planes_to_image(planes: &[PlaneView<'_>], discard: u8) -> Result<DecodedImage, AssetError> {
+/// samples scaled to 8 bits, sub-sampled components stretched. A local
+/// import (`local_import`) may be larger than a network texture.
+fn planes_to_image(planes: &[PlaneView<'_>], discard: u8, local_import: bool) -> Result<DecodedImage, AssetError> {
     let width = planes.iter().map(|c| c.w).max().unwrap_or(0);
     let height = planes.iter().map(|c| c.h).max().unwrap_or(0);
     if planes.is_empty()
@@ -1081,12 +1105,19 @@ fn planes_to_image(planes: &[PlaneView<'_>], discard: u8) -> Result<DecodedImage
     {
         return Err(AssetError::J2k("decoded component has no data"));
     }
-    if width > MAX_DIMENSION || height > MAX_DIMENSION {
+    if !local_import && (width > MAX_DIMENSION || height > MAX_DIMENSION) {
         return Err(AssetError::TooLarge("decoded JPEG2000 dimensions"));
     }
     let n = planes.len();
-    let pixels = width as usize * height as usize;
-    let mut out = vec![0u8; pixels * n];
+    let length = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(n))
+        .filter(|&bytes| bytes <= isize::MAX as usize)
+        .ok_or(AssetError::TooLarge("decoded JPEG2000 pixels"))?;
+    let mut out = Vec::new();
+    out.try_reserve_exact(length)
+        .map_err(|_| AssetError::TooLarge("decoded JPEG2000 pixel allocation"))?;
+    out.resize(length, 0_u8);
 
     for (ci, c) in planes.iter().enumerate() {
         let cw = c.w as usize;
@@ -1198,6 +1229,10 @@ mod tests {
 
     /// Lossless J2K encode (test helper, mirrors JPEG2KEncode in llimagej2coj.cpp).
     fn encode(w: u32, h: u32, comps: u32, pixel: impl Fn(u32, u32, u32) -> u8) -> Vec<u8> {
+        encode_with_levels(w, h, comps, 5, pixel)
+    }
+
+    fn encode_with_levels(w: u32, h: u32, comps: u32, levels: u8, pixel: impl Fn(u32, u32, u32) -> u8) -> Vec<u8> {
         // SAFETY: test-only FFI usage; every pointer is checked and freed below.
         unsafe {
             let mut params: opj::opj_cparameters_t = std::mem::zeroed();
@@ -1208,7 +1243,7 @@ mod tests {
             params.irreversible = 0;
             params.tcp_mct = if comps >= 3 { 1 } else { 0 };
             // Like JPEG2KEncode: small images need fewer resolutions.
-            params.numresolution = params.numresolution.min(1 + w.min(h).ilog2() as i32);
+            params.numresolution = params.numresolution.min(1 + w.min(h).ilog2() as i32).min(1 + i32::from(levels));
             let mut cparms: Vec<opj::opj_image_cmptparm_t> = (0..comps)
                 .map(|_| {
                     let mut p: opj::opj_image_cmptparm_t = std::mem::zeroed();
@@ -1257,6 +1292,55 @@ mod tests {
 
     fn pattern(x: u32, y: u32, c: u32) -> u8 {
         ((x * 4 + y * 3 + c * 50) & 0xFF) as u8
+    }
+
+    #[test]
+    fn local_jpeg2000_import_reduces_large_sources_without_relaxing_network_limits() {
+        // A narrow source exercises the network dimension rejection without
+        // allocating a multi-gigabyte encoder fixture for a square 16K map.
+        let bytes = encode(32768, 64, 3, |_, _, c| [30, 80, 150][c as usize]);
+        assert!(matches!(
+            decode_j2k(&bytes, 0),
+            Err(AssetError::TooLarge("JPEG2000 image dimensions"))
+        ));
+        for loader in [crate::import_texture::decode, crate::import_texture::decode_map] {
+            let source = loader(&bytes).expect("large local JPEG2000");
+            assert_eq!((source.width, source.height, source.components, source.discard), (2048, 4, 3, 4));
+            assert!(source.data.as_chunks::<3>().0.iter().all(|pixel| *pixel == [30, 80, 150]));
+            for maximum in [1024, 2048] {
+                let options = crate::import_texture::Options {
+                    max_width: maximum,
+                    max_height: maximum,
+                    ..Default::default()
+                };
+                let pixels = crate::import_texture::prepare(&source, options).expect("resize imported J2K");
+                assert_eq!((pixels.width, pixels.height), (maximum, 4));
+            }
+        }
+    }
+
+    #[test]
+    fn local_jpeg2000_import_without_wavelet_levels_resizes_after_full_decode() {
+        let bytes = encode_with_levels(32768, 4, 3, 0, |_, _, c| [30, 80, 150][c as usize]);
+        assert_eq!(j2k_info(&bytes).expect("header").levels, 0);
+        assert!(matches!(
+            decode_j2k(&bytes, 0),
+            Err(AssetError::TooLarge("JPEG2000 image dimensions"))
+        ));
+        for loader in [crate::import_texture::decode, crate::import_texture::decode_map] {
+            let source = loader(&bytes).expect("large local source without wavelet reductions");
+            assert_eq!((source.width, source.height, source.components, source.discard), (32768, 4, 3, 0));
+            for maximum in [1024, 2048] {
+                let options = crate::import_texture::Options {
+                    max_width: maximum,
+                    max_height: maximum,
+                    ..Default::default()
+                };
+                let pixels = crate::import_texture::prepare(&source, options).expect("resize full-resolution J2K");
+                assert_eq!((pixels.width, pixels.height), (maximum, 4));
+                assert!(pixels.data.as_chunks::<3>().0.iter().all(|pixel| *pixel == [30, 80, 150]));
+            }
+        }
     }
 
     #[test]
@@ -1521,6 +1605,29 @@ mod tests {
             );
             assert!(matches!(decode_j2k(cs, discard), Err(AssetError::TooLarge(_))));
         }
+        assert!(
+            matches!(decode_j2k_for_import(cs), Err(AssetError::TooLarge(_))),
+            "local imports retain the decoder memory checks"
+        );
+    }
+
+    #[test]
+    fn local_jpeg2000_import_keeps_enough_resolution_for_2k_within_the_decoder_budget() {
+        for (width, expected) in [(3000, 0), (8192, 2), (16384, 3)] {
+            let cs = codestream(&Layout::texture(width, width, 4), &[]);
+            let discard = import_discard(j2k_info(&cs).expect("source header"));
+            assert_eq!(discard, expected);
+            assert!(check_decode_memory(&cs, discard).is_ok());
+            assert!((width >> discard) >= 2048);
+        }
+        let mut few_levels = Layout::texture(16384, 16384, 4);
+        few_levels.levels = 1;
+        let cs = codestream(&few_levels, &[]);
+        assert_eq!(import_discard(j2k_info(&cs).expect("source header")), 1);
+        assert!(matches!(
+            decode_j2k_for_import(&cs),
+            Err(AssetError::TooLarge("JPEG2000 decoder memory"))
+        ));
     }
 
     #[test]
