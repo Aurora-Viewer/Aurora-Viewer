@@ -39,6 +39,13 @@ pub fn pill_tab_wide(
     tab(ui, p, icon, label, None, false, selected, enabled, Some(width), Some(why))
 }
 
+/// A `pill_tab` of its own width, without icon or count, that says `why`
+/// on hover while it is greyed (a preview tab behind a waiting question or
+/// a viewing restriction).
+pub fn pill_tab_why(ui: &mut egui::Ui, p: &Palette, label: &str, selected: bool, enabled: bool, why: &str) -> egui::Response {
+    tab(ui, p, "", label, None, false, selected, enabled, None, Some(why))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn tab(
     ui: &mut egui::Ui,

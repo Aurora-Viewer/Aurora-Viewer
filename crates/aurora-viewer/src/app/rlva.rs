@@ -56,6 +56,25 @@ fn view_blocked_notice(asset_type: i32) -> String {
     }
 }
 
+/// The items of a bulk Open that the restrictions let preview, and the
+/// notice of each one they refuse: LLInventoryAction::doToSelected
+/// (indra/newview/llinventoryfunctions.cpp) opens every selected item, and
+/// each refused one notifies as when opened alone (`rlva_preview_refused`).
+pub(super) fn bulk_previews(inventory: &crate::world::inventory::Inventory, ids: Vec<Uuid>) -> (Vec<Uuid>, Vec<String>) {
+    let mut notices = Vec::new();
+    let allowed = ids
+        .into_iter()
+        .filter(|id| match inventory.items.get(id).map(|item| item.asset_type) {
+            Some(kind) if !inventory.can_preview(kind) => {
+                notices.push(view_blocked_notice(kind));
+                false
+            }
+            _ => true,
+        })
+        .collect();
+    (allowed, notices)
+}
+
 /// RlvActions::canHighlightTransparent (rlvactions.cpp) refuses the
 /// highlight under @edit and @showloc, and the @viewtransparent toggle
 /// handler (rlvhandler.cpp) turns it off: the three keep it off here.
@@ -1357,6 +1376,26 @@ mod tests {
             message: commands.into(),
         }));
         rlva
+    }
+
+    #[test]
+    fn a_bulk_open_notifies_each_item_the_restrictions_refuse() {
+        let mut inventory = crate::world::inventory::Inventory::default();
+        let item = |n: u128, asset_type: i32| aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(n),
+            asset_type,
+            ..Default::default()
+        };
+        inventory.add_items(vec![item(1, 0), item(2, 57), item(3, 0)]);
+        let ids: Vec<_> = (1..=3).map(Uuid::from_u128).collect();
+        assert_eq!(bulk_previews(&inventory, ids.clone()), (ids.clone(), Vec::new()));
+        // @viewtexture: the textures are refused, the material opens
+        inventory.rlva_preview_mask = 1;
+        let notice = aurora_i18n::tr!("rlva-blocked-view-texture").to_string();
+        assert_eq!(
+            bulk_previews(&inventory, ids),
+            (vec![Uuid::from_u128(2)], vec![notice.clone(), notice])
+        );
     }
 
     /// RlvUIEnabler::onToggleShowMinimap: `fPrevVisibile`.

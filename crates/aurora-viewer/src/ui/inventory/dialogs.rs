@@ -48,6 +48,12 @@ pub(super) fn show(
         EditDialog::CopyEmbedded(..) => aurora_i18n::tr!("notecard-copy-inventory"),
     };
     let properties = matches!(dialog, EditDialog::Properties(_));
+    // a Properties tab in the back of its group: its group's window shows
+    // another tab (the other dialogs are windows of their own, drawn always)
+    if properties && st.tab_host.as_ref().is_some_and(|host| !host.active()) {
+        st.dialog = Some(dialog);
+        return;
+    }
     let document_confirmation = matches!(
         dialog,
         EditDialog::Discard(_) | EditDialog::CopyEmbedded(..) | EditDialog::SaveEmbedded(_)
@@ -693,6 +699,13 @@ pub(super) fn preview(
         super::clipboard::return_document_focus(ctx, st);
         return;
     };
+    // a tab in the back of its group: only its windows of their own (the
+    // attachment opened from a notecard) are drawn, the group's window
+    // shows another tab
+    if st.tab_host.as_ref().is_some_and(|host| !host.active()) {
+        super::embedded::preview(ctx, p, st, images);
+        return;
+    }
     if it.asset_type == 20 {
         animation(ctx, p, inv, st, it, actions);
         return;

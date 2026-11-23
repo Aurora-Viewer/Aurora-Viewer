@@ -31,9 +31,34 @@ pub(super) fn panorama_state(dimensions: Option<(u32, u32)>, name: &str, choice:
 pub(super) struct PreviewGroup {
     pub(super) id: Uuid,
     pub(super) items: Vec<Uuid>,
-    pub(super) selected: usize,
+    /// The selected item by id: an index would move to another item when
+    /// one before it leaves the group.
+    pub(super) selected: Uuid,
+    /// A preview asked for while the selected material's save question
+    /// waits: selected once it is answered, never over it.
+    pending: Option<Uuid>,
     closing: bool,
     dirty: HashSet<Uuid>,
+}
+
+impl PreviewGroup {
+    /// Keeps the selection through a change of `items` (from `before`): an
+    /// item that left gives its place to the tab after it, else the one
+    /// before.
+    fn keep_selected(&mut self, before: &[Uuid]) {
+        if self.items.contains(&self.selected) {
+            return;
+        }
+        let at = before.iter().position(|id| *id == self.selected).unwrap_or(0);
+        if let Some(id) = before[at..]
+            .iter()
+            .chain(before[..at].iter().rev())
+            .chain(self.items.iter())
+            .find(|id| self.items.contains(id))
+        {
+            self.selected = *id;
+        }
+    }
 }
 
 pub(super) struct BatchExport {
@@ -286,7 +311,7 @@ impl LibraryUi {
         let original = window.id;
         window.id = copied;
         for group in &mut self.preview_groups {
-            for id in &mut group.items {
+            for id in group.items.iter_mut().chain([&mut group.selected]).chain(group.pending.as_mut()) {
                 if *id == original {
                     *id = copied;
                 }
@@ -393,15 +418,15 @@ impl LibraryUi {
         for id in &items {
             self.open_preview(ctx, world, *id);
         }
-        // Moving an existing preview into a new batch must not duplicate its draft.
+        // Moving an existing preview into a new batch must not duplicate its
+        // draft. A group left with one tab is dissolved: that preview shows
+        // in a window of its own again (`ui::preview_tabs::Hosts::group`).
         for group in &mut self.preview_groups {
-            let selected = group.items.get(group.selected).copied();
+            let before = group.items.clone();
             group.items.retain(|id| !seen.contains(id));
-            group.selected = selected
-                .and_then(|id| group.items.iter().position(|other| *other == id))
-                .unwrap_or(0);
+            group.keep_selected(&before);
         }
-        self.preview_groups.retain(|group| !group.items.is_empty());
+        self.preview_groups.retain(|group| group.items.len() >= 2);
         let id = (0..)
             .map(group_slot_id)
             .find(|id| !self.preview_groups.iter().any(|group| group.id == *id))
@@ -410,8 +435,9 @@ impl LibraryUi {
         widgets::open_floater(ctx, &window_id(id), &mut false);
         self.preview_groups.push(PreviewGroup {
             id,
+            selected: items[0],
             items,
-            selected: 0,
+            pending: None,
             closing: false,
             dirty: HashSet::new(),
         });
@@ -445,11 +471,12 @@ impl LibraryUi {
             .collect();
         let mut groups = std::mem::take(&mut self.preview_groups);
         for group in &mut groups {
+            let before = group.items.clone();
             group.items.retain(|id| valid.contains(id));
             if group.items.is_empty() {
                 continue;
             }
-            group.selected = group.selected.min(group.items.len() - 1);
+            group.keep_selected(&before);
             let allowed = |id: &Uuid| {
                 world
                     .inventory
@@ -457,23 +484,39 @@ impl LibraryUi {
                     .get(id)
                     .is_some_and(|item| world.inventory.can_preview(item.asset_type))
             };
-            if !allowed(&group.items[group.selected])
-                && let Some(index) = group.items.iter().position(allowed)
-            {
-                group.selected = index;
+            // the selected material's save question keeps its tab in front:
+            // a preview asked for meanwhile waits for the answer
+            let asking = windows
+                .iter()
+                .any(|window| window.id == group.selected && window.editor.as_ref().is_some_and(|editor| editor.confirm_close));
+            if let Some(focus) = self.focus_preview.filter(|id| group.items.contains(id)) {
+                group.pending = Some(focus);
             }
-            if let Some(focus) = self.focus_preview
-                && let Some(index) = group.items.iter().position(|id| *id == focus)
-            {
-                group.selected = index;
+            if !asking {
+                if let Some(id) = group.pending.take().filter(|id| group.items.contains(id) && allowed(id)) {
+                    group.selected = id;
+                }
+                if !allowed(&group.selected)
+                    && let Some(id) = group.items.iter().copied().find(allowed)
+                {
+                    group.selected = id;
+                }
             }
             group.dirty.clear();
             group.dirty.extend(group.items.iter().copied().filter(|id| dirty.contains(id)));
-            let item = group.items[group.selected];
+            let item = group.selected;
             let window = windows.iter_mut().find(|window| window.id == item).expect("group member exists");
             if !self.preview_window(ctx, p, world, scene, images, prefs, window, actions, Some(group)) {
                 windows.retain(|window| window.id != item);
                 group.items.retain(|id| *id != item);
+            }
+            // the other tabs' own windows (an enlarged panorama, a texture
+            // picker) stay whichever tab is selected
+            for window in windows
+                .iter_mut()
+                .filter(|window| window.id != item && group.items.contains(&window.id))
+            {
+                self.preview_extras(ctx, p, world, images, window);
             }
         }
         groups.retain(|group| !group.items.is_empty());
@@ -491,6 +534,25 @@ impl LibraryUi {
                 .find(|group| group.items.contains(&id))
                 .map_or(id, |group| group.id);
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(window_id(host))));
+        }
+    }
+
+    /// The windows of their own a preview opens: the enlarged panorama,
+    /// over the whole window, and the material editor's texture picker.
+    /// Drawn for every tab of a group, not only the selected one.
+    fn preview_extras(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        world: &mut World,
+        images: &HashMap<Uuid, egui::TextureHandle>,
+        window: &mut PreviewWindow,
+    ) {
+        if let (Some(view), Some(shown)) = (&mut window.pano_view, &window.texture.shown) {
+            view.show_full(ctx, p, egui::Id::unique(("texture_panorama", window.id)), shown);
+        }
+        if let Some(editor) = &mut window.editor {
+            self.wanted_images.extend(editor.show_picker(ctx, p, world, images));
         }
     }
 
@@ -564,18 +626,25 @@ impl LibraryUi {
                             let locked = group.closing || window.editor.as_ref().is_some_and(|editor| editor.confirm_close);
                             ui.horizontal(|ui| {
                                 for (index, name) in labels.iter().enumerate() {
-                                    let selected = group.selected == index;
-                                    let enabled = (selected || !locked)
-                                        && world
-                                            .inventory
-                                            .items
-                                            .get(&group.items[index])
-                                            .is_some_and(|item| world.inventory.can_preview(item.asset_type));
-                                    let response = widgets::pill_tab(ui, p, "", name, None, false, selected, enabled);
+                                    let member = group.items[index];
+                                    let selected = group.selected == member;
+                                    let allowed = world
+                                        .inventory
+                                        .items
+                                        .get(&member)
+                                        .is_some_and(|item| world.inventory.can_preview(item.asset_type));
+                                    let response = widgets::pill_tab_why(
+                                        ui,
+                                        p,
+                                        name,
+                                        selected,
+                                        allowed && (selected || !locked),
+                                        crate::ui::preview_tabs::disabled_tab_tip(allowed, group.closing),
+                                    );
                                     if response.clicked() && !locked {
-                                        group.selected = index;
+                                        group.selected = member;
                                         response.scroll_to_me(None);
-                                    } else if group.selected == index && (self.focus_preview == Some(item.id) || group.closing) {
+                                    } else if selected && (self.focus_preview == Some(item.id) || group.closing) {
                                         response.scroll_to_me(Some(egui::Align::Center));
                                     }
                                 }
@@ -759,10 +828,7 @@ impl LibraryUi {
             }
         }
         open &= !close_clicked;
-        // the enlarged panorama, over the whole window
-        if let (Some(view), Some(shown)) = (&mut window.pano_view, &window.texture.shown) {
-            view.show_full(ctx, p, egui::Id::unique(("texture_panorama", item.id)), shown);
-        }
+        self.preview_extras(ctx, p, world, images, window);
         if let Some(editor) = &mut window.editor {
             if editor.close_ready {
                 return false;
@@ -771,7 +837,6 @@ impl LibraryUi {
                 open = true;
                 editor.confirm_close = true;
             }
-            self.wanted_images.extend(editor.show_picker(ctx, p, world, images));
             if editor.confirm_close {
                 widgets::Modal::new(egui::Id::unique(("material_close", item.id))).show(ctx, |ui| {
                     ui.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));

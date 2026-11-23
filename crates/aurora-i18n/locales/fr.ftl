@@ -15590,6 +15590,9 @@ admin-unfreeze-message = Vous n’êtes plus gelé.
 
 resource-preview-tabs-title = Aperçus de l’inventaire
 resource-preview-close-tab = Fermer cet onglet
+resource-preview-tab-question = Répondez d’abord à la question de l’onglet ouvert
+resource-preview-tab-closing = Pas pendant la fermeture de ces onglets
+resource-preview-tab-restricted = L’affichage de cet objet est bloqué par les restrictions RLVa
 
 ui-weather-aurora = Météo Aurora
 ui-bars-aurora-weather = Météo Aurora…

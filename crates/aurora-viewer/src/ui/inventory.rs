@@ -2916,7 +2916,6 @@ pub fn show(
         }
         w.state.ui_id = w.id;
         w.state.tab_host = tab_views.remove(&w.id);
-        let tab_visible = w.state.tab_host.as_ref().is_none_or(|host| host.active());
         if w.id == listings::PANEL && w.state.fetch_all {
             fetch_whole_inventory(&mut world.inventory, &mut w.state);
         }
@@ -3028,23 +3027,23 @@ pub fn show(
         folder_colors::show(ctx, p, &world.inventory, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         delete::finish_detach(&world.inventory, &mut w.state, prefs, &facts, &mut actions);
-        if tab_visible {
-            dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
-            move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
-            dialogs::preview(
-                ctx,
-                p,
-                icons,
-                &world.inventory,
-                &world.inventory,
-                &mut w.state,
-                images,
-                prefs,
-                script_settings,
-                facts.god_level,
-                &mut actions,
-            );
-        }
+        // a tab in the back of its group draws no body, but its windows of
+        // their own (a question, Move to, a notecard's attachment) stay
+        dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
+        move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
+        dialogs::preview(
+            ctx,
+            p,
+            icons,
+            &world.inventory,
+            &world.inventory,
+            &mut w.state,
+            images,
+            prefs,
+            script_settings,
+            facts.god_level,
+            &mut actions,
+        );
         w.state.thumbnail.show(
             ctx,
             p,

@@ -517,7 +517,7 @@ fn bulk_resource_tabs_keep_drafts_cameras_and_save_replies_separate() {
     assert_eq!(f.resources.windows.len(), 2);
     assert_eq!(f.resources.preview_groups.len(), 1);
     assert_eq!(f.resources.preview_groups[0].items, ids);
-    assert_eq!(f.resources.preview_groups[0].selected, 0);
+    assert_eq!(f.resources.preview_groups[0].selected, ids[0]);
     let editor = f
         .resources
         .windows
@@ -531,7 +531,7 @@ fn bulk_resource_tabs_keep_drafts_cameras_and_save_replies_separate() {
     f.settle();
     let camera = f.resources.windows.iter().find(|w| w.id == ids[0]).unwrap().view;
     f.click_label("Preview 114");
-    assert_eq!(f.resources.preview_groups[0].selected, 1);
+    assert_eq!(f.resources.preview_groups[0].selected, ids[1]);
     assert!(
         !f.resources
             .windows
@@ -556,7 +556,7 @@ fn bulk_resource_tabs_keep_drafts_cameras_and_save_replies_separate() {
     // Existing item opens focus its host instead of creating another editor.
     f.resources.open_preview(&f.ctx, &f.world, ids[1]);
     f.settle();
-    assert_eq!(f.resources.preview_groups[0].selected, 1);
+    assert_eq!(f.resources.preview_groups[0].selected, ids[1]);
     assert_eq!(f.resources.windows.len(), 2);
     // Save as changes identity without ejecting an inactive tab from its host.
     assert!(f.resources.begin_material_save(ids[0], request));
@@ -585,7 +585,7 @@ fn bulk_resource_tabs_keep_drafts_cameras_and_save_replies_separate() {
     assert!(f.resources.begin_material_save(ids[1], request));
     f.resources.material_saved(request, &Err("Save failed".to_owned()));
     f.settle();
-    assert_eq!(f.resources.preview_groups[0].selected, 1);
+    assert_eq!(f.resources.preview_groups[0].selected, ids[1]);
     let editor = f
         .resources
         .windows
@@ -630,4 +630,69 @@ fn closing_a_resource_tab_host_checks_each_dirty_material_and_cancel_keeps_the_r
     f.click_label(aurora_i18n::tr!("common-cancel"));
     assert_eq!(f.resources.windows.len(), 1);
     assert!(f.resources.windows[0].editor.as_ref().unwrap().dirty());
+}
+
+#[test]
+fn a_resource_tab_group_keeps_its_selected_item_when_another_leaves() {
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    let ids = [110, 111, 112].map(Uuid::from_u128);
+    f.resources.open_group(&f.ctx, &f.world, ids.to_vec());
+    f.settle();
+    f.click_label("Preview 111");
+    assert_eq!(f.resources.preview_groups[0].selected, ids[1]);
+    // the tab before it leaves (its item deleted): the selection stays
+    f.world.inventory.items.remove(&ids[0]);
+    f.settle();
+    assert_eq!(f.resources.preview_groups[0].items, ids[1..]);
+    assert_eq!(f.resources.preview_groups[0].selected, ids[1]);
+    // the selected one leaves: the tab after it takes its place
+    f.world.inventory.items.remove(&ids[1]);
+    f.settle();
+    assert!(f.resources.preview_groups.is_empty() || f.resources.preview_groups[0].selected == ids[2]);
+}
+
+#[test]
+fn a_resource_tab_group_left_with_one_tab_by_a_new_batch_is_dissolved() {
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    let ids = [110, 111, 112].map(Uuid::from_u128);
+    f.resources.open_group(&f.ctx, &f.world, ids[..2].to_vec());
+    f.resources.open_group(&f.ctx, &f.world, ids[1..].to_vec());
+    assert_eq!(f.resources.preview_groups.len(), 1);
+    assert_eq!(f.resources.preview_groups[0].items, ids[1..]);
+    f.settle();
+    // the first texture shows in a window of its own
+    assert_eq!(f.resources.windows.len(), 3);
+    let _ = f.rect(110);
+}
+
+#[test]
+fn opening_a_resource_while_a_material_save_question_waits_keeps_the_question_in_front() {
+    let _inline = crate::scene::jobs::execute_inline_on_this_thread();
+    let avatars = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+    let mut f = Fixture::new(avatars, Preferences::default());
+    let ids = [113, 114].map(Uuid::from_u128);
+    f.resources.open_group(&f.ctx, &f.world, ids.to_vec());
+    f.settle();
+    f.click_label("Preview 114");
+    Arc::make_mut(&mut f.resources.windows[1].editor.as_mut().unwrap().draft).roughness_factor = 0.23;
+    f.settle();
+    let host = preview_window_id(f.resources.preview_groups[0].id);
+    let rect = f.ctx.memory(|m| m.area_rect(egui::Id::unique(&host))).unwrap();
+    let close = egui::pos2(rect.right() - 18.0, rect.top() + 19.0);
+    f.button(close, true);
+    f.button(close, false);
+    f.settle();
+    assert!(f.resources.windows[1].editor.as_ref().unwrap().confirm_close);
+    // the first material opened again from the inventory
+    f.resources.open_preview(&f.ctx, &f.world, ids[0]);
+    f.settle();
+    assert_eq!(f.resources.preview_groups[0].selected, ids[1]);
+    assert!(f.resources.windows[1].editor.as_ref().unwrap().confirm_close);
+    let _ = f.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
+    f.click_label(aurora_i18n::tr!("common-cancel"));
+    assert_eq!(f.resources.preview_groups[0].selected, ids[0], "then the one asked for");
 }

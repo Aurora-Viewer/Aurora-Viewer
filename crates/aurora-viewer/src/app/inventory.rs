@@ -548,6 +548,10 @@ impl App {
                 // isMultiPreviewAllowed (environment settings). Here each family
                 // has its own host (`ui::preview_tabs`), and an environment setting
                 // keeps its editor while the rest is grouped.
+                let (resources, notices) = super::rlva::bulk_previews(&self.world.inventory, resources);
+                for notice in notices {
+                    self.world.system_notice(notice, crate::world::notice_topics::Topic::Warning);
+                }
                 self.texture_library.open_group(&self.egui_ctx, &self.world, resources);
                 for id in &documents {
                     self.apply_inventory_action_from(editor, InvAction::Preview(*id, owner));

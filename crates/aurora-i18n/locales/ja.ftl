@@ -15441,6 +15441,9 @@ admin-unfreeze-message = フリーズが解除されました。
 
 resource-preview-tabs-title = インベントリのプレビュー
 resource-preview-close-tab = このタブを閉じる
+resource-preview-tab-question = 先に、開いているタブの質問に答えてください。
+resource-preview-tab-closing = タブを閉じている間は使用できません。
+resource-preview-tab-restricted = ＲＬＶａの制限により、このアイテムは表示できません。
 
 ui-weather-aurora = Aurora の天気
 ui-bars-aurora-weather = Aurora の天気…

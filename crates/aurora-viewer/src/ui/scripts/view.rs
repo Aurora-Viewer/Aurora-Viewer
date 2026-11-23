@@ -1007,7 +1007,7 @@ pub(super) fn search(
     e.tools.scroll_to_cursor |= cursor != editing::cursor(ctx, id);
 }
 
-pub(super) fn poll_files(ctx: &egui::Context, e: &mut Editor, id: Id, settings: &ScriptSettings, actions: &mut Vec<Action>) {
+fn poll_files(ctx: &egui::Context, e: &mut Editor, id: Id, settings: &ScriptSettings, actions: &mut Vec<Action>) {
     if let Some(done) = e.tools.file_job.as_ref().and_then(|j| j.0.try_recv().ok()) {
         e.tools.file_job = None;
         e.tools.external_starting = false;

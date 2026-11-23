@@ -43,8 +43,32 @@ struct Group {
     fresh: bool,
     keys: Vec<Uuid>,
     selected: Uuid,
+    /// A tab asked for (a focus, a failed save) while another tab's question
+    /// waits: selected once that question is answered, never over it.
+    pending: Option<Uuid>,
     closing: bool,
     labels: Arc<[Member]>,
+}
+
+impl Group {
+    /// The tab whose question waits, as the last `update` saw it.
+    fn asking(&self) -> Option<Uuid> {
+        self.labels.iter().find(|member| member.asking).map(|member| member.key)
+    }
+    /// Every change of tab that does not come from a click (which the
+    /// locked strip refuses) goes through here: a waiting question keeps
+    /// its tab in front, or it would vanish while still waiting.
+    fn select(&mut self, member: Uuid) {
+        match self.asking() {
+            Some(asking) if asking != member => self.pending = Some(member),
+            // the asking tab asked for again keeps a request made meanwhile
+            Some(_) => self.selected = member,
+            None => {
+                self.selected = member;
+                self.pending = None;
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -62,12 +86,18 @@ pub struct View {
     labels: Arc<[Member]>,
     close_tab: bool,
     changed: bool,
+    /// The tab this view asked for (a click, a cancelled close): `report`
+    /// applies it alone, so a view drawn with an older selection does not
+    /// undo a focus made since.
+    chosen: Option<Uuid>,
 }
 
 impl Hosts {
     /// Whether a group was made: fewer than two distinct keys make none,
     /// and those windows keep showing on their own. `kind` names the family
-    /// of windows (Properties, documents, scripts) in the window id.
+    /// of windows (Properties, documents, scripts) in the window id. An
+    /// earlier group left with one tab by the new one is dissolved: its
+    /// last window shows on its own again, as it would have been opened.
     pub fn group(&mut self, kind: &'static str, keys: Vec<Uuid>) -> bool {
         let mut seen = HashSet::new();
         let keys: Vec<_> = keys.into_iter().filter(|id| seen.insert(*id)).collect();
@@ -82,7 +112,7 @@ impl Hosts {
                 group.selected = *id;
             }
         }
-        self.groups.retain(|group| !group.keys.is_empty());
+        self.groups.retain(|group| group.keys.len() >= 2);
         let slot = self.free_slot(kind);
         self.groups.push(Group {
             id: Uuid::new_v4(),
@@ -91,6 +121,7 @@ impl Hosts {
             fresh: true,
             selected: keys[0],
             keys,
+            pending: None,
             closing: false,
             labels: Arc::from([]),
         });
@@ -115,10 +146,22 @@ impl Hosts {
             .filter_map(|group| std::mem::take(&mut group.fresh).then(|| window_id(group.kind, group.slot)))
             .collect()
     }
+    /// A group whose tabs close down to one keeps its window, as
+    /// LLMultiFloater::removeFloater (indra/llui/llmultifloater.cpp) keeps
+    /// its host until the last tab closes: the window does not jump to the
+    /// place of a window of its own.
     pub fn update(&mut self, members: impl IntoIterator<Item = Member>) {
         let live: HashMap<_, _> = members.into_iter().map(|member| (member.key, member)).collect();
         for group in &mut self.groups {
             group.keys.retain(|id| live.contains_key(id));
+            group.labels = group.keys.iter().map(|id| live[id].clone()).collect();
+            if group.asking().is_none()
+                && let Some(id) = group.pending.take()
+                && live.get(&id).is_some_and(|member| member.enabled)
+                && group.keys.contains(&id)
+            {
+                group.selected = id;
+            }
             if !group.keys.contains(&group.selected)
                 && let Some(id) = group.keys.first()
             {
@@ -135,13 +178,18 @@ impl Hosts {
             if !group.keys.iter().any(|id| live[id].enabled) {
                 group.closing = false;
             }
-            group.labels = group.keys.iter().map(|id| live[id].clone()).collect();
+            // a question shows on its own tab whatever asked for another
+            if let Some(asking) = group.asking() {
+                group.selected = asking;
+            }
         }
         self.groups.retain(|group| !group.keys.is_empty());
     }
+    /// The window of `member`'s group, its tab selected (or selected once
+    /// another tab's waiting question is answered).
     pub fn focus(&mut self, member: Uuid) -> Option<String> {
         let group = self.groups.iter_mut().find(|group| group.keys.contains(&member))?;
-        group.selected = member;
+        group.select(member);
         Some(window_id(group.kind, group.slot))
     }
     /// A member that cannot close (a failed save): its group stops closing
@@ -150,7 +198,7 @@ impl Hosts {
         let Some(group) = self.groups.iter_mut().find(|group| group.keys.contains(&member)) else {
             return false;
         };
-        group.selected = member;
+        group.select(member);
         group.closing = false;
         true
     }
@@ -165,13 +213,17 @@ impl Hosts {
             labels: group.labels.clone(),
             close_tab: false,
             changed: false,
+            chosen: None,
         })
     }
     pub fn report(&mut self, view: &mut View) {
+        let chosen = view.chosen.take();
         if std::mem::take(&mut view.changed)
             && let Some(group) = self.groups.iter_mut().find(|group| group.id == view.id)
         {
-            group.selected = view.selected;
+            if let Some(member) = chosen {
+                group.select(member);
+            }
             group.closing = view.closing;
         }
     }
@@ -192,6 +244,19 @@ pub fn group_title() -> String {
     aurora_i18n::tr!("resource-preview-tabs-title").to_string()
 }
 
+/// What a greyed tab says on hover: viewing refused (RLVa's @viewnote,
+/// @viewscript, @viewtexture), the group closing, or another tab's
+/// question waiting for an answer.
+pub fn disabled_tab_tip(enabled: bool, closing: bool) -> &'static str {
+    if !enabled {
+        aurora_i18n::tr!("resource-preview-tab-restricted")
+    } else if closing {
+        aurora_i18n::tr!("resource-preview-tab-closing")
+    } else {
+        aurora_i18n::tr!("resource-preview-tab-question")
+    }
+}
+
 pub fn window_id(kind: &str, slot: usize) -> String {
     format!("{kind}_tab_host_{slot}")
 }
@@ -205,6 +270,7 @@ impl View {
     }
     pub fn cancel_close(&mut self) {
         self.selected = self.member;
+        self.chosen = Some(self.member);
         self.closing = false;
         self.changed = true;
     }
@@ -227,10 +293,17 @@ impl View {
                                 member.name.clone()
                             };
                             let selected = member.key == self.selected;
-                            let response =
-                                super::widgets::pill_tab(ui, p, "", &name, None, false, selected, member.enabled && (selected || !locked));
+                            let response = super::widgets::pill_tab_why(
+                                ui,
+                                p,
+                                &name,
+                                selected,
+                                member.enabled && (selected || !locked),
+                                disabled_tab_tip(member.enabled, self.closing),
+                            );
                             if response.clicked() && !locked {
                                 self.selected = member.key;
+                                self.chosen = Some(member.key);
                                 self.changed = true;
                                 response.scroll_to_me(None);
                             }
@@ -402,6 +475,81 @@ mod tests {
         hosts.report(&mut view);
         assert!(hosts.view(keys[0]).unwrap().locked(), "the whole group closes");
     }
+    fn asking(n: u128) -> Member {
+        Member { asking: true, ..member(n) }
+    }
+    #[test]
+    fn a_focus_while_another_tab_asks_waits_for_the_answer() {
+        let mut hosts = Hosts::default();
+        let keys = [1, 2, 3].map(Uuid::from_u128);
+        hosts.group(KIND, keys.to_vec());
+        hosts.update([asking(1), member(2), member(3)]);
+        // a double-click on the second item in the inventory
+        assert!(hosts.focus(keys[1]).is_some(), "its window still comes forward");
+        assert!(hosts.view(keys[0]).unwrap().active(), "the question stays in front");
+        // the asking tab asked for again keeps the request made meanwhile
+        hosts.focus(keys[0]);
+        hosts.update([asking(1), member(2), member(3)]);
+        assert!(hosts.view(keys[0]).unwrap().active());
+        // answered: the tab asked for comes forward
+        hosts.update([member(1), member(2), member(3)]);
+        assert!(hosts.view(keys[1]).unwrap().active());
+        // no question: a focus applies at once, and leaves nothing pending
+        hosts.focus(keys[2]);
+        assert!(hosts.view(keys[2]).unwrap().active());
+        hosts.update([member(1), member(2), member(3)]);
+        assert!(hosts.view(keys[2]).unwrap().active());
+    }
+    #[test]
+    fn a_cancelled_close_or_failed_save_never_hides_another_tabs_question() {
+        let mut hosts = Hosts::default();
+        let keys = [1, 2].map(Uuid::from_u128);
+        hosts.group(KIND, keys.to_vec());
+        hosts.update([member(1), member(2)]);
+        let mut first = hosts.view(keys[0]).unwrap();
+        first.closing(&mut false);
+        hosts.report(&mut first);
+        // the second tab's question shows while the first one's background
+        // save fails (`InventoryUi::finish_content_save`)
+        hosts.update([member(1), asking(2)]);
+        assert!(hosts.view(keys[1]).unwrap().active(), "the question's tab is brought forward");
+        let mut stale = first.clone();
+        stale.cancel_close();
+        hosts.report(&mut stale);
+        assert!(hosts.view(keys[1]).unwrap().active());
+        assert!(!hosts.view(keys[1]).unwrap().closing, "the close stops");
+        // the same through the group (a script that failed to compile)
+        hosts.cancel_member(keys[0]);
+        hosts.update([member(1), asking(2)]);
+        assert!(hosts.view(keys[1]).unwrap().active());
+        hosts.update([member(1), member(2)]);
+        assert!(hosts.view(keys[0]).unwrap().active(), "then the failed tab shows");
+    }
+    #[test]
+    fn a_view_drawn_before_a_focus_does_not_undo_it() {
+        let mut hosts = Hosts::default();
+        let keys = [1, 2].map(Uuid::from_u128);
+        hosts.group(KIND, keys.to_vec());
+        hosts.update([member(1), member(2)]);
+        let mut view = hosts.view(keys[0]).unwrap();
+        hosts.focus(keys[1]);
+        view.closing(&mut false);
+        hosts.report(&mut view);
+        let second = hosts.view(keys[1]).unwrap();
+        assert!(second.active() && second.closing);
+    }
+    #[test]
+    fn a_group_left_with_one_tab_by_a_new_batch_is_dissolved() {
+        let mut hosts = Hosts::default();
+        let keys = [1, 2, 3].map(Uuid::from_u128);
+        hosts.group(KIND, keys[..2].to_vec());
+        hosts.group(KIND, keys[1..].to_vec());
+        assert!(hosts.view(keys[0]).is_none(), "its window shows on its own");
+        assert_eq!(hosts.view(keys[1]).unwrap().id, hosts.view(keys[2]).unwrap().id);
+        // a tab closing down to one keeps its group's window
+        hosts.update([member(2)]);
+        assert!(hosts.view(keys[1]).is_some());
+    }
     #[test]
     fn regrouping_does_not_let_stale_host_events_change_the_new_batch() {
         let mut hosts = Hosts::default();
@@ -415,6 +563,7 @@ mod tests {
         hosts.focus(keys[2]);
         hosts.report(&mut stale);
         assert!(hosts.view(keys[2]).unwrap().active());
-        assert_ne!(hosts.view(keys[0]).unwrap().id, hosts.view(keys[1]).unwrap().id);
+        assert_eq!(hosts.view(keys[0]).unwrap().id, hosts.view(keys[2]).unwrap().id);
+        assert!(hosts.view(keys[1]).is_none(), "the old batch, left with one tab, is dissolved");
     }
 }

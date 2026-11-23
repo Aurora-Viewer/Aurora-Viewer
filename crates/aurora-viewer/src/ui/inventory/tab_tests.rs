@@ -398,3 +398,77 @@ fn a_save_question_stays_while_a_group_closes_and_another_tab_is_clicked() {
     f.label(aurora_i18n::tr!("ui-inventory-dialogs-discard-changes"));
     assert!(f.state.windows.is_empty());
 }
+
+/// Two loaded notecards in one group, both with unsaved drafts.
+fn dirty_notecards() -> (Fixture, [Uuid; 2]) {
+    let mut f = Fixture::new(7);
+    let ids = [9101, 9102].map(Uuid::from_u128);
+    for id in ids {
+        f.state.open_document(&f.ctx, id, 7, None);
+        f.state
+            .windows
+            .last_mut()
+            .unwrap()
+            .state
+            .load_document(7, true, &Ok(b"Original".to_vec()));
+    }
+    f.state.group_documents(&ids, None);
+    f.settle();
+    for (index, window) in f.state.windows.iter_mut().enumerate() {
+        window.state.preview_text = Some(Ok(format!("Draft {index}")));
+        window.state.document_changed();
+    }
+    f.settle();
+    (f, ids)
+}
+
+#[test]
+fn opening_or_failing_another_tab_while_a_question_waits_keeps_the_question_in_front() {
+    let (mut f, ids) = dirty_notecards();
+    f.close_host();
+    assert!(matches!(f.state.windows[0].state.dialog, Some(EditDialog::Discard(id)) if id == ids[0]));
+    let question = aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes").to_string();
+    // a double-click on the second notecard in the inventory
+    f.state.open_document(&f.ctx, ids[1], 7, None);
+    f.settle();
+    assert!(f.state.windows[0].state.tab_host.as_ref().unwrap().active());
+    assert!(f.labels.iter().any(|(text, _)| *text == question), "the question is still drawn");
+    // the second notecard's background save fails meanwhile
+    let request = Uuid::from_u128(9200);
+    assert!(
+        f.state.windows[1]
+            .state
+            .start_content_save(request, 7, "Draft 1".into(), false)
+            .is_ok()
+    );
+    assert!(f.state.windows[1].state.finish_content_save(request, Some("Save failed")));
+    f.settle();
+    assert!(f.state.windows[0].state.tab_host.as_ref().unwrap().active());
+    assert!(matches!(f.state.windows[0].state.dialog, Some(EditDialog::Discard(id)) if id == ids[0]));
+    assert!(f.labels.iter().any(|(text, _)| *text == question), "the question is still drawn");
+    // answered: the notecard asked for comes forward
+    f.label(aurora_i18n::tr!("common-cancel"));
+    assert!(f.state.windows[1].state.tab_host.as_ref().unwrap().active());
+    assert_eq!(f.state.windows.len(), 2);
+}
+
+#[test]
+fn a_notecard_attachment_stays_open_when_its_tab_goes_to_the_back() {
+    let (mut f, _) = dirty_notecards();
+    f.state.windows[0].state.attachment_preview = Some(aurora_net::inventory::InvItem {
+        id: Uuid::from_u128(9300),
+        name: "Attached picture".into(),
+        asset_type: 0,
+        ..Default::default()
+    });
+    f.settle();
+    assert!(f.labels.iter().any(|(text, _)| text == "Attached picture"));
+    f.tab("Item 1 *");
+    assert!(f.state.windows[1].state.tab_host.as_ref().unwrap().active());
+    assert!(
+        f.labels.iter().any(|(text, _)| text == "Attached picture"),
+        "the attachment's window stays: {:?}",
+        f.labels
+    );
+    assert!(f.state.windows[0].state.attachment_preview.is_some());
+}

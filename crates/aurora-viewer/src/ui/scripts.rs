@@ -792,6 +792,34 @@ impl Editors {
         self.documents.iter().any(|e| e.colors.picker.is_open())
     }
 
+    /// An editor's windows of its own (Go to line, help, the library, the
+    /// colour picker), drawn whether its tab is in front or not.
+    #[allow(clippy::too_many_arguments)]
+    fn separate_windows(
+        ctx: &egui::Context,
+        p: &Palette,
+        e: &mut Editor,
+        id: &str,
+        window_id: &str,
+        settings: &mut settings::ScriptSettings,
+        color_prefs: &mut super::color_picker::Preferences,
+        panels: &mut dialogs::Panels,
+        actions: &mut Vec<Action>,
+    ) {
+        let source_id = egui::Id::unique((id, "source_text"));
+        view::dialogs(ctx, p, e, source_id, settings, panels, actions);
+        if let Some(literal) = e.colors.clicked.take() {
+            e.colors.open(&mut e.source, ctx, source_id, egui::Id::unique(window_id), literal);
+        }
+        e.colors.show(
+            ctx,
+            p,
+            color_prefs,
+            &mut e.source,
+            e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed,
+        );
+    }
+
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -825,6 +853,9 @@ impl Editors {
             .iter()
             .filter_map(|e| self.tab_hosts.view(e.target.item).map(|host| (e.target.item, host)))
             .collect();
+        // tabs whose preprocessing failed: their groups stop closing once
+        // every view has reported, or a later tab's report would undo it
+        let mut cancelled = Vec::new();
         for e in &mut self.documents {
             if e.closed {
                 continue;
@@ -898,7 +929,7 @@ impl Editors {
                         e.compile_failed = true;
                         e.errors = vec![reason];
                         e.status = aurora_i18n::tr!("script-preproc-failed").into();
-                        self.tab_hosts.cancel_member(e.target.item);
+                        cancelled.push(e.target.item);
                         if let Some(host) = &mut host
                             && host.active()
                         {
@@ -910,8 +941,10 @@ impl Editors {
             if std::mem::take(&mut e.raise) {
                 super::widgets::expand_floater(ctx, &window_id);
             }
+            // a tab in the back of its group draws no body, but its windows
+            // of their own (Go to line, help, the colour picker) stay
             if host.as_ref().is_some_and(|host| !host.active()) {
-                view::poll_files(ctx, e, egui::Id::unique((&id, "source_text")), settings, &mut actions);
+                Self::separate_windows(ctx, p, e, &id, &window_id, settings, color_prefs, &mut self.panels, &mut actions);
                 continue;
             }
             if focus_host {
@@ -969,26 +1002,7 @@ impl Editors {
             {
                 actions.push(Action::Rename { target: e.target, name });
             }
-            view::dialogs(
-                ctx,
-                p,
-                e,
-                egui::Id::unique((&id, "source_text")),
-                settings,
-                &mut self.panels,
-                &mut actions,
-            );
-            let source_id = egui::Id::unique((&id, "source_text"));
-            if let Some(literal) = e.colors.clicked.take() {
-                e.colors.open(&mut e.source, ctx, source_id, egui::Id::unique(&window_id), literal);
-            }
-            e.colors.show(
-                ctx,
-                p,
-                color_prefs,
-                &mut e.source,
-                e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed,
-            );
+            Self::separate_windows(ctx, p, e, &id, &window_id, settings, color_prefs, &mut self.panels, &mut actions);
             if let Some(host) = &mut host {
                 host.closing(&mut open);
             }
@@ -1054,6 +1068,9 @@ impl Editors {
             if let Some(host) = &mut host {
                 self.tab_hosts.report(host);
             }
+        }
+        for item in cancelled {
+            self.tab_hosts.cancel_member(item);
         }
         self.documents.retain(|e| {
             if e.closed
@@ -1256,6 +1273,72 @@ mod tests {
         // Ctrl+F is claimed by the host's active source, using its original text ID.
         let _ = frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
         assert!(editors.panels.search.owns(source_id(targets[0])));
+    }
+
+    fn grouped_scripts(ctx: &egui::Context) -> (Editors, [ScriptTarget; 2]) {
+        let mut editors = Editors::default();
+        let targets = [711, 712].map(|n| ScriptTarget {
+            object: Uuid::nil(),
+            item: Uuid::from_u128(n),
+        });
+        for (index, target) in targets.iter().copied().enumerate() {
+            let request = editors.open(target, format!("Script {index}"), true, true, 0).unwrap();
+            editors.loaded(request, target, Ok(format!("// source {index}\ndefault {{ state_entry() {{}} }}")));
+        }
+        editors.group_inventory(&targets.map(|target| target.item));
+        settle(ctx, &mut editors);
+        (editors, targets)
+    }
+
+    /// Whether the next frame draws `label`.
+    fn drawn(ctx: &egui::Context, editors: &mut Editors, label: &str) -> bool {
+        fn find(shape: &egui::Shape, label: &str) -> bool {
+            match shape {
+                egui::Shape::Text(text) => text.galley.job.text == label,
+                egui::Shape::Vec(shapes) => shapes.iter().any(|shape| find(shape, label)),
+                _ => false,
+            }
+        }
+        let mut output = frame(ctx, editors, vec![]);
+        output.textures_delta.clear();
+        output.shapes.iter().any(|shape| find(&shape.shape, label))
+    }
+
+    #[test]
+    fn a_script_tab_in_the_back_keeps_its_own_windows() {
+        let ctx = egui::Context::default();
+        let (mut editors, targets) = grouped_scripts(&ctx);
+        editors.documents[0].tools.goto = true;
+        settle(&ctx, &mut editors);
+        let title = aurora_i18n::tr!("script-goto");
+        assert!(drawn(&ctx, &mut editors, title));
+        click_label(&ctx, &mut editors, "Script 1");
+        settle(&ctx, &mut editors);
+        assert!(editors.tab_hosts.view(targets[1].item).unwrap().active());
+        assert!(drawn(&ctx, &mut editors, title), "Go to line stays open for the tab in the back");
+        assert!(editors.documents[0].tools.goto);
+    }
+
+    #[test]
+    fn raising_another_script_while_a_close_question_waits_keeps_the_question_in_front() {
+        let ctx = egui::Context::default();
+        let (mut editors, targets) = grouped_scripts(&ctx);
+        editors.documents[0].source.push_str("\n// draft");
+        editors.documents[0].close_prompt = true;
+        settle(&ctx, &mut editors);
+        // the second script opened again from the inventory
+        editors.documents[1].raise = true;
+        settle(&ctx, &mut editors);
+        assert!(editors.tab_hosts.view(targets[0].item).unwrap().active());
+        let question = aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes");
+        assert!(drawn(&ctx, &mut editors, question));
+        // answered (the prompt's Cancel clears it)
+        editors.documents[0].close_prompt = false;
+        settle(&ctx, &mut editors);
+        assert!(
+            editors.tab_hosts.view(targets[1].item).unwrap().active(),
+            "then the script asked for"
+        );
     }
 
     #[test]

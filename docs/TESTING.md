@@ -6210,7 +6210,7 @@ both open states and the selection count. Capture at frame 620.
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
 | `AURORA_DEMO_AREA_SEARCH=1\|filters\|ranges\|scope\|fields\|columns\|all-columns\|link\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
-| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails; `tabs*` opens grouped previews. |
+| `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 | `AURORA_DEMO_UNINSTALL=confirm\|running\|result\|left` | "Remove Aurora from this computer" as a dry run: its confirmation, or the result window. |
 
 `AURORA_DEMO_UNINSTALL` opens Preferences › Language and updates on the

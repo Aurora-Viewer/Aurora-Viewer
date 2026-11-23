@@ -15581,6 +15581,9 @@ admin-unfreeze-message = You are no longer frozen.
 
 resource-preview-tabs-title = Inventory previews
 resource-preview-close-tab = Close this tab
+resource-preview-tab-question = Answer the open tab's question first
+resource-preview-tab-closing = Not while these tabs close
+resource-preview-tab-restricted = Viewing this item is blocked by RLVa restrictions
 
 ui-weather-aurora = Aurora Weather
 ui-bars-aurora-weather = Aurora Weather…
