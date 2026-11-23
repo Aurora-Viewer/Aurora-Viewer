@@ -1928,6 +1928,10 @@ pub struct Settings {
     pub rt_lamp_softness: f32,
     /// How many of the nearest lamps cast traced shadows.
     pub rt_shadow_lamps: u8,
+    /// The traced indirect light's global illumination probes (aurora-render
+    /// `RtTuning::probes`): more bounces, and no sky's light in a closed
+    /// room. On by default; read only with the traced indirect light.
+    pub rt_gi_probes: bool,
     /// Anisotropic filtering: 1 (off), 2, 4, 8, 16.
     pub anisotropy: u16,
     /// Disk cache size (MB) for textures, meshes, animations, objects and inventory.
@@ -2926,6 +2930,7 @@ impl Default for Settings {
             ssr: false,
             ray_tracing: RayTracingSettings::SHADOWS,
             rt_sun_softness: 1.0,
+            rt_gi_probes: true,
             rt_lamp_softness: 1.0,
             rt_shadow_lamps: RT_SHADOW_LAMPS_MAX,
             // an opt-in: the Legacy Viewer sorts its blended faces, and the
@@ -4187,6 +4192,10 @@ impl Settings {
                 lamp_reuse: aurora_render::LampQuality::HIGH.reuse,
                 lamp_denoise: aurora_render::LampQuality::HIGH.denoise,
                 projectors: self.projector_shadows,
+                probes: self.rt_gi_probes,
+                // (High, until the ray tracing quality has its setting;
+                // AURORA_RT_GI_QUALITY for a launch)
+                ..aurora_render::RtTuning::default().with_gi_quality(aurora_render::RtTuning::gi_quality_from_env().unwrap_or(2))
             },
             // set each frame by the app while it rains
             rain_surfaces: false,
@@ -4662,6 +4671,18 @@ mod tests {
         assert!(old.log_import_at_login);
         let off: Settings = serde_json::from_str(r#"{"log_import_at_login":false}"#).expect("preferences");
         assert!(!off.log_import_at_login);
+    }
+
+    #[test]
+    fn gi_probes_default_on_keep_a_saved_off_and_reach_the_renderer() {
+        use super::Settings;
+        assert!(Settings::default().rt_gi_probes);
+        assert!(Settings::default().render_settings().rt_tuning.probes);
+        // preferences saved before the setting existed
+        let old: Settings = serde_json::from_str("{}").expect("older preferences");
+        assert!(old.rt_gi_probes);
+        let off: Settings = serde_json::from_str(r#"{"rt_gi_probes":false}"#).expect("preferences");
+        assert!(!off.render_settings().rt_tuning.probes);
     }
 
     #[test]

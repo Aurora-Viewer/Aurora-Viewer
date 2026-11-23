@@ -1228,7 +1228,9 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         return mix(col, base, unlit);
     }
     let r = reflect(-v, n);
-    let sky = sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))) * sky_scale * (0.35 + 0.65 * shadow);
+    // (and the traced probes' sight of the sky where no reflection probe
+    // gives the place's reflection, common.wgsl `screen_sky`)
+    let sky = sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))) * sky_scale * (0.35 + 0.65 * shadow) * screen_sky(frag);
     // sampleReflectionProbesLegacy: glossy environment at the glossiness mip,
     // legacy environment at the sharpest one
     var gloss_sky = sky;

@@ -205,10 +205,14 @@ pub mod mask_255;
 pub mod mirror;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
-/// A blocked resident talks in nearby chat, the history hiding, folding or
-/// greying the lines (AURORA_DEMO_MUTED_CHAT).
 #[path = "demo_muted_chat.rs"]
 pub mod muted_chat;
+/// A blocked resident talks in nearby chat, the history hiding, folding or
+/// greying the lines (AURORA_DEMO_MUTED_CHAT).
+/// A room lit by the sun through a doorway and by emissive strips, for the
+/// traced global illumination (AURORA_DEMO_NEON_ROOM).
+#[path = "demo_neon_room.rs"]
+pub mod neon_room;
 /// The real or the Legacy Viewer's night sky, the camera on the stars
 /// (AURORA_DEMO_NIGHT_SKY).
 #[path = "demo_night_sky.rs"]
@@ -404,6 +408,10 @@ pub mod worn;
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
 pub fn floor_at(x: f32, y: f32) -> f32 {
+    // AURORA_DEMO_NEON_ROOM: the room's floor, over the ground
+    if let Some(floor) = neon_room::floor_under(x, y) {
+        return floor;
+    }
     let (cx, cy) = (140.0, 130.0);
     let terrain = height(x, y);
     if (x - cx).hypot(y - cy) <= 12.0 {
@@ -6546,6 +6554,12 @@ pub fn events() -> Vec<NetEvent> {
         }
         id += mirror::COUNT;
     }
+    if neon_room::enabled() {
+        for o in neon_room::objects(id) {
+            add(o);
+        }
+        id += neon_room::COUNT;
+    }
     // AURORA_DEMO_HALO: a wide translucent pane 3 m ahead of the start
     // position, facing the camera, so that the avatar stands between the
     // camera and the pane (issue #556: no halo around the avatar on it)
@@ -6866,6 +6880,9 @@ pub fn events() -> Vec<NetEvent> {
     // AURORA_DEMO_MIRROR: in front of the mirror, facing it
     let (start, look_at) = if mirror::enabled() {
         mirror::start()
+    } else if neon_room::enabled() {
+        // AURORA_DEMO_NEON_ROOM: inside the room, facing its pink strip
+        neon_room::start()
     } else {
         (start, Vec3::new(0.8, 0.4, 0.0))
     };
@@ -10279,6 +10296,7 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     if legacy_bump::enabled() {
         list.push((legacy_bump::PBR_MATERIAL, legacy_bump::pbr_material()));
     }
+    list.extend(neon_room::materials());
     for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {
         list.push((
             mat,

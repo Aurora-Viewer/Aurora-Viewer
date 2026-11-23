@@ -206,13 +206,33 @@ fn surface_at(record: u32, primitive: u32, bary: vec2<f32>, dir: vec3<f32>) -> S
     }
     s.record = record;
     s.normal = n;
-    s.uv = vertex_uv(v0) * w.x + vertex_uv(v1) * w.y + vertex_uv(v2) * w.z;
-    // (object.wgsl `face_st`; a HUD's zoom aside, no HUD is traced)
+    s.uv = uv_of(record, v0, v1, v2, w);
+    return s;
+}
+
+// The texture coordinates at barycentric weights `w` of a triangle of
+// `record`: `surface_at`'s, and `uv_at`'s for the alpha test, the same
+// expression for both so that the alpha test decides as the shading reads.
+// A planar-mapped face takes them from its position (object.wgsl
+// `face_st`; a HUD's zoom aside, no HUD is traced).
+fn uv_of(record: u32, v0: u32, v1: u32, v2: u32, w: vec3<f32>) -> vec2<f32> {
     if ((record_vec(record, RECORD_FLAGS).x & FLAG_PLANAR) != 0u) {
         let local_p = vertex_pos(v0) * w.x + vertex_pos(v1) * w.y + vertex_pos(v2) * w.z;
-        s.uv = planar_st(local_p, local_n, record_model(record));
+        let local_n = vertex_normal(v0) * w.x + vertex_normal(v1) * w.y + vertex_normal(v2) * w.z;
+        return planar_st(local_p, local_n, record_model(record));
     }
-    return s;
+    return vertex_uv(v0) * w.x + vertex_uv(v1) * w.y + vertex_uv(v2) * w.z;
+}
+
+// `surface_at`'s texture coordinates alone: the alpha test of a candidate
+// hit (`stops`) needs no normal, and every traced ray near the avatars
+// tests many (their hair, their clothes' cut-outs).
+fn uv_at(record: u32, primitive: u32, bary: vec2<f32>) -> vec2<f32> {
+    let face = cull_face(record);
+    let first = face.first_index + primitive * 3u;
+    let base = u32(max(face.base_vertex, 0));
+    let w = vec3<f32>(1.0 - bary.x - bary.y, bary.x, bary.y);
+    return uv_of(record, base + index_at(first), base + index_at(first + 1u), base + index_at(first + 2u), w);
 }
 
 // The face of a hit, and the hit's triangle in that face.
@@ -573,13 +593,18 @@ fn emissive_color(record: u32) -> vec3<f32> {
 // traversal commits those itself), an alpha-masked one where its texture is
 // over its cutoff. (Naga takes no ray query as a function's argument, so
 // each trace runs its own loop around this.)
+// `dir` is kept for the callers: the test reads no normal. (A face that is
+// not alpha-masked stops it before its vertices are read; the texture
+// coordinates are `surface_at`'s, so the same candidates stop.)
 fn stops(c: RayIntersection, posed: bool, dir: vec3<f32>) -> bool {
     if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE) {
         return false;
     }
     let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
-    let s = surface_at(h.record, h.primitive, c.barycentrics, dir);
-    return !masked_out(h.record, s.uv);
+    if ((record_vec(h.record, RECORD_FLAGS).x & FLAG_ALPHA_MASK) == 0u) {
+        return true;
+    }
+    return !masked_out(h.record, uv_at(h.record, h.primitive, c.barycentrics));
 }
 
 // How far from a pixel of the view its own curved surface may still be met

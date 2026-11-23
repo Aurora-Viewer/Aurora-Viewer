@@ -284,6 +284,9 @@ const PALETTE_STRIDE: u32 = 261u;
 @group(0) @binding(23) var water_exclusion_mask: texture_2d<f32>;
 // GTAO's screen-space indirect light (gtao.rs), when SCREEN_INDIRECT
 @group(0) @binding(14) var il_tex: texture_2d<f32>;
+// The traced probes' sight of the sky at half resolution (rt_gi.wgsl
+// `cs_gi_sky`): in g how open each place is (`screen_open`).
+@group(0) @binding(32) var gi_open_tex: texture_2d<f32>;
 
 // Reflection probes (probes.rs, reflectionProbeF.glsl).
 // The probes of the frame's list at most (probes::MAX_PROBES).
@@ -655,7 +658,7 @@ fn probe_tiles_miss(pos: vec3<f32>, frag: vec2<f32>) -> bool {
     return count > 0u && (probe_word(0u, count, tiles, cell) & 1u) == 0u;
 }
 
-fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, amblit: vec3<f32>, water: bool) -> vec4<f32> {
+fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, amblit: vec3<f32>, water: bool, outside: vec4<f32>) -> vec4<f32> {
     let count = min(probe_set.count, MAX_PROBES);
     // never let automatic probes encroach on box probes
     var sample_automatic = true;
@@ -728,6 +731,9 @@ fn sample_probes_ex(pos: vec3<f32>, dir: vec3<f32>, lod: f32, irradiance: bool, 
             refcol = mix(amblit, irr, min(p.params.x, 1.0));
         } else {
             refcol = textureSampleLevel(probe_tex, probe_sampler, v, i32(p.slot.x), lod).rgb * p.params.y;
+            if (i == 0u) {
+                refcol = mix(outside.rgb, refcol, outside.a);
+            }
         }
         if (manual) {
             col1 += refcol * w;
@@ -766,15 +772,42 @@ struct ProbePair {
 }
 
 // A probe's contribution to a lookup, along `v` in its cube (tapRefMap,
-// tapIrradianceMap).
-fn probe_tap(i: u32, v: vec3<f32>, lookup: ProbeLookup, amblit: vec3<f32>) -> vec3<f32> {
+// tapIrradianceMap); `outside` as `default_probe_outside`'s.
+fn probe_tap(i: u32, v: vec3<f32>, lookup: ProbeLookup, amblit: vec3<f32>, outside: vec4<f32>) -> vec3<f32> {
     let slot = i32(probe_set.probes[i].slot.x);
     let scale = probe_set.probes[i].params;
     if (lookup.irradiance) {
         let irr = textureSampleLevel(probe_irr_tex, probe_sampler, v, slot, 0.0).rgb * scale.x;
         return mix(amblit, irr, min(scale.x, 1.0));
     }
-    return textureSampleLevel(probe_tex, probe_sampler, v, slot, lookup.lod).rgb * scale.y;
+    let rad = textureSampleLevel(probe_tex, probe_sampler, v, slot, lookup.lod).rgb * scale.y;
+    if (i == 0u) {
+        return mix(outside.rgb, rad, outside.a);
+    }
+    return rad;
+}
+
+// What the default probe's reflection becomes at the fragment at `frag`:
+// in a the share of it that stays (how open the place is, `screen_open`),
+// in rgb what takes the rest (the light the faces around bounce there, the
+// traced indirect light's). The default probe sees only the sky, the
+// water, the terrain and the clouds (LLReflectionMapManager::
+// updateProbeFace), from wherever the camera is, so a shiny face in a
+// closed room without a probe of its own reflected the world outside it,
+// its sky and its sunlit water; it now reflects the room's own light,
+// blurred (the probes keep no direction finer than a face's hemisphere).
+// The place's openness and not the sky's share along the normal: out in
+// the open a shiny face turned to the ground sees no sky, and the ground
+// the probe shows it is right. Aurora's own, with the traced indirect light
+// only: the Legacy Viewer's rooms reflect the outside. The probes residents
+// place, which see the place, are left as they are; (0, 1) without the
+// traced indirect light and in reflection passes.
+fn default_probe_outside(frag: vec2<f32>) -> vec4<f32> {
+    let open = screen_open(frag);
+    if (open >= 1.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    return vec4<f32>(textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb, open);
 }
 
 // Where a lookup leaves a box probe, from `lp` inside it (boxIntersect; the
@@ -834,11 +867,12 @@ fn probe_mix(col0_in: vec3<f32>, col1_in: vec3<f32>, w0: f32, w1: f32, dw1: f32,
 fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeLookup, want_b: bool, automatic: bool, amblit: vec3<f32>) -> ProbePair {
     var out: ProbePair;
     out.b = vec4<f32>(0.0);
-    let walk = frame.light_mode.w;
+    let walk = frame.light_mode.w & 0xffu;
+    let outside = default_probe_outside(frag);
     if (walk == PROBE_WALK_PER_LOOKUP) {
-        out.a = sample_probes_ex(pos, a.dir, a.lod, a.irradiance, amblit, !automatic);
+        out.a = sample_probes_ex(pos, a.dir, a.lod, a.irradiance, amblit, !automatic, outside);
         if (want_b) {
-            out.b = sample_probes_ex(pos, b.dir, b.lod, b.irradiance, amblit, !automatic);
+            out.b = sample_probes_ex(pos, b.dir, b.lod, b.irradiance, amblit, !automatic, outside);
         }
         return out;
     }
@@ -925,10 +959,10 @@ fn sample_probes_pair(pos: vec3<f32>, frag: vec2<f32>, a: ProbeLookup, b: ProbeL
                 dw = base * atten * max(r, 1.0) * 4.0;
                 w = base * atten;
             }
-            let ca = probe_tap(i, va, a, amblit) * w;
+            let ca = probe_tap(i, va, a, amblit, outside) * w;
             var cb = vec3<f32>(0.0);
             if (want_b) {
-                cb = probe_tap(i, vb, b, amblit) * w;
+                cb = probe_tap(i, vb, b, amblit, outside) * w;
             }
             if (manual) {
                 a1 += ca;
@@ -1418,6 +1452,10 @@ const SHADOW_FILTER_GAPS: u32 = 0x100u;
 const SHADOW_OFFSET_MAPPED: u32 = 0x200u;
 // frame.light_mode.z: il_tex holds GTAO's indirect light of this frame
 const SCREEN_INDIRECT: u32 = 0x400u;
+// frame.light_mode.w: il_tex's alpha holds the share of the sky's ambient
+// the traced probes let through (rt_gi.wgsl `cs_gi_filter`, `screen_sky`);
+// the probe walk is in the bits under it
+const TRACED_SKY: u32 = 0x100u;
 // frame.light_mode.z: normal maps on a unit, orthogonal tangent frame as the
 // Legacy Viewer's per-vertex tangents (AURORA_TANGENTS, perturb_normal)
 const TANGENT_UNIT: u32 = 0x800u;
@@ -1995,6 +2033,53 @@ fn screen_indirect(frag: vec2<f32>) -> vec3<f32> {
     return textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).rgb * (share * screen_ao(frag));
 }
 
+// `screen_sky` and `screen_open` in a reflection pass, which has no screen
+// of the traced light: how open the place the pass is drawn from is, for
+// all its faces (rt_gi.wgsl `gi_points`: texel 0 a probe's capture, 1 the
+// mirror). 1 in the passes that do not set TRACED_SKY (the water's
+// reflection, the impostors, the HUD) and without the traced probes.
+fn reflection_open() -> f32 {
+    if ((frame.light_mode.w & TRACED_SKY) == 0u) {
+        return 1.0;
+    }
+    let last = i32(textureDimensions(gi_open_tex).x) - 1;
+    let i = min(select(1, 0, (frame.light_mode.z & PROBE_CAPTURE_DOME) != 0u), last);
+    return clamp(textureLoad(gi_open_tex, vec2<i32>(i, 0), 0).r, 0.0, 1.0);
+}
+
+// The share of the sky's ambient that reaches the fragment at `frag`: what
+// the traced global illumination's probes see of the sky there (gi.rs; a
+// room, the shade of a roof or a tree), 1 without them and in reflection
+// passes (the HUD is fullbright). A face the indirect light's depth does
+// not hold (a blended one, the snow) takes the sky of what lies behind
+// it, most often the same room. The light the surfaces around bounce stays the
+// traced indirect light's (`screen_indirect`), so that none is counted
+// twice. An Aurora difference, with the traced indirect light only: the
+// Legacy Viewer's sky ambient reaches every place alike, darkened by its
+// screen-space occlusion alone.
+fn screen_sky(frag: vec2<f32>) -> f32 {
+    if (in_reflection_pass()) {
+        return reflection_open();
+    }
+    if ((frame.light_mode.w & TRACED_SKY) == 0u || (frame.light_mode.z & SCREEN_INDIRECT) == 0u) {
+        return 1.0;
+    }
+    return clamp(textureSampleLevel(il_tex, lin_clamp, screen_uv(frag), 0.0).a, 0.0, 1.0);
+}
+
+// How open the place of the fragment at `frag` is, whatever its normal
+// (gi_update.wgsl `gi_openness`): 1 out in the open, 0 in a closed room;
+// 1 without the traced probes; in reflection passes `reflection_open`.
+fn screen_open(frag: vec2<f32>) -> f32 {
+    if (in_reflection_pass()) {
+        return reflection_open();
+    }
+    if ((frame.light_mode.w & TRACED_SKY) == 0u || (frame.light_mode.z & SCREEN_INDIRECT) == 0u) {
+        return 1.0;
+    }
+    return clamp(textureSampleLevel(gi_open_tex, lin_clamp, screen_uv(frag), 0.0).g, 0.0, 1.0);
+}
+
 // The solid angle two spherical caps share, divided by 2 pi: caps of
 // cosines `cos_a` and `cos_b` whose axes are `cos_d` apart. Oat and Sander,
 // "Ambient Aperture Lighting" (2007), with the smooth approximation of the
@@ -2176,6 +2261,9 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
     // with GTAO, the occlusion of the reflected ray instead of the ambient one
     let spec_ao = specular_occlusion(frag, r, roughness, ao);
     var occl = (0.35 + 0.65 * shadow) * (1.0 - 0.75 * roughness) * spec_ao;
+    // the sky's reflection, where no reflection probe gives the place's,
+    // takes the traced probes' sight of the sky as the ambient does
+    var env_of_sky = true;
     if (probes_on()) {
         // non classic skies: ambient from the probes' irradiance along the
         // normal, each probe mixed with the sky ambient by its ambiance
@@ -2188,9 +2276,14 @@ fn shade_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32, n: 
         if (s.b.w > 0.0) {
             env = s.b.rgb * probe_pass_radiance();
             occl = spec_ao;
+            env_of_sky = false;
         }
     }
-    col += diffuse_color * amb * ao * mat_ao;
+    let sky = screen_sky(frag);
+    if (env_of_sky) {
+        occl *= sky;
+    }
+    col += diffuse_color * amb * ao * mat_ao * sky;
     col += diffuse_color * screen_indirect(frag) * mat_ao;
     if (legacy) {
         return col;
@@ -2904,7 +2997,8 @@ fn ll_ssao(irr: vec3<f32>, frag: vec2<f32>) -> vec3<f32> {
     let ao = screen_ao(frag);
     let occluded = min(irr * 0.6, vec3<f32>(0.18));
     let effect = occluded - vec3<f32>(0.2 * (occluded.r + occluded.g + occluded.b) / 3.0);
-    return mix(effect, irr, ao);
+    // (and the traced probes' sight of the sky, `screen_sky`)
+    return mix(effect, irr, ao) * screen_sky(frag);
 }
 
 // softenLightF.glsl final_scale: 1.1 on classic skies, applied to the whole
@@ -3010,7 +3104,10 @@ fn ll_classic_pbr(base: vec3<f32>, metallic: f32, roughness_in: f32, mat_ao: f32
     let hemi = mix(mix(frame.ground_color.rgb, frame.sky_horizon.rgb, clamp(up * 2.0, 0.0, 1.0)),
                    frame.sky_zenith.rgb, clamp(up * 2.0 - 1.0, 0.0, 1.0));
     let r = reflect(-v, n);
-    var env = probe_radiance(probe_point(world_pos, n), frag, r, roughness, mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness));
+    // (the sky's reflection, where no reflection probe gives the place's,
+    // takes the traced probes' sight of the sky, as `shade_pbr`'s)
+    let sky_env = mix(sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))), hemi, roughness) * screen_sky(frag);
+    var env = probe_radiance(probe_point(world_pos, n), frag, r, roughness, sky_env);
     let m = mirror_tap(world_pos, r, 1.0 - clamp(roughness_in, 0.0, 1.0));
     env = mix(env, m.rgb, m.a);
     // pbrIbl scales the specular by the material's occlusion only (ORM red);
