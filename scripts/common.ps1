@@ -363,37 +363,55 @@ function Get-GitHubSlug([string]$Url) {
 }
 
 # GitHub owners whose copy of the repository may hold the head of a task
-# branch's PR: those of the remotes it was pushed to (push remote, a
-# tracked branch of the same name, or a remote-tracking ref left by a push).
-# A task branch tracks origin/main from new-task.ps1, which says nothing of
-# where it was pushed. When nothing tells, every GitHub remote's owner.
+# branch's PR, surest first: the remotes the branch's settings push it to
+# (branch push remote, remote.pushDefault, a tracked branch of the same
+# name); else the remotes holding a ref of that name, left by a push or by
+# a fetch (a contributor's fork added for a review may hold a branch of the
+# same name: Get-BranchPr also checks the commits); else every GitHub
+# remote's owner. A task branch tracks origin/main from new-task.ps1, which
+# says nothing of where it was pushed.
 function Get-BranchHeadOwners([string]$Dir, [string]$Branch) {
     $owners = @{}
     foreach ($r in @(git -C $Dir remote 2>$null)) {
-        $slug = Get-GitHubSlug (git -C $Dir remote get-url $r 2>$null)
+        $slug = Get-GitHubSlug (git -C $Dir remote get-url --push $r 2>$null)
         if ($slug) { $owners[$r] = $slug.Split('/')[0] }
     }
-    $pushed = @()
-    $pushed += git -C $Dir config "branch.$Branch.pushRemote" 2>$null
-    $pushed += git -C $Dir config remote.pushDefault 2>$null
+    $configured = @()
+    $configured += git -C $Dir config "branch.$Branch.pushRemote" 2>$null
+    $configured += git -C $Dir config remote.pushDefault 2>$null
     if ((git -C $Dir config "branch.$Branch.merge" 2>$null) -eq "refs/heads/$Branch") {
-        $pushed += git -C $Dir config "branch.$Branch.remote" 2>$null
+        $configured += git -C $Dir config "branch.$Branch.remote" 2>$null
     }
+    $withRef = @()
     foreach ($r in @($owners.Keys)) {
         git -C $Dir show-ref --verify --quiet "refs/remotes/$r/$Branch" 2>$null
-        if ($LASTEXITCODE -eq 0) { $pushed += $r }
+        if ($LASTEXITCODE -eq 0) { $withRef += $r }
     }
-    $known = @($pushed | Where-Object { $_ -and $owners.ContainsKey($_) } | ForEach-Object { $owners[$_] } | Select-Object -Unique)
-    if ($known) { $known } else { @($owners.Values | Select-Object -Unique) }
+    foreach ($remotes in @(, $configured) + @(, $withRef)) {
+        $known = @($remotes | Where-Object { $_ -and $owners.ContainsKey($_) } | ForEach-Object { $owners[$_] } | Select-Object -Unique)
+        if ($known) { return $known }
+    }
+    @($owners.Values | Select-Object -Unique)
 }
 
 # The newest of $Prs (gh pr list JSON, newest first) whose head is in the
-# repository of one of $Owners: another contributor's PR from a branch of
-# the same name (main, fix/...) is not ours.
-function Select-BranchPr($Prs, [string[]]$Owners) {
+# repository of one of $Owners, and whose head commit passes $HasHead when
+# given: another contributor's PR from a branch of the same name (main,
+# fix/...) is not ours.
+function Select-BranchPr($Prs, [string[]]$Owners, [scriptblock]$HasHead) {
     foreach ($pr in $Prs) {
-        if ($pr.headRepositoryOwner -and $Owners -contains $pr.headRepositoryOwner.login) { return $pr }
+        if (-not $pr.headRepositoryOwner -or $Owners -notcontains $pr.headRepositoryOwner.login) { continue }
+        if ($HasHead -and -not (& $HasHead $pr.headRefOid)) { continue }
+        return $pr
     }
+}
+
+# $Commit is $Head or one of its ancestors. False for a commit missing
+# here (a head pushed from elsewhere, not fetched): nothing is assumed.
+function Test-CommitIn([string]$Dir, [string]$Commit, [string]$Head) {
+    if (-not $Commit -or -not $Head) { return $false }
+    git -C $Dir merge-base --is-ancestor $Commit $Head 2>$null
+    $LASTEXITCODE -eq 0
 }
 
 # Number and state of the PR of a task branch, into the repository of the
@@ -401,15 +419,25 @@ function Select-BranchPr($Prs, [string[]]$Owners) {
 # personal fork, PRs opened cross-repo): a bare `gh pr view <branch>` only
 # looks in the repository gh picks for the folder and, with a fork remote
 # and no `gh repo set-default`, finds nothing.
-function Get-BranchPr([string]$Dir, [string]$Branch) {
+# -AllCommits, before deleting anything: only a PR whose head holds every
+# commit of the local branch. A same-named branch of someone else does not,
+# nor does a PR merged before commits made since.
+function Get-BranchPr([string]$Dir, [string]$Branch, [switch]$AllCommits) {
     if (-not $Branch) { return }
     $Branch = $Branch.Trim()
     $repo = Get-GitHubSlug (git -C $Dir remote get-url origin 2>$null)
     if (-not $repo) { return }
-    $json = gh pr list --repo $repo --head $Branch --state all --limit 30 --json number,state,headRepositoryOwner 2>$null
+    $json = gh pr list --repo $repo --head $Branch --state all --limit 30 --json number,state,headRepositoryOwner,headRefOid 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $json) { return }
     # assigned before use: Windows PowerShell 5.1 hands a JSON array to the
     # pipeline as one object
     $prs = ($json -join "`n") | ConvertFrom-Json
-    Select-BranchPr $prs (Get-BranchHeadOwners $Dir $Branch)
+    if (-not $prs) { return }
+    $hasHead = $null
+    if ($AllCommits) {
+        $tip = git -C $Dir rev-parse --verify --quiet "refs/heads/$Branch" 2>$null
+        if (-not $tip) { return }
+        $hasHead = { param($Oid) Test-CommitIn $Dir $tip $Oid }.GetNewClosure()
+    }
+    Select-BranchPr $prs (Get-BranchHeadOwners $Dir $Branch) $hasHead
 }

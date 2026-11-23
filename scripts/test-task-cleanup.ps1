@@ -98,15 +98,18 @@ try {
 
     # The PRs gh lists for a branch name, newest first: another contributor's
     # PR from a branch of the same name is never ours.
-    $prs = '[{"number":3,"state":"OPEN","headRepositoryOwner":{"login":"someone"}},' +
-        '{"number":4,"state":"CLOSED","headRepositoryOwner":null},' +
-        '{"number":2,"state":"MERGED","headRepositoryOwner":{"login":"me"}},' +
-        '{"number":1,"state":"CLOSED","headRepositoryOwner":{"login":"Upstream"}}]' | ConvertFrom-Json
+    $prs = '[{"number":3,"state":"OPEN","headRefOid":"c3","headRepositoryOwner":{"login":"someone"}},' +
+        '{"number":4,"state":"CLOSED","headRefOid":"c4","headRepositoryOwner":null},' +
+        '{"number":2,"state":"MERGED","headRefOid":"c2","headRepositoryOwner":{"login":"me"}},' +
+        '{"number":1,"state":"CLOSED","headRefOid":"c1","headRepositoryOwner":{"login":"Upstream"}}]' | ConvertFrom-Json
     Assert-CleanupTest ((Select-BranchPr $prs @('Me')).number -eq 2) 'A fork PR is found by its head owner, case ignored.'
     Assert-CleanupTest ((Select-BranchPr $prs @('Upstream')).number -eq 1) 'A PR from a branch of origin is found.'
     Assert-CleanupTest ((Select-BranchPr $prs @('Upstream', 'Me')).number -eq 2) 'The newest of our PRs wins.'
     Assert-CleanupTest ($null -eq (Select-BranchPr $prs @('nobody'))) 'Only other contributors: no PR.'
     Assert-CleanupTest ($null -eq (Select-BranchPr ('[]' | ConvertFrom-Json) @('Me'))) 'No PR at all.'
+    # -AllCommits: a PR whose head lacks the local commits is skipped
+    Assert-CleanupTest ((Select-BranchPr $prs @('Upstream', 'Me') { param($Oid) $Oid -eq 'c1' }).number -eq 1) 'A head without the local commits is skipped.'
+    Assert-CleanupTest ($null -eq (Select-BranchPr $prs @('Me') { param($Oid) $false })) 'No head with the local commits: no PR.'
 
     # Where a branch was pushed, in a fixture repository whose git reads no
     # global or system setting (a pushDefault of the PC would change it).
@@ -138,10 +141,26 @@ try {
         Assert-CleanupTest ((@(Get-BranchHeadOwners $repo 'fix/upstream') -join ',') -eq 'Upstream') 'Branch pushed to origin.'
         git -C $repo config branch.fix/push-remote.pushRemote fork
         Assert-CleanupTest ((@(Get-BranchHeadOwners $repo 'fix/push-remote') -join ',') -eq 'Me') 'Branch with a push remote.'
+        # a contributor's fork fetched for a review holds a branch of the
+        # same name: the branch's own push settings win over it
+        git -C $repo remote add review https://github.com/Other/Aurora-Viewer.git
+        git -C $repo update-ref refs/remotes/review/fix/tracked $head
+        Assert-CleanupTest ((@(Get-BranchHeadOwners $repo 'fix/tracked') -join ',') -eq 'Me') 'Push settings win over a fetched ref.'
+
+        # every commit of the local branch must be in the PR's head
+        git -C $repo -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m later
+        $later = (git -C $repo rev-parse HEAD).Trim()
+        Assert-CleanupTest (Test-CommitIn $repo $head $later) 'An older commit is in a later head.'
+        Assert-CleanupTest (Test-CommitIn $repo $later $later) 'A commit is in itself.'
+        Assert-CleanupTest (-not (Test-CommitIn $repo $later $head)) 'A local commit made after the head is not in it.'
+        Assert-CleanupTest (-not (Test-CommitIn $repo $head ('0' * 40))) 'A head missing here holds nothing.'
     } finally {
         $env:GIT_CONFIG_GLOBAL = $savedGlobal; $env:GIT_CONFIG_NOSYSTEM = $savedNoSystem
     }
 
+    # git config of an unset key and show-ref of a missing ref exit with 1:
+    # expected above, but check.ps1 judges the step by the last exit code
+    $global:LASTEXITCODE = 0
     Write-Output 'Task cleanup: new and older Cargo layouts, trim marker, later build, unknown date and fork PR lookup passed.'
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixture)
