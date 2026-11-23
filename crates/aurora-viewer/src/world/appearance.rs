@@ -285,6 +285,27 @@ pub(super) fn item_link(it: &InvItem) -> OutfitLink {
     }
 }
 
+/// Keep the selected outfit link for clothing. The original still supplies
+/// the wearable type, permissions and the target of the new COF link.
+pub fn wear_entry(inv: &Inventory, entry: Uuid, original: Uuid) -> Uuid {
+    if entry != original
+        && inv.items.get(&original).is_some_and(|it| it.asset_type == 5)
+        && inv.items.get(&entry).is_some_and(|link| {
+            link.asset_type == 24
+                && link.asset_id == original
+                && inv
+                    .folders
+                    .get(&link.parent)
+                    .is_some_and(|f| f.info.type_default == FT_OUTFIT && !f.library)
+        })
+        && !super::inventory::actions::library(inv, original)
+    {
+        entry
+    } else {
+        original
+    }
+}
+
 pub fn dirty(inv: &Inventory) -> bool {
     let Some((cof, base)) = cof(inv).zip(base(inv)) else {
         return false;
@@ -605,7 +626,17 @@ fn wear_link(
         }
     }
     if !current.iter().any(|l| l.target == id) {
-        current.push(item_link(it));
+        let mut link = item_link(it);
+        if wear_entry(inv, request.item, id) != id {
+            let source = &inv.items[&request.item];
+            // link_inventory_array (llviewerinventory.cpp) takes the clicked
+            // link's actual description. An unplaced link sorts by name.
+            link.desc.clone_from(&source.desc);
+            if let Some(order) = layer_order(&source.desc, kind) {
+                restore_layer(inv, current, &mut link, source.parent, kind, order);
+            }
+        }
+        current.push(link);
     }
     Ok(())
 }
@@ -1193,32 +1224,69 @@ fn drop_coalesced(inv: &Inventory, links: &mut Vec<OutfitLink>) {
 /// WearablesOrderComparator: ties then go by name. The outfit lists and the
 /// layers worn share this order, so a list shows what the avatar wears.
 pub fn layer_rank(link: &OutfitLink, kind: u32) -> (u32, String) {
-    let order = link
-        .desc
-        .strip_prefix('@')
+    (layer_order(&link.desc, kind).unwrap_or(u32::MAX), link.name.to_lowercase())
+}
+
+fn layer_order(desc: &str, kind: u32) -> Option<u32> {
+    desc.strip_prefix('@')
         .and_then(|s| s.parse::<u32>().ok())
         .filter(|order| order / 100 == kind)
-        .unwrap_or(u32::MAX);
-    (order, link.name.to_lowercase())
+}
+
+/// Removing a layer renumbers the COF. Use the saved outfit's other layers
+/// as bounds so adding them back one at a time also works in reverse order.
+/// Keep the relative order of everything the resident is already wearing.
+fn restore_layer(inv: &Inventory, current: &mut [OutfitLink], new: &mut OutfitLink, outfit: Uuid, kind: u32, order: u32) {
+    let saved: HashMap<_, _> = inv.folders[&outfit]
+        .items
+        .iter()
+        .filter_map(|id| inv.items.get(id))
+        .filter(|it| it.parent == outfit && it.asset_type == 24)
+        .filter_map(|it| Some((it.asset_id, layer_order(&it.desc, kind)?)))
+        .collect();
+    let worn = ordered_layers(inv, current, kind);
+    let mut lower = 0;
+    let mut upper = worn.len();
+    for (i, link) in worn.iter().enumerate() {
+        if let Some(&place) = saved.get(&link.target) {
+            if place < order {
+                lower = i + 1;
+            } else if place > order {
+                upper = upper.min(i);
+            }
+        }
+    }
+    let mut slot = ((order % 100) as usize).min(worn.len());
+    // If the resident reversed the saved neighbours, keep their current
+    // order and insert at the saved index among the remaining layers.
+    if lower <= upper {
+        slot = slot.clamp(lower, upper);
+    }
+    for (index, link) in worn.into_iter().enumerate() {
+        link.desc = format!("@{}", kind * 100 + (index + usize::from(index >= slot)) as u32);
+    }
+    new.desc = format!("@{}", kind * 100 + slot as u32);
+}
+
+fn ordered_layers<'a>(inv: &Inventory, links: &'a mut [OutfitLink], kind: u32) -> Vec<&'a mut OutfitLink> {
+    let mut layers: Vec<_> = links
+        .iter_mut()
+        .filter(|l| {
+            !l.folder
+                && inv
+                    .items
+                    .get(&l.target)
+                    .is_some_and(|it| it.asset_type == 5 && it.flags & 0xff == kind)
+        })
+        .collect();
+    layers.sort_by_cached_key(|l| layer_rank(l, kind));
+    layers
 }
 
 fn normalize_layers(inv: &Inventory, links: &mut [OutfitLink]) {
     for kind in 4..=16 {
-        let mut indices: Vec<_> = links
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| {
-                !l.folder
-                    && inv
-                        .items
-                        .get(&l.target)
-                        .is_some_and(|it| it.asset_type == 5 && it.flags & 0xff == kind)
-            })
-            .map(|(i, l)| (i, layer_rank(l, kind)))
-            .collect();
-        indices.sort_by(|a, b| a.1.cmp(&b.1));
-        for (order, (i, _)) in indices.iter().enumerate() {
-            links[*i].desc = format!("@{}", kind * 100 + order as u32);
+        for (order, link) in ordered_layers(inv, links, kind).into_iter().enumerate() {
+            link.desc = format!("@{}", kind * 100 + order as u32);
         }
     }
 }
@@ -2903,6 +2971,71 @@ mod tests {
     fn wear(inv: &Inventory, item: Uuid, replace: bool) -> Vec<Uuid> {
         let (change, _) = plan(inv, Action::WearItem { item, replace, point: 0 }, &HashMap::new()).expect("wear");
         change.links.iter().filter(|l| !l.folder).map(|l| l.target).collect()
+    }
+
+    #[test]
+    fn saved_outfit_layers_return_in_order_when_added_individually() {
+        let agent = Uuid::from_u128(1);
+        let mut inv = fixture();
+        seed_demo_layers(&mut inv, agent);
+        let cof = cof(&inv).expect("COF");
+        let folder = Uuid::from_u128(702);
+        let tattoos = [714, 724, 725].map(Uuid::from_u128);
+        let links = folder_links(&inv, cof);
+        demo_replace(&mut inv, agent, folder, &links);
+        let entries = tattoos.map(|id| {
+            inv.folders[&folder]
+                .items
+                .iter()
+                .copied()
+                .find(|entry| inv.items[entry].asset_id == id)
+                .unwrap()
+        });
+        let bare: Vec<_> = links.into_iter().filter(|l| !tattoos.contains(&l.target)).collect();
+        for permutation in [[2, 1, 0], [1, 0, 2], [0, 2, 1], [1, 2, 0], [2, 0, 1], [0, 1, 2]] {
+            demo_replace(&mut inv, agent, cof, &bare);
+            for i in permutation {
+                let (change, _) = plan(&inv, Action::Add(entries[i]), &HashMap::new()).expect("add saved layer");
+                demo_mutate(&mut inv, agent, &change).expect("acknowledged COF");
+            }
+            let mut result = folder_links(&inv, cof);
+            let worn: Vec<_> = ordered_layers(&inv, &mut result, 14).iter().map(|l| l.target).collect();
+            assert_eq!(worn, tattoos, "added in order {permutation:?}");
+        }
+    }
+
+    #[test]
+    fn wear_uses_the_clicked_outfits_slot_after_replacing_the_top_layer() {
+        let agent = Uuid::from_u128(1);
+        let mut inv = fixture();
+        seed_demo_layers(&mut inv, agent);
+        let [bottom, middle, top] = [714, 724, 725].map(Uuid::from_u128);
+        let new = clothing(&mut inv, 9000, 14, "Zebra");
+        // The original and the two outfits all give the same item different places.
+        inv.items.get_mut(&new).unwrap().desc = "@1402".into();
+        for (folder, desc, expected) in [
+            (702, "@1400", vec![new, bottom, middle]),
+            (703, "@1401", vec![bottom, new, middle]),
+            (704, "@500", vec![bottom, middle, new]),
+            (705, "creator text", vec![bottom, middle, new]),
+        ] {
+            let folder = Uuid::from_u128(folder);
+            let mut saved = item_link(&inv.items[&new]);
+            saved.desc = desc.into();
+            demo_replace(&mut inv, agent, folder, &[saved]);
+            let entry = inv.folders[&folder].items[0];
+            let action = Action::WearItem {
+                item: entry,
+                replace: true,
+                point: 0,
+            };
+            let (mut change, _) = plan(&inv, action, &HashMap::new()).expect("wear saved layer");
+            let worn: Vec<_> = ordered_layers(&inv, &mut change.links, 14).iter().map(|l| l.target).collect();
+            assert_eq!(worn, expected);
+            assert!(!change.links.iter().any(|l| l.target == top || l.target == entry));
+            assert_eq!(inv.items[&entry].desc, desc);
+        }
+        assert_eq!(inv.items[&new].desc, "@1402");
     }
 
     #[test]
