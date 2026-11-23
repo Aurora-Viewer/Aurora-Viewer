@@ -232,6 +232,7 @@ impl App {
     pub(super) fn demo_hud_drag_steps(&mut self) {
         self.demo_hud_view_zoom_steps();
         self.demo_hud_scale_steps();
+        self.demo_hud_media_scale_steps();
         if !self.demo || !std::env::var("AURORA_DEMO_HUDS").is_ok_and(|mode| mode.starts_with("drag")) {
             return;
         }
@@ -407,6 +408,67 @@ impl App {
             self.build.deselect_all(&self.world);
             self.build.sync_hud_zoom(&mut self.world);
             log::info!("demo HUD view with empty selection: reset={}", self.world.hud_zoom == 1.0);
+        }
+    }
+
+    /// AURORA_DEMO_HUDS=media-scale: the `media` HUD enlarged with the HUD
+    /// key + wheel (frame 720), then its page's Click button clicked where
+    /// it is drawn (frames 880–900; below the page's centre, which a resize
+    /// leaves in place): the button must take the click and read
+    /// "Clicked!" (#4111). The log compares the page's coordinates with
+    /// those of the object's own pick (a touch's).
+    fn demo_hud_media_scale_steps(&mut self) {
+        if !self.demo || !std::env::var("AURORA_DEMO_HUDS").is_ok_and(|mode| mode == "media-scale") {
+            return;
+        }
+        let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::hud::object(35, false).full_id) else {
+            return;
+        };
+        let Some(view) = self.scene.lists.hud_view else { return };
+        let now = Instant::now();
+        let Some((pos, rot, _)) = Scene::object_transform(&self.world, idx, now, 0) else {
+            return;
+        };
+        if self.frame_count == 700 {
+            // from 100 % (the size kept by the last run, otherwise)
+            if let Some(key) = self.world.objects.get(idx).map(|o| o.key) {
+                self.reset_hud_scale(key, false);
+            }
+        } else if self.frame_count == 720 {
+            self.cursor_pos = view.pixel(pos).into();
+            self.demo_hud_drag_key(true);
+            let handled = self.on_hud_scroll(5.0);
+            log::info!(
+                "demo HUD media-scale zoom: handled={handled}, scale={:.3}",
+                self.world.hud_scale(idx)
+            );
+        } else if self.frame_count == 840 {
+            self.demo_hud_drag_key(false);
+        } else if self.frame_count == 880 {
+            // the Click button: 16 % of the face's height below its centre,
+            // as drawn
+            let button = Vec3::new(0.0, 0.0, -0.16) * self.world.visual_scale_at(idx, now);
+            self.cursor_pos = view.pixel(pos + rot * button).into();
+            let page = self
+                .scene
+                .hud_click_pick(&self.world, self.cursor_pos)
+                .and_then(|(picked, point, ray)| {
+                    let distance = (point - ray.0).dot(ray.1);
+                    let media = self
+                        .media
+                        .hit_test(&self.world, &self.scene, ray.0, ray.1, Some(distance), true, Some(picked))?;
+                    Some((media.st, self.scene.touch_surface(&self.world, picked, ray)))
+                });
+            match page {
+                Some((st, touch)) => log::info!(
+                    "demo HUD media-scale click: page st={st:.3?}, the object's pick uv={:.3?} (the same when the page follows the drawn HUD)",
+                    touch.map(|t| t.uv.truncate())
+                ),
+                None => log::info!("demo HUD media-scale click: no page under the cursor"),
+            }
+            self.on_left_press();
+        } else if self.frame_count == 900 {
+            self.on_left_release();
         }
     }
 
