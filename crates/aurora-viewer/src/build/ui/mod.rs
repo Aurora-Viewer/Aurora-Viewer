@@ -631,6 +631,14 @@ pub fn show(
         floater = floater.auto_height();
     }
     let uuid_feedback = egui::Id::unique(INSPECTOR_ID).with("copy_uuid");
+    // Outside the viewer's window, the settings panel has no place beside
+    // the build window: its window there keeps the room for it, and the
+    // panel is drawn in the window's own pass, with the control an
+    // organization carries, which follows that window's pointer.
+    let outside = widgets::floater_outside(ctx, egui::Id::unique(INSPECTOR_ID));
+    if layout::settings_shown(ctx, tool) {
+        floater.side_outside = layout::SETTINGS_ROOM;
+    }
     floater.show(ctx, p, &mut open, |ui| {
         common::typography(ui);
         // (in the window's own pass: outside the viewer's, it is another window)
@@ -639,6 +647,11 @@ pub fn show(
             legacy_toggle_sections = legacy::body(ui, p, tool, world, s, mods, env);
         } else {
             compact::body(ui, p, tool, world, s, mods, env);
+        }
+        if outside {
+            let room = widgets::side_room_outside(ui.ctx(), INSPECTOR_ID);
+            layout::settings(ui.ctx(), p, tool, world, s, mods, layout::Beside::Outside(room));
+            layout::finish(ui.ctx(), p, tool, s);
         }
     });
     if !s.legacy_window {
@@ -686,8 +699,10 @@ pub fn show(
     }
     detach::finish(ctx, p, tool, s);
     detach::windows(ctx, p, tool, world, s, mods, env);
-    layout::settings(ctx, p, tool, world, s, mods);
-    layout::finish(ctx, p, tool, s);
+    if !outside {
+        layout::settings(ctx, p, tool, world, s, mods, layout::Beside::Window);
+        layout::finish(ctx, p, tool, s);
+    }
     notecards::show(ctx, p, tool, world, s);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if legacy_toggle_sections {

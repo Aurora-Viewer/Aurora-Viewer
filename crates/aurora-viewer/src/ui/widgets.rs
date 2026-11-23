@@ -710,6 +710,12 @@ pub struct Floater<'a> {
     /// An icon button at the right end of the detail row, under the status
     /// action: its glyph, tooltip, and whether it was clicked.
     pub header_summary_icon: Option<(&'a str, &'a str, &'a mut bool)>,
+    /// The width of a panel that sits beside the window in the viewer's
+    /// (the build window's settings), 0 for none. Outside the viewer's
+    /// nothing is beside a window: its window there is that much wider,
+    /// and the panel is drawn in that room (`side_room_outside`), in the
+    /// window's own pass.
+    pub side_outside: f32,
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
@@ -778,6 +784,7 @@ impl<'a> Floater<'a> {
             header_summary: None,
             header_summary_action: None,
             header_summary_icon: None,
+            side_outside: 0.0,
             title_note: None,
             title_note_tooltip: None,
             title_state: None,
@@ -1598,7 +1605,11 @@ impl<'a> Floater<'a> {
         let asked_id = window_id.with("outside content size");
         if !crate::outside::native(ctx, window_id) {
             // (a new window outside: no size was asked of it yet)
-            ctx.data_mut(|d| d.remove::<(Vec2, f32)>(asked_id));
+            ctx.data_mut(|d| {
+                d.remove::<(Vec2, f32)>(asked_id);
+                d.remove::<SideRoom>(window_id.with(SIDE_ROOM));
+                d.remove::<egui::Rect>(window_id.with(SIDE_RECT));
+            });
             // asked at this pass, opened before the next: as large as it
             // was outside last, or as it is inside
             let inside = egui::AreaState::load(ctx, window_id);
@@ -1645,7 +1656,42 @@ impl<'a> Floater<'a> {
         let builder = egui::ViewportBuilder::default().with_title(self.title.clone());
         let out = ctx.show_viewport_immediate(crate::outside::viewport(window_id), builder, |ui, _| {
             super::close_key::pressed_outside(ui.ctx(), window_id);
-            let size = ui.max_rect().size();
+            // the window's own width, and the room at its right for what
+            // sits beside it inside (`side_outside`)
+            let whole = ui.max_rect();
+            let wanted = if self.side_outside > 0.0 {
+                self.side_outside + 2.0 * SIDE_GAP
+            } else {
+                0.0
+            };
+            let was = ui.ctx().data(|d| d.get_temp::<SideRoom>(window_id.with(SIDE_ROOM)));
+            // (the viewer's clock: a window outside has its own input)
+            let now = ui.ctx().input_for(egui::ViewportId::ROOT, |i| i.time);
+            let (side, ask) = side_room(was, whole.width(), wanted, self.min_size.x, now);
+            if let Some(width) = ask {
+                crate::outside::resize(ui.ctx(), window_id, Vec2::new(width, whole.height()), content_sized);
+            }
+            let own = side.map_or(whole.width(), |side| side.own.min(whole.width()));
+            let room = side
+                .filter(|side| side.room > 0.0)
+                .map(|_| {
+                    egui::Rect::from_min_max(
+                        egui::pos2(whole.left() + own + SIDE_GAP, whole.top() + SIDE_GAP),
+                        egui::pos2(whole.right() - SIDE_GAP, whole.bottom() - SIDE_GAP),
+                    )
+                })
+                .filter(|room| room.width() >= SIDE_LEAST);
+            ui.ctx().data_mut(|d| {
+                d.remove::<SideRoom>(window_id.with(SIDE_ROOM));
+                d.remove::<egui::Rect>(window_id.with(SIDE_RECT));
+                if let Some(side) = side {
+                    d.insert_temp(window_id.with(SIDE_ROOM), side);
+                }
+                if let Some(room) = room {
+                    d.insert_temp(window_id.with(SIDE_RECT), room);
+                }
+            });
+            let size = Vec2::new(own, whole.height());
             ui.ctx().data_mut(|d| d.insert_persisted(window_id.with(OUTSIDE_SIZE), size));
             // what follows the pointer during a drag, as the viewer's pass
             // draws it in its own window (`App::inventory_drag_input`)
@@ -1663,6 +1709,15 @@ impl<'a> Floater<'a> {
                 }
             } else {
                 FLOATER_MARGIN
+            };
+            // (the window keeps its own width, at the left of the room)
+            let mut left;
+            let ui = if side.is_some() {
+                left = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(whole.min, size)));
+                left.set_clip_rect(left.max_rect());
+                &mut left
+            } else {
+                ui
             };
             egui::Frame::new()
                 .inner_margin(margin)
@@ -1855,7 +1910,10 @@ impl<'a> Floater<'a> {
             let zoom = ctx.zoom_factor();
             let asked = asked_at(ctx.data(|d| d.get_temp::<(Vec2, f32)>(asked_id)), zoom);
             if follows_content(size, content, asked) {
-                crate::outside::resize(ctx, window_id, content, true);
+                let room = ctx
+                    .data(|d| d.get_temp::<SideRoom>(window_id.with(SIDE_ROOM)))
+                    .map_or(0.0, |side| side.room);
+                crate::outside::resize(ctx, window_id, content + Vec2::new(room, 0.0), true);
                 ctx.data_mut(|d| d.insert_temp(asked_id, (content, zoom)));
             }
         }
@@ -1884,6 +1942,83 @@ fn asked_at(asked: Option<(Vec2, f32)>, zoom: f32) -> Option<Vec2> {
 /// the system may give less (a small screen) or nothing.
 fn follows_content(size: Vec2, content: Vec2, asked: Option<Vec2>) -> bool {
     ((size.x - content.x).abs() > 1.0 || (size.y - content.y).abs() > 1.0) && asked != Some(content)
+}
+
+/// The room a window outside keeps at its right (`Floater::side_outside`):
+/// the system's window is that much wider than the window, which keeps a
+/// width of its own. The system sizes its window when it likes, some
+/// frames after it is asked, or not at all: the window's own width is the
+/// rest of the system's only once that one has answered.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SideRoom {
+    /// The window's own width.
+    own: f32,
+    /// The room's width in the size last asked, its gaps included.
+    room: f32,
+    /// The width asked of the system and when, until it has given it or
+    /// the wait is over.
+    asked: Option<(f32, f64)>,
+}
+
+const SIDE_ROOM: &str = "outside side room";
+const SIDE_RECT: &str = "outside side rect";
+/// The gap between the window and its side panel, and around that one.
+const SIDE_GAP: f32 = 8.0;
+/// A room narrower than this shows nothing: the system has not made it
+/// yet, or the user took it back by the window's edge.
+const SIDE_LEAST: f32 = 120.0;
+/// How long the system has to give the width asked, in seconds: past it,
+/// the window makes do with the width it has.
+const SIDE_WAIT: f64 = 0.5;
+
+/// One pass of a window outside that the system shows `native` wide and
+/// that wants `room` at its right (0 for none), `min` being its own least
+/// width: what to keep for the next pass, and the width to ask of the
+/// system, once, when the room changes. While the system has not answered,
+/// the window keeps the width it had: its content does not jump to the
+/// width of both and back.
+fn side_room(was: Option<SideRoom>, native: f32, room: f32, min: f32, now: f64) -> (Option<SideRoom>, Option<f32>) {
+    let mut side = match was {
+        Some(side) => side,
+        None if room <= 0.0 => return (None, None),
+        None => SideRoom {
+            own: native,
+            room: 0.0,
+            asked: None,
+        },
+    };
+    let mut ask = None;
+    if side.room != room {
+        let width = side.own + room;
+        side.room = room;
+        side.asked = Some((width, now));
+        ask = Some(width);
+    }
+    if let Some((width, since)) = side.asked
+        && ((native - width).abs() <= 1.0 || now - since > SIDE_WAIT)
+    {
+        side.asked = None;
+    }
+    if side.asked.is_none() {
+        // the size the user gave it by its edge, or what the system gave:
+        // the room keeps its width, the window takes the rest
+        side.own = (native - side.room).max(min.min(native));
+        if side.room <= 0.0 {
+            return (None, ask);
+        }
+    }
+    (Some(side), ask)
+}
+
+/// The room the window `id` has at its right in its window outside
+/// (`Floater::side_outside`), during its own pass there. None in the
+/// viewer's window, where a panel sits beside the window itself, and
+/// until the system has made the room.
+pub(crate) fn side_room_outside(ctx: &egui::Context, id: &str) -> Option<egui::Rect> {
+    let window_id = egui::Id::unique(id);
+    floater_outside(ctx, window_id)
+        .then(|| ctx.data(|d| d.get_temp::<egui::Rect>(window_id.with(SIDE_RECT))))
+        .flatten()
 }
 
 /// The rows under a window's title: its states, with the text action at
