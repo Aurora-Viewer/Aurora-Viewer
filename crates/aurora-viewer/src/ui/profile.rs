@@ -1554,7 +1554,7 @@ fn second_life_tab(
                     .id_salt(("groups", id))
                     .max_height(groups_h - 8.0)
                     .auto_shrink([false, true])
-                    .show(ui, |ui| groups_list(ui, p, world, profile, own, actions));
+                    .show(ui, |ui| groups_list(ui, p, world, profile, own));
             });
         });
         ui.add_space(4.0);
@@ -1580,16 +1580,8 @@ fn second_life_tab(
     w.bottom_h = bottom.response.rect.height();
 }
 
-/// group_list: names as links (double-click: chat of one of our groups,
-/// there is no group profile in Aurora yet).
-fn groups_list(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    world: &World,
-    profile: Option<&AvatarProfile>,
-    own: bool,
-    actions: &mut Vec<ProfileAction>,
-) {
+/// The classic profile group list opens group info on a double-click.
+fn groups_list(ui: &mut egui::Ui, p: &Palette, world: &World, profile: Option<&AvatarProfile>, own: bool) {
     let Some(pr) = profile else {
         loading(ui, p);
         return;
@@ -1607,13 +1599,14 @@ fn groups_list(
     for g in groups {
         let member = world.groups.is_member(&g.id);
         let r = ui.add(egui::Label::new(RichText::new(&g.name).size(12.5).color(p.indigo_light)).sense(egui::Sense::click()));
-        let tip = if member {
-            aurora_i18n::tr!("ui-profile-double-click-group-chat")
+        let r = r.on_hover_text(aurora_i18n::tr!("common-view-info"));
+        if r.double_clicked() {
+            super::group_profile::request_open(ui.ctx(), g.id);
+        }
+        if member {
+            super::menu::context_menu(&r, p, |ui| super::context::group_menu(ui, p, world, g.id));
         } else {
-            aurora_i18n::tr!("ui-profile-group-profile-coming-soon")
-        };
-        if r.on_hover_text(tip).double_clicked() && member {
-            actions.push(ProfileAction::GroupChat(g.id));
+            super::context::group_link_menu(&r, p, world, g.id, Some(&g.name));
         }
     }
 }
