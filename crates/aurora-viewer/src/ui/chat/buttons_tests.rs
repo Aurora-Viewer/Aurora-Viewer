@@ -26,13 +26,22 @@ fn chat_header_username_follows_preferences_and_saved_names_stay_frozen() {
     names.options.legacy_format = false;
     names.options.use_display_names = true;
     names.options.show_usernames = true;
-    names.on_display_names(&[aurora_net::AvatarNameData {
-        id: JANE, username: "janedoe".into(), display_name: "Jane".into(),
-        ..Default::default()
-    }], &[], None);
+    names.on_display_names(
+        &[aurora_net::AvatarNameData {
+            id: JANE,
+            username: "janedoe".into(),
+            display_name: "Jane".into(),
+            ..Default::default()
+        }],
+        &[],
+        None,
+    );
     let mut message = line("Jane", JANE, ChatKind::Im, "/me waves");
     assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane (janedoe)");
-    assert_eq!(super::line_body(&message, &super::sender_name(&h.world, "", &message)).0, "Jane waves");
+    assert_eq!(
+        super::line_body(&message, &super::sender_name(&h.world, "", &message)).0,
+        "Jane waves"
+    );
     message.origin = Origin::Log;
     assert_eq!(super::chat_header_name(&h.world, &message, "Jane"), "Jane");
     message.origin = Origin::Live;
