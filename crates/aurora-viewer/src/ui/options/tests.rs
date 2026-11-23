@@ -2066,6 +2066,7 @@ fn the_confirmations_page_lists_every_question_and_warning() {
         tr!("ui-options-fly-override-caution"),
         tr!("ui-options-driver-warning"),
         tr!("ui-options-skipped-update"),
+        tr!("ui-options-warn-live-preview"),
         "32.0.15.6094",
     ] {
         assert!(shows(key), "{key} on Confirmations");

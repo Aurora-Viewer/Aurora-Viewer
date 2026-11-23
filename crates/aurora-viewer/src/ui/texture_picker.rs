@@ -132,6 +132,16 @@ pub struct TexturePicker {
     /// The objects the choice goes on are the agent's and not for sale: a
     /// no-transfer item may be confirmed only then (setCanApply).
     pub(crate) owned_target: bool,
+    /// The caller warns when a click cannot preview the item chosen (the
+    /// build picker, its `warn_live_preview` setting).
+    pub(crate) warn_live_preview: bool,
+    /// That warning, from this input time on: once a double click could no
+    /// longer follow the click (a double click confirms instead).
+    live_preview_warning: Option<f64>,
+    live_preview_dont_show: bool,
+    /// The warning's "Do not show again" was ticked: the caller turns its
+    /// setting off.
+    pub(crate) stop_warning_live_preview: bool,
     uuid_text: String,
     uuid_from_user: bool,
     /// Selection, inventory permissions and local membership used by the UUID field.
@@ -287,6 +297,9 @@ impl TexturePicker {
         self.required_permissions = 0;
         self.drop_permissions = 0;
         self.owned_target = true;
+        self.warn_live_preview = false;
+        self.live_preview_warning = None;
+        self.live_preview_dont_show = false;
         self.uuid_text = current.to_string();
         self.uuid_from_user = false;
         self.uuid_lookup = None;
@@ -969,8 +982,16 @@ impl TexturePicker {
                                 self.uuid_from_user = false;
                                 self.uuid_lookup = None;
                                 self.uuid_error = false;
-                                self.preview =
-                                    (local || Self::previewable_with(owned_target, &world.inventory, world.agent_id, id)).then_some(asset);
+                                let previewable = local || Self::previewable_with(owned_target, &world.inventory, world.agent_id, id);
+                                self.preview = previewable.then_some(asset);
+                                // FSPanelFace::onTextureSelectionChanged /
+                                // onPbrSelectionChanged: LivePreviewUnavailable(PBR)
+                                // when TextureLivePreview is on. The Legacy
+                                // Viewer also shows it for an item it then
+                                // previews (setCanApply(true, true) follows):
+                                // here only when the click applies nothing.
+                                self.live_preview_warning = (!previewable && self.warn_live_preview)
+                                    .then(|| ui.input(|i| i.time) + ui.ctx().options(|o| o.input_options.max_double_click_delay));
                             }
                         }
                         if !folder
@@ -1162,8 +1183,47 @@ impl TexturePicker {
         }
         if !self.open {
             self.stop_pipette(ctx);
+            self.live_preview_warning = None;
         }
+        self.live_preview_alert(ctx, p);
         chosen
+    }
+
+    /// LivePreviewUnavailable / LivePreviewUnavailablePBR (notifications.xml,
+    /// "okignore"): the chosen item cannot be previewed, OK applies it.
+    fn live_preview_alert(&mut self, ctx: &egui::Context, p: &Palette) {
+        let Some(at) = self.live_preview_warning else {
+            return;
+        };
+        let now = ctx.input(|i| i.time);
+        if now < at {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(at - now));
+            return;
+        }
+        let mut done = false;
+        let modal = widgets::Modal::new(egui::Id::unique("texture_picker_live_preview")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            let text = if self.materials {
+                aurora_i18n::tr!("ui-texture-picker-live-preview-material")
+            } else {
+                aurora_i18n::tr!("ui-texture-picker-live-preview-texture")
+            };
+            ui.add(egui::Label::new(RichText::new(text).size(13.0).color(p.ink)).wrap());
+            ui.add_space(8.0);
+            widgets::checkbox(
+                ui,
+                p,
+                &mut self.live_preview_dont_show,
+                aurora_i18n::tr!("ui-context-do-not-show-again"),
+            );
+            ui.add_space(8.0);
+            let size = Vec2::new(0.0, 26.0);
+            done = widgets::action_button(ui, p, "check", aurora_i18n::tr!("common-ok"), widgets::ActionKind::Primary, size).clicked();
+        });
+        if done || modal.should_close() {
+            self.live_preview_warning = None;
+            self.stop_warning_live_preview |= std::mem::take(&mut self.live_preview_dont_show);
+        }
     }
 }
 
@@ -1912,6 +1972,79 @@ pub(crate) mod tests {
         });
         assert_eq!(changes, [asset]);
         assert!(!picker.open);
+    }
+
+    #[test]
+    fn a_click_that_applies_nothing_warns_once_a_double_click_is_out_of_reach() {
+        // FSPanelFace::onTextureSelectionChanged: LivePreviewUnavailable,
+        // "okignore"; only for a build picker (the caller's setting).
+        let mut ui = PickerUi::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let root = Uuid::from_u128(1);
+        world.inventory.root = root;
+        let items = [
+            (2u128, "No-copy texture", actions::MODIFY | actions::TRANSFER),
+            (3, "Full texture", actions::FULL),
+        ];
+        for (n, name, owner_mask) in items {
+            let id = Uuid::from_u128(n);
+            world.inventory.items.insert(
+                id,
+                aurora_net::inventory::InvItem {
+                    id,
+                    parent: root,
+                    asset_id: Uuid::from_u128(n + 100),
+                    name: name.into(),
+                    inv_type: INV_TEXTURE,
+                    owner: world.agent_id,
+                    owner_mask,
+                    ..Default::default()
+                },
+            );
+        }
+        world.inventory.owner = world.agent_id;
+        world.inventory.folders.insert(
+            root,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: root,
+                    ..Default::default()
+                },
+                state: crate::world::inventory::FetchState::Fetched,
+                children: Vec::new(),
+                items: vec![Uuid::from_u128(2), Uuid::from_u128(3)],
+                library: false,
+            },
+        );
+        let warning = aurora_i18n::tr!("ui-texture-picker-live-preview-texture");
+        let mut picker = TexturePicker::default();
+        let draw = |picker: &mut TexturePicker, world: &mut World, ctx: &egui::Context, p: &Palette| {
+            picker.show(ctx, p, world, &HashMap::new());
+        };
+        for warn in [false, true] {
+            picker.open("Texture", Uuid::nil());
+            picker.warn_live_preview = warn;
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+            ui.click("Full texture", |ctx, p| draw(&mut picker, &mut world, ctx, p));
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+            assert!(!ui.labels.contains_key(warning), "a click that applies warns of nothing");
+            ui.click("No-copy texture", |ctx, p| draw(&mut picker, &mut world, ctx, p));
+            assert!(picker.take_preview().is_none());
+            assert!(!ui.labels.contains_key(warning), "a double click could still confirm");
+            for _ in 0..6 {
+                ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+            }
+            assert_eq!(ui.labels.contains_key(warning), warn, "only a picker that asks for it warns");
+        }
+        ui.click(aurora_i18n::tr!("ui-context-do-not-show-again"), |ctx, p| {
+            draw(&mut picker, &mut world, ctx, p)
+        });
+        assert!(!picker.stop_warning_live_preview, "the box is kept for the answer");
+        ui.click(aurora_i18n::tr!("common-ok"), |ctx, p| draw(&mut picker, &mut world, ctx, p));
+        ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+        assert!(!ui.labels.contains_key(warning));
+        assert!(picker.stop_warning_live_preview, "the caller turns its setting off");
+        assert!(picker.open, "the warning leaves the picker open, OK still applies the item");
     }
 
     fn frame(
