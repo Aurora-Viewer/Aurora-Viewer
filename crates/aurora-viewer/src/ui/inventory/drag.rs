@@ -38,9 +38,38 @@ impl Cargo {
     }
 }
 
+/// DRAG_N_DROP_DISTANCE_THRESHOLD (indra/llui/llui.h): how far, in points,
+/// the pointer travels from where it was pressed before a drag starts.
+const DRAG_THRESHOLD: f32 = 3.0;
+
+/// Port of LLFolderView::isOverDragThreshold (indra/llui/llfolderview.cpp):
+/// strictly farther than the threshold from the press point.
+pub(super) fn over_threshold(press: egui::Pos2, pointer: egui::Pos2) -> bool {
+    press.distance_sq(pointer) > DRAG_THRESHOLD * DRAG_THRESHOLD
+}
+
+/// Whether a drag from `r` starts this frame: the left button was pressed on
+/// it and the pointer is now past the threshold from the press point
+/// (LLFolderViewItem::handleMouseDown keeps the press, handleHover starts
+/// the drag). egui's own `drag_started` also fires after the button is held
+/// 0.8 s without moving, or as soon as the pointer slips onto the next row,
+/// so a long or sloppy click moved a folder into its neighbour (#4057).
+/// Every inventory drag source goes through it.
+pub(super) fn begins(ui: &egui::Ui, r: &egui::Response) -> bool {
+    r.is_pointer_button_down_on()
+        && !egui::DragAndDrop::has_any_payload(ui.ctx())
+        && ui.input(|i| {
+            i.pointer.primary_down()
+                && i.pointer
+                    .press_origin()
+                    .zip(i.pointer.latest_pos())
+                    .is_some_and(|(press, pointer)| over_threshold(press, pointer))
+        })
+}
+
 pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, st: &mut InventoryUi) {
     record_row(ui.ctx(), st.ui_id, id, r.rect);
-    if !r.drag_started() {
+    if !begins(ui, r) {
         return;
     }
     // Pressing a selected row must keep a Ctrl/Shift selection until the drag
@@ -54,11 +83,11 @@ pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, 
     super::clipboard::request_focus(ui, st);
     let ids = st.selected_ids(id);
     if ids.len() > 1 {
-        r.dnd_set_drag_payload(SelectionDrag(ids));
+        egui::DragAndDrop::set_payload(ui.ctx(), SelectionDrag(ids));
     } else if folder {
-        r.dnd_set_drag_payload(FolderDrag(id));
+        egui::DragAndDrop::set_payload(ui.ctx(), FolderDrag(id));
     } else {
-        r.dnd_set_drag_payload(InvDrag(id));
+        egui::DragAndDrop::set_payload(ui.ctx(), InvDrag(id));
     }
 }
 
@@ -243,6 +272,10 @@ pub(super) fn target(
                     actions.push(InvAction::Drop(change));
                 }
                 Ok(_) => {}
+                // A folder let go on its own row is a click that slipped past
+                // the threshold: refused without a word, as the Legacy Viewer
+                // only shows TooltipDragOntoSelf while hovering.
+                Err(_) if cargo.ids().contains(&to) => {}
                 Err(reason) => st.message = reason,
             }
         }

@@ -347,7 +347,7 @@ pub(super) fn editor(
             }
             // handleHover begins a drag past the threshold. Only an object
             // has somewhere to go here: the world (dropObject).
-            if response.drag_started() && attachment.item.asset_type == 6 {
+            if attachment.item.asset_type == 6 && super::drag::begins(ui, &response) {
                 result.drag = Some(marker);
             }
             response
