@@ -374,7 +374,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
     // Only the pass just before counts: this runs only while no web page or
     // media face has the keyboard, and an older mark would take an Escape.
     let typing_id = egui::Id::unique("build_shortcuts_typing");
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let typing_before = ctx.data(|d| d.get_temp::<u64>(typing_id)).is_some_and(|typed| typed + 1 == pass);
     // Only a text entry: a focused button or list row leaves Escape to the
     // shortcuts, so Organize mode still closes on the first press.
@@ -530,11 +530,14 @@ pub fn show(
     {
         tool.ui.layout.open = true;
         tool.ui.layout.organizing = true;
-        if ctx.cumulative_frame_nr() >= 700 {
+        if ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 700 {
             tool.ui.layout.drag = Some(item);
         }
     }
-    if env.demo && ctx.cumulative_frame_nr() >= 700 && ctx.data(|data| data.get_temp::<bool>(demo_notice)) == Some(false) {
+    if env.demo
+        && ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 700
+        && ctx.data(|data| data.get_temp::<bool>(demo_notice)) == Some(false)
+    {
         ctx.data_mut(|data| data.insert_temp(demo_notice, true));
         tool.status = aurora_i18n::tr!("build-link-pending").into();
     }
@@ -637,12 +640,28 @@ pub fn show(
             .map_or(width, |size| size.x);
         floater = floater.auto_height();
     }
+    let uuid_feedback = egui::Id::unique(INSPECTOR_ID).with("copy_uuid");
+    // Outside the viewer's window, the settings panel has no place beside
+    // the build window: its window there keeps the room for it, and the
+    // panel is drawn in the window's own pass, with the control an
+    // organization carries, which follows that window's pointer.
+    let outside = widgets::floater_outside(ctx, egui::Id::unique(INSPECTOR_ID));
+    if layout::settings_shown(ctx, tool) {
+        floater.side_outside = layout::SETTINGS_ROOM;
+    }
     floater.show(ctx, p, &mut open, |ui| {
         common::typography(ui);
+        // (in the window's own pass: outside the viewer's, it is another window)
+        widgets::copied_feedback(ui.ctx(), p, uuid_feedback, window_rect(ui.ctx()));
         if s.legacy_window {
             legacy_toggle_sections = legacy::body(ui, p, tool, world, s, mods, env);
         } else {
             compact::body(ui, p, tool, world, s, mods, env);
+        }
+        if outside {
+            let room = widgets::side_room_outside(ui.ctx(), INSPECTOR_ID);
+            layout::settings(ui.ctx(), p, tool, world, s, mods, layout::Beside::Outside(room));
+            layout::finish(ui.ctx(), p, tool, s);
         }
     });
     if restore_text {
@@ -674,7 +693,6 @@ pub fn show(
             Err(text) => world.system_notice(text, crate::world::notice_topics::Topic::Items),
         }
     }
-    let uuid_feedback = egui::Id::unique(INSPECTOR_ID).with("copy_uuid");
     if let Some(anchor) = copy_uuid
         && !tool.selection.is_empty()
     {
@@ -684,7 +702,6 @@ pub fn show(
             widgets::show_copied(ctx, uuid_feedback, anchor, copied_keys_label(count));
         }
     }
-    widgets::copied_feedback(ctx, p, uuid_feedback, window_rect(ctx));
     if !tool.ui.layout.open {
         tool.ui.layout.organizing = false;
         tool.ui.layout.drag = None;
@@ -695,8 +712,10 @@ pub fn show(
     }
     detach::finish(ctx, p, tool, s);
     detach::windows(ctx, p, tool, world, s, mods, env);
-    layout::settings(ctx, p, tool, world, s, mods);
-    layout::finish(ctx, p, tool, s);
+    if !outside {
+        layout::settings(ctx, p, tool, world, s, mods, layout::Beside::Window);
+        layout::finish(ctx, p, tool, s);
+    }
     notecards::show(ctx, p, tool, world, s);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if legacy_toggle_sections {

@@ -111,12 +111,18 @@ impl UiImageCache {
         if !frame.is_multiple_of(LOOK_EVERY) {
             return false;
         }
+        self.drawn_in(shapes, now);
+        true
+    }
+
+    /// What `shapes` draw is used: those of another pass of the same frame
+    /// (a window outside the viewer's), once `look` said to look.
+    pub fn drawn_in(&mut self, shapes: &[ClippedShape], now: Instant) {
         if !self.held.is_empty() {
             for clipped in shapes {
                 self.drawn(&clipped.shape, now);
             }
         }
-        true
     }
 
     fn drawn(&mut self, shape: &Shape, now: Instant) {
@@ -308,5 +314,12 @@ mod tests {
             assert_eq!(cache.held[&id(k)].used, later, "image {k}");
         }
         assert_eq!(cache.held[&id(4)].used, start, "not drawn");
+        // drawn by another pass of the frame: a window outside the viewer's
+        let mut outside = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.image(egui::load::SizedTexture::new(hidden.id(), [16.0, 16.0]));
+        });
+        outside.textures_delta.clear();
+        cache.drawn_in(&outside.shapes, later);
+        assert_eq!(cache.held[&id(4)].used, later);
     }
 }

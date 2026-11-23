@@ -36,7 +36,7 @@ pub enum Paste {
     /// Not an outfit folder: the inventory's own rules apply.
     Inventory,
     Edit(Mutation),
-    /// The originals to wear, in clipboard order.
+    /// The inventory entries to wear, in clipboard order.
     Wear(Vec<Uuid>),
 }
 
@@ -108,14 +108,15 @@ pub fn plan(inv: &Inventory, ids: &[Uuid], to: Uuid, cut: bool, protected: &Hash
     match target {
         Target::Current => {
             let mut wear = Vec::new();
+            let mut seen = HashSet::new();
             for id in ids {
                 let original = actions::original(inv, id).ok_or(aurora_i18n::tr!("common-the-link-is-broken"))?;
                 if !wearable(inv, original, false) {
                     return Err(refused());
                 }
                 // Already worn: skipped, where the Legacy Viewer warns.
-                if !worn_in(inv, original) && !wear.contains(&original) {
-                    wear.push(original);
+                if !worn_in(inv, original) && seen.insert(original) {
+                    wear.push(super::appearance::wear_entry(inv, id, original));
                 }
             }
             if wear.is_empty() {
