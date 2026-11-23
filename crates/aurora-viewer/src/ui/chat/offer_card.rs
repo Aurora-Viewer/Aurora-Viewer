@@ -16,22 +16,38 @@ use crate::ui::fonts::chat_size;
 use crate::ui::widgets;
 use crate::world::ChatLine;
 use crate::world::inventory_offers::{Answer, Offer, item_label, kind_label};
-use crate::world::names::NameScope;
+use crate::world::names::{NameScope, TextScope};
 use egui::{RichText, Vec2};
 
 /// The icon of giving, the same as the notification centre's offers.
 const ICON: &str = "gift-filled";
 const BUTTON: Vec2 = Vec2::new(88.0, 24.0);
-/// The names an offer shows under `@shownames`, in the conversation that
-/// names its giver too: the Legacy Viewer hides a giver who is around
-/// unless excepted or already talked to (inventory_offer_handler,
-/// llviewermessage.cpp); here whenever the world hides them, which is
-/// stricter.
-const NAMES: NameScope = NameScope::World;
+/// The text of the card under RLVa's `@shownames` and `@showloc`: as
+/// written. UserGiveItem's text goes through no RlvUtil::filterNames nor
+/// filterLocation; the one thing inventory_offer_handler
+/// (indra/newview/llimprocessing.cpp) hides in it is the giver, by the link
+/// of their name, decided when the offer arrives (`giver`).
+fn wording() -> TextScope {
+    TextScope::verbatim(NameScope::Roster)
+}
+
+/// The giver as the card names them: their name, or their stand-in when the
+/// offer hid them as it arrived (`Offer::named`: around us, with no
+/// conversation open, under `@shownames`). Later restrictions change
+/// neither: the Legacy Viewer's notification keeps the link it was made
+/// with, the resident's own or the `rlvanonym` one.
+fn giver(env: &LineEnv, line: &ChatLine, v: &Offer) -> String {
+    if v.named {
+        env.world
+            .person_name_in(NameScope::Roster, &v.from)
+            .unwrap_or_else(|| line.from.clone())
+    } else {
+        env.world.rlva_anonymous(v.from).display_name.clone()
+    }
+}
 
 fn title(env: &LineEnv, line: &ChatLine, v: &Offer) -> String {
-    let name = env.world.person_name_in(NAMES, &v.from).unwrap_or_else(|| line.from.clone());
-    aurora_i18n::tr!("world-mod-gives-you", from = name, what = item_label(&v.item))
+    aurora_i18n::tr!("world-mod-gives-you", from = giver(env, line, v), what = item_label(&v.item))
 }
 
 /// None while it waits for an answer, else what to say instead of the
@@ -62,7 +78,7 @@ fn inventory_link(ui: &mut egui::Ui, env: &mut LineEnv, offer: &Offer) {
             env.p,
             env.emoji,
             env.world,
-            NAMES,
+            wording(),
             env.want_names,
             &link,
             chat_size(ui.ctx(), 12.0),
@@ -122,7 +138,7 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, o
             p,
             env.emoji,
             world,
-            NAMES,
+            wording(),
             env.want_names,
             &text,
             chat_size(ui.ctx(), 12.5),
@@ -157,8 +173,14 @@ mod tests {
 
     /// A world with Jane's offer of a notecard, and the line of its card.
     fn offered() -> (World, ChatLine) {
+        offered_after(|_| {})
+    }
+
+    /// `offered`, in a world `prepare` set up before the offer arrived.
+    fn offered_after(prepare: impl FnOnce(&mut World)) -> (World, ChatLine) {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.agent_id = Uuid::from_u128(1);
+        prepare(&mut world);
         let mut bucket = vec![7u8];
         bucket.extend_from_slice(Uuid::from_u128(0x20).as_bytes());
         world.apply(aurora_net::NetEvent::InstantMessage(aurora_net::InstantMessage {
@@ -250,6 +272,36 @@ mod tests {
             self.frame(world, line, bubbles, vec![button(true)]);
             self.frame(world, line, bubbles, vec![button(false)]);
             crate::ui::context::take_requests(&self.frames.ctx)
+        }
+    }
+
+    /// inventory_offer_handler under `@shownames`: the card writes the
+    /// stand-in of a giver who stood around with no conversation open when
+    /// the offer arrived, and the name of any other, in both presentations.
+    #[test]
+    fn shownames_hides_on_the_card_the_giver_the_offer_hid() {
+        for (near, talking, named) in [(false, false, true), (true, false, false), (true, true, true)] {
+            let (mut world, line) = offered_after(|w| {
+                w.rlva.configure(true);
+                w.rlva_console_input("@shownames=n");
+                assert!(!w.rlva_can_name(JANE));
+                if near {
+                    w.coarse.entry(1).or_default().push((JANE, glam::Vec3::ONE));
+                }
+                if talking {
+                    w.social.session_mut(JANE);
+                }
+            });
+            world.refresh_rlva_privacy();
+            for bubbles in [true, false] {
+                let texts = Card::new().frame(&world, &line, bubbles, Vec::new());
+                assert_eq!(
+                    texts.iter().any(|t| t.source.contains("Jane")),
+                    named,
+                    "{near}/{talking}/{bubbles}: {:?}",
+                    texts.iter().map(|t| &t.source).collect::<Vec<_>>()
+                );
+            }
         }
     }
 

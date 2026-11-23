@@ -10,13 +10,7 @@ pub(super) fn combine(rig: &Rig, pose: &LocalPose, pelvis: Vec3, scale: &[Vec3],
         if !weight.is_finite() || weight <= 0.0 {
             continue;
         }
-        let Some(goal) = (match &goal.follow {
-            Some(follow) => follow.resolve(goal, rig, pose, pelvis, scale),
-            None => Some(goal.clone()),
-        }) else {
-            continue;
-        };
-        resolved.push((goal, weight));
+        resolved.push((goal.clone(), weight));
     }
     let first = &resolved.first()?.0;
     let bone = first.bone;
@@ -28,7 +22,6 @@ pub(super) fn combine(rig: &Rig, pose: &LocalPose, pelvis: Vec3, scale: &[Vec3],
     let (mut position, mut contact, mut rotation, mut pole) = (Vec3::ZERO, Vec3::ZERO, glam::Vec4::ZERO, Vec3::ZERO);
     let (mut total, mut pole_weight) = (0.0, 0.0);
     let mut result = first.clone();
-    result.follow = None;
     for (goal, weight) in &resolved {
         let r = goal.rotation.unwrap_or(q);
         let r = if r.dot(reference) < 0.0 { -r } else { r };

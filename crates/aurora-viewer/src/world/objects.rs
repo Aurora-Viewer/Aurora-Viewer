@@ -27,6 +27,10 @@ pub const CARRIED_LOCAL_ID: u32 = u32::MAX;
 /// Private namespace for render-only Blender attachments, never a grid handle.
 pub const PREVIEW_REGION: RegionHandle = u64::MAX;
 
+/// Every texture entry of a prim in a `blinn_phong_faces` mask.
+#[cfg(test)]
+const ALL_TES: u64 = (1u64 << aurora_prim::te::MAX_TES) - 1;
+
 mod local_appearance;
 pub use local_appearance::{LocalAppearance, LocalTextureSlot};
 mod local_duplicates;
@@ -43,8 +47,10 @@ pub struct RenderState {
     pub local_fit: Option<Vec3>,
     /// None applies to all faces, Some(face) overrides that face only.
     pub local_appearance: HashMap<Option<u8>, LocalAppearance>,
-    /// Temporary material-inspector display mode; no simulator state changes.
-    pub blinn_phong_preview: bool,
+    /// Temporary material-inspector display mode, one bit per face (no
+    /// simulator state changes). The Blinn-Phong tab hides only the faces it
+    /// edits, so the PBR faces of the same prim keep rendering (#4467).
+    pub blinn_phong_faces: u64,
     /// Geometry cache key currently bound (and its LOD).
     pub geom: Option<crate::scene::GeomKey>,
     /// Geometry requested but not ready yet.
@@ -196,8 +202,15 @@ impl Object {
         }
         value
     }
+    /// Whether the material inspector shows this face in Blinn-Phong. The
+    /// bits follow the faces the tab edits, so a Blinn-Phong face of a mixed
+    /// prim no longer hides the prim's PBR faces (#4467).
+    pub fn is_blinn_phong_preview(&self, face: usize) -> bool {
+        face < u64::BITS as usize && self.render.blinn_phong_faces & (1u64 << face) != 0
+    }
+
     pub fn visual_material(&self, face: usize) -> Option<Uuid> {
-        if self.render.blinn_phong_preview {
+        if self.is_blinn_phong_preview(face) {
             return None;
         }
         match self.local_appearance(face).and_then(LocalAppearance::surface) {
@@ -357,7 +370,7 @@ impl Object {
             self.render.local_scale = None;
             self.render.local_fit = None;
             self.render.local_appearance.clear();
-            self.render.blinn_phong_preview = false;
+            self.render.blinn_phong_faces = 0;
             self.foot_plane = None;
         }
         self.full_update_serial = self.full_update_serial.wrapping_add(1);
@@ -641,20 +654,32 @@ impl Object {
         (self.reported_pose(motion_time).1 * self.rotation.inverse()).normalize()
     }
 
-    /// A report was applied at `now`: stamp it with its region's clock and,
-    /// when it left the object where `drawn` says it was not, let the gap
-    /// fade. True when a correction started. A damped seat needs none: its
-    /// damping takes it there. An object the report sets moving jumps, as
-    /// LLViewerObject::updateDrawable damps only a volume whose velocity is
-    /// exactly zero: a looping keyframed motion starts again from its first
-    /// frame instead of sliding back to it (#2328).
-    fn stamp_motion(&mut self, motion_time: f64, now: Instant, drawn: Option<(Vec3, Quat)>) -> bool {
+    /// LLViewerObject::updateDrawable checks velocity only when adding a
+    /// drawable to ON_MOVE_LIST. Later reports change its target without
+    /// cancelling an active glide, including when a scripted move becomes
+    /// a physical fall. A moving object not already on that list still snaps
+    /// (#2328). Seats have their own forced per-frame damping.
+    fn stamp_motion(&mut self, motion_time: f64, visual_time: f64, now: Instant, drawn: Option<(Vec3, Quat)>, continuing: bool) -> bool {
         self.motion_time = motion_time;
-        let moving = !self.is_avatar() && self.velocity != Vec3::ZERO;
-        let drawn = if self.seat_damping() || moving { None } else { drawn };
-        self.correction =
-            drawn.and_then(|drawn| Correction::toward(drawn, self.reported_pose(motion_time), (self.position, self.rotation), now));
+        let target = self.reported_pose(visual_time);
+        let fresh = !continuing || self.correction.is_none_or(|c| c.drawable.is_some() && c.fresh);
+        self.correction = if self.seat_damping() {
+            None
+        } else if self.is_avatar() {
+            drawn.and_then(|drawn| Correction::toward(drawn, target, (self.position, self.rotation), now))
+        } else if self.pcode == aurora_prim::params::LL_PCODE_VOLUME && (self.velocity == Vec3::ZERO || continuing) {
+            drawn
+                .filter(|drawn| continuing || *drawn != target || self.scale_correction.is_some())
+                .map(|drawn| Correction::drawable(drawn, (self.position, self.rotation), now, fresh))
+        } else {
+            None
+        };
         self.correction.is_some()
+    }
+
+    fn continuing_damping(&self, now: Instant) -> bool {
+        self.correction
+            .is_some_and(|c| c.active(now) && c.leads_to(self.position, self.rotation))
     }
 }
 
@@ -785,19 +810,34 @@ struct HeldPose {
 }
 
 impl ObjectStore {
+    /// The whole prim in Blinn-Phong (the tests' shorthand; the Texture tab
+    /// uses `set_blinn_phong_faces` with the faces it edits).
+    #[cfg(test)]
     pub fn set_blinn_phong_preview(&mut self, idx: usize, preview: bool) {
+        self.set_blinn_phong_faces(idx, ALL_TES, preview);
+    }
+
+    /// Show or hide the given faces (one bit per face) in Blinn-Phong for
+    /// the material inspector. The other faces keep their own choice: the
+    /// tab acts on the selected faces alone (#4467).
+    pub fn set_blinn_phong_faces(&mut self, idx: usize, faces: u64, preview: bool) {
         let Some(o) = self.get(idx) else { return };
-        if o.render.blinn_phong_preview == preview {
+        let next = if preview {
+            o.render.blinn_phong_faces | faces
+        } else {
+            o.render.blinn_phong_faces & !faces
+        };
+        if next == o.render.blinn_phong_faces {
             return;
         }
         let id = o.full_id;
-        if preview {
-            self.blinn_phong_previews.insert(id);
-        } else {
+        if next == 0 {
             self.blinn_phong_previews.remove(&id);
+        } else {
+            self.blinn_phong_previews.insert(id);
         }
         if let Some(o) = self.get_mut(idx) {
-            o.render.blinn_phong_preview = preview;
+            o.render.blinn_phong_faces = next;
             o.material_dirty = true;
         }
     }
@@ -809,7 +849,7 @@ impl ObjectStore {
             if let Some(idx) = self.index_of_uuid(&id)
                 && let Some(o) = self.get_mut(idx)
             {
-                o.render.blinn_phong_preview = false;
+                o.render.blinn_phong_faces = 0;
                 o.material_dirty = true;
             }
         }
@@ -894,6 +934,12 @@ impl ObjectStore {
         };
         for key in held.poses.keys() {
             if let Some(&idx) = self.by_key.get(key) {
+                if let Some(o) = self.get_mut_untracked(idx)
+                    && o.correction.is_some_and(|c| c.drawable.is_some())
+                {
+                    o.correction = None;
+                    o.scale_correction = None;
+                }
                 self.touch(idx);
             }
         }
@@ -1006,6 +1052,86 @@ impl ObjectStore {
         self.correcting = listed;
     }
 
+    /// One LLDrawable::updateXform step for each ordinary volume on the move
+    /// list. Position, rotation and scale share the stopping test. Network
+    /// receipt instants remain exclusively the origin of extrapolation.
+    pub fn damp_drawables(&mut self, dt: f32, selected: impl Fn(&ObjKey) -> bool, view: impl Fn(usize) -> Option<motion::DampingView>) {
+        let k = motion::drawable_interpolant(dt);
+        for n in 0..self.correcting.len() {
+            let idx = self.correcting[n];
+            let Some(o) = self.get(idx) else { continue };
+            let Some(correction) = o.correction.filter(|c| c.drawable.is_some()) else {
+                continue;
+            };
+            let is_selected = selected(&o.key)
+                || self
+                    .parent_of(o)
+                    .and_then(|p| self.get(p))
+                    .is_some_and(|parent| selected(&parent.key));
+            let matches = correction.leads_to(o.position, o.rotation) && o.scale_correction.is_none_or(|c| c.matches(o.scale));
+            let target = o.reported_pose(self.motion_time(o.key.region));
+            let drawn = correction.drawable.expect("drawable correction");
+            let scale = o.scale_correction.map_or(o.scale, |c| c.drawn);
+            let visible = view(idx).unwrap_or(motion::DampingView {
+                distance_squared: 1.0,
+                visible: false,
+            });
+            let ((position, rotation, scale), active) = if !matches || (correction.fresh && is_selected) {
+                ((target.0, target.1, o.scale), false)
+            } else {
+                motion::drawable_step(
+                    (drawn.0, drawn.1, scale),
+                    (target.0, target.1, o.scale),
+                    k,
+                    visible,
+                    o.angular_velocity != Vec3::ZERO,
+                    o.parent_id != 0,
+                )
+            };
+            let Some(o) = self.get_mut_untracked(idx) else { continue };
+            if super::object_motion_trace::contains(idx) {
+                log::info!(
+                    "object motion trace: step slot={idx} dt={dt:.6} k={k:.6} fresh={} selected={is_selected} matches={matches} visible={} distance2={:.6} before_gap={:?} after_gap={:?} active={active}",
+                    correction.fresh,
+                    visible.visible,
+                    visible.distance_squared,
+                    (drawn.0 - target.0).to_array(),
+                    (position - target.0).to_array(),
+                );
+            }
+            if active {
+                if let Some(c) = &mut o.correction {
+                    c.drawable = Some((position, rotation));
+                    c.fresh = false;
+                }
+                if let Some(c) = &mut o.scale_correction {
+                    c.drawn = scale;
+                }
+            } else {
+                o.correction = None;
+                o.scale_correction = None;
+                o.render.needs_records = true;
+                self.touched.note(idx);
+            }
+        }
+    }
+
+    /// Fixtures that inspect a settled rendered transform must run a render
+    /// step; advancing a wall-clock sample alone no longer moves drawables.
+    #[cfg(test)]
+    pub fn settle_drawables(&mut self) {
+        self.damp_drawables(
+            1.0,
+            |_| false,
+            |_| {
+                Some(motion::DampingView {
+                    distance_squared: 4.0,
+                    visible: true,
+                })
+            },
+        );
+    }
+
     /// One frame of the damping of the roots avatars sit on (motion::damp),
     /// `dt` seconds after the previous one. LLVOAvatar::idleUpdate damps the
     /// root of each seated avatar's linkset every frame, moving or not,
@@ -1059,6 +1185,9 @@ impl ObjectStore {
             o.seat = seat;
             if seat.is_some_and(|s| s.damping) {
                 o.correction = None;
+                if let Some(scale) = &mut o.scale_correction {
+                    scale.leave_drawable(now);
+                }
             } else if let Some(c) = handover {
                 o.correction = Some(c);
                 if !self.correcting.contains(&idx) {
@@ -1091,30 +1220,33 @@ impl ObjectStore {
     /// Apply a terse update to the object in `idx`.
     #[cfg(test)]
     pub fn apply_terse(&mut self, idx: usize, t: &TerseUpdate) {
-        self.apply_terse_at(idx, t, None);
+        self.apply_terse_at(idx, t, None, Instant::now());
     }
 
-    /// Apply a terse update the network `received` at: its motion starts
-    /// from that moment, and the gap it opens is measured with where the
-    /// object was drawn for that same moment.
-    pub fn apply_terse_at(&mut self, idx: usize, t: &TerseUpdate, received: Option<Instant>) {
+    /// Apply a terse update at `now`. Extrapolation starts at `received`,
+    /// but visual damping starts when the report is applied, like
+    /// LLDrawable::updateXform (indra/newview/lldrawable.cpp): time spent
+    /// waiting in the event queue must not consume the visible transition.
+    pub fn apply_terse_at(&mut self, idx: usize, t: &TerseUpdate, received: Option<Instant>, now: Instant) {
         self.hold_before_report(idx);
-        let now = received.unwrap_or_else(Instant::now);
         let Some(key) = self.get(idx).map(|o| o.key) else {
             return;
         };
         let clock = self.report_clock(key.region, received);
+        let visual_clock = self.motion_time(key.region);
         let reported = Transform {
             position: Some(t.position),
             rotation: Some(t.rotation),
             scale: None,
         };
-        let sent = self.sent_edits.filter(key, reported, now);
+        let sent = self.sent_edits.filter(key, reported, received.unwrap_or(now));
         let snap_hud = self.snap_hud_root_report(idx, t.state);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        let drawn = (!snap_hud).then(|| o.predicted(now, clock));
+        let drawn = (!snap_hud).then(|| o.predicted(now, visual_clock));
+        let previous = (o.position, o.rotation);
+        let continuing = o.continuing_damping(now);
         if snap_hud {
             // A terse update can move a still-resizing body attachment onto the HUD.
             o.scale_correction = None;
@@ -1125,17 +1257,44 @@ impl ObjectStore {
         if let Some(sent) = sent {
             o.keep_sent(sent);
         }
-        if o.stamp_motion(clock, now, drawn) && !self.correcting.contains(&idx) {
+        let active = o.stamp_motion(clock, visual_clock, now, drawn, continuing);
+        if o.pcode == aurora_prim::params::LL_PCODE_VOLUME
+            && (previous != (o.position, o.rotation) || continuing)
+            && super::object_motion_trace::watch(idx)
+        {
+            log::info!(
+                "object motion trace: report slot={idx} kind=terse delta={:?} turn={:.6} velocity={:?} acceleration={:?} omega={:?} parent={} hud_snap={snap_hud} continuing={continuing} correction={active} raw_drawn_gap={:?}",
+                (o.position - previous.0).to_array(),
+                previous.1.angle_between(o.rotation),
+                o.velocity.to_array(),
+                o.acceleration.to_array(),
+                o.angular_velocity.to_array(),
+                o.parent_id != 0,
+                drawn.map(|p| (o.position - p.0).to_array()),
+            );
+        }
+        if !active && !o.is_avatar() && !o.seat_damping() {
+            o.scale_correction = None;
+        }
+        if active && !self.correcting.contains(&idx) {
             self.correcting.push(idx);
         }
     }
 
     /// Apply a full update to an object already known. `moved_frame`: its
     /// parent changed, so its coordinates are not those it was drawn in.
-    fn apply_full(&mut self, idx: usize, region: RegionHandle, u: ObjectUpdate, moved_frame: bool, received: Option<Instant>) {
+    fn apply_full(
+        &mut self,
+        idx: usize,
+        region: RegionHandle,
+        u: ObjectUpdate,
+        moved_frame: bool,
+        received: Option<Instant>,
+        now: Instant,
+    ) {
         self.hold_before_report(idx);
-        let now = received.unwrap_or_else(Instant::now);
         let clock = self.report_clock(region, received);
+        let visual_clock = self.motion_time(region);
         let key = ObjKey {
             region,
             local_id: u.local_id,
@@ -1149,13 +1308,15 @@ impl ObjectStore {
                 rotation: Some(u.rotation),
                 scale: Some(u.scale),
             };
-            self.sent_edits.filter(key, reported, now)
+            self.sent_edits.filter(key, reported, received.unwrap_or(now))
         };
         let snap_hud = self.snap_hud_root_report(idx, u.state);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        let mut drawn = (!moved_frame && !snap_hud).then(|| o.predicted(now, clock));
+        let mut drawn = (!moved_frame && !snap_hud).then(|| o.predicted(now, visual_clock));
+        let previous = (o.position, o.rotation, o.scale);
+        let continuing = o.continuing_damping(now);
         let drawn_scale = o.scale_correction.map_or(o.scale, |c| c.sample(o.scale, now));
         let angular_rotation = if o.full_id == u.full_id {
             o.retained_angular_rotation(clock, u.rotation, u.angular_velocity, u.update_flags)
@@ -1168,15 +1329,34 @@ impl ObjectStore {
         if let Some(sent) = sent {
             o.keep_sent(sent);
         }
-        // Sample centre and size at the same receipt instant, including a
+        // Sample centre and size at the same application instant, including a
         // new report arriving before the previous correction has settled.
-        let smooth_scale =
-            !o.is_avatar() && drawn.is_some_and(|pose| motion::within_snap_distance(pose.0 - o.position, drawn_scale - o.scale));
+        let smooth_scale = o.pcode == aurora_prim::params::LL_PCODE_VOLUME && drawn.is_some() && (o.velocity == Vec3::ZERO || continuing);
         if !o.is_avatar() && !smooth_scale {
             drawn = None;
         }
-        o.scale_correction = smooth_scale.then(|| ScaleCorrection::between(drawn_scale, o.scale, now)).flatten();
-        let pose_active = o.stamp_motion(clock, now, drawn);
+        o.scale_correction = if o.seat_damping() {
+            smooth_scale.then(|| ScaleCorrection::between(drawn_scale, o.scale, now)).flatten()
+        } else {
+            (smooth_scale && drawn_scale != o.scale).then(|| ScaleCorrection::drawable(drawn_scale, o.scale, now))
+        };
+        let pose_active = o.stamp_motion(clock, visual_clock, now, drawn, continuing);
+        if o.pcode == aurora_prim::params::LL_PCODE_VOLUME
+            && (previous != (o.position, o.rotation, o.scale) || continuing)
+            && super::object_motion_trace::watch(idx)
+        {
+            log::info!(
+                "object motion trace: report slot={idx} kind=full delta={:?} turn={:.6} size_delta={:?} velocity={:?} acceleration={:?} omega={:?} parent={} reparent={moved_frame} hud_snap={snap_hud} continuing={continuing} correction={pose_active} raw_drawn_gap={:?}",
+                (o.position - previous.0).to_array(),
+                previous.1.angle_between(o.rotation),
+                (o.scale - previous.2).to_array(),
+                o.velocity.to_array(),
+                o.acceleration.to_array(),
+                o.angular_velocity.to_array(),
+                o.parent_id != 0,
+                drawn.map(|p| (o.position - p.0).to_array()),
+            );
+        }
         if (pose_active || o.scale_correction.is_some()) && !self.correcting.contains(&idx) {
             self.correcting.push(idx);
         }
@@ -1468,11 +1648,11 @@ impl ObjectStore {
     /// Insert or update from a full update. Returns the slot index.
     #[cfg(test)]
     pub fn upsert(&mut self, region: RegionHandle, u: ObjectUpdate) -> usize {
-        self.upsert_at(region, u, None)
+        self.upsert_at(region, u, None, Instant::now())
     }
 
     /// `upsert` of a report the network `received` at (`apply_terse_at`).
-    pub fn upsert_at(&mut self, region: RegionHandle, u: ObjectUpdate, received: Option<Instant>) -> usize {
+    pub fn upsert_at(&mut self, region: RegionHandle, u: ObjectUpdate, received: Option<Instant>, now: Instant) -> usize {
         let key = ObjKey {
             region,
             local_id: u.local_id,
@@ -1485,7 +1665,7 @@ impl ObjectStore {
             if parent_changed {
                 self.unlink(idx);
             }
-            self.apply_full(idx, region, u, parent_changed, received);
+            self.apply_full(idx, region, u, parent_changed, received, now);
             if parent_changed {
                 self.link(idx);
             }
@@ -1520,7 +1700,7 @@ impl ObjectStore {
             }
             // (it came under another key: its place is not corrected from
             // where it was drawn in the other region's coordinates)
-            self.apply_full(old, region, u, true, received);
+            self.apply_full(old, region, u, true, received, now);
             if parent_changed {
                 self.link(old);
             }
@@ -1532,6 +1712,18 @@ impl ObjectStore {
             obj.motion_time = self.report_clock(region, received);
         }
         let idx = self.insert(obj);
+        if let Some(o) = self.get(idx)
+            && o.pcode == aurora_prim::params::LL_PCODE_VOLUME
+            && super::object_motion_trace::watch(idx)
+        {
+            log::info!(
+                "object motion trace: arrival slot={idx} parent={} velocity={:?} acceleration={:?} omega={:?}",
+                o.parent_id != 0,
+                o.velocity.to_array(),
+                o.acceleration.to_array(),
+                o.angular_velocity.to_array(),
+            );
+        }
         self.apply_local_duplicates(idx, true);
         idx
     }
@@ -1810,6 +2002,19 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    fn drawable_frame(store: &mut ObjectStore, dt: f32) {
+        store.damp_drawables(
+            dt,
+            |_| false,
+            |_| {
+                Some(motion::DampingView {
+                    distance_squared: 4.0,
+                    visible: true,
+                })
+            },
+        );
+    }
+
     #[test]
     fn local_assembly_fits_nonuniform_anchor_sizes_without_changing_the_server_shape() {
         let mut object = Object::from_update(1, update(5, PRIM, ""));
@@ -1835,17 +2040,18 @@ mod tests {
         let now = Instant::now();
         let mut objects = ObjectStore::default();
         let mut update = update(5, PRIM, "");
-        let index = objects.upsert_at(1, update.clone(), Some(now));
+        let index = objects.upsert_at(1, update.clone(), Some(now), now);
         let size = Vec3::new(10.0, 4.0, 2.0);
         objects.get_mut(index).expect("anchor").render.local_fit = Some(size);
         update.scale *= 2.0;
-        objects.upsert_at(1, update.clone(), Some(now));
+        objects.upsert_at(1, update.clone(), Some(now), now);
         let half = now + Duration::from_millis(60);
+        drawable_frame(&mut objects, 0.06);
         let object = objects.get(index).expect("anchor");
         assert!(object.visual_scale_at(half).abs_diff_eq(size * 0.15, 1e-5));
         assert_eq!(object.scale, Vec3::splat(2.0));
         update.full_id = Uuid::new_v4();
-        objects.upsert_at(1, update, Some(half));
+        objects.upsert_at(1, update, Some(half), half);
         assert!(objects.get(index).expect("new object").render.local_fit.is_none());
     }
 
@@ -2212,7 +2418,7 @@ mod tests {
         // a collision: thrown back and turned, then still; no jump on screen
         let mut hit = terse(5, Vec3::X * 9.0, Vec3::ZERO);
         (hit.is_avatar, hit.rotation) = (false, Quat::from_rotation_z(0.5));
-        s.apply_terse_at(car, &hit, Some(now));
+        s.apply_terse_at(car, &hit, Some(now), now);
         near(drawn(&s, car, now).0, Vec3::X * car_x);
         frames(&mut s, &mut now, 1, false);
         let (position, rotation) = drawn(&s, car, now);
@@ -2224,7 +2430,7 @@ mod tests {
         // selected in the build tools: drawn where it is
         let mut push = terse(5, Vec3::X * 9.0, Vec3::X * 10.0);
         push.is_avatar = false;
-        s.apply_terse_at(car, &push, Some(now));
+        s.apply_terse_at(car, &push, Some(now), now);
         frames(&mut s, &mut now, 30, true);
         near(drawn(&s, car, now).0, Vec3::X * 14.0);
         frames(&mut s, &mut now, 30, false);
@@ -2350,13 +2556,13 @@ mod tests {
                 let mut store = ObjectStore::default();
                 let start = Instant::now();
                 if linked {
-                    store.upsert_at(1, update(100, PRIM, ""), Some(start));
+                    store.upsert_at(1, update(100, PRIM, ""), Some(start), start);
                 }
                 let mut report = update(101, PRIM, "");
                 report.parent_id = if linked { 100 } else { 0 };
                 report.position = Vec3::Z;
                 report.scale = Vec3::new(0.2, 0.2, 2.0);
-                let idx = store.upsert_at(1, report.clone(), Some(start));
+                let idx = store.upsert_at(1, report.clone(), Some(start), start);
                 let mut generation = 0;
                 for frame in 1..=fps {
                     let at = start + Duration::from_secs_f64(frame as f64 / fps as f64);
@@ -2366,8 +2572,9 @@ mod tests {
                         let length = if generation % 2 == 0 { 2.0 } else { 0.6 };
                         report.scale.z = length;
                         report.position.z = length * 0.5;
-                        store.upsert_at(1, report.clone(), Some(at));
+                        store.upsert_at(1, report.clone(), Some(at), at);
                     }
+                    drawable_frame(&mut store, 1.0 / fps as f32);
                     store.expire_corrections(at);
                     let o = store.get(idx).expect("prim");
                     assert_eq!(o.scale, report.scale, "reported dimensions must remain authoritative");
@@ -2382,10 +2589,114 @@ mod tests {
                     let centre = store.predicted(o, later).0;
                     assert!((centre.z - o.visual_scale_at(later).z * 0.5).abs() < 1e-5);
                 }
+                drawable_frame(&mut store, 1.0);
                 store.expire_corrections(start + Duration::from_secs(2));
                 let o = store.get(idx).expect("settled prim");
                 assert!(!o.has_motion());
                 assert_eq!(o.visual_scale(), report.scale);
+            }
+        }
+    }
+
+    #[test]
+    fn queued_scripted_reports_keep_the_full_visual_transition() {
+        for fps in [30, 60, 144] {
+            for lag_ms in [0, 100, 650] {
+                for context in ["root", "child", "body_root", "hud_root", "hud_child"] {
+                    for full in [false, true] {
+                        let start = Instant::now();
+                        let mut store = ObjectStore::default();
+                        let mut report = update(21, PRIM, "");
+                        match context {
+                            "child" => {
+                                store.upsert(1, update(20, PRIM, ""));
+                                report.parent_id = 20;
+                            }
+                            "body_root" | "hud_root" | "hud_child" => {
+                                store.upsert(1, update(10, AVATAR, ""));
+                                let point: u8 = if context == "body_root" { 2 } else { 31 };
+                                report.parent_id = 10;
+                                report.state = point.rotate_left(4);
+                                if context == "hud_child" {
+                                    let mut root = update(20, PRIM, "");
+                                    root.parent_id = 10;
+                                    root.state = report.state;
+                                    store.upsert(1, root);
+                                    report.parent_id = 20;
+                                    report.state = 0;
+                                }
+                            }
+                            _ => {}
+                        }
+                        let idx = store.upsert_at(1, report.clone(), Some(start), start);
+                        let applied = start + Duration::from_secs(1);
+                        let lag = Duration::from_millis(lag_ms);
+                        let apply = |store: &mut ObjectStore, report: &ObjectUpdate, at: Instant| {
+                            if full {
+                                store.upsert_at(1, report.clone(), Some(at - lag), at);
+                            } else {
+                                let mut packet = terse(21, report.position, Vec3::ZERO);
+                                packet.is_avatar = false;
+                                packet.state = report.state;
+                                packet.rotation = report.rotation;
+                                store.apply_terse_at(idx, &packet, Some(at - lag), at);
+                            }
+                        };
+                        let sample = |store: &ObjectStore, at: Instant| {
+                            let o = store.get(idx).expect("prim");
+                            (store.predicted(o, at), o.visual_scale_at(at))
+                        };
+                        report.position = Vec3::X * 1.5;
+                        report.rotation = Quat::from_rotation_z(1.2);
+                        if full {
+                            report.scale = Vec3::new(2.5, 1.0, 1.0);
+                        }
+                        apply(&mut store, &report, applied);
+                        let snap = context == "hud_root";
+                        let mut previous_elapsed = 0.0;
+                        let mut expected_rotation = Quat::IDENTITY;
+                        for elapsed in [0.0, 1.0 / fps as f32, 0.06] {
+                            let at = applied + Duration::from_secs_f32(elapsed);
+                            let dt = elapsed - previous_elapsed;
+                            expected_rotation = if snap {
+                                report.rotation
+                            } else {
+                                expected_rotation.lerp(report.rotation, 1.0 - 0.5_f32.powf(dt / 0.06))
+                            };
+                            drawable_frame(&mut store, dt);
+                            previous_elapsed = elapsed;
+                            store.expire_corrections(at);
+                            let ((position, rotation), scale) = sample(&store, at);
+                            let fraction = if snap { 1.0 } else { 1.0 - 0.5_f32.powf(elapsed / 0.06) };
+                            near(position, report.position * fraction);
+                            near(scale, Vec3::ONE.lerp(report.scale, fraction));
+                            assert!(rotation.abs_diff_eq(expected_rotation, 1e-5));
+                        }
+                        // Reverse while the first correction is still visible. Measure
+                        // its current pose, never rewind it to the packet receipt time.
+                        let retarget = applied + Duration::from_millis(60);
+                        let before = sample(&store, retarget);
+                        report.position = Vec3::ZERO;
+                        report.rotation = Quat::IDENTITY;
+                        report.scale = Vec3::ONE;
+                        apply(&mut store, &report, retarget);
+                        let after = sample(&store, retarget);
+                        if !snap {
+                            near(after.0.0, before.0.0);
+                            near(after.1, before.1);
+                            assert!(after.0.1.abs_diff_eq(before.0.1, 1e-5));
+                            drawable_frame(&mut store, 0.06);
+                            let half = sample(&store, retarget + Duration::from_millis(60));
+                            near(half.0.0, before.0.0 * 0.5);
+                            near(half.1, before.1.lerp(Vec3::ONE, 0.5));
+                        }
+                        let settled = retarget + Duration::from_secs(1);
+                        drawable_frame(&mut store, 1.0);
+                        store.expire_corrections(settled);
+                        assert_eq!(sample(&store, settled), ((Vec3::ZERO, Quat::IDENTITY), Vec3::ONE));
+                        assert!(!store.get(idx).expect("settled prim").has_motion());
+                    }
+                }
             }
         }
     }
@@ -2397,10 +2708,11 @@ mod tests {
         let mut store = ObjectStore::default();
         let mut report = update(102, PRIM, "");
         report.scale = Vec3::ONE;
-        let idx = store.upsert_at(1, report.clone(), Some(start));
+        let idx = store.upsert_at(1, report.clone(), Some(start), start);
         report.scale = Vec3::splat(2.0);
-        store.upsert_at(1, report.clone(), Some(start));
+        store.upsert_at(1, report.clone(), Some(start), start);
         assert!(store.get(idx).expect("scaling").has_motion());
+        drawable_frame(&mut store, 0.06);
         store.expire_corrections(start + Duration::from_millis(60));
         near(store.get(idx).expect("half scale").visual_scale(), Vec3::splat(1.5));
         // A terse movement update carries no scale and must not cancel it.
@@ -2408,22 +2720,36 @@ mod tests {
             idx,
             &terse(102, report.position, Vec3::ZERO),
             Some(start + Duration::from_millis(60)),
+            start + Duration::from_millis(60),
         );
+        drawable_frame(&mut store, 0.06);
         near(
             store.get(idx).expect("terse").visual_scale_at(start + Duration::from_millis(120)),
             Vec3::splat(1.75),
         );
         store.get_mut(idx).expect("edit").scale = Vec3::splat(3.0);
         near(store.get(idx).expect("edited").visual_scale(), Vec3::splat(3.0));
+        drawable_frame(&mut store, 0.01);
         store.expire_corrections(start + Duration::from_millis(130));
         assert!(!store.get(idx).expect("edit cancelled correction").has_motion());
         report.parent_id = 999;
         report.scale = Vec3::splat(4.0);
-        store.upsert_at(1, report.clone(), Some(start + Duration::from_millis(140)));
+        store.upsert_at(
+            1,
+            report.clone(),
+            Some(start + Duration::from_millis(140)),
+            start + Duration::from_millis(140),
+        );
         assert_eq!(store.get(idx).expect("reparented").visual_scale(), report.scale);
         report.position = Vec3::X * 100.0;
         report.scale = Vec3::splat(5.0);
-        store.upsert_at(1, report.clone(), Some(start + Duration::from_millis(150)));
+        store.upsert_at(
+            1,
+            report.clone(),
+            Some(start + Duration::from_millis(150)),
+            start + Duration::from_millis(150),
+        );
+        drawable_frame(&mut store, 1.0 / 60.0);
         let o = store.get(idx).expect("large jump");
         assert_eq!(store.predicted(o, start + Duration::from_millis(150)).0, report.position);
         assert_eq!(o.visual_scale(), report.scale);
@@ -2439,12 +2765,12 @@ mod tests {
         let at = start + Duration::from_millis(500);
         let mut store = ObjectStore::default();
         for (local, speed, fades) in [(103, Vec3::Y, false), (104, Vec3::ZERO, true)] {
-            let idx = store.upsert_at(1, update(local, PRIM, ""), Some(start));
+            let idx = store.upsert_at(1, update(local, PRIM, ""), Some(start), start);
             let o = store.get_mut(idx).expect("prim");
             let origin = o.position;
             // drawn half a metre along its path when the report puts it back
             o.position = origin + Vec3::Y * 0.5;
-            store.apply_terse_at(idx, &terse(local, origin, speed), Some(at));
+            store.apply_terse_at(idx, &terse(local, origin, speed), Some(at), at);
             let o = store.get(idx).expect("reported prim");
             assert_eq!(o.correction.is_some(), fades, "speed {speed:?}");
             let shown = store.predicted(o, at).0;
@@ -2452,6 +2778,192 @@ mod tests {
                 assert!(shown.distance(origin) > 0.4, "an object at rest fades from where it was drawn");
             } else {
                 near(shown, origin);
+            }
+        }
+    }
+
+    #[test]
+    fn a_scripted_horizontal_move_is_not_cut_short_when_the_object_starts_falling() {
+        let start = Instant::now();
+        let mut store = ObjectStore::default();
+        let mut report = update(210, PRIM, "");
+        let idx = store.upsert_at(1, report.clone(), Some(start), start);
+        report.position = Vec3::X * 1.5;
+        store.upsert_at(1, report.clone(), Some(start), start);
+        let falling = start + Duration::from_millis(80);
+        drawable_frame(&mut store, 0.08);
+        let before = store.predicted(store.get(idx).expect("moving prim"), falling).0;
+        assert!(before.x > 0.0 && before.x < 1.4);
+        report.position.z = -0.005;
+        report.velocity = -Vec3::Z;
+        report.update_flags |= crate::build::edits::FLAGS_USE_PHYSICS;
+        store.upsert_at(1, report, Some(falling), falling);
+        let after = store.predicted(store.get(idx).expect("falling prim"), falling).0;
+        // LLViewerObject::updateDrawable leaves a drawable already on
+        // ON_MOVE_LIST alone: the new velocity must not cancel its glide.
+        assert!((after.x - before.x).abs() < 1e-4, "horizontal jump: {} -> {}", before.x, after.x);
+    }
+
+    #[test]
+    fn drawable_eligibility_and_stopping_follow_the_legacy_viewer() {
+        // 60 ms is one half-life: the stopping test sees the remaining half,
+        // not the report's original distance. Visibility and selection only
+        // change eligibility; camera distance changes the settling threshold.
+        for (distance, camera, visible, selected, expected) in [
+            (1.5, 2.0, true, false, 0.75),
+            (12.0, 2.0, true, false, 6.0),
+            (24.0, 2.0, true, false, 24.0),
+            (0.01, 2.0, true, false, 0.005),
+            (0.01, 10.0, true, false, 0.01),
+            (1.5, 2.0, false, false, 1.5),
+            (1.5, 2.0, true, true, 1.5),
+        ] {
+            let start = Instant::now();
+            let mut store = ObjectStore::default();
+            let mut report = update(210, PRIM, "");
+            let idx = store.upsert_at(1, report.clone(), Some(start), start);
+            report.position.x = distance;
+            store.upsert_at(1, report, Some(start), start);
+            store.damp_drawables(
+                0.06,
+                |_| selected,
+                |_| {
+                    Some(motion::DampingView {
+                        distance_squared: camera * camera,
+                        visible,
+                    })
+                },
+            );
+            near(store.predicted(store.get(idx).unwrap(), start).0, Vec3::X * expected);
+        }
+        // Selecting a parent prevents a new glide, but does not cancel one
+        // already on ON_MOVE_LIST. Non-volume objects always snap.
+        for pcode in [PRIM, aurora_prim::params::LL_PCODE_TREE_NEW] {
+            for already_moving in [false, true] {
+                let start = Instant::now();
+                let mut store = ObjectStore::default();
+                store.upsert(1, update(209, PRIM, ""));
+                let mut report = update(210, pcode, "");
+                report.parent_id = 209;
+                let idx = store.upsert_at(1, report.clone(), Some(start), start);
+                report.position.x = 1.5;
+                report.scale = Vec3::splat(2.0);
+                store.upsert_at(1, report, Some(start), start);
+                if already_moving {
+                    drawable_frame(&mut store, 0.06);
+                }
+                store.damp_drawables(
+                    0.06,
+                    |key| key.local_id == 209,
+                    |_| {
+                        Some(motion::DampingView {
+                            distance_squared: 4.0,
+                            visible: true,
+                        })
+                    },
+                );
+                let object = store.get(idx).unwrap();
+                let gliding = already_moving && pcode == PRIM;
+                near(store.predicted(object, start).0, Vec3::X * if gliding { 1.125 } else { 1.5 });
+                near(object.visual_scale(), Vec3::splat(if gliding { 1.75 } else { 2.0 }));
+                assert_eq!(object.has_motion(), gliding);
+            }
+        }
+    }
+
+    #[test]
+    fn scripted_then_physical_motion_matches_legacy_drawables_frame_by_frame() {
+        // Independent reading of LLDrawable::updateXform: a camera 2 m away,
+        // a horizontal script move, a falling target after 80 ms, then rest.
+        // Both packet formats, parent-relative coordinates and quaternion
+        // hemispheres must follow the same drawable throughout the sequence.
+        for fps in [30, 60, 144] {
+            for full in [false, true] {
+                for child in [false, true] {
+                    for negative_quaternion in [false, true] {
+                        let start = Instant::now();
+                        let mut store = ObjectStore::default();
+                        if child {
+                            store.upsert(1, update(209, PRIM, ""));
+                        }
+                        let mut report = update(210, PRIM, "");
+                        report.parent_id = if child { 209 } else { 0 };
+                        let idx = store.upsert_at(1, report.clone(), Some(start), start);
+                        let mut reference = (Vec3::ZERO, Quat::IDENTITY, Vec3::ONE);
+                        report.position = Vec3::X * 1.5;
+                        report.rotation = Quat::from_rotation_z(2.8);
+                        if negative_quaternion {
+                            report.rotation = -report.rotation;
+                        }
+                        if full {
+                            report.scale = Vec3::new(2.0, 0.5, 1.3);
+                        }
+                        let apply = |store: &mut ObjectStore, u: &ObjectUpdate, at| {
+                            if full {
+                                store.upsert_at(1, u.clone(), Some(at), at);
+                            } else {
+                                let mut t = terse(u.local_id, u.position, u.velocity);
+                                t.rotation = u.rotation;
+                                t.is_avatar = false;
+                                store.apply_terse_at(idx, &t, Some(at), at);
+                            }
+                        };
+                        apply(&mut store, &report, start);
+                        let dt = 1.0 / fps as f32;
+                        let fall_frame = (fps as f32 * 0.08).ceil() as u32;
+                        let stop_frame = fall_frame + fps / 2;
+                        for frame in 1..=fps * 3 {
+                            let at = start + Duration::from_secs_f64(frame as f64 / fps as f64);
+                            store.advance_motion(1, 1.0 / fps as f64);
+                            store.note_motion_tick(at, 1, 1.0);
+                            if frame == fall_frame {
+                                report.velocity = -Vec3::Z;
+                                report.update_flags |= crate::build::edits::FLAGS_USE_PHYSICS;
+                                apply(&mut store, &report, at);
+                            } else if frame == stop_frame {
+                                report.position.z = -0.5;
+                                report.velocity = Vec3::ZERO;
+                                apply(&mut store, &report, at);
+                            }
+                            let target_position = Vec3::new(1.5, 0.0, -((frame.saturating_sub(fall_frame) as f32) / fps as f32).min(0.5));
+                            let k = 1.0 - 2.0_f32.powf(-dt / 0.06);
+                            let position = reference.0 + (target_position - reference.0) * k;
+                            let rotation = if reference.1.dot(report.rotation) < 0.0 {
+                                (-reference.1).slerp(report.rotation, k)
+                            } else {
+                                (report.rotation * k + reference.1 * (1.0 - k)).normalize()
+                            };
+                            let scale = reference.2 + (report.scale - reference.2) * k;
+                            let gap = position.distance_squared(target_position)
+                                + 10.0 * (1.0 - rotation.dot(report.rotation))
+                                + scale.distance_squared(report.scale);
+                            reference = if (0.000004..=100.0).contains(&gap) {
+                                (position, rotation, scale)
+                            } else {
+                                (target_position, report.rotation, report.scale)
+                            };
+                            drawable_frame(&mut store, dt);
+                            store.expire_corrections(at);
+                            let o = store.get(idx).expect("moving object");
+                            let pose = store.predicted(o, at);
+                            let context = format!("fps={fps} full={full} child={child} negative={negative_quaternion} frame={frame}");
+                            assert!(
+                                pose.0.distance(reference.0) < 1e-4,
+                                "position {context}: {:?} vs {:?}",
+                                pose.0,
+                                reference.0
+                            );
+                            assert!(
+                                pose.1.abs_diff_eq(reference.1, 2e-5),
+                                "rotation {context}: {:?} vs {:?}",
+                                pose.1,
+                                reference.1
+                            );
+                            assert!(o.visual_scale_at(at).distance(reference.2) < 1e-4, "scale {context}");
+                        }
+                        assert!(!store.get(idx).expect("settled object").has_motion());
+                    }
+                }
             }
         }
     }
@@ -2614,26 +3126,29 @@ mod tests {
             report.state = point;
             report.rotation = Quat::from_rotation_x(0.7);
             report.angular_velocity = Vec3::Z * 1.25;
-            let idx = store.upsert_at(1, report.clone(), Some(start));
+            let idx = store.upsert_at(1, report.clone(), Some(start), start);
             for step in 1..=80 {
                 store.advance_motion(1, 0.1);
                 let now = start + Duration::from_millis(step * 100);
                 if step % 2 == 0 {
                     // A colour/text update repeats the simulator's base angle.
                     report.text = step.to_string();
-                    store.upsert_at(1, report.clone(), Some(now));
+                    store.upsert_at(1, report.clone(), Some(now), now);
                 } else {
                     let mut terse = terse(2, report.position, Vec3::ZERO);
                     terse.is_avatar = false;
                     terse.state = point;
                     terse.rotation = report.rotation;
                     terse.angular_velocity = report.angular_velocity;
-                    store.apply_terse_at(idx, &terse, Some(now));
+                    store.apply_terse_at(idx, &terse, Some(now), now);
                 }
+                // Isolate retained spin phase from the drawable's following
+                // lag. Simulator time stays fixed while this render step settles.
+                store.settle_drawables();
                 let object = store.get(idx).expect("spinning prim");
                 assert_eq!(object.rotation, report.rotation, "keep the simulator's base angle");
                 let expected = Quat::from_rotation_z(step as f32 * 0.125) * report.rotation;
-                // Also sample after damping would have erased the old phase.
+                // Wall-clock samples must not change the simulator's spin phase.
                 for at in [now, now + Duration::from_secs(1)] {
                     let shown = store.predicted(object, at).1;
                     assert!(
@@ -2655,11 +3170,17 @@ mod tests {
             if physical {
                 report.update_flags |= crate::build::edits::FLAGS_USE_PHYSICS;
             }
-            let idx = store.upsert_at(1, report.clone(), Some(start));
+            let idx = store.upsert_at(1, report.clone(), Some(start), start);
             store.advance_motion(1, 1.0);
             report.angular_velocity = Vec3::X * 2.0;
-            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(1)));
+            store.upsert_at(
+                1,
+                report.clone(),
+                Some(start + Duration::from_secs(1)),
+                start + Duration::from_secs(1),
+            );
             store.advance_motion(1, 0.5);
+            store.settle_drawables();
             let object = store.get(idx).expect("spinning prim");
             let expected = Quat::from_rotation_x(1.0) * if physical { Quat::IDENTITY } else { Quat::from_rotation_z(1.0) };
             let shown = store.predicted(object, start + Duration::from_secs(3)).1;
@@ -2670,24 +3191,47 @@ mod tests {
 
             // A genuinely new base angle replaces the accumulated turn.
             report.rotation = Quat::from_rotation_y(0.8);
-            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(3)));
+            store.upsert_at(
+                1,
+                report.clone(),
+                Some(start + Duration::from_secs(3)),
+                start + Duration::from_secs(3),
+            );
             store.advance_motion(1, 0.5);
+            store.settle_drawables();
             let shown = store.predicted(store.get(idx).expect("new base"), start + Duration::from_secs(4)).1;
             assert!(shown.angle_between(Quat::from_rotation_x(1.0) * report.rotation) < 0.002);
 
             report.angular_velocity = Vec3::ZERO;
-            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(4)));
+            store.upsert_at(
+                1,
+                report.clone(),
+                Some(start + Duration::from_secs(4)),
+                start + Duration::from_secs(4),
+            );
             store.advance_motion(1, 0.5);
+            store.settle_drawables();
             let shown = store.predicted(store.get(idx).expect("stopped"), start + Duration::from_secs(5)).1;
             assert!(shown.angle_between(report.rotation) < 0.002);
 
             report.angular_velocity = Vec3::Z;
-            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(5)));
+            store.upsert_at(
+                1,
+                report.clone(),
+                Some(start + Duration::from_secs(5)),
+                start + Duration::from_secs(5),
+            );
             store.advance_motion(1, 1.0);
             report.parent_id = 10;
             report.state = 0x10;
-            store.upsert_at(1, report.clone(), Some(start + Duration::from_secs(6)));
+            store.upsert_at(
+                1,
+                report.clone(),
+                Some(start + Duration::from_secs(6)),
+                start + Duration::from_secs(6),
+            );
             store.advance_motion(1, 0.5);
+            store.settle_drawables();
             let shown = store
                 .predicted(store.get(idx).expect("reparented"), start + Duration::from_secs(7))
                 .1;
@@ -2807,6 +3351,7 @@ mod tests {
         assert!(!s.get(seat).expect("seat").has_motion());
         // a move of more than 10 m is a move, not a correction
         s.apply_terse(seat, &terse(5, Vec3::X * 40.0, Vec3::ZERO));
+        drawable_frame(&mut s, 1.0 / 60.0);
         assert!(!s.get(seat).expect("seat").has_motion());
     }
 
@@ -2816,13 +3361,14 @@ mod tests {
         let half = now + Duration::from_millis(60);
         for terse_to_hud in [false, true] {
             let mut store = ObjectStore::default();
-            store.upsert_at(1, update(10, AVATAR, ""), Some(now));
+            store.upsert_at(1, update(10, AVATAR, ""), Some(now), now);
             let mut root = update(20, PRIM, "");
             root.parent_id = 10;
             root.state = 2u8.rotate_left(4);
-            let idx = store.upsert_at(1, root.clone(), Some(now));
+            let idx = store.upsert_at(1, root.clone(), Some(now), now);
             root.scale = Vec3::splat(2.0);
-            store.upsert_at(1, root.clone(), Some(now));
+            store.upsert_at(1, root.clone(), Some(now), now);
+            drawable_frame(&mut store, 0.06);
             near(store.get(idx).unwrap().visual_scale_at(half), Vec3::splat(1.5));
 
             // An attachment point can change while the same avatar stays its parent.
@@ -2834,9 +3380,9 @@ mod tests {
                 report.is_avatar = false;
                 report.state = root.state;
                 report.rotation = root.rotation;
-                store.apply_terse_at(idx, &report, Some(half));
+                store.apply_terse_at(idx, &report, Some(half), half);
             } else {
-                store.upsert_at(1, root.clone(), Some(half));
+                store.upsert_at(1, root.clone(), Some(half), half);
             }
             let object = store.get(idx).unwrap();
             let (position, rotation) = store.predicted(object, half);
@@ -2846,11 +3392,12 @@ mod tests {
 
             root.state = 2u8.rotate_left(4);
             root.position = Vec3::X * 0.4;
-            store.upsert_at(1, root.clone(), Some(half));
+            store.upsert_at(1, root.clone(), Some(half), half);
             near(store.predicted(store.get(idx).unwrap(), half).0, root.position);
             // Subsequent changes on the body use the ordinary 60 ms half-life.
             root.position = Vec3::X * 0.6;
-            store.upsert_at(1, root, Some(half));
+            store.upsert_at(1, root, Some(half), half);
+            drawable_frame(&mut store, 0.06);
             near(
                 store.predicted(store.get(idx).unwrap(), half + Duration::from_millis(60)).0,
                 Vec3::X * 0.5,
@@ -2930,7 +3477,7 @@ mod tests {
         // read 50 ms before the clocks' last tick
         let mut walker = update(10, AVATAR, "");
         walker.velocity = Vec3::X * 4.0;
-        let idx = s.upsert_at(1, walker, Some(tick - Duration::from_millis(50)));
+        let idx = s.upsert_at(1, walker, Some(tick - Duration::from_millis(50)), tick - Duration::from_millis(50));
         let drawn = |s: &ObjectStore| s.predicted(s.get(idx).expect("walker"), tick).0;
         near(drawn(&s), Vec3::X * 0.2);
         // read 20 ms after it: there 20 ms later on the clock
@@ -2938,6 +3485,7 @@ mod tests {
             idx,
             &terse(10, Vec3::X * 30.0, Vec3::X * 4.0),
             Some(tick + Duration::from_millis(20)),
+            tick + Duration::from_millis(20),
         );
         near(drawn(&s), Vec3::X * 30.0);
         s.advance_motion(1, 0.12);

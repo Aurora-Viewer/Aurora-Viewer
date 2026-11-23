@@ -15,6 +15,7 @@
 //! the arrow keys select among them and Enter clicks the selected one.
 
 use crate::theme::Palette;
+use aurora_i18n::UiUpper;
 use egui::{Color32, FontId, Id, LayerId, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Sense, Stroke, Ui, Vec2};
 
 /// Row height and paddings (LLMenuItemGL: 20 px rows with a check column;
@@ -806,11 +807,9 @@ pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
     if filtering() {
         return;
     }
-    let galley = ui.painter().layout_no_wrap(
-        title.to_uppercase(),
-        FontId::new(10.5, super::fonts::semibold(ui.ctx())),
-        p.muted_dim,
-    );
+    let galley = ui
+        .painter()
+        .layout_no_wrap(title.ui_upper(), FontId::new(10.5, super::fonts::semibold(ui.ctx())), p.muted_dim);
     let w = if ui.is_sizing_pass() {
         (galley.size().x + PAD * 2.0).max(MIN_W)
     } else {
@@ -856,6 +855,61 @@ fn track(ui: &Ui, hovered: bool) {
 /// Enabled entry; true when clicked (the menu closes).
 pub fn item(ui: &mut Ui, p: &Palette, icon: &str, label: &str) -> bool {
     item_if(ui, p, icon, label, true)
+}
+
+/// A catalogue command with a right-click action to add or remove its toolbar button.
+pub fn command(ui: &mut Ui, p: &Palette, id: &'static str) -> bool {
+    command_row(ui, p, id, true, End::None, "")
+}
+
+pub fn command_keys(ui: &mut Ui, p: &Palette, id: &'static str, keys: &str) -> bool {
+    command_keys_if(ui, p, id, true, keys)
+}
+
+/// A catalogue command with its shortcut in the keys column, greyed out
+/// when `enabled` is false: the button keeps the short label.
+pub fn command_keys_if(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, keys: &str) -> bool {
+    command_row(ui, p, id, enabled, End::Keys(keys), "")
+}
+
+pub fn command_check(ui: &mut Ui, p: &Palette, id: &'static str, checked: bool) -> bool {
+    command_row(ui, p, id, true, End::Check(checked), "")
+}
+
+pub fn command_tip(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, tip: &str) -> bool {
+    command_row(ui, p, id, enabled, End::None, tip)
+}
+
+fn command_row(ui: &mut Ui, p: &Palette, id: &'static str, enabled: bool, end: End<'_>, tip: &str) -> bool {
+    let Some(command) = super::toolbar::command(id) else { return false };
+    // Unavailable actions can still be added to a toolbar for later use.
+    let response = row_lead_sensed(
+        ui,
+        p,
+        Lead::Icon(command.icon),
+        command.label(),
+        enabled,
+        end,
+        false,
+        Sense::click(),
+    );
+    if ui
+        .ctx()
+        .data(|d| d.get_temp::<bool>(Id::unique("toolbar_menu_demo")))
+        .unwrap_or(false)
+    {
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(Id::unique(("toolbar_menu_command", id)), response.rect));
+    }
+    super::toolbar::command_context(&response, id);
+    let clicked = enabled && response.clicked();
+    if !tip.is_empty() {
+        response.on_hover_text(tip);
+    }
+    if clicked {
+        ui.close();
+    }
+    clicked
 }
 
 /// Entry greyed out when `enabled` is false (Firestorm's on_enable).
@@ -1191,7 +1245,7 @@ pub fn heading(ui: &mut Ui, p: &Palette, text: &str) {
 
 fn heading_line(ui: &mut Ui, p: &Palette, text: &str) {
     let font = FontId::new(10.5, super::fonts::semibold(ui.ctx()));
-    let galley = ui.painter().layout_no_wrap(text.to_uppercase(), font, p.muted_dim);
+    let galley = ui.painter().layout_no_wrap(text.ui_upper(), font, p.muted_dim);
     let natural = (PAD + galley.size().x + PAD).max(MIN_W);
     let w = if ui.is_sizing_pass() {
         natural

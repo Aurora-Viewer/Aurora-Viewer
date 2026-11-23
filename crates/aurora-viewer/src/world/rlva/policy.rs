@@ -5,6 +5,21 @@ use aurora_net::{NetCommand, control};
 use glam::Vec3;
 use uuid::Uuid;
 
+/// What RLVa makes of a double click that walks or teleports to a point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoubleClickRlva {
+    Go,
+    /// @interact: LLViewerWindow::cursorIntersect dropped the pick, the
+    /// land's included, so there is nowhere to go and nothing is said.
+    Ignored,
+    /// RlvActions::canTeleportToLocal refuses the point: the Legacy tool
+    /// says Blocked::AutoPilot.
+    Blocked,
+}
+/// The particle editor's script injection, sent past the attachment locks
+/// (ParticleEditor::scriptInjectReturned, `NetCommand::Build` below).
+pub const PARTICLE_EDITOR: Uuid = Uuid::from_u128(0x726c_7661_7061_7274_6963_6c65_0000_0001);
+
 impl World {
     /// Resident and group payments follow RLV `@pay`; object purchases use
     /// the independent `@buy` restriction.
@@ -16,11 +31,21 @@ impl World {
         if !self.rlva.enabled() {
             return true;
         }
+        // LLWorld::getAvatar (indra/newview/llworld.cpp), for
+        // rlvCheckAvatarIMDistance (indra/newview/rlvactions.cpp): a loaded
+        // avatar, else the coarse map location of any region we see
         let distance = self
             .objects
             .index_of_uuid(&target)
             .and_then(|i| crate::scene::Scene::object_transform_unshifted(self, i, std::time::Instant::now()))
-            .map(|(p, _, _)| p.distance(self.agent.position));
+            .map(|(p, _, _)| p)
+            .or_else(|| {
+                self.coarse
+                    .keys()
+                    .find_map(|region| super::super::radar::coarse_in(self, *region).find(|(id, ..)| *id == target))
+                    .map(|(_, position, _)| position)
+            })
+            .map(|p| p.distance(self.agent.position));
         distance.map_or_else(
             || self.rlva.allows_im(behaviour, target),
             |d| self.rlva.allows_im_at(behaviour, target, Some(d)),
@@ -30,8 +55,19 @@ impl World {
         self.rlva_can_touch_at(handle, local_id, None)
     }
 
-    /// `position` is in the viewer's region-relative world, like a picking
-    /// ray. Measure the clicked surface, not the object's bounding-box centre.
+    /// RlvActions::canTouch (indra/newview/rlvactions.cpp). `position` is in
+    /// the viewer's region-relative world, like a picking ray. Measure the
+    /// clicked surface, not the object's bounding-box centre.
+    ///
+    /// @interact is not asked here: it drops the pick
+    /// (LLViewerWindow::cursorIntersect, llviewerwindow.cpp), which the
+    /// clicks, the hover and the Move tool meet first
+    /// (`rlva_drops_picks`, `rlva_can_interact_at`). What needs no pick
+    /// (the Touch entry of a worn object, handle_attachment_touch in
+    /// llviewermenu.cpp; the chat bar's touch, chatbar_as_cmdline.cpp; the
+    /// area search's double click, FSPanelAreaSearchList::touchObject)
+    /// asks canTouch alone, whatever @interact, @showself or
+    /// @showselfhead hold.
     pub fn rlva_can_touch_at(&self, handle: aurora_net::RegionHandle, local_id: u32, position: Option<Vec3>) -> bool {
         let r = &self.rlva;
         if !r.enabled() {
@@ -40,9 +76,6 @@ impl World {
         let Some(index) = self.objects.index_of(&super::super::objects::ObjKey { region: handle, local_id }) else {
             return false;
         };
-        if !self.rlva_object_visible(index) {
-            return false;
-        }
         let mut root = index;
         let mut wearer = None;
         for _ in 0..64 {
@@ -63,16 +96,6 @@ impl World {
         };
         let id = object.full_id.to_string();
         let hud = wearer == Some(self.agent_id) && self.avatar_lib.attach_points.get(&object.attachment_point()).is_some_and(|p| p.hud);
-        // @interact is enforced when the object is picked
-        // (LLViewerWindow::cursorIntersect, llviewerwindow.cpp), before
-        // RlvActions::canTouch and its @touchme override are asked. A HUD's
-        // pick is dropped there too, by `rlva_drops_picks` where the click
-        // is read: this rule also answers the Touch entry of a worn object,
-        // which needs no pick and keeps a HUD's touch (handle_attachment_touch,
-        // llviewermenu.cpp).
-        if !hud && r.has("interact") {
-            return false;
-        }
         if r.rules_for("touchme", Uuid::nil()).any(|(source, _)| {
             let Some(mut i) = self.objects.index_of_uuid(&source) else {
                 return false;
@@ -133,16 +156,55 @@ impl World {
     /// around them; a bare @tplocal allows 1.5 m. Farther, only @tploc.
     fn rlva_teleport_delta_allowed(&self, delta: Vec3, actor: Uuid) -> bool {
         let r = &self.rlva;
-        if self.agent.is_sitting() && r.has_except("unsit", actor) {
-            return false;
-        }
         if delta.truncate().length_squared() < 256.0 * 256.0 {
-            delta.length() < r.distance_limit("sittp", 1.5, actor)
-                && (!r.has_except("tplocal", actor) || delta.length() < r.distance_limit("tplocal", 1.5, actor).min(256.0))
+            self.rlva_local_teleport_allowed(delta.length(), actor)
         } else {
-            !r.has_except("tploc", actor)
+            !(self.agent.is_sitting() && r.has_except("unsit", actor)) && !r.has_except("tploc", actor)
         }
     }
+
+    /// RlvActions::canTeleportToLocal: the agent may stand up, and the
+    /// place is within what @sittp and @tplocal leave, measured in 3D.
+    /// Whether a distance applies leaves out the issuer's own restriction
+    /// (hasBehaviourExcept), but the distance is the global modifier's, the
+    /// smallest of every object's (RlvBehaviourModifier::getValue), the
+    /// issuer's own included.
+    fn rlva_local_teleport_allowed(&self, distance: f32, actor: Uuid) -> bool {
+        let r = &self.rlva;
+        !(self.agent.is_sitting() && r.has_except("unsit", actor))
+            && (!r.has_except("sittp", actor) || distance < r.distance_limit("sittp", 1.5, Uuid::nil()))
+            && (!r.has_except("tplocal", actor) || distance < r.distance_limit("tplocal", 1.5, Uuid::nil()).min(256.0))
+    }
+
+    /// RlvActions::canTeleportToLocal asked alone, whatever the distance:
+    /// what the area search shows "Teleport to" on
+    /// (FSPanelAreaSearchList::onContextMenuItemVisibleRLV,
+    /// indra/newview/fsareasearch.cpp). Farther than a region's width the
+    /// entry is hidden under @sittp or @tplocal, and shown under @tploc
+    /// alone, which refuses the teleport once asked.
+    pub fn rlva_can_teleport_local(&self, global: glam::DVec3) -> bool {
+        if !self.rlva.enabled() {
+            return true;
+        }
+        let distance = self.agent_global().map_or(f32::INFINITY, |here| (global - here).as_vec3().length());
+        self.rlva_local_teleport_allowed(distance, Uuid::nil())
+    }
+    /// A double click walking or teleporting to `global`
+    /// (LLToolPie::walkToClickedLocation and teleportToClickedLocation,
+    /// lltoolpie.cpp): @interact leaves no pick; otherwise the point must
+    /// be one a local teleport may reach (@tplocal, @sittp, @unsit while
+    /// seated), however far it is, and never @tploc: the teleport itself
+    /// asks that one (LLAgent::teleportViaLocationLookAt).
+    pub fn rlva_double_click(&self, global: Option<glam::DVec3>) -> DoubleClickRlva {
+        if self.rlva_drops_picks() {
+            DoubleClickRlva::Ignored
+        } else if global.is_some_and(|g| !self.rlva_can_teleport_local(g)) {
+            DoubleClickRlva::Blocked
+        } else {
+            DoubleClickRlva::Go
+        }
+    }
+
     /// What the interface greys: the same rules as the send boundary, so a
     /// greyed entry and a refused click never disagree.
     pub fn rlva_can_teleport_home(&self) -> bool {
@@ -158,12 +220,36 @@ impl World {
         self.rlva_can_teleport_home() && !self.rlva.has("tplm") && !self.rlva.has("tploc")
     }
 
+    /// RlvActions::canTeleportToLocation (rlvactions.cpp), what the Legacy
+    /// Viewer's place windows grey their Teleport button with, whatever the
+    /// distance (LLPanelPlaces::updateVerbs, LLTeleportHistoryPanel,
+    /// FSFloaterPlaceDetails): no @tploc, and free to stand up.
+    pub fn rlva_can_teleport_location(&self) -> bool {
+        !self.rlva.enabled() || (!self.rlva.has("tploc") && !(self.agent.is_sitting() && self.rlva.has("unsit")))
+    }
+
+    /// The Home buttons of the navigation bar and of the map
+    /// (RlvUIEnabler::onToggleTp, rlvui.cpp; LLFloaterWorldMap::draw): greyed
+    /// only under both @tplm and @tploc, seated under @unsit or not.
+    pub fn rlva_home_button_enabled(&self) -> bool {
+        !self.rlva.enabled() || !(self.rlva.has("tplm") && self.rlva.has("tploc"))
+    }
+
+    /// A landmark's Teleport button (LLLandmarksPanel::isActionEnabled,
+    /// llpanellandmarks.cpp; LLPanelPlaces::updateVerbs): greyed under @tplm.
+    pub fn rlva_landmark_button_enabled(&self) -> bool {
+        !self.rlva.enabled() || !self.rlva.has("tplm")
+    }
+
     pub fn rlva_can_teleport_landmark(&self) -> bool {
         self.rlva_allows_command(&NetCommand::TeleportLandmark(Uuid::nil()), Uuid::nil())
     }
 
     /// A teleport to a global position (LLAgent::teleportViaLocation), local
-    /// or not; unknown where we stand, it counts as a distant one.
+    /// or not; unknown where we stand, it counts as a distant one. The
+    /// windows now grey as the Legacy ones do (rlva_can_teleport_location),
+    /// so only the tests still ask it.
+    #[cfg(test)]
     pub fn rlva_can_teleport_global(&self, global: glam::DVec3) -> bool {
         if !self.rlva.enabled() {
             return true;
@@ -182,25 +268,29 @@ impl World {
         }
         let blocked = |name| r.has_except(name, actor);
         match command {
-            NetCommand::AgentAnimation { anim, start: true } if *anim == super::super::radar::ANIM_AGENT_TYPE => r.can_send_typing_start(),
             NetCommand::CreateInventoryItem {
                 kind: aurora_net::inventory::operations::NewItem::Landmark,
                 ..
             } => !r.has("showloc"),
-            NetCommand::OfferTeleport { to, .. } => to.iter().all(|id| self.rlva_can_offer_teleport(*id)),
+            NetCommand::OfferTeleport { to, .. } => to
+                .iter()
+                .all(|id| self.rlva_answers_teleport_request(*id) || self.rlva_can_offer_teleport(*id)),
             NetCommand::PickUpdate(pick) if r.has("showloc") => self
                 .profiles
                 .picks
                 .get(&pick.id)
                 .is_some_and(|old| old.pos_global == pick.pos_global),
-            NetCommand::ClassifiedUpdate(classified) if r.has("showloc") => self
-                .profiles
-                .classifieds
-                .get(&classified.id)
-                .is_some_and(|old| old.pos_global == classified.pos_global),
+            // LLPanelProfileClassifieds::updateButtons greys New under
+            // @showloc; an existing classified's "Set location"
+            // (LLPanelProfileClassified::onSetLocationClick,
+            // llpanelprofileclassifieds.cpp) has no RLVa test, so its new
+            // place is published
+            NetCommand::ClassifiedUpdate(classified) if r.has("showloc") => self.profiles.classifieds.contains_key(&classified.id),
             NetCommand::EditInventory { request, change } => {
                 if actor == super::offers::ACTOR {
                     r.offers.permits(*request, change)
+                } else if r.deletes.contains(request) {
+                    self.rlva_inventory_delete_allowed(change, actor)
                 } else {
                     self.rlva_inventory_mutation_allowed(change, actor)
                 }
@@ -226,6 +316,7 @@ impl World {
                         .index_of_uuid(&target.object)
                         .is_some_and(|i| self.rlva_locked_attachment(i))
             }
+            NetCommand::SaveScript { target, .. } => self.rlva_can_save_script(target.object),
             NetCommand::SendIm { to, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 0, .. } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 17, .. } => self.rlva_can_send_session(*to),
@@ -236,7 +327,10 @@ impl World {
             NetCommand::ActivateGroup(group) => {
                 !blocked("setgroup") || (actor == super::groups::ACTOR && r.has("setgroup") && r.groups.restore_allowed(*group))
             }
-            NetCommand::GroupTitleUpdate { .. } => !blocked("setgroup"),
+            // (a group title is changed whatever @setgroup holds:
+            // LLPanelGroupGeneral::apply, llpanelgroupgeneral.cpp, and
+            // FSFloaterGroupTitles::activateGroupTitle send
+            // sendGroupTitleUpdate without RLVa)
             // LLGroupActions::leave (llgroupactions.cpp): leaving the active
             // group would change it, which @setgroup forbids.
             NetCommand::LeaveGroup(group) => *group != self.groups.active || !blocked("setgroup"),
@@ -279,7 +373,12 @@ impl World {
                         actor,
                     )
                 } else {
-                    !blocked("tploc") && !(self.agent.is_sitting() && blocked("unsit"))
+                    // RlvForceHandler<RLV_BHVR_TPTO> (rlvhandler.cpp) asks
+                    // the map first and decides nothing before it answers:
+                    // the teleport it resolves to is checked then
+                    // (RlvHandler::onTeleportCallback, the TeleportTo the
+                    // reply becomes, `App::send_deferred_teleport`).
+                    true
                 }
             }
             NetCommand::RequestSit { target, offset, .. } => {
@@ -304,7 +403,9 @@ impl World {
             }
             NetCommand::OneShotControl(flags) => {
                 (flags & control::STAND_UP == 0 || !blocked("unsit"))
-                    && (flags & control::SIT_ON_GROUND == 0 || (!blocked("sit") && !(self.agent.is_sitting() && blocked("unsit"))))
+                    && (flags & control::SIT_ON_GROUND == 0
+                        || (*flags == control::SIT_ON_GROUND && r.sitting.ground_released(actor))
+                        || (!blocked("sit") && !(self.agent.is_sitting() && blocked("unsit"))))
             }
             // One message for every kind of run (LLAgent::sendWalkRun): it is
             // refused only when both restrictions leave nothing that may run.
@@ -313,20 +414,38 @@ impl World {
             NetCommand::BuyObject { .. } => !blocked("buy"),
             NetCommand::PayObject { .. } => !blocked("buy"),
             NetCommand::PayResident { .. } => !blocked("pay"),
-            // LLToolPlacer::placeObject and LLToolDragAndDrop::dropObject.
-            NetCommand::Build(aurora_net::build::BuildCmd::Add(_) | aurora_net::build::BuildCmd::RezInventory(_)) => {
-                !blocked("rez") && !blocked("interact")
-            }
+            // LLToolDragAndDrop::dropObject. A new prim is refused under
+            // @rez alone: the chat bar's platform asks RlvActions::canRez
+            // (cmdline_rezplat, chatbar_as_cmdline.cpp), and the Create tool
+            // asks @interact too before it sends (LLToolPlacer::placeObject,
+            // `rlva_can_rez`).
+            NetCommand::Build(aurora_net::build::BuildCmd::RezInventory(_)) => !blocked("rez") && !blocked("interact"),
+            NetCommand::Build(aurora_net::build::BuildCmd::Add(_)) => !blocked("rez"),
+            // ParticleEditor::scriptInjectReturned (particleeditor.cpp) puts
+            // its script in with LLViewerObject::saveScript
+            // (llviewerobject.cpp), which asks nothing of RLVa: a locked
+            // attachment takes it too
+            NetCommand::Build(aurora_net::build::BuildCmd::RezScript { .. }) if actor == PARTICLE_EDITOR => true,
             NetCommand::Build(command) => self.rlva_allows_build(command),
             NetCommand::ScriptAnswer { task_id, questions, .. } => self.rlva_script_permissions(*task_id, *questions).0 == *questions,
+            // lure_callback (llviewermessage.cpp) asks RLVa nothing when the
+            // offer is accepted: @tplure and @unsit were asked when it came
+            // (LLIMProcessing::processNewMessage), and refused it there.
             NetCommand::AcceptLure { lure_id, godlike } => {
                 *godlike
-                    || self.teleport_invites.list.iter().any(|v| {
-                        matches!(v.kind, super::super::teleport_invites::InviteKind::Offer { lure, .. } if lure == *lure_id)
-                            && self.rlva_can_accept_teleport(v.from, false)
-                    })
+                    || self
+                        .teleport_invites
+                        .list
+                        .iter()
+                        .any(|v| matches!(v.kind, super::super::teleport_invites::InviteKind::Offer { lure, .. } if lure == *lure_id))
             }
-            NetCommand::DetachAttachments(items) => items.iter().all(|item| self.rlva_can_remove(*item, actor)),
+            // The viewer's own bridge comes off whatever the locks
+            // (FSLSLBridge::canDetach in
+            // LLVOAvatarSelf::detachAttachmentIntoInventory,
+            // indra/newview/llvoavatarself.cpp).
+            NetCommand::DetachAttachments(items) => items.iter().all(|item| {
+                super::super::bridge::viewer_bridge(self, *item, super::super::bridge::POINT) || self.rlva_can_remove(*item, actor)
+            }),
             NetCommand::DetachObject { handle, local_id } => self
                 .objects
                 .index_of(&super::super::objects::ObjKey {
@@ -343,9 +462,14 @@ impl World {
                 }),
             // Rez is sent as ADD while RLVa is enabled. The watchdog replaces
             // only removable predecessors once the actual point is known.
+            // The bridge goes back on Center 2 past them too (the fRlvForce
+            // of LLAttachmentsMgr::addAttachmentRequest,
+            // indra/newview/llattachmentsmgr.cpp).
             NetCommand::RezAttachments(items) => {
                 let worn = self.rlva_worn_attachment_points();
-                items.iter().all(|item| self.rlva_rez_allowed(item, &worn, actor))
+                items.iter().all(|item| {
+                    super::super::bridge::viewer_bridge(self, item.item_id, item.point) || self.rlva_rez_allowed(item, &worn, actor)
+                })
             }
             NetCommand::UpdateOutfit { change, .. } => {
                 let Some(cof) = super::super::appearance::cof(&self.inventory) else {
@@ -438,12 +562,28 @@ impl World {
         }
     }
 
+    /// RlvUIEnabler::onToggleMovement (rlvui.cpp): when @fly, @alwaysrun or
+    /// @temprun comes or goes, a flight under way lands under @fly. Only
+    /// then: a flight the issuer of @fly forced itself (@fly:true=force)
+    /// goes on while its @fly=n holds.
+    pub fn rlva_movement_tick(&mut self) {
+        let rules = ["fly", "alwaysrun", "temprun"]
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| self.rlva.has(name))
+            .fold(0u8, |bits, (i, _)| bits | (1 << i));
+        if std::mem::replace(&mut self.rlva.movement_rules, rules) != rules && rules & 1 != 0 {
+            self.agent.flying = false;
+        }
+    }
+
     /// Queries requiring world state and force commands are consumed in their
     /// original order. The issuing object may bypass only its own locks.
     pub fn rlva_pending(&mut self) -> Vec<(Uuid, NetCommand)> {
         self.rlva_relative_tick(std::time::Instant::now());
         let mut commands = Vec::new();
         if self.rlva.appearance_busy || !self.rlva.appearance.is_empty() {
+            self.rlva_answer_held_replies(&mut commands);
             return commands;
         }
         let mut pending = std::mem::take(&mut self.rlva.pending).into_iter();
@@ -472,7 +612,37 @@ impl World {
                 break;
             }
         }
+        self.rlva_answer_held_replies(&mut commands);
         commands
+    }
+
+    /// The queries and @notify lines queued behind a force that waits for an
+    /// outfit change: answered now, in their order, with the world as it is.
+    /// RlvHandler::processCommand (rlvhandler.cpp) answers a query when it
+    /// is received, while RlvForceWear::done (rlvhelper.cpp) only starts the
+    /// COF update: a query after a forced wear reads the outfit before the
+    /// change has landed. Only a query that waits for data of its own (an
+    /// inventory not loaded yet) holds the replies after it.
+    fn rlva_answer_held_replies(&mut self, commands: &mut Vec<(Uuid, NetCommand)>) {
+        if !self.rlva.pending.iter().any(|(_, c)| matches!(c.param, super::Param::Reply(_))) {
+            return;
+        }
+        let mut kept = Vec::new();
+        let mut blocked = false;
+        for (source, c) in std::mem::take(&mut self.rlva.pending) {
+            if blocked || !matches!(c.param, super::Param::Reply(_)) || !self.rlva.enabled() {
+                kept.push((source, c));
+                continue;
+            }
+            let live = self.rlva.rewind(&c);
+            let go_on = self.rlva_run_queued(source, c, &mut Vec::new().into_iter(), commands);
+            self.rlva.resume(live);
+            if !go_on {
+                blocked = true;
+                kept.append(&mut self.rlva.pending);
+            }
+        }
+        self.rlva.pending = kept;
     }
 
     /// One queued command. False stops the queue: the commands after it wait
@@ -484,19 +654,41 @@ impl World {
         pending: &mut std::vec::IntoIter<(Uuid, super::Command)>,
         commands: &mut Vec<(Uuid, NetCommand)>,
     ) -> bool {
+        // A @notify line told while this queue waited: sent in its place,
+        // behind the camera and debug commands queued before it.
+        if c.behaviour == super::NOTICE {
+            if let super::Param::Reply(channel) = c.param {
+                if self.rlva.viewer.is_empty() {
+                    self.rlva.reply(channel, "notify", c.option);
+                } else if self.rlva.viewer.len() < super::MAX_QUEUED {
+                    self.rlva.viewer.push((source, c));
+                }
+            }
+            return true;
+        }
         if !self.rlva.controllers.accepts(source, c.param) {
             return true;
         }
         if self.rlva_environment_command(source, &c) {
             return true;
         }
+        // A reply from RLVa's own state, queued to keep the order of the
+        // replies: it reads the rules it was received under (`rewind`).
+        if let super::Param::Reply(channel) = c.param
+            && self.rlva.viewer.is_empty()
+            && let Some(text) = self.rlva.inline_reply(source, &c)
+        {
+            self.rlva.reply(channel, &c.behaviour, text);
+            return true;
+        }
         if c.behaviour.starts_with("getcam_")
+            || (matches!(c.param, super::Param::Reply(_)) && !self.rlva.viewer.is_empty() && self.rlva.inline_reply(source, &c).is_some())
             || c.behaviour.starts_with("setcam_")
             || c.behaviour.starts_with("getdebug_")
             || c.behaviour.starts_with("setdebug_")
             || matches!(c.behaviour.as_str(), "adjustheight" | "getheightoffset")
         {
-            if self.rlva.viewer.len() < 256 {
+            if self.rlva.viewer.len() < super::MAX_QUEUED {
                 self.rlva.viewer.push((source, c));
             }
             return true;
@@ -505,14 +697,13 @@ impl World {
             // (RlvHandler::processReplyCommand reads no option for
             // @getgroup and @getsitid: one given changes nothing)
             let text = match c.behaviour.as_str() {
-                "getgroup" => Some(
-                    self.groups
-                        .groups
-                        .iter()
-                        .find(|g| g.id == self.groups.active)
-                        .map_or("none", |g| g.name.as_str())
-                        .to_owned(),
-                ),
+                // gAgent.getGroupName(), the name AgentDataUpdate gave,
+                // whatever the group list holds (it may not have come yet)
+                "getgroup" => Some(if self.groups.active.is_nil() || self.groups.active_name.is_empty() {
+                    "none".to_owned()
+                } else {
+                    self.groups.active_name.clone()
+                }),
                 "getsitid" => Some(self.rlva_sit_id().to_string()),
                 name if super::QUERIES.contains(&name) => self.rlva_inventory_query(&c, source),
                 _ => Some(String::new()),
@@ -523,22 +714,6 @@ impl World {
                 self.rlva.pending.push((source, c));
                 self.rlva.pending.extend(pending.by_ref());
                 return false;
-            }
-            return true;
-        }
-        if c.behaviour == "detachme"
-            && c.option.is_empty()
-            && let Some(item) = self.rlva_attachment_item(source)
-            && let Some(key) = self.rlva_temporary_attachment(item)
-        {
-            if self.rlva_can_remove(item, source) {
-                commands.push((
-                    source,
-                    NetCommand::DetachObject {
-                        handle: key.region,
-                        local_id: key.local_id,
-                    },
-                ));
             }
             return true;
         }
@@ -570,9 +745,9 @@ impl World {
             // it the null key, which no option is too (LLUUID::set).
             "sitground" => self.rlva_force_ground_sit(source),
             "sit" if c.option.is_empty() => self.rlva_force_ground_sit(source),
-            "sit" => match Uuid::parse_str(&c.option) {
-                Ok(id) if id.is_nil() => self.rlva_force_ground_sit(source),
-                Ok(id) => self
+            "sit" => match super::numeric::uuid_set(&c.option) {
+                Some(id) if id.is_nil() => self.rlva_force_ground_sit(source),
+                Some(id) => self
                     .objects
                     .index_of_uuid(&id)
                     .and_then(|i| self.objects.get(i))
@@ -581,12 +756,12 @@ impl World {
                         target: o.full_id,
                         offset: Vec3::ZERO,
                     }),
-                Err(_) => None,
+                None => None,
             },
+            // RlvExtGetSet::processCommand (rlvextensions.cpp):
+            // LLStringUtil::convertToF32, which never reads `inf` or `nan`.
             "setrot" => {
-                if let Ok(angle) = c.option.parse::<f32>()
-                    && angle.is_finite()
-                {
+                if let Some(angle) = super::numeric::convert_to_f32(&c.option) {
                     self.agent.yaw = std::f32::consts::FRAC_PI_2 - angle;
                 }
                 None
@@ -597,8 +772,17 @@ impl World {
                 } else {
                     super::option_bool(&c.option)
                 };
+                // RlvForceHandler<RLV_BHVR_FLY> (rlvhandler.cpp) takes off
+                // through LLAgent::setFlying (llagent.cpp), which refuses a
+                // takeoff seated or where the land allows no flight
+                // (LLAgent::canFly: no parcel known yet is no flight), and
+                // lets a flight under way land.
                 if let Some(flying) = flying
-                    && (!flying || !self.rlva.has_except("fly", source))
+                    && flying != self.agent.flying
+                    && (!flying
+                        || (!self.rlva.has_except("fly", source)
+                            && !self.agent.is_sitting()
+                            && crate::autopilot::land_allows_flight(self, true, false)))
                 {
                     self.agent.flying = flying;
                 }
@@ -609,46 +793,64 @@ impl World {
         };
         if let Some(mut command) = command
             && self.rlva_normalize_teleport(&mut command)
-            && self.rlva_allows_command(&command, source)
         {
-            // LLAgent::teleportViaLocation: a teleport forced by @tpto
-            // cannot be cancelled (RlvHandler::setCanCancelTp(false))
-            if c.behaviour == "tpto" {
-                self.tp_cancel.lock_for_rlva();
+            if self.rlva_allows_command(&command, source) {
+                // LLAgent::teleportViaLocation: a teleport forced by @tpto
+                // to a position cannot be cancelled
+                // (RlvHandler::setCanCancelTp(false)). One to a region name
+                // starts from RlvHandler::onTeleportCallback, once the map
+                // answered, where no command is current: it can be.
+                if c.behaviour == "tpto" && matches!(command, NetCommand::TeleportTo { .. }) {
+                    self.tp_cancel.lock_for_rlva();
+                }
+                commands.push((source, command));
+            } else if c.behaviour == "tpto" {
+                // LLAgent::teleportViaLocation(LookAt): a refused teleport
+                // says so (RlvUtil::notifyBlocked, Blocked::Teleport).
+                self.system_notice(
+                    aurora_i18n::tr!("rlva-blocked-teleport"),
+                    super::super::notice_topics::Topic::Warning,
+                );
             }
-            commands.push((source, command));
         }
         true
     }
 }
 
-fn teleport(option: &str) -> Option<NetCommand> {
-    // RlvForceHandler<TPTO> retains double precision until the region origin
-    // is removed and rotates the look vector by the optional radian angle.
+pub(super) fn teleport(option: &str) -> Option<NetCommand> {
+    use super::numeric;
+    // RlvForceHandler<RLV_BHVR_TPTO>::onCommand (rlvhandler.cpp): the option
+    // split on every ';' (tokens after the second ignored), the angle read by
+    // `std::stof`; a global position read by `sscanf("%lf/%lf/%lf")` keeps
+    // double precision until the region origin is removed; otherwise
+    // `<region>/<x>/<y>/<z>`, the position read by `sscanf("%f/%f/%f")`.
+    // A value that is not finite is refused: the Legacy Viewer would send it.
+    if option.is_empty() {
+        return None;
+    }
     let mut options = option.split(';');
     let destination = options.next()?;
     let look_at = match options.next() {
         Some(angle) => {
-            let angle = angle.parse::<f32>().ok()?;
-            if !angle.is_finite() {
-                return None;
-            }
+            let angle = numeric::finite(numeric::stof(angle))?;
             let (sin, cos) = angle.sin_cos();
             Vec3::new(cos, sin, 0.0)
         }
         None => Vec3::ZERO,
     };
-    let parts: Vec<_> = destination.split('/').collect();
-    let (name, coordinates) = match parts.as_slice() {
-        [x, y, z] => (None, [*x, *y, *z]),
-        [region, x, y, z] if !region.is_empty() => (Some(*region), [*x, *y, *z]),
-        _ => return None,
+    let (name, p) = if let Some(global) = numeric::scan_doubles::<3>(destination) {
+        (None, glam::DVec3::from_array(global))
+    } else {
+        let parts: Vec<_> = destination.split('/').collect();
+        let [region, ..] = parts.as_slice() else {
+            return None;
+        };
+        if parts.len() != 4 || region.is_empty() {
+            return None;
+        }
+        let local = numeric::scan_floats::<3>(&destination[region.len() + 1..])?;
+        (Some(*region), glam::Vec3::from_array(local).as_dvec3())
     };
-    let p = glam::DVec3::new(
-        coordinates[0].parse().ok()?,
-        coordinates[1].parse().ok()?,
-        coordinates[2].parse().ok()?,
-    );
     if !p.is_finite() {
         return None;
     }
@@ -735,5 +937,43 @@ mod teleport_tests {
         ] {
             assert!(teleport(invalid).is_none(), "{invalid}");
         }
+    }
+
+    /// rlvCheckAvatarIMDistance (rlvactions.cpp) measures with
+    /// LLWorld::getAvatar (llworld.cpp): a resident not loaded yet is found
+    /// by their map location, in our region or a neighbour.
+    #[test]
+    fn rlva_im_range_measures_residents_known_only_by_their_map_location() {
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(1);
+        let main = aurora_net::origin_to_handle(256000, 256000);
+        let east = aurora_net::origin_to_handle(256256, 256000);
+        w.main_region = Some(main);
+        w.agent.position = Vec3::new(200.0, 100.0, 20.0);
+        w.rlva_configure(true);
+        w.rlva_console_input("@recvim:50=n");
+        let (near, far) = (Uuid::from_u128(5), Uuid::from_u128(6));
+        assert!(w.rlva_allows_im("recvim", near), "nowhere to be found: beyond any range");
+        w.coarse.insert(main, vec![(near, Vec3::new(220.0, 100.0, 20.0))]);
+        w.coarse.insert(east, vec![(far, Vec3::new(10.0, 100.0, 20.0))]);
+        assert!(!w.rlva_allows_im("recvim", near), "20 m away, inside the 50 m");
+        assert!(w.rlva_allows_im("recvim", far), "66 m away in the next region");
+    }
+
+    /// LLAgent::startTyping (llagent.cpp) is the only place @redirchat
+    /// holds the typing animation back: a gesture or a manual play of it
+    /// still goes.
+    #[test]
+    fn rlva_redirchat_leaves_a_typing_animation_played_by_other_means() {
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(1);
+        w.rlva_configure(true);
+        w.rlva_console_input("@redirchat:5=n");
+        assert!(!w.rlva.can_send_typing_start());
+        let typing = NetCommand::AgentAnimation {
+            anim: crate::world::radar::ANIM_AGENT_TYPE,
+            start: true,
+        };
+        assert!(w.rlva_allows_command(&typing, Uuid::nil()));
     }
 }

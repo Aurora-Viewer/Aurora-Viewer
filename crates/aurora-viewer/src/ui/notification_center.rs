@@ -16,6 +16,7 @@ use crate::world::World;
 use crate::world::chat_log::format::Slt;
 use crate::world::notification_history::{self as history, Entry, Follow, History, Outcome};
 use crate::world::notifications::{Data, Kind, Notification, Notifications, Response};
+use aurora_i18n::UiUpper;
 use egui::{Rect, RichText, Vec2};
 
 /// Width of the panel under the bell (the mockup's 360 px), with
@@ -750,13 +751,24 @@ pub(super) fn history_list(
             let mut e = e.clone();
             hide_teleport_history_location(&mut e, world.rlva.has("showloc"));
             // the kinds that name their resident keep its name under
-            // `@shownames` (`Kind::names`)
+            // `@shownames` (`Kind::names`), and the bodies shown as written
+            // stay as written (`Kind::text`); a script's prompt stays as
+            // received, its owner's name included (`Kind::as_received`)
+            let kind = Kind::of_look(e.look);
+            let text = entry_text(&e);
             let privacy = if world.rlva.enabled() {
-                world.rlva_filter_in(Kind::of_look(e.look).names())
+                world.rlva_filter_in(text.names)
             } else {
                 privacy
             };
-            privacy.redact_notice(&world.social.avatar_names, &mut e.title, &mut e.body, &mut e.name_links);
+            if !kind.as_received() {
+                privacy.redact_notice(
+                    &world.social.avatar_names,
+                    &mut e.title,
+                    text.rewritten.then_some(&mut e.body),
+                    &mut e.name_links,
+                );
+            }
             (query.is_empty() || e.title.to_lowercase().contains(&query) || e.body.to_lowercase().contains(&query)).then_some((i, e))
         })
         .collect();
@@ -775,7 +787,7 @@ pub(super) fn history_list(
             for (index, e) in found {
                 let day = day_label(e.time, today);
                 if last_day.as_ref() != Some(&day) {
-                    ui.label(RichText::new(day.to_uppercase()).size(10.5).strong().color(p.muted_dim));
+                    ui.label(RichText::new(day.ui_upper()).size(10.5).strong().color(p.muted_dim));
                     last_day = Some(day);
                 }
                 if let Some(follow) = history_card(ui, p, icons, world, &e) {
@@ -1007,6 +1019,17 @@ fn follow_label(f: &Follow) -> Option<&'static str> {
     })
 }
 
+/// How an entry of the history shows its text under `@shownames` and
+/// `@showloc`: as the kind of its notice did (`Kind::text`), or naming
+/// everyone when the notice named its resident (`Entry::named`).
+fn entry_text(e: &Entry) -> crate::world::names::TextScope {
+    if e.named {
+        crate::world::names::NameScope::Roster.into()
+    } else {
+        Kind::of_look(e.look).text()
+    }
+}
+
 /// History can predate the current restriction or come from an earlier
 /// session. Filter the displayed copy before search, including its action.
 fn hide_teleport_history_location(entry: &mut Entry, showloc: bool) {
@@ -1039,22 +1062,12 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, world: &World, e:
                         let time = hhmm(e.time);
                         let w = (ui.available_width() - 12.0 - cards::time_width(ui, &time)).max(40.0);
                         ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                            cards::text::show(
-                                ui,
-                                p,
-                                &e.title,
-                                &e.name_links,
-                                12.5,
-                                p.ink,
-                                true,
-                                true,
-                                Kind::of_look(e.look).names(),
-                            );
+                            cards::text::show(ui, p, &e.title, &e.name_links, 12.5, p.ink, true, true, entry_text(e).names);
                         });
                         ui.label(RichText::new(time).size(10.5).color(p.muted_dim));
                     });
                     if !e.body.is_empty() {
-                        super::chat::text_with_links(ui, p, world, Kind::of_look(e.look).names(), &e.body, &e.name_links, 12.0, p.muted);
+                        super::chat::text_with_links(ui, p, world, entry_text(e), &e.body, &e.name_links, 12.0, p.muted);
                     }
                     ui.horizontal(|ui| {
                         egui::Frame::new()

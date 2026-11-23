@@ -247,6 +247,9 @@ pub struct Renderer {
     pick_ticket: u64,
     /// The same for the faces drawn under a pixel (`request_drawn`).
     drawn_requests: Vec<crate::drawn_pick::DrawnRequest>,
+    /// Those already handed over and given up since: told to the render
+    /// thread with the next frame.
+    drawn_forgotten: Vec<u64>,
     drawn_answers: Vec<crate::drawn_pick::DrawnAnswer>,
     /// The poser's part pick read back last (`take_part_pick`).
     part_pick: Option<(u32, [u32; 2])>,
@@ -323,6 +326,9 @@ pub struct Renderer {
     pub thumbnail_request: Option<u64>,
     /// The small pictures made, until the caller takes them.
     pub thumbnails: Vec<crate::Thumbnail>,
+    /// The second camera's view to draw after the next frame
+    /// (second_view.rs); asked again every frame the window is open.
+    pub second_view: Option<crate::second_view::SecondViewJob>,
     /// Set by the device-lost callback (device_lost.rs).
     lost: DeviceLost,
     /// AURORA_DEMO_GPU_LOST: the frame the device is taken as lost at.
@@ -792,6 +798,7 @@ impl Renderer {
             pick_answers: Vec::new(),
             pick_ticket: 0,
             drawn_requests: Vec::new(),
+            drawn_forgotten: Vec::new(),
             drawn_answers: Vec::new(),
             part_pick: None,
             frames: 0,
@@ -823,6 +830,7 @@ impl Renderer {
             histogram: None,
             thumbnail_request: None,
             thumbnails: Vec::new(),
+            second_view: None,
             lost,
             // one of the list for each renderer of the run (a recovery's
             // counts its frames from 0 again)
@@ -1384,6 +1392,7 @@ impl Renderer {
         self.pick_answers.extend(asked);
         let asked = self.drawn_requests.drain(..).map(|(ticket, _, _, _)| (ticket, Default::default()));
         self.drawn_answers.extend(asked);
+        self.drawn_forgotten.clear();
     }
 
     /// Close the frame and have it drawn: with a render thread the packet
@@ -1596,10 +1605,12 @@ impl Renderer {
             hover: self.hover_request.take(),
             picks: std::mem::take(&mut self.pick_requests),
             drawn: std::mem::take(&mut self.drawn_requests),
+            drawn_forgotten: std::mem::take(&mut self.drawn_forgotten),
             capture,
             equirect: self.equirect_request.take(),
             histogram: self.histogram_request.take(),
             thumbnail: self.thumbnail_request.take(),
+            second_view: self.second_view.take(),
             motion_cut: std::mem::take(&mut self.motion_cut),
             world_shift: std::mem::take(&mut self.world_shift),
             input_at: self.input_at.take(),
@@ -1680,6 +1691,7 @@ impl Renderer {
                 gpu_ssao: self.last_stats.gpu_ssao,
                 gpu_contact: self.last_stats.gpu_contact,
                 gpu_clouds: self.last_stats.gpu_clouds,
+                gpu_soft: self.last_stats.gpu_soft,
                 gpu_bloom: self.last_stats.gpu_bloom,
                 gpu_effects: self.last_stats.gpu_effects,
                 gpu_weather: self.last_stats.gpu_weather,
@@ -1854,10 +1866,15 @@ impl Renderer {
         self.part_pick.take()
     }
 
-    /// Give up a [`Self::request_drawn`] nobody waits for any more.
+    /// Give up a [`Self::request_drawn`] nobody waits for any more: here,
+    /// and on the render thread when it has left with a frame.
     pub fn forget_drawn(&mut self, ticket: u64) {
+        let held = self.drawn_requests.len() + self.drawn_answers.len();
         self.drawn_requests.retain(|(t, _, _, _)| *t != ticket);
         self.drawn_answers.retain(|(t, _)| *t != ticket);
+        if self.drawn_requests.len() + self.drawn_answers.len() == held {
+            self.drawn_forgotten.push(ticket);
+        }
     }
 
     /// Like [`Self::request_pick`], waiting for the answer: for the frame in
@@ -1942,6 +1959,8 @@ impl Renderer {
 
     /// Project a world position to screen pixels (None if behind camera).
     pub fn project(&self, f: &FrameParams, p: Vec3) -> Option<(f32, f32, f32)> {
+        // where it is drawn, on the curved planet if any (curvature.rs)
+        let p = crate::curvature::Curvature::new(f.camera_pos, f.curvature).bend(p);
         let c = f.proj * f.view * p.extend(1.0);
         if c.w <= 0.01 {
             return None;

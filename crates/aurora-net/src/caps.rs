@@ -104,6 +104,10 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // Legacy Viewer: LLViewerRegionImpl::buildCapabilityNames (llviewerregion.cpp).
     "ParcelPropertiesUpdate",
     "ParcelVoiceInfoRequest",
+    // the grid's one-to-one IM history, listed then paged
+    // (LLChatServiceHistory, LL viewer 26.5)
+    "PersistentChatConversationsRequest",
+    "PersistentChatHistoryRequest",
     "ProvisionVoiceAccountRequest",
     // instant messages kept while offline (LLIMProcessing::requestOfflineMessages)
     "ReadOfflineMsgs",

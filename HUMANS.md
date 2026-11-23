@@ -181,8 +181,11 @@ below). They check that `main` is green, suggest the number from the labels
 of the PRs merged since the last version, show these PRs, create the tag and
 follow the publication up to the release link. They are also used to
 **delete** a release (you have to type its tag to confirm; `assets-1`, which
-holds the 3D emoji font older commits download, is protected). Write access to the repository is
-required.
+holds the 3D emoji font older commits download, is protected). Only an
+admin of the repository publishes a release, stable or beta: the ruleset of
+the version tags refuses anyone else's stable tag, and the Release and
+Nightly workflows stop a beta tag pushed, or a Nightly run started, by
+anyone else. Deleting a release needs write access.
 
 Before the creation is confirmed, two choices set the effect of the update
 for users: **keep or invalidate the cache**, then **keep and migrate the
@@ -303,8 +306,10 @@ opens. It also works when placed in the project folder, next to
 `aurora-viewer/`; alone in an empty folder, it downloads the installer from
 the `main` of GitHub. On the command line, it passes the arguments to the
 tools and returns their exit code, for example
-`aurora-tools.cmd -Action diagnose`. Exclamation marks in the path stay valid
-even from a prompt with delayed expansion.
+`aurora-tools.cmd -Action diagnose` (`.\aurora-tools.cmd` in PowerShell, which
+does not look in the current folder; Windows PowerShell and PowerShell 7 both
+work). Exclamation marks in the path stay valid even from a prompt with delayed
+expansion.
 
 The active choice carries a **›** mark on a violet background; the text
 cursor stays hidden while navigating. Long lists scroll with the selection
@@ -527,6 +532,13 @@ as `aurora.previous.log`. Demo sessions have their own logs
 
 ## Security
 
+- **No data of our own in shared places.** Second Life's shared experience
+  policy forbids a viewer to store its own data where the grid keeps it or
+  where other residents receive it (asset and object names, descriptions,
+  EEP settings, hidden bits in numbers, chat channels…) so that only that
+  viewer makes something of it; the region weather of Aurora Weather did,
+  and was removed. The agents follow the rule (AGENTS.md, section 2) and
+  stop to ask you when a feature would need it.
 - The agents never connect to the grid and never handle your credentials.
   The remembered password is stored by Windows (Credential Manager), as a
   hash only.

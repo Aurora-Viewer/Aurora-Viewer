@@ -522,6 +522,16 @@ pub enum NetEvent {
     /// The ReadOfflineMsgs capability failed: Firestorm then asks by
     /// message (`NetCommand::RequestOfflineMessagesLegacy`).
     OfflineMessagesFailed,
+    /// Answer of a `NetCommand::ChatServiceRequest`. `status` is the HTTP
+    /// status, 0 for a transport failure (timeout, connection) and 499 for
+    /// an LLSD body that does not parse, as LLCoreHttpUtil reports them.
+    /// `body` is the LLSD of a success only; an array root (the list) is
+    /// given as it is.
+    ChatServiceResponse {
+        id: u64,
+        status: u16,
+        body: Option<aurora_llsd::Llsd>,
+    },
     /// An offline group invitation was accepted by capability: the group
     /// list is to ask again.
     OfflineGroupInviteAccepted(Uuid),
@@ -709,7 +719,14 @@ pub enum NetEvent {
         /// "GroupChatPostLinksEnabled": the region applies the group ability
         /// to post links in chat (LLViewerRegion::groupChatPostLinksEnabled).
         group_chat_post_links: bool,
+        /// "GameControlEnabled": the region reads GameControlData
+        /// (LLViewerRegion::gameControlEnabled).
+        game_control: bool,
     },
+    /// SimStats' LL_SIM_STAT_FPS of any region (process_sim_stats): the
+    /// simulator's frame rate, which paces GameControlData
+    /// (LLGameControl::setServerFrameRate).
+    SimFrameRate(f32),
     HoverHeightUpdated {
         region: RegionHandle,
         request: u64,
@@ -826,6 +843,10 @@ pub enum NetEvent {
     TeleportFailed {
         reason: String,
     },
+    /// The TeleportFailed that follows is a refusal for the destination's
+    /// content rating (teleport_access.rs): the viewer may offer to change
+    /// the preference instead of reporting the reason.
+    TeleportAccessBlocked(crate::teleport_access::AccessBlocked),
     Alert {
         message: String,
     },
@@ -1266,6 +1287,10 @@ pub enum NetEvent {
     InventoryUpdated {
         folders: Vec<crate::inventory::InvFolder>,
         items: Vec<crate::inventory::InvItem>,
+        /// From BulkUpdateInventory (UDP or event queue): a delivery or an
+        /// unpack, whose folders the viewer reads at once so they sort by
+        /// their contents (#3025). Every other server change leaves it false.
+        bulk: bool,
     },
     /// Delivery identity follows InventoryUpdated, so observers see its headers.
     InventoryDelivery {
@@ -1647,6 +1672,17 @@ pub enum NetCommand {
     /// The same by the RetrieveInstantMessages message only (after
     /// `NetEvent::OfflineMessagesFailed`).
     RequestOfflineMessagesLegacy,
+    /// One request of the grid's direct IM history
+    /// (LLChatServiceHistory::request, LL viewer 26.5): a GET of the
+    /// conversation list when `body` is None, else a POST of one history
+    /// page. `url` is the capability of the context the viewer sampled, so
+    /// that a region change in between does not send it elsewhere. Answered
+    /// by `NetEvent::ChatServiceResponse` with the same `id`.
+    ChatServiceRequest {
+        id: u64,
+        url: String,
+        body: Option<aurora_llsd::Llsd>,
+    },
     /// Answer a friendship offer received while offline: by the
     /// AcceptFriendship / DeclineFriendship capability, else by message when
     /// it came with a transaction id.
@@ -1831,6 +1867,9 @@ pub enum NetCommand {
     /// viewer made on purpose, such as the Compass's 1° (LLAgent::resetAxes
     /// then send_agent_update in FSAvatarAlignBase::applyRotation).
     ForceAgentUpdate,
+    /// GameControlData to the agent's region, unreliable (sendGameControlData,
+    /// llappviewer.cpp): the viewer decides when it is due.
+    GameControlData(GameControlPacket),
     /// Walk / run toggle (SetAlwaysRun), used for double-tap running.
     SetAlwaysRun(bool),
     /// Our look-at target (ViewerEffect, LLHUDEffectLookAt::packData).
@@ -2604,6 +2643,21 @@ pub mod control {
 
 /// The typing bit of AgentUpdate's State (AGENT_STATE_TYPING, llagent.cpp).
 pub const AGENT_STATE_TYPING: u8 = 0x04;
+
+/// One GameControlData message, packed as sendGameControlData does: the
+/// trailing zero axes are already cut, and a button mask of zero is `None`
+/// (the server reads anything left out as zero).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GameControlPacket {
+    /// Wraps at 255, never reset (LLGameControl::getNextPacketNum).
+    pub packet: u8,
+    /// AgentControlMode: 0 avatar, 1 mouselook, 2 flycam, 3 captive, 4 cursor.
+    pub action_mode: u8,
+    pub axes: Vec<i16>,
+    pub buttons: Option<u32>,
+    pub mode_axes: Vec<i16>,
+    pub mode_buttons: Option<u32>,
+}
 
 /// Agent state the viewer writes each frame and the network layer sends by
 /// the rule of `agent_update.rs`.

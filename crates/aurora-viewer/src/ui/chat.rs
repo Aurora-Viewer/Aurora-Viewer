@@ -57,13 +57,15 @@ mod chat_lines_tests;
 #[cfg(test)]
 mod contact_visual_tests;
 #[cfg(test)]
+mod earshot_tests;
+#[cfg(test)]
 mod volume_tests;
 
 use super::context::CtxAction;
 use super::presence;
 use crate::theme::Palette;
 use crate::world::chat_log::format::Slt;
-use crate::world::names::NameScope;
+use crate::world::names::{NameScope, TextScope};
 use crate::world::{ChatKind, Origin, World};
 use aurora_net::ChatType;
 use egui::{Color32, RichText};
@@ -252,6 +254,9 @@ pub struct ChatUi {
     /// A conversation's notices too (its sub-option, off), given every
     /// frame by the app.
     pub compact_im_notices: bool,
+    /// Emotes join their sender's group in the Aurora style
+    /// (Preferences › Chat, off), given every frame by the app.
+    pub group_emotes: bool,
     /// The nearby chat's field shows its channel selector (Preferences ›
     /// Chat, off by default), given every frame by the app.
     pub show_channel: bool,
@@ -350,6 +355,38 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// Route text started from the world to the Nearby field that will
+    /// actually receive keyboard focus (LLViewerWindow::handleKey).
+    pub fn start_nearby_with(&mut self, ctx: &egui::Context, main_open: bool, text: &str) {
+        let target = nearby_typing_target(
+            self.nearby_window_shown(ctx),
+            main_open && !self.contacts && self.selected.is_none() && !crate::ui::widgets::floater_minimized(ctx, "conversations"),
+        );
+        match target {
+            NearbyTypingTarget::Detached => {
+                self.draft_mut(None).push_str(text);
+                self.popped.raise(None, true);
+            }
+            NearbyTypingTarget::Main => {
+                self.draft_mut(None).push_str(text);
+                self.conv_focus_request = true;
+            }
+            NearbyTypingTarget::ChatBar => {
+                self.input.push_str(text);
+                self.focus_request = true;
+            }
+        }
+    }
+
+    /// How far residents can hear the selected nearby chat volume.
+    pub(crate) fn earshot_range(&self, ranges: crate::world::radar::ChatRanges) -> f32 {
+        match self.volume {
+            compose::Volume::Whisper => ranges.whisper,
+            compose::Volume::Say => ranges.say,
+            compose::Volume::Shout => ranges.shout,
+        }
+    }
+
     /// The column's saved state, given every frame by the app
     /// (`Settings::chat_column_collapsed`), or the demo session's own.
     pub fn follow_column_setting(&mut self, saved: bool) {
@@ -376,6 +413,12 @@ impl ChatUi {
         } else {
             self.side_filter.trim()
         }
+    }
+
+    /// The search typed in the column's field, whatever the rail shows: the
+    /// Dev Toolbox's Contacts report (J10) names it when it hides the entry.
+    pub fn column_filter(&self) -> &str {
+        self.side_filter.trim()
     }
 
     /// Recreate only the account-independent nearby window. IMs, messages,
@@ -853,6 +896,12 @@ impl ChatUi {
         self.local_typing.update(now, std::mem::take(&mut self.local_field))
     }
 
+    /// `local_typing_update` while RLVa holds the typing start back
+    /// (`LocalTyping::update_held`).
+    pub fn local_typing_update_held(&mut self, now: std::time::Instant) -> Option<bool> {
+        self.local_typing.update_held(now, std::mem::take(&mut self.local_field))
+    }
+
     /// `AURORA_DEMO_TYPING`: we type without a key, every frame; true when
     /// it starts.
     pub fn hold_local_typing(&mut self, now: std::time::Instant) -> bool {
@@ -869,6 +918,28 @@ impl ChatUi {
     pub fn stop_local_typing(&mut self) -> bool {
         self.local_typing.stop()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NearbyTypingTarget {
+    Detached,
+    Main,
+    ChatBar,
+}
+
+fn nearby_typing_target(detached_visible: bool, main_visible: bool) -> NearbyTypingTarget {
+    if detached_visible {
+        NearbyTypingTarget::Detached
+    } else if main_visible {
+        NearbyTypingTarget::Main
+    } else {
+        NearbyTypingTarget::ChatBar
+    }
+}
+
+/// Count residents whose known range is within the selected nearby chat range.
+pub(crate) fn earshot_count(entries: impl IntoIterator<Item = Option<f32>>, range: f32) -> usize {
+    entries.into_iter().filter(|distance| distance.is_some_and(|d| d <= range)).count()
 }
 
 pub struct OutgoingChat {
@@ -1088,15 +1159,15 @@ fn message_emphasis(kind: ChatKind, italics: bool) -> super::fonts::TextEmphasis
 }
 
 /// The same message tone in the conversation thread and its nearby-chat card.
+/// An emote takes the colour of its sender's other lines, keyword included:
+/// LLViewerChat::getChatColor (indra/newview/llviewerchat.cpp) has no colour
+/// of its own for `/me`, only the italics (`message_emphasis`).
 fn message_color(line: &crate::world::ChatLine, p: &Palette, world: &World) -> Color32 {
     if let Some(color) = super::colors::contact_chat_color(line, world) {
         return color;
     }
-    let tone = history_tone(p, line.origin);
-    if line.text.starts_with("/me ") || line.text.starts_with("/me'") {
-        return tone.unwrap_or(p.violet_pale);
-    }
-    tone.or_else(|| super::colors::keyword_color(line))
+    history_tone(p, line.origin)
+        .or_else(|| super::colors::keyword_color(line))
         .unwrap_or_else(|| match line.kind.volume() {
             Some(ChatType::Whisper) => p.muted,
             Some(ChatType::Shout) => p.ink,
@@ -1161,9 +1232,12 @@ fn shown_name<'a>(line: &crate::world::ChatLine, name: &'a str) -> &'a str {
     conversation_options::you(&conversation_options::current(), line).unwrap_or(name)
 }
 
-/// A system line's text as shown, in brackets with the option.
-fn system_text(text: &str) -> Cow<'_, str> {
-    conversation_options::system_text(&conversation_options::current(), text)
+/// Whether a system line is drawn in brackets: the option, but never the
+/// radar's own lines, which the Legacy Viewer's chat leaves plain (its
+/// CHAT_TYPE_RADAR, `notice_topics::Topic::Radar`).
+fn system_brackets(world: &World, line: &crate::world::ChatLine) -> bool {
+    let radar = world.notice_topics.of(line) == crate::world::notice_topics::Topic::Radar;
+    conversation_options::system_brackets(&conversation_options::current(), radar)
 }
 
 /// The day a group of lines was said, between two lines of different days
@@ -1217,6 +1291,7 @@ fn pieces(text: &str, mut label_of: impl FnMut(&Seg) -> String) -> Vec<(String, 
             Seg::Url(u) => (u.to_owned(), Some(Link::Url(u.to_owned()))),
             Seg::Place(u, place) => (place.label.clone(), Some(Link::Place(u.to_owned(), place))),
             Seg::Agent(id) => (label_of(&s), Some(Link::Agent(id))),
+            Seg::Anonym(_) => (label_of(&s), None),
             Seg::Mention(id) => (format!("@{}", label_of(&s)), Some(Link::Agent(id))),
             Seg::App(..) => {
                 let label = label_of(&s);
@@ -1328,12 +1403,14 @@ pub(crate) fn text_with_links(
     ui: &mut egui::Ui,
     p: &Palette,
     world: &World,
-    scope: NameScope,
+    scope: TextScope,
     text: &str,
     names: &[crate::world::notifications::NameLink],
     size: f32,
     color: Color32,
 ) {
+    // the names of its links, and what is rewritten of its labels
+    let (scope, wording) = (scope.names, scope);
     let segs = segments(text);
     let plain = |ui: &mut egui::Ui, t: &str| {
         if !t.is_empty() {
@@ -1350,6 +1427,7 @@ pub(crate) fn text_with_links(
         for s in segs {
             match s {
                 Seg::Text(t) => plain(ui, t),
+                Seg::Anonym(id) => plain(ui, &world.rlva_anonym_label(id)),
                 Seg::Url(u) => web_link(ui, p, u, u, size, false.into()),
                 Seg::Slurl(u) => {
                     select::label(ui, RichText::new(u).size(size).color(super::colors::text(k.chat_slurl))).on_hover_text(u);
@@ -1366,7 +1444,7 @@ pub(crate) fn text_with_links(
                         world,
                         NameScope::Roster,
                         id,
-                        &world.rlva_filter_text_in(scope, &label),
+                        &world.rlva_filter_text_in(wording, &label),
                         size,
                         false.into(),
                     ),
@@ -1374,22 +1452,27 @@ pub(crate) fn text_with_links(
                         ui,
                         p,
                         world,
-                        scope,
+                        wording.mentions,
                         id,
-                        &world.rlva_filter_text_in(scope, &label),
+                        &world.rlva_filter_text_in(wording, &label),
                         size,
                         false.into(),
                     ),
-                    Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &label, size),
+                    // the text the link was written with, rewritten like
+                    // the text around it (RlvUtil::filterNames runs on the
+                    // raw line, the text of its links included)
+                    Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &world.rlva_filter_text_in(wording, &label), size),
                     _ => plain(ui, &label),
                 },
                 Seg::App(u, link) => {
-                    let label = app_links::label(world, &mut wanted, u, &link);
+                    let label = app_links::label(world, wording, &mut wanted, u, &link);
                     app_links::link(ui, p, world, u, &link, &label, size);
                 }
-                // a dialog has no mention highlight: the name, as a link (a
-                // mention is rewritten, a bare avatar link shows the name of
-                // its resident: LLUrlEntryAgent has no RLVa test)
+                // a dialog has no mention highlight: the name, as a link. A
+                // bare avatar link shows the name of its resident
+                // (LLUrlEntryAgent has no RLVa test); a mention is rewritten
+                // where RlvUtil::filterMentions runs, so not in a script's
+                // prompt (`TextScope::mentions`)
                 Seg::Agent(id) => {
                     wanted.insert(id);
                     agent_link(
@@ -1405,7 +1488,17 @@ pub(crate) fn text_with_links(
                 }
                 Seg::Mention(id) => {
                     wanted.insert(id);
-                    agent_link(ui, p, world, scope, id, &world.social.name_in(scope, &id), size, false.into());
+                    let names = wording.mentions;
+                    agent_link(
+                        ui,
+                        p,
+                        world,
+                        names,
+                        id,
+                        &format!("@{}", world.social.name_in(names, &id)),
+                        size,
+                        false.into(),
+                    );
                 }
             }
         }
@@ -1495,13 +1588,16 @@ fn line_job(
     look: JobLook<'_>,
 ) -> BubbleJob {
     // the on-screen chat has no conversation: the line's kind tells its names
-    let scope = line_names(&line.kind);
+    let scope = line_names(world, &line.kind);
+    // what a resident typed is shown as typed (`ChatKind::text_in`)
+    let wording = line.wording(scope);
+    // (a line is rewritten when it arrives, `World::rlva_freeze_line`; a
+    // card's text while it is shown: the whole of it, the labels of its
+    // links included)
     let filtered;
-    let line = if world.rlva.has("shownames") || world.rlva.has("showloc") {
+    let line = if wording.rewritten && world.rlva.enabled() {
         let mut copy = line.clone();
-        // (the whole text, the labels of its links included)
-        copy.text = world.rlva_filter_text_in(scope, &copy.text).into_owned();
-        copy.from = sender_name(world, scope, &world.own_name(), &copy);
+        copy.text = world.rlva_filter_text_in(wording, &copy.text).into_owned();
         filtered = copy;
         &filtered
     } else {
@@ -1542,11 +1638,12 @@ fn line_job(
     }
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     // the pills of the islands (the bars mockup's `.toasts`): a resident's
-    // name in semi-bold light violet, no colon, a system line in italics;
-    // every other colour stays the kind's
+    // name in semi-bold, in the senders' colour (Preferences › Emitter ›
+    // Avatars), no colon, a system line in italics; every other colour
+    // stays the kind's
     let resident = matches!(line.kind, ChatKind::Local(_) | ChatKind::Own(_));
     let mut name_fmt = match pill {
-        Some(family) => super::fonts::semibold_format(family, size, if resident { p.violet_light } else { col }),
+        Some(family) => super::fonts::semibold_format(family, size, if resident { super::colors::sender_color(line) } else { col }),
         None if compact => egui::TextFormat {
             color: super::colors::sender_color(line),
             font_id: egui::FontId::proportional(size),
@@ -1617,7 +1714,8 @@ fn line_job(
             want_names.insert(*id);
             world.social.name_in(scope, id)
         }
-        Seg::App(u, link) => app_links::label(world, want_names, u, link),
+        Seg::Anonym(id) => world.rlva_anonym_label(*id),
+        Seg::App(u, link) => app_links::label(world, wording, want_names, u, link),
         _ => String::new(),
     };
     // the badge of a web link takes the place of an invisible glyph glued to
@@ -1640,7 +1738,7 @@ fn line_job(
             // whole text above has already read
             piece
         } else {
-            world.rlva_filter_text_in(scope, &piece).into_owned()
+            world.rlva_filter_text_in(wording, &piece).into_owned()
         };
         let badge = match &link {
             Some(Link::Url(u)) => Some(LinkBadge::Web(u.clone())),
@@ -1827,6 +1925,11 @@ enum Seg<'a> {
     /// secondlife:///app/agent/<id>/about (inspect, completename...): shown
     /// as the avatar's name, opens the profile (LLUrlEntryAgent).
     Agent(uuid::Uuid),
+    /// secondlife:///app/agent/<id>/rlvanonym, the link RLVa writes for a
+    /// hidden resident: their stand-in in plain text, never a link
+    /// (LLUrlEntryAgentRLVAnonymizedName, indra/llui/llurlentry.cpp;
+    /// `World::rlva_anonym_label`).
+    Anonym(uuid::Uuid),
     /// A link written with its own text, `[https://example.org Text]` or
     /// `[secondlife:///app/... Text]` (LLUrlEntryHTTPLabel, LLUrlEntrySLLabel):
     /// shown as the text, it acts as the link inside (a web link, an agent
@@ -1844,10 +1947,14 @@ pub(crate) fn mentions(text: &str, agent: &uuid::Uuid) -> bool {
 /// A message as plain text, for a system notification or a short preview:
 /// agents by their name (a mention with its "@"), places by their label,
 /// app commands by `app` (their label, `app_links::label`), labelled links
-/// by their text, web links as written.
+/// by their text, web links as written. `name` is told whether the link is
+/// a mention: RLVa rewrites a mention where it leaves a bare avatar link
+/// alone (`TextScope::mentions`). `anonym`: the label of an `rlvanonym`
+/// link (`World::rlva_anonym_label`).
 pub(crate) fn plain_text(
     text: &str,
-    name: impl Fn(&uuid::Uuid) -> Option<String>,
+    name: impl Fn(&uuid::Uuid, bool) -> Option<String>,
+    anonym: impl Fn(uuid::Uuid) -> String,
     app: impl Fn(&str, &crate::slapp::AppLink) -> String,
 ) -> String {
     let mut out = String::with_capacity(text.len());
@@ -1858,9 +1965,10 @@ pub(crate) fn plain_text(
             Seg::Place(_, place) => out.push_str(&place.label),
             Seg::Mention(id) => {
                 out.push('@');
-                out.push_str(&name(&id).unwrap_or_else(|| id.to_string()));
+                out.push_str(&name(&id, true).unwrap_or_else(|| id.to_string()));
             }
-            Seg::Agent(id) => out.push_str(&name(&id).unwrap_or_else(|| id.to_string())),
+            Seg::Agent(id) => out.push_str(&name(&id, false).unwrap_or_else(|| id.to_string())),
+            Seg::Anonym(id) => out.push_str(&anonym(id)),
             Seg::Labelled(label, _) => out.push_str(&label),
         }
     }
@@ -1868,9 +1976,9 @@ pub(crate) fn plain_text(
 }
 
 /// The label of an app command, for the texts drawn outside the chat (a
-/// system notification).
-pub(crate) fn app_label(world: &World, url: &str, link: &crate::slapp::AppLink) -> String {
-    app_links::label(world, &mut HashSet::new(), url, link)
+/// system notification), in a text shown as `wording` says.
+pub(crate) fn app_label(world: &World, wording: impl Into<TextScope>, url: &str, link: &crate::slapp::AppLink) -> String {
+    app_links::label(world, wording.into(), &mut HashSet::new(), url, link)
 }
 
 /// A message with its links shown as in the conversation, in plain text,
@@ -1879,19 +1987,38 @@ pub(crate) fn app_label(world: &World, url: &str, link: &crate::slapp::AppLink) 
 /// asked at the end of the frame), places, app commands and labelled links
 /// by their label. The preview cuts the result, never a link's address in
 /// its middle, as the Legacy Viewer's toasts show the labels of their text
-/// (`parse_urls`, LLTextBase::appendTextImpl) before eliding it.
-pub(crate) fn resolved_text(world: &World, text: &str) -> String {
-    resolved_text_in(world, NameScope::World, text)
-}
-
-/// `resolved_text` for a text shown in `scope` (`conversation_names`).
-pub(crate) fn resolved_text_in(world: &World, scope: NameScope, text: &str) -> String {
-    let name = |id: &uuid::Uuid| {
-        app_links::want_agents([*id]);
-        Some(world.social.name_in(scope, id))
-    };
-    let text = plain_text(text, name, |u, link| app_label(world, u, link));
-    world.rlva_filter_text_in(scope, &text).into_owned()
+/// (`parse_urls`, LLTextBase::appendTextImpl) before eliding it. `scope`:
+/// where the text is shown (`conversation_names`), or `ChatKind::text_in`
+/// for the text of a line.
+pub(crate) fn resolved_text_in(world: &World, scope: impl Into<TextScope>, text: &str) -> String {
+    let scope = scope.into();
+    // as the text is drawn (`chat_text_marked`): its words, the labels it
+    // was written with and what a label takes from an address are rewritten
+    // as `scope` says; a bare avatar link names its resident
+    // (LLUrlEntryAgent has no RLVa test: RlvUtil::filterNames ran on the
+    // raw text, before the link was read), a mention follows
+    // `TextScope::mentions`
+    let hide = |t: &str| world.rlva_filter_text_in(scope, t).into_owned();
+    let mut out = String::with_capacity(text.len());
+    for seg in segments(text) {
+        match seg {
+            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => out.push_str(&hide(t)),
+            Seg::App(u, link) => out.push_str(&app_label(world, scope, u, &link)),
+            Seg::Place(_, place) => out.push_str(&hide(&place.label)),
+            Seg::Labelled(label, _) => out.push_str(&hide(&label)),
+            Seg::Anonym(id) => out.push_str(&world.rlva_anonym_label(id)),
+            Seg::Mention(id) => {
+                app_links::want_agents([id]);
+                out.push('@');
+                out.push_str(&world.social.name_in(scope.mentions, &id));
+            }
+            Seg::Agent(id) => {
+                app_links::want_agents([id]);
+                out.push_str(&world.social.name_in(NameScope::Roster, &id));
+            }
+        }
+    }
+    out
 }
 
 /// The schemes of the links of a text, with or without their own text.
@@ -2203,6 +2330,7 @@ fn link_seg(link: &str) -> Seg<'_> {
         let (id, action) = rest.split_once('/').unwrap_or((rest, ""));
         match (uuid::Uuid::parse_str(id).ok(), action) {
             (Some(id), "mention") => Seg::Mention(id),
+            (Some(id), "rlvanonym") => Seg::Anonym(id),
             (Some(id), "about" | "inspect" | "completename" | "displayname" | "username") => Seg::Agent(id),
             _ => crate::slapp::parse(link).map_or(Seg::Slurl(link), |app| Seg::App(link, app)),
         }
@@ -2263,7 +2391,9 @@ fn line_name_menu(
     line: &crate::world::ChatLine,
     menu: Option<egui::Id>,
 ) {
-    if !super::context::name_has_menu(world, scope, id) {
+    // the stand-in of a speaker hidden when the line arrived is plain text
+    // (`super::context::name_has_menu`, decided then)
+    if line.anonymous() {
         return;
     }
     if !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
@@ -2357,7 +2487,19 @@ pub(crate) fn chat_text(
     color: Color32,
     italics: bool,
 ) {
-    chat_text_marked(ui, p, emoji, world, NameScope::World, want_names, text, size, color, italics, None);
+    chat_text_marked(
+        ui,
+        p,
+        emoji,
+        world,
+        NameScope::World.into(),
+        want_names,
+        text,
+        size,
+        color,
+        italics,
+        None,
+    );
 }
 
 /// A text searched for in the lines, and the wash its matches are drawn on.
@@ -2392,14 +2534,15 @@ fn marked_run(
 }
 
 /// `chat_text` with the matches of a searched text highlighted, for a text
-/// shown in `scope` (`conversation_names`).
+/// shown in `scope` (`conversation_names`, or `ChatKind::text_in` for the
+/// text of a line).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn chat_text_marked(
     ui: &mut egui::Ui,
     p: &Palette,
     emoji: &mut super::emoji::Emoji,
     world: &World,
-    scope: NameScope,
+    scope: TextScope,
     want_names: &mut HashSet<uuid::Uuid>,
     text: &str,
     size: f32,
@@ -2407,26 +2550,112 @@ pub(crate) fn chat_text_marked(
     emphasis: impl Into<super::fonts::TextEmphasis>,
     mark: Option<Mark>,
 ) {
-    let emphasis = emphasis.into();
-    // `@shownames` and `@showloc` rewrite the text and the labels someone
-    // wrote, those of an avatar link included (RlvUtil::filterNames and
-    // filterLocation run on the raw text). A bare avatar link shows the name
-    // of its resident, as the Legacy Viewer's LLUrlEntryAgent does (no RLVa
-    // test); a `/mention` link is rewritten (RlvUtil::filterMentions).
-    let hide = |t: &str| world.rlva_filter_text_in(scope, t).into_owned();
-    let filtered = world.rlva_filter_text_in(scope, text);
+    chat_text_all(
+        ui,
+        p,
+        emoji,
+        world,
+        scope,
+        want_names,
+        text,
+        size,
+        color,
+        emphasis.into(),
+        mark,
+        false,
+    );
+}
+
+/// `chat_text_marked` for a system line, in brackets around it when
+/// `brackets`. The Legacy Viewer's chat appends them as their own runs
+/// (FSChatHistory::appendMessage): written into the text, they read as a link
+/// given its own text, `[secondlife:///app/agent/<id>/about entered the
+/// region.]`, whose label takes the resident's name away.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn chat_text_bracketed(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    scope: TextScope,
+    want_names: &mut HashSet<uuid::Uuid>,
+    text: &str,
+    size: f32,
+    color: Color32,
+    emphasis: impl Into<super::fonts::TextEmphasis>,
+    mark: Option<Mark>,
+    brackets: bool,
+) {
+    chat_text_all(
+        ui,
+        p,
+        emoji,
+        world,
+        scope,
+        want_names,
+        text,
+        size,
+        color,
+        emphasis.into(),
+        mark,
+        brackets,
+    );
+}
+
+/// The pair around a system line in `brackets`, in reading order. A line that
+/// reads from the right takes the pair turned around: drawn as pieces of
+/// their own, the brackets miss the mirroring the bidi pass gives the text.
+fn bracket_pair(brackets: bool, rtl: bool) -> (&'static str, &'static str) {
+    match (brackets, rtl) {
+        (false, _) => ("", ""),
+        (true, false) => ("[", "]"),
+        (true, true) => ("]", "["),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn chat_text_all(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    emoji: &mut super::emoji::Emoji,
+    world: &World,
+    scope: TextScope,
+    want_names: &mut HashSet<uuid::Uuid>,
+    text: &str,
+    size: f32,
+    color: Color32,
+    emphasis: super::fonts::TextEmphasis,
+    mark: Option<Mark>,
+    brackets: bool,
+) {
+    // `@shownames` and `@showloc` rewrite the text and the labels of what no
+    // resident typed, those of an avatar link included (RlvUtil::filterNames
+    // and filterLocation run on the raw text of an object's line; `wording`
+    // is as written for a resident's). A bare avatar link shows the name of
+    // its resident, as the Legacy Viewer's LLUrlEntryAgent does (no RLVa
+    // test); a `/mention` link is rewritten where RlvUtil::filterMentions
+    // runs (`TextScope::mentions`).
+    let wording = scope;
+    let hide = |t: &str| world.rlva_filter_text_in(wording, t).into_owned();
+    let filtered = world.rlva_filter_text_in(wording, text);
     let segs = segments(text);
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(filtered.as_ref(), m.needle).is_empty());
-    if mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
+    if !brackets && mark.is_none() && segs.iter().all(|s| matches!(s, Seg::Text(_))) {
         emoji.rich_text(ui, filtered.as_ref(), size, color, emphasis);
         return;
     }
     let k = super::colors::get();
-    super::emoji::text_rows_in(ui, size, super::bidi::rtl_paragraph(text), |ui| {
+    let rtl = super::bidi::rtl_paragraph(text);
+    let (open, close) = bracket_pair(brackets, rtl);
+    super::emoji::text_rows_in(ui, size, rtl, |ui| {
+        if !open.is_empty() {
+            emoji.inline(ui, open, size, color, emphasis);
+        }
         for s in segs {
             match s {
                 Seg::Text(t) => marked_run(ui, emoji, &hide(t), size, color, emphasis, mark),
+                Seg::Anonym(id) => marked_run(ui, emoji, &world.rlva_anonym_label(id), size, color, emphasis, mark),
                 Seg::Url(u) => web_link(ui, p, u, u, size, emphasis),
                 Seg::Slurl(u) => {
                     select::label(ui, emphasis.rich_text(ui.ctx(), u, size, super::colors::text(k.chat_slurl))).on_hover_text(u);
@@ -2434,7 +2663,7 @@ pub(crate) fn chat_text_marked(
                 Seg::Labelled(label, inner) => match *inner {
                     Seg::Url(u) => web_link(ui, p, u, &hide(&label), size, emphasis),
                     Seg::Agent(id) => agent_link(ui, p, world, NameScope::Roster, id, &hide(&label), size, emphasis),
-                    Seg::Mention(id) => agent_link(ui, p, world, scope, id, &hide(&label), size, emphasis),
+                    Seg::Mention(id) => agent_link(ui, p, world, wording.mentions, id, &hide(&label), size, emphasis),
                     Seg::Slurl(u) => {
                         select::label(
                             ui,
@@ -2446,7 +2675,7 @@ pub(crate) fn chat_text_marked(
                     _ => marked_run(ui, emoji, &hide(&label), size, color, emphasis, mark),
                 },
                 Seg::App(u, link) => {
-                    let label = app_links::label(world, want_names, u, &link);
+                    let label = app_links::label(world, wording, want_names, u, &link);
                     app_links::link_emphasized(ui, p, world, u, &link, &label, size, emphasis);
                 }
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size, emphasis),
@@ -2454,6 +2683,7 @@ pub(crate) fn chat_text_marked(
                     want_names.insert(id);
                     let me = id == world.agent_id;
                     let bg = if me { k.mention_me } else { k.mention_residents };
+                    let scope = wording.mentions;
                     let label = format!(" @{} ", world.social.name_in(scope, &id));
                     let r = action_marker::link(
                         ui,
@@ -2483,6 +2713,9 @@ pub(crate) fn chat_text_marked(
                     );
                 }
             }
+        }
+        if !close.is_empty() {
+            emoji.inline(ui, close, size, color, emphasis);
         }
     });
 }
@@ -2653,35 +2886,47 @@ pub(crate) fn conversation_names(session: Option<&uuid::Uuid>) -> NameScope {
 /// `conversation_names` for a line shown outside its conversation (the
 /// on-screen chat): an instant message and a teleport offer or request
 /// name their sender (process_improved_im tests nothing for them,
-/// llimprocessing.cpp), every other line follows the nearby chat.
-pub(crate) fn line_names(kind: &ChatKind) -> NameScope {
+/// llimprocessing.cpp), and so does a payment (money_balance_avatar_notify,
+/// llviewermessage.cpp); an inventory offer names its giver when the offer
+/// did as it arrived (`Offer::named`); every other line follows the nearby
+/// chat.
+pub(crate) fn line_names(world: &World, kind: &ChatKind) -> NameScope {
     match kind {
-        ChatKind::Im | ChatKind::Invite(_) => NameScope::Roster,
+        ChatKind::Im | ChatKind::Invite(_) | ChatKind::Payment(_) => NameScope::Roster,
+        ChatKind::InventoryOffer(id) if world.inventory_offers.get(*id).is_some_and(|offer| offer.named) => NameScope::Roster,
         _ => NameScope::World,
     }
 }
 
-/// The name a line of a conversation shown in `scope` gives its sender
+/// The name a line gives its sender
 /// (FSChatHistoryHeader): the display name looked up, mine, else the name
-/// the line came with; history lines are looked up for nothing.
-pub(crate) fn sender_name(world: &World, scope: NameScope, own_name: &str, line: &crate::world::ChatLine) -> String {
-    if !line.source.is_nil() && !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !world.rlva_shows_name(scope, line.source)
-    {
-        return world.rlva_anonymous(line.source).display_name.clone();
+/// the line came with. A line read back from a transcript keeps the name
+/// the file gives it, under RLVa's `@shownames` and `@showloc` too:
+/// FSChatHistory::appendMessage (indra/newview/fschathistory.cpp) writes
+/// `mFromName` as it is for a `message_from_log`, and nothing sets
+/// `mRlvNamesFiltered` on it (`ChatLine::wording`).
+///
+/// Under `@shownames`, who a line said during this session names was
+/// decided when it arrived (`World::rlva_freeze_line`): a speaker hidden
+/// then keeps the stand-in the line holds, one named then keeps their name,
+/// and an object the name it was given then, whatever the restriction
+/// became since (FSChatHistory::appendMessage writes `chat.mFromName` once).
+pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
+    if line.origin != Origin::Live || line.anonymous() {
+        return line.from.clone();
     }
-    let logged = line.origin != Origin::Live;
     let own = line.kind.is_own();
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     let names = &world.social.avatar_names;
-    let cached = if object || logged {
+    let cached = if object {
         None
     } else {
-        names.get_in(scope, if own { &world.agent_id } else { &line.source })
+        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
     };
     match cached {
         Some(n) => n.display(&names.options),
-        None if own && !logged => own_name.to_owned(),
-        None => world.rlva_filter_text_in(scope, &line.from).into_owned(),
+        None if own => own_name.to_owned(),
+        None => line.from.clone(),
     }
 }
 
@@ -2704,22 +2949,26 @@ pub(crate) fn line_body(line: &crate::world::ChatLine, name: &str) -> (String, b
 /// The text a line shows, as a copy of it gives it: links as written,
 /// places, names and mentions as shown.
 fn shown_text(world: &World, scope: NameScope, line: &crate::world::ChatLine, name: &str) -> String {
+    let wording = line.wording(scope);
     let body = match line.kind {
         ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => line.text.clone(),
         _ => line_body(line, name).0,
     };
-    let text: String = segments(&body)
+    // rewritten piece by piece, as it is drawn (`chat_text_marked`)
+    let hide = |t: &str| world.rlva_filter_text_in(wording, t).into_owned();
+    segments(&body)
         .into_iter()
         .map(|s| match s {
-            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => t.to_owned(),
-            Seg::Labelled(label, _) => label.into_owned(),
-            Seg::Place(_, place) => place.label,
-            Seg::Mention(id) => format!(" @{} ", world.social.name_in(scope, &id)),
-            Seg::Agent(id) => world.social.name_in(scope, &id),
-            Seg::App(u, link) => app_links::label(world, &mut HashSet::new(), u, &link),
+            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => hide(t),
+            Seg::Labelled(label, _) => hide(&label),
+            Seg::Place(_, place) => hide(&place.label),
+            Seg::Mention(id) => format!(" @{} ", world.social.name_in(wording.mentions, &id)),
+            // a bare avatar link names its resident, as it is drawn
+            Seg::Agent(id) => world.social.name_in(NameScope::Roster, &id),
+            Seg::Anonym(id) => world.rlva_anonym_label(id),
+            Seg::App(u, link) => app_links::label(world, wording, &mut HashSet::new(), u, &link),
         })
-        .collect();
-    world.rlva_filter_text_in(scope, &text).into_owned()
+        .collect()
 }
 
 /// What a copied line starts with when it is taken from its start, as
@@ -2766,7 +3015,7 @@ impl Copied<'_> {
             let Some(line) = seq.checked_sub(self.first).and_then(|i| self.lines.get(i as usize)) else {
                 return (String::new(), String::new());
             };
-            let name = sender_name(self.world, self.names, self.own_name, line);
+            let name = sender_name(self.world, self.own_name, line);
             (copy_prefix(line, &name), shown_text(self.world, self.names, line, &name))
         })
     }
@@ -2779,10 +3028,10 @@ impl Copied<'_> {
     }
 }
 
-/// The selection of the lines (`select.rs`), as in Firestorm's transcript:
+/// The selection of the lines (`select.rs`), as in the Legacy Viewer's transcript:
 /// a drag selects across them (never moving the window), a double click
-/// selects a word, a click without a drag clears it; a press gives them the
-/// keyboard, then Ctrl+A selects the
+/// selects a word, a triple click selects a paragraph, a click without a drag
+/// clears it; a press gives them the keyboard, then Ctrl+A selects the
 /// whole conversation, Ctrl+C (Ctrl+Insert) copies the selection, Escape
 /// clears it, and what is typed goes to the conversation's field.
 fn select_lines(
@@ -2839,6 +3088,17 @@ fn select_lines(
         && let Some((seq, range, text)) = select::word_at(drawn, pos)
     {
         sel.select_in_row(seq, range, text);
+    }
+    // a triple click selects the paragraph under the pointer, as the
+    // triple-click block of LLTextBase::handleMouseDown
+    // (indra/llui/lltextbase.cpp) selects the logical line in the Legacy
+    // Viewer's transcript (FSChatHistory, an LLTextEditor); it is copied as a
+    // drag over it, the first paragraph with the "[time] Name: " prefix
+    if content.triple_clicked()
+        && let Some(pos) = content.interact_pointer_pos().filter(|p| area.contains(*p))
+        && let Some((seq, range, text)) = select::paragraph_at(drawn, pos)
+    {
+        sel.select_paragraph(seq, range, text);
     }
     // (no text cursor over the lines, though a drag selects them: the
     // arrow, the hand on links and names; the human's choice of 2026-10-16)
@@ -3025,6 +3285,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             };
             let width = (ui.available_width() * 2.0).round() / 2.0;
             let clearing_filter = view.is_filtered() && filter.is_empty();
+            view.set_group_emotes(st.group_emotes);
             let changed = view.sync(
                 &view::Source {
                     lines,
@@ -3146,7 +3407,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         })
     });
     let latest_id = ui.scope_id().with(("latest", st.selected));
-    if resume || (!st.hide_latest && !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived)) {
+    if resume || (!st.hide_latest && !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, arrived)) {
         // past the end: the scroll area stops there and sticks to it again
         offset.y = out.content_size.y;
         store = true;
@@ -3155,8 +3416,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         super::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
     }
     line_menu::show(ui, menu, p, |ui, target| {
-        if let Some(avatar) = target.sender {
-            super::context::chat_sender_menu(ui, p, w, avatar, env.names, &target.line);
+        if let Some(sender) = target.sender {
+            sender_menu(ui, p, w, sender, env.names, &target.line);
         } else if let Rows::Thread(th) = &mut rows {
             thread::message_menu(ui, &env, th, target);
         }
@@ -3254,18 +3515,19 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                 ui.label(header_time(ui, p, time));
             }
             ui.vertical(|ui| {
-                chat_text_marked(
+                chat_text_bracketed(
                     ui,
                     p,
                     env.emoji,
                     world,
-                    env.names,
+                    line.wording(env.names),
                     env.want_names,
-                    &system_text(&line.text),
+                    &line.text,
                     super::fonts::chat_size(ui.ctx(), 12.5),
                     tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
                     true,
                     mark,
+                    system_brackets(world, line),
                 );
             });
         });
@@ -3275,10 +3537,10 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
-    let cached = if object || logged {
+    let cached = if object || logged || line.anonymous() {
         None
     } else {
-        names.get_in(env.names, if own { &world.agent_id } else { &line.source })
+        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
     };
     let name = match cached {
         Some(n) => n.display(&names.options),
@@ -3296,7 +3558,8 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                 ui.set_width(w - 8.0);
                 ui.horizontal(|ui| {
                     if object {
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                        let (rect, cube) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                        line_object_sender(cube, p, world, line, env.menu);
                         let (glyph, tint) = object_row::object_glyph(line, p, super::colors::sender_color(line));
                         if let Some(t) = env.icons.get(glyph) {
                             ui.painter().image(
@@ -3307,10 +3570,13 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                             );
                         }
                     } else {
-                        if !line.source.is_nil() {
-                            env.wanted.insert(line.source);
+                        // (none for a speaker `@shownames` hid:
+                        // FSChatHistoryHeader shows Unknown_Icon)
+                        let pictured = if line.anonymous() { uuid::Uuid::nil() } else { line.source };
+                        if !pictured.is_nil() {
+                            env.wanted.insert(pictured);
                         }
-                        avatar_pic(ui, p, env.pics.get(&line.source), &name, 20.0);
+                        avatar_pic(ui, p, env.pics.get(&pictured), &name, 20.0);
                     }
                     let col = super::colors::contact_sender_color(line, world)
                         .or(tone)
@@ -3322,11 +3588,12 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     // the inspector in the Legacy Viewer; Aurora opens the
                     // profile (a history line's when its sender is known)
                     let avatar = match (logged, own) {
+                        _ if line.anonymous() => uuid::Uuid::nil(),
                         (false, true) => world.agent_id,
                         _ => line.source,
                     };
-                    if object && !line.source.is_nil() {
-                        object_sender(&r.clone().on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
+                    if object {
+                        line_object_sender(r.clone(), p, world, line, env.menu);
                     } else if !avatar.is_nil() {
                         line_name_menu(&r, p, world, avatar, env.names, line, env.menu);
                     }
@@ -3345,7 +3612,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
             });
         ui.add_space(2.0);
     }
-    let (text, italics) = line_body(line, &name);
+    // an emote of ours starts with "(You)" too, as the Legacy Viewer's plain
+    // text history writes it (FSChatHistory::appendMessage)
+    let (text, italics) = line_body(line, shown_name(line, &name));
     let visible = previews::text(env.previews.as_deref(), line, &text, ui.available_width() - 8.0);
     egui::Frame::new()
         .inner_margin(egui::Margin {
@@ -3361,7 +3630,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                     p,
                     env.emoji,
                     world,
-                    env.names,
+                    line.wording(env.names),
                     env.want_names,
                     &visible,
                     super::fonts::chat_size(ui.ctx(), 13.5),
@@ -4379,6 +4648,15 @@ pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
     (!st.contacts && st.selected.is_none() && !minimized) || popout::in_sight(ctx, &st.popped).any(|c| c.is_none())
 }
 
+/// The nearby history hides the overlay independently of its container
+/// (#2546). Reuse the detached-window visibility check; a stale main-tab
+/// selection must not hide lines while that detached window is hidden.
+/// LLFloaterIMNearbyChatHandler::processChat likewise tests the history's
+/// visibility before showing nearby chat toasts.
+pub fn nearby_chat_shown(ctx: &egui::Context, st: &ChatUi, conversations_open: bool) -> bool {
+    st.nearby_window_shown(ctx) || (conversations_open && !st.nearby_apart() && local_chat_shown(ctx, st))
+}
+
 /// A demo's window of its own for `conversation`, at `pos` (whatever the
 /// cascade or a previous run would give it).
 pub fn demo_place_window(ctx: &egui::Context, conversation: Option<uuid::Uuid>, pos: egui::Pos2, size: egui::Vec2) {
@@ -4840,7 +5118,8 @@ enum SenderLink {
 fn sender_link(world: &World, line: &crate::world::ChatLine) -> Option<SenderLink> {
     let id = if line.kind.is_own() { world.agent_id } else { line.source };
     match line.kind {
-        _ if id.is_nil() || line.kind.is_notice() => None,
+        // (the stand-in of a hidden speaker is plain text)
+        _ if id.is_nil() || line.kind.is_notice() || line.anonymous() => None,
         ChatKind::Object(_) | ChatKind::ObjectIm => Some(SenderLink::Object(id)),
         _ => Some(SenderLink::Resident(id)),
     }
@@ -4870,9 +5149,9 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
             let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             match target {
                 SenderLink::Resident(id) => {
-                    line_name_menu(&resp, p, world, id, line_names(&line.kind), line, None);
+                    line_name_menu(&resp, p, world, id, line_names(world, &line.kind), line, None);
                     if resp.clicked() {
-                        super::profile::request_open_in(ui.ctx(), line_names(&line.kind), id);
+                        super::profile::request_open_in(ui.ctx(), line_names(world, &line.kind), id);
                     }
                 }
                 SenderLink::Object(_) => object_sender(&resp, p, world, line),
@@ -4880,43 +5159,82 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
         });
 }
 
+/// The object a line can be inspected or blocked by: what it said, and its
+/// IMs, which carry its id in their session id (IM_FROM_TASK).
+pub(super) fn line_object(line: &crate::world::ChatLine) -> Option<uuid::Uuid> {
+    (matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !line.source.is_nil()).then_some(line.source)
+}
+
+/// The inspector of a line's object: the line's own origin, its name alone
+/// when none was kept.
+fn object_inspect(world: &World, line: &crate::world::ChatLine) -> CtxAction {
+    CtxAction::AppLink(crate::slapp::AppLink::ObjectIm(world.chat_object(line).cloned().unwrap_or_else(
+        || crate::slapp::RemoteObject {
+            id: line.source,
+            name: line.from.clone(),
+            owner: uuid::Uuid::nil(),
+            group_owned: false,
+            owner_hidden: false,
+            slurl: String::new(),
+        },
+    )))
+}
+
+/// The rows of an object's menu: inspect, ignore (the Block of
+/// menu_object_icon.xml and menu_url_objectim.xml).
+fn object_menu(ui: &mut egui::Ui, p: &Palette, world: &World, line: &crate::world::ChatLine) {
+    let id = line.source;
+    if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
+        super::context::request(ui.ctx(), object_inspect(world, line));
+    }
+    let (icon, label) = if world.object_block_entry(&id).is_some() {
+        ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
+    } else {
+        ("ban", aurora_i18n::tr!("common-ignore"))
+    };
+    if super::menu::item(ui, p, icon, label) {
+        super::context::request(
+            ui.ctx(),
+            CtxAction::ToggleBlockObject {
+                id,
+                name: line.from.clone(),
+            },
+        );
+    }
+}
+
+/// The menu of a line's sender, a resident's or an object's.
+pub(super) fn sender_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, scope: NameScope, line: &crate::world::ChatLine) {
+    if line_object(line) == Some(id) {
+        object_menu(ui, p, world, line);
+    } else {
+        super::context::chat_sender_menu(ui, p, world, id, scope, line);
+    }
+}
+
 /// An object's name in a line: a click inspects it, a right click offers
 /// to inspect or to ignore it (the Legacy Viewer's objectim link of the name,
 /// LLViewerChat::getSenderSLURL).
 fn object_sender(resp: &egui::Response, p: &Palette, world: &World, line: &crate::world::ChatLine) {
-    let id = line.source;
-    let inspect = || {
-        CtxAction::AppLink(crate::slapp::AppLink::ObjectIm(world.chat_object(line).cloned().unwrap_or_else(
-            || crate::slapp::RemoteObject {
-                id,
-                name: line.from.clone(),
-                owner: uuid::Uuid::nil(),
-                group_owned: false,
-                slurl: String::new(),
-            },
-        )))
-    };
-    super::menu::context_menu(resp, p, |ui| {
-        if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
-            super::context::request(ui.ctx(), inspect());
-        }
-        let (icon, label) = if world.mutes.is_muted_id(&id) {
-            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("ban", aurora_i18n::tr!("common-ignore"))
-        };
-        if super::menu::item(ui, p, icon, label) {
-            super::context::request(
-                ui.ctx(),
-                CtxAction::ToggleBlockObject {
-                    id,
-                    name: line.from.clone(),
-                },
-            );
-        }
-    });
+    super::menu::context_menu(resp, p, |ui| object_menu(ui, p, world, line));
     if resp.clicked() {
-        super::context::request(&resp.ctx, inspect());
+        super::context::request(&resp.ctx, object_inspect(world, line));
+    }
+}
+
+/// The name or the cube of a full-size line from an object: `object_sender`,
+/// in the transcript's own menu where it has one.
+pub(super) fn line_object_sender(r: egui::Response, p: &Palette, world: &World, line: &crate::world::ChatLine, menu: Option<egui::Id>) {
+    let Some(id) = line_object(line) else { return };
+    line_menu::demo_mark_object(&r);
+    let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if let Some(menu) = menu {
+        line_menu::sender(&r, menu, id, line);
+        if r.clicked() {
+            super::context::request(&r.ctx, object_inspect(world, line));
+        }
+    } else {
+        object_sender(&r, p, world, line);
     }
 }
 
@@ -4995,8 +5313,10 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                     }
                 }
                 Link::App(u, app) => {
-                    // the bubble's label is the menu's "copy name"
-                    let label = app_links::label(world, &mut HashSet::new(), u, app);
+                    // the bubble's label is the menu's "copy name" (the text
+                    // of the line was rewritten before its links were read,
+                    // `line_job`: the address is taken as it stands)
+                    let label = app_links::label(world, TextScope::verbatim(NameScope::World), &mut HashSet::new(), u, app);
                     app_links::menu(&resp, p, world, u, app, &label);
                     if resp.on_hover_text(app_links::tooltip(app)).clicked() {
                         super::context::request(ui.ctx(), CtxAction::AppLink(app.clone()));
@@ -5192,6 +5512,32 @@ mod tests {
         assert_eq!(super::ooc(""), "");
         // like the Legacy Viewer, a channel typed after Alt+Enter stays text on channel 0
         assert_eq!(super::parse_channel(&super::ooc("/5 hi")), (0, "(( /5 hi ))".into()));
+    }
+
+    #[test]
+    fn nearby_world_typing_targets_the_field_that_will_be_drawn() {
+        assert_eq!(nearby_typing_target(true, false), NearbyTypingTarget::Detached);
+        assert_eq!(nearby_typing_target(true, true), NearbyTypingTarget::Detached);
+        assert_eq!(nearby_typing_target(false, true), NearbyTypingTarget::Main);
+        assert_eq!(nearby_typing_target(false, false), NearbyTypingTarget::ChatBar);
+    }
+
+    #[test]
+    fn world_typing_focuses_detached_nearby_without_changing_main_im() {
+        let ctx = egui::Context::default();
+        let mut chat = ChatUi::default();
+        let im = uuid::Uuid::from_u128(0x2753);
+        chat.selected = Some(im);
+        chat.draft_mut(Some(im)).push_str("untouched");
+        chat.popped.pop_out(None, false, false, false);
+        chat.start_nearby_with(&ctx, true, "x");
+        assert_eq!(chat.draft_mut(None), "x");
+        assert_eq!(chat.draft_mut(Some(im)), "untouched");
+        assert!(!chat.conv_focus_request, "main IM must not receive focus");
+        assert!(chat.popped.focus_requested(None));
+        chat.start_nearby_with(&ctx, false, "y");
+        assert_eq!(chat.draft_mut(None), "xy", "later frame keeps typing in Nearby");
+        assert_eq!(chat.draft_mut(Some(im)), "untouched");
     }
 
     use super::*;
@@ -5565,6 +5911,46 @@ mod tests {
         ));
     }
 
+    /// A detached nearby window hides the overlay independently of the
+    /// container; hidden or minimized nearby windows never do (#2546).
+    #[test]
+    fn nearby_history_visibility_tracks_its_own_window() {
+        for main_open in [false, true] {
+            for main_minimized in [false, true] {
+                for contacts in [false, true] {
+                    for selected in [None, Some(uuid::Uuid::from_u128(42))] {
+                        for detached in [None, Some((false, false)), Some((true, false)), Some((false, true))] {
+                            let ctx = egui::Context::default();
+                            let mut st = ChatUi {
+                                contacts,
+                                selected,
+                                ..ChatUi::default()
+                            };
+                            if main_minimized {
+                                super::super::widgets::minimize_floater(&ctx, "conversations");
+                            }
+                            let expected = if let Some((hidden, minimized)) = detached {
+                                st.popped.pop_out(None, false, false, false);
+                                st.popped.set_hidden(None, hidden);
+                                if minimized {
+                                    super::super::widgets::minimize_floater(&ctx, &popout::floater_id(None));
+                                }
+                                !hidden && !minimized
+                            } else {
+                                main_open && !main_minimized && !contacts && selected.is_none()
+                            };
+                            assert_eq!(
+                                nearby_chat_shown(&ctx, &st, main_open),
+                                expected,
+                                "open={main_open}, minimized={main_minimized}, contacts={contacts}, selected={selected:?}, detached={detached:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_chat_line_isolates_its_sender_s_display_name() {
         use crate::ui::bidi::Base;
@@ -5783,7 +6169,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_links(ui, &p, &world, NameScope::World, text, &[], 12.0, p.ink),
+            |ui| text_with_links(ui, &p, &world, NameScope::World.into(), text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         assert_eq!(super::super::widgets::take_wanted_regions(&ctx), vec!["Pinède".to_owned()]);
@@ -5843,7 +6229,7 @@ mod tests {
                                 if chat {
                                     chat_text(ui, &p, &mut emoji, &world, &mut HashSet::new(), &text, size, p.ink, false);
                                 } else {
-                                    text_with_links(ui, &p, &world, NameScope::World, &text, &[], size, p.ink);
+                                    text_with_links(ui, &p, &world, NameScope::World.into(), &text, &[], size, p.ink);
                                 }
                             },
                         );
@@ -5908,7 +6294,7 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_links(ui, &p, &world, NameScope::World, &text, &[], 12.0, p.ink),
+            |ui| text_with_links(ui, &p, &world, NameScope::World.into(), &text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         let mut shown = String::new();
@@ -5988,17 +6374,18 @@ mod tests {
         assert!(mentions(&t, &me));
         assert!(!mentions(&t, &jane), "an about link is not a mention");
         assert!(!mentions(&format!("secondlife:///app/agent/{me}/about"), &me));
-        let name = |id: &uuid::Uuid| (*id == me).then(|| "Aurora Demo".to_owned());
+        let name = |id: &uuid::Uuid, _: bool| (*id == me).then(|| "Aurora Demo".to_owned());
         let app = |_: &str, _: &crate::slapp::AppLink| "Demo Group".to_owned();
+        let anonym = |_: uuid::Uuid| "A resident".to_owned();
         assert_eq!(
-            plain_text(&t, name, app),
+            plain_text(&t, name, anonym, app),
             format!("@Aurora Demo see {jane} at https://example.org"),
             "an unknown name keeps its id, a web link its address"
         );
-        assert_eq!(plain_text("[https://example.org the site] now", name, app), "the site now");
+        assert_eq!(plain_text("[https://example.org the site] now", name, anonym, app), "the site now");
         let g = uuid::Uuid::from_u128(7);
         assert_eq!(
-            plain_text(&format!("join secondlife:///app/group/{g}/about!"), name, app),
+            plain_text(&format!("join secondlife:///app/group/{g}/about!"), name, anonym, app),
             "join Demo Group!",
             "an app command shows its label (#947)"
         );
@@ -6022,10 +6409,10 @@ mod tests {
              http://maps.secondlife.com/secondlife/Pinède/1/2/3 [https://example.org le site] https://example.org/x"
         );
         assert_eq!(
-            resolved_text(&world, &text),
+            resolved_text_in(&world, NameScope::World, &text),
             "Lune Étoilée, @Lune Étoilée et … à Cercle des Brumes Pinède (1,2,3) le site https://example.org/x"
         );
-        assert_eq!(resolved_text(&world, "plain words"), "plain words");
+        assert_eq!(resolved_text_in(&world, NameScope::World, "plain words"), "plain words");
     }
 
     #[test]
@@ -6072,6 +6459,62 @@ mod tests {
         }
         // the address alone is still a link, without the bracket
         assert_eq!(segments("[https://example.org]")[1], Seg::Url("https://example.org"));
+    }
+
+    /// #4386: a system line's brackets are drawn around it, not written into
+    /// the text its links are found in. Written in, `[<link> entered the
+    /// region.]` reads as a link given its own text and the resident's name
+    /// is lost; the Legacy Viewer appends them as their own runs
+    /// (FSChatHistory::appendMessage).
+    #[test]
+    fn a_system_line_keeps_the_name_of_the_link_it_starts_with() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let p = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = uuid::Uuid::from_u128(0x2A);
+        world.social.names.insert(id, "Nova Example".to_owned());
+        let text = format!("secondlife:///app/agent/{id}/about entered the region.");
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let mut frames = Frames::new();
+        let texts = frames.run(Vec::new(), |ui| {
+            let mut want = HashSet::new();
+            chat_text_bracketed(
+                ui,
+                &p,
+                &mut emoji,
+                &world,
+                NameScope::Roster.into(),
+                &mut want,
+                &text,
+                13.0,
+                p.ink,
+                false,
+                None,
+                true,
+            );
+        });
+        let drawn = |needle: &str| texts.iter().any(|t| t.source.contains(needle));
+        assert!(drawn("Nova Example"), "the resident's name is a link of the line");
+        assert!(drawn("entered the region."), "the rest of the line stays text");
+        // the brackets stand on their own, outside the link
+        assert!(texts.iter().any(|t| t.source == "["), "an opening bracket");
+        assert!(texts.iter().any(|t| t.source == "]"), "a closing bracket");
+        // the way it was, brackets written in: one link given its own text,
+        // the resident's name taken by the rest of the line
+        let wrapped = format!("[{text}]");
+        assert!(
+            matches!(segments(&wrapped).as_slice(), [Seg::Labelled(label, _)] if label == "entered the region."),
+            "the line written in brackets is a link given its own text"
+        );
+    }
+
+    #[test]
+    fn brackets_around_a_line_that_reads_from_the_right_are_turned_around() {
+        assert_eq!(bracket_pair(false, false), ("", ""));
+        assert_eq!(bracket_pair(false, true), ("", ""));
+        assert_eq!(bracket_pair(true, false), ("[", "]"));
+        // (a piece of its own misses the mirroring the bidi pass gives a run)
+        assert_eq!(bracket_pair(true, true), ("]", "["));
     }
 
     /// Long texts with many brackets or many link starts and few spaces are
@@ -6203,11 +6646,11 @@ mod tests {
     }
 
     /// The islands' chat pills (the bars mockup): a resident's name in
-    /// semi-bold light violet followed by the text without a colon, an
-    /// object's name in its kind's colour, a system line in italics; the
+    /// semi-bold, in the senders' colour (Emitter › Avatars), followed by
+    /// the text without a colon, an object's name in its kind's colour, a system line in italics; the
     /// full-width bar's lines keep "Name: text" and their colours.
     #[test]
-    fn chat_pills_name_residents_in_violet_without_a_colon() {
+    fn chat_pills_name_residents_in_the_senders_colour_without_a_colon() {
         let p = crate::theme::Theme::default().palette();
         let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         let family = egui::FontFamily::Proportional;
@@ -6220,6 +6663,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let job = |l: &crate::world::ChatLine, pill: Option<&egui::FontFamily>| {
             line_job(
@@ -6239,7 +6683,7 @@ mod tests {
         let pill = job(&said, Some(&family));
         assert_eq!(pill.text, "Orion ExempleBienvenue");
         let name = &pill.sections[0];
-        assert_eq!(name.format.color, p.violet_light);
+        assert_eq!(name.format.color, crate::ui::colors::sender_color(&said));
         assert_eq!(pill.sections.last().map(|s| s.leading_space), Some(4.0));
         assert_eq!(pill.sections.last().map(|s| s.format.color), Some(p.ink));
         let bar = job(&said, None);
@@ -6251,6 +6695,42 @@ mod tests {
         let pill = job(&online, Some(&family));
         assert!(pill.sections.iter().all(|s| s.format.italics));
         assert!(!job(&online, None).sections.iter().any(|s| s.format.italics));
+    }
+
+    /// An emote is in its sender's message colour, ours ("My messages") and
+    /// another resident's ("Others") alike, as LLViewerChat::getChatColor.
+    #[test]
+    fn emotes_use_their_senders_message_colour_in_chat_cards() {
+        let p = crate::theme::Theme::default().palette();
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut line = crate::world::ChatLine {
+            time: std::time::UNIX_EPOCH,
+            from: "Resident".into(),
+            text: String::new(),
+            kind: ChatKind::OWN,
+            source: uuid::Uuid::nil(),
+            origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
+        };
+        let mine = message_color(&line, &p, &world);
+        for text in ["/me waves", "/me's hat"] {
+            line.text = text.into();
+            assert_eq!(message_color(&line, &p, &world), mine);
+        }
+        line.origin = Origin::Log;
+        assert_eq!(Some(message_color(&line, &p, &world)), history_tone(&p, Origin::Log));
+        line.origin = Origin::Live;
+        line.kind = ChatKind::Local(ChatType::Normal);
+        line.source = uuid::Uuid::from_u128(7);
+        line.text = "hello".into();
+        let theirs = message_color(&line, &p, &world);
+        assert_ne!(theirs, mine);
+        for text in ["/me waves", "/me's hat"] {
+            line.text = text.into();
+            assert_eq!(message_color(&line, &p, &world), theirs);
+        }
     }
 
     /// The pills' sender names: a resident's profile (ours for our own
@@ -6269,6 +6749,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         let id = uuid::Uuid::from_u128;
         assert_eq!(
@@ -6305,6 +6786,7 @@ mod tests {
                 origin: Origin::Live,
                 blocked: false,
                 beyond_range: false,
+                speaker: Default::default(),
             });
         }
         let ctx = egui::Context::default();
@@ -6851,6 +7333,7 @@ mod tests {
                 origin: Origin::Live,
                 blocked: false,
                 beyond_range: false,
+                speaker: Default::default(),
             });
             world.chat_clock.pushed_back();
         }

@@ -66,6 +66,7 @@ fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
         origin: Origin::Live,
         blocked: false,
         beyond_range: false,
+        speaker: Default::default(),
     }
 }
 
@@ -835,9 +836,43 @@ fn the_message_menu_acts() {
     }
 }
 
+/// A full-size line of an object: its name, and in the workspace styles its
+/// message, offer to inspect and to ignore it, like Firestorm's object menu.
+#[test]
+fn an_objects_full_size_line_offers_to_ignore_it_in_every_style() {
+    const THING: Uuid = Uuid::from_u128(0x0b1ec7);
+    for style in ALL {
+        for on_name in [true, false] {
+            if !style.workspace() && !on_name {
+                continue;
+            }
+            let mut h = H::new(style);
+            h.world.chat.push_back(line(
+                "Worn Thing",
+                THING,
+                ChatKind::Object(aurora_net::ChatType::Normal),
+                "a word from an object",
+            ));
+            h.open(None);
+            let at = h.text_rect(if on_name { "Worn Thing" } else { "a word from an object" }).center();
+            h.right_click(at);
+            assert!(h.painted(aurora_i18n::tr!("ui-context-inspect-2")), "{style:?} {on_name}: inspect");
+            h.press_text(aurora_i18n::tr!("common-ignore"));
+            let asked = crate::ui::context::take_requests(&h.frames.ctx);
+            assert!(
+                asked.iter().any(
+                    |a| matches!(a, crate::ui::context::CtxAction::ToggleBlockObject { id, name } if *id == THING && name == "Worn Thing")
+                ),
+                "{style:?} {on_name}: ignore"
+            );
+        }
+    }
+}
+
 /// A double click on the first or the last word of a message, then Ctrl+C,
 /// copies that word alone: not the line's "[time] Name: " prefix, nor the
-/// whole message.
+/// whole message. A third click copies the message as a drag from the start
+/// of its line does, with the prefix.
 #[test]
 fn a_double_clicked_word_is_copied_alone() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
@@ -850,6 +885,7 @@ fn a_double_clicked_word_is_copied_alone() {
             ] {
                 let mut h = H::new(style);
                 let message = line("Jane", JANE, ChatKind::Im, said);
+                let prefixed = format!("{}{said}", super::copy_prefix(&message, &message.from));
                 if let Some(id) = conversation {
                     h.world.social.session_mut(id).lines = [message].into();
                 } else {
@@ -875,6 +911,59 @@ fn a_double_clicked_word_is_copied_alone() {
                     _ => None,
                 });
                 assert_eq!(copied.as_deref(), Some(word), "{style:?}, {conversation:?}, {said:?}");
+                // a third click selects the whole paragraph, copied as a drag
+                // from the start of the line: with the "[time] Name: " prefix
+                h.frame(vec![button(true)]);
+                h.frame(vec![button(false)]);
+                h.settle();
+                let copied = h.frame_out(vec![egui::Event::Copy]).commands.into_iter().find_map(|c| match c {
+                    egui::OutputCommand::CopyText(t) => Some(t),
+                    _ => None,
+                });
+                assert_eq!(copied, Some(prefixed), "{style:?}, {conversation:?}, {said:?}");
+            }
+        }
+    }
+}
+
+/// A triple click on a message of two paragraphs, then Ctrl+C: the first
+/// paragraph is copied with the line's "[time] Name: " prefix, the one after
+/// the line break without it.
+#[test]
+fn a_triple_clicked_paragraph_after_a_line_break_is_copied_without_the_prefix() {
+    let said = "first paragraph\nsecond one";
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for conversation in [None, Some(JANE)] {
+            let message = line("Jane", JANE, ChatKind::Im, said);
+            let prefix = super::copy_prefix(&message, &message.from);
+            // the upper and the lower row of the message
+            for (row, expected) in [(0.25, format!("{prefix}first paragraph")), (0.75, "second one".into())] {
+                let mut h = H::new(style);
+                if let Some(id) = conversation {
+                    h.world.social.session_mut(id).lines = [message.clone()].into();
+                } else {
+                    h.world.chat = [message.clone()].into();
+                }
+                h.open(conversation);
+                let text = h.text_rect(said);
+                let pos = egui::pos2(text.left() + 20.0, text.top() + text.height() * row);
+                let button = |pressed| egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![egui::Event::PointerMoved(pos)]);
+                for _ in 0..3 {
+                    h.frame(vec![button(true)]);
+                    h.frame(vec![button(false)]);
+                }
+                h.settle();
+                let copied = h.frame_out(vec![egui::Event::Copy]).commands.into_iter().find_map(|c| match c {
+                    egui::OutputCommand::CopyText(t) => Some(t),
+                    _ => None,
+                });
+                assert_eq!(copied, Some(expected), "{style:?}, {conversation:?}, row {row}");
             }
         }
     }
@@ -2230,6 +2319,53 @@ fn inventory_drops_give_to_the_resident_in_every_conversation_style() {
                 assert!(!egui::DragAndDrop::has_any_payload(&h.frames.ctx));
                 assert_eq!(h.st.drafts[&Some(JANE)], draft);
             }
+        }
+    }
+}
+
+/// A landmark dragged from Places (or a favorite) is the inventory item of
+/// that landmark: dropped on a resident's conversation it is given, as in the
+/// Legacy Viewer (#4241). A place with no item (history, parcel) is not.
+#[test]
+fn a_landmark_dragged_from_places_gives_to_the_resident() {
+    use crate::ui::places::drag::{PlaceDrag, Target};
+    const ITEM: Uuid = Uuid::from_u128(0x1A4);
+    let place = |target| PlaceDrag {
+        target,
+        favorite: None,
+        name: "A place".into(),
+        thumbnail: None,
+    };
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for style in ALL {
+        let mut h = H::new(style);
+        h.open(Some(JANE));
+        let over = h.text_rect("hello from Jane").center();
+        let away = egui::pos2(4.0, 4.0);
+        for (target, gives) in [(Target::Landmark(ITEM), true), (Target::Parcel(ITEM), false)] {
+            h.take();
+            h.frame(vec![egui::Event::PointerMoved(away), button(away, true)]);
+            egui::DragAndDrop::set_payload(&h.frames.ctx, place(target));
+            assert_eq!(crate::ui::inventory::drag::give_count(&h.frames.ctx), gives.then_some(1));
+            assert_eq!(crate::ui::inventory::drag::carried_count(&h.frames.ctx), None);
+            h.frame(vec![egui::Event::PointerMoved(over)]);
+            h.frame(vec![button(over, false)]);
+            h.settle();
+            let actions = h.take();
+            assert_eq!(
+                has(
+                    &actions,
+                    |a| matches!(a, ConvAction::GiveItems { to, items } if *to == JANE && *items == [ITEM])
+                ),
+                gives,
+                "{style:?}: {target:?}"
+            );
+            egui::DragAndDrop::clear_payload(&h.frames.ctx);
         }
     }
 }

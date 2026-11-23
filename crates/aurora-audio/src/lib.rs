@@ -43,6 +43,8 @@ mod record;
 mod resample;
 mod reverb;
 mod stream;
+mod tls;
+mod voice_route;
 mod wind;
 
 use std::sync::Arc;
@@ -59,6 +61,8 @@ pub use processing::{EchoReference, MicProcessing};
 pub use record::{Block as RecordBlock, RECORD_BLOCK, RecordTap};
 pub use reverb::ReverbParams;
 pub use stream::{StreamError, StreamStatus};
+pub use tls::CertificateIssue;
+pub use voice_route::{VoiceStream, voice_stream_for};
 pub use wind::WindTarget;
 
 use mixer::{ClipVoice, Command, Mixer, PcmSource, SharedParams, WorldVoice};
@@ -161,6 +165,17 @@ impl AudioEngine {
     /// falls back to the default (logged).
     pub fn set_output_device(&self, name: Option<String>) {
         self.inner.output.set_device(name);
+    }
+
+    /// Routes voice to `name` when it differs from the active main output.
+    /// `None`, an empty name, or the main output's current device keeps voice
+    /// on the main stream. The voice sink remains connected while the route
+    /// changes. If the requested device is unavailable, voice falls back to
+    /// the main stream and the request is retried when output devices change,
+    /// and on a timer with a backoff (2 s doubling to 30 s) while the device
+    /// stays listed.
+    pub fn set_voice_output_device(&self, name: Option<String>) {
+        self.inner.output.set_voice_device(name.filter(|name| !name.is_empty()));
     }
 
     /// Sets a channel volume (linear, clamped to 0..=1).

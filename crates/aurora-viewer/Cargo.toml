@@ -59,6 +59,9 @@ log = "0.4.34"
 png = "0.18.1"
 md5 = "0.8.1"
 memmap2 = "0.9.11"
+# The LiveMesh thumbnails reduce a heavy object (already in the workspace,
+# through aurora-assets)
+meshopt = "0.7.0"
 parking_lot = "0.13.0"
 # CommonMark parsing for notecard previews; MIT licensed, no HTML runtime.
 pulldown-cmark = { version = "0.13.4", default-features = false }
@@ -142,10 +145,14 @@ libc = "0.2.190"
 # The application menu's Quit item routed to the window's close
 # (mac_quit.rs); the versions already in the tree
 objc2 = "0.6.5"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder"] }
+# Retain and cancel an import's modeless NSOpenPanel on AppKit's main thread;
+# both helpers already in the tree through rfd (MIT / Apache-2.0 / Zlib).
+block2 = "0.6.2"
+dispatch2 = "0.3.1"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSApplication", "NSEvent", "NSMenu", "NSMenuItem", "NSResponder", "NSOpenPanel", "NSSavePanel", "NSPanel", "NSWindow"] }
 # The Window menu's titles (mac_window_menu.rs); already in the tree through
 # objc2-app-kit
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSArray", "NSURL"] }
 # The graphics card box (app/gpu_stall.rs): a CFUserNotification kept to be
 # cancelled; already in the tree through rfd
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFBase", "CFDate", "CFDictionary", "CFString", "CFUserNotification"] }
@@ -154,6 +161,10 @@ objc2-core-foundation = { version = "0.3.2", default-features = false, features 
 # The freedesktop notification service (system_notify.rs), over the session
 # bus; already in the tree through keyring's Secret Service store
 zbus = "5.19.0"
+# Race the portal's response with importer cancellation, without blocking a
+# bus reader. Already used by zbus (MIT / Apache-2.0).
+async-io = "2.6.0"
+futures-lite = "2.6.1"
 # The keyboard layout (keybinds/layout/linux.rs): the XKB keymap of the
 # Wayland compositor or the X server. All three already in the tree through
 # winit, with its features (MIT, MIT / Apache-2.0, MIT)
@@ -171,6 +182,12 @@ fontconfig-parser = { version = "0.5.8", default-features = false }
 # the bundled dictionaries, compressed into the exe (build.rs)
 flate2 = "1.1.10"
 winresource = { version = "0.1.34", default-features = false }
+
+[dev-dependencies]
+# Type-check the portal integration and test cancellation races on every host.
+zbus = "5.19.0"
+async-io = "2.6.0"
+futures-lite = "2.6.1"
 
 [features]
 # The Khronos OpenXR loader built into the exe (needs CMake): the published

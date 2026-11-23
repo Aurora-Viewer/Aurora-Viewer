@@ -246,9 +246,13 @@ pub(crate) fn offer(
     ids: Vec<Uuid>,
     cut: bool,
     protected: &HashSet<Uuid>,
+    rlva: &crate::world::rlva::WearLocks,
 ) -> bool {
     let allowed = if cut {
-        !ids.is_empty() && ids.iter().all(|id| rules::relocatable(inv, *id, protected))
+        !ids.is_empty()
+            && ids
+                .iter()
+                .all(|id| rules::relocatable(inv, *id, protected) && rlva.removable(inv, *id))
     } else {
         copy_allowed(inv, &ids)
     };
@@ -281,7 +285,7 @@ pub fn appearance_request(
     let mut actions = Vec::new();
     match request {
         ClipboardRequest::Store { ids, cut } => {
-            if !offer(ctx, inv, st, ids, cut, &prefs.protected) {
+            if !offer(ctx, inv, st, ids, cut, &prefs.protected, &facts.rlva) {
                 st.message = aurora_i18n::tr!("ui-appearance-clipboard-cannot-take").into();
             }
         }
@@ -425,7 +429,15 @@ pub(super) fn shortcuts(
             egui::Event::Copy | egui::Event::Cut => {
                 let mut ids: Vec<_> = st.selection.iter().copied().collect();
                 ids.sort();
-                offer(ui.ctx(), inv, st, ids, matches!(event, egui::Event::Cut), &prefs.protected);
+                offer(
+                    ui.ctx(),
+                    inv,
+                    st,
+                    ids,
+                    matches!(event, egui::Event::Cut),
+                    &prefs.protected,
+                    &facts.rlva,
+                );
             }
             egui::Event::Paste(text) => {
                 if !holds_marker(st, &text) {
@@ -457,6 +469,8 @@ fn demo_mode() -> Option<&'static str> {
                 || mode.starts_with("keyboard")
                 || mode.starts_with("aurora-keyboard")
                 || mode.starts_with("enter")
+                || mode.contains("rename-focus")
+                || mode.contains("rename-window")
         })
     })
     .as_deref()
@@ -537,6 +551,68 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     let Some(mode) = demo_mode().filter(|mode| *mode != "clipboard") else {
         return Vec::new();
     };
+    if matches!(mode, "rename-focus" | "rename-window") {
+        if frame == 640 {
+            super::super::widgets::place_floater(ctx, "inventory", egui::pos2(20.0, 56.0), egui::vec2(560.0, 750.0));
+            for window in &st.windows {
+                super::super::widgets::place_floater(
+                    ctx,
+                    &format!("inventory_{}", window.id),
+                    egui::pos2(620.0, 56.0),
+                    egui::vec2(560.0, 750.0),
+                );
+            }
+        }
+        let target = if mode == "rename-window" {
+            st.windows.first().map(|w| &*w.state).unwrap_or(st)
+        } else {
+            st
+        };
+        if matches!(frame, 650 | 651)
+            && let Some(pos) =
+                ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", target.ui_id, Uuid::from_u128(8100)))))
+        {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650,
+                    modifiers: Default::default(),
+                },
+            ];
+        }
+        let key = match frame {
+            670 => Some(egui::Key::F2),
+            685 => Some(egui::Key::End),
+            710 => Some(egui::Key::Enter),
+            735 => Some(egui::Key::ArrowDown),
+            _ => None,
+        };
+        if let Some(key) = key {
+            return vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }];
+        }
+        if frame == 690 && target.rename.is_some() {
+            // Keep the existing localized name: newly typed inventory text is ASCII.
+            return vec![egui::Event::Text(" 2".into())];
+        }
+        if matches!(frame, 680 | 720 | 750) {
+            log::info!(
+                "demo inventory rename: frame={frame}, pane={}, renaming={}, list_focus={}, selected={:?}",
+                target.ui_id,
+                target.rename.is_some(),
+                ctx.memory(|m| m.has_focus(focus_id(target))),
+                target.selected
+            );
+        }
+        return Vec::new();
+    }
     if mode.starts_with("enter") {
         // Select and reveal the demo object, keep the list's keyboard, then
         // Enter puts it on and a second Enter takes it off once it is worn
@@ -840,6 +916,7 @@ mod tests {
         ctx: egui::Context,
         world: World,
         st: InventoryUi,
+        dual: InventoryUi,
         prefs: InventoryPreferences,
         output: egui::FullOutput,
         time: f64,
@@ -885,6 +962,7 @@ mod tests {
                     expand_all: Some(true),
                     ..Default::default()
                 },
+                dual: InventoryUi::dual_pane(),
                 prefs: InventoryPreferences::default(),
                 output: Default::default(),
                 time: 0.0,
@@ -926,7 +1004,7 @@ mod tests {
                         &Icons::default(),
                         &mut self.world,
                         &mut self.st,
-                        None,
+                        self.prefs.dual_panel.then_some(&mut self.dual),
                         &mut self.prefs,
                         &mut true,
                         false,
@@ -1109,6 +1187,110 @@ mod tests {
             pressed: true,
             repeat: false,
             modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    fn rename_key(key: egui::Key) -> Event {
+        Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn inventory_rename_returns_navigation_to_the_list_in_every_layout() {
+        for (classic, width) in [(true, 680.0), (false, 440.0), (false, 800.0), (false, 1180.0)] {
+            for finish in [egui::Key::Enter, egui::Key::Escape] {
+                let mut h = Harness::new();
+                h.classic = classic;
+                super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(width, 950.0));
+                h.st.show_original(&h.world.inventory, id(8100));
+                for _ in 0..4 {
+                    h.frame(Vec::new());
+                }
+                h.select(id(8100), false);
+                h.frame(vec![rename_key(egui::Key::F2)]);
+                assert_eq!(h.st.rename.as_ref().map(|edit| edit.id), Some(id(8100)));
+                h.frame(vec![Event::Text("Renamed demo object".into())]);
+                let actions = h.frame(vec![rename_key(finish)]);
+                assert!(h.st.rename.is_none(), "{classic}, {width}, {finish:?}");
+                assert_eq!(
+                    actions.iter().filter(|a| matches!(a, InvAction::Edit(_))).count(),
+                    usize::from(finish == egui::Key::Enter)
+                );
+                h.frame(Vec::new());
+                assert!(
+                    h.ctx.memory(|m| m.has_focus(focus_id(&h.st))),
+                    "the list keeps focus after {finish:?}"
+                );
+                h.frame(vec![arrow(true, false)]);
+                assert_ne!(
+                    h.st.selected,
+                    Some(id(8100)),
+                    "arrows navigate after {finish:?}, {classic}, {width}"
+                );
+                assert!(
+                    !h.ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)),
+                    "the world must not receive the arrow"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn inventory_f2_and_rename_completion_stay_in_the_focused_folder_window() {
+        for classic in [true, false] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            h.select(id(8100), false);
+            h.st.open_folder_window(id(8000));
+            let window = format!("inventory_{}", h.st.windows[0].id);
+            super::super::super::widgets::place_floater(&h.ctx, &window, egui::pos2(20.0, 50.0), egui::vec2(600.0, 800.0));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.click(h.row_in(id(8100), &window), Default::default());
+            h.frame(vec![rename_key(egui::Key::F2)]);
+            assert!(h.st.rename.is_none(), "the first window must not steal F2");
+            assert_eq!(h.st.windows[0].state.rename.as_ref().map(|edit| edit.id), Some(id(8100)));
+            h.frame(vec![enter_key()]);
+            h.frame(Vec::new());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st.windows[0].state))));
+            h.frame(vec![arrow(true, false)]);
+            assert_ne!(h.st.windows[0].state.selected, Some(id(8100)));
+            assert_eq!(h.st.selected, Some(id(8100)));
+        }
+    }
+
+    #[test]
+    fn inventory_f2_uses_the_focused_dual_pane() {
+        for classic in [true, false] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            h.prefs.dual_panel = true;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(1400.0, 900.0));
+            h.dual.show_original(&h.world.inventory, id(8100));
+            h.dual.expand_all = Some(true);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let row = h
+                .ctx
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", h.dual.ui_id, id(8100)))))
+                .expect("right pane row");
+            h.click(row.left_center() + egui::vec2(80.0, 0.0), Default::default());
+            assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.dual))));
+            h.frame(vec![rename_key(egui::Key::F2)]);
+            assert!(h.st.rename.is_none());
+            assert_eq!(h.dual.rename.as_ref().map(|edit| edit.id), Some(id(8100)));
+            h.frame(vec![enter_key()]);
+            h.frame(Vec::new());
+            h.frame(vec![arrow(true, false)]);
+            assert_ne!(h.dual.selected, Some(id(8100)));
+            assert_eq!(h.st.selected, Some(id(8100)));
         }
     }
 

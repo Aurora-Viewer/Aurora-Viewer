@@ -1233,6 +1233,11 @@ pub struct RenderSettings {
     /// Screen-space contact shadows of the sun or the moon (contact_shadows.rs),
     /// with the sun shadows only.
     pub contact_shadows: bool,
+    /// Soft sun shadows (soft_shadows.rs, experimental): the penumbra of the
+    /// sun's shadows widens with the distance of the caster, from a
+    /// screen-space mask drawn once per frame. Off: the shadows are exactly
+    /// the ones of before (nothing is created or drawn).
+    pub soft_shadows: bool,
     /// Geometric specular anti-aliasing of the objects' highlights
     /// (common.wgsl `specular_aa_roughness`, AURORA_SPECULAR_AA).
     pub specular_aa: bool,
@@ -1291,6 +1296,7 @@ impl Default for RenderSettings {
             screen_indirect: false,
             screen_indirect_intensity: 1.0,
             contact_shadows: false,
+            soft_shadows: false,
             specular_aa: true,
             water_reflection_scale: 0.25,
             mirror_scale: 0.25,
@@ -1515,8 +1521,8 @@ pub struct RainLook {
     /// Deep snow's reach around my avatar at High weather quality (m, 10 to
     /// 40); Low and Medium keep their share of it (two thirds, 13/15).
     pub deep_reach: f32,
-    /// How deep snow lies in the open at least (0..1): a region's weather
-    /// gives its whole history (who comes in late sees what has built up).
+    /// How deep snow lies in the open at least (0..1): `AURORA_SNOW_LYING`'s
+    /// floor for demo captures, else 0.
     pub snow_lying: f32,
     /// Snow lying on the ground is drawn ("Snow settles"), whatever falls
     /// now: off, none at once, nor while what lay melts after the weather
@@ -1702,6 +1708,13 @@ pub struct FrameParams {
     pub shadows: bool,
     /// Distance covered by the shadow cascades.
     pub shadow_distance: f32,
+    /// With soft shadows: the size of the light, 1 = 2.3 degrees across (the
+    /// real sun, 0.53 degrees, is a softness of 0.23), 0 = a light with no size, the shadows
+    /// of before (the Preferences' value, or the photo's own).
+    pub shadow_softness: f32,
+    /// How dark the sun's shadows are, 1 = as before, 0 = no shadow (the
+    /// Preferences' value, or the photo's own).
+    pub shadow_intensity: f32,
     pub lights: Vec<PointLight>,
     /// The projectors of `lights` that cast shadows (drawn with `shadows`).
     pub spot_shadows: [Option<SpotShadow>; crate::projector_shadows::MAX_PROJECTOR_SHADOWS],
@@ -1759,9 +1772,16 @@ pub struct FrameParams {
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
+    /// The photo filters' catalogue pictures (look_thumbs.rs): a new still
+    /// and one look drawn on it; None: none, at no cost (their images are
+    /// let go after a while).
+    pub look_thumbs: Option<crate::look_thumbs::ThumbRequest>,
     /// Volumetric clouds in the place of the Legacy Viewer's flat layer
     /// (clouds.rs); None: the Legacy layer, with nothing else running.
     pub clouds: Option<CloudsFrame>,
+    /// Planet curvature (curvature.rs, Aurora's own): the planet's radius
+    /// in metres; None: the flat regions, as the Legacy Viewer draws them.
+    pub curvature: Option<f32>,
 }
 
 /// The volumetric clouds' inputs that are not in the sky: where the camera
@@ -2000,6 +2020,9 @@ pub struct RenderStats {
     /// GPU time of the volumetric clouds' compute passes and weather map
     /// (ms), part of [`GpuElement::TerrainSky`]; None while off.
     pub gpu_clouds: Option<f32>,
+    /// GPU time of the soft sun shadows alone (ms), part of
+    /// [`GpuElement::Effects`] (0 while off).
+    pub gpu_soft: Option<f32>,
     /// GPU time of the bloom levels alone (ms), part of
     /// [`GpuElement::Post`] (0 while off).
     pub gpu_bloom: Option<f32>,

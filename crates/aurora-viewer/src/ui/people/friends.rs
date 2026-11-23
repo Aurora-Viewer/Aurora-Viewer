@@ -101,14 +101,7 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
     let world = c.world;
     let names = &world.social.avatar_names;
     let o = names.options;
-    // where the friends around us are (the radar's sightings)
-    // never of a friend RLVa hides around us: the list names them, and their
-    // region would tell which friend the stranger next to us is
-    let regions: HashMap<Uuid, String> = crate::world::radar::sightings(world)
-        .into_iter()
-        .filter(|s| world.rlva_shows_name(NameScope::World, s.id))
-        .filter_map(|s| Some((s.id, world.regions.get(&s.region)?.name.clone())))
-        .collect();
+    let regions = regions_around(world);
     let mut out: Vec<Line> = world
         .social
         .friends
@@ -175,6 +168,34 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
     let order: HashMap<Uuid, usize> = friends.iter().enumerate().map(|(i, f)| (f.id, i)).collect();
     out.sort_by_key(|l| order.get(&l.friend.id).copied().unwrap_or(usize::MAX));
     out
+}
+
+/// Where the friends around us are (the radar's sightings), for the second
+/// line of their row. A friend RLVa's `@shownames` hides around us has it
+/// like any other: the Legacy Viewer's friends list has no `@shownames` test
+/// (FSFloaterContacts, indra/newview/fsfloatercontacts.cpp), and its menu
+/// tells who stands around. Under `@showloc` the region is the hidden one's
+/// label, as every region name shown (RlvActions::canShowLocation).
+/// Under `@shownearby` the line says nothing: who stands around is what
+/// RlvActions::canShowNearbyAgents (indra/newview/rlvactions.cpp) hides from
+/// the nearby list and the radar, the closest Legacy rule for this line.
+fn regions_around(world: &crate::world::World) -> HashMap<Uuid, String> {
+    if world.rlva.has("shownearby") {
+        return HashMap::new();
+    }
+    let hidden = world.rlva.has("showloc");
+    crate::world::radar::sightings(world)
+        .into_iter()
+        .filter_map(|s| {
+            let region = world.regions.get(&s.region)?;
+            let name = if hidden {
+                aurora_i18n::tr!("rlva-hidden-region").to_owned()
+            } else {
+                region.name.clone()
+            };
+            Some((s.id, name))
+        })
+        .collect()
 }
 
 /// The list side: toolbar, pills, then the friends.
@@ -631,6 +652,46 @@ fn received(ui: &mut egui::Ui, p: &crate::theme::Palette, f: &Friend, slot: Rect
 mod tests {
     use super::*;
 
+    /// The Legacy Viewer's friends list has no `@shownames` test: a friend
+    /// the restriction hides around us keeps the second line of their row.
+    /// `@showloc` hides the region's name there as everywhere.
+    #[test]
+    fn a_friend_around_keeps_their_region_under_shownames_and_loses_its_name_under_showloc() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        let region = world.region_name();
+        assert!(!region.is_empty());
+        assert_eq!(regions_around(&world).get(&near), Some(&region));
+        world.rlva.configure(true);
+        let restrict = |world: &mut crate::world::World, command: &str| {
+            assert!(world.rlva.receive(&aurora_net::ChatMessage {
+                from_name: "Friends fixture".into(),
+                source_id: Uuid::from_u128(4),
+                owner_id: world.agent_id,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: command.into(),
+            }));
+            world.refresh_rlva_privacy();
+        };
+        restrict(&mut world, "@shownames=n");
+        assert!(!world.rlva_shows_name(NameScope::World, near));
+        assert_eq!(regions_around(&world).get(&near), Some(&region));
+        restrict(&mut world, "@showloc=n");
+        let shown = regions_around(&world).get(&near).cloned().unwrap();
+        assert_ne!(shown, region);
+    }
+
     /// A click on a friend takes the keyboard, then the first letters of
     /// another name jump to that friend (LLScrollListCtrl::handleUnicodeCharHere).
     #[test]
@@ -949,5 +1010,26 @@ mod tests {
     fn view_settings_default_to_the_mockup() {
         // online first, with the online and offline parts
         assert_eq!(super::super::FriendsSettings::default().sort, SORT_STATUS);
+    }
+    /// The second line tells who stands around: `@shownearby` hides it, as
+    /// RlvActions::canShowNearbyAgents hides the nearby list and the radar.
+    #[test]
+    fn a_friend_around_loses_their_region_under_shownearby() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        assert!(regions_around(&world).contains_key(&near));
+        world.rlva.configure(true);
+        world.rlva_console_input("@shownearby=n");
+        assert!(regions_around(&world).is_empty(), "nobody around is told");
+        world.rlva_console_input("@shownearby=y");
+        assert!(regions_around(&world).contains_key(&near));
     }
 }

@@ -129,6 +129,7 @@ impl App {
         }
         self.imports.poll_local_registry();
         self.sync_local_picker_bindings();
+        self.imports.sync_attachment_targets(&self.world);
         let expired = self.imports.expire_local_appearances(&mut self.world.objects);
         self.build
             .forget_expired_local_picker_appearances(&expired, &self.imports.local_appearance_targets);
@@ -1081,7 +1082,7 @@ impl App {
             object.shape_dirty = true;
             object.render.needs_records = true;
             // counted again from the local mesh (face stepping, texturing)
-            self.build.face_counts.remove(id);
+            self.build.forget_face_count(id);
         }
         self.clear_local_mesh_targets(&invalid);
     }
@@ -1097,7 +1098,7 @@ impl App {
                 object.shape_dirty = true;
                 object.render.needs_records = true;
             }
-            self.build.face_counts.remove(id);
+            self.build.forget_face_count(id);
         }
     }
     pub(super) fn apply_local_imports(&mut self, renderer: &mut aurora_render::Renderer) {
@@ -1187,6 +1188,14 @@ impl App {
             }
             entry.local_pending = false;
         }
+        self.world.local_asset_order = self
+            .imports
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.local)
+            .map(|(order, entry)| (entry.id, order))
+            .collect();
         self.imports.local_uploads = pending;
         if !self.imports.local_uploads.is_empty() {
             self.egui_ctx.request_repaint_after(Duration::from_millis(33));

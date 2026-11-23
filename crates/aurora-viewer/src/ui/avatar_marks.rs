@@ -37,8 +37,10 @@ fn label(name: MarkColor) -> &'static str {
     }
 }
 
-/// Unlike LLNetMap::handleRightMouseDown, the mini-map also protects the
-/// mark controls: the clear action and custom colour would identify a dot.
+/// The mini-map marks every avatar it shows, loaded or only known by its
+/// coarse location. A name hidden by RLVa changes nothing (LLNetMap::handleRightMouseDown,
+/// indra/newview/llnetmap.cpp: "MarkAvatar" is shown for any agent under
+/// the pointer and is not among the entries `@shownames` greys).
 fn can_edit(world: &World, ids: &[Uuid], source: AvatarList) -> bool {
     source != AvatarList::MiniMap || ids.iter().all(|id| super::minimap::can_mark(world, id))
 }
@@ -225,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn mini_map_marks_close_on_hidden_names_or_a_hidden_parcel_and_restore_the_same_colour() {
+    fn mini_map_marks_stay_on_hidden_names_and_parcels_and_close_when_the_dot_leaves() {
         use crate::ui::widgets::elide_tests::{Frames, painted};
         use std::time::Instant;
 
@@ -241,9 +243,11 @@ mod tests {
         let blue = LEGACY_COLORS[2].1;
         w.avatar_marks.set(&[luna], blue);
         let source = AvatarList::MiniMap;
+        // a dot only known by its coarse location is marked too
         assert!(can_edit(&w, &[luna], source));
-        assert!(!can_edit(&w, &[distant], source));
-        assert!(!can_edit(&w, &[luna, distant], source));
+        assert!(can_edit(&w, &[distant], source));
+        assert!(can_edit(&w, &[luna, distant], source));
+        assert!(!can_edit(&w, &[Uuid::from_u128(0x0bad)], source));
 
         let p = crate::theme::Theme::default().palette();
         let mut frames = Frames::new();
@@ -259,28 +263,36 @@ mod tests {
         assert!(texts.iter().any(|t| t.source == custom));
         assert!(texts.iter().any(|t| t.source == clear));
 
+        // `@shownames`: the menu and the open window stay, as the Legacy
+        // Viewer's "Mark..." does
         w.rlva_configure(true);
         w.rlva_console_input("@shownames=n");
-        let texts = frames.run(Vec::new(), |ui| {
-            draw_menu(ui, &w);
-            show(ui.ctx(), &p, &mut w, &mut picker);
-        });
-        assert!(!texts.iter().any(|t| t.source == custom || t.source == clear));
-        assert!(picker.is_none());
-        assert!(context::take_requests(&frames.ctx).is_empty());
-        w.rlva_console_input("@shownames=y");
+        assert!(!w.rlva_can_name(luna));
         assert!(can_edit(&w, &[luna], source));
-        let mut picker = Some(CustomMark::new(&w, vec![luna], None, source));
+        let texts = frames.hover(row, |ui| draw_menu(ui, &w));
+        assert!(texts.iter().any(|t| t.source == custom));
+        assert!(texts.iter().any(|t| t.source == clear));
+        frames.run(Vec::new(), |ui| show(ui.ctx(), &p, &mut w, &mut picker));
+        assert!(picker.is_some());
         assert_eq!(picker.as_ref().unwrap().rgb(), blue);
+        w.rlva_console_input("@shownames=y");
 
-        // The west resident is still loaded and named when only our eastern
-        // parcel becomes visible. The open picker must not keep its colour.
+        // A parcel hidden from the world keeps its dots and their marks, as
+        // the Legacy Viewer's map does for a private parcel.
         let mut settings = crate::settings::Settings::default();
         crate::demo::parcel_visibility::install(&mut w, &mut settings, "always");
         w.agent.get_off(center);
         w.parcel = Some(crate::demo::parcel_visibility::parcel_at(center.x, center.y));
         let _ = w.update_parcel_visibility(&settings.parcel_visibility, Instant::now());
         assert!(w.objects.index_of_uuid(&luna).is_some());
+        assert!(can_edit(&w, &[luna], source));
+        frames.run(Vec::new(), |ui| show(ui.ctx(), &p, &mut w, &mut picker));
+        assert!(picker.is_some());
+
+        // The resident leaves the map: the open picker must not keep its colour.
+        let index = w.objects.index_of_uuid(&luna).expect("loaded above");
+        w.objects.remove_idx(index);
+        w.coarse.clear();
         assert!(!can_edit(&w, &[luna], source));
         frames.run(Vec::new(), |ui| show(ui.ctx(), &p, &mut w, &mut picker));
         assert!(picker.is_none());

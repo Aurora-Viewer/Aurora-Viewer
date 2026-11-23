@@ -50,7 +50,7 @@ impl App {
             self.world.avatar_studio = false;
             return;
         }
-        let restricted = self.world.rlva.camera_restricted();
+        let restricted = self.world.rlva_studio_refused();
         let switch = if !self.in_world() || self.world.teleporting || renderer.vr_engaged() || restricted {
             self.panels.avatar_studio = false;
             self.studio_transition.cancel();
@@ -371,7 +371,8 @@ impl App {
     }
 
     pub(super) fn studio_overlay(&mut self, ctx: &egui::Context) {
-        if !self.avatar_studio.active || self.viewfinder_on() {
+        // nothing of it while the UI is not drawn (Ctrl+Alt+F1)
+        if !self.avatar_studio.active || self.viewfinder_on() || self.interface.ui_off {
             return;
         }
         let mut reset = false;
@@ -929,6 +930,7 @@ mod tests {
             objects: vec![seats[0].clone()],
         });
         let expected = seats[0].position + seats[0].rotation * expected_center;
+        world.objects.settle_drawables();
         let now = Instant::now() + std::time::Duration::from_secs(2);
         assert!(
             studio_podium_center(&world, anchor, now)
@@ -980,6 +982,7 @@ mod tests {
             });
             // Let report-correction smoothing reach each fixture orientation;
             // entry follows the rendered pose, not an undrawn server update.
+            world.objects.settle_drawables();
             let now = Instant::now() + std::time::Duration::from_secs(2);
             let mut studio = Studio::default();
             studio.enter(studio_facing(&world, now), 1.8);

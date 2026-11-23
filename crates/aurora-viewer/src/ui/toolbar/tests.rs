@@ -293,8 +293,11 @@ struct Bench {
     settings: ToolbarSettings,
     panels: Panels,
     saves: usize,
+    action: bars::BarAction,
     /// The dock of the islands instead of Firestorm's bar.
     islands: bool,
+    /// Our avatar sits, for the bars' Row.
+    seated: bool,
 }
 
 impl Default for Bench {
@@ -310,7 +313,9 @@ impl Default for Bench {
             settings: Default::default(),
             panels: Panels::from_settings(&settings),
             saves: 0,
+            action: bars::BarAction::None,
             islands: false,
+            seated: false,
         }
     }
 }
@@ -334,7 +339,7 @@ impl Bench {
                 ..Default::default()
             },
             |ui| {
-                bars::bottom_bar(
+                let (_, action, _, _) = bars::bottom_bar(
                     ui,
                     &p,
                     &Icons::default(),
@@ -347,7 +352,7 @@ impl Bench {
                     0,
                     None,
                     false,
-                    false,
+                    self.seated,
                     false,
                     &mut 0.0,
                     &mut bars::MicButton::default(),
@@ -356,13 +361,14 @@ impl Bench {
                     None,
                     &bars::favorites::View::default(),
                 );
+                self.action = action;
                 let favorites = bars::favorites::View::default();
                 let row = bars::Row {
                     unread: 0,
                     latest_unread: None,
                     flash: 0.0,
                     flying: false,
-                    seated: false,
+                    seated: self.seated,
                     mouselook: false,
                     ao_active: false,
                     locked: self.settings.locked,
@@ -896,12 +902,13 @@ fn toolbar_sanitize_skips_the_retired_howto_command() {
 fn toolbar_catalogue_holds_firestorm_commands_and_runs_the_ready_ones() {
     let skin = Layout::default();
     let all = catalogue(&skin);
-    assert_eq!(all.len(), 81);
-    assert_eq!(COMMANDS.len(), 81);
+    // main's 83 commands, plus the 15 menu commands (`ao_mini` is already in the 83).
+    assert_eq!(all.len(), 98);
+    assert_eq!(COMMANDS.len(), 98);
     let mut ids: Vec<_> = COMMANDS.iter().map(|c| c.id).collect();
     ids.sort_unstable();
     ids.dedup();
-    assert_eq!(ids.len(), 81, "each command once");
+    assert_eq!(ids.len(), 98, "each command once");
     assert!(ready("texture_library"));
     assert!(ready("movelock") && ready("move_lock") && ready("movement") && ready("water_walk"));
     assert_eq!(catalogue::find("move_lock").map(|c| c.id), Some("movelock"));
@@ -1052,6 +1059,172 @@ fn vr_toolbar_migration_preserves_customization_and_manual_removal() {
     };
     side.migrate_vr_button();
     assert_eq!(side.buttons.expect("custom toolbar").len(), 1);
+}
+
+#[test]
+fn menu_toolbar_edits_recheck_lock_membership_and_preserve_other_pending_edits() {
+    let ctx = egui::Context::default();
+    let layout = layout();
+    let mut state = ToolbarUi::default();
+    let mut settings = ToolbarSettings::default();
+    let queue = |remove| {
+        ctx.data_mut(|d| {
+            d.get_temp_mut_or_default::<Vec<MenuEdit>>(egui::Id::unique("menu_toolbar_edits"))
+                .push(MenuEdit { command: "import", remove })
+        })
+    };
+    queue(false);
+    settings.locked = true;
+    assert!(!state.commit_with_menus(&ctx, &layout, &mut settings));
+    assert!(settings.location("import", &layout).is_none());
+    settings.locked = false;
+    state.pending = Some(Edit::Remove("inventory".into()));
+    queue(false);
+    assert!(state.commit_with_menus(&ctx, &layout, &mut settings));
+    assert!(settings.location("inventory", &layout).is_none());
+    assert_eq!(settings.bar(Bar::Bottom, &layout).last().unwrap().command, "import");
+    queue(false);
+    assert!(
+        !state.commit_with_menus(&ctx, &layout, &mut settings),
+        "stale Add does not move an existing button"
+    );
+    state.pending = Some(Edit::Insert(
+        Bar::Right,
+        settings.bar(Bar::Bottom, &layout).last().unwrap().clone(),
+        0,
+    ));
+    state.commit_with_menus(&ctx, &layout, &mut settings);
+    queue(true);
+    assert!(state.commit_with_menus(&ctx, &layout, &mut settings));
+    assert!(settings.location("import", &layout).is_none(), "menu removal finds side bars too");
+}
+
+#[test]
+fn menu_toolbar_added_import_button_runs_import_in_both_bar_layouts() {
+    for islands in [false, true] {
+        let mut bench = Bench {
+            islands,
+            ..Bench::default()
+        };
+        bench.ctx.data_mut(|d| {
+            d.insert_temp(
+                egui::Id::unique("menu_toolbar_edits"),
+                vec![MenuEdit {
+                    command: "import",
+                    remove: false,
+                }],
+            )
+        });
+        assert!(bench.state.commit_with_menus(&bench.ctx, &layout(), &mut bench.settings));
+        bench.frame(vec![]);
+        let pos = bench.pos("import");
+        bench.pointer(pos, true, false);
+        bench.pointer(pos, false, false);
+        assert!(matches!(bench.action, bars::BarAction::Import));
+    }
+}
+
+/// Queues a menu's Add of each command and applies it: their buttons go to
+/// the end of the bottom toolbar.
+fn add_from_menu(bench: &mut Bench, commands: &[&'static str]) {
+    bench.ctx.data_mut(|d| {
+        d.insert_temp(
+            egui::Id::unique("menu_toolbar_edits"),
+            commands
+                .iter()
+                .map(|&command| MenuEdit { command, remove: false })
+                .collect::<Vec<_>>(),
+        )
+    });
+    assert!(bench.state.commit_with_menus(&bench.ctx, &layout(), &mut bench.settings));
+}
+
+/// Clicks the toolbar button of `command` and gives the bottom bar's action.
+fn click(bench: &mut Bench, command: &str) -> bars::BarAction {
+    let pos = bench.pos(command);
+    bench.pointer(pos, true, false);
+    bench.pointer(pos, false, false);
+    std::mem::replace(&mut bench.action, bars::BarAction::None)
+}
+
+/// The button of `command` has the violet face of a lit button (hovered
+/// or not) in `output`.
+fn lit(bench: &Bench, output: &egui::FullOutput, command: &str) -> bool {
+    fn face(shape: &egui::Shape, rect: Rect, faces: &[egui::Color32]) -> bool {
+        match shape {
+            egui::Shape::Rect(r) => r.rect == rect && faces.contains(&r.fill),
+            egui::Shape::Vec(v) => v.iter().any(|s| face(s, rect, faces)),
+            _ => false,
+        }
+    }
+    let p = crate::theme::Theme::default().palette();
+    let faces = [p.violet.gamma_multiply(0.40), p.violet.gamma_multiply(0.55)];
+    let rect = bench.ctx.read_response(bars::tool_button_id(command)).expect("real button").rect;
+    output.shapes.iter().any(|s| face(&s.shape, rect, &faces))
+}
+
+/// The bench draws the bottom and side toolbars and never the top bar, as
+/// with the interface hidden or chatting in mouselook: the buttons still
+/// follow the selection, Fly override and Quickjump given by the app.
+#[test]
+fn menu_toolbar_buttons_follow_the_app_state_without_the_top_bar() {
+    let mut bench = Bench::default();
+    add_from_menu(&mut bench, &["edit_particles", "fly_override", "quickjump"]);
+    bench.frame(vec![]);
+    assert!(matches!(click(&mut bench, "edit_particles"), bars::BarAction::None));
+    let output = bench.frame(vec![]);
+    assert!(!lit(&bench, &output, "fly_override") && !lit(&bench, &output, "quickjump"));
+    bench.state.edit_particles = true;
+    bench.state.fly_override_active = true;
+    bench.frame(vec![]);
+    assert!(matches!(click(&mut bench, "edit_particles"), bars::BarAction::EditParticles));
+    let output = bench.frame(vec![]);
+    assert!(lit(&bench, &output, "fly_override"), "Fly override lights while on");
+    assert!(!lit(&bench, &output, "quickjump"));
+    bench.state.fly_override_active = false;
+    bench.state.quickjump_active = true;
+    let output = bench.frame(vec![]);
+    assert!(!lit(&bench, &output, "fly_override"), "a toggled Fly override goes dark");
+    assert!(lit(&bench, &output, "quickjump"), "Quickjump lights while on");
+}
+
+/// enable_standup_self (indra/newview/llviewermenu.cpp): the Stand up
+/// button does nothing while standing, and stands while seated.
+#[test]
+fn menu_toolbar_stand_up_button_is_greyed_while_standing() {
+    let mut bench = Bench::default();
+    add_from_menu(&mut bench, &["stand_up"]);
+    bench.frame(vec![]);
+    assert!(matches!(click(&mut bench, "stand_up"), bars::BarAction::None));
+    bench.seated = true;
+    bench.frame(vec![]);
+    assert!(matches!(click(&mut bench, "stand_up"), bars::BarAction::StandUp));
+}
+
+/// The Build modes' buttons carry short labels like every other button; the
+/// menu shows their Ctrl+3/4/5 in its keys column.
+#[test]
+fn menu_toolbar_build_buttons_have_short_labels() {
+    for (id, label) in [
+        ("build_edit", aurora_i18n::tr!("toolbar-command-build-edit")),
+        ("build_create", aurora_i18n::tr!("toolbar-command-build-create")),
+        ("build_land", aurora_i18n::tr!("toolbar-command-build-land")),
+    ] {
+        let command = catalogue::find(id).expect("menu command");
+        assert_eq!(command.label(), label);
+        assert!(!label.contains("Ctrl") && !label.contains('('), "{id}: {label}");
+    }
+}
+
+/// One function, one icon: the menu commands' icons are not another
+/// command's of the catalogue.
+#[test]
+fn menu_toolbar_commands_have_icons_of_their_own() {
+    for id in ["movement_enhancer", "movelock_options"] {
+        let icon = catalogue::find(id).expect("menu command").icon;
+        let others: Vec<_> = COMMANDS.iter().filter(|c| c.id != id && c.icon == icon).map(|c| c.id).collect();
+        assert!(others.is_empty(), "{id}'s {icon} is also {others:?}'s");
+    }
 }
 
 #[test]

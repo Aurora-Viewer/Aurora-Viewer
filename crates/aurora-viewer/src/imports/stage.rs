@@ -23,12 +23,6 @@ impl Imports {
         if selected.is_empty() {
             return 0;
         }
-        // Apply the loader's draft and conservative non-mesh input budgets
-        // atomically: a large selection must never create a partial batch.
-        if self.entries.len() + selected.len() > 512 {
-            self.message = aurora_i18n::tr!("import-batch-limit").into();
-            return 0;
-        }
         let maps = local_maps(&self.entries);
         let mut copies = Vec::with_capacity(selected.len());
         for original in selected {
@@ -47,6 +41,7 @@ impl Imports {
             }
             let folder = Self::source_folder(world, inventory, &source);
             let mut copy = Entry::with_cached_alpha(original.path.clone(), Ok(source), original.options, Some(original.empty_alpha));
+            copy.image_size_limit = original.image_size_limit;
             copy.name.clone_from(&original.name);
             copy.description.clone_from(&original.description);
             copy.source_folders.clone_from(&original.source_folders);
@@ -57,18 +52,6 @@ impl Imports {
                 Self::batch_folder(world, prefs.batch_folder)
             };
             copies.push(copy);
-        }
-        let bytes: usize = self
-            .entries
-            .iter()
-            .chain(copies.iter())
-            .filter_map(|entry| entry.source.as_ref())
-            .filter(|source| !matches!(source, Source::Mesh(_)))
-            .map(Source::retained_bytes)
-            .sum();
-        if bytes > 1024 * 1024 * 1024 {
-            self.message = aurora_i18n::tr!("import-batch-limit").into();
-            return 0;
         }
         let Some(first) = copies.first().map(|entry| entry.id) else {
             return 0;

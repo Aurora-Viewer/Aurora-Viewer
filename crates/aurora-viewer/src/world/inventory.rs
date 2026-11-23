@@ -65,6 +65,8 @@ pub struct Inventory {
     /// limit (the Legacy Viewer's InventoryLimitReachedAIS). Their direct
     /// items cannot be read; search and refresh do not ask again in a loop.
     pub too_big: HashSet<Uuid>,
+    /// When each folder's last read failed (`shown_needs_fetch`).
+    pub(crate) failed_at: HashMap<Uuid, std::time::Instant>,
     /// Failed item reads (network, server error), by attempt.
     pub item_failures: HashMap<Uuid, u8>,
     /// Failed item reads to ask for again (`take_item_retries`).
@@ -87,6 +89,10 @@ pub struct Inventory {
 /// read proves nothing; the Legacy Viewer treats a link still unresolved once
 /// its background fetch ended as broken (LLAppearanceMgr::updateAppearanceFromCOF).
 pub const ITEM_FETCH_ATTEMPTS: u8 = 3;
+
+/// The pause before a folder shown open whose read failed is asked for
+/// again (`Inventory::shown_needs_fetch`).
+pub const SHOWN_RETRY: std::time::Duration = std::time::Duration::from_secs(10);
 
 // v3 could store a no-copy original as removed even when the offer never
 // reached a simulator. The folder version alone cannot distinguish that cache.
@@ -254,6 +260,19 @@ impl Inventory {
         }
     }
 
+    /// Whether a folder shown open should be asked for now: one never read,
+    /// or one whose last read failed `SHOWN_RETRY` ago or more. The windows
+    /// ask every frame; without the pause, a folder the server is busy with
+    /// (a large link creation still running) or refuses at once was asked
+    /// again and again, and stayed "loading" for good.
+    pub fn shown_needs_fetch(&self, id: Uuid, now: std::time::Instant) -> bool {
+        match self.folders.get(&id).map(|f| f.state) {
+            Some(FetchState::Unknown) => true,
+            Some(FetchState::Failed) => self.failed_at.get(&id).is_none_or(|at| now.duration_since(*at) >= SHOWN_RETRY),
+            _ => false,
+        }
+    }
+
     /// Apply folder snapshots. A snapshot older than the contents already
     /// confirmed locally is not applied: the folder is queued again, like
     /// AISUpdate::parseCategory's stale-folder refetch (llaisapi.cpp).
@@ -413,6 +432,27 @@ impl Inventory {
         }
     }
 
+    /// A BulkUpdateInventory (a delivery, a gift, an unpack): applied like
+    /// any server change, then each of its folders not read yet is read
+    /// (#3025). The Legacy Viewer dates a folder by its loaded children
+    /// (llfolderviewmodelinventory.cpp) and, in
+    /// LLInventoryModel::processBulkUpdateInventory, only fetches a known
+    /// folder whose version is unknown or a new folder's parent, so a
+    /// delivered folder waits for an expand there before it sorts by date.
+    /// Aurora reads the delivered folder at once so that it sorts with its
+    /// contents: one FetchInventoryDescendents2 per delivered folder, a
+    /// small and deliberate difference in what is sent. Folders created,
+    /// moved or recovered through `server_updated` are not read.
+    pub fn bulk_updated(&mut self, folders: Vec<InvFolder>, items: Vec<InvItem>) {
+        let delivered: Vec<Uuid> = folders.iter().map(|folder| folder.id).collect();
+        self.server_updated(folders, items);
+        for id in delivered {
+            if self.folders.get(&id).is_some_and(|f| !matches!(f.state, FetchState::Fetched)) {
+                self.request(id);
+            }
+        }
+    }
+
     /// LLInventoryModel::accountForUpdate / updateItem / updateCategory:
     /// apply server changes immediately, and advance each loaded parent's
     /// version once per update. Repeated records do not advance it again.
@@ -556,10 +596,15 @@ impl Inventory {
     }
 
     pub fn failed(&mut self, folders: &[Uuid]) {
+        self.failed_at_time(folders, std::time::Instant::now());
+    }
+
+    fn failed_at_time(&mut self, folders: &[Uuid], now: std::time::Instant) {
         self.generation += 1;
         for id in folders {
             if let Some(f) = self.folders.get_mut(id) {
                 f.state = FetchState::Failed;
+                self.failed_at.insert(*id, now);
             }
         }
     }
@@ -1118,6 +1163,62 @@ mod tests {
             assert_eq!(inv.folders[&child].items, vec![copied.id]);
             assert!(inv.items.contains_key(&Uuid::from_u128(723)), "copy keeps the original");
         }
+    }
+
+    /// #3025: a folder delivered by BulkUpdate must be fetched so its date
+    /// (newest descendant) sorts it with its contents, without waiting for expand.
+    #[test]
+    fn bulk_updated_folders_are_queued_for_fetch() {
+        let mut inv = fixture();
+        let id = Uuid::from_u128(9801);
+        inv.bulk_updated(
+            vec![InvFolder {
+                id,
+                parent: inv.root,
+                name: "Gift folder".into(),
+                type_default: -1,
+                version: -1,
+                ..Default::default()
+            }],
+            Vec::new(),
+        );
+        assert_eq!(inv.folders[&id].state, FetchState::Fetching);
+        assert!(
+            inv.queue.iter().any(|(queued, _)| *queued == id),
+            "descendent fetch queued: {:?}",
+            inv.queue
+        );
+    }
+
+    /// Only a BulkUpdateInventory reads its folders: a folder AIS just
+    /// created, one announced during a copy and a folder moved elsewhere
+    /// send no FetchInventoryDescendents2, as in the Legacy Viewer.
+    #[test]
+    fn created_and_moved_folders_are_not_queued_for_fetch() {
+        let mut inv = fixture();
+        let folder = |id: u128, parent: Uuid| InvFolder {
+            id: Uuid::from_u128(id),
+            parent,
+            name: format!("Folder {id}"),
+            type_default: -1,
+            version: 1,
+            ..Default::default()
+        };
+        let root = inv.root;
+        inv.created_folders(vec![folder(9811, root)]);
+        assert!(inv.queue.is_empty(), "created folder: {:?}", inv.queue);
+        assert_eq!(inv.folders[&Uuid::from_u128(9811)].state, FetchState::Fetched);
+
+        // copied without AIS (announce_folder) and never opened
+        inv.server_updated(vec![folder(9812, root)], Vec::new());
+        assert!(inv.queue.is_empty(), "announced folder: {:?}", inv.queue);
+
+        // moved under another folder
+        let mut moved = folder(9812, Uuid::from_u128(9811));
+        moved.version = -1;
+        inv.server_updated(vec![moved], Vec::new());
+        assert!(inv.queue.is_empty(), "moved folder: {:?}", inv.queue);
+        assert!(inv.folders[&Uuid::from_u128(9811)].children.contains(&Uuid::from_u128(9812)));
     }
 
     #[test]

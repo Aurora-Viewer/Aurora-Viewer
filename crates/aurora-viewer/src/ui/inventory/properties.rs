@@ -59,14 +59,10 @@ pub(super) fn show(
         actions.push(InvAction::Profile(resident));
     }
     if let Some(edit) = response.edit {
-        // (a coded settings item's field shows its name without the code,
-        // which the rename keeps)
-        let name = if edit.name == super::shown_name(it) {
+        let name = if edit.name == it.name {
             it.name.clone()
         } else {
-            rules::clean_name(&edit.name)
-                .map(|name| crate::weather::region::keep_code(&it.name, &name))
-                .unwrap_or_else(|_| it.name.clone())
+            rules::clean_name(&edit.name).unwrap_or_else(|_| it.name.clone())
         };
         let body = llsd_map! { "name" => name, "desc" => edit.desc.clone(),
         "permissions" => llsd_map! { "next_owner_mask" => edit.next as i32, "group_mask" => edit.group as i32, "everyone_mask" => edit.everyone as i32 },
@@ -208,7 +204,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
             edit.commit_name |= name.lost_focus();
             if can_describe && edit.commit_name && !ui.input(|input| input.pointer.any_down()) {
                 edit.commit_name = false;
-                if edit.name != super::shown_name(it)
+                if edit.name != it.name
                     && let Ok(name) = rules::clean_name(&edit.name)
                 {
                     edit.name = name.clone();
@@ -409,7 +405,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, p: &Palette, icons: Option<&Icons>, data:
 }
 fn rights() -> [(u32, &'static str); 3] {
     [
-        (rules::MODIFY, aurora_i18n::tr!("common-edit")),
+        (rules::MODIFY, aurora_i18n::tr!("common-modify")),
         (rules::COPY, aurora_i18n::tr!("common-copy-2")),
         (rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
     ]
@@ -542,7 +538,7 @@ mod tests {
         st.property_edit.as_mut().unwrap().1.name = "|".into();
         st.property_edit.as_mut().unwrap().1.desc = "Uncommitted description".into();
         for (label, next_owner) in [
-            (aurora_i18n::tr!("common-edit"), true),
+            (aurora_i18n::tr!("common-modify"), true),
             (aurora_i18n::tr!("common-share"), false),
             (aurora_i18n::tr!("common-copy-2"), true),
             (aurora_i18n::tr!("ui-inventory-properties-for-sale"), false),
@@ -585,7 +581,7 @@ mod tests {
         let point = labels
             .iter()
             .rev()
-            .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+            .find(|(text, _)| text == aurora_i18n::tr!("common-modify"))
             .unwrap()
             .1
             .center();
@@ -643,7 +639,7 @@ mod tests {
         let point = labels
             .iter()
             .rev()
-            .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+            .find(|(text, _)| text == aurora_i18n::tr!("common-modify"))
             .unwrap()
             .1
             .center();
@@ -701,7 +697,7 @@ mod tests {
                 let point = labels
                     .iter()
                     .rev()
-                    .find(|(text, _)| text == aurora_i18n::tr!("common-edit"))
+                    .find(|(text, _)| text == aurora_i18n::tr!("common-modify"))
                     .unwrap()
                     .1
                     .center();

@@ -205,7 +205,7 @@ fn start_inner() -> anyhow::Result<()> {
     std::fs::create_dir_all(root())?;
     recover();
     let settings = crate::settings::Settings::load();
-    aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
+    crate::language_file::select(&settings.language, settings.custom_language);
     let dir = root().join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir(&dir)?;
     let record = Record {
@@ -310,6 +310,14 @@ pub fn panic(info: &std::panic::PanicHookInfo<'_>, trace: &std::backtrace::Backt
 #[cold]
 pub fn out_of_memory(size: usize) {
     native::out_of_memory(size);
+}
+
+/// The renderer was dropped and its driver is being unloaded: a fatal
+/// signal the driver gave a handler of its own comes back to the crash
+/// handler before that handler's code is gone (crash/linux.rs).
+#[cfg(target_os = "linux")]
+pub fn renderer_dropped() {
+    native::reclaim();
 }
 
 /// The long-lived thread whose panic means the session cannot go on

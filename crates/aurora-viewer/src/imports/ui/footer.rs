@@ -5,7 +5,7 @@ pub(super) fn show(
     ui: &mut egui::Ui,
     p: &Palette,
     imports: &mut Imports,
-    prefs: &Preferences,
+    prefs: &mut Preferences,
     world: &crate::world::World,
     prices: &Prices,
     actions: &mut Vec<Action>,
@@ -36,20 +36,8 @@ pub(super) fn show(
         ui.label(RichText::new(aurora_i18n::tr!("import-paid", cost = imports.spent)).color(p.success));
     }
     ui.horizontal_wrapped(|ui| {
-        let total = imports.total(prices);
         let local = imports.choice == Choice::Local;
         ui.label(RichText::new(price_label(imports, prices, connected, world.agent_id)).strong());
-        let selected = imports
-            .entries
-            .iter()
-            .any(|e| imports.choice.accepts(e) && e.selected && matches!(e.status, Status::Ready));
-        let can_upload = connected
-            && !mesh_blocked(imports, connected, world.agent_id)
-            && !busy
-            && imports.pending_files.is_none()
-            && imports.folder_plan_valid(world)
-            && selected
-            && total.is_some_and(|cost| cost == 0 || world.balance.is_some_and(|b| b >= cost));
         // a wrapping row: the buttons stay in its layout
         let size = Vec2::new(0.0, ui.spacing().interact_size.y);
         if local {
@@ -101,6 +89,7 @@ pub(super) fn show(
             if stage.clicked() {
                 actions.push(Action::StageLocalUploads);
             }
+            image_size_global(ui, imports, prefs, busy || stage.clicked());
         } else {
             if let Some(entry) = imports
                 .active
@@ -163,6 +152,18 @@ pub(super) fn show(
                     actions.push(Action::Quote(entry.id));
                 }
             }
+            let total = imports.total(prices);
+            let selected = imports
+                .entries
+                .iter()
+                .any(|e| imports.choice.accepts(e) && e.selected && matches!(e.status, Status::Ready));
+            let can_upload = connected
+                && !mesh_blocked(imports, connected, world.agent_id)
+                && !busy
+                && imports.pending_files.is_none()
+                && imports.folder_plan_valid(world)
+                && selected
+                && total.is_some_and(|cost| cost == 0 || world.balance.is_some_and(|b| b >= cost));
             let upload = aurora_i18n::tr!("import-upload");
             let upload = action_button_if(ui, p, "file-upload-filled", upload, ActionKind::Primary, size, can_upload);
             #[cfg(test)]
@@ -174,6 +175,13 @@ pub(super) fn show(
                 } else {
                     actions.push(start_action(imports.choice));
                 }
+            }
+            if matches!(
+                imports.window_choice(),
+                Choice::Bulk | Choice::Texture | Choice::Material | Choice::Mesh
+            ) {
+                // Freeze the size on the frame that confirms or starts the upload.
+                image_size_global(ui, imports, prefs, busy || upload.clicked());
             }
         }
         if busy {
@@ -229,6 +237,75 @@ fn script_receipts(ui: &mut egui::Ui, p: &Palette, receipts: &[script::Receipt])
                 }
             }
         });
+}
+
+fn image_size_global(ui: &mut egui::Ui, imports: &mut Imports, prefs: &mut Preferences, busy: bool) {
+    let old = prefs.limit_texture_size;
+    let label = aurora_i18n::tr!("import-image-size-limit");
+    let label_width = ui
+        .painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            egui::TextStyle::Body.resolve(ui.style()),
+            ui.visuals().text_color(),
+        )
+        .size()
+        .x;
+    let gap = 16.0;
+    let selector_width = 100.0;
+    // Keep the label and selector together when the footer wraps, with extra
+    // space separating them from the import action on a wide row.
+    ui.allocate_ui_with_layout(
+        Vec2::new(
+            gap + label_width + ui.spacing().item_spacing.x + selector_width,
+            ui.spacing().interact_size.y,
+        ),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.add_space(gap);
+            ui.add_enabled_ui(!busy, |ui| {
+                let label = ui.label(label);
+                #[cfg(test)]
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(egui::Id::unique("import_image_size_global_label"), label.rect));
+                let _ = label;
+                let response = egui::ComboBox::from_id_salt("import_image_size_global")
+                    .width(selector_width)
+                    .selected_text(aurora_i18n::tr!(
+                        "import-image-size-pixels",
+                        size = if prefs.limit_texture_size { 1024 } else { 2048 }
+                    ))
+                    .show_ui(ui, |ui| {
+                        for (limit, maximum) in [(true, 1024), (false, 2048)] {
+                            let response = selection(
+                                ui,
+                                &mut prefs.limit_texture_size,
+                                limit,
+                                aurora_i18n::tr!("import-image-size-pixels", size = maximum),
+                            );
+                            #[cfg(test)]
+                            ui.ctx().data_mut(|data| {
+                                data.insert_temp(egui::Id::unique(("import_image_size_global_choice", limit)), response.rect);
+                            });
+                            let _ = response;
+                        }
+                    })
+                    .response
+                    .on_hover_text(aurora_i18n::tr!("import-image-size-global-help"));
+                #[cfg(test)]
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        egui::Id::unique("import_image_size_global"),
+                        (response.rect, ui.clip_rect(), response.enabled()),
+                    );
+                });
+                let _ = response;
+            })
+        },
+    );
+    if old != prefs.limit_texture_size {
+        imports.sync_image_limits(prefs);
+    }
 }
 
 /// The confirmation is a payment check: an upload the account's benefits make

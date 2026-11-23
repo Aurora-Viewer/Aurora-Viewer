@@ -110,19 +110,11 @@ pub(super) fn rows(ctx: &egui::Context, line: &ChatLine, job: BubbleJob) -> usiz
     ctx.fonts_mut(|f| crate::ui::bidi::layout(f, job.job, base).galley.rows.len())
 }
 
-/// The colour of a head's name: ours in the theme's teal, an object's in
-/// its kind's colour, a resident's in ink (the Conversations thread's).
-fn name_color(p: &Palette, line: &ChatLine, world: &World) -> Color32 {
-    if let Some(color) = crate::ui::colors::contact_sender_color(line, world) {
-        return color;
-    }
-    if is_object(line.kind) {
-        return crate::ui::colors::sender_color(line);
-    }
-    if line.kind.is_own() {
-        return p.teal;
-    }
-    p.ink
+/// The colour of a head's name: the senders' colour of Preferences ›
+/// Emitter (Avatars, ours included, or Objects), as in the Conversations
+/// thread (`thread::name_color`), unless a contact set colours it.
+fn name_color(line: &ChatLine, world: &World) -> Color32 {
+    crate::ui::colors::contact_sender_color(line, world).unwrap_or_else(|| crate::ui::colors::sender_color(line))
 }
 
 /// The recent nearby chat in cards (see the module).
@@ -299,7 +291,7 @@ fn card<'a>(
                 let font = egui::FontId::new(chat_size(ui.ctx(), 12.5), crate::ui::fonts::semibold(ui.ctx()));
                 let galley = ui
                     .painter()
-                    .layout(first.from.clone(), font, name_color(p, first, world), text_w * 0.6);
+                    .layout(first.from.clone(), font, name_color(first, world), text_w * 0.6);
                 let (r, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                 ui.painter().galley(r.min, galley, p.ink);
                 names.push((r, first));
@@ -439,7 +431,7 @@ fn picture(
         thread::paint_icon(ui.painter(), glyph, rect.shrink(6.0), tint);
         return;
     }
-    let id = line.source;
+    let id = if line.anonymous() { uuid::Uuid::nil() } else { line.source };
     if !id.is_nil() {
         wanted_pics.insert(id);
     }
@@ -493,6 +485,7 @@ mod tests {
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         }
     }
 
@@ -791,6 +784,63 @@ mod tests {
         let mut emote = line(ChatKind::Local(ChatType::Normal), "Orion", 2);
         emote.text = "/me waves".into();
         assert_eq!(job(&emote), "Orion waves");
+    }
+
+    /// Under RLVa's `@shownames` and `@showloc` the on-screen chat hides who
+    /// speaks and shows what they typed as typed; what an object says is
+    /// rewritten (LLFloaterIMNearbyChatHandler::processChat filters only
+    /// when the source is not an avatar). Both are decided when the line
+    /// arrives (`World::rlva_freeze_line`), and drawn as they were kept.
+    #[test]
+    fn rlva_keeps_what_a_resident_typed_and_rewrites_what_an_object_says() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        let p = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let me = world.agent_id;
+        let near = world.objects.avatars().map(|(_, o)| o.full_id).find(|id| *id != me).unwrap();
+        world.social.avatar_names.on_legacy(near, "Near", "Tester");
+        let handle = world.main_region.unwrap();
+        world.regions.get_mut(&handle).unwrap().name = "Secret Region".into();
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Fixture".into(),
+            source_id: uuid::Uuid::from_u128(1),
+            owner_id: me,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n,showloc=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        let text = "Near Tester waits in Secret Region";
+        let mut job = |source_type, source_id: uuid::Uuid, from: &str| {
+            world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: from.into(),
+                source_id,
+                owner_id: me,
+                source_type,
+                chat_type: ChatType::Normal,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: text.into(),
+            }));
+            let l = world.chat.back().expect("the line");
+            assert_eq!(l.source, source_id);
+            line_job(&ctx, l, &p, &world, &mut HashSet::new(), 800.0, TEXT, false, JobLook::Line)
+                .job
+                .text
+        };
+        let said = job(aurora_net::ChatSourceType::Agent, near, "Near Tester");
+        assert!(said.ends_with(text), "the text as typed: {said}");
+        assert!(!said[..said.len() - text.len()].contains("Tester"), "the speaker hidden: {said}");
+        let object = job(aurora_net::ChatSourceType::Object, uuid::Uuid::from_u128(0xB0C5), "Box");
+        assert!(!object.contains("Tester") && !object.contains("Secret Region"), "{object}");
     }
 
     /// The picture and the name of a card open the profile, and offer the

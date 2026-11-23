@@ -213,7 +213,7 @@ pub(super) fn look_style(p: &Palette, look: crate::world::notification_history::
 /// The start of a message on its card: its links by their labels first,
 /// then cut, so never inside an address (#947).
 fn message_excerpt(world: &World, body: &str) -> String {
-    let body = super::chat::resolved_text_in(world, Kind::Message.names(), body);
+    let body = super::chat::resolved_text_in(world, Kind::Message.text(), body);
     let mut text: String = body.chars().take(MESSAGE_CHARS).collect();
     if body.chars().count() > MESSAGE_CHARS {
         text.push('…');
@@ -275,7 +275,17 @@ pub(super) fn person_card(
                         n.title.clone()
                     };
                     ui.allocate_ui(Vec2::new(w, 18.0), |ui| {
-                        name_hover = text::show(ui, p, &title, &n.name_links, 12.5, p.ink, true, false, n.kind.names());
+                        name_hover = text::show(
+                            ui,
+                            p,
+                            &title,
+                            &n.name_links,
+                            12.5,
+                            p.ink,
+                            true,
+                            false,
+                            world.notifications.names_of(n),
+                        );
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (r, resp) = ui.allocate_exact_size(Vec2::splat(16.0), egui::Sense::hover());
@@ -297,7 +307,14 @@ pub(super) fn person_card(
                 let shown = world.notification_body(n);
                 if !shown.is_empty() {
                     let text = message_excerpt(world, &shown);
-                    name_hover = name_hover.or(text::person_body(ui, p, env.emoji, &text, &n.name_links, n.kind.names()));
+                    name_hover = name_hover.or(text::person_body(
+                        ui,
+                        p,
+                        env.emoji,
+                        &text,
+                        &n.name_links,
+                        world.notifications.names_of(n),
+                    ));
                 }
             });
         });
@@ -339,7 +356,7 @@ pub(super) fn person_card(
     let cover = if tip.is_empty() { cover } else { cover.on_hover_text(tip) };
     if cover.clicked() {
         if !on_close && let Some(target) = name_hover {
-            text::open(ui.ctx(), n.kind.names(), target);
+            text::open(ui.ctx(), world.notifications.names_of(n), target);
             return None;
         }
         return Some(if on_close || !n.opens() {
@@ -431,7 +448,17 @@ pub(super) fn card(
                         let title = super::notification_center::aurora::title(ui, p, &n.title, 12.5);
                         ui.add(egui::Label::new(title).wrap());
                     } else {
-                        text::show(ui, p, &n.title, &n.name_links, 12.5, p.ink, true, true, n.kind.names());
+                        text::show(
+                            ui,
+                            p,
+                            &n.title,
+                            &n.name_links,
+                            12.5,
+                            p.ink,
+                            true,
+                            true,
+                            world.notifications.names_of(n),
+                        );
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -469,12 +496,19 @@ pub(super) fn card(
                 // LLTextEditor (lltoastnotifypanel.cpp, "text_editor_box")
                 if script {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        super::chat::text_with_links(ui, p, world, n.kind.names(), &shown, &n.name_links, 12.0, p.ink);
+                        super::chat::text_with_links(ui, p, world, world.notifications.text_of(n), &shown, &n.name_links, 12.0, p.ink);
                     });
                 } else {
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
-                        super::chat::text_with_links(ui, p, world, n.kind.names(), &shown, &n.name_links, 12.0, p.muted);
+                        let text = world.notifications.text_of(n);
+                        if matches!(n.data, Data::GroupNotice { .. }) {
+                            super::chat::select::document(ui, p, n.id, &shown, |ui, line| {
+                                super::chat::text_with_links(ui, p, world, text, line, &n.name_links, 12.0, p.muted);
+                            });
+                        } else {
+                            super::chat::text_with_links(ui, p, world, text, &shown, &n.name_links, 12.0, p.muted);
+                        }
                     });
                 }
             }
@@ -570,6 +604,24 @@ pub(super) fn card(
                     };
                     buttons.push((accept.into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
+                }
+                // handle_teleport_access_blocked's prompts and the maturity
+                // dialog (world/teleport_access.rs)
+                Data::MaturityChange { rating, prompt } => {
+                    use crate::world::teleport_access::Prompt;
+                    let accept: String = match prompt {
+                        Prompt::ChangeAndReteleport => aurora_i18n::tr!("world-teleport-access-change-and-continue").into(),
+                        Prompt::Change => aurora_i18n::tr!("world-teleport-access-change-preferences").into(),
+                        Prompt::Allow => aurora_i18n::tr!(
+                            "world-teleport-access-allow-button",
+                            rating = crate::ui::bars::maturity_name(*rating).to_owned()
+                        ),
+                        _ => aurora_i18n::tr!("common-ok").into(),
+                    };
+                    buttons.push((accept, Response::Accept, true));
+                    if *prompt != Prompt::OutOfSync {
+                        buttons.push((aurora_i18n::tr!("common-cancel").into(), Response::Decline, false));
+                    }
                 }
                 // TeleportRequest: Yes offers a teleport, No sends nothing
                 Data::TeleportRequest { .. } => {
@@ -691,29 +743,33 @@ pub(super) fn card(
                 } => {
                     ui.add_space(8.0);
                     let width = (ui.available_width() - 12.0) / 3.0;
+                    let size = Vec2::new(width, ui.spacing().interact_size.y.max(24.0));
                     // Reverse rows, never the labels or their wire indices.
+                    // A button taller than the requested size must not shift
+                    // the next column down in a vertically centered row.
                     for row in script_rows(b.len()) {
-                        ui.horizontal(|ui| {
+                        ui.horizontal_top(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             for index in row.clone() {
-                                if button_sized(ui, p, &b[index], false, Some(Vec2::new(width, 24.0))).clicked() {
+                                if button_sized(ui, p, &b[index], false, Some(size)).clicked() {
                                     out = Some(Response::Button(index));
                                 }
                             }
                             for _ in row.len()..3 {
-                                ui.allocate_space(Vec2::new(width, 24.0));
+                                ui.allocate_space(size);
                             }
                         });
                     }
                     ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if button_sized(ui, p, aurora_i18n::tr!("common-ignore"), false, Some(Vec2::new(72.0, 22.0))).clicked() {
+                    ui.horizontal_top(|ui| {
+                        // LLToastNotifyPanel::createButton auto-sizes these
+                        // labels; updateButtonsLayout keeps Block to the left
+                        // of Ignore. Only script labels use fixed columns.
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min).with_main_wrap(true), |ui| {
+                            if button(ui, p, aurora_i18n::tr!("common-ignore"), false).clicked() {
                                 out = Some(Response::Dismiss);
                             }
-                            if !own_object
-                                && button_sized(ui, p, aurora_i18n::tr!("common-block"), false, Some(Vec2::new(72.0, 22.0))).clicked()
-                            {
+                            if !own_object && button(ui, p, aurora_i18n::tr!("common-block"), false).clicked() {
                                 out = Some(Response::Block);
                             }
                         });
@@ -1542,10 +1598,10 @@ mod tests {
 
     #[test]
     fn script_dialog_pointer_clicks_return_the_original_button_in_both_styles() {
-        for aurora in [false, true] {
+        for (aurora, scale) in [(false, 1.0), (true, 1.0), (false, 2.0), (true, 2.0)] {
             let ctx = egui::Context::default();
             let theme = crate::theme::Theme::default();
-            theme.apply(&ctx, 1.0);
+            theme.apply(&ctx, scale);
             let p = theme.palette();
             let icons = Icons::default();
             let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -1596,6 +1652,23 @@ mod tests {
             for _ in 0..3 {
                 frame(vec![]);
             }
+            let (output, _) = frame(vec![]);
+            for row in labels.chunks(3) {
+                let centers: Vec<_> = row
+                    .iter()
+                    .map(|label| {
+                        output
+                            .shapes
+                            .iter()
+                            .find_map(|s| match &s.shape {
+                                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos.y + t.galley.size().y * 0.5),
+                                _ => None,
+                            })
+                            .expect("button visible")
+                    })
+                    .collect();
+                assert!(centers.iter().all(|y| (y - centers[0]).abs() < 0.5), "aurora={aurora}: {centers:?}");
+            }
             for (index, label) in labels.iter().enumerate() {
                 let (output, _) = frame(vec![]);
                 let pos = output
@@ -1622,6 +1695,40 @@ mod tests {
                     "aurora={aurora}, button={index}: {answer:?}"
                 );
             }
+            let mut footer = Vec::new();
+            for (label, block) in [(aurora_i18n::tr!("common-block"), true), (aurora_i18n::tr!("common-ignore"), false)] {
+                let (output, _) = frame(vec![]);
+                let text = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| match &s.shape {
+                        egui::Shape::Text(t) if t.galley.text() == label => Some(t),
+                        _ => None,
+                    })
+                    .expect("footer label visible");
+                assert!(!text.galley.elided, "aurora={aurora}, scale={scale}: {label} must stay whole");
+                let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                footer.push(rect);
+                let pos = rect.center();
+                frame(vec![egui::Event::PointerMoved(pos)]);
+                let click = |pressed| {
+                    vec![egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }]
+                };
+                frame(click(true));
+                let (_, answer) = frame(click(false));
+                assert!(
+                    matches!((answer, block), (Some(Response::Block), true) | (Some(Response::Dismiss), false)),
+                    "aurora={aurora}, scale={scale}: {label} keeps its action"
+                );
+            }
+            assert!(!footer[0].intersects(footer[1]));
+            assert!((footer[0].center().y - footer[1].center().y).abs() < 0.5);
+            assert!(footer[0].right() < footer[1].left(), "Block stays left of Ignore");
         }
     }
 

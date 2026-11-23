@@ -44,9 +44,11 @@ const THIS_PC: &[&str] = &[
     "window_maximized",
     "cache_location",
     "chat_log_location",
+    // a file of this PC (Preferences › Language and updates)
+    "custom_language_file",
 ];
 /// The same inside `audio`: the devices of this PC.
-const THIS_PC_AUDIO: &[&str] = &["output_device", "input_device"];
+const THIS_PC_AUDIO: &[&str] = &["output_device", "voice_output_device", "input_device"];
 /// The same inside `gifs`: the user's own service keys, and this viewer's
 /// random id. A backup file is carried around and shared; keys are not.
 const THIS_PC_GIFS: &[&str] = &["giphy_key", "klipy_key", "customer_id"];
@@ -292,7 +294,9 @@ impl Settings {
         self.window_maximized = current.window_maximized;
         self.cache_location = current.cache_location.clone();
         self.chat_log_location = current.chat_log_location.clone();
+        self.custom_language_file = current.custom_language_file.clone();
         self.audio.output_device = current.audio.output_device.clone();
+        self.audio.voice_output_device = current.audio.voice_output_device.clone();
         self.audio.input_device = current.audio.input_device.clone();
         self.gifs.giphy_key = current.gifs.giphy_key.clone();
         self.gifs.klipy_key = current.gifs.klipy_key.clone();
@@ -337,6 +341,7 @@ mod tests {
             ..Settings::default()
         };
         s.audio.output_device = "Speakers".into();
+        s.audio.voice_output_device = "Headset".into();
         s.audio.input_device = "Microphone".into();
         s.gifs.giphy_key = "giphy-key-of-this-pc".into();
         s.gifs.klipy_key = "klipy-key-of-this-pc".into();
@@ -355,6 +360,7 @@ mod tests {
             "D:\\\\cache",
             "D:\\\\logs",
             "Speakers",
+            "Headset",
             "Microphone",
             "giphy-key-of-this-pc",
             "klipy-key-of-this-pc",
@@ -395,6 +401,7 @@ mod tests {
         other.colors.chat_direct = [1, 2, 3, 255];
         other.window_width = 640;
         other.audio.output_device = "Elsewhere".into();
+        other.audio.voice_output_device = "Other headset".into();
         other.gifs.giphy_key = "giphy-key-elsewhere".into();
         other.gifs.rating = crate::gif_search::Rating::Strict;
         let backup = Backup::parse(&Backup::new(&other, Some("layout".into())).to_bytes().unwrap()).unwrap();

@@ -262,7 +262,13 @@ impl World {
         if !sent && self.mutes.text_muted(&other, &self.social.name_of(&other)) {
             return false;
         }
-        let message = message_of(item).to_owned();
+        // FIRE-21803 (process_money_balance_reply, llviewermessage.cpp): the
+        // message of a payer whose IMs RLVa holds back is not shown either.
+        let message = if !sent && !self.rlva_allows_im("recvim", other) {
+            String::new()
+        } else {
+            message_of(item).to_owned()
+        };
         let text = sentence(super::teleport_invites::agent_link(other), sent, amount, &message);
         let note = self.notice_line(text.clone());
         self.transcript_only(other, &note);
@@ -280,13 +286,16 @@ impl World {
         let payment = self.payments.push(other, sent, amount, message);
         let line = ChatLine {
             time: SystemTime::now(),
-            from: self.social.name_of(&other),
+            // (the payer is always named: money_balance_avatar_notify,
+            // indra/newview/llviewermessage.cpp, has no RLVa name test)
+            from: self.social.name_in(super::names::NameScope::Roster, &other),
             text,
             kind: ChatKind::Payment(payment),
             source: other,
             origin: Origin::Live,
             blocked: false,
             beyond_range: false,
+            speaker: Default::default(),
         };
         self.conversation_card(other, line);
         if sent {
@@ -394,6 +403,39 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert_eq!((got[0].amount, got[0].message.as_str()), (1200, ""));
         assert_eq!(w.social.ims[0].unread, 1);
+    }
+
+    /// FIRE-21803 (process_money_balance_reply, llviewermessage.cpp): under
+    /// @recvim the payer's message stays out of the card and its line; an
+    /// exception for the payer, or our own payment, keeps it.
+    #[test]
+    fn a_payer_whose_ims_rlva_holds_back_gives_no_message() {
+        const OBJECT: Uuid = Uuid::from_u128(3);
+        let held = |exception: bool| {
+            let mut w = world();
+            w.rlva_configure(true);
+            w.social.session_mut(JANE);
+            let text = if exception {
+                format!("@recvim=n,recvim:{JANE}=add")
+            } else {
+                "@recvim=n".to_owned()
+            };
+            assert!(w.rlva.receive(&aurora_net::ChatMessage {
+                from_name: "Test object".to_owned(),
+                source_id: OBJECT,
+                owner_id: AGENT,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                region: None,
+                position: glam::Vec3::ZERO,
+                message: text,
+            }));
+            w.payment(&paid(20, GIFT, JANE, AGENT, 30, "Read this anyway"));
+            w.payment(&paid(21, GIFT, AGENT, JANE, 5, "Our own words"));
+            cards(&w, JANE).into_iter().map(|c| c.message).collect::<Vec<_>>()
+        };
+        assert_eq!(held(false), ["", "Our own words"]);
+        assert_eq!(held(true), ["Read this anyway", "Our own words"]);
     }
 
     /// Whether a closed conversation opens, for each choice, from a friend

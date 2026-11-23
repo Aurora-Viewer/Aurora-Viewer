@@ -540,6 +540,10 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "properties-no-mod"
         | "properties-no-creator"
         | "rename"
+        | "rename-focus"
+        | "aurora-rename-focus"
+        | "rename-window"
+        | "aurora-rename-window"
         | "multi-add"
         | "multi-detach"
         | "delete"
@@ -581,7 +585,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"
         | "note-task" | "note-task-save" | "note-task-error" | "note-task-readonly" | "note-drop" | "note-image" | "note-landmark"
         | "note-copy" | "note-task-embedded" | "note-menu-right" | "note-markdown" | "note-source" | "note-classic" | "note-format"
-        | "note-remember" | "note-lsl" | "note-lsl-markdown" | "note-rez" | "task-preview" => 8103,
+        | "note-remember" | "note-lsl" | "note-lsl-markdown" | "note-rez" | "note-find" | "note-replace" | "task-preview" => 8103,
         "nocopy" | "offer-unsent" | "offer-sent" | "offer-uncertain" => 8109,
         "notransfer" => 8110,
         "link" => 8113,
@@ -638,6 +642,17 @@ pub fn seed_clipboard_tree(inv: &mut Inventory) {
     inv.add_items(items);
 }
 
+/// The pose notecard of `AURORA_DEMO_INVENTORY=note-find` and `note-replace`:
+/// data lines, not interface text.
+const POSE_NOTE: &str = "SITTER 0\n\
+    POSE Sit1|sit_female_01|<0.0,0.0,0.6>|<0,0,0>\n\
+    POSE Sit2|sit_female_02|<0.1,0.0,0.6>|<0,0,0>\n\
+    POSE Lean|lean_female_01|<0.0,0.2,0.6>|<0,0,90>\n\
+    SITTER 1\n\
+    POSE Sit1|sit_male_01|<0.0,0.6,0.6>|<0,0,180>\n\
+    POSE Sit2|sit_male_02|<0.1,0.6,0.6>|<0,0,180>\n\
+    POSE Lean|lean_male_01|<0.0,0.8,0.6>|<0,0,270>";
+
 pub fn note_asset(embedded: bool) -> Vec<u8> {
     let markdown = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| {
         matches!(
@@ -646,14 +661,19 @@ pub fn note_asset(embedded: bool) -> Vec<u8> {
         )
     });
     let lsl = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "note-lsl" | "note-lsl-markdown"));
-    let text = if lsl {
+    // the find scenarios: a pose notecard, the kind creators clean with
+    // Replace all (#4153), with items to show that they stay
+    let poses = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "note-find" | "note-replace"));
+    let text = if poses {
+        POSE_NOTE
+    } else if lsl {
         aurora_i18n::tr!("notecard-lsl-demo")
     } else if markdown {
         aurora_i18n::tr!("notecard-markdown-demo")
     } else {
         aurora_i18n::tr!("notecard-demo-text")
     };
-    let embedded = embedded || markdown;
+    let embedded = embedded || markdown || poses;
     if embedded {
         let mut card = aurora_net::inventory::notecard::Notecard::default();
         let mut text = format!("{text}\n");

@@ -130,6 +130,9 @@ pub(crate) struct FramePacket {
     /// Pixels whose drawn faces to read back: drawn again in this frame,
     /// answered with a later result (drawn_pick.rs).
     pub drawn: Vec<DrawnRequest>,
+    /// Requests of earlier frames given up since the frame before: not
+    /// drawn for if they still wait.
+    pub drawn_forgotten: Vec<u64>,
     pub capture: Option<Capture>,
     /// The panorama to project from the cube of the six faces, before the
     /// frame is drawn (equirect.rs); answered by a later result.
@@ -140,6 +143,8 @@ pub(crate) struct FramePacket {
     /// A small picture of this frame's 3D view, tagged (thumbnail.rs;
     /// answered a few frames later, never waited for).
     pub thumbnail: Option<u64>,
+    /// The second camera's view, drawn after this frame (second_view.rs).
+    pub second_view: Option<crate::second_view::SecondViewJob>,
     /// Start the motion history again (`Renderer::cut_motion_history`).
     pub motion_cut: bool,
     /// How far every position moved since the last frame (m, x and y): a

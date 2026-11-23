@@ -778,9 +778,12 @@ impl Session<'_> {
                     refresh: vec![item.parent],
                     ..Default::default()
                 };
-                crate::inventory::operations::mutate(&http, &ais, &descendants, owner, change)
-                    .await
-                    .map_err(|_| Error::Verification)?;
+                // LLObjectsMaterialItemCallback::fire (indra/newview/llmaterialeditor.cpp)
+                // uploads the material whatever becomes of the name and rights
+                // update: an item left without its material would never load.
+                if let Err(reason) = crate::inventory::operations::mutate(&http, &ais, &descendants, owner, change).await {
+                    log::warn!("material item name and rights not confirmed, its material is sent anyway: {reason}");
+                }
                 let saved = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, item.id, 57, pending.upload.data)
                     .await
                     .map_err(material_save_error)?;
