@@ -198,9 +198,9 @@ fn none_row(ui: &mut egui::Ui, c: &mut Ctx) {
     });
 }
 
-/// The second line of a group's row: the title we wear in it (when known),
-/// how many members are online (when its members are loaded), or that its
-/// chat is blocked.
+/// The second line of a group's row: the title we wear in it (when known)
+/// and how many members are online (when its members are loaded), whatever
+/// its chat: the row's chat switch shows a blocked chat.
 fn second_line(c: &Ctx, g: &GroupMembership) -> String {
     let world = c.world;
     let data = world.group_data.get(&g.id);
@@ -215,9 +215,7 @@ fn second_line(c: &Ctx, g: &GroupMembership) -> String {
         Some(t) => aurora_i18n::tr!("people-groups-title", title = t),
         None => aurora_i18n::tr!("people-groups-member").to_owned(),
     }];
-    if world.mutes.group_chat_muted(&g.id) {
-        parts.push(aurora_i18n::tr!("people-groups-chat-off").to_owned());
-    } else if let Some(d) = data.filter(|d| d.members_complete) {
+    if let Some(d) = data.filter(|d| d.members_complete) {
         parts.push(aurora_i18n::tr!("people-groups-online", count = d.online().count() as i64));
     }
     parts.join(" · ")
@@ -286,11 +284,13 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, g: &GroupMembership) {
     };
     let pointer = resp.hover_pos();
     let mut tip = None;
-    let mut switched = false;
+    let (mut switched, mut menu_asked) = (false, false);
     for (((_, part), cell), text) in parts.iter().zip(&end.items).zip(&tips) {
         match part {
             Part::Setting(s) => {
-                switched |= setting_switch(ui, c, g, *s, *cell, text);
+                let click = setting_switch(ui, c, g, *s, *cell, text);
+                switched |= click == SwitchClick::Toggled;
+                menu_asked |= click == SwitchClick::Menu;
                 continue;
             }
             Part::Pinned => super::radar::icon(ui, "pin-filled", *cell, 13.0, p.amber),
@@ -362,9 +362,10 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, g: &GroupMembership) {
     if resp.double_clicked() && !switched {
         c.actions.push(PeopleAction::GroupChat(g.id));
     }
-    // menu_people_groups.xml
+    // menu_people_groups.xml, from a right click on the row or on one of its
+    // switches (which take it), at the pointer
     let (id, world) = (g.id, c.world);
-    menu::context_menu(&resp, p, |ui| context::group_menu(ui, p, world, id));
+    menu::context_menu_also(&resp, p, menu_asked, |ui| context::group_menu(ui, p, world, id));
     if let Some(tip) = tip {
         resp.on_hover_text(tip);
     }
@@ -463,16 +464,33 @@ fn setting_tip(s: Setting, (on, refused): (bool, Option<ChatRefusal>)) -> String
             ChatRefusal::WithoutNotices => aurora_i18n::tr!("ui-options-groups-without-notices"),
         };
         tip.push('\n');
-        tip.push_str(&aurora_i18n::tr!("people-groups-chat-refused", preference = preference));
+        // the section's own name, as Preferences shows it
+        let section = aurora_i18n::tr!("ui-options-groups-and-blocking");
+        tip.push_str(&aurora_i18n::tr!(
+            "people-groups-chat-refused",
+            preference = preference,
+            section = section
+        ));
     }
     tip
 }
 
+/// What a click did on a setting's switch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SwitchClick {
+    None,
+    /// A left click turned the setting over.
+    Toggled,
+    /// A right click: the row's menu, which the switch took from the row.
+    Menu,
+}
+
 /// The switch of a setting in `cell` of a group's row: the sheet's icon,
-/// in the muted ink while lit, clearly dimmed otherwise. A click turns the
-/// group's own setting over, as the sheet's switch (a refused chat's click
-/// still blocks or unblocks the group), and does nothing else; true then.
-fn setting_switch(ui: &egui::Ui, c: &mut Ctx, g: &GroupMembership, s: Setting, cell: Rect, tip: &str) -> bool {
+/// in the muted ink while lit, clearly dimmed otherwise. A left click turns
+/// the group's own setting over, as the sheet's switch (a refused chat's
+/// click still blocks or unblocks the group), and does nothing else; a
+/// right click asks for the row's menu.
+fn setting_switch(ui: &egui::Ui, c: &mut Ctx, g: &GroupMembership, s: Setting, cell: Rect, tip: &str) -> SwitchClick {
     let p = c.p;
     let state = setting_state(c.world, g, s);
     let hit = Rect::from_center_size(cell.center(), SETTING_HIT);
@@ -489,8 +507,11 @@ fn setting_switch(ui: &egui::Ui, c: &mut Ctx, g: &GroupMembership, s: Setting, c
     };
     super::radar::icon(ui, s.icon(), cell, BADGE, tint);
     let resp = resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand);
+    if resp.secondary_clicked() {
+        return SwitchClick::Menu;
+    }
     if !resp.clicked() {
-        return false;
+        return SwitchClick::None;
     }
     let on = state.0;
     match s {
@@ -502,7 +523,7 @@ fn setting_switch(ui: &egui::Ui, c: &mut Ctx, g: &GroupMembership, s: Setting, c
             profile: !on,
         }),
     }
-    true
+    SwitchClick::Toggled
 }
 
 /// What a group's row drew at its right end, for the tests.
@@ -1003,11 +1024,25 @@ mod tests {
         asked: Vec<CtxAction>,
         actions: Vec<PeopleAction>,
         st: PeopleUi,
+        /// A menu is open after the run (the row's, a right click away).
+        menu: bool,
     }
 
     /// `draw_row` in a list `width` wide, with everything it gives; the nil
     /// group draws the "No active group" row.
     fn run_row(world: &crate::world::World, group: Uuid, width: f32, hovered: bool, click: Option<Pos2>) -> Run {
+        run_row_button(world, group, width, hovered, click, egui::PointerButton::Primary)
+    }
+
+    /// `run_row` clicking with `button`.
+    fn run_row_button(
+        world: &crate::world::World,
+        group: Uuid,
+        width: f32,
+        hovered: bool,
+        click: Option<Pos2>,
+        button: egui::PointerButton,
+    ) -> Run {
         let p = crate::theme::Theme::default().palette();
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
@@ -1038,14 +1073,14 @@ mod tests {
                     egui::Event::PointerMoved(at),
                     egui::Event::PointerButton {
                         pos: at,
-                        button: egui::PointerButton::Primary,
+                        button,
                         pressed: true,
                         modifiers: Default::default(),
                     },
                 ],
                 (Some(at), f) if f == frames - 1 => vec![egui::Event::PointerButton {
                     pos: at,
-                    button: egui::PointerButton::Primary,
+                    button,
                     pressed: false,
                     modifiers: Default::default(),
                 }],
@@ -1089,6 +1124,7 @@ mod tests {
             asked,
             actions,
             st,
+            menu: egui::Popup::is_any_open(&ctx),
         }
     }
 
@@ -1246,6 +1282,9 @@ mod tests {
         assert!(!setting_lit(state));
         let tip = setting_tip(Setting::Chat, state);
         assert!(tip.contains(without_notices) && !tip.contains(no_chats), "{tip}");
+        // the path to the preference names the section as Preferences does
+        let section = aurora_i18n::tr!("ui-options-groups-and-blocking");
+        assert!(tip.contains(section), "{tip}");
         // the other switches keep their own state
         let notices = setting_state(&world, &g(&world, G3), Setting::Notices);
         assert_eq!(notices, (false, None));
@@ -1256,6 +1295,57 @@ mod tests {
         let run = run_row(&world, G3, 360.0, false, Some(cell.center()));
         assert_eq!(switched(&run, G3), vec![(Setting::Chat, false)], "{:?}", run.asked);
         assert_eq!(run.st.sheet, None);
+    }
+
+    /// A right click on a switch opens the group's menu, as on the rest of
+    /// the row, and switches, selects and opens nothing; a left click on it
+    /// opens no menu.
+    #[test]
+    fn a_right_click_on_a_switch_opens_the_row_menu() {
+        let world = settings_world();
+        let calm = run_row(&world, G1, 360.0, false, None);
+        let drawn = calm.drawn.expect("the row's end");
+        let names = Pos2::new(rows::names_left(calm.row) + 20.0, calm.row.center().y);
+        let secondary = egui::PointerButton::Secondary;
+        let control = run_row_button(&world, G1, 360.0, false, Some(names), secondary);
+        assert!(control.menu, "a right click on the names opens the menu");
+        assert!(control.st.sel.is_empty() && control.st.sheet.is_none());
+        for (s, cell) in &drawn.settings {
+            let run = run_row_button(&world, G1, 360.0, false, Some(cell.center()), secondary);
+            assert!(run.menu, "{s:?}: the row's menu");
+            assert!(switched(&run, G1).is_empty(), "{s:?}: switched");
+            assert!(run.st.sel.is_empty(), "{s:?}: selected");
+            assert_eq!(run.st.sheet, None, "{s:?}: the sheet opened");
+            let run = run_row(&world, G1, 360.0, false, Some(cell.center()));
+            assert!(!run.menu, "{s:?}: a left click opens no menu");
+            assert_eq!(switched(&run, G1).len(), if *s == Setting::Profile { 2 } else { 1 }, "{s:?}");
+        }
+    }
+
+    /// The second line leaves a blocked chat to the chat switch: what we
+    /// are in the group, never "chat blocked".
+    #[test]
+    fn the_second_line_leaves_a_blocked_chat_to_its_switch() {
+        let world = settings_world();
+        let p = crate::theme::Theme::default().palette();
+        let images = HashMap::new();
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut friends = super::super::FriendsSettings::default();
+        let mut actions = Vec::new();
+        let c = Ctx {
+            p: &p,
+            world: &world,
+            contacts: &mut contacts,
+            friends: &mut friends,
+            images: &images,
+            actions: &mut actions,
+            embedded_contacts: false,
+            contact_sheet_on_click: false,
+            contact_sheet_room: false,
+        };
+        let blocked = world.groups.group(&G2).expect("the blocked group");
+        assert!(world.mutes.group_chat_muted(&G2));
+        assert_eq!(second_line(&c, blocked), aurora_i18n::tr!("people-groups-member"));
     }
 
     /// A row too narrow for every part keeps the names' minimum: the badges

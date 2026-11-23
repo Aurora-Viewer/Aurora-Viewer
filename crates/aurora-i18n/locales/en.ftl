@@ -11141,7 +11141,6 @@ people-groups-active = Active group
 people-groups-member = Member
 people-groups-title = Title: { $title }
 people-groups-online = { $count } online
-people-groups-chat-off = chat blocked
 people-groups-notices = { $count ->
     [one] { $count } notice
    *[other] { $count } notices
@@ -11162,7 +11161,7 @@ people-groups-receive-chat = Receive the group chat
 people-groups-in-profile = Show in my profile
 people-groups-switch-on = { $setting }: on
 people-groups-switch-off = { $setting }: off
-people-groups-chat-refused = Chat refused by “{ $preference }” (Preferences › Chat)
+people-groups-chat-refused = Chat refused by “{ $preference }” (Preferences › Chat › { $section })
 people-groups-pin = Pin at the top of the list
 people-groups-slurl = SLurl
 people-groups-leave = Leave the group

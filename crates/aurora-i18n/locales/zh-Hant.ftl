@@ -10558,7 +10558,6 @@ people-groups-active = 目前群組
 people-groups-member = 成員
 people-groups-title = 頭銜：{ $title }
 people-groups-online = { $count } 人線上
-people-groups-chat-off = 聊天已封鎖
 people-groups-notices = { $count ->
     [one] { $count } 條通知
    *[other] { $count } 條通知

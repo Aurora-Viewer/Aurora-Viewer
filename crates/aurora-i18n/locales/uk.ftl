@@ -10775,7 +10775,6 @@ people-groups-active = Активна група
 people-groups-member = Учасник
 people-groups-title = Звання: { $title }
 people-groups-online = У мережі: { $count }
-people-groups-chat-off = чат заблоковано
 people-groups-notices = { $count ->
     [one] { $count } оголошення
     [few] { $count } оголошення

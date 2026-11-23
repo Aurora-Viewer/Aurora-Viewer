@@ -10562,7 +10562,6 @@ people-groups-active = 当前群组
 people-groups-member = 成员
 people-groups-title = 头衔：{ $title }
 people-groups-online = { $count } 人在线
-people-groups-chat-off = 聊天已封锁
 people-groups-notices = { $count ->
     [one] { $count } 条通知
    *[other] { $count } 条通知
