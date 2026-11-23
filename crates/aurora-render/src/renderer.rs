@@ -4204,6 +4204,9 @@ impl Backend {
             float_tex(31),
             // GTAO's screen-space indirect light (gtao.rs)
             float_tex(14),
+            // how open each place is, from the traced probes (rt_gi.wgsl
+            // `cs_gi_sky`, common.wgsl `screen_open`)
+            float_tex(32),
             // the night sky's stars (stars.rs)
             wgpu::BindGroupLayoutEntry {
                 binding: 24,
@@ -6521,7 +6524,13 @@ impl Backend {
         let contact = crate::contact_shadows::Override::from_env()
             .needed(s.contact_shadows)
             .then(|| contact.targets(device, &depth_ss, DEPTH_FORMAT, w, h));
-        let rt = crate::rt_shadows::Targets::new(device, w, h, crate::rt_shadows::traced(device, external, s.ray_tracing));
+        let rt = crate::rt_shadows::Targets::new(
+            device,
+            w,
+            h,
+            crate::rt_shadows::traced(device, external, s.ray_tracing),
+            s.rt_tuning.gi_step,
+        );
         // the blended faces opaque enough are in the occlusion depth when it
         // holds them (`blend_in_ao_depth`)
         let soft = soft
@@ -6622,6 +6631,7 @@ impl Backend {
                   contact: &wgpu::TextureView,
                   glass: &wgpu::TextureView,
                   il: &wgpu::TextureView,
+                  open: &wgpu::TextureView,
                   sample_water: bool,
                   sample_mask: bool,
                   soft: Option<&wgpu::TextureView>| {
@@ -6735,6 +6745,10 @@ impl Backend {
                         resource: wgpu::BindingResource::TextureView(il),
                     },
                     wgpu::BindGroupEntry {
+                        binding: 32,
+                        resource: wgpu::BindingResource::TextureView(open),
+                    },
+                    wgpu::BindGroupEntry {
                         binding: 15,
                         resource: wgpu::BindingResource::TextureView(&water_effects.view),
                     },
@@ -6800,6 +6814,15 @@ impl Backend {
                 .map(|g| &g.result)
                 .or(t.gtao.as_ref().and_then(|g| g.indirect.as_ref()).map(|i| &i.result))
                 .unwrap_or(&dummies.black);
+        // how open each place is (rt_gi.wgsl `cs_gi_sky`; white: open)
+        let open = t.rt.as_ref().and_then(|r| r.gi.as_ref()).map(|g| &g.sky).unwrap_or(&dummies.white);
+        // how open the places the reflections are drawn from are (rt_gi.wgsl
+        // `gi_points`)
+        let points =
+            t.rt.as_ref()
+                .and_then(|r| r.gi.as_ref())
+                .map(|g| &g.points)
+                .unwrap_or(&dummies.white);
         let soft = t.soft.as_ref().map(|s| s.result());
         // the solid surfaces of the depth the occlusion and the contact
         // shadows read (a dummy without either: nothing reads it)
@@ -6817,6 +6840,7 @@ impl Backend {
                 &dummies.black,
                 &dummies.white,
                 &dummies.black,
+                &dummies.white,
                 false,
                 false,
                 None,
@@ -6833,6 +6857,7 @@ impl Backend {
                 contact,
                 glass,
                 il,
+                open,
                 false,
                 true,
                 soft,
@@ -6849,6 +6874,7 @@ impl Backend {
                 contact,
                 glass,
                 il,
+                open,
                 false,
                 true,
                 soft,
@@ -6865,6 +6891,7 @@ impl Backend {
                 contact,
                 glass,
                 il,
+                open,
                 true,
                 true,
                 soft,
@@ -6882,6 +6909,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6898,6 +6926,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                     None,
@@ -6914,6 +6943,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                     None,
@@ -6930,6 +6960,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6946,6 +6977,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6962,6 +6994,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6978,6 +7011,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -6994,6 +7028,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.white,
                     &dummies.black,
+                    &dummies.white,
                     false,
                     false,
                     None,
@@ -7010,6 +7045,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.white,
                     &dummies.black,
+                    points,
                     false,
                     false,
                     None,
@@ -7535,6 +7571,8 @@ impl Backend {
             || crate::rt_shadows::traced(&self.device, self.external, s.ray_tracing)
                 != crate::rt_shadows::traced(&self.device, self.external, self.settings.ray_tracing)
             || s.soft_shadows != self.settings.soft_shadows
+            // (the traced indirect light's textures are of its grid)
+            || s.rt_tuning.gi_step != self.settings.rt_tuning.gi_step
             || s.water_reflection_scale != self.settings.water_reflection_scale
             || crate::water_optics::scale(s.water_effects) != crate::water_optics::scale(self.settings.water_effects)
             || s.mirror_scale != self.settings.mirror_scale;
@@ -9675,6 +9713,16 @@ impl Backend {
         if indirect_now || rt_gi_now {
             main.light_sets.mode[2] |= 0x400;
         }
+        // (common.wgsl TRACED_SKY: the traced probes' sight of the sky in
+        // the indirect light's alpha)
+        if let Some(rt) = self.rt.as_mut() {
+            rt.want_probes(self.settings.rt_tuning.probes);
+            rt.tune_gi(self.settings.rt_tuning);
+        }
+        let traced_sky = rt_gi_now && self.rt.as_ref().is_some_and(|r| r.sees_the_sky());
+        if traced_sky {
+            main.light_sets.mode[3] |= 0x100;
+        }
         // (common.wgsl LOCAL_TRACED, TRACED_LIGHTS_SHIFT, PROJECTORS_TRACED)
         if rt_lights_now {
             let tuning = self.settings.rt_tuning;
@@ -9833,6 +9881,10 @@ impl Backend {
                 [w, h, 1.0 / w, 1.0 / h]
             })
         };
+        // The places the probe's capture and the mirror are drawn from, whose
+        // openness their faces take with the traced probes (rt_gi.wgsl
+        // `gi_points`, common.wgsl `reflection_open`; TRACED_SKY tells them)
+        let mut gi_points: [Option<Vec3>; 2] = [None; 2];
         if do_water_refl {
             let mut u = refl_frame(self, Vec3::Z, -f.water_height, 0.05, false);
             // The mirror flips z after the bend: a point bent down by the
@@ -9850,6 +9902,13 @@ impl Backend {
             let n = m.normal.normalize_or(Vec3::Z);
             let mut u = refl_frame(self, n, -n.dot(m.point), 0.01, true);
             u.sky_star_pass = star_pass(&self.targets.mirror);
+            // (half a metre in front of it, on the camera's side: on its
+            // plane the place is the mirror's own panel)
+            if traced_sky {
+                u.light_sets.mode[3] |= 0x100;
+                let side = if n.dot(f.camera_pos - m.point) < 0.0 { -n } else { n };
+                gi_points[1] = Some(m.point + side * 0.5);
+            }
             mirror_vp = Mat4::from_cols_array_2d(&u.view_proj);
             mirror_eye = Vec3::from_slice(&u.camera_pos[..3]);
             self.queue.write_buffer(&self.refl_buffers[1], 0, bytemuck::bytes_of(&u));
@@ -9880,6 +9939,10 @@ impl Backend {
             u.misc = [0.0, 0.0, 0.0, 2.0];
             u.clip_plane = [0.0; 4];
             u.light_sets.mode[2] |= radiance_bits | crate::probes::capture_lighting::DOME;
+            if traced_sky {
+                u.light_sets.mode[3] |= 0x100;
+                gi_points[0] = Some(c.origin);
+            }
             // the sun stops at the roofs (display_cube_face, generateSunShadow)
             if !c.sky_only && irr_capture && f.shadows {
                 if c.face == 0 {
@@ -11222,6 +11285,7 @@ impl Backend {
                         &self.targets.scene_copy,
                         &scene,
                         round,
+                        gi_points,
                     );
                 }
             }

@@ -5641,6 +5641,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_LAMP_MOVE=<frames>[,<stop>]` | The same lamp carried from side to side behind a post, a crossing every `frames` frames |
 | `AURORA_DEMO_PROBES=1` | Two manual reflection probes on the plaza: a box and a sphere |
 | `AURORA_DEMO_PROBE_ROOM=<ambiance>[,box\|inner][,shiny]` | A closed room with a lamp at `AURORA_DEMO_POS="100,100"`, and a manual probe of that ambiance: a sphere crossing the floor, a box filling the room, or a box on its inner faces; `shiny` makes the room shiny |
+| `AURORA_DEMO_NEON_ROOM=1`, `closed` or `dark` | A room with a doorway, a red wall and two emissive neons, a covered porch outside, our avatar inside: the traced global illumination against `AURORA_GI=0` and `AURORA_RT_GI=0` |
 | `AURORA_DEMO_GEOMETRY=<mb>[,<mb per second>]` | Geometry load: meshes filling the geometry arena |
 | `AURORA_GPU_OOM=<mb>[,<seconds>[,<after>]]` | Video memory full: every growth of a GPU buffer or texture page of at least that size fails, for the whole run or that long, from the start or `after` seconds |
 | `AURORA_GPU_OOM_TARGETS=<seconds>` | Video memory full for the render targets, that long after the start |
@@ -13099,6 +13100,10 @@ What the inventory must show with these scenarios:
 | `AURORA_RT_LIGHTS=1` or `0` | Ray-traced local light shadows forced on or off for this launch |
 | `AURORA_RT_GI=1` or `0` | Ray-traced indirect light forced on or off for this launch |
 | `AURORA_RT_REFLECTIONS=1` or `0` | Ray-traced reflections forced on or off for this launch |
+| `AURORA_GI=0` | The traced indirect light without the global illumination probes, whatever Preferences say: its hits keep the sky's light, and the sky's ambient reaches every place |
+| `AURORA_RT_GI_QUALITY=low`, `medium` or `high` | The traced indirect light's ray tracing quality for this launch (`high`, today's image, by default) |
+| `AURORA_RT_GI_DIAG=cycle`, `opaque`, `noposed`, `noshadows`, `novis`, `count` or `coarse` | Diagnosis only: the traced indirect light leaves out one part of its work (the image is wrong), to measure that part's cost; `count` logs the probes' reads, rays and candidate hits instead; `coarse` reads no probe of the finest cascade |
+| `AURORA_RT_GI_VIS=all`, `p1` or `p6` | Diagnosis only: which reads of a global illumination probe trace its visibility ray, to compare with the viewer's (`p6`) |
 | `AURORA_RT_EMITTER=sphere` | A lamp's traced rays stop at the sphere around its prim instead of passing that prim alone |
 | `AURORA_RT_LAMPS=low`, `medium` or `high` | The traced lamps' quality for this launch, whatever the settings say (to measure each) |
 | `AURORA_RT_POSED_BUILD=trace` or `build` | The avatars' traced levels built for a fast trace instead of a fast build (the default), to measure both; the picture is the same |
@@ -13644,11 +13649,94 @@ What the inventory must show with these scenarios:
   inside that sphere beside the prim still casts.
   **`AURORA_RT_EMITTER=sphere`** stops the rays at the sphere instead, as
   the first version did, to compare the picture and the lights pass's GPU
-  time (`rt lights:`). With
+  time (`rt lights:`). With `AURORA_RT_GI=1`, the indirect light's hits
+  the view does not see take the light of a volume of probes around the
+  camera (`gi.rs`, `rt_gi_probes.rs`, 2,048 of them traced a frame, about
+  48 MB), which have the light bounced more than once and the closed rooms'
+  dark, in the sky's hemisphere's place; the same probes say how much of
+  the sky each place on screen sees, and the sky's ambient is darkened
+  where a roof, a room's walls or a tree hide it (`screen_sky`), in the
+  traced reflections too (`hit_ambient`); the log
+  says `global illumination probes ready` at the start. The user turns
+  them off and on in Preferences › Graphics › Ray tracing, "Global
+  illumination probes" (under the traced indirect light, on by default;
+  the log says `global illumination probes off` / `on` at each change,
+  and turned on again they start from nothing). **`AURORA_GI=0`** leaves
+  the probes out whatever that setting says, to compare: the hits take
+  the sky's hemisphere, and the sky's ambient reaches every place, as
+  before them. **`AURORA_RT_GI_QUALITY=low|medium|high`** sets the
+  traced indirect light's quality for the launch (types.rs
+  `GI_QUALITIES`): `high` traces one pixel of each 2 x 2 and updates 2,048
+  probes a frame; `medium` one of each 3 x 3 and 1,024 probes; `low` one
+  of each 4 x 4, 512 probes and one neighbour in the reuse. Every one keeps
+  the light on: compare the walls' and the avatars' indirect light, and the
+  `rt gi:` line's rays and times.
+  **`AURORA_RT_GI_DIAG`** is a diagnosis, never a setting: the image it
+  gives is not the viewer's. Each value leaves one part of the traced
+  indirect light's work out (rt_gi.wgsl `DIAG_*`): `opaque`, the view's
+  rays take the avatars' alpha-masked faces as opaque (no alpha test on
+  them); `noposed`, the view's rays and the reuse's shadow rays leave the
+  avatars out; `noshadows`, the hits the view does not see are lit with no
+  shadow ray (sun and lamps); `novis`, the probes are read with no
+  visibility ray (in the trace and in the sky's pass). `cycle` takes
+  `normal` and the four in turn, 20 s each, and logs `rt gi diag: now …` at
+  each change: stand still in one place for two minutes with
+  `AURORA_PROFILE=1`, and each part's cost is the `rt gi:` lines' drop from
+  `normal` (each line ends with the variant it was measured with; the line
+  that spans a change mixes two). `count` keeps the viewer's image and
+  work and logs every 240 frames a `rt gi counts` line, a frame's mean for
+  the trace, the sky's pass and the probes' own rays (`probes`): the
+  probes' reads by cascade, the probes whose visibility is asked, the
+  shares the depth settles (`depth sure`), that weigh too little for a ray
+  (`tiny`) and that trace one (`rays`, by cascade, with each cascade's mean
+  ray length), the rays that find the probe hidden, and the candidate hits
+  a ray hands the shader with the alpha-masked share among them
+  (rt_gi_counts.rs); the counts cost time of their own, so its `rt gi:`
+  lines are not the viewer's. `coarse` reads no probe of the first cascade
+  (1.5 m apart) anywhere, so that the coarser ones, whose visibility rays
+  are long, light everything: a stress test of those rays (compare its
+  `rt gi:` lines with the viewer's); the image is softer
+  than the viewer's. **`AURORA_RT_GI_VIS`** (a diagnosis
+  too) chooses which probe reads trace their visibility ray: `all`, every
+  one; `p1`, those whose depth texel may be wrong (gi_sample.wgsl
+  `gi_depth_sure`: a texel of one surface, not nearer than the point,
+  needs none); `p6` or nothing, the viewer's, those of them whose weight in
+  the read is not under a hundredth (`gi_tiny`, taken for hidden with no
+  ray): compare the `rt gi:` and `gi probes:` lines and the images in
+  `AURORA_DEMO_NEON_ROOM=closed` and `dark` and in a crowd. With
   `AURORA_PROFILE=1`, the log has every 240 frames the lines `rt shadows:`
   (the faces posed, the levels built and the trace on the GPU, the faces
-  placed, and the render thread's time), `rt lights:`, `rt gi:` and
-  `rt reflections:` (each pass's GPU time).
+  placed, and the render thread's time), `rt lights:`, `rt gi:`,
+  `gi probes:` (the probes' rays and their update) and `rt reflections:`
+  (each pass's GPU time).
+- **`AURORA_DEMO_NEON_ROOM=1`**: a closed room on the open patch at
+  (100, 100), 9 × 7 × 3.4 m, its floor a metre over the ground on a
+  foundation: a 3 m doorway in its south wall lets the sky in (the demo is
+  at night, under the moon), its north wall is red, a strip of pink PBR emissive runs along its east wall
+  and a cyan emissive tube stands in its north-east corner (no light of
+  their own), with a pale ball by the red wall, a pale box by the doorway
+  and a manual box probe filling the room; outside the doorway, a porch
+  under a roof on two posts. Our avatar starts inside at the west end,
+  facing the pink strip (`AURORA_DEMO_POS` is ignored). With
+  `AURORA_RT_SHADOWS=1 AURORA_RT_GI=1`, capture at frame 4000 (the
+  traced light settles over a few seconds, not frames: at 260 frames a
+  second, frame 900 still shows the room black): the walls and the roof
+  take the sky's light bounced in from the doorway, the room takes a warm
+  tint from the red wall, the walls around the strip and the tube take
+  pink and cyan, and the porch's floor under its roof (turn the camera to
+  the doorway) is darker than the open ground. With `AURORA_GI=0` the
+  bounces and the neons stay, but the room takes the sky's whole ambient:
+  its far corners and the porch's floor as light as the doorway. With
+  `AURORA_RT_GI=0`, the Legacy Viewer's light: the sky's ambient
+  everywhere, the neons lighting nothing. `closed`: the doorway walled up,
+  the neons the only light (the room pink and dimmer); `dark`: walled up
+  and the neons plain, no light at all: the room must be black with the
+  probes; with `AURORA_GI=0` it stays grey, the traced light's hits beyond
+  the screen taking the open sky's hemisphere (what the probes are for).
+  The demo's sun is under the horizon, so the moon lights it: before
+  2026-11-21 the traced shadows were off at night and the moon came
+  through every roof, a lit floor the traced indirect light then bounced
+  around the room.
 - **`AURORA_SOFT_SHADOWS=0|1|alt`**: the soft sun shadows (Preferences ›
   Graphics › Soft shadows, experimental; `soft_shadows.rs`) for this
   launch, without changing the saved setting: `0` off, `1` on, `alt` off and

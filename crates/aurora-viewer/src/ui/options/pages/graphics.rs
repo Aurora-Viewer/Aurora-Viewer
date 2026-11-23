@@ -262,6 +262,11 @@ fn ray_tracing(cx: &mut Cx) {
                 tr!("ui-options-ray-traced-indirect-help"),
                 &field!(ray_tracing.indirect),
             );
+            // (Aurora's own, under the traced indirect light it completes)
+            cx.greyed(!cx.s.ray_tracing.indirect);
+            cx.experimental()
+                .toggle(tr!("ui-options-gi-probes"), tr!("ui-options-gi-probes-help"), &field!(rt_gi_probes));
+            cx.greyed(false);
             let ssr = cx.s.ssr;
             cx.experimental().row(
                 tr!("ui-options-ray-traced-reflections"),

@@ -1252,6 +1252,25 @@ pub struct RtTuning {
     /// The projectors cast traced shadows (the Legacy Viewer's "Sun/Moon +
     /// Projectors" shadow detail, Aurora's projector shadows option).
     pub projectors: bool,
+    /// The traced indirect light's global illumination probes (gi.rs):
+    /// more bounces, and the sky's light shut out of closed rooms.
+    /// `AURORA_GI=0` leaves them out whatever this says.
+    pub probes: bool,
+    // The traced indirect light's cost, set by the ray tracing quality
+    // (High is the default, as before the qualities: Medium 3, 1024, 2;
+    // Low 4, 512, 1). Each lowers its cost and keeps it on.
+    /// The screen pixels a side of a traced pixel of the indirect light
+    /// (rt_gi.wgsl `params.grid`): 2, one ray for each 2x2; 3 and 4 trace a
+    /// ninth and a sixteenth of the screen's pixels, upsampled through the
+    /// depth as at 2. Every pass of it follows (the reuse, the denoiser, the
+    /// probes' sight of the sky). Changing it makes its textures anew.
+    pub gi_step: u32,
+    /// The global illumination probes updated a frame (gi.rs `BUDGET` at
+    /// most): fewer, and each follows a change of the light more slowly.
+    pub gi_probe_updates: u32,
+    /// The neighbours whose picks the indirect light's reuse weighs
+    /// (rt_gi.wgsl `NEIGHBOURS`, 1 or 2): one shadow ray each.
+    pub gi_neighbours: u32,
 }
 
 impl Default for RtTuning {
@@ -1264,7 +1283,51 @@ impl Default for RtTuning {
             lamp_reuse: 4,
             lamp_denoise: 4,
             projectors: true,
+            probes: true,
+            gi_step: 2,
+            gi_probe_updates: crate::gi::BUDGET,
+            gi_neighbours: 2,
         }
+    }
+}
+
+/// The traced indirect light's knobs of each ray tracing quality, Low,
+/// Medium then High (`RtTuning::gi_step`, `gi_probe_updates`,
+/// `gi_neighbours`): High is the image before the qualities. Medium traces
+/// 4/9 of its rays and Low a quarter; Low also updates a quarter of the
+/// probes a frame and weighs one neighbour's pick.
+pub const GI_QUALITIES: [(u32, u32, u32); 3] = [
+    (4, crate::gi::BUDGET / 4, 1),
+    (3, crate::gi::BUDGET / 2, 2),
+    (2, crate::gi::BUDGET, 2),
+];
+
+impl RtTuning {
+    /// This tuning with the traced indirect light of quality `quality`
+    /// (0 Low, 1 Medium, 2 High; past 2, High): [`GI_QUALITIES`].
+    pub fn with_gi_quality(self, quality: usize) -> Self {
+        let (gi_step, gi_probe_updates, gi_neighbours) = GI_QUALITIES[quality.min(GI_QUALITIES.len() - 1)];
+        RtTuning {
+            gi_step,
+            gi_probe_updates,
+            gi_neighbours,
+            ..self
+        }
+    }
+
+    /// `AURORA_RT_GI_QUALITY=low|medium|high` (docs/TESTING.md): the
+    /// indirect light's quality for this launch, to measure each.
+    pub fn gi_quality_from_env() -> Option<usize> {
+        gi_quality_named(std::env::var("AURORA_RT_GI_QUALITY").ok()?.as_str())
+    }
+}
+
+fn gi_quality_named(name: &str) -> Option<usize> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "low" => Some(0),
+        "medium" => Some(1),
+        "high" => Some(2),
+        _ => None,
     }
 }
 
@@ -2263,6 +2326,25 @@ impl GpuElement {
 
 #[cfg(test)]
 mod tests {
+    /// High is the default (the image before the qualities); each quality
+    /// is cheaper than the one above.
+    #[test]
+    fn gi_qualities_go_down_from_high() {
+        let high = super::RtTuning::default();
+        assert_eq!(high.with_gi_quality(2), high);
+        assert_eq!(high.with_gi_quality(9), high);
+        let low = high.with_gi_quality(0);
+        assert_eq!((low.gi_step, low.gi_probe_updates, low.gi_neighbours), (4, 512, 1));
+        assert_eq!((low.lamps, low.probes), (high.lamps, high.probes));
+        for q in 0..2 {
+            let (a, b) = (super::GI_QUALITIES[q], super::GI_QUALITIES[q + 1]);
+            assert!(a.0 > b.0 && a.1 < b.1 && a.2 <= b.2, "{a:?} {b:?}");
+        }
+        assert_eq!(super::gi_quality_named(" Medium "), Some(1));
+        assert_eq!(super::gi_quality_named("low"), Some(0));
+        assert_eq!(super::gi_quality_named("ultra"), None);
+    }
+
     use super::*;
 
     #[test]
