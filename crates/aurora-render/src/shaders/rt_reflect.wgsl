@@ -231,7 +231,17 @@ fn pbr_orm(record: u32, uv: vec2<f32>, lod: f32) -> vec3<f32> {
 // `legacy_light`'s glossy environment and its environment (applyGlossEnv,
 // applyLegacyEnv), which dims the face as it covers it; a face with neither
 // mirrors nothing, as it is drawn.
-fn hit_sent(s: Surface, hit: vec3<f32>, dir: vec3<f32>, lod: f32, offset: f32) -> Sent {
+// The sky's ambient a hit takes along its normal (rt_probes.wgsl
+// `ambient_at`), darkened as the screen's where the traced global
+// illumination's probes do not see the sky (gi_sample.wgsl `gi_sky`;
+// common.wgsl `screen_sky`): a reflected room is as dark as the room.
+// `ray`: from where the reflected ray left to the hit.
+fn hit_ambient(hit: vec3<f32>, n: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
+    return ambient_at(params.lit, hit, n) * gi_sky(hit, n, -ray);
+}
+
+// `t`: how far the ray went from where it left to the hit.
+fn hit_sent(s: Surface, hit: vec3<f32>, dir: vec3<f32>, t: f32, lod: f32, offset: f32) -> Sent {
     let flags = record_vec(s.record, RECORD_FLAGS).x;
     let base = base_color(s.record, s.uv, lod).rgb;
     let glow = emissive_color(s.record);
@@ -248,7 +258,7 @@ fn hit_sent(s: Surface, hit: vec3<f32>, dir: vec3<f32>, lod: f32, offset: f32) -
         // (a metal has no diffuse: no light to find for it)
         var light = vec3<f32>(0.0);
         if (metallic < 0.999) {
-            let ambient = ambient_at(params.lit, hit, s.normal) * occlusion;
+            let ambient = hit_ambient(hit, s.normal, dir * t) * occlusion;
             light = hit_light(params.lit, s, hit, offset, params.mode.x, params.mode.y > 0.5, lamps, ambient);
         }
         let f0 = mix(vec3<f32>(0.04), base, metallic);
@@ -258,7 +268,7 @@ fn hit_sent(s: Surface, hit: vec3<f32>, dir: vec3<f32>, lod: f32, offset: f32) -
         let blurred = fresnel * (1.0 - sharp) * mirrored_at(params.lit, hit, reflect(dir, s.normal), roughness);
         return Sent(base * (1.0 - metallic) * light + blurred + glow, fresnel * sharp);
     }
-    let light = hit_light(params.lit, s, hit, offset, params.mode.x, params.mode.y > 0.5, lamps, ambient_at(params.lit, hit, s.normal));
+    let light = hit_light(params.lit, s, hit, offset, params.mode.x, params.mode.y > 0.5, lamps, hit_ambient(hit, s.normal, dir * t));
     var lit = base * light;
     var mirror = vec3<f32>(0.0);
     if ((flags & FLAG_LEGACY_MAT) != 0u) {
@@ -328,7 +338,7 @@ struct Near {
 fn nearest(origin: vec3<f32>, dir: vec3<f32>, least: f32, reach: f32) -> Near {
     var near = Near(-1.0, 0u, 0u, vec2<f32>(0.0));
     var rq: ray_query;
-    rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, 0xFFu, least, reach, origin, dir));
+    rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, SOLID, least, reach, origin, dir));
     while (rayQueryProceed(&rq)) {
         if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
             rayQueryConfirmIntersection(&rq);
@@ -341,7 +351,7 @@ fn nearest(origin: vec3<f32>, dir: vec3<f32>, least: f32, reach: f32) -> Near {
     }
     if (params.mode.y > 0.5) {
         var rp: ray_query;
-        rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, 0xFFu, least, select(reach, near.t, near.t >= 0.0), origin, dir));
+        rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, SOLID, least, select(reach, near.t, near.t >= 0.0), origin, dir));
         while (rayQueryProceed(&rp)) {
             if (stops(rayQueryGetCandidateIntersection(&rp), true, dir)) {
                 rayQueryConfirmIntersection(&rp);
@@ -412,7 +422,7 @@ fn traced(start: vec3<f32>, toward: vec3<f32>, dist: f32, bounces: u32) -> vec4<
         along += t;
         // a coarser mip further along the ray, where a texel covers more
         let offset = 0.01 + 0.002 * (dist + along);
-        let sent = hit_sent(s, hit, dir, log2(1.0 + along), offset);
+        let sent = hit_sent(s, hit, dir, t, log2(1.0 + along), offset);
         worth *= 1.0 - on_screen.a;
         color += worth * sent.body;
         worth *= sent.mirror;

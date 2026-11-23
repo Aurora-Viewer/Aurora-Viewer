@@ -14,6 +14,14 @@
 // the frame group): `.r` is 0 lit, 1 in shadow, the darker of the traced
 // shadow and the contact shadow, so `sun_shadow` (common.wgsl) needs
 // nothing more than that mask.
+//
+// Glass: a ray that nothing stops goes on through the blended faces (the
+// `GLASS` instances, rt_common.wgsl `glass_passes`), and what they leave of
+// the sun's red, green and blue is `out_glass`: 1 where it meets none, 0
+// where the ray was stopped. Its ray goes to another point of the sun's
+// disc each frame, as the shadow's: the lights' passes average it as they
+// do the shadow (rt_lights.wgsl `glass_history`), over the rays that
+// arrived, into the frame's binding 31 (common.wgsl `sun_glass`).
 
 // After rt_common.wgsl, rt_view.wgsl and wgpu_ray_query's enable
 // (rt_shadows.rs `source`).
@@ -42,6 +50,7 @@ struct Params {
 @group(0) @binding(4) var out_tex: texture_storage_2d<rgba8unorm, write>;
 // The avatars and what they wear, posed (rt_pose.wgsl).
 @group(0) @binding(5) var posed_tlas: acceleration_structure;
+@group(0) @binding(6) var out_glass: texture_storage_2d<rgba8unorm, write>;
 
 @compute @workgroup_size(8, 8)
 fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -57,6 +66,7 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     // reversed depth: 0 is the sky
     if (depth <= 0.0 || params.light.w < 0.5) {
         textureStore(out_tex, pixel, vec4<f32>(contact, 0.0, 0.0, 0.0));
+        textureStore(out_glass, pixel, vec4<f32>(1.0));
         return;
     }
     let world = unproject(pixel, depth);
@@ -75,14 +85,29 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // a triangle turned from the sun on a rounded mesh: rt_common.wgsl `shadows`
     let curved = dot(n, dir) <= 0.0;
-    let flags = u32(params.mode.x) | RAY_FLAG_TERMINATE_ON_FIRST_HIT | select(RAY_FLAG_NONE, RAY_FLAG_FORCE_NO_OPAQUE, curved);
-    let ray = RayDesc(flags, 0xFFu, 0.0, params.mode.z, origin, dir);
+    // the faces turned from the sun let it through (#3895, rt_common.wgsl
+    // `SHADOW_CULL`), but on a curved pixel, whose own mesh `shadows` sorts
+    let flags = select(SHADOW_CULL, RAY_FLAG_NONE, curved) | RAY_FLAG_TERMINATE_ON_FIRST_HIT
+        | select(RAY_FLAG_NONE, RAY_FLAG_FORCE_NO_OPAQUE, curved);
+    // The glass rides along (`sun_meets`): its panes are candidates the
+    // ray weighs and never commits, so what stops the ray is the same as
+    // with the opaque faces alone, and a ray that nothing stops has met
+    // every pane on its way. One traversal of each level instead of two.
+    // Not for a curved pixel, whose ray meets the faces from both sides
+    // where the panes are met from their front (`SHADOW_CULL`): its glass
+    // keeps a ray of its own.
+    let ray = RayDesc(flags, select(SOLID | GLASS, SOLID, curved), 0.0, params.mode.z, origin, dir);
+    // the masked and blended layers lying on the pixel's surface cast
+    // nothing on it, as in the shadow maps (rt_view.wgsl `lies_on`); none
+    // for a curved pixel, turned from the sun
+    let lying = lying_on(n, dir, dist);
     var shadow = 0.0;
+    var glass = vec3<f32>(1.0);
     // (one query for both levels: a pass pays for each query it holds)
     var rq: ray_query;
     rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
-        if (shadows(rayQueryGetCandidateIntersection(&rq), false, dir, curved)) {
+        if (sun_meets(rayQueryGetCandidateIntersection(&rq), false, dir, n, lying, curved, &glass)) {
             rayQueryConfirmIntersection(&rq);
         }
     }
@@ -91,7 +116,7 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
     } else if (params.mode.w > 0.5) {
         rayQueryInitialize(&rq, posed_tlas, ray);
         while (rayQueryProceed(&rq)) {
-            if (shadows(rayQueryGetCandidateIntersection(&rq), true, dir, curved)) {
+            if (sun_meets(rayQueryGetCandidateIntersection(&rq), true, dir, n, lying, curved, &glass)) {
                 rayQueryConfirmIntersection(&rq);
             }
         }
@@ -99,5 +124,47 @@ fn cs_trace(@builtin(global_invocation_id) id: vec3<u32>) {
             shadow = 1.0;
         }
     }
+    // a curved pixel's glass, where nothing stopped its ray: every pane is
+    // a candidate, none is committed
+    if (shadow < 0.5 && curved) {
+        let pane = RayDesc(SHADOW_CULL, GLASS, 0.0, params.mode.z, origin, dir);
+        rayQueryInitialize(&rq, scene_tlas, pane);
+        while (rayQueryProceed(&rq)) {
+            let c = rayQueryGetCandidateIntersection(&rq);
+            if (!lies_on(c, false, dir, n, lying)) {
+                glass *= glass_passes(c, false, dir);
+            }
+        }
+        // the moving faces are the posed level's (a pane being carried);
+        // worn glass is not traced yet
+        if (params.mode.w > 0.5) {
+            rayQueryInitialize(&rq, posed_tlas, pane);
+            while (rayQueryProceed(&rq)) {
+                let c = rayQueryGetCandidateIntersection(&rq);
+                if (!lies_on(c, true, dir, n, lying)) {
+                    glass *= glass_passes(c, true, dir);
+                }
+            }
+        }
+    }
+    // (a stopped ray's 0: the average is over those that arrived)
+    textureStore(out_glass, pixel, vec4<f32>(select(glass, vec3<f32>(0.0), shadow > 0.5), 1.0));
     textureStore(out_tex, pixel, vec4<f32>(select(max(shadow, contact), contact, soft), shadow, 0.0, 0.0));
+}
+
+// Whether a candidate of the sun's ray stops it: an opaque or masked face
+// as `shadows` says, but a layer lying on the pixel's surface
+// (`lies_on`). A pane of glass (a blended face: the `GLASS` instances,
+// none of them posed or merged, rt_shadows.rs `look`) never does: what it
+// leaves of the light multiplies `glass`, as the ray of its own did.
+fn sun_meets(c: RayIntersection, posed: bool, dir: vec3<f32>, flat: vec3<f32>, lying: f32, curved: bool, glass: ptr<function, vec3<f32>>) -> bool {
+    if (c.kind != RAY_QUERY_INTERSECTION_TRIANGLE || lies_on(c, posed, dir, flat, lying)) {
+        return false;
+    }
+    let h = hit_of(posed, c.instance_custom_data, c.geometry_index, c.primitive_index);
+    if ((record_vec(h.record, RECORD_FLAGS).x & FLAG_ALPHA_BLEND) != 0u) {
+        *glass *= glass_passes(c, posed, dir);
+        return false;
+    }
+    return shadows(c, posed, dir, curved);
 }

@@ -379,11 +379,17 @@ pub(crate) struct WheelSteps {
     /// The same notches, each rounded to an integer. Ctrl and Shift become
     /// no step on an integer field.
     pub integer: i32,
+    /// Whole notches, without the modifiers' scale (LLSlider has none).
+    pub notches: f32,
 }
 
 impl WheelSteps {
     fn none() -> Self {
-        Self { scaled: 0.0, integer: 0 }
+        Self {
+            scaled: 0.0,
+            integer: 0,
+            notches: 0.0,
+        }
     }
 }
 
@@ -417,6 +423,7 @@ pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, take
     let mut remainder = ui.data(|d| d.get_temp::<WheelRemainder>(key)).map(|kept| kept.0).unwrap_or(0.0);
     let mut scaled = 0.0f32;
     let mut integer = 0i32;
+    let mut notches_total = 0.0f32;
     ui.input(|input| {
         for event in &input.events {
             let egui::Event::MouseWheel {
@@ -440,6 +447,7 @@ pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, take
             let whole = remainder.trunc().clamp(-100.0, 100.0);
             remainder -= whole;
             if whole != 0.0 {
+                notches_total += whole;
                 let scale = spin_key_scale(*modifiers);
                 scaled += whole * scale;
                 integer = integer.saturating_add((whole as i32).saturating_mul(scale.round() as i32));
@@ -451,7 +459,11 @@ pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, take
     } else {
         ui.data_mut(|d| d.insert_temp(key, WheelRemainder(remainder)));
     }
-    WheelSteps { scaled, integer }
+    WheelSteps {
+        scaled,
+        integer,
+        notches: notches_total,
+    }
 }
 
 /// LLButton held_down_delay (widgets/button.xml), in seconds.
@@ -773,6 +785,11 @@ pub struct Floater<'a> {
     /// No title bar: its close cross in a small box against its right edge
     /// (see `headless`).
     pub headless: bool,
+    /// Its body's margins in place of the floater's own (`margin`).
+    pub margin: Option<egui::Margin>,
+    /// A window without a title bar shows no close cross, and Ctrl+W passes
+    /// over it (`without_close`).
+    pub closable: bool,
     cascade: Option<CascadeGroup>,
     partial_outside: bool,
     /// A chat window: it stays in immersive mode (`hide_windows`).
@@ -813,6 +830,8 @@ impl<'a> Floater<'a> {
             aspect: None,
             order: egui::Order::Middle,
             headless: false,
+            margin: None,
+            closable: true,
             cascade: None,
             partial_outside: false,
             chat: false,
@@ -952,6 +971,27 @@ impl<'a> Floater<'a> {
         self
     }
 
+    /// Its body's margins, in place of the floater's own: a small window
+    /// without a title bar laid out to the pixel (the Classic style's small
+    /// camera window).
+    pub fn margin(mut self, margin: egui::Margin) -> Self {
+        self.margin = Some(margin);
+        self
+    }
+
+    /// Without a title bar, and without the close cross beside it either:
+    /// the window closes by what opened it (its toolbar button, its menu
+    /// entry), as the Legacy Viewer's small camera window
+    /// (floater_fs_camera_small.xml, `can_close="false"`). Ctrl+W passes
+    /// over it to the window behind, and Ctrl+Shift+W still closes it
+    /// (LLFloaterView::getFrontmostClosableFloater skips a floater that is
+    /// not closeable; closeAllChildren does not).
+    pub fn without_close(mut self) -> Self {
+        self.headless = true;
+        self.closable = false;
+        self
+    }
+
     /// Mark the minimized bar while `waiting` (unread messages inside).
     pub fn attention(mut self, waiting: bool) -> Self {
         self.attention = waiting;
@@ -1047,7 +1087,9 @@ impl<'a> Floater<'a> {
                 color: shadow.color.gamma_multiply(opacity),
                 ..shadow
             })
-            .inner_margin(if self.framed_header.is_some() {
+            .inner_margin(if let Some(margin) = self.margin {
+                margin
+            } else if self.framed_header.is_some() {
                 egui::Margin::ZERO
             } else if self.headless {
                 egui::Margin {
@@ -1072,9 +1114,14 @@ impl<'a> Floater<'a> {
                 FLOATER_MARGIN
             });
         // Ctrl+W closes it as its cross does, when it is the frontmost.
-        // Ctrl+Shift+W closes every window.
+        // Ctrl+Shift+W closes every window, one without a close cross too,
+        // which Ctrl+W passes over (`without_close`).
         let mut close = super::close_key::take(ctx, egui::Id::unique(self.id)) || close_asked(ctx, self.id);
-        super::close_key::shown(ctx, egui::Id::unique(self.id));
+        if self.closable {
+            super::close_key::shown(ctx, egui::Id::unique(self.id));
+        } else {
+            super::close_key::shown_extra(ctx, egui::Id::unique(self.id));
+        }
         // the toolbar button, a menu entry or a shortcut asked to expand it
         let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
@@ -1519,7 +1566,7 @@ impl<'a> Floater<'a> {
                 ctx.data_mut(|d| d.insert_temp(scroll_id, too_tall));
             }
             slot.shown(ctx, response.response.rect, minimized);
-            if self.headless && headless_close(ctx, p, window_id, &response.response, fill, opacity, self.order) {
+            if self.headless && self.closable && headless_close(ctx, p, window_id, &response.response, fill, opacity, self.order) {
                 close = true;
             }
             if self.cascade.is_some() {

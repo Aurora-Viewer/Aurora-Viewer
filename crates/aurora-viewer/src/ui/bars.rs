@@ -87,6 +87,12 @@ pub enum BarAction {
     ToggleFlyOverride,
     /// The toolbar's Snapshot to disk (File.TakeSnapshotToDisk).
     PhotoToDisk,
+    /// The menu's Photo, as its Ctrl+Shift+S (Take Snapshot, `Floater.Show`
+    /// snapshot): opens the photo window, or brings it forward.
+    PhotoWindow,
+    /// The toolbar's Photo button (the snapshot command, `Floater.Toggle`):
+    /// the photo window of the chosen style opened or closed.
+    PhotoToggle,
     /// The toolbar's Photo roll: the reel's quick view on its newest photo.
     PhotoRoll,
     /// The toolbar's 360° snapshot (Floater.ToggleOrBringToFront
@@ -1541,7 +1547,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         let photo = crate::keybinds::chord_label("KeyS", true, false, true);
         if menu::item_keys(ui, p, "photo-filled", aurora_i18n::tr!("photo-title"), &photo) {
-            super::widgets::toggle_floater(ui.ctx(), super::snapshot::WINDOW, &mut panels.snapshot);
+            *action = BarAction::PhotoWindow;
         }
         // Phototools (menu_viewer.xml `phototools_item_call`, alt|P)
         let phototools = crate::keybinds::chord_label("KeyP", false, true, false);
@@ -2788,7 +2794,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
-        "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
+        // Floater.Toggle snapshot: the app knows the window's style
+        "snapshot" => return BarAction::PhotoToggle,
         // Floater.ToggleOrBringToFront 360capture
         "360capture" => return BarAction::Photo360,
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
@@ -4720,6 +4727,15 @@ mod tests {
         assert!(!command_active("ao_mini", &panels, false, false, false));
         panels.ao_mini = true;
         assert!(command_active("ao_mini", &panels, false, false, false));
+    }
+
+    /// The toolbar's Photo button is left to the app, which toggles the
+    /// window of the chosen style (#4625).
+    #[test]
+    fn snapshot_button_asks_the_app_to_toggle_the_photo_window() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(matches!(run_command(&ctx, "snapshot", &mut panels), BarAction::PhotoToggle));
     }
 
     #[test]

@@ -133,7 +133,7 @@ impl Panel<'_> {
     }
 
     pub fn interact(&mut self, ui: &egui::Ui, inv: &Inventory, id: Uuid, response: &egui::Response) {
-        if response.clicked() || response.secondary_clicked() {
+        if (response.clicked() && !super::drag::dragged_this_press(ui.ctx())) || response.secondary_clicked() {
             // The same selection rules, with the order of this hosted tree.
             self.state.select(ui, id, response.secondary_clicked());
         }
