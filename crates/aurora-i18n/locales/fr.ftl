@@ -5128,6 +5128,7 @@ inspect-prims-count = { $count ->
 inspect-prims-hint = Cliquez une prim pour la souligner dans le monde
 inspect-share-outfit = { $percent } % de la tenue
 inspect-share-selection = { $percent } % de la sélection
+inspect-percent = { $percent } %
 inspect-tile-tmem = Mémoire des textures
 inspect-tile-vram = VRAM
 inspect-tile-prims = Prims

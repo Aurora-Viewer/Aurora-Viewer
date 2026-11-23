@@ -5046,6 +5046,7 @@ inspect-prims-count = { $count ->
 inspect-prims-hint = プリムをクリックするとワールドに輪郭を表示します
 inspect-share-outfit = コーデの{ $percent }%
 inspect-share-selection = 選択の{ $percent }%
+inspect-percent = { $percent }%
 inspect-tile-tmem = テクスチャメモリ
 inspect-tile-vram = VRAM
 inspect-tile-prims = プリム

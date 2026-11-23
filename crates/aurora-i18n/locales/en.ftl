@@ -5122,6 +5122,7 @@ inspect-prims-count = { $count ->
 inspect-prims-hint = Click a prim to outline it in the world
 inspect-share-outfit = { $percent }% of the outfit
 inspect-share-selection = { $percent }% of the selection
+inspect-percent = { $percent }%
 inspect-tile-tmem = Texture memory
 inspect-tile-vram = VRAM
 inspect-tile-prims = Prims

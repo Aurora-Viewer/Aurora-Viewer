@@ -472,11 +472,12 @@ fn body(
             let outfit = matches!(state.subject, Subject::Avatar(_));
             let share = |part: u64, whole: u64| {
                 let percent = model::share(part, whole);
-                if outfit {
+                let sentence = if outfit {
                     aurora_i18n::tr!("inspect-share-outfit", percent = percent)
                 } else {
                     aurora_i18n::tr!("inspect-share-selection", percent = percent)
-                }
+                };
+                (percent, sentence)
             };
             ui.horizontal(|ui| {
                 ui.label(
@@ -635,9 +636,10 @@ fn small_card(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::Ui)) 
         });
 }
 
-/// Figure tiles in `columns` columns: the value, its label on one line, and
-/// its share when there is one.
-pub(super) fn tiles(ui: &mut egui::Ui, p: &Palette, list: &[(String, &str, Option<String>)], columns: usize) {
+/// Figure tiles in `columns` columns: the value with its share on the
+/// right, then its label. The share's sentence ("14% of the outfit") is the
+/// tile's tooltip and what a screen reader says.
+pub(super) fn tiles(ui: &mut egui::Ui, p: &Palette, list: &[(String, &str, Option<(u32, String)>)], columns: usize) {
     let radius = ui.visuals().window_corner_radius;
     let gap = 6.0;
     let width = ((ui.available_width() - gap * (columns as f32 - 1.0)) / columns as f32).floor();
@@ -645,7 +647,7 @@ pub(super) fn tiles(ui: &mut egui::Ui, p: &Palette, list: &[(String, &str, Optio
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = gap;
             for (value, label, share) in chunk {
-                egui::Frame::new()
+                let tile = egui::Frame::new()
                     .fill(p.bar)
                     .corner_radius(radius)
                     .inner_margin(egui::Margin::symmetric(8, 6))
@@ -653,13 +655,24 @@ pub(super) fn tiles(ui: &mut egui::Ui, p: &Palette, list: &[(String, &str, Optio
                         ui.set_width(width - 16.0);
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 0.0;
-                            ui.label(RichText::new(value).size(13.5).strong().color(p.ink));
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(value).size(13.5).strong().color(p.ink));
+                                if let Some((percent, _)) = share {
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let percent = aurora_i18n::tr!("inspect-percent", percent = *percent);
+                                        ui.label(RichText::new(percent).size(11.5).color(p.muted));
+                                    });
+                                }
+                            });
                             ui.add(egui::Label::new(RichText::new(*label).size(11.0).color(p.muted)).truncate());
-                            if let Some(share) = share {
-                                ui.add(egui::Label::new(RichText::new(share).size(11.0).color(p.muted)).truncate());
-                            }
                         });
                     });
+                if let Some((_, sentence)) = share {
+                    let spoken = format!("{value} {label}, {sentence}");
+                    tile.response
+                        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &spoken));
+                    tile.response.on_hover_text(sentence);
+                }
             }
         });
         ui.add_space(gap);
