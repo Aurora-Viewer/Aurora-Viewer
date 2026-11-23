@@ -244,7 +244,8 @@ line (link, revision, time since the last snapshot, **Enable preview** or
   rebuild it at each revision. While a change is on its way (sent by
   Blender, not yet in the picture), a light sweeps over the thumbnail; with
   **Reduce animations**, the thumbnail is tinted instead. Click it for **Quick look**, a larger view
-  under the cards: drag to turn it, double-click to face it again. The line under the name says whether it is
+  under the cards: drag to turn it, double-click to face it again. A rigged
+  object bends there at the elbows and knees as the **Avatar** tab sets them. The line under the name says whether it is
   static or rigged (a **Rigged** tag), its prims and its triangles. A linkset's
   card unfolds to its prims (`#2 · Frame`). On the right, the time since
   Blender last changed that object (teal for the first five seconds): a
