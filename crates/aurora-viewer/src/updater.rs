@@ -503,7 +503,7 @@ impl Updater {
         if self.busy() {
             return;
         }
-        if !aurora_updater::installs_here() || release.archive.is_none() || release.checksum.is_none() {
+        if !aurora_updater::installs_here() || release.archive.is_none() || release.sha256.is_none() {
             if show {
                 self.state = State::Error(Failure::Unsupported);
                 self.open = true;
@@ -661,7 +661,7 @@ mod tests {
             notes: String::new(),
             url: aurora_updater::feed::RELEASE_PAGE.into(),
             archive: None,
-            checksum: None,
+            sha256: None,
             required,
             minimum: required.then(|| tag.trim_start_matches('v').into()),
             // these tests are about the block itself

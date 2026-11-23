@@ -9147,7 +9147,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `target` of the worktree, dev profile, then restoration of the normal binary
   at its Git version; no tag or release published. `AURORA_UPDATE_TEST_ROOT` is
   only accepted for an exe in its `install` subfolder, with an
-  `aurora-update-test.json` marker defining a loopback HTTP feed. Settings,
+  `aurora-update-test.json` marker defining a loopback HTTP feed and the
+  public half of a key the script makes for the run: its releases are signed
+  like the real ones (`scripts/sign-release.ps1`, openssl from Git for
+  Windows), and the loopback feed trusts that key only, never GitHub's
+  feed. Settings,
   cache and logs are isolated under this root; login and credential vault inert.
   `AURORA_UPDATE_TEST_VERSION` is reserved for these binaries and refused in
   release or with `AURORA_VERSION_TAG`. The synthetic binaries refuse any normal
@@ -9158,6 +9162,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `-Beta` serves `0.2.101-beta.20261025.1` as a GitHub pre-release and starts
   the isolated profile on the Beta channel: the offer shows; Preferences ›
   Language and updates › Versions › Stable hides it, Beta brings it back.
+  `-Unsigned` publishes 0.2.101 as a release made by hand on GitHub, without
+  its signatures: Check for updates must answer "up to date", and the log
+  says `update v0.2.101: not offered, … signature is missing`.
   The script needs PowerShell 7 (`pwsh`).
   Add `-ClearCache` and/or `-ResetSettings` to the script to test the
   publishing choices. The dialog must announce the effects before download
@@ -9184,7 +9191,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (`python3 scripts/test-update-linux.py`) prepares the same two packages as
   `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` in `.scratch` and serves the
   tarball on loopback: the same checks, with `--beta`, `--clear-cache`,
-  `--reset-settings` and `--required` in place of the switches, and no
+  `--reset-settings`, `--required` and `--unsigned` in place of the switches, and no
   server PID to stop: the feed runs inside the script, which keeps serving
   while the viewer it launched, or the one the update restarted, runs and
   stops three seconds after the last of them is closed — a Check for updates
