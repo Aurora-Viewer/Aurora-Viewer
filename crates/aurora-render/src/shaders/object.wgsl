@@ -1228,7 +1228,9 @@ fn legacy_light(col_in: vec3<f32>, base: vec3<f32>, unlit: f32, spec: vec4<f32>,
         return mix(col, base, unlit);
     }
     let r = reflect(-v, n);
-    let sky = sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))) * sky_scale * (0.35 + 0.65 * shadow);
+    // (and the traced probes' sight of the sky where no reflection probe
+    // gives the place's reflection, common.wgsl `screen_sky`)
+    let sky = sky_color(vec3<f32>(r.x, r.y, max(r.z, -0.2))) * sky_scale * (0.35 + 0.65 * shadow) * screen_sky(frag);
     // sampleReflectionProbesLegacy: glossy environment at the glossiness mip,
     // legacy environment at the sharpest one
     var gloss_sky = sky;
@@ -1346,7 +1348,7 @@ fn legacy_local_spec(spec: vec4<f32>, env: f32, n: vec3<f32>, v: vec3<f32>, worl
         }
     }
     for (var i = next_light(&spots); i >= 0; i = next_light(&spots)) {
-        let at = projector_at(i, world_pos, n);
+        let at = projector_at(i, world_pos, n, frag);
         if (at.atten <= 0.0) {
             continue;
         }
@@ -1682,6 +1684,9 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         }
         screen_share = select(0.0, max(share, on), in_depth);
         contact_share = max(select(0.0, share, frame.contact.y > 0.5), select(0.0, on, contact));
+        // the depth holds the texel from SCREEN_BLEND_ALPHA: under it, the
+        // traced surface is what the layer lies on
+        contact_glass = in_depth && share > 0.0;
     }
     // Share this calculation across both lighting branches: duplicating its
     // wave/shadow code crashes Apple's Metal pipeline compiler.
@@ -1736,7 +1741,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
             // environment at the probes' radiance (legacy_light first: both
             // add to legacy_glare, whose sum depends on the order)
             col = legacy_light(col - m.emissive, m.color.rgb, m.unlit, m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy, sh,
-                               frame.sun_color.rgb / 3.0, 1.0);
+                               frame.sun_color.rgb * sun_glass / 3.0, 1.0);
             let local_spec = legacy_local_spec(m.legacy_spec, m.legacy_env, m.n, v, in.world_pos, in.clip.xy);
             col += local_spec + m.emissive;
             own = m.emissive + shade_pbr_local * (1.0 - clamp(m.unlit, 0.0, 1.0)) * (1.0 - clamp(m.legacy_env, 0.0, 1.0)) + local_spec;

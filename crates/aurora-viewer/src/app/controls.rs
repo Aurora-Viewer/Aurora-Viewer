@@ -86,11 +86,15 @@ impl App {
     /// (`ui::controls::request`; the free camera keeps Aurora's window).
     pub(super) fn request_controls(&mut self, movement: bool, toggle: bool) {
         let classic = self.settings.classic_controls && self.camera.free().is_none();
+        // the camera's form shown: the saved choice, or a demo run's
+        let saved = self.settings.compact_controls;
+        let small = self.demo_compact.map_or(saved, |run| run.camera(saved));
         crate::ui::controls::request(
             &self.egui_ctx,
             &mut self.panels.camera_controls,
             &mut self.panels.movement_controls,
             classic,
+            small,
             movement,
             toggle,
         );
@@ -241,7 +245,7 @@ impl App {
 
     /// AURORA_DEMO_CONTROLS=camera | roll | movement | compact |
     /// compact-move | compact-close | compact-move-back | movement-compact |
-    /// classic | free | free-compact: the window open (minimized for
+    /// classic | classic-compact | free | free-compact: the window open (minimized for
     /// `compact`; `compact-move` also, then Move pressed 40 frames later as
     /// the toolbar does, #1815; `compact-close` the camera's toolbar button
     /// pressed at 640, which closes it, and again at 680, which opens it
@@ -249,7 +253,8 @@ impl App {
     /// window's Camera tab at 660: compact again, logged at 680, #3904;
     /// `movement-compact` the Movement tab shown compact at 640, the run's
     /// form, its saved choice left as it is: the movement pad and walk / run
-    /// / fly); `free` the
+    /// / fly; `classic-compact` the Legacy Viewer's two windows, the camera
+    /// in its small window, compact for the run); `free` the
     /// photo window's free camera on, which opens it, `free-compact` the
     /// same minimized; 40 frames later the free camera has flown 2 m to the
     /// left and 1 m up and turned toward the avatar, which stayed.
@@ -357,7 +362,7 @@ impl App {
             Ok("movement" | "movement-compact") => self.panels.movement_controls = true,
             // compact for this run only (`DemoCompact`, AGENTS.md section 4)
             Ok("compact" | "compact-move" | "compact-move-back" | "compact-close") => self.panels.camera_controls = true,
-            Ok("classic") => {
+            Ok("classic" | "classic-compact") => {
                 self.settings.classic_controls = true;
                 self.panels.camera_controls = true;
                 self.panels.movement_controls = true;
@@ -373,14 +378,14 @@ impl App {
 }
 
 /// AURORA_DEMO_CONTROLS=compact | compact-move | compact-move-back |
-/// compact-close | movement-compact: the run keeps its own compact forms
+/// compact-close | classic-compact | movement-compact: the run keeps its own compact forms
 /// (`DemoCompact`), whatever the saved choices; `Some(true)` when the camera
 /// starts compact, `Some(false)` for `movement-compact` (its Movement tab
 /// made compact at 640).
 fn demo_compact() -> Option<bool> {
     static ON: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
     *ON.get_or_init(|| match std::env::var("AURORA_DEMO_CONTROLS").as_deref() {
-        Ok("compact" | "compact-move" | "compact-move-back" | "compact-close") => Some(true),
+        Ok("compact" | "compact-move" | "compact-move-back" | "compact-close" | "classic-compact") => Some(true),
         Ok("movement-compact") => Some(false),
         _ => None,
     })
@@ -418,6 +423,12 @@ impl DemoCompact {
         }
         self.saved = saved;
         self.run
+    }
+
+    /// The camera's form `shown` would give for the saved choice `saved`,
+    /// without taking it in (the toolbar's request between two frames).
+    pub fn camera(&self, saved: bool) -> bool {
+        if saved != self.saved.camera { saved } else { self.run.camera }
     }
 }
 

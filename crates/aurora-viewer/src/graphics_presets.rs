@@ -21,6 +21,16 @@
 //! Potato and Low have none of these; outside the levels they are all off by
 //! default.
 //!
+//! Deluxe became "Deluxe (RT)" in settings version 46 (decided by the
+//! human on 2026-11-22): High's values, with the shadows of the sun and of
+//! the local lights and the indirect light traced by the graphics card
+//! (`RayTracingSettings::DELUXE`, aurora-render's rt_*.rs), and the
+//! projectors' shadows on as in the former Deluxe (a tester's report: the
+//! rays skip a projector whose shadows are off). No other level
+//! traces. The former Deluxe is kept as [`deluxe_v45`] for the migrations
+//! and the photo's maxima; a profile still exactly on it moves to High once
+//! ([`upgrade_deluxe_to_high`]). The Legacy Viewer has no traced level.
+//!
 //! The avatar physics detail follows the Legacy Viewer's lists too (0 in
 //! Potato, 0.75 in Low, 1 above); the physics switch itself is not a level's.
 //! So does the maximum texture resolution (RenderMaxTextureResolution: 512
@@ -216,45 +226,14 @@ impl Preset {
                 local_light_count: ALL_LIGHTS,
                 effects: Effects::HIGH,
             },
-            // "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
-            // projectors too (detail 2), the whole scene in the probes; the
-            // rest is "the most that stays reasonable": 192 m instead of
-            // Ultra's 256 (a busy place costs far less), the complexity of
-            // "HighUltra" (Ultra keeps the user's), the highest shadow
-            // quality, ambient occlusion by GTAO at Ultra quality (Aurora's
-            // method, beyond the Legacy Viewer's SSAO of Ultra), water
-            // reflection at half resolution (full costs a second scene),
-            // Aurora's mirrors as by default and 16x anisotropy;
-            // screen-space reflections stay off, as in every Legacy Viewer
-            // level; and Aurora's own effects (module comment)
+            // Deluxe (RT): High, with the shadows and the indirect light
+            // traced (module comment), and the projectors' shadows on as
+            // the former Deluxe had them: the rays trace a projector only
+            // when they are (aurora-render rt_shadows.rs `traced_lights`)
             Preset::Deluxe => Values {
-                draw_distance: 192.0,
-                lod_factor: 3.0,
-                tree_lod_factor: 1.0,
-                max_avatars: 16,
-                max_complexity: 350_000,
-                max_particles: 8192,
-                shadow_quality: 4,
-                projector_shadows: true,
-                projector_shadow_limit: 2,
-                ssao: 2,
-                ao_method: 1,
-                gtao_quality: 3,
-                water_reflections: 2,
-                mirrors: 1,
-                ssr: false,
-                reflection_probes: 3,
-                probe_count: 256,
-                antialiasing: 6,
-                blend_order: 4,
-                anisotropy: 16,
-                sharpen: 0.4,
-                glow: true,
-                avatar_physics_detail: 1.0,
-                hdr_emissive: true,
-                max_texture_resolution: MAX_TEXTURE_RESOLUTION,
-                local_light_count: ALL_LIGHTS,
                 effects: Effects::DELUXE,
+                projector_shadows: true,
+                ..Preset::High.values()
             },
         }
     }
@@ -406,6 +385,51 @@ pub(crate) mod mac_mid_high {
     }
 }
 
+/// The Deluxe of settings version 45, before it became Deluxe (RT):
+/// the Legacy Viewer's
+/// "Ultra": LOD 3, 16 avatars, 8,192 particles, shadows of the
+/// projectors too (detail 2), the whole scene in the probes; the
+/// rest is "the most that stays reasonable": 192 m instead of
+/// Ultra's 256 (a busy place costs far less), the complexity of
+/// "HighUltra" (Ultra keeps the user's), the highest shadow
+/// quality, ambient occlusion by GTAO at Ultra quality (Aurora's
+/// method, beyond the Legacy Viewer's SSAO of Ultra), water
+/// reflection at half resolution (full costs a second scene),
+/// Aurora's mirrors as by default and 16x anisotropy;
+/// screen-space reflections stay off, as in every Legacy Viewer
+/// level; and Aurora's own effects (module comment)
+pub(crate) fn deluxe_v45() -> Values {
+    Values {
+        draw_distance: 192.0,
+        lod_factor: 3.0,
+        tree_lod_factor: 1.0,
+        max_avatars: 16,
+        max_complexity: 350_000,
+        max_particles: 8192,
+        shadow_quality: 4,
+        projector_shadows: true,
+        projector_shadow_limit: 2,
+        ssao: 2,
+        ao_method: 1,
+        gtao_quality: 3,
+        water_reflections: 2,
+        mirrors: 1,
+        ssr: false,
+        reflection_probes: 3,
+        probe_count: 256,
+        antialiasing: 6,
+        blend_order: 4,
+        anisotropy: 16,
+        sharpen: 0.4,
+        glow: true,
+        avatar_physics_detail: 1.0,
+        hdr_emissive: true,
+        max_texture_resolution: MAX_TEXTURE_RESOLUTION,
+        local_light_count: ALL_LIGHTS,
+        effects: Effects::DELUXE_V45,
+    }
+}
+
 /// The Deluxe of settings version 20: 256 m, GTAO at High and the contact
 /// shadows only. The older Deluxes below are written from it, so that they
 /// stay what those files hold whatever the levels of now become.
@@ -419,8 +443,32 @@ pub(crate) fn deluxe_v20() -> Values {
             contact_shadows: true,
             ..Effects::OFF
         },
-        ..Preset::Deluxe.values()
+        ..deluxe_v45()
     }
+}
+
+/// Settings files written before Deluxe became Deluxe (RT) (version 46),
+/// once their ray tracing is off (`Settings::sanitized`): a profile still
+/// exactly on the former Deluxe moves to High, the level nearest to what
+/// it drew without ray tracing; any other keeps its values.
+pub(crate) fn upgrade_deluxe_to_high(s: &mut Settings) {
+    if Values::read(s).as_shown() == deluxe_v45().as_shown() {
+        Preset::High.apply(s);
+    }
+}
+
+/// The former Deluxe written as its level did (`Preset::apply`): the
+/// earlier migrations moved a profile to the Deluxe of their time, which
+/// the version 46 one then moves to High.
+fn apply_former_deluxe(s: &mut Settings) {
+    Values {
+        glow: s.glow,
+        ..deluxe_v45()
+    }
+    .write(s);
+    crate::settings::autotune::Hold::chosen(s);
+    s.graphics_saved_active = None;
+    s.weather.quality = Preset::Deluxe.weather_quality();
 }
 
 /// The High of settings version 20: GTAO at Medium, none of the effects.
@@ -462,7 +510,7 @@ pub(crate) fn upgrade_deluxe(s: &mut Settings) {
         ..deluxe_v18()
     };
     if Values::read(s).as_shown() == former.as_shown() {
-        Preset::Deluxe.apply(s);
+        apply_former_deluxe(s);
     }
 }
 
@@ -485,7 +533,7 @@ pub(crate) fn deluxe_v19() -> Values {
 /// they were.
 pub(crate) fn upgrade_deluxe_effects(s: &mut Settings) {
     if Values::read(s).as_shown() == deluxe_v18().as_shown() {
-        Preset::Deluxe.apply(s);
+        apply_former_deluxe(s);
     }
 }
 
@@ -494,7 +542,7 @@ pub(crate) fn upgrade_deluxe_effects(s: &mut Settings) {
 /// that Deluxe moves to the Deluxe of now (both off); any other keeps them.
 pub(crate) fn upgrade_deluxe_experimental(s: &mut Settings) {
     if Values::read(s).as_shown() == deluxe_v19().as_shown() {
-        Preset::Deluxe.apply(s);
+        apply_former_deluxe(s);
     }
 }
 
@@ -529,7 +577,11 @@ pub(crate) fn upgrade_levels_v21(s: &mut Settings) {
         (deluxe_v20(), Preset::Deluxe),
     ] {
         if current == former.as_shown() {
-            preset.apply(s);
+            if preset == Preset::Deluxe {
+                apply_former_deluxe(s);
+            } else {
+                preset.apply(s);
+            }
             return;
         }
     }
@@ -607,8 +659,8 @@ pub(crate) fn upgrade_max_texture_resolution(s: &mut Settings) {
 /// takes the level's (0 and 1, the Legacy Viewer's Low and Ultra); any
 /// other keeps 0.5.
 pub(crate) fn upgrade_tree_detail(s: &mut Settings) {
-    for preset in [Preset::Potato, Preset::Deluxe] {
-        let level = preset.values();
+    // (the Deluxe of then: the former one)
+    for level in [Preset::Potato.values(), deluxe_v45()] {
         let current = Values {
             tree_lod_factor: level.tree_lod_factor,
             local_light_count: level.local_light_count,
@@ -671,9 +723,11 @@ pub struct Effects {
     pub shadow_softness: f32,
     pub screen_indirect_light: bool,
     pub screen_indirect_intensity: f32,
-    /// Ray tracing, experimental: off in every level, so the safe graphics
-    /// turn it off (a backup or a saved preset written before it holds
-    /// none: off).
+    /// Ray tracing: the shadows and the indirect light traced in Deluxe
+    /// (RT) only, where the card can; off in the others, so the safe
+    /// graphics turn it off. The reflections, experimental, in none. A
+    /// backup or a saved preset written before it holds none: off, as it
+    /// drew.
     #[serde(default)]
     pub ray_tracing: crate::settings::RayTracingSettings,
 }
@@ -699,9 +753,18 @@ impl Effects {
         contact_shadows: true,
         ..Effects::OFF
     };
-    /// Deluxe's: the contact shadows and the indirect light at its default
-    /// intensity; the bloom, experimental, stays off.
+    /// Deluxe (RT)'s: High's, with the shadows and the indirect light
+    /// traced (the traced indirect light takes the screen-space one's
+    /// place, which stays off).
     pub const DELUXE: Effects = Effects {
+        ray_tracing: crate::settings::RayTracingSettings::DELUXE,
+        ..Effects::HIGH
+    };
+    /// The former Deluxe's, before Deluxe (RT): the contact shadows and
+    /// the screen-space indirect light at its default intensity, nothing
+    /// traced (what its files hold: `Settings::sanitized` turns ray
+    /// tracing off before comparing).
+    pub const DELUXE_V45: Effects = Effects {
         contact_shadows: true,
         screen_indirect_light: true,
         ..Effects::OFF
@@ -1045,10 +1108,12 @@ mod tests {
 
     #[test]
     fn projector_shadow_budget_is_saved_with_custom_presets_and_old_presets_keep_two() {
+        // (the former Deluxe: the one level that had the projectors' shadows)
         let mut settings = Settings::default();
-        Preset::Deluxe.apply(&mut settings);
+        deluxe_v45().write(&mut settings);
+        let level = Values::read(&settings).as_shown();
         settings.projector_shadow_limit = 10;
-        assert_eq!(Preset::matching(&settings), None);
+        assert_ne!(Values::read(&settings).as_shown(), level);
         let saved = serde_json::to_value(Values::read(&settings)).expect("save custom preset");
         let restored: Values = serde_json::from_value(saved.clone()).expect("restore custom preset");
         Preset::Low.apply(&mut settings);
@@ -1420,13 +1485,16 @@ mod tests {
     #[test]
     fn gtao_from_medium_up_and_the_levels_below_none() {
         let ao = |p: Preset| (p.values().ssao, p.values().ao_method, p.values().gtao_quality);
-        assert_eq!(ao(Preset::Deluxe), (2, 1, 3));
+        assert_eq!(ao(Preset::Deluxe), (1, 1, 2), "Deluxe (RT) is High's");
+        let former = deluxe_v45();
+        assert_eq!((former.ssao, former.ao_method, former.gtao_quality), (2, 1, 3));
         assert_eq!(ao(Preset::High), (1, 1, 2));
         assert_eq!(ao(Preset::Medium), (1, 1, 0));
         for p in [Preset::Potato, Preset::Low] {
             assert_eq!(p.values().ssao, 0, "{p:?}");
         }
-        assert_eq!(Preset::Deluxe.values().draw_distance, 192.0);
+        assert_eq!(Preset::Deluxe.values().draw_distance, 128.0);
+        assert_eq!(deluxe_v45().draw_distance, 192.0);
         // the default method outside the levels stays Legacy
         assert_eq!(Settings::default().ao_method, 0);
     }
@@ -1453,7 +1521,7 @@ mod tests {
         assert_eq!(Preset::matching(&s), None);
         // Deluxe with another GTAO quality, or the Legacy method, is custom
         Preset::Deluxe.apply(&mut s);
-        s.gtao_quality = 2;
+        s.gtao_quality = 1;
         assert_eq!(Preset::matching(&s), None);
         Preset::Deluxe.apply(&mut s);
         s.ao_method = 0;
@@ -1469,7 +1537,8 @@ mod tests {
         s.ao_method = 0;
         upgrade_deluxe(&mut s);
         assert_eq!((s.ao_method, s.gtao_quality), (1, 3));
-        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        // to the Deluxe of then, which version 46 moves to High
+        assert_eq!(Values::read(&s).as_shown(), deluxe_v45().as_shown());
         // a custom profile close to it keeps its occlusion
         let mut custom = Settings::default();
         deluxe_v18().write(&mut custom);
@@ -1491,7 +1560,24 @@ mod tests {
     fn high_and_deluxe_turn_on_their_effects_and_no_other_level_does() {
         let mut s = Settings::default();
         Preset::Deluxe.apply(&mut s);
-        // contact shadows and indirect light; the experimental bloom off
+        // High's contact shadows, the shadows and the indirect light traced
+        // in the screen-space light's place; the experimental bloom off
+        assert!(s.contact_shadows && !s.bloom && !s.screen_indirect_light);
+        assert_eq!(s.ray_tracing, crate::settings::RayTracingSettings::DELUXE);
+        assert_eq!(
+            Preset::Deluxe.values(),
+            Values {
+                effects: Effects::DELUXE,
+                projector_shadows: true,
+                ..Preset::High.values()
+            }
+        );
+        // the projectors cast, as in the former Deluxe: the rays trace a
+        // projector only with its shadows on
+        assert!(s.projector_shadows && s.shadow_quality > 0);
+        assert!(deluxe_v45().projector_shadows && !Preset::High.values().projector_shadows);
+        // the former Deluxe: contact shadows and the screen-space indirect light
+        deluxe_v45().write(&mut s);
         assert!(s.contact_shadows && !s.bloom && s.screen_indirect_light);
         assert_eq!(s.bloom_strength, crate::settings::BLOOM_STRENGTH);
         assert_eq!(s.screen_indirect_intensity, crate::settings::SCREEN_INDIRECT_INTENSITY);
@@ -1502,14 +1588,14 @@ mod tests {
             assert_eq!(p.values().effects, Effects::OFF, "{p:?}");
             assert!(!s.bloom && !s.contact_shadows && !s.screen_indirect_light, "{p:?}");
         }
-        // outside the levels, all off
+        // outside the levels, all off, nothing traced
         let d = Settings::default();
         assert!(!d.bloom && !d.contact_shadows && !d.screen_indirect_light);
         assert_eq!(d.ray_tracing, crate::settings::RayTracingSettings::OFF);
     }
 
     #[test]
-    fn every_level_turns_ray_tracing_off_and_it_counts_only_with_what_it_needs() {
+    fn the_levels_with_shadows_trace_them_and_ray_tracing_counts_only_with_what_it_needs() {
         use crate::settings::RayTracingSettings;
         let all = RayTracingSettings {
             enabled: true,
@@ -1517,26 +1603,56 @@ mod tests {
             indirect: true,
             reflections: true,
         };
-        // experimental: no level has it, the safe graphics' Potato included
-        for p in [Preset::Potato, Preset::Low, Preset::Medium, Preset::High, Preset::Deluxe] {
+        // Deluxe (RT) traces the shadows, the sun's and the local lights',
+        // and the indirect light; the others nothing, the safe graphics'
+        // Potato included; the reflections, experimental, in none
+        for (p, traced) in [
+            (Preset::Potato, RayTracingSettings::OFF),
+            (Preset::Low, RayTracingSettings::OFF),
+            (Preset::Medium, RayTracingSettings::OFF),
+            (Preset::High, RayTracingSettings::OFF),
+            (Preset::Deluxe, RayTracingSettings::DELUXE),
+        ] {
             let mut s = Settings {
                 ray_tracing: all,
                 ..Default::default()
             };
             p.apply(&mut s);
-            assert_eq!(s.ray_tracing, RayTracingSettings::OFF, "{p:?}");
+            assert_eq!(s.ray_tracing, traced, "{p:?}");
         }
         // Low has no shadows: what is left on traces nothing, the level stays
         let mut s = Settings::default();
         Preset::Low.apply(&mut s);
         s.ray_tracing = all;
         assert_eq!(Preset::matching(&s), Some(Preset::Low));
-        // High has them: on is custom, and its options alone are not
+        // High has them: ray tracing turned on there is custom
         Preset::High.apply(&mut s);
-        s.ray_tracing = RayTracingSettings { enabled: false, ..all };
         assert_eq!(Preset::matching(&s), Some(Preset::High));
-        s.ray_tracing.enabled = true;
+        s.ray_tracing = RayTracingSettings::SHADOWS;
         assert_eq!(Preset::matching(&s), None);
+        // Deluxe (RT): back to the shadow maps is custom (High with the
+        // projectors' shadows), and High once they are off too; the local
+        // lights or the indirect light off is custom; the reflections,
+        // without the screen-space ones there, do not count
+        Preset::Deluxe.apply(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        s.ray_tracing = RayTracingSettings { enabled: false, ..all };
+        assert_eq!(Preset::matching(&s), None);
+        s.projector_shadows = false;
+        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        s.projector_shadows = true;
+        for changed in [
+            RayTracingSettings {
+                lights: false,
+                ..RayTracingSettings::DELUXE
+            },
+            RayTracingSettings::SHADOWS,
+        ] {
+            s.ray_tracing = changed;
+            assert_eq!(Preset::matching(&s), None, "{changed:?}");
+        }
+        s.ray_tracing = all;
+        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
         // a saved profile and the safe graphics' backup keep it, and one
         // written before it reads as off
         let kept = Values::read(&s);
@@ -1593,14 +1709,14 @@ mod tests {
         Preset::High.apply(&mut s);
         s.bloom = true;
         assert_eq!(Preset::matching(&s), None);
-        // Deluxe with its contact shadows or indirect light off, or the
-        // bloom on, or another indirect intensity, is custom; the strength of
-        // the bloom, off, does not count
+        // Deluxe with its contact shadows or traced indirect light off, or
+        // the screen-space indirect light or the bloom on, is custom; the
+        // strength of the bloom, off, does not count
         for change in [
             |s: &mut Settings| s.contact_shadows = false,
-            |s: &mut Settings| s.screen_indirect_light = false,
+            |s: &mut Settings| s.ray_tracing.indirect = false,
+            |s: &mut Settings| s.screen_indirect_light = true,
             |s: &mut Settings| s.bloom = true,
-            |s: &mut Settings| s.screen_indirect_intensity = 2.0,
         ] {
             Preset::Deluxe.apply(&mut s);
             change(&mut s);
@@ -1609,9 +1725,14 @@ mod tests {
         Preset::Deluxe.apply(&mut s);
         s.bloom_strength = 0.8;
         assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
-        // on, the strength the slider shows reads as its own value
+        // the screen-space light's strength, off there, does not count
         s.screen_indirect_intensity = 1.5000001;
         assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        // on, the strength the slider shows reads as its own value
+        deluxe_v45().write(&mut s);
+        let shown = Values::read(&s).as_shown();
+        s.screen_indirect_intensity = crate::settings::SCREEN_INDIRECT_INTENSITY + 0.0000001;
+        assert_eq!(Values::read(&s).as_shown(), shown);
     }
 
     #[test]
@@ -1620,8 +1741,9 @@ mod tests {
         deluxe_v18().write(&mut s);
         assert_eq!(Preset::matching(&s), None);
         upgrade_deluxe_effects(&mut s);
-        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
-        // straight to the Deluxe of now: the experimental bloom stays off
+        // to the Deluxe of then, which version 46 moves to High
+        assert_eq!(Values::read(&s).as_shown(), deluxe_v45().as_shown());
+        // straight to the former Deluxe: the experimental bloom stays off
         assert!(s.contact_shadows && !s.bloom && s.screen_indirect_light);
         // a custom profile close to it keeps its effects off
         let mut custom = Settings::default();
@@ -1652,7 +1774,8 @@ mod tests {
         assert!(s.bloom && s.contact_shadows && s.screen_indirect_light);
         assert_eq!(Preset::matching(&s), None);
         upgrade_deluxe_experimental(&mut s);
-        assert_eq!(Preset::matching(&s), Some(Preset::Deluxe));
+        // to the Deluxe of then, which version 46 moves to High
+        assert_eq!(Values::read(&s).as_shown(), deluxe_v45().as_shown());
         assert!(s.contact_shadows && !s.bloom && s.screen_indirect_light);
         // a custom profile close to it keeps its bloom and indirect light
         let mut custom = Settings::default();
@@ -1672,6 +1795,31 @@ mod tests {
             p.apply(&mut s);
             let before = Values::read(&s);
             upgrade_deluxe_experimental(&mut s);
+            assert_eq!(Values::read(&s), before, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn a_profile_on_the_former_deluxe_moves_to_high_and_no_other() {
+        // the former Deluxe, its ray tracing off (version 46): to High
+        let mut s = Settings::default();
+        deluxe_v45().write(&mut s);
+        assert_eq!(Preset::matching(&s), None);
+        upgrade_deluxe_to_high(&mut s);
+        assert_eq!(Preset::matching(&s), Some(Preset::High));
+        // a custom profile close to it keeps its values
+        let mut custom = Settings::default();
+        deluxe_v45().write(&mut custom);
+        custom.draw_distance = 300.0;
+        let before = Values::read(&custom);
+        upgrade_deluxe_to_high(&mut custom);
+        assert_eq!(Values::read(&custom), before);
+        // the levels of now are untouched, Deluxe (RT) included
+        for p in Preset::ALL {
+            let mut s = Settings::default();
+            p.apply(&mut s);
+            let before = Values::read(&s);
+            upgrade_deluxe_to_high(&mut s);
             assert_eq!(Values::read(&s), before, "{p:?}");
         }
     }
@@ -1714,7 +1862,12 @@ mod tests {
             former.write(&mut s);
             assert_eq!(Preset::matching(&s), None, "{preset:?}");
             upgrade_levels_v21(&mut s);
-            assert_eq!(Preset::matching(&s), Some(preset));
+            if preset == Preset::Deluxe {
+                // the Deluxe of then, which version 46 moves to High
+                assert_eq!(Values::read(&s).as_shown(), deluxe_v45().as_shown());
+            } else {
+                assert_eq!(Preset::matching(&s), Some(preset));
+            }
             // customized on that level: kept
             let mut custom = Settings::default();
             former.write(&mut custom);
