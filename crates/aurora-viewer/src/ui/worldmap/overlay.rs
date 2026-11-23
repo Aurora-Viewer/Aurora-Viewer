@@ -24,6 +24,7 @@ use crate::world::place_details::Source;
 use crate::world::social::rights;
 use crate::world::tphistory::{self, HistoryItem};
 use crate::world::worldmap::location_label;
+use aurora_i18n::UiUpper;
 use aurora_net::map_item;
 use egui::{Align, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use std::collections::{HashMap, HashSet};
@@ -65,7 +66,7 @@ const FOLDER_LANDMARKS: i32 = 3;
 const FOLDER_TRASH: i32 = 14;
 const FOLDER_FAVORITES: i32 = 23;
 
-fn search_id() -> egui::Id {
+pub(super) fn search_id() -> egui::Id {
     egui::Id::unique("worldmap-search")
 }
 
@@ -225,7 +226,7 @@ enum Selection {
 /// The floating panels' state.
 #[derive(Default)]
 pub(super) struct Overlay {
-    query: String,
+    pub(super) query: String,
     /// The suggestions show (typing, focus); a touch of the map closes them.
     suggest: bool,
     highlight: usize,
@@ -615,6 +616,7 @@ impl WorldMapUi {
         pictures: &MapPictures,
         actions: &mut Vec<WorldMapAction>,
     ) {
+        let focus_search = std::mem::take(&mut self.focus_search);
         let now = ui.input(|i| i.time);
         let area = ui.available_rect_before_wrap();
         let size = vec2(area.width().max(160.0).floor(), area.height().max(160.0).floor());
@@ -654,14 +656,14 @@ impl WorldMapUi {
         }
         let fade = if dragging { 0.55 } else { 1.0 };
         let card = self.place_card(ui, p, world, tiles, cam, pictures, map, fade, actions);
-        self.nav(ui, p, map, fade, world.rlva_can_teleport_home(), actions);
+        self.nav(ui, p, map, fade, world.rlva_home_button_enabled(), actions);
         self.layers(ui, p, opts, map, fade);
         if let Some(tab) = self.ov.drawer {
             let top = map.top() + EDGE + self.ov.sizes.get("search").map_or(40.0, |s| s.y) + GAP;
             let bottom = card.map_or(map.bottom() - EDGE, |c| c.top() - GAP);
             self.drawer(ui, p, world, tiles, cam, pictures, map, tab, top, bottom, fade, actions);
         }
-        self.search_panel(ui, p, world, cam, pictures, map, fade, now);
+        self.search_panel(ui, p, world, cam, pictures, map, fade, now, focus_search);
     }
 
     /// Ask the folders of Landmarks and Favorites not fetched yet.
@@ -807,6 +809,7 @@ impl WorldMapUi {
         map: Rect,
         fade: f32,
         now: f64,
+        focus_search: bool,
     ) {
         let mut panel = self.ov.open(
             ui,
@@ -840,7 +843,12 @@ impl WorldMapUi {
                         .hint_text(aurora_i18n::tr!("ui-worldmap-search-anything"))
                         .desired_width(w)
                 });
-                if !self.ov.query.is_empty() {
+                if focus_search {
+                    r.request_focus();
+                }
+                // only where room was kept before the field: the first
+                // characters typed fill the query after `hint_w` was measured
+                if hint_w > 0.0 {
                     let (hr, _) = ui.allocate_exact_size(Vec2::new(hint_w - 6.0, 22.0), Sense::hover());
                     ui.painter().text(
                         hr.right_center(),
@@ -1118,7 +1126,12 @@ impl WorldMapUi {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0.0, |d| d.as_secs_f64());
-                for (section, items) in crate::ui::places::history_sections(&world.tp_storage.items, filter, now) {
+                for (section, items) in crate::ui::places::history_sections(
+                    &world.tp_storage.items,
+                    filter,
+                    now,
+                    crate::ui::places::history_offset(self.history_zone, now),
+                ) {
                     rows.push(Row::Section(section));
                     rows.extend(items.into_iter().map(Row::History));
                 }
@@ -1190,7 +1203,7 @@ impl WorldMapUi {
             }
             Row::Section(i) => {
                 let font = egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx()));
-                let name = tphistory::history_sections()[(*i).min(8)].to_uppercase();
+                let name = tphistory::history_sections()[(*i).min(8)].ui_upper();
                 widgets::paint_elided(ui, &name, pos2(rect.left() + 2.0, rect.center().y), rect.width(), font, p.muted_dim);
                 None
             }
@@ -1253,7 +1266,7 @@ impl WorldMapUi {
                 let region = place.map_or_else(|| aurora_i18n::tr!("common-loading-2").to_owned(), |p| p.1);
                 widgets::paint_elided(ui, &region, pos2(x, rect.bottom() - 12.5), w, small, p.muted);
                 // greyed under RLVa @tplm (LLLandmarksPanel "teleport")
-                let allowed = world.rlva_can_teleport_landmark();
+                let allowed = world.rlva_landmark_button_enabled();
                 if go_resp.hovered() && allowed {
                     ui.painter().rect_filled(go, ui.visuals().widgets.inactive.corner_radius, p.raised);
                 }
@@ -1293,9 +1306,9 @@ impl WorldMapUi {
                     body,
                     p.ink,
                 );
-                // greyed when RLVa would refuse it (LLTeleportHistoryPanel:
-                // canTeleportToLocation)
-                let allowed = world.rlva_can_teleport_global(h.global);
+                // greyed as LLTeleportHistoryPanel greys it
+                // (canTeleportToLocation, whatever the distance)
+                let allowed = world.rlva_can_teleport_location();
                 if go_resp.hovered() && allowed {
                     ui.painter().rect_filled(go, ui.visuals().widgets.inactive.corner_radius, p.raised);
                 }
@@ -1697,16 +1710,11 @@ impl WorldMapUi {
             .and_then(|(item, ..)| world.inventory.items.get(item))
             .map_or(Uuid::nil(), |i| i.thumbnail);
         let tex = self.thumbnail(tiles, pictures, thumb_id, region.as_ref().map(|r| r.0));
-        // what its buttons do
-        // greyed when RLVa would refuse it: @tplm for a landmark, the
-        // position's rules for a tracked place
-        let can_teleport = if landmark.is_some() {
-            world.rlva_can_teleport_landmark()
-        } else {
-            track
-                .as_ref()
-                .is_some_and(|t| !t.pending && !t.invalid && world.rlva_can_teleport_global(glam::DVec3::new(t.x, t.y, t.z as f64)))
-        };
+        // what its buttons do: the map's Teleport button follows the
+        // tracking alone (LLFloaterWorldMap::draw); RLVa refuses the
+        // teleport itself, with its notice (teleportViaLandmark,
+        // teleportViaLocation)
+        let can_teleport = landmark.is_some() || track.as_ref().is_some_and(|t| !t.pending && !t.invalid);
         let local = |t: &crate::world::worldmap::Track, (sx, sy): (u32, u32)| {
             glam::Vec3::new((t.x - sx as f64 * 256.0) as f32, (t.y - sy as f64 * 256.0) as f32, t.z)
         };
@@ -1940,7 +1948,7 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, text: &str) {
     let font = egui::FontId::new(10.5, crate::ui::fonts::semibold(ui.ctx()));
     widgets::paint_elided(
         ui,
-        &text.to_uppercase(),
+        &text.ui_upper(),
         pos2(rect.left() + 8.0, rect.center().y + 2.0),
         rect.width() - 16.0,
         font,

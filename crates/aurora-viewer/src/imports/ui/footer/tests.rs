@@ -1,6 +1,101 @@
 use super::*;
 
 #[test]
+fn the_general_image_limit_stays_beside_import_and_cannot_change_during_confirmation() {
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for choice in [Choice::Bulk, Choice::Texture, Choice::Material] {
+        for width in [320.0, 440.0, 820.0] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let source = if choice == Choice::Material {
+                Source::Material {
+                    value: PbrMaterial::default(),
+                    images: Box::new([None, None, None, None]),
+                }
+            } else {
+                Source::Texture(crate::imports::tests::image(16, 16))
+            };
+            let entry = Entry::new("source".into(), Ok(source), Default::default());
+            let mut imports = Imports {
+                choice,
+                active: Some(entry.id),
+                entries: vec![entry],
+                ..Default::default()
+            };
+            let mut prefs = Preferences::default();
+            let frame = |imports: &mut Imports, prefs: &mut Preferences, events| {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(width, 300.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(ui, &theme.palette(), imports, prefs, &world, &Prices::default(), &mut Vec::new());
+                    },
+                );
+                output.textures_delta.clear();
+            };
+            for _ in 0..4 {
+                frame(&mut imports, &mut prefs, Vec::new());
+            }
+            let global_state = || {
+                ctx.data(|data| data.get_temp::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_image_size_global")))
+                    .expect("general image size control")
+            };
+            let (global, clip, enabled) = global_state();
+            let label = ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("import_image_size_global_label")))
+                .expect("general image size label");
+            let (upload, upload_clip, _) = ctx
+                .data(|data| data.get_temp::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_upload_action")))
+                .expect("import button");
+            assert!(
+                enabled && clip.contains_rect(global),
+                "{choice:?}, width {width}: visible limit {global:?} inside {clip:?}, enabled={enabled}"
+            );
+            assert!(upload_clip.contains_rect(upload), "{choice:?}, width {width}: visible import");
+            assert!(!global.intersects(upload), "controls must not overlap");
+            assert!(clip.contains_rect(label), "the label remains visible when the footer wraps");
+            assert!(global.left() >= label.right(), "the selector follows its label");
+            assert!(
+                (global.center().y - label.center().y).abs() < 1.0,
+                "keep label and selector together"
+            );
+            if width == 820.0 {
+                assert!((global.center().y - upload.center().y).abs() < 1.0);
+                assert!(label.left() - upload.right() >= 16.0, "leave space after Import");
+            }
+            imports.confirm = true;
+            frame(&mut imports, &mut prefs, Vec::new());
+            assert!(!global_state().2, "a confirmed batch freezes its image limit");
+            for pressed in [true, false] {
+                frame(
+                    &mut imports,
+                    &mut prefs,
+                    vec![
+                        egui::Event::PointerMoved(global.center()),
+                        egui::Event::PointerButton {
+                            pos: global.center(),
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert!(!prefs.limit_texture_size);
+            assert!(
+                ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("import_image_size_global_choice", true))))
+                    .is_none(),
+                "a disabled control cannot open its choices"
+            );
+        }
+    }
+}
+
+#[test]
 fn mesh_physics_warning_precedes_quotes_and_convex_action_opens_the_collision_preview() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
@@ -30,7 +125,7 @@ fn mesh_physics_warning_precedes_quotes_and_convex_action_opens_the_collision_pr
                     ui,
                     &theme.palette(),
                     imports,
-                    &Preferences::default(),
+                    &mut Preferences::default(),
                     &world,
                     &Prices::default(),
                     &mut actions,
@@ -90,6 +185,99 @@ fn mesh_physics_warning_precedes_quotes_and_convex_action_opens_the_collision_pr
 }
 
 #[test]
+fn a_free_upload_starts_without_the_payment_confirmation_and_a_paid_one_still_asks() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.inventory.root = Uuid::from_u128(1);
+    world.inventory.created_folders(vec![aurora_net::inventory::InvFolder {
+        id: world.inventory.root,
+        name: "Inventory".into(),
+        type_default: 8,
+        ..Default::default()
+    }]);
+    world.balance = Some(1000);
+    let price = |cost| Prices {
+        texture: Some(cost),
+        large_texture: Some(cost),
+        sound: Some(cost),
+        animation: Some(cost),
+    };
+    for (cost, starts) in [(0, true), (10, false)] {
+        let entry = Entry::new(
+            "free.png".into(),
+            Ok(Source::Texture(crate::imports::tests::image(16, 16))),
+            Default::default(),
+        );
+        let mut imports = Imports {
+            choice: Choice::Texture,
+            active: Some(entry.id),
+            entries: vec![entry],
+            demo_started: true,
+            ..Default::default()
+        };
+        let prices = price(cost);
+        let frame = |imports: &mut Imports, events| {
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(820.0, 300.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    show(
+                        ui,
+                        &theme.palette(),
+                        imports,
+                        &mut Preferences::default(),
+                        &world,
+                        &prices,
+                        &mut actions,
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            actions
+        };
+        for _ in 0..3 {
+            frame(&mut imports, vec![]);
+        }
+        let (rect, clip, enabled) = ctx
+            .data(|data| data.get_temp::<(egui::Rect, egui::Rect, bool)>(egui::Id::unique("import_upload_action")))
+            .expect("upload action");
+        assert!(enabled && clip.contains_rect(rect), "L${cost}: the upload action is reachable");
+        let mut actions = Vec::new();
+        for pressed in [true, false] {
+            actions.extend(frame(
+                &mut imports,
+                vec![
+                    egui::Event::PointerMoved(rect.center()),
+                    egui::Event::PointerButton {
+                        pos: rect.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            ));
+        }
+        if starts {
+            assert!(
+                matches!(actions.as_slice(), [Action::StartFor(Choice::Texture)]),
+                "L$0 starts at once"
+            );
+            assert!(!imports.confirm && imports.confirm_choice.is_none());
+        } else {
+            assert!(actions.is_empty(), "a paid upload waits for the confirmation");
+            assert!(imports.confirm);
+            assert_eq!(imports.confirm_choice, Some(Choice::Texture));
+        }
+    }
+}
+
+#[test]
 fn local_upload_button_uses_checked_files_instead_of_the_active_item_and_disables_during_loading() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
@@ -128,7 +316,7 @@ fn local_upload_button_uses_checked_files_instead_of_the_active_item_and_disable
                     ui,
                     &theme.palette(),
                     imports,
-                    &Preferences::default(),
+                    &mut Preferences::default(),
                     &world,
                     &Prices::default(),
                     &mut actions,

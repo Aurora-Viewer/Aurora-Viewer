@@ -14,7 +14,7 @@
 
 use super::CameraShot;
 use crate::dof::PhotoDof;
-use crate::snapshot::looks::{Layer, MAX_LAYERS};
+use crate::snapshot::looks::Layer;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -61,12 +61,16 @@ impl Anchor {
 /// The photo mode's lens. The field of view is the view's (the Legacy
 /// Viewer's preset keeps CameraAngle); while the viewfinder is open it is
 /// the photo's, given back when it closes. The exposure is the photo's
-/// (`snapshot::light`): None, Preferences' own.
+/// (`snapshot::light`): None, Preferences' own. The tilt is the camera's
+/// roll in degrees (the viewfinder's, positive clockwise); a preset saved
+/// before it was kept reads as level.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Lens {
     pub fov: f32,
     pub dof: PhotoDof,
     pub exposure: Option<f32>,
+    #[serde(default)]
+    pub tilt: f32,
 }
 
 /// The photo's looks (`snapshot::looks`): the stack and the settings of
@@ -187,12 +191,11 @@ pub fn sanitize(list: &mut Vec<CameraShot>) {
                 .exposure
                 .filter(|e| e.is_finite())
                 .map(|e| e.clamp(*crate::snapshot::light::EXPOSURE.start(), *crate::snapshot::light::EXPOSURE.end()));
+            let max = crate::snapshot::viewfinder::ROLL_MAX;
+            lens.tilt = if lens.tilt.is_finite() { lens.tilt.clamp(-max, max) } else { 0.0 };
         }
         if let Some(looks) = &mut shot.looks {
-            looks.layers.truncate(MAX_LAYERS);
-            for l in &mut looks.layers {
-                l.strength = l.strength.min(100);
-            }
+            crate::snapshot::looks::sanitize(&mut looks.layers);
         }
         if let Some(light) = &mut shot.light {
             light.time_of_day = light.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS);
@@ -240,6 +243,7 @@ mod tests {
             fov: 0.5,
             dof: PhotoDof::default(),
             exposure: Some(1.5),
+            tilt: -12.5,
         });
         s.looks = Some(Looks {
             layers: vec![Layer::new("Sepia")],
@@ -321,6 +325,7 @@ mod tests {
             fov: 40.0,
             dof: PhotoDof::default(),
             exposure: Some(f32::INFINITY),
+            tilt: f32::NAN,
         });
         bad.light = Some(Light {
             environment: Some("not llsd {".into()),
@@ -335,7 +340,19 @@ mod tests {
         let lens = s.lens.as_ref().unwrap();
         assert_eq!(lens.fov, 175.0f32.to_radians());
         assert_eq!(lens.exposure, None);
+        assert_eq!(lens.tilt, 0.0, "a broken tilt is level");
         assert!(s.light.is_none());
+    }
+
+    #[test]
+    fn a_lens_saved_before_the_tilt_reads_level_and_a_tilt_stays_in_range() {
+        let old = r#"{"name":"Portrait","camera_offset":[-1.0,0.0,0.5],"focus_offset":[0.5,0.0,0.8],
+            "lens":{"fov":0.6,"dof":{},"exposure":null}}"#;
+        let mut list = vec![serde_json::from_str::<CameraShot>(old).unwrap()];
+        assert_eq!(list[0].lens.as_ref().unwrap().tilt, 0.0);
+        list[0].lens.as_mut().unwrap().tilt = 500.0;
+        sanitize(&mut list);
+        assert_eq!(list[0].lens.as_ref().unwrap().tilt, crate::snapshot::viewfinder::ROLL_MAX);
     }
 
     #[test]

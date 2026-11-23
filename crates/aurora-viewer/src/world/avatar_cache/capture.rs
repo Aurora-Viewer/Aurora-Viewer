@@ -1,0 +1,283 @@
+//! What is kept of an avatar's worn objects: each root it wears in the
+//! world (not the HUDs, which only their wearer sees and could not click
+//! in a copy) with its prims, as they are drawn now, and only what drawing
+//! them needs. The text over them, their media, sounds, particles, click
+//! actions and name-values (the AttachItemID among them) are left out: a
+//! copy is never taken for the object, by the outfit, RLVa or a click.
+//! With them, the avatar's last appearance from the region: its shape, its
+//! bakes and its hover height; for ours, the animations its worn objects'
+//! scripts were playing on it (a bento tail's wag), which only start again
+//! once the region has attached those objects.
+
+use super::file::{KeptAvatar, KeptLook, KeptMotion, WornObject, WornPrim};
+use crate::world::World;
+use crate::world::objects::Object;
+use aurora_net::objects::{ObjectUpdate, ParticleUpdate};
+use aurora_net::types::AvatarAppearance;
+use glam::Vec3;
+use std::hash::{Hash, Hasher};
+use uuid::Uuid;
+
+/// The HUD attachment points (LLViewerJointAttachment::getIsHUDAttachment).
+pub fn is_hud_point(point: u8) -> bool {
+    (31..=38).contains(&point)
+}
+
+/// The update that draws `object` again, without what a copy leaves out.
+/// The ids, parent and flags are the copy's to set.
+pub fn drawing_update(object: &Object) -> ObjectUpdate {
+    ObjectUpdate {
+        local_id: object.key.local_id,
+        full_id: object.full_id,
+        parent_id: object.parent_id,
+        pcode: object.pcode,
+        state: object.state,
+        crc: 0,
+        material: object.prim_material,
+        click_action: 0,
+        scale: object.scale,
+        position: object.position,
+        rotation: object.rotation,
+        velocity: Vec3::ZERO,
+        acceleration: Vec3::ZERO,
+        // a spinning attachment keeps spinning (llTargetOmega)
+        angular_velocity: object.angular_velocity,
+        update_flags: 0,
+        owner_id: object.owner_id,
+        volume: object.volume,
+        texture_entry: object.te.clone(),
+        extra: object.extra.clone(),
+        name_values: String::new(),
+        text: String::new(),
+        text_color: [0; 4],
+        media_url: String::new(),
+        tree_species: object.tree_species,
+        texture_anim: object.tex_anim,
+        foot_plane: None,
+        particles: ParticleUpdate::Clear,
+        sound: Default::default(),
+    }
+}
+
+/// The worn roots of the avatar at `avatar` a copy can be made of: the
+/// region's objects (not the viewer's own previews, ours included), not
+/// the HUDs.
+pub fn worn_roots(world: &World, avatar: usize) -> Vec<usize> {
+    let Some(av) = world.objects.get(avatar) else {
+        return Vec::new();
+    };
+    world
+        .objects
+        .children_of(&av.key)
+        .iter()
+        .copied()
+        .filter(|&i| {
+            world
+                .objects
+                .get(i)
+                .is_some_and(|o| !o.is_client_preview() && o.is_attachment() && !is_hud_point(o.attachment_point()))
+        })
+        .collect()
+}
+
+/// The prims of the worn root at `root`, the root first (an avatar sitting
+/// on it is not part of it).
+fn prims_of(world: &World, root: usize) -> Vec<usize> {
+    world
+        .objects
+        .subtree(root)
+        .into_iter()
+        .filter(|&i| world.objects.get(i).is_some_and(|o| !o.is_avatar() && !o.is_client_preview()))
+        .collect()
+}
+
+/// What is kept of an appearance (its list of worn objects aside).
+pub fn look_of(a: &AvatarAppearance) -> KeptLook {
+    KeptLook {
+        visual_params: a.visual_params.clone(),
+        texture_entry: a
+            .texture_entry
+            .as_ref()
+            .map(|te| aurora_prim::te::pack_texture_entry(te, te.faces.len()))
+            .unwrap_or_default(),
+        hover_height: a.hover_height,
+        appearance_version: i32::from(a.appearance_version),
+        cof_version: a.cof_version,
+    }
+}
+
+/// The appearance a kept look draws until the region's comes. It lists no
+/// worn object: the ids it named change at each login, and what is
+/// matched against the region's list is that list only.
+pub fn appearance_of(avatar: Uuid, look: &KeptLook) -> AvatarAppearance {
+    AvatarAppearance {
+        avatar_id: avatar,
+        texture_entry: aurora_prim::parse_texture_entry(&look.texture_entry).map(std::sync::Arc::new),
+        visual_params: look.visual_params.clone(),
+        cof_version: look.cof_version,
+        appearance_version: u8::try_from(look.appearance_version).unwrap_or(0),
+        hover_height: look.hover_height,
+        attachments: Vec::new(),
+    }
+}
+
+/// The look kept for the avatar at `avatar`: its last appearance from the
+/// region, or the one its file kept when none came this session.
+fn kept_look(world: &World, avatar: usize) -> Option<KeptLook> {
+    let id = world.objects.get(avatar)?.full_id;
+    match world.appearances.get(&id) {
+        Some((a, _)) => Some(look_of(a)),
+        None => world.avatar_cache.sets.get(&id)?.as_ref()?.look.clone(),
+    }
+}
+
+/// The animations our worn objects are playing on us (the AnimationSourceList
+/// of AvatarAnimation, `World::animation_sources`), each with the item the
+/// object was worn from. Not the HUDs' (an AO's stands are its own to
+/// choose), not another avatar's: the region sends theirs with them.
+pub fn own_motions(world: &World, avatar: usize) -> Vec<KeptMotion> {
+    let Some(me) = world.objects.get(avatar).filter(|o| o.full_id == world.agent_id) else {
+        return Vec::new();
+    };
+    let playing = world.animations.get(&me.full_id).map(Vec::as_slice).unwrap_or_default();
+    let mut out: Vec<KeptMotion> = world
+        .animation_sources
+        .iter()
+        .filter_map(|(source, motions)| {
+            // the source may be a child prim: up to the root worn by us
+            let mut idx = world.objects.index_of_uuid(source)?;
+            let mut guard = 0;
+            loop {
+                let o = world.objects.get(idx)?;
+                let parent = world.objects.parent_of(o)?;
+                if parent == avatar {
+                    break;
+                }
+                idx = parent;
+                guard += 1;
+                if guard > 256 {
+                    return None;
+                }
+            }
+            let root = world
+                .objects
+                .get(idx)
+                .filter(|o| !o.is_client_preview() && !is_hud_point(o.attachment_point()))?;
+            let item = root.attachment_item_id().filter(|i| !i.is_nil())?;
+            Some(
+                motions
+                    .iter()
+                    .filter(|m| playing.iter().any(|p| p.id == **m))
+                    .map(move |m| KeptMotion {
+                        animation: *m,
+                        item_id: item,
+                    }),
+            )
+        })
+        .flatten()
+        .collect();
+    out.sort();
+    out.dedup();
+    out.truncate(super::file::MAX_MOTIONS);
+    out
+}
+
+/// What changes when what the avatar wears or how it looks changes: its
+/// roots, each prim's count of full updates and GLTF overrides, and its
+/// appearance's shape, bakes and hover height.
+pub fn signature(world: &World, avatar: usize) -> u64 {
+    let mut roots: Vec<(Uuid, usize)> = worn_roots(world, avatar)
+        .into_iter()
+        .filter_map(|i| world.objects.get(i).map(|o| (o.full_id, i)))
+        .collect();
+    roots.sort();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    if let Some(look) = kept_look(world, avatar) {
+        look.visual_params.hash(&mut h);
+        look.texture_entry.hash(&mut h);
+        look.hover_height.to_bits().hash(&mut h);
+    }
+    own_motions(world, avatar).hash(&mut h);
+    for (id, root) in roots {
+        id.hash(&mut h);
+        for p in prims_of(world, root) {
+            if let Some(o) = world.objects.get(p) {
+                o.full_update_serial.hash(&mut h);
+                world
+                    .gltf_overrides
+                    .get(&o.key)
+                    .map(|sides| std::sync::Arc::as_ptr(sides) as *const u8 as usize)
+                    .hash(&mut h);
+            }
+        }
+    }
+    h.finish()
+}
+
+/// The GLTF overrides of a prim, as the file keeps them: LLSD binary of an
+/// array of `[face, override]`.
+fn overrides_of(world: &World, object: &Object) -> Vec<u8> {
+    let Some(sides) = world.gltf_overrides.get(&object.key) else {
+        return Vec::new();
+    };
+    let list = sides
+        .iter()
+        .map(|(face, o)| aurora_llsd::Llsd::Array(vec![aurora_llsd::Llsd::Integer(i32::from(*face)), o.to_llsd()]))
+        .collect();
+    aurora_llsd::to_binary(&aurora_llsd::Llsd::Array(list))
+}
+
+/// Read back what [`overrides_of`] wrote.
+pub fn read_overrides(d: &[u8]) -> Vec<(u8, aurora_assets::material::PbrOverride)> {
+    if d.is_empty() {
+        return Vec::new();
+    }
+    let Ok((list, _)) = aurora_llsd::from_binary_local(d) else {
+        return Vec::new();
+    };
+    list.as_array()
+        .iter()
+        .filter_map(|side| {
+            let face = u8::try_from(side.at(0).as_i32()).ok()?;
+            Some((face, aurora_assets::material::PbrOverride::from_llsd(side.at(1))))
+        })
+        .collect()
+}
+
+/// What is kept of the avatar at `avatar`, written at `saved_at` (Unix
+/// seconds).
+pub fn capture(world: &World, avatar: usize, saved_at: u64) -> KeptAvatar {
+    let mut objects = Vec::new();
+    let mut room = super::file::MAX_PRIMS;
+    for root in worn_roots(world, avatar).into_iter().take(super::file::MAX_OBJECTS) {
+        let Some(r) = world.objects.get(root) else { continue };
+        let ids = prims_of(world, root);
+        // (an object that does not fit whole is left out: a part of it
+        // would be drawn as if it were all)
+        if ids.len() > room {
+            continue;
+        }
+        room -= ids.len();
+        let prims = ids
+            .into_iter()
+            .filter_map(|i| world.objects.get(i))
+            .map(|o| WornPrim {
+                update_flags: 0,
+                data: aurora_net::objects::encode_compressed(&drawing_update(o)),
+                overrides: overrides_of(world, o),
+            })
+            .collect();
+        objects.push(WornObject {
+            root_id: r.full_id,
+            item_id: r.attachment_item_id().unwrap_or_default(),
+            point: r.attachment_point(),
+            prims,
+        });
+    }
+    KeptAvatar {
+        saved_at,
+        objects,
+        look: kept_look(world, avatar),
+        motions: own_motions(world, avatar),
+    }
+}

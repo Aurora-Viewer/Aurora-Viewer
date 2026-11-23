@@ -55,6 +55,7 @@ impl App {
                 fov: self.settings.camera.fov,
                 dof: self.settings.snapshot.dof.clone(),
                 exposure: self.snapshots.ui.light.exposure,
+                tilt: self.camera.roll.to_degrees(),
             });
         }
         if include.looks {
@@ -105,6 +106,7 @@ impl App {
     /// template (LLFloaterCamera::switchToPreset): the Controls window, the
     /// system island's menu.
     pub(super) fn switch_camera_view(&mut self, view: CameraPreset) {
+        self.world.rlva.user_chose_camera_view();
         self.settings.camera.apply_view(view, &self.settings.camera_views);
         self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
         self.settings.save();
@@ -165,8 +167,10 @@ impl App {
             return Ok(());
         };
         log::info!("camera preset applied: {}", shot.name);
+        self.world.rlva.user_chose_camera_view();
         // the lens first: the anchor's view is framed with its field of view
         if let Some(lens) = &shot.lens {
+            self.world.rlva.user_chose_fov();
             self.settings.camera.fov = lens.fov;
             self.settings.snapshot.dof = lens.dof.clone();
             // the photo's own, while the photo mode is open
@@ -186,6 +190,11 @@ impl App {
             Some(anchor) => self.apply_preset_anchor(&shot, anchor),
             None => Ok(()),
         };
+        // the tilt after the anchor: placing the camera on the avatar levels it
+        if let Some(lens) = &shot.lens {
+            let max = crate::snapshot::viewfinder::ROLL_MAX;
+            self.camera.roll = lens.tilt.clamp(-max, max).to_radians();
+        }
         self.snapshots.preview_wanted = true;
         self.settings.save();
         placed

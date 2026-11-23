@@ -215,6 +215,11 @@ impl App {
     /// The environment lists' and Personal Lighting's choices.
     pub(super) fn env_actions(&mut self, actions: impl IntoIterator<Item = crate::ui::environment::EnvAction>) {
         use crate::ui::environment::EnvAction;
+        // @setenv: the lists and presets are greyed, and whatever still
+        // asks changes nothing, neither now nor once the restriction lifts
+        if self.world.eep.rlva_locked {
+            return;
+        }
         for action in actions {
             match action {
                 EnvAction::Pick(kind, asset) => self.world.eep.request_local(asset, kind),
@@ -223,8 +228,40 @@ impl App {
                     self.panels.time_of_day = 0;
                 }
                 EnvAction::Preset(n) => self.panels.time_of_day = n,
+                EnvAction::SaveParcel => self.world.save_parcel_environment(),
+                EnvAction::ForgetParcel => self.world.parcel_env.forget_here(),
             }
         }
+    }
+
+    /// The environments saved for parcels, each frame.
+    pub(super) fn parcel_environment_frame(&mut self) {
+        use crate::ui::environment::ParcelChoice;
+        use crate::world::parcel_env::Outcome;
+        match self.world.parcel_environment_frame() {
+            Outcome::Nothing => {}
+            Outcome::Saved(entry) => {
+                log::info!(
+                    "environment saved for parcel {} of region {}",
+                    entry.place.local_id,
+                    entry.place.region
+                );
+            }
+            Outcome::NotSaved => self.env_alert(
+                aurora_i18n::tr!("common-environment"),
+                aurora_i18n::tr!("parcel-environment-not-saved"),
+            ),
+            Outcome::Left => self.env_alert(aurora_i18n::tr!("common-environment"), aurora_i18n::tr!("parcel-environment-left")),
+        }
+        let saved_here = self.world.parcel_env.saved_here();
+        let savable = self.world.parcel.is_some() && (self.world.eep.has_local() || self.panels.time_of_day != 0);
+        self.env_ui.parcel_choice = if saved_here && !(savable && self.world.parcel_environment_changed()) {
+            ParcelChoice::Saved
+        } else if savable {
+            ParcelChoice::Save
+        } else {
+            ParcelChoice::Nothing
+        };
     }
 
     /// The sunbeacon / moonbeacon settings, saved when changed.
@@ -506,6 +543,10 @@ impl App {
     /// Open the day cycle editor on a parcel's or region's day, or on
     /// Firestorm's default day when there is none (onBtnEdit).
     fn open_day_editor_in(&mut self, context: DayContext, day: Option<DayDoc>, timing: (i32, i32)) {
+        // env_edit_extdaycycle is filtered under @setenv (rlvhandler.cpp)
+        if self.rlva_environment_windows_locked() {
+            return;
+        }
         self.day_editor.close();
         self.day_fetch = None;
         let extended = self.extended_environment();

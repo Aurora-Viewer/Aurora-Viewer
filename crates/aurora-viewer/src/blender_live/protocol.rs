@@ -82,6 +82,10 @@ pub struct PreparedSource {
     pub link: Option<Link>,
     /// Immutable import input, shared with a draft when Upload is selected.
     pub scene: Arc<Scene>,
+    /// A hash of what Blender sent for this source (its encoded batches,
+    /// colours, name and link), made on the transport thread: the window
+    /// tells which object a revision changed (`Live::changed`).
+    pub digest: u64,
 }
 
 /// Static object origins in the same baked coordinate frame as the vertices.
@@ -371,7 +375,24 @@ pub(super) fn prepare_snapshot(
             name: mesh.name,
             link: mesh.link,
             scene: Arc::new(scene),
+            digest: 0,
         });
+    }
+    for source in &mut sources {
+        use std::hash::{BuildHasher, Hash, Hasher};
+        let mut hasher = foldhash::fast::FixedState::with_seed(0).build_hasher();
+        source.name.hash(&mut hasher);
+        if let Some(link) = source.link {
+            link.parent.hash(&mut hasher);
+            link.offset.map(f32::to_bits).hash(&mut hasher);
+        }
+        for mesh in meshes.iter().filter(|mesh| mesh.source == source.id) {
+            mesh.data.hash(&mut hasher);
+            for color in &mesh.colors {
+                color.map(f32::to_bits).hash(&mut hasher);
+            }
+        }
+        source.digest = hasher.finish();
     }
     for source in &sources {
         if let Some(link) = source.link

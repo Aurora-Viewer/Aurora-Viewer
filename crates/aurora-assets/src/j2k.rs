@@ -198,26 +198,49 @@ fn bound_tile_parts(cs: &[u8], plausible: usize) -> Option<Vec<u8>> {
 /// so no other field moves. Returns a patched copy only when a TLM is present.
 ///
 /// The TLM marker (0xFF55) lives only in the main header, which runs from the
-/// SOC to the first SOT (ISO 15444-1 A.4.4); the header is walked by segment
-/// length, so a 0xFF55 pair inside later coded data is never touched.
-fn disable_tlm_index(cs: &[u8]) -> Option<Vec<u8>> {
-    let mut copy: Option<Vec<u8>> = None;
-    let mut pos = 2usize; // past the SOC marker (0xFF4F)
-    while let Some(marker) = be16(cs, pos) {
-        // SOT / SOD / EOC end the main header.
-        if matches!(marker, 0xFF90 | 0xFF93 | 0xFFD9) {
-            break;
+/// SOC to the first SOT (ISO 15444-1 A.4.4). The header is walked by
+/// [`walk_header`], the way `opj_j2k_read_header_procedure` reads it: an
+/// unknown marker (SOD and EOC included, which OpenJPEG does not know in a
+/// header) is passed two bytes at a time, as `opj_j2k_read_unk` looks for the
+/// next known marker, so no byte sequence can hide a TLM that OpenJPEG would
+/// still reach. A 0xFF55 pair inside a segment's body or in later coded data
+/// is never touched. The walk fails closed: a main header it cannot follow
+/// to its first SOT (a segment too short or cut, a TLM with no Stlm byte) is
+/// refused, as OpenJPEG would refuse it anyway.
+fn disable_tlm_index(cs: &[u8]) -> Result<Option<Vec<u8>>, AssetError> {
+    const REFUSED: AssetError = AssetError::J2k("JPEG2000 main header");
+    let mut steps = cs.len() + 16;
+    let reached_sot = std::cell::Cell::new(false);
+    let mut stlm_at: Vec<usize> = Vec::new();
+    let mut tlm_cut = false;
+    let stop = |m: u16| {
+        let sot = m == 0xFF90;
+        reached_sot.set(sot);
+        sot
+    };
+    // past the SOC marker (0xFF4F)
+    walk_header(cs, 2, stop, &mut steps, |marker, body| {
+        if marker == 0xFF55 {
+            // TLM body: Ztlm(1) Stlm(1) …; `body` is a slice of `cs`.
+            match body.get(1) {
+                Some(stlm) => stlm_at.push(stlm as *const u8 as usize - cs.as_ptr() as usize),
+                None => tlm_cut = true,
+            }
         }
-        let Some(len) = be16(cs, pos + 2).map(usize::from).filter(|&l| l >= 2) else {
-            break;
-        };
-        // TLM body: Ztlm(1) Stlm(1) …; force ST = 3 in Stlm (bits 4-5).
-        if marker == 0xFF55 && len >= 4 && pos + 5 < cs.len() {
-            copy.get_or_insert_with(|| cs.to_vec())[pos + 5] |= 0x30;
-        }
-        pos = pos.checked_add(2 + len)?;
+    })
+    .ok_or(REFUSED)?;
+    if !reached_sot.get() || tlm_cut {
+        return Err(REFUSED);
     }
-    copy
+    if stlm_at.is_empty() {
+        return Ok(None);
+    }
+    let mut copy = cs.to_vec();
+    for at in stlm_at {
+        // Force ST = 3 in Stlm (bits 4-5).
+        copy[at] |= 0x30;
+    }
+    Ok(Some(copy))
 }
 
 /// What OpenJPEG may hold at once for one decode, estimated from the headers
@@ -720,10 +743,27 @@ pub struct DecodeTimings {
 /// [`decode_j2k`], with the time spent in each of its two stages
 /// (measurements: `examples/j2k_bench.rs`).
 pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, DecodeTimings), AssetError> {
+    decode_j2k_inner(data, discard, false)
+}
+
+/// Local import sources may be larger than network textures. Decode only
+/// the wavelet levels needed for a 2K upload; retain at least that much
+/// detail so a later 1K -> 2K change never enlarges a previously reduced
+/// upload. The same tile, coding-layout and memory checks still apply.
+pub(crate) fn decode_j2k_for_import(data: &[u8]) -> Result<DecodedImage, AssetError> {
+    let info = j2k_info(data).ok_or(AssetError::J2k("JPEG2000 main header"))?;
+    decode_j2k_inner(data, import_discard(info), true).map(|(image, _)| image)
+}
+
+fn import_discard(info: J2kInfo) -> u8 {
+    ((info.width.max(info.height) / 2048).max(1).ilog2() as u8).min(info.levels)
+}
+
+fn decode_j2k_inner(data: &[u8], discard: u8, local_import: bool) -> Result<(DecodedImage, DecodeTimings), AssetError> {
     let start = Instant::now();
     let cs = locate_codestream(data).ok_or(AssetError::J2k("not a JPEG2000 codestream"))?;
     let info = parse_main_header(cs).ok_or(AssetError::Truncated("JPEG2000 main header"))?;
-    if info.width > MAX_DIMENSION || info.height > MAX_DIMENSION || info.width as u64 * info.height as u64 > MAX_PIXELS {
+    if !local_import && (info.width > MAX_DIMENSION || info.height > MAX_DIMENSION || info.width as u64 * info.height as u64 > MAX_PIXELS) {
         return Err(AssetError::TooLarge("JPEG2000 image dimensions"));
     }
     if u16::from(info.components) > MAX_HEADER_COMPONENTS {
@@ -732,12 +772,16 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
     let reduce = discard.min(info.levels);
     let siz = check_decode_memory(cs, reduce)?;
     // (a tile-part can never need more than about twice the raw pixels)
-    let plausible = (info.width as usize * info.height as usize * usize::from(info.components)).saturating_mul(2) + (1 << 16);
+    let plausible = (info.width as usize)
+        .saturating_mul(info.height as usize)
+        .saturating_mul(usize::from(info.components))
+        .saturating_mul(2)
+        .saturating_add(1 << 16);
     let bounded = bound_tile_parts(cs, plausible);
     let cs = bounded.as_deref().unwrap_or(cs);
     // Disable any TLM tile-part index: OpenJPEG 2.5.3 can write past it (see
     // `disable_tlm_index`). Aurora decodes textures in codestream order anyway.
-    let no_tlm = disable_tlm_index(cs);
+    let no_tlm = disable_tlm_index(cs)?;
     let cs = no_tlm.as_deref().unwrap_or(cs);
 
     let mut mem = MemStream { data: cs, offset: 0 };
@@ -807,7 +851,7 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
     // `opj_read_header`/`opj_decode`; it is not mutated while borrowed.
     let img = unsafe { &*image.0 };
     let codec = start.elapsed();
-    let out = convert_image(img, &siz, reduce)?;
+    let out = convert_image(img, &siz, reduce, local_import)?;
     let convert = start.elapsed().saturating_sub(codec);
     Ok((out, DecodeTimings { codec, convert }))
 }
@@ -831,7 +875,7 @@ fn component_size(siz: &Siz, sub: (u8, u8), reduce: u8) -> (u64, u64) {
 /// components are checked against the codestream's own SIZ (`siz`, decoded
 /// at `reduce`) before their planes are read: the same component count, and
 /// planes no larger than the SIZ gives them.
-fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<DecodedImage, AssetError> {
+fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8, local_import: bool) -> Result<DecodedImage, AssetError> {
     if img.numcomps == 0 || img.comps.is_null() {
         return Err(AssetError::J2k("decoded image has no components"));
     }
@@ -855,21 +899,32 @@ fn convert_image(img: &opj::opj_image_t, siz: &Siz, reduce: u8) -> Result<Decode
         width = width.max(c.w);
         height = height.max(c.h);
     }
-    if width > MAX_DIMENSION || height > MAX_DIMENSION {
+    if !local_import && (width > MAX_DIMENSION || height > MAX_DIMENSION) {
         return Err(AssetError::TooLarge("decoded JPEG2000 dimensions"));
     }
     let n = used.len();
-    let pixels = width as usize * height as usize;
-    let mut out = vec![0u8; pixels * n];
+    let length = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(n))
+        .filter(|&bytes| bytes <= isize::MAX as usize)
+        .ok_or(AssetError::TooLarge("decoded JPEG2000 pixels"))?;
+    let mut out = Vec::new();
+    out.try_reserve_exact(length)
+        .map_err(|_| AssetError::TooLarge("decoded JPEG2000 pixel allocation"))?;
+    out.resize(length, 0_u8);
 
     for (ci, c) in used.iter().enumerate() {
         let cw = c.w as usize;
         let ch = c.h as usize;
+        let samples = cw
+            .checked_mul(ch)
+            .filter(|&samples| samples <= isize::MAX as usize / std::mem::size_of::<i32>())
+            .ok_or(AssetError::TooLarge("decoded JPEG2000 component samples"))?;
         // SAFETY: `data` is non-null and OpenJPEG allocates `w * h` samples for
         // each decoded component (dimensions already reduced by the resolution
         // factor); `w` and `h` were checked above against the SIZ, so the
         // slice never spans more than the header's own component size.
-        let plane = unsafe { std::slice::from_raw_parts(c.data as *const i32, cw * ch) };
+        let plane = unsafe { std::slice::from_raw_parts(c.data as *const i32, samples) };
         let prec = c.prec.clamp(1, 31);
         let offset: i64 = if c.sgnd != 0 { 1i64 << (prec - 1) } else { 0 };
         let max_in = (1i64 << prec) - 1;
@@ -961,6 +1016,10 @@ mod tests {
 
     /// Lossless J2K encode (test helper, mirrors JPEG2KEncode in llimagej2coj.cpp).
     fn encode(w: u32, h: u32, comps: u32, pixel: impl Fn(u32, u32, u32) -> u8) -> Vec<u8> {
+        encode_with_levels(w, h, comps, 5, pixel)
+    }
+
+    fn encode_with_levels(w: u32, h: u32, comps: u32, levels: u8, pixel: impl Fn(u32, u32, u32) -> u8) -> Vec<u8> {
         // SAFETY: test-only FFI usage; every pointer is checked and freed below.
         unsafe {
             let mut params: opj::opj_cparameters_t = std::mem::zeroed();
@@ -971,7 +1030,7 @@ mod tests {
             params.irreversible = 0;
             params.tcp_mct = if comps >= 3 { 1 } else { 0 };
             // Like JPEG2KEncode: small images need fewer resolutions.
-            params.numresolution = params.numresolution.min(1 + w.min(h).ilog2() as i32);
+            params.numresolution = params.numresolution.min(1 + w.min(h).ilog2() as i32).min(1 + i32::from(levels));
             let mut cparms: Vec<opj::opj_image_cmptparm_t> = (0..comps)
                 .map(|_| {
                     let mut p: opj::opj_image_cmptparm_t = std::mem::zeroed();
@@ -1020,6 +1079,55 @@ mod tests {
 
     fn pattern(x: u32, y: u32, c: u32) -> u8 {
         ((x * 4 + y * 3 + c * 50) & 0xFF) as u8
+    }
+
+    #[test]
+    fn local_jpeg2000_import_reduces_large_sources_without_relaxing_network_limits() {
+        // A narrow source exercises the network dimension rejection without
+        // allocating a multi-gigabyte encoder fixture for a square 16K map.
+        let bytes = encode(32768, 64, 3, |_, _, c| [30, 80, 150][c as usize]);
+        assert!(matches!(
+            decode_j2k(&bytes, 0),
+            Err(AssetError::TooLarge("JPEG2000 image dimensions"))
+        ));
+        for loader in [crate::import_texture::decode, crate::import_texture::decode_map] {
+            let source = loader(&bytes).expect("large local JPEG2000");
+            assert_eq!((source.width, source.height, source.components, source.discard), (2048, 4, 3, 4));
+            assert!(source.data.as_chunks::<3>().0.iter().all(|pixel| *pixel == [30, 80, 150]));
+            for maximum in [1024, 2048] {
+                let options = crate::import_texture::Options {
+                    max_width: maximum,
+                    max_height: maximum,
+                    ..Default::default()
+                };
+                let pixels = crate::import_texture::prepare(&source, options).expect("resize imported J2K");
+                assert_eq!((pixels.width, pixels.height), (maximum, 4));
+            }
+        }
+    }
+
+    #[test]
+    fn local_jpeg2000_import_without_wavelet_levels_resizes_after_full_decode() {
+        let bytes = encode_with_levels(32768, 4, 3, 0, |_, _, c| [30, 80, 150][c as usize]);
+        assert_eq!(j2k_info(&bytes).expect("header").levels, 0);
+        assert!(matches!(
+            decode_j2k(&bytes, 0),
+            Err(AssetError::TooLarge("JPEG2000 image dimensions"))
+        ));
+        for loader in [crate::import_texture::decode, crate::import_texture::decode_map] {
+            let source = loader(&bytes).expect("large local source without wavelet reductions");
+            assert_eq!((source.width, source.height, source.components, source.discard), (32768, 4, 3, 0));
+            for maximum in [1024, 2048] {
+                let options = crate::import_texture::Options {
+                    max_width: maximum,
+                    max_height: maximum,
+                    ..Default::default()
+                };
+                let pixels = crate::import_texture::prepare(&source, options).expect("resize full-resolution J2K");
+                assert_eq!((pixels.width, pixels.height), (maximum, 4));
+                assert!(pixels.data.as_chunks::<3>().0.iter().all(|pixel| *pixel == [30, 80, 150]));
+            }
+        }
     }
 
     #[test]
@@ -1284,6 +1392,29 @@ mod tests {
             );
             assert!(matches!(decode_j2k(cs, discard), Err(AssetError::TooLarge(_))));
         }
+        assert!(
+            matches!(decode_j2k_for_import(cs), Err(AssetError::TooLarge(_))),
+            "local imports retain the decoder memory checks"
+        );
+    }
+
+    #[test]
+    fn local_jpeg2000_import_keeps_enough_resolution_for_2k_within_the_decoder_budget() {
+        for (width, expected) in [(3000, 0), (8192, 2), (16384, 3)] {
+            let cs = codestream(&Layout::texture(width, width, 4), &[]);
+            let discard = import_discard(j2k_info(&cs).expect("source header"));
+            assert_eq!(discard, expected);
+            assert!(check_decode_memory(&cs, discard).is_ok());
+            assert!((width >> discard) >= 2048);
+        }
+        let mut few_levels = Layout::texture(16384, 16384, 4);
+        few_levels.levels = 1;
+        let cs = codestream(&few_levels, &[]);
+        assert_eq!(import_discard(j2k_info(&cs).expect("source header")), 1);
+        assert!(matches!(
+            decode_j2k_for_import(&cs),
+            Err(AssetError::TooLarge("JPEG2000 decoder memory"))
+        ));
     }
 
     #[test]
@@ -1417,9 +1548,16 @@ mod tests {
     /// of that tile in order (TPsot 0, 1, …), none giving the tile-part count
     /// (TNsot 0).
     fn codestream_with_tlm(parts: u8) -> Vec<u8> {
+        codestream_with_tlm_after(&[], parts)
+    }
+
+    /// [`codestream_with_tlm`], with `before` placed in the main header just
+    /// before the TLM segment.
+    fn codestream_with_tlm_after(before: &[u8], parts: u8) -> Vec<u8> {
         let main = codestream(&Layout::texture(64, 64, 3), &[]);
         let sot = main.windows(4).position(|w| w == [0xFF, 0x90, 0x00, 0x0A]).expect("SOT");
         let mut cs = main[..sot].to_vec();
+        cs.extend_from_slice(before);
         // Ztlm 0, Stlm: 8-bit Ttlm, 16-bit Ptlm; Ttlm 0, Ptlm 14.
         cs.extend(segment(0xFF55, &[0, 0x10, 0, 0, 14]));
         for part in 0..parts {
@@ -1438,16 +1576,66 @@ mod tests {
     fn tile_parts_beyond_the_tlm_are_read_in_stream_order() {
         let cs = codestream_with_tlm(200);
         // The TLM is found and disabled (its Stlm byte forced to ST = 3).
-        let patched = disable_tlm_index(&cs).expect("TLM disabled");
+        assert_tlm_disabled(&cs);
+        // A codestream with no TLM is left untouched.
+        let plain = codestream(&Layout::texture(64, 64, 3), &[]);
+        assert!(disable_tlm_index(&plain).expect("header walked").is_none());
+        // Decoding the crafted stream must not corrupt memory.
+        let _ = decode_j2k(&cs, 0);
+    }
+
+    /// The last TLM of `cs` has its Stlm byte forced to ST = 3, and nothing
+    /// else changes.
+    fn assert_tlm_disabled(cs: &[u8]) {
+        let patched = disable_tlm_index(cs).expect("header walked").expect("TLM disabled");
         // FF 55, Lcme(2), Ztlm(1), Stlm(1): Stlm is the sixth byte.
-        let tlm = cs.windows(2).position(|w| w == [0xFF, 0x55]).expect("TLM marker");
+        let tlm = cs.windows(2).rposition(|w| w == [0xFF, 0x55]).expect("TLM marker");
         assert_eq!(patched[tlm + 5] & 0x30, 0x30, "Stlm ST bits set");
         assert_eq!(&patched[..tlm + 5], &cs[..tlm + 5], "only the Stlm byte changes");
         assert_eq!(&patched[tlm + 6..], &cs[tlm + 6..]);
-        // A codestream with no TLM is left untouched.
-        assert!(disable_tlm_index(&codestream(&Layout::texture(64, 64, 3), &[])).is_none());
-        // Decoding the crafted stream must not corrupt memory.
-        let _ = decode_j2k(&cs, 0);
+    }
+
+    /// OpenJPEG passes the bytes after an unknown marker two at a time until
+    /// it finds a known one (`opj_j2k_read_unk`), SOD and EOC included, which
+    /// it does not know in a header. Whatever comes before the TLM, the walk
+    /// that disables it must reach it the same way.
+    #[test]
+    fn a_tlm_behind_unknown_markers_is_still_disabled() {
+        let hiders: [&[u8]; 7] = [
+            &[0xFF, 0x31, 0x00, 0x00], // unknown marker, length 0
+            &[0xFF, 0x31, 0x00, 0x01], // unknown marker, length 1
+            &[0xFF, 0x31, 0xFF, 0xFF], // unknown marker, huge length
+            &[0xFF, 0x6F],             // unknown marker, nothing after it
+            &[0xFF, 0x4F, 0x00, 0x00], // a second SOC
+            &[0xFF, 0x93],             // SOD
+            &[0xFF, 0xD9],             // EOC
+        ];
+        for before in hiders {
+            let cs = codestream_with_tlm_after(before, 200);
+            assert_tlm_disabled(&cs);
+            let _ = decode_j2k(&cs, 0);
+        }
+    }
+
+    /// A main header the walk cannot follow to its first SOT is refused
+    /// rather than handed to OpenJPEG with its TLM, if any, still on.
+    #[test]
+    fn a_main_header_that_does_not_reach_a_sot_is_refused() {
+        let cs = codestream_with_tlm(4);
+        let tlm = cs.windows(2).position(|w| w == [0xFF, 0x55]).expect("TLM marker");
+        // A known segment too short to hold its length.
+        let mut short = cs[..tlm].to_vec();
+        short.extend_from_slice(&[0xFF, 0x64, 0x00, 0x01]);
+        short.extend_from_slice(&cs[tlm..]);
+        assert!(disable_tlm_index(&short).is_err());
+        assert!(decode_j2k(&short, 0).is_err());
+        // A TLM too short to hold its Stlm byte.
+        let mut no_stlm = cs[..tlm].to_vec();
+        no_stlm.extend(segment(0xFF55, &[0]));
+        no_stlm.extend_from_slice(&cs[tlm..]);
+        assert!(disable_tlm_index(&no_stlm).is_err());
+        // A main header cut before its SOT.
+        assert!(disable_tlm_index(&cs[..tlm + 4]).is_err());
     }
 
     /// Found by fuzzing: a SIZ header claiming 2^32 - 1 on both sides

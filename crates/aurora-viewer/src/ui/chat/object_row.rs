@@ -18,7 +18,7 @@
 //! of the Conversations window draws them here, the cards above the chat
 //! bar with `console.rs`.
 
-use super::{LineEnv, Mark, chat_text_marked, hhmm, history_tone, object_sender, sender_name};
+use super::{LineEnv, Mark, chat_text_bracketed, hhmm, history_tone, object_sender, sender_name};
 use crate::ui::fonts::chat_size;
 use crate::world::notice_topics::Topic;
 use crate::world::{ChatKind, ChatLine, World};
@@ -94,7 +94,7 @@ pub(super) fn icon(world: &World, line: &ChatLine) -> &'static str {
     }
     match world.notice_topics.of(line) {
         Topic::Info => "info-circle-filled",
-        Topic::People => "user-filled",
+        Topic::People | Topic::Radar => "user-filled",
         Topic::Teleport => "plane-departure-filled",
         Topic::Items => "box",
         Topic::Region => "world-filled",
@@ -186,8 +186,8 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
         if !notice {
             let name = sender_name(world, env.own_name, line);
             // the cube names its object under the pointer and inspects it
-            // like the name (an object's IM comes from its owner's id: the
-            // name alone, no menu)
+            // like the name, for nearby chat and an object's IM alike (the
+            // IM's line belongs to the object, its session id)
             let id = ui.scope_id().with(("compact_icon", line.time, line.source));
             let cube = ui.interact(icon.expand(2.0), id, egui::Sense::click()).on_hover_text(&name);
             let color = tone.unwrap_or_else(|| crate::ui::colors::sender_color(line));
@@ -205,15 +205,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
                 resp = resp.on_hover_text(&name);
             }
             crate::ui::widgets::paint_on_baseline(ui.painter(), galley, r.left(), baseline, color);
-            if matches!(line.kind, ChatKind::Object(_)) && !line.source.is_nil() {
+            if matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !line.source.is_nil() {
                 for r in [cube, resp] {
-                    object_sender(
-                        &r.on_hover_cursor(egui::CursorIcon::PointingHand),
-                        p,
-                        world,
-                        line.source,
-                        &line.from,
-                    );
+                    object_sender(&r.on_hover_cursor(egui::CursorIcon::PointingHand), p, world, line);
                 }
             }
             ui.add_space(GAP);
@@ -224,23 +218,26 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
             crate::ui::widgets::paint_on_baseline(ui.painter(), galley, r.left(), baseline, p.muted_dim);
             ui.add_space(GAP);
         }
+        let brackets = notice && super::system_brackets(world, line);
         let (text, italics) = if notice { (&line.text[..], false) } else { body(line) };
         let color = crate::ui::colors::keyword_color(line)
             .or(tone)
             .unwrap_or_else(|| text_color(line, p));
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
-            chat_text_marked(
+            chat_text_bracketed(
                 ui,
                 p,
                 env.emoji,
                 world,
+                line.wording(env.names),
                 env.want_names,
                 text,
                 size,
                 color,
                 super::message_emphasis(line.kind, italics),
                 mark,
+                brackets,
             );
         });
     });
@@ -271,6 +268,9 @@ pub(super) mod tests {
             kind,
             source: uuid::Uuid::from_u128(9),
             origin: Origin::Live,
+            blocked: false,
+            beyond_range: false,
+            speaker: Default::default(),
         }
     }
 
@@ -337,6 +337,7 @@ pub(super) mod tests {
                     emoji: &mut emoji,
                     pics: &pics,
                     world: &world,
+                    names: crate::world::names::NameScope::World,
                     want_names: &mut names,
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",
@@ -346,6 +347,7 @@ pub(super) mod tests {
                     menu: None,
                     bubbles: style,
                     previews: None,
+                    moderators: None,
                 };
                 super::super::draw_line(ui, &mut env, &said, look, None);
             },
@@ -471,6 +473,7 @@ pub(super) mod tests {
                                 emoji: &mut emoji,
                                 pics: &pics,
                                 world: &world,
+                                names: crate::world::names::NameScope::World,
                                 want_names: &mut names,
                                 wanted: &mut wanted,
                                 own_name: "Aurora Demo",
@@ -480,6 +483,7 @@ pub(super) mod tests {
                                 menu: None,
                                 bubbles: None,
                                 previews: None,
+                                moderators: None,
                             };
                             let place = Place {
                                 icon_center: 14.0,

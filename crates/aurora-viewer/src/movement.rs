@@ -24,6 +24,12 @@ const STANDARD_RUN_SPEED: f32 = 5.13;
 // https://wiki.secondlife.com/wiki/Default_Avatar_Movement_Speeds
 const STANDARD_FLY_SPEED: f32 = 16.0;
 const STANDARD_FLY_DOWN_SPEED: f32 = 22.87;
+/// A dive, surface or takeoff goal that has stopped approaching for this
+/// long, with the body at rest vertically, is unreachable (seabed, prim
+/// floor, ceiling). Longer than a busy region's command round trip.
+const TARGET_STALL: Duration = Duration::from_millis(1500);
+const TARGET_PROGRESS: f32 = 0.05;
+const TARGET_MOVING: f32 = 0.25;
 
 /// Match bridge.lsl's horizontal camera frame for shore probes and passage.
 /// Camera pitch must not turn either check into a ground/sky ray.
@@ -34,6 +40,17 @@ pub fn horizontal_heading(camera_forward: Vec3, body_forward: Vec3) -> Vec3 {
     } else {
         body_forward.with_z(0.0).normalize_or(Vec3::X)
     }
+}
+
+/// The aids let go of the avatar during a teleport or a region load, under
+/// the photo's free camera and under autopilot. Not when the window loses
+/// the focus (`focused` is taken so that the caller passes it and a test
+/// can hold the rule): LLViewerWindow::handleFocusLost only releases the
+/// held keys, so Stand on water or a float keeps holding the avatar behind
+/// another window while a held walk still stops (#2449).
+pub fn aids_suspended(teleporting: bool, loading: bool, free_camera: bool, autopilot: bool, focused: bool) -> bool {
+    let _ = focused;
+    teleporting || loading || free_camera || autopilot
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -248,11 +265,13 @@ pub struct Runtime {
     water_target_until: Option<Instant>,
     /// Last meaningful remaining distance; movement renews a surface return's budget.
     surface_progress: Option<f32>,
+    /// Closest approach to `water_target` and when it last improved.
+    target_progress: Option<(f32, Instant)>,
     exit_flight: bool,
     last_jump: Option<Instant>,
     swim_signal: Option<crate::world::PlayingAnimation>,
     swim_pose: Option<crate::ao::State>,
-    /// Keep animation context when a free camera/focus loss releases physics.
+    /// Keep animation context when a free camera or a load releases physics.
     swim_inspection: Option<State>,
     entry_fall: bool,
     flight_exit_pose: bool,
@@ -473,6 +492,11 @@ impl Runtime {
             self.water_target = None;
             self.exit_flight = false;
         }
+        // Up replaces a dive tap's goal with a rise while held, as Down drops a
+        // surface return: either key moves a swimmer only while held.
+        if input.up && !input.down && self.water_target.is_some_and(|(mode, _)| mode == 7) {
+            self.water_target = None;
+        }
         if input.down {
             if self.exit_flight || self.water_target.is_some_and(|(mode, _)| mode == 8) {
                 self.water_target = None;
@@ -565,6 +589,29 @@ impl Runtime {
                 self.exit_flight = false;
             }
         }
+        // A tap leaves its goal owning the motor and the AO's Swimming Down /
+        // Up pose after the key is released. The seabed, a prim floor or a
+        // ceiling can make it unreachable, and the surface budget above renews
+        // on every bob: let go of a goal that no longer gets closer.
+        if let Some((mode, offset)) = self.water_target
+            && let Some(water) = water
+        {
+            let distance = (water + offset - frame.position.z).abs();
+            match self.target_progress {
+                Some((best, since)) if best - distance < TARGET_PROGRESS && frame.velocity.z.abs() < TARGET_MOVING => {
+                    if now.saturating_duration_since(since) >= TARGET_STALL {
+                        self.water_target = None;
+                        self.target_progress = None;
+                        if mode == 10 {
+                            self.exit_flight = false;
+                        }
+                    }
+                }
+                _ => self.target_progress = Some((distance, now)),
+            }
+        } else {
+            self.target_progress = None;
+        }
         let action = self
             .water_controls
             .update(
@@ -629,6 +676,7 @@ impl Runtime {
             let distance = (water + offset - frame.position.z).abs();
             self.water_target_until = Some(Self::water_deadline(mode, distance, prefs.swim_speed, now));
             self.surface_progress = (mode == 8).then_some(distance);
+            self.target_progress = None;
         } else if self.water_target.is_none() {
             self.water_target_until = None;
             self.surface_progress = None;

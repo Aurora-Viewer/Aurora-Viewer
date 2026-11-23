@@ -36,8 +36,9 @@ impl App {
     /// Every frame, before it is laid out.
     pub(super) fn photo_isolate_frame(&mut self, renderer: &mut Renderer) {
         self.photo_isolate_demo(renderer);
-        // (the outfit's auto portrait isolates as the photo mode does)
-        let open = self.panels.snapshot || self.outfit_portrait_studio();
+        // (the outfit's auto portrait isolates as the photo mode does, and
+        // so does the Director, for the film)
+        let open = self.panels.snapshot || self.outfit_portrait_studio() || self.panels.director;
         let agent = self.world.agent_id;
         let iso = &mut self.world.photo_isolation;
         iso.set_own(agent);
@@ -142,11 +143,9 @@ impl App {
             .get(id)
             .map(|p| p.name.clone())
             .filter(|n| !n.is_empty())
-            .or_else(|| {
-                object
-                    .map(|o| o.text.lines().next().unwrap_or("").to_owned())
-                    .filter(|n| !n.is_empty())
-            })
+            // the floating text as it is shown: none under @showhovertext*,
+            // the names and places hidden (LLHUDText::setString, llhudtext.cpp)
+            .or_else(|| crate::ui::hud::hover_text_title(&self.world, *id))
             .unwrap_or_else(|| aurora_i18n::tr!("photo-isolate-object").to_owned());
         (name, false)
     }

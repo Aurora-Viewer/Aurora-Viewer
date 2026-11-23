@@ -741,6 +741,31 @@ impl Manip {
         }
     }
 
+    /// LLManipTranslate::render draws guidelines with depth testing before
+    /// its overlay handles. World guides belong in the world-label GPU pass.
+    pub(super) fn draw_world_guides(&self, p: &Painter3d, world: &World, s: &BuildSettings, sel: &[ObjKey], linked: bool, mode: EditMode) {
+        let mode = self.drag.as_ref().filter(|d| d.started).map_or(mode, |d| d.mode);
+        if mode != EditMode::Move || !can_transform_selection(world, sel, linked, mode) {
+            return;
+        }
+        let Some(mut f) = frame(world, s, sel, linked, Instant::now(), self.grid_ref.as_ref()) else {
+            return;
+        };
+        if s.select_limit().is_some_and(|max| f.pivot.distance(p.cam.eye) > max + 64.0) {
+            return;
+        }
+        if let Some(d) = self.drag.as_ref().filter(|d| d.started) {
+            f.grid = d.grid;
+        }
+        for i in 0..3 {
+            let a = f.pivot - f.grid.rotation * unit(i) * 256.0;
+            let b = f.pivot + f.grid.rotation * unit(i) * 256.0;
+            aurora_render::world_line_at(p.painter.ctx(), a, b);
+            p.line(a, b, fade(axis_color(&p.pal, i), 0.33), 1.5);
+        }
+        aurora_render::world_label_at(p.painter.ctx(), None);
+    }
+
     /// Aurora look of LLManipTranslate::renderTranslationHandles: pale axes
     /// with one positive arrow per axis and two-color plane handles outside
     /// their envelope. Hover keeps both axis colors and accents the outline.
@@ -752,9 +777,11 @@ impl Manip {
         let len = arrow_length(cam, f, piv);
         let k = f.size;
         // guidelines through the pivot (LLManip::renderGuidelines)
-        for i in 0..3 {
-            let a = g * unit(i);
-            p.line(piv - a * 256.0, piv + a * 256.0, fade(axis_color(&pal, i), 0.33), 1.5);
+        if cam.hud.is_some() {
+            for i in 0..3 {
+                let a = g * unit(i);
+                p.line(piv - a * 256.0, piv + a * 256.0, fade(axis_color(&pal, i), 0.33), 1.5);
+            }
         }
         let active = drag.map(|d| d.part);
         // snap ruler / plane grid while dragging
@@ -1590,21 +1617,45 @@ fn drag_update(
         // Shift-drag leaves a copy behind (LLManipTranslate::handleHover, selectDuplicate)
         if d.mode == EditMode::Move && mods.shift && !mods.ctrl && cam.hud.is_none() {
             if d.linked {
-                // Firestorm refuses to copy individual parts
+                // Firestorm refuses to copy individual parts, once a drag
+                // (mWarningNoDragCopy): UISndInvalidOp
+                world.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
+            } else if d
+                .movers
+                .iter()
+                .any(|m| super::select_type(world, m.idx) != super::SelectType::World)
+            {
+                // LLSelectMgr::selectDuplicate: no copy of an attachment,
+                // UISndInvalidOp
+                world.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
             } else {
                 let mut by_region: HashMap<RegionHandle, Vec<u32>> = HashMap::new();
                 for m in d.movers.iter().filter(|m| super::copyable_object(world, m.idx)) {
                     by_region.entry(m.key.region).or_default().push(m.key.local_id);
                 }
-                for (handle, ids) in by_region {
-                    world.objects.expect_local_duplicates(handle, &ids, Vec3::ZERO, false, None);
-                    out.push(BuildCmd::Duplicate {
+                let group_id = world.group_for_rez(s.rez_under_land_group);
+                let copies: Vec<BuildCmd> = by_region
+                    .into_iter()
+                    .map(|(handle, local_ids)| BuildCmd::Duplicate {
                         handle,
-                        local_ids: ids,
+                        local_ids,
                         offset: Vec3::ZERO,
                         flags: 0,
-                        group_id: world.group_for_rez(s.rez_under_land_group),
-                    });
+                        group_id,
+                    })
+                    .collect();
+                // selectDuplicate under rlvCanDeleteOrReturn: refused before
+                // anything is sent (the send boundary's rule), UISndInvalidOp;
+                // the move itself goes on, as in the Legacy Viewer
+                if copies.iter().all(|c| world.rlva_allows_build(c)) {
+                    for c in copies {
+                        if let BuildCmd::Duplicate { handle, local_ids, .. } = &c {
+                            world.objects.expect_local_duplicates(*handle, local_ids, Vec3::ZERO, false, None);
+                        }
+                        out.push(c);
+                    }
+                } else {
+                    world.ui_sounds.push(crate::ui_sound::UiSound::InvalidOp);
                 }
             }
         }

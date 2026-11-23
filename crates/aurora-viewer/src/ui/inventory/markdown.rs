@@ -163,6 +163,7 @@ pub(super) fn editor(
                 result.save |= right.save;
                 result.open = right.open.or(result.open);
                 result.copy = right.copy.or(result.copy);
+                result.drag = right.drag.or(result.drag);
                 result
             })
         }

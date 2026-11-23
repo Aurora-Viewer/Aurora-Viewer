@@ -39,7 +39,7 @@ fn time_text(time: u32) -> String {
 
 /// The line as the list shows it and the copy gives it.
 fn line(world: &World, c: &Collision) -> String {
-    format!("{}  {}", time_text(c.time), c.kind.sentence(&world.social.name_of(&c.perp)))
+    format!("{}  {}", time_text(c.time), c.kind.sentence(&c.name(world)))
 }
 
 impl BumpsUi {
@@ -111,7 +111,7 @@ impl BumpsUi {
                     let font = egui::FontId::proportional(12.5);
                     let time = egui::pos2(rect.left() + 8.0, rect.center().y);
                     widgets::paint_elided(ui, &time_text(c.time), time, TIME_W - 8.0, font.clone(), p.muted);
-                    let text = c.kind.sentence(&world.social.name_of(&c.perp));
+                    let text = c.kind.sentence(&c.name(world));
                     let left = rect.left() + 8.0 + TIME_W;
                     let room = rect.right() - left - 8.0;
                     let cut = widgets::paint_elided(ui, &text, egui::pos2(left, rect.center().y), room, font, p.ink);
