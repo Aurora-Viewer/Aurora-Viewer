@@ -5601,7 +5601,7 @@ mod tests {
         use egui::{Event, Id, Key, Modifiers, RawInput, ScrollArea, Sense};
 
         let ctx = egui::Context::default();
-        let transcript = Id::new("transcript");
+        let transcript = Id::unique("transcript");
         let composer = Id::unique(("conv_input", Option::<uuid::Uuid>::None));
         let elsewhere = Id::unique(("conv_input", Some(uuid::Uuid::from_u128(1))));
         let frame = |focus, key: Option<Key>, modifiers, focused| {
