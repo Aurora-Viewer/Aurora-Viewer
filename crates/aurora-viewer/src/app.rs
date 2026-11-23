@@ -12972,6 +12972,7 @@ impl App {
                 ..self.weather_now.rain_look(&self.weather_wind)
             },
             hide_sky: self.settings.debug.hidden_types.sky,
+            hide_water: self.settings.debug.hidden_types.water,
             curvature: self.settings.planet_radius(),
             look: None,
             look_thumbs: None,

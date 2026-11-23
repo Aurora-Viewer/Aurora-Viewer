@@ -1769,6 +1769,8 @@ pub struct FrameParams {
     /// The sky's rendering type is hidden (the viewer's Advanced ›
     /// Rendering types): the view starts from `clear_color` instead.
     pub hide_sky: bool,
+    /// Hide the water's optical effects with its surface (Advanced › Rendering types).
+    pub hide_water: bool,
     /// The photo's look (looks.rs), over the image once tone mapped; None:
     /// none, at no cost.
     pub look: Option<crate::looks::PhotoLook>,
