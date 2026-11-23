@@ -941,13 +941,13 @@ fn fog_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     switch_row(
         ui,
         p,
-        "cloud",
+        "cloud-filled",
         aurora_i18n::tr!("ui-weather-fog-from-sky"),
         aurora_i18n::tr!("ui-weather-fog-from-sky-tip"),
         &mut w.fog_from_sky,
     );
     ui.horizontal(|ui| {
-        widgets::glyph(ui, "palette", p.muted, 15.0);
+        widgets::glyph(ui, "palette-filled", p.muted, 15.0);
         let gap = ui.spacing().item_spacing.x;
         let width = ui.available_width() - widgets::SWITCH_SIZE.x - ui.spacing().interact_size.x - 2.0 * gap;
         label(
@@ -975,7 +975,7 @@ fn fog_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
 /// rain; the snow's fall and melting in snow) and the fog following that
 /// colour; the presets above set them too.
 fn tint_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
-    card(ui, p, "palette", aurora_i18n::tr!("ui-weather-tint"), None, |ui, _| {
+    card(ui, p, "palette-filled", aurora_i18n::tr!("ui-weather-tint"), None, |ui, _| {
         let snowing = w.snowing();
         let (tint, opacity) = if snowing {
             (&mut w.snow_tint, &mut w.snow_opacity)
@@ -1030,7 +1030,7 @@ fn tint_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
             switch_row(
                 ui,
                 p,
-                "sun",
+                "sun-filled",
                 aurora_i18n::tr!("ui-weather-fall-melts"),
                 aurora_i18n::tr!("ui-weather-fall-melts-tip"),
                 &mut w.fall_melts,
@@ -1072,7 +1072,7 @@ fn debris_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
         on: &mut on,
         tip: aurora_i18n::tr!("ui-weather-debris-on-tip"),
     };
-    card(ui, p, "leaf", aurora_i18n::tr!("ui-weather-debris"), Some(head), |ui, on| {
+    card(ui, p, "leaf-filled", aurora_i18n::tr!("ui-weather-debris"), Some(head), |ui, on| {
         w.debris_on = on;
         ui.add_enabled_ui(on, |ui| {
             let options = [
@@ -1124,7 +1124,7 @@ fn debris_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
         switch_row(
             ui,
             p,
-            "circle",
+            "circle-filled",
             aurora_i18n::tr!("ui-weather-tumbleweeds"),
             aurora_i18n::tr!("ui-weather-tumbleweeds-tip"),
             &mut w.tumbleweeds,
@@ -1135,7 +1135,7 @@ fn debris_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
 /// "Presets": the whole weather at once (what falls and its colour, the
 /// fog, the wind's strength, the debris), full width above the cards.
 fn presets_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
-    card(ui, p, "wand", aurora_i18n::tr!("ui-weather-presets"), None, |ui, _| {
+    card(ui, p, "sparkles-filled", aurora_i18n::tr!("ui-weather-presets"), None, |ui, _| {
         ui.horizontal_wrapped(|ui| {
             for preset in crate::weather::WeatherPreset::ALL {
                 if ui
@@ -1176,7 +1176,7 @@ fn pictures_rows(ui: &mut egui::Ui, p: &Palette, list: &mut Vec<std::path::PathB
         }
     }
     ui.horizontal(|ui| {
-        widgets::glyph(ui, "photo", p.muted, 15.0);
+        widgets::glyph(ui, "photo-filled", p.muted, 15.0);
         let gap = ui.spacing().item_spacing.x;
         let width = ui.available_width() - ui.spacing().interact_size.x * 2.0 - gap;
         label(
@@ -1230,7 +1230,7 @@ fn pictures_rows(ui: &mut egui::Ui, p: &Palette, list: &mut Vec<std::path::PathB
 /// A colour setting (sRGB 0..1): its label, a colour button on the right.
 fn colour_row(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str, colour: &mut [f32; 3]) {
     ui.horizontal(|ui| {
-        widgets::glyph(ui, "palette", p.muted, 15.0);
+        widgets::glyph(ui, "palette-filled", p.muted, 15.0);
         let gap = ui.spacing().item_spacing.x;
         let width = ui.available_width() - ui.spacing().interact_size.x - gap;
         label(ui, p, text, tip, width);
@@ -1525,6 +1525,31 @@ fn foot(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, actions: &mut W
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every icon the window draws is embedded: a name that is not (an
+    /// outline name of a filled-only icon) draws nothing.
+    #[test]
+    fn every_icon_of_the_window_exists() {
+        let src = include_str!("weather_window.rs");
+        let mut checked = 0;
+        for marker in ["card(", "glyph(", "chip(", "icon_button(", "switch_row(", "tile("] {
+            let mut rest = src;
+            while let Some(at) = rest.find(marker) {
+                rest = &rest[at + marker.len()..];
+                let window = &rest[..rest.len().min(120)];
+                // the first string literal of the call is its icon
+                let Some(open) = window.find('"') else { continue };
+                let Some(len) = window[open + 1..].find('"') else { continue };
+                let name = &window[open + 1..open + 1 + len];
+                if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
+                    continue;
+                }
+                assert!(crate::ui::icons::embedded(name), "icon {name:?} ({marker}…) is not embedded");
+                checked += 1;
+            }
+        }
+        assert!(checked > 20, "{checked} icons found");
+    }
 
     #[test]
     fn the_curtain_fades_out_at_both_sides_without_a_nan() {
