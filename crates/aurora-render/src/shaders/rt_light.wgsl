@@ -21,8 +21,15 @@ struct Light {
     pos_radius: vec4<f32>,
     color_falloff: vec4<f32>,
     // x: the radius of the prim it shines from, y: 1 for a projector, z:
-    // how far it moved since last frame (m).
+    // how far it moved since last frame (m), w: that prim's object index
+    // plus one, 0 for none (rt_common.wgsl `shadows_but`).
     source: vec4<f32>,
+    // A projector's: world to its texture (common.wgsl `projector_at`:
+    // inside its frustum where z >= 0 and x / w, y / w are in 0..1), and
+    // the apex of its frustum (xyz), which its rays aim at. Zero for a
+    // point light.
+    beam: mat4x4<f32>,
+    apex: vec4<f32>,
 };
 
 // The point lights at a hit.
@@ -53,7 +60,7 @@ fn hemisphere(lit: HitLight, n: vec3<f32>) -> vec3<f32> {
 // the scene's faces, then the posed ones when `posed` (the alpha-masked
 // faces tested at each candidate, rt_common.wgsl `stops`).
 fn unblocked(origin: vec3<f32>, dir: vec3<f32>, reach: f32, posed: bool) -> bool {
-    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, reach, origin, dir);
+    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | SHADOW_CULL, SOLID, 0.0, reach, origin, dir);
     var rq: ray_query;
     rayQueryInitialize(&rq, scene_tlas, ray);
     while (rayQueryProceed(&rq)) {
@@ -75,60 +82,6 @@ fn unblocked(origin: vec3<f32>, dir: vec3<f32>, reach: f32, posed: bool) -> bool
         }
     }
     return rayQueryGetCommittedIntersection(&rp).kind == RAY_QUERY_INTERSECTION_NONE;
-}
-
-// How far along `dir` from `origin`, a pixel of the view, something stops
-// a shadow ray within `reach` (any of what does, not the nearest), or -1
-// when nothing does: for the shadows that soften with that distance
-// (rt_lights.wgsl). `curved`: rt_common.wgsl `shadows`. One query serves
-// the scene's level then the posed one, and its flags are constant where
-// each starts: a pass pays for each query its shader holds, run or not.
-fn blocked_at(origin: vec3<f32>, dir: vec3<f32>, reach: f32, posed: bool, curved: bool) -> f32 {
-    var rq: ray_query;
-    if (curved) {
-        let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT | RAY_FLAG_FORCE_NO_OPAQUE, 0xFFu, 0.0, reach, origin, dir);
-        rayQueryInitialize(&rq, scene_tlas, ray);
-        while (rayQueryProceed(&rq)) {
-            if (shadows(rayQueryGetCandidateIntersection(&rq), false, dir, true)) {
-                rayQueryConfirmIntersection(&rq);
-            }
-        }
-        var hit = rayQueryGetCommittedIntersection(&rq);
-        if (hit.kind == RAY_QUERY_INTERSECTION_NONE && posed) {
-            rayQueryInitialize(&rq, posed_tlas, ray);
-            while (rayQueryProceed(&rq)) {
-                if (shadows(rayQueryGetCandidateIntersection(&rq), true, dir, true)) {
-                    rayQueryConfirmIntersection(&rq);
-                }
-            }
-            hit = rayQueryGetCommittedIntersection(&rq);
-        }
-        if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
-            return hit.t;
-        }
-        return -1.0;
-    }
-    let ray = RayDesc(RAY_FLAG_TERMINATE_ON_FIRST_HIT, 0xFFu, 0.0, reach, origin, dir);
-    rayQueryInitialize(&rq, scene_tlas, ray);
-    while (rayQueryProceed(&rq)) {
-        if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
-            rayQueryConfirmIntersection(&rq);
-        }
-    }
-    var hit = rayQueryGetCommittedIntersection(&rq);
-    if (hit.kind == RAY_QUERY_INTERSECTION_NONE && posed) {
-        rayQueryInitialize(&rq, posed_tlas, ray);
-        while (rayQueryProceed(&rq)) {
-            if (stops(rayQueryGetCandidateIntersection(&rq), true, dir)) {
-                rayQueryConfirmIntersection(&rq);
-            }
-        }
-        hit = rayQueryGetCommittedIntersection(&rq);
-    }
-    if (hit.kind != RAY_QUERY_INTERSECTION_NONE) {
-        return hit.t;
-    }
-    return -1.0;
 }
 
 // The diffuse light point light `i` gives a face at `p` turned to `n`,
@@ -157,8 +110,11 @@ fn lamp_light(i: u32, p: vec3<f32>, n: vec3<f32>, pbr: bool) -> vec3<f32> {
 }
 
 // The ray from `start` to point light `i`: xyz its direction, w how far it
-// goes, up to the light's own prim (rt_lights.wgsl `light_blocked`); w 0
-// from inside it.
+// goes, up to the bounds of the light's own prim; w 0 from inside them. A
+// hit of the indirect light or of a reflection stops there, where the
+// view's own pixels trace on to the light past every face but its prim's
+// (rt_lights.wgsl `light_ray`): a second ray for what the bounced
+// light hardly shows.
 fn lamp_ray(i: u32, start: vec3<f32>) -> vec4<f32> {
     let lt = lights[i];
     let to_l = lt.pos_radius.xyz - start;

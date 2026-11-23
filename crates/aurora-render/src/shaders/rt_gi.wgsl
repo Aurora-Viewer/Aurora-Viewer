@@ -4,7 +4,10 @@
 // irradiance over pi, which the shading multiplies by the diffuse colour.
 // The sky's own light stays the hemisphere's and the probes'.
 //
-// `cs_gi`, at half resolution: one cosine-weighted ray per pixel and frame
+// `cs_gi`, at half resolution (the High ray tracing quality; Medium and Low
+// trace one pixel of each 3×3 or 4×4, `params.grid`, and every pass below
+// runs at that size; "half resolution" below says the traced pixels): one
+// cosine-weighted ray per pixel and frame
 // from the depth prepass (the first pixel of each 2×2, always: see `cs_gi`),
 // nearest hit. The light is gathered about the mesh's smooth normal where
 // the prepass drew it (rt_history.wgsl `smooth_normal`), as the shading
@@ -12,8 +15,9 @@
 // showed each one as a block of its own light (#993, as GTAO's). The rays
 // start off the triangle's. A hit the view sees takes last frame's lit colour from the
 // scene copy (so the local lights and the light already bounced come back
-// too); one it does not see is shaded here (rt_light.wgsl `hit_radiance`:
-// the sun, the sky and the point lights, a ray to the sun and one to a
+// too); one it does not see is shaded here (gi_hit.wgsl `gi_hit_radiance`:
+// the sun, the sky, or the traced probes' light where they cover the hit
+// (gi.rs; the light bounced more than once), and the point lights, a ray to the sun and one to a
 // lamp drawn among them where the view traces their shadows; measured in a
 // room its lamps light, such hits gave half the light of the same seen on
 // screen before the lamps were counted, and 85 % with them, the rest being
@@ -91,6 +95,17 @@ struct Params {
     scene_clip_from_world: mat4x4<f32>,
     scene_world_from_clip: mat4x4<f32>,
     scene: vec4<f32>,
+    // The places the reflection passes are drawn from (`gi_points`): xyz,
+    // w 1 when there is one. 0: the reflection probe captured this frame,
+    // 1: in front of the mirror.
+    points: array<vec4<f32>, 2>,
+    // The traced pixels' grid (RtTuning, the ray tracing quality): x the
+    // screen pixels a side of one (`params.half` is the screen over it,
+    // each the first pixel of its block), y one over x, z the neighbours
+    // whose picks `cs_gi_reuse` weighs (`NEIGHBOURS` at most); w the
+    // diagnosis of the passes' cost (`AURORA_RT_GI_DIAG`, rt_shadows.rs
+    // `GiDiag`), 0 without one: `DIAG_*`.
+    grid: vec4<f32>,
 };
 
 // Frames the history averages at most on a surface that moved on its own,
@@ -114,11 +129,37 @@ const PICK_RAYS: f32 = 20.0;
 // more grain.
 const LAMP_LAG: f32 = 0.03;
 const PICK_RAYS_MOVING: f32 = 8.0;
-// The pixels around whose picks a pixel weighs, and how far they are taken
-// (half resolution pixels). Two: four took a tenth more of the grain out
-// for half as much time again in the reuse.
+// The pixels around whose picks a pixel weighs at most (`params.grid.z`
+// says how many), and how far they are taken (screen pixels). Two: four
+// took a tenth more of the grain out for half as much time again in the
+// reuse.
 const NEIGHBOURS: u32 = 2u;
-const NEIGHBOUR_REACH: f32 = 30.0;
+const NEIGHBOUR_REACH: f32 = 60.0;
+
+// The screen pixels a side of a traced pixel (`params.grid`).
+fn grid_step() -> i32 {
+    return i32(params.grid.x + 0.5);
+}
+
+// `AURORA_RT_GI_DIAG`'s variants (`params.grid.w`), each leaving out one
+// part of the work to measure it, the image with it: the view's rays take
+// the posed faces as opaque (no alpha test), or leave them out (and so do
+// the reuse's shadow rays), the hits the view does not see are lit with
+// no shadow ray, or the probes are read with no visibility ray.
+const DIAG_POSED_OPAQUE: u32 = 1u;
+const DIAG_NO_POSED: u32 = 2u;
+const DIAG_NO_HIT_SHADOWS: u32 = 3u;
+const DIAG_NO_PROBE_RAYS: u32 = 4u;
+
+fn diag() -> u32 {
+    return u32(params.grid.w + 0.5);
+}
+
+// Whether the avatars' level is traced: there are posed faces, and no
+// diagnosis leaves them out.
+fn posed_traced() -> bool {
+    return params.mode.y > 0.5 && diag() != DIAG_NO_POSED;
+}
 // The most a neighbour's pick gains or loses by this pixel being nearer its
 // hit or more in front of it than the neighbour is (past it the pick is
 // left), and the most a pick's weight is kept at: past them one pick would
@@ -172,6 +213,12 @@ const WEIGHT_MAX: f32 = 1.0e4;
 @group(0) @binding(9) var gi_color: texture_2d<f32>;
 @group(0) @binding(10) var gi_guide: texture_2d<f32>;
 @group(0) @binding(11) var out_gi: texture_storage_2d<rgba16float, write>;
+// the probes' sight of the sky at half resolution (`cs_gi_sky`), read by
+// `cs_gi_filter`
+@group(0) @binding(21) var out_sky: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(22) var sky_tex: texture_2d<f32>;
+// how open the places of `params.points` are, in r (`gi_points`)
+@group(0) @binding(23) var out_points: texture_storage_2d<rgba16float, write>;
 
 // `c` no brighter than `SAMPLE_MAX`, its colour kept: held channel by
 // channel, a strong coloured light turned towards white.
@@ -321,6 +368,19 @@ fn seen_before(p: vec3<f32>, dir: vec3<f32>) -> Seen {
         return out;
     }
     let n = normal_at(px, d);
+    // Last frame showed `p` there only if its surface there was `p`, as its
+    // guide says (half resolution: the distance from last frame's eye and
+    // the normal, which faced that eye). A view that went through a thin
+    // wall saw its other side there, and its outer light lit the room for
+    // a second. (Looser than the photo's: the guide is of the 2×2's first
+    // pixel, a little off `p` on a face seen aslant.)
+    let q = min(vec2<i32>(before * params.grid.y), vec2<i32>(params.half.xy) - vec2<i32>(1));
+    let was = textureLoad(prev_guide, q, 0);
+    let expected = distance(p, params.prev_camera.xyz);
+    if (params.mode.w < 0.5 || was.z <= 0.0 || abs(was.z - expected) > 0.05 + 0.03 * expected
+        || dot(unpack_normal(was.xy), n) < 0.5) {
+        return out;
+    }
     out.light = textureLoad(scene_tex, vec2<i32>(before), 0).rgb;
     out.normal = select(n, -n, dot(n, dir) > 0.0);
     out.seen = true;
@@ -367,7 +427,7 @@ fn kept(back: Back, n: vec3<f32>) -> Kept {
         return k;
     }
     // a half resolution pixel is the first of its 2×2
-    let c = (back.at - vec2<f32>(0.5)) * 0.5;
+    let c = (back.at - vec2<f32>(0.5)) * params.grid.y;
     let corner = vec2<i32>(floor(c));
     let f = c - floor(c);
     var weight = 0.0;
@@ -457,7 +517,7 @@ fn held_at(back: Back, n: vec3<f32>) -> vec2<i32> {
     if (back.at.x < 0.0) {
         return best;
     }
-    let c = (back.at - vec2<f32>(0.5)) * 0.5;
+    let c = (back.at - vec2<f32>(0.5)) * params.grid.y;
     let corner = vec2<i32>(floor(c));
     let f = c - floor(c);
     var most = 0.0;
@@ -473,8 +533,17 @@ fn held_at(back: Back, n: vec3<f32>) -> vec2<i32> {
     return best;
 }
 
+// The trace's pass: `gi_trace_pixel`, its reads of the probes counted for
+// `AURORA_RT_GI_DIAG=count` (gi.rs `PLAIN_HOOKS` count nothing,
+// shaders/gi_count.wgsl), whatever `return` it ends on.
 @compute @workgroup_size(8, 8)
-fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
+fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) group: vec3<u32>) {
+    gi_count_start(0u, group);
+    gi_trace_pixel(id);
+    gi_count_flush();
+}
+
+fn gi_trace_pixel(id: vec3<u32>) {
     let hp = vec2<i32>(id.xy);
     if (any(hp >= vec2<i32>(params.half.xy))) {
         return;
@@ -484,7 +553,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     // 2×2 across an edge was one face then the other: its history and what
     // `cs_gi_filter` spread from it changed with the frame, and the edges
     // glittered with the view still.
-    let pixel = hp * 2;
+    let pixel = hp * grid_step();
     let depth = textureLoad(depth_tex, pixel, 0);
     // reversed depth: 0 is the sky
     if (depth <= 0.0) {
@@ -497,16 +566,22 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
     let n = smooth_normal(pixel, flat);
     let dist = distance(world, params.camera.xyz);
     let origin = ray_origin(world, flat, dist);
-    let posed = params.mode.y > 0.5;
+    let posed = posed_traced();
+    gi_probe_rays = diag() != DIAG_NO_PROBE_RAYS;
+    let posed_flags = select(0u, RAY_FLAG_FORCE_OPAQUE, diag() == DIAG_POSED_OPAQUE);
     // with no history (a photo, a new size), more rays at once
     let rays = select(1u, RESET_RAYS, params.mode.w < 0.5);
     var pick = no_pick();
     // the worths weighed so far, each over how likely its hit was drawn
     var sum = 0.0;
-    // the queries of every ray, declared out of the loop: one declared in it
-    // is set to zero again at each pass, an assignment Metal's compiler
-    // refuses for a ray query (rt_shadows.rs
-    // `no_ray_query_is_declared_in_a_loop`)
+    // The ray queries are declared out of the loop and initialised again at
+    // each ray. naga 30 gives a variable declared in a loop's body a store of
+    // its zero value at each turn, and a ray query's is an `OpConstantNull`
+    // of `OpTypeRayQueryKHR`, which SPIR-V forbids (an opaque type has no
+    // null): AMD's compiler (LLPC, an RX 9070 XT) crashed on it in
+    // vkCreateComputePipelines (#4596), and it is an assignment Metal's
+    // compiler refuses for a ray query. `rt_shaders_have_no_null_ray_query`
+    // and `no_ray_query_is_declared_in_a_loop` check every traced pass.
     var rq: ray_query;
     var rp: ray_query;
     for (var ray = 0u; ray < rays; ray++) {
@@ -516,7 +591,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
         var record = 0u;
         var primitive = 0u;
         var bary = vec2<f32>(0.0);
-        rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, 0xFFu, 0.0, params.mode.x, origin, dir));
+        rayQueryInitialize(&rq, scene_tlas, RayDesc(0u, SOLID, 0.0, params.mode.x, origin, dir));
         while (rayQueryProceed(&rq)) {
             if (stops(rayQueryGetCandidateIntersection(&rq), false, dir)) {
                 rayQueryConfirmIntersection(&rq);
@@ -532,7 +607,7 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         if (posed) {
             let reach = select(params.mode.x, t, t >= 0.0);
-            rayQueryInitialize(&rp, posed_tlas, RayDesc(0u, 0xFFu, 0.0, reach, origin, dir));
+            rayQueryInitialize(&rp, posed_tlas, RayDesc(posed_flags, SOLID, 0.0, reach, origin, dir));
             while (rayQueryProceed(&rp)) {
                 if (stops(rayQueryGetCandidateIntersection(&rp), true, dir)) {
                     rayQueryConfirmIntersection(&rp);
@@ -563,8 +638,12 @@ fn cs_gi(@builtin(global_invocation_id) id: vec3<u32>) {
             if (before.seen) {
                 one = before.light;
             } else {
-                let lamps = Lamps(u32(params.lamps.x), params.lamps.y > 0.5, chance(id.xy, frame, 40u + ray).x);
-                one = hit_radiance(params.lit, s, hit, 2.0 + log2(1.0 + t), 0.01 + 0.002 * (dist + t), params.mode.x, posed, lamps);
+                // (the diagnosis with no shadow ray: no lamp's, and a reach
+                // of 0 for the sun's)
+                let shadows = diag() != DIAG_NO_HIT_SHADOWS;
+                let lamps = Lamps(u32(params.lamps.x), params.lamps.y > 0.5 && shadows, chance(id.xy, frame, 40u + ray).x);
+                let reach = select(0.0, params.mode.x, shadows);
+                one = gi_hit_radiance(params.lit, s, hit, dir * t, 2.0 + log2(1.0 + t), 0.01 + 0.002 * (dist + t), reach, posed, lamps);
             }
             facing = s.normal;
         }
@@ -645,7 +724,7 @@ fn sees(origin: vec3<f32>, dist: f32, hit: vec3<f32>) -> bool {
     let to = hit - origin;
     let far = length(to);
     let reach = far - (0.02 + 0.004 * (dist + far));
-    return reach <= 0.0 || unblocked(origin, to / far, reach, params.mode.y > 0.5);
+    return reach <= 0.0 || unblocked(origin, to / far, reach, posed_traced());
 }
 
 @compute @workgroup_size(8, 8)
@@ -655,7 +734,7 @@ fn cs_gi_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let frame = u32(params.mode.z);
-    let pixel = hp * 2;
+    let pixel = hp * grid_step();
     let depth = textureLoad(depth_tex, pixel, 0);
     if (depth <= 0.0) {
         textureStore(out_color, hp, vec4<f32>(0.0));
@@ -683,26 +762,29 @@ fn cs_gi_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     // the golden angle and all of them anew each frame
     let u = chance(id.xy, frame, 21u);
     let last = vec2<i32>(params.half.xy) - vec2<i32>(1);
+    let taken = min(u32(params.grid.z + 0.5), NEIGHBOURS);
     for (var k = 0u; k < NEIGHBOURS; k++) {
         near_rays[k] = 0.0;
-        let radius = NEIGHBOUR_REACH * sqrt((f32(k) + u.x) / f32(NEIGHBOURS));
+    }
+    for (var k = 0u; k < taken; k++) {
+        let radius = NEIGHBOUR_REACH * params.grid.y * sqrt((f32(k) + u.x) / f32(taken));
         let angle = 2.0 * PI * (u.y + f32(k) * 0.61803399);
         let q = hp + vec2<i32>(round(vec2<f32>(cos(angle), sin(angle)) * radius));
         if (any(q < vec2<i32>(0)) || any(q > last) || all(q == hp)) {
             continue;
         }
-        let depth_q = textureLoad(depth_tex, q * 2, 0);
+        let depth_q = textureLoad(depth_tex, q * grid_step(), 0);
         if (depth_q <= 0.0) {
             continue;
         }
         // on this pixel's face: in its plane and facing as it does, where
         // the two receive most of the same light
-        let at_q = unproject(q * 2, depth_q);
+        let at_q = unproject(q * grid_step(), depth_q);
         if (abs(dot(flat, at_q - world)) > 0.01 + 0.01 * dist) {
             continue;
         }
-        let flat_q = normal_at(q * 2, depth_q);
-        let n_q = smooth_normal(q * 2, flat_q);
+        let flat_q = normal_at(q * grid_step(), depth_q);
+        let n_q = smooth_normal(q * grid_step(), flat_q);
         if (dot(n, n_q) < 0.9) {
             continue;
         }
@@ -804,41 +886,130 @@ fn cs_gi_reuse(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(out_guide, hp, vec4<f32>(pack_normal(n), dist, moment));
 }
 
+// The share of the sky's ambient the traced probes let through at each
+// half resolution pixel (gi_sample.wgsl `gi_sky`; common.wgsl
+// `screen_sky`), at the place and with the normal its guide holds: the
+// whole sky where it holds no face. At half resolution, as the indirect
+// light: it changes slowly over the screen, and at each full resolution
+// pixel it cost 0.2 ms on an RTX 4090 at 2560 x 1370 (2026-11-21).
+// How open the places the reflection passes are drawn from are (texel i
+// for `params.points[i]`), 1 where there is none: the passes see no screen
+// of their own, so their faces take the openness of the place they are
+// seen from (common.wgsl `reflection_open`). A probe's capture and the
+// mirror otherwise lit a closed room with the whole sky's ambient and
+// mirrored the outside on its shiny faces, which the view's shiny faces
+// reflect in turn.
+fn gi_points() {
+    for (var i = 0u; i < 2u; i++) {
+        var open = 1.0;
+        if (params.points[i].w > 0.0) {
+            open = gi_open_at(params.points[i].xyz);
+        }
+        textureStore(out_points, vec2<i32>(i32(i), 0), vec4<f32>(open, open, 0.0, 0.0));
+    }
+}
+
+// The sky's pass: `gi_sky_pixel`, counted as `cs_gi`.
 @compute @workgroup_size(8, 8)
-fn cs_gi_filter(@builtin(global_invocation_id) id: vec3<u32>) {
+fn cs_gi_sky(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) group: vec3<u32>) {
+    gi_count_start(1u, group);
+    gi_sky_pixel(id);
+    gi_count_flush();
+}
+
+fn gi_sky_pixel(id: vec3<u32>) {
+    gi_probe_rays = diag() != DIAG_NO_PROBE_RAYS;
+    if (all(id.xy == vec2<u32>(0u))) {
+        gi_points();
+    }
+    let hp = vec2<i32>(id.xy);
+    if (any(hp >= vec2<i32>(params.half.xy))) {
+        return;
+    }
+    let guide = textureLoad(gi_guide, hp, 0);
+    // (a half resolution pixel is the first of its 2×2)
+    let pixel = hp * grid_step();
+    let depth = textureLoad(depth_tex, pixel, 0);
+    // (y: how open the place is, read by the shading straight from this
+    // texture, common.wgsl `screen_open`)
+    var sky = vec2<f32>(1.0);
+    if (guide.z > 0.0 && depth > 0.0) {
+        let pos = unproject(pixel, depth);
+        sky = gi_sky_view(pos, unpack_normal(guide.xy), params.camera.xyz - pos);
+    }
+    textureStore(out_sky, hp, vec4<f32>(sky, 0.0, 0.0));
+}
+
+// `cs_gi_filter`'s traced pixels, read once by its workgroup: the 8 x 8
+// screen pixels of a workgroup take their 4 x 4 taps among 7 x 7 traced
+// pixels at most (5 x 5 at a step of 4), each read here by one invocation
+// in the place of up to sixteen. Each holds what the traced pixel at
+// `GiTile`'s place, clamped to the image, gives: the guide's distance, the
+// light and the sky's share. The same values in the same order: the image
+// is the same as with each tap read on its own.
+const GI_TILE: u32 = 8u;
+var<workgroup> gi_tile_dist: array<f32, 64>;
+var<workgroup> gi_tile_light: array<vec3<f32>, 64>;
+var<workgroup> gi_tile_sky: array<f32, 64>;
+
+@compute @workgroup_size(8, 8)
+fn cs_gi_filter(
+    @builtin(global_invocation_id) id: vec3<u32>,
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(local_invocation_index) local: u32,
+) {
+    // The tile's first traced pixel: the one before the first the
+    // workgroup's first pixel takes (its taps go from -1 to 2).
+    let last = vec2<i32>(params.half.xy) - vec2<i32>(1);
+    let first = vec2<i32>(floor(vec2<f32>(group.xy * GI_TILE) * params.grid.y)) - vec2<i32>(1);
+    {
+        let q = clamp(first + vec2<i32>(i32(local % GI_TILE), i32(local / GI_TILE)), vec2<i32>(0), last);
+        gi_tile_dist[local] = textureLoad(gi_guide, q, 0).z;
+        gi_tile_light[local] = textureLoad(gi_color, q, 0).rgb;
+        gi_tile_sky[local] = textureLoad(sky_tex, q, 0).r;
+    }
+    workgroupBarrier();
     let pixel = vec2<i32>(id.xy);
     if (any(pixel >= vec2<i32>(params.screen.xy))) {
         return;
     }
     let depth = textureLoad(depth_tex, pixel, 0);
     if (depth <= 0.0) {
-        textureStore(out_gi, pixel, vec4<f32>(0.0));
+        // (a: the whole sky, so that a face's edge sampled towards the sky
+        // keeps its ambient)
+        textureStore(out_gi, pixel, vec4<f32>(0.0, 0.0, 0.0, 1.0));
         return;
     }
     let dist = distance(unproject(pixel, depth), params.camera.xyz);
     // a half resolution pixel is the first of its 2×2
-    let centre = vec2<f32>(pixel) * 0.5;
+    let centre = vec2<f32>(pixel) * params.grid.y;
     let base = vec2<i32>(floor(centre));
-    let last = vec2<i32>(params.half.xy) - vec2<i32>(1);
     var sum = vec3<f32>(0.0);
+    var sky_sum = 0.0;
     var weight = 0.0;
     for (var y = -1; y <= 2; y++) {
         for (var x = -1; x <= 2; x++) {
-            let q = clamp(base + vec2<i32>(x, y), vec2<i32>(0), last);
-            let qd = textureLoad(gi_guide, q, 0).z;
+            let at = base + vec2<i32>(x, y);
+            let q = clamp(at, vec2<i32>(0), last);
+            let k = u32(at.x - first.x) + GI_TILE * u32(at.y - first.y);
+            let qd = gi_tile_dist[k];
             if (qd <= 0.0) {
                 continue;
             }
-            let c = textureLoad(gi_color, q, 0);
             let off = vec2<f32>(q) - centre;
             // nearer and of the same depth weigh more
             let w_space = exp(-dot(off, off));
             let w_depth = exp(-abs(qd - dist) / (0.01 + 0.02 * dist));
             let w = w_space * w_depth;
-            sum += c.rgb * w;
+            sum += gi_tile_light[k] * w;
+            sky_sum += gi_tile_sky[k] * w;
             weight += w;
         }
     }
     let gi = select(vec3<f32>(0.0), sum / max(weight, 1e-6), weight > 1e-4);
-    textureStore(out_gi, pixel, vec4<f32>(gi * params.half.z, 1.0));
+    // a: the share of the sky's ambient the traced probes let through
+    // (`cs_gi_sky`, upsampled as the light; common.wgsl `screen_sky`), the
+    // whole sky where no half resolution pixel holds the face
+    let sky = select(1.0, sky_sum / max(weight, 1e-6), weight > 1e-4);
+    textureStore(out_gi, pixel, vec4<f32>(gi * params.half.z, sky));
 }

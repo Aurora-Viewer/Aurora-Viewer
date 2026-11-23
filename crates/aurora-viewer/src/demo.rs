@@ -205,10 +205,14 @@ pub mod mask_255;
 pub mod mirror;
 #[path = "demo_missing_texture.rs"]
 pub mod missing_texture;
-/// A blocked resident talks in nearby chat, the history hiding, folding or
-/// greying the lines (AURORA_DEMO_MUTED_CHAT).
 #[path = "demo_muted_chat.rs"]
 pub mod muted_chat;
+/// A blocked resident talks in nearby chat, the history hiding, folding or
+/// greying the lines (AURORA_DEMO_MUTED_CHAT).
+/// A room lit by the sun through a doorway and by emissive strips, for the
+/// traced global illumination (AURORA_DEMO_NEON_ROOM).
+#[path = "demo_neon_room.rs"]
+pub mod neon_room;
 /// The real or the Legacy Viewer's night sky, the camera on the stars
 /// (AURORA_DEMO_NIGHT_SKY).
 #[path = "demo_night_sky.rs"]
@@ -404,6 +408,10 @@ pub mod worn;
 /// Walkable floor of the demo (plaza top, else the terrain), for the
 /// offline movement stand-in.
 pub fn floor_at(x: f32, y: f32) -> f32 {
+    // AURORA_DEMO_NEON_ROOM: the room's floor, over the ground
+    if let Some(floor) = neon_room::floor_under(x, y) {
+        return floor;
+    }
     let (cx, cy) = (140.0, 130.0);
     let terrain = height(x, y);
     if (x - cx).hypot(y - cy) <= 12.0 {
@@ -5198,12 +5206,13 @@ pub fn events() -> Vec<NetEvent> {
         let across = Vec3::new(-yaw.sin(), yaw.cos(), 0.0);
         let center = Vec3::new(138.5, 125.5, 0.0);
         let floor = height(cx, cy) + 0.35;
+        let alpha = panel_alpha(std::env::var("AURORA_DEMO_PANEL_ALPHA").ok().as_deref());
         for (k, (tex, mat, label)) in alpha_panels().iter().enumerate() {
             let p = center + across * ((k as f32 - 2.5) * 2.1);
             let mut t = TextureEntry::default();
             for f in t.faces.iter_mut() {
                 f.texture = *tex;
-                f.color = [1.0, 1.0, 1.0, 1.0];
+                f.color = [1.0, 1.0, 1.0, alpha];
                 f.material_id = mat.unwrap_or(Uuid::nil());
             }
             add(prim(
@@ -6048,6 +6057,121 @@ pub fn events() -> Vec<NetEvent> {
             id += 1;
         }
     }
+    // AURORA_DEMO_STAINED_GLASS=sun|lamp: a canopy of three panes, red,
+    // green and blue at an alpha of 0.3, 0.5 and 0.7 (the panes of PR
+    // #3821's demo, circuskid), 2.2 m over a white slab ahead of the start
+    // position: with the shadows traced the light they let through colours
+    // the slab, each pane by mix(1, rgb, a) * (1 - a) (aurora-render
+    // rt_common.wgsl `glass_passes`). `lamp` adds a white lamp 1.4 m over
+    // the middle pane, for the night (AURORA_DEMO_TOD=4).
+    if let Ok(mode) = std::env::var("AURORA_DEMO_STAINED_GLASS") {
+        let floor = height(cx, cy) + 0.35;
+        let (x, y) = (136.0, 130.0);
+        add(prim(
+            id,
+            Vec3::new(x, y, floor + 0.02),
+            Quat::IDENTITY,
+            Vec3::new(3.0, 5.0, 0.04),
+            boxp,
+            te([0.9, 0.9, 0.9, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+        for (k, color) in [[0.9, 0.1, 0.08, 0.3], [0.1, 0.8, 0.15, 0.5], [0.1, 0.25, 0.95, 0.7]]
+            .into_iter()
+            .enumerate()
+        {
+            add(prim(
+                id,
+                Vec3::new(x, y + (k as f32 - 1.0) * 1.3, floor + 2.2),
+                Quat::IDENTITY,
+                Vec3::new(1.2, 1.2, 0.02),
+                boxp,
+                te(color, 0, false, 0.0),
+                ExtraParams::default(),
+                "",
+            ));
+            id += 1;
+        }
+        if mode.trim() == "lamp" {
+            add(prim(
+                id,
+                Vec3::new(x, y, floor + 3.6),
+                Quat::IDENTITY,
+                Vec3::splat(0.2),
+                sphere,
+                te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+                ExtraParams {
+                    // (bright on the slab: a weak lamp's colour is lost in
+                    // the night's ambiance, which the panes do not colour)
+                    light: Some(LightParams {
+                        color: [1.0, 1.0, 1.0, 1.0],
+                        radius: 12.0,
+                        cutoff: 0.0,
+                        falloff: 0.0,
+                    }),
+                    ..Default::default()
+                },
+                "",
+            ));
+            id += 1;
+        }
+    }
+    // AURORA_DEMO_LIGHT_PANEL=1: a ceiling light panel, 2.4 m square, 2.6 m
+    // over a white slab, its light at its middle, and a cube hung 1.2 m
+    // under one of its sides, inside the sphere that holds the panel: the
+    // traced rays pass the panel alone, so the cube casts on the slab;
+    // with AURORA_RT_EMITTER=sphere they stop at the sphere and it casts
+    // nothing (aurora-render rt_common.wgsl `shadows_but`). For the night
+    // (AURORA_DEMO_TOD=4).
+    if std::env::var("AURORA_DEMO_LIGHT_PANEL").is_ok() {
+        let floor = height(cx, cy) + 0.35;
+        let (x, y) = (136.0, 122.0);
+        add(prim(
+            id,
+            Vec3::new(x, y, floor + 0.02),
+            Quat::IDENTITY,
+            Vec3::new(5.0, 5.0, 0.04),
+            boxp,
+            te([0.9, 0.9, 0.9, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+        add(prim(
+            id,
+            Vec3::new(x, y, floor + 2.6),
+            Quat::IDENTITY,
+            Vec3::new(2.4, 2.4, 0.05),
+            boxp,
+            te([1.0, 1.0, 1.0, 1.0], 0, true, 0.0),
+            ExtraParams {
+                light: Some(LightParams {
+                    color: [0.8, 0.75, 0.68, 1.0],
+                    radius: 10.0,
+                    cutoff: 0.0,
+                    falloff: 0.0,
+                }),
+                ..Default::default()
+            },
+            "",
+        ));
+        id += 1;
+        // (1.34 m from the light, inside the panel's 1.7 m sphere; its
+        // shadow lands 1.3 m from the slab's middle)
+        add(prim(
+            id,
+            Vec3::new(x + 0.6, y, floor + 1.4),
+            Quat::IDENTITY,
+            Vec3::splat(0.3),
+            boxp,
+            te([0.8, 0.3, 0.2, 1.0], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+        id += 1;
+    }
     // AURORA_DEMO_TEXANIM=1: texture animations (llSetTextureAnim) on a row
     // of panels facing the start position, in place of the alpha panels
     if texanim {
@@ -6458,6 +6582,12 @@ pub fn events() -> Vec<NetEvent> {
         }
         id += mirror::COUNT;
     }
+    if neon_room::enabled() {
+        for o in neon_room::objects(id) {
+            add(o);
+        }
+        id += neon_room::COUNT;
+    }
     // AURORA_DEMO_HALO: a wide translucent pane 3 m ahead of the start
     // position, facing the camera, so that the avatar stands between the
     // camera and the pane (issue #556: no halo around the avatar on it)
@@ -6778,6 +6908,9 @@ pub fn events() -> Vec<NetEvent> {
     // AURORA_DEMO_MIRROR: in front of the mirror, facing it
     let (start, look_at) = if mirror::enabled() {
         mirror::start()
+    } else if neon_room::enabled() {
+        // AURORA_DEMO_NEON_ROOM: inside the room, facing its pink strip
+        neon_room::start()
     } else {
         (start, Vec3::new(0.8, 0.4, 0.0))
     };
@@ -9854,6 +9987,31 @@ fn panel_scale(k: usize, label: &str) -> Vec3 {
     }
 }
 
+/// Face alpha of the alpha-mode test panels: AURORA_DEMO_PANEL_ALPHA=<0..1>
+/// (0.98 is the build floater's 2 % transparency, #4517); opaque without it
+/// or with a value that does not parse.
+fn panel_alpha(spec: Option<&str>) -> f32 {
+    spec.and_then(|s| s.trim().parse::<f32>().ok())
+        .filter(|a| a.is_finite())
+        .map_or(1.0, |a| a.clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod panel_alpha_tests {
+    use super::panel_alpha;
+
+    #[test]
+    fn the_panel_alpha_is_opaque_unless_a_valid_value_is_given() {
+        assert_eq!(panel_alpha(None), 1.0);
+        assert_eq!(panel_alpha(Some("0.98")), 0.98);
+        assert_eq!(panel_alpha(Some(" 0.5 ")), 0.5);
+        assert_eq!(panel_alpha(Some("2")), 1.0);
+        assert_eq!(panel_alpha(Some("-1")), 0.0);
+        assert_eq!(panel_alpha(Some("NaN")), 1.0);
+        assert_eq!(panel_alpha(Some("half")), 1.0);
+    }
+}
+
 /// (texture, legacy material, hover text) of the test panels;
 /// AURORA_DEMO_MASK_ZERO=1 gives the holed one a Mask material with a
 /// cutoff of 0, drawn whole like the Legacy Viewer.
@@ -10191,6 +10349,7 @@ pub fn pbr_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     if legacy_bump::enabled() {
         list.push((legacy_bump::PBR_MATERIAL, legacy_bump::pbr_material()));
     }
+    list.extend(neon_room::materials());
     for (mat, double_sided) in MAT_PBR_SIDED.into_iter().zip([false, true]) {
         list.push((
             mat,
