@@ -1657,8 +1657,9 @@ when unfocused") is ignored during a screenshot.
   focuses the ground when that is what the click meets. Open the build
   tools and Alt+click again: the camera orbits the ignored prim. An
   ignored prim with nothing behind it focuses nothing. The Focus tool
-  (build tools already open) still focuses the ignored prim. There is no
-  offline demo for this; the click action belongs to a rezzed prim.
+  (build tools already open) still focuses the ignored prim. Offline:
+  `AURORA_DEMO_ACTIONS=ignore-alt` and `ignore-alt-build` (see
+  `AURORA_DEMO_ACTIONS`).
 - **`AURORA_TP_SCREEN`**: `legacy` brings back the teleport screen of
   before 2026-10-17 (0.8 s at least after the arrival, then a bar easing at
   2.6 per second up to 98.5 %), `alt` uses it every other teleport, starting
@@ -2089,7 +2090,7 @@ when unfocused") is ignored during a screenshot.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying |
+| `AURORA_DEMO_ACTIONS=<mode>` | Cursors, object clicks, buying and paying, Alt+click through an ignored prim |
 | `AURORA_DEMO_HOVER_TIPS=<form>[:all][:noland][:avatars]` | World tooltips over objects, avatars and land (`avatars`: avatars alone) |
 | `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu, every scripted object's window |
@@ -3135,6 +3136,13 @@ No real L$ and no connection to a grid.
 - `ignore` goes through a visible screen and opens Buy behind it; `disabled`
   stops the click without touching; `ignore-build` selects this screen in
   build mode.
+- `ignore-alt` (#3288): Alt+click on the same screen, set to Ignore Object:
+  the camera focuses the Buy cube behind it. `ignore-alt-build` opens the
+  build tools first: the camera focuses the screen. The log has `demo alt
+  focus: point=…, prim=Some(971)` (`Some(981)` with `-build`), then the
+  `demo action click` line with the camera's `focus` (the cube's centre, or
+  the screen's). The press is released at once, so the view itself does not
+  move: the log is the check.
 - `open` shows three simulated content items.
 - `open-multi` (#1410): the Open window receives Ctrl+A at frame 420;
   every contents row is selected together. Ctrl/Shift clicks, a selected-row

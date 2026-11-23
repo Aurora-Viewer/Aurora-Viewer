@@ -1552,11 +1552,33 @@ impl Scene {
         among: Option<&[usize]>,
         mode: FacePick,
     ) -> Option<Vec3> {
+        self.surface_behind_ignored(world, ray, (0.0, far), true, now, among, mode)
+            .map(|(point, _)| point)
+    }
+
+    /// The nearest surface that is not ignored along `ray`, between the
+    /// distances `span` (from, exclusive; up to): its point and its object,
+    /// None for the ground. `avatars`: their boxes count too.
+    #[allow(clippy::too_many_arguments)] // The trace's bounds, objects and alpha policy.
+    pub(super) fn surface_behind_ignored(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        span: (f32, f32),
+        avatars: bool,
+        now: Instant,
+        among: Option<&[usize]>,
+        mode: FacePick,
+    ) -> Option<(Vec3, Option<usize>)> {
+        let (from, far) = span;
         let mut nearest = far;
-        let mut found = false;
+        let mut found = None;
         for (idx, g) in self.pick_objects(among) {
             let Some(o) = world.objects.get(idx) else { continue };
             if g.faces.is_empty() || g.hud || o.extra.reflection_probe.is_some() || o.click_action == crate::interaction::code::IGNORE {
+                continue;
+            }
+            if g.is_avatar && !avatars {
                 continue;
             }
             if !g.is_avatar && !ray_may_hit(g, ray) {
@@ -1575,16 +1597,16 @@ impl Scene {
                 self.hit_distance(world, idx, ray, now, false, among)
             };
             if let Some(t) = t
-                && t > 0.0
+                && t > from
                 && t < nearest
             {
                 nearest = t;
-                found = true;
+                found = Some(Some(idx));
             }
         }
         // Terrain can also be the target behind an ignored screen.
-        let mut previous = 0.0;
-        let mut t = 1.0;
+        let mut previous = from;
+        let mut t = from + 1.0;
         while t < nearest {
             let p = ray.0 + ray.1 * t;
             if world.ground_height(p).is_some_and(|z| p.z <= z) {
@@ -1600,13 +1622,13 @@ impl Scene {
                     }
                 }
                 nearest = hi;
-                found = true;
+                found = Some(None);
                 break;
             }
             previous = t;
             t += 1.0;
         }
-        found.then_some(ray.0 + ray.1 * nearest)
+        found.map(|idx| (ray.0 + ray.1 * nearest, idx))
     }
 
     /// The nearest surface the CPU finds along `ray` between `from` and

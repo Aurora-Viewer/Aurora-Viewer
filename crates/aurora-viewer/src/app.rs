@@ -5858,15 +5858,8 @@ impl App {
         // the build tools are open. An empty drawn answer in the diagnostic
         // wait mode still uses the older depth.
         let alt_focus = alt.then(|| {
-            self.scene.alt_focus_target(
-                &self.world,
-                &picked.drawn,
-                ray,
-                picked.visible_point(),
-                self.build.open,
-                self.settings.draw_distance,
-                now,
-            )
+            self.scene
+                .alt_focus_target(&self.world, &picked.drawn, ray, self.build.open, self.settings.draw_distance, now)
         });
         let hit = if let Some((point, _)) = alt_focus {
             point.or_else(|| {
@@ -6024,6 +6017,13 @@ impl App {
                     _ if on_avatar => own_idx,
                     _ => self.scene.interaction_at(&self.world, p, now, self.build.open),
                 };
+                if self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
+                    log::info!(
+                        "demo alt focus: point={p:?}, prim={:?}, build={}",
+                        idx.and_then(|i| self.world.objects.get(i)).map(|o| o.key.local_id),
+                        self.build.open
+                    );
+                }
                 let object = idx.and_then(|i| crate::camera::pick_focus_object(&self.world, i, now));
                 self.camera.alt_focus(p, object, ray, &mut self.world.agent, &self.settings.camera);
                 self.camera.begin_drag(false);
@@ -8301,6 +8301,17 @@ impl App {
             } else if mode.starts_with("buy-touch-menu") {
                 self.on_ctx_action(ui::context::CtxAction::Buy(crate::demo::action_id(id)));
                 log::info!("demo menu purchase: prim={id}, dialog={}", self.interactions.dialog.is_some());
+            } else if mode.starts_with("ignore-alt") {
+                // Alt+click on the ignored screen: the camera focuses the
+                // Buy cube behind it, or the screen with the build tools
+                // open (`-build`); the press keeps its Alt when it runs
+                // again with the depth (click_pick.rs)
+                if mode.ends_with("-build") {
+                    self.build.open_build(crate::build::Tool::Edit);
+                }
+                self.alt = true;
+                self.on_left_press();
+                self.alt = false;
             } else if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
                 self.click(click_pick::Click::Build);
