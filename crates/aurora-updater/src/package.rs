@@ -1,4 +1,5 @@
-//! Verify the published SHA-256 before extracting into an empty sibling.
+//! Verify the SHA-256 the release signed (`signature`, checked by
+//! `feed::Source::check`) before extracting into an empty sibling.
 //! Archive names are validated for Windows even when the tests run elsewhere:
 //! a ZIP for the Windows package, a tar.gz for the Linux one.
 
@@ -76,12 +77,8 @@ pub async fn download(
     cancel.check().map_err(|_| Failure::Network)?;
     let client = source.client().map_err(|e| failure(Failure::Network, e))?;
     let archive = release.archive.as_ref().ok_or(Failure::Unsupported)?;
-    let checksum = release.checksum.as_ref().ok_or(Failure::Unsupported)?;
-    let expected = source
-        .bytes(&client, &checksum.browser_download_url, 1024)
-        .await
-        .map_err(|e| failure(Failure::Network, e))?;
-    let expected = parse_checksum(&expected, &archive.name).map_err(|e| failure(Failure::Integrity, e))?;
+    // signed: `Source::check` checked it against the release keys
+    let expected = release.sha256.ok_or(Failure::Unsupported)?;
     let format = Format::of(&archive.name).ok_or(Failure::Unsupported)?;
     let path = work.join(format.file());
     let fetch = Fetch {
@@ -166,7 +163,9 @@ pub(crate) fn failure(kind: Failure, error: anyhow::Error) -> Failure {
     kind
 }
 
-fn parse_checksum(bytes: &[u8], filename: &str) -> Result<[u8; 32]> {
+/// The SHA-256 a `.sha256` file gives for `filename`: `<hex>  <name>`, as
+/// `Get-FileHash` and `sha256sum` write it.
+pub(crate) fn parse_checksum(bytes: &[u8], filename: &str) -> Result<[u8; 32]> {
     let text = std::str::from_utf8(bytes)?;
     let fields: Vec<&str> = text.split_whitespace().collect();
     ensure!(

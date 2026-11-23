@@ -10297,7 +10297,6 @@ build-compact-summary-details = { " - " }{ $capacity }    { $counts }
 build-compact-link-action = Koble sammen
 build-compact-unlink-action = Koble fra
 build-compact-link-value = Link { $number }
-build-compact-face-value = Flate { $number }
 build-compact-move = Flytt
 build-compact-rotate = Roter (Ctrl)
 build-compact-stretch = Strekk (Ctrl+Shift)
