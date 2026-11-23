@@ -17,25 +17,30 @@ use std::time::{Duration, Instant};
 const MAX_RESENDS: u8 = 3;
 const DEDUPE_WINDOW: usize = 2048;
 const ACK_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+/// `mHeartbeatInterval` of `LLCircuitData`: the time between two pings, the
+/// session's `PING_INTERVAL` (5 s, as `LLStartUp` sets it, llstartup.cpp).
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Wait before an ordinary reliable packet is resent.
 ///
 /// `LLMessageSystem::sendReliable` (indra/llmessage/message.cpp) uses
 /// `max(LL_MINIMUM_RELIABLE_TIMEOUT_SECONDS, LL_RELIABLE_TIMEOUT_FACTOR *
 /// getPingDelayAveraged())`. `LLCircuitData::getPingDelayAveraged`
-/// (indra/llmessage/llcircuit.cpp) is the smoothed ping, at least the time
-/// the oldest ping has been unanswered, and at most `LL_AVERAGED_PING_MAX`
-/// (2 s, llcircuit.h). A 1 s average therefore waits 5 s. There is no
-/// separate ceiling on the wait. The 100 ms ping floor
+/// (indra/llmessage/llcircuit.cpp) is the smoothed ping or
+/// `getPingInTransitTime`, whichever is larger, at most
+/// `LL_AVERAGED_PING_MAX` (2 s, llcircuit.h). A 1 s average therefore waits
+/// 5 s, and any unanswered ping already counts at least 4 s
+/// (`Circuit::ping_in_transit_time`), so it waits the full 10 s. There is
+/// no separate ceiling on the wait. The 100 ms ping floor
 /// (`LL_AVERAGED_PING_MIN`) cannot change this: five times 100 ms is under
 /// the 1 s minimum. `averaged` is already smoothed in `on_ping_reply`, not
 /// a raw sample.
-fn reliable_timeout(averaged: Duration, ping_out: Option<Duration>) -> Duration {
+fn reliable_timeout(averaged: Duration, in_transit: Duration) -> Duration {
     /// `LL_AVERAGED_PING_MAX`.
     const PING_MAX: Duration = Duration::from_secs(2);
     /// `LL_MINIMUM_RELIABLE_TIMEOUT_SECONDS`.
     const MINIMUM: Duration = Duration::from_secs(1);
-    let delay = ping_out.unwrap_or_default().max(averaged).min(PING_MAX);
+    let delay = in_transit.max(averaged).min(PING_MAX);
     (delay * 5).max(MINIMUM)
 }
 
@@ -101,6 +106,11 @@ pub struct Circuit {
     /// Oldest ping still unanswered: new pings must not shorten the loss
     /// grace during a stall (getPingInTransitTime, llcircuit.cpp).
     ping_wait_started: Option<Instant>,
+    /// `mPingsInTransit`: pings sent since the last answered one
+    /// (`pingTimerStart` adds one, `pingTimerStop` resets it).
+    pings_in_transit: u32,
+    /// `mPingTime`: when the latest ping went out.
+    last_ping_at: Option<Instant>,
     buf: Vec<u8>,
     /// Reliable packets given up on since the last `take_dropped`.
     dropped: Vec<u32>,
@@ -122,6 +132,8 @@ impl Circuit {
             ping_id: 0,
             ping_sent: None,
             ping_wait_started: None,
+            pings_in_transit: 0,
+            last_ping_at: None,
             buf: Vec::with_capacity(1500),
             dropped: Vec::new(),
             packet_loss: PacketLoss::default(),
@@ -294,10 +306,12 @@ impl Circuit {
             stats.packets_lost.fetch_add(lost, Ordering::Relaxed);
         }
         // Ordinary reliable packets wait as `LLMessageSystem::sendReliable` does.
-        // `ping_out` stands in for `getPingInTransitTime`. A fixed policy (the
-        // login circuit code) keeps its own timeout.
-        let ping_out = self.ping_wait_started.map(|at| now.saturating_duration_since(at));
-        let ping_timeout = reliable_timeout(self.rtt, ping_out);
+        // A fixed policy (the login circuit code) keeps its own timeout. The
+        // Legacy Viewer fixes a packet's expiry when it is sent and at each
+        // resend, from the ping known then; here the wait is evaluated each
+        // tick from the current ping, so a ping that goes unanswered later
+        // also lengthens packets already waiting (it only ever waits longer).
+        let ping_timeout = reliable_timeout(self.rtt, self.ping_in_transit_time(now));
         let mut to_resend = Vec::new();
         let mut to_drop = Vec::new();
         for (seq, u) in &self.unacked {
@@ -366,8 +380,23 @@ impl Circuit {
         let now = Instant::now();
         self.ping_sent = Some((self.ping_id, now));
         self.ping_wait_started.get_or_insert(now);
+        // LLCircuitData::pingTimerStart
+        self.pings_in_transit += 1;
+        self.last_ping_at = Some(now);
         let oldest = self.unacked.keys().min().copied().unwrap_or(self.next_seq);
         (self.ping_id, oldest)
+    }
+
+    /// `LLCircuitData::getPingInTransitTime` (indra/llmessage/llcircuit.cpp):
+    /// with pings out, `pings × heartbeat − 1 s + time since the latest ping`,
+    /// so one unanswered ping already counts 4 s; zero with none.
+    fn ping_in_transit_time(&self, now: Instant) -> Duration {
+        match self.last_ping_at {
+            Some(at) if self.pings_in_transit > 0 => {
+                (HEARTBEAT_INTERVAL * self.pings_in_transit).saturating_sub(Duration::from_secs(1)) + now.saturating_duration_since(at)
+            }
+            _ => Duration::ZERO,
+        }
     }
 
     pub fn on_ping_reply(&mut self, id: u8) -> Option<Duration> {
@@ -379,6 +408,8 @@ impl Circuit {
             self.rtt = (self.rtt * 7 + rtt) / 8;
             self.ping_sent = None;
             self.ping_wait_started = None;
+            // LLCircuitData::pingTimerStop: no ping sent after the answered one
+            self.pings_in_transit = 0;
             return Some(rtt);
         }
         None
@@ -577,20 +608,46 @@ mod tests {
 
     #[test]
     fn reliable_timeout_matches_the_legacy_formula() {
-        assert_eq!(reliable_timeout(Duration::from_millis(1), None), Duration::from_secs(1));
-        assert_eq!(reliable_timeout(Duration::from_millis(400), None), Duration::from_secs(2));
-        assert_eq!(reliable_timeout(Duration::from_secs(1), None), Duration::from_secs(5));
+        let none = Duration::ZERO;
+        assert_eq!(reliable_timeout(Duration::from_millis(1), none), Duration::from_secs(1));
+        assert_eq!(reliable_timeout(Duration::from_millis(400), none), Duration::from_secs(2));
+        assert_eq!(reliable_timeout(Duration::from_secs(1), none), Duration::from_secs(5));
         // The averaged ping stops at 2 s, so five times that is 10 s.
-        assert_eq!(reliable_timeout(Duration::from_secs(3), None), Duration::from_secs(10));
+        assert_eq!(reliable_timeout(Duration::from_secs(3), none), Duration::from_secs(10));
         assert_eq!(
-            reliable_timeout(Duration::from_millis(1), Some(Duration::from_millis(400))),
+            reliable_timeout(Duration::from_millis(1), Duration::from_millis(400)),
             Duration::from_secs(2)
         );
-        // An unanswered ping is also capped at 2 s.
+        // The time in transit is also capped at 2 s.
         assert_eq!(
-            reliable_timeout(Duration::from_millis(1), Some(Duration::from_secs(9))),
+            reliable_timeout(Duration::from_millis(1), Duration::from_secs(9)),
             Duration::from_secs(10)
         );
+    }
+
+    /// `getPingInTransitTime`: `pings × 5 s − 1 s + time since the latest
+    /// ping`, zero once answered.
+    #[test]
+    fn ping_in_transit_time_follows_the_legacy_formula() {
+        let mut c = circuit();
+        let now = Instant::now();
+        assert_eq!(c.ping_in_transit_time(now), Duration::ZERO);
+        let (id, _) = c.next_ping();
+        let sent = c.last_ping_at.expect("ping time");
+        // one ping out: 5 s − 1 s, plus the time since it went out
+        assert_eq!(c.ping_in_transit_time(sent), Duration::from_secs(4));
+        assert_eq!(
+            c.ping_in_transit_time(sent + Duration::from_millis(300)),
+            Duration::from_millis(4_300)
+        );
+        // a second ping without a reply: 2 × 5 s − 1 s from the latest one
+        let (id2, _) = c.next_ping();
+        let sent2 = c.last_ping_at.expect("ping time");
+        assert_eq!(c.ping_in_transit_time(sent2), Duration::from_secs(9));
+        // a reply to the latest ping: nothing in transit
+        assert!(c.on_ping_reply(id).is_none(), "only the latest ping is matched");
+        assert!(c.on_ping_reply(id2).is_some());
+        assert_eq!(c.ping_in_transit_time(Instant::now()), Duration::ZERO);
     }
 
     fn rewind(c: &mut Circuit, age: Duration) {
@@ -673,7 +730,9 @@ mod tests {
         assert_eq!(c.unacked[&seq].retries, 1);
     }
 
-    /// `getPingDelayAveraged` is at least the time the oldest ping has been out.
+    /// `getPingDelayAveraged` is at least `getPingInTransitTime`: with one
+    /// ping out it already counts 4 s, capped at 2 s, so the wait is 10 s
+    /// from the first moment the ping is unanswered.
     #[tokio::test]
     async fn an_unanswered_ping_lengthens_the_reliable_resend_wait() {
         let sock = bound().await;
@@ -681,13 +740,11 @@ mod tests {
         let mut c = circuit();
         c.rtt = Duration::from_millis(1);
         let seq = one_reliable(&mut c, &sock, &stats);
-        // 400 ms unanswered → 5 × 400 ms = 2 s, above the 1 s floor.
-        c.ping_wait_started = Some(Instant::now() - Duration::from_millis(400));
-        rewind(&mut c, Duration::from_millis(1_500));
+        let _ = c.next_ping();
+        rewind(&mut c, Duration::from_millis(9_900));
         c.tick(&sock, &stats);
-        assert_eq!(c.unacked[&seq].retries, 0, "an unanswered ping raises the wait above 1 s");
-        c.ping_wait_started = Some(Instant::now() - Duration::from_millis(400));
-        rewind(&mut c, Duration::from_millis(2_500));
+        assert_eq!(c.unacked[&seq].retries, 0, "one unanswered ping makes the wait 10 s at once");
+        rewind(&mut c, Duration::from_millis(10_001));
         c.tick(&sock, &stats);
         assert_eq!(c.unacked[&seq].retries, 1);
     }
