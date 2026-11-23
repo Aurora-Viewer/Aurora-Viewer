@@ -65,14 +65,14 @@ pub use tracks::{
 };
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
+pub use workspace::{
+    FORM_LABEL_W, FORM_SLIDER_W, Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark,
+    form_row, glyph, navigation, navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
+};
 pub(crate) use workspace::{
     INVENTORY_LABEL_PADDING, finish_bar_glass, inventory_item_label, inventory_item_label_tagged, inventory_spacing, island, island_shape,
     organization_drag_preview, organization_drop_target, organization_header, organization_section, organization_source,
     organization_typography, overlay, overlay_frame, paint_world_label,
-};
-pub use workspace::{
-    Modal, ModalGround, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation,
-    navigation_beside, navigation_wrapped, paint_glyph, section_header, sort_caret, stat, surface,
 };
 
 /// Whether UI owns a world-pointer event at `pos` (logical points). Resize
@@ -667,6 +667,9 @@ pub struct Floater<'a> {
     /// A single-line detail row inside the expanded title section.
     pub header_summary: Option<egui::WidgetText>,
     pub header_summary_action: Option<&'a mut bool>,
+    /// An icon button at the right end of the detail row, under the status
+    /// action: its glyph, tooltip, and whether it was clicked.
+    pub header_summary_icon: Option<(&'a str, &'a str, &'a mut bool)>,
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
@@ -734,6 +737,7 @@ impl<'a> Floater<'a> {
             header_status_action: None,
             header_summary: None,
             header_summary_action: None,
+            header_summary_icon: None,
             title_note: None,
             title_note_tooltip: None,
             title_state: None,
@@ -1317,13 +1321,54 @@ impl<'a> Floater<'a> {
                     } else {
                         Sense::hover()
                     };
-                    if ui
-                        .add(egui::Label::new(summary.clone()).truncate().sense(sense))
-                        .on_hover_text(full_text)
-                        .clicked()
-                        && let Some(clicked) = &mut self.header_summary_action
-                    {
-                        **clicked = true;
+                    let summary_action = &mut self.header_summary_action;
+                    let mut summary_row = |ui: &mut egui::Ui| {
+                        if ui
+                            .add(egui::Label::new(summary.clone()).truncate().sense(sense))
+                            .on_hover_text(&full_text)
+                            .clicked()
+                            && let Some(clicked) = summary_action
+                        {
+                            **clicked = true;
+                        }
+                    };
+                    if let Some((icon, tip, clicked)) = &mut self.header_summary_icon {
+                        ui.horizontal(|ui| {
+                            let size = Vec2::splat(18.0);
+                            let width = (ui.available_width() - size.x - ui.spacing().item_spacing.x).max(1.0);
+                            ui.allocate_ui_with_layout(
+                                Vec2::new(width, size.y),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                &mut summary_row,
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+                                if response.hovered() {
+                                    ui.painter()
+                                        .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.raised);
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                }
+                                let glyph_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(14.0));
+                                #[cfg(test)]
+                                ui.ctx()
+                                    .data_mut(|d| d.insert_temp(egui::Id::unique(("header_summary_icon", *icon)), glyph_rect));
+                                if let Some(texture) = crate::ui::icons::global(icon) {
+                                    ui.painter().image(
+                                        texture.id(),
+                                        glyph_rect,
+                                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                                        p.violet_light,
+                                    );
+                                }
+                                let response = response.on_hover_text(*tip);
+                                response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, *tip));
+                                if response.clicked() {
+                                    **clicked = true;
+                                }
+                            });
+                        });
+                    } else {
+                        summary_row(ui);
                     }
                 }
                 title_row
@@ -2285,24 +2330,7 @@ pub fn switch(ui: &mut egui::Ui, p: &Palette, on: &mut bool) -> egui::Response {
     resp
 }
 
-/// Compact padding for values adjoining construction controls.
-const READOUT_PADDING: Vec2 = Vec2::new(4.0, 1.0);
 pub const TEXT_BUTTON_HEIGHT: f32 = 18.0;
-
-/// A non-interactive value with the same neutral face as the adjoining buttons.
-pub fn readout_sized(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, size: Vec2) -> egui::Response {
-    let label = label.into();
-    let response = ui
-        .scope(|ui| {
-            ui.spacing_mut().button_padding = READOUT_PADDING;
-            let face = ui.visuals().widgets.inactive;
-            ui.visuals_mut().widgets.noninteractive = face;
-            ui.add_sized(size, egui::Button::new(label.clone()).sense(egui::Sense::hover()).truncate())
-        })
-        .inner;
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, ui.is_enabled(), label.text()));
-    response
-}
 
 /// Check box of the interface, with the contract of `ui.checkbox`: the
 /// response is `changed()` when a click flipped `on`. A flat square with the
@@ -3212,6 +3240,78 @@ pub fn action_button_if(
     action_button_keyed(ui, p, icon, label, kind, size, enabled, None)
 }
 
+/// One button of an `index_buttons` row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexState {
+    /// Greyed: nothing to pick there.
+    Disabled,
+    Off,
+    /// Picked for part of what it stands for: a wash of the accent.
+    Mixed,
+    On,
+}
+
+/// A row of numbered buttons 0, 1, 2… sharing `size`, each with its state,
+/// as tight as the row: the flat face of `action_button`, the accent when
+/// on. Returns the index clicked; `tip` gives each one's tooltip.
+pub fn index_buttons(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    size: Vec2,
+    states: &[IndexState],
+    tip: impl Fn(usize) -> String,
+) -> (Option<usize>, Vec<egui::Rect>) {
+    let base = ui.next_auto_id();
+    let (row, _) = ui.allocate_exact_size(size, Sense::hover());
+    let count = states.len().max(1) as f32;
+    let gap = if row.width() / count >= 12.0 { 2.0 } else { 1.0 };
+    let cell = ((row.width() - gap * (count - 1.0)) / count).max(1.0);
+    let font = control_font(ui, (cell * 1.45).clamp(7.0, 12.5).min(row.height() * 0.7));
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    let enabled_ui = ui.is_enabled();
+    let mut clicked = None;
+    let mut rects = Vec::with_capacity(states.len());
+    for (index, state) in states.iter().enumerate() {
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(row.left() + index as f32 * (cell + gap), row.top()),
+            Vec2::new(cell, row.height()),
+        );
+        rects.push(rect);
+        let enabled = enabled_ui && *state != IndexState::Disabled;
+        let resp = ui.interact(
+            rect,
+            base.with(("index-button", index)),
+            if enabled { Sense::click() } else { Sense::hover() },
+        );
+        let hot = enabled && resp.hovered();
+        let (fill, ink) = match state {
+            IndexState::On => (if hot { p.violet_light } else { p.violet }, p.on_accent),
+            IndexState::Mixed => (p.violet.gamma_multiply(if hot { 0.5 } else { 0.32 }), p.ink),
+            IndexState::Off | IndexState::Disabled => (if hot { p.raised.lerp_to_gamma(p.ink, 0.16) } else { p.raised }, p.ink),
+        };
+        let fade = if enabled { 1.0 } else { 0.45 };
+        ui.painter().rect_filled(rect, radius, fill.gamma_multiply(fade));
+        if p.high_contrast && matches!(state, IndexState::Off | IndexState::Disabled) {
+            let edge = if hot { p.ink } else { p.muted_dim };
+            ui.painter()
+                .rect_stroke(rect, radius, Stroke::new(1.0, edge.gamma_multiply(fade)), egui::StrokeKind::Inside);
+        }
+        let label = index.to_string();
+        let galley = ui.painter().layout_no_wrap(label.clone(), font.clone(), ink.gamma_multiply(fade));
+        let origin = row_text_origin(ui.painter(), &galley, rect.center().x - galley.size().x / 2.0, rect.center().y);
+        ui.painter().galley(origin, galley, ink.gamma_multiply(fade));
+        if hot {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        let on = *state == IndexState::On;
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, on, &label));
+        if resp.on_hover_text(tip(index)).clicked() {
+            clicked = Some(index);
+        }
+    }
+    (clicked, rects)
+}
+
 /// An inactive action face with a live spinner and readable work status.
 pub fn busy_button(ui: &mut egui::Ui, p: &Palette, label: &str) -> egui::Response {
     const SPINNER: f32 = 14.0;
@@ -3711,6 +3811,34 @@ pub fn ink_rect(galley: &egui::Galley) -> egui::Rect {
         }
     }
     if ink.is_positive() { ink } else { galley.rect }
+}
+
+/// A dashed outline in `rect`: a place to drop something or a card that
+/// adds one (the profile's Give zone, the photo filters' drop zones).
+pub fn dashed_outline(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
+    let r = rect.shrink(0.75);
+    let path = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+    painter.extend(egui::Shape::dashed_line(&path, egui::Stroke::new(1.5, color), 5.0, 4.0));
+}
+
+/// A place number that turns over in `rect` (the contact sets' tiles and
+/// the photo filters' cards while one is held): `before` slides up and
+/// fades as `now` rises in, `turn` going from 0 to 1, eased out with a
+/// touch of overshoot as it lands.
+pub fn turning_number(ui: &egui::Ui, rect: egui::Rect, now: usize, before: Option<usize>, turn: f32, color: Color32) {
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let font = crate::ui::fonts::semibold_format(&crate::ui::fonts::semibold(ui.ctx()), rect.height() * 0.5, color).font_id;
+    let k = turn.clamp(0.0, 1.0);
+    let e = 1.0 - (1.0 - k).powi(3);
+    let travel = rect.height() * 0.6;
+    if let Some(before) = before.filter(|_| k < 1.0) {
+        let g = painter.layout_no_wrap(aurora_i18n::integer(before as i64), font.clone(), color);
+        let at = rect.center() - Vec2::new(0.0, travel * e);
+        paint_ink_centered(&painter, g, at, color.gamma_multiply(1.0 - e));
+    }
+    let g = painter.layout_no_wrap(aurora_i18n::integer(now as i64), font, color);
+    let at = rect.center() + Vec2::new(0.0, travel * (1.0 - e));
+    paint_ink_centered(&painter, g, at, color.gamma_multiply(e.max(0.15)));
 }
 
 /// Paint a galley so that its visible ink (not egui's text row, which

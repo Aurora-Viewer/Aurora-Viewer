@@ -2111,6 +2111,9 @@ pub(crate) struct Backend {
     dof: Option<crate::dof::Dof>,
     /// The photo's look, made the first time one is on.
     looks: Option<crate::looks::Looks>,
+    /// The photo filters' catalogue pictures, while the catalogue asks for
+    /// them (look_thumbs.rs).
+    look_thumbs: Option<crate::look_thumbs::LookThumbs>,
     rlva_spheres: Option<crate::rlva::Spheres>,
     /// The motion vectors' view (AURORA_DEBUG_MOTION).
     motion_debug: Option<crate::motion_debug::MotionDebug>,
@@ -4630,6 +4633,7 @@ impl Backend {
             glow,
             dof: None,
             looks: None,
+            look_thumbs: None,
             rlva_spheres: None,
             motion_debug,
             rlva_overlays: None,
@@ -7936,6 +7940,7 @@ impl Backend {
                 &mut ui.primitives,
                 ui.pixels_per_point,
             );
+            crate::look_thumbs::resolve(self.look_thumbs.as_ref(), &mut ui.primitives);
             let sd = egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [self.config.width, self.config.height],
                 pixels_per_point: ui.pixels_per_point,
@@ -8268,6 +8273,7 @@ impl Backend {
             hover: None,
             picks: Vec::new(),
             drawn: Vec::new(),
+            drawn_forgotten: Vec::new(),
             capture: None,
             equirect: None,
             histogram: None,
@@ -8615,6 +8621,7 @@ impl Backend {
             hover,
             picks,
             drawn,
+            drawn_forgotten,
             capture: wanted,
             // (taken by `render` before the frame)
             equirect: _,
@@ -8643,7 +8650,7 @@ impl Backend {
         self.depth_pick.harvest_clicks();
         self.drawn_pick.harvest();
         self.part_pick.harvest();
-        self.drawn_pick.ask(drawn);
+        self.drawn_pick.ask(drawn, &drawn_forgotten);
         let previous_scene = self.scene_size();
         let picks = picks
             .into_iter()
@@ -12492,9 +12499,60 @@ impl Backend {
             self.rlva_spheres = None;
             composed_view
         };
+        // the catalogue's pictures: made on their first request, let go
+        // after a while without one
+        match &f.look_thumbs {
+            Some(_) => {
+                let format = self.config.format;
+                if self.look_thumbs.as_ref().is_none_or(|t| t.format != format) {
+                    if let Some(old) = self.look_thumbs.take() {
+                        old.free(&mut self.egui);
+                    }
+                    if self.oom.extras_ready(Instant::now()) {
+                        let device = &self.device;
+                        let egui = &mut self.egui;
+                        let (thumbs, refused) =
+                            crate::gpu_alloc::scoped(device, || crate::look_thumbs::LookThumbs::new(device, egui, format));
+                        if first_use(&mut self.oom, "photo filter pictures", false, refused && !self.lost.get()) {
+                            thumbs.free(&mut self.egui);
+                        } else {
+                            self.look_thumbs = Some(thumbs);
+                        }
+                    }
+                }
+                if let Some(thumbs) = &mut self.look_thumbs {
+                    thumbs.idle = 0;
+                }
+            }
+            None => {
+                if let Some(thumbs) = &mut self.look_thumbs {
+                    thumbs.idle += 1;
+                    if thumbs.idle > crate::look_thumbs::KEEP_FRAMES
+                        && let Some(old) = self.look_thumbs.take()
+                    {
+                        old.free(&mut self.egui);
+                    }
+                }
+            }
+        }
+        // a still for them is taken from the look's input: without a look,
+        // one that changes nothing routes the frame through it
+        let capture = f
+            .look_thumbs
+            .as_ref()
+            .and_then(|t| t.capture)
+            .filter(|_| self.look_thumbs.is_some());
+        let pass_through;
         // the photo's look: the post pass and SMAA draw into its input,
         // and its passes into the frame
-        let look = f.look.as_ref().filter(|look| look.layers.iter().any(|l| !l.ops.is_empty()));
+        let look = match f.look.as_ref().filter(|look| look.layers.iter().any(|l| !l.ops.is_empty())) {
+            Some(look) => Some(look),
+            None if capture.is_some() => {
+                pass_through = crate::looks::PhotoLook::pass_through(post_size);
+                Some(&pass_through)
+            }
+            None => None,
+        };
         if look.is_some() {
             let format = self.config.format;
             let looks = self.looks.get_or_insert_with(|| crate::looks::Looks::new(&self.device));
@@ -12512,7 +12570,11 @@ impl Backend {
                 // through (no input: the frame goes without the look)
                 looks.release();
             }
-        } else if let Some(looks) = &mut self.looks {
+        } else if let Some(looks) = &mut self.looks
+            && f.look_thumbs.is_none()
+        {
+            // (kept while the filters catalogue shows: its stills go
+            // through them every few seconds, see `pass_through` above)
             looks.idle();
         }
         let looks = look.and(self.looks.as_ref()).and_then(|looks| Some((looks, looks.input()?)));
@@ -12561,6 +12623,14 @@ impl Backend {
             }
             if let Some(st) = &self.smaa_targets {
                 self.smaa.encode(&mut encoder, st, post_target, smaa_ts);
+            }
+            if let Some(thumbs) = &mut self.look_thumbs {
+                if let (Some(rect), Some((_, input))) = (capture, looks) {
+                    thumbs.capture(&self.device, &self.queue, &mut encoder, input, post_depth, rect, f.proj);
+                }
+                if let Some((slot, look)) = f.look_thumbs.as_ref().and_then(|t| t.draw.as_ref()) {
+                    calls.set(calls.get() + thumbs.draw(&self.device, &self.queue, &mut encoder, *slot, look));
+                }
             }
             if let (Some((looks, _)), Some(look)) = (looks, look) {
                 let depth = crate::looks::LookDepth {
@@ -12788,6 +12858,7 @@ impl Backend {
             crate::second_view::replace(&mut ui.primitives, self.second_view_texture());
             self.previews
                 .render(&self.device, &self.queue, &mut encoder, &mut self.egui, &mut ui.primitives, scale);
+            crate::look_thumbs::resolve(self.look_thumbs.as_ref(), &mut ui.primitives);
             extra_cmds = self
                 .egui
                 .update_buffers(&self.device, &self.queue, &mut encoder, &ui.primitives, &sd);

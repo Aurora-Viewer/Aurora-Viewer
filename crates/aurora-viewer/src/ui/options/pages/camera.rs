@@ -5,34 +5,11 @@
 
 use super::super::COMBO_W;
 use super::super::cx::{Custom, Cx, Nothing, field, fields};
-use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE};
-use egui::RichText;
+use crate::camera::{CameraPreset, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE};
 
-/// Three fields x / y / z (x forward, y left, z up).
-fn offset(ui: &mut egui::Ui, v: &mut [f32; 3]) -> bool {
-    let mut changed = false;
-    for (axis, value) in ["X", "Y", "Z"].iter().zip(v.iter_mut()) {
-        ui.label(RichText::new(*axis).size(12.0));
-        changed |= ui
-            .add(
-                egui::DragValue::new(value)
-                    .custom_parser(aurora_i18n::parse_number)
-                    .range(-10.0..=10.0)
-                    .speed(0.02)
-                    .max_decimals(2),
-            )
-            .changed();
-    }
-    changed
-}
-
-/// An offset moved by hand: the preset becomes "Custom".
-fn custom(changed: bool, c: &mut CameraSettings) -> bool {
-    if changed {
-        c.preset = CameraPreset::Custom;
-    }
-    changed
-}
+// The offsets' fields are the camera position window's
+// (`ui::camera_position`), which keeps a value set past their range.
+use crate::ui::camera_position::{mark_custom as custom, offset_fields as offset};
 
 pub fn page(cx: &mut Cx, tab: usize) {
     use aurora_i18n::tr;
@@ -88,7 +65,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-restores-the-preset-s-camera-position-and-focus-point"),
                     &Nothing,
                     |ui, s| {
-                        let c = &mut s.camera;
                         let reset = crate::ui::widgets::action_button(
                             ui,
                             &p,
@@ -99,12 +75,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         )
                         .clicked();
                         if reset {
-                            let preset = if c.preset == CameraPreset::Custom {
-                                CameraPreset::Rear
-                            } else {
-                                c.preset
-                            };
-                            s.camera.apply_view(preset, &s.camera_views);
+                            crate::ui::camera_position::reset_angles(s);
                         }
                         reset
                     },
