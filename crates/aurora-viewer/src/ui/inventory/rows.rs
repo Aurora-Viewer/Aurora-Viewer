@@ -635,7 +635,10 @@ fn rows(
                 Kind::Folder { open } => {
                     let mut now = open;
                     folder_row(ui, p, icons, inv, row.id, &mut now, st, prefs, facts, actions);
-                    if now != open {
+                    if now != open && st.lists_flat() {
+                        // the Legacy-style single folder window goes in
+                        st.browse = row.id;
+                    } else if now != open {
                         st.plain.set_open(row.id, now);
                     }
                 }

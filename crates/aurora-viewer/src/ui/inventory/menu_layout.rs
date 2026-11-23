@@ -184,10 +184,13 @@ impl Default for Profile {
                             "separator:folder-navigation",
                             "reload",
                             "clean-broken-links",
+                            // #4735: the rows that open the folder together,
+                            // Open first (the most used, as in
+                            // menu_inventory.xml), then the Show rows
+                            "open-current",
+                            "open-window",
                             "show-main",
                             "show-window",
-                            "open-window",
-                            "open-current",
                             "separator:purge",
                             "purge",
                             "empty-trash",
@@ -338,7 +341,36 @@ impl Preferences {
                 }
                 after = id;
             }
+            legacy_open_rows(profile);
         }
+    }
+}
+
+/// The rows that open a folder, in the previous default order and in
+/// today's: Open and Open in a new window now come before the Show rows,
+/// Open first (#4735).
+const OPEN_ROWS_BEFORE: [&str; 4] = ["show-main", "show-window", "open-window", "open-current"];
+const OPEN_ROWS: [&str; 4] = ["open-current", "open-window", "show-main", "show-window"];
+
+/// #4735: a menu its user never arranged, still in the previous default
+/// order (older menus reach it once `unify` gives them Open), takes today's
+/// order of the rows that open a folder. An arranged menu keeps its own.
+fn legacy_open_rows(profile: &mut Profile) {
+    let Some(order) = profile.layout.orders.get(TEXT) else { return };
+    let Some(start) = order.iter().position(|id| id == OPEN_ROWS_BEFORE[0]) else {
+        return;
+    };
+    if order.get(start..start + 4).is_none_or(|rows| rows != OPEN_ROWS_BEFORE) {
+        return;
+    }
+    let mut candidate = profile.clone();
+    if let Some(order) = candidate.layout.orders.get_mut(TEXT) {
+        for (slot, id) in order[start..start + 4].iter_mut().zip(OPEN_ROWS) {
+            *slot = id.into();
+        }
+    }
+    if candidate == Profile::default() {
+        *profile = candidate;
     }
 }
 
@@ -918,6 +950,61 @@ impl Layout {
 
 #[cfg(test)]
 mod tests {
+    /// #4735: the rows that open a folder in one section, Open and Open in
+    /// a new window above the Show rows, for every menu its user never
+    /// arranged; an arranged menu keeps its order.
+    #[test]
+    fn untouched_menus_put_the_open_rows_above_the_show_rows() {
+        let current = Profile::default();
+        let order = &current.layout.orders[TEXT];
+        let start = order.iter().position(|id| id == "clean-broken-links").expect("clean-broken-links");
+        assert_eq!(
+            order[start..start + 6],
+            [
+                "clean-broken-links",
+                "open-current",
+                "open-window",
+                "show-main",
+                "show-window",
+                "separator:purge"
+            ]
+        );
+        // the previous default: the Show rows, Open in a new window, Open
+        let mut previous = current.clone();
+        let order = previous.layout.orders.get_mut(TEXT).expect("text order");
+        for (slot, id) in order[start + 1..start + 5].iter_mut().zip(OPEN_ROWS_BEFORE) {
+            *slot = id.into();
+        }
+        assert_ne!(previous, current);
+        // a menu older than Open, which gains it on the way
+        let mut older = previous.clone();
+        older
+            .layout
+            .orders
+            .get_mut(TEXT)
+            .expect("text order")
+            .retain(|id| id != "open-current");
+        for profile in [previous.clone(), older] {
+            let mut prefs = Preferences {
+                profiles: [(SHARED.into(), profile)].into(),
+            };
+            prefs.unify();
+            assert_eq!(prefs.profiles[SHARED], current);
+            prefs.unify();
+            assert_eq!(prefs.profiles[SHARED], current, "a second pass changes nothing");
+        }
+        // an arranged menu (Rename moved first) keeps its own order
+        let mut arranged = previous;
+        let order = arranged.layout.orders.get_mut(TEXT).expect("text order");
+        order.retain(|id| id != "rename");
+        order.insert(1, "rename".into());
+        let mut prefs = Preferences {
+            profiles: [(SHARED.into(), arranged.clone())].into(),
+        };
+        prefs.unify();
+        assert_eq!(prefs.profiles[SHARED], arranged);
+    }
+
     #[test]
     fn saved_sound_menus_gain_world_playback_immediately_after_local_playback() {
         let mut profile = Profile::default();

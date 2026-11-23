@@ -10,9 +10,10 @@ use super::*;
 /// Run after rebuilding the displayed order and before laying out its viewport,
 /// including while Aurora's explorer has swapped its flat tree into `plain`.
 pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, filtered: bool) -> bool {
-    // The explorer lists one folder flat (the Legacy Viewer's single folder
-    // mode): its folders never open in place, so Left and Right stay unused.
-    let explorer = st.aurora.is_some_and(|frame| frame.explorer);
+    // The explorer and the Legacy-style single folder window list one folder
+    // flat (the Legacy Viewer's single folder mode): its folders never open
+    // in place, so Left and Right stay unused.
+    let explorer = st.lists_flat();
     st.shown_order = if filtered {
         ShownOrder::Results
     } else if explorer {
@@ -240,8 +241,9 @@ fn open_selected(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPrefere
             }
         }
         if inv.folders.contains_key(&id) {
-            // The explorer steps into a folder; anywhere else Enter folds it.
-            if st.aurora.is_some_and(|frame| frame.explorer) {
+            // A single folder list steps into a folder; anywhere else Enter
+            // folds it.
+            if st.lists_flat() {
                 st.browse = id;
                 st.selection.clear();
                 st.selected = None;
