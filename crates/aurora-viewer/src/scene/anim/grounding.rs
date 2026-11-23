@@ -93,6 +93,8 @@ const RISER_OVERLAP: f32 = 0.05;
 /// How far both authored feet may sink below the floor together and be
 /// carried by the body rather than by the knees (`Placement::apply`).
 const COMMON_SINK: f32 = 0.02;
+/// Fastest change of that shared sink, in metres per second.
+const SINK_RATE: f32 = 0.1;
 /// Knee circle radius over which a bending knee moves from the source's bend
 /// plane to the source's side offset in metres (`hinge`).
 const PLANE_BLEND: f32 = 0.1;
@@ -126,11 +128,15 @@ type Ceiling = (f32, Vec3);
 /// With a `ceiling`, any support more than `RISER` above that floor's plane
 /// is a riser too, even under the ankle: a standing avatar's lifted foot
 /// moving into a higher step hits it, it is not carried onto its top.
+///
+/// Only a `standing` avatar's feet touch risers: walking up stairs, a toe
+/// over the next tread lifts the foot onto it, as before.
 fn footing(
     corners: [Vec3; 4],
     sole: [Vec3; 4],
     current: Option<f32>,
     ceiling: Option<Ceiling>,
+    standing: bool,
     query: &dyn Fn(Vec3) -> Option<Surface>,
 ) -> ([Option<Surface>; 4], bool) {
     let mut hits = corners.map(query);
@@ -146,7 +152,7 @@ fn footing(
             }
         }
     }
-    let Some(base) = query(under) else {
+    let Some(base) = query(under).filter(|_| standing) else {
         return (hits, dropped);
     };
     let raised = |hit: &Surface| {
@@ -344,7 +350,11 @@ fn hinge(hip: Vec3, knee: Vec3, ankle: Vec3, target: Vec3, side: Vec3) -> Option
     };
     let metres = ((upper.dot(side) - along * axis.dot(side)) / side_reach).clamp(-radius, radius);
     let proportional = radius * share.clamp(-0.98, 0.98);
-    let bias = proportional + (metres - proportional) * cubic_step((radius - source_offset.length()) / PLANE_BLEND);
+    // A source knee within a centimetre of its hip-ankle line has no
+    // reliable bend direction (its share flips as it passes straight):
+    // there the offset in metres is kept, as before.
+    let reliable = cubic_step(source_offset.length() / 0.01);
+    let bias = metres + (proportional - metres) * reliable * (1.0 - cubic_step((radius - source_offset.length()) / PLANE_BLEND));
     let bend = hip + axis * along + lateral * bias + forward * (radius * radius - bias * bias).max(0.0).sqrt();
     let hip_delta = precise_arc(upper / a, (bend - hip).normalize());
     let knee_delta = precise_arc((hip_delta * lower).normalize(), (hip + axis * reach - bend).normalize());
@@ -377,6 +387,8 @@ pub(super) struct Placement {
     acquired: Option<Acquisition>,
     /// The world point the positions below are relative to.
     anchor: Option<Vec3>,
+    /// The authored sink both feet share, carried by the body.
+    sink: f32,
 }
 
 impl Placement {
@@ -556,7 +568,10 @@ impl Placement {
         // instead, and the body with it; a deeper sink still bends the
         // knees. Clearances are continuous, so a foot that lifts eases it
         // out. Feet without a known support keep the source as it is.
-        let sink = if pose.allowed.iter().all(|allowed| *allowed) && self.feet.iter().all(|foot| foot.departure.is_some()) {
+        // It moves at most `SINK_RATE`, faster than a breath's bob: the full
+        // sink is only known once both feet have support, and taking it at
+        // once popped the body up as placement began.
+        let sink_goal = if pose.allowed.iter().all(|allowed| *allowed) && self.feet.iter().all(|foot| foot.departure.is_some()) {
             clearances
                 .iter()
                 .map(|clearance| (-clearance).max(0.0))
@@ -565,6 +580,8 @@ impl Placement {
         } else {
             0.0
         };
+        let sink = self.sink + (sink_goal - self.sink).clamp(-SINK_RATE * dt, SINK_RATE * dt);
+        self.sink = sink;
         let clearances = clearances.map(|clearance| clearance + sink);
         let lifted = Mat4::from_translation(Vec3::Z * sink) * frame.to_world;
         let source: Vec<Mat4> = source.into_iter().map(|matrix| lifted * matrix).collect();
@@ -594,7 +611,7 @@ impl Placement {
                 self.feet[side].normal = rotations[side] * Vec3::Z;
                 let corners = footprint(visible.w_axis.truncate(), orientation(visible), leg.sole);
                 let current = self.feet[side].elevation.map(|height| height.value);
-                penetration[side] = correction(corners, footing(corners, leg.sole, current, None, &query).0)
+                penetration[side] = correction(corners, footing(corners, leg.sole, current, None, !moving, &query).0)
                     .unwrap_or(0.0)
                     .max(0.0);
             }
@@ -642,11 +659,11 @@ impl Placement {
                 foot.blocked = false;
             }
             let ceiling = foot.elevation.filter(|_| !moving).and_then(|elevation| {
+                // Without a previous position (just enabled) nothing entered.
                 let entering = height > 0.0005
                     && foot
                         .under
-                        .and_then(&query)
-                        .is_none_or(|previous| previous.position.z <= elevation.value + RISER);
+                        .is_some_and(|previous| query(previous).is_none_or(|previous| previous.position.z <= elevation.value + RISER));
                 (foot.blocked || entering).then_some((elevation.value, foot.normal))
             });
             foot.under = Some(under);
@@ -655,6 +672,7 @@ impl Placement {
                 leg.sole,
                 self.feet[side].elevation.map(|height| height.value),
                 ceiling,
+                !moving,
                 &query,
             );
             self.feet[side].blocked = ceiling.is_some() && dropped;
@@ -689,7 +707,7 @@ impl Placement {
                     });
                     if let Some(lift) = correction(
                         ahead,
-                        footing(ahead, leg.sole, foot.elevation.map(|height| height.value), ceiling, &query).0,
+                        footing(ahead, leg.sole, foot.elevation.map(|height| height.value), ceiling, !moving, &query).0,
                     ) {
                         let next = reference_floor + lift;
                         // A ledge is not a stair tread. Preparing a large
@@ -737,7 +755,10 @@ impl Placement {
                 // Query the actual oriented footprint before deriving body
                 // reach, so a toe crossing an edge is part of that constraint.
                 let corners = footprint(targets[side], rotations[side], leg.sole);
-                if let Some(lift) = correction(corners, footing(corners, leg.sole, Some(elevation.value), ceiling, &query).0) {
+                if let Some(lift) = correction(
+                    corners,
+                    footing(corners, leg.sole, Some(elevation.value), ceiling, !moving, &query).0,
+                ) {
                     // Ease the initial penetration by elapsed time, rather
                     // than a per-frame fraction. New collision remains hard
                     // once the avatar has joined the selected set.
@@ -914,6 +935,33 @@ mod tests {
             frame: Frame,
             ground: &dyn Fn(Vec3) -> Option<Surface>,
         ) -> Vec<Mat4> {
+            self.check_with(placement, placed, raw, pelvis, frame, ground, false)
+        }
+
+        /// `check` for a standing avatar, whose feet may touch a riser.
+        fn check_standing(
+            &self,
+            placement: &Placement,
+            placed: &Placed,
+            raw: &[Quat],
+            pelvis: Vec3,
+            frame: Frame,
+            ground: &dyn Fn(Vec3) -> Option<Surface>,
+        ) -> Vec<Mat4> {
+            self.check_with(placement, placed, raw, pelvis, frame, ground, true)
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn check_with(
+            &self,
+            placement: &Placement,
+            placed: &Placed,
+            raw: &[Quat],
+            pelvis: Vec3,
+            frame: Frame,
+            ground: &dyn Fn(Vec3) -> Option<Surface>,
+            standing: bool,
+        ) -> Vec<Mat4> {
             let source = self.rig.world_with(raw, pelvis, &self.base.local_pos, &self.base.scale);
             let output = self
                 .rig
@@ -940,7 +988,10 @@ mod tests {
                         // The edge of a higher step may reach this far into the
                         // footprint: the foot touches its riser (`footing`).
                         let inward = point + (under - point).with_z(0.0).normalize_or_zero() * RISER_OVERLAP;
-                        if distance <= -0.0015 && ground(inward).is_none_or(|inner| (point - inner.position).dot(inner.normal) > -0.0015) {
+                        if standing
+                            && distance <= -0.0015
+                            && ground(inward).is_none_or(|inner| (point - inner.position).dot(inner.normal) > -0.0015)
+                        {
                             continue;
                         }
                         assert!(distance > -0.0015, "foot {side} penetrates by {distance}");
@@ -1515,7 +1566,9 @@ mod tests {
                     now + Duration::from_secs_f32(i as f32 / fps as f32),
                     &ground,
                 );
-                let world = f.check(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, &ground);
+                // Turning in place is standing: a toe may touch the side step's
+                // riser before the foot is carried onto it.
+                let world = f.check_standing(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, &ground);
                 let body = world[f.rig.pelvis].w_axis.z;
                 if let Some(previous) = previous {
                     assert!(
@@ -1665,7 +1718,7 @@ mod tests {
                 now + Duration::from_secs_f32(t),
                 ground,
             );
-            f.check(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, ground);
+            f.check_standing(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, ground);
             let output = f.rig.world_with(&placed.rotations, placed.pelvis, &f.base.local_pos, &f.base.scale);
             let source = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
             for name in ["mAnkleLeft", "mAnkleRight"] {
