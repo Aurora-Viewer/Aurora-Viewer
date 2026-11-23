@@ -42,7 +42,8 @@ pub enum Kind {
     Web,
 }
 
-/// The sections of "All", in the order of the chips.
+/// The sections of "All", in the default order of their chips: the user
+/// drags the chips to change it (`section_order`).
 const SECTIONS: [Tab; 5] = [Tab::People, Tab::Places, Tab::Events, Tab::Groups, Tab::Classifieds];
 /// Rows of a section of "All" before its "See all".
 const SECTION_ROWS: usize = 3;
@@ -51,17 +52,48 @@ const ASKS_PER_FRAME: usize = 6;
 /// The details pane beside the results.
 const DETAILS_W: f32 = 372.0;
 
-impl Kind {
-    const CHIPS: [Kind; 7] = [
-        Kind::All,
-        Kind::People,
-        Kind::Places,
-        Kind::Events,
-        Kind::Groups,
-        Kind::Classifieds,
-        Kind::Land,
-    ];
+/// The order of the sections of "All" and of their chips, from the saved
+/// names (`SearchSettings::aurora_order`): those it knows, once each, then
+/// the sections it lacks at their default place. Aurora's own: the Legacy
+/// Viewer's tabs have a fixed order.
+fn section_order(saved: &[String]) -> [Tab; 5] {
+    let mut order: Vec<Tab> = Vec::with_capacity(SECTIONS.len());
+    for tab in saved.iter().filter_map(|k| Tab::from_key(k)) {
+        if SECTIONS.contains(&tab) && !order.contains(&tab) {
+            order.push(tab);
+        }
+    }
+    for tab in SECTIONS {
+        if !order.contains(&tab) {
+            order.push(tab);
+        }
+    }
+    let mut out = SECTIONS;
+    out.copy_from_slice(&order);
+    out
+}
 
+/// The order once the chip of `from` is dropped before or after the chip
+/// of `to`.
+fn moved(order: [Tab; 5], from: Tab, to: Tab, before: bool) -> [Tab; 5] {
+    if from == to {
+        return order;
+    }
+    let mut v: Vec<Tab> = order.into_iter().filter(|t| *t != from).collect();
+    let Some(at) = v.iter().position(|t| *t == to) else {
+        return order;
+    };
+    v.insert(if before { at } else { at + 1 }, from);
+    let mut out = order;
+    out.copy_from_slice(&v);
+    out
+}
+
+/// The payload of a section chip being dragged.
+#[derive(Clone, Copy)]
+struct ChipDrag(Tab);
+
+impl Kind {
     /// The chip of a Legacy tab (a window opened on a tab: a group link,
     /// the demo).
     pub fn of(tab: Tab) -> Kind {
@@ -135,6 +167,9 @@ pub struct Aurora {
     /// The row chosen in "All" (one of the sections'); a single type uses
     /// its list's selection.
     selected: Option<(Tab, Key)>,
+    /// The sections of "All" in the user's order, read from the settings
+    /// each frame (`section_order`).
+    order: [Tab; 5],
     /// "Price ≤" and "Area ≥" of land sales: empty, no limit.
     land_price: String,
     land_area: String,
@@ -152,6 +187,7 @@ impl Default for Aurora {
             text: String::new(),
             searched: HashMap::new(),
             selected: None,
+            order: SECTIONS,
             land_price: String::new(),
             land_area: String::new(),
             asked: HashSet::new(),
@@ -393,7 +429,7 @@ impl SearchUi {
         let has = |tab: Tab, key: Key| search.list(tab).is_some_and(|l| l.rows.iter().any(|r| r.key == key));
         match self.aurora.kind {
             Kind::All => self.aurora.selected.filter(|(t, k)| has(*t, *k)).or_else(|| {
-                SECTIONS.iter().filter(|t| self.aurora_shows(**t)).find_map(|t| {
+                self.aurora.order.iter().filter(|t| self.aurora_shows(**t)).find_map(|t| {
                     let list = search.list(*t)?;
                     let first = list.sorted().first()?.key;
                     Some((*t, list.selected.filter(|k| has(*t, *k)).unwrap_or(first)))
@@ -422,6 +458,7 @@ impl SearchUi {
         let world = c.world;
         let access = world.agent_access();
         let mut find = false;
+        self.aurora.order = section_order(&settings.aurora_order);
         // the field
         ui.horizontal(|ui| {
             let hint = if self.aurora.kind == Kind::Land {
@@ -439,11 +476,20 @@ impl SearchUi {
         // Counts and translated labels can exceed the minimum width. Wrap
         // whole chips, including Web, so every directory stays reachable.
         let mut picked = None;
+        let mut reorder = None;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            for kind in Kind::CHIPS {
+            let sections = self.aurora.order.map(Kind::of);
+            let chips = std::iter::once(Kind::All).chain(sections).chain([Kind::Land]);
+            for kind in chips {
                 let count = self.chip_count(&world.search, kind);
-                if widgets::pill_tab(ui, p, kind.icon(), kind.label(), count, false, self.aurora.kind == kind, true).clicked() {
+                let mut chip = widgets::pill_tab(ui, p, kind.icon(), kind.label(), count, false, self.aurora.kind == kind, true);
+                if let Some(tab) = kind.tab().filter(|t| SECTIONS.contains(t)) {
+                    let (dragged, order) = self.section_chip_drag(ui, p, chip, tab);
+                    chip = dragged;
+                    reorder = order.or(reorder);
+                }
+                if chip.clicked() {
                     picked = Some(kind);
                 }
             }
@@ -461,6 +507,15 @@ impl SearchUi {
                 picked = Some(Kind::Web);
             }
         });
+        if let Some(order) = reorder.filter(|o| *o != self.aurora.order) {
+            self.aurora.order = order;
+            settings.aurora_order = if order == SECTIONS {
+                Vec::new()
+            } else {
+                order.iter().map(|t| t.key().to_owned()).collect()
+            };
+            actions.push(SearchAction::SettingsChanged);
+        }
         if let Some(kind) = picked.filter(|k| *k != self.aurora.kind) {
             self.aurora.kind = kind;
             self.aurora.selected = None;
@@ -519,6 +574,40 @@ impl SearchUi {
                 });
             }
         }
+    }
+
+    /// A section chip is dragged onto another to change the order of the
+    /// chips and of the sections of "All"; its right click puts the
+    /// default order back. The chip, and the new order when it changes.
+    fn section_chip_drag(&self, ui: &egui::Ui, p: &Palette, chip: egui::Response, tab: Tab) -> (egui::Response, Option<[Tab; 5]>) {
+        let chip = chip.interact(Sense::click_and_drag());
+        if chip.drag_started_by(egui::PointerButton::Primary) {
+            chip.dnd_set_drag_payload(ChipDrag(tab));
+        }
+        if chip.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+        let mut out = None;
+        if let Some(drag) = chip.dnd_hover_payload::<ChipDrag>().filter(|d| d.0 != tab) {
+            // the half of the chip under the pointer: before or after it
+            let before = ui.ctx().pointer_hover_pos().is_none_or(|pos| pos.x < chip.rect.center().x);
+            let r = chip.rect;
+            let x = if before { r.left() - 2.0 } else { r.right() + 2.0 };
+            ui.painter()
+                .vline(x, r.y_range().shrink(2.0), egui::Stroke::new(2.0, p.violet_light));
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            if chip.dnd_release_payload::<ChipDrag>().is_some() {
+                out = Some(moved(self.aurora.order, drag.0, tab, before));
+            }
+        }
+        if self.aurora.order != SECTIONS {
+            crate::ui::menu::context_menu(&chip, p, |ui| {
+                if crate::ui::menu::item(ui, p, "restore", aurora_i18n::tr!("search-aurora-reset-order")) {
+                    out = Some(SECTIONS);
+                }
+            });
+        }
+        (chip.on_hover_text(aurora_i18n::tr!("search-aurora-reorder-tip")), out)
     }
 
     /// The line of filters of the chip shown, and the number of results at
@@ -747,7 +836,7 @@ impl SearchUi {
                 };
                 if kind == Kind::All {
                     let mut any = false;
-                    for tab in SECTIONS {
+                    for tab in self.aurora.order {
                         let Some(list) = world.search.list(tab).filter(|_| self.aurora_shows(tab)) else {
                             continue;
                         };
@@ -1125,6 +1214,63 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, kind: Kind, count: &str, more: b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn keys(order: &[Tab]) -> Vec<String> {
+        order.iter().map(|t| t.key().to_owned()).collect()
+    }
+
+    #[test]
+    fn the_saved_order_is_read_back_and_mended() {
+        assert_eq!(section_order(&[]), SECTIONS, "no saved order: the default one");
+        let mine = [Tab::Places, Tab::Groups, Tab::People, Tab::Classifieds, Tab::Events];
+        assert_eq!(section_order(&keys(&mine)), mine);
+        // a name twice, a tab that is not a section, a name from a later
+        // version, and two sections missing: they come back at the end
+        let odd: Vec<String> = ["groups", "groups", "web", "land", "teleports", "events"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(
+            section_order(&odd),
+            [Tab::Groups, Tab::Events, Tab::People, Tab::Places, Tab::Classifieds]
+        );
+        for tab in Tab::ALL {
+            assert_eq!(Tab::from_key(tab.key()), Some(tab));
+        }
+    }
+
+    #[test]
+    fn a_chip_dropped_on_another_goes_before_or_after_it() {
+        let [people, places, events, groups, classifieds] = SECTIONS;
+        assert_eq!(moved(SECTIONS, places, people, true), [places, people, events, groups, classifieds]);
+        assert_eq!(
+            moved(SECTIONS, people, groups, false),
+            [places, events, groups, people, classifieds]
+        );
+        assert_eq!(
+            moved(SECTIONS, classifieds, people, false),
+            [people, classifieds, places, events, groups]
+        );
+        assert_eq!(
+            moved(SECTIONS, people, classifieds, false),
+            [places, events, groups, classifieds, people]
+        );
+        assert_eq!(moved(SECTIONS, events, events, true), SECTIONS);
+    }
+
+    #[test]
+    fn the_order_survives_a_save_and_older_settings_keep_the_default() {
+        let old: SearchSettings = serde_json::from_str(r#"{"last_tab": 1}"#).expect("old settings");
+        assert!(old.aurora_order.is_empty());
+        let settings = SearchSettings {
+            aurora_order: keys(&[Tab::Places, Tab::People]),
+            ..SearchSettings::default()
+        };
+        let back: SearchSettings = serde_json::from_str(&serde_json::to_string(&settings).expect("json")).expect("read");
+        assert_eq!(
+            section_order(&back.aurora_order),
+            [Tab::Places, Tab::People, Tab::Events, Tab::Groups, Tab::Classifieds]
+        );
+    }
 
     #[test]
     fn all_searches_the_five_texts_and_keeps_their_categories_open() {
