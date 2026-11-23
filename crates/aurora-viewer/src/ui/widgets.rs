@@ -379,11 +379,17 @@ pub(crate) struct WheelSteps {
     /// The same notches, each rounded to an integer. Ctrl and Shift become
     /// no step on an integer field.
     pub integer: i32,
+    /// Whole notches, without the modifiers' scale (LLSlider has none).
+    pub notches: f32,
 }
 
 impl WheelSteps {
     fn none() -> Self {
-        Self { scaled: 0.0, integer: 0 }
+        Self {
+            scaled: 0.0,
+            integer: 0,
+            notches: 0.0,
+        }
     }
 }
 
@@ -417,6 +423,7 @@ pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, take
     let mut remainder = ui.data(|d| d.get_temp::<WheelRemainder>(key)).map(|kept| kept.0).unwrap_or(0.0);
     let mut scaled = 0.0f32;
     let mut integer = 0i32;
+    let mut notches_total = 0.0f32;
     ui.input(|input| {
         for event in &input.events {
             let egui::Event::MouseWheel {
@@ -440,6 +447,7 @@ pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, take
             let whole = remainder.trunc().clamp(-100.0, 100.0);
             remainder -= whole;
             if whole != 0.0 {
+                notches_total += whole;
                 let scale = spin_key_scale(*modifiers);
                 scaled += whole * scale;
                 integer = integer.saturating_add((whole as i32).saturating_mul(scale.round() as i32));
@@ -451,7 +459,11 @@ pub(crate) fn spin_wheel(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, take
     } else {
         ui.data_mut(|d| d.insert_temp(key, WheelRemainder(remainder)));
     }
-    WheelSteps { scaled, integer }
+    WheelSteps {
+        scaled,
+        integer,
+        notches: notches_total,
+    }
 }
 
 /// LLButton held_down_delay (widgets/button.xml), in seconds.

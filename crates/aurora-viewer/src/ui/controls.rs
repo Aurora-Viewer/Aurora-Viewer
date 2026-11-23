@@ -70,6 +70,9 @@ const SMALL_ZOOM_BUTTON: f32 = 14.0;
 const SMALL_ZOOM_THUMB: Vec2 = Vec2::new(10.0, 4.0);
 /// Pixels of drag on the small zoom slider for the whole zoom range.
 const SMALL_ZOOM_TRAVEL: f32 = 200.0;
+/// An arrow key or a wheel notch on the small zoom slider: LLF32UICtrl's
+/// default increment (LLSlider::handleKeyHere, handleScrollWheel).
+const SMALL_ZOOM_STEP: f32 = 0.1;
 const SMALL_ROLL: f32 = 12.0;
 /// Room between two items of a row of buttons.
 const ROW_GAP: f32 = 4.0;
@@ -1521,13 +1524,43 @@ fn small_camera(ui: &mut egui::Ui, p: &Palette, view: &View, out: &mut Output) {
 }
 
 /// The small window's zoom slider: a thin track and a small thumb in the
-/// 16 px column. Dragged, it moves the zoom by the drag over
-/// `SMALL_ZOOM_TRAVEL` rather than to the pointer, which on a rail of some
-/// 20 px threw the camera across its whole range. Gives the new zoom
+/// 16 px column. Unlike the Legacy Viewer's slider, which puts the zoom
+/// where the pointer is, a drag moves it by the drag over
+/// `SMALL_ZOOM_TRAVEL`: on a rail of some 20 px the pointer threw the camera
+/// across its whole range. As the Legacy Viewer's, an arrow key (once the
+/// slider has focus, by Tab or a press) or a wheel notch over it moves the
+/// zoom by `SMALL_ZOOM_STEP`, up and right zooming in. Gives the new zoom
 /// fraction (1 zoomed in, at the top).
 fn small_zoom(ui: &mut egui::Ui, p: &Palette, rail: Rect, zoom: f32) -> Option<f32> {
     let label = aurora_i18n::tr!("common-zoom");
-    let resp = ui.interact(rail, ui.scope_id().with("small_zoom"), Sense::drag());
+    let id = ui.scope_id().with("small_zoom");
+    let resp = ui.interact(rail, id, Sense::click_and_drag());
+    if resp.drag_started() || resp.clicked() {
+        resp.request_focus();
+    }
+    let mut steps = 0.0;
+    if resp.has_focus() {
+        ui.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                id,
+                egui::EventFilter {
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    ..Default::default()
+                },
+            );
+        });
+        steps += ui.input(|i| {
+            let up = i.num_presses(egui::Key::ArrowUp) + i.num_presses(egui::Key::ArrowRight);
+            let down = i.num_presses(egui::Key::ArrowDown) + i.num_presses(egui::Key::ArrowLeft);
+            up as f32 - down as f32
+        });
+    }
+    steps += ui.input(|i| {
+        use egui::accesskit::Action;
+        i.num_accesskit_action_requests(id, Action::Increment) as f32 - i.num_accesskit_action_requests(id, Action::Decrement) as f32
+    });
+    steps += widgets::spin_wheel(ui, rail, id, true, true).notches;
     let resp = resp.on_hover_text(label);
     let travel = rail.height() - SMALL_ZOOM_THUMB.y;
     let y = rail.bottom() - SMALL_ZOOM_THUMB.y / 2.0 - zoom.clamp(0.0, 1.0) * travel;
@@ -1540,11 +1573,13 @@ fn small_zoom(ui: &mut egui::Ui, p: &Palette, rail: Rect, zoom: f32) -> Option<f
         egui::Stroke::new(2.0, p.raised),
     );
     let thumb = Rect::from_center_size(egui::pos2(rail.center().x, y), SMALL_ZOOM_THUMB);
-    let ink = if resp.dragged() || resp.hovered() { p.violet } else { p.ink };
+    let ink = if resp.dragged() || resp.hovered() || resp.has_focus() { p.violet } else { p.ink };
     painter.rect_filled(thumb, widgets::inner_radius(ui.visuals()), ink);
     resp.widget_info(|| egui::WidgetInfo::slider(true, f64::from(zoom), label));
     let dy = resp.drag_delta().y;
-    (resp.dragged() && dy != 0.0).then(|| (zoom - dy / SMALL_ZOOM_TRAVEL).clamp(0.0, 1.0))
+    let dragged = resp.dragged() && dy != 0.0;
+    let drag = if dragged { dy / SMALL_ZOOM_TRAVEL } else { 0.0 };
+    (dragged || steps != 0.0).then(|| (zoom - drag + steps * SMALL_ZOOM_STEP).clamp(0.0, 1.0))
 }
 
 /// Where the small camera window's parts sit in its body, from the body's
@@ -3085,6 +3120,58 @@ mod tests {
         for z in zooms {
             assert!(z > 0.5 && z <= 0.5 + 8.0 / SMALL_ZOOM_TRAVEL, "in, by the frame's drag: {z}");
         }
+    }
+
+    #[test]
+    fn the_small_zoom_slider_takes_the_arrows_and_the_wheel() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let keys = KeyBindings::default();
+        let (origin, _) = small_frame(&ctx, &p, &keys, 0.0, vec![], false);
+        let rail = SmallCamera::new(origin).sticks.zoom.center();
+        let away = rail + Vec2::new(120.0, 0.0);
+        let zooms = |out: Output| -> Vec<f32> {
+            out.actions
+                .iter()
+                .filter_map(|a| match a {
+                    ControlAction::Zoom(z) => Some(*z),
+                    _ => None,
+                })
+                .collect()
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let wheel = |y| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut time = 0.0;
+        let mut frame = |events| {
+            time += 0.05;
+            small_frame(&ctx, &p, &keys, time, events, false).1
+        };
+        // not focused yet: an arrow is not the slider's
+        assert!(zooms(frame(vec![key(egui::Key::ArrowUp)])).is_empty());
+        // a press on it gives it the keys (the zoom is 0.5 in `small_frame`)
+        frame(vec![egui::Event::PointerMoved(rail), button(rail, true)]);
+        frame(vec![button(rail, false)]);
+        frame(vec![egui::Event::PointerMoved(away)]);
+        assert_eq!(zooms(frame(vec![key(egui::Key::ArrowUp)])), vec![0.5 + SMALL_ZOOM_STEP]);
+        assert_eq!(zooms(frame(vec![key(egui::Key::ArrowLeft)])), vec![0.5 - SMALL_ZOOM_STEP]);
+        // the wheel, over the slider only: rolled up, it zooms in
+        assert!(zooms(frame(vec![wheel(1.0)])).is_empty());
+        frame(vec![egui::Event::PointerMoved(rail)]);
+        assert_eq!(zooms(frame(vec![wheel(1.0)])), vec![0.5 + SMALL_ZOOM_STEP]);
+        assert_eq!(zooms(frame(vec![wheel(-2.0)])), vec![0.5 - 2.0 * SMALL_ZOOM_STEP]);
     }
 
     #[test]
