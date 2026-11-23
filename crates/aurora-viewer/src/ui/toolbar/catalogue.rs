@@ -37,9 +37,11 @@ pub const COMMANDS: &[Command] = commands![
     "people", "Command_People_Icon", "common-people", true;
     "friends", "Command_People_Icon", "common-friends", true;
     "inventory", "Command_Inventory_Icon", "common-inventory", true;
+    "inventory_dual", "columns-2-filled", "inventory-dual-panel", true;
     "texture_library", "stack-2-filled", "texture-library-title", true;
     "gestures", "Command_Gestures_Icon", "gesture-title", true;
     "appearance", "Command_Appearance_Icon", "common-appearance", true;
+    "avatar_studio", "man-filled", "avatar-studio-title", true;
     "search", "Command_Search_Icon", "search-title", true;
     "places", "Command_Places_Icon", "common-places", true;
     "snapshot", "Command_Snapshot_Icon", "photo-title", true;
@@ -48,6 +50,7 @@ pub const COMMANDS: &[Command] = commands![
     "performance", "Command_Performance_Icon", "common-performance", true;
     "sit", "groundsit", "extra-sit-on-ground-stand-up", true;
     "ao", "AO", "ao-title", true;
+    "ao_mini", "app-window-filled", "toolbar-command-ao-mini", true;
     "movement", "swimming", "movement-swimming", true;
     "preferences", "Command_Preferences_Icon", "common-preferences", true;
     "fly", "plane-tilt-filled", "extra-fly-land-f", true;
@@ -69,6 +72,9 @@ pub const COMMANDS: &[Command] = commands![
     "stop_animations", "player-stop-filled", "ui-context-stop-animations", true;
     "snapshot_to_disk", "device-floppy-filled", "toolbar-command-snapshot-to-disk", true;
     "beacons", "bulb-filled", "toolbar-command-beacons", true;
+    // the Legacy Viewer's Compass and its Face nearest avatar (FSAvatarAlignBase)
+    "avatar_align", "user-scan", "toolbar-command-avatar-align", true;
+    "face_nearest_avatar", "user-search", "toolbar-command-face-nearest", true;
     // Aurora's own: the interface hidden but the chat (#859)
     "immersive", "maximize", "ui-bars-immersive", true;
     "name_tags", "label-filled", "ui-bars-immersive-hide-tags", true;
@@ -78,8 +84,30 @@ pub const COMMANDS: &[Command] = commands![
     "huds", "device-desktop-filled", "ui-bars-immersive-hide-huds", true;
     // Aurora's own: the photo reel's quick view, the session's photos
     "photo_roll", "carousel-horizontal-filled", "toolbar-command-photo-roll", true;
+    // Build and Me menu commands that can be added directly to a toolbar.
+    "ik_edit", "bone-filled", "ik-edit-title", true;
+    "build_edit", "pencil-filled", "toolbar-command-build-edit", true;
+    "build_create", "circle-plus-filled", "toolbar-command-build-create", true;
+    "build_land", "mountain-filled", "toolbar-command-build-land", true;
+    "edit_particles", "sparkles-filled", "ui-bars-edit-particles", true;
+    "import", "file-upload-filled", "import-menu", true;
+    "blender_live", "cube-3d-sphere", "blender-live-title", true;
+    "buy_currency", "coin-filled", "currency-menu", true;
+    "money_tracker", "receipt-filled", "money-tracker-title", true;
+    "experiences", "flask-filled", "ui-experiences-title", true;
+    "stand_up", "man-filled", "common-stand-up", true;
+    "fly_override", "plane-departure-filled", "ui-bars-fly-override", true;
+    "movelock_options", "lock-cog", "movelock-options", true;
+    "quickjump", "arrow-big-up-lines-filled", "ui-bars-quickjump", true;
+    "movement_enhancer", "steering-wheel-filled", "movement-title", true;
+    // Aurora's own: the Director, a camera track to film with
+    "director", "movie", "toolbar-command-director", true;
+    // Aurora's own: our avatar seen by a camera of its own
+    "second_camera", "device-cctv-filled", "second-camera-title", true;
+    // Aurora's own: the viewer steps back for a game (app/gaming_mode.rs)
+    "gaming_mode", "device-gamepad-2-filled", "toolbar-command-gaming-mode", true;
     // Firestorm's, not in Aurora yet
-    "avatar", "user-circle", "toolbar-command-avatar", false;
+    "avatar", "user-circle", "toolbar-command-avatar", true;
     "destinations", "map-2", "toolbar-command-destinations", true;
     "picks", "heart-filled", "toolbar-command-picks", true;
     "poser", "wand", "toolbar-command-poser", true;
@@ -96,21 +124,19 @@ pub const COMMANDS: &[Command] = commands![
     "statistics", "statistics", "toolbar-command-statistics", true;
     "soundexplorer", "music", "toolbar-command-sound-explorer", true;
     "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", true;
-    "phototools", "camera-cog", "toolbar-command-phototools", false;
+    "phototools", "camera-cog", "toolbar-command-phototools", true;
     "phototools_view", "video-filled", "toolbar-command-phototools-camera", false;
-    "pose_stand", "man-filled", "toolbar-command-pose-stand", false;
-    "conversation_log", "file-text-filled", "toolbar-command-conversation-log", false;
+    "pose_stand", "man-filled", "toolbar-command-pose-stand", true;
+    "conversation_log", "file-text-filled", "toolbar-command-conversation-log", true;
     "movelock", "lock-filled", "movelock-title", true;
     "water_walk", "walk", "movement-water-walk", true;
     "resync_animations", "refresh", "toolbar-command-resync-animations", true;
     "regiontracker", "location-filled", "toolbar-command-region-tracker", true;
     "group_titles", "tags-filled", "toolbar-command-group-titles", true;
-    "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", false;
+    "wearable_favorites", "hanger-2-filled", "toolbar-command-wearable-favorites", true;
     "discord", "brand-discord-filled", "toolbar-command-discord", false;
-    "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", false;
-    "omnifilter", "filter-filled", "toolbar-command-omnifilter", false;
-    "avatar_align", "user-scan", "toolbar-command-avatar-align", false;
-    "face_nearest_avatar", "user-search", "toolbar-command-face-nearest", false;
+    "360capture", "panorama-horizontal-filled", "toolbar-command-360-snapshot", true;
+    "omnifilter", "filter-filled", "toolbar-command-omnifilter", true;
 ];
 
 impl Command {

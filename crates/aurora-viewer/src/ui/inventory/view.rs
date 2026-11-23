@@ -380,6 +380,10 @@ pub struct InventoryPreferences {
     /// Aurora's window shows the selection's details: the card at the
     /// bottom of the narrow and medium widths, the pane of the wide one.
     pub show_details: bool,
+    /// Aurora's dual-panel layout: two panes side by side in the Inventory
+    /// window, each with its own folder, search and selection. Off by
+    /// default (the Legacy Viewer has one pane).
+    pub dual_panel: bool,
     /// Folder icon colors (`folder_colors.rs`): this viewer only, on by default.
     pub folder_colors_enabled: bool,
     pub folder_colors: std::collections::BTreeMap<Uuid, [u8; 3]>,
@@ -394,8 +398,11 @@ impl Default for InventoryPreferences {
             protected: HashSet::new(),
             upload_folders: [Uuid::nil(); 5],
             sort: Sort::default(),
+            // RecentItemsSortOrder = SO_DATE only (indra/newview/app_settings/settings.xml,
+            // indra/newview/llinventoryfilter.h): system folders compete by date too.
             recent_sort: Sort {
                 folders_by_name: false,
+                system_first: false,
                 ..Sort::default()
             },
             received_sort: Sort {
@@ -428,6 +435,7 @@ impl Default for InventoryPreferences {
             confirm_delete: true,
             rights: Default::default(),
             show_details: true,
+            dual_panel: false,
             folder_colors_enabled: true,
             folder_colors: Default::default(),
         }
@@ -446,6 +454,13 @@ pub struct ExplorerPreferences {
     pub show_kind: bool,
     pub show_rights: bool,
     pub show_date: bool,
+    /// How the explorer shows its folder: rows, tiles, or both.
+    pub view: ExplorerView,
+    /// The side of a tile's picture; 0 is the Legacy Viewer's 128.
+    pub tile_size: u16,
+    /// The height of the tiles above the rows in the combination view; 0
+    /// shares the room between them.
+    pub gallery_height: u16,
 }
 
 impl Default for ExplorerPreferences {
@@ -458,8 +473,26 @@ impl Default for ExplorerPreferences {
             show_kind: true,
             show_rights: true,
             show_date: true,
+            view: ExplorerView::List,
+            tile_size: 0,
+            gallery_height: 0,
         }
     }
+}
+
+/// The views of the Legacy Viewer's single folder mode (LLPanelMainInventory
+/// ::setViewMode, indra/newview/llpanelmaininventory.cpp): the list, the
+/// gallery of every entry, or the combination of a gallery of the entries
+/// that have a picture above a list of the others. Aurora difference: the
+/// choice is kept, and the explorer starts with its list as before (the
+/// Legacy Viewer starts each single folder mode in the combination view).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExplorerView {
+    #[default]
+    List,
+    Gallery,
+    Combination,
 }
 
 impl InventoryPreferences {
@@ -553,6 +586,9 @@ struct Query {
     agent: Uuid,
     cutoff: i64,
     worn: HashSet<Uuid>,
+    /// The worn or active tag each worn original's label ends with, as it
+    /// is searched: " (worn on left hand)", " (active)"…
+    worn_tags: HashMap<Uuid, String>,
     names: HashMap<Uuid, String>,
 }
 
@@ -767,6 +803,22 @@ impl ViewCache {
         } else {
             HashSet::new()
         };
+        // LLItemBridge::buildSearchableName: the name searched is the row's
+        // whole label, so it holds the worn tag of LLObjectBridge and
+        // LLWearableBridge::getLabelSuffix and the active one of
+        // LLGestureBridge::getLabelSuffix (llinventorybridge.cpp): `+worn`
+        // finds what the avatar wears (#4423). The same text as the rows'
+        // tag (`Facts::worn_label`), lowercase like the searched names.
+        let worn_tags = if smart.is_none() && !text.is_empty() && matches!(prefs.search_field, SearchField::Name | SearchField::All) {
+            facts
+                .worn
+                .iter()
+                .chain(&facts.active_gestures)
+                .filter_map(|id| Some((*id, format!(" ({})", facts.original_worn_label(*id)?.to_lowercase()))))
+                .collect()
+        } else {
+            HashMap::new()
+        };
         let query = Query {
             root,
             text,
@@ -781,6 +833,7 @@ impl ViewCache {
             agent,
             cutoff,
             worn,
+            worn_tags,
             names,
         };
         if self.query.as_ref() == Some(&query) {
@@ -819,9 +872,13 @@ impl ViewCache {
             within(inv, &favorites)
         };
         // Advanced search: patterns and creator names resolved once, then
-        // shared by the parallel walk. Its Date rules keep their own clock;
-        // the Recent tab still limits to since logout.
+        // shared by the parallel walk. Its Date rules keep their own clock.
+        // The Recent tab keeps its since-logout limit under rules on other
+        // fields; a Date rule replaces it, as the finder's hours ago replace
+        // "Since Logoff" on the Recent Items panel
+        // (LLInventoryFilter::setHoursAgo resets the date range).
         let recent = recent_cutoff(prefs, time);
+        let recent_limit = tab == 2 && !smart.is_some_and(|q| q.uses(SmartField::Date));
         let matcher = smart.map(|q| Matcher::new(q, &query.names, recent, time));
         let folder_names: HashMap<Uuid, &str> = if smart.is_some_and(|q| q.uses(SmartField::Folder)) {
             self.entries.iter().filter(|e| e.folder).map(|e| (e.id, e.name.as_str())).collect()
@@ -831,6 +888,12 @@ impl ViewCache {
         // LLItemBridge::getLabelSuffix: the translated link suffix, lowercase
         // like the searched names.
         let link_suffix = format!(" ({})", aurora_i18n::tr!("inventory-pill-link").to_lowercase());
+        let rights_suffixes = [
+            (rules::COPY, aurora_i18n::tr!("inventory-search-no-copy")),
+            (rules::MODIFY, aurora_i18n::tr!("inventory-search-no-modify")),
+            (rules::TRANSFER, aurora_i18n::tr!("inventory-search-no-transfer")),
+        ]
+        .map(|(bit, words)| (bit, format!(" ({})", words.to_lowercase())));
         self.results = self
             .entries
             .par_iter()
@@ -896,7 +959,7 @@ impl ViewCache {
                     }
                     let original_id = rules::original(inv, e.id).unwrap_or(e.id);
                     let original = inv.items.get(&original_id).unwrap_or(it);
-                    if tab == 2 && (e.date <= 0 || e.date < recent) {
+                    if recent_limit && (e.date <= 0 || e.date < recent) {
                         return false;
                     }
                     if tab == 3 && (!query.worn.contains(&original_id) || e.outfit) {
@@ -956,13 +1019,28 @@ impl ViewCache {
                     return false;
                 }
                 let creator = || query.names.get(&original.creator).map(|s| s.to_lowercase()).unwrap_or_default();
-                // LLItemBridge::buildDisplayName includes the link suffix in search.
+                // LLItemBridge::buildSearchableName: the name and its label's
+                // suffix (getLabelSuffix), in its order: the link tag, or the
+                // rights the agent lacks on its own item, then the worn tag.
                 let name = || {
-                    if linked {
-                        std::borrow::Cow::Owned(format!("{}{link_suffix}", e.name))
-                    } else {
-                        std::borrow::Cow::Borrowed(e.name.as_str())
+                    let rights = rules::label_missing_rights(it, inv.owner);
+                    let worn = query.worn_tags.get(&original_id);
+                    if !linked && rights == 0 && worn.is_none() {
+                        return std::borrow::Cow::Borrowed(e.name.as_str());
                     }
+                    let mut label = e.name.clone();
+                    if linked {
+                        label.push_str(&link_suffix);
+                    }
+                    for (bit, suffix) in &rights_suffixes {
+                        if rights & bit != 0 {
+                            label.push_str(suffix);
+                        }
+                    }
+                    if let Some(worn) = worn {
+                        label.push_str(worn);
+                    }
+                    std::borrow::Cow::Owned(label)
                 };
                 match query.field {
                     SearchField::Name => matches_text(&name(), &query.text),
@@ -1297,7 +1375,8 @@ fn compare(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
         .then_with(|| a.id.cmp(&b.id))
 }
 
-fn matches_text(value: &str, query: &str) -> bool {
+/// Inventory text matching on a label and query already folded to the same case.
+pub(crate) fn matches_text(value: &str, query: &str) -> bool {
     if let Some(exact) = query.strip_prefix('"').and_then(|q| q.strip_suffix('"')) {
         return value.split_whitespace().any(|word| word == exact);
     }
@@ -1373,6 +1452,104 @@ mod tests {
             );
             assert!(view.results.contains(&id(91)));
             assert!(!view.results.contains(&id(10)));
+        }
+    }
+
+    /// The quick search of `text` in `field`, in All of the inventory.
+    fn search_text(inv: &Inventory, facts: &Facts, field: SearchField, text: &str) -> Vec<Uuid> {
+        let prefs = InventoryPreferences {
+            search_field: field,
+            ..Default::default()
+        };
+        let mut view = ViewCache::default();
+        view.search(inv, inv.root, text, &prefs, &Filters::default(), 0, None, facts, facts.agent, 1000);
+        view.results
+    }
+
+    #[test]
+    fn name_plus_worn_matches_what_the_avatar_wears_like_the_legacy_label() {
+        // #4423: `jacket+worn` finds the worn jacket, its link and an item
+        // whose own name says "worn", as the Legacy Viewer's label does
+        // (LLItemBridge::buildSearchableName with LLWearableBridge and
+        // LLObjectBridge::getLabelSuffix).
+        let (mut inv, mut facts) = fixture();
+        let mut jacket = item(20, id(2), "Denim Jacket", 100);
+        jacket.asset_type = 5;
+        jacket.inv_type = 18;
+        let spare = item(21, id(2), "Spare Jacket", 100);
+        let worn = aurora_i18n::tr!("common-worn").to_lowercase();
+        let jacket_query = format!("jacket+{worn}");
+        let link_tag = aurora_i18n::tr!("inventory-pill-link").to_lowercase();
+        let active = aurora_i18n::tr!("gesture-active").to_lowercase();
+        let named = item(22, id(2), &format!("Jacket ({worn})"), 100);
+        let mut link = item(23, id(6), "Denim Jacket", 100);
+        link.asset_type = 24;
+        link.asset_id = id(20);
+        let ring = item(24, id(2), "Ring", 100);
+        let mut wave = item(25, id(2), "Wave", 100);
+        wave.asset_type = 21;
+        wave.inv_type = 20;
+        inv.add_items(vec![jacket, spare, named, link, ring, wave]);
+        facts.worn = [id(20), id(24)].into();
+        facts.worn_labels = [(id(24), "Worn on Left Hand".to_owned())].into();
+        facts.active_gestures = [id(25)].into();
+        for field in [SearchField::Name, SearchField::All] {
+            let search = |facts: &Facts, text: &str| {
+                let mut found = search_text(&inv, facts, field, text);
+                found.sort();
+                found
+            };
+            // The jacket, its link and the item with the tag in its name.
+            assert_eq!(search(&facts, &jacket_query), [id(20), id(22), id(23)], "{field:?}");
+            assert_eq!(search(&facts, &format!("{jacket_query}+{link_tag}")), [id(23)], "{field:?}");
+            assert_eq!(search(&facts, "ring+worn on left hand"), [id(24)], "{field:?}");
+            assert_eq!(search(&facts, &format!("wave+{active}")), [id(25)], "{field:?}");
+            // taken off: only the name is left
+            facts.worn.clear();
+            assert_eq!(search(&facts, &jacket_query), [id(22)], "{field:?}");
+            facts.worn = [id(20), id(24)].into();
+        }
+        // the description has no label tags
+        assert!(search_text(&inv, &facts, SearchField::Description, &worn).is_empty());
+    }
+
+    #[test]
+    fn the_searched_label_names_the_rights_missing_on_the_agents_own_items() {
+        // LLItemBridge::getLabelSuffix: " (no copy)", " (no modify)" and
+        // " (no transfer)" on the agent's own items only, never on a link.
+        let (mut inv, facts) = fixture();
+        inv.owner = id(98);
+        let mut no_copy = item(30, id(2), "Sofa", 100);
+        no_copy.owner = id(98);
+        no_copy.owner_mask = rules::MODIFY | rules::TRANSFER;
+        let mut no_mod_no_transfer = item(31, id(2), "Lamp", 100);
+        no_mod_no_transfer.owner = id(98);
+        no_mod_no_transfer.owner_mask = rules::COPY;
+        let mut group = item(32, id(2), "Group Sofa", 100);
+        group.owner = id(97);
+        group.group_owned = true;
+        group.owner_mask = rules::MODIFY;
+        let mut link = item(33, id(2), "Sofa", 100);
+        link.owner = id(98);
+        link.asset_type = 24;
+        link.asset_id = id(30);
+        let mut full = item(34, id(2), "Table", 100);
+        full.owner = id(98);
+        inv.add_items(vec![no_copy, no_mod_no_transfer, group, link, full]);
+        let no_copy_text = aurora_i18n::tr!("inventory-search-no-copy").to_lowercase();
+        let no_modify_text = aurora_i18n::tr!("inventory-search-no-modify").to_lowercase();
+        let no_transfer_text = aurora_i18n::tr!("inventory-search-no-transfer").to_lowercase();
+        for field in [SearchField::Name, SearchField::All] {
+            assert_eq!(search_text(&inv, &facts, field, &no_copy_text), [id(30)], "{field:?}");
+            assert_eq!(
+                search_text(&inv, &facts, field, &format!("lamp+{no_modify_text}+{no_transfer_text}")),
+                [id(31)],
+                "{field:?}"
+            );
+            assert!(
+                search_text(&inv, &facts, field, &format!("table+{no_copy_text}")).is_empty(),
+                "{field:?}"
+            );
         }
     }
 
@@ -1938,6 +2115,43 @@ mod tests {
         assert_eq!(search(&inv, &facts, &hour, &Filters::default(), 2), [id(11), id(10)]);
     }
 
+    /// A date filter set on the Recent tab replaces its since-logout limit,
+    /// as the finder's hours ago replace "Since Logoff" on the Recent Items
+    /// panel (LLInventoryFilter::setHoursAgo resets the date range): in the
+    /// quick filters and as a Date rule of the advanced search.
+    #[test]
+    fn a_date_filter_on_the_recent_tab_replaces_the_since_logout_limit() {
+        use super::super::smart::{Field, Node, Rule};
+        let (inv, facts) = fixture();
+        let prefs = InventoryPreferences {
+            last_logout: 200,
+            ..Default::default()
+        };
+        assert_eq!(search(&inv, &facts, &prefs, &Filters::default(), 2), [id(11)], "since logout alone");
+        let quick = Filters {
+            age: Age::Newer,
+            hours: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            search(&inv, &facts, &prefs, &quick, 2),
+            [id(11), id(10)],
+            "quick filter: the last hour"
+        );
+        let mut rule = Rule::of(Field::Date);
+        rule.age = Age::Newer;
+        rule.hours = 1;
+        assert_eq!(
+            search(&inv, &facts, &prefs, &smart(vec![Node::Rule(rule)], false), 2),
+            [id(11), id(10)],
+            "advanced search: the same Date rule"
+        );
+        // a rule on another field keeps the Recent tab's limit
+        let mut types = Rule::of(Field::Type);
+        types.bits = 1 << 6;
+        assert_eq!(search(&inv, &facts, &prefs, &smart(vec![Node::Rule(types)], false), 2), [id(11)]);
+    }
+
     #[test]
     fn filtered_items_keep_all_ancestors_without_unrelated_items() {
         let (mut inv, facts) = fixture();
@@ -2226,6 +2440,7 @@ mod tests {
             prefs.recent_sort,
             Sort {
                 folders_by_name: false,
+                system_first: false,
                 ..Sort::default()
             }
         );
@@ -2255,6 +2470,7 @@ mod tests {
                 ..Default::default()
             },
             show_details: false,
+            dual_panel: true,
             ..prefs
         };
         let json = serde_json::to_string(&changed).expect("serialize preferences");
@@ -2312,6 +2528,64 @@ mod tests {
         }
     }
 
+    fn recent_tree_order(inv: &Inventory, facts: &Facts, prefs: &InventoryPreferences) -> Vec<Uuid> {
+        let mut view = ViewCache::default();
+        view.search(inv, inv.root, "", prefs, &Filters::default(), 2, None, facts, facts.agent, 1000);
+        let mut tree = TreeState::default();
+        tree.prepare(&view, inv.root, 2, true);
+        tree.order
+    }
+
+    #[test]
+    fn recent_ranks_root_folders_by_their_newest_item_unless_system_first_is_chosen() {
+        let (mut inv, facts) = fixture();
+        let root = inv.root;
+        folder(&mut inv, 20, root, -1, "Store delivery");
+        inv.add_items(vec![item(30, id(4), "Old texture", 200), item(31, id(20), "New box", 600)]);
+        let mut prefs = InventoryPreferences {
+            last_logout: 1,
+            ..Default::default()
+        };
+        let root_order = |inv: &Inventory, prefs: &InventoryPreferences| {
+            recent_tree_order(inv, &facts, prefs)
+                .into_iter()
+                .filter(|entry| [id(4), id(20)].contains(entry))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(root_order(&inv, &prefs), [id(20), id(4)], "newer ordinary folder first");
+        prefs.recent_sort.system_first = true;
+        assert_eq!(root_order(&inv, &prefs), [id(4), id(20)], "explicit system grouping still works");
+        prefs.recent_sort.system_first = false;
+        inv.add_items(vec![item(32, id(4), "Newest texture", 800)]);
+        assert_eq!(root_order(&inv, &prefs), [id(4), id(20)], "system folders also compete by date");
+    }
+
+    #[test]
+    fn recent_keeps_support_folders_first_and_trash_last_even_with_newer_contents() {
+        let (mut inv, facts) = fixture();
+        let root = inv.root;
+        folder(&mut inv, 20, root, -1, "Store delivery");
+        folder(&mut inv, 21, root, -1, "#Aurora");
+        folder(&mut inv, 22, root, -1, "#RLV");
+        inv.add_items(vec![
+            item(30, id(4), "Old texture", 200),
+            item(31, id(20), "New box", 600),
+            item(32, id(5), "Newest discarded box", 900),
+            item(33, id(21), "Support item", 100),
+            item(34, id(22), "Shared item", 100),
+        ]);
+        let prefs = InventoryPreferences {
+            last_logout: 1,
+            search_trash: true,
+            ..Default::default()
+        };
+        let order: Vec<_> = recent_tree_order(&inv, &facts, &prefs)
+            .into_iter()
+            .filter(|entry| [id(4), id(5), id(20), id(21), id(22)].contains(entry))
+            .collect();
+        assert_eq!(order, [id(21), id(22), id(20), id(4), id(5)]);
+    }
+
     #[test]
     fn recent_sort_is_independent_and_survives_reload() {
         let mut prefs: InventoryPreferences =
@@ -2320,6 +2594,7 @@ mod tests {
             prefs.recent_sort,
             Sort {
                 folders_by_name: false,
+                system_first: false,
                 ..Sort::default()
             }
         );
@@ -2360,7 +2635,7 @@ mod tests {
         assert_eq!(run(&mut cache, &prefs, 2), [id(10), id(11)]);
         assert_eq!(run(&mut cache, &prefs, 0), [id(11), id(10)]);
         let built = cache.built;
-        prefs.recent_sort.system_first = false;
+        prefs.recent_sort.system_first = !prefs.recent_sort.system_first;
         assert_eq!(run(&mut cache, &prefs, 0), [id(11), id(10)]);
         assert_eq!(cache.built, built, "Recent changes do not rebuild All");
         assert_eq!(run(&mut cache, &prefs, 2), [id(10), id(11)]);

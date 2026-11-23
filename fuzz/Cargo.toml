@@ -24,6 +24,7 @@ libfuzzer = ["dep:libfuzzer-sys"]
 [dependencies]
 aurora-assets = { path = "../crates/aurora-assets" }
 aurora-audio = { path = "../crates/aurora-audio" }
+aurora-editor-sync = { path = "../crates/aurora-editor-sync" }
 aurora-llsd = { path = "../crates/aurora-llsd" }
 aurora-msg = { path = "../crates/aurora-msg" }
 aurora-net = { path = "../crates/aurora-net" }
@@ -50,6 +51,10 @@ debug-assertions = true
 overflow-checks = true
 
 [profile.release.package.aurora-audio]
+debug-assertions = true
+overflow-checks = true
+
+[profile.release.package.aurora-editor-sync]
 debug-assertions = true
 overflow-checks = true
 
@@ -102,6 +107,14 @@ bench = false
 [[bin]]
 name = "llsd"
 path = "fuzz_targets/llsd.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "editor"
+path = "fuzz_targets/editor.rs"
 required-features = ["libfuzzer"]
 test = false
 doc = false

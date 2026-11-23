@@ -71,8 +71,37 @@ pub fn update(
         }
     }
     if crate::ao::water_demo::mode().is_none() && camera.free().is_none() {
-        let (eye, target) = if mode.contains("exclusion") {
+        let (eye, target) = if mode.contains("deep-lights") {
+            // Looking down at the deep floor of the `deep-lights` set, 48 m
+            // under the water line, its lamp in the middle.
+            (Vec3::new(32.0, 92.0, -21.0), Vec3::new(40.0, 100.0, -27.6))
+        } else if mode.contains("glint") {
+            // Looking down 56 degrees at the lagoon from 12 m above it,
+            // toward `glint-<heading>` (degrees from east, 45 by default:
+            // the sun of AURORA_DEMO_TOD=5), at the sun's glint on the ripples.
+            let heading = mode
+                .split(':')
+                .find_map(|part| part.strip_prefix("glint-")?.parse::<f32>().ok())
+                .unwrap_or(45.0)
+                .to_radians();
+            let target = Vec3::new(40.0, 112.0, 20.0);
+            let back = glam::Vec2::new(heading.cos(), heading.sin()) * 8.1;
+            (target - back.extend(-12.0), target)
+        } else if mode.contains("caustics") {
+            // Under the lagoon, down at its sunny bed 2 to 4 m deep.
+            (Vec3::new(28.0, 110.0, 19.2), Vec3::new(37.0, 119.0, 15.8))
+        } else if mode.contains("puddles") {
+            // Down at the plaza's floor south of the arrival, 3 m away:
+            // with AURORA_RAIN its puddles, with AURORA_SNOW_AFTER their ice.
+            (Vec3::new(128.0, 118.0, 34.6), Vec3::new(132.0, 123.5, 32.0))
+        } else if mode.contains("rain-sea") {
+            // Across the lagoon from 2.5 m above it: with AURORA_RAIN, the
+            // rain on open water.
+            (Vec3::new(30.0, 104.0, 22.5), Vec3::new(50.0, 124.0, 19.5))
+        } else if mode.contains("exclusion") {
             (Vec3::new(48.0, 111.0, 28.0), Vec3::new(48.0, 127.0, 19.0))
+        } else if mode.contains("alpha-layers") || mode.contains("alpha-cross") {
+            (Vec3::new(46.0, 117.0, 24.0), Vec3::new(56.0, 130.0, 19.5))
         } else if mode.contains("parts-") {
             let x = if mode.contains("parts-feet") { 62.0 } else { 52.0 };
             if mode.contains("parts-feet") {
@@ -246,7 +275,9 @@ pub fn update(
             && (crate::ao::water_demo::mode().is_some()
                 || mode.contains("parts-")
                 || mode.contains("waterline")
-                || mode.contains("optics-"))
+                || mode.contains("optics-")
+                || mode.contains("alpha-layers")
+                || mode.contains("alpha-cross"))
         {
             continue;
         }
@@ -260,6 +291,68 @@ pub fn update(
             Default::default(),
             "",
         ));
+    }
+    if mode.contains("deep-lights") {
+        // A floor 48 m under the water line (region water at 20 m) with a
+        // point light just above it and one at 30 m under: the lamps must
+        // light it in their own colour, not as dim as the sunlight down
+        // there (water_scene_lit).
+        for (id, pos, scale, color, light) in [
+            (
+                99540,
+                Vec3::new(40.0, 100.0, -28.2),
+                Vec3::new(16.0, 16.0, 0.4),
+                [0.8, 0.8, 0.78, 1.0],
+                None,
+            ),
+            (
+                99541,
+                Vec3::new(36.0, 104.0, -26.0),
+                Vec3::new(1.0, 1.0, 4.0),
+                [0.55, 0.5, 0.45, 1.0],
+                None,
+            ),
+            (
+                99542,
+                Vec3::new(41.0, 99.0, -27.4),
+                Vec3::new(0.3, 0.3, 0.3),
+                [1.0, 0.85, 0.6, 1.0],
+                Some([1.0, 0.8, 0.55, 1.0]),
+            ),
+            (
+                99543,
+                Vec3::new(46.0, 104.0, -10.0),
+                Vec3::new(4.0, 4.0, 0.3),
+                [0.8, 0.8, 0.78, 1.0],
+                None,
+            ),
+            (
+                99544,
+                Vec3::new(46.0, 104.0, -9.0),
+                Vec3::new(0.3, 0.3, 0.3),
+                [0.5, 0.8, 1.0, 1.0],
+                Some([0.5, 0.8, 1.0, 1.0]),
+            ),
+        ] {
+            objects.push(super::prim(
+                id,
+                pos,
+                Quat::IDENTITY,
+                scale,
+                box_shape,
+                super::te(color, 0, light.is_some(), 0.0),
+                aurora_prim::ExtraParams {
+                    light: light.map(|color| aurora_prim::LightParams {
+                        color,
+                        radius: 8.0,
+                        cutoff: 0.0,
+                        falloff: 0.75,
+                    }),
+                    ..Default::default()
+                },
+                "",
+            ));
+        }
     }
     if mode.contains("optics-") {
         for (id, x, z, color) in [
@@ -301,6 +394,64 @@ pub fn update(
                 "",
             ));
         }
+    }
+    if mode.contains("alpha-layers") {
+        // Blended layers stacked under the water, as the animated surfaces
+        // of a pond lying in region water: two wide sheets tilted opposite
+        // ways, crossing along a line, and a small tile under both. Each
+        // must show through the others on both sides of the crossing; none
+        // may cut another along a straight edge.
+        for (id, pos, tilt, scale, color) in [
+            (
+                99533,
+                Vec3::new(56.0, 130.0, 19.55),
+                0.05,
+                Vec3::new(16.0, 12.0, 0.05),
+                [0.2, 0.45, 1.0, 0.3],
+            ),
+            (
+                99534,
+                Vec3::new(56.0, 130.0, 19.5),
+                -0.05,
+                Vec3::new(16.0, 12.0, 0.05),
+                [1.0, 0.85, 0.3, 0.45],
+            ),
+            (
+                99535,
+                Vec3::new(52.0, 128.0, 18.9),
+                0.0,
+                Vec3::new(2.0, 2.0, 0.05),
+                [0.95, 0.1, 0.1, 0.7],
+            ),
+        ] {
+            objects.push(super::prim(
+                id,
+                pos,
+                Quat::from_rotation_y(tilt),
+                scale,
+                box_shape,
+                super::te(color, 0, false, 0.0),
+                Default::default(),
+                "",
+            ));
+        }
+    }
+    if mode.contains("alpha-cross") {
+        // A faint blended sheet crossing the water plane, as the animated
+        // surface of a pond lying in region water: one half just under the
+        // water, the other just above it. The water must keep its fog and
+        // its reflection on both sides of the crossing line; the half under
+        // the water must not show the bed clear, as through a hole.
+        objects.push(super::prim(
+            99536,
+            Vec3::new(56.0, 130.0, 20.0),
+            Quat::from_rotation_y(0.05),
+            Vec3::new(16.0, 12.0, 0.02),
+            box_shape,
+            super::te([0.9, 0.95, 1.0, 0.15], 0, false, 0.0),
+            Default::default(),
+            "",
+        ));
     }
     for (id, pos) in [
         // Shin-deep wading: feet cross the surface during the fixture's gait.

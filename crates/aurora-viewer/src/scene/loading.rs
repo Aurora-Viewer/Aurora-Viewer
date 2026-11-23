@@ -128,6 +128,9 @@ struct State {
     shown: f32,
     /// When each part was last complete (the `shown after` log line).
     timeline: Timeline,
+    /// A copy of an avatar already loaded (the animation editor's mirror):
+    /// shown once its parts are there, with no settling delay.
+    copy: bool,
 }
 
 /// When each kind of part of a loading avatar became complete, in seconds
@@ -206,6 +209,7 @@ impl State {
             reported: false,
             shown: 0.0,
             timeline: Timeline::default(),
+            copy: false,
         }
     }
 
@@ -249,7 +253,7 @@ impl State {
         }
         let delay = if self.shown_once { LOADED_DELAY } else { FIRST_MIN_DELAY };
         let since = now.duration_since(self.loading_at).as_secs_f32();
-        let settled = since > delay || (!self.shown_once && textures && since > LOADED_DELAY);
+        let settled = self.copy || since > delay || (!self.shown_once && textures && since > LOADED_DELAY);
         let loaded = !still && (settled || waited > MAX_WAIT);
         let first_show = loaded && !self.shown_once;
         if loaded {
@@ -517,6 +521,10 @@ impl Scene {
             let id = o.full_id;
             seen.push(id);
             let s = loading.states.entry(id).or_insert_with(|| State::new(now));
+            // the animation editor's mirror of us is made of what is already
+            // loaded: it shows as soon as its copies are built, with no
+            // settling delay
+            s.copy = world.is_mirror(&id);
             // shown once, an avatar is never a cloud again: nothing below
             // would be used, and what it wears was looked up here every
             // frame (a club crowd wears hundreds of prims each)
@@ -524,9 +532,24 @@ impl Scene {
                 continue;
             }
             let own = id == world.agent_id;
-            let worn = world.objects.children_of(&o.key).len();
-            // (ours is not compared with the simulator's list: `!isSelf()`)
-            let announced = if own { 0 } else { world.announced_attachments(&id) };
+            // the region's objects, and the copies drawn from the cache for
+            // those not there yet, each once (world/avatar_cache): an avatar
+            // whose objects were kept shows with their copies, where the
+            // Legacy Viewer keeps it a cloud until the region sends them
+            let worn = world
+                .objects
+                .children_of(&o.key)
+                .iter()
+                .filter(|&&i| world.objects.get(i).is_some_and(|c| !c.is_client_preview()))
+                .count()
+                + world.avatar_cache.standing_in(&id);
+            // (ours is not compared with the simulator's list: `!isSelf()`,
+            // nor the animation editor's mirror of us, which has no HUDs)
+            let announced = if own || world.is_mirror(&id) {
+                0
+            } else {
+                world.announced_attachments(&id)
+            };
             // its missing bakes rank with the meshes it wears (`wait_px`),
             // the textures on what it wears just behind them: the geometry
             // is what it waits for, the textures only shorten the delay
@@ -729,6 +752,15 @@ mod tests {
         // nothing expected yet: textures change nothing
         let mut s = State::new(t0);
         assert!(!s.tick(t0 + secs(2.0), 4, 0, false, true).loaded);
+    }
+
+    #[test]
+    fn a_copy_of_a_loaded_avatar_shows_once_its_parts_are_there() {
+        let t0 = Instant::now();
+        let mut s = State::new(t0);
+        s.copy = true;
+        assert!(!s.tick(t0, 2, 0, false, true).loaded, "its copies are being built");
+        assert!(s.tick(t0 + secs(0.03), 2, 0, true, true).loaded);
     }
 
     #[test]

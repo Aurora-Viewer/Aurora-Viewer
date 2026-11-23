@@ -25,7 +25,6 @@ pub fn seed_queries(world: &mut World) {
 
 #[derive(Default)]
 pub struct Demo {
-    ik_generation: u128,
     scripts: Vec<TaskItem>,
     pub installed: bool,
     pub startup_stalled: bool,
@@ -34,6 +33,10 @@ pub struct Demo {
     /// stays known but every request times out until a recompile.
     pub halt: bool,
     halted: bool,
+    /// The bridge is worn as the Library container looks, a rock-sized
+    /// sphere, and this simulator applies none of the looks the viewer sends:
+    /// what a slow region shows while the factory works.
+    pub container: bool,
 }
 
 pub fn seed(world: &mut World) {
@@ -100,7 +103,6 @@ impl Demo {
                 } else {
                     Ok(match query {
                         Query::Pose { .. } => Reply::Pose,
-                        Query::Portal { .. } => Reply::Portal,
                         Query::Altitudes(ids) => Reply::Altitudes(
                             ids.iter()
                                 .filter(|id| **id == SKY_VISITOR)
@@ -147,16 +149,14 @@ impl Demo {
                 && *index == 0
                 && *label == format!("auroraHello|{}", bridge.object) =>
             {
-                // All three scripts hear the same probe and answer it.
+                // Both scripts hear the same probe and answer it.
                 Some(
                     self.handshake(bridge, world)
                         .into_iter()
                         .chain(self.query_handshake(bridge, world))
-                        .chain(self.ik_handshake(bridge, world))
                         .collect(),
                 )
             }
-            NetCommand::ScriptDialogReply { label, .. } if label.starts_with("auroraIKRelay|") => Some(Vec::new()),
             NetCommand::AgentAnimationChanges { changes } if !world.agent_id.is_nil() => {
                 let mut anims: Vec<_> = world
                     .animations
@@ -222,12 +222,48 @@ impl Demo {
                     .collect();
                 Some(vec![NetEvent::InventoryContents(contents)])
             }
-            NetCommand::Build(BuildCmd::Transform { updates, .. })
+            NetCommand::RezAttachments(items) if self.container && items.iter().all(|item| item.item_id == bridge.item) => {
+                Some(vec![NetEvent::ObjectUpdates {
+                    handle: world.main_region.unwrap_or_default(),
+                    objects: items
+                        .iter()
+                        .map(|item| {
+                            let mut rock = crate::demo::outfit_attachment(item);
+                            rock.scale = glam::Vec3::splat(0.6);
+                            rock.volume = aurora_prim::RawShape {
+                                path_curve: aurora_prim::params::LL_PCODE_PATH_CIRCLE,
+                                profile_curve: aurora_prim::params::LL_PCODE_PROFILE_CIRCLE_HALF,
+                                path_scale_x: 100,
+                                path_scale_y: 100,
+                                ..Default::default()
+                            }
+                            .to_params();
+                            let mut look = aurora_prim::te::TextureEntry::default();
+                            for face in &mut look.faces {
+                                face.texture = aurora_prim::te::BLANK_TEXTURE;
+                                face.color = [0.55, 0.6, 0.5, 1.0];
+                            }
+                            rock.texture_entry = Some(std::sync::Arc::new(look));
+                            rock
+                        })
+                        .collect(),
+                }])
+            }
+            // The bridge's look (`Bridge::disguise`): taken, never echoed.
+            NetCommand::Build(edit @ (BuildCmd::Transform { .. } | BuildCmd::SetShape { .. } | BuildCmd::SetTextures { .. }))
                 if world
                     .objects
                     .index_of_uuid(&bridge.object)
                     .and_then(|i| world.objects.get(i))
-                    .is_some_and(|object| updates.iter().all(|update| update.local_id == object.key.local_id)) =>
+                    .is_some_and(|object| {
+                        let own = |local_id: &u32| *local_id == object.key.local_id;
+                        match edit {
+                            BuildCmd::Transform { updates, .. } => updates.iter().all(|update| own(&update.local_id)),
+                            BuildCmd::SetShape { local_ids, .. } => local_ids.iter().all(own),
+                            BuildCmd::SetTextures { local_id, .. } => own(local_id),
+                            _ => false,
+                        }
+                    }) =>
             {
                 Some(Vec::new())
             }
@@ -252,6 +288,7 @@ impl Demo {
                 completed.folders.clear();
                 Some(vec![
                     NetEvent::InventoryUpdated {
+                        bulk: false,
                         folders: Vec::new(),
                         items,
                     },
@@ -266,21 +303,20 @@ impl Demo {
                 serial: Some(1),
                 result: Ok(self.scripts.clone()),
             }]),
+            NetCommand::Build(BuildCmd::RemoveTaskInventory { item_id, .. }) if self.scripts.iter().any(|s| s.item_id == *item_id) => {
+                self.scripts.retain(|s| s.item_id != *item_id);
+                Some(Vec::new())
+            }
             NetCommand::Build(BuildCmd::RezScript { item, .. })
-                if [NAME, QUERY_NAME, ik::NAME].contains(&item.name.as_str()) && self.scripts.iter().all(|s| s.name != item.name) =>
+                if [NAME, QUERY_NAME].contains(&item.name.as_str()) && self.scripts.iter().all(|s| s.name != item.name) =>
             {
                 let mut script = (**item).clone();
                 script.item_id = Uuid::new_v4();
                 self.scripts.push(script);
                 Some(Vec::new())
             }
-            NetCommand::SaveScript { request, target, .. }
-                if [bridge.upload, bridge.query_upload, bridge.ik.upload].contains(&Some(*request)) =>
-            {
+            NetCommand::SaveScript { request, target, .. } if [bridge.upload, bridge.query_upload].contains(&Some(*request)) => {
                 self.installed = !failed;
-                if target.item == bridge.ik.script && !failed {
-                    self.ik_generation += 1;
-                }
                 Some(vec![NetEvent::ScriptSaved {
                     request: *request,
                     target: *target,
@@ -352,6 +388,7 @@ impl Demo {
                 item.asset_id = Uuid::new_v4();
                 Some(vec![
                     NetEvent::InventoryUpdated {
+                        bulk: false,
                         folders: Vec::new(),
                         items: vec![item],
                     },
@@ -362,6 +399,7 @@ impl Demo {
                 ])
             }
             NetCommand::FetchItems { items, .. } if items.contains(&bridge.item) => Some(vec![NetEvent::InventoryUpdated {
+                bulk: false,
                 folders: Vec::new(),
                 items: items.iter().filter_map(|id| world.inventory.items.get(id).cloned()).collect(),
             }]),
@@ -370,7 +408,7 @@ impl Demo {
                     object_id: *object_id,
                     item_id: *item_id,
                     running: self.installed,
-                    mono: Some(true),
+                    compile: Some(aurora_net::scripts::CompileTarget::Mono),
                 }])
             }
             _ => None,
@@ -380,6 +418,16 @@ impl Demo {
     #[cfg(test)]
     pub fn forget_script(&mut self, name: &str) {
         self.scripts.retain(|s| s.name != name);
+    }
+    /// A bridge object made before the IK relay's removal still holds it.
+    #[cfg(test)]
+    pub fn keep_retired_ik(&mut self) {
+        self.scripts.push(TaskItem {
+            item_id: Uuid::from_u128(0x1c_0001),
+            name: RETIRED_IK_NAME.into(),
+            asset_type: 10,
+            ..Default::default()
+        });
     }
     pub fn query_handshake(&self, bridge: &Bridge, world: &World) -> Option<NetEvent> {
         let NetEvent::Chat(mut chat) = self.handshake(bridge, world)? else {
@@ -391,17 +439,6 @@ impl Demo {
             .replace("</auroraBridge>", "</auroraBridgeQuery>")
             .replace("/cap/11111111-", "/cap/22222222-")
             .replace(&Uuid::from_u128(42).to_string(), &Uuid::from_u128(43).to_string());
-        Some(NetEvent::Chat(chat))
-    }
-    pub fn ik_handshake(&self, bridge: &Bridge, world: &World) -> Option<NetEvent> {
-        let NetEvent::Chat(mut chat) = self.handshake(bridge, world)? else {
-            return None;
-        };
-        chat.message = format!(
-            "<auroraBridgeIK>{VERSION}|{}|{}</auroraBridgeIK>",
-            bridge.folder,
-            Uuid::from_u128(44 + self.ik_generation)
-        );
         Some(NetEvent::Chat(chat))
     }
     pub fn handshake(&self, bridge: &Bridge, world: &World) -> Option<NetEvent> {
@@ -422,6 +459,7 @@ impl Demo {
             owner_id: world.agent_id,
             source_type: ChatSourceType::Object,
             chat_type: ChatType::OwnerSay,
+            region: world.main_region,
             position: glam::Vec3::ZERO,
             message: format!(
                 "<auroraBridge>{VERSION}|{}|https://{host}:12043/cap/11111111-1111-4111-8111-111111111111|{}</auroraBridge>",

@@ -193,6 +193,7 @@ impl Session<'_> {
             NetEvent::InventoryUpdated {
                 folders: update.folders,
                 items,
+                bulk: true,
             },
         );
         if !update.transaction.is_nil() {
@@ -373,10 +374,11 @@ mod tests {
         let mut session = Session {
             asset_imports: Default::default(),
             sh: &sh,
-            sock: sock.clone(),
+            sock: std::sync::Arc::new(crate::circuit_socket::CircuitSocket::direct(sock.clone())),
             login,
             sims: [(address, sim)].into(),
             main: Some(address),
+            last_run_sent: None,
             eq_tx,
             caps_tx,
             notecard_copy_tx,
@@ -386,6 +388,7 @@ mod tests {
             appearance_queue: Default::default(),
             own_profile: None,
             notecard_copies: HashMap::new(),
+            offer_hosts: Default::default(),
             agent_update: AgentUpdateRule::new(Instant::now()),
             control_flags: 0,
             one_shot: 0,
@@ -393,6 +396,7 @@ mod tests {
             far: FarStep::new(Instant::now()),
             refuse_neighbours: false,
             fov: DEFAULT_FOV,
+            interest_list: InterestListMode::Default,
             logout_started: None,
             finished: false,
             agent_moved: false,

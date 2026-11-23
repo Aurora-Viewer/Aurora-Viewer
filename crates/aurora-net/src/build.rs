@@ -406,6 +406,14 @@ pub enum BuildCmd {
         group_id: Uuid,
         item: Box<TaskItem>,
     },
+    /// CreateTaskInventoryItem: the region makes a new script or notecard in
+    /// the object `item.parent_id` (LLViewerObject::createInventoryItem);
+    /// the answer comes back as NetEvent::CapReply with the same `tag`.
+    CreateTaskItem {
+        handle: RegionHandle,
+        item: Box<TaskItem>,
+        tag: u64,
+    },
     ScriptReset {
         handle: RegionHandle,
         object_id: Uuid,
@@ -559,9 +567,14 @@ pub struct ObjectProps {
     pub sale_price: i32,
     pub category: u32,
     pub inventory_serial: i16,
+    pub item_id: Uuid,
     /// Inventory folder the object was rezzed from (full properties only;
     /// nil when unknown). Take sends it back there (handle_take).
     pub folder_id: Uuid,
+    /// The object whose contents the object was rezzed from (full
+    /// properties only; nil otherwise): where "Save back to object
+    /// contents" sends it (LLSelectNode::mFromTaskID).
+    pub from_task_id: Uuid,
     pub name: String,
     pub description: String,
     pub touch_name: String,

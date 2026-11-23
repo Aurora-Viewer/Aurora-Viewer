@@ -5,21 +5,27 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MAGIC: &[u8; 8] = b"AURBLD1\n";
+/// The add-on's greeting, followed by the session's secret (`token.rs`).
+const MAGIC: &[u8; 8] = b"AURBLD2\n";
+/// The greeting of add-ons that send no secret: refused, with a reply that
+/// makes them say "Incompatible Aurora protocol" instead of retrying silently.
+const OLD_MAGIC: &[u8; 8] = b"AURBLD1\n";
 
 pub(super) fn start(
     port: u16,
+    secret: String,
     supported: HashSet<String>,
     rest_axes: std::collections::HashMap<String, [f32; 16]>,
     ctx: egui::Context,
     pool: Option<Arc<aurora_render::StagingPool>>,
 ) -> io::Result<Arc<Shared>> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
-    start_listener(listener, supported, rest_axes, ctx, pool)
+    start_listener(listener, secret, supported, rest_axes, ctx, pool)
 }
 
 pub(super) fn start_listener(
     listener: TcpListener,
+    secret: String,
     supported: HashSet<String>,
     rest_axes: std::collections::HashMap<String, [f32; 16]>,
     ctx: egui::Context,
@@ -32,7 +38,7 @@ pub(super) fn start_listener(
         while !worker.stop.load(Ordering::Acquire) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
-                    if let Err(error) = serve(&mut stream, &worker, &supported, &rest_axes, &ctx, pool.as_deref())
+                    if let Err(error) = serve(&mut stream, &secret, &worker, &supported, &rest_axes, &ctx, pool.as_deref())
                         && !worker.stop.load(Ordering::Acquire)
                         && !matches!(
                             error.kind(),
@@ -85,6 +91,7 @@ fn read(stream: &mut TcpStream, mut target: &mut [u8], shared: &Shared, idle: Du
 
 fn serve(
     stream: &mut TcpStream,
+    secret: &str,
     shared: &Shared,
     supported: &HashSet<String>,
     rest_axes: &std::collections::HashMap<String, [f32; 16]>,
@@ -96,8 +103,23 @@ fn serve(
     stream.set_nodelay(true)?;
     let mut magic = [0; 8];
     read(stream, &mut magic, shared, Duration::from_secs(3))?;
+    if &magic == OLD_MAGIC {
+        let _ = writeln!(stream, "{}", serde_json::json!({ "protocol": protocol::VERSION + 1 }));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            aurora_i18n::tr!("blender-live-addon-outdated").to_string(),
+        ));
+    }
     if &magic != MAGIC {
         return Err(io::ErrorKind::InvalidData.into());
+    }
+    let mut received = [0; token::LEN];
+    read(stream, &mut received, shared, Duration::from_secs(3))?;
+    if !token::matches(&received, secret) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            aurora_i18n::tr!("blender-live-token-refused").to_string(),
+        ));
     }
     let mut joints: Vec<_> = supported.iter().collect();
     joints.sort();
@@ -247,4 +269,85 @@ fn reply(stream: &mut TcpStream, shared: &Shared, mut reply: serde_json::Value) 
         reply["shape_cancel"] = serde_json::json!(id);
     }
     writeln!(stream, "{reply}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::BufRead;
+
+    fn server(secret: &str) -> (Arc<Shared>, u16) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        let supported = ["mPelvis".to_owned()].into_iter().collect();
+        let shared = start_listener(
+            listener,
+            secret.to_owned(),
+            supported,
+            Default::default(),
+            egui::Context::default(),
+            None,
+        )
+        .expect("start");
+        (shared, port)
+    }
+
+    /// The viewer's first line after `greeting`; empty when it closes without one.
+    fn first_line(port: u16, greeting: &[u8]) -> String {
+        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+        stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+        stream.write_all(greeting).expect("greeting");
+        let mut line = String::new();
+        // A reset counts as a close: the viewer may drop unread bytes.
+        let _ = io::BufReader::new(stream).read_line(&mut line);
+        line
+    }
+
+    /// All the viewer sends after `greeting` until it closes the connection.
+    /// The worker records its error before it drops the stream, so once this
+    /// returns the status holds it (reading only the reply raced with it).
+    fn refused(port: u16, greeting: &[u8]) -> String {
+        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+        stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+        stream.write_all(greeting).expect("greeting");
+        let mut reply = Vec::new();
+        // A reset counts as a close: the viewer may drop unread bytes.
+        let _ = stream.read_to_end(&mut reply);
+        String::from_utf8_lossy(&reply).into_owned()
+    }
+
+    #[test]
+    fn only_an_add_on_with_the_session_secret_is_greeted() {
+        let secret = token::generate();
+        let (shared, port) = server(&secret);
+
+        let hello = first_line(port, &[MAGIC.as_slice(), secret.as_bytes()].concat());
+        assert!(hello.contains("\"joints\":[\"mPelvis\"]"), "{hello}");
+
+        let other = token::generate();
+        assert_eq!(refused(port, &[MAGIC.as_slice(), other.as_bytes()].concat()), "");
+        assert_eq!(
+            shared.status.lock().error.as_deref(),
+            Some(aurora_i18n::tr!("blender-live-token-refused").as_ref())
+        );
+
+        assert_eq!(refused(port, b"GET / HTTP/1.1\r\n\r\n"), "");
+
+        let old = refused(port, OLD_MAGIC);
+        let reply: serde_json::Value = serde_json::from_str(&old).expect("JSON reply");
+        assert_eq!(
+            reply["protocol"],
+            protocol::VERSION + 1,
+            "an old add-on reads an incompatible protocol"
+        );
+        assert!(reply.get("joints").is_none());
+        assert_eq!(
+            shared.status.lock().error.as_deref(),
+            Some(aurora_i18n::tr!("blender-live-addon-outdated").as_ref())
+        );
+
+        let hello = first_line(port, &[MAGIC.as_slice(), secret.as_bytes()].concat());
+        assert!(hello.contains("\"joints\""), "the secret still works after refusals: {hello}");
+        shared.stop.store(true, Ordering::Release);
+    }
 }

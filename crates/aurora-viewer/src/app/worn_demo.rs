@@ -37,6 +37,10 @@ impl App {
             self.demo_temporary_detach_steps(mode == "temporary-detach");
             return;
         }
+        if mode == "derender-part" {
+            self.demo_worn_derender_part_steps();
+            return;
+        }
         if matches!(mode.as_str(), "temporary" | "temporary-outfit") {
             self.demo_temporary_steps();
             if mode == "temporary-outfit" {
@@ -46,7 +50,12 @@ impl App {
         }
         let freeze = mode == "freeze";
         let (edit, inspect) = (matches!(mode.as_str(), "edit" | "move" | "freeze"), mode == "inspect");
-        if !(edit || inspect || mode == "menu") {
+        let detach_delete = matches!(mode.as_str(), "detach-delete" | "detach-delete-confirm");
+        if mode == "detach-delete-confirm" {
+            let (confirm, log) = (self.frame_count == 780, [760, 800, 900, 1200].contains(&self.frame_count));
+            self.demo_detach_delete_steps("worn detach-delete", crate::demo::worn::item_id(), confirm, log);
+        }
+        if !(edit || inspect || detach_delete || mode == "menu") {
             return;
         }
         if freeze {
@@ -80,6 +89,11 @@ impl App {
                 }
                 self.context_menu = None;
             }
+            // "Detach and Delete" from the bottom icon bar: its confirmation
+            740 if detach_delete => {
+                self.on_ctx_action(CtxAction::DetachDelete(key));
+                self.context_menu = None;
+            }
             // the arrow along the attachment point's Z, 45 px from the pivot
             780 if mode == "move" => {
                 if let Some(b) = self.build.bounds(&self.world, now)
@@ -103,6 +117,67 @@ impl App {
                     );
                 }
             }
+            _ => {}
+        }
+    }
+
+    /// AURORA_DEMO_WORN=derender-part (#3384): Edit on the backpack, "Edit
+    /// linked parts", its child prim selected and right-clicked, then
+    /// "Derender": only that prim goes; "Clear temporary" brings it back.
+    fn demo_worn_derender_part_steps(&mut self) {
+        let region = self.world.main_region.unwrap_or_default();
+        let root = ObjKey {
+            region,
+            local_id: crate::demo::worn::ROOT,
+        };
+        let child = ObjKey {
+            region,
+            local_id: crate::demo::worn::CHILD,
+        };
+        let log_state = |app: &Self, step: &str| {
+            log::info!(
+                "demo worn derender-part: {step}: root present={} child present={}",
+                app.world.objects.index_of(&root).is_some(),
+                app.world.objects.index_of(&child).is_some()
+            );
+        };
+        match self.frame_count {
+            700 => self.on_ctx_action(CtxAction::EditAttachment(root)),
+            720 => {
+                self.build.set_edit_linked(&mut self.world, &mut self.settings.build, true);
+                if let Some(idx) = self.world.objects.index_of(&child) {
+                    self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                    self.flush_build();
+                }
+            }
+            // the right click on the child prim, where it is drawn
+            740 => {
+                if let Some(idx) = self.world.objects.index_of(&child)
+                    && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
+                    && let Some(cursor) = self.build.cam.project_px(pos)
+                {
+                    self.cursor_pos = cursor;
+                    self.open_context_menu();
+                }
+            }
+            780 => {
+                let id = self
+                    .world
+                    .objects
+                    .index_of(&child)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| o.full_id);
+                self.context_menu = None;
+                if let Some(id) = id {
+                    self.on_ctx_action(CtxAction::Derender { id, permanent: false });
+                }
+                log_state(self, "derendered");
+            }
+            900 => {
+                self.world.clear_temporary_derenders();
+                self.send_derender_requests();
+            }
+            960 => log_state(self, "cleared"),
             _ => {}
         }
     }

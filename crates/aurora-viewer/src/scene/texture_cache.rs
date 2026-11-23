@@ -213,14 +213,18 @@ pub fn read(path: &Path, want: u8) -> Option<Transcoded> {
 
 /// Coarse preview reads stay bounded even before the streamer knows the
 /// texture's dimensions. Select from the cache header before loading blocks.
-pub fn read_preview(path: &Path) -> Option<Transcoded> {
+pub fn read_preview(path: &Path, side: u32) -> Option<Transcoded> {
     read_for(path, |head| {
-        preview_discard(u32_at(head, 12).unwrap_or(0), u32_at(head, 16).unwrap_or(0))
+        discard_for_side(u32_at(head, 12).unwrap_or(0), u32_at(head, 16).unwrap_or(0), side)
     })
 }
-pub fn preview_discard(mut width: u32, mut height: u32) -> u8 {
+pub fn preview_discard(width: u32, height: u32) -> u8 {
+    discard_for_side(width, height, 256)
+}
+
+pub fn discard_for_side(mut width: u32, mut height: u32, side: u32) -> u8 {
     let mut discard = 0;
-    while width.max(height) > 256 && discard < 15 {
+    while width.max(height) > side && discard < 15 {
         (width, height) = (width.div_ceil(2), height.div_ceil(2));
         discard += 1;
     }
@@ -524,7 +528,7 @@ mod tests {
             panic!("a BC7 chain");
         };
         assert_eq!(c.levels, chain[3..]);
-        assert_eq!(read_preview(&sealed), read_preview(&clear));
+        assert_eq!(read_preview(&sealed, 256), read_preview(&clear, 256));
     }
 
     #[test]

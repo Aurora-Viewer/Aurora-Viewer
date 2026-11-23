@@ -42,6 +42,21 @@ default
 }
 "#;
 
+const SLUA_DEMO_SOURCE: &str = r#"--[[ SLua: comments, strings and library calls ]]
+local count = 0
+local delay = 1.5
+
+local function greet(resident: string): string
+    return `Hello, {ll.Key2Name(resident)}!`
+end
+
+LLEvents:on("touch_start", function(events)
+    count += 1
+    ll.Say(PUBLIC_CHANNEL, greet(events[1]:getKey()))
+    ll.SetText(string.format("%d touches", count), vector(1, 1, 1), 1.0)
+end)
+"#;
+
 const WORD_WRAP_DEMO_SOURCE: &str = r#"// A long comment stays readable when the editor is resized: each continuation belongs to the same source line, and saving or copying keeps the original text exactly as written.
 string message = "This long string wraps visually inside the script editor without inserting any newline into the script or changing the string sent to nearby chat.";
 default
@@ -53,6 +68,15 @@ default
 }
 "#;
 
+/// `AURORA_DEMO_SCRIPTS=lua`: a Lua (SLua) source, item subtype SST_LUA.
+const LUA_DEMO_SOURCE: &str = r#"-- A Lua script: saved for the Luau VM, never as LSL
+local function greet(name: string)
+    ll.Say(0, "Hello, " .. name .. "!")
+end
+
+greet("Avatar")
+"#;
+
 struct ScriptInfo {
     name: String,
     handle: u64,
@@ -60,6 +84,8 @@ struct ScriptInfo {
     asset: Uuid,
     can_read: bool,
     can_edit: bool,
+    /// The item's flags: its low byte is the script language.
+    flags: u32,
 }
 
 /// Read and edit rights: copy and modify, or copy alone for the library
@@ -227,6 +253,7 @@ impl App {
                 | "word-wrap"
                 | "no-word-wrap"
                 | "word-wrap-preferences"
+                | "slua"
         );
         if self.frame_count == 280 {
             self.panels.perf = false;
@@ -253,6 +280,15 @@ impl App {
             ) {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
                 let item = Uuid::from_u128(8102);
+                if mode == "slua" {
+                    // SST_LUA in the item's flags, on a region that runs SLua
+                    if let Some(it) = self.world.inventory.items.get_mut(&item) {
+                        it.flags |= 1;
+                    }
+                    if let Some(region) = self.world.main_region.and_then(|h| self.world.regions.get_mut(&h)) {
+                        region.lua_scripts = true;
+                    }
+                }
                 if mode == "readonly"
                     && let Some(it) = self.world.inventory.items.get_mut(&item)
                 {
@@ -272,6 +308,12 @@ impl App {
                 self.panels.inventory = true;
                 self.inventory_ui.show_original(&self.world.inventory, item);
                 let target = ScriptTarget { object: Uuid::nil(), item };
+                if mode == "lua"
+                    && let Some(it) = self.world.inventory.items.get_mut(&item)
+                {
+                    it.flags = (it.flags & !0xff) | 1;
+                    self.demo_script_sources.insert(target, LUA_DEMO_SOURCE.into());
+                }
                 if syntax_demo {
                     self.demo_script_sources.insert(
                         target,
@@ -279,6 +321,8 @@ impl App {
                             COLORS_DEMO_SOURCE
                         } else if matches!(mode.as_str(), "word-wrap" | "no-word-wrap" | "word-wrap-preferences") {
                             WORD_WRAP_DEMO_SOURCE
+                        } else if mode == "slua" {
+                            SLUA_DEMO_SOURCE
                         } else {
                             SYNTAX_DEMO_SOURCE
                         }
@@ -413,6 +457,18 @@ impl App {
                 self.apply_script_action(action);
             }
         }
+        if self.frame_count == 320 && mode == "lua" {
+            let target = ScriptTarget {
+                object: Uuid::nil(),
+                item: Uuid::from_u128(8102),
+            };
+            if let Some(action) = self
+                .script_editors
+                .demo_edit(target, LUA_DEMO_SOURCE.replace("Avatar", "Aurora"), true)
+            {
+                self.apply_script_action(action);
+            }
+        }
         if self.frame_count == 320 && matches!(mode.as_str(), "error" | "save" | "object-save") {
             let target = if mode == "object-save" {
                 let Some(target) = self
@@ -480,6 +536,7 @@ impl App {
                 asset: it.asset_id,
                 can_read,
                 can_edit,
+                flags: it.flags,
             })
         } else {
             let idx = self.world.objects.index_of_uuid(&target.object)?;
@@ -503,12 +560,29 @@ impl App {
                 asset: it.asset_id,
                 can_read: can_read && modify,
                 can_edit: can_edit && modify,
+                flags: it.flags,
             })
         }
     }
 
     pub(super) fn open_script(&mut self, target: ScriptTarget) {
+        self.open_script_from(target, None);
+    }
+
+    pub(super) fn open_script_from(&mut self, target: ScriptTarget, owner: Option<egui::Id>) {
         if self.world.rlva.has("viewscript") {
+            self.rlva_view_blocked(10);
+            return;
+        }
+        // LLTaskLSLBridge::openItem (llpanelobjectinventory.cpp): the scripts
+        // of an attachment that cannot be taken off stay closed.
+        if self
+            .world
+            .objects
+            .index_of_uuid(&target.object)
+            .is_some_and(|i| self.world.rlva_locked_attachment(i))
+        {
+            self.rlva_view_blocked(10);
             return;
         }
         if task_script_refused(&self.build, &self.world, target.object) {
@@ -519,7 +593,18 @@ impl App {
             return;
         }
         let Some(info) = self.script_info(target) else { return };
-        if let Some(request) = self.script_editors.open(target, info.name, info.can_read, info.can_edit) {
+        let request = self
+            .script_editors
+            .open(target, info.name, info.can_read, info.can_edit, info.flags);
+        if let Some(editor) = self.script_editors.documents.iter_mut().find(|e| e.target == target) {
+            editor.inventory_owner = owner;
+        }
+        if let Some(request) = request {
+            // an SLua script, or one that may become one: its keywords are
+            // read while the source loads, not on the frame that draws it
+            if aurora_net::scripts::is_slua_item(info.flags) || self.world.main().is_some_and(|r| r.lua_scripts) {
+                crate::lsl_keywords::warm_lua();
+            }
             self.send(NetCommand::LoadScript {
                 request,
                 target,
@@ -543,6 +628,9 @@ impl App {
     pub(super) fn show_scripts(&mut self, ctx: &egui::Context, p: &Palette) {
         self.script_editors.agent = self.world.agent_id;
         self.script_editors.agent_name = self.world.social.name_of(&self.world.agent_id);
+        // shortcut: the agent's region, not the object's (have_lua_enabled); fine
+        // until objects in a neighbour region are edited across a SLua border
+        self.script_editors.lua_scripts = self.world.main().is_some_and(|r| r.lua_scripts);
         let rights: Vec<_> = self
             .script_editors
             .documents
@@ -574,6 +662,21 @@ impl App {
     pub(super) fn apply_script_action(&mut self, action: Action) {
         match action {
             Action::Debug => self.script_editors.open_debug(),
+            Action::Rename { target, name } => {
+                // Permissions are rechecked when the UI action is executed.
+                if self.script_info(target).is_some_and(|info| info.can_edit) {
+                    if target.object.is_nil() {
+                        let inv = &self.world.inventory;
+                        if rules::renameable(inv, target.item)
+                            && let Ok(change) = rules::patch(inv, target.item, aurora_llsd::llsd_map! { "name" => name })
+                        {
+                            self.edit_inventory(change, false, Uuid::nil());
+                        }
+                    } else if let Some(idx) = self.world.objects.index_of_uuid(&target.object) {
+                        self.build.rename_item(&self.world, idx, target.item, &name);
+                    }
+                }
+            }
             Action::Include { request, name } => {
                 // of the scripts of that name, the one the include may use
                 // most (FSLSLPreprocessor::findInventoryByName takes the
@@ -652,6 +755,14 @@ impl App {
                 options,
                 source,
             } => {
+                // LLLiveLSLEditor::saveIfNeeded: a locked attachment's script
+                // is not saved, and the editor keeps its text
+                if !self.world.rlva_can_save_script(target.object) {
+                    let blocked = aurora_i18n::tr!("rlva-blocked");
+                    self.script_editors.saved(request, target, &Err(blocked.into()));
+                    self.world.system_notice(blocked, crate::world::notice_topics::Topic::Warning);
+                    return;
+                }
                 let Some(info) = self.script_info(target).filter(|i| i.can_edit) else {
                     self.script_editors
                         .saved(request, target, &Err(aurora_i18n::tr!("script-no-permission").into()));
@@ -732,6 +843,127 @@ impl App {
         }
     }
 
+    /// AURORA_DEMO_EDITOR_SYNC=1|<port>: the sync turned on for the run,
+    /// the demo script sent to the external editor, and a local editor
+    /// (aurora_editor_sync::demo_client) that proves itself, follows it and
+    /// gets the result of a save with an error. Everything stays on
+    /// 127.0.0.1.
+    pub(super) fn demo_editor_sync_steps(&mut self) {
+        use aurora_editor_sync::demo_client::Seen;
+        if !self.demo {
+            return;
+        }
+        let Ok(mode) = std::env::var("AURORA_DEMO_EDITOR_SYNC") else {
+            return;
+        };
+        let target = ScriptTarget {
+            object: Uuid::nil(),
+            item: Uuid::from_u128(8102),
+        };
+        if self.frame_count == 280 {
+            self.panels.perf = false;
+            // for the run: the demo never saves the settings
+            self.settings.script_editor.websocket_sync = true;
+            if let Ok(port) = mode.parse::<u16>()
+                && port >= 1024
+            {
+                self.settings.script_editor.websocket_port = port;
+            }
+            crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+            self.open_script(target);
+        }
+        if self.frame_count == 300 {
+            self.script_editors.demo_external(target);
+        }
+        if self.frame_count > 300
+            && self.editor_sync.demo.is_none()
+            && let Some(port) = self.editor_sync.port()
+        {
+            self.editor_sync.demo = Some(aurora_editor_sync::demo_client::spawn(self.net.runtime(), port));
+        }
+        let seen: Vec<Seen> = self.editor_sync.demo.as_ref().map(|rx| rx.try_iter().collect()).unwrap_or_default();
+        for seen in seen {
+            log::info!("demo editor sync: {seen:?}");
+            let title = match seen {
+                Seen::Followed { success: true, .. } => {
+                    // a save with an error: its result goes to the editor
+                    let source = DEFAULT_SOURCE.replace("llSay(0, \"Hello, Avatar!\");", "AURORA_DEMO_SYNTAX_ERROR");
+                    if let Some(action) = self.script_editors.demo_edit(target, source, true) {
+                        self.apply_script_action(action);
+                    }
+                    aurora_i18n::tr!("script-sync-demo-followed").to_owned()
+                }
+                Seen::Compiled {
+                    diagnostics, first_row, ..
+                } => aurora_i18n::tr!(
+                    "script-sync-demo-compiled",
+                    count = diagnostics as i64,
+                    row = first_row.unwrap_or(0)
+                ),
+                _ => continue,
+            };
+            self.world.notifications.push(
+                crate::world::notifications::Kind::Info,
+                title,
+                "",
+                crate::world::notifications::Data::None,
+            );
+        }
+    }
+
+    /// Once a frame: the external script editor sync (editor_sync.rs).
+    pub(super) fn update_editor_sync(&mut self) {
+        let compiled = self.script_editors.take_compiled();
+        let settings = &self.settings.script_editor;
+        let in_world = self.in_world() && !self.world.agent_id.is_nil();
+        let agent_name = self
+            .world
+            .login
+            .as_ref()
+            .map(|l| crate::editor_sync::agent_name(&l.first_name, &l.last_name))
+            .unwrap_or_else(|| self.world.social.name_of(&self.world.agent_id));
+        let frame = crate::editor_sync::Frame {
+            enabled: settings.websocket_sync,
+            port: settings.websocket_port,
+            forward_debug: settings.websocket_forward_debug,
+            logged_in: in_world,
+            scripts: self.script_editors.synced().collect(),
+            compiled,
+            hello: aurora_editor_sync::Hello {
+                viewer_name: "Aurora Viewer".into(),
+                viewer_version: aurora_version::version().to_owned(),
+                agent_id: self.world.agent_id,
+                agent_name,
+                syntax_id: crate::lsl_keywords::current_id().unwrap_or_default(),
+                commands: false,
+            },
+            now: std::time::Instant::now(),
+        };
+        let objects = &self.world.objects;
+        let root = |prim: Uuid| {
+            let idx = objects.index_of_uuid(&prim)?;
+            objects.get(objects.linkset_root(idx)).map(|o| o.full_id)
+        };
+        let tips = self
+            .editor_sync
+            .update(self.net.runtime(), frame, &mut self.world.editor_sync_chat, root);
+        self.world.editor_sync_chat.on = self.editor_sync.wants_chat(settings.websocket_forward_debug);
+        for tip in tips {
+            // ExternalEditorServerStarted / Failed / Stopped
+            let title = match tip {
+                crate::editor_sync::Tip::Started(port) => aurora_i18n::tr!("script-sync-started", port = port.to_string()),
+                crate::editor_sync::Tip::Failed(port) => aurora_i18n::tr!("script-sync-failed", port = port.to_string()),
+                crate::editor_sync::Tip::Stopped => aurora_i18n::tr!("script-sync-stopped").into(),
+            };
+            self.world.notifications.push(
+                crate::world::notifications::Kind::Info,
+                title,
+                "",
+                crate::world::notifications::Data::None,
+            );
+        }
+    }
+
     pub(super) fn script_saved(&mut self, request: Uuid, target: ScriptTarget, result: Result<ScriptSaved, String>) {
         if !self.script_editors.saved(request, target, &result) {
             return;
@@ -808,11 +1040,12 @@ impl App {
                 // A named marker simulates a server diagnostic in demo mode;
                 // this is deliberately not a local LSL compiler.
                 let compiled = !source.contains("AURORA_DEMO_SYNTAX_ERROR");
+                log::info!("demo scripts: saved {} for target {}", target.item, options.compile.name());
                 let asset = Uuid::new_v4();
                 self.demo_script_sources.insert(*target, source.clone());
                 self.demo_script_experiences.insert(*target, options.experience);
                 self.build_demo
-                    .save_script(*target, asset, compiled && options.running, options.mono);
+                    .save_script(*target, asset, compiled && options.running, options.compile);
                 let result = Ok(ScriptSaved {
                     asset,
                     compiled,
@@ -908,6 +1141,41 @@ mod tests {
         // in an object: copy and modify, as for opening it
         assert!(task_permissions(perm::COPY | perm::MODIFY, 0).1);
         assert!(!task_permissions(perm::COPY, 0).1 && !task_permissions(perm::MODIFY, 0).1);
+    }
+
+    /// The editor sync (editor_sync.rs) offers a script to an outside
+    /// editor only when it was sent to the external editor while it may be
+    /// edited: `Synced::can_edit` is the editing right of [`permissions`]
+    /// (LLScriptEdCore's external editor button, enabled with the editor),
+    /// the agent's mask from rules::agent_mask, as the export itself.
+    #[test]
+    fn a_script_is_offered_to_the_editor_sync_only_when_it_may_be_edited() {
+        use aurora_net::inventory::InvItem;
+        let (me, other) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let full = perm::COPY | perm::MODIFY | perm::TRANSFER;
+        let item = |owner: Uuid, owner_mask: u32, everyone_mask: u32, group_owned: bool| InvItem {
+            owner,
+            owner_mask,
+            everyone_mask,
+            group_owned,
+            asset_type: 10,
+            ..Default::default()
+        };
+        let offered = |it: &InvItem, library: bool| permissions(rules::agent_mask(it, me), library, 0).1;
+        assert!(offered(&item(me, full, 0, false), false), "the owner's, full permissions");
+        assert!(!offered(&item(me, full, 0, true), false), "group-owned, nothing for everyone");
+        assert!(!offered(&item(other, full, 0, false), false), "someone else's");
+        assert!(!offered(&item(other, 0, full, false), true), "a Library script");
+        assert!(!offered(&item(me, perm::MODIFY | perm::TRANSFER, 0, false), false), "no copy");
+        assert!(
+            offered(&item(me, perm::COPY | perm::MODIFY, 0, false), false),
+            "no transfer, as the Legacy Viewer"
+        );
+        assert!(!offered(&item(me, perm::COPY | perm::TRANSFER, 0, false), false), "no modify");
+        // in an object, as for opening it: copy and modify
+        assert!(task_permissions(full, 0).1);
+        assert!(!task_permissions(perm::COPY | perm::TRANSFER, 0).1, "no modify");
+        assert!(!task_permissions(perm::MODIFY | perm::TRANSFER, 0).1, "no copy");
     }
 
     #[test]

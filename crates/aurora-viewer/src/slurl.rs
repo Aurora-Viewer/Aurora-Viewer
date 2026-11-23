@@ -40,12 +40,55 @@ pub fn set_grid(grid: Option<String>) {
     }
 }
 
-/// The SLURL of a place on the grid the agent is on: on Second Life
+thread_local! {
+    /// RLVa `@showloc`: what a SLURL shows in place of a connected region,
+    /// and the names of those regions (`set_hidden_regions`). Kept by the
+    /// thread of the interface, which makes every SLURL a window shows; a
+    /// test thread starts without it.
+    static HIDDEN: std::cell::RefCell<Option<(String, Vec<String>)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// RLVa `@showloc` from now on: `hidden` is the "(Hidden region)" label and
+/// the names of the regions the agent is connected to; None without the
+/// restriction. Set by the app every frame.
+pub fn set_hidden_regions(hidden: Option<(String, Vec<String>)>) {
+    HIDDEN.with(|h| {
+        let mut h = h.borrow_mut();
+        if *h != hidden {
+            *h = hidden;
+        }
+    });
+}
+
+/// The SLURL of a place on the grid the agent is on, as a window shows or
+/// copies it: on Second Life
 /// `http://maps.secondlife.com/secondlife/Region%20Name/x/y/z`, on an OpenSim
-/// grid `hop://grid.example:8002/Region%20Name/x/y/z`.
+/// grid `hop://grid.example:8002/Region%20Name/x/y/z`. Under RLVa `@showloc`
+/// a region the agent is connected to is the "(Hidden region)" label, with
+/// no position (`.../secondlife/(Hidden region)`), as
+/// LLSLURL::getSLURLString does with RlvUtil::isNearbyRegion
+/// (indra/newview/llslurl.cpp, rlvcommon.cpp: the exact region name).
 pub fn make(region: &str, pos: Vec3) -> String {
     let grid = GRID.read().ok().and_then(|g| g.clone());
-    make_on(grid.as_deref(), region, pos)
+    let hidden = HIDDEN.with(|h| {
+        h.borrow()
+            .as_ref()
+            .filter(|(_, regions)| regions.iter().any(|r| r == region))
+            .map(|(label, _)| label.clone())
+    });
+    match hidden {
+        Some(label) => hidden_on(grid.as_deref(), &label),
+        None => make_on(grid.as_deref(), region, pos),
+    }
+}
+
+/// The SLURL of a region RLVa `@showloc` hides: the grid's base then
+/// `label` as it is, no position (LLGridManager::getSLURLBase +
+/// RlvStrings::getString(Hidden::Region) in LLSLURL::getSLURLString).
+pub fn hidden_on(grid: Option<&str>, label: &str) -> String {
+    let base = make_on(grid, "", Vec3::ZERO);
+    let base = base.strip_suffix("/0/0/0").unwrap_or(&base);
+    format!("{base}{label}")
 }
 
 /// LLSLURL::getSLURLString: Second Life's maps address, or on an OpenSim
@@ -443,5 +486,43 @@ mod tests {
         let s = make("Aurora Démo", Vec3::new(12.4, 34.6, 56.0));
         assert_eq!(s, "http://maps.secondlife.com/secondlife/Aurora%20D%C3%A9mo/12/35/56");
         assert_eq!(p(&s), ("Aurora Démo".to_owned(), [12, 35, 56]));
+    }
+}
+
+#[cfg(test)]
+mod rlva_tests {
+    use super::*;
+
+    /// LLSLURL::getSLURLString (indra/newview/llslurl.cpp): under `@showloc`
+    /// a connected region is "(Hidden region)" with no position, another
+    /// region keeps its address; the exact name counts.
+    #[test]
+    fn showloc_hides_the_connected_regions_of_a_slurl() {
+        set_hidden_regions(Some(("(Hidden region)".into(), vec!["Aurora Démo".into()])));
+        assert_eq!(
+            make("Aurora Démo", Vec3::new(12.0, 34.0, 56.0)),
+            "http://maps.secondlife.com/secondlife/(Hidden region)"
+        );
+        assert_eq!(
+            make("Far Away", Vec3::new(1.0, 2.0, 3.0)),
+            "http://maps.secondlife.com/secondlife/Far%20Away/1/2/3"
+        );
+        assert_eq!(
+            make("aurora démo", Vec3::new(1.0, 2.0, 3.0)),
+            "http://maps.secondlife.com/secondlife/aurora%20d%C3%A9mo/1/2/3"
+        );
+        assert_eq!(
+            make_on(None, "Aurora Démo", Vec3::new(12.0, 34.0, 56.0)),
+            "http://maps.secondlife.com/secondlife/Aurora%20D%C3%A9mo/12/34/56"
+        );
+        assert_eq!(
+            hidden_on(Some("grid.example:8002"), "(Hidden region)"),
+            "hop://grid.example:8002/(Hidden region)"
+        );
+        set_hidden_regions(None);
+        assert_eq!(
+            make("Aurora Démo", Vec3::new(12.0, 34.0, 56.0)),
+            "http://maps.secondlife.com/secondlife/Aurora%20D%C3%A9mo/12/34/56"
+        );
     }
 }

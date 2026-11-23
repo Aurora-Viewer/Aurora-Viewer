@@ -146,23 +146,37 @@ fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry) {
         draft.preview_bend,
     );
     if entry.local {
+        let scene_supported = crate::imports::local::scene::supported(draft);
+        entry.local_scene &= scene_supported;
+        let mut model = (!entry.local_scene).then_some(entry.local_model);
         ui.label(aurora_i18n::tr!("import-local-mesh-instance"));
         egui::ComboBox::from_id_salt("local_mesh_instance")
             .width(ui.available_width() - 20.0)
-            .selected_text(
+            .selected_text(if entry.local_scene {
+                aurora_i18n::tr!("import-local-mesh-scene")
+            } else {
                 draft
                     .scene
                     .instances
                     .get(entry.local_model)
                     .map(|instance| instance.name.as_str())
-                    .unwrap_or(aurora_i18n::tr!("import-mesh")),
-            )
+                    .unwrap_or(aurora_i18n::tr!("import-mesh"))
+            })
             .show_ui(ui, |ui| {
+                if scene_supported {
+                    selection(ui, &mut model, None, aurora_i18n::tr!("import-local-mesh-scene"));
+                }
                 for (index, instance) in draft.scene.instances.iter().enumerate() {
-                    selection(ui, &mut entry.local_model, index, &instance.name);
+                    selection(ui, &mut model, Some(index), &instance.name);
                 }
             });
-        checkbox(ui, p, &mut entry.local_use_scale, aurora_i18n::tr!("import-local-mesh-scale"));
+        entry.local_scene = model.is_none();
+        if let Some(model) = model {
+            entry.local_model = model;
+        }
+        ui.add_enabled_ui(!entry.local_scene, |ui| {
+            checkbox(ui, p, &mut entry.local_use_scale, aurora_i18n::tr!("import-local-mesh-scale"));
+        });
     }
     checkbox(ui, p, &mut entry.view.edges, aurora_i18n::tr!("import-edges"));
     checkbox(ui, p, &mut draft.show_textures, aurora_i18n::tr!("import-textures"));
@@ -263,10 +277,8 @@ fn preview(
 fn lod_source(source: mesh::LodSource) -> &'static str {
     match source {
         mesh::LodSource::File => aurora_i18n::tr!("import-source-file"),
-        mesh::LodSource::Auto => aurora_i18n::tr!("import-lod-auto"),
-        mesh::LodSource::Combine => aurora_i18n::tr!("import-lod-combine"),
-        mesh::LodSource::Fast => aurora_i18n::tr!("import-lod-fast"),
         mesh::LodSource::Reliable => aurora_i18n::tr!("import-lod-reliable"),
+        mesh::LodSource::Legacy => aurora_i18n::tr!("import-lod-auto"),
         mesh::LodSource::Above => aurora_i18n::tr!("import-lod-above"),
     }
 }
@@ -322,6 +334,7 @@ fn mesh_controls(
     let old = draft.options.clone();
     let mut changed = false;
     let triangles = draft.scene.models.iter().map(|model| model.triangles()).sum::<usize>();
+    let minimum_triangles = mesh::minimum_lod_triangles(&draft.scene);
     if draft.pending.is_some() {
         ui.horizontal(|ui| {
             ui.spinner();
@@ -381,9 +394,7 @@ fn mesh_controls(
                             .show_ui(ui, |ui| {
                                 for choice in [
                                     mesh::LodSource::File,
-                                    mesh::LodSource::Auto,
-                                    mesh::LodSource::Combine,
-                                    mesh::LodSource::Fast,
+                                    mesh::LodSource::Legacy,
                                     mesh::LodSource::Reliable,
                                     mesh::LodSource::Above,
                                 ] {
@@ -439,7 +450,10 @@ fn mesh_controls(
                                 }
                             } else {
                                 edited |= ui
-                                    .add_sized(Vec2::new(62.0, 26.0), egui::DragValue::new(&mut lod.triangles).range(0..=triangles))
+                                    .add_sized(
+                                        Vec2::new(62.0, 26.0),
+                                        egui::DragValue::new(&mut lod.triangles).range(minimum_triangles..=triangles),
+                                    )
                                     .changed();
                             }
                         }
@@ -1073,32 +1087,32 @@ mod tests {
         let ctx = egui::Context::default();
         let theme = crate::theme::Theme::default();
         theme.apply(&ctx, 1.0);
-        let mut draft = crate::imports::tests::mesh_fixture();
-        // A closed surface can reduce as the error rises; an isolated quad cannot.
-        let model = &mut Arc::make_mut(&mut draft.scene).models[0];
-        model.center = glam::Vec3::ZERO;
-        model.size = glam::Vec3::ONE;
-        model.faces.truncate(1);
-        let face = &mut model.faces[0];
+        let mut draft = crate::imports::tests::reducible_mesh_fixture();
+        // A curved open surface has intermediate reductions; a closed cube
+        // can collapse entirely at high error and restore its source instead.
+        let face = &mut Arc::make_mut(&mut draft.scene).models[0].faces[0];
         let prototype = face.vertices[0].clone();
-        face.vertices = [-0.5, 0.5]
-            .into_iter()
-            .flat_map(|x| {
+        face.vertices = (0..=8)
+            .flat_map(|y| {
                 let prototype = prototype.clone();
-                [-0.5, 0.5].into_iter().flat_map(move |y| {
-                    let prototype = prototype.clone();
-                    [-0.5, 0.5].into_iter().map(move |z| aurora_assets::import_mesh::Vertex {
-                        position: [x, y, z],
-                        normal: [0.0, 0.0, 1.0],
-                        uv: [0.0; 2],
+                (0..=8).map(move |x| {
+                    let x = x as f32 / 8.0 - 0.5;
+                    let y = y as f32 / 8.0 - 0.5;
+                    aurora_assets::import_mesh::Vertex {
+                        position: [x, y, (x * x + y * y) * 0.4],
                         ..prototype.clone()
-                    })
+                    }
                 })
             })
             .collect();
-        face.indices = vec![
-            0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7, 5,
-        ];
+        face.indices = (0..8)
+            .flat_map(|y| {
+                (0..8).flat_map(move |x| {
+                    let i = y * 9 + x;
+                    [i, i + 1, i + 9, i + 1, i + 10, i + 9]
+                })
+            })
+            .collect();
         draft.lods[2].error_mode = true;
         draft.lods[2].error = 0.0;
         let prepared = Arc::new(mesh::prepare(&draft).expect("strict threshold"));
@@ -1149,7 +1163,7 @@ mod tests {
         }
         frame(
             vec![
-                egui::Event::Text("100".into()),
+                egui::Event::Text("2".into()),
                 egui::Event::Key {
                     key: egui::Key::Enter,
                     physical_key: None,
@@ -1164,7 +1178,7 @@ mod tests {
             panic!("mesh draft")
         };
         assert_eq!(
-            draft.lods[2].error, 1.0,
+            draft.lods[2].error, 0.02,
             "the UI percent reaches the simplifier as a relative error"
         );
         assert_eq!(
@@ -1293,7 +1307,32 @@ mod tests {
         for _ in 0..3 {
             output = Some(frame(Vec::new(), &mut entry).0);
         }
-        let file = text_position(output.as_ref().expect("popup"), aurora_i18n::tr!("import-source-file"), true);
+        let popup = output.as_ref().expect("popup");
+        let labels: Vec<_> = popup
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.text()),
+                _ => None,
+            })
+            .collect();
+        // The foreground popup is painted after the panel; its File row is
+        // the last occurrence, as when choosing it below.
+        let first = labels
+            .iter()
+            .rposition(|label| *label == aurora_i18n::tr!("import-source-file"))
+            .expect("popup File row");
+        assert_eq!(
+            &labels[first..],
+            &[
+                aurora_i18n::tr!("import-source-file"),
+                aurora_i18n::tr!("import-lod-auto"),
+                aurora_i18n::tr!("import-lod-reliable"),
+                aurora_i18n::tr!("import-lod-above"),
+            ],
+            "only Automatic and Reliable generate a LOD; File and Above remain sources"
+        );
+        let file = text_position(popup, aurora_i18n::tr!("import-source-file"), true);
         let mut actions = Vec::new();
         for pressed in [true, false] {
             actions.extend(frame(events(file, pressed), &mut entry).1);
@@ -1311,7 +1350,7 @@ mod tests {
         );
         let Some(Source::Mesh(draft)) = &entry.source else { panic!("mesh") };
         assert!(
-            draft.lods[2].source == mesh::LodSource::Auto,
+            draft.lods[2].source == mesh::LodSource::Legacy,
             "cancelled file picker keeps the working source"
         );
         assert_eq!(

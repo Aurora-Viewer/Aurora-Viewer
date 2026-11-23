@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The artifact configuration "initial" of the SignPath project
+  "Aurora-Viewer" (docs/UPDATES.md, "Code signing"). SignPath keeps its own
+  copy: paste this file into the project's artifact configuration and keep
+  both the same.
+
+  .github/actions/signpath-sign uploads target/release/aurora-viewer.exe
+  alone with actions/upload-artifact, which makes it a zip with the exe at
+  its root. The exe's version block (crates/aurora-viewer/build.rs) must
+  match: the product name, and the version the workflow passes (the tag
+  without its v for a release, the exe's own for a Sign test run).
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="aurora-viewer.exe" product-name="Aurora Viewer" product-version="${version}">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
