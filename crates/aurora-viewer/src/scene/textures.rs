@@ -1113,6 +1113,16 @@ pub struct TextureStreamer {
     pub bc7_cache: bool,
     /// Alpha class by bindless slot (fast lookup during list building).
     pub alpha_by_slot: Vec<AlphaKind>,
+    /// Aurora Weather's foliage by slot (`jobs::classify_foliage`): leaves
+    /// fall from where the top of the canopy map is such a texture.
+    pub foliage_by_slot: Vec<bool>,
+    /// The classifier's verdicts, once per texture id.
+    foliage_by_id: HashMap<Uuid, bool>,
+    /// Textures never taken as foliage (the Weather settings' exclusion
+    /// list, for false positives).
+    pub foliage_excluded: std::collections::HashSet<Uuid>,
+    /// Textures always taken as foliage: the Linden trees'.
+    foliage_forced: std::collections::HashSet<Uuid>,
     pub(super) pick_masks: HashMap<Uuid, PickMask>,
     /// Per slot: the decoded image has an alpha channel (LL sends such
     /// faces to the alpha pool when rigged or glowing, even if opaque).
@@ -1561,6 +1571,10 @@ impl TextureStreamer {
             })
             .collect(),
             alpha_by_slot: builtin_alpha(),
+            foliage_by_slot: Vec::new(),
+            foliage_by_id: HashMap::new(),
+            foliage_excluded: std::collections::HashSet::new(),
+            foliage_forced: std::collections::HashSet::new(),
             alpha_channel_by_slot: Vec::new(),
             cache_dir,
             local_slots: HashMap::new(),
@@ -2201,6 +2215,23 @@ impl TextureStreamer {
             // Reuse the scene's texture-user rebuild path for placeholders
             // acquired before local-file restoration, even without a GPU slot.
             self.reslotted.push(id);
+        }
+    }
+
+    /// Aurora Weather: `id` (in `slot`) is foliage whatever the classifier
+    /// says (a Linden tree's texture); its faces are marked at once.
+    pub fn force_foliage(&mut self, id: Uuid, slot: u32) {
+        if !self.foliage_forced.insert(id) {
+            return;
+        }
+        let i = slot as usize;
+        if i >= self.foliage_by_slot.len() {
+            self.foliage_by_slot.resize(i + 1024, false);
+        }
+        if !self.foliage_by_slot[i] {
+            self.foliage_by_slot[i] = true;
+            self.generation += 1;
+            self.alpha_changes.push(slot);
         }
     }
 
@@ -3635,7 +3666,31 @@ impl TextureStreamer {
                 e.slot,
                 u.alpha,
             );
+            // foliage: a Linden tree's texture, or one with holes in its
+            // alpha the classifier takes, judged once per id (from a level
+            // of 32 px or more; a smaller one is judged again later)
+            let foliage = self.foliage_forced.contains(&u.id)
+                || u.alpha != AlphaKind::Opaque
+                    && !self.foliage_excluded.contains(&u.id)
+                    && match self.foliage_by_id.get(&u.id) {
+                        Some(&known) => known,
+                        None => super::jobs::foliage_level(&u.mips).is_some_and(|(px, w, h)| {
+                            let leafy = super::jobs::classify_foliage(&px, w, h);
+                            if w.max(h) >= 32 {
+                                self.foliage_by_id.insert(u.id, leafy);
+                            }
+                            leafy
+                        }),
+                    };
             let slot = e.slot as usize;
+            if slot >= self.foliage_by_slot.len() {
+                self.foliage_by_slot.resize(slot + 1024, false);
+            }
+            if self.foliage_by_slot[slot] != foliage {
+                self.foliage_by_slot[slot] = foliage;
+                self.generation += 1;
+                self.alpha_changes.push(e.slot);
+            }
             if slot >= self.alpha_channel_by_slot.len() {
                 self.alpha_channel_by_slot.resize(slot + 1024, false);
             }

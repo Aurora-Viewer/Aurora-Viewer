@@ -4909,8 +4909,73 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_THUNDER_AT=<s>[:<m>]` | A lightning strike this many seconds after the start, 1 km away or `<m>` metres |
 | `AURORA_THUNDER_HOLD=<flash>` | The lightning's light on the world held at this brightness |
 | `AURORA_NORTHERN_LIGHTS=<0..1>[,<deg>[,<colours>]]` | The northern lights at this brightness until the Aurora Weather window is used |
+| `AURORA_FOG=<0..1>\|off` | Fog of this thickness (or none, in a fog demo scene) until the Aurora Weather window is used |
+| `AURORA_FOG_TIER=height\|volumetric\|lights` | How the fog is drawn until the Aurora Weather window is used |
+| `AURORA_FOG_COLOUR=sky\|<r>,<g>,<b>` | The fog's colour (the sky's light, or its own in sRGB 0..1) until the Aurora Weather window is used |
+| `AURORA_WEATHER_PRESET=<name>` | An Aurora Weather preset (colour, fall, fog, wind) until the window is used |
+| `AURORA_DEBRIS=<kind>[,stream]` | Aurora Weather's debris (leaves, sand, paper, embers or dust motes) on until the window is used |
+| `AURORA_DEBRIS_PICTURES=<file>[;<file>…]` | Image files as the debris leaves' and paper's pictures until the window is used |
+| `AURORA_DEMO_TUMBLEWEEDS=1` | Aurora Weather's tumbleweeds start in view, 10 m ahead (demo only) |
+| `AURORA_DEMO_FOG=sunset\|neon\|indoor\|underwater\|shelter\|aerial\|ground` | Fog under a fixed sky with props and a placed camera |
+| `AURORA_DEMO_FOG_SWING=<degrees>` | The fog scene's camera swings side to side, through its view at full speed every 100 frames |
 
 ### Details
+
+- **Fog (`AURORA_FOG`, `AURORA_FOG_TIER`, `AURORA_DEMO_FOG`)**: the Fog card
+  of the Aurora Weather window, for this viewer only. `AURORA_FOG=<0..1>`
+  turns it on at that thickness, `AURORA_FOG_TIER` chooses height fog, the
+  volume, or the volume lit by the local lights, both until the window is
+  touched. `AURORA_DEMO_FOG` (demo mode) turns it on (0.45 without
+  `AURORA_FOG`), answers the region's environment with a fixed sky, adds
+  props and places the camera, the interface hidden: `sunset` (the sun low
+  in the west behind posts and the torus: a warm glow, the posts' and the
+  torus's shadows darker shafts in the fog toward the camera), `neon` (a
+  street at night between dark blocks, neon signs with their lights: each
+  lights the air around it in its colour, the street's end lost in a
+  violet haze), `indoor` (inside a closed room looking out of its doorway:
+  the room clear, the fog outside) and `underwater` (under the lagoon: the
+  water's fog alone, as without the fog) and `shelter` (from outside: the
+  room's doorway with a tongue of fog a few metres in, an open porch on
+  posts with fog under it, a closed glass box clear inside: the fog flowing
+  around the walls, Volume looks only) and `aerial` (60 m up over the
+  region: the fog lies on the hill and the sea to the horizon, with no line
+  where the volume ends 160 m away) and `ground` (4 m over the ground,
+  looking across it: the fog even, no bands at the slices' distances). `AURORA_PROFILE=1` gives its GPU
+  time as `g_fog` (none drawn: 0). A capture without fog for comparison:
+  the same command with `AURORA_FOG=off` (the scene, no fog at all, even
+  with the Fog card on in the saved settings) or
+  `AURORA_FOG=0` (a faint mist). `AURORA_DEMO_FOG_SWING=<degrees>` swings
+  the scene's camera side to side every 200 frames, through its view at
+  full speed at frames 100, 200, 300…: a capture there against one without
+  the variable shows the fog while the camera turns (the same brightness,
+  the wisps in place). With `AURORA_FOG_COLOUR=sky`, `AURORA_RAIN=0`
+  and `AURORA_FOG_TIER`, a capture does not depend on the Fog card's
+  saved colour nor on the rain left on in the profile (the shared settings:
+  AGENTS.md section 4). Under a classic sky the fog is lit by the haze's
+  own colour (its ambient part), so that the fog and the haze beyond it
+  meet without a seam; under the height fog, a room under a roof stays
+  clear (the shelter map, three taps along each view).
+
+  `AURORA_WEATHER_PRESET=plain|blood-rain|ash|acid-rain|dust-storm|autumn`
+  sets what that preset of the Aurora Weather window's Colour card sets
+  (the colour and opacity of the rain or snow and of their puddles and
+  snow lying, the fall's speed and flutter, the fog and the wind) until the
+  window is used. With `AURORA_RAIN` or `AURORA_SNOW` it shows the tinted
+  drops, puddles or snow at once; `plain` draws what the weather drew
+  before the tint (the defaults), for a before / after comparison.
+
+  `AURORA_DEBRIS=leaves|sand|paper|embers|motes` turns the Debris card on with
+  that kind until the window is used; `,stream` (leaves) lets leaves come
+  on the wind where no foliage is near. Debris moves with the weather's
+  wind, so give it one (`AURORA_WEATHER_PRESET=autumn` or `dust-storm`);
+  with `AURORA_FOG=off` the saved fog does not hide it. Leaves streaming
+  from upwind take ten to twenty seconds to reach the plaza
+  (`AURORA_CAPTURE_FRAMES=1800`). `AURORA_PROFILE=1` gives its GPU time
+  in `g_weather`. With `AURORA_DEMO_PLANTS=dense` the leaves fall from the
+  trees (the canopy map). Tumbleweeds come with the Dust storm preset; they
+  start upwind out of view, so `AURORA_DEMO_TUMBLEWEEDS=1` starts them 10 m
+  ahead of the camera instead, rolling across the view (the log says
+  `tumbleweeds: one starts…` and `…goes`).
 
 - **Weather (`AURORA_RAIN`, `AURORA_SNOW*`, `AURORA_THUNDER_*`)**: the
   weather of the Aurora Weather window is drawn for

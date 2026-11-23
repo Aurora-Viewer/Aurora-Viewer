@@ -233,6 +233,14 @@ struct FrameU {
     snow_far: [f32; 4],
     /// Planet curvature (`Curvature::uniform`): xy the main camera, z 1 / 2R.
     curvature: [f32; 4],
+    /// Aurora Weather's fog (fog.rs `frame_terms`; zero: none).
+    fog_look: [[f32; 4]; 7],
+    /// Aurora Weather's tint, gust and fall (`WeatherTint::uniform`; zero:
+    /// none).
+    weather_tint: [[f32; 4]; 4],
+    /// Aurora Weather's debris pictures (`DebrisLook::pictures`): [0..2]
+    /// the leaves', [2..4] the paper's; zero: none.
+    debris_pictures: [[u32; 4]; 4],
 }
 
 /// Must match `ShadowParams` in object.wgsl.
@@ -1134,6 +1142,9 @@ struct Pipelines {
     water_particles_under: wgpu::RenderPipeline,
     /// Rain prototype (`vs_rain` in env.wgsl, `AURORA_RAIN`).
     rain: wgpu::RenderPipeline,
+    /// Aurora Weather's debris (debris.rs, `vs_debris`): cards and points
+    /// tested against the depth, their edges a hashed alpha test.
+    debris: wgpu::RenderPipeline,
     /// Rain prototype's splashes (`vs_rain_splash`).
     rain_splash: wgpu::RenderPipeline,
     /// Deep snow's surface (`vs_snow_mesh`): writes the depth.
@@ -1236,6 +1247,13 @@ struct Pipelines {
     /// lying on what the map says, left every slope bare.
     shelter: wgpu::RenderPipeline,
     shelter_terrain: wgpu::RenderPipeline,
+    /// Aurora Weather's canopy map (debris.rs, object.wgsl `fs_canopy`) and
+    /// the floor under it (`fs_canopy_floor`).
+    canopy: wgpu::RenderPipeline,
+    canopy_floor: wgpu::RenderPipeline,
+    /// Aurora Weather's fog: the walls drawn into its flow grid (fog.rs
+    /// `Flow`, object.wgsl `fs_fog_voxel`).
+    fog_voxel: wgpu::RenderPipeline,
     post: wgpu::RenderPipeline,
     /// Faces drawn under a pixel (drawn_pick.rs): culled like the scene's
     /// one-sided and two-sided faces.
@@ -1302,7 +1320,7 @@ struct GpuTimer {
     /// order.
     last_effects: Option<[f32; 4]>,
     /// Last times of the weather (ms), in [`GPU_WEATHER_PARTS`] order.
-    last_weather: Option<[f32; 4]>,
+    last_weather: Option<[f32; 6]>,
     /// AURORA_MSAA_PREPASS=alt: the variant each readback slot's frame was
     /// drawn with, and the frames measured since the variant last changed.
     slot_prepass: [std::cell::Cell<bool>; 3],
@@ -1376,7 +1394,7 @@ impl PrepassCompare {
 
 /// Timestamps of a frame: 0 first pass, 1 end of post / HUDs, then the marks.
 const GPU_TIMESTAMPS: u32 = 2 + GPU_MARKS;
-const GPU_MARKS: u32 = 39;
+const GPU_MARKS: u32 = 42;
 /// Mark indices, in frame order. Those inside the scene passes split them
 /// by draw group; a timestamp there waits for the draws before it, so the
 /// split is close but not exact (the GPU overlaps neighbouring draws).
@@ -1468,6 +1486,15 @@ const MARK_CLOUDS_END: u32 = 39;
 /// there when they are off); in the effects' range from `MARK_SSAO_END` to
 /// `MARK_WATER_AIR_BEGIN`.
 const MARK_SOFT_END: u32 = 40;
+/// Aurora Weather's fog volume (fog.rs): around its compute, after the
+/// clouds' and before scene pass A (both written together when it is not
+/// drawn).
+const MARK_FOG_BEGIN: u32 = 41;
+const MARK_FOG_END: u32 = 42;
+/// Aurora Weather's debris (debris.rs): its canopy map and its simulation,
+/// after the clouds and before the fog (`MARK_FOG_BEGIN` ends it); written
+/// every frame.
+const MARK_DEBRIS_BEGIN: u32 = 43;
 /// The effects beyond the occlusion, the contact shadows and the soft
 /// shadows (`RenderStats::gpu_effects`): the planar reflections (water, mirror), with
 /// the refracted water light before them; the reflection probe face with its
@@ -1484,12 +1511,15 @@ const GPU_EFFECT_PARTS: [&[(u32, u32)]; 4] = [
 ];
 /// What `GpuElement::Weather` is made of (`RenderStats::gpu_weather`): the
 /// shelter map, the wetness and footprints memories, the wet ground (with
-/// the snow lying), the drops and flakes with the distant layers.
-const GPU_WEATHER_PARTS: [(u32, u32); 4] = [
+/// the snow lying), the drops and flakes with the distant layers and the
+/// debris drawn, the fog's volume, the debris' canopy map and simulation.
+const GPU_WEATHER_PARTS: [(u32, u32); 6] = [
     (MARK_SHELTER_BEGIN, MARK_SHELTER_END),
     (MARK_WEATHER_MEMORY_BEGIN, MARK_WEATHER_MEMORY_END),
     (MARK_WET_BEGIN, MARK_SSR_END),
     (MARK_RAIN_BEGIN, MARK_RAIN_END),
+    (MARK_FOG_BEGIN, MARK_FOG_END),
+    (MARK_DEBRIS_BEGIN, MARK_FOG_BEGIN),
 ];
 /// GPU time ranges `(from, to)` of each kind of element, in
 /// [`GpuElement::ALL`] order; together they cover the whole frame.
@@ -1510,8 +1540,12 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_WEATHER_MEMORY_END, MARK_COPY_END),
         (MARK_COPY_END, MARK_WET_BEGIN),
     ],
-    // terrain and sky
-    &[(MARK_DEPTH_MSAA_END, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
+    // terrain and sky (the fog's volume and the debris are the weather's)
+    &[
+        (MARK_DEPTH_MSAA_END, MARK_DEBRIS_BEGIN),
+        (MARK_FOG_END, MARK_SKY_END),
+        (MARK_SKY_END, MARK_TERRAIN_END),
+    ],
     // objects and avatars (opaque, masked), impostor pictures and cards
     &[
         (MARK_TERRAIN_END, MARK_OBJECTS_END),
@@ -1914,6 +1948,10 @@ struct Dummies {
     white: wgpu::TextureView,
     black: wgpu::TextureView,
     depth: wgpu::TextureView,
+    /// A 1^3 fog volume that lets everything through (0, 0, 0, 1).
+    volume: wgpu::TextureView,
+    /// A 1 x 1 fog ground (never read: `fog_look[6]` says none).
+    ground: wgpu::TextureView,
 }
 
 /// Frame bind groups (group 0) for the different passes.
@@ -2087,6 +2125,20 @@ pub(crate) struct Backend {
     /// made again until ray tracing is turned off and on.
     rt_failed: bool,
     rt_now: bool,
+    /// Aurora Weather's fog (fog.rs), made while it is on.
+    fog: Option<crate::fog::Fog>,
+    /// Aurora Weather's debris (debris.rs): made while it is on.
+    debris: Option<crate::debris::Debris>,
+    /// When the debris last moved, and its step this frame (s).
+    debris_last: Option<Instant>,
+    debris_dt: f32,
+    /// This frame's fog: the height fog's terms of every view (none: no
+    /// fog, or the camera under the water), and whether the main view
+    /// reads the volume.
+    fog_terms: Option<(crate::types::FogLook, f32)>,
+    fog_volume_now: bool,
+    /// The fog's volume is on: the shelter map is drawn for it.
+    fog_shelter: bool,
     /// The soft sun shadows' pipelines, made with the first frame that
     /// wants them.
     soft: Option<crate::soft_shadows::SoftShadows>,
@@ -2456,6 +2508,8 @@ enum Vb {
     Sprite,
     /// Aurora Weather's footprints, one an instance (`vs_snow_print`).
     Print,
+    /// Aurora Weather's debris, a particle an instance (`vs_debris`).
+    Debris,
 }
 
 /// The most footprints kept (32 bytes each).
@@ -2476,6 +2530,17 @@ fn print_layout() -> wgpu::VertexBufferLayout<'static> {
     ];
     wgpu::VertexBufferLayout {
         array_stride: 32,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &ATTRS,
+    }
+}
+
+/// Aurora Weather's debris: a particle an instance, its four vec4
+/// (debris.rs `STRIDE`; `vs_debris`).
+fn debris_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4];
+    wgpu::VertexBufferLayout {
+        array_stride: crate::debris::STRIDE,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &ATTRS,
     }
@@ -2754,6 +2819,9 @@ struct RainWet {
     /// and melts after, the faster in rain (the memory's places new to it
     /// take it, as `soak`).
     snow: f32,
+    /// What lies does not melt once the fall stops (ash: `RainLook::
+    /// fall_melts` off); rain still washes it away.
+    keeps: bool,
     uniform: [f32; 4],
     step: [f32; 4],
     snow_cover: [f32; 4],
@@ -2966,7 +3034,7 @@ impl RainWet {
         if snow > 0.0 {
             self.snow += (1.0 - self.snow) * (1.0 - (-dt * snow / SNOW_FILL_SECS).exp());
             self.snow = self.snow.max(1e-3);
-        } else {
+        } else if rain > 0.0 || !self.keeps {
             let melt = if rain > 0.0 { SNOW_RAIN_MELT_SECS } else { SNOW_MELT_SECS };
             self.snow *= (-dt / melt).exp();
         }
@@ -2996,7 +3064,7 @@ impl Backend {
     /// to it, where the camera goes, from it); with the shadows off too,
     /// alone in the atlas (low settings keep the rain out of the houses).
     fn rain_shelter(&self, f: &FrameParams) -> bool {
-        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && self.rain_wet.active()
+        rain_drops(f.rain, f.rain_look.quality) > 0 || !f.cutout && (self.rain_wet.active() || self.fog_shelter || f.debris.is_some())
     }
 
     /// How many of the frame's first lights have their projector shadows
@@ -3049,8 +3117,106 @@ impl Backend {
         let by = Vec2::from(by);
         self.rain_wet.shift(by);
         self.snow_trail.shift(by);
+        // (the debris is in world positions: it starts afresh, its pool and
+        // pipelines kept)
+        if let Some(debris) = &mut self.debris {
+            debris.reset();
+        }
+        // (the fog's history is of the old positions: it starts afresh)
+        if let Some(fog) = &mut self.fog {
+            fog.skipped();
+        }
         if let Some(c) = &mut self.shelter_centre {
             *c += by.extend(0.0);
+        }
+    }
+}
+
+impl Backend {
+    /// Aurora Weather's debris this frame (debris.rs): made while it is on
+    /// (again at another quality, the pool's size), gone when off, and its
+    /// step; it moves (in the frame, after the shadows) while the shelter
+    /// map it reads is drawn. Not in a cut-out photo.
+    fn prepare_debris(&mut self, f: &FrameParams) {
+        let Some(look) = f.debris.filter(|_| !f.cutout) else {
+            self.debris = None;
+            self.debris_last = None;
+            return;
+        };
+        let pool = crate::debris::pool_size(look.quality);
+        if self.debris.as_ref().is_some_and(|d| d.pool() != pool) {
+            self.debris = None;
+        }
+        if self.debris.is_none() {
+            self.debris = extra(&mut self.oom, &self.device, self.lost.get(), "debris", |d| {
+                crate::debris::Debris::new(d, look.quality)
+            });
+        }
+        let now = Instant::now();
+        self.debris_dt = self.debris_last.map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
+        self.debris_last = Some(now);
+    }
+
+    /// Aurora Weather's fog this frame (fog.rs): made while it is on, its
+    /// volume's textures while its tier has one (the frame groups bound to
+    /// them again when they change). The height fog's terms of every view
+    /// are kept for `frame_uniforms`. Under the water, and in a cut-out
+    /// photo, none is drawn: the water's fog alone.
+    fn prepare_fog(&mut self, f: &FrameParams, ground: &FogGround, camera_water_level: f32) {
+        self.fog_shelter = f.fog.is_some();
+        let Some(look) = f.fog.filter(|_| !f.cutout && f.camera_pos.z >= camera_water_level) else {
+            self.fog_terms = None;
+            self.fog_volume_now = false;
+            self.fog_shelter = false;
+            // off: everything goes, the frame groups lose its textures
+            if f.fog.is_none() && self.fog.take().is_some() {
+                self.remake_frame_groups();
+            }
+            return;
+        };
+        let made = self.fog.is_none();
+        if made {
+            let queue = &self.queue;
+            self.fog = extra(&mut self.oom, &self.device, self.lost.get(), "fog", |d| {
+                crate::fog::Fog::new(d, queue)
+            });
+        }
+        self.fog_volume_now = false;
+        let Some(fog) = &mut self.fog else {
+            // (refused for now: none at all rather than a fogged ground
+            // under a clear sky)
+            self.fog_terms = None;
+            self.fog_shelter = false;
+            return;
+        };
+        let level = crate::fog::ground_level_at(ground, f.camera_pos.truncate()).unwrap_or(f.water_height);
+        self.fog_terms = Some((look, level));
+        fog.upload_ground(&self.queue, ground);
+        let changed = if look.tier == FogTier::Height {
+            fog.release_targets()
+        } else if !self.oom.extras_ready(Instant::now()) {
+            false
+        } else {
+            let (made, refused) = crate::gpu_alloc::scoped(&self.device, || fog.ensure_targets(&self.device, look.quality));
+            if first_use(&mut self.oom, "fog volume", false, refused && !self.lost.get()) {
+                // refused: the height fog until it can be made
+                fog.release_targets();
+                true
+            } else {
+                made
+            }
+        };
+        self.fog_volume_now = fog.volume().is_some();
+        // (before the uniforms: the scene reads the flow grid where it is now)
+        if self.fog_volume_now && !f.cutout {
+            fog.place_flow(f.camera_pos);
+        }
+        // the shelter map for the fog drawn, the height fog's too (it keeps
+        // the rooms clear)
+        self.fog_shelter = true;
+        // (made this frame: the frame groups take its ground)
+        if changed || made {
+            self.remake_frame_groups();
         }
     }
 }
@@ -3103,6 +3269,7 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
     let part_bufs = [Some(particle_layout())];
     let sprite_bufs = [Some(sprite_layout())];
     let print_bufs = [Some(print_layout())];
+    let debris_bufs = [Some(debris_layout())];
     let mut targets = Vec::new();
     if let Some(f) = d.format {
         targets.push(Some(wgpu::ColorTargetState {
@@ -3142,6 +3309,7 @@ fn make_pipeline(device: &wgpu::Device, module: &wgpu::ShaderModule, layout: &wg
                 Vb::Particle => &part_bufs,
                 Vb::Sprite => &sprite_bufs,
                 Vb::Print => &print_bufs,
+                Vb::Debris => &debris_bufs,
             },
         },
         primitive: wgpu::PrimitiveState {
@@ -4240,6 +4408,40 @@ impl Backend {
                 },
                 count: None,
             },
+            // Aurora Weather's fog volume (fog.rs; 31 and 32 are the sun
+            // glass and the GI's openness, of the lighting's group)
+            wgpu::BindGroupLayoutEntry {
+                binding: 33,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // its flow grid (fog.rs `Flow`): how open the air is
+            wgpu::BindGroupLayoutEntry {
+                binding: 34,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // the ground it pools on (fog.rs `upload_ground`)
+            wgpu::BindGroupLayoutEntry {
+                binding: 35,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ];
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
@@ -4445,7 +4647,64 @@ impl Backend {
                     depth_or_array_layers: 1,
                 },
             );
-            Dummies { white, black, depth }
+            let volume_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("dummy fog volume"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D3,
+                format: wgpu::TextureFormat::Rgba16Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            // (half floats 0, 0, 0, 1)
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &volume_tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(&[0u16, 0, 0, 0x3c00]),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(8),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let volume = volume_tex.create_view(&Default::default());
+            let ground = device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("dummy fog ground"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rg32Float,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default());
+            Dummies {
+                white,
+                black,
+                depth,
+                volume,
+                ground,
+            }
         };
 
         let fmt_features = adapter.get_texture_format_features(HDR_FORMAT);
@@ -4596,6 +4855,8 @@ impl Backend {
             &water_effects,
             &stars,
             &milky_way,
+            None,
+            None,
         );
         let indirect = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("indirect"),
@@ -4696,6 +4957,13 @@ impl Backend {
             rt_build: None,
             rt_failed: false,
             rt_now: false,
+            fog: None,
+            debris: None,
+            debris_last: None,
+            debris_dt: 0.0,
+            fog_terms: None,
+            fog_volume_now: false,
+            fog_shelter: false,
             soft: None,
             soft_now: false,
             contact_now: false,
@@ -5114,10 +5382,11 @@ impl Backend {
         // (without the stochastic transparency's passes: its own module,
         // `make_st`, when the method is first on)
         let src = format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n{}\n{}",
             common_shader_for(soft),
             crate::oit_stochastic::without_st(&crate::object_shader_source(device.features())),
-            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
+            crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl")),
+            include_str!("shaders/debris.wgsl")
         );
         let src = crate::blend_exact::scene_source(src, device.features());
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -5539,6 +5808,16 @@ impl Backend {
             depth_compare: wgpu::CompareFunction::Greater,
             constants: rain_constants(),
             ..base("rain", "vs_rain", "fs_rain")
+        });
+        let debris = pipe(PipeDesc {
+            vb: Vb::Debris,
+            cull: None,
+            write_mask: wgpu::ColorWrites::COLOR,
+            // (drawn with the rain, whose pass reads the depth only: sparse
+            // cards, rarely over each other)
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("debris", "vs_debris", "fs_debris")
         });
         let rain_splash = pipe(PipeDesc {
             vb: Vb::None,
@@ -6191,6 +6470,28 @@ impl Backend {
                 ..shadow_desc("rain shelter", Some("fs_shadow"))
             },
         );
+        // Aurora Weather's debris: the canopy map (debris.rs, `fs_canopy`):
+        // the topmost surface, nearest the top first
+        let canopy = batch.add(
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                format: Some(crate::debris::CANOPY_FORMAT),
+                depth_compare: wgpu::CompareFunction::Less,
+                depth_bias: level,
+                ..shadow_desc("debris canopy", Some("fs_canopy"))
+            },
+        );
+        // (depth only, as the shelter map: its terrain pipeline draws the
+        // ground into the same pass)
+        let canopy_floor = batch.add(
+            &module,
+            &shadow_pl,
+            PipeDesc {
+                depth_bias: level,
+                ..shadow_desc("debris floor", Some("fs_canopy_floor"))
+            },
+        );
         let shelter_terrain = batch.add(
             &module,
             &shadow_pl,
@@ -6198,6 +6499,30 @@ impl Backend {
                 vs: "vs_shadow_terrain",
                 depth_bias: level,
                 ..shadow_desc("rain shelter terrain", Some("fs_shadow_terrain"))
+            },
+        );
+        // Aurora Weather's fog: the shelter map's casters drawn into the
+        // flow grid's solid cells (no depth; a stand-in target, its writes discarded with the pass)
+        let voxel_layout = crate::fog::voxel_layout(device);
+        let voxel_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fog walls"),
+            bind_group_layouts: &[None, Some(records_layout), Some(tex_layout), Some(&voxel_layout)],
+            immediate_size: 0,
+        });
+        let fog_voxel = batch.add(
+            &module,
+            &voxel_pl,
+            PipeDesc {
+                format: Some(wgpu::TextureFormat::R8Unorm),
+                // (a write to it, discarded with the pass: a fragment shader
+                // with nothing to write could be left out by a driver, and
+                // its storage writes with it)
+                write_mask: wgpu::ColorWrites::RED,
+                depth_format: None,
+                depth_write: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                depth_bias: level,
+                ..shadow_desc("fog walls", Some("fs_fog_voxel"))
             },
         );
         let post_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -6279,6 +6604,7 @@ impl Backend {
             water_particles: water_particles.resolve(&mut done),
             water_particles_under: water_particles_under.resolve(&mut done),
             rain: rain.resolve(&mut done),
+            debris: debris.resolve(&mut done),
             rain_wet: rain_wet.resolve(&mut done),
             rain_wet_g: rain_wet_g.resolve(&mut done),
             rain_splash: rain_splash.resolve(&mut done),
@@ -6330,6 +6656,9 @@ impl Backend {
             shadow_terrain: shadow_terrain.resolve(&mut done),
             shelter: shelter.resolve(&mut done),
             shelter_terrain: shelter_terrain.resolve(&mut done),
+            canopy: canopy.resolve(&mut done),
+            canopy_floor: canopy_floor.resolve(&mut done),
+            fog_voxel: fog_voxel.resolve(&mut done),
             post: post.resolve(&mut done),
             pick: pick.resolve(&mut done),
             pick_terrain: pick_terrain.resolve(&mut done),
@@ -6619,6 +6948,8 @@ impl Backend {
         water_effects: &crate::water_effects::WaterGpu,
         stars: &wgpu::Buffer,
         milky_way: &wgpu::TextureView,
+        fog_volume: Option<(&wgpu::TextureView, &wgpu::TextureView)>,
+        fog_ground: Option<&wgpu::TextureView>,
     ) -> FrameGroups {
         let mk = |label: &str,
                   buffer: &wgpu::Buffer,
@@ -6656,6 +6987,26 @@ impl Backend {
                     wgpu::BindGroupEntry {
                         binding: 30,
                         resource: wgpu::BindingResource::TextureView(soft.unwrap_or(milky_way)),
+                    },
+                    // the fog volume (main view only: the others take the
+                    // height fog, `fog_look[2].w`)
+                    wgpu::BindGroupEntry {
+                        binding: 33,
+                        resource: wgpu::BindingResource::TextureView(match fog_volume {
+                            Some((v, _)) if std::ptr::eq(buffer, frame_buffer) => v,
+                            _ => &dummies.volume,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 34,
+                        resource: wgpu::BindingResource::TextureView(match fog_volume {
+                            Some((_, flow)) if std::ptr::eq(buffer, frame_buffer) => flow,
+                            _ => &dummies.volume,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 35,
+                        resource: wgpu::BindingResource::TextureView(fog_ground.unwrap_or(&dummies.ground)),
                     },
                     wgpu::BindGroupEntry {
                         binding: 26,
@@ -7112,6 +7463,8 @@ impl Backend {
             &self.water_effects,
             &self.stars,
             &self.milky_way,
+            self.fog.as_ref().and_then(|f| f.volume().map(|v| (v, f.flow_view()))),
+            self.fog.as_ref().map(|f| f.ground_view()),
         );
     }
 
@@ -8040,6 +8393,16 @@ impl Backend {
         // centred on the main camera in every pass (`f` is the main view's,
         // reflections and probes included)
         u.curvature = Curvature::new(f.camera_pos, f.curvature).uniform();
+        // the height fog in every view; the main view may read the volume
+        // instead (render_frame)
+        if let Some((look, ground)) = &self.fog_terms {
+            let forward = crate::light_tiles::view_forward(view);
+            u.fog_look[..4].copy_from_slice(&crate::fog::frame_terms(look, &f.sky, *ground, forward, crate::fog::MODE_HEIGHT));
+            // the ground the fog lies on, in every view (binding 33)
+            if let Some([x, y, side]) = self.fog.as_ref().and_then(|f| f.ground_rect()) {
+                u.fog_look[6] = [x, y, side, 0.0];
+            }
+        }
         u.rain_look = [
             f32::from(u8::from(f.rain_look.puddles)),
             f.rain_look.distance,
@@ -8051,6 +8414,16 @@ impl Backend {
             },
         ];
         u.rain_wind = [f.rain_look.drift[0], f.rain_look.drift[1], f.rain_look.wind[0], f.rain_look.wind[1]];
+        u.weather_tint = f
+            .rain_look
+            .tint
+            .uniform(f.rain_look.gust, f.rain_look.fall_speed, f.rain_look.flutter, f.rain_look.sand);
+        if let Some(d) = &f.debris {
+            for (k, list) in d.pictures.iter().enumerate() {
+                u.debris_pictures[k * 2] = [list[0], list[1], list[2], list[3]];
+                u.debris_pictures[k * 2 + 1] = [list[4], list[5], list[6], list[7]];
+            }
+        }
         u.selection_color = f.selection_color;
         // (object.wgsl fs_selection_pattern; 0: its procedural stand-in)
         u.features[FEATURE_FACE_SELECT_SLOT] = f.face_select_texture;
@@ -9414,8 +9787,18 @@ impl Backend {
         // rain prototype: the terrain heights (and where they are, for the
         // uniforms below)
         self.water_effects.upload_rain_ground(&self.queue, &lists.rain_ground);
+        // Aurora Weather's fog: before the uniforms (its terms) and the
+        // shadows (its shelter map)
+        self.prepare_fog(f, &lists.fog_ground, camera_water_level);
+        // Aurora Weather's debris: made or let go, its step (it moves after
+        // the shadows, on the shelter map they draw)
+        self.prepare_debris(f);
+        let debris_shelter = self.rain_shelter_map(f).is_some();
         // snow wets nothing (the ground dries as after rain), it lies
         let (rain, snow) = if f.rain_look.snow > 0.0 { (0.0, f.rain) } else { (f.rain, 0.0) };
+        // blowing sand gathers in drifts as snow does (its colour the snow's
+        // tint, from the viewer), slowly; and stays while it blows
+        let snow = snow.max(f.rain_look.sand * 0.35);
         // cleaned up (the Weather window): the memory starts again, every
         // cell new, as dry and bare as the open is now (a region's snow so
         // far, given below, is still the region's)
@@ -9455,6 +9838,7 @@ impl Backend {
         let extent = self.water_effects.rain_wet_size as f32 / RAIN_WET_TEXELS_PER_M;
         self.follow_shelter(f.camera_pos);
         self.rain_wet.snow = self.rain_wet.snow.max(f.rain_look.snow_lying.clamp(0.0, 1.0));
+        self.rain_wet.keeps = !f.rain_look.fall_melts || f.rain_look.sand > 0.0;
         self.rain_wet
             .advance(rain, snow, f.camera_pos.truncate(), f.rain_look.ice, f.rain_look.deep_snow, extent);
         // footprints while snow lies and they are wanted
@@ -9485,6 +9869,17 @@ impl Backend {
         }
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
+        if self.fog_volume_now {
+            main.fog_look[2][3] = crate::fog::MODE_VOLUME;
+            // the fog's flow grid, for the surfaces in closed rooms
+            if let Some(origin) = self.fog.as_ref().and_then(|f| f.flow_grid()) {
+                let d = crate::fog::FLOW_DIMS;
+                main.fog_look[4] = origin.extend(crate::fog::FLOW_CELL).to_array();
+                main.fog_look[5] = [d[0] as f32, d[1] as f32, d[2] as f32, 0.0];
+            }
+        } else if self.fog_terms.is_some() && self.rain_shelter_map(f).is_some() {
+            main.fog_look[2][3] += crate::fog::MODE_SHELTER;
+        }
         if f.photo_tile != Mat4::IDENTITY {
             main.photo = photo_part(f.photo_tile);
         }
@@ -10724,6 +11119,8 @@ impl Backend {
             self.shelter_drawn = Some((self.shelter_matrix(), Instant::now()));
         }
         let shelter_only = shelter_only && !shelter_kept;
+        // its draws are this frame's (the fog's walls are drawn with them)
+        let shelter_drawn_now = shelter && (f.shadows || shelter_only);
         // MARK_SHELTER_BEGIN / END written (once, in the Spots step)
         let mut shelter_marked = false;
         if f.shadows || shelter_only {
@@ -11746,6 +12143,169 @@ impl Backend {
             clouds.skipped(still.is_some());
         }
         mark(&mut encoder, MARK_CLOUDS_END);
+        // ---- Aurora Weather's fog volume (fog.rs): after the shadows it
+        // reads, before the scene that reads it; then the sky's pipeline
+        mark(&mut encoder, MARK_DEBRIS_BEGIN);
+        // ---- Aurora Weather's canopy map (debris.rs): the shelter map's
+        // casters again, from above, into its own small target: the leaves
+        // fall from the foliage, and every debris through it to the floor
+        // under it (with its draws, this frame's)
+        if shelter_drawn_now
+            && still.is_none()
+            && f.debris.is_some()
+            && let Some(debris) = &mut self.debris
+        {
+            let [canopy, floor, depth] = debris.canopy_targets();
+            // the canopy: the top of the foliage (its own depth, let go);
+            // then the floor: the topmost of the rest and the terrain, its
+            // depth kept for the simulation
+            for floor_pass in [false, true] {
+                let (color, depth_view, store) = if floor_pass {
+                    (None, floor, wgpu::StoreOp::Store)
+                } else {
+                    (Some(canopy), depth, wgpu::StoreOp::Discard)
+                };
+                let color_attachments = [color.map(|view| wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })];
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some(if floor_pass { "debris floor" } else { "debris canopy" }),
+                    color_attachments: if floor_pass { &[] } else { &color_attachments },
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                let k = self.shelter_slot;
+                pass.set_bind_group(3, &self.shadow_bind_groups[CASCADES + k], &[]);
+                if floor_pass {
+                    draw(&mut pass, &self.pipelines.shelter_terrain, rg.spot_terrain[k]);
+                }
+                pass.set_pipeline(if floor_pass {
+                    &self.pipelines.canopy_floor
+                } else {
+                    &self.pipelines.canopy
+                });
+                let (off, count) = rg.spot[k];
+                if count > 0 {
+                    pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                    calls.set(calls.get() + 1);
+                }
+                draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
+            }
+        }
+        // ---- Aurora Weather's debris (debris.rs): after the shadows (the
+        // shelter map it lands on), before the scene that draws it
+        // (not between a photo's tiles: the particles would move across
+        // their seams)
+        if let (Some(look), Some(debris)) = (
+            f.debris.filter(|_| !f.cutout && debris_shelter && still.is_none()),
+            &mut self.debris,
+        ) {
+            debris.encode(
+                &self.device,
+                &self.queue,
+                &mut encoder,
+                &self.frame_buffer,
+                &self.shadow_view,
+                &look,
+                f.camera_pos,
+                (Vec2::from(f.rain_look.wind), f.rain_look.gust),
+                f.time,
+                self.debris_dt,
+            );
+        }
+        mark(&mut encoder, MARK_FOG_BEGIN);
+        if let Some(fog) = &mut self.fog {
+            // its walls, drawn with the shelter map's casters into the flow
+            // grid when due (the shelter map's draws are this frame's)
+            if self.fog_volume_now && shelter_drawn_now && still.is_none() && fog.walls_due(&self.queue, self.anim_now) {
+                let walls = fog.walls();
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("fog walls"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: walls.target,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Discard,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(1, &self.records_bind_group, &[]);
+                pass.set_bind_group(2, &scene.textures, &[]);
+                pass.set_vertex_buffer(0, scene.vertices.slice(..));
+                pass.set_vertex_buffer(1, scene.skin.slice(..));
+                pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_pipeline(&self.pipelines.fog_voxel);
+                let k = self.shelter_slot;
+                for (group, (w, h)) in walls.views {
+                    pass.set_viewport(0.0, 0.0, w as f32, h as f32, 0.0, 1.0);
+                    pass.set_scissor_rect(0, 0, w, h);
+                    pass.set_bind_group(3, group, &[]);
+                    let (off, count) = rg.spot[k];
+                    if count > 0 {
+                        pass.multi_draw_indexed_indirect(&self.indirect, off, count);
+                        calls.set(calls.get() + 1);
+                    }
+                    draw_bin(&mut pass, None, BIN_SPOT + k, BIN_SPOT + k);
+                }
+            }
+            match (&self.fog_terms, self.fog_volume_now) {
+                (Some((look, _)), true) => fog.encode(
+                    &self.device,
+                    &self.queue,
+                    &mut encoder,
+                    &self.frame_buffer,
+                    &self.shadow_view,
+                    &self.shadow_sampler,
+                    &self.lin_clamp,
+                    look,
+                    fu.view,
+                    fu.proj,
+                    fu.camera_pos,
+                    still.is_some(),
+                ),
+                _ => fog.skipped(),
+            }
+            if self.fog_terms.is_some() {
+                fog.prepare_sky(
+                    &self.device,
+                    &self.frame_buffer,
+                    &self.lin_clamp,
+                    &self.dummies.volume,
+                    scene_samples,
+                    scene_gbuf,
+                    HDR_FORMAT,
+                    GBUF_FORMAT,
+                    DEPTH_FORMAT,
+                );
+            }
+        }
+        mark(&mut encoder, MARK_FOG_END);
         // ---- scene pass A: sky, terrain, opaque, masked
         {
             let (view, resolve) = match &self.targets.color_msaa {
@@ -11828,6 +12388,13 @@ impl Backend {
                     // (the composite has its own group 0)
                     pass.set_bind_group(0, &self.groups.a, &[]);
                 }
+                // the weather's fog over the sky and the clouds: dst * T + L
+                if self.fog_terms.is_some()
+                    && let Some(fog) = &self.fog
+                {
+                    fog.draw_sky(&mut pass, scene_samples, scene_gbuf);
+                    pass.set_bind_group(0, &self.groups.a, &[]);
+                }
             }
             pass_mark(&mut pass, MARK_SKY_END);
             draw(&mut pass, &self.pipelines.terrain, rg.terrain);
@@ -11870,6 +12437,11 @@ impl Backend {
         }
         let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
         let rain_drops = if f.cutout { 0 } else { rain_drops(f.rain, f.rain_look.quality) };
+        // the debris drawn when it moved this frame (debris.rs)
+        let debris_draw = self
+            .debris
+            .as_ref()
+            .filter(|_| f.debris.is_some() && !f.cutout && self.rain_shelter_map(f).is_some());
         // rain prototype: the wetness memory, from the last one and the
         // shelter map, then copied where it is read
         let rain_wet = !f.cutout && self.rain_wet.active();
@@ -12341,6 +12913,12 @@ impl Backend {
                 // beyond the drops' box: the distant rain's layers
                 pass.set_pipeline(&self.pipelines.rain_far);
                 pass.draw(0..3, 0..1);
+            }
+            // the debris (its GPU time in the drops', `g_drops`)
+            if let Some(debris) = debris_draw {
+                pass.set_pipeline(&self.pipelines.debris);
+                pass.set_vertex_buffer(0, debris.instances().slice(..));
+                pass.draw(0..crate::debris::VERTICES, 0..debris.pool());
             }
             pass_mark(pass, MARK_RAIN_END);
             // particles last: they rebind vertex buffer 0
@@ -14187,6 +14765,9 @@ mod tests {
         MARK_WATER_INTERFACE_END,
         MARK_DEPTH_MSAA_END,
         MARK_CLOUDS_END,
+        MARK_DEBRIS_BEGIN,
+        MARK_FOG_BEGIN,
+        MARK_FOG_END,
         MARK_SKY_END,
         MARK_TERRAIN_END,
         MARK_OBJECTS_END,

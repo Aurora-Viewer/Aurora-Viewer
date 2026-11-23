@@ -840,6 +840,12 @@ pub struct App {
     weather_saved: crate::weather::WeatherSettings,
     /// The weather's wind, in gusts.
     weather_wind: crate::weather::Wind,
+    /// What lies on the ground is the sand's (blown sand gathered there,
+    /// no snow fallen since): it keeps the sand's colour after the storm,
+    /// until snow falls or nothing lies any more.
+    lying_sand: bool,
+    /// How far the wind has carried the weather's fog (weather/fog.rs).
+    fog_drift: crate::weather::FogDrift,
     /// The weather in effect this frame: the settings (`update_weather_now`;
     /// the demo's snow spin may change it after).
     weather_now: crate::weather::WeatherSettings,
@@ -2162,6 +2168,8 @@ impl App {
             rain_last: None,
             weather_saved: Default::default(),
             weather_wind: Default::default(),
+            lying_sand: false,
+            fog_drift: Default::default(),
             weather_now: Default::default(),
             thunder: Default::default(),
             thunder_demo_done: false,
@@ -6929,9 +6937,20 @@ impl App {
         self.weather_wind
             .advance(std::time::Instant::now(), range, heading, region_wind.truncate());
         let weather_wind = range.1 > 0.0;
+        // the fog drifts with the weather's wind, or the region's without it
+        let fog_wind = if weather_wind {
+            self.weather_wind.now
+        } else {
+            region_wind.truncate()
+        };
+        self.fog_drift
+            .advance(std::time::Instant::now(), fog_wind, self.weather_now.fog_drift);
+        self.scene.weather_wind = None;
         if weather_wind {
             let open = self.scene.sound_reverb.sky.map_or(1.0, |s| s.exposure.clamp(0.0, 1.0));
             region_wind = self.weather_wind.now.extend(0.0) * (0.15 + 0.85 * open);
+            // (the flexis feel it, sheltered as we are)
+            self.scene.weather_wind = Some(region_wind);
         }
         let agent = &self.world.agent;
         // demo runs stay silent unless AURORA_DEMO_SOUND or AURORA_DEMO_WIND
@@ -11034,6 +11053,7 @@ impl App {
             if let Some(ap) = &mut self.autopilot {
                 ap.shift(shift);
             }
+            self.scene.tumbleweeds.shift(shift);
             // the weather's memory of the ground (snow, wet, footprints)
             if let Some(gfx) = &mut self.gfx {
                 gfx.renderer.shift_world(shift);
@@ -12398,6 +12418,26 @@ impl App {
                 .physics_shapes
                 .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
             self.scene.physics_shapes.append(&mut self.scene.lists);
+            // Aurora Weather's tumbleweeds: rolled, then drawn with the rest
+            {
+                let wind = self
+                    .weather_now
+                    .tumbleweeds
+                    .then_some((self.weather_wind.now, self.weather_now.gust(&self.weather_wind)));
+                let mut weeds = std::mem::take(&mut self.scene.tumbleweeds);
+                weeds.update(
+                    &mut gfx.renderer,
+                    &self.scene,
+                    &self.world,
+                    Instant::now(),
+                    wind,
+                    self.camera.position,
+                    self.camera.forward(),
+                    self.camera.fov_y,
+                );
+                weeds.append(&mut self.scene.lists);
+                self.scene.tumbleweeds = weeds;
+            }
             let huds_shown = self.huds_shown();
             self.scene
                 .build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown, |id| {
@@ -12836,6 +12876,14 @@ impl App {
             self.scene.snow_trails.clear();
             self.scene.avatar_snow = Default::default();
         }
+        // Aurora Weather: blown sand lying (drawn as the snow lying is, in
+        // the sand's colour), until snow falls on it or nothing lies
+        let snow_falling = self.weather_now.snowing() && self.weather_now.fall() > 0.0;
+        if self.weather_now.sand_blowing() > 0.0 && !snow_falling {
+            self.lying_sand = true;
+        } else if weather_clean || snow_falling || !gfx.renderer.snow_lying() {
+            self.lying_sand = false;
+        }
         // Aurora Weather: the snow gathering on the avatars near the camera
         // ("Snow on avatars"; off, what lay on them goes at once)
         // (nothing to do in clear weather with none left on them)
@@ -13071,13 +13119,51 @@ impl App {
                 trail_centre: self.trail_centre().truncate().to_array(),
                 clean: weather_clean,
                 fill: weather_fill,
-                ..self.weather_now.rain_look(&self.weather_wind)
+                ..{
+                    let mut look = self.weather_now.rain_look(&self.weather_wind);
+                    // what lies is sand: drawn in its colour
+                    if self.lying_sand {
+                        look.tint.snow = crate::weather::tint::SAND_LINEAR;
+                    }
+                    look
+                }
             },
             hide_sky: self.settings.debug.hidden_types.sky,
             hide_water: self.settings.debug.hidden_types.water,
             curvature: self.settings.planet_radius(),
             look: None,
             look_thumbs: None,
+            debris: {
+                // the exclusion list, for the textures classified from now
+                let excluded = &mut self.scene.textures.foliage_excluded;
+                let list = &self.weather_now.debris_not_foliage;
+                if excluded.len() != list.len() || !list.iter().all(|id| excluded.contains(id)) {
+                    *excluded = list.iter().copied().collect();
+                }
+                // the user's pictures, read while the debris is on (let go
+                // when off)
+                let on = self.weather_now.enabled && self.weather_now.debris_on;
+                let none = Vec::new();
+                let pictures = self.scene.debris_textures.update(
+                    &mut gfx.renderer,
+                    if on { &self.weather_now.debris_pictures_leaves } else { &none },
+                    if on { &self.weather_now.debris_pictures_paper } else { &none },
+                );
+                // not in VR yet: each eye would simulate its own pool (two
+                // different sets of particles, no depth between the eyes)
+                self.weather_now
+                    .debris_look(self.weather_now.quality_index())
+                    .filter(|_| !gfx.renderer.vr_engaged())
+                    .map(|look| aurora_render::DebrisLook { pictures, ..look })
+            },
+            fog: self.weather_now.fog_look(
+                self.fog_drift.at,
+                crate::weather::fog::utc_clock(),
+                self.world
+                    .main_region
+                    .map_or([0.0; 2], |h| [(h >> 32) as f64, (h & 0xffff_ffff) as f64]),
+                self.weather_now.quality_index(),
+            ),
             clouds: crate::world::env::clouds_frame(
                 self.settings.volumetric_clouds,
                 self.world.main_region,
@@ -14001,6 +14087,8 @@ impl App {
         }
         let raining = self.rain_last.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1500));
         self.scene.update_rain_ground(&self.world, fp.camera_pos, raining);
+        self.scene
+            .update_fog_ground(&self.world, fp.camera_pos, fp.water_height, fp.fog.is_some());
         let lists = if self.in_world() && !self.scene_paused() {
             &self.scene.lists
         } else {
@@ -14705,6 +14793,9 @@ impl App {
                 self.world.apply(event);
             }
             for event in crate::demo::sky::events(self.frame_count) {
+                self.world.apply(event);
+            }
+            for event in crate::demo::fog::events(self.frame_count) {
                 self.world.apply(event);
             }
             for event in crate::demo::clouds::events(self.frame_count) {
@@ -22363,7 +22454,8 @@ impl ApplicationHandler for App {
                 self.settings.sync_night_sky();
             }
             // AURORA_DEMO_CLOUDS: the region's fixed sky, not a time of day
-            if crate::demo::clouds::scenario().is_some() {
+            // (the clouds' and the fog's scenarios show the region's sky)
+            if crate::demo::clouds::scenario().is_some() || crate::demo::fog::scenario().is_some() {
                 self.panels.time_of_day = 0;
             }
             // AURORA_DEMO_NIGHT_SKY_CLOCK: the real time at this longitude

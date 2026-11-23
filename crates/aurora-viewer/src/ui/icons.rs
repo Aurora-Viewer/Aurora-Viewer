@@ -124,6 +124,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "loader-2",
     "lock-open",
     "lock-cog",
+    "mist",
     "pencil-off",
     "login-2",
     "logout",

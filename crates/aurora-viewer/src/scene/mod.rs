@@ -17,6 +17,7 @@ pub mod body_physics;
 pub mod build_hologram;
 pub mod complexity;
 pub mod creation_preview;
+pub mod debris_textures;
 pub(crate) mod default_motions;
 pub mod describe;
 pub mod draw_limits;
@@ -24,6 +25,7 @@ pub mod drawn;
 pub mod face_pattern;
 pub mod fetch_priority;
 pub(crate) mod flexible;
+mod fog_ground;
 mod foot_scope;
 mod foot_support;
 pub mod geometry_need;
@@ -79,6 +81,7 @@ mod sync_plan;
 mod sync_slow;
 pub mod thunder;
 mod tree_detail;
+pub mod tumbleweeds;
 mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
@@ -600,6 +603,13 @@ impl ObjGpu {
 /// never auto alpha-mask a rigged face or a HUD attachment. Soft genital
 /// and hair alphas stay visible; an explicit MASK material / PBR mask is
 /// unchanged.
+/// Aurora Weather: a face whose base texture is in `slot` counts as foliage
+/// (the canopy map): its slot's verdict, never an opaque texture (a slot
+/// reused for one before its new verdict).
+fn leafy_slot(foliage: &[bool], alpha: &[AlphaKind], slot: u32) -> bool {
+    foliage.get(slot as usize).copied().unwrap_or(false) && alpha.get(slot as usize).is_some_and(|a| *a != AlphaKind::Opaque)
+}
+
 fn face_mode(f: &FaceDraw, alpha: &[AlphaKind], channel: &[bool], object_auto_mask: bool) -> (Pass, bool) {
     let tex_alpha = alpha.get(f.base_slot as usize).copied().unwrap_or(AlphaKind::Opaque);
     let mut pass = classify(f, tex_alpha);
@@ -944,6 +954,13 @@ pub struct Scene {
     studio_visible: bool,
     studio_roots: Vec<Uuid>,
     pub studio_stage: avatar_studio::Stage,
+    /// Aurora Weather's tumbleweeds (their own meshes and records).
+    pub tumbleweeds: tumbleweeds::Tumbleweeds,
+    /// Aurora Weather's wind at the camera (m/s, as sheltered as we are),
+    /// None without it: the flexis feel it instead of the region's.
+    pub weather_wind: Option<Vec3>,
+    /// Aurora Weather's debris pictures (the user's image files).
+    pub debris_textures: debris_textures::DebrisTextures,
     pub studio_pose: crate::avatar_studio::Pose,
     pub studio_floor_offset: f32,
     pub studio_hover_height: f32,
@@ -1052,6 +1069,8 @@ pub struct Scene {
     /// Rain prototype: the terrain's heights around the camera
     /// (`rain_ground.rs`).
     rain_ground: rain_ground::RainGroundCache,
+    /// Aurora Weather's fog: the ground it pools on (`fog_ground.rs`).
+    fog_ground: fog_ground::FogGroundCache,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
     /// for the lights, it may hold removed indices and readers check `mirror`.
     mirror_objects: std::collections::BTreeSet<usize>,
@@ -1775,6 +1794,9 @@ impl Scene {
             studio_visible: false,
             studio_roots: Vec::new(),
             studio_stage: Default::default(),
+            tumbleweeds: Default::default(),
+            weather_wind: None,
+            debris_textures: Default::default(),
             studio_pose: Default::default(),
             studio_floor_offset: 0.0,
             studio_hover_height: 0.0,
@@ -1821,6 +1843,7 @@ impl Scene {
             light_scratch: Default::default(),
             spot_shadows: Default::default(),
             rain_ground: Default::default(),
+            fog_ground: Default::default(),
             mirror_objects: Default::default(),
             shelter_holds: Default::default(),
             selection_wire: Default::default(),
@@ -2509,6 +2532,10 @@ impl Scene {
         }
         self.water.clear(renderer);
         self.studio_stage.clear(renderer);
+        // (their meshes and records are this renderer's: a recovery or a
+        // relog makes them again)
+        self.tumbleweeds.clear(renderer);
+        self.debris_textures.clear(renderer);
         self.banlines.clear(renderer);
         self.spinning_cat.clear(renderer);
         self.portals.clear(renderer);
@@ -3579,6 +3606,8 @@ impl Scene {
     fn reclassify_slots(&mut self, renderer: &mut Renderer, slots: &[u32]) {
         let alpha = &self.textures.alpha_by_slot;
         let channel = &self.textures.alpha_channel_by_slot;
+        // Aurora Weather's foliage (the canopy map): marked on the records
+        let foliage = &self.textures.foliage_by_slot;
         for &slot in slots {
             for &(_, idx) in self.slot_users.range((slot, 0)..=(slot, u32::MAX)) {
                 let idx = idx as usize;
@@ -3593,10 +3622,17 @@ impl Scene {
                         continue;
                     }
                     let (pass, pool) = face_mode(f, alpha, channel, object_auto_mask);
-                    if pass == f.pass && pool == f.glow_pool {
+                    // Aurora Weather's foliage, set or cleared with the slot's
+                    // verdict (a reused slot's new texture may not be leaves)
+                    let leafy = leafy_slot(foliage, alpha, slot);
+                    let foliage_changed = renderer
+                        .records
+                        .get(f.record)
+                        .is_some_and(|r| (r.flags[3] & flags::FOLIAGE != 0) != leafy);
+                    if pass == f.pass && pool == f.glow_pool && !foliage_changed {
                         continue;
                     }
-                    any = true;
+                    any |= pass != f.pass || pool != f.glow_pool;
                     let before = f.record_flags();
                     f.pass = pass;
                     f.glow_pool = pool;
@@ -3605,13 +3641,14 @@ impl Scene {
                     let (record, face) = (f.record, cull_face(f, idx, fi == 0));
                     // (`object_auto_mask`: neither rigged nor a HUD, the
                     // objects whose blended faces take a rank of their own)
-                    if (mode_changed || object_auto_mask)
+                    if (mode_changed || object_auto_mask || foliage_changed)
                         && let Some(mut r) = renderer.records.get(record).copied()
                     {
                         r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
                         if object_auto_mask {
                             r.set_layer_rank(stacked_layer_rank(pass, f.te_index));
                         }
+                        r.flags[3] = (r.flags[3] & !flags::FOLIAGE) | if leafy { flags::FOLIAGE } else { 0 };
                         renderer.records.set(record, r);
                     }
                     renderer.records.set_face(record, face);
@@ -3639,6 +3676,7 @@ impl Scene {
         self.fresh_usage.insert(idx);
         let alpha = &self.textures.alpha_by_slot;
         let channel = &self.textures.alpha_channel_by_slot;
+        let foliage = &self.textures.foliage_by_slot;
         let mut last_slot = None;
         // (an object appearing keeps its rez effect through a rebuild)
         // (and its geometry may have been what it waited for)
@@ -3662,12 +3700,16 @@ impl Scene {
             } else {
                 0
             };
-            if (mode != 0 || rank != 0)
+            let leafy = leafy_slot(foliage, alpha, f.base_slot);
+            if (mode != 0 || rank != 0 || leafy)
                 && let Some(mut r) = renderer.records.get(f.record).copied()
             {
                 r.flags[0] = (r.flags[0] & !(flags::ALPHA_BLEND | flags::ALPHA_MASK)) | mode;
                 if object_auto_mask {
                     r.set_layer_rank(rank);
+                }
+                if leafy {
+                    r.flags[3] |= flags::FOLIAGE;
                 }
                 renderer.records.set(f.record, r);
             }
@@ -4324,6 +4366,10 @@ impl Scene {
             if plant.is_some() {
                 rec.params[3] = 0.5;
             }
+            // a Linden tree is always foliage (Aurora Weather's leaves)
+            if o.is_tree() {
+                rec.flags[3] |= flags::FOLIAGE;
+            }
             // LLVOVolume: prims of the "light" material are fullbright
             if o.prim_material == LL_MCODE_LIGHT {
                 rec.flags[0] |= flags::FULLBRIGHT;
@@ -4533,6 +4579,12 @@ impl Scene {
                 g.tex_ids.push(base_tex);
             }
             rec.tex[0] = self.textures.acquire(renderer, base_tex, source);
+            // a Linden tree's or grass's texture is foliage, whatever the
+            // classifier says (what blows about falls through grass to the
+            // ground, as through a crown)
+            if (o.is_tree() || o.pcode == aurora_prim::params::LL_PCODE_LEGACY_GRASS) && !base_tex.is_nil() {
+                self.textures.force_foliage(base_tex, rec.tex[0]);
+            }
             let rigged = rigged_owner.is_some();
             if let Some((owner, _, binds)) = rigged_owner {
                 rec.flags[0] |= flags::SKINNED;

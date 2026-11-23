@@ -12,7 +12,10 @@
 use super::environment::{colour_names, compass_point};
 use super::widgets;
 use crate::theme::Palette;
-use crate::weather::{AuroraColours, DEEP_SNOW_REACH, PUDDLE_DISTANCE, Precipitation, SNOW_DISTANCE, WeatherQuality, WeatherSettings};
+use crate::weather::fog::{FOG_ANISOTROPY, FOG_HEIGHT};
+use crate::weather::{
+    AuroraColours, DEEP_SNOW_REACH, FogTier, PUDDLE_DISTANCE, Precipitation, SNOW_DISTANCE, WeatherQuality, WeatherSettings,
+};
 use egui::{Align, Layout, RichText, Sense, Stroke, Vec2};
 
 /// The window's width: two columns of cards.
@@ -48,6 +51,10 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) -> WeatherA
     ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
     summary(ui, p, w);
     ui.add_space(4.0);
+    // the presets set everything together (and turn the weather on): above
+    // the cards, never greyed
+    presets_card(ui, p, w);
+    ui.add_space(4.0);
     // the main switch off, every card is greyed, its settings kept
     ui.add_enabled_ui(w.enabled, |ui| {
         ui.columns(2, |cols| {
@@ -58,7 +65,13 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) -> WeatherA
             left.add_space(4.0);
             // what falls leaves it: greyed with the "Falling" card
             left.add_enabled_ui(w.precipitation_on, |ui| ground_card(ui, p, w));
+            left.add_space(4.0);
+            fog_card(left, p, w);
             wind_card(right, p, w);
+            right.add_space(4.0);
+            tint_card(right, p, w);
+            right.add_space(4.0);
+            debris_card(right, p, w);
             right.add_space(4.0);
             thunder_card(right, p, w);
             right.add_space(4.0);
@@ -225,6 +238,9 @@ fn chips(ui: &mut egui::Ui, p: &Palette, w: &WeatherSettings) {
         }
         if w.snowing() && falling && w.snow_settles {
             chip(ui, p, "mountain-filled", p.ink, aurora_i18n::tr!("ui-weather-chip-snow-lying"));
+        }
+        if w.fog_on {
+            chip(ui, p, "mist", p.ink, fog_word(w.fog_density));
         }
         if w.aurora {
             chip(
@@ -820,6 +836,422 @@ fn thunder_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     });
 }
 
+/// The word for how thick the fog is, 0 (a mist) to 1.
+fn fog_word(v: f32) -> &'static str {
+    if v < 0.2 {
+        aurora_i18n::tr!("ui-weather-fog-mist")
+    } else if v < 0.5 {
+        aurora_i18n::tr!("ui-weather-fog-light")
+    } else if v < 0.8 {
+        aurora_i18n::tr!("ui-weather-fog-thick")
+    } else {
+        aurora_i18n::tr!("ui-weather-fog-dense")
+    }
+}
+
+/// "Fog": how it is drawn, how thick and how high, how the wind carries
+/// it, its glow around the lights, and its colour (weather/fog.rs).
+fn fog_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    let mut on = w.fog_on;
+    let head = Head {
+        on: &mut on,
+        tip: aurora_i18n::tr!("ui-weather-fog-on-tip"),
+    };
+    card(ui, p, "mist", aurora_i18n::tr!("ui-weather-fog"), Some(head), |ui, on| {
+        w.fog_on = on;
+        ui.add_enabled_ui(on, |ui| fog_rows(ui, p, w));
+    });
+}
+
+/// The "Fog" card's rows, under its switch.
+fn fog_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    ui.horizontal(|ui| {
+        let gap = ui.spacing().item_spacing.x;
+        let options = [
+            (aurora_i18n::tr!("ui-weather-fog-look-height"), true),
+            (aurora_i18n::tr!("ui-weather-fog-look-volume"), true),
+            (aurora_i18n::tr!("ui-weather-fog-look-lights"), true),
+        ];
+        let width = ui.available_width() - widgets::segmented_size(ui, &options).x - gap;
+        label(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-weather-fog-look"),
+            aurora_i18n::tr!("ui-weather-fog-look-tip"),
+            width,
+        );
+        let mut i = FogTier::ALL.iter().position(|t| *t == w.fog_tier).unwrap_or(2);
+        if widgets::segmented(ui, p, &mut i, &options) {
+            w.fog_tier = FogTier::ALL[i.min(2)];
+        }
+    });
+    slider_row(
+        ui,
+        p,
+        (
+            aurora_i18n::tr!("ui-weather-fog-density"),
+            aurora_i18n::tr!("ui-weather-fog-density-tip"),
+        ),
+        fog_word(w.fog_density),
+        Some((aurora_i18n::tr!("ui-weather-fog-mist"), aurora_i18n::tr!("ui-weather-fog-dense"))),
+        egui::Slider::new(&mut w.fog_density, 0.0..=1.0),
+    );
+    let height = format!("{:.0} m", w.fog_height);
+    slider_row(
+        ui,
+        p,
+        (
+            aurora_i18n::tr!("ui-weather-fog-height"),
+            aurora_i18n::tr!("ui-weather-fog-height-tip"),
+        ),
+        &height,
+        Some((aurora_i18n::tr!("ui-weather-fog-low"), aurora_i18n::tr!("ui-weather-fog-high"))),
+        egui::Slider::new(&mut w.fog_height, FOG_HEIGHT).logarithmic(true),
+    );
+    ui.columns(2, |cols| {
+        let [left, right] = cols else { return };
+        let drift = format!("{:.0} %", w.fog_drift * 100.0);
+        slider_row(
+            left,
+            p,
+            (
+                aurora_i18n::tr!("ui-weather-fog-drift"),
+                aurora_i18n::tr!("ui-weather-fog-drift-tip"),
+            ),
+            &drift,
+            Some((
+                aurora_i18n::tr!("ui-weather-fog-still"),
+                aurora_i18n::tr!("ui-weather-fog-windblown"),
+            )),
+            egui::Slider::new(&mut w.fog_drift, 0.0..=1.0),
+        );
+        let glow = format!("{:.0} %", w.fog_anisotropy / FOG_ANISOTROPY.end() * 100.0);
+        slider_row(
+            right,
+            p,
+            (aurora_i18n::tr!("ui-weather-fog-glow"), aurora_i18n::tr!("ui-weather-fog-glow-tip")),
+            &glow,
+            Some((
+                aurora_i18n::tr!("ui-weather-fog-glow-soft"),
+                aurora_i18n::tr!("ui-weather-fog-glow-tight"),
+            )),
+            egui::Slider::new(&mut w.fog_anisotropy, FOG_ANISOTROPY),
+        );
+    });
+    switch_row(
+        ui,
+        p,
+        "cloud-filled",
+        aurora_i18n::tr!("ui-weather-fog-from-sky"),
+        aurora_i18n::tr!("ui-weather-fog-from-sky-tip"),
+        &mut w.fog_from_sky,
+    );
+    ui.horizontal(|ui| {
+        widgets::glyph(ui, "palette-filled", p.muted, 15.0);
+        let gap = ui.spacing().item_spacing.x;
+        let width = ui.available_width() - widgets::SWITCH_SIZE.x - ui.spacing().interact_size.x - 2.0 * gap;
+        label(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-weather-fog-follow-sky"),
+            aurora_i18n::tr!("ui-weather-fog-follow-sky-tip"),
+            width,
+        );
+        let to_byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let mut rgba = [to_byte(w.fog_colour[0]), to_byte(w.fog_colour[1]), to_byte(w.fog_colour[2]), 255];
+        ui.add_enabled_ui(!w.fog_follow_sky, |ui| {
+            if widgets::color_button(ui, p, "weather fog colour", &mut rgba, false)
+                .on_hover_text(aurora_i18n::tr!("ui-weather-fog-colour-tip"))
+                .changed()
+            {
+                w.fog_colour = [rgba[0], rgba[1], rgba[2]].map(|c| f32::from(c) / 255.0);
+            }
+        });
+        widgets::switch(ui, p, &mut w.fog_follow_sky).on_hover_text(aurora_i18n::tr!("ui-weather-fog-follow-sky-tip"));
+    });
+}
+
+/// "Colour": the colour and opacity of what falls (the rain's thickness in
+/// rain; the snow's fall and melting in snow) and the fog following that
+/// colour; the presets above set them too.
+fn tint_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    card(ui, p, "palette-filled", aurora_i18n::tr!("ui-weather-tint"), None, |ui, _| {
+        let snowing = w.snowing();
+        let (tint, opacity) = if snowing {
+            (&mut w.snow_tint, &mut w.snow_opacity)
+        } else {
+            (&mut w.rain_tint, &mut w.rain_opacity)
+        };
+        colour_row(
+            ui,
+            p,
+            if snowing {
+                aurora_i18n::tr!("ui-weather-snow-colour")
+            } else {
+                aurora_i18n::tr!("ui-weather-rain-colour")
+            },
+            aurora_i18n::tr!("ui-weather-fall-colour-tip"),
+            tint,
+        );
+        let shown = format!("{:.0} %", *opacity * 100.0);
+        slider_row(
+            ui,
+            p,
+            (
+                aurora_i18n::tr!("ui-weather-fall-opacity"),
+                aurora_i18n::tr!("ui-weather-fall-opacity-tip"),
+            ),
+            &shown,
+            None,
+            egui::Slider::new(opacity, 0.0..=crate::weather::tint::OPACITY_MAX),
+        );
+        if snowing {
+            let speed = format!("{:.0} %", w.fall_speed * 100.0);
+            slider_row(
+                ui,
+                p,
+                (
+                    aurora_i18n::tr!("ui-weather-fall-speed"),
+                    aurora_i18n::tr!("ui-weather-fall-speed-tip"),
+                ),
+                &speed,
+                None,
+                egui::Slider::new(&mut w.fall_speed, crate::weather::tint::FALL_SPEED),
+            );
+            let flutter = format!("{:.0} %", w.flutter * 100.0);
+            slider_row(
+                ui,
+                p,
+                (aurora_i18n::tr!("ui-weather-flutter"), aurora_i18n::tr!("ui-weather-flutter-tip")),
+                &flutter,
+                None,
+                egui::Slider::new(&mut w.flutter, crate::weather::tint::FLUTTER),
+            );
+            switch_row(
+                ui,
+                p,
+                "sun-filled",
+                aurora_i18n::tr!("ui-weather-fall-melts"),
+                aurora_i18n::tr!("ui-weather-fall-melts-tip"),
+                &mut w.fall_melts,
+            );
+        } else {
+            let thick = format!("{:.0} %", w.liquid_thickness * 100.0);
+            slider_row(
+                ui,
+                p,
+                (
+                    aurora_i18n::tr!("ui-weather-thickness"),
+                    aurora_i18n::tr!("ui-weather-thickness-tip"),
+                ),
+                &thick,
+                Some((
+                    aurora_i18n::tr!("ui-weather-thickness-clear"),
+                    aurora_i18n::tr!("ui-weather-thickness-thick"),
+                )),
+                egui::Slider::new(&mut w.liquid_thickness, 0.0..=1.0),
+            );
+        }
+        switch_row(
+            ui,
+            p,
+            "mist",
+            aurora_i18n::tr!("ui-weather-fog-follows-fall"),
+            aurora_i18n::tr!("ui-weather-fog-follows-fall-tip"),
+            &mut w.fog_follows_fall,
+        );
+    });
+}
+
+/// "Debris": what the wind blows about (the user's choice: the viewer
+/// cannot know the place), how much, leaves coming on the wind where no
+/// foliage is near, and tumbleweeds.
+fn debris_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    let mut on = w.debris_on;
+    let head = Head {
+        on: &mut on,
+        tip: aurora_i18n::tr!("ui-weather-debris-on-tip"),
+    };
+    card(ui, p, "leaf-filled", aurora_i18n::tr!("ui-weather-debris"), Some(head), |ui, on| {
+        w.debris_on = on;
+        ui.add_enabled_ui(on, |ui| {
+            let options = [
+                (aurora_i18n::tr!("ui-weather-debris-leaves"), true),
+                (aurora_i18n::tr!("ui-weather-debris-sand"), true),
+                (aurora_i18n::tr!("ui-weather-debris-paper"), true),
+                (aurora_i18n::tr!("ui-weather-debris-embers"), true),
+                (aurora_i18n::tr!("ui-weather-debris-motes"), true),
+            ];
+            let mut i = crate::weather::DebrisChoice::ALL
+                .iter()
+                .position(|k| *k == w.debris_kind)
+                .unwrap_or(0);
+            if widgets::segmented(ui, p, &mut i, &options) {
+                w.debris_kind = crate::weather::DebrisChoice::ALL[i.min(crate::weather::DebrisChoice::ALL.len() - 1)];
+            }
+            let amount = format!("{:.0} %", w.debris_density * 100.0);
+            slider_row(
+                ui,
+                p,
+                (
+                    aurora_i18n::tr!("ui-weather-debris-density"),
+                    aurora_i18n::tr!("ui-weather-debris-density-tip"),
+                ),
+                &amount,
+                Some((
+                    aurora_i18n::tr!("ui-weather-debris-few"),
+                    aurora_i18n::tr!("ui-weather-debris-many"),
+                )),
+                egui::Slider::new(&mut w.debris_density, 0.0..=1.0),
+            );
+            match w.debris_kind {
+                crate::weather::DebrisChoice::Leaves => pictures_rows(ui, p, &mut w.debris_pictures_leaves, PictureSet::Leaves),
+                crate::weather::DebrisChoice::Paper => pictures_rows(ui, p, &mut w.debris_pictures_paper, PictureSet::Paper),
+                _ => {}
+            }
+            if w.debris_kind == crate::weather::DebrisChoice::Leaves {
+                switch_row(
+                    ui,
+                    p,
+                    "wind",
+                    aurora_i18n::tr!("ui-weather-debris-stream"),
+                    aurora_i18n::tr!("ui-weather-debris-stream-tip"),
+                    &mut w.debris_stream,
+                );
+            }
+        });
+        // tumbleweeds roll with any debris or none
+        switch_row(
+            ui,
+            p,
+            "circle-filled",
+            aurora_i18n::tr!("ui-weather-tumbleweeds"),
+            aurora_i18n::tr!("ui-weather-tumbleweeds-tip"),
+            &mut w.tumbleweeds,
+        );
+    });
+}
+
+/// "Presets": the whole weather at once (what falls and its colour, the
+/// fog, the wind's strength, the debris), full width above the cards.
+fn presets_card(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
+    card(ui, p, "sparkles-filled", aurora_i18n::tr!("ui-weather-presets"), None, |ui, _| {
+        ui.horizontal_wrapped(|ui| {
+            for preset in crate::weather::WeatherPreset::ALL {
+                if ui
+                    .button(RichText::new(preset.label()).size(LABEL_SIZE))
+                    .on_hover_text(aurora_i18n::tr!("ui-weather-presets-tip"))
+                    .clicked()
+                {
+                    w.apply_preset(preset);
+                }
+            }
+        });
+    });
+}
+
+/// Which pictures a file chooser adds to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PictureSet {
+    Leaves,
+    Paper,
+}
+
+/// The files picked in the chooser (its own thread), for their list.
+static PICKED: std::sync::Mutex<Vec<(PictureSet, Vec<std::path::PathBuf>)>> = std::sync::Mutex::new(Vec::new());
+/// A chooser is open: one at a time.
+static CHOOSING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The debris' own pictures (leaves or paper): their file names, each with
+/// a button to take it out, and one to add more (a file chooser, off the
+/// frame); none: the drawn shapes.
+fn pictures_rows(ui: &mut egui::Ui, p: &Palette, list: &mut Vec<std::path::PathBuf>, set: PictureSet) {
+    use crate::scene::debris_textures::MAX;
+    if let Ok(mut picked) = PICKED.lock() {
+        picked.retain(|(s, files)| {
+            if *s != set {
+                return true;
+            }
+            for f in files {
+                if list.len() < MAX && !list.contains(f) {
+                    list.push(f.clone());
+                }
+            }
+            false
+        });
+    }
+    ui.horizontal(|ui| {
+        widgets::glyph(ui, "photo-filled", p.muted, 15.0);
+        let gap = ui.spacing().item_spacing.x;
+        let width = ui.available_width() - ui.spacing().interact_size.x * 2.0 - gap;
+        label(
+            ui,
+            p,
+            aurora_i18n::tr!("ui-weather-debris-pictures"),
+            aurora_i18n::tr!("ui-weather-debris-pictures-tip"),
+            width,
+        );
+        let choosing = CHOOSING.load(std::sync::atomic::Ordering::Relaxed);
+        let add = ui
+            .add_enabled(
+                list.len() < MAX && !choosing,
+                egui::Button::new(RichText::new(aurora_i18n::tr!("ui-weather-debris-pictures-add")).size(LABEL_SIZE)),
+            )
+            .on_hover_text(aurora_i18n::tr!("ui-weather-debris-pictures-tip"));
+        if add.clicked() && !CHOOSING.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            let ctx = ui.ctx().clone();
+            let spawned = std::thread::Builder::new().name("aurora-debris-pictures".into()).spawn(move || {
+                let files = rfd::FileDialog::new()
+                    .set_title(aurora_i18n::tr!("ui-weather-debris-pictures"))
+                    .add_filter(
+                        aurora_i18n::tr!("ui-weather-debris-pictures-type"),
+                        &["png", "jpg", "jpeg", "tga", "bmp", "webp"],
+                    )
+                    .pick_files();
+                if let (Some(files), Ok(mut picked)) = (files, PICKED.lock()) {
+                    picked.push((set, files));
+                }
+                CHOOSING.store(false, std::sync::atomic::Ordering::Relaxed);
+                ctx.request_repaint();
+            });
+            if spawned.is_err() {
+                CHOOSING.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    });
+    let mut gone = None;
+    for (i, path) in list.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let name = path
+                .file_name()
+                .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+            let width = ui.available_width() - ui.spacing().interact_size.y - ui.spacing().item_spacing.x;
+            label(ui, p, &name, &path.display().to_string(), width);
+            if widgets::icon_button(ui, p, "x", aurora_i18n::tr!("ui-weather-debris-pictures-remove"), true) {
+                gone = Some(i);
+            }
+        });
+    }
+    if let Some(i) = gone {
+        list.remove(i);
+    }
+}
+
+/// A colour setting (sRGB 0..1): its label, a colour button on the right.
+fn colour_row(ui: &mut egui::Ui, p: &Palette, text: &str, tip: &str, colour: &mut [f32; 3]) {
+    ui.horizontal(|ui| {
+        widgets::glyph(ui, "palette-filled", p.muted, 15.0);
+        let gap = ui.spacing().item_spacing.x;
+        let width = ui.available_width() - ui.spacing().interact_size.x - gap;
+        label(ui, p, text, tip, width);
+        let to_byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let mut rgba = [to_byte(colour[0]), to_byte(colour[1]), to_byte(colour[2]), 255];
+        if widgets::color_button(ui, p, text, &mut rgba, false).on_hover_text(tip).changed() {
+            *colour = [rgba[0], rgba[1], rgba[2]].map(|c| f32::from(c) / 255.0);
+        }
+    });
+}
+
 /// The aurora's colour at its foot (green in all three).
 fn aurora_foot() -> egui::Color32 {
     egui::Color32::from_rgb(0x34, 0xD3, 0x7A) // theme-guard: content — the aurora's own green
@@ -1103,6 +1535,31 @@ fn foot(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, actions: &mut W
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every icon the window draws is embedded: a name that is not (an
+    /// outline name of a filled-only icon) draws nothing.
+    #[test]
+    fn every_icon_of_the_window_exists() {
+        let src = include_str!("weather_window.rs");
+        let mut checked = 0;
+        for marker in ["card(", "glyph(", "chip(", "icon_button(", "switch_row(", "tile("] {
+            let mut rest = src;
+            while let Some(at) = rest.find(marker) {
+                rest = &rest[at + marker.len()..];
+                let window = &rest[..rest.len().min(120)];
+                // the first string literal of the call is its icon
+                let Some(open) = window.find('"') else { continue };
+                let Some(len) = window[open + 1..].find('"') else { continue };
+                let name = &window[open + 1..open + 1 + len];
+                if name.is_empty() || !name.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
+                    continue;
+                }
+                assert!(crate::ui::icons::embedded(name), "icon {name:?} ({marker}…) is not embedded");
+                checked += 1;
+            }
+        }
+        assert!(checked > 20, "{checked} icons found");
+    }
 
     #[test]
     fn the_curtain_fades_out_at_both_sides_without_a_nan() {

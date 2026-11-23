@@ -215,6 +215,9 @@ pub mod flags {
     /// Bit of flags[3], above packed texture animation: local studio scenery
     /// is excluded from the avatar's temporary white reveal.
     pub const STUDIO_STAGE: u32 = 1 << 29;
+    /// Bit of flags[3]: a foliage texture or a Linden tree (Aurora Weather's
+    /// canopy map, object.wgsl `fs_canopy`; worn objects never count).
+    pub const FOLIAGE: u32 = 1 << 28;
 }
 
 pub const PORTAL_HALF_WIDTH: f32 = 1.0;
@@ -662,6 +665,8 @@ pub struct DrawLists {
     pub water_ground: crate::WaterGround,
     /// Rain prototype: the terrain's heights around the camera.
     pub rain_ground: crate::RainGround,
+    /// Aurora Weather's fog: the ground it pools on.
+    pub fog_ground: FogGround,
     /// Sorted back to front, the first `blend_depth` apart (below).
     pub blend: Vec<DrawCmd>,
     /// The blended faces under the water while the camera is above it, back
@@ -882,6 +887,7 @@ impl DrawLists {
         self.water_contacts.clone_from(&src.water_contacts);
         self.water_ground.clone_from(&src.water_ground);
         self.rain_ground.clone_from(&src.rain_ground);
+        self.fog_ground.clone_from(&src.fog_ground);
         self.glow.clone_from(&src.glow);
         self.glow_alpha.clone_from(&src.glow_alpha);
         self.debug_red.clone_from(&src.debug_red);
@@ -940,6 +946,7 @@ impl DrawLists {
         self.water_contacts.clear();
         self.water_ground = Default::default();
         self.rain_ground = Default::default();
+        self.fog_ground = Default::default();
         self.glow.clear();
         self.blend_glow.clear();
         self.blend_double_sided.clear();
@@ -1717,6 +1724,65 @@ pub struct RainLook {
     /// This frame starts it again full of snow: lying everywhere as deep as
     /// a long snowfall leaves it (the snow-fill button).
     pub fill: bool,
+    /// The colour of what falls, and of what it leaves (Aurora Weather's
+    /// tint): white and opaque draw what was drawn before it.
+    pub tint: WeatherTint,
+    /// Where the wind stands between its lulls (0) and its gusts (1): the
+    /// one gust curve the drops, the fog and the debris share.
+    pub gust: f32,
+    /// How fast what falls falls (1 as before; ash 0.6).
+    pub fall_speed: f32,
+    /// How far flakes swing as they fall (1 as before; ash 1.8).
+    pub flutter: f32,
+    /// The snow lying melts once the fall stops (off for ash).
+    pub fall_melts: bool,
+    /// Sand blowing (the debris' sand, 0..1): it gathers in drifts as snow
+    /// does (sand-coloured, the snow's tint), and snakes along the ground.
+    pub sand: f32,
+}
+
+/// The colour and opacity of the rain and the snow (Aurora Weather's tint),
+/// linear RGB: the drops, the puddles and the wet ground they fill, the
+/// flakes, the lying snow and the snow on avatars.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeatherTint {
+    /// The rain's colour (linear) and opacity (0..2; 1 as before).
+    pub rain: [f32; 4],
+    /// How thick the rain's liquid is (0..1; 0 the clear water of before,
+    /// 1 as thick as paint: drops not seen through, puddles of its own
+    /// colour, hardly a mirror).
+    pub thickness: f32,
+    /// The snow's colour (linear) and opacity (0..2; 1 as before).
+    pub snow: [f32; 4],
+}
+
+impl WeatherTint {
+    /// Clear rain and white snow: what was drawn before the tint.
+    pub const NONE: WeatherTint = WeatherTint {
+        rain: [1.0; 4],
+        thickness: 0.0,
+        snow: [1.0; 4],
+    };
+
+    /// The frame uniform's `weather_tint` (common.wgsl): [0] the rain,
+    /// [1] the snow, [2] x the liquid's thickness, y the gust, z 1 (set: a
+    /// frame left zeroed, a preview's, takes no tint), w the sand blowing;
+    /// [3] x the fall's speed, y the flakes' flutter (scales, 1 as before).
+    pub fn uniform(&self, gust: f32, fall_speed: f32, flutter: f32, sand: f32) -> [[f32; 4]; 4] {
+        let clamp = |c: [f32; 4]| [c[0].max(0.0), c[1].max(0.0), c[2].max(0.0), c[3].clamp(0.0, 2.0)];
+        [
+            clamp(self.rain),
+            clamp(self.snow),
+            [self.thickness.clamp(0.0, 1.0), gust.clamp(0.0, 1.0), 1.0, sand.clamp(0.0, 1.0)],
+            [fall_speed.clamp(0.1, 3.0), flutter.clamp(0.0, 4.0), 0.0, 0.0],
+        ]
+    }
+}
+
+impl Default for WeatherTint {
+    fn default() -> Self {
+        WeatherTint::NONE
+    }
 }
 
 /// The most feet set down in the snow in one frame.
@@ -1749,9 +1815,134 @@ impl Default for RainLook {
             snow_stamp_z: [0.0; SNOW_STAMPS],
             clean: false,
             fill: false,
+            tint: WeatherTint::NONE,
+            gust: 0.0,
+            fall_speed: 1.0,
+            flutter: 1.0,
+            fall_melts: true,
+            sand: 0.0,
         }
     }
 }
+
+/// What Aurora Weather's wind blows about (debris.rs): the user's choice,
+/// as the viewer cannot know the place (a forest, a city street, a desert).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DebrisKind {
+    /// Leaves falling from the foliage around (canopy map).
+    #[default]
+    Leaves,
+    /// Sand streaming past near the ground.
+    Sand,
+    /// Paper and litter tumbling along a street.
+    Paper,
+    /// Embers rising and glowing.
+    Embers,
+    /// Dust motes hanging in the air, glinting in the sun.
+    Motes,
+}
+
+impl DebrisKind {
+    /// Its number in debris_sim.wgsl (`DK_*`; 0 is none).
+    pub fn index(self) -> u32 {
+        match self {
+            DebrisKind::Leaves => 1,
+            DebrisKind::Sand => 2,
+            DebrisKind::Paper => 3,
+            DebrisKind::Embers => 4,
+            DebrisKind::Motes => 5,
+        }
+    }
+}
+
+/// Aurora Weather's debris this frame (debris.rs).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DebrisLook {
+    pub kind: DebrisKind,
+    /// How much of it (0..1): a share of the pool, more in the wind.
+    pub density: f32,
+    /// The pool's size: 0 low, 1 medium, 2 high (the weather's quality).
+    pub quality: u32,
+    /// Leaves with no foliage near: a thin stream from upwind (else none).
+    pub stream: bool,
+    /// Its size scale (0.5..2, 1 as made).
+    pub size: f32,
+    /// The user's own pictures (bindless slots, 0 for none; the leading
+    /// ones used): [0] for the leaves, [1] for the paper. With none, the
+    /// shapes drawn in the shader.
+    pub pictures: [[u32; 8]; 2],
+}
+
+impl Default for DebrisLook {
+    fn default() -> Self {
+        DebrisLook {
+            kind: DebrisKind::Leaves,
+            density: 0.5,
+            quality: 2,
+            stream: false,
+            size: 1.0,
+            pictures: [[0; 8]; 2],
+        }
+    }
+}
+
+/// How Aurora Weather's fog is drawn (fog.rs): its cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FogTier {
+    /// Height fog worked out on each surface, no volume: nearly free.
+    Height,
+    /// The froxel volume, lit by the sun (its shadows: god rays) and the sky.
+    Volumetric,
+    /// The volume lit by the local lights too (neon through fog).
+    #[default]
+    VolumetricLights,
+}
+
+/// Aurora Weather's fog for a frame (fog.rs). `FrameParams::fog` None: no
+/// fog, nothing allocated nor run, the image of before.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FogLook {
+    pub tier: FogTier,
+    /// The weather's quality (0 low, 1 medium, 2 high): the volume's
+    /// resolution and reach.
+    pub quality: u32,
+    /// How thick, 0..1 (the slider; fog.rs `base_extinction`).
+    pub density: f32,
+    /// The region's sky haze scales it: a hazy sky, a thicker fog.
+    pub from_sky: bool,
+    /// How fast it thins with height above the ground it pools on (m: the
+    /// height over which it falls to a third).
+    pub height: f32,
+    /// Its own colour (linear RGB, the light it scatters); None: white, the
+    /// sky's light alone colours it as it does the haze.
+    pub color: Option<[f32; 3]>,
+    /// The scattering's lean toward the light (Henyey-Greenstein g, 0
+    /// even to 0.9 a tight glow around each light).
+    pub anisotropy: f32,
+    /// How far the wind has carried it (m, world x and y).
+    pub drift: [f32; 2],
+    /// Seconds of the UTC day: the noise's slow change, the same for every
+    /// viewer at the same moment.
+    pub clock: f32,
+    /// The south-west corner of the camera's region on the grid (m): the
+    /// noise is anchored to the grid, the same wisps at the same place.
+    pub region_origin: [f64; 2],
+}
+
+/// Aurora Weather's fog: the ground it pools on, in a square around the
+/// camera (`FOG_GROUND_SIZE` cells a side, row by row from `origin`). Per
+/// cell: x the terrain (or the water above it), y that ground smoothed over
+/// tens of metres, the level the fog fills up to. Empty: none (the camera's
+/// ground level everywhere).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FogGround {
+    pub origin: [f32; 2],
+    pub extent: f32,
+    pub heights: std::sync::Arc<[[f32; 2]]>,
+}
+
+/// Cells a side of [`FogGround`].
+pub const FOG_GROUND_SIZE: u32 = 256;
 
 /// A photo drawn in tiles reads GTAO's depth of the whole photo beyond
 /// each tile: a tile drawn alone has no scene past its guard band, and near
@@ -1936,6 +2127,10 @@ pub struct FrameParams {
     /// Volumetric clouds in the place of the Legacy Viewer's flat layer
     /// (clouds.rs); None: the Legacy layer, with nothing else running.
     pub clouds: Option<CloudsFrame>,
+    /// Aurora Weather's fog (fog.rs); None: none, at no cost.
+    pub fog: Option<FogLook>,
+    /// Aurora Weather's debris (debris.rs); None: none, at no cost.
+    pub debris: Option<DebrisLook>,
     /// Planet curvature (curvature.rs, Aurora's own): the planet's radius
     /// in metres; None: the flat regions, as the Legacy Viewer draws them.
     pub curvature: Option<f32>,
@@ -2194,8 +2389,9 @@ pub struct RenderStats {
     pub gpu_effects: Option<[f32; 4]>,
     /// GPU time of [`GpuElement::Weather`] in parts (ms): the shelter map,
     /// the wetness and footprints memories, the wet ground (with the snow
-    /// lying), the drops and flakes with the distant layers.
-    pub gpu_weather: Option<[f32; 4]>,
+    /// lying), the drops and flakes with the distant layers and the debris
+    /// drawn, the fog's volume, the debris' canopy map and simulation.
+    pub gpu_weather: Option<[f32; 6]>,
     /// CPU time of each step of the renderer's frame (ms), in
     /// [`RENDER_PHASES`] order; "acquire" is the wait for the swapchain.
     /// Spent on the render thread when there is one (then they are those
@@ -2290,7 +2486,9 @@ pub enum GpuElement {
     /// Blended faces and particles.
     Transparent,
     /// Aurora Weather: the shelter map, the memories, the wet ground and
-    /// the snow lying, the drops and flakes (`RenderStats::gpu_weather`).
+    /// the snow lying, the drops and flakes and the debris drawn, the fog's
+    /// volume, the debris' canopy map and simulation
+    /// (`RenderStats::gpu_weather`).
     Weather,
     /// Glow, TAA, tone mapping, SMAA.
     Post,

@@ -26,11 +26,13 @@ mod cutout;
 mod dedicated;
 mod device_lost;
 pub use device_lost::{GPU_WORK_NONE, GPU_WORK_VERDICTS, in_guarded_poll, is_loss_panic, loss_details};
+mod debris;
 mod dof;
 mod drawn_pick;
 mod equirect;
 mod exposure;
 mod film_readback;
+mod fog;
 pub mod frame_priority;
 mod fsr;
 pub mod gi;
@@ -311,6 +313,8 @@ mod shader_tests {
             include_str!("shaders/env.wgsl")
         );
         validate(&src);
+        // and with the debris drawn as the scene module has them
+        validate(&format!("{src}\n{}", include_str!("shaders/debris.wgsl")));
     }
 
     /// Use the actual water projection/depth entry points with a constant

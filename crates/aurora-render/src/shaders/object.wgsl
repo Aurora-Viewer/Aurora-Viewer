@@ -1035,8 +1035,11 @@ fn avatar_snow_on(m_in: Material, in: VsOut) -> Material {
         fract(sin(dot(i + vec2<f32>(0.0, 1.0), vec2<f32>(127.1, 311.7))) * 43758.5453),
         fract(sin(dot(i + vec2<f32>(1.0, 1.0), vec2<f32>(127.1, 311.7))) * 43758.5453));
     let patches = mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
-    let cover = smoothstep(patches * 0.8, patches * 0.8 + 0.3, in.snow * up * 1.25);
-    m.color = vec4<f32>(mix(m.color.rgb, vec3<f32>(0.86, 0.88, 0.9), cover), m.color.a);
+    let cover_full = smoothstep(patches * 0.8, patches * 0.8 + 0.3, in.snow * up * 1.25);
+    // the snow's tint (white by default), thinner as its opacity falls
+    let tint = snow_tint();
+    let cover = cover_full * min(tint.a, 1.0);
+    m.color = vec4<f32>(mix(m.color.rgb, vec3<f32>(0.86, 0.88, 0.9) * tint.rgb, cover), m.color.a);
     m.roughness = mix(m.roughness, 0.85, cover);
     m.metallic *= 1.0 - cover;
     m.legacy_spec *= 1.0 - cover;
@@ -1758,6 +1761,9 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     col = rez_apply(rec, in, m.n, col);
     if (!hazed || water_fogs_source(in.world_pos)) {
         col = apply_fog(col, in.world_pos);
+    } else {
+        // a classic sky's haze is ll_haze's: the weather's fog over it
+        col = weather_fog(col, in.world_pos);
     }
     var s: Shaded;
     col = debug_view(col, in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy);
@@ -3660,6 +3666,75 @@ fn fs_shadow(in: ShadowOut, @builtin(front_facing) front: bool) {
     }
 }
 
+// ------------------------------------------------------ the fog's walls
+// Aurora Weather's fog flows (fog.rs `Flow`): the solid cells of a grid
+// around the camera, drawn with `vs_shadow` from above and from two sides
+// (each face is seen edge on from one of them at most): every texel of a
+// face marks its cell with this drawing's stamp (times two, plus 1 for an
+// opaque face: what stops the local lights' light in the fog too), so that
+// no clear is needed between two of them. A texel transparent enough to let
+// the light through lets the fog through; glass does not, but lets the
+// light through.
+struct FogVoxelGrid {
+    origin: vec4<f32>,  // xyz the grid's corner (m), w a cell's side (m)
+    dims: vec4<u32>,    // cells x, y, z; w this drawing's stamp
+};
+
+@group(3) @binding(2) var fog_voxels: texture_storage_3d<r32uint, write>;
+@group(3) @binding(3) var<uniform> fog_voxel_grid: FogVoxelGrid;
+
+@fragment
+fn fs_fog_voxel(in: ShadowOut) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
+    let alpha = sample_tex_unbiased(rec.tex.x, in.uv).a * rec.base_color.a;
+    if ((rec.flags.x & FLAG_ALPHA_BLEND) != 0u && alpha < 0.02) { discard; }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && alpha < rec.params.w) { discard; }
+    let c = (in.world_pos - fog_voxel_grid.origin.xyz) / fog_voxel_grid.origin.w;
+    let dims = vec3<f32>(fog_voxel_grid.dims.xyz);
+    if (any(c < vec3<f32>(0.0)) || any(c >= dims)) { discard; }
+    let opaque = (rec.flags.x & FLAG_ALPHA_BLEND) == 0u || alpha >= 0.9;
+    textureStore(fog_voxels, vec3<i32>(floor(c)), vec4<u32>(fog_voxel_grid.dims.w * 2u + select(0u, 1u, opaque), 0u, 0u, 0u));
+    // (the target is a stand-in, discarded with the pass)
+    return vec4<f32>(0.0);
+}
+
+// ---------------------------------------------------------- the canopy map
+// Aurora Weather's debris (debris.rs): the shelter map's foliage (a foliage
+// texture or a Linden tree, never a worn object) drawn from above again
+// into a small target with a depth of its own, so that each texel keeps
+// the top of the foliage over it: x 1 where there is foliage, y its top.
+// Leaves start just under it, and fall through it to the floor below.
+@fragment
+fn fs_canopy(in: ShadowOut) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
+    if (!canopy_leafy(rec)) { discard; }
+    let alpha = sample_tex_unbiased(rec.tex.x, in.uv).a * rec.base_color.a;
+    if ((rec.flags.x & FLAG_ALPHA_BLEND) != 0u && alpha < 0.02) { discard; }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && alpha < rec.params.w) { discard; }
+    return vec4<f32>(1.0, in.world_pos.z, 0.0, 0.0);
+}
+
+// Foliage for the canopy map: the flag, never on a worn object nor a
+// rigged mesh (hair on a mannequin).
+fn canopy_leafy(rec: DrawRecord) -> bool {
+    return (rec.flags.w & FLAG_FOLIAGE) != 0u && (rec.flags.x & (FLAG_ANCHORED | FLAG_SKINNED)) == 0u;
+}
+
+// The floor under the foliage (debris_sim.wgsl `debris_floor`): the same
+// casters without the foliage, depth only (the terrain with the shelter's
+// own pipeline), the topmost of what is left.
+@fragment
+fn fs_canopy_floor(in: ShadowOut) {
+    let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
+    if (canopy_leafy(rec)) { discard; }
+    let alpha = sample_tex_unbiased(rec.tex.x, in.uv).a * rec.base_color.a;
+    if ((rec.flags.x & FLAG_ALPHA_BLEND) != 0u && alpha < 0.02) { discard; }
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && alpha < rec.params.w) { discard; }
+}
+
 // --------------------------------------------------------------- particles
 
 const PART_EMISSIVE: u32 = 1u;
@@ -3871,6 +3946,7 @@ fn impostor_color(in: SpriteOut) -> vec4<f32> {
     // the whole card takes the depth's dimming)
     col*=select(vec3<f32>(1.0),water_scene_light(in.world_pos),in.fullbright==0u);
     if(!is_classic_sky() || water_fogs_source(in.world_pos)){col=apply_fog(col,in.world_pos);}
+    else{col=weather_fog(col,in.world_pos);}
     return vec4<f32>(col, 1.0);
 }
 

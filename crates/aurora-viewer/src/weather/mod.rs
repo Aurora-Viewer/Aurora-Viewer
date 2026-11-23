@@ -5,6 +5,13 @@ use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+pub mod debris;
+pub mod fog;
+pub mod tint;
+pub use debris::DebrisChoice;
+pub use fog::{FogDrift, FogTier};
+pub use tint::WeatherPreset;
+
 /// What falls from the sky.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Precipitation {
@@ -139,6 +146,65 @@ pub struct WeatherSettings {
     /// How high its foot is seen, 0 (on the horizon) to 1 (overhead).
     pub aurora_height: f32,
     pub aurora_colours: AuroraColours,
+    /// The "Fog" card's switch (weather/fog.rs): fog that pools low,
+    /// drifts with the wind and scatters the light. Off by default.
+    pub fog_on: bool,
+    /// How thick it is, 0 (a light mist) to 1 (a pea-souper).
+    pub fog_density: f32,
+    /// How high it reaches before it thins to a third (m).
+    pub fog_height: f32,
+    /// How much of the wind's speed carries it (0..1).
+    pub fog_drift: f32,
+    /// It takes the sky's light alone, as the haze does; off, `fog_colour`.
+    pub fog_follow_sky: bool,
+    /// Its own colour (sRGB) when it does not follow the sky.
+    pub fog_colour: [f32; 3],
+    /// The region's sky haze scales it: a hazy sky, a thicker fog.
+    pub fog_from_sky: bool,
+    /// How it is drawn: height fog, a volume, a volume lit by the lights.
+    pub fog_tier: FogTier,
+    /// The glow around the lights and the sun (0 even, 0.9 tight).
+    pub fog_anisotropy: f32,
+    /// The rain's colour (sRGB, weather/tint.rs): white is clear water.
+    pub rain_tint: [f32; 3],
+    /// How much of the drops is seen (0..2; 1 as before, 2 twice as much).
+    pub rain_opacity: f32,
+    /// How thick the rain's liquid is (0 clear water, as before; 1 as thick
+    /// as paint): the drops are no longer seen through, the puddles show
+    /// its own colour, rough, hardly a mirror.
+    #[serde(alias = "puddle_opacity")]
+    pub liquid_thickness: f32,
+    /// The snow's colour (sRGB): falling, lying and on avatars.
+    pub snow_tint: [f32; 3],
+    /// How much of the snow is seen (0..2; 1 as before).
+    pub snow_opacity: f32,
+    /// How fast what falls falls (a scale, 1 as before; ash falls slower).
+    pub fall_speed: f32,
+    /// How far flakes swing as they fall (a scale, 1 as before).
+    pub flutter: f32,
+    /// Snow lying melts once it stops falling (off: ash stays).
+    pub fall_melts: bool,
+    /// The fog takes the colour of what falls (when it is not white).
+    pub fog_follows_fall: bool,
+    /// The "Debris" card's switch (weather/debris.rs): the wind blows
+    /// leaves, sand, paper or embers about. Off by default.
+    pub debris_on: bool,
+    pub debris_kind: DebrisChoice,
+    /// How much of it (0..1).
+    pub debris_density: f32,
+    /// Leaves with no foliage near come on the wind from upwind.
+    pub debris_stream: bool,
+    /// Tumbleweeds roll across open ground (their own switch, with any
+    /// debris or none).
+    pub tumbleweeds: bool,
+    /// Textures never taken as foliage (false positives of the classifier,
+    /// `scene::jobs::classify_foliage`): kept on this computer only.
+    pub debris_not_foliage: Vec<uuid::Uuid>,
+    /// The user's own pictures for the leaves and the paper (image files on
+    /// this computer, up to `scene::debris_textures::MAX` each; none: the
+    /// drawn shapes).
+    pub debris_pictures_leaves: Vec<std::path::PathBuf>,
+    pub debris_pictures_paper: Vec<std::path::PathBuf>,
     pub quality: WeatherQuality,
     /// The menu was used this session: `AURORA_RAIN` no longer applies.
     #[serde(skip)]
@@ -183,6 +249,32 @@ impl Default for WeatherSettings {
             aurora_heading: 0.0,
             aurora_height: 0.25,
             aurora_colours: AuroraColours::Green,
+            fog_on: false,
+            fog_density: fog::FOG_DENSITY_DEFAULT,
+            fog_height: fog::FOG_HEIGHT_DEFAULT,
+            fog_drift: fog::FOG_DRIFT_DEFAULT,
+            fog_follow_sky: true,
+            fog_colour: fog::FOG_COLOUR_DEFAULT,
+            fog_from_sky: true,
+            fog_tier: FogTier::VolumetricLights,
+            fog_anisotropy: fog::FOG_ANISOTROPY_DEFAULT,
+            rain_tint: tint::WHITE,
+            rain_opacity: 1.0,
+            liquid_thickness: 0.0,
+            snow_tint: tint::WHITE,
+            snow_opacity: 1.0,
+            fall_speed: 1.0,
+            flutter: 1.0,
+            fall_melts: true,
+            fog_follows_fall: false,
+            debris_on: false,
+            debris_kind: DebrisChoice::Leaves,
+            debris_density: debris::DEBRIS_DENSITY_DEFAULT,
+            debris_stream: false,
+            tumbleweeds: false,
+            debris_not_foliage: Vec::new(),
+            debris_pictures_leaves: Vec::new(),
+            debris_pictures_paper: Vec::new(),
             quality: WeatherQuality::High,
             touched: false,
             former_region_weather: None,
@@ -209,6 +301,13 @@ impl WeatherSettings {
     /// until the window is used (they are read before these values).
     pub fn in_effect(&self) -> WeatherSettings {
         let mut w = self.clone();
+        // a preset first: the variables below override what it sets
+        // (`AURORA_FOG=off` keeps a Dust storm's fog away)
+        if !w.touched
+            && let Some(preset) = tint::env_preset()
+        {
+            w.apply_preset(preset);
+        }
         // what the variables set is on, for the summary's words too
         if !w.touched && (env_rain().is_some() || env_snow().is_some()) {
             w.enabled = true;
@@ -216,6 +315,27 @@ impl WeatherSettings {
         }
         if !w.touched && env_northern_lights().is_some() {
             w.enabled = true;
+        }
+        if !w.touched && fog::env_fog().is_some() {
+            w.enabled = true;
+            w.fog_on = true;
+        }
+        if !w.touched && fog::env_fog_off() {
+            w.fog_on = false;
+        }
+        if !w.touched
+            && let Some((kind, stream)) = debris::env_debris()
+        {
+            w.enabled = true;
+            w.debris_on = true;
+            w.debris_kind = kind;
+            w.debris_stream = stream;
+        }
+        if !w.touched
+            && let Some(files) = debris::env_pictures()
+        {
+            w.debris_pictures_leaves = files.clone();
+            w.debris_pictures_paper = files;
         }
         if !(w.enabled && w.precipitation_on) {
             w.amount = 0.0;
@@ -227,6 +347,9 @@ impl WeatherSettings {
         }
         if !w.enabled {
             w.aurora = false;
+            w.fog_on = false;
+            w.debris_on = false;
+            w.tumbleweeds = false;
         }
         w
     }
@@ -334,6 +457,15 @@ impl WeatherSettings {
         0.5 * 4.0f32.powf(self.snow_size.clamp(0.0, 1.0))
     }
 
+    /// Where the weather's wind stands between its lulls and gusts, for what
+    /// the gusts lift and churn (the debris, the drops): none with the wind
+    /// off or steady (its lulls as strong as its gusts), all of the curve
+    /// once the gusts are well above the lulls.
+    pub fn gust(&self, wind: &Wind) -> f32 {
+        let (lo, hi) = self.wind_range();
+        wind.gust * ((hi - lo) * 4.0).clamp(0.0, 1.0)
+    }
+
     /// The wind's range, lulls to gusts (0..1, the lower first).
     pub fn wind_range(&self) -> (f32, f32) {
         let (a, b) = (self.wind_min.clamp(0.0, 1.0), self.wind_max.clamp(0.0, 1.0));
@@ -436,11 +568,25 @@ impl WeatherSettings {
             // button is pressed
             clean: false,
             fill: false,
-            quality: match env_quality().filter(|_| !self.touched).unwrap_or(self.quality) {
-                WeatherQuality::Low => 0,
-                WeatherQuality::Medium => 1,
-                WeatherQuality::High => 2,
-            },
+            quality: self.quality_index(),
+            // (the app draws what lies in the sand's colour while it is
+            // the sand's, `App::lying_sand`)
+            tint: self.tint(),
+            sand: self.sand_blowing(),
+            gust: self.gust(wind),
+            fall_speed: self.fall_speed.clamp(*tint::FALL_SPEED.start(), *tint::FALL_SPEED.end()),
+            flutter: self.flutter.clamp(*tint::FLUTTER.start(), *tint::FLUTTER.end()),
+            fall_melts: self.fall_melts,
+        }
+    }
+
+    /// The weather's quality as the renderer takes it: 0 low, 1 medium, 2
+    /// high (`AURORA_WEATHER_QUALITY` until the window is used).
+    pub fn quality_index(&self) -> u32 {
+        match env_quality().filter(|_| !self.touched).unwrap_or(self.quality) {
+            WeatherQuality::Low => 0,
+            WeatherQuality::Medium => 1,
+            WeatherQuality::High => 2,
         }
     }
 }
@@ -460,6 +606,9 @@ pub struct Wind {
     heading: Vec2,
     /// The wind now (m/s).
     pub now: Vec2,
+    /// Where it stands between its lulls (0) and its gusts (1): the one
+    /// gust curve the drops, the fog and the debris share.
+    pub gust: f32,
     /// How far it has carried a drop so far (m).
     pub drift: Vec2,
 }
@@ -471,6 +620,7 @@ impl Default for Wind {
             clock: 0.0,
             heading: Vec2::new(0.94, 0.34),
             now: Vec2::ZERO,
+            gust: 0.0,
             drift: Vec2::ZERO,
         }
     }
@@ -508,10 +658,11 @@ impl Wind {
         let (lo, hi) = (range.0.clamp(0.0, 1.0), range.1.clamp(0.0, 1.0));
         let (lo, hi) = (lo.min(hi), lo.max(hi));
         let t = self.clock;
-        let level = lo + (hi - lo) * gustiness(t);
+        self.gust = gustiness(t);
+        let level = lo + (hi - lo) * self.gust;
         let speed = WIND_MAX * level.powf(1.5);
         // the direction swings a little, more in the gusts
-        let swing = (0.12 * (t * 0.23 + 0.7).sin() + 0.06 * (t * 0.71).sin()) * (0.6 + 0.4 * gustiness(t));
+        let swing = (0.12 * (t * 0.23 + 0.7).sin() + 0.06 * (t * 0.71).sin()) * (0.6 + 0.4 * self.gust);
         let dir = Vec2::from_angle(swing).rotate(self.heading);
         self.now = dir * speed;
         self.drift += self.now * dt;

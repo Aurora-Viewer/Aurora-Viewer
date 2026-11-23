@@ -3000,7 +3000,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-render/src/panorama.rs`, `shaders/panorama.wgsl`, `ui/panorama.rs` | The panorama viewer (360° snapshots, the inventory's 2:1 textures): a paint-callback region of `preview::Cache` drawn by the render thread into a target of its own, the image with a mip chain of 2x2 blits (gamma space, on purpose), `textureSampleGrad` with gradients from the view direction so that the longitude wrap leaves no seam, redrawn only when the view or the image changes, images and targets let go when no longer drawn; `ui/panorama.rs` is its controls (`PanoView`: drag, wheel zoom 30°-100°, double-click reset, auto-rotate, keys while focused, enlarge) |
 | `build/ui/shape_preview.rs`, `aurora-render/src/preview_mesh.rs`, `shaders/preview_mesh.wgsl` | Create thumbnails from the actual volume parameters and placement rotations, with shared studio shading and readable framing in both layouts. Cached GPU MSAA and supersampling box-filter premultiplied coverage at physical display resolution (64 samples for small tiles, bounded sampling for larger HiDPI tiles). Same-sized tiles share transient render targets; only final images remain cached until their source/size changes or the palette closes. No CPU readback or GPU wait in the frame loop. |
 | `build/new_defaults.rs`, `ui/options/pages/build.rs` | What a prim made with the Create tool starts as (FSCommon::applyDefaultBuildPreferences): colour, transparency, glow, full bright, shininess, physical, temporary and phantom, given when it arrives ours with full rights; Preferences › Build lists them with the size and material |
-| `weather/mod.rs`, `ui/environment.rs`, `ui/weather_window.rs`, `scene/rain_sound.rs`, `scene/thunder.rs`, `scene/snow_detail.rs`, `scene/snow_trail.rs`, `scene/avatar_snow.rs`, `scene/rain_ground.rs`, `scene/shelter_hold.rs`, `aurora-render/src/projector_shadows.rs` (`shelter_slot`) | Aurora Weather: the settings and the gusting wind, the Aurora Weather window, the rain's sound, thunder and lightning, the snow's detail texture, footprints, snow on avatars, the terrain under the puddles, what a move of its own keeps out of the shelter map for a while (a script's steps), and the shelter map's place in the shadow atlas (the first map past the projectors'); the drawing itself is in `shaders/env.wgsl` (see "Aurora Weather" below) |
+| `weather/mod.rs`, `ui/environment.rs`, `ui/weather_window.rs`, `scene/rain_sound.rs`, `scene/thunder.rs`, `scene/snow_detail.rs`, `scene/snow_trail.rs`, `scene/avatar_snow.rs`, `scene/rain_ground.rs`, `scene/shelter_hold.rs`, `weather/fog.rs`, `weather/tint.rs`, `weather/debris.rs`, `scene/fog_ground.rs`, `aurora-render/src/fog.rs`, `aurora-render/src/projector_shadows.rs` (`shelter_slot`) | Aurora Weather: the settings and the gusting wind, the colour of the rain and snow and the presets, the fog and the ground it pools on, the Aurora Weather window, the rain's sound, thunder and lightning, the snow's detail texture, footprints, snow on avatars, the terrain under the puddles, what a move of its own keeps out of the shelter map for a while (a script's steps), and the shelter map's place in the shadow atlas (the first map past the projectors'); the drawing itself is in `shaders/env.wgsl` (see "Aurora Weather" below) |
 | `scene/surface_area.rs` | Large surface protection (RenderVolumeSAProtection): prims and sculpts measured on their swept grid (`VolumeMesh::grid_area`, kept per geometry), those past their threshold added from the smallest each frame, the rest not drawn past the total; the object's drawing goes and comes back through `Scene::stop_drawing` and the sync planner |
 | `build/deep_perms.rs`, `build/deep_perms_demo.rs`, `build/deep_perms_tests.rs` | "Include objects inside objects" of the Content permissions window (an Aurora addition: the Legacy Viewer's bulk permissions never recurse): eligibility (rez-from-contents rule and modify, 5 levels), checks before the first rez (build right, parcel room, RLVa), then per object item, deepest first, a stage job confirmed by the simulator: rez above its holder, arrival and FromTaskID, scripts stopped, contents changes read back before object masks, masks confirmed, scripts restored, fresh source inventory baseline, save back (added or replaced in place), returned task item masks updated and read back in its container, original removed, copy deleted; recovery deletes a copy whose original is intact and stops on a refused or lost rez. Unconfirmed post-save item permissions stop the job with all working copies kept. Demo chest of nested boxes (`AURORA_DEMO_DEEP_PERMS`) |
 | `build/replace.rs`, `build/replace/`, `build/ui/replace.rs` | Guided replacement of a linked part: locked target, selection of the replacement, options and progress; steps confirmed by the server, copy of the contents through the resident's inventory, script states preserved, recovery of the initial configuration and offline simulator |
@@ -3581,7 +3581,47 @@ near the camera by `scene/avatar_snow.rs` (an amount per avatar in its joint
 palette, melting under cover or in rain) and the terrain's dips the puddles
 gather in by `scene/rain_ground.rs` (the heightmap around the camera, only
 while it rains). The footprints and the snow on avatars run only while snow
-falls or lies (`RenderStats::snow_lying`).
+falls or lies (`RenderStats::snow_lying`). The fog (the Fog card) is
+`weather/fog.rs` (its settings made into `aurora_render::FogLook`, the wind's
+drift, `AURORA_FOG`), `scene/fog_ground.rs` (the terrain and the water around
+the camera, smoothed, which the fog pools on) and `aurora-render`'s `fog.rs`
+with `shaders/fog.wgsl` (a froxel volume in compute: density, the sun's
+shadowed light and the local lights, temporal blend, integration; the sky's
+fog; the fog's flow: the walls around the camera drawn into a grid of solid
+cells by `fs_fog_voxel` in `shaders/object.wgsl`, and the fog spread from the
+open sky through the empty ones) and `weather_fog` in `shaders/common.wgsl` (every surface, blended faces
+and particles through the volume or the height fog); none of it exists while
+the fog is off. Its demo scenes are `demo_fog.rs` (`AURORA_DEMO_FOG`).
+The colour of what falls (the Colour card) is `weather/tint.rs`: the rain's
+and the snow's colour and opacity, the puddles' opacity, the snow's fall speed,
+flutter and melting, and the presets that set them with the fog and the wind
+(`AURORA_WEATHER_PRESET`), made into `aurora_render::WeatherTint` and the
+frame's `weather_tint` (read by `rain_tint`, `snow_tint`, `puddle_opacity` and
+`weather_gust` in `shaders/common.wgsl`; a zeroed frame takes no tint).
+The debris (the Debris card) is `weather/debris.rs` (its settings made into
+`aurora_render::DebrisLook`, `AURORA_DEBRIS`) and `aurora-render`'s
+`debris.rs`: a pool of particles on the GPU moved by `cs_debris`
+(`shaders/debris_sim.wgsl`, after the shadows: the wind, curl-noise eddies
+and the gust, landing on the shelter map's top surface and never blowing
+under cover) and drawn by `vs_debris` / `fs_debris` (`shaders/debris.wgsl`,
+in the scene module, with the rain); none of it exists while it is off.
+Leaves fall from foliage: `scene::jobs::classify_foliage` judges each texture
+once (by id, from a level of 64 px or less, in `TextureStreamer`'s uploads:
+holes in its alpha, many fine edges, a leafy average colour; an exclusion
+list for false positives), Linden trees always count, and the faces get the
+`FOLIAGE` record flag; the canopy map (`fs_canopy` in `shaders/object.wgsl`)
+draws the shelter map's casters again from above to keep, per texel, whether
+the topmost surface is foliage (never a worn object) and its height.
+Tumbleweeds are `scene/tumbleweeds.rs`: a few procedural meshes simulated on
+the CPU (rolling with the wind, rays through the picking's triangles for the
+ground and the walls ahead, `Scene::ground_below`, `obstacle_ahead`), added
+to the frame's lists with their shadows.
+The user's own pictures for the leaves and the paper are `scene/debris_textures.rs`
+(image files on this computer, read small on a worker thread, given bindless
+slots, passed in the frame's `debris_pictures`).
+Blowing sand (`WeatherSettings::sand_blowing`, `RainLook::sand`) feeds the
+snow's memory, its lying snow drawn in the sand's colour (the drifts), and
+`sand_snakes` in `shaders/env.wgsl` draws wisps racing along the open ground.
 
 ## Life of a frame
 
