@@ -12283,7 +12283,9 @@ impl App {
             // jelly doll, first person): its part falls back to the bones
             self.ik_editor
                 .set_poser_meshes_drawn(self.scene.poser_part.map(|_| self.scene.poser_part_skinned));
-            let preview = if (self.focused || self.demo && self.capture.is_some())
+            // (the keyboard in any of the viewer's windows: the Create tool is
+            // chosen in the build tools' window, which may be outside)
+            let preview = if (self.in_front() || self.demo && self.capture.is_some())
                 && !covered
                 && !self.camera.mouselook()
                 && !self.exit_prompt.open
