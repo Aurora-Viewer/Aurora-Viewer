@@ -33,6 +33,8 @@ webpki-root-certs = "1.0.9"
 
 [dev-dependencies]
 rcgen = "0.14.10"
+# paused time for the tests of retries and backoffs (`start_paused`)
+tokio = { version = "1.53.2", features = ["test-util"] }
 
 # rustls-webpki is used: its library is named `webpki` (sim_tls.rs), which
 # cargo-machete does not see from the package name
