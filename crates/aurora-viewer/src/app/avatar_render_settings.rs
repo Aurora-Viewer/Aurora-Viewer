@@ -25,22 +25,11 @@ impl App {
     }
 
     pub(super) fn avatar_render_settings_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        let mut rows = Vec::new();
-        if self.panels.avatar_render_settings {
-            for (id, mode) in self.settings.render_exceptions_map() {
-                if id.is_nil() || id == self.world.agent_id || !(1..=2).contains(&mode) {
-                    continue;
-                }
-                let can_name = self.world.rlva_can_name(id);
-                let name = if can_name {
-                    self.world.social.want_name(id);
-                    self.world.social.name_of(&id)
-                } else {
-                    crate::world::rlva::privacy::anonymous(id).display_name.clone()
-                };
-                rows.push(Row { id, mode, name, can_name });
-            }
-        }
+        let rows = if self.panels.avatar_render_settings {
+            rows(&self.world, self.settings.render_exceptions_map())
+        } else {
+            Vec::new()
+        };
         if let Some(change) = self
             .avatar_render_settings_ui
             .show(ctx, p, &rows, &mut self.world, &mut self.panels.avatar_render_settings)
@@ -65,6 +54,22 @@ impl App {
             }
         }
     }
+}
+
+/// The window's rows: every resident by their complete name, as
+/// LLFloaterAvatarRenderSettings::updateList
+/// (indra/newview/llfloateravatarrendersettings.cpp) lists them, with no
+/// RLVa test (`NameScope::Roster`).
+fn rows(world: &crate::world::World, exceptions: std::collections::HashMap<Uuid, u8>) -> Vec<Row> {
+    exceptions
+        .into_iter()
+        .filter(|(id, mode)| !id.is_nil() && *id != world.agent_id && (1..=2).contains(mode))
+        .map(|(id, mode)| {
+            world.social.avatar_names.want(&id);
+            let name = world.social.name_in(crate::world::names::NameScope::Roster, &id);
+            Row { id, mode, name }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -101,5 +106,23 @@ mod tests {
             ..rules
         };
         assert!(!rules.too_complex(&a, false, u32::MAX, 100_000.0));
+    }
+    /// LLFloaterAvatarRenderSettings has no RLVa test: under `@shownames`
+    /// its list still names every resident.
+    #[test]
+    fn avatar_render_settings_name_everyone_under_shownames() {
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = Uuid::from_u128(0x7e58);
+        world.social.avatar_names.on_legacy(id, "Render", "Tester");
+        world.rlva.configure(true);
+        world.rlva_console_input("@shownames=n");
+        world.refresh_rlva_privacy();
+        assert!(!world.rlva_can_name(id));
+        let rows = rows(&world, std::collections::HashMap::from([(id, 2), (world.agent_id, 1)]));
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].name.contains("Render Tester"), "{}", rows[0].name);
     }
 }

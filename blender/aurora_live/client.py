@@ -8,13 +8,46 @@ import time
 import zlib
 import array
 import base64
+import os
 import sys
 
-MAGIC = b"AURBLD1\n"
+MAGIC = b"AURBLD2\n"
+TOKEN_LENGTH = 64
 MAX_BYTES = 64 * 1024 * 1024
 MAX_DECODED_BYTES = 256 * 1024 * 1024
 COMPRESS_THRESHOLD = 1024 * 1024
 MAX_REPLY = 8 * 1024 * 1024 + 4096
+NO_TOKEN = "Enable preview in Aurora's LiveMesh window"
+
+
+def token_path(port):
+    """The secret Aurora writes each time its preview starts, in the viewer's
+    data folder (ProjectDirs "org", "Aurora", "AuroraViewer" of the directories
+    crate, crates/aurora-viewer/src/blender_live/token.rs)."""
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+        data = os.path.join(base, "Aurora", "AuroraViewer", "data")
+    elif sys.platform == "darwin":
+        data = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "org.Aurora.AuroraViewer")
+    else:
+        base = os.environ.get("XDG_DATA_HOME", "")
+        if not os.path.isabs(base):
+            base = os.path.join(os.path.expanduser("~"), ".local", "share")
+        data = os.path.join(base, "auroraviewer")
+    return os.path.join(data, "blender-live", "{}.token".format(port))
+
+
+def read_token(port):
+    """Read again at every connection: each start of Aurora's preview draws a
+    new secret."""
+    try:
+        with open(token_path(port), "rb") as file:
+            token = file.read(TOKEN_LENGTH + 1).strip()
+    except OSError:
+        raise ValueError(NO_TOKEN) from None
+    if len(token) != TOKEN_LENGTH:
+        raise ValueError(NO_TOKEN)
+    return token
 
 
 def wire_snapshot(snapshot, features):
@@ -78,15 +111,20 @@ def lods_frame(prepared, hello):
     JSON instead, bounded like compressed snapshots."""
     raw = json.dumps(prepared, separators=(",", ":"), allow_nan=False).encode("utf-8")
     limit = min(MAX_BYTES, hello.get("max_bytes", MAX_BYTES)) - 4
-    if "compressed-lods" in hello.get("features", []) and (len(raw) >= COMPRESS_THRESHOLD or len(raw) > limit):
+    compressed = "compressed-lods" in hello.get("features", [])
+    if compressed and (len(raw) >= COMPRESS_THRESHOLD or len(raw) > limit):
         if len(raw) <= min(MAX_DECODED_BYTES, hello.get("max_decoded_bytes", MAX_DECODED_BYTES)):
             packed = b"ZLIB" + zlib.compress(raw, 1)
             if len(packed) < len(raw) and len(packed) <= limit:
                 return b"LODS" + packed
     if len(raw) <= limit:
         return b"LODS" + raw
-    return b"LODS" + json.dumps({"id": prepared["id"], "source": prepared["source"],
-                                 "error": "Prepared LODs exceed 64 MiB"}, separators=(",", ":")).encode("utf-8")
+    # As _encode: over the decoded budget or still too large once deflated,
+    # only less geometry helps; a viewer without compressed-lods needs an update.
+    error = ("Prepared LODs exceed the LiveMesh transfer limit; reduce the mesh's geometry" if compressed else
+             "Prepared LODs exceed 64 MiB; update Aurora Viewer to import them")
+    return b"LODS" + json.dumps({"id": prepared["id"], "source": prepared["source"], "error": error},
+                                separators=(",", ":")).encode("utf-8")
 
 
 def _encode(snapshot, hello):
@@ -273,6 +311,7 @@ class Client:
     def _run(self):
         while not self._stop.is_set():
             try:
+                token = read_token(self.port)
                 with socket.create_connection(("127.0.0.1", self.port), timeout=1.0) as connection:
                     with self._lock:
                         self._connection = connection
@@ -280,7 +319,7 @@ class Client:
                         break
                     connection.settimeout(5.0)
                     connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                    connection.sendall(MAGIC)
+                    connection.sendall(MAGIC + token)
                     with connection.makefile("rb") as reader:
                         hello = self._line(reader)
                         if hello.get("protocol") != 1 or not hello.get("joints"):

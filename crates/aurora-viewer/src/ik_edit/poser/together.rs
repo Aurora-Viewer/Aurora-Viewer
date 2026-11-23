@@ -1,5 +1,6 @@
-//! Several joints edited as one. Shift + click on a joint (its marker, its
-//! row or its finger cell) adds it to the selected joint, or takes it out;
+//! Several joints edited as one. Shift or Ctrl + click on a joint (its
+//! marker, its shaft, its row or its finger cell) adds it to the selected
+//! joint, or takes it out;
 //! the joints added follow every change of the selected one: both eyes turn
 //! together, both shoulders lift together, a few spine joints bend together.
 //! This is not Mirror: the followers get the same change, not its reflection.
@@ -39,6 +40,11 @@ impl Editor {
             return;
         }
         self.poser.together.clear();
+        // an explicit click that selects another joint frames it (when the
+        // option is on); a drag start (`grab_pose_bone`) never does
+        if self.selected != Some(bone) {
+            self.request_poser_framing(bone, crate::camera::PoserFraming::Joint);
+        }
         self.select_pose_bone(bone, rig, frame);
     }
     /// A drag begun on a joint: on a joint of the selection it leads the
@@ -60,6 +66,8 @@ impl Editor {
         self.poser.together.clear();
     }
 }
+
+pub(super) use crate::ik_edit::adds_to_selection;
 
 /// Add `bone` to the followers, or take it out.
 fn toggle(together: &mut Vec<usize>, bone: usize) {
@@ -131,6 +139,7 @@ mod tests {
             scales: rig.scale.clone(),
             locks: Default::default(),
             origin: rig.local_rot.clone(),
+            hold_rotation: vec![false; rig.len()],
         }
     }
 
@@ -220,6 +229,16 @@ mod tests {
             "{moved} vs {led}"
         );
         assert!((moved.y + led.y).abs() < 0.005, "{moved} vs {led}");
+    }
+
+    #[test]
+    fn shift_or_ctrl_adds_a_joint_and_a_plain_click_does_not() {
+        use egui::Modifiers;
+        assert!(adds_to_selection(Modifiers::SHIFT));
+        assert!(adds_to_selection(Modifiers::CTRL));
+        assert!(adds_to_selection(Modifiers::COMMAND));
+        assert!(!adds_to_selection(Modifiers::NONE));
+        assert!(!adds_to_selection(Modifiers::ALT));
     }
 
     #[test]

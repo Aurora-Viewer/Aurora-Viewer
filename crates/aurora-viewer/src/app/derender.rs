@@ -59,6 +59,19 @@ impl App {
             log::info!("derender {id} refused: our own attachment while RLVa is on");
             return;
         }
+        // the seat held by @unsit keeps its root prim
+        if let Some(prims) = idx.and_then(|i| w.rlva_seat_derender(i, part))
+            && !(part && prims == [id])
+        {
+            log::info!(
+                "derender {id}: the root of the seat held by @unsit stays, {} linked prim(s) go",
+                prims.len()
+            );
+            for prim in prims {
+                self.derender_one(prim, permanent, true);
+            }
+            return;
+        }
         let avatar = idx.and_then(|i| w.objects.get(i)).is_none_or(|o| o.is_avatar());
         let (target, entry) = if avatar {
             // FirstName / LastName of the avatar, or its user name

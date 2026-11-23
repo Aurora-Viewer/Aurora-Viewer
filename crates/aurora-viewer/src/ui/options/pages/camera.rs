@@ -5,34 +5,11 @@
 
 use super::super::COMBO_W;
 use super::super::cx::{Custom, Cx, Nothing, field, fields};
-use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE};
-use egui::RichText;
+use crate::camera::{CameraPreset, DEFAULT_FOV, FOV_RANGE, SMOOTHING_RANGE};
 
-/// Three fields x / y / z (x forward, y left, z up).
-fn offset(ui: &mut egui::Ui, v: &mut [f32; 3]) -> bool {
-    let mut changed = false;
-    for (axis, value) in ["X", "Y", "Z"].iter().zip(v.iter_mut()) {
-        ui.label(RichText::new(*axis).size(12.0));
-        changed |= ui
-            .add(
-                egui::DragValue::new(value)
-                    .custom_parser(aurora_i18n::parse_number)
-                    .range(-10.0..=10.0)
-                    .speed(0.02)
-                    .max_decimals(2),
-            )
-            .changed();
-    }
-    changed
-}
-
-/// An offset moved by hand: the preset becomes "Custom".
-fn custom(changed: bool, c: &mut CameraSettings) -> bool {
-    if changed {
-        c.preset = CameraPreset::Custom;
-    }
-    changed
-}
+// The offsets' fields are the camera position window's
+// (`ui::camera_position`), which keeps a value set past their range.
+use crate::ui::camera_position::{mark_custom as custom, offset_fields as offset};
 
 pub fn page(cx: &mut Cx, tab: usize) {
     use aurora_i18n::tr;
@@ -88,7 +65,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-restores-the-preset-s-camera-position-and-focus-point"),
                     &Nothing,
                     |ui, s| {
-                        let c = &mut s.camera;
                         let reset = crate::ui::widgets::action_button(
                             ui,
                             &p,
@@ -99,12 +75,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         )
                         .clicked();
                         if reset {
-                            let preset = if c.preset == CameraPreset::Custom {
-                                CameraPreset::Rear
-                            } else {
-                                c.preset
-                            };
-                            s.camera.apply_view(preset, &s.camera_views);
+                            crate::ui::camera_position::reset_angles(s);
                         }
                         reset
                     },
@@ -201,6 +172,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-camera-click-my-avatar-keep-camera"),
                     tr!("ui-options-camera-clicking-your-avatar-does-not-return-the-camera-behind"),
                     &field!(camera.click_avatar_keeps_camera),
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-frame-while-posing"),
+                    tr!("ui-options-camera-frame-while-posing-tip"),
+                    &field!(camera.frame_while_posing),
+                );
+                cx.toggle(
+                    tr!("ui-options-camera-still-while-posing"),
+                    tr!("ui-options-camera-still-while-posing-tip"),
+                    &field!(camera.still_while_posing),
                 );
                 cx.toggle(
                     tr!("ui-options-camera-follow-the-targeted-object"),
@@ -311,6 +292,31 @@ fn mouselook(cx: &mut Cx) {
             tr!("ui-options-camera-show-interface-tip"),
             &field!(camera.show_interface_in_mouselook),
         );
+        // FSMouselookCombatFeatures, ExodusMouselookIFF and
+        // ExodusMouselookIFFRange (panel_preferences_move.xml)
+        cx.toggle(
+            tr!("ui-options-camera-combat"),
+            tr!("ui-options-camera-combat-tip"),
+            &field!(camera.mouselook_combat),
+        );
+        let off = !cx.s.camera.mouselook_combat;
+        cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-camera-combat-markers"),
+                tr!("ui-options-camera-combat-markers-tip"),
+                &field!(camera.mouselook_iff),
+            );
+            let off = !cx.s.camera.mouselook_iff;
+            cx.subs(off, |cx| {
+                cx.slider(
+                    tr!("ui-options-camera-combat-range"),
+                    "",
+                    &field!(camera.mouselook_iff_range),
+                    0.0..=500.0,
+                    " m",
+                );
+            });
+        });
     });
 }
 

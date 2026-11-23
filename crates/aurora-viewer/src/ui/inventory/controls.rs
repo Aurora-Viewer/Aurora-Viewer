@@ -432,7 +432,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                 ui.label(RichText::new(aurora_i18n::tr!("ui-inventory-controls-required-permissions")).color(p.muted));
                 ui.horizontal(|ui| {
                     for (bit, label) in [
-                        (super::rules::MODIFY, aurora_i18n::tr!("common-edit")),
+                        (super::rules::MODIFY, aurora_i18n::tr!("common-modify")),
                         (super::rules::COPY, aurora_i18n::tr!("common-copy-2")),
                         (super::rules::TRANSFER, aurora_i18n::tr!("common-transfer")),
                     ] {
@@ -530,7 +530,10 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                     if flat_button(ui, p, aurora_i18n::tr!("common-reset")).clicked() {
                         *f = Filters::default();
                     }
-                    if flat_button(ui, p, aurora_i18n::tr!("ui-inventory-controls-keep-by-default")).clicked() {
+                    // Recent keeps its filters on its own (`remember_recent_filters`).
+                    if st.tab != super::RECENT_TAB
+                        && flat_button(ui, p, aurora_i18n::tr!("ui-inventory-controls-keep-by-default")).clicked()
+                    {
                         prefs.filters_for_mut(st.tab).clone_from(f);
                     }
                 });

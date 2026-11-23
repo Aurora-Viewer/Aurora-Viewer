@@ -3,10 +3,12 @@
 //! (indra/newview/fslslbridge.cpp, originally LGPL 2.1).
 use super::{World, inventory::FetchState};
 use aurora_net::bridge::{Ack, Command, Endpoint, Motion};
-use aurora_net::build::{BuildCmd, TaskItem, perm};
+use aurora_net::build::{BuildCmd, TaskItem};
 use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
-use aurora_net::scripts::{ScriptOptions, ScriptTarget};
-use aurora_net::{AttachRequest, ChatMessage, ChatSourceType, ChatType, NetCommand, NetEvent};
+use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetCommand, NetEvent};
+// (the tests build their own requests and uploads)
+#[cfg(test)]
+use aurora_net::{AttachRequest, scripts::ScriptTarget};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -16,11 +18,20 @@ pub const FOLDER: &str = "#Aurora";
 pub const SUBFOLDER: &str = "Aurora Bridge";
 const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
+/// Center 2, where both viewers wear their bridge (FS_BRIDGE_POINT,
+/// fslslbridge.h).
+pub(crate) const POINT: u8 = 31;
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.41";
+const VERSION: &str = "1.44";
 /// The controller's and query script's owner-say tags, never shown in chat.
-const PRIVATE_TAGS: [&str; 7] = [
+/// `<auroraPortal>` is a 1.42 query script's, kept hidden until it is
+/// replaced: portals are this viewer's own and no longer relayed.
+const PRIVATE_TAGS: [&str; 9] = [
+    // The retired IK relay's tags: a bridge made before its removal runs it
+    // until `RETIRED_IK_NAME` is deleted from the worn object.
+    "<auroraBridgeIK>",
+    "<auroraIKRelay>",
     "<auroraBridge>",
     "<auroraBridgeQuery>",
     "<auroraPose>",
@@ -37,13 +48,19 @@ const LEGACY_DISCOVERY_CHANNEL: i32 = -184735219;
 /// with its old version and gets updated well before its own 60 s detach.
 const LEGACY_DISCOVERY_AFTER: Duration = Duration::from_secs(10);
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
-const ROCK: &str = "Rock - medium, round";
+pub(crate) mod factory;
+const ROCK: &str = factory::ROCK;
 const SOURCE: &str = include_str!("bridge/bridge.lsl");
 // Read-only services (radar heights, script and object information) run in a
 // second script: Mono gives each script 64 KB, and the controller has little left.
 pub const QUERY_NAME: &str = "#Aurora Bridge Query";
 const QUERY_SOURCE: &str = include_str!("bridge/query.lsl");
-pub(crate) mod ik;
+/// The third script older bridges carried: a relay that listened on a fixed
+/// region channel for hand contacts that objects published to Aurora viewers.
+/// It was removed (Second Life's shared experience policy; AGENTS.md, "No
+/// data of our own in shared places"), and the listing deletes it from a
+/// bridge that still has it.
+const RETIRED_IK_NAME: &str = "#Aurora Bridge IK";
 
 pub mod services;
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -69,11 +86,54 @@ pub mod demo;
 mod tests;
 
 /// The negative chat channel the viewer and its own worn bridge talk on,
-/// derived from a key both of them know: the worn root for the hello, the IK
-/// relay's random session for its commands. The worn root gets a new key at
-/// each rez, so the channel changes with every login and is never a fixed
-/// one that any listener could watch. The bridge scripts compute the same
-/// value: `-0x10000000 - (integer)("0x" + llGetSubString((string)key, 0, 6))`.
+/// derived from a key both of them know: the worn root for the hello. The
+/// worn root gets a new key at each rez, so the channel changes with every
+/// login and is never a fixed one that any listener could watch. The bridge
+/// scripts compute the same value: `-0x10000000 - (integer)("0x" + llGetSubString((string)key, 0, 6))`.
+/// The agent's own folder `name`, directly under the inventory root.
+fn root_folder(inv: &super::inventory::Inventory, name: &str) -> Option<Uuid> {
+    inv.folders.get(&inv.root)?.children.iter().copied().find(|id| {
+        inv.folders
+            .get(id)
+            .is_some_and(|f| f.info.parent == inv.root && f.info.name == name && !f.library)
+    })
+}
+
+/// FS_BRIDGE_NAME (fslslbridge.h) with its exact version syntax: a chat tag
+/// or a similarly named ordinary HUD is not the Legacy Viewer's bridge.
+fn legacy_bridge_name(name: &str) -> bool {
+    name.strip_prefix("#Firestorm LSL Bridge v")
+        .and_then(|v| v.split_once('.'))
+        .is_some_and(|(major, minor)| {
+            [major, minor]
+                .iter()
+                .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+        })
+}
+
+/// Whether the inventory item is a viewer's scripting bridge: ours in
+/// `#Aurora`, or the one the Legacy Viewer left worn, in `#Firestorm`. The
+/// name alone is not enough: the agent owns it and it lies under the
+/// viewer's own folder. RLVa leaves such an object out of what the avatar
+/// wears on `point` (FSLSLBridge::isBridgeValid and getAttachedID, used by
+/// RlvHandler::onGetAttach and RlvForceWear::isForceDetachable).
+pub(crate) fn viewer_bridge(world: &World, item: Uuid, point: u8) -> bool {
+    let inv = &world.inventory;
+    point == POINT
+        && inv.items.get(&item).is_some_and(|entry| {
+            let folder = if entry.name == NAME {
+                FOLDER
+            } else if legacy_bridge_name(&entry.name) {
+                "#Firestorm"
+            } else {
+                return false;
+            };
+            entry.owner == world.agent_id
+                && entry.asset_type == 6
+                && root_folder(inv, folder).is_some_and(|folder| super::inventory::actions::under(inv, item, folder))
+        })
+}
+
 pub(crate) fn private_channel(key: Uuid) -> i32 {
     // The first seven hex digits of the key's text form: 28 bits.
     -0x1000_0000 - (key.as_u128() >> 100) as i32
@@ -226,7 +286,6 @@ pub struct Bridge {
     restarted: bool,
     query_upload: Option<Uuid>,
     query_script: Uuid,
-    ik: ik::Service,
     query_restarted: bool,
     query: Option<Endpoint>,
     query_candidate: Option<(ChatMessage, Instant)>,
@@ -280,6 +339,20 @@ impl Bridge {
     }
     pub fn folder(&self) -> Uuid {
         self.folder
+    }
+    /// Whether the bridge makes `#Aurora` when it is missing: it runs for
+    /// this account, on, worn, still looking for its folder, and the grid
+    /// lets it write (`inventory_writable_with_ais`). What else keeps its
+    /// folders under `#Aurora` at login waits for it instead of asking for
+    /// a second `#Aurora` in the same seconds (the Favorite Wearables; the
+    /// AO's bootstrap waits the same way).
+    pub fn makes_brand_folder(&self, world: &World) -> bool {
+        !self.agent.is_nil()
+            && self.agent == world.agent_id
+            && !self.disabled
+            && !self.user_detached
+            && matches!(self.phase, Phase::Inventory | Phase::Folder)
+            && (self.mutation.is_some() || world.inventory_writable_with_ais())
     }
     pub fn locked(&self) -> bool {
         self.phase == Phase::Ready && self.ack.locked && self.error.is_none()
@@ -445,7 +518,6 @@ impl Bridge {
         self.checked_script = None;
         self.restarted = false;
         self.query_restarted = false;
-        self.ik.restarted = false;
         self.watch = Watch::default();
         self.query_watch = Watch::default();
         // A query hello is valid from compilation until the next save or move.
@@ -481,7 +553,6 @@ impl Bridge {
         self.mutation = None;
         self.upload = None;
         self.query_upload = None;
-        self.ik.upload = None;
         self.query_candidate = None;
         self.commands.clear();
         self.refresh_inventory = true;
@@ -571,13 +642,7 @@ impl Bridge {
         }
         self.own_poll = Some(now);
         let inv = &world.inventory;
-        let folder = inv.folders.get(&inv.root).and_then(|root| {
-            root.children.iter().copied().find(|id| {
-                inv.folders
-                    .get(id)
-                    .is_some_and(|f| f.info.parent == inv.root && f.info.name == FOLDER && !f.library)
-            })
-        });
+        let folder = root_folder(inv, FOLDER);
         let mut detach = Vec::new();
         for item in world.worn_attachment_items() {
             let ours = item == self.item
@@ -629,18 +694,11 @@ impl Bridge {
         let Some(item) = world.inventory.items.get(&self.item) else {
             return;
         };
-        self.commands.push(NetCommand::RezAttachments(vec![AttachRequest {
-            item_id: item.id,
-            owner_id: world.agent_id,
-            point: 31,
-            add: true,
-            flags: item.flags,
-            group_mask: item.group_mask,
-            everyone_mask: item.everyone_mask,
-            next_owner_mask: item.next_owner_mask,
-            name: item.name.clone(),
-            desc: item.desc.clone(),
-        }]));
+        self.commands.push(NetCommand::RezAttachments(vec![factory::attach_request(
+            item,
+            world.agent_id,
+            POINT,
+        )]));
         self.enter(phase, now);
     }
     fn detach_firestorm(&mut self, world: &World, now: Instant) {
@@ -652,35 +710,23 @@ impl Bridge {
         }
         self.firestorm_poll = Some(now);
         let inv = &world.inventory;
-        let Some(folder) = inv.folders.get(&inv.root).and_then(|root| {
-            root.children.iter().copied().find(|id| {
-                inv.folders
-                    .get(id)
-                    .is_some_and(|f| f.info.parent == inv.root && f.info.name == "#Firestorm" && !f.library)
-            })
-        }) else {
+        let Some(folder) = root_folder(inv, "#Firestorm") else {
             return;
         };
         let mut detach = Vec::new();
         for item in world.worn_attachment_items() {
             let Some(entry) = inv.items.get(&item) else { continue };
             // FS_BRIDGE_NAME and FS_BRIDGE_POINT (fslslbridge.h). Exact
-            // version syntax, inventory ancestry and a worn root are required;
-            // a chat tag or a similarly named ordinary HUD is insufficient.
-            let version = entry.name.strip_prefix("#Firestorm LSL Bridge v").and_then(|v| v.split_once('.'));
+            // version syntax, inventory ancestry and a worn root are required.
             if entry.owner != world.agent_id
                 || entry.asset_type != 6
-                || !version.is_some_and(|(major, minor)| {
-                    [major, minor]
-                        .iter()
-                        .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
-                })
+                || !legacy_bridge_name(&entry.name)
                 || !super::inventory::actions::under(inv, item, folder)
             {
                 continue;
             }
             if let Some(root) = world.worn_attachment(&item).and_then(|i| world.objects.get(i))
-                && root.attachment_point() == 31
+                && root.attachment_point() == POINT
                 && self.firestorm_detached.insert(root.full_id)
             {
                 detach.push(item);
@@ -781,7 +827,7 @@ impl Bridge {
             self.rejection = Some(HandshakeError::Folder);
             return false;
         }
-        if self.phase == Phase::Verify && (self.query.is_none() || self.ik_candidate_relay(world).is_none()) {
+        if self.phase == Phase::Verify && self.query.is_none() {
             return false;
         }
         self.rejection = None;
@@ -824,6 +870,61 @@ impl Bridge {
         true
     }
     pub fn update(&mut self, world: &mut World, prefs: &Preferences, online: bool, now: Instant) {
+        self.advance(world, prefs, online, now);
+        world.concealed_attachment = if online { self.concealed() } else { Uuid::nil() };
+    }
+    /// The item whose worn object the HUD pass leaves out: ours while the
+    /// factory works on it. A new bridge is worn as the Library rock, on a
+    /// HUD point (31, Center 2), and the simulator takes a moment to apply
+    /// the look sent by `disguise`, longer still to run the script; a rock
+    /// must not show in the middle of the screen meanwhile. A finished
+    /// bridge is an invisible 1 cm box; a failed one shows again, so that
+    /// what is worn can be seen and removed.
+    fn concealed(&self) -> Uuid {
+        if self.disabled || self.user_detached || matches!(self.phase, Phase::Ready | Phase::Failed) {
+            Uuid::nil()
+        } else {
+            self.item
+        }
+    }
+    /// The look of the bridge, sent as soon as the Library container is worn
+    /// (FSLSLBridge::setupBridgePrim, indra/newview/fslslbridge.cpp,
+    /// originally LGPL 2.1): 1 cm, a plain box, transparent. The values are
+    /// those `initialize` of bridge.lsl sets again once it runs, so that the
+    /// script's own pass changes nothing.
+    fn disguise(&mut self, handle: u64, local_id: u32) {
+        const FACES: usize = 6;
+        let face = aurora_prim::te::TextureFace {
+            color: [1.0, 1.0, 1.0, 0.0],
+            ..Default::default()
+        };
+        let look = aurora_prim::te::TextureEntry { faces: vec![face; FACES] };
+        self.commands.extend([
+            NetCommand::Build(BuildCmd::Transform {
+                handle,
+                updates: vec![aurora_net::build::TransformUpdate {
+                    local_id,
+                    position: None,
+                    rotation: None,
+                    scale: Some(glam::Vec3::splat(0.01)),
+                    linked: true,
+                    uniform: false,
+                }],
+            }),
+            NetCommand::Build(BuildCmd::SetShape {
+                handle,
+                local_ids: vec![local_id],
+                shape: aurora_prim::VolumeParams::default().to_raw(),
+            }),
+            NetCommand::Build(BuildCmd::SetTextures {
+                handle,
+                local_id,
+                media_url: String::new(),
+                texture_entry: aurora_prim::te::pack_texture_entry(&look, FACES),
+            }),
+        ]);
+    }
+    fn advance(&mut self, world: &mut World, prefs: &Preferences, online: bool, now: Instant) {
         if !online || world.agent_id.is_nil() || world.main_region.is_none() {
             return;
         }
@@ -877,8 +978,6 @@ impl Bridge {
                 .filter(|(_, at)| now.duration_since(*at) < Duration::from_secs(3));
             self.upload = None;
             self.query_upload = None;
-            self.ik.upload = None;
-            world.hand_contacts.relay = None;
             // An explicit resume/repair must still discover and rez an absent
             // inventory item, even when the region changed while paused.
             self.enter(
@@ -907,7 +1006,6 @@ impl Bridge {
             Phase::Attach | Phase::Listing | Phase::Verify | Phase::Starting | Phase::Handshake | Phase::Ready
         ) {
             self.accept_query(world);
-            self.accept_ik(world);
         }
         // Ready mode only walks our attachment list; provisioning polls at
         // most four times a second, never scanning the entire inventory per frame.
@@ -916,7 +1014,6 @@ impl Bridge {
             && self.accept_candidate(world, now)
         {
             if self.ready() {
-                self.accept_ik(world);
                 self.send_mode(prefs, now);
             }
             return;
@@ -934,7 +1031,7 @@ impl Bridge {
                     // like a silent one: the simulator may report it stopped.
                     self.query_watch.silent_since.get_or_insert(now);
                 }
-                if self.error.is_some() || self.query.is_none() || world.hand_contacts.relay.is_none() {
+                if self.error.is_some() || self.query.is_none() {
                     self.discover(world, now);
                 }
                 if !self.watch_silence(world, now) {
@@ -1143,54 +1240,28 @@ impl Bridge {
                 if self.phase == Phase::Copy {
                     return;
                 }
-                // Library layouts vary. Search its metadata only, with no
-                // more than eight folder requests in flight, never user folders.
-                let library: Vec<_> = inv.folders.values().filter(|f| f.library).map(|f| f.info.id).collect();
-                let rock = library
-                    .iter()
-                    .filter_map(|id| inv.folders.get(id))
-                    .flat_map(|f| f.items.iter())
-                    .filter_map(|id| inv.items.get(id))
-                    .find(|i| {
-                        i.name == ROCK && i.asset_type == 6 && i.owner_mask & (perm::COPY | perm::MODIFY) == (perm::COPY | perm::MODIFY)
-                    })
-                    .cloned();
-                if let Some(rock) = rock {
-                    self.mutate(
-                        Mutation {
-                            copies: vec![CopyItem {
-                                item: rock.id,
-                                owner: inv.lib_owner,
-                                parent: folder,
-                                name: NAME.into(),
-                            }],
-                            refresh: vec![folder],
-                            ..Default::default()
-                        },
-                        Phase::Copy,
-                        now,
-                    );
-                } else if !library.is_empty()
-                    && library
-                        .iter()
-                        .all(|id| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetched))
-                {
-                    self.fail(aurora_i18n::tr!("bridge-library-missing").into());
-                } else {
-                    let in_flight = library
-                        .iter()
-                        .filter(|id| inv.folders.get(id).is_some_and(|f| f.state == FetchState::Fetching))
-                        .count();
-                    let mut waiting: Vec<_> = library
-                        .iter()
-                        .filter_map(|id| inv.folders.get(id))
-                        .filter(|f| matches!(f.state, FetchState::Unknown | FetchState::Failed))
-                        .map(|f| (f.info.name != "Objects" && !f.info.name.contains("Rock"), f.info.id))
-                        .collect();
-                    waiting.sort_unstable();
-                    for (_, id) in waiting.into_iter().take(8usize.saturating_sub(in_flight)) {
-                        inv.request(id);
+                // (the search of the Library is shared with the RLVa
+                // self-test's controller: bridge/factory.rs)
+                match factory::library_object(inv, ROCK) {
+                    factory::LibraryObject::Found(rock) => {
+                        let owner = inv.lib_owner;
+                        self.mutate(
+                            Mutation {
+                                copies: vec![CopyItem {
+                                    item: rock.id,
+                                    owner,
+                                    parent: folder,
+                                    name: NAME.into(),
+                                }],
+                                refresh: vec![folder],
+                                ..Default::default()
+                            },
+                            Phase::Copy,
+                            now,
+                        );
                     }
+                    factory::LibraryObject::Missing => self.fail(aurora_i18n::tr!("bridge-library-missing").into()),
+                    factory::LibraryObject::Waiting => {}
                 }
             }
             Phase::Attach | Phase::Restore => {
@@ -1204,19 +1275,10 @@ impl Bridge {
                     if self.phase == Phase::Restore || self.relocated {
                         self.enter(Phase::Handshake, now);
                     } else {
-                        // Keep the freshly copied library object unobtrusive
-                        // while the disabled script is installed and compiled.
-                        self.commands.push(NetCommand::Build(BuildCmd::Transform {
-                            handle: object.key.region,
-                            updates: vec![aurora_net::build::TransformUpdate {
-                                local_id: object.key.local_id,
-                                position: None,
-                                rotation: None,
-                                scale: Some(glam::Vec3::splat(0.01)),
-                                linked: true,
-                                uniform: false,
-                            }],
-                        }));
+                        // The freshly copied Library object takes the bridge's
+                        // look at once, not when its script is compiled.
+                        let (handle, local_id) = (object.key.region, object.key.local_id);
+                        self.disguise(handle, local_id);
                         self.enter(Phase::Listing, now);
                         self.request_contents(world);
                     }
@@ -1238,7 +1300,7 @@ impl Bridge {
                     && let Some(object) = world.objects.index_of_uuid(&self.object).and_then(|i| world.objects.get(i))
                 {
                     self.checked_script = Some(now);
-                    for item_id in [self.script, self.query_script, self.ik.script] {
+                    for item_id in [self.script, self.query_script] {
                         if !item_id.is_nil() {
                             self.commands.push(NetCommand::Build(BuildCmd::GetScriptRunning {
                                 handle: object.key.region,
@@ -1344,17 +1406,11 @@ impl Bridge {
                 NetEvent::Chat(chat) => {
                     chat.source_type == ChatSourceType::Object
                         && chat.chat_type == ChatType::OwnerSay
-                        && PRIVATE_TAGS
-                            .iter()
-                            .chain(["<auroraBridgeIK>", "<auroraIKRelay>"].iter())
-                            .any(|tag| chat.message.starts_with(tag))
+                        && PRIVATE_TAGS.iter().any(|tag| chat.message.starts_with(tag))
                 }
                 NetEvent::BridgeReply { .. } => true,
                 _ => false,
             };
-        }
-        if self.ik_event(world, event, now) {
-            return true;
         }
         match event {
             NetEvent::Chat(chat)
@@ -1380,18 +1436,6 @@ impl Bridge {
                             Err(_) => {}
                         }
                     } else if chat.source_id == self.object {
-                        if chat.message.starts_with("<auroraPortal>")
-                            && self.available()
-                            && world
-                                .objects
-                                .index_of_uuid(&self.object)
-                                .and_then(|i| world.objects.get(i))
-                                .is_some_and(|o| Some(o.key.region) == world.main_region)
-                        {
-                            let mut portals = std::mem::take(&mut world.portals);
-                            portals.receive(world, &chat.message, now, super::portals::unix_time());
-                            world.portals = portals;
-                        }
                         if chat.message.starts_with("<auroraPose>")
                             && self.available()
                             && world
@@ -1465,70 +1509,58 @@ impl Bridge {
                     return true;
                 };
                 let find = |name: &str| items.iter().find(|i| i.asset_type == 10 && i.name == name).map(|i| i.item_id);
-                if let (Some(script), Some(query), Some(ik)) = (find(NAME), find(QUERY_NAME), find(ik::NAME)) {
+                if let Some(retired) = find(RETIRED_IK_NAME) {
+                    self.commands.push(NetCommand::Build(BuildCmd::RemoveTaskInventory {
+                        handle: root.key.region,
+                        local_id: root.key.local_id,
+                        item_id: retired,
+                    }));
+                }
+                if let (Some(script), Some(query)) = (find(NAME), find(QUERY_NAME)) {
                     self.script = script;
                     self.query_script = query;
-                    self.ik.script = ik;
                     if self.phase == Phase::Listing && !self.force_update {
                         self.enter(Phase::Verify, now);
                         return true;
                     }
                     self.candidate = None;
                     self.query_candidate = None;
-                    self.ik.clear_candidate();
                     // Keep the update intent until every upload is confirmed;
                     // a circuit change during compilation must finish it.
                     self.force_update = true;
                     let folder = self.folder.to_string();
                     let mut upload = |item: Uuid, source: &str| {
                         let request = Uuid::new_v4();
-                        self.commands.push(NetCommand::SaveScript {
+                        self.commands.push(factory::save_script(
                             request,
-                            target: ScriptTarget { object: *object, item },
-                            handle: root.key.region,
-                            options: ScriptOptions {
-                                mono: true,
-                                luau: aurora_net::scripts::Luau::Off,
-                                running: true,
-                                experience: Uuid::nil(),
-                            },
-                            source: source.replace("__FOLDER__", &folder),
-                        });
+                            root.key.region,
+                            *object,
+                            item,
+                            source.replace("__FOLDER__", &folder),
+                        ));
                         request
                     };
                     let controller = upload(script, SOURCE);
                     let query = upload(query, QUERY_SOURCE);
-                    let ik = upload(ik, ik::SOURCE);
                     self.upload = Some(controller);
                     self.query_upload = Some(query);
-                    self.ik.upload = Some(ik);
                     self.enter(Phase::Upload, now);
                 } else if self.phase == Phase::Listing {
                     // A bridge made before the query service gets only the
                     // missing script; the controller keeps its item. RezScript
                     // uses the active group (LLViewerObject::saveScript,
                     // indra/newview/llviewerobject.cpp), even for attachments.
-                    for name in [NAME, QUERY_NAME, ik::NAME] {
+                    for name in [NAME, QUERY_NAME] {
                         if find(name).is_none() {
-                            self.commands.push(NetCommand::Build(BuildCmd::RezScript {
-                                handle: root.key.region,
-                                local_id: root.key.local_id,
-                                enabled: false,
-                                group_id: world.groups.active,
-                                item: Box::new(TaskItem {
-                                    parent_id: *object,
-                                    creator_id: world.agent_id,
-                                    owner_id: world.agent_id,
-                                    base_mask: 0x7fff_ffff,
-                                    owner_mask: 0x7fff_ffff,
-                                    next_owner_mask: perm::COPY | perm::MODIFY | perm::MOVE,
-                                    asset_type: 10,
-                                    inv_type: 10,
-                                    name: name.into(),
-                                    description: "Aurora's private bridge".into(),
-                                    ..Default::default()
-                                }),
-                            }));
+                            self.commands.push(factory::rez_script(
+                                root.key.region,
+                                root.key.local_id,
+                                *object,
+                                world.agent_id,
+                                world.groups.active,
+                                name,
+                                "Aurora's private bridge",
+                            ));
                         }
                     }
                     self.enter(Phase::Script, now);
@@ -1536,20 +1568,18 @@ impl Bridge {
                 true
             }
             NetEvent::ScriptSaved { request, result, .. }
-                if self.phase == Phase::Upload && [self.upload, self.query_upload, self.ik.upload].contains(&Some(*request)) =>
+                if self.phase == Phase::Upload && [self.upload, self.query_upload].contains(&Some(*request)) =>
             {
                 if self.upload == Some(*request) {
                     self.upload = None;
-                } else if self.query_upload == Some(*request) {
-                    self.query_upload = None;
                 } else {
-                    self.ik.upload = None;
+                    self.query_upload = None;
                 }
                 if result.as_ref().is_ok_and(|r| r.compiled) {
                     self.save_pending = true;
                     // An early hello can arrive before the HTTP upload reply.
                     // Keep it; Starting validates it against the exact object.
-                    if self.upload.is_none() && self.query_upload.is_none() && self.ik.upload.is_none() {
+                    if self.upload.is_none() && self.query_upload.is_none() {
                         self.force_update = false;
                         self.endpoint = None;
                         self.enter(Phase::Starting, now);
@@ -1566,17 +1596,13 @@ impl Bridge {
                 ..
             } if *object_id == self.object
                 && matches!(self.phase, Phase::Starting | Phase::Handshake | Phase::Verify)
-                && ((*item_id == self.script && !self.restarted)
-                    || (*item_id == self.query_script && !self.query_restarted)
-                    || (*item_id == self.ik.script && !self.ik.restarted)) =>
+                && ((*item_id == self.script && !self.restarted) || (*item_id == self.query_script && !self.query_restarted)) =>
             {
                 if let Some(object) = world.objects.index_of_uuid(&self.object).and_then(|i| world.objects.get(i)) {
                     if *item_id == self.script {
                         self.restarted = true;
-                    } else if *item_id == self.query_script {
-                        self.query_restarted = true;
                     } else {
-                        self.ik.restarted = true;
+                        self.query_restarted = true;
                     }
                     self.commands.push(NetCommand::Build(BuildCmd::SetScriptRunning {
                         handle: object.key.region,
