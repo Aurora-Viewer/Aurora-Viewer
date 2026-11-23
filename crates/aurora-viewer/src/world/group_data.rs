@@ -327,8 +327,9 @@ impl GroupMgr {
     }
 
     /// LLPanelGroupNotices::onSelectNotice: GroupNoticeRequest, and the
-    /// notice counts as read. One sent from here is not asked for: the grid
-    /// does not know its id and would never answer (#4325).
+    /// notice counts as read. One sent from here is not asked for, on
+    /// purpose: onSelectNotice sends the request even for the id that
+    /// onClickSendMessage made up, which the grid never answers (#4325).
     pub fn open_notice(&mut self, group: Uuid, notice: Uuid) {
         let g = self.data(group);
         if g.sent_notice(notice).is_some() {

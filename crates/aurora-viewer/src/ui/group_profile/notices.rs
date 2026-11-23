@@ -280,10 +280,17 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, actio
         ui.label(egui::RichText::new(aurora_i18n::tr!("common-loading-2")).size(12.5).color(p.muted));
         return;
     };
-    // updateSelected's selectByID failing: a notice no longer listed (one
-    // sent from here, after Refresh brought the grid's copy under its own
-    // id) is chosen no more, the first one is
-    if st.notices.selected.is_some_and(|id| !list.iter().any(|n| n.id == id)) {
+    // updateSelected's selectByID failing: a choice that cannot come back
+    // (the row of one sent from here, gone with Refresh, which brings the
+    // grid's copy under its own id) gives way to the first notice. The list
+    // arrives a packet at a time: a notice not listed yet but shown, or a
+    // sent one still kept, stays chosen.
+    let gone = |id: Uuid| {
+        !list.iter().any(|n| n.id == id)
+            && v.data
+                .is_none_or(|d| d.notice.as_ref().is_none_or(|n| n.id != id) && d.sent_notice(id).is_none())
+    };
+    if st.notices.selected.is_some_and(gone) {
         st.notices.selected = None;
     }
     // updateSelected: the first notice is read when nothing is chosen, not

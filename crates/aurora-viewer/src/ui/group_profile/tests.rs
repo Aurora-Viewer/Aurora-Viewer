@@ -736,6 +736,33 @@ fn a_notice_just_sent_is_not_asked_for_and_reads_as_sent() {
     );
 }
 
+/// A notice being read stays chosen while the list comes back a packet at
+/// a time (a Refresh): updateSelected re-selects it once the list is in.
+#[test]
+fn a_chosen_notice_survives_a_list_arriving_in_packets() {
+    let mut world = world(true, MEMBER);
+    let mut st = opened(&mut world);
+    pump(&mut world);
+    let list = world.group_data.get(&DEMO_GROUP1).and_then(|d| d.notices.clone()).expect("notices");
+    let (newest, older) = (list[0].clone(), list[2].id);
+    world.group_data.open_notice(DEMO_GROUP1, older);
+    pump(&mut world);
+    st.tab = Tab::Notices;
+    st.notices.selected = Some(older);
+    world.group_data.request_notices(DEMO_GROUP1);
+    let _ = world.group_data.take_commands();
+    world.apply(NetEvent::GroupNotices {
+        group: DEMO_GROUP1,
+        notices: vec![newest],
+    });
+    let (_, actions) = texts(&mut st, &world, false);
+    assert_eq!(st.notices.selected, Some(older));
+    assert!(
+        !actions.iter().any(|a| matches!(a, GroupAction::OpenNotice { .. })),
+        "nothing else is read"
+    );
+}
+
 #[test]
 fn ejects_bans_and_role_ticks_follow_firestorm() {
     use super::admin_members::{self, Me};

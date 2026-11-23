@@ -17725,7 +17725,6 @@ impl App {
         }
     }
 
-    /// What the group profile window asked (LLGroupActions).
     /// `AURORA_DEMO_GROUP_PROFILE=<scenario>:sent`: Send, then a click on
     /// the row it adds (#4325).
     fn demo_sent_notice(&mut self, subject: String, message: String) {
@@ -17753,6 +17752,7 @@ impl App {
         }
     }
 
+    /// What the group profile window asked (LLGroupActions).
     fn apply_group_actions(&mut self, ctx: &egui::Context, actions: Vec<ui::group_profile::GroupAction>) {
         use ui::group_profile::GroupAction;
         let mut search = Vec::new();
