@@ -7292,7 +7292,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   an answer once, as after an HTTP 500: press Import and confirm. The failed
   row shows its error and is no longer ticked, the rows behind it are
   cancelled, and the price and Import follow the rows that are left: after
-  "Resume remaining files", and for a file added afterwards. "Restore
+  "Resume remaining files", and for a file added afterwards. "Resume this
   draft" on the failed row ticks it again.
   `mesh-physics` shows the physics shape and its edges; `mesh-degenerate`
   injects a triangle defect, which must appear in the preview and block
