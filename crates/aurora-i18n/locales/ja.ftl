@@ -13882,6 +13882,7 @@ poser-face = 顔
 poser-hands = 手
 poser-misc = その他のボーン
 poser-search = ボーンを検索…
+poser-face-position-drag = ドラッグすると 1 ピクセルにつき 0.1 mm ずつ関節が移動します。クリックすると位置を入力できます。
 poser-position = ローカルの位置（ｍ）
 poser-rotation = ローカルの回転角（度）
 poser-markers = ジョイントのマーカーとギズモを表示

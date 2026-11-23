@@ -726,7 +726,7 @@ impl Editor {
                     .get(&self.poser.subject)
                     .filter(|_| self.poser.transform == 1)
                     .map(|s| s.base.matrices(rig, frame.model)[bone].w_axis.truncate());
-                if self.axis_sliders(ui, p, &mut value, base_point) {
+                if self.axis_sliders(ui, p, &mut value, base_point, &rig.canonical_names[bone]) {
                     self.apply_joint_value(rig, frame, bone, value);
                 }
             });

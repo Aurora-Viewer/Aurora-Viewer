@@ -82,6 +82,35 @@ pub(super) fn projector(point: Vec3) -> Projector {
     }
 }
 #[test]
+fn poser_face_position_press_keeps_the_value_and_drag_moves_in_tenths_of_a_millimetre() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let mut editor = Editor::default();
+    editor.poser.transform = 1;
+    let p = crate::theme::Theme::default().palette();
+    for (delta, initial) in [(false, 1.637), (true, -0.016)] {
+        editor.poser.delta = delta;
+        let mut frames = Frames::new();
+        let mut value = Vec3::splat(initial);
+        let draw = |ui: &mut egui::Ui, value: &mut Vec3| {
+            ui.set_width(320.0);
+            editor.axis_sliders(ui, &p, value, Some(Vec3::splat(1.63)), "mFaceLipCornerLeft");
+        };
+        let rows = frames.run(Vec::new(), |ui| draw(ui, &mut value));
+        let at = painted(&rows, "X").rect.right_center() + egui::vec2(60.0, 0.0);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos, pressed, button: egui::PointerButton::Primary, modifiers: egui::Modifiers::NONE,
+        };
+        frames.run(vec![egui::Event::PointerMoved(at), button(at, true)], |ui| draw(ui, &mut value));
+        assert_eq!(value, Vec3::splat(initial), "pressing away from the center leaves the pose alone");
+        let end = at + egui::vec2(20.0, 0.0);
+        frames.run(vec![egui::Event::PointerMoved(end)], |ui| draw(ui, &mut value));
+        frames.run(vec![button(end, false)], |ui| draw(ui, &mut value));
+        assert!((value.x - initial - 0.002).abs() < 0.00011, "{value:?}");
+        assert_eq!((value.y, value.z), (initial, initial));
+    }
+}
+
+#[test]
 fn poser_tabs_replace_visible_joints_and_selection_without_editing_the_pose() {
     use crate::ui::widgets::elide_tests::{Frames, painted};
     let (world, mut editor) = selected_fixture();

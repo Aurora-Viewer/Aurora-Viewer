@@ -160,11 +160,12 @@ impl Editor {
     /// window's joint row; a right click puts an axis back. True when one
     /// changed: `apply_joint_value` then sets it. `base_point` is the joint's
     /// starting place, for Position.
-    pub(super) fn axis_sliders(&self, ui: &mut egui::Ui, p: &Palette, value: &mut Vec3, base_point: Option<Vec3>) -> bool {
+    pub(super) fn axis_sliders(&self, ui: &mut egui::Ui, p: &Palette, value: &mut Vec3, base_point: Option<Vec3>, bone_name: &str) -> bool {
         let mut edited = false;
         // below the last decimal shown: 0, never -0
         let zero = if self.poser.transform == 0 { 0.005 } else { 0.00005 };
         let unit = ["°", " m", " ×"][self.poser.transform.min(2)];
+        let fine_position = self.poser.transform == 1 && visibility::Group::of(bone_name) == visibility::Group::Face;
         for axis in 0..3 {
             ui.horizontal(|ui| {
                 ui.label(
@@ -183,17 +184,34 @@ impl Editor {
                 ui.spacing_mut().slider_width = (ui.available_width() - 84.0).max(60.0);
                 // Display precision must not round the captured pose on idle
                 // frames or add another undo step when a gizmo drag ends.
-                let response = ui.add(
-                    egui::Slider::new(&mut value[axis], range)
-                        .clamping(egui::SliderClamping::Edits)
-                        .step_by(if self.poser.transform == 0 { 0.01 } else { 0.001 })
-                        .suffix(unit)
-                        .max_decimals(if self.poser.transform == 0 { 2 } else { 4 })
-                        // a tiny negative reads 0, never -0
-                        .custom_formatter(move |v, range| {
-                            egui::emath::format_with_decimals_in_range(if v.abs() < zero { 0.0 } else { v }, range)
-                        }),
-                );
+                let response = if fine_position {
+                    // An absolute track moves the lip as soon as it is pressed.
+                    // A relative field starts at the displayed position (or delta)
+                    // and moves a tenth of a millimetre per logical pixel.
+                    let center = if self.poser.delta { 0.0 } else { base_point.unwrap_or_default()[axis] };
+                    ui.add(
+                        egui::DragValue::new(&mut value[axis])
+                            .min_size(egui::vec2(ui.available_width(), ui.spacing().interact_size.y))
+                            .speed(0.0001)
+                            .range(center - 5.0..=center + 5.0)
+                            .clamp_existing_to_range(false)
+                            .fixed_decimals(4)
+                            .suffix(unit),
+                    )
+                    .on_hover_text(aurora_i18n::tr!("poser-face-position-drag"))
+                } else {
+                    ui.add(
+                        egui::Slider::new(&mut value[axis], range)
+                            .clamping(egui::SliderClamping::Edits)
+                            .step_by(if self.poser.transform == 0 { 0.01 } else { 0.001 })
+                            .suffix(unit)
+                            .max_decimals(if self.poser.transform == 0 { 2 } else { 4 })
+                            // a tiny negative reads 0, never -0
+                            .custom_formatter(move |v, range| {
+                                egui::emath::format_with_decimals_in_range(if v.abs() < zero { 0.0 } else { v }, range)
+                            }),
+                    )
+                };
                 edited |= response.changed();
                 if response.secondary_clicked() {
                     value[axis] = match self.poser.transform {
@@ -508,7 +526,7 @@ impl Editor {
             });
             ui.vertical(|ui| {
                 ui.add_space(TRACKBALL / 2.0 - 60.0);
-                edited |= self.axis_sliders(ui, p, &mut value, base_point);
+                edited |= self.axis_sliders(ui, p, &mut value, base_point, name);
                 ui.add_space(4.0);
                 // beside the trackball the column is narrow: the French and a
                 // larger font take two lines
