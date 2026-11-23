@@ -2682,23 +2682,19 @@ LUT_3D_SIZE {n}
         self.panels.snapshot && (self.snapshots.ui.full_frame || self.viewfinder_on())
     }
 
-    /// Ctrl+Shift+S (Action::PhotoWindow). Port of the "Take Snapshot" menu
-    /// item, `Floater.Show` "snapshot" (menu_viewer.xml), and of
-    /// LLFloaterSnapshot::onOpen (indra/newview/llfloatersnapshot.cpp): the
-    /// key opens the photo window, or brings an open one forward with a
-    /// fresh preview, and never closes it (#4625); the viewfinder is the
-    /// exception ([`photo_shortcut`]). The toolbar button and the menus stay
-    /// toggles, as the Legacy Viewer's toolbar command is.
+    /// Ctrl+Shift+S (Action::PhotoWindow) and the menu's Photo. Port of the
+    /// "Take Snapshot" menu item, `Floater.Show` "snapshot" (menu_viewer.xml),
+    /// and of LLFloaterSnapshot::onOpen (indra/newview/llfloatersnapshot.cpp):
+    /// opens the photo window, or brings an open one forward with a fresh
+    /// preview, and never closes it (#4625); the viewfinder is the exception
+    /// ([`photo_shortcut`]). The toolbar button stays a toggle
+    /// ([`Self::photo_window_toggle`]).
     pub(super) fn photo_window_shortcut(&mut self) {
         let style = self.photo_style();
         match photo_shortcut(self.panels.snapshot, style) {
             PhotoShortcut::Leave => self.panels.snapshot = false,
             PhotoShortcut::Show => {
-                let id = if style == crate::settings::PhotoWindowStyle::Legacy {
-                    crate::ui::snapshot::CLASSIC_WINDOW
-                } else {
-                    crate::ui::snapshot::WINDOW
-                };
+                let id = photo_window_id(style);
                 if self.panels.snapshot {
                     crate::ui::widgets::bring_floater_front(&self.egui_ctx, id);
                 } else {
@@ -2708,6 +2704,14 @@ LUT_3D_SIZE {n}
                 self.snapshots.preview_wanted = true;
             }
         }
+    }
+
+    /// The toolbar's Photo button (the snapshot command, `Floater.Toggle`,
+    /// commands.xml): the window of the chosen style, a minimized one
+    /// expanded.
+    pub(super) fn photo_window_toggle(&mut self) {
+        let id = photo_window_id(self.photo_style());
+        crate::ui::widgets::toggle_floater(&self.egui_ctx, id, &mut self.panels.snapshot);
     }
 
     /// Escape leaves the full-frame view, then brings the free camera back,
@@ -3566,6 +3570,15 @@ fn photo_shortcut(open: bool, style: crate::settings::PhotoWindowStyle) -> Photo
     }
 }
 
+/// The floater of a photo window style: the Legacy one has its own.
+fn photo_window_id(style: crate::settings::PhotoWindowStyle) -> &'static str {
+    if style == crate::settings::PhotoWindowStyle::Legacy {
+        crate::ui::snapshot::CLASSIC_WINDOW
+    } else {
+        crate::ui::snapshot::WINDOW
+    }
+}
+
 /// A picture shared with another reader (the photo window's panorama),
 /// handed to the texture encoder without a copy.
 struct SharedRgba(std::sync::Arc<Vec<u8>>);
@@ -3591,5 +3604,14 @@ mod tests {
         assert_eq!(photo_shortcut(true, PhotoWindowStyle::Legacy), PhotoShortcut::Show);
         assert_eq!(photo_shortcut(true, PhotoWindowStyle::Panel), PhotoShortcut::Show);
         assert_eq!(photo_shortcut(true, PhotoWindowStyle::Aurora), PhotoShortcut::Leave);
+    }
+
+    /// The Legacy style's window is its own floater: the toolbar and the
+    /// shortcut expand that one when it is minimized.
+    #[test]
+    fn photo_window_id_follows_the_style() {
+        assert_eq!(photo_window_id(PhotoWindowStyle::Legacy), crate::ui::snapshot::CLASSIC_WINDOW);
+        assert_eq!(photo_window_id(PhotoWindowStyle::Panel), crate::ui::snapshot::WINDOW);
+        assert_eq!(photo_window_id(PhotoWindowStyle::Aurora), crate::ui::snapshot::WINDOW);
     }
 }

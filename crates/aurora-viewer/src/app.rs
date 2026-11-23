@@ -16741,6 +16741,8 @@ impl App {
             BarAction::TeleportHistory => self.toggle_teleport_history(),
             BarAction::CreateLandmark => self.open_create_landmark(None),
             BarAction::PhotoToDisk => self.photo_to_disk(),
+            BarAction::PhotoWindow => self.photo_window_shortcut(),
+            BarAction::PhotoToggle => self.photo_window_toggle(),
             BarAction::PhotoRoll => self.photo_reel_show_newest(),
             BarAction::Photo360 => {
                 if self.pano_open() {
