@@ -1492,7 +1492,8 @@ mod tests {
             };
             let stopped = || {
                 let mut src = ParticleSource::new(data, 5);
-                src.update(0.06, &ctx, &mut usize::MAX);
+                let mut budget = usize::MAX;
+                src.update(0.06, &ctx, &mut budget);
                 src.stop();
                 src
             };
