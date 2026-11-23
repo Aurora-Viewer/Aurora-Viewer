@@ -144,10 +144,11 @@ impl BuildTool {
         let prims = self.sel_prims(world);
         !prims.is_empty()
             && prims.iter().all(|&i| {
-                world
-                    .objects
-                    .get(i)
-                    .is_some_and(|o| o.update_flags & FLAGS_OBJECT_MOVE != 0 && (!self.selection_linked || self.can_modify(world, i)))
+                world.objects.get(i).is_some_and(|o| {
+                    !super::worn_by_other(world, i)
+                        && o.update_flags & FLAGS_OBJECT_MOVE != 0
+                        && (!self.selection_linked || self.can_modify(world, i))
+                })
             })
     }
 

@@ -173,12 +173,17 @@ impl DemoSim {
                 .and_then(|i| world.objects.get(i))
                 .map(|o| o.key.local_id);
             let (touch_name, sit_name) = local_id.and_then(crate::demo::object_menu::texts).unwrap_or_default();
+            // an attachment belongs to its wearer, as on a grid
             let owner_id = world
                 .objects
                 .index_of_uuid(&id)
                 .and_then(|i| world.objects.get(i))
-                .map(|o| o.owner_id)
-                .filter(|owner| !owner.is_nil())
+                .and_then(|o| {
+                    Some(o.owner_id).filter(|owner| !owner.is_nil()).or_else(|| {
+                        let parent = world.objects.get(world.objects.parent_of(o)?)?;
+                        parent.is_avatar().then_some(parent.full_id)
+                    })
+                })
                 .unwrap_or(crate::demo::DEMO_AGENT);
             // the lamp of AURORA_DEMO_OBJECT_EXPORT: mostly our own work
             let creator_id = local_id.and_then(crate::demo::object_export::creator).unwrap_or(DEMO_CREATOR);

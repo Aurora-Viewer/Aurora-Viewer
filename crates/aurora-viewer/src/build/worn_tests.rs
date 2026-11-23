@@ -26,7 +26,7 @@ fn worn(world: &World) -> (usize, usize) {
 }
 
 #[test]
-fn what_we_wear_is_selectable_as_an_attachment_and_other_avatars_things_are_not() {
+fn what_we_wear_is_selectable_as_an_attachment_and_so_are_other_avatars_things_but_not_changeable() {
     let world = world();
     let (root, child) = worn(&world);
     assert_eq!(select_type(&world, root), SelectType::Attachment);
@@ -34,10 +34,32 @@ fn what_we_wear_is_selectable_as_an_attachment_and_other_avatars_things_are_not(
     assert!(selectable(&world, root) && selectable(&world, child));
     // a click on a linked prim takes the whole worn object
     assert_eq!(BuildTool::unit_of(&world, child, false), Some(world.objects.get(root).unwrap().key));
-    // Violet Wolf's hat: an attachment too, but not ours to edit
+    // Violet Wolf's hat: an attachment too; it can be selected and looked at
+    // (LLSelectMgr::canSelectObject), but never moved or modified
     let hat = local(&world, 9100);
     assert_eq!(select_type(&world, hat), SelectType::Attachment);
-    assert!(!selectable(&world, hat));
+    assert!(selectable(&world, hat));
+    assert!(worn_by_other(&world, hat));
+    assert!(!worn_by_other(&world, root) && !worn_by_other(&world, child));
+}
+
+#[test]
+fn another_avatars_attachment_stays_locked_whatever_rights_the_simulator_reports() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let mut world = world();
+    let hat = local(&world, 9100);
+    world.objects.get_mut(hat).unwrap().update_flags |= OBJECT_MODIFY | OBJECT_MOVE;
+    let tool = BuildTool::default();
+    assert!(!tool.can_modify(&world, hat));
+    for mode in [EditMode::Move, EditMode::Stretch] {
+        assert!(!can_transform(&world, hat, false, mode));
+        assert!(!can_transform(&world, hat, true, mode));
+    }
+    // our own worn object is unchanged by the rule
+    let (root, _) = worn(&world);
+    world.objects.get_mut(root).unwrap().update_flags |= OBJECT_MODIFY | OBJECT_MOVE;
+    assert!(tool.can_modify(&world, root));
+    assert!(can_transform(&world, root, false, EditMode::Move));
 }
 
 #[test]

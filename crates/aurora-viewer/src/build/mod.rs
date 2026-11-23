@@ -555,7 +555,7 @@ pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) ->
     }
     // LLSelectMgr::selectGetEditMoveLinksetPermissions: the seat the agent is
     // held on under @unsit or @sittp neither moves nor changes.
-    if world.rlva_restrained_seat(idx) {
+    if world.rlva_restrained_seat(idx) || worn_by_other(world, idx) {
         return false;
     }
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
@@ -1332,8 +1332,9 @@ pub fn rlva_selectable(world: &World, idx: usize) -> bool {
     world.rlva_can_edit(idx) && (!world.rlva.has("interact") || world.hud_root(idx).is_some())
 }
 
-/// World objects and what our avatar wears, HUDs included; the attachments
-/// of other avatars cannot be edited.
+/// World objects and what avatars wear, our HUDs included. The attachments of
+/// other avatars can be selected to be looked at, never changed
+/// ([`worn_by_other`]).
 pub fn selectable(world: &World, idx: usize) -> bool {
     world.rlva_within_fartouch(idx) && selectable_within(world, idx)
 }
@@ -1363,8 +1364,24 @@ pub fn rlva_keeps_menu_selection(world: &World, idx: usize) -> bool {
     !world.rlva.has("interact") || world.hud_root(idx).is_some()
 }
 
+/// `idx` hangs from an avatar that is not ours. LLSelectionNode::allowOperationOnNode
+/// (indra/newview/llselectmgr.cpp): "only owners can move or modify their
+/// attachments, no proxy allowed", whatever rights the simulator reports
+/// (a friend's modify right, a group, a god level).
+pub fn worn_by_other(world: &World, mut idx: usize) -> bool {
+    for _ in 0..64 {
+        let Some(o) = world.objects.get(idx) else { return false };
+        let Some(parent) = world.objects.parent_of(o) else { return false };
+        if let Some(p) = world.objects.get(parent).filter(|p| p.is_avatar()) {
+            return p.full_id != world.agent_id;
+        }
+        idx = parent;
+    }
+    false
+}
+
 /// An object of a kind that can be selected: a prim or a tree, in the world
-/// or worn by our avatar.
+/// or worn by an avatar.
 fn selectable_kind(world: &World, idx: usize) -> bool {
     let mut i = idx;
     for _ in 0..64 {
@@ -1385,7 +1402,12 @@ fn selectable_kind(world: &World, idx: usize) -> bool {
                 if let Some(parent) = world.objects.get(p)
                     && parent.is_avatar()
                 {
-                    return parent.full_id == world.agent_id;
+                    // Another avatar's attachment is selectable too
+                    // (LLSelectMgr::canSelectObject only refuses avatars); what
+                    // may be changed is `worn_by_other`'s to refuse. Its HUDs
+                    // are never ours to pick (cursorIntersect with a HUD pick
+                    // only takes our own).
+                    return parent.full_id == world.agent_id || !(31..=38).contains(&o.attachment_point());
                 }
                 i = p;
             }
