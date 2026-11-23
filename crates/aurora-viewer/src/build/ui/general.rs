@@ -348,9 +348,10 @@ pub(crate) fn property_dialogs(ctx: &egui::Context, p: &Palette, tool: &mut Buil
 
 fn name_description_fields(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &World, props: &[ObjectProps], modify: bool) {
     let legacy = super::legacy::active(ui);
-    for (field, title, limit, description) in [
-        ("name", aurora_i18n::tr!("common-name-2"), 63, false),
-        ("desc", aurora_i18n::tr!("common-description"), 127, true),
+    use super::name_focus::Which;
+    for (field, which, title, limit, description) in [
+        ("name", Which::Name, aurora_i18n::tr!("common-name-2"), 63, false),
+        ("desc", Which::Desc, aurora_i18n::tr!("common-description"), 127, true),
     ] {
         let current = if props.len() == 1 {
             if description {
@@ -370,9 +371,10 @@ fn name_description_fields(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
             };
             let width = ui.available_width();
             // Read only without the modify right, still selectable.
-            // Stable id: an empty click focuses this row (name_focus,
+            // Stable id, scoped to this window (Object > Profile draws
+            // General too): an empty click focuses this row (name_focus,
             // LLLineEditor::setFocus when select_on_focus is set).
-            let field_id = super::name_focus::field_id(field);
+            let field_id = super::name_focus::field_id(ui, which);
             let r =
                 crate::ui::widgets::restricted_text_field(ui, modify, &mut v, crate::ui::widgets::TextPolicy::PrintableNoPipe, |b, _| {
                     egui::TextEdit::singleline(b)
@@ -381,7 +383,7 @@ fn name_description_fields(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool,
                         .char_limit(limit)
                         .hint_text(hint)
                 });
-            super::name_focus::remember_value(ui.ctx(), field, &v);
+            super::name_focus::shown(ui, which, &r, modify, &v);
             if description {
                 r.clone().on_hover_text(aurora_i18n::tr!("build-ui-general-127-bytes-maximum"));
             } else {
