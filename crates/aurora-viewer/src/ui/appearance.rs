@@ -2372,9 +2372,38 @@ pub fn demo_showcase(inv: &mut crate::world::inventory::Inventory, st: &mut Appe
     st.outfit_selection.single(Uuid::from_u128(703));
 }
 
+/// `AURORA_DEMO_APPEARANCE_SIZE=<width>,<height>`: the Appearance window's
+/// size for the run, in points, the showcase's widening skipped (#4633: a
+/// height where the preview just overflows).
+pub fn demo_size(ctx: &egui::Context) {
+    let Ok(value) = std::env::var("AURORA_DEMO_APPEARANCE_SIZE") else {
+        return;
+    };
+    let Some(size) = parse_demo_size(&value) else {
+        log::warn!("AURORA_DEMO_APPEARANCE_SIZE: expected <width>,<height>, got {value:?}");
+        return;
+    };
+    widgets::size_floater(ctx, "appearance", size);
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::unique("appearance_showcase_widened"), true));
+}
+
+fn parse_demo_size(value: &str) -> Option<Vec2> {
+    let (width, height) = value.split_once(',')?;
+    let size = Vec2::new(width.trim().parse().ok()?, height.trim().parse().ok()?);
+    (size.x.is_finite() && size.y.is_finite() && size.x > 0.0 && size.y > 0.0).then_some(size)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_demo_size_reads_width_and_height() {
+        assert_eq!(parse_demo_size("1080, 1134"), Some(Vec2::new(1080.0, 1134.0)));
+        for bad in ["1080", "a,b", "0,500", "1080,-1", "inf,500"] {
+            assert_eq!(parse_demo_size(bad), None, "{bad}");
+        }
+    }
 
     /// RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
     /// (indra/newview/rlvhandler.cpp): when the restriction starts, the list

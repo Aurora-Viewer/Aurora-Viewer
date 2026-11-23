@@ -222,9 +222,9 @@ pub(crate) fn take_reset(ctx: &egui::Context, id: Id) -> bool {
     windows(ctx, |w| w.resets > 0 && w.reset_done.insert(id.value()))
 }
 
-/// What `take_reset` will answer for the window `id`, left for it to take:
-/// a window outside the viewer's comes back inside before it takes its
-/// default place.
+/// `take_reset` would answer true for `id`, without taking it: a window
+/// outside the viewer's comes back inside before it takes its default
+/// place.
 pub(crate) fn reset_pending(ctx: &egui::Context, id: Id) -> bool {
     windows(ctx, |w| w.resets > 0 && !w.reset_done.contains(&id.value()))
 }

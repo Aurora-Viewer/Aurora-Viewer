@@ -668,6 +668,9 @@ pub struct App {
     /// world focuses the camera, as with Alt (LLToolCamera).
     controls_ui: ui::controls::ControlsUi,
     controls_held: Vec<Action>,
+    /// AURORA_DEMO_CONTROLS=compact… and movement-compact: the compact forms
+    /// of the run, never saved; `None` until the window is drawn
+    demo_compact: Option<controls::DemoCompact>,
     /// Its free camera joysticks this frame: move, look.
     controls_free: (egui::Vec2, egui::Vec2),
     object_view: bool,
@@ -2072,6 +2075,7 @@ impl App {
             always_run: false,
             controls_ui: Default::default(),
             controls_held: Vec::new(),
+            demo_compact: None,
             controls_free: (egui::Vec2::ZERO, egui::Vec2::ZERO),
             object_view: false,
             double_click: Default::default(),
@@ -3694,6 +3698,8 @@ impl App {
         if !self.demo {
             self.settings.release_hover_account();
         }
+        // a parcel's saved preset goes with the session
+        self.panels.time_of_day = self.settings.time_of_day;
         self.hover_height_ui = Default::default();
         // the marks go with the session's World; their window too
         self.avatar_mark_ui = None;
@@ -4537,6 +4543,16 @@ impl App {
                     Default::default()
                 } else {
                     crate::world::favorites::Favorites::load(crate::settings::account_dir(&l.agent_id).join(crate::world::favorites::FILE))
+                };
+                // the environments saved for parcels, on the grid of the
+                // login; the demo keeps them in memory
+                self.world.parcel_env.saves = if self.demo {
+                    Default::default()
+                } else {
+                    let grid = crate::world::chat_log::grid_name(&self.settings.grid, &self.settings.custom_login_uri, false);
+                    crate::world::parcel_env::Saves::load(
+                        crate::settings::account_dir(&l.agent_id).join(crate::world::parcel_env::file_name(&grid)),
+                    )
                 };
                 // the saved smart searches of the inventory; the demo keeps
                 // them in memory
@@ -9746,7 +9762,7 @@ impl App {
         let Some(path) = self.local_env_path() else {
             return;
         };
-        match self.world.eep.saved_local().filter(|_| self.settings.env_persist) {
+        match self.world.eep.saved_session().filter(|_| self.settings.env_persist) {
             Some(data) => {
                 if let Some(dir) = path.parent() {
                     let _ = std::fs::create_dir_all(dir);
@@ -10495,6 +10511,12 @@ impl App {
         if self.demo && std::env::var("AURORA_DEMO_PARCEL_VISIBILITY").is_ok_and(|mode| mode == "crossings") {
             crate::demo::parcel_visibility::check_crossings(&self.world, self.frame_count);
         }
+        if self.demo
+            && let Some(mode) = crate::demo::parcel_env::mode()
+        {
+            crate::demo::parcel_env::frame(&mut self.world, &mut self.panels.time_of_day, &mode, self.frame_count);
+            crate::demo::parcel_visibility::update_agent_parcel(&mut self.world, "", self.frame_count);
+        }
         for c in self.world.land.take_commands() {
             self.send(c);
         }
@@ -11222,6 +11244,7 @@ impl App {
             if self.env_scan && self.env_ui.scan_left != 0 {
                 self.env_ui.scan_left = crate::world::env_select::scan_step(&mut self.world.inventory);
             }
+            self.parcel_environment_frame();
             self.save_local_environment();
             for id in self.world.eep.take_failed() {
                 // FailedToFindSettings
@@ -13025,6 +13048,7 @@ impl App {
                 ..self.weather_now.rain_look(&self.weather_wind)
             },
             hide_sky: self.settings.debug.hidden_types.sky,
+            hide_water: self.settings.debug.hidden_types.water,
             curvature: self.settings.planet_radius(),
             look: None,
             look_thumbs: None,
@@ -13781,7 +13805,10 @@ impl App {
             crate::link_preview::configure_sites(&self.settings.link_previews.picture_sites, crate::demo::picture_sites());
             sync_auto_render_scale(&mut self.settings, gfx.window.scale_factor());
             gfx.renderer.apply_settings(self.photo_render_settings());
-            self.panels.time_of_day = self.settings.time_of_day;
+            // (a parcel's saved preset is not in the settings: it stays shown)
+            if !self.world.eep.parcel_held() {
+                self.panels.time_of_day = self.settings.time_of_day;
+            }
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
             self.disk_cache.set_limit_mb(self.settings.cache_size_mb);
             self.net.set_bandwidth(bandwidth_kbps(&self.settings));
@@ -18043,6 +18070,7 @@ impl App {
         self.options_ui.friends_only = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only());
         self.options_ui.friends_only_keep = (!self.world.agent_id.is_nil()).then_some(self.world.friends_only.keep_after_teleport);
         let time_of_day = self.settings.time_of_day;
+        self.options_ui.parcel_environments = self.world.parcel_env.saves.rows();
         if self.options_ui.anti_spam_version != self.world.anti_spam.version {
             self.options_ui.anti_spam_version = self.world.anti_spam.version;
             self.options_ui.anti_spam_blocks = self
@@ -18129,6 +18157,12 @@ impl App {
         }
         if let Some((queue, source)) = res.unblock_anti_spam {
             self.world.anti_spam.unblock(queue, source);
+        }
+        if let Some((region, local_id)) = res.forget_parcel_environment {
+            self.world.parcel_env.saves.forget(region, local_id);
+        }
+        if res.forget_all_parcel_environments {
+            self.world.parcel_env.saves.clear();
         }
         self.world.anti_spam.configure(self.settings.anti_spam);
         self.update_rlva();
@@ -21500,8 +21534,9 @@ impl App {
                 self.settings.appearance_tab = u8::try_from(self.appearance_ui.tab).unwrap_or(0);
                 self.settings.show_ao = self.panels.ao;
                 // (the photo's time of day is its own layer, never saved)
-                if self.panels.time_of_day != self.settings.time_of_day {
-                    self.settings.time_of_day = self.panels.time_of_day;
+                let time_of_day = self.world.eep.session_time_of_day(self.panels.time_of_day);
+                if time_of_day != self.settings.time_of_day {
+                    self.settings.time_of_day = time_of_day;
                 }
                 if let Some(msg) = self.world.alerts.pop_front() {
                     log::info!("alert: {msg}");
@@ -23186,6 +23221,9 @@ impl ApplicationHandler for App {
             if let Ok(mode) = std::env::var("AURORA_DEMO_PARCEL_VISIBILITY") {
                 crate::demo::parcel_visibility::install(&mut self.world, &mut self.settings, &mode);
             }
+            if crate::demo::parcel_env::mode().is_some() {
+                crate::demo::parcel_visibility::install(&mut self.world, &mut self.settings, "off");
+            }
             // AURORA_DEMO_APPLINKS: a link of each `secondlife:///app/...`
             // command, in a conversation and in the bubbles
             if crate::demo::applinks_scene() {
@@ -23709,6 +23747,7 @@ impl ApplicationHandler for App {
                         self.demo_cached_outfit_portrait();
                     }
                 }
+                ui::appearance::demo_size(&self.egui_ctx);
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {
                     crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);
@@ -23841,6 +23880,8 @@ impl ApplicationHandler for App {
                         | "recent-date"
                         | "aurora-recent-date"
                         | "worn"
+                        | "search-worn"
+                        | "aurora-search-worn"
                         | "filtered"
                         | "large"
                         | "keyboard-click-top"
@@ -23971,7 +24012,7 @@ impl ApplicationHandler for App {
                         // Aurora's window at each width, on the demo object
                         // of the right-click tests, a favourite beside it.
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
-                        if view.starts_with("aurora-worn") {
+                        if view.starts_with("aurora-worn") || view == "aurora-search-worn" {
                             self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(715));
                             self.inventory_ui.selected = None;
                             self.inventory_ui.selection.clear();
@@ -24100,6 +24141,10 @@ impl ApplicationHandler for App {
                     }
                     if view == "worn" {
                         self.inventory_ui.tab = 3;
+                    }
+                    if view.ends_with("search-worn") {
+                        // #4423: the worn tag is searched with the name
+                        self.inventory_ui.search = aurora_i18n::tr!("common-worn").to_lowercase();
                     }
                     if matches!(view.as_str(), "received-big" | "received-big-open") {
                         self.inventory_ui.tab = 1;

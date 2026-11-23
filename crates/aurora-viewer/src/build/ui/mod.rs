@@ -26,6 +26,7 @@ mod legacy;
 mod notecards;
 pub use notecards::{loaded as layout_notecard_loaded, saved as layout_notecard_saved};
 mod mesh;
+mod name_focus;
 mod object;
 pub(crate) mod particles;
 mod replace;
@@ -414,6 +415,7 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
     for ev in pressed {
         let egui::Event::Key {
             key,
+            physical_key,
             pressed: true,
             repeat,
             modifiers: m,
@@ -427,7 +429,9 @@ pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s
             shift: m.shift,
             alt: m.alt,
         };
-        if let Some(command) = Shortcut::from_key(key, mods, tool.open) {
+        // Position for 1–5; consume the logical key so AZERTY's `'` is taken.
+        let shortcut_key = keyboard::position_key(key, physical_key);
+        if let Some(command) = Shortcut::from_key(shortcut_key, mods, tool.open) {
             // The picker owns Escape in stages (pipette, then dialog).
             // Leave its event intact instead of consuming a no-op Close.
             if command == Shortcut::Close && (tool.ui.color_picker.is_open() || crate::ui::texture_picker::pipette::armed(ctx)) {
@@ -469,6 +473,12 @@ pub fn show(
         detach::park(ctx, s);
         return false;
     }
+    // Sampled before a press can surrender the field: an empty click while
+    // the window already holds the keyboard commits that field, and does
+    // not select it again.
+    name_focus::note(ctx);
+    name_focus::keep_through_release(ctx);
+    let restore_text = name_focus::pending(ctx);
     press_takes_build_field_focus(ctx);
     let before = s.clone();
     let property_lines_before = *env.property_lines;
@@ -654,6 +664,9 @@ pub fn show(
             layout::finish(ui.ctx(), p, tool, s);
         }
     });
+    if restore_text {
+        name_focus::apply(ctx);
+    }
     if !s.legacy_window {
         detach::fit_window(ctx, tool, s);
     }

@@ -140,6 +140,7 @@ impl Edit {
 struct SpinnerDrag {
     widget: egui::Id,
     value: f32,
+    changed: bool,
 }
 
 pub fn label(ui: &mut egui::Ui, p: &Palette, t: &str) -> egui::Response {
@@ -343,7 +344,17 @@ fn spinner(
     }
     let stepped = stepped && *v != before_step;
     if r.dragged() {
-        ui.data_mut(|data| data.insert_temp(draft_id, SpinnerDrag { widget: r.id, value: *v }));
+        let changed = draft.is_some_and(|d| d.changed) || *v != before;
+        ui.data_mut(|data| {
+            data.insert_temp(
+                draft_id,
+                SpinnerDrag {
+                    widget: r.id,
+                    value: *v,
+                    changed,
+                },
+            )
+        });
     }
     let mut e = Edit {
         changed: stepped,
@@ -358,7 +369,7 @@ fn spinner(
         }
     }
     if r.drag_stopped() {
-        e.changed |= draft.is_some();
+        e.changed |= draft.is_some_and(|d| d.changed);
         e.commit = true;
     }
     // LLSpinCtrl::onEditorCommit (indra/llui/llspinctrl.cpp) commits every

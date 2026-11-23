@@ -73,6 +73,41 @@ fn a_compact_view_is_kept_and_changed_outside() {
     );
 }
 
+/// An expand asked of a window outside in its compact view (its toolbar
+/// button, a tab that shows in its full form) is taken there as inside:
+/// the full view shows, and the request does not stay pending, which the
+/// Controls window reads to tell its title button from a request.
+#[test]
+fn an_expand_asked_of_a_compact_window_outside_is_taken_there() {
+    let mut frames = elide_tests::Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let name = "test outside expand";
+    let window = egui::Id::unique(name);
+    let ctx = frames.ctx.clone();
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((name, "minimized")), true));
+    crate::outside::want(&ctx, window, true);
+    crate::outside::set_native(&ctx, window, true);
+    let draw = |frames: &mut elide_tests::Frames| {
+        let mut open = true;
+        let mut compact = None;
+        frames.run(Vec::new(), |ui| {
+            Floater::new(name, "Controls", egui::pos2(10.0, 10.0), Vec2::new(300.0, 200.0))
+                .silent()
+                .fixed()
+                .auto_height()
+                .compact_when_minimized(140.0)
+                .show(ui.ctx(), &p, &mut open, |ui| compact = Some(floater_minimized(ui.ctx(), name)));
+        });
+        compact
+    };
+    assert_eq!(draw(&mut frames), Some(true));
+    expand_floater(&ctx, name);
+    assert!(floater_expand_pending(&ctx, name));
+    assert_eq!(draw(&mut frames), Some(false));
+    assert!(!floater_expand_pending(&ctx, name));
+    assert!(!floater_minimized(&ctx, name));
+}
+
 /// Hiding the interface (mouselook, immersive mode, "Hide the interface")
 /// leaves a window outside up: it covers nothing of the world. Brought
 /// back inside meanwhile, it is hidden with the others and comes back with
