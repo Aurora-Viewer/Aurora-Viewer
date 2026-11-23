@@ -548,10 +548,16 @@ fn the_demo_order_is_shown_for_the_launch_and_never_saved() {
     }
     let y_of = |label: &'static str| {
         let head = aurora_i18n::text(label).to_uppercase();
-        texts.iter().find(|(_, t)| *t == head).map(|(pos, _)| pos.y).expect("section")
+        texts
+            .iter()
+            .find(|(_, t)| *t == head)
+            .map(|(pos, _)| pos.y)
+            .unwrap_or_else(|| panic!("{head} in {:?}", texts.iter().map(|t| &t.1).collect::<Vec<_>>()))
     };
-    assert!(y_of("common-groups") < y_of("common-places"));
-    assert!(y_of("common-places") < y_of("common-people"));
+    assert!(y_of("common-groups") < y_of("common-places"), "All's sections");
+    let x_of = |label: &str| texts.iter().find(|(_, t)| t == label).map(|(pos, _)| pos.x).expect("chip");
+    let chips = ["common-groups", "common-places", "common-people", "search-tab-events"].map(|k| x_of(aurora_i18n::text(k)));
+    assert!(chips.is_sorted(), "the chips: named first, then the default order");
     assert!(w.settings.aurora_order.is_empty(), "the saved order is untouched");
     assert!(actions.iter().all(|a| !matches!(a, SearchAction::SettingsChanged)));
 }
