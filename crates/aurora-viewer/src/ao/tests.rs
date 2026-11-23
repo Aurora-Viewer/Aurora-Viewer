@@ -807,6 +807,106 @@ fn a_renamed_ao_root_keeps_the_set() {
     }
 }
 
+/// Folders queued by a mutation, as (parent, name).
+fn queued_folders(change: &aurora_net::inventory::operations::Mutation) -> Vec<(Uuid, String)> {
+    change
+        .operations
+        .iter()
+        .filter_map(|op| match op {
+            aurora_net::inventory::operations::Operation::Folder { parent, name, .. } => Some((*parent, name.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn creating_a_set_while_the_brand_is_renamed_queues_no_second_brand() {
+    // With the AO root loaded.
+    let mut inv = Inventory::default();
+    let (brand, set) = ao_tree(&mut inv, inventory::Source::Native);
+    let mut catalog = inventory::Catalog::default();
+    catalog.refresh(&mut inv);
+    let ao = catalog.root.expect("ao root");
+    rename_server(&mut inv, brand, "#Aurora (Unavailable)");
+    catalog.refresh(&mut inv);
+    let mut night = catalog.selected(set).expect("set").clone();
+    night.name = "Night".into();
+    let (change, _) = inventory::create(&inv, &catalog, &night).expect("create");
+    let queued = queued_folders(&change);
+    assert!(!queued.iter().any(|(_, name)| name == "#Aurora"), "{queued:?}");
+    assert!(queued.contains(&(ao, "Night".into())), "{queued:?}");
+
+    // With the brand alone: the AO root goes into the renamed brand.
+    let mut inv = Inventory::default();
+    let root = Uuid::from_u128(0xb0_0000_0000_0001);
+    let brand = Uuid::from_u128(0xb0_0000_0000_0002);
+    inv.root = root;
+    fetched_folder(&mut inv, Uuid::nil(), root, "Inventory");
+    fetched_folder(&mut inv, root, brand, "#Aurora");
+    let mut catalog = inventory::Catalog::default();
+    catalog.refresh(&mut inv);
+    assert_eq!(catalog.native_brand(), Some(brand));
+    rename_server(&mut inv, brand, "#Aurora (Unavailable)");
+    catalog.refresh(&mut inv);
+    assert_eq!(catalog.native_brand(), Some(brand));
+    let (change, _) = inventory::create(&inv, &catalog, &night).expect("create");
+    let queued = queued_folders(&change);
+    assert!(!queued.iter().any(|(_, name)| name == "#Aurora"), "{queued:?}");
+    assert!(queued.contains(&(brand, inventory::FOLDER.into())), "{queued:?}");
+}
+
+#[test]
+fn the_requested_ao_root_name_wins_over_a_kept_old_root() {
+    let mut inv = Inventory::default();
+    let (brand, set) = ao_tree(&mut inv, inventory::Source::Native);
+    let mut catalog = inventory::Catalog::default();
+    catalog.refresh(&mut inv);
+    let old = catalog.root.expect("ao root");
+    // A stale cache showed only `#Aurora/AO`.
+    rename_server(&mut inv, old, inventory::OLD_FOLDER);
+    catalog.refresh(&mut inv);
+    assert_eq!(catalog.root, Some(old));
+    assert_eq!(catalog.selected(set).map(|s| s.id), Some(set));
+    // The brand's next snapshot also lists `Aurora AO`: it is authoritative,
+    // and bootstrap must not rename `AO` into a second one.
+    let native = Uuid::from_u128(0xa0_0000_0000_0030);
+    fetched_folder(&mut inv, brand, native, inventory::FOLDER);
+    inv.generation += 1;
+    catalog.refresh(&mut inv);
+    assert_eq!(catalog.root, Some(native));
+    assert!(catalog.sets.is_empty());
+}
+
+#[test]
+fn an_ao_folder_deleted_elsewhere_is_not_kept() {
+    for deleted in ["ao root", "brand"] {
+        let mut inv = Inventory::default();
+        let (brand, _set) = ao_tree(&mut inv, inventory::Source::Native);
+        let mut catalog = inventory::Catalog::default();
+        catalog.refresh(&mut inv);
+        assert_eq!(catalog.sets.len(), 1);
+        // A parent snapshot without the folder replaces its children; the
+        // folder's own record stays behind with its old parent.
+        let parent = if deleted == "brand" { inv.root } else { brand };
+        let kept: Vec<_> = inv.folders[&parent]
+            .children
+            .iter()
+            .filter(|id| **id != brand && Some(**id) != catalog.root)
+            .map(|id| inv.folders[id].info.clone())
+            .collect();
+        inv.apply(vec![aurora_net::inventory::FolderContents {
+            folder_id: parent,
+            owner_id: Uuid::nil(),
+            version: 2,
+            folders: kept,
+            items: Vec::new(),
+        }]);
+        catalog.refresh(&mut inv);
+        assert!(catalog.root.is_none(), "{deleted}");
+        assert!(catalog.sets.is_empty(), "{deleted}");
+    }
+}
+
 #[test]
 fn inventory_round_trip_preserves_firestorm_options_and_originals() {
     let (mut inv, mut set) = fixture();
