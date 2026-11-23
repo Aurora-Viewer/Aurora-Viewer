@@ -10,6 +10,8 @@ mod contents_keyboard_tests;
 mod layout_tests;
 #[path = "legacy_tests.rs"]
 mod legacy_tests;
+#[path = "name_focus_tests.rs"]
+mod name_focus_tests;
 
 /// Whether a painted text is the heading of the former labelled navigation
 /// ("OBJECT"). In Japanese that heading is オブジェクト, the very word of
