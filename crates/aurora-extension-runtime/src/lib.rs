@@ -1284,6 +1284,52 @@ mod tests {
     }
 
     #[test]
+    fn persistent_manager_rejects_tampered_package_on_restore_without_rewriting_registry() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-restore-tamper-{}-{stamp}", std::process::id()));
+        let package = fixture(&manifest("*", "[\"chat.nearby.read\"]"), &copy_module());
+        let mut store = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("open store");
+        let staged = store.stage_install(&package).expect("stage package");
+        store
+            .install_with_ack(staged, &package, &[Permission::ChatNearbyRead], true, true, false)
+            .expect("install package");
+        drop(store);
+
+        let registry_path = root.join("registry.json");
+        let original_registry = std::fs::read(&registry_path).expect("read registry before tamper");
+        let archive_path = std::fs::read_dir(root.join("packages"))
+            .expect("read package directory")
+            .next()
+            .expect("installed archive")
+            .expect("package directory entry")
+            .path();
+        let mut tampered_archive = std::fs::read(&archive_path).expect("read installed archive");
+        tampered_archive[0] ^= 0xff;
+        std::fs::write(&archive_path, &tampered_archive).expect("tamper isolated archive");
+
+        let error = match PersistentExtensionManager::open(&root, Version::new(1, 0, 0)) {
+            Ok(_) => panic!("restore must reject a package whose archive hash changed"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(&error, PersistentManagerError::Storage(message) if message == "stored package hash does not match registry"),
+            "unexpected restore error: {error}"
+        );
+        assert_eq!(
+            std::fs::read(&registry_path).expect("read registry after failure"),
+            original_registry
+        );
+        assert_eq!(
+            std::fs::read(&archive_path).expect("read tampered archive after failure"),
+            tampered_archive
+        );
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
     fn persistent_update_requires_new_grants_and_survives_restart() {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
