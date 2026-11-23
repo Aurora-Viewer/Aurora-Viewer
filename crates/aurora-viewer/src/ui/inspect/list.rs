@@ -243,12 +243,15 @@ fn card(
         right -= 22.0;
         let mut on_action = false;
         // pointed at, the creator's picture gives way to the Profile button;
-        // a right click on the line moves the camera to the object
+        // a right click on the line moves the camera to the object. Both sit
+        // in the same slot, kept on every line, so that the badges stay in
+        // one column whichever line is pointed at
+        let slot = egui::pos2(right - QUICK / 2.0, rect.center().y);
+        right -= QUICK + 6.0;
         let quick = (pointed || resp.has_focus()) && !open;
         if quick {
             let enabled = row.creator.is_some();
-            let r = Rect::from_center_size(egui::pos2(right - QUICK / 2.0, rect.center().y), Vec2::splat(QUICK));
-            right -= QUICK + 6.0;
+            let r = Rect::from_center_size(slot, Vec2::splat(QUICK));
             let b = ui.interact(
                 r,
                 ui.scope_id().with(("inspect_profile", item.root)),
@@ -267,7 +270,7 @@ fn card(
                 });
             }
         } else if opts.creator == CreatorShown::Picture {
-            let pic = Rect::from_center_size(egui::pos2(right - PICTURE / 2.0, rect.center().y), Vec2::splat(PICTURE));
+            let pic = Rect::from_center_size(slot, Vec2::splat(PICTURE));
             if let Some(id) = row.creator {
                 state.wanted_pics.insert(id);
             }
@@ -276,7 +279,6 @@ fn card(
                 resp.clone()
                     .on_hover_text(aurora_i18n::tr!("inspect-made-by-tip", name = row.creator_name.as_str()));
             }
-            right -= PICTURE + 8.0;
         }
         if opts.complexity {
             right = badge(ui, p, right, rect.center().y, item.complexity, tier) - 8.0;
