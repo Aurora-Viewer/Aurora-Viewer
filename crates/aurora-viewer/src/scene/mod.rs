@@ -6458,10 +6458,14 @@ impl Scene {
         }
     }
 
-    /// Animated eyes relative to the avatar root, before its world transform.
-    /// Camera placement can then apply the hover-camera preference directly.
+    /// Animated system eyes relative to the avatar root, before its world
+    /// transform: the mouselook camera's eye point
+    /// (`anim::Controller::system_eyes_pos`, LLVOAvatar::mHeadOffset), never
+    /// the Bento eyes of a mesh head, which the look-at line follows
+    /// (`eyes_world`). Camera placement can then apply the hover-camera
+    /// preference directly.
     pub fn eyes_offset(&self, world: &World, id: &Uuid) -> Option<Vec3> {
-        Some(self.motions.get(id)?.eyes_pos()? - world.avatar_lib.pelvis)
+        Some(self.motions.get(id)?.system_eyes_pos()? - world.avatar_lib.pelvis)
     }
 
     /// The head joint as last posed, relative to the avatar root (as
@@ -7717,6 +7721,68 @@ mod tests {
             }
             previous = Some(eyes);
         }
+    }
+
+    #[test]
+    fn seated_mouselook_follows_system_eyes_raised_by_the_seat() {
+        use crate::camera::{Camera, CameraSettings, FrameInput};
+
+        // A vehicle's sit animation raises only the system eyes to its
+        // periscope; the Bento eyes stay in the head (#4606).
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for frame in [650, 700] {
+            for event in crate::camera::demo::sit_events("sit-ml-periscope", frame) {
+                if let NetEvent::ObjectUpdates { handle, .. } = &event {
+                    world.main_region = Some(*handle);
+                }
+                world.apply(event);
+            }
+        }
+        let owner = world.agent_id;
+        let mut scene = Scene::new(Default::default(), lib.clone());
+        scene.palette_base(owner);
+        let mut seat = crate::demo::seat_animation();
+        seat.ease_in = 0.0;
+        scene
+            .anims
+            .insert(crate::demo::SEAT_ANIM, Arc::new(anim::BoundAnim::bind(seat, &lib.rig)));
+        scene.anims.insert(
+            crate::demo::PERISCOPE_ANIM,
+            Arc::new(anim::BoundAnim::bind(crate::demo::periscope_animation(&lib.rig), &lib.rig)),
+        );
+        let now = Instant::now() + std::time::Duration::from_secs(1);
+        scene.update_poses(&mut world, Vec3::ZERO, now);
+        let head = scene.head_offset(&world, &owner).expect("posed head");
+        let eyes = scene.eyes_offset(&world, &owner).expect("posed system eyes");
+        assert!(
+            eyes.z - head.z > 1.4,
+            "the camera's eyes follow the raised system eyes: {eyes} / {head}"
+        );
+        // the look-at line keeps the eyes of the head (the Bento ones)
+        let look = scene.eyes_world(&world, &owner, now).expect("look-at eyes");
+        let head_world = scene.head_world(&world, &owner, now).expect("head");
+        assert!(look.distance(head_world) < 0.3, "{look} / {head_world}");
+
+        let settings = CameraSettings::default();
+        let mut camera = Camera::default();
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        let input = FrameInput {
+            dt: 1.0,
+            now,
+            steering: false,
+            build_mode: false,
+            edit_tracking: None,
+            eye_offset: Some(eyes),
+            follow_joint_offset: None,
+            head_offset: Some(head),
+            draw_distance: 128.0,
+            region_width: 256.0,
+            aspect: 1.0,
+        };
+        camera.update(&mut world, &settings, &input);
+        assert!(camera.position.z - head_world.z > 1.4, "{} / {head_world}", camera.position);
     }
 
     #[test]

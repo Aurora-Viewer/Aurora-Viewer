@@ -22215,6 +22215,10 @@ impl ApplicationHandler for App {
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::seat_animation(), &rig)),
             );
             self.scene.anims.insert(
+                crate::demo::PERISCOPE_ANIM,
+                Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::periscope_animation(&rig), &rig)),
+            );
+            self.scene.anims.insert(
                 crate::world::radar::ANIM_AGENT_TYPE,
                 Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::typing_animation(), &rig)),
             );

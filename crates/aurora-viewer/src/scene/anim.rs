@@ -943,6 +943,20 @@ fn eye_pair(eyes: Option<(Vec3, Vec3)>, alt: Option<(Vec3, Vec3)>) -> Option<(Ve
     }
 }
 
+/// The point between the system eyes (mEyeLeft / mEyeRight) whatever the
+/// Bento ones do; without eyes, mHead with the default offset. The
+/// mouselook camera's eye point: LLVOAvatar::updateHeadOffset
+/// (indra/newview/llvoavatar.cpp) reads mEyeLeftp, and
+/// LLAgentCamera::calcCameraPositionTargetGlobal (llagentcamera.cpp) puts
+/// the mouselook camera at that mHeadOffset. A vehicle's sit animation that
+/// moves only the system eyes (to a periscope, a conning tower) takes the
+/// camera with them, while the mesh head's eyes stay in the hull (#4606).
+/// Aurora takes the midpoint of both system eyes, as before, where the
+/// Legacy Viewer reads the left eye alone.
+fn system_eyes_between(eyes: Option<(Vec3, Vec3)>, head: Option<(Quat, Vec3)>) -> Option<Vec3> {
+    eyes_between(eyes, None, head)
+}
+
 /// Rotation facing `dir` with Z up (LLQuaternion(at, left, up)).
 fn facing(dir: Vec3) -> Option<Quat> {
     let left = Vec3::Z.cross(dir).normalize_or_zero();
@@ -1154,6 +1168,14 @@ impl Controller {
         let p = &self.posed;
         let pair = |l: Option<(Quat, Vec3)>, r: Option<(Quat, Vec3)>| Some((l?.1, r?.1));
         eyes_between(pair(p.eye_l, p.eye_r), pair(p.alt_l, p.alt_r), p.head)
+    }
+
+    /// Skeleton-space point between the system eyes as posed last frame
+    /// (`system_eyes_between`), for the mouselook camera.
+    pub fn system_eyes_pos(&self) -> Option<Vec3> {
+        let p = &self.posed;
+        let pair = |l: Option<(Quat, Vec3)>, r: Option<(Quat, Vec3)>| Some((l?.1, r?.1));
+        system_eyes_between(pair(p.eye_l, p.eye_r), p.head)
     }
 
     /// The live morph weights of the last frame: the expressions and hand
@@ -2693,6 +2715,27 @@ mod tests {
         let head = (Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), Vec3::new(0.0, 0.0, 1.6));
         assert!(close(eyes_between(None, None, Some(head)), Vec3::new(0.0, 0.098, 1.679)));
         assert_eq!(eyes_between(None, None, None), None);
+    }
+
+    #[test]
+    fn the_mouselook_camera_follows_the_system_eyes_not_the_bento_ones() {
+        let close = |a: Option<Vec3>, b: Vec3| a.is_some_and(|a| a.distance(b) < 1e-5);
+        // a vehicle's sit animation raised the system eyes 1.5 m to its
+        // periscope; the Bento eyes stayed in the (mesh) head (#4606)
+        let raised = (Vec3::new(0.1, 0.036, 3.2), Vec3::new(0.1, -0.036, 3.2));
+        let bento = (Vec3::new(0.1, 0.036, 1.7), Vec3::new(0.1, -0.036, 1.7));
+        // the look-at line keeps the Bento eyes, the camera the system ones
+        assert!(close(eyes_between(Some(raised), Some(bento), None), Vec3::new(0.1, 0.0, 1.7)));
+        assert!(close(system_eyes_between(Some(raised), None), Vec3::new(0.1, 0.0, 3.2)));
+        // a mesh head that moved only its Bento eyes leaves the camera at the
+        // system eyes too, as the Legacy Viewer's mEyeLeftp does
+        let moved = (Vec3::new(0.12, 0.03, 1.72), Vec3::new(0.12, -0.03, 1.72));
+        assert!(close(system_eyes_between(Some(bento), None), Vec3::new(0.1, 0.0, 1.7)));
+        assert!(close(eyes_between(Some(bento), Some(moved), None), Vec3::new(0.12, 0.0, 1.72)));
+        // no eyes: in front of the head joint
+        let head = (Quat::IDENTITY, Vec3::new(0.0, 0.0, 1.6));
+        assert!(close(system_eyes_between(None, Some(head)), Vec3::new(0.098, 0.0, 1.679)));
+        assert_eq!(system_eyes_between(None, None), None);
     }
 
     fn signal(id: Uuid, sequence: i32, start: Instant) -> PlayingAnimation {
