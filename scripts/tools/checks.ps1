@@ -41,7 +41,9 @@ function Get-CommonScript($P) {
 # The program of a search tool: in PATH, or just installed by winget (its
 # folder then reaches the PATH of the windows opened afterwards only).
 function Find-SearchTool($Tool) {
-    $cmd = Get-Command $Tool.Exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    # Debian and Ubuntu name fd's program fdfind (package fd-find)
+    $names = if ($IsLinux -and $Tool.Exe -eq 'fd') { 'fd', 'fdfind' } else { $Tool.Exe }
+    $cmd = Get-Command $names -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($cmd) { return $cmd.Source }
     if (-not $env:LOCALAPPDATA) { return }
     Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\$($Tool.Id)_*" -Recurse -Filter "$($Tool.Exe).exe" -ErrorAction SilentlyContinue |
@@ -86,8 +88,8 @@ function Get-LinuxPackages([string]$Id) {
             'Git.Git' = 'git'; 'GitHub.cli' = 'gh'; 'Mozilla.sccache' = 'sccache'
             'xdg-open' = 'xdg-utils'; 'notify-send' = 'libnotify-bin'; 'wl-copy' = 'wl-clipboard'; 'xclip' = 'xclip'
             'BuildTools' = 'build-essential', 'cmake', 'clang', 'pkg-config', 'libasound2-dev', 'libudev-dev', 'libxkbcommon-dev', 'libwayland-dev'
-            # fd-find names its program fdfind, which the check does not find; no ast-grep package
-            'BurntSushi.ripgrep.MSVC' = 'ripgrep'; 'jqlang.jq' = 'jq'
+            # fd-find installs fdfind (Find-SearchTool accepts it); no ast-grep package
+            'BurntSushi.ripgrep.MSVC' = 'ripgrep'; 'sharkdp.fd' = 'fd-find'; 'jqlang.jq' = 'jq'
         }
     }
     $manager = Get-LinuxPackageManager

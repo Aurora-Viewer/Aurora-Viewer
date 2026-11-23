@@ -123,8 +123,13 @@ $previousVersionTag = [Environment]::GetEnvironmentVariable('AURORA_VERSION_TAG'
 # The OpenXR loader built in, like the published exe (release.yml): without
 # it, VR depends on an openxr_loader.dll found on the PC, which a headset
 # software update can remove. Building it needs CMake (docs/VR_WINDOWS.md).
+# On Linux the published binary has neither (release.yml): no static loader,
+# and its debug info stripped (about 490 MB with it), as here.
 $features = @()
-if (Get-Command cmake -ErrorAction SilentlyContinue) {
+$previousStrip = $env:CARGO_PROFILE_RELEASE_STRIP
+if ($IsLinux) {
+    $env:CARGO_PROFILE_RELEASE_STRIP = 'debuginfo'
+} elseif (Get-Command cmake -ErrorAction SilentlyContinue) {
     $features = '--features', 'xr-static-loader'
 } else {
     Write-Host 'CMake not found: the OpenXR loader is not built in, VR will need an openxr_loader.dll on this PC. Install CMake (winget install Kitware.CMake) to build it in.' -ForegroundColor Yellow
@@ -139,6 +144,10 @@ try {
 } finally {
     if ($null -ne $previousVersionTag) {
         [Environment]::SetEnvironmentVariable('AURORA_VERSION_TAG', $previousVersionTag, 'Process')
+    }
+    if ($IsLinux) {
+        if ($null -eq $previousStrip) { Remove-Item -LiteralPath Env:CARGO_PROFILE_RELEASE_STRIP -ErrorAction SilentlyContinue }
+        else { $env:CARGO_PROFILE_RELEASE_STRIP = $previousStrip }
     }
     Pop-Location
 }

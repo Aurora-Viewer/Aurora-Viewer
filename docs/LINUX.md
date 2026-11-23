@@ -200,7 +200,7 @@ sudo pacman -S --needed ripgrep fd jq ast-grep
 
 On Debian and Ubuntu: `sudo apt install ripgrep fd-find jq` (`fd` is named
 `fdfind` there), and `cargo install ast-grep --locked`; Repair installs
-ripgrep and jq there.
+all but ast-grep there.
 
 ### Development environment
 
