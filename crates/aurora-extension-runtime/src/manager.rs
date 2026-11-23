@@ -526,8 +526,11 @@ impl ExtensionManager {
             ExtensionState::Enabled => {}
         }
         if let Some(permission) = event_permission(&request.event)
-            && !extension.granted.contains(&permission)
+            && !extension.granted.iter().any(|grant| grant.covers(permission))
         {
+            return Err(ManagerError::EventPermissionDenied);
+        }
+        if request.storage.is_some() && !extension.granted.contains(&Permission::ExtensionStorage) {
             return Err(ManagerError::EventPermissionDenied);
         }
         let response = match extension.guest.handle_event(request) {
@@ -538,7 +541,8 @@ impl ExtensionManager {
             }
         };
         for action in &response.actions {
-            if !extension.granted.contains(&action_permission(action)) {
+            let required = action_permission(action);
+            if !extension.granted.iter().any(|grant| grant.covers(required)) {
                 extension.state = ExtensionState::Quarantined;
                 return Err(ManagerError::CapabilityViolation);
             }
@@ -587,5 +591,6 @@ fn action_permission(action: &ExtensionAction) -> Permission {
         ExtensionAction::AnnotateChat { .. } => Permission::UiChatAnnotate,
         ExtensionAction::ShowNotification { .. } => Permission::UiNotificationShow,
         ExtensionAction::RegisterPanel { .. } => Permission::UiPanelRegister,
+        ExtensionAction::SetStorage { .. } => Permission::ExtensionStorage,
     }
 }

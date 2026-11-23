@@ -2,7 +2,9 @@ use crate::{
     ExtensionManager, ExtensionState, ExtensionSummary, ManagerError, PublisherKeyFile, StagedExtension, TrustedPublisher,
     parse_public_key_file, public_key_file,
 };
-use aurora_extension_api::Permission;
+use aurora_extension_api::{
+    API_VERSION, ExtensionAction, ExtensionEvent, ExtensionRequest, ExtensionStorageEntry, MAX_STORAGE_ENTRIES, Permission,
+};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -24,6 +26,9 @@ const MAX_TRUST_REGISTRY_BYTES: u64 = 256 * 1024;
 const MAX_TRUSTED_PUBLISHERS: usize = 256;
 const MAX_PUBLISHER_LABEL_BYTES: usize = 128;
 const TRUST_REGISTRY_FILE: &str = "trusted_publishers.json";
+const EXTENSION_STORAGE_VERSION: u32 = 1;
+const MAX_EXTENSION_STORAGE_BYTES: u64 = 8 * 1024;
+const EXTENSION_STORAGE_DIR: &str = "extension_data";
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Failure while loading or durably updating the per-user extension registry.
@@ -93,6 +98,13 @@ struct TrustRegistry {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+struct ExtensionStorageFile {
+    schema_version: u32,
+    entries: Vec<ExtensionStorageEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct TrustedPublisherEntry {
     key_id: String,
     public_key: String,
@@ -116,6 +128,8 @@ pub struct PersistentExtensionManager {
     archive_hashes: BTreeMap<String, String>,
     registry: Registry,
     trusted_publishers: Vec<TrustedPublisher>,
+    #[cfg(test)]
+    registry_save_fail_after: std::cell::Cell<Option<usize>>,
 }
 
 impl PersistentExtensionManager {
@@ -197,6 +211,8 @@ impl PersistentExtensionManager {
             archive_hashes,
             registry,
             trusted_publishers,
+            #[cfg(test)]
+            registry_save_fail_after: std::cell::Cell::new(None),
         };
         if disabled_for_missing_acknowledgement {
             store.save_registry()?;
@@ -449,10 +465,17 @@ impl PersistentExtensionManager {
             }
             Err(error) => {
                 self.registry.extensions[entry_index] = old_entry;
-                self.archive_hashes.insert(id.to_owned(), old_hash);
+                self.archive_hashes.insert(id.to_owned(), old_hash.clone());
                 if let Err(rollback_error) = self.save_registry() {
-                    let _ = self.reload_manager();
-                    return Err(rollback_error);
+                    return match self.reload_manager() {
+                        Ok(()) => {
+                            remove_if_unreferenced(&package_path(&self.root, id, &old_hash));
+                            Err(rollback_error)
+                        }
+                        Err(reload_error) => Err(storage(&format!(
+                            "update rollback failed ({rollback_error}); reopening persisted state also failed ({reload_error})"
+                        ))),
+                    };
                 }
                 self.reload_manager()?;
                 remove_if_unreferenced(&new_package_path);
@@ -558,6 +581,11 @@ impl PersistentExtensionManager {
         }
         self.manager.uninstall(id)?;
         let _ = fs::remove_file(package_path(&self.root, id, &hash));
+        match fs::remove_file(extension_storage_path(&self.root, id)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(storage_error(error)),
+        }
         Ok(())
     }
 
@@ -571,6 +599,15 @@ impl PersistentExtensionManager {
         }
         self.manager.set_safe_mode(enabled);
         Ok(())
+    }
+
+    /// Return this extension's persisted values only when its explicit storage grant is active.
+    pub fn storage_snapshot(&self, id: &str) -> Result<Option<Vec<ExtensionStorageEntry>>, PersistentManagerError> {
+        let summary = self.manager.summary(id)?;
+        if !summary.granted_permissions.contains(&Permission::ExtensionStorage) {
+            return Ok(None);
+        }
+        self.read_extension_storage(id).map(Some)
     }
 
     /// Dispatch one event and persist quarantine after a guest trap or capability violation.
@@ -589,7 +626,29 @@ impl PersistentExtensionManager {
             self.save_registry()?;
             debug_assert_eq!(state_from_summary(&summary), StoredState::Quarantined);
         }
-        result.map_err(Into::into)
+        let mut actions = result?;
+        if actions.iter().any(|action| matches!(action, ExtensionAction::SetStorage { .. })) {
+            let current = self.read_extension_storage(id)?;
+            let mut values: BTreeMap<_, _> = current.into_iter().map(|entry| (entry.key, entry.value)).collect();
+            for action in &actions {
+                if let ExtensionAction::SetStorage { key, value } = action {
+                    if let Some(value) = value {
+                        values.insert(key.clone(), value.clone());
+                    } else {
+                        values.remove(key);
+                    }
+                }
+            }
+            self.write_extension_storage(
+                id,
+                values
+                    .into_iter()
+                    .map(|(key, value)| ExtensionStorageEntry { key, value })
+                    .collect(),
+            )?;
+            actions.retain(|action| !matches!(action, ExtensionAction::SetStorage { .. }));
+        }
+        Ok(actions)
     }
 
     /// Clear quarantine after user review; the extension remains disabled.
@@ -610,6 +669,16 @@ impl PersistentExtensionManager {
     /// Whether extension execution is globally disabled.
     pub fn safe_mode(&self) -> bool {
         self.registry.safe_mode
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_registry_save_failure_after(&self, successful_saves: usize) {
+        self.registry_save_fail_after.set(Some(successful_saves));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_manager_safe_mode_for_test(&mut self, enabled: bool) {
+        self.manager.set_safe_mode(enabled);
     }
 
     /// Safe metadata for installed extensions.
@@ -634,7 +703,71 @@ impl PersistentExtensionManager {
             .ok_or_else(|| storage("extension is not in the registry"))
     }
 
+    fn read_extension_storage(&self, id: &str) -> Result<Vec<ExtensionStorageEntry>, PersistentManagerError> {
+        let path = extension_storage_path(&self.root, id);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(storage_error(error)),
+        };
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX_EXTENSION_STORAGE_BYTES {
+            return Err(storage("extension storage file is invalid or exceeds its size limit"));
+        }
+        let file: ExtensionStorageFile =
+            serde_json::from_slice(&fs::read(path).map_err(storage_error)?).map_err(|_| storage("extension storage file is malformed"))?;
+        if file.schema_version != EXTENSION_STORAGE_VERSION || file.entries.len() > MAX_STORAGE_ENTRIES {
+            return Err(storage("extension storage schema or entry count is unsupported"));
+        }
+        let request = ExtensionRequest {
+            api_version: API_VERSION,
+            request_id: 0,
+            event: ExtensionEvent::Shutdown,
+            storage: Some(file.entries.clone()),
+        };
+        request.validate().map_err(|_| storage("extension storage entries are invalid"))?;
+        Ok(file.entries)
+    }
+
+    fn write_extension_storage(&self, id: &str, entries: Vec<ExtensionStorageEntry>) -> Result<(), PersistentManagerError> {
+        let path = extension_storage_path(&self.root, id);
+        if entries.is_empty() {
+            return match fs::remove_file(path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(storage_error(error)),
+            };
+        }
+        let request = ExtensionRequest {
+            api_version: API_VERSION,
+            request_id: 0,
+            event: ExtensionEvent::Shutdown,
+            storage: Some(entries.clone()),
+        };
+        request
+            .validate()
+            .map_err(|_| storage("extension storage entries exceed their limits"))?;
+        let file = ExtensionStorageFile {
+            schema_version: EXTENSION_STORAGE_VERSION,
+            entries,
+        };
+        let mut bytes = serde_json::to_vec_pretty(&file).map_err(|_| storage("could not serialize extension storage"))?;
+        bytes.push(b'\n');
+        if bytes.len() as u64 > MAX_EXTENSION_STORAGE_BYTES {
+            return Err(storage("extension storage quota exceeded"));
+        }
+        fs::create_dir_all(self.root.join(EXTENSION_STORAGE_DIR)).map_err(storage_error)?;
+        atomic_write(&path, &bytes)
+    }
+
     fn save_registry(&self) -> Result<(), PersistentManagerError> {
+        #[cfg(test)]
+        if let Some(remaining) = self.registry_save_fail_after.get() {
+            if remaining == 0 {
+                self.registry_save_fail_after.set(None);
+                return Err(storage("injected registry save failure"));
+            }
+            self.registry_save_fail_after.set(Some(remaining - 1));
+        }
         let mut bytes = serde_json::to_vec_pretty(&self.registry).map_err(|_| storage("could not serialize registry"))?;
         bytes.push(b'\n');
         atomic_write(&self.root.join("registry.json"), &bytes)
@@ -766,6 +899,10 @@ fn package_path(root: &Path, id: &str, digest: &str) -> PathBuf {
     root.join("packages").join(format!("{id}-{digest}.ext"))
 }
 
+fn extension_storage_path(root: &Path, id: &str) -> PathBuf {
+    root.join(EXTENSION_STORAGE_DIR).join(format!("{id}.json"))
+}
+
 fn write_immutable(path: &Path, bytes: &[u8]) -> Result<(), PersistentManagerError> {
     if path.exists() {
         let existing = fs::read(path).map_err(storage_error)?;
@@ -804,4 +941,97 @@ fn storage(message: &str) -> PersistentManagerError {
 }
 fn storage_error(error: std::io::Error) -> PersistentManagerError {
     PersistentManagerError::Storage(error.to_string())
+}
+
+#[cfg(test)]
+mod extension_storage_tests {
+    use super::*;
+
+    #[test]
+    fn storage_quota_rejection_preserves_previous_values() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-storage-quota-{}-{stamp}", std::process::id()));
+        let store = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("open store");
+        let id = "dev.example.fixture";
+        let original = vec![ExtensionStorageEntry {
+            key: "saved".into(),
+            value: "keep".into(),
+        }];
+        store.write_extension_storage(id, original.clone()).expect("write initial values");
+
+        let oversized: Vec<_> = (0..9)
+            .map(|index| ExtensionStorageEntry {
+                key: format!("value-{index}"),
+                value: "x".repeat(aurora_extension_api::MAX_STORAGE_VALUE_BYTES),
+            })
+            .collect();
+        assert!(matches!(
+            store.write_extension_storage(id, oversized),
+            Err(PersistentManagerError::Storage(message)) if message == "extension storage quota exceeded"
+        ));
+        assert_eq!(store.read_extension_storage(id).expect("original values remain"), original);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn corrupt_extension_storage_is_rejected_without_rewriting_it() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-storage-corrupt-{}-{stamp}", std::process::id()));
+        let store = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("open store");
+        let id = "dev.example.fixture";
+        let path = extension_storage_path(&root, id);
+        std::fs::create_dir_all(path.parent().expect("storage directory")).expect("create storage directory");
+
+        let cases = [
+            b"not json".to_vec(),
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": EXTENSION_STORAGE_VERSION + 1,
+                "entries": []
+            }))
+            .expect("unsupported schema"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": EXTENSION_STORAGE_VERSION,
+                "entries": [
+                    {"key": "duplicate", "value": "first"},
+                    {"key": "duplicate", "value": "second"}
+                ]
+            }))
+            .expect("duplicate keys"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": EXTENSION_STORAGE_VERSION,
+                "entries": [{"key": "Bad Key", "value": "value"}]
+            }))
+            .expect("invalid key"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": EXTENSION_STORAGE_VERSION,
+                "entries": [{"key": "valid", "value": "bad\nvalue"}]
+            }))
+            .expect("invalid value"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": EXTENSION_STORAGE_VERSION,
+                "entries": (0..=aurora_extension_api::MAX_STORAGE_ENTRIES)
+                    .map(|index| serde_json::json!({"key": format!("key-{index}"), "value": "v"}))
+                    .collect::<Vec<_>>()
+            }))
+            .expect("excess entries"),
+        ];
+
+        for bytes in cases {
+            std::fs::write(&path, &bytes).expect("write corrupt storage fixture");
+            assert!(store.read_extension_storage(id).is_err());
+            assert_eq!(std::fs::read(&path).expect("read original corrupt bytes"), bytes);
+        }
+
+        let oversized = vec![b' '; (MAX_EXTENSION_STORAGE_BYTES + 1) as usize];
+        std::fs::write(&path, &oversized).expect("write oversized storage fixture");
+        assert!(store.read_extension_storage(id).is_err());
+        assert_eq!(std::fs::read(&path).expect("read original oversized bytes"), oversized);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
 }

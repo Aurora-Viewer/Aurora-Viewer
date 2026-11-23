@@ -465,6 +465,8 @@ pub struct OptionsUi {
     pub page: Page,
     /// Snapshot of the extension manager, refreshed by the app each frame.
     pub extensions: crate::extension_host::Snapshot,
+    /// Selected subpage in Preferences > Extensions.
+    pub extension_manager_tab: usize,
     /// Permissions explicitly checked for the pending package review.
     pub extension_grants: HashSet<String>,
     /// ID whose pending review currently owns `extension_grants`.

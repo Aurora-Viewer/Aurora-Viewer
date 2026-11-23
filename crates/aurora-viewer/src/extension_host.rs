@@ -336,7 +336,10 @@ fn run_worker(
                         .into_iter()
                         .filter(|extension| {
                             extension.state == ExtensionState::Enabled
-                                && extension.granted_permissions.contains(&Permission::ChatNearbyRead)
+                                && extension
+                                    .granted_permissions
+                                    .iter()
+                                    .any(|grant| grant.covers(Permission::ChatNearbyRead))
                         })
                         .map(|extension| extension.manifest.id)
                         .collect();
@@ -659,6 +662,7 @@ fn make_request(next_request_id: &mut u64, event: ExtensionEvent) -> ExtensionRe
         api_version: API_VERSION,
         request_id,
         event,
+        storage: None,
     }
 }
 
@@ -682,10 +686,11 @@ fn initialize_extension(
 fn dispatch_extension(
     manager: &mut PersistentExtensionManager,
     id: &str,
-    request: ExtensionRequest,
+    mut request: ExtensionRequest,
     action_queue: &RwLock<VecDeque<ActionBatch>>,
     panels: &mut Vec<PanelView>,
 ) -> Result<(), String> {
+    request.storage = manager.storage_snapshot(id).map_err(|error| error.to_string())?;
     let message_id = match &request.event {
         ExtensionEvent::NearbyChat { message_id, .. } => Some(*message_id),
         _ => None,
@@ -1015,6 +1020,7 @@ mod tests {
             event: ExtensionEvent::Initialize {
                 host_api_version: "1.0.0".into(),
             },
+            storage: None,
         }
     }
 
@@ -1027,6 +1033,7 @@ mod tests {
                 control_id: "notify".into(),
                 value: PanelEventValue::Clicked,
             },
+            storage: None,
         }
     }
 
@@ -1062,6 +1069,11 @@ mod tests {
                         id: "offline-status".into(),
                         text: "Offline fixture: the WASM guest initialized.".into(),
                     },
+                    PanelControl::Toggle {
+                        id: "enabled".into(),
+                        label: "Demo feature enabled".into(),
+                        value: false,
+                    },
                     PanelControl::Button {
                         id: "notify".into(),
                         label: "Show demo notification".into(),
@@ -1069,14 +1081,41 @@ mod tests {
                 ],
             }],
         };
-        let click_response = ExtensionResponse {
+        let mut click_response = ExtensionResponse {
             api_version: API_VERSION,
             request_id: click.request_id,
-            actions: vec![ExtensionAction::ShowNotification {
-                title: DEMO_TITLE.into(),
-                body: DEMO_BODY.into(),
-            }],
+            actions: vec![
+                ExtensionAction::ShowNotification {
+                    title: DEMO_TITLE.into(),
+                    body: DEMO_BODY.into(),
+                },
+                ExtensionAction::RegisterPanel {
+                    panel_id: "sandbox-demo".into(),
+                    title: "Sandbox Demo".into(),
+                    controls: vec![
+                        PanelControl::Label {
+                            id: "offline-status".into(),
+                            text: "Offline fixture: the WASM guest initialized.".into(),
+                        },
+                        PanelControl::Toggle {
+                            id: "enabled".into(),
+                            label: "Demo feature enabled".into(),
+                            value: true,
+                        },
+                        PanelControl::Button {
+                            id: "notify".into(),
+                            label: "Show demo notification".into(),
+                        },
+                    ],
+                },
+            ],
         };
+        if permissions.contains(&"extension.storage") {
+            click_response.actions.push(ExtensionAction::SetStorage {
+                key: "ui.enabled".into(),
+                value: Some("true".into()),
+            });
+        }
         let init_bytes = serde_json::to_vec(&init_response).expect("initialize response");
         let click_bytes = serde_json::to_vec(&click_response).expect("click response");
         let wasm = response_module(&init_bytes, &click_bytes, event_offset as u32);
@@ -1212,9 +1251,9 @@ mod tests {
     }
 
     #[test]
-    fn panel_click_runs_wasm_and_shows_an_in_view_card_while_active() {
+    fn panel_click_runs_wasm_with_full_access_and_shows_an_in_view_card_while_active() {
         let temp = TempRoot::new("extension-notification");
-        let permissions = [Permission::UiPanelRegister, Permission::UiNotificationShow];
+        let permissions = [Permission::FullAccess];
         let (mut manager, _) = install_fixture(&temp.0, &permissions);
         let batches = RwLock::new(VecDeque::new());
         let mut panels = Vec::new();
@@ -1225,6 +1264,11 @@ mod tests {
         batches.write().expect("action queue").clear();
 
         dispatch_extension(&mut manager, DEMO_ID, panel_request(42), &batches, &mut panels).expect("dispatch button click to WASM");
+        let enabled = panels[0].controls.iter().find_map(|control| match control {
+            PanelControl::Toggle { id, value, .. } if id == "enabled" => Some(*value),
+            _ => None,
+        });
+        assert_eq!(enabled, Some(true), "the host panel reflects the guest's updated toggle state");
         let batch = batches.write().expect("action queue").pop_front().expect("guest response batch");
         assert_eq!(batch.extension_id, DEMO_ID);
         assert_eq!(batch.message_id, None);
@@ -1236,6 +1280,7 @@ mod tests {
                 ExtensionAction::ShowNotification { title, body } => {
                     notification_id = Some(show_notification(&mut notifications, title, body));
                 }
+                ExtensionAction::RegisterPanel { .. } => {}
                 other => panic!("unexpected guest action: {other:?}"),
             }
         }
@@ -1284,6 +1329,64 @@ mod tests {
     }
 
     #[test]
+    fn panel_action_persists_only_explicitly_granted_extension_storage() {
+        let temp = TempRoot::new("extension-storage");
+        let permissions = [
+            Permission::UiPanelRegister,
+            Permission::UiNotificationShow,
+            Permission::ExtensionStorage,
+        ];
+        let (mut manager, _) = install_fixture(&temp.0, &permissions);
+        let batches = RwLock::new(VecDeque::new());
+        let mut panels = Vec::new();
+
+        dispatch_extension(&mut manager, DEMO_ID, initialize_request(41), &batches, &mut panels).expect("initialize guest");
+        assert_eq!(manager.storage_snapshot(DEMO_ID).expect("granted storage"), Some(Vec::new()));
+        batches.write().expect("action queue").clear();
+        let toggle_request = ExtensionRequest {
+            api_version: API_VERSION,
+            request_id: 42,
+            event: ExtensionEvent::PanelAction {
+                panel_id: "sandbox-demo".into(),
+                control_id: "enabled".into(),
+                value: PanelEventValue::Toggled { value: true },
+            },
+            storage: None,
+        };
+        dispatch_extension(&mut manager, DEMO_ID, toggle_request, &batches, &mut panels).expect("persist toggle");
+        let actions = batches
+            .write()
+            .expect("action queue")
+            .pop_front()
+            .expect("UI response batch")
+            .actions;
+        assert!(actions.iter().any(|action| matches!(action, ExtensionAction::RegisterPanel { .. })));
+        assert!(
+            actions
+                .iter()
+                .any(|action| matches!(action, ExtensionAction::ShowNotification { .. }))
+        );
+        assert!(!actions.iter().any(|action| matches!(action, ExtensionAction::SetStorage { .. })));
+        assert_eq!(
+            manager.storage_snapshot(DEMO_ID).expect("persisted storage"),
+            Some(vec![aurora_extension_api::ExtensionStorageEntry {
+                key: "ui.enabled".into(),
+                value: "true".into(),
+            }])
+        );
+
+        drop(manager);
+        let reopened = PersistentExtensionManager::open(&temp.0, Version::new(1, 0, 0)).expect("reopen extension manager");
+        assert_eq!(
+            reopened.storage_snapshot(DEMO_ID).expect("restored extension storage"),
+            Some(vec![aurora_extension_api::ExtensionStorageEntry {
+                key: "ui.enabled".into(),
+                value: "true".into(),
+            }])
+        );
+    }
+
+    #[test]
     fn ungranted_notification_action_is_quarantined_and_reported_in_manager() {
         let temp = TempRoot::new("extension-notification-denied");
         let permissions = [Permission::UiPanelRegister];
@@ -1310,7 +1413,7 @@ mod tests {
     }
 
     #[test]
-    fn persistent_package_and_permission_grant_are_isolated_between_accounts() {
+    fn persistent_full_access_grant_isolated_between_accounts_and_restores() {
         let temp = TempRoot::new("extension-account-scope");
         let account_a = account_scope_key(
             "https://grid-a.example/login",
@@ -1322,11 +1425,8 @@ mod tests {
         );
         let package_path = temp.0.join("fixture.ext");
         std::fs::create_dir_all(&temp.0).expect("create temporary store root");
-        std::fs::write(
-            &package_path,
-            fixture_package_with_request_ids(&["ui.panel.register", "ui.notification.show"], 1, 2),
-        )
-        .expect("write local test package");
+        std::fs::write(&package_path, fixture_package_with_request_ids(&["extension.full_access"], 1, 2))
+            .expect("write local test package");
         let service = Service::new(temp.0.clone());
 
         assert!(service.submit(Command::SetAccountScope(account_a.clone())));
@@ -1338,10 +1438,7 @@ mod tests {
         });
         assert!(review.pending.is_some(), "package review should be available: {:?}", review.error);
         assert!(service.submit(Command::CommitInstall {
-            permissions: vec![
-                Permission::UiPanelRegister.manifest_key().to_owned(),
-                Permission::UiNotificationShow.manifest_key().to_owned(),
-            ],
+            permissions: vec![Permission::FullAccess.manifest_key().to_owned()],
             enable: true,
             acknowledge_unverified: true,
             acknowledge_publisher_change: false,
@@ -1351,7 +1448,7 @@ mod tests {
         });
         assert!(installed.error.is_none(), "install/initialize failed: {:?}", installed.error);
         assert_eq!(installed.installed[0].state, ExtensionState::Enabled);
-        assert_eq!(installed.installed[0].granted_permissions.len(), 2);
+        assert_eq!(installed.installed[0].granted_permissions, vec![Permission::FullAccess]);
 
         assert!(service.submit(Command::SetAccountScope(account_b.clone())));
         assert!(
@@ -1372,7 +1469,7 @@ mod tests {
         });
         assert!(restored.error.is_none(), "account A restore failed: {:?}", restored.error);
         assert_eq!(restored.installed[0].state, ExtensionState::Enabled);
-        assert_eq!(restored.installed[0].granted_permissions.len(), 2);
+        assert_eq!(restored.installed[0].granted_permissions, vec![Permission::FullAccess]);
 
         // Leave the worker on an empty scope so its final thread shutdown cannot
         // dispatch a fixture Shutdown event after the assertions.

@@ -471,6 +471,14 @@ fn validate_manifest(manifest: &Manifest, supported_api: &Version) -> Result<(),
             return Err(invalid("unknown or duplicate permission"));
         }
     }
+    let full_access = Permission::FullAccess;
+    if manifest.permissions.iter().any(|key| key == full_access.manifest_key())
+        && manifest.permissions.iter().any(|key| {
+            Permission::from_manifest_key(key).is_some_and(|permission| permission != full_access && full_access.covers(permission))
+        })
+    {
+        return Err(invalid("full access cannot be combined with permissions it already covers"));
+    }
     if !manifest.network_domains.is_empty() {
         return Err(invalid("network permissions are not supported by this package runtime yet"));
     }
@@ -480,7 +488,7 @@ fn validate_manifest(manifest: &Manifest, supported_api: &Version) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aurora_extension_api::{API_VERSION, ExtensionAction, ExtensionEvent};
+    use aurora_extension_api::{API_VERSION, ExtensionAction, ExtensionEvent, ExtensionStorageEntry};
     use std::io::Write;
     use zip::{ZipWriter, write::SimpleFileOptions};
 
@@ -620,6 +628,7 @@ mod tests {
                 speaker: "Fixture".into(),
                 text: "sample".into(),
             },
+            storage: None,
         };
         let expected = ExtensionResponse {
             api_version: API_VERSION,
@@ -648,6 +657,7 @@ mod tests {
                 speaker: "Fixture".into(),
                 text: "sample".into(),
             },
+            storage: None,
         };
         let response = ExtensionResponse {
             api_version: API_VERSION,
@@ -690,6 +700,103 @@ mod tests {
     }
 
     #[test]
+    fn extension_manager_full_access_covers_current_v1_chat_input_and_actions() {
+        let response = ExtensionResponse {
+            api_version: API_VERSION,
+            request_id: 1,
+            actions: vec![
+                ExtensionAction::AnnotateChat {
+                    message_id: 7,
+                    text: "separate note".into(),
+                },
+                ExtensionAction::ShowNotification {
+                    title: "Notice".into(),
+                    body: "Handled by the extension".into(),
+                },
+            ],
+        };
+        let wasm = response_module(&serde_json::to_vec(&response).expect("fixture response JSON"));
+        let bytes = fixture(&manifest("*", "[\"extension.full_access\"]"), &wasm);
+        let id = "dev.example.fixture";
+        let mut manager = ExtensionManager::new(Version::new(1, 0, 0));
+        let staged = manager.stage_install(&bytes).expect("stage full-access package");
+        assert_eq!(staged.review().requested_permissions, vec![Permission::FullAccess]);
+        manager
+            .install_with_ack(staged, &[], false, true, false)
+            .expect("install without silently granting the requested permission");
+        assert_eq!(manager.summary(id).expect("installed disabled").state, ExtensionState::Disabled);
+        assert!(manager.summary(id).expect("grant still absent").granted_permissions.is_empty());
+        assert!(matches!(manager.enable(id, &[]), Err(ManagerError::MissingPermissions)));
+        manager
+            .enable(id, &[Permission::FullAccess])
+            .expect("explicitly grant current API v1 full access");
+
+        let request = ExtensionRequest {
+            api_version: API_VERSION,
+            request_id: 1,
+            event: ExtensionEvent::NearbyChat {
+                message_id: 7,
+                speaker: "Fixture".into(),
+                text: "sample".into(),
+            },
+            storage: None,
+        };
+        assert_eq!(
+            manager.dispatch(id, &request).expect("full access covers chat read and actions"),
+            response.actions
+        );
+        let storage_request = ExtensionRequest {
+            storage: Some(Vec::new()),
+            ..request.clone()
+        };
+        assert!(matches!(
+            manager.dispatch(id, &storage_request),
+            Err(ManagerError::EventPermissionDenied)
+        ));
+
+        manager.revoke_permission(id, Permission::FullAccess).expect("revoke broad grant");
+        assert_eq!(
+            manager.summary(id).expect("installed after revocation").state,
+            ExtensionState::Disabled
+        );
+        assert!(matches!(manager.dispatch(id, &request), Err(ManagerError::Disabled)));
+    }
+
+    #[test]
+    fn extension_manager_full_access_cannot_write_extension_storage() {
+        let response = ExtensionResponse {
+            api_version: API_VERSION,
+            request_id: 1,
+            actions: vec![ExtensionAction::SetStorage {
+                key: "ui.enabled".into(),
+                value: Some("true".into()),
+            }],
+        };
+        let wasm = response_module(&serde_json::to_vec(&response).expect("storage response JSON"));
+        let bytes = fixture(&manifest("*", "[\"extension.full_access\"]"), &wasm);
+        let id = "dev.example.fixture";
+        let mut manager = ExtensionManager::new(Version::new(1, 0, 0));
+        let staged = manager.stage_install(&bytes).expect("stage full-access package");
+        manager
+            .install_with_ack(staged, &[Permission::FullAccess], true, true, false)
+            .expect("explicitly grant full access");
+
+        let request = ExtensionRequest {
+            api_version: API_VERSION,
+            request_id: 1,
+            event: ExtensionEvent::Initialize {
+                host_api_version: "1.0.0".into(),
+            },
+            storage: None,
+        };
+        assert!(matches!(manager.dispatch(id, &request), Err(ManagerError::CapabilityViolation)));
+        assert_eq!(
+            manager.summary(id).expect("quarantined extension").state,
+            ExtensionState::Quarantined
+        );
+    }
+
+    #[test]
     fn extension_manager_quarantines_capability_violations_and_runtime_traps() {
         let request = ExtensionRequest {
             api_version: API_VERSION,
@@ -699,6 +806,7 @@ mod tests {
                 speaker: "Fixture".into(),
                 text: "sample".into(),
             },
+            storage: None,
         };
         let response = ExtensionResponse {
             api_version: API_VERSION,
@@ -737,6 +845,7 @@ mod tests {
             event: ExtensionEvent::Initialize {
                 host_api_version: "1.0.0".into(),
             },
+            storage: None,
         };
         assert!(matches!(
             manager.dispatch("dev.example.loop", &init),
@@ -1022,6 +1131,18 @@ mod tests {
         assert!(validate(&fixture(&manifest(">=2.0.0", "[]"), b"\0asm\x01\0\0\0"), &version).is_err());
         assert!(validate(&fixture(&manifest("*", "[\"filesystem.read\"]"), b"\0asm\x01\0\0\0"), &version).is_err());
     }
+
+    #[test]
+    fn full_access_manifest_rejects_redundant_permissions_and_unavailable_network_access() {
+        let version = Version::new(1, 0, 0);
+        let permissions = "[\"extension.full_access\",\"chat.nearby.read\"]";
+        assert!(validate(&fixture(&manifest("*", permissions), &copy_module()), &version).is_err());
+        assert!(validate(&fixture(&manifest("*", "[\"extension.full_access\"]"), &copy_module()), &version).is_ok());
+        let network_manifest =
+            manifest("*", "[\"extension.full_access\"]").replace("\"network_domains\":[]", "\"network_domains\":[\"example.com\"]");
+        assert!(validate(&fixture(&network_manifest, &copy_module()), &version).is_err());
+    }
+
     #[test]
     fn rejects_malformed_module_and_unknown_manifest_fields() {
         let version = Version::new(1, 0, 0);
@@ -1212,6 +1333,224 @@ mod tests {
     }
 
     #[test]
+    fn persistent_update_rolls_back_memory_and_new_package_when_registry_commit_fails() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-update-rollback-{}-{stamp}", std::process::id()));
+        let id = "dev.example.fixture";
+        let original = fixture(&manifest("*", "[\"chat.nearby.read\"]"), &copy_module());
+        let updated_manifest = manifest("*", "[\"chat.nearby.read\"]").replace("\"version\":\"0.1.0\"", "\"version\":\"0.2.0\"");
+        let updated = fixture(&updated_manifest, &copy_module());
+
+        let mut store = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("open store");
+        let staged = store.stage_install(&original).expect("stage original");
+        store
+            .install_with_ack(staged, &original, &[Permission::ChatNearbyRead], true, true, false)
+            .expect("install original");
+        let package_count_before = std::fs::read_dir(root.join("packages")).expect("read package directory").count();
+
+        let registry = root.join("registry.json");
+        std::fs::remove_file(&registry).expect("remove isolated test registry");
+        std::fs::create_dir(&registry).expect("make registry commit fail deterministically");
+        let staged_update = store.stage_update(id, &updated).expect("stage update");
+        assert!(matches!(
+            store.update_with_ack(id, staged_update, &updated, &[Permission::ChatNearbyRead], true, true, false),
+            Err(PersistentManagerError::Storage(_))
+        ));
+        let current = store.list();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].manifest.version, "0.1.0");
+        assert_eq!(current[0].state, ExtensionState::Enabled);
+        assert_eq!(
+            std::fs::read_dir(root.join("packages"))
+                .expect("read packages after rollback")
+                .count(),
+            package_count_before
+        );
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_update_reopens_committed_state_when_rollback_save_fails() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-update-recovery-{}-{stamp}", std::process::id()));
+        let id = "dev.example.fixture";
+        let original = fixture(&manifest("*", "[\"chat.nearby.read\"]"), &copy_module());
+        let updated_manifest = manifest("*", "[\"chat.nearby.read\"]").replace("\"version\":\"0.1.0\"", "\"version\":\"0.2.0\"");
+        let updated = fixture(&updated_manifest, &copy_module());
+
+        let mut store = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("open store");
+        let staged = store.stage_install(&original).expect("stage original");
+        store
+            .install_with_ack(staged, &original, &[Permission::ChatNearbyRead], true, true, false)
+            .expect("install original");
+        let staged_update = store.stage_update(id, &updated).expect("stage update");
+        store.set_manager_safe_mode_for_test(true);
+        store.inject_registry_save_failure_after(1);
+
+        assert!(matches!(
+            store.update_with_ack(id, staged_update, &updated, &[Permission::ChatNearbyRead], true, true, false),
+            Err(PersistentManagerError::Storage(message)) if message == "injected registry save failure"
+        ));
+        assert_eq!(store.list()[0].manifest.version, "0.2.0");
+        assert_eq!(store.list()[0].state, ExtensionState::Enabled);
+        assert_eq!(
+            std::fs::read_dir(root.join("packages")).expect("read recovered packages").count(),
+            1
+        );
+
+        drop(store);
+        let reopened = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("reopen committed update");
+        assert_eq!(reopened.list()[0].manifest.version, "0.2.0");
+        assert_eq!(reopened.list()[0].state, ExtensionState::Enabled);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_extension_storage_is_grant_gated_and_removed_on_uninstall() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-data-{}-{stamp}", std::process::id()));
+        let id = "dev.example.fixture";
+        let response = ExtensionResponse {
+            api_version: API_VERSION,
+            request_id: 1,
+            actions: vec![ExtensionAction::SetStorage {
+                key: "ui.enabled".into(),
+                value: Some("true".into()),
+            }],
+        };
+        let wasm = response_module(&serde_json::to_vec(&response).expect("storage response JSON"));
+        let bytes = fixture(&manifest("*", "[\"extension.storage\"]"), &wasm);
+        let mut store = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("open store");
+        let staged = store.stage_install(&bytes).expect("stage storage extension");
+        store
+            .install_with_ack(staged, &bytes, &[Permission::ExtensionStorage], true, true, false)
+            .expect("grant storage explicitly");
+        assert_eq!(store.storage_snapshot(id).expect("empty storage"), Some(vec![]));
+
+        let request = ExtensionRequest {
+            api_version: API_VERSION,
+            request_id: 1,
+            event: ExtensionEvent::Initialize {
+                host_api_version: "1.0.0".into(),
+            },
+            storage: Some(Vec::new()),
+        };
+        assert!(store.dispatch(id, &request).expect("persist storage action").is_empty());
+        assert_eq!(
+            store.storage_snapshot(id).expect("stored values"),
+            Some(vec![ExtensionStorageEntry {
+                key: "ui.enabled".into(),
+                value: "true".into(),
+            }])
+        );
+
+        let updated_manifest = manifest("*", "[\"extension.storage\"]").replace("\"version\":\"0.1.0\"", "\"version\":\"0.2.0\"");
+        let updated_bytes = fixture(&updated_manifest, &wasm);
+        let staged_update = store.stage_update(id, &updated_bytes).expect("stage storage extension update");
+        store
+            .update_with_ack(
+                id,
+                staged_update,
+                &updated_bytes,
+                &[Permission::ExtensionStorage],
+                true,
+                true,
+                false,
+            )
+            .expect("update with unchanged storage grant");
+        assert_eq!(
+            store.storage_snapshot(id).expect("storage survives package update"),
+            Some(vec![ExtensionStorageEntry {
+                key: "ui.enabled".into(),
+                value: "true".into(),
+            }])
+        );
+
+        let other_id = "dev.example.other";
+        let other_response = ExtensionResponse {
+            api_version: API_VERSION,
+            request_id: 1,
+            actions: vec![ExtensionAction::SetStorage {
+                key: "ui.enabled".into(),
+                value: Some("false".into()),
+            }],
+        };
+        let other_wasm = response_module(&serde_json::to_vec(&other_response).expect("other storage response JSON"));
+        let other_manifest = manifest("*", "[\"extension.storage\"]").replace(id, other_id);
+        let other_bytes = fixture(&other_manifest, &other_wasm);
+        let other_staged = store.stage_install(&other_bytes).expect("stage other storage extension");
+        store
+            .install_with_ack(other_staged, &other_bytes, &[Permission::ExtensionStorage], true, true, false)
+            .expect("grant other extension storage");
+        let other_request = ExtensionRequest {
+            storage: store.storage_snapshot(other_id).expect("other empty storage"),
+            ..request.clone()
+        };
+        assert!(
+            store
+                .dispatch(other_id, &other_request)
+                .expect("persist other extension state")
+                .is_empty()
+        );
+        let other_values = Some(vec![ExtensionStorageEntry {
+            key: "ui.enabled".into(),
+            value: "false".into(),
+        }]);
+        assert_eq!(store.storage_snapshot(other_id).expect("other extension values"), other_values);
+
+        drop(store);
+        let mut reopened = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("reopen store");
+        assert_eq!(
+            reopened.storage_snapshot(id).expect("restored values"),
+            Some(vec![ExtensionStorageEntry {
+                key: "ui.enabled".into(),
+                value: "true".into(),
+            }])
+        );
+        assert_eq!(
+            reopened.storage_snapshot(other_id).expect("other values after reopen"),
+            other_values
+        );
+        reopened
+            .revoke_permission(id, Permission::ExtensionStorage)
+            .expect("revoke storage grant");
+        assert_eq!(reopened.storage_snapshot(id).expect("revoked storage is hidden"), None);
+        assert_eq!(
+            reopened.storage_snapshot(other_id).expect("other grant remains isolated"),
+            other_values
+        );
+        assert!(root.join("extension_data").join(format!("{id}.json")).exists());
+        assert!(reopened.enable(id, &[]).is_err(), "re-enabling requires the storage grant again");
+        reopened
+            .enable(id, &[Permission::ExtensionStorage])
+            .expect("explicitly regrant storage");
+        assert_eq!(
+            reopened.storage_snapshot(id).expect("regranted storage"),
+            Some(vec![ExtensionStorageEntry {
+                key: "ui.enabled".into(),
+                value: "true".into(),
+            }])
+        );
+        reopened.uninstall(id).expect("uninstall extension");
+        assert!(!root.join("extension_data").join(format!("{id}.json")).exists());
+        assert!(root.join("extension_data").join(format!("{other_id}.json")).exists());
+        assert_eq!(
+            reopened.storage_snapshot(other_id).expect("other state survives uninstall"),
+            other_values
+        );
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
     fn persistent_manager_restores_packages_grants_safe_mode_and_uninstall() {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1252,5 +1591,254 @@ mod tests {
         let store = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("restore uninstalled store");
         assert!(store.list().is_empty());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persistent_manager_rejects_malformed_registry_without_rewriting_it() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-corrupt-registry-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create isolated test store");
+        let registry = root.join("registry.json");
+        let malformed = b"{\"schema_version\":1,\"extensions\":[";
+        std::fs::write(&registry, malformed).expect("write malformed test registry");
+
+        let result = PersistentExtensionManager::open(&root, Version::new(1, 0, 0));
+        assert!(matches!(result, Err(PersistentManagerError::Storage(message)) if message == "registry is malformed"));
+        assert_eq!(std::fs::read(&registry).expect("read registry after rejected open"), malformed);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_manager_rejects_unsupported_registry_schema_without_rewriting_it() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-schema-registry-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create isolated test store");
+        let registry = root.join("registry.json");
+        let unsupported = br#"{"schema_version":999,"safe_mode":false,"extensions":[]}"#;
+        std::fs::write(&registry, unsupported).expect("write unsupported test registry");
+
+        let result = PersistentExtensionManager::open(&root, Version::new(1, 0, 0));
+        assert!(
+            matches!(result, Err(PersistentManagerError::Storage(message)) if message == "registry version or extension count is unsupported")
+        );
+        assert_eq!(std::fs::read(&registry).expect("read registry after rejected open"), unsupported);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_manager_rejects_invalid_registry_record_without_rewriting_it() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-invalid-record-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create isolated test store");
+        let registry = root.join("registry.json");
+        let invalid = format!(
+            "{{\"schema_version\":1,\"safe_mode\":false,\"extensions\":[{{\"id\":\"BAD\",\"archive_sha256\":\"{}\",\"content_sha256\":\"{}\",\"permissions\":[],\"state\":\"disabled\",\"unverified_acknowledged\":true}}]}}",
+            "0".repeat(64),
+            "1".repeat(64)
+        );
+        std::fs::write(&registry, invalid.as_bytes()).expect("write invalid test registry record");
+
+        let result = PersistentExtensionManager::open(&root, Version::new(1, 0, 0));
+        assert!(
+            matches!(result, Err(PersistentManagerError::Storage(message)) if message == "registry contains an invalid or duplicate extension record")
+        );
+        assert_eq!(
+            std::fs::read(&registry).expect("read registry after rejected open"),
+            invalid.as_bytes()
+        );
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_manager_rejects_duplicate_registry_entries_without_rewriting_them() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-duplicate-record-{}-{stamp}", std::process::id()));
+        let bytes = fixture(&manifest("*", "[]"), &copy_module());
+        let mut store = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("open store");
+        let staged = store.stage_install(&bytes).expect("stage package");
+        store
+            .install_with_ack(staged, &bytes, &[], false, true, false)
+            .expect("install disabled fixture");
+        drop(store);
+
+        let registry = root.join("registry.json");
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&registry).expect("read installed registry")).expect("parse registry");
+        let duplicate = document["extensions"][0].clone();
+        document["extensions"]
+            .as_array_mut()
+            .expect("registry extensions array")
+            .push(duplicate);
+        let duplicate_bytes = serde_json::to_vec(&document).expect("serialize duplicate registry");
+        std::fs::write(&registry, &duplicate_bytes).expect("write duplicate registry");
+
+        let result = PersistentExtensionManager::open(&root, Version::new(1, 0, 0));
+        assert!(
+            matches!(result, Err(PersistentManagerError::Storage(message)) if message == "registry contains an invalid or duplicate extension record")
+        );
+        assert_eq!(std::fs::read(&registry).expect("read rejected registry"), duplicate_bytes);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_manager_rejects_oversized_registry_before_parsing_or_rewriting_it() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-oversized-registry-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create isolated test store");
+        let registry = root.join("registry.json");
+        let oversized = vec![b'x'; 1024 * 1024 + 1];
+        std::fs::write(&registry, &oversized).expect("write oversized test registry");
+
+        let result = PersistentExtensionManager::open(&root, Version::new(1, 0, 0));
+        assert!(matches!(result, Err(PersistentManagerError::Storage(message)) if message == "registry exceeds size limit"));
+        assert_eq!(std::fs::read(&registry).expect("read rejected registry"), oversized);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_manager_rejects_excess_registry_entries_before_loading_packages() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-excess-records-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create isolated test store");
+        let registry = root.join("registry.json");
+        let entry = serde_json::json!({
+            "id": "dev.example.fixture",
+            "archive_sha256": "0".repeat(64),
+            "content_sha256": "1".repeat(64),
+            "permissions": [],
+            "state": "disabled",
+            "unverified_acknowledged": true
+        });
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "safe_mode": false,
+            "extensions": vec![entry; 33]
+        }))
+        .expect("serialize over-count test registry");
+        std::fs::write(&registry, &bytes).expect("write over-count test registry");
+
+        let result = PersistentExtensionManager::open(&root, Version::new(1, 0, 0));
+        assert!(
+            matches!(result, Err(PersistentManagerError::Storage(message)) if message == "registry version or extension count is unsupported")
+        );
+        assert_eq!(std::fs::read(&registry).expect("read rejected registry"), bytes);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_manager_rejects_excess_trusted_publishers_without_rewriting_them() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-trust-overcount-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create isolated test store");
+        let registry = root.join("trusted_publishers.json");
+        let publisher = serde_json::json!({ "key_id": "invalid", "public_key": "invalid", "label": "Fixture" });
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "publishers": vec![publisher; 257]
+        }))
+        .expect("serialize over-count trusted-publisher registry");
+        std::fs::write(&registry, &bytes).expect("write over-count trusted-publisher registry");
+
+        let result = PersistentExtensionManager::open(&root, Version::new(1, 0, 0));
+        assert!(
+            matches!(result, Err(PersistentManagerError::Storage(message)) if message == "trusted publisher registry version or count is unsupported")
+        );
+        assert_eq!(std::fs::read(&registry).expect("read rejected trust registry"), bytes);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_manager_rejects_invalid_trusted_publisher_label_without_rewriting_it() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-trust-label-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create isolated test store");
+        let registry = root.join("trusted_publishers.json");
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "publishers": [{ "key_id": "invalid", "public_key": "invalid", "label": "Bad\nLabel" }]
+        }))
+        .expect("serialize invalid-label trust registry");
+        std::fs::write(&registry, &bytes).expect("write invalid-label trust registry");
+
+        let result = PersistentExtensionManager::open(&root, Version::new(1, 0, 0));
+        assert!(
+            matches!(result, Err(PersistentManagerError::Storage(message)) if message == "trusted publisher registry contains an invalid label")
+        );
+        assert_eq!(std::fs::read(&registry).expect("read rejected trust registry"), bytes);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_manager_rejects_duplicate_trusted_publisher_keys_without_rewriting_them() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-trust-duplicate-{}-{stamp}", std::process::id()));
+        let private_key = generate_pkcs8().expect("publisher key");
+        let signer = public_key_from_pkcs8(&private_key).expect("publisher public key");
+        let key_file = serde_json::to_vec(&public_key_file(&signer.public_key)).expect("publisher public key JSON");
+        let mut store = PersistentExtensionManager::open(&root, Version::new(1, 0, 0)).expect("open store");
+        store.trust_publisher(&key_file, "Fixture publisher").expect("trust publisher key");
+        drop(store);
+
+        let registry = root.join("trusted_publishers.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&registry).expect("read trust registry")).expect("parse trust registry");
+        let duplicate = value["publishers"][0].clone();
+        value["publishers"].as_array_mut().expect("publisher list").push(duplicate);
+        let bytes = serde_json::to_vec(&value).expect("serialize duplicate trust registry");
+        std::fs::write(&registry, &bytes).expect("write duplicate trust registry");
+
+        let result = PersistentExtensionManager::open(&root, Version::new(1, 0, 0));
+        assert!(
+            matches!(result, Err(PersistentManagerError::Storage(message)) if message == "trusted publisher registry contains duplicate keys")
+        );
+        assert_eq!(std::fs::read(&registry).expect("read rejected trust registry"), bytes);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
+    }
+
+    #[test]
+    fn persistent_manager_rejects_oversized_trust_registry_without_rewriting_it() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("aurora-extension-trust-oversize-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create isolated test store");
+        let registry = root.join("trusted_publishers.json");
+        let oversized = vec![b'x'; 256 * 1024 + 1];
+        std::fs::write(&registry, &oversized).expect("write oversized trust registry");
+
+        let result = PersistentExtensionManager::open(&root, Version::new(1, 0, 0));
+        assert!(
+            matches!(result, Err(PersistentManagerError::Storage(message)) if message == "trusted publisher registry exceeds size limit")
+        );
+        assert_eq!(std::fs::read(&registry).expect("read rejected trust registry"), oversized);
+        std::fs::remove_dir_all(root).expect("remove isolated test store");
     }
 }

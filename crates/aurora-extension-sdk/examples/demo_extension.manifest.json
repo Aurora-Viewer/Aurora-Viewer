@@ -2,12 +2,13 @@
   "manifest_version": 1,
   "id": "dev.example.sandbox-demo",
   "name": "Sandbox Demo Extension",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "api": ">=1.0.0, <2.0.0",
   "entry": "module.wasm",
   "permissions": [
     "ui.panel.register",
-    "ui.notification.show"
+    "ui.notification.show",
+    "extension.storage"
   ],
   "network_domains": [],
   "publisher": "Generic demo fixture"

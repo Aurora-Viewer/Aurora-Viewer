@@ -2575,6 +2575,7 @@ impl World {
             api_version: API_VERSION,
             request_id: message_id,
             event: ExtensionEvent::NearbyChat { message_id, speaker, text },
+            storage: None,
         };
         if request.validate().is_err() {
             return;

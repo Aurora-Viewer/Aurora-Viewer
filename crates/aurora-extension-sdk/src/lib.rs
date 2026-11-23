@@ -8,6 +8,12 @@ use std::fmt;
 pub trait ExtensionHandler {
     /// Handle one lifecycle or viewer event. Host capabilities are checked after this returns.
     fn on_event(&mut self, event: &ExtensionEvent) -> Vec<ExtensionAction>;
+
+    /// Handle the complete request, including any explicitly granted storage snapshot.
+    /// Existing handlers keep their event-only behavior unless they override this method.
+    fn on_request(&mut self, request: &ExtensionRequest) -> Vec<ExtensionAction> {
+        self.on_event(&request.event)
+    }
 }
 
 /// An SDK error raised while parsing, handling or serializing one request.
@@ -43,7 +49,7 @@ pub fn handle_request<H: ExtensionHandler>(handler: &mut H, input: &[u8]) -> Res
     let response = ExtensionResponse {
         api_version: API_VERSION,
         request_id: request.request_id,
-        actions: handler.on_event(&request.event),
+        actions: handler.on_request(&request),
     };
     response.validate_for(&request).map_err(|_| SdkError::InvalidResponse)?;
     let output = serde_json::to_vec(&response).map_err(|_| SdkError::Serialization)?;
@@ -165,6 +171,7 @@ mod tests {
                 speaker: "Fixture".into(),
                 text: "sample".into(),
             },
+            storage: None,
         };
         let output = handle_request(&mut Fixture, &serde_json::to_vec(&request).expect("request JSON")).expect("response");
         let response: ExtensionResponse = serde_json::from_slice(&output).expect("response JSON");
@@ -192,6 +199,7 @@ mod tests {
                 speaker: "Fixture".into(),
                 text: "sample".into(),
             },
+            storage: None,
         };
         let input = serde_json::to_vec(&request).expect("request JSON");
         assert!(matches!(handle_request(&mut Invalid, &input), Err(SdkError::InvalidResponse)));

@@ -7342,6 +7342,10 @@ impl App {
                     aurora_extension_api::ExtensionAction::RegisterPanel { .. } => {
                         // The worker stores validated panel declarations for the native manager UI.
                     }
+                    aurora_extension_api::ExtensionAction::SetStorage { .. } => {
+                        // PersistentExtensionManager consumes storage writes before queueing host actions.
+                        log::warn!("discarded extension storage action outside its host storage broker");
+                    }
                 }
             }
         }

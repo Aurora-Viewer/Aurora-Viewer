@@ -17,6 +17,12 @@ pub const MAX_UI_TEXT_BYTES: usize = 2 * 1024;
 pub const MAX_CHAT_TEXT_BYTES: usize = 4 * 1024;
 /// Maximum controls a plugin can declare for one panel.
 pub const MAX_PANEL_CONTROLS: usize = 16;
+/// Maximum extension-owned values restored with one request.
+pub const MAX_STORAGE_ENTRIES: usize = 32;
+/// Maximum key size in extension-owned storage.
+pub const MAX_STORAGE_KEY_BYTES: usize = 64;
+/// Maximum value size in extension-owned storage.
+pub const MAX_STORAGE_VALUE_BYTES: usize = 1024;
 
 /// A v1 capability name used in a package manifest and an explicit user grant.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -30,6 +36,11 @@ pub enum Permission {
     UiNotificationShow,
     /// Register declarative, host-rendered panels and controls.
     UiPanelRegister,
+    /// Read and write bounded, account/grid-scoped extension-owned values.
+    ExtensionStorage,
+    /// High-risk grant for every host-mediated capability currently defined by API v1.
+    /// This fixed snapshot does not grant future permission variants automatically.
+    FullAccess,
 }
 
 impl Permission {
@@ -40,6 +51,8 @@ impl Permission {
             Self::UiChatAnnotate => "ui.chat.annotate",
             Self::UiNotificationShow => "ui.notification.show",
             Self::UiPanelRegister => "ui.panel.register",
+            Self::ExtensionStorage => "extension.storage",
+            Self::FullAccess => "extension.full_access",
         }
     }
 
@@ -50,8 +63,25 @@ impl Permission {
             "ui.chat.annotate" => Some(Self::UiChatAnnotate),
             "ui.notification.show" => Some(Self::UiNotificationShow),
             "ui.panel.register" => Some(Self::UiPanelRegister),
+            "extension.storage" => Some(Self::ExtensionStorage),
+            "extension.full_access" => Some(Self::FullAccess),
             _ => None,
         }
+    }
+
+    /// Whether this grant covers a required capability.
+    ///
+    /// `FullAccess` is intentionally a fixed API v1 snapshot. New permission
+    /// variants require explicit consent and are not covered by it by default.
+    pub fn covers(self, required: Self) -> bool {
+        self == required
+            || matches!(
+                (self, required),
+                (Self::FullAccess, Self::ChatNearbyRead)
+                    | (Self::FullAccess, Self::UiChatAnnotate)
+                    | (Self::FullAccess, Self::UiNotificationShow)
+                    | (Self::FullAccess, Self::UiPanelRegister)
+            )
     }
 }
 
@@ -65,6 +95,19 @@ pub struct ExtensionRequest {
     pub request_id: u64,
     /// Lifecycle or sanitized viewer event.
     pub event: ExtensionEvent,
+    /// Present only when the host granted `extension.storage`; omitted otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<Vec<ExtensionStorageEntry>>,
+}
+
+/// One plain-text value in this extension's isolated persistent storage.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtensionStorageEntry {
+    /// Stable key chosen by the extension.
+    pub key: String,
+    /// Plain-text value owned only by this extension.
+    pub value: String,
 }
 
 /// Events available to extensions in API v1.
@@ -142,7 +185,7 @@ pub enum ExtensionAction {
         /// Plain-text body.
         body: String,
     },
-    /// Request a small panel rendered entirely by Aurora's native UI.
+    /// Register a host-rendered panel during initialization or refresh it after one of its own actions.
     RegisterPanel {
         /// Stable ASCII identifier unique to this extension.
         panel_id: String,
@@ -150,6 +193,13 @@ pub enum ExtensionAction {
         title: String,
         /// Bounded declarative controls; no HTML, JavaScript or arbitrary layout.
         controls: Vec<PanelControl>,
+    },
+    /// Set or remove one bounded extension-owned value (`None` removes the key).
+    SetStorage {
+        /// Stable key.
+        key: String,
+        /// New value, or `None` to remove it.
+        value: Option<String>,
     },
 }
 
@@ -224,6 +274,19 @@ impl ExtensionRequest {
 
             ExtensionEvent::Shutdown => {}
         }
+        if let Some(entries) = &self.storage {
+            if entries.len() > MAX_STORAGE_ENTRIES {
+                return Err(ProtocolError::InvalidRequest);
+            }
+            let mut keys = HashSet::new();
+            for entry in entries {
+                validate_storage_key(&entry.key)?;
+                validate_text(&entry.value, MAX_STORAGE_VALUE_BYTES)?;
+                if !keys.insert(&entry.key) {
+                    return Err(ProtocolError::InvalidRequest);
+                }
+            }
+        }
         if serde_json::to_vec(self).map_err(|_| ProtocolError::InvalidRequest)?.len() > MAX_ENVELOPE_BYTES {
             return Err(ProtocolError::InvalidRequest);
         }
@@ -255,7 +318,7 @@ impl ExtensionResponse {
                     validate_text(body, MAX_UI_TEXT_BYTES).map_err(|_| ProtocolError::InvalidResponse)?;
                 }
                 ExtensionAction::RegisterPanel { panel_id, title, controls } => {
-                    if !matches!(request.event, ExtensionEvent::Initialize { .. })
+                    if !panel_registration_allowed(&request.event, panel_id)
                         || !panel_ids.insert(panel_id)
                         || controls.len() > MAX_PANEL_CONTROLS
                     {
@@ -276,6 +339,12 @@ impl ExtensionResponse {
                         }
                     }
                 }
+                ExtensionAction::SetStorage { key, value } => {
+                    validate_storage_key(key).map_err(|_| ProtocolError::InvalidResponse)?;
+                    if let Some(value) = value {
+                        validate_text(value, MAX_STORAGE_VALUE_BYTES).map_err(|_| ProtocolError::InvalidResponse)?;
+                    }
+                }
             }
         }
         if serde_json::to_vec(self).map_err(|_| ProtocolError::InvalidResponse)?.len() > MAX_ENVELOPE_BYTES {
@@ -283,6 +352,29 @@ impl ExtensionResponse {
         }
         Ok(())
     }
+}
+
+fn panel_registration_allowed(event: &ExtensionEvent, panel_id: &str) -> bool {
+    match event {
+        ExtensionEvent::Initialize { .. } => true,
+        ExtensionEvent::PanelAction {
+            panel_id: event_panel_id, ..
+        } => event_panel_id == panel_id,
+        _ => false,
+    }
+}
+
+fn validate_storage_key(value: &str) -> Result<(), ProtocolError> {
+    if value.is_empty()
+        || value.len() > MAX_STORAGE_KEY_BYTES
+        || !value.is_ascii()
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(ProtocolError::InvalidRequest);
+    }
+    Ok(())
 }
 
 fn validate_id(value: &str) -> Result<(), ProtocolError> {
@@ -319,6 +411,7 @@ mod tests {
                 speaker: "Nova Example".into(),
                 text: "hello".into(),
             },
+            storage: None,
         };
         let encoded = serde_json::to_vec(&request).expect("serialize request");
         let decoded: ExtensionRequest = serde_json::from_slice(&encoded).expect("deserialize request");
@@ -339,9 +432,26 @@ mod tests {
     #[test]
     fn rejects_unknown_permissions_and_unknown_protocol_fields() {
         assert_eq!(Permission::from_manifest_key("ui.chat.annotate"), Some(Permission::UiChatAnnotate));
+        assert_eq!(Permission::from_manifest_key("extension.full_access"), Some(Permission::FullAccess));
         assert_eq!(Permission::from_manifest_key("network.fetch"), None);
         let json = br#"{"api_version":1,"request_id":1,"event":{"type":"shutdown"},"extra":true}"#;
         assert!(serde_json::from_slice::<ExtensionRequest>(json).is_err());
+    }
+
+    #[test]
+    fn full_access_covers_only_the_current_api_v1_permissions() {
+        let full_access = Permission::FullAccess;
+        assert_eq!(full_access.manifest_key(), "extension.full_access");
+        for permission in [
+            Permission::ChatNearbyRead,
+            Permission::UiChatAnnotate,
+            Permission::UiNotificationShow,
+            Permission::UiPanelRegister,
+        ] {
+            assert!(full_access.covers(permission));
+        }
+        assert!(!Permission::ChatNearbyRead.covers(Permission::UiChatAnnotate));
+        assert!(!Permission::UiPanelRegister.covers(Permission::FullAccess));
     }
 
     #[test]
@@ -350,6 +460,7 @@ mod tests {
             api_version: API_VERSION,
             request_id: 9,
             event: ExtensionEvent::Shutdown,
+            storage: None,
         };
         let response = ExtensionResponse {
             api_version: API_VERSION,
@@ -368,6 +479,7 @@ mod tests {
             api_version: API_VERSION,
             request_id: 1,
             event: ExtensionEvent::Shutdown,
+            storage: None,
         };
         let control = PanelControl::Toggle {
             id: "enabled".into(),
@@ -390,6 +502,7 @@ mod tests {
             event: ExtensionEvent::Initialize {
                 host_api_version: "1.0.0".into(),
             },
+            storage: None,
         };
         let response = ExtensionResponse {
             api_version: API_VERSION,
@@ -401,5 +514,173 @@ mod tests {
             }],
         };
         assert_eq!(response.validate_for(&request), Err(ProtocolError::InvalidResponse));
+    }
+
+    #[test]
+    fn panel_action_can_refresh_only_the_panel_that_emitted_it() {
+        let request = ExtensionRequest {
+            api_version: API_VERSION,
+            request_id: 17,
+            event: ExtensionEvent::PanelAction {
+                panel_id: "settings".into(),
+                control_id: "enabled".into(),
+                value: PanelEventValue::Toggled { value: true },
+            },
+            storage: None,
+        };
+        let response = ExtensionResponse {
+            api_version: API_VERSION,
+            request_id: 17,
+            actions: vec![ExtensionAction::RegisterPanel {
+                panel_id: "settings".into(),
+                title: "Settings".into(),
+                controls: vec![PanelControl::Toggle {
+                    id: "enabled".into(),
+                    label: "Enabled".into(),
+                    value: true,
+                }],
+            }],
+        };
+        response.validate_for(&request).expect("same-panel refresh is valid");
+
+        let mismatched = ExtensionResponse {
+            actions: vec![ExtensionAction::RegisterPanel {
+                panel_id: "other".into(),
+                title: "Other".into(),
+                controls: vec![],
+            }],
+            ..response
+        };
+        assert_eq!(mismatched.validate_for(&request), Err(ProtocolError::InvalidResponse));
+    }
+
+    #[test]
+    fn extension_storage_is_opt_in_bounded_and_not_in_full_access() {
+        assert_eq!(
+            Permission::from_manifest_key("extension.storage"),
+            Some(Permission::ExtensionStorage)
+        );
+        assert!(!Permission::FullAccess.covers(Permission::ExtensionStorage));
+
+        let request_without_storage = ExtensionRequest {
+            api_version: API_VERSION,
+            request_id: 1,
+            event: ExtensionEvent::Shutdown,
+            storage: None,
+        };
+        let legacy_json = serde_json::to_string(&request_without_storage).expect("serialize legacy request");
+        assert!(!legacy_json.contains("storage"));
+
+        let request = ExtensionRequest {
+            request_id: 2,
+            storage: Some(vec![ExtensionStorageEntry {
+                key: "ui.enabled".into(),
+                value: "true".into(),
+            }]),
+            ..request_without_storage.clone()
+        };
+        request.validate().expect("bounded storage snapshot");
+        let response = ExtensionResponse {
+            api_version: API_VERSION,
+            request_id: 2,
+            actions: vec![ExtensionAction::SetStorage {
+                key: "ui.enabled".into(),
+                value: Some("false".into()),
+            }],
+        };
+        response.validate_for(&request).expect("bounded storage update");
+    }
+
+    #[test]
+    fn storage_rejects_invalid_keys_values_duplicate_keys_and_excess_entries() {
+        let base = ExtensionRequest {
+            api_version: API_VERSION,
+            request_id: 1,
+            event: ExtensionEvent::Shutdown,
+            storage: None,
+        };
+        let invalid_key = ExtensionRequest {
+            storage: Some(vec![ExtensionStorageEntry {
+                key: "Bad Key".into(),
+                value: "value".into(),
+            }]),
+            ..base.clone()
+        };
+        assert_eq!(invalid_key.validate(), Err(ProtocolError::InvalidRequest));
+
+        let duplicate_key = ExtensionRequest {
+            storage: Some(vec![
+                ExtensionStorageEntry {
+                    key: "key".into(),
+                    value: "one".into(),
+                },
+                ExtensionStorageEntry {
+                    key: "key".into(),
+                    value: "two".into(),
+                },
+            ]),
+            ..base.clone()
+        };
+        assert_eq!(duplicate_key.validate(), Err(ProtocolError::InvalidRequest));
+
+        let too_many = ExtensionRequest {
+            storage: Some(
+                (0..=MAX_STORAGE_ENTRIES)
+                    .map(|index| ExtensionStorageEntry {
+                        key: format!("key-{index}"),
+                        value: "value".into(),
+                    })
+                    .collect(),
+            ),
+            ..base.clone()
+        };
+        assert_eq!(too_many.validate(), Err(ProtocolError::InvalidRequest));
+
+        let maximum_entry = ExtensionRequest {
+            storage: Some(vec![ExtensionStorageEntry {
+                key: "k".repeat(MAX_STORAGE_KEY_BYTES),
+                value: "v".repeat(MAX_STORAGE_VALUE_BYTES),
+            }]),
+            ..base.clone()
+        };
+        maximum_entry.validate().expect("maximum key and value sizes are accepted");
+
+        let oversized_key = ExtensionRequest {
+            storage: Some(vec![ExtensionStorageEntry {
+                key: "k".repeat(MAX_STORAGE_KEY_BYTES + 1),
+                value: "value".into(),
+            }]),
+            ..base.clone()
+        };
+        assert_eq!(oversized_key.validate(), Err(ProtocolError::InvalidRequest));
+
+        let oversized_value = ExtensionRequest {
+            storage: Some(vec![ExtensionStorageEntry {
+                key: "key".into(),
+                value: "v".repeat(MAX_STORAGE_VALUE_BYTES + 1),
+            }]),
+            ..base.clone()
+        };
+        assert_eq!(oversized_value.validate(), Err(ProtocolError::InvalidRequest));
+
+        let invalid_value = ExtensionResponse {
+            api_version: API_VERSION,
+            request_id: 1,
+            actions: vec![ExtensionAction::SetStorage {
+                key: "key".into(),
+                value: Some("bad\nvalue".into()),
+            }],
+        };
+        assert_eq!(invalid_value.validate_for(&base), Err(ProtocolError::InvalidResponse));
+
+        let oversized_action = ExtensionResponse {
+            api_version: API_VERSION,
+            request_id: 1,
+            actions: vec![ExtensionAction::SetStorage {
+                key: "key".into(),
+                value: Some("v".repeat(MAX_STORAGE_VALUE_BYTES + 1)),
+            }],
+        };
+        assert_eq!(oversized_action.validate_for(&base), Err(ProtocolError::InvalidResponse));
     }
 }
