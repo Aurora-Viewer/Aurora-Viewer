@@ -977,12 +977,17 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             let mut seen = HashSet::new();
             let mut replaced_clothing = HashSet::new();
             for id in ids {
-                let layer = super::inventory::actions::original(inv, id)
+                let original = super::inventory::actions::original(inv, id);
+                // An item already worn is skipped before needs_to_replace
+                // (isLinkedInCOF), so it never uses up its type's turn.
+                let worn_already = original.is_some_and(|id| current.iter().any(|l| !l.folder && l.target == id));
+                let layer = original
                     .and_then(|id| inv.items.get(&id))
                     .map(|it| (it.asset_type, it.flags & 0xff));
                 // The first clothing of a type replaces its top layer, the
                 // next ones add (needs_to_replace, llappearancemgr.cpp).
-                let layers = if replace && layer.is_some_and(|(kind, layer)| kind != 5 || replaced_clothing.insert(layer)) {
+                let layers = if replace && !worn_already && layer.is_some_and(|(kind, layer)| kind != 5 || replaced_clothing.insert(layer))
+                {
                     Layers::ReplaceTop
                 } else {
                     Layers::Add
@@ -2915,6 +2920,21 @@ mod tests {
         let before = wear(&inv, freckles, false);
         assert_eq!(wear(&inv, freckles, true), before);
         assert!(before.contains(&lipstick));
+        // nor does it use up the type's replace in a selection: the new
+        // tattoo still replaces the top layer, Lipstick itself
+        let (change, _) = plan(
+            &inv,
+            Action::WearItems {
+                items: vec![lipstick, third],
+                replace: true,
+                point: 0,
+            },
+            &HashMap::new(),
+        )
+        .expect("wear selection");
+        let worn: Vec<_> = change.links.iter().filter(|l| !l.folder).map(|l| l.target).collect();
+        assert!(worn.contains(&star) && worn.contains(&freckles) && worn.contains(&third));
+        assert!(!worn.contains(&lipstick), "the worn item is skipped, the new one replaces the top");
     }
 
     #[test]
