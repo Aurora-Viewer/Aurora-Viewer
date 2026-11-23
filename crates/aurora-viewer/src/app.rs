@@ -22765,6 +22765,11 @@ impl ApplicationHandler for App {
             // Aurora's "all" chip), its search done ("page" in the text: a
             // full page, "xyz": nothing; for land in the Legacy look the
             // text is the price limit, 0 by default)
+            // AURORA_DEMO_SEARCH_ORDER=places,people,…: the order of the
+            // section chips and of All, for this launch only (not saved)
+            if let Ok(v) = std::env::var("AURORA_DEMO_SEARCH_ORDER") {
+                self.search_ui.aurora_launch_order(&v);
+            }
             if let Ok(v) = std::env::var("AURORA_DEMO_SEARCH") {
                 let (name, text) = v.split_once(':').unwrap_or((v.as_str(), "aurora"));
                 // land without a text keeps the default price field ("0")

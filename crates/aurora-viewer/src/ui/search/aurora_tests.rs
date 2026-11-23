@@ -533,6 +533,30 @@ fn dragging_a_chip_reorders_the_chips_and_the_sections_of_all() {
 }
 
 #[test]
+fn the_demo_order_is_shown_for_the_launch_and_never_saved() {
+    let mut world = world();
+    let mut w = Window::new("aurora");
+    w.st.aurora_launch_order(" Groups, unknown ,places");
+    let requests = w.st.aurora_requests(&w.settings);
+    apply(&mut world, requests.into_iter().map(SearchAction::Find).collect());
+    let mut actions = Vec::new();
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        let (t, a) = w.frame(&world, Vec::new());
+        actions.extend(a);
+        texts = t;
+    }
+    let y_of = |label: &str| {
+        let head = aurora_i18n::text(label).to_uppercase();
+        texts.iter().find(|(_, t)| *t == head).map(|(pos, _)| pos.y).expect("section")
+    };
+    assert!(y_of("common-groups") < y_of("common-places"));
+    assert!(y_of("common-places") < y_of("common-people"));
+    assert!(w.settings.aurora_order.is_empty(), "the saved order is untouched");
+    assert!(actions.iter().all(|a| !matches!(a, SearchAction::SettingsChanged)));
+}
+
+#[test]
 fn all_then_a_chip_rows_toggles_and_the_web() {
     let mut world = world();
     let mut w = Window::new("aurora");

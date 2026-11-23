@@ -167,6 +167,10 @@ pub struct Aurora {
     /// The sections of "All" in the user's order, read from the settings
     /// each frame (`section_order`).
     order: [Tab; 5],
+    /// The order of `AURORA_DEMO_SEARCH_ORDER`, for this launch only: it
+    /// is read instead of the saved one and never saved, until a chip is
+    /// dragged.
+    launch_order: Option<Vec<String>>,
     /// "Price ≤" and "Area ≥" of land sales: empty, no limit.
     land_price: String,
     land_area: String,
@@ -185,6 +189,7 @@ impl Default for Aurora {
             searched: HashMap::new(),
             selected: None,
             order: SECTIONS,
+            launch_order: None,
             land_price: String::new(),
             land_area: String::new(),
             asked: HashSet::new(),
@@ -374,6 +379,13 @@ impl SearchUi {
         out
     }
 
+    /// `AURORA_DEMO_SEARCH_ORDER=places,people,…`: the chips in this order
+    /// for this launch, without touching the saved settings.
+    pub fn aurora_launch_order(&mut self, names: &str) {
+        let names = names.split(',').map(|n| n.trim().to_lowercase()).filter(|n| !n.is_empty());
+        self.aurora.launch_order = Some(names.collect());
+    }
+
     /// The searches of Aurora's window for its chip, as they are (demo).
     pub fn aurora_requests(&mut self, settings: &SearchSettings) -> Vec<Request> {
         self.aurora_search(settings, false)
@@ -455,7 +467,8 @@ impl SearchUi {
         let world = c.world;
         let access = world.agent_access();
         let mut find = false;
-        self.aurora.order = section_order(&settings.aurora_order);
+        let saved = self.aurora.launch_order.as_deref().unwrap_or(&settings.aurora_order);
+        self.aurora.order = section_order(saved);
         // the field
         ui.horizontal(|ui| {
             let hint = if self.aurora.kind == Kind::Land {
@@ -506,6 +519,7 @@ impl SearchUi {
         });
         if let Some(order) = reorder.filter(|o| *o != self.aurora.order) {
             self.aurora.order = order;
+            self.aurora.launch_order = None;
             settings.aurora_order = if order == SECTIONS {
                 Vec::new()
             } else {
