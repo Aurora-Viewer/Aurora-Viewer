@@ -3083,6 +3083,58 @@ impl Copied<'_> {
     }
 }
 
+/// A press in a conversation's window that leaves no widget of its own with
+/// the keyboard gives it to the conversation's field (#4628): the list, the
+/// header, the title bar, the padding and the strip above the field too, so
+/// that what is typed next never walks the avatar. Port of
+/// LLFloater::handleMouseDown → bringToFront → LLFloater::setFocus →
+/// focusFirstItem (indra/llui/llfloater.cpp), which FSFloaterIM::focusFirstItem
+/// (indra/newview/fsfloaterim.cpp) points at its input editor. A widget
+/// that took the keyboard while the window drew (a search field pressed,
+/// the lines being selected, a find field's clear button) or one that keeps
+/// it under the pointer stays focused; a press over a menu or another window
+/// above is theirs. `before`: the focus when the window's body began
+/// (`focus_before_body`); called at the end of that body, whose `ui` is in
+/// the window's layer.
+///
+/// At the press, as the Legacy Viewer does, and again at its release when
+/// it is a click: egui takes the keyboard from a widget clicked away from
+/// then (`SurrenderFocusOn::Clicks`, applied at the end of the pass by
+/// `click_away_focus.rs`), unless a focus is asked during that pass.
+fn press_focuses_field(ui: &egui::Ui, before: Option<egui::Id>, field: egui::Id) {
+    let ctx = ui.ctx();
+    let at = ui.input(|i| {
+        if i.pointer.primary_pressed() {
+            i.pointer.press_origin()
+        } else if i.pointer.primary_clicked() {
+            i.pointer.interact_pos()
+        } else {
+            None
+        }
+    });
+    let Some(origin) = at else {
+        return;
+    };
+    // a window outside the viewer's is its own viewport's background, with
+    // no area under the pointer but a popup of its own
+    if ctx.layer_id_at(origin).unwrap_or(egui::LayerId::background()) != ui.layer_id() || !ui.is_enabled() {
+        return;
+    }
+    // (a widget takes the keyboard at once, `Memory::request_focus`; a
+    // focus elsewhere is surrendered only at the end of the click's pass)
+    let now = ctx.memory(|m| m.focused());
+    let kept = now.is_some_and(|focused| now != before || ctx.read_response(focused).is_some_and(|r| r.hovered()));
+    if !kept {
+        ctx.memory_mut(|m| m.request_focus(field));
+    }
+}
+
+/// The focus when a conversation window's body begins, for
+/// `press_focuses_field`.
+fn focus_before_body(ui: &egui::Ui) -> Option<egui::Id> {
+    ui.ctx().memory(|m| m.focused())
+}
+
 /// The selection of the lines (`select.rs`), as in the Legacy Viewer's transcript:
 /// a drag selects across them (never moving the window), a double click
 /// selects a word, a triple click selects a paragraph, a click without a drag
@@ -3098,7 +3150,8 @@ fn select_lines(
 ) -> ToField {
     // the lines' own area: egui also hands them a pointer a few points off
     // (interact_radius), on the strip between them and the field, which
-    // stays neutral (no selection, no keyboard)
+    // selects nothing (the window gives the keyboard to its field there,
+    // `press_focuses_field`)
     let area = content.rect.intersect(ui.clip_rect());
     let pressed_in = ui.input(|i| i.pointer.press_origin()).is_some_and(|p| area.contains(p));
     let pressed = ui.input(|i| i.pointer.primary_pressed());
@@ -4095,6 +4148,7 @@ pub fn show(
     }
     floater.min_size = floater.min_size.max(least);
     let image_bounds = floater.show(ctx, p, open, |ui| {
+        let focus_before = focus_before_body(ui);
         let bounds = ui.available_rect_before_wrap().intersect(ui.clip_rect());
         if enlarged {
             ui.disable();
@@ -4115,6 +4169,9 @@ pub fn show(
                 compact: style == crate::settings::ChatStyle::Compact,
             };
             workspace::show(ui, env, world, st, &mut actions);
+            if !st.contacts && !minimized {
+                press_focuses_field(ui, focus_before, egui::Id::unique(("conv_input", st.selected)));
+            }
             return bounds;
         }
         let h = (ui.available_height() - 6.0).max(140.0);
@@ -4262,6 +4319,9 @@ pub fn show(
             // ---- conversation pane
             ui.vertical(|ui| classic_pane(ui, p, icons, emoji, pics, gestures, world, st, &mut actions, h, &own_name));
         });
+        if !st.contacts && !minimized {
+            press_focuses_field(ui, focus_before, egui::Id::unique(("conv_input", st.selected)));
+        }
         bounds
     });
     docking::target(ctx, *open && !minimized && image_bounds.is_some());
@@ -7224,6 +7284,104 @@ mod tests {
             frame(&mut st, true, vec![egui::Event::Text("nearby".into())]);
             assert_eq!(st.draft_mut(None), "nearby");
             assert_eq!(other, if style.workspace() { "" } else { "filter" });
+        }
+    }
+
+    /// #4628: a press anywhere in the Conversations window that focuses
+    /// nothing of its own (its title bar here) gives the keyboard to the
+    /// conversation's field, as focusFirstItem does (FSFloaterIM), so that
+    /// what is typed next is not a key of the world; a field pressed keeps
+    /// it, inside the window or outside it.
+    #[test]
+    fn a_press_in_the_conversations_window_gives_its_field_the_keyboard() {
+        for style in [
+            crate::settings::ChatStyle::Aurora,
+            crate::settings::ChatStyle::Compact,
+            crate::settings::ChatStyle::Bubbles,
+            crate::settings::ChatStyle::Legacy,
+        ] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = crate::ui::icons::Icons::load(&ctx, None);
+            let mut emoji = crate::ui::emoji::Emoji::load();
+            let pics = HashMap::new();
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let a = uuid::Uuid::from_u128(0xA);
+            world.social.session_mut(a);
+            let gestures = crate::gestures::Manager::default();
+            let mut st = ChatUi {
+                style,
+                selected: Some(a),
+                ..Default::default()
+            };
+            let mut contacts = super::super::contacts::ContactsUi::default();
+            let mut contacts_settings = super::super::contacts::ContactsSettings::default();
+            // a field of the screen behind the window (the world's side)
+            let other_id = egui::Id::unique("field_behind_conversations");
+            let mut other = String::new();
+            let mut frame = |st: &mut ChatUi, events| {
+                frames.run(events, |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut other).id(other_id));
+                    let mut open = true;
+                    show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut emoji,
+                        &pics,
+                        &pics,
+                        &mut world,
+                        &gestures,
+                        st,
+                        &mut contacts,
+                        &mut contacts_settings,
+                        false,
+                        None,
+                        &mut open,
+                    );
+                });
+            };
+            let press = |at: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            for _ in 0..3 {
+                frame(&mut st, Vec::new());
+            }
+            let field = egui::Id::unique(("conv_input", Some(a)));
+            let focused = |id| ctx.memory(|m| m.has_focus(id));
+            assert!(focused(field), "{style:?}: the window opened");
+            // the field behind takes the keyboard
+            let behind = ctx.read_response(other_id).expect("the field behind").rect.center();
+            frame(&mut st, vec![egui::Event::PointerMoved(behind), press(behind, true)]);
+            frame(&mut st, vec![press(behind, false)]);
+            assert!(focused(other_id), "{style:?}: a field outside the window keeps its press");
+            // the window's title bar: nothing there takes the keyboard
+            let window = ctx
+                .memory(|m| m.area_rect(egui::Id::unique("conversations")))
+                .expect("the Conversations window");
+            assert!(!window.contains(behind), "{style:?}: the field behind is in sight");
+            let title = egui::pos2(window.center().x, window.top() + 10.0);
+            frame(&mut st, vec![egui::Event::PointerMoved(title), press(title, true)]);
+            frame(&mut st, vec![press(title, false)]);
+            assert!(focused(field), "{style:?}: the title bar's press gives the field the keyboard");
+            frame(&mut st, vec![egui::Event::Text("hi".into())]);
+            assert_eq!(st.draft_mut(Some(a)), "hi", "{style:?}");
+            // a field of the window pressed keeps the keyboard
+            if style.workspace() {
+                let search = ctx.read_response(sidebar::search_id()).expect("the column's search").rect.center();
+                frame(&mut st, vec![egui::Event::PointerMoved(search), press(search, true)]);
+                frame(&mut st, vec![press(search, false)]);
+                assert!(focused(sidebar::search_id()), "{style:?}: the search keeps its press");
+                assert!(!focused(field), "{style:?}");
+            }
+            drop(frame);
+            assert!(other.is_empty(), "{style:?}: nothing typed went behind the window");
         }
     }
 
