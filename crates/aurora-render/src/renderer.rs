@@ -12630,9 +12630,13 @@ impl Backend {
             _ => None,
         };
         // a range of blended faces in runs of one material class, each with
-        // its class's pipelines (the generic `pipe` for class 0)
+        // its class's pipelines (the generic `pipe` for class 0). Only the
+        // plain blended pass (`blend_lean`) is specialised: the rigged
+        // passes' pipelines (`blend_depth_*`) write depth, compare otherwise
+        // or split the texels (BLEND_SPLIT), which the material pipelines
+        // do not, so they keep their own
         let draw_classes = |pass: &mut wgpu::RenderPass, pipe: &SidedPipelines, r: (u64, u32), first: u32| {
-            let Some(mats) = blend_material else {
+            let Some(mats) = blend_material.filter(|_| std::ptr::eq(pipe, blend_lean)) else {
                 draw_sided(pass, pipe, r, first);
                 return;
             };
