@@ -93,6 +93,11 @@ const RISER_OVERLAP: f32 = 0.05;
 /// How far both authored feet may sink below the floor together and be
 /// carried by the body rather than by the knees (`Placement::apply`).
 const COMMON_SINK: f32 = 0.02;
+/// Knee circle radius over which a bending knee moves from the source's bend
+/// plane to the source's side offset in metres (`hinge`).
+const PLANE_BLEND: f32 = 0.1;
+/// Spacing of the anchors placement works around (`Placement::apply`).
+const ANCHOR_GRID: f32 = 16.0;
 
 /// The point of the sole under the ankle.
 fn under_ankle(corners: [Vec3; 4], sole: [Vec3; 4]) -> Vec3 {
@@ -322,7 +327,24 @@ fn hinge(hip: Vec3, knee: Vec3, ankle: Vec3, target: Vec3, side: Vec3) -> Option
     // Intersect the knee circle with the source hinge's lateral coordinate.
     // Transporting a pole toward a near-folded leg would rotate its forward
     // flexion medially; preserve the source knee's side offset in metres.
-    let bias = ((upper.dot(side) - along * axis.dot(side)) / side_reach).clamp(-radius, radius);
+    // Near straight that offset no longer fits the small circle: clamped to
+    // its radius, the forward flexion vanished about 5 degrees short of
+    // straight and the bend plane turned some 40 degrees within a millimetre
+    // of foot motion, the knee jerk of a locked standing leg. Near the
+    // source's own bend, keep the source's share of side offset instead, so
+    // the knee straightens within the source's bend plane, and move to the
+    // offset in metres over the next `PLANE_BLEND` of radius (a crouch).
+    let source_axis = (ankle - hip).normalize_or_zero();
+    let source_offset = upper - source_axis * upper.dot(source_axis);
+    let source_side = (side - source_axis * source_axis.dot(side)).normalize_or_zero();
+    let share = if source_offset.length() > 1e-6 {
+        source_offset.dot(source_side) / source_offset.length()
+    } else {
+        0.0
+    };
+    let metres = ((upper.dot(side) - along * axis.dot(side)) / side_reach).clamp(-radius, radius);
+    let proportional = radius * share.clamp(-0.98, 0.98);
+    let bias = proportional + (metres - proportional) * cubic_step((radius - source_offset.length()) / PLANE_BLEND);
     let bend = hip + axis * along + lateral * bias + forward * (radius * radius - bias * bias).max(0.0).sqrt();
     let hip_delta = precise_arc(upper / a, (bend - hip).normalize());
     let knee_delta = precise_arc((hip_delta * lower).normalize(), (hip + axis * reach - bend).normalize());
@@ -353,9 +375,26 @@ pub(super) struct Placement {
     deltas: Vec<Quat>,
     release: Option<Release>,
     acquired: Option<Acquisition>,
+    /// The world point the positions below are relative to.
+    anchor: Option<Vec3>,
 }
 
 impl Placement {
+    /// Carry the absolute heights and points kept between frames over to an
+    /// anchor `delta` lower.
+    fn rebase(&mut self, delta: Vec3) {
+        for foot in &mut self.feet {
+            foot.departure = foot.departure.map(|floor| floor + delta.z);
+            if let Some(elevation) = &mut foot.elevation {
+                elevation.value += delta.z;
+            }
+            foot.under = foot.under.map(|point| point + delta);
+        }
+        if let Some(height) = &mut self.height {
+            height.value += delta.z;
+        }
+    }
+
     pub(super) fn resume(&mut self, duration: Duration) {
         self.sampled = self.sampled.and_then(|at| at.checked_add(duration));
         if let Some(release) = &mut self.release {
@@ -468,7 +507,27 @@ impl Placement {
                 .min(0.1)
         };
         self.sampled = Some(now);
-        let previous_frame = self.previous_frame.replace(frame);
+        // Near 2,500 m (skyboxes) an f32 position only varies in steps of
+        // 0.24 mm, rounded separately for each joint and target: a nearly
+        // straight knee turned that noise into a degree of flicker per frame
+        // while the feet stood still. Work relative to an anchor near the
+        // avatar, a multiple of `ANCHOR_GRID` metres, and rebase the heights
+        // kept between frames when it changes; the terrain queries add it back.
+        let anchor = (frame.to_world.w_axis.truncate() / ANCHOR_GRID).floor() * ANCHOR_GRID;
+        if let Some(old) = self.anchor.replace(anchor)
+            && old != anchor
+        {
+            self.rebase(old - anchor);
+        }
+        let shift = Mat4::from_translation(-anchor);
+        let previous_frame = self.previous_frame.replace(frame).map(|previous| Frame {
+            to_world: shift * previous.to_world,
+            ..previous
+        });
+        let frame = Frame {
+            to_world: shift * frame.to_world,
+            ..frame
+        };
         // Walking, not a stand's sway or turning in place.
         let moving = previous_frame.is_some_and(|previous| {
             dt > 1e-5 && (frame.to_world.w_axis - previous.to_world.w_axis).truncate().truncate().length() > 0.1 * dt
@@ -512,7 +571,11 @@ impl Placement {
         let reference_floor = frame.to_world.transform_point3(Vec3::Z * setup.floor + pose.reference_offset).z;
         let inverse_frame = frame.to_world.inverse();
         let query = |point: Vec3| {
-            ground(point)
+            ground(point + anchor)
+                .map(|hit| Surface {
+                    position: hit.position - anchor,
+                    ..hit
+                })
                 .filter(|hit| hit.normal.z > 0.2 && hit.position.distance(point) <= crate::settings::MAX_GROUND_FEET_HEIGHT + MARGIN * 2.0)
         };
         if let Some(seed) = seed {
@@ -730,6 +793,7 @@ impl Placement {
             };
         }
         let offset = Vec3::Z * (height.value - reference_floor);
+        let (mut knees, mut stretch) = ([f32::NAN; 2], [f32::NAN; 2]);
         let mut result = Placed {
             rotations: pose.rotations.to_vec(),
             pelvis: inverse_frame.transform_vector3(offset + Vec3::Z * sink),
@@ -749,6 +813,15 @@ impl Placement {
             let Some((a, b)) = hinge(p(hip), p(knee), p(ankle), targets[side], orientation(source[knee]) * Vec3::Y) else {
                 continue;
             };
+            if log::log_enabled!(target: "aurora_viewer::foot_placement", log::Level::Trace) {
+                // Solved knee angle (180 = straight) and the target's distance
+                // as a share of the leg's length: a stretched leg magnifies
+                // millimetres of target motion into degrees of knee motion.
+                let upper = a * (p(knee) - p(hip));
+                let lower = b * a * (p(ankle) - p(knee));
+                knees[side] = (-upper).angle_between(lower).to_degrees();
+                stretch[side] = p(hip).distance(targets[side]) / (upper.length() + lower.length());
+            }
             let hip_rotation = a * orientation(source[hip]);
             let knee_rotation = b * a * orientation(source[knee]);
             let parent = rig.parent[hip].map_or(orientation(frame.to_world), |j| orientation(source[j]));
@@ -762,8 +835,8 @@ impl Placement {
             .zip(pose.rotations)
             .map(|(&placed, &raw)| placed * raw.inverse())
             .collect();
-        log::trace!(target: "aurora_viewer::foot_placement", "terrain anchor={} body={:.5} reference={reference_floor:.5} contact={:?} targets={targets:?}",
-            frame.standing_anchor, height.value + sink, self.feet.each_ref().map(|foot| foot.contact));
+        log::trace!(target: "aurora_viewer::foot_placement", "terrain origin={anchor:?} anchor={} body={:.5} reference={reference_floor:.5} contact={:?} targets={targets:?} knees={knees:.2?} stretch={stretch:.4?} blocked={:?}",
+            frame.standing_anchor, height.value + sink, self.feet.each_ref().map(|foot| foot.contact), self.feet.each_ref().map(|foot| foot.blocked));
         self.held = Some(result.clone());
         Some(result)
     }
@@ -1484,6 +1557,93 @@ mod tests {
                     "the body crouched in anticipation of a fall: {:?}",
                     placed.pelvis
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn grounding_a_skybox_solves_the_legs_as_precisely_as_the_ground() {
+        // The same breathing, swaying stand at ground level and 2,502 m up,
+        // where an f32 world position only varies in 0.24 mm steps: the
+        // nearly straight knees must not pick up that rounding.
+        let f = Fixture::new();
+        let now = Instant::now();
+        let knee = |world: &[Mat4], side: &str| {
+            let at = |bone: &str| world[f.rig.names[&format!("m{bone}{side}")]].w_axis.truncate();
+            (at("Hip") - at("Knee")).angle_between(at("Ankle") - at("Knee")).to_degrees()
+        };
+        let sky = Vec3::new(181.37, 57.91, 2502.37);
+        let low = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(0.0),
+                normal: Vec3::Z,
+            })
+        };
+        let high = |p: Vec3| {
+            Some(Surface {
+                position: p.with_z(sky.z),
+                normal: Vec3::Z,
+            })
+        };
+        let mut worst = 0.0_f32;
+        for fps in [30, 60, 144] {
+            let (mut ground_level, mut skybox) = (Placement::default(), Placement::default());
+            for i in 0..=fps * 6 {
+                let t = i as f32 / fps as f32;
+                let sway = Vec3::X * 0.012 * (t * std::f32::consts::PI).sin();
+                let pelvis = Vec3::Z * 0.003 * (t * std::f32::consts::TAU * 0.7).sin();
+                let at = now + Duration::from_secs_f32(t);
+                let a = f.sample(&mut ground_level, &f.rig.local_rot, pelvis, Some(f.frame(sway, 0.3)), at, &low);
+                let b = f.sample(&mut skybox, &f.rig.local_rot, pelvis, Some(f.frame(sky + sway, 0.3)), at, &high);
+                let a = f.rig.world_with(&a.rotations, pelvis + a.pelvis, &f.base.local_pos, &f.base.scale);
+                let b = f.rig.world_with(&b.rotations, pelvis + b.pelvis, &f.base.local_pos, &f.base.scale);
+                for side in ["Left", "Right"] {
+                    worst = worst.max((knee(&a, side) - knee(&b, side)).abs());
+                }
+            }
+        }
+        // World-space solving: 1.07 degrees. What is left is the rounding of
+        // the root and floor heights themselves, which arrive as f32.
+        assert!(worst < 0.25, "the knees differ by up to {worst} degrees 2,502 m up");
+    }
+
+    #[test]
+    fn grounding_a_straightening_knee_keeps_its_bend_plane() {
+        // Pull the foot from a bent knee to a straight leg in 0.01 mm steps:
+        // the knee straightens within one plane, as the source's, instead of
+        // swinging sideways in the last degrees before straight.
+        let f = Fixture::new();
+        let rest = f.rig.world_with(&f.rig.local_rot, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+        for side_name in ["Left", "Right"] {
+            let at = |bone: &str| rest[f.rig.names[&format!("m{bone}{side_name}")]].w_axis.truncate();
+            let (hip, knee, ankle) = (at("Hip"), at("Knee"), at("Ankle"));
+            let side = orientation(rest[f.rig.names[&format!("mKnee{side_name}")]]) * Vec3::Y;
+            let length = hip.distance(knee) + knee.distance(ankle);
+            let axis = (ankle - hip).normalize();
+            let plane = |stretch: f32| {
+                let target = hip + axis * length * stretch;
+                let (upper, _) = hinge(hip, knee, ankle, target, side).expect("solvable");
+                let bend = hip + upper * (knee - hip);
+                (bend - hip - axis * (bend - hip).dot(axis)).normalize()
+            };
+            let source = plane(hip.distance(ankle) / length);
+            let mut previous = plane(0.985);
+            for i in 1..=1499 {
+                let stretch = 0.985 + i as f32 * 0.00001;
+                let current = plane(stretch);
+                let step = previous.angle_between(current).to_degrees();
+                assert!(
+                    step < 0.2,
+                    "the {side_name} knee's bend plane turned {step} degrees at stretch {stretch}"
+                );
+                if stretch * length > hip.distance(ankle) {
+                    let drift = source.angle_between(current).to_degrees();
+                    assert!(
+                        drift < 1.0,
+                        "the straightening {side_name} knee left its bend plane by {drift} degrees at stretch {stretch}"
+                    );
+                }
+                previous = current;
             }
         }
     }
