@@ -332,12 +332,14 @@ fn read_signature(contents: &[FolderContents]) -> Vec<(Uuid, i32, Vec<Uuid>)> {
     read
 }
 
-/// `sync_inventory_folder` (llviewerinventory.cpp), on the item's linked id
-/// (RlvPredIsEqualOrLinkedItem: a link's target, an item's own id). A current
-/// item that is wanted takes every wanted entry for its target, so a second
-/// current link to it is removed and a duplicate wanted entry adds nothing; a
-/// real item consumes its entries too, but only links are ever removed. What
-/// is left of the wanted links is added.
+/// Port of RLVa's `sync_inventory_folder` (indra/newview/llviewerinventory.cpp)
+/// and `RlvPredIsEqualOrLinkedItem` (rlvcommon.cpp), Copyright © 2009-2020
+/// Kitty Barnett, originally LGPL 2.1. It works on the item's linked id (a
+/// link's target, an item's own id). A current item that is wanted takes
+/// every wanted entry for its target, so a second current link to it is
+/// removed and a duplicate wanted entry adds nothing; a real item consumes its
+/// entries too, but only links are ever removed. What is left of the wanted
+/// links is added.
 ///
 /// Only what the folder holds counts: the items whose parent is `folder`, as
 /// collectDescendents reads them from the inventory model. OpenSim's
@@ -376,6 +378,8 @@ fn link_diff<'a>(
         if link && is_layer_order(&desc) && desc != item.desc {
             let mut item = item.clone();
             item.desc = desc;
+            // the update names the folder: a nil parent would send a nil folder_id
+            item.parent = folder;
             redescribe.push(item);
         }
     }
@@ -920,15 +924,17 @@ pub(crate) mod tests {
             items.extend(links.iter().map(|(item, target)| worn_link(cof, *item, *target)));
             cof_reply(cof, version, items)
         };
+        // a spare third reply: a retry would read it, otherwise the probe below does
         let (url, task) = server(vec![
             (200, listing(1, vec![(ia, a), (ib, b), (ic, c)])),
+            (200, listing(3, vec![(ib, b), (ic, c), (id, d)])),
             (200, listing(3, vec![(ib, b), (ic, c), (id, d)])),
         ])
         .await;
         let (edits, send) = recorder();
-        let started = std::time::Instant::now();
+        let http = reqwest::Client::new();
         let result = mutate_udp(
-            &reqwest::Client::new(),
+            &http,
             None,
             &format!("{url}/fetch"),
             Uuid::nil(),
@@ -937,9 +943,15 @@ pub(crate) mod tests {
             &|_| {},
         )
         .await;
-        task.abort();
+        // refused when a retry already took the spare reply: the count below tells
+        let _ = http.get(format!("{url}/probe")).send().await;
+        let requests = task.await.expect("requests");
         let contents = result.expect("the outfit change completes");
-        assert!(started.elapsed() < std::time::Duration::from_millis(150), "no retry");
+        let lines: Vec<&str> = requests.iter().map(|(line, _)| line.as_str()).collect();
+        assert!(
+            lines.len() == 3 && lines[..2].iter().all(|l| l.contains(" /fetch ")) && lines[2].starts_with("GET /probe "),
+            "one read and one read-back, no retry: {lines:?}"
+        );
         let edits = edits.lock().expect("edits");
         let [UdpEdit::Link { parent, target, .. }, UdpEdit::RemoveItem(removed)] = edits.as_slice() else {
             panic!("d is linked and a is taken off, nothing else: {edits:?}");
@@ -1208,6 +1220,23 @@ pub(crate) mod tests {
             };
             assert_eq!((item.id, item.desc.as_str()), (Uuid::from_u128(11), "@801"));
         }
+    }
+
+    /// A link listed without its parent is filed in the folder it is listed
+    /// in, and its update names that folder: UpdateInventoryItem with a nil
+    /// folder_id would move it out of the outfit.
+    #[test]
+    fn a_redescribed_link_without_a_parent_names_its_folder() {
+        let a = Uuid::from_u128(1);
+        let mut link = current(11, a, 24, "@800");
+        link.parent = Uuid::nil();
+        let ordered = [wanted(a, "@801")];
+        let (remove, add, redescribe) = link_diff(FOLDER, &[link], &ordered);
+        assert!(remove.is_empty() && add.is_empty(), "{remove:?} {add:?}");
+        let [item] = redescribe.as_slice() else {
+            panic!("{redescribe:?}");
+        };
+        assert_eq!((item.id, item.parent, item.desc.as_str()), (Uuid::from_u128(11), FOLDER, "@801"));
     }
 
     /// A kept link whose layer order changed gets its new description, as
