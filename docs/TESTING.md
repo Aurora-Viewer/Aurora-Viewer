@@ -8844,8 +8844,11 @@ failure. Grid validation and any paid upload are performed by the human.
   the transcript, Group profile, Activate group (greyed for the active
   one), Stop receiving its chat, Leave group; `conference`
   (`aurora:conference`): Close, Hang up during its call, the transcript;
-  `local`: the transcript only. The transcript rows are greyed in the demo
-  (no transcript folder).
+  `local`: the nearby transcript. All four menus and the Conversations
+  toolbar button offer **Close all IM conversations** while an IM is open.
+  Nearby chat stays open. With `AURORA_DEMO_CALL=p2p`, wait for the call
+  to connect, then try Cancel and OK. The transcript rows are greyed in
+  the demo (no transcript folder).
 - **`AURORA_DEMO_CONV_POPOUT=1|option|nearby|nearby-out|dock|dock-hold`** (#717, #995, #1026): with an `AURORA_DEMO_CONV`
   scenario (`aurora`, `aurora:compact`, `bubbles` or `bubbles:legacy`), at
   frame 640: `1` pops the friend's IM (Nova) and the Aurora Builders group

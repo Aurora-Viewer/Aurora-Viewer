@@ -892,6 +892,8 @@ pub struct Settings {
     pub confirm_return_to_owner: bool,
     pub confirm_attachment_drop: bool,
     pub confirm_script_modify: bool,
+    /// ConfirmCloseAll when an open IM has an active voice call.
+    pub confirm_close_all_ims: bool,
     /// The Marketplace listings ask before a move from the inventory
     /// (ConfirmMerchantMoveInventory), a change to an active listing
     /// (ConfirmMerchantActiveChange), a version folder leaving its place
@@ -2583,6 +2585,7 @@ impl Default for Settings {
             confirm_return_to_owner: true,
             confirm_attachment_drop: true,
             confirm_script_modify: true,
+            confirm_close_all_ims: true,
             confirm_merchant_move: true,
             confirm_merchant_active_change: true,
             confirm_merchant_clear_version: true,
