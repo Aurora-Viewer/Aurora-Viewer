@@ -5650,6 +5650,7 @@ ui-sound-menu-option-7-hovered = Menu : choix 7 survolé
 ui-sound-menu-option-8-hovered = Menu : choix 8 survolé
 ui-bars-aurora-menu = Menu Aurora
 ui-bars-menu-no-match = Aucune entrée ne correspond à « { $query } ».
+ui-bars-menu-tear-off = Détacher ce menu
 ui-sound-context-menu-closed = Menu clic droit fermé
 ui-sound-context-menu-opened = Menu clic droit ouvert
 world-mod-test-menu = Menu de test

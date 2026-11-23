@@ -13,6 +13,10 @@
 //! field: while it holds a query, every row checks itself against it, and
 //! the sub-menus list their matching entries in place, under their path;
 //! the arrow keys select among them and Enter clicks the selected one.
+//!
+//! The sub-menus of a menu wrapped in [`tearable`] (the wolf menu) can be
+//! torn off into windows of their own, as in the Legacy Viewer: see
+//! [`scoped`] and `ui/bars/torn.rs`.
 
 use crate::theme::Palette;
 use aurora_i18n::UiUpper;
@@ -453,7 +457,7 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
 
 #[allow(clippy::too_many_arguments)]
 fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, end: End, open: bool, sense: Sense) -> egui::Response {
-    if !filter_row(ui, p, label) {
+    if !tear_drawn() || !filter_row(ui, p, label) {
         return hidden(ui);
     }
     let keyed = if enabled && sense.senses_click() { keyboard_row() } else { None };
@@ -832,7 +836,7 @@ pub fn item_tag(ui: &mut Ui, p: &Palette, icon: &str, label: &str, tag: &str) ->
 
 /// The title of a group of entries: small capitals, muted.
 pub fn section(ui: &mut Ui, p: &Palette, title: &str) {
-    if filtering() {
+    if filtering() || !tear_drawn() {
         return;
     }
     let galley = ui
@@ -1032,6 +1036,47 @@ pub fn submenu_heading(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enable
         FILTER.with_borrow_mut(|f| f.as_mut().map(|f| f.path.pop()));
         return hidden(ui);
     }
+    match tear_step(label) {
+        // a torn-off window draws its own menu only (`scoped`)
+        Some(Step::Outside) => return hidden(ui),
+        Some(Step::Descend { reached }) => {
+            if !enabled {
+                return hidden(ui);
+            }
+            tear_push(label, reached);
+            if reached {
+                tear_row(ui, p, true);
+            }
+            body(ui);
+            tear_pop();
+            return hidden(ui);
+        }
+        // torn off: its row raises its window instead of opening it
+        // (LLMenuItemBranchGL::setHighlight / openMenu)
+        Some(Step::Draw) if enabled && is_torn(label) => {
+            let resp = row(ui, p, icon, label, enabled, End::Caret, false);
+            if resp.clicked() {
+                let id = torn_window_id(&tear_path_with(label));
+                super::widgets::bring_floater_front(ui.ctx(), &id);
+                ui.close();
+            }
+            return resp;
+        }
+        Some(Step::Draw) => {
+            let open = enabled && sub_menu_open(ui);
+            let resp = row(ui, p, icon, label, enabled, End::Caret, open);
+            if enabled {
+                egui::containers::menu::SubMenu::new().show(ui, &resp, |ui| {
+                    tear_push(label, false);
+                    tear_row(ui, p, false);
+                    body(ui);
+                    tear_pop();
+                });
+            }
+            return resp;
+        }
+        None => {}
+    }
     let open = enabled && sub_menu_open(ui);
     let resp = row(ui, p, icon, label, enabled, End::Caret, open);
     if enabled {
@@ -1208,7 +1253,7 @@ pub(crate) fn clicks_kept_row(ctx: &egui::Context, popup: Id) -> bool {
 
 /// Thin line between groups of entries.
 pub fn separator(ui: &mut Ui, p: &Palette) {
-    if filtering() {
+    if filtering() || !tear_drawn() {
         return;
     }
     let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
@@ -1249,7 +1294,7 @@ fn info_line(
     icon_color: Color32,
     color: Color32,
 ) -> egui::Response {
-    if filtering() {
+    if filtering() || !tear_drawn() {
         return hidden(ui);
     }
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
@@ -1269,7 +1314,7 @@ fn info_line(
 /// The title of a group of rows, in small capitals (the parcel's rights,
 /// the recent places of the place menu).
 pub fn heading(ui: &mut Ui, p: &Palette, text: &str) {
-    if !filtering() {
+    if !filtering() && tear_drawn() {
         heading_line(ui, p, text);
     }
 }
@@ -1289,6 +1334,222 @@ fn heading_line(ui: &mut Ui, p: &Palette, text: &str) {
         galley,
         p.muted_dim,
     );
+}
+
+// Tear-off menus: port of LLMenuItemTearOffGL and LLTearOffMenu
+// (indra/llui/llmenugl.cpp, originally LGPL 2.1). The sub-menus of a menu
+// wrapped in [`tearable`] start with a tear-off row; a click on it asks for
+// a window of their own (`ui/bars/torn.rs`), which draws the same menu
+// again through [`scoped`]: only the rows of the torn-off sub-menu are
+// drawn there, so every entry keeps its own rule and action, and a click
+// leaves the window open (LLMenuItemGL::onCommit skips hideMenus for a
+// torn-off menu). Sub-menus are known by their path of labels, as the
+// search lists them.
+
+/// Height of the tear-off row (TEAROFF_SEPARATOR_HEIGHT_PIXELS).
+const TEAR_H: f32 = 10.0;
+
+/// The [`tearable`] or [`scoped`] menu being drawn: the labels of the
+/// sub-menus the rows are in, the paths torn off, and for a torn-off
+/// window the path it shows and whether that path was found.
+struct Tear {
+    path: Vec<String>,
+    torn: Vec<Vec<String>>,
+    target: Option<Vec<String>>,
+    found: bool,
+}
+
+thread_local! {
+    static TEAR: std::cell::RefCell<Option<Tear>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A click on a tear-off row: the path of its sub-menu, and the rect of the
+/// row (where the menu was, and how wide).
+#[derive(Clone, Debug)]
+pub struct TearRequest {
+    pub path: Vec<String>,
+    pub rect: egui::Rect,
+}
+
+fn torn_id() -> Id {
+    Id::unique("aurora_menu_torn")
+}
+
+fn tear_request_id() -> Id {
+    Id::unique("aurora_menu_tear_request")
+}
+
+/// The paths torn off, read by the next [`tearable`] and [`scoped`] menus.
+pub fn set_torn(ctx: &egui::Context, torn: Vec<Vec<String>>) {
+    ctx.data_mut(|d| d.insert_temp(torn_id(), torn));
+}
+
+/// The tear-off row clicked this frame, if any.
+pub fn take_tear_request(ctx: &egui::Context) -> Option<TearRequest> {
+    ctx.data_mut(|d| {
+        let request = d.get_temp::<TearRequest>(tear_request_id());
+        d.remove::<TearRequest>(tear_request_id());
+        request
+    })
+}
+
+/// The window id of the torn-off sub-menu `path`.
+pub fn torn_window_id(path: &[String]) -> String {
+    format!("torn_menu:{}", path.join(" › "))
+}
+
+/// Where a sub-menu row stands in the menu being drawn.
+#[derive(Debug, PartialEq)]
+enum Step {
+    /// Drawn as usual (with its tear-off row when opened).
+    Draw,
+    /// On the way to a torn-off window's sub-menu: its entries are walked
+    /// in place, `reached` when it is that sub-menu.
+    Descend { reached: bool },
+    /// Not in a torn-off window's sub-menu: nothing drawn.
+    Outside,
+}
+
+/// The step of the sub-menu `label` under `path`, for a window showing
+/// `target` (`None`: a menu, not a window).
+fn step(path: &[String], target: Option<&[String]>, label: &str) -> Step {
+    match target {
+        Some(t) if path.len() < t.len() => {
+            if t.starts_with(path) && t[path.len()] == label {
+                Step::Descend {
+                    reached: path.len() + 1 == t.len(),
+                }
+            } else {
+                Step::Outside
+            }
+        }
+        _ => Step::Draw,
+    }
+}
+
+/// Whether the rows under `path` are drawn in a window showing `target`:
+/// those of its sub-menu, and of the sub-menus it opens.
+fn drawn(path: &[String], target: Option<&[String]>) -> bool {
+    target.is_none_or(|t| path.len() >= t.len())
+}
+
+fn tear_step(label: &str) -> Option<Step> {
+    TEAR.with_borrow(|t| t.as_ref().map(|t| step(&t.path, t.target.as_deref(), label)))
+}
+
+/// Whether the row about to be drawn is: outside a torn-off window's own
+/// sub-menu, it is not.
+fn tear_drawn() -> bool {
+    TEAR.with_borrow(|t| t.as_ref().is_none_or(|t| drawn(&t.path, t.target.as_deref())))
+}
+
+fn tear_push(label: &str, reached: bool) {
+    TEAR.with_borrow_mut(|t| {
+        if let Some(t) = t.as_mut() {
+            t.path.push(label.to_owned());
+            t.found |= reached;
+        }
+    });
+}
+
+fn tear_pop() {
+    TEAR.with_borrow_mut(|t| t.as_mut().map(|t| t.path.pop()));
+}
+
+/// The path of the sub-menu `label` under the rows being drawn.
+fn tear_path_with(label: &str) -> Vec<String> {
+    TEAR.with_borrow(|t| {
+        let mut path = t.as_ref().map(|t| t.path.clone()).unwrap_or_default();
+        path.push(label.to_owned());
+        path
+    })
+}
+
+/// The sub-menu `label` under the rows being drawn is torn off.
+fn is_torn(label: &str) -> bool {
+    let path = tear_path_with(label);
+    TEAR.with_borrow(|t| t.as_ref().is_some_and(|t| t.torn.contains(&path)))
+}
+
+/// The tear-off row at the top of a sub-menu: two thin lines
+/// (LLMenuItemTearOffGL::draw). In a menu, a click asks for its window and
+/// closes the menu; in the window (`in_window`), it closes the window
+/// (LLMenuItemTearOffGL::onCommit). Never while the menu is searched.
+fn tear_row(ui: &mut Ui, p: &Palette, in_window: bool) {
+    if filtering() {
+        return;
+    }
+    let w = if ui.is_sizing_pass() { MIN_W } else { ui.available_width() };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, TEAR_H), Sense::click());
+    let hovered = resp.hovered();
+    if hovered {
+        ui.painter()
+            .rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.35));
+    }
+    let stroke = if hovered {
+        Stroke::new(1.0, p.ink)
+    } else {
+        super::widgets::divider_stroke(p)
+    };
+    let x = rect.x_range().shrink(PAD - 2.0);
+    let third = TEAR_H / 3.0;
+    ui.painter().hline(x, rect.top() + third, stroke);
+    ui.painter().hline(x, rect.top() + third * 2.0, stroke);
+    let tip = if in_window {
+        aurora_i18n::tr!("common-close")
+    } else {
+        aurora_i18n::tr!("ui-bars-menu-tear-off")
+    };
+    if resp.on_hover_text(tip).clicked() {
+        let path = TEAR.with_borrow(|t| t.as_ref().map(|t| t.path.clone()).unwrap_or_default());
+        ui.ctx().data_mut(|d| d.insert_temp(tear_request_id(), TearRequest { path, rect }));
+        ui.close();
+    }
+}
+
+/// A menu whose sub-menus can be torn off (the wolf menu): they start with
+/// a tear-off row, and the row of one torn off raises its window.
+pub fn tearable(ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
+    let torn = ui.ctx().data(|d| d.get_temp::<Vec<Vec<String>>>(torn_id())).unwrap_or_default();
+    let before = TEAR.replace(Some(Tear {
+        path: Vec::new(),
+        torn,
+        target: None,
+        found: false,
+    }));
+    body(ui);
+    TEAR.set(before);
+}
+
+/// The sub-menu `target` of the menu `body` draws, in a torn-off window:
+/// its tear-off row, then its rows, whose clicks leave the window open;
+/// its own sub-menus open beside it and can be torn off in turn. Returns
+/// whether the sub-menu was found (a sub-menu gone, or renamed by a change
+/// of language, closes its window).
+pub fn scoped(ui: &mut Ui, p: &Palette, target: &[String], body: impl FnOnce(&mut Ui)) -> bool {
+    use egui::containers::menu::MenuConfig;
+    let torn = ui.ctx().data(|d| d.get_temp::<Vec<Vec<String>>>(torn_id())).unwrap_or_default();
+    let before = TEAR.replace(Some(Tear {
+        path: Vec::new(),
+        torn,
+        target: Some(target.to_vec()),
+        found: false,
+    }));
+    // a menu root for the sub-menus that open from it, which takes the
+    // `ui.close()` of a clicked entry instead of the window
+    let config = MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClick).style(style(p));
+    let builder = egui::UiBuilder::new()
+        .id_salt("aurora_torn_menu")
+        .ui_stack_info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))
+        .closable();
+    ui.scope_builder(builder, |ui| {
+        // the rows as close together as in the menu (`style`)
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        body(ui);
+    });
+    let found = TEAR.with_borrow(|t| t.as_ref().is_some_and(|t| t.found));
+    TEAR.set(before);
+    found
 }
 
 /// The query of the [`searchable`] menu being drawn, and where its rows
@@ -1602,6 +1863,245 @@ mod tests {
 
     fn words(q: &str) -> Vec<String> {
         query_words(q)
+    }
+
+    fn path(labels: &[&str]) -> Vec<String> {
+        labels.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_menu_draws_every_sub_menu() {
+        assert_eq!(step(&[], None, "World"), Step::Draw);
+        assert_eq!(step(&path(&["World"]), None, "Sun"), Step::Draw);
+        assert!(drawn(&[], None));
+        assert!(drawn(&path(&["World", "Sun"]), None));
+    }
+
+    #[test]
+    fn a_torn_off_window_walks_down_to_its_sub_menu_only() {
+        let target = path(&["World", "Sun"]);
+        let t = Some(target.as_slice());
+        assert_eq!(step(&[], t, "World"), Step::Descend { reached: false });
+        assert_eq!(step(&[], t, "Me"), Step::Outside);
+        assert_eq!(step(&path(&["World"]), t, "Sun"), Step::Descend { reached: true });
+        assert_eq!(step(&path(&["World"]), t, "Map"), Step::Outside);
+        // the sub-menus of the torn-off one open as usual
+        assert_eq!(step(&target, t, "Presets"), Step::Draw);
+        // its entries only, not those of the menus above it
+        assert!(!drawn(&[], t));
+        assert!(!drawn(&path(&["World"]), t));
+        assert!(drawn(&target, t));
+        assert!(drawn(&path(&["World", "Sun", "Presets"]), t));
+    }
+
+    #[test]
+    fn torn_off_windows_have_one_id_per_path() {
+        assert_eq!(torn_window_id(&path(&["World", "Sun"])), "torn_menu:World › Sun");
+        assert_ne!(torn_window_id(&path(&["World"])), torn_window_id(&path(&["World", "Sun"])));
+    }
+
+    /// A small menu with two levels, as `main_menus` writes them.
+    fn sample_menu(ui: &mut Ui, p: &Palette, clicked: &mut Option<&'static str>) {
+        submenu(ui, p, "user-filled", "Me", true, |ui| {
+            if item(ui, p, "user-filled", "Profile") {
+                *clicked = Some("Profile");
+            }
+        });
+        submenu(ui, p, "world", "World", true, |ui| {
+            if item(ui, p, "map", "Map") {
+                *clicked = Some("Map");
+            }
+            separator(ui, p);
+            submenu(ui, p, "sun-filled", "Sun", true, |ui| {
+                if item(ui, p, "sun-filled", "Noon") {
+                    *clicked = Some("Noon");
+                }
+                if item(ui, p, "moon-filled", "Midnight") {
+                    *clicked = Some("Midnight");
+                }
+            });
+        });
+    }
+
+    /// The torn-off window of World › Sun shows Noon and Midnight, nothing
+    /// of the menus above; a click on Noon runs it and the window stays
+    /// open (LLMenuItemGL::onCommit).
+    #[test]
+    fn a_torn_off_window_shows_its_entries_and_stays_open_on_a_click() {
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = Frames::new();
+        let target = path(&["World", "Sun"]);
+        let mut open = true;
+        let mut found = false;
+        let mut clicked = None;
+        let draw =
+            |frames: &mut Frames, events: Vec<egui::Event>, open: &mut bool, found: &mut bool, clicked: &mut Option<&'static str>| {
+                frames.run(events, |ui| {
+                    Floater::new("torn_menu:test", "Sun", egui::pos2(100.0, 100.0), egui::vec2(220.0, 120.0))
+                        .silent()
+                        .auto_height()
+                        .show(ui.ctx(), &p, open, |ui| {
+                            *found = scoped(ui, &p, &target, |ui| sample_menu(ui, &p, clicked));
+                        });
+                })
+            };
+        let mut texts = Vec::new();
+        for _ in 0..4 {
+            texts = draw(&mut frames, Vec::new(), &mut open, &mut found, &mut clicked);
+        }
+        assert!(found);
+        let shown: Vec<&str> = texts.iter().map(|t| t.source.as_str()).collect();
+        assert!(shown.contains(&"Noon") && shown.contains(&"Midnight"), "{shown:?}");
+        for other in ["Me", "Profile", "World", "Map"] {
+            assert!(!shown.contains(&other), "{other} drawn in {shown:?}");
+        }
+        let noon = texts.iter().find(|t| t.source == "Noon").expect("Noon").rect.center();
+        draw(
+            &mut frames,
+            vec![egui::Event::PointerMoved(noon)],
+            &mut open,
+            &mut found,
+            &mut clicked,
+        );
+        for pressed in [true, false] {
+            let click = egui::Event::PointerButton {
+                pos: noon,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            draw(&mut frames, vec![click], &mut open, &mut found, &mut clicked);
+        }
+        for _ in 0..3 {
+            draw(&mut frames, Vec::new(), &mut open, &mut found, &mut clicked);
+        }
+        assert_eq!(clicked, Some("Noon"));
+        assert!(open, "the click closed the torn-off window");
+        let texts = draw(&mut frames, Vec::new(), &mut open, &mut found, &mut clicked);
+        assert!(texts.iter().any(|t| t.source == "Noon"), "the window lost its entries");
+    }
+
+    /// A path no longer in the menu (a sub-menu gone, another language) is
+    /// not found: its window closes.
+    #[test]
+    fn a_torn_off_window_of_a_path_gone_finds_nothing() {
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = Frames::new();
+        let mut found = true;
+        let texts = frames.run(Vec::new(), |ui| {
+            found = scoped(ui, &p, &path(&["World", "Weather"]), |ui| sample_menu(ui, &p, &mut None));
+        });
+        assert!(!found);
+        assert!(texts.is_empty(), "{:?}", texts.iter().map(|t| &t.source).collect::<Vec<_>>());
+    }
+
+    /// A click on the tear-off row at the top of an opened sub-menu asks
+    /// for its window, with the menu's place and width, and closes the menu.
+    #[test]
+    fn the_tear_off_row_asks_for_a_window_and_closes_the_menu() {
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = Frames::new();
+        let mut open = false;
+        let mut run = |frames: &mut Frames, events: Vec<egui::Event>| {
+            frames.run(events, |ui| {
+                Floater::new("menu_host", "Host", egui::pos2(30.0, 100.0), egui::vec2(300.0, 260.0))
+                    .silent()
+                    .show(ui.ctx(), &p, &mut true, |ui| {
+                        let button = ui.button("Menu");
+                        open = dropdown(&button, &p, PopupCloseBehavior::CloseOnClick, |ui| {
+                            tearable(ui, |ui| sample_menu(ui, &p, &mut None));
+                        });
+                    });
+            })
+        };
+        let click = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = run(&mut frames, Vec::new());
+        }
+        let button = texts.iter().find(|t| t.source == "Menu").expect("button").rect.center();
+        run(&mut frames, vec![egui::Event::PointerMoved(button)]);
+        run(&mut frames, vec![click(button, true)]);
+        run(&mut frames, vec![click(button, false)]);
+        for _ in 0..3 {
+            texts = run(&mut frames, Vec::new());
+        }
+        let world = texts.iter().find(|t| t.source == "World").expect("World row").rect;
+        for _ in 0..30 {
+            texts = run(&mut frames, vec![egui::Event::PointerMoved(world.center())]);
+        }
+        let map = texts.iter().find(|t| t.source == "Map").expect("World opened").rect;
+        // the tear-off row sits just above the first entry
+        let tear = egui::pos2(map.center().x, map.top() - 7.0);
+        run(&mut frames, vec![egui::Event::PointerMoved(tear)]);
+        run(&mut frames, vec![click(tear, true)]);
+        run(&mut frames, vec![click(tear, false)]);
+        let request = take_tear_request(&frames.ctx).expect("a tear-off request");
+        assert_eq!(request.path, path(&["World"]));
+        assert!(request.rect.width() >= MIN_W, "{:?}", request.rect);
+        assert!(request.rect.bottom() <= map.top() + 0.5);
+        for _ in 0..3 {
+            run(&mut frames, Vec::new());
+        }
+        assert!(!open, "the menu stayed open");
+    }
+
+    /// In a tearable menu, the row of a sub-menu torn off raises its window
+    /// instead of opening it; the others still open with their tear-off row.
+    #[test]
+    fn the_row_of_a_torn_off_sub_menu_does_not_open_it() {
+        let p = crate::theme::Theme::default().palette();
+        let mut frames = Frames::new();
+        set_torn(&frames.ctx, vec![path(&["World"])]);
+        let mut texts = Vec::new();
+        let run = |frames: &mut Frames, events: Vec<egui::Event>| {
+            frames.run(events, |ui| {
+                Floater::new("menu_host", "Host", egui::pos2(30.0, 100.0), egui::vec2(300.0, 260.0))
+                    .silent()
+                    .show(ui.ctx(), &p, &mut true, |ui| {
+                        let button = ui.button("Menu");
+                        dropdown(&button, &p, PopupCloseBehavior::CloseOnClick, |ui| {
+                            tearable(ui, |ui| sample_menu(ui, &p, &mut None));
+                        });
+                    });
+            })
+        };
+        for _ in 0..3 {
+            texts = run(&mut frames, Vec::new());
+        }
+        let button = texts.iter().find(|t| t.source == "Menu").expect("button").rect.center();
+        run(&mut frames, vec![egui::Event::PointerMoved(button)]);
+        for pressed in [true, false] {
+            run(
+                &mut frames,
+                vec![egui::Event::PointerButton {
+                    pos: button,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+        }
+        for _ in 0..3 {
+            texts = run(&mut frames, Vec::new());
+        }
+        // hovering World (torn off) shows nothing of its sub-menu
+        let world = texts.iter().find(|t| t.source == "World").expect("World row").rect.center();
+        for _ in 0..30 {
+            texts = run(&mut frames, vec![egui::Event::PointerMoved(world)]);
+        }
+        assert!(!texts.iter().any(|t| t.source == "Map"), "World opened");
+        // hovering Me opens it as usual
+        let me = texts.iter().find(|t| t.source == "Me").expect("Me row").rect.center();
+        for _ in 0..30 {
+            texts = run(&mut frames, vec![egui::Event::PointerMoved(me)]);
+        }
+        assert!(texts.iter().any(|t| t.source == "Profile"), "Me did not open");
     }
 
     #[test]

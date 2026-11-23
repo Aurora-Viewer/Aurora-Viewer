@@ -5573,6 +5573,7 @@ ui-sound-menu-option-7-hovered = メニュー：項目７にカーソル
 ui-sound-menu-option-8-hovered = メニュー：項目８にカーソル
 ui-bars-aurora-menu = Auroraメニュー
 ui-bars-menu-no-match = 「{ $query }」に一致する項目はありません。
+ui-bars-menu-tear-off = このメニューを切り離す
 ui-sound-context-menu-closed = コンテキストメニューを閉じた
 ui-sound-context-menu-opened = コンテキストメニューを開いた
 world-mod-test-menu = テストメニュー

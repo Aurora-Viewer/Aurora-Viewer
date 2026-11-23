@@ -794,6 +794,11 @@ pub struct Floater<'a> {
     partial_outside: bool,
     /// A chat window: it stays in immersive mode (`hide_windows`).
     chat: bool,
+    /// It has no minimize button and is never minimized (a torn-off menu:
+    /// LLTearOffMenu, `setCanMinimize(false)`).
+    can_minimize: bool,
+    /// It stays in the viewer's window: no button to send it outside.
+    stays_inside: bool,
 }
 
 impl<'a> Floater<'a> {
@@ -835,7 +840,21 @@ impl<'a> Floater<'a> {
             cascade: None,
             partial_outside: false,
             chat: false,
+            can_minimize: true,
+            stays_inside: false,
         }
+    }
+
+    /// No minimize button (see `can_minimize`).
+    pub(crate) fn no_minimize(mut self) -> Self {
+        self.can_minimize = false;
+        self
+    }
+
+    /// Kept in the viewer's window (see `stays_inside`).
+    pub(crate) fn stays_inside(mut self) -> Self {
+        self.stays_inside = true;
+        self
     }
 
     /// Only document editors opt in. A read-only document still reserves its
@@ -912,7 +931,7 @@ impl<'a> Floater<'a> {
     /// window drawn over an overlay of the viewer's (`order`) is a window
     /// of its own outside, over nothing.
     fn goes_outside(&self) -> bool {
-        !STAYS_INSIDE.contains(&self.id) && !self.height_only
+        !self.stays_inside && !STAYS_INSIDE.contains(&self.id) && !self.height_only
     }
 
     pub fn framed_header(mut self, icon: &'a str) -> Self {
@@ -1066,7 +1085,7 @@ impl<'a> Floater<'a> {
         }
         // persisted with the UI layout (ui_layout.ron)
         // a window without a title bar has no bar to be minimized to
-        let minimized = !self.headless && ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
+        let minimized = !self.headless && self.can_minimize && ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
         // minimized with its compact body: sized by that body
         let compact = minimized && self.compact_minimized.is_some();
         if !self.silent {
@@ -1355,12 +1374,14 @@ impl<'a> Floater<'a> {
                             (false, true) => aurora_i18n::tr!("common-expand"),
                             (false, false) => aurora_i18n::tr!("common-collapse"),
                         };
-                        let response = title_button(ui, p, icon).on_hover_text(tip);
-                        #[cfg(test)]
-                        ui.ctx()
-                            .data_mut(|d| d.insert_temp(egui::Id::unique(("floater_minimize", self.id)), response.rect));
-                        if response.clicked() {
-                            toggle_min = true;
+                        if self.can_minimize {
+                            let response = title_button(ui, p, icon).on_hover_text(tip);
+                            #[cfg(test)]
+                            ui.ctx()
+                                .data_mut(|d| d.insert_temp(egui::Id::unique(("floater_minimize", self.id)), response.rect));
+                            if response.clicked() {
+                                toggle_min = true;
+                            }
                         }
                         if goes_outside
                             && title_button(ui, p, OUTSIDE_ICON)
@@ -1621,7 +1642,7 @@ impl<'a> Floater<'a> {
                 unminimize_quietly(ctx, self.id);
             }
             crate::outside::want(ctx, window_id, true);
-        } else if toggle_min {
+        } else if toggle_min && self.can_minimize {
             ctx.data_mut(|d| d.insert_persisted(min_id, !minimized));
             if self.cascade.is_some() {
                 cascade::minimized(ctx, window_id, !minimized);
