@@ -475,13 +475,22 @@ impl InspectUi {
                 aurora_i18n::tr!("inspect-search")
             };
             let width = (ui.available_width() - button_w - ui.spacing().item_spacing.x).max(80.0);
-            widgets::search_field(ui, p, &mut self.query, hint, width);
+            // as tall as the button beside it, its capitals in its middle
+            let mut margin = widgets::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
+            margin.left += 8;
+            margin.right += 4;
+            widgets::search_text_edit_with_margin(ui, p, &mut self.query, margin, |edit| {
+                edit.hint_text(hint)
+                    .align(egui::Align2::LEFT_CENTER)
+                    .desired_width(width)
+                    .min_size(Vec2::new(0.0, SEARCH_HEIGHT))
+            });
             let kind = if self.view_open {
                 widgets::ActionKind::Primary
             } else {
                 widgets::ActionKind::Flat
             };
-            if widgets::action_button(ui, p, "adjustments-horizontal-filled", &label, kind, Vec2::new(0.0, 26.0))
+            if widgets::action_button(ui, p, "adjustments-horizontal-filled", &label, kind, Vec2::new(0.0, SEARCH_HEIGHT))
                 .on_hover_text(aurora_i18n::tr!("inspect-view-tip"))
                 .clicked()
             {
@@ -595,6 +604,9 @@ impl InspectUi {
         });
     }
 }
+
+/// Height of the search field and of the View button beside it.
+const SEARCH_HEIGHT: f32 = 26.0;
 
 /// Side of the picture in the summary card.
 const SUMMARY_PICTURE: f32 = 38.0;
