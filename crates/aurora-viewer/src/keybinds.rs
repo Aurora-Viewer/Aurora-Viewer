@@ -119,8 +119,12 @@ fn learned(k: &str) -> Option<String> {
 }
 
 fn key_label(k: &str) -> String {
+    key_label_on(k, cfg!(target_os = "macos"))
+}
+
+fn key_label_on(k: &str, mac: bool) -> String {
     match k {
-        "AltLeft" | "AltRight" => return "ALT".into(),
+        "AltLeft" | "AltRight" => return (if mac { "⌥ Option" } else { "ALT" }).into(),
         "ControlLeft" | "ControlRight" => return "Ctrl".into(),
         "ShiftLeft" | "ShiftRight" => return aurora_i18n::tr!("keybinds-shift").into(),
         _ => {}
@@ -2245,6 +2249,14 @@ mod tests {
     /// through here (Ctrl+Q is KeyA on AZERTY, Ctrl+H is KeyJ on Dvorak).
     fn letter(us_key: KeyCode) -> KeyCode {
         layout::current().named_key(us_key)
+    }
+
+    #[test]
+    fn standalone_alt_keys_use_platform_labels() {
+        for key in ["AltLeft", "AltRight"] {
+            assert_eq!(key_label_on(key, true), "⌥ Option");
+            assert_eq!(key_label_on(key, false), "ALT");
+        }
     }
 
     /// LLKeyboard names KEY_HOME "Home" (indra/llwindow/llkeyboard.cpp).
