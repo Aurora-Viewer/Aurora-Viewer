@@ -298,8 +298,9 @@ pub enum InvAction {
         item: Uuid,
         input: thumbnail::Input,
     },
-    /// An action of the dual-panel layout's right pane (`DUAL_PANE`): the
-    /// app answers in that pane (messages, documents, created items).
+    /// An action of the dual-panel layout's right pane (`DUAL_PANE`), or an
+    /// inventory change of a folder window (its id): the app answers in that
+    /// pane (messages, documents, created items).
     Panel {
         editor: Uuid,
         action: Box<InvAction>,
@@ -554,6 +555,40 @@ fn bring_forward_shown(ctx: &egui::Context, windows: &mut Vec<InventoryWindow>) 
         kept.push(w);
     }
     *windows = kept;
+}
+
+impl InventoryWindow {
+    /// A window that lists inventory rows of its own, where a change it asks
+    /// for is answered (#4700): a folder's tree ("Show in a new window"),
+    /// a single folder ("Open in a new window"), the additional window or
+    /// an explorer tab dragged out to a window of its own (`torn_off`).
+    /// Every other window (a document, a properties or confirmation
+    /// window, the Marketplace Listings panel) lets the main window
+    /// answer. A new kind of list window is added here.
+    fn lists_inventory(&self) -> bool {
+        self.id != listings::PANEL && (!self.root.is_nil() || self.additional || self.state.torn_off || self.state.single_folder.is_some())
+    }
+}
+
+/// The inventory changes a list window asked for (`range` of this frame's
+/// actions, `InventoryWindow::lists_inventory`) carry its id, so that the
+/// app answers in that window: the folder it created is selected there, on
+/// its own tab, and not in the main window (#4700). Done once every window
+/// is drawn, so that each one still sees the others' changes as
+/// `InvAction::Edit` (one change a frame).
+fn tag_window_edits(w: &InventoryWindow, actions: &mut [InvAction], range: std::ops::Range<usize>) {
+    if !w.lists_inventory() {
+        return;
+    }
+    for action in &mut actions[range] {
+        if matches!(action, InvAction::Edit(_)) {
+            let edit = std::mem::replace(action, InvAction::DualPanel);
+            *action = InvAction::Panel {
+                editor: w.id,
+                action: Box::new(edit),
+            };
+        }
+    }
 }
 
 /// Whether an inventory window stays in the list this frame: open, the main
@@ -816,6 +851,11 @@ pub struct InventoryUi {
     pub consume_clipboard: bool,
     pub pending_refresh: Vec<Uuid>,
     pub created_selection: Option<Uuid>,
+    /// Client folder ID from "+" outside the explorer. A refused or cancelled
+    /// Marketplace edit must not change how the next folder is displayed.
+    pub new_folder_in_all: Option<Uuid>,
+    /// The pending change's folder is shown that way (`show_created`).
+    pub created_in_all: bool,
     pub merchant_requested: bool,
     pub merchant: bool,
     pub pending: Option<Uuid>,
@@ -1215,6 +1255,55 @@ impl InventoryUi {
     /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
         self.show_original_in(inv, id, 0);
+    }
+
+    /// Toolbar and keyboard use the same destination and reveal policy.
+    /// In single-folder mode the displayed folder owns the new one even
+    /// when the window is narrow or another row is selected.
+    fn new_folder_target(&self, inv: &Inventory, root: Uuid, layout: Option<aurora::Layout>) -> (Uuid, bool) {
+        if self.single_folder.is_some() || self.tab == 0 && layout.is_some_and(|layout| layout != aurora::Layout::Compact) {
+            return (self.browse, false);
+        }
+        let parent = self.selected.and_then(|id| {
+            if inv.folders.contains_key(&id) {
+                Some(id)
+            } else {
+                rules::parent(inv, id)
+            }
+        });
+        (parent.unwrap_or(root), true)
+    }
+
+    /// A folder this window just created: select it, by the Legacy
+    /// Viewer's rule for the command that made it.
+    /// - "+" New Folder (toolbar, gear menu, Ctrl+Shift+N) outside the
+    ///   explorer (`created_in_all`): on the All tab, search cleared, as
+    ///   LLPanelMainInventory::doCreate (indra/newview/llpanelmaininventory.cpp)
+    ///   does before it creates (`selectAllItemsPanel`, `onFilterEdit("")`).
+    ///   In the explorer, the folder shown, as its single-folder mode.
+    /// - Every other one (Create folder from selection, a folder's
+    ///   right-click New Folder, a paste): on the tab and filters in use
+    ///   (#4700), where `show_original` would move to the All tab. The
+    ///   right-click New Folder follows menu_create_inventory_item
+    ///   (indra/newview/llviewerinventory.cpp), which selects it in the panel
+    ///   that asked. Create folder from selection follows
+    ///   move_items_to_folder (indra/newview/llinventoryfunctions.cpp) in the
+    ///   main window, which selects it in the main inventory's active panel;
+    ///   in a folder or additional window, Aurora answers in that window
+    ///   instead, where the Legacy Viewer always answers in the main window
+    ///   (a visible difference, so that the result shows where the user is
+    ///   working).
+    pub fn show_created(&mut self, inv: &Inventory, id: Uuid) {
+        self.anchor = Some(id);
+        if std::mem::take(&mut self.created_in_all) {
+            self.show_original(inv, id);
+            return;
+        }
+        self.keyboard_selection = false;
+        self.selected = Some(id);
+        self.selection.clear();
+        self.selection.insert(id);
+        self.reveal_item(inv, id);
     }
 
     /// Demo: press the Detach and Delete confirmation's button
@@ -2115,7 +2204,7 @@ fn folder_window_contents(
     });
     task_drop::target(ui, p, &zone.response, inv, root, actions);
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
-    status(ui, p, inv, st, prefs, facts, actions, filtered);
+    status(ui, p, inv, root, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
     drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
@@ -2187,6 +2276,7 @@ fn status(
     ui: &mut egui::Ui,
     p: &Palette,
     inv: &Inventory,
+    root: Uuid,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     facts: &Facts,
@@ -2209,13 +2299,18 @@ fn status(
         )
     };
     ui.horizontal(|ui| {
-        let to = st
-            .selected
-            .filter(|id| inv.folders.contains_key(id))
-            .or_else(|| st.selected.and_then(|id| rules::parent(inv, id)))
-            .unwrap_or(inv.root);
+        let (to, in_all) = st.new_folder_target(inv, root, None);
         super::widgets::icon_menu(ui, p, "plus", aurora_i18n::tr!("common-new-folder"), |ui| {
-            context::new_menu(ui, p, to, st.pending.is_none() && rules::destination(inv, to), st, prefs, actions);
+            context::new_menu(
+                ui,
+                p,
+                to,
+                st.pending.is_none() && rules::destination(inv, to),
+                in_all,
+                st,
+                prefs,
+                actions,
+            );
         });
         additional_button(ui, p, st);
         ui.label(
@@ -2928,7 +3023,7 @@ fn inventory_contents(
     let target = list_destination(st, root);
     task_drop::target(ui, p, &zone.response, inv, target, actions);
     drag::target(ui, p, &zone.response, inv, target, st, prefs, facts, actions);
-    status(ui, p, inv, st, prefs, facts, actions, filtered);
+    status(ui, p, inv, root, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
     drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
@@ -3458,7 +3553,11 @@ pub fn show(
     let mut windows = std::mem::take(&mut st.windows);
     bring_forward_shown(ctx, &mut windows);
     let mut spawned = Vec::new();
-    for w in &mut windows {
+    // (window index, its actions of this frame): allocated only on a frame
+    // where a window asked for something
+    let mut window_actions = Vec::new();
+    for (index, w) in windows.iter_mut().enumerate() {
+        let first_action = actions.len();
         if !w.open {
             w.state.pending_delete = None;
         }
@@ -3649,7 +3748,13 @@ pub fn show(
             w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
         }
         remember_recent_filters(&mut w.state, prefs);
+        if actions.len() > first_action {
+            window_actions.push((index, first_action..actions.len()));
+        }
         spawned.append(&mut w.state.windows);
+    }
+    for (index, range) in window_actions {
+        tag_window_edits(&windows[index], &mut actions, range);
     }
     // A tab let go this frame: along its strip, to another window, or out
     // to a window of its own (`aurora::tabs::settle`); a window whose last
@@ -4463,6 +4568,116 @@ mod tests {
         st.enter_advanced(view::SearchField::Name);
         st.show_original(&inv, Uuid::from_u128(1));
         assert!(!st.advanced && st.search.is_empty() && st.filters.smart.is_none());
+    }
+
+    #[test]
+    fn a_created_folder_is_shown_on_the_tab_in_use() {
+        // #4700: Create folder from selection on Recent stayed there in the
+        // Legacy Viewer, and moved to the All tab here.
+        use aurora_net::inventory::InvFolder;
+        let id = Uuid::from_u128;
+        let mut inv = Inventory::default();
+        inv.created_folders(vec![
+            InvFolder {
+                id: id(10),
+                ..Default::default()
+            },
+            InvFolder {
+                id: id(20),
+                parent: id(10),
+                ..Default::default()
+            },
+        ]);
+        let prefs = InventoryPreferences::default();
+        let mut st = InventoryUi::default();
+        set_tab(&mut st, &prefs, RECENT_TAB);
+        st.search = "hat".into();
+        let filters = st.filters.clone();
+        st.selection = HashSet::from([id(30), id(40)]);
+        st.show_created(&inv, id(20));
+        assert_eq!(st.tab, RECENT_TAB);
+        assert_eq!(st.search, "hat");
+        assert_eq!(st.filters, filters);
+        assert_eq!(st.selected, Some(id(20)));
+        assert_eq!(st.selection, HashSet::from([id(20)]));
+        assert_eq!(st.anchor, Some(id(20)));
+        assert_eq!(st.reveal, Some(id(20)));
+        assert!(st.reveal_path.contains(&id(10)));
+        // a "+" New Folder: on the All tab, search cleared, as
+        // LLPanelMainInventory::doCreate; the mark is used once
+        st.created_in_all = true;
+        st.show_created(&inv, id(10));
+        assert_eq!(st.tab, 0);
+        assert!(st.search.is_empty());
+        assert_eq!(st.selected, Some(id(10)));
+        assert!(!st.created_in_all, "used once");
+        set_tab(&mut st, &prefs, RECENT_TAB);
+        st.show_created(&inv, id(20));
+        assert_eq!(st.tab, RECENT_TAB, "the next folder keeps the tab again");
+    }
+
+    #[test]
+    fn a_folder_window_tags_only_its_own_inventory_changes() {
+        let edit = || InvAction::Edit(Default::default());
+        let mut st = InventoryUi::default();
+        st.open_folder_window(Uuid::from_u128(20));
+        let window = &st.windows[0];
+        let mut actions = vec![edit(), edit(), InvAction::DualPanel];
+        tag_window_edits(window, &mut actions, 1..3);
+        assert!(matches!(actions[0], InvAction::Edit(_)), "another window's change");
+        assert!(matches!(&actions[1], InvAction::Panel { editor, action }
+            if *editor == window.id && matches!(**action, InvAction::Edit(_))));
+        assert!(matches!(actions[2], InvAction::DualPanel), "only changes are tagged");
+        // the list windows answer for themselves, every other window lets the
+        // main window answer (`InventoryWindow::lists_inventory`)
+        let folder = st.windows.remove(0);
+        let kinds = [
+            ("additional", Uuid::nil(), true, Uuid::from_u128(30), true),
+            ("document", Uuid::nil(), false, Uuid::from_u128(31), false),
+            ("listings", Uuid::nil(), false, listings::PANEL, false),
+            ("listings with a root", Uuid::from_u128(20), false, listings::PANEL, false),
+        ];
+        for (kind, root, additional, id, tagged) in kinds {
+            let w = InventoryWindow {
+                id,
+                root,
+                additional,
+                state: Box::default(),
+                open: true,
+            };
+            assert_eq!(w.lists_inventory(), tagged, "{kind}");
+            let mut actions = vec![edit()];
+            tag_window_edits(&w, &mut actions, 0..1);
+            assert_eq!(
+                matches!(&actions[0], InvAction::Panel { editor, .. } if *editor == id),
+                tagged,
+                "{kind}"
+            );
+        }
+        assert!(folder.lists_inventory(), "a folder's tree");
+        // "Open in a new window" (#4748): a single folder, root nil
+        st.open_single_folder_window(Uuid::from_u128(20));
+        let single = st.windows.pop().expect("the single folder window");
+        assert!(single.root.is_nil() && !single.additional);
+        assert!(single.lists_inventory(), "a single folder");
+        let mut actions = vec![edit()];
+        tag_window_edits(&single, &mut actions, 0..1);
+        assert!(matches!(&actions[0], InvAction::Panel { editor, .. } if *editor == single.id));
+        // an explorer tab dragged out to a window of its own (#4341)
+        let torn = InventoryWindow {
+            id: Uuid::from_u128(32),
+            root: Uuid::nil(),
+            additional: false,
+            state: Box::new(InventoryUi {
+                torn_off: true,
+                ..Default::default()
+            }),
+            open: true,
+        };
+        assert!(torn.lists_inventory(), "a torn-off tab");
+        let mut actions = vec![edit()];
+        tag_window_edits(&torn, &mut actions, 0..1);
+        assert!(matches!(&actions[0], InvAction::Panel { editor, .. } if *editor == torn.id));
     }
 
     #[test]
