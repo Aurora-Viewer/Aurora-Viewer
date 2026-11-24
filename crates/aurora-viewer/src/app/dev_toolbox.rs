@@ -661,7 +661,7 @@ impl App {
             }
             Target::UnderCursor => match self.toolbox.hover.and_then(|(i, f)| Some((self.world.objects.get(i)?, f))) {
                 Some((o, face)) => {
-                    let kind = if o.visual_volume().is_mesh() { "mesh" } else { "prim" };
+                    let kind = if o.visual_volume().is_mesh() { "Mesh" } else { "Prim" };
                     let face = face.map_or_else(|| "?".to_string(), |f| f.to_string());
                     tr!("dev-toolbox-target-surface", id = short(&o.full_id), kind = kind, face = face)
                 }

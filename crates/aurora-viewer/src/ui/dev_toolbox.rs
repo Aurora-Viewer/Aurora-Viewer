@@ -41,7 +41,7 @@ const SEND_TIGHT_H: f32 = 460.0;
 pub struct View {
     /// The toggles that are on.
     pub on: HashSet<&'static str>,
-    /// The second line of a button with something live ("8.4 ms · worst 31").
+    /// The second line of a button with something live ("8.4 ms · Worst 31").
     pub live: HashMap<&'static str, String>,
     /// What the target bar names, and its hint.
     pub target_text: String,
