@@ -192,7 +192,7 @@ fn picture(
         |it| inventory_item_icon(inv, it, p),
     );
     let size = (rect.height() * 0.42).clamp(20.0, 44.0);
-    if let Some(texture) = icons.get(icon) {
+    if let Some(texture) = icons.sized(ui.ctx(), icon, size) {
         ui.painter().image(
             texture.id(),
             Rect::from_center_size(rect.center(), Vec2::splat(size)),
