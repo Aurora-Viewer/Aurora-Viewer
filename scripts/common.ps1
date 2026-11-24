@@ -372,6 +372,22 @@ function Get-GitHubSlug([string]$Url) {
     }
 }
 
+# owner/name of the main repository on GitHub, the one that holds the PRs,
+# issues, project board and merge queue, or nothing. In a clone whose origin
+# is a personal fork, it is another remote: the one `gh repo set-default`
+# chose (it marks it gh-resolved = base), else the one named upstream (as
+# `gh repo fork --clone` names it); otherwise origin. A remote that is not
+# on GitHub is skipped.
+function Get-MainRepo([string]$Dir) {
+    $remotes = @(git -C $Dir remote 2>$null)
+    $chosen = @($remotes | Where-Object { (git -C $Dir config "remote.$_.gh-resolved" 2>$null) -eq 'base' })
+    foreach ($r in $chosen + @('upstream', 'origin')) {
+        if ($remotes -notcontains $r) { continue }
+        $slug = Get-GitHubSlug (git -C $Dir remote get-url $r 2>$null)
+        if ($slug) { return $slug }
+    }
+}
+
 # GitHub owners whose copy of the repository may hold the head of a task
 # branch's PR, surest first: the remotes the branch's settings push it to
 # (branch push remote, remote.pushDefault, a tracked branch of the same
@@ -424,8 +440,8 @@ function Test-CommitIn([string]$Dir, [string]$Commit, [string]$Head) {
     $LASTEXITCODE -eq 0
 }
 
-# Number and state of the PR of a task branch, into the repository of the
-# origin remote, or nothing. The head may be on a fork (branches pushed to a
+# Number and state of the PR of a task branch, into the main repository
+# (Get-MainRepo), or nothing. The head may be on a fork (branches pushed to a
 # personal fork, PRs opened cross-repo): a bare `gh pr view <branch>` only
 # looks in the repository gh picks for the folder and, with a fork remote
 # and no `gh repo set-default`, finds nothing.
@@ -435,7 +451,7 @@ function Test-CommitIn([string]$Dir, [string]$Commit, [string]$Head) {
 function Get-BranchPr([string]$Dir, [string]$Branch, [switch]$AllCommits) {
     if (-not $Branch) { return }
     $Branch = $Branch.Trim()
-    $repo = Get-GitHubSlug (git -C $Dir remote get-url origin 2>$null)
+    $repo = Get-MainRepo $Dir
     if (-not $repo) { return }
     $json = gh pr list --repo $repo --head $Branch --state all --limit 30 --json number,state,headRepositoryOwner,headRefOid 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $json) { return }

@@ -4,7 +4,8 @@
     Set-LastBuildMarker, common.ps1) and the lookup of a task's PR, its head
     on origin or on a fork (Get-BranchPr's offline parts), which the
     housekeeping of new-task.ps1, end-task.ps1 and the task list of
-    aurora-tools.cmd read. Fixture folders and a fixture repository only, in
+    aurora-tools.cmd read, and the main repository's remote (Get-MainRepo),
+    which those and the scripts that work on GitHub read. Fixture folders and a fixture repository only, in
     .scratch\: no real task, build, setting or GitHub call is touched.
 #>
 $ErrorActionPreference = 'Stop'
@@ -147,6 +148,26 @@ try {
         git -C $repo update-ref refs/remotes/review/fix/tracked $head
         Assert-CleanupTest ((@(Get-BranchHeadOwners $repo 'fix/tracked') -join ',') -eq 'Me') 'Push settings win over a fetched ref.'
 
+        # the main repository: origin here, whatever the other remotes
+        Assert-CleanupTest ((Get-MainRepo $repo) -eq 'Upstream/Aurora-Viewer') 'Clone of the main repository: origin.'
+        # a clone of a personal fork: origin is the fork, upstream the main one
+        $forkClone = Join-Path $fixture 'fork-clone'
+        git init -q $forkClone
+        git -C $forkClone remote add origin git@github.com:Me/Aurora-Viewer.git
+        Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Me/Aurora-Viewer') 'Only origin: origin.'
+        git -C $forkClone remote add upstream https://github.com/Upstream/Aurora-Viewer.git
+        Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Upstream/Aurora-Viewer') 'Clone of a fork: upstream.'
+        # gh repo set-default marks its choice, which wins over the names
+        git -C $forkClone remote add team https://github.com/Team/Aurora-Viewer.git
+        git -C $forkClone config remote.team.gh-resolved base
+        Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Team/Aurora-Viewer') 'The remote gh repo set-default chose wins.'
+        # a remote off GitHub is skipped, the next one taken
+        git -C $forkClone config --unset remote.team.gh-resolved
+        git -C $forkClone remote set-url upstream https://gitlab.com/Upstream/Aurora-Viewer.git
+        Assert-CleanupTest ((Get-MainRepo $forkClone) -eq 'Me/Aurora-Viewer') 'An upstream off GitHub is skipped.'
+        git -C $forkClone remote set-url origin https://gitlab.com/Me/Aurora-Viewer.git
+        Assert-CleanupTest ($null -eq (Get-MainRepo $forkClone)) 'No main repository on GitHub: nothing.'
+
         # every commit of the local branch must be in the PR's head
         git -C $repo -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m later
         $later = (git -C $repo rev-parse HEAD).Trim()
@@ -161,7 +182,7 @@ try {
     # git config of an unset key and show-ref of a missing ref exit with 1:
     # expected above, but check.ps1 judges the step by the last exit code
     $global:LASTEXITCODE = 0
-    Write-Output 'Task cleanup: new and older Cargo layouts, trim marker, later build, unknown date and fork PR lookup passed.'
+    Write-Output 'Task cleanup: new and older Cargo layouts, trim marker, later build, unknown date, fork PR lookup and main repository passed.'
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixture)
     if ((Split-Path $resolved -Parent) -ne [IO.Path]::GetFullPath($scratch) -or (Split-Path $resolved -Leaf) -notlike 'cleanup-test-*') { throw 'Cleanup outside fixture refused.' }
