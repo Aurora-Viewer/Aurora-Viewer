@@ -7,7 +7,7 @@ use crate::world::inventory::{FetchState, Inventory};
 use crate::world::{World, inventory::actions as rules};
 use aurora_net::inventory::operations::{Mutation, NewItem};
 use egui::{RichText, Vec2};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub struct WearCopyGroup {
@@ -19,6 +19,7 @@ pub struct WearCopyGroup {
 }
 mod aurora;
 mod bulk_permissions;
+pub(crate) mod category;
 pub use bulk_permissions::demo_menu as bulk_permissions_demo;
 mod clipboard;
 pub use clipboard::demo_events as clipboard_demo_events;
@@ -43,6 +44,7 @@ pub(crate) mod drag;
 mod embedded;
 mod find;
 mod folder_colors;
+pub(crate) mod groups;
 pub use folder_colors::{demo as folder_colors_demo, demo_frame as folder_colors_demo_frame};
 mod hover;
 pub use hover::demo_events as hover_demo_events;
@@ -58,6 +60,9 @@ pub(crate) mod properties;
 mod received;
 mod replace_links;
 mod rows;
+mod select_keys;
+mod shortcuts;
+mod single_folder;
 pub(crate) mod smart;
 mod smart_builder;
 pub(crate) mod smart_store;
@@ -209,6 +214,8 @@ pub enum InvAction {
         start: bool,
     },
     Sound(Uuid),
+    /// The preview pane wants a notecard's text (`InventoryUi::pane_texts`).
+    PaneText(Uuid),
     /// Play a sound in the world, heard by everyone around (send_sound_trigger).
     TriggerSound(Uuid),
     /// Copy a Library wearable into the inventory, then wear the copy
@@ -312,6 +319,10 @@ pub struct Facts {
     /// Worn objects that handle touches (enable_attachment_touch).
     pub touchable: HashSet<Uuid>,
     pub names: std::collections::HashMap<Uuid, String>,
+    pub pane_texts: std::sync::Arc<std::collections::HashMap<PaneKey, PaneText>>,
+    /// The creator column's names by creator and owner (`None`: not known
+    /// yet), RLVa's `@shownames` stand-ins included.
+    pub creator_names: std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>>,
     /// The stand-in of each owner or creator RLVa's `@shownames` hides, by
     /// the field that shows them (`resident_scopes`): it opens no profile.
     pub hidden_names: HiddenNames,
@@ -370,6 +381,8 @@ impl Facts {
             appearance_busy,
             touchable: world.touchable_attachment_items(),
             names: Default::default(),
+            pane_texts: Default::default(),
+            creator_names: no_creator_names(),
             hidden_names: Default::default(),
             pictures: Default::default(),
             online: world
@@ -500,6 +513,42 @@ pub struct InventoryWindow {
     pub open: bool,
 }
 
+/// The folder a window opened by "Show in a new window" (false) or "Open in
+/// a new window" (true) shows, as LLFloaterReg keys the first and
+/// LLPanelMainInventory::newFolderWindow looks for the second.
+fn shown_folder(w: &InventoryWindow) -> Option<(bool, Uuid)> {
+    if w.id == listings::PANEL || w.additional {
+        None
+    } else if w.state.single_folder.is_some() {
+        Some((true, w.state.browse))
+    } else {
+        (!w.root.is_nil()).then_some((false, w.root))
+    }
+}
+
+/// A window just opened on a folder that another window of the same kind
+/// already shows is dropped, and that one comes forward (expanded, on top):
+/// LLFloaterReg::showInstance for fs_partial_inventory, and the `setFocus`
+/// of LLPanelMainInventory::newFolderWindow.
+fn bring_forward_shown(ctx: &egui::Context, windows: &mut Vec<InventoryWindow>) {
+    if !windows.iter().any(|w| w.state.fresh) {
+        return;
+    }
+    let mut kept: Vec<InventoryWindow> = Vec::with_capacity(windows.len());
+    for mut w in windows.drain(..) {
+        if std::mem::take(&mut w.state.fresh)
+            && let Some(shown) = shown_folder(&w)
+            && let Some(old) = kept.iter_mut().find(|old| shown_folder(old) == Some(shown))
+        {
+            old.open = true;
+            super::widgets::expand_floater(ctx, &floater_id(old.id));
+            continue;
+        }
+        kept.push(w);
+    }
+    *windows = kept;
+}
+
 /// Whether an inventory window stays in the list this frame: open, the main
 /// panel, or closed with a document, confirmation or pending Detach and
 /// Delete of its own still running.
@@ -532,9 +581,7 @@ pub const DUAL_ICON: &str = "columns-2-filled";
 /// (each pane keeps the width of the single one), at least `DUAL_SIZE`;
 /// back to one pane, half of it. A size the user sets afterwards stays.
 pub fn resize_for_dual(ctx: &egui::Context, dual: bool) {
-    let size = egui::AreaState::load(ctx, egui::Id::unique("inventory"))
-        .and_then(|state| state.size)
-        .unwrap_or(DEFAULT_SIZE);
+    let size = super::widgets::floater_size(ctx, "inventory").unwrap_or(DEFAULT_SIZE);
     let size = if dual {
         Vec2::new((size.x * 2.0).max(DUAL_SIZE.x), size.y.max(DUAL_SIZE.y))
     } else {
@@ -547,6 +594,17 @@ const DUAL_SIZE: Vec2 = Vec2::new(900.0, 600.0);
 
 fn floater_id(id: Uuid) -> String {
     format!("inventory_{id}")
+}
+
+/// A key the focused inventory list handles itself (its bindings,
+/// `shortcuts::list_keeps`), before the viewer's own shortcuts take it.
+pub fn list_keeps_chord(ctx: &egui::Context, input: &crate::keybinds::Input, ctrl: bool, shift: bool, alt: bool) -> bool {
+    clipboard::list_focused_recently(ctx).is_some_and(|explorer| shortcuts::list_keeps(ctx, input, ctrl, shift, alt, explorer))
+}
+
+/// The user's inventory keys, for this frame's lists (`shortcuts::publish`).
+pub fn publish_shortcuts(ctx: &egui::Context, kb: &crate::keybinds::KeyBindings) {
+    shortcuts::publish(ctx, kb);
 }
 
 /// Inventory cargo shared by world placement and the build contents floater.
@@ -581,7 +639,7 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
     let item = egui::DragAndDrop::payload::<InvDrag>(ctx)
         .map(|cargo| cargo.0)
         .or_else(|| egui::DragAndDrop::payload::<super::places::drag::PlaceDrag>(ctx).and_then(|cargo| cargo.target.item()))?;
-    if ctx.is_pointer_over_egui() {
+    if !drag::over_world(ctx) {
         return None;
     }
     ctx.input(|i| {
@@ -619,6 +677,22 @@ pub struct InventoryUi {
     pub preferences_dirty: bool,
     was_open: bool,
     focus_search: bool,
+    /// The explorer's folder filter (Ctrl+Alt+F, `aurora::filter`): what it
+    /// keeps, `None` while its bar is closed.
+    folder_filter: Option<String>,
+    focus_folder_filter: bool,
+    /// The folder the filter's text was typed for (`None`: the one about to
+    /// be shown): another folder empties the text, as Dolphin's unlocked bar.
+    folder_filter_at: Option<Uuid>,
+    /// The folder tiles' borrowed pictures (`thumbnail::PreviewCache`).
+    folder_previews: thumbnail::PreviewCache,
+    /// Alt+P was pressed: the preview pane turns on or off.
+    toggle_preview: bool,
+    /// Ctrl+Shift+1…6 was pressed: the view it gives (`aurora::set_view`).
+    view_key: Option<u8>,
+    /// The notecards' texts the preview pane asked for, the main window's
+    /// for every pane (`Facts::pane_texts`).
+    pub pane_texts: std::sync::Arc<std::collections::HashMap<PaneKey, PaneText>>,
     bulk_permissions: bulk_permissions::State,
     menu_editor: context_customize::State,
     menu_notecards: context_notecards::State,
@@ -650,6 +724,18 @@ pub struct InventoryUi {
     result_width: f32,
     creator_generation: Option<u64>,
     creators: HashSet<Uuid>,
+    /// The creators and owners of the items, for the creator column
+    /// (`CreatorKeys`), followed through the items' journal.
+    creator_keys: CreatorKeys,
+    /// The creator column's names, built again when the creators or RLVa's
+    /// `@shownames` change, soon while some are unknown, and every few
+    /// seconds for the renames (`CREATOR_NAMES_REFRESH`).
+    creator_names: std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>>,
+    creator_names_at: Option<(u64, u64, std::time::Instant)>,
+    /// The sort context given to the lists, and the worn items it was made for.
+    sort_context: Option<(view::SortContext, HashSet<Uuid>)>,
+    /// What each details column showed, for the fit of its divider.
+    pub(super) column_fit: aurora::ColumnFit,
     fetch_poll: Option<std::time::Instant>,
     fetch_generation: Option<(Uuid, u64, bool, bool, bool)>,
     /// The clipboard's folders were all loaded at this inventory generation.
@@ -685,6 +771,13 @@ pub struct InventoryUi {
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     keyboard_selection: bool,
+    /// The keyboard's place apart from the selection (Ctrl+↑/↓ in the
+    /// explorer, `select_keys`), drawn as an outline.
+    focus: Option<Uuid>,
+    /// The letters typed to find a row (`select_keys`).
+    type_ahead: select_keys::TypeAhead,
+    /// The explorer's rubber band (`aurora::marquee`).
+    marquee: aurora::Marquee,
     /// "Do not show again" on the Delete confirmation (Trash moves only).
     delete_dont_ask: bool,
     pending_delete: Option<Box<delete::PendingDelete>>,
@@ -703,6 +796,10 @@ pub struct InventoryUi {
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
+    /// This frame's Esc cancelled a cut (`clipboard_input`).
+    cut_cancelled: bool,
+    /// A local copy, cut or cancellation changed the shared clipboard in this pane.
+    clipboard_edited: bool,
     cut_rows: clipboard::CutRows,
     #[cfg(windows)]
     clipboard_sequence: Option<u32>,
@@ -776,13 +873,32 @@ pub struct InventoryUi {
     /// The explorer's rows of `browse`: its folders never open in place.
     flat: rows::PlainTree,
     side: aurora::Sidebar,
+    /// Where the explorer has been: Back, Forward (`aurora::history`).
+    history: aurora::History,
+    /// The breadcrumb while a path is typed in it (`aurora::breadcrumb`).
+    path_edit: Option<aurora::PathEdit>,
     counts: aurora::Counts,
     /// A row's "more actions" menu, opened by its button: the row, where.
     row_menu: Option<(Uuid, egui::Pos2)>,
+    /// `row_menu` is the menu of the explorer's empty space, for the folder
+    /// it shows (a right-click there, or Shift+F10 with nothing selected).
+    background_menu: bool,
+    /// `AURORA_DEMO_INVENTORY=aurora-explorer…`, waiting for its folder.
+    demo_explorer: Option<String>,
+    /// A right-button drop waiting for its choice (`drag::drop_menu`).
+    drop_menu: Option<drag::DropMenu>,
+    /// Where the selected row was drawn last frame, for Shift+F10.
+    selected_rect: Option<egui::Rect>,
     /// The folder a folder window shows (nil: the whole inventory). Its
     /// lists, searches, column and breadcrumb stay under it.
     scope: Uuid,
-    navigate_to: Option<Uuid>,
+    /// "Open in a new window": the window's single folder mode, its folder
+    /// being `browse` (`single_folder`).
+    single_folder: Option<single_folder::Nav>,
+    /// Opened this frame by "Show in a new window" or "Open in a new
+    /// window": a window already showing its folder comes forward instead
+    /// (`bring_forward_shown`).
+    fresh: bool,
     pending_cleanup: Option<Uuid>,
     cleanup_generation: Option<u64>,
 }
@@ -844,14 +960,39 @@ impl InventoryUi {
         }
     }
 
-    /// FSFloaterPartialInventory: show only descendants of the chosen folder.
-    /// Firestorm indra/newview/fsfloaterpartialinventory.cpp (LGPL 2.1).
+    /// "Show in a new window" (show_in_new_window, LLFolderBridge::
+    /// performAction, indra/newview/llinventorybridge.cpp): the folder's
+    /// tree alone, FSFloaterPartialInventory
+    /// (indra/newview/fsfloaterpartialinventory.cpp, LGPL 2.1). One window
+    /// per folder, as LLFloaterReg keys it by the folder.
     pub fn open_folder_window(&mut self, root: Uuid) {
         self.windows.push(InventoryWindow {
             id: Uuid::new_v4(),
             root,
             additional: false,
-            state: Box::new(InventoryUi::default()),
+            state: Box::new(InventoryUi {
+                fresh: true,
+                ..InventoryUi::default()
+            }),
+            open: true,
+        });
+    }
+
+    /// "Open in a new window" (Inventory.OpenNewFolderWindow,
+    /// LLPanelMainInventory::newFolderWindow, indra/newview/
+    /// llpanelmaininventory.cpp): a new whole-inventory window in single
+    /// folder mode on `folder`, or the one already showing it.
+    pub fn open_single_folder_window(&mut self, folder: Uuid) {
+        self.windows.push(InventoryWindow {
+            id: Uuid::new_v4(),
+            root: Uuid::nil(),
+            additional: false,
+            state: Box::new(InventoryUi {
+                browse: folder,
+                single_folder: Some(single_folder::Nav::at(folder)),
+                fresh: true,
+                ..InventoryUi::default()
+            }),
             open: true,
         });
     }
@@ -917,10 +1058,14 @@ impl InventoryUi {
         }
     }
 
-    /// RLVa's @showinv closes the additional window with the main one
-    /// (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>, rlvhandler.cpp).
-    pub fn close_additional_window(&mut self) {
-        for w in self.windows.iter_mut().filter(|w| w.additional) {
+    /// RLVa's @showinv closes, with the main window, every "inventory"
+    /// floater (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
+    /// and its floater filter, rlvhandler.cpp): the additional window and
+    /// the single folder windows of "Open in a new window", run every frame
+    /// so that none opens while it holds. Like the Legacy Viewer, the trees
+    /// of "Show in a new window" (fs_partial_inventory) are left alone.
+    pub fn close_showinv_windows(&mut self) {
+        for w in self.windows.iter_mut().filter(|w| w.additional || w.state.single_folder.is_some()) {
             w.open = false;
         }
     }
@@ -936,6 +1081,83 @@ impl InventoryUi {
         self.rename = Some(InlineRename { id, name, focus: true });
         self.message.clear();
     }
+    /// Demo (`AURORA_DEMO_INVENTORY=aurora-explorer[-path|-menu]`): the
+    /// explorer in the demo folder, come from the root (Back and Up lit),
+    /// with the path being typed or the menu of its empty space open.
+    pub fn demo_explorer(&mut self, mode: &str) {
+        // applied once the demo folder has arrived (`demo_explorer_now`)
+        self.demo_explorer = Some(mode.to_owned());
+    }
+
+    fn demo_explorer_now(&mut self, inv: &Inventory) {
+        let here = Uuid::from_u128(8000);
+        let Some(mode) = self.demo_explorer.take_if(|_| inv.folders.contains_key(&here)) else {
+            return;
+        };
+        let mode = mode.as_str();
+        self.history.observe(aurora::Place { tab: 0, folder: inv.root });
+        self.history.observe(aurora::Place { tab: 0, folder: here });
+        self.browse = here;
+        match mode {
+            "aurora-explorer-path" => {
+                let base = inv.root;
+                let mut text = aurora::path_text(inv, base, base);
+                text.push(aurora::PATH_SEPARATOR);
+                self.path_edit = Some(aurora::PathEdit::new(text));
+            }
+            "aurora-explorer-menu" => {
+                self.selection.clear();
+                self.selected = None;
+                self.row_menu = Some((here, egui::pos2(760.0, 420.0)));
+                self.background_menu = true;
+            }
+            // the preview pane on the demo's notecard
+            "aurora-explorer-preview" => {
+                let note = Uuid::from_u128(8103);
+                self.selection.clear();
+                self.selection.insert(note);
+                self.selected = Some(note);
+            }
+            _ => {}
+        }
+    }
+
+    /// Demo (`AURORA_DEMO_INVENTORY=aurora-system-folders`): Aurora's
+    /// explorer on the root, nothing selected.
+    pub fn demo_browse_root(&mut self, inv: &Inventory) {
+        self.browse = inv.root;
+        self.selected = None;
+        self.selection.clear();
+        // not the folder of an item revealed earlier
+        self.reveal = None;
+        self.reveal_path.clear();
+    }
+
+    /// Demo: `id` selected and scrolled to in the folder that holds it.
+    pub fn demo_reveal(&mut self, id: Uuid) {
+        self.selection.clear();
+        self.selection.insert(id);
+        self.selected = Some(id);
+        self.reveal = Some(id);
+    }
+
+    /// The demo's folder filter (`AURORA_DEMO_INVENTORY=aurora-explorer-filter`).
+    pub fn demo_folder_filter(&mut self, text: &str) {
+        self.folder_filter = Some(text.to_owned());
+        self.folder_filter_at = None;
+    }
+
+    /// Demo (`AURORA_DEMO_INVENTORY=aurora-filtered`): only these type
+    /// filters on, their list open.
+    pub fn demo_type_filters(&mut self, types: u32) {
+        self.filters = view::Filters {
+            types,
+            ..view::Filters::default()
+        };
+        self.filters_initialized = true;
+        self.filters_open = true;
+    }
+
     /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
         self.show_original_in(inv, id, 0);
@@ -1192,9 +1414,22 @@ impl InventoryUi {
         !self.search.trim().is_empty() || self.filters.active() || self.links_filter.is_some() || self.tab >= RECEIVED_TAB
     }
 
+    /// The list shows one folder flat, the Legacy Viewer's single folder
+    /// mode: Aurora's explorer, or the Legacy-style window of "Open in a new
+    /// window" outside a search. Its folders are gone into, never opened in
+    /// place, and its menu has "Open" (LLFolderBridge::
+    /// addOpenFolderMenuOptions, with `comb_single_folder_inv` active).
+    pub(super) fn lists_flat(&self) -> bool {
+        match self.aurora {
+            Some(frame) => frame.explorer,
+            None => self.single_folder.is_some() && !self.result_view(),
+        }
+    }
+
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
         clipboard::request_focus(ui, self);
         self.keyboard_selection = false;
+        self.focus = None;
         if secondary && self.selection.contains(&id) {
             self.selected = Some(id);
             return;
@@ -1248,11 +1483,153 @@ pub(crate) fn resident_scopes(it: &aurora_net::inventory::InvItem) -> [(Uuid, cr
     [(it.owner, NameScope::Owner), (it.creator, NameScope::Creator { owner })]
 }
 
+/// How often the creator column's names are read again, for the renames,
+/// and while some are still unknown.
+const CREATOR_NAMES_REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The creator column's names when it shows none: one map shared by every
+/// frame, so that a sort context made from it is not made again each frame.
+fn no_creator_names() -> std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>> {
+    static EMPTY: std::sync::LazyLock<std::sync::Arc<std::collections::HashMap<(Uuid, Uuid), Option<String>>>> =
+        std::sync::LazyLock::new(Default::default);
+    EMPTY.clone()
+}
+
+/// Every creator and owner among the items (each record's own, a link's
+/// included: the column's key, `aurora::rows::creator_key`, is its
+/// original's, which is a record too, or its own when the original is not
+/// loaded), with how many records hold each. Read whole once, then followed
+/// record by record through the items' journal (`Items::changed_since`):
+/// an inventory of 200,000 items is not read again at each change.
+#[derive(Default)]
+struct CreatorKeys {
+    of: HashMap<Uuid, (Uuid, Uuid)>,
+    count: HashMap<(Uuid, Uuid), u32>,
+    /// The items' revision read up to.
+    revision: Option<u64>,
+    /// Bumped when the set of keys changes.
+    version: u64,
+}
+
+impl CreatorKeys {
+    fn key(it: &aurora_net::inventory::InvItem) -> Option<(Uuid, Uuid)> {
+        (!it.creator.is_nil()).then_some((it.creator, if it.group_owned { Uuid::nil() } else { it.owner }))
+    }
+
+    /// Brings the keys up to the items' revision, `version` bumped when the
+    /// set changed.
+    fn update(&mut self, items: &crate::world::inventory::items::Items) {
+        if self.revision == Some(items.revision()) {
+            return;
+        }
+        let changed: Option<Vec<Uuid>> = self.revision.and_then(|from| items.changed_since(from)).map(Iterator::collect);
+        let mut grew_or_shrank = false;
+        match changed {
+            Some(ids) => {
+                for id in ids {
+                    let old = self.of.remove(&id);
+                    let new = items.get(&id).and_then(Self::key);
+                    if old == new {
+                        if let Some(key) = new {
+                            self.of.insert(id, key);
+                        }
+                        continue;
+                    }
+                    if let Some(key) = old
+                        && let Some(n) = self.count.get_mut(&key)
+                    {
+                        *n -= 1;
+                        if *n == 0 {
+                            self.count.remove(&key);
+                            grew_or_shrank = true;
+                        }
+                    }
+                    if let Some(key) = new {
+                        self.of.insert(id, key);
+                        let n = self.count.entry(key).or_insert(0);
+                        grew_or_shrank |= *n == 0;
+                        *n += 1;
+                    }
+                }
+            }
+            None => {
+                let old: HashSet<(Uuid, Uuid)> = self.count.keys().copied().collect();
+                self.of.clear();
+                self.count.clear();
+                for (id, it) in items.iter() {
+                    if let Some(key) = Self::key(it) {
+                        self.of.insert(*id, key);
+                        *self.count.entry(key).or_insert(0) += 1;
+                    }
+                }
+                grew_or_shrank = self.revision.is_none() || self.count.len() != old.len() || self.count.keys().any(|k| !old.contains(k));
+            }
+        }
+        self.revision = Some(items.revision());
+        if grew_or_shrank {
+            self.version += 1;
+        }
+    }
+
+    fn keys(&self) -> impl Iterator<Item = (Uuid, Uuid)> + '_ {
+        self.count.keys().copied()
+    }
+}
+const CREATOR_NAMES_PENDING: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// What a notecard's text in the preview pane was read for: the notecard
+/// (the link's original), its asset, and whether the agent may read it
+/// now (`world::inventory::preview::can_read`, RLVa's @viewnote included).
+/// A save gives a new asset and a change of rights or of RLVa a new key, so
+/// the pane never shows a text read under other terms.
+pub type PaneKey = (Uuid, Uuid, bool);
+
+/// The pane's key for `item`, `None` when it is no notecard.
+pub fn pane_key(inv: &crate::world::inventory::Inventory, item: Uuid, god_level: u8) -> Option<PaneKey> {
+    let original = crate::world::inventory::actions::original(inv, item)?;
+    let it = inv.items.get(&original).filter(|it| it.asset_type == 7)?;
+    Some((
+        original,
+        it.asset_id,
+        crate::world::inventory::preview::can_read(inv, original, god_level),
+    ))
+}
+
+/// A notecard's text for the preview pane.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PaneText {
+    Loading,
+    Text(String),
+    /// Not to be read here (`world::inventory::preview::can_read`), or the
+    /// download failed: why.
+    Unavailable(String),
+}
+
 /// The stand-ins of the owners and creators `@shownames` hides, each by the
 /// field that shows it: the Legacy Viewer answers for each field, so a
 /// resident hidden as the owner of an item is still named as the creator of
 /// another one that they neither own nor stand near.
 pub(crate) type HiddenNames = std::collections::HashMap<(Uuid, crate::world::names::NameScope), String>;
+
+/// The name the creator column shows for an item made by `creator` and
+/// owned by `owner` (nil for a group's): "You", the stand-in where
+/// `@shownames` hides them (`resident_scopes`, as the properties' field),
+/// their name, or `None` while it is not known.
+pub(crate) fn creator_label(world: &World, creator: Uuid, owner: Uuid) -> Option<String> {
+    use crate::world::names::NameScope;
+    let scope = NameScope::Creator { owner };
+    if creator == world.agent_id {
+        Some(aurora_i18n::tr!("inventory-owner-you").to_owned())
+    } else if !world.rlva_shows_name(scope, creator) {
+        Some(world.social.name_in(scope, &creator))
+    } else {
+        world
+            .social
+            .avatar_names
+            .complete_in(NameScope::Roster, &creator)
+            .or_else(|| world.social.names.get(&creator).cloned())
+    }
+}
 
 /// Notes in `hidden` the stand-in of the owner and of the creator of `it`
 /// where `@shownames` hides them.
@@ -1287,9 +1664,21 @@ pub fn item_icon(asset_type: i32, inv_type: i32, flags: u32) -> &'static str {
         (24, _) => "Inv_LinkItem",
         (25, _) => "Inv_LinkFolder",
         (49, _) => "Inv_Mesh",
-        (56, _) => "Inv_Settings",
+        (56, _) => settings_icon(flags),
         (57, _) => "Inv_Material",
         _ => "Inv_Invalid",
+    }
+}
+
+/// LLSettingsType::fromInventoryFlags / getIconName (indra/llinventory/
+/// llinventorysettings.cpp): the low byte of a settings item's flags is its
+/// kind, 0 sky, 1 water, 2 day cycle; any other keeps the generic icon.
+fn settings_icon(flags: u32) -> &'static str {
+    match flags & 0xff {
+        0 => "Inv_SettingsSky",
+        1 => "Inv_SettingsWater",
+        2 => "Inv_SettingsDay",
+        _ => "Inv_Settings",
     }
 }
 
@@ -1458,7 +1847,9 @@ fn item_response(
     super::widgets::demo::rez_row(&r, it.id);
     super::widgets::demo::worn_row(&r, it.id);
     st.hover.record(&r, id, permissions);
-    if r.clicked() || r.secondary_clicked() {
+    // A drop that stayed within egui's click distance is no click: the
+    // dragged selection stays selected.
+    if (r.clicked() && !drag::dragged_this_press(ui.ctx())) || r.secondary_clicked() {
         st.select(ui, id, r.secondary_clicked());
         reveal_clicked_row(ui, &r, st, id);
     }
@@ -1481,13 +1872,14 @@ fn folder_row(
     inv: &Inventory,
     id: Uuid,
     open: &mut bool,
+    branches: bool,
     state: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
     if state.aurora.is_some() {
-        aurora::rows::folder(ui, p, icons, inv, id, open, state, prefs, facts, actions);
+        aurora::rows::folder(ui, p, icons, inv, id, open, branches, state, prefs, facts, actions);
         return;
     }
     let Some(folder) = inv.folders.get(&id) else { return };
@@ -1497,13 +1889,22 @@ fn folder_row(
         let opacity = ui.opacity();
         ui.multiply_opacity(clipboard::opacity(inv, state, id));
         ui.spacing_mut().item_spacing.x = 4.0;
-        let resp = tree::caret(ui, p, *open);
-        clipboard::demo_caret(&resp, state, id);
-        if resp.clicked() {
-            *open = !*open;
-        }
+        // A single folder list has no carets: its folders are gone into. A
+        // folder known to be empty has none either (`rows::branches`). The
+        // caret's place stays, so the icons line up.
+        let flat = state.lists_flat();
+        let lead = if flat || !branches {
+            ui.allocate_exact_size(tree::CARET, egui::Sense::hover()).0
+        } else {
+            let resp = tree::caret(ui, p, *open);
+            clipboard::demo_caret(&resp, state, id);
+            if resp.clicked() {
+                *open = !*open;
+            }
+            resp.rect
+        };
         let tint = folder_colors::tint(prefs, id);
-        tree::icon(ui, icons, folder_icon(folder.info.type_default, *open), p, tint);
+        tree::icon(ui, icons, folder_icon(folder.info.type_default, *open && !flat), p, tint);
         let label = match fetch_state {
             FetchState::Fetching => aurora_i18n::tr!("status-name-loading", name = name.to_string()),
             FetchState::Failed => aurora_i18n::tr!("ui-inventory-failed-2", name = name.to_string()),
@@ -1527,7 +1928,7 @@ fn folder_row(
         });
         let r = super::widgets::inventory_item_label_tagged(ui, job, state.selection.contains(&id), sense, None, tag);
         ui.set_opacity(opacity);
-        if folder_response(ui, p, inv, id, r, Some(resp.rect), open, state, prefs, facts, actions).double_clicked() {
+        if folder_response(ui, p, inv, id, r, Some(lead), open, state, prefs, facts, actions).double_clicked() && (branches || flat) {
             *open = !*open;
         }
     });
@@ -1576,7 +1977,7 @@ fn folder_response(
     drag::target(ui, p, &destination, inv, id, state, prefs, facts, actions);
     drag::navigation::folder(ui, &destination, state.ui_id, id, open);
     state.hover.record(&r, id, None);
-    if r.clicked() || r.secondary_clicked() {
+    if (r.clicked() && !drag::dragged_this_press(ui.ctx())) || r.secondary_clicked() {
         state.select(ui, id, r.secondary_clicked());
         reveal_clicked_row(ui, &r, state, id);
     }
@@ -1662,6 +2063,7 @@ fn folder_window_contents(
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
+    drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
 
 use tree::spacing as tree_spacing;
@@ -1979,8 +2381,8 @@ fn search_rows(
             ui.add_space(row.depth.min(24) as f32 * ui.spacing().indent);
             if row.folder {
                 let mut open = row.open;
-                folder_row(ui, p, icons, inv, row.id, &mut open, st, prefs, facts, actions);
-                if open != row.open {
+                folder_row(ui, p, icons, inv, row.id, &mut open, row.branches, st, prefs, facts, actions);
+                if open != row.open && row.branches {
                     st.result_tree.toggle(row.id, st.tab);
                 }
             } else {
@@ -2084,18 +2486,48 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
         return true;
     } else if !r.has_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         // LLFolderView::handleKeyHere / onRenamerLost (indra/llui/llfolderview.cpp):
-        // completing a rename keeps navigation in this list. A click or Tab
-        // that moved focus elsewhere must keep its new destination instead.
+        // completing a rename keeps navigation in this list. A click that
+        // moved focus elsewhere keeps its new destination instead. Windows
+        // Explorer: Tab goes on to rename the next row, Shift+Tab the one
+        // before (Aurora difference: the Legacy Viewer's Tab ends the
+        // rename only).
         let submitted = keyboard_owner && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        let tab = ui.input(|i| i.key_pressed(egui::Key::Tab).then_some(i.modifiers.shift));
         st.rename = Some(edit);
         finish_rename(inv, st, actions);
-        if submitted && st.rename.is_none() {
+        if let Some(back) = tab
+            && st.rename.is_none()
+        {
+            rename_next(inv, st, id, back);
+        } else if submitted && st.rename.is_none() {
             clipboard::request_focus(ui, st);
         }
         return true;
     }
     st.rename = Some(edit);
     true
+}
+
+/// Renames the row after `id` in the list (before it with `back`) that
+/// can be renamed, as Tab does in Windows Explorer's rename.
+fn rename_next(inv: &Inventory, st: &mut InventoryUi, id: Uuid, back: bool) {
+    let order = keyboard::shown_order(st);
+    let Some(at) = order.iter().position(|row| *row == id) else {
+        return;
+    };
+    let next = if back {
+        order[..at].iter().rev().find(|row| rules::renameable(inv, **row)).copied()
+    } else {
+        order[at + 1..].iter().find(|row| rules::renameable(inv, **row)).copied()
+    };
+    if let Some(next) = next {
+        st.selection.clear();
+        st.selection.insert(next);
+        st.selected = Some(next);
+        st.anchor = Some(next);
+        st.begin_rename(inv, next);
+        st.reveal = Some(next);
+    }
 }
 
 fn finish_rename(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
@@ -2444,6 +2876,7 @@ fn inventory_contents(
     drag::target(ui, p, &zone.response, inv, target, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
+    drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
 
 /// Full fetches requested by mutation dialogs must keep running even when
@@ -2545,6 +2978,7 @@ pub fn show(
     } else {
         Facts::default()
     };
+    facts.pane_texts = st.pane_texts.clone();
     fn property_names(st: &InventoryUi, world: &World, facts: &mut Facts) {
         if let Some(EditDialog::Properties(id)) = st.dialog
             && let Some(it) = world.inventory.items.get(&id)
@@ -2644,6 +3078,56 @@ pub fn show(
                 .insert(*id, world.social.name_in(crate::world::names::NameScope::Roster, id));
         }
     }
+    // Aurora's creator column, and the sorts by creator or worn: the names
+    // as the column shows them, a stand-in where `@shownames` hides one
+    // (resident_scopes), and the worn items.
+    let sorts_by = |column| (0..=4).any(|tab| prefs.sort_for(tab).column == Some(column));
+    let by_creator = prefs.explorer.group_by == groups::GroupBy::Creator;
+    if shown && !classic && (prefs.explorer.columns.shown(view::ColumnId::Creator) || sorts_by(view::SortColumn::Creator) || by_creator) {
+        st.creator_keys.update(&world.inventory.items);
+        let version = st.creator_keys.version;
+        let now = std::time::Instant::now();
+        let complete = st.creator_names.values().all(Option::is_some);
+        let privacy = world.social.avatar_names.privacy_key();
+        let stale = st.creator_names_at.is_none_or(|(was_version, was_private, at)| {
+            was_version != version
+                || was_private != privacy
+                || now.duration_since(at) >= if complete { CREATOR_NAMES_REFRESH } else { CREATOR_NAMES_PENDING }
+        });
+        if stale {
+            let mut names = std::collections::HashMap::with_capacity(st.creator_keys.count.len());
+            for (creator, owner) in st.creator_keys.keys() {
+                let name = creator_label(world, creator, owner);
+                if name.is_none() {
+                    world.social.want_name(creator);
+                }
+                names.insert((creator, owner), name);
+            }
+            if *st.creator_names != names {
+                st.creator_names = std::sync::Arc::new(names);
+            }
+            st.creator_names_at = Some((version, privacy, now));
+        }
+        facts.creator_names = st.creator_names.clone();
+    }
+    if sorts_by(view::SortColumn::Creator) || sorts_by(view::SortColumn::Worn) || by_creator {
+        let worn: HashSet<Uuid> = facts.worn.iter().chain(&facts.active_gestures).copied().collect();
+        // made again only when the names or the worn items change
+        let same = st
+            .sort_context
+            .as_ref()
+            .is_some_and(|(context, was_worn)| std::sync::Arc::ptr_eq(&context.creators, &facts.creator_names) && *was_worn == worn);
+        if !same {
+            st.sort_context = Some((view::SortContext::new(facts.creator_names.clone(), worn.clone()), worn));
+        }
+        let context = st.sort_context.as_ref().map(|(context, _)| context.clone()).unwrap_or_default();
+        for state in std::iter::once(&mut *st).chain(dual.as_deref_mut()) {
+            state.view.set_context(context.clone());
+            for window in &mut state.windows {
+                window.state.view.set_context(context.clone());
+            }
+        }
+    }
     let inv = &mut world.inventory;
     if let Some(dual) = dual.as_deref_mut() {
         if !*open {
@@ -2657,6 +3141,7 @@ pub fn show(
         dual.focus_search = *open && dual.focus_search;
         dual.clipboard.clone_from(&st.clipboard);
         dual.cut = st.cut;
+        dual.clipboard_edited = false;
         dual.pending = st.pending;
         dual.progress.clone_from(&st.progress);
         dual.copy_jobs.clone_from(&st.copy_jobs);
@@ -2690,6 +3175,25 @@ pub fn show(
             }
         }
         st.clipboard_loaded = loaded.then(|| (inv.generation, st.clipboard.clone()));
+    }
+    // a drag that copies loads its folders' trees the same way (once per
+    // inventory generation)
+    let copied = drag::copied_folders(ctx, inv);
+    if !copied.is_empty() {
+        let key = egui::Id::unique("inventory_drag_copy_loaded");
+        let done = ctx
+            .data(|d| d.get_temp::<(u64, Vec<Uuid>)>(key))
+            .is_some_and(|(generation, ids)| generation == inv.generation && ids == copied);
+        if !done {
+            // every tree asked for, not only up to the first unloaded one
+            let mut loaded = true;
+            for id in &copied {
+                loaded &= rules::request_tree(inv, *id);
+            }
+            if loaded {
+                ctx.data_mut(|d| d.insert_temp(key, (inv.generation, copied)));
+            }
+        }
     }
     let screen = ctx.content_rect();
     let default_size = if dual.is_some() { DUAL_SIZE } else { DEFAULT_SIZE };
@@ -2855,6 +3359,10 @@ pub fn show(
         st.wanted_hover_images.extend(dual.wanted_hover_images.drain());
         st.preferences_dirty |= dual.preferences_dirty;
         dual.preferences_dirty = false;
+        if dual.clipboard_edited {
+            st.clipboard.clone_from(&dual.clipboard);
+            st.cut = dual.cut;
+        }
         st.consume_clipboard |= dual.consume_clipboard;
         dual.consume_clipboard = false;
         st.windows.append(&mut dual.windows);
@@ -2867,6 +3375,7 @@ pub fn show(
         }));
     }
     let mut windows = std::mem::take(&mut st.windows);
+    bring_forward_shown(ctx, &mut windows);
     let mut spawned = Vec::new();
     for w in &mut windows {
         if !w.open {
@@ -2909,6 +3418,20 @@ pub fn show(
                 additional_window_pos(ctx, screen),
                 DEFAULT_SIZE,
             )
+        } else if w.state.single_folder.is_some() {
+            // updateTitle: a single folder window is named after its folder.
+            // The Aurora style opens on its explorer, the single folder mode.
+            let size = if classic {
+                Vec2::new(420.0, 440.0)
+            } else {
+                Vec2::new(aurora::Layout::MEDIUM + 60.0, 480.0)
+            };
+            super::widgets::Floater::new(
+                &window_id,
+                folder_name(&world.inventory, w.state.browse),
+                screen.center() - size / 2.0,
+                size,
+            )
         } else {
             super::widgets::Floater::new(
                 &window_id,
@@ -2923,6 +3446,8 @@ pub fn show(
             floater.show(ctx, p, &mut w.open, |ui| {
                 if w.additional {
                     inventory_contents(ui, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
+                } else if w.state.single_folder.is_some() {
+                    single_folder::contents(ui, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
                 } else {
                     folder_window_contents(
                         ui,
@@ -2978,11 +3503,6 @@ pub fn show(
             .hover
             .show(p, &world.inventory, prefs, hover_images, &mut w.state.wanted_hover_images);
         w.state.was_open = w.open && !super::widgets::floater_minimized(ctx, &window_id);
-        if let Some(root) = w.state.navigate_to.take() {
-            w.root = root;
-            w.state.scope = root;
-            w.state.view = Default::default();
-        }
         bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, world.agent_id, &mut actions);
         if w.id != listings::PANEL {
             finish_hidden_rename(&world.inventory, &mut w.state, &mut actions);
@@ -3080,6 +3600,53 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 mod tests {
     use super::*;
 
+    #[test]
+    fn creator_keys_follow_the_items_written() {
+        let item = |id: u128, creator: u128, owner: u128| aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(id),
+            creator: Uuid::from_u128(creator),
+            owner: Uuid::from_u128(owner),
+            asset_type: 6,
+            ..Default::default()
+        };
+        let mut items: crate::world::inventory::items::Items = [item(1, 10, 20), item(2, 10, 20), item(3, 11, 20)]
+            .into_iter()
+            .map(|it| (it.id, it))
+            .collect();
+        let mut keys = CreatorKeys::default();
+        let sorted = |keys: &CreatorKeys| {
+            let mut all: Vec<(u128, u128)> = keys.keys().map(|(c, o)| (c.as_u128(), o.as_u128())).collect();
+            all.sort();
+            all
+        };
+        keys.update(&items);
+        assert_eq!(sorted(&keys), [(10, 20), (11, 20)]);
+        let first = keys.version;
+        // one of two records of a key goes: the set stays
+        items.remove(&Uuid::from_u128(2));
+        keys.update(&items);
+        assert_eq!((sorted(&keys), keys.version), (vec![(10, 20), (11, 20)], first));
+        // a new creator, a group-owned record, a record without a creator
+        items.insert(Uuid::from_u128(4), item(4, 12, 20));
+        let mut group = item(5, 10, 30);
+        group.group_owned = true;
+        items.insert(group.id, group);
+        items.insert(Uuid::from_u128(6), item(6, 0, 20));
+        keys.update(&items);
+        assert_eq!(sorted(&keys), [(10, 0), (10, 20), (11, 20), (12, 20)]);
+        assert!(keys.version > first);
+        // the last record of a key changes hands, then everything at once
+        items.get_mut(&Uuid::from_u128(3)).expect("record").owner = Uuid::from_u128(21);
+        keys.update(&items);
+        assert_eq!(sorted(&keys), [(10, 0), (10, 20), (11, 21), (12, 20)]);
+        for it in items.values_mut() {
+            it.owner = Uuid::from_u128(22);
+            it.group_owned = false;
+        }
+        keys.update(&items);
+        assert_eq!(sorted(&keys), [(10, 22), (11, 22), (12, 22)]);
+    }
+
     /// RLVa `@shownames` answers for each field, as
     /// LLSidepanelItemInfo::refreshFromItem does: the owner is hidden unless
     /// excepted, the creator only when they also own the item or stand in a
@@ -3149,6 +3716,52 @@ mod tests {
         // an exception names the resident in every field
         restrict(&mut world, format!("@shownames:{near}=add"));
         assert!(hidden(&world, &item(near, near, false)).is_empty());
+    }
+
+    #[test]
+    fn the_creator_column_names_follow_shownames() {
+        use crate::world::names::NameScope;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let me = world.agent_id;
+        let near = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != me)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        let unknown = Uuid::from_u128(0xc4ea);
+        // the resident around, their name known
+        world.social.names.insert(near, "Nora Example".into());
+        let real = creator_label(&world, near, me);
+        assert_eq!(real.as_deref(), Some("Nora Example"));
+        assert_eq!(
+            creator_label(&world, me, me),
+            Some(aurora_i18n::tr!("inventory-owner-you").to_owned())
+        );
+        assert_eq!(creator_label(&world, unknown, me), None, "not known yet");
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Names fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: me,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            region: None,
+            position: glam::Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        world.refresh_rlva_privacy();
+        let hidden = creator_label(&world, near, me);
+        assert_eq!(hidden, Some(world.social.name_in(NameScope::Creator { owner: me }, &near)));
+        assert_ne!(hidden, real, "the stand-in, never the real name");
+        assert_eq!(
+            creator_label(&world, me, me),
+            Some(aurora_i18n::tr!("inventory-owner-you").to_owned()),
+            "never oneself"
+        );
     }
 
     #[test]
@@ -3970,6 +4583,85 @@ mod tests {
         }
     }
 
+    /// #4735: "Show in a new window" and "Open in a new window" open their
+    /// own windows, one per folder each, as the Legacy Viewer's
+    /// fs_partial_inventory and LLPanelMainInventory::newFolderWindow; only
+    /// the single folder window has "Open", which goes into the folder.
+    #[test]
+    fn show_and_open_in_a_new_window_open_their_own_window_once_per_folder() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let (outfits, sub) = (Uuid::from_u128(8000), Uuid::from_u128(8001));
+        for classic in [false, true] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            crate::world::inventory::demo::seed(&mut world.inventory, crate::demo::DEMO_AGENT);
+            assert!(world.inventory.folders.contains_key(&outfits) && world.inventory.folders.contains_key(&sub));
+            let mut st = InventoryUi::default();
+            let mut prefs = InventoryPreferences::default();
+            let images = Default::default();
+            let scripts = Default::default();
+            let mut frame = |st: &mut InventoryUi| {
+                frames.run(Vec::new(), |ui| {
+                    show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut world,
+                        st,
+                        None,
+                        &mut prefs,
+                        &mut true,
+                        false,
+                        &images,
+                        &Default::default(),
+                        &Default::default(),
+                        &scripts,
+                        classic,
+                    );
+                })
+            };
+            st.open_folder_window(outfits);
+            st.open_single_folder_window(outfits);
+            frame(&mut st);
+            st.open_folder_window(outfits);
+            st.open_single_folder_window(outfits);
+            frame(&mut st);
+            frame(&mut st);
+            let kinds: Vec<_> = st.windows.iter().map(shown_folder).collect();
+            assert_eq!(kinds, [Some((false, outfits)), Some((true, outfits))], "classic={classic}");
+            assert!(st.windows.iter().all(|w| w.open && !w.state.fresh));
+            let (tree, single) = (&st.windows[0].state, &st.windows[1].state);
+            if classic {
+                // the Legacy style lists the single folder flat, the tree not
+                assert!(single.lists_flat() && !tree.lists_flat());
+            } else {
+                // Aurora's windows keep to their scope: the second is the
+                // whole inventory
+                assert!(tree.scope == outfits && single.scope.is_nil());
+            }
+            // Elsewhere in the single folder window the same folder opens a
+            // new window: the first one moved on.
+            st.windows[1].state.browse = sub;
+            st.open_single_folder_window(outfits);
+            frame(&mut st);
+            frame(&mut st);
+            assert_eq!(st.windows.len(), 3, "classic={classic}");
+            // RLVa off: nothing closes them; @showinv closes the single
+            // folder windows (inventory floaters), not the tree.
+            frame(&mut st);
+            assert!(st.windows.iter().all(|w| w.open));
+            st.close_showinv_windows();
+            frame(&mut st);
+            let kinds: Vec<_> = st.windows.iter().map(shown_folder).collect();
+            assert_eq!(kinds, [Some((false, outfits))], "classic={classic}: @showinv");
+        }
+    }
+
     /// #1090: the main window's button opens the additional window on the
     /// whole inventory and stays lit while it shows; that window has neither
     /// the button nor the Received tab; a second click closes it and forgets
@@ -4083,7 +4775,7 @@ mod tests {
             frame(&mut st, true, Vec::new());
             assert!(st.additional_open());
             assert!(st.windows[0].state.search.is_empty(), "classic={classic}: a fresh window");
-            st.close_additional_window();
+            st.close_showinv_windows();
             frame(&mut st, true, Vec::new());
             assert!(!st.additional_open(), "classic={classic}: @showinv closes it");
         }
@@ -4352,6 +5044,59 @@ mod tests {
         assert_eq!(item_icon(0, 0, OBJECT_HAS_MULTIPLE_ITEMS), "Inv_Texture");
         assert_eq!(item_icon(0, 15, 0), "Inv_Snapshot");
         assert_eq!(item_icon(24, 24, OBJECT_HAS_MULTIPLE_ITEMS), "Inv_LinkItem");
+    }
+
+    #[test]
+    fn settings_icons_follow_the_settings_type_of_their_flags() {
+        assert_eq!(item_icon(56, 25, 0), "Inv_SettingsSky");
+        assert_eq!(item_icon(56, 25, 1), "Inv_SettingsWater");
+        assert_eq!(item_icon(56, 25, 2), "Inv_SettingsDay");
+        // ST_INVALID and unknown kinds keep the generic icon
+        assert_eq!(item_icon(56, 25, 255), "Inv_Settings");
+        assert_eq!(item_icon(56, 25, 7), "Inv_Settings");
+        // only the low byte is the kind
+        assert_eq!(item_icon(56, 25, 0x100 | 1), "Inv_SettingsWater");
+        // and each has its own embedded icon and link icon
+        for name in ["Inv_SettingsSky", "Inv_SettingsWater", "Inv_SettingsDay", "Inv_Settings"] {
+            assert!(super::super::icons::embedded(name), "{name}");
+            assert_ne!(super::super::icons::inventory_link_name(name), "Inv_LinkItem", "{name}");
+        }
+    }
+
+    #[test]
+    fn system_folder_icons_follow_their_type_and_keep_trash_and_suitcase() {
+        use tree::folder_icon;
+        assert_eq!(folder_icon(0, false), "Inv_TexturesClosed");
+        assert_eq!(folder_icon(0, true), "Inv_TexturesOpen");
+        assert_eq!(folder_icon(46, false), "Inv_CurrentOutfitClosed");
+        assert_eq!(folder_icon(48, true), "Inv_LookFolderOpen");
+        assert_eq!(folder_icon(53, false), "Inv_MarketplaceClosed");
+        assert_eq!(folder_icon(54, false), "Inv_StockFolderClosed");
+        assert_eq!(folder_icon(55, true), "Inv_VersionFolderOpen");
+        assert_eq!(folder_icon(14, true), "Inv_TrashClosed");
+        assert_eq!(folder_icon(100, false), "Inv_SuitcaseClosed");
+        assert_eq!(folder_icon(100, true), "Inv_SuitcaseOpen");
+        assert_eq!(folder_icon(-1, false), "Inv_FolderClosed");
+        assert_eq!(folder_icon(8, true), "Inv_FolderOpen");
+        for folder_type in -1..=100 {
+            for open in [false, true] {
+                let name = folder_icon(folder_type, open);
+                assert!(super::super::icons::embedded(name), "{folder_type}: {name}");
+                if folder_type != 14 {
+                    assert!(
+                        category::is_folder_icon(name) || name.starts_with("Inv_Suitcase"),
+                        "{name} is drawn as a folder"
+                    );
+                }
+            }
+            // a link to the folder keeps its symbol (My Suitcase has no link
+            // icon yet, as before)
+            if folder_type == 100 {
+                continue;
+            }
+            let link = super::super::icons::inventory_link_name(folder_icon(folder_type, false));
+            assert!(link.ends_with("_Link"), "{folder_type}: {link}");
+        }
     }
 
     #[test]
@@ -5840,6 +6585,25 @@ mod tests {
         assert_eq!(inv.items[&id].name, old);
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
             [aurora_net::inventory::operations::Operation::Patch { id: target, body, .. }] if *target == id && body["name"].as_str() == "Renamed object")));
+    }
+
+    #[test]
+    fn tab_while_renaming_goes_on_to_rename_the_next_row() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let (first, next) = (Uuid::from_u128(8100), Uuid::from_u128(8102));
+        assert!(rules::renameable(&inv, next));
+        let mut st = InventoryUi::default();
+        st.plain.order = vec![first, next];
+        st.begin_rename(&inv, first);
+        rename_frame(&ctx, &inv, &mut st, Vec::new());
+        rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Renamed".into())]);
+        let actions = rename_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
+        assert!(matches!(&actions[..], [InvAction::Edit(_)]), "the first name is submitted");
+        assert_eq!(st.rename.as_ref().map(|edit| edit.id), Some(next));
+        assert_eq!(st.selected, Some(next));
+        assert!(st.selection.contains(&next) && !st.selection.contains(&first));
     }
 
     #[test]

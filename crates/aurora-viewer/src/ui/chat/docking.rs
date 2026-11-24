@@ -14,7 +14,7 @@ pub(super) fn target(ctx: &egui::Context, visible: bool) {
     let rect = visible
         .then(|| ctx.memory(|m| m.area_rect(egui::Id::unique("conversations"))))
         .flatten();
-    let pass = ctx.cumulative_pass_nr();
+    let pass = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     ctx.data_mut(|d| d.insert_temp(target_id(), (pass, rect)));
 }
 
@@ -51,7 +51,7 @@ pub(crate) fn title_drop(ctx: &egui::Context, p: &Palette, source: &str) -> bool
         return false;
     }
     let target = ctx.data(|d| d.get_temp::<(u64, Option<egui::Rect>)>(target_id()));
-    let Some((_, Some(rect))) = target.filter(|(pass, _)| *pass == ctx.cumulative_pass_nr()) else {
+    let Some((_, Some(rect))) = target.filter(|(pass, _)| *pass == ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT)) else {
         return false;
     };
     let Some(pos) = ctx.pointer_interact_pos().filter(|pos| rect.contains(*pos)) else {

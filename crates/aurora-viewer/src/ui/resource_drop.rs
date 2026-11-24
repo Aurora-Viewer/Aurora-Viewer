@@ -30,7 +30,7 @@ impl Target {
             clip: ui.clip_rect(),
             layer: ui.layer_id(),
             radius: ui.visuals().widgets.inactive.corner_radius,
-            pass: ui.ctx().cumulative_pass_nr(),
+            pass: ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT),
             materials,
             enabled: enabled && ui.is_enabled(),
         })
@@ -47,7 +47,7 @@ impl Target {
         inv: &'a Inventory,
         accepts: impl FnOnce(&InvItem) -> bool,
     ) -> Option<Resource<'a>> {
-        if self.pass != ctx.cumulative_pass_nr() {
+        if self.pass != ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT) {
             return None;
         }
         let ids = super::inventory::drag::carried_ids(ctx)?;

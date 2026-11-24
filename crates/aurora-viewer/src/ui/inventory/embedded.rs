@@ -11,7 +11,7 @@ use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 pub fn save_focused(ctx: &egui::Context) -> bool {
     ctx.memory(|m| m.focused()).is_some_and(|id| {
         ctx.data(|d| d.get_temp::<u64>(id.with("document_save_frame")))
-            .is_some_and(|frame| frame + 1 >= ctx.cumulative_frame_nr())
+            .is_some_and(|frame| frame + 1 >= ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT))
     })
 }
 
@@ -281,7 +281,7 @@ pub(super) fn editor(
         ..Default::default()
     };
     if output.response.has_focus() {
-        let frame = ui.ctx().cumulative_frame_nr();
+        let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
         ui.ctx().data_mut(|data| data.insert_temp(id.with("document_save_frame"), frame));
         result.save = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S));
     }
@@ -341,14 +341,15 @@ pub(super) fn editor(
                 id.with(("attachment", index)),
                 egui::Sense::click_and_drag(),
             );
-            // LLViewerTextEditor::handleMouseUp opens items on a single click.
-            if response.clicked() {
-                result.open = Some(marker);
-            }
             // handleHover begins a drag past the threshold. Only an object
             // has somewhere to go here: the world (dropObject).
-            if response.drag_started() && attachment.item.asset_type == 6 {
+            if super::drag::begins(ui, &response) && attachment.item.asset_type == 6 {
                 result.drag = Some(marker);
+            }
+            // LLViewerTextEditor::handleMouseUp opens items on a single
+            // click, never on the release of a drag.
+            if response.clicked() && !super::drag::dragged_this_press(ui.ctx()) {
+                result.open = Some(marker);
             }
             response
                 .clone()
@@ -431,7 +432,7 @@ mod tests {
         let output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(700.0, 400.0))),
-                time: Some(ctx.cumulative_frame_nr() as f64 * 0.1),
+                time: Some(ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) as f64 * 0.1),
                 focused: true,
                 events,
                 ..Default::default()
