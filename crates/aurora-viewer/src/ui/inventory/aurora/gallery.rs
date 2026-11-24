@@ -361,6 +361,14 @@ fn pane(
         if blank.clicked() {
             clipboard::request_focus(ui, st);
         }
+        // its right-click: the menu of the folder shown
+        if blank.secondary_clicked()
+            && st.tab == 0
+            && let Some(pos) = blank.interact_pointer_pos()
+        {
+            st.row_menu = Some((root, pos));
+            st.background_menu = true;
+        }
         if count == 0 {
             if own {
                 let text = match inv.folders.get(&root).map(|f| f.state) {
@@ -633,6 +641,10 @@ fn tile(
     };
     let key = if item.is_some() { "inv_item" } else { "inv_folder" };
     let r = ui.interact(rect, ui.make_persistent_id((key, id)), sense);
+    super::marquee::record(st, id, rect);
+    if st.selected == Some(id) {
+        st.selected_rect = Some(rect);
+    }
     #[cfg(test)]
     row::tests::record(ui, id, rect);
     fill(ui);

@@ -1380,6 +1380,17 @@ inventory-move-to = Move to…
 inventory-move-filter = Filter folders by name…
 inventory-move-selection-name = Move “{ $name }”
 inventory-move-selection-count = Move { $count } items
+inventory-copy-selection-count = { $count ->
+    [one] Copy 1 item
+   *[other] Copy { $count } items
+}
+inventory-link-selection-count = { $count ->
+    [one] Link 1 item
+   *[other] Link { $count } items
+}
+inventory-drop-move-here = Move here
+inventory-drop-copy-here = Copy here
+inventory-drop-link-here = Create links here
 inventory-move-no-folders = No folders available for this filter.
 inventory-widen = Widen the window
 inventory-additional-window = Additional inventory window
@@ -1433,6 +1444,24 @@ inventory-column-both-rights = You → next owner
 inventory-columns = Columns
 inventory-column-permissions = Permissions
 inventory-columns-reset = Reset inventory layout
+inventory-back = Back
+inventory-forward = Forward
+inventory-up = Up one level
+keybinds-inventory-root = Go to the top
+keybinds-inventory-search = Search the inventory
+keybinds-inventory-toggle = Select or unselect the row in focus
+keybinds-inventory-menu = Open the menu of the selection
+keybinds-inventory-purge = Purge from the Trash
+keybinds-inventory-refused = { $keys } stays the inventory list's own key: choose another.
+inventory-path-edit = Type a path
+inventory-path-subfolders = Subfolders
+inventory-copy-path = Copy path
+inventory-show-in-folder = Show in folder
+inventory-pin = Pin to Quick access
+inventory-unpin = Unpin from Quick access
+inventory-quick-access = Quick access
+inventory-quick-access-drop = Drop a folder here to pin it
+inventory-invert-selection = Invert selection
 inventory-resize-columns = Drag to resize columns. Double-click to reset their widths.
 inventory-resize-sidebar = Drag to resize the folder sidebar. Double-click to reset its width.
 inventory-resize-gallery = Drag to share the room between the tiles and the list. Double-click to reset it.

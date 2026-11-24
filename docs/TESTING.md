@@ -7763,6 +7763,28 @@ failure. Grid validation and any paid upload are performed by the human.
   Regression filter `inventory_hover_cache` exercises 1,000 successive images,
   real egui handle release, active/recent retention, expiry, shared world/UI
   source references, bounded workers and replies arriving after cancellation.
+- **`AURORA_DEMO_INVENTORY=aurora-explorer|aurora-explorer-path|aurora-explorer-menu|aurora-explorer-medium`**:
+  the wide explorer (medium for `-medium`) in the right-click tests folder,
+  come from the top: Back and Up lit, the breadcrumb with its chevrons, the
+  folder and its subfolder pinned under Quick access. `-path` opens the
+  breadcrumb as a path with the top's subfolders as completions; `-menu`
+  opens the menu of the empty space (View, Sort, Select all, Invert
+  selection, each with its keys). By hand: Alt+← / → / ↑ and the mouse's
+  side buttons, Backspace, a right-click
+  on Back; a chevron's subfolders; Ctrl+L (the path starts with `~/`), typing
+  `Cl`, Tab, Enter, then `~/` alone (the top); a drag
+  from the empty space or a row's Type / Rights / Date columns (the band, Ctrl
+  adds, near the bottom it scrolls; from a name the item is dragged);
+  Home / End / Page keys, Ctrl+A, Ctrl+Shift+A, Esc, letters typed; Ctrl+↑ /
+  ↓ then Ctrl+Space; F2 then Tab; Ctrl+Shift+N; Alt+Enter; Shift+F10; a
+  drag with Ctrl (Copy badge), with Alt (Link badge), with the right button
+  (its menu), Esc during a drag; a folder dragged onto Quick access, pins
+  reordered; Shift+Delete in and out of the Trash. The keys are rebindable
+  in Preferences › Shortcuts › Inventory (`AURORA_DEMO_OPTIONS=shortcuts/4`):
+  rebind one (Reload folder to F6), check the explorer follows and the
+  tooltip names F6; a key the list keeps (Enter, an arrow) is refused with a
+  notice; Ctrl+Shift+A still opens People when the list does not have the
+  keyboard, and unbinding Invert selection gives the chord back to People.
 - **`AURORA_DEMO_INVENTORY=locked|aurora-locked`**: locks the demo folder
   holding the demo object, in the Legacy or Aurora inventory. Check its
   "Locked" tag after the name; the folder itself refuses Delete, Cut and a

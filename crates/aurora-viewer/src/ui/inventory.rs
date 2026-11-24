@@ -59,6 +59,8 @@ pub(crate) mod properties;
 mod received;
 mod replace_links;
 mod rows;
+mod select_keys;
+mod shortcuts;
 pub(crate) mod smart;
 mod smart_builder;
 pub(crate) mod smart_store;
@@ -548,6 +550,17 @@ fn floater_id(id: Uuid) -> String {
     format!("inventory_{id}")
 }
 
+/// A key the focused inventory list handles itself (its bindings,
+/// `shortcuts::list_keeps`), before the viewer's own shortcuts take it.
+pub fn list_keeps_chord(ctx: &egui::Context, input: &crate::keybinds::Input, ctrl: bool, shift: bool, alt: bool) -> bool {
+    clipboard::list_focused_recently(ctx) && shortcuts::list_keeps(ctx, input, ctrl, shift, alt)
+}
+
+/// The user's inventory keys, for this frame's lists (`shortcuts::publish`).
+pub fn publish_shortcuts(ctx: &egui::Context, kb: &crate::keybinds::KeyBindings) {
+    shortcuts::publish(ctx, kb);
+}
+
 /// Inventory cargo shared by world placement and the build contents floater.
 #[derive(Debug, Clone, Copy)]
 pub struct InvDrag(pub Uuid);
@@ -684,6 +697,13 @@ pub struct InventoryUi {
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
     keyboard_selection: bool,
+    /// The keyboard's place apart from the selection (Ctrl+↑/↓ in the
+    /// explorer, `select_keys`), drawn as an outline.
+    focus: Option<Uuid>,
+    /// The letters typed to find a row (`select_keys`).
+    type_ahead: select_keys::TypeAhead,
+    /// The explorer's rubber band (`aurora::marquee`).
+    marquee: aurora::Marquee,
     /// "Do not show again" on the Delete confirmation (Trash moves only).
     delete_dont_ask: bool,
     pending_delete: Option<Box<delete::PendingDelete>>,
@@ -702,6 +722,8 @@ pub struct InventoryUi {
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
+    /// This frame's Esc cancelled a cut (`clipboard_input`).
+    cut_cancelled: bool,
     /// A local copy, cut or cancellation changed the shared clipboard in this pane.
     clipboard_edited: bool,
     cut_rows: clipboard::CutRows,
@@ -777,9 +799,22 @@ pub struct InventoryUi {
     /// The explorer's rows of `browse`: its folders never open in place.
     flat: rows::PlainTree,
     side: aurora::Sidebar,
+    /// Where the explorer has been: Back, Forward (`aurora::history`).
+    history: aurora::History,
+    /// The breadcrumb while a path is typed in it (`aurora::breadcrumb`).
+    path_edit: Option<aurora::PathEdit>,
     counts: aurora::Counts,
     /// A row's "more actions" menu, opened by its button: the row, where.
     row_menu: Option<(Uuid, egui::Pos2)>,
+    /// `row_menu` is the menu of the explorer's empty space, for the folder
+    /// it shows (a right-click there, or Shift+F10 with nothing selected).
+    background_menu: bool,
+    /// `AURORA_DEMO_INVENTORY=aurora-explorer…`, waiting for its folder.
+    demo_explorer: Option<String>,
+    /// A right-button drop waiting for its choice (`drag::drop_menu`).
+    drop_menu: Option<drag::DropMenu>,
+    /// Where the selected row was drawn last frame, for Shift+F10.
+    selected_rect: Option<egui::Rect>,
     /// The folder a folder window shows (nil: the whole inventory). Its
     /// lists, searches, column and breadcrumb stay under it.
     scope: Uuid,
@@ -937,6 +972,40 @@ impl InventoryUi {
         self.rename = Some(InlineRename { id, name, focus: true });
         self.message.clear();
     }
+    /// Demo (`AURORA_DEMO_INVENTORY=aurora-explorer[-path|-menu]`): the
+    /// explorer in the demo folder, come from the root (Back and Up lit),
+    /// with the path being typed or the menu of its empty space open.
+    pub fn demo_explorer(&mut self, mode: &str) {
+        // applied once the demo folder has arrived (`demo_explorer_now`)
+        self.demo_explorer = Some(mode.to_owned());
+    }
+
+    fn demo_explorer_now(&mut self, inv: &Inventory) {
+        let here = Uuid::from_u128(8000);
+        let Some(mode) = self.demo_explorer.take_if(|_| inv.folders.contains_key(&here)) else {
+            return;
+        };
+        let mode = mode.as_str();
+        self.history.observe(aurora::Place { tab: 0, folder: inv.root });
+        self.history.observe(aurora::Place { tab: 0, folder: here });
+        self.browse = here;
+        match mode {
+            "aurora-explorer-path" => {
+                let base = inv.root;
+                let mut text = aurora::path_text(inv, base, base);
+                text.push(aurora::PATH_SEPARATOR);
+                self.path_edit = Some(aurora::PathEdit::new(text));
+            }
+            "aurora-explorer-menu" => {
+                self.selection.clear();
+                self.selected = None;
+                self.row_menu = Some((here, egui::pos2(760.0, 420.0)));
+                self.background_menu = true;
+            }
+            _ => {}
+        }
+    }
+
     /// Demo (`AURORA_DEMO_INVENTORY=aurora-system-folders`): Aurora's
     /// explorer on the root, nothing selected.
     pub fn demo_browse_root(&mut self, inv: &Inventory) {
@@ -1218,6 +1287,7 @@ impl InventoryUi {
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
         clipboard::request_focus(ui, self);
         self.keyboard_selection = false;
+        self.focus = None;
         if secondary && self.selection.contains(&id) {
             self.selected = Some(id);
             return;
@@ -1699,6 +1769,7 @@ fn folder_window_contents(
     drag::target(ui, p, &zone.response, inv, root, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, root, st, prefs, facts, actions);
+    drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
 
 use tree::spacing as tree_spacing;
@@ -2121,18 +2192,48 @@ fn rename_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, id: Uuid, st: &mu
         return true;
     } else if !r.has_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         // LLFolderView::handleKeyHere / onRenamerLost (indra/llui/llfolderview.cpp):
-        // completing a rename keeps navigation in this list. A click or Tab
-        // that moved focus elsewhere must keep its new destination instead.
+        // completing a rename keeps navigation in this list. A click that
+        // moved focus elsewhere keeps its new destination instead. Windows
+        // Explorer: Tab goes on to rename the next row, Shift+Tab the one
+        // before (Aurora difference: the Legacy Viewer's Tab ends the
+        // rename only).
         let submitted = keyboard_owner && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        let tab = ui.input(|i| i.key_pressed(egui::Key::Tab).then_some(i.modifiers.shift));
         st.rename = Some(edit);
         finish_rename(inv, st, actions);
-        if submitted && st.rename.is_none() {
+        if let Some(back) = tab
+            && st.rename.is_none()
+        {
+            rename_next(inv, st, id, back);
+        } else if submitted && st.rename.is_none() {
             clipboard::request_focus(ui, st);
         }
         return true;
     }
     st.rename = Some(edit);
     true
+}
+
+/// Renames the row after `id` in the list (before it with `back`) that
+/// can be renamed, as Tab does in Windows Explorer's rename.
+fn rename_next(inv: &Inventory, st: &mut InventoryUi, id: Uuid, back: bool) {
+    let order = keyboard::shown_order(st);
+    let Some(at) = order.iter().position(|row| *row == id) else {
+        return;
+    };
+    let next = if back {
+        order[..at].iter().rev().find(|row| rules::renameable(inv, **row)).copied()
+    } else {
+        order[at + 1..].iter().find(|row| rules::renameable(inv, **row)).copied()
+    };
+    if let Some(next) = next {
+        st.selection.clear();
+        st.selection.insert(next);
+        st.selected = Some(next);
+        st.anchor = Some(next);
+        st.begin_rename(inv, next);
+        st.reveal = Some(next);
+    }
 }
 
 fn finish_rename(inv: &Inventory, st: &mut InventoryUi, actions: &mut Vec<InvAction>) {
@@ -2481,6 +2582,7 @@ fn inventory_contents(
     drag::target(ui, p, &zone.response, inv, target, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
+    drag::drop_menu(ui, p, inv, st, prefs, facts, actions);
 }
 
 /// Full fetches requested by mutation dialogs must keep running even when
@@ -2728,6 +2830,25 @@ pub fn show(
             }
         }
         st.clipboard_loaded = loaded.then(|| (inv.generation, st.clipboard.clone()));
+    }
+    // a drag that copies loads its folders' trees the same way (once per
+    // inventory generation)
+    let copied = drag::copied_folders(ctx, inv);
+    if !copied.is_empty() {
+        let key = egui::Id::unique("inventory_drag_copy_loaded");
+        let done = ctx
+            .data(|d| d.get_temp::<(u64, Vec<Uuid>)>(key))
+            .is_some_and(|(generation, ids)| generation == inv.generation && ids == copied);
+        if !done {
+            // every tree asked for, not only up to the first unloaded one
+            let mut loaded = true;
+            for id in &copied {
+                loaded &= rules::request_tree(inv, *id);
+            }
+            if loaded {
+                ctx.data_mut(|d| d.insert_temp(key, (inv.generation, copied)));
+            }
+        }
     }
     let screen = ctx.content_rect();
     let default_size = if dual.is_some() { DUAL_SIZE } else { DEFAULT_SIZE };
@@ -5935,6 +6056,25 @@ mod tests {
         assert_eq!(inv.items[&id].name, old);
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
             [aurora_net::inventory::operations::Operation::Patch { id: target, body, .. }] if *target == id && body["name"].as_str() == "Renamed object")));
+    }
+
+    #[test]
+    fn tab_while_renaming_goes_on_to_rename_the_next_row() {
+        let ctx = egui::Context::default();
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        let (first, next) = (Uuid::from_u128(8100), Uuid::from_u128(8102));
+        assert!(rules::renameable(&inv, next));
+        let mut st = InventoryUi::default();
+        st.plain.order = vec![first, next];
+        st.begin_rename(&inv, first);
+        rename_frame(&ctx, &inv, &mut st, Vec::new());
+        rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Renamed".into())]);
+        let actions = rename_frame(&ctx, &inv, &mut st, vec![key(egui::Key::Tab)]);
+        assert!(matches!(&actions[..], [InvAction::Edit(_)]), "the first name is submitted");
+        assert_eq!(st.rename.as_ref().map(|edit| edit.id), Some(next));
+        assert_eq!(st.selected, Some(next));
+        assert!(st.selection.contains(&next) && !st.selection.contains(&first));
     }
 
     #[test]

@@ -1383,6 +1383,17 @@ inventory-move-to = Déplacer vers…
 inventory-move-filter = Filtrer les dossiers par nom…
 inventory-move-selection-name = Déplacer « { $name } »
 inventory-move-selection-count = Déplacer { $count } éléments
+inventory-copy-selection-count = { $count ->
+    [one] Copier 1 élément
+   *[other] Copier { $count } éléments
+}
+inventory-link-selection-count = { $count ->
+    [one] Lier 1 élément
+   *[other] Lier { $count } éléments
+}
+inventory-drop-move-here = Déplacer ici
+inventory-drop-copy-here = Copier ici
+inventory-drop-link-here = Créer des liens ici
 inventory-move-no-folders = Aucun dossier disponible pour ce filtre.
 inventory-widen = Élargir la fenêtre
 inventory-additional-window = Fenêtre d’inventaire supplémentaire
@@ -1436,6 +1447,24 @@ inventory-column-both-rights = Vous → prochain
 inventory-columns = Colonnes
 inventory-column-permissions = Permissions
 inventory-columns-reset = Réinitialiser la disposition de l’inventaire
+inventory-back = Précédent
+inventory-forward = Suivant
+inventory-up = Dossier parent
+keybinds-inventory-root = Aller tout en haut
+keybinds-inventory-search = Rechercher dans l’inventaire
+keybinds-inventory-toggle = Sélectionner ou désélectionner la ligne active
+keybinds-inventory-menu = Ouvrir le menu de la sélection
+keybinds-inventory-purge = Purger de la corbeille
+keybinds-inventory-refused = { $keys } reste une touche propre à la liste de l’inventaire : choisissez-en une autre.
+inventory-path-edit = Saisir un chemin
+inventory-path-subfolders = Sous-dossiers
+inventory-copy-path = Copier le chemin
+inventory-show-in-folder = Afficher dans le dossier
+inventory-pin = Épingler à l’accès rapide
+inventory-unpin = Désépingler de l’accès rapide
+inventory-quick-access = Accès rapide
+inventory-quick-access-drop = Déposez un dossier ici pour l’épingler
+inventory-invert-selection = Inverser la sélection
 inventory-resize-columns = Faites glisser pour redimensionner les colonnes. Double-cliquez pour rétablir leurs largeurs.
 inventory-resize-sidebar = Faites glisser pour redimensionner le panneau des dossiers. Double-cliquez pour rétablir sa largeur.
 inventory-resize-gallery = Faites glisser pour partager la place entre les vignettes et la liste. Double-cliquez pour la rétablir.

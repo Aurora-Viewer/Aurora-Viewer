@@ -209,6 +209,7 @@ fn more(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, id: Uuid) {
         .on_hover_text(aurora_i18n::tr!("inventory-more-actions"));
     if response.clicked() {
         st.row_menu = Some((id, response.rect.left_bottom()));
+        st.background_menu = false;
     }
 }
 

@@ -13,7 +13,7 @@ use crate::ui::{menu, sheet, widgets};
 use egui::{Color32, Pos2, Rect, Sense, Vec2};
 
 /// The height of the toolbars' buttons and fields.
-const BAR: f32 = 30.0;
+pub(super) const BAR: f32 = 30.0;
 /// The height of the line of messages, when there is one.
 pub const MESSAGE: f32 = 22.0;
 /// The height of the wide width's status bar.
@@ -495,16 +495,28 @@ pub(super) fn explorer_row(
     inv: &Inventory,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
+    facts: &Facts,
     layout: Layout,
     actions: &mut Vec<InvAction>,
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            super::history::buttons(ui, p, inv, st, prefs);
+        });
+        // the tools' width as last drawn: the address bar takes the rest
+        let tools_id = ui.scope_id().with("aurora_explorer_tools_width");
+        let mut tools_from = None;
         if layout == Layout::Wide {
-            let crumbs = (ui.available_width() * 0.32).clamp(140.0, 380.0);
+            // the address bar, all the room the tools leave, as Explorer's
+            // and Dolphin's
+            let tools_w = ui.ctx().data(|d| d.get_temp::<f32>(tools_id)).unwrap_or(560.0);
+            let crumbs = (ui.available_width() - tools_w - 8.0).max(180.0);
             ui.allocate_ui_with_layout(Vec2::new(crumbs, BAR), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                breadcrumb(ui, p, inv, st)
+                super::breadcrumb::show(ui, p, inv, st, prefs, facts, actions)
             });
+            tools_from = Some(ui.cursor().left());
             let new_label = aurora_i18n::tr!("inventory-new");
             let new_w = widgets::action_button_fit(ui, "plus", new_label);
             let count = chip_list(st).len();
@@ -569,12 +581,16 @@ pub(super) fn explorer_row(
             });
         }
         tree_buttons(ui, p, st);
+        if let Some(from) = tools_from {
+            let width = ui.cursor().left() - from;
+            ui.ctx().data_mut(|d| d.insert_temp(tools_id, width));
+        }
     });
     search_line(ui, p, inv, st, prefs, layout);
 }
 
 /// The name of the shortcut (tab) shown, for where the list is.
-fn tab_name(tab: usize) -> &'static str {
+pub(super) fn tab_name(tab: usize) -> &'static str {
     match tab {
         2 => aurora_i18n::tr!("inventory-tab-recent"),
         3 => aurora_i18n::tr!("inventory-tab-worn"),
@@ -584,55 +600,16 @@ fn tab_name(tab: usize) -> &'static str {
     }
 }
 
-/// The folders from the root to the explorer's, each a link back to it
-/// (the last one, where the list is, in semi-bold); a shortcut's name
-/// instead while one is shown.
-fn breadcrumb(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi) {
-    ui.spacing_mut().item_spacing.x = 4.0;
-    if st.tab != 0 {
-        ui.add(egui::Label::new(sheet::semibold(ui, tab_name(st.tab), 13.0, p.ink)).truncate());
-        return;
-    }
-    let base = super::base(inv, st);
-    let mut path = Vec::new();
-    let mut id = st.browse;
-    let mut seen = HashSet::new();
-    while seen.insert(id) && inv.folders.contains_key(&id) {
-        path.push(id);
-        if id == inv.root || id == base {
-            break;
-        }
-        id = rules::parent(inv, id).unwrap_or(Uuid::nil());
-    }
-    path.reverse();
-    // A deep folder keeps its last levels in sight.
-    let shown = path.len().min(4);
-    if path.len() > shown {
-        ui.label(egui::RichText::new("…").size(13.0).color(p.muted));
-        widgets::glyph(ui, "chevron-right", p.muted_dim, 12.0);
-    }
-    let start = path.len() - shown;
-    for (n, folder) in path[start..].iter().enumerate() {
-        let last = start + n + 1 == path.len();
-        let name = folder_name(inv, *folder);
-        if last {
-            ui.add(egui::Label::new(sheet::semibold(ui, &name, 13.0, p.ink)).truncate());
-        } else {
-            let link = ui
-                .add(egui::Label::new(egui::RichText::new(&name).size(13.0).color(p.muted)).sense(Sense::click()))
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            if link.clicked() {
-                st.browse = *folder;
-                st.selection.clear();
-                st.selected = None;
-            }
-            widgets::glyph(ui, "chevron-right", p.muted_dim, 12.0);
-        }
-    }
-}
-
 /// The medium width's line over the list: where it is, how much it holds.
-pub(super) fn breadcrumb_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut InventoryUi) {
+pub(super) fn breadcrumb_row(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    inv: &Inventory,
+    st: &mut InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    actions: &mut Vec<InvAction>,
+) {
     ui.allocate_ui_with_layout(
         Vec2::new(ui.available_width(), 26.0),
         egui::Layout::left_to_right(egui::Align::Center),
@@ -646,7 +623,7 @@ pub(super) fn breadcrumb_row(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st
             ui.allocate_ui_with_layout(
                 Vec2::new((ui.available_width() - count_w).max(40.0), 26.0),
                 egui::Layout::left_to_right(egui::Align::Center),
-                |ui| breadcrumb(ui, p, inv, st),
+                |ui| super::breadcrumb::show(ui, p, inv, st, prefs, facts, actions),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(count) = count {
