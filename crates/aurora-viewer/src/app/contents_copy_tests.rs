@@ -34,6 +34,8 @@ fn folder_copies_refresh_permissions_and_refuse_missing_items_and_no_copy_worn_c
         items: vec![item.clone()],
         transfer: task_inventory::contents_transfer(&world, object, std::slice::from_ref(&item), true).unwrap(),
         wear: None,
+        source_folder: None,
+        destination: Default::default(),
     };
     assert!(refresh_copy(request.clone(), &build, &world).unwrap().transfer.moved.is_empty());
     let mut current = item;
@@ -127,6 +129,8 @@ fn fixture(wear: bool) -> (PendingCopy, Inventory, Instant) {
             scripted: false,
         },
         wear: wear.then_some(WearMode::Append),
+        source_folder: None,
+        destination: Default::default(),
     };
     let copy = PendingCopy::new(Uuid::from_u128(102), folder, &request, now);
     let mut inv = Inventory::default();
@@ -257,6 +261,8 @@ fn an_unanswered_folder_creation_reports_timeout_once_and_retains_ownership_of_a
                     scripted: false,
                 },
                 wear: None,
+                source_folder: None,
+                destination: Default::default(),
             },
             folder: Uuid::from_u128(303),
             since: now,

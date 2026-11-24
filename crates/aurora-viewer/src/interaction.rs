@@ -444,7 +444,12 @@ impl Interactions {
 
     pub fn on_properties(&mut self, props: &[ObjectProps]) {
         for p in props {
-            self.props.insert(p.object_id, p.clone());
+            // a family answer has no folder: it never replaces the full one
+            // that carries it ("Accept in")
+            let keeps_full = !p.full && self.props.get(&p.object_id).is_some_and(|old| old.full);
+            if !keeps_full {
+                self.props.insert(p.object_id, p.clone());
+            }
             if let Some(d) = &mut self.dialog
                 && d.target.root == p.object_id
                 && d.props.is_none()

@@ -151,7 +151,9 @@ underlines, using the resolved palette. egui retains composition, cursor,
 commit and cancellation state; the native input bridge is unchanged (#2608).
 
 Object contents item menus share `ui/object_actions::task_copy_request` and
-`app/contents_copy.rs` with the Open window's full-copy button. The editor
+`app/contents_copy.rs` with the Open window's full-copy button. The window's
+"Accept in" choice (Catznip) is `world/contents_destination.rs`: the rule that
+picks the folder the new folder goes into, with its fallbacks. The editor
 queues one `build::ui::Request::CopyContents` for its selection; both editor
 layouts and the Open item menu create one folder named after the object,
 retain the shared no-copy move warning and observe actual item arrivals.

@@ -3374,6 +3374,20 @@ impl App {
                     .unwrap_or_else(|| crate::demo::demo_reply(&cmd)),
                 None => crate::demo::demo_reply(&cmd),
             };
+            // An object the demo did not list (one rezzed in the demo): its
+            // contents are the demo simulator's, the same ones the copy moves.
+            if events.is_empty()
+                && let NetCommand::RequestTaskInventory { handle, local_id, object } = &cmd
+            {
+                events = self.build_demo.reply(
+                    &self.world,
+                    &aurora_net::build::BuildCmd::RequestTaskInventory {
+                        handle: *handle,
+                        local_id: *local_id,
+                        object_id: *object,
+                    },
+                );
+            }
             if matches!(
                 cmd,
                 NetCommand::Call {
@@ -20712,10 +20726,23 @@ impl App {
                 for action in contents_actions {
                     self.apply_contents_action(action);
                 }
-                for action in
-                    ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world, &self.build)
-                {
+                let accept_in = self.settings.inventory.contents_accept_in;
+                let mut accept_in_now = accept_in;
+                for action in ui::object_actions::show_contents(
+                    &ctx,
+                    &p,
+                    &self.skin.icons,
+                    &mut self.interactions,
+                    &self.world,
+                    &self.build,
+                    &mut accept_in_now,
+                ) {
                     self.apply_contents_action(action);
+                }
+                // the window's "Accept in" choice is kept for the next copy
+                if accept_in_now != accept_in {
+                    self.settings.inventory.contents_accept_in = accept_in_now;
+                    self.settings.save();
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);

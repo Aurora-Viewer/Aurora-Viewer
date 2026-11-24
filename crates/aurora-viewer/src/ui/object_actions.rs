@@ -295,6 +295,10 @@ pub struct CopyRequest {
     pub items: Vec<aurora_net::build::TaskItem>,
     pub transfer: crate::build::task_inventory::ContentsTransfer,
     pub wear: Option<crate::world::appearance::WearMode>,
+    /// The folder the object was rezzed from (full properties only).
+    pub source_folder: Option<uuid::Uuid>,
+    /// "Accept in": where the new folder goes (Default: the usual place).
+    pub destination: crate::world::contents_destination::Destination,
 }
 
 /// A copy that moves no-copy items, waiting for the user's answer
@@ -343,7 +347,45 @@ pub fn task_copy_request(
         items,
         transfer,
         wear: None,
+        source_folder: source_folder(props, world),
+        destination: Default::default(),
     })
+}
+
+/// The folder an object came from: the folder it was rezzed from (full
+/// properties, LLSelectNode::mFolderID), else, for a worn object, the folder of
+/// its worn inventory item (Catznip's getFolderFromObject). A family answer
+/// carries neither.
+fn source_folder(props: Option<&aurora_net::build::ObjectProps>, world: &World) -> Option<uuid::Uuid> {
+    let props = props.filter(|props| props.full)?;
+    let worn = (!props.item_id.is_nil())
+        .then(|| world.inventory.items.get(&props.item_id).map(|item| item.parent))
+        .flatten();
+    pick_source(props.folder_id, worn)
+}
+
+/// The first of the rezzed-from folder and the worn item's folder that is known.
+fn pick_source(rezzed_from: uuid::Uuid, worn_parent: Option<uuid::Uuid>) -> Option<uuid::Uuid> {
+    [rezzed_from, worn_parent.unwrap_or_default()].into_iter().find(|id| !id.is_nil())
+}
+
+/// The "Accept in" drop-down's choices, with the usual place first; the
+/// object's folder and Received Items only when they are usable now
+/// (LLPanelInventoryOfferFolder::refreshFolders).
+fn accept_in_options(world: &World, source: Option<uuid::Uuid>) -> Vec<(crate::world::contents_destination::Destination, String)> {
+    use crate::world::contents_destination::{Destination, parent};
+    let accept = crate::world::contents_destination::object_folder;
+    let inv = &world.inventory;
+    let name = |folder: uuid::Uuid| inv.folders.get(&folder).map(|f| f.info.name.clone()).unwrap_or_default();
+    let mut out = vec![(Destination::Default, aurora_i18n::tr!("contents-accept-in-default").to_owned())];
+    if let Some(folder) = accept(source, inv) {
+        let text = aurora_i18n::tr!("contents-accept-in-object", name = name(folder)).to_owned();
+        out.push((Destination::ObjectFolder, text));
+    }
+    if let Some(folder) = parent(Destination::ReceivedItems, None, inv) {
+        out.push((Destination::ReceivedItems, name(folder)));
+    }
+    out
 }
 
 /// LLFloaterOpenObject: load and show the root object's task inventory.
@@ -354,6 +396,7 @@ pub fn show_contents(
     state: &mut Interactions,
     world: &World,
     build: &crate::build::BuildTool,
+    accept: &mut crate::world::contents_destination::AcceptIn,
 ) -> Vec<ContentsAction> {
     let Some(c) = state.contents.as_ref() else { return Vec::new() };
     let mut documents = Vec::new();
@@ -404,6 +447,27 @@ pub fn show_contents(
         footer.show(outer, |ui| {
             use super::widgets::{ActionKind, action_button_if, action_menu_button};
             let mut copy = None;
+            // "Accept in" (Catznip): the drop-down offers the folders usable now
+            let options = accept_in_options(world, source_folder(props, world));
+            let shown = options
+                .iter()
+                .find(|(destination, _)| *destination == accept.choice)
+                .or(options.first())
+                .map(|(_, text)| text.clone())
+                .unwrap_or_default();
+            ui.horizontal(|ui| {
+                super::widgets::checkbox(ui, p, &mut accept.on, aurora_i18n::tr!("contents-accept-in"))
+                    .on_hover_text(aurora_i18n::tr!("contents-accept-in-tip"));
+                ui.add_enabled_ui(accept.on, |ui| {
+                    egui::ComboBox::from_id_salt("contents_accept_in")
+                        .selected_text(shown)
+                        .show_ui(ui, |ui| {
+                            for (destination, text) in &options {
+                                ui.selectable_value(&mut accept.choice, *destination, text.as_str());
+                            }
+                        });
+                });
+            });
             ui.horizontal(|ui| {
                 let ready = copyable.is_ok();
                 let tip = match &copyable {
@@ -434,7 +498,12 @@ pub fn show_contents(
             if let Some(wear) = copy
                 && let Ok(request) = &copyable
             {
-                documents.push(ContentsAction::Copy(Box::new(CopyRequest { wear, ..request.clone() })));
+                let destination = accept.requested();
+                documents.push(ContentsAction::Copy(Box::new(CopyRequest {
+                    wear,
+                    destination,
+                    ..request.clone()
+                })));
                 close = true;
             }
         });
@@ -512,3 +581,28 @@ pub fn confirm_copy(ctx: &egui::Context, p: &Palette, pending: &mut Option<CopyC
 
 /// The no-copy items named in the move warning, the rest counted.
 const MOVED_SHOWN: usize = 8;
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    fn id(n: u128) -> uuid::Uuid {
+        uuid::Uuid::from_u128(n)
+    }
+
+    #[test]
+    fn the_rezzed_from_folder_comes_first() {
+        assert_eq!(pick_source(id(1), Some(id(2))), Some(id(1)));
+    }
+
+    #[test]
+    fn a_worn_object_takes_the_folder_of_its_worn_item() {
+        assert_eq!(pick_source(uuid::Uuid::nil(), Some(id(2))), Some(id(2)));
+    }
+
+    #[test]
+    fn nothing_known_means_no_source_folder() {
+        assert_eq!(pick_source(uuid::Uuid::nil(), None), None);
+        assert_eq!(pick_source(uuid::Uuid::nil(), Some(uuid::Uuid::nil())), None);
+    }
+}

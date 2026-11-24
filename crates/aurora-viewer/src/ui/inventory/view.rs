@@ -450,6 +450,9 @@ pub struct InventoryPreferences {
     pub recent_hours: u32,
     pub warn_task_move: bool,
     pub warn_scripted_task_move: bool,
+    /// "Accept in" of the object contents window (Catznip): off by default,
+    /// the last choice kept (world/contents_destination.rs).
+    pub contents_accept_in: crate::world::contents_destination::AcceptIn,
     /// Ask before moving inventory to the Trash (DeleteItems; its "Do not
     /// show again" box turns this off). Purge from Trash always asks.
     /// On by default (#2344).
@@ -525,6 +528,7 @@ impl Default for InventoryPreferences {
             recent_hours: 0,
             warn_task_move: true,
             warn_scripted_task_move: true,
+            contents_accept_in: Default::default(),
             confirm_delete: true,
             rights: Default::default(),
             show_details: true,

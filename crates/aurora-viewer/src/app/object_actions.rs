@@ -193,6 +193,20 @@ impl App {
                         handle: target.key.region,
                         object: target.root,
                     });
+                    // the folder the object came from is in its full properties
+                    // only: select and deselect the root to read them ("Accept in")
+                    let root = self
+                        .world
+                        .objects
+                        .index_of_uuid(&target.root)
+                        .and_then(|i| self.world.objects.get(i))
+                        .map(|o| o.key);
+                    for command in root
+                        .map(|key| self.build.prim_properties_query(&self.world, key))
+                        .unwrap_or_default()
+                    {
+                        self.send(command);
+                    }
                     self.send(NetCommand::RequestTaskInventory {
                         handle: target.key.region,
                         local_id: target.key.local_id,

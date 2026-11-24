@@ -328,12 +328,18 @@ impl App {
         self.inventory_ui
             .begin_contents_copy(id, aurora_i18n::tr!("contents-copy-requested", folder = name.as_str()));
         let inv = &self.world.inventory;
-        let parent = if request.wear.is_some() {
-            crate::world::appearance::system_folder(inv, FT_CLOTHING).unwrap_or(inv.root)
-        } else {
-            inv.root
-        };
-        if !rules::destination(inv, parent) {
+        // "Accept in" (Catznip): the chosen folder when it is usable now, else
+        // the usual place
+        // a chosen folder has already passed the same usable rule
+        let chosen = crate::world::contents_destination::parent(request.destination, request.source_folder, inv);
+        let parent = chosen.unwrap_or_else(|| {
+            if request.wear.is_some() {
+                crate::world::appearance::system_folder(inv, FT_CLOTHING).unwrap_or(inv.root)
+            } else {
+                inv.root
+            }
+        });
+        if chosen.is_none() && !rules::destination(inv, parent) {
             self.contents_copy_failed(id, aurora_i18n::tr!("task-transfer-destination").to_owned());
             return;
         }

@@ -101,6 +101,7 @@ impl Window {
                     &mut self.state,
                     &self.world,
                     &self.build,
+                    &mut crate::world::contents_destination::AcceptIn::default(),
                 ));
             },
         );

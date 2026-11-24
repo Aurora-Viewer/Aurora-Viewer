@@ -26,6 +26,7 @@ pub mod collisions;
 pub mod complexity_notice;
 pub mod contact_markers;
 pub mod contact_sets;
+pub mod contents_destination;
 pub mod derender;
 pub mod dialog_names;
 pub mod direct_history;
