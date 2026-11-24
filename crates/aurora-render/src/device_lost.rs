@@ -81,13 +81,24 @@ thread_local! {
 }
 
 /// True while [`start_guarded`] runs on this thread: the panic hook leaves
-/// a panic now to it (aurora-viewer logging.rs).
+/// a panic now to it when [`is_start_loss_panic`] says it is the device's
+/// loss (aurora-viewer logging.rs).
 pub fn in_guarded_start() -> bool {
     STARTING.with(Cell::get)
 }
 
-/// Makes a renderer right after a device loss, a panic in it returned as
-/// its message instead of ending the process. The card may still be
+/// A panic of wgpu's for a device lost while a renderer starts: the loss
+/// itself ([`is_loss_panic`]), or the first object made on the lost device,
+/// which wgpu 30 returns invalid and then panics on ("Buffer with '' label
+/// is invalid", from `create_buffer_init`). Any other panic there is a bug
+/// and is reported as one.
+pub fn is_start_loss_panic(message: &str) -> bool {
+    is_loss_panic(message) || message.contains("label is invalid")
+}
+
+/// Makes a renderer right after a device loss, a panic in it for the
+/// device's loss ([`is_start_loss_panic`]) returned as its message instead of
+/// ending the process; another panic goes on. The card may still be
 /// resetting: its new device is then lost while the renderer starts, and
 /// wgpu answers the first buffer made on it (egui's, `create_buffer_init`,
 /// wgpu 30 `util/device.rs`) with a panic, "Buffer with '' label is
@@ -103,11 +114,14 @@ pub fn start_guarded<T>(start: impl FnOnce() -> T) -> Result<T, String> {
     STARTING.with(|g| g.set(true));
     let _reset = Reset;
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(start)).map_err(|payload| {
-        payload
+        let message = payload
             .downcast_ref::<String>()
             .cloned()
-            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
-            .unwrap_or_else(|| "panic".to_owned())
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()));
+        match message {
+            Some(message) if is_start_loss_panic(&message) => message,
+            _ => std::panic::resume_unwind(payload),
+        }
     })
 }
 
@@ -460,9 +474,14 @@ mod tests {
     /// The tests that touch the process-wide loss details take turns: the
     /// test runner runs them in parallel.
     static DETAILS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    /// The tests that panic, or swap the process's panic hook to watch one,
+    /// take turns: the hook is the process's, and a panic on another
+    /// test's thread would reach it.
+    static PANICS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn a_panic_while_starting_comes_back_as_its_message() {
+        let _turn = PANICS.lock().unwrap_or_else(|e| e.into_inner());
         assert!(!in_guarded_start());
         assert_eq!(start_guarded(|| 7), Ok(7));
         let failed = start_guarded(|| -> u32 {
@@ -471,6 +490,23 @@ mod tests {
         });
         assert_eq!(failed, Err("Buffer with '' label is invalid".to_owned()));
         assert!(!in_guarded_start(), "the flag is cleared after a panic too");
+        assert_eq!(
+            start_guarded(|| -> u32 { panic!("Parent device is lost") }),
+            Err("Parent device is lost".to_owned())
+        );
+    }
+
+    /// Any other panic while a renderer starts is a bug: it goes on, to be
+    /// reported as a crash, and the flag is cleared.
+    #[test]
+    fn another_panic_while_starting_goes_on() {
+        let _turn = PANICS.lock().unwrap_or_else(|e| e.into_inner());
+        let other = std::panic::catch_unwind(|| start_guarded(|| -> u32 { panic!("index out of bounds") }));
+        let payload = other.expect_err("not caught as a start failure");
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"index out of bounds"));
+        assert!(!in_guarded_start());
+        assert!(is_start_loss_panic("Failed to get mapped range…: Buffer with '' label is invalid"));
+        assert!(!is_start_loss_panic("index out of bounds"));
     }
 
     /// #4508: a device lost while the renderer starts (the card still
@@ -479,6 +515,7 @@ mod tests {
     #[test]
     fn a_buffer_on_a_device_lost_while_starting_is_a_failed_start() {
         use wgpu::util::DeviceExt;
+        let _turn = PANICS.lock().unwrap_or_else(|e| e.into_inner());
         let _gpu = crate::test_gpu::lock();
         let instance = wgpu::Instance::default();
         let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
@@ -532,6 +569,7 @@ mod tests {
     /// caller gets nothing back, and the guard is off afterwards.
     #[test]
     fn a_panic_during_a_guarded_wait_is_the_loss() {
+        let _turn = PANICS.lock().unwrap_or_else(|e| e.into_inner());
         static SEEN: AtomicBool = AtomicBool::new(false);
         let before = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| SEEN.store(in_guarded_poll(), Ordering::Relaxed)));

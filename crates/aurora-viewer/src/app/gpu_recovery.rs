@@ -265,10 +265,17 @@ impl App {
 
     /// The renderer after a loss. The card may still be resetting, and its
     /// new device lost again while the renderer starts (#4508: "loss 2:
-    /// nothing submitted yet"), which wgpu answers with a panic rather than
-    /// an error (`aurora_render::start_guarded`): that start is made again
-    /// once, after `RESTART_WAIT`. None when no renderer could be made: the
-    /// caller closes as before, with the crash report.
+    /// nothing submitted yet"): wgpu answers that with a panic in the first
+    /// buffer made (`aurora_render::start_guarded`), or the renderer finds
+    /// the device lost once its objects are made (`RenderError::DeviceLost`).
+    /// Either start is made again once, after `RESTART_WAIT`. None when no
+    /// renderer could be made: the caller closes as before, with the crash
+    /// report.
+    ///
+    /// The wait holds the event loop, as the whole recovery does (it made
+    /// the new renderer in up to 11 s in the crash reports): on this path
+    /// the viewer used to end. Making the recovery wait in the event loop
+    /// instead is noted in TASKS.md.
     fn open_renderer_after_loss(&mut self, window: &Arc<Window>) -> Option<Renderer> {
         // AURORA_DEMO_GPU_RESTART_FAIL=1: the first start fails as on a
         // device lost while it starts, with wgpu's panic (docs/TESTING.md)
@@ -283,16 +290,19 @@ impl App {
                 self.open_renderer(window)
             }) {
                 Ok(Ok(renderer)) => return Some(renderer),
+                Ok(Err(aurora_render::RenderError::DeviceLost)) => {
+                    log::error!("GPU recovery: the new device was lost while the renderer started (attempt {attempt})");
+                }
                 Ok(Err(e)) => {
                     log::error!("GPU recovery: no new renderer: {e}");
                     return None;
                 }
                 Err(panic) => {
                     log::error!("GPU recovery: the new device failed while the renderer started (attempt {attempt}): {panic}");
-                    if attempt < RESTART_ATTEMPTS {
-                        std::thread::sleep(RESTART_WAIT);
-                    }
                 }
+            }
+            if attempt < RESTART_ATTEMPTS {
+                std::thread::sleep(RESTART_WAIT);
             }
         }
         None
