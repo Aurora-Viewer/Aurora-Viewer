@@ -535,6 +535,12 @@ impl WebView {
             p.focus(false);
         }
         self.focus_seen = window;
+        // a pass that is not painted (the chat lays an unmeasured row out
+        // once invisibly, at another rect, then again where it is drawn):
+        // the painted pass gives the page its pointer, in its own rect
+        if !ui.is_visible() {
+            return resp;
+        }
         // a disabled page (under another window, `ui/signup.rs`) is drawn
         // but gets no pointer; otherwise only the view under the pointer
         // gets it, or the one a press captured until its release
@@ -543,6 +549,8 @@ impl WebView {
         }
         let pointer = read_web_pointer(ui, &resp, rect, ui.is_enabled(), self.captured, self.token);
         self.captured = pointer.captured;
+        // where the page last saw the pointer, before this frame's move
+        let seen = self.last_pos;
         if let Some(pos) = pointer.moved {
             self.last_pos = Some(pos);
             let (x, y) = to_px(pos);
@@ -562,9 +570,15 @@ impl WebView {
             self.focused = focused;
             p.focus(focused);
         }
-        // (a release the viewer never saw goes where the page last saw the
-        // pointer)
-        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()).or(self.last_pos) {
+        // a release the viewer never saw goes where the page last saw the
+        // pointer, not where the pointer is now (a seek or a selection would
+        // end there)
+        if pointer.missed_release {
+            if let Some(pos) = seen {
+                let (x, y) = to_px(pos);
+                p.mouse_event(MouseEvent::Up, 0, x, y, mods);
+            }
+        } else if let Some(pos) = ui.input(|i| i.pointer.interact_pos()).or(self.last_pos) {
             let (x, y) = to_px(pos);
             if pointer.press {
                 self.last_pos = Some(pos);
@@ -600,6 +614,10 @@ struct WebPointer {
     press: bool,
     /// Primary release on this view, or anywhere ending a press on it.
     release: bool,
+    /// The release is one the viewer never saw (`release` is set too): the
+    /// focus lost mid-drag, the button let go outside the window, while the
+    /// view was not drawn, or another page took the pointer meanwhile.
+    missed_release: bool,
     /// Double click on this view.
     double_click: bool,
     /// Keyboard focus to take or give up, on a primary press.
@@ -667,6 +685,7 @@ fn read_web_pointer(ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, enab
     if held_elsewhere {
         return WebPointer {
             release: captured,
+            missed_release: captured,
             ..WebPointer::default()
         };
     }
@@ -689,6 +708,7 @@ fn read_web_pointer(ui: &egui::Ui, resp: &egui::Response, rect: egui::Rect, enab
         hover: hover.is_some(),
         press,
         release,
+        missed_release: lost,
         double_click: resp.double_clicked() && on_view,
         focus: (enabled && pressed).then_some(on_view),
         // the holder takes the wheel for the whole hold
@@ -1195,6 +1215,7 @@ mod tests {
         frames.focused = false;
         let lost = two_pages(&mut frames, vec![egui::Event::WindowFocused(false)], None);
         assert!(lost.a_pointer.release, "the page gets the release it would never get");
+        assert!(lost.a_pointer.missed_release, "at the place it last saw, not the live pointer");
         assert!(!lost.a_pointer.captured);
         frames.focused = true;
         let after = two_pages(
@@ -1227,6 +1248,7 @@ mod tests {
             None,
         );
         assert!(release.a_pointer.release, "the release is the holder's");
+        assert!(!release.a_pointer.missed_release, "a release seen goes where the pointer is");
         assert!(!release.b_pointer.release, "the other page had no press");
         // the hold over: the other page gets its pointer again
         let after = two_pages(&mut frames, vec![egui::Event::PointerMoved(on_b + egui::vec2(4.0, 0.0))], None);
