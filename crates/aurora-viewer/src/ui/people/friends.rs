@@ -490,10 +490,10 @@ fn row(
     );
     let mut clicked_right = false;
     if let Some(cell) = end.items.first() {
-        received(ui, p, f, *cell);
+        clicked_right |= received(ui, c, f, *cell);
     }
     if let Some(cell) = end.items.get(1) {
-        clicked_right = granted(ui, c, f, *cell);
+        clicked_right |= granted(ui, c, f, *cell);
     }
     let color = crate::ui::colors::resident_name(c.world, &f.id, p.ink);
     let cut = if end.names_right > left {
@@ -630,9 +630,11 @@ fn granted(ui: &mut egui::Ui, c: &mut Ctx, f: &Friend, slot: Rect) -> bool {
     clicked
 }
 
-/// What the friend grants us, read only: after a faint line, turquoise when
-/// granted.
-fn received(ui: &mut egui::Ui, p: &crate::theme::Palette, f: &Friend, slot: Rect) {
+/// What the friend grants us: turquoise when granted. The received map
+/// right also opens the friend's location on the world map.
+fn received(ui: &mut egui::Ui, c: &Ctx, f: &Friend, slot: Rect) -> bool {
+    let p = c.p;
+    let mut clicked = false;
     let y = slot.center().y;
     ui.painter()
         .vline(slot.left() + 1.0, (y - 9.0)..=(y + 9.0), widgets::divider_stroke(p));
@@ -643,9 +645,24 @@ fn received(ui: &mut egui::Ui, p: &crate::theme::Palette, f: &Friend, slot: Rect
         );
         let on = f.rights_has & bit != 0;
         super::radar::icon(ui, icon, cell, 12.0, if on { p.teal } else { p.muted_dim.gamma_multiply(0.7) });
-        ui.interact(cell, ui.scope_id().with(("people-received", f.id, i)), Sense::hover())
-            .on_hover_text(aurora_i18n::text(tip));
+        let locatable = bit == rights::MAP_LOCATION
+            && c.world.social.can_map_friend(f.id)
+            && context::can_show_on_map(c.world);
+        let sense = if locatable { Sense::click() } else { Sense::hover() };
+        let resp = ui.interact(cell, ui.scope_id().with(("people-received", f.id, i)), sense);
+        if locatable {
+            let resp = resp
+                .on_hover_text(aurora_i18n::tr!("common-show-on-map-2"))
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if resp.clicked() {
+                clicked = true;
+                context::request(ui.ctx(), CtxAction::ShowOnMap(f.id));
+            }
+        } else {
+            resp.on_hover_text(aurora_i18n::text(tip));
+        }
     }
+    clicked
 }
 
 #[cfg(test)]
