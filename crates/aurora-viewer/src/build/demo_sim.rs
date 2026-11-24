@@ -173,14 +173,16 @@ impl DemoSim {
                 .and_then(|i| world.objects.get(i))
                 .map(|o| o.key.local_id);
             let (touch_name, sit_name) = local_id.and_then(crate::demo::object_menu::texts).unwrap_or_default();
-            // an attachment belongs to its wearer, as on a grid
+            // an attachment belongs to its wearer, as on a grid; a linked
+            // prim of it hangs from its root, which hangs from the avatar
             let owner_id = world
                 .objects
                 .index_of_uuid(&id)
-                .and_then(|i| world.objects.get(i))
-                .and_then(|o| {
+                .and_then(|i| {
+                    let o = world.objects.get(i)?;
                     Some(o.owner_id).filter(|owner| !owner.is_nil()).or_else(|| {
-                        let parent = world.objects.get(world.objects.parent_of(o)?)?;
+                        let root = world.objects.get(super::root_of(world, i))?;
+                        let parent = world.objects.get(world.objects.parent_of(root)?)?;
                         parent.is_avatar().then_some(parent.full_id)
                     })
                 })

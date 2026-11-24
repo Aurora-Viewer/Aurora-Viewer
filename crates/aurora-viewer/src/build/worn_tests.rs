@@ -62,6 +62,115 @@ fn another_avatars_attachment_stays_locked_whatever_rights_the_simulator_reports
     assert!(can_transform(&world, root, false, EditMode::Move));
 }
 
+/// Violet Wolf (local id 9001) also wears a two-prim object (root 9110, its
+/// linked prim 9111) and a HUD (9112, top-left point 31), with no rights for
+/// us, like the hat.
+fn with_wolf_extras(world: &mut World) {
+    let hat = crate::demo::wolf_attachments(false).remove(0);
+    let attached = |local_id: u32, parent_id: u32, point: u8| {
+        let mut o = hat.clone();
+        o.local_id = local_id;
+        o.full_id = Uuid::from_u128(0xA0E0_0000_0000_0000_0000_0000_0000_0000 | u128::from(local_id));
+        o.parent_id = parent_id;
+        o.state = ((point & 0x0F) << 4) | ((point & 0xF0) >> 4);
+        o
+    };
+    let mut child = attached(9111, 9110, 0);
+    child.state = 0;
+    let handle = world.main_region.unwrap_or_default();
+    world.apply(aurora_net::NetEvent::ObjectUpdates {
+        handle,
+        objects: vec![attached(9110, 9001, 2), child, attached(9112, 9001, 31)],
+    });
+}
+
+#[test]
+fn another_avatars_hud_stays_unselectable_but_their_linked_attachment_selects_and_stays_locked() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let mut world = world();
+    with_wolf_extras(&mut world);
+    let (root, child, hud) = (local(&world, 9110), local(&world, 9111), local(&world, 9112));
+    // cursorIntersect only picks our own HUDs
+    assert!(!selectable(&world, hud));
+    assert!(selectable(&world, root) && selectable(&world, child));
+    assert_eq!(root_of(&world, child), root);
+    // the lock walks up the links, whatever the simulator reports
+    for idx in [root, child] {
+        world.objects.get_mut(idx).unwrap().update_flags |= OBJECT_MODIFY | OBJECT_MOVE;
+    }
+    let tool = BuildTool::default();
+    for idx in [root, child] {
+        assert!(worn_by_other(&world, idx));
+        assert!(!tool.can_modify(&world, idx));
+        assert!(!can_transform(&world, idx, true, EditMode::Move));
+        assert!(!can_transform(&world, idx, false, EditMode::Rotate));
+        assert!(!undo_allowed(&world, idx, false) && !undo_allowed(&world, idx, true));
+    }
+}
+
+#[test]
+fn align_refuses_another_avatars_attachment_and_accepts_ours() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let mut world = world();
+    let hat = local(&world, 9100);
+    let (root, _) = worn(&world);
+    for idx in [hat, root] {
+        world.objects.get_mut(idx).unwrap().update_flags |= OBJECT_MODIFY | OBJECT_MOVE;
+    }
+    let s = BuildSettings::default();
+    let mut tool = BuildTool::default();
+    tool.click_select(&mut world, &s, Some(hat), false);
+    assert_eq!(tool.selection, vec![world.objects.get(hat).unwrap().key]);
+    assert!(!tool.align_allowed(&world));
+    tool.click_select(&mut world, &s, Some(root), false);
+    assert!(tool.align_allowed(&world));
+}
+
+#[test]
+fn undo_and_redo_send_nothing_for_another_avatars_attachment() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let mut world = world();
+    let hat = local(&world, 9100);
+    let (root, _) = worn(&world);
+    for idx in [hat, root] {
+        world.objects.get_mut(idx).unwrap().update_flags |= OBJECT_MODIFY | OBJECT_MOVE;
+    }
+    let s = BuildSettings::default();
+    let mut tool = BuildTool::default();
+    tool.click_select(&mut world, &s, Some(hat), false);
+    tool.out.clear();
+    for redo in [false, true] {
+        assert!(!tool.can_undo(&world, redo));
+        tool.undo(&world, redo);
+    }
+    assert!(tool.out.is_empty(), "{:?}", tool.out);
+    // our own worn object is still undone
+    tool.click_select(&mut world, &s, Some(root), false);
+    tool.out.clear();
+    assert!(tool.can_undo(&world, false));
+    tool.undo(&world, false);
+    let id = world.objects.get(root).unwrap().full_id;
+    assert!(matches!(&tool.out[..], [NetCommand::Build(BuildCmd::Undo { ids, .. })] if ids == &[id]));
+}
+
+#[test]
+fn undo_follows_the_legacy_rights_on_our_own_object() {
+    use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
+    let mut world = world();
+    let (root, _) = worn(&world);
+    let set = |world: &mut World, flags: u32| {
+        let o = world.objects.get_mut(root).unwrap();
+        o.update_flags = o.update_flags & !(OBJECT_MODIFY | OBJECT_MOVE) | flags;
+    };
+    // getFirstUndoEnabledObject: Modify, or Move; getFirstEditableObject: Modify
+    set(&mut world, 0);
+    assert!(!undo_allowed(&world, root, false) && !undo_allowed(&world, root, true));
+    set(&mut world, OBJECT_MOVE);
+    assert!(undo_allowed(&world, root, false) && !undo_allowed(&world, root, true));
+    set(&mut world, OBJECT_MODIFY);
+    assert!(undo_allowed(&world, root, false) && undo_allowed(&world, root, true));
+}
+
 #[test]
 fn the_edit_frame_of_a_worn_object_is_its_attachment_point() {
     let world = world();
