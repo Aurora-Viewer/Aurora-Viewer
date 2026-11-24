@@ -7,11 +7,18 @@ use image::{ImageBuffer, Rgba, RgbaImage, imageops::FilterType};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::SystemTime;
 use uuid::Uuid;
 
 const ALLOWED_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "tga", "bmp", "webp", "gif"];
 const MAX_COMPARE_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_CAPTURE_FILES: usize = 200;
+const MAX_CAPTURE_DIR_BYTES: u64 = 256 * 1024 * 1024;
+const PRUNE_EVERY_N_WRITES: u64 = 16;
+
+static CAPTURE_WRITE_COUNT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncodedCapture {
@@ -29,6 +36,46 @@ pub fn capture_output_dir() -> PathBuf {
     let dir = std::env::temp_dir().join("aurora-mcp-captures");
     let _ = std::fs::create_dir_all(&dir);
     dir
+}
+
+/// Periodically prunes oldest files in `aurora-mcp-captures` to bound disk usage.
+pub(crate) fn maybe_prune_capture_dir(dir: &Path) {
+    let count = CAPTURE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    if count.is_multiple_of(PRUNE_EVERY_N_WRITES) {
+        prune_capture_dir_in(dir, MAX_CAPTURE_FILES, MAX_CAPTURE_DIR_BYTES);
+    }
+}
+
+fn prune_capture_dir_in(dir: &Path, max_files: usize, max_bytes: u64) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(PathBuf, SystemTime, u64)> = Vec::new();
+    let mut total_bytes: u64 = 0;
+    for entry in rd.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let len = meta.len();
+        let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        total_bytes = total_bytes.saturating_add(len);
+        files.push((entry.path(), mtime, len));
+    }
+    if files.len() <= max_files && total_bytes <= max_bytes {
+        return;
+    }
+    files.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    let mut remaining_files = files.len();
+    for (path, _, len) in files {
+        if remaining_files <= max_files && total_bytes <= max_bytes {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            remaining_files = remaining_files.saturating_sub(1);
+            total_bytes = total_bytes.saturating_sub(len);
+        }
+    }
 }
 
 /// Read a `capture_orbit` manifest back from disk (`capture_manifest_read`).
@@ -73,7 +120,7 @@ pub fn read_capture_manifest(key: &str) -> Result<serde_json::Value, McpError> {
 
 /// Downscales (if needed) and encodes a raw RGBA8 frame into a PNG file and
 /// Base64 payload on a background worker thread.
-pub fn encode_captured_frame(raw: RawCapturedFrame, max_dimensions: (u32, u32), label: &str) -> Result<EncodedCapture, McpError> {
+pub fn encode_captured_frame(mut raw: RawCapturedFrame, max_dimensions: (u32, u32), label: &str) -> Result<EncodedCapture, McpError> {
     let expected_len = (raw.width as usize).saturating_mul(raw.height as usize).saturating_mul(4);
     if raw.rgba_bytes.len() < expected_len || raw.width == 0 || raw.height == 0 {
         return Err(McpError::Internal(format!(
@@ -84,7 +131,8 @@ pub fn encode_captured_frame(raw: RawCapturedFrame, max_dimensions: (u32, u32), 
         )));
     }
 
-    let img: RgbaImage = ImageBuffer::from_raw(raw.width, raw.height, raw.rgba_bytes[..expected_len].to_vec())
+    raw.rgba_bytes.truncate(expected_len);
+    let img: RgbaImage = ImageBuffer::from_raw(raw.width, raw.height, raw.rgba_bytes)
         .ok_or_else(|| McpError::Internal("failed to construct RgbaImage".into()))?;
 
     let (max_w, max_h) = (max_dimensions.0.max(32), max_dimensions.1.max(32));
@@ -98,16 +146,22 @@ pub fn encode_captured_frame(raw: RawCapturedFrame, max_dimensions: (u32, u32), 
     };
 
     let (width, height) = (final_img.width(), final_img.height());
+    let rgba = final_img.as_raw();
+    let mut rgb_bytes = Vec::with_capacity((width as usize).saturating_mul(height as usize).saturating_mul(3));
+    for px in rgba.chunks_exact(4) {
+        rgb_bytes.extend_from_slice(&px[..3]);
+    }
     let mut png_bytes = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut png_bytes, width, height);
-        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_color(png::ColorType::Rgb);
         encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
         let mut writer = encoder
             .write_header()
             .map_err(|e| McpError::Internal(format!("PNG header error: {e}")))?;
         writer
-            .write_image_data(final_img.as_raw())
+            .write_image_data(&rgb_bytes)
             .map_err(|e| McpError::Internal(format!("PNG encode error: {e}")))?;
     }
 
@@ -134,8 +188,10 @@ pub fn encode_captured_frame(raw: RawCapturedFrame, max_dimensions: (u32, u32), 
         },
         &sha256[..12]
     );
-    let path = capture_output_dir().join(file_name);
+    let out_dir = capture_output_dir();
+    let path = out_dir.join(file_name);
     std::fs::write(&path, &png_bytes).map_err(|e| McpError::Internal(format!("failed to write capture PNG: {e}")))?;
+    maybe_prune_capture_dir(&out_dir);
 
     let base64_png = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
     Ok(EncodedCapture {
@@ -207,10 +263,12 @@ pub fn compare_images(reference_path: &str, observed_path: &str) -> Result<Value
     let rmse = (sum_sq_err / channels).sqrt();
     let changed_ratio = changed_pixels as f64 / total_pixels as f64;
 
-    let diff_path = capture_output_dir().join(format!("diff-{}.png", Uuid::new_v4()));
+    let out_dir = capture_output_dir();
+    let diff_path = out_dir.join(format!("diff-{}.png", Uuid::new_v4()));
     diff_img
         .save(&diff_path)
         .map_err(|e| McpError::Internal(format!("failed to save diff image: {e}")))?;
+    maybe_prune_capture_dir(&out_dir);
 
     Ok(json!({
         "reference": reference_path,
@@ -278,5 +336,28 @@ mod tests {
             "x"
         );
         let _ = std::fs::remove_file(&inside);
+    }
+
+    #[test]
+    fn prune_capture_dir_evicts_oldest_files_over_limits() {
+        let dir = std::env::temp_dir().join(format!("aurora-prune-test-{}", Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+
+        let base = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        for (i, size) in [(0, 40usize), (1, 40), (2, 40), (3, 40)] {
+            let p = dir.join(format!("cap-{i}.png"));
+            let f = std::fs::File::create(&p).expect("create file");
+            use std::io::Write;
+            (&f).write_all(&vec![b'x'; size]).expect("write bytes");
+            let _ = f.set_modified(base + std::time::Duration::from_secs(i));
+        }
+
+        // Enforce max 2 files and max 90 bytes: cap-0 and cap-1 (oldest) must be removed.
+        prune_capture_dir_in(&dir, 2, 90);
+        assert!(!dir.join("cap-0.png").exists());
+        assert!(!dir.join("cap-1.png").exists());
+        assert!(dir.join("cap-2.png").exists());
+        assert!(dir.join("cap-3.png").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -39,6 +39,10 @@ const MCP_FRAME_BUDGET: Duration = Duration::from_micros(FRAME_BUDGET_MICROS);
 const MCP_STATUS_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(500);
 const MCP_RADAR_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const MCP_OBJECT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const MCP_VOICE_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const MAX_SCRIPT_FINGERPRINTS: usize = 512;
+const MAX_LSD_STORES: usize = 128;
+const MAX_MESH_TEXTURES_CONFIGURED: usize = 256;
 
 fn contains_ascii_case_insensitive(haystack: &str, needle_lower: &str) -> bool {
     let n = needle_lower.as_bytes();
@@ -315,6 +319,7 @@ pub struct McpBridge {
     radar_seeded: bool,
     last_radar_poll: Option<Instant>,
     last_rez_poll: Option<Instant>,
+    last_voice_poll: Option<Instant>,
     pub(super) last_offscreen_render: Option<Instant>,
     radar_seen_scratch: HashSet<Uuid>,
     last_health: Option<f32>,
@@ -371,6 +376,24 @@ impl McpBridge {
     #[inline]
     pub(super) fn has_pending_capture(&self) -> bool {
         !self.pending_captures.is_empty()
+    }
+
+    fn clear_session_caches(&mut self, region_only: bool) {
+        self.radar_seeded = false;
+        self.known_radar_avatars.clear();
+        self.last_voice_speaking.clear();
+        if !region_only {
+            self.script_fingerprints.clear();
+            self.lsd_stores.clear();
+            self.mesh_textures_configured.clear();
+        }
+    }
+
+    fn lsd_store_mut(&mut self, root_uuid: Uuid) -> &mut LinksetDataStore {
+        if !self.lsd_stores.contains_key(&root_uuid) && self.lsd_stores.len() >= MAX_LSD_STORES {
+            self.lsd_stores.clear();
+        }
+        self.lsd_stores.entry(root_uuid).or_default()
     }
 
     /// Applies any active MCP poser bone overrides on top of the scene's pose map.
@@ -589,7 +612,7 @@ impl App {
                 );
             }
             NetEvent::MainRegionChanged { handle } => {
-                self.mcp_bridge.radar_seeded = false;
+                self.mcp_bridge.clear_session_caches(true);
                 let region_name = self
                     .world
                     .regions
@@ -621,7 +644,7 @@ impl App {
                 self.mcp_bridge.push_event("region", "RegionRestartCancelled", json!({}));
             }
             NetEvent::Disconnected { reason, lost } => {
-                self.mcp_bridge.radar_seeded = false;
+                self.mcp_bridge.clear_session_caches(false);
                 self.mcp_bridge.push_event(
                     "region",
                     "Disconnected",
@@ -632,7 +655,7 @@ impl App {
                 );
             }
             NetEvent::LoggedOut => {
-                self.mcp_bridge.radar_seeded = false;
+                self.mcp_bridge.clear_session_caches(false);
                 self.mcp_bridge.push_event("region", "LoggedOut", json!({}));
             }
             NetEvent::Alert { message } => {
@@ -1294,13 +1317,21 @@ impl App {
         self.progress_mcp_walk();
 
         // 6. Voice speaker activity, notification prompts/offers, and radar deltas
-        if self.mcp_bridge.events.is_some() && self.voice.connected {
-            let levels = self.voice.levels(self.world.agent_id);
-            for (id, &(level, speaking)) in &levels {
-                let was_speaking = self.mcp_bridge.last_voice_speaking.get(id).copied().unwrap_or(false);
+        if self.mcp_bridge.events.is_some()
+            && self.voice.connected
+            && self
+                .mcp_bridge
+                .last_voice_poll
+                .is_none_or(|t| t.elapsed() >= MCP_VOICE_POLL_INTERVAL)
+        {
+            self.mcp_bridge.last_voice_poll = Some(Instant::now());
+            let agent_id = self.world.agent_id;
+            let bridge = &mut self.mcp_bridge;
+            self.voice.for_each_level(agent_id, |id, level, speaking| {
+                let was_speaking = bridge.last_voice_speaking.get(&id).copied().unwrap_or(false);
                 if was_speaking != speaking {
-                    self.mcp_bridge.last_voice_speaking.insert(*id, speaking);
-                    self.mcp_bridge.push_event(
+                    bridge.last_voice_speaking.insert(id, speaking);
+                    bridge.push_event(
                         "voice",
                         "SpeakerChanged",
                         json!({
@@ -1310,7 +1341,7 @@ impl App {
                         }),
                     );
                 }
-            }
+            });
         }
         self.poll_mcp_object_inspect();
         self.poll_mcp_map_lookup();
@@ -1333,6 +1364,9 @@ impl App {
         }
         use crate::world::notifications::Data;
         let last_seen = self.mcp_bridge.last_seen_notification_id;
+        if self.world.notifications.list.last().is_none_or(|n| n.id <= last_seen) {
+            return;
+        }
         let mut max_id = last_seen;
         let mut outgoing: Vec<(&'static str, &'static str, Value)> = Vec::new();
         for n in &self.world.notifications.list {
@@ -4476,20 +4510,6 @@ impl App {
                 return;
             }
         };
-        let source_code = if let Some(path) = source_code.strip_prefix("@file:") {
-            match std::fs::read_to_string(path.trim()) {
-                Ok(text) => text.strip_prefix('\u{feff}').unwrap_or(&text).replace("\r\n", "\n"),
-                Err(err) => {
-                    let _ = reply_tx.send(Err(McpError::InvalidParams(format!(
-                        "Failed to read script source file '{}': {err}",
-                        path.trim()
-                    ))));
-                    return;
-                }
-            }
-        } else {
-            source_code
-        };
         let explicit_experience = match experience_id.as_deref().map(str::trim) {
             None | Some("") => None,
             Some("none") => Some(Uuid::nil()),
@@ -4578,6 +4598,11 @@ impl App {
                 .map(|b| format!("{b:02x}"))
                 .collect::<String>()
         };
+        if !self.mcp_bridge.script_fingerprints.contains_key(&object_uuid)
+            && self.mcp_bridge.script_fingerprints.len() >= MAX_SCRIPT_FINGERPRINTS
+        {
+            self.mcp_bridge.script_fingerprints.clear();
+        }
         self.mcp_bridge
             .script_fingerprints
             .insert(object_uuid, (source_bytes, source_sha256));
@@ -4937,16 +4962,18 @@ impl App {
     /// The agents' control bar: who has the viewer, Allow / Not now / Take back,
     /// and how it is shared (ui/agent_control.rs).
     pub(crate) fn draw_agent_control(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
-        let Some((leases, events, approvals)) = self
-            .mcp_bridge
-            .server_handle
-            .as_ref()
-            .map(|h| (h.leases.clone(), h.events.clone(), h.approvals.clone()))
-        else {
+        let Some(h) = self.mcp_bridge.server_handle.as_ref() else {
             return;
         };
+        let pending_hint = h.policy.mode == aurora_mcp::PolicyMode::Supervised && h.approvals.has_pending();
+        if !h.leases.has_ui_activity() && !pending_hint {
+            return;
+        }
+        let leases = h.leases.clone();
+        let events = h.events.clone();
+        let approvals = h.approvals.clone();
         let view = leases.view();
-        let pending_approval = approvals.next_pending();
+        let pending_approval = if pending_hint { approvals.next_pending() } else { None };
         if view.active.is_some() || view.asking.is_some() || pending_approval.is_some() {
             // the countdowns move: draw again within a second
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
@@ -5041,7 +5068,7 @@ impl App {
     ) -> Result<ViewerResponse, McpError> {
         let (idx, root_uuid) = self.resolve_prim_by_local_id(object_local_id)?;
         self.check_object_modify_permission(idx)?;
-        let store = self.mcp_bridge.lsd_stores.entry(root_uuid).or_default();
+        let store = self.mcp_bridge.lsd_store_mut(root_uuid);
         let mut val = store.inspect(filter_regex.as_deref(), include_protected, passphrase.as_deref(), limit)?;
         if let Some(obj) = val.as_object_mut() {
             obj.insert("local_id".into(), json!(object_local_id));
@@ -5053,7 +5080,7 @@ impl App {
     fn handle_mcp_lsd_mutate(&mut self, object_local_id: u32, operations: Vec<LsdOperation>) -> Result<ViewerResponse, McpError> {
         let (idx, root_uuid) = self.resolve_prim_by_local_id(object_local_id)?;
         self.check_object_modify_permission(idx)?;
-        let store = self.mcp_bridge.lsd_stores.entry(root_uuid).or_default();
+        let store = self.mcp_bridge.lsd_store_mut(root_uuid);
         let mut results = Vec::new();
 
         for op in operations {
@@ -5288,6 +5315,11 @@ impl App {
                 let prev = draft.options.clone();
                 if let Some(v) = include_textures {
                     draft.options.textures = v;
+                    if !self.mcp_bridge.mesh_textures_configured.contains(&entry.id)
+                        && self.mcp_bridge.mesh_textures_configured.len() >= MAX_MESH_TEXTURES_CONFIGURED
+                    {
+                        self.mcp_bridge.mesh_textures_configured.clear();
+                    }
                     self.mcp_bridge.mesh_textures_configured.insert(entry.id);
                 }
                 if let Some(v) = include_skin_weights {

@@ -446,6 +446,22 @@ impl Voice {
         }
     }
 
+    /// Visit each voice participant's `(agent_id, level, speaking)` including our
+    /// local mic, without allocating a `HashMap`.
+    pub fn for_each_level(&self, agent_id: Uuid, mut f: impl FnMut(Uuid, f32, bool)) {
+        if let Some((_, s)) = &self.session
+            && self.connected
+        {
+            for p in s.participants() {
+                if p.agent_id != agent_id {
+                    f(p.agent_id, p.level, p.speaking);
+                }
+            }
+            let own = s.own_level();
+            f(agent_id, own, own > aurora_voice::SPEAKING_AUDIO_LEVEL);
+        }
+    }
+
     /// Direct list of all participants in the active session.
     pub fn participants(&self) -> Vec<aurora_voice::Participant> {
         self.session.as_ref().map(|(_, s)| s.participants()).unwrap_or_default()

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -274,11 +275,20 @@ struct ApprovalState {
 #[derive(Default)]
 pub struct ApprovalQueue {
     state: Mutex<ApprovalState>,
+    has_pending: AtomicBool,
 }
 
 impl ApprovalQueue {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn has_pending(&self) -> bool {
+        self.has_pending.load(Ordering::Acquire)
+    }
+
+    fn sync_has_pending(&self, st: &ApprovalState) {
+        self.has_pending.store(!st.pending.is_empty(), Ordering::Release);
     }
 
     fn prune(st: &mut ApprovalState, now: Instant) {
@@ -296,12 +306,15 @@ impl ApprovalQueue {
         Self::prune(&mut st, now);
 
         if st.approved.remove(&key).is_some() {
+            self.sync_has_pending(&st);
             return ApprovalCheck::Approved;
         }
         if st.denied.contains_key(&key) {
+            self.sync_has_pending(&st);
             return ApprovalCheck::Denied;
         }
         if let Some(existing) = st.pending.iter().find(|p| p.key == key) {
+            self.sync_has_pending(&st);
             return ApprovalCheck::Pending(PendingApprovalView {
                 id: existing.id.clone(),
                 session_id: existing.key.0.clone(),
@@ -324,6 +337,7 @@ impl ApprovalQueue {
             waiting_secs: 0,
         };
         st.pending.push(item);
+        self.sync_has_pending(&st);
         ApprovalCheck::Pending(view)
     }
 
@@ -332,6 +346,7 @@ impl ApprovalQueue {
         let now = Instant::now();
         let mut st = self.state.lock();
         Self::prune(&mut st, now);
+        self.sync_has_pending(&st);
         st.pending.first().map(|p| PendingApprovalView {
             id: p.id.clone(),
             session_id: p.key.0.clone(),
@@ -350,6 +365,7 @@ impl ApprovalQueue {
         let item = st.pending.remove(pos);
         st.denied.remove(&item.key);
         st.approved.insert(item.key, now);
+        self.sync_has_pending(&st);
         true
     }
 
@@ -362,6 +378,7 @@ impl ApprovalQueue {
         let item = st.pending.remove(pos);
         st.approved.remove(&item.key);
         st.denied.insert(item.key, now);
+        self.sync_has_pending(&st);
         true
     }
 }

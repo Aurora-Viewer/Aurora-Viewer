@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 
 /// How long one request may take. Tool calls run up to the viewer's own
@@ -16,6 +16,46 @@ use std::time::Duration;
 /// generous room; anything else should answer at once.
 const TOOL_CALL_TIMEOUT: Duration = Duration::from_secs(600);
 const OTHER_TIMEOUT: Duration = Duration::from_secs(30);
+const WORKER_THREADS: usize = 8;
+const WORK_QUEUE_CAP: usize = 256;
+
+struct TokenCache {
+    port: u16,
+    cached: Mutex<Option<Option<String>>>,
+}
+
+impl TokenCache {
+    fn new(port: u16) -> Self {
+        Self {
+            port,
+            cached: Mutex::new(None),
+        }
+    }
+
+    fn get(&self) -> Option<String> {
+        let mut guard = self.cached.lock().unwrap_or_else(|e| e.into_inner());
+        match &*guard {
+            Some(tok) => tok.clone(),
+            None => {
+                let tok = aurora_mcp::auth::client_token(self.port);
+                *guard = Some(tok.clone());
+                tok
+            }
+        }
+    }
+
+    fn refresh(&self) -> Option<String> {
+        let tok = aurora_mcp::auth::client_token(self.port);
+        let mut guard = self.cached.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(tok.clone());
+        tok
+    }
+}
+
+struct WorkItem {
+    body: String,
+    parsed: Value,
+}
 
 fn write_line(stdout: &Mutex<std::io::Stdout>, line: &str) {
     let mut out = stdout.lock().unwrap_or_else(|e| e.into_inner());
@@ -33,6 +73,7 @@ fn main() {
     let stdin = std::io::stdin();
     let stdout = Arc::new(Mutex::new(std::io::stdout()));
     let session_id = Arc::new(uuid::Uuid::new_v4().to_string());
+    let tokens = Arc::new(TokenCache::new(port));
     let stop_push = Arc::new(AtomicBool::new(false));
     let push_enabled = std::env::var("AURORA_MCP_STDIO_PUSH")
         .ok()
@@ -40,8 +81,52 @@ fn main() {
     if push_enabled {
         let push_stdout = Arc::clone(&stdout);
         let push_session = Arc::clone(&session_id);
+        let push_tokens = Arc::clone(&tokens);
         let push_stop = Arc::clone(&stop_push);
-        std::thread::spawn(move || run_sse_listener(addr, push_stdout, push_session, push_stop));
+        std::thread::spawn(move || run_sse_listener(addr, push_stdout, push_session, push_tokens, push_stop));
+    }
+
+    let (work_tx, work_rx) = mpsc::sync_channel::<WorkItem>(WORK_QUEUE_CAP);
+    let shared_rx = Arc::new(Mutex::new(work_rx));
+    let mut workers = Vec::with_capacity(WORKER_THREADS);
+    for idx in 0..WORKER_THREADS {
+        let rx = Arc::clone(&shared_rx);
+        let stdout = Arc::clone(&stdout);
+        let session_id = Arc::clone(&session_id);
+        let tokens = Arc::clone(&tokens);
+        let handle = std::thread::Builder::new()
+            .name(format!("aurora-stdio-{idx}"))
+            .spawn(move || {
+                let mut conn: Option<BufReader<TcpStream>> = None;
+                loop {
+                    let item = {
+                        let guard = rx.lock().unwrap_or_else(|e| e.into_inner());
+                        guard.recv()
+                    };
+                    let Ok(item) = item else {
+                        break;
+                    };
+                    let id = item.parsed.get("id").cloned();
+                    let method = item.parsed.get("method").and_then(Value::as_str).unwrap_or("");
+                    let params = item.parsed.get("params").cloned().unwrap_or_else(|| json!({}));
+                    let timeout = if method == "tools/call" { TOOL_CALL_TIMEOUT } else { OTHER_TIMEOUT };
+                    match forward_http(addr, item.body.as_bytes(), &session_id, timeout, &tokens, &mut conn) {
+                        Ok(Some(reply_body)) if !reply_body.trim().is_empty() => write_line(&stdout, reply_body.trim()),
+                        Ok(_) => {}
+                        Err(e) => {
+                            if id.is_none() || method.starts_with("notifications/") {
+                                continue;
+                            }
+                            let req_id = id.unwrap_or(Value::Null);
+                            let reply = handle_offline_request(req_id, method, &params, port, &e);
+                            write_line(&stdout, &reply.to_string());
+                        }
+                    }
+                }
+            });
+        if let Ok(h) = handle {
+            workers.push(h);
+        }
     }
 
     for line in stdin.lock().lines() {
@@ -65,30 +150,19 @@ fn main() {
             }
         };
 
-        // each request on its own thread: a slow tool call (an upload, a
-        // long viewer_call) does not hold up pings and other calls; replies
-        // carry their ids, so their order does not matter
-        let body = trimmed.to_owned();
-        let stdout = Arc::clone(&stdout);
-        let session_id = Arc::clone(&session_id);
-        std::thread::spawn(move || {
-            let id = parsed.get("id").cloned();
-            let method = parsed.get("method").and_then(Value::as_str).unwrap_or("");
-            let params = parsed.get("params").cloned().unwrap_or_else(|| json!({}));
-            let timeout = if method == "tools/call" { TOOL_CALL_TIMEOUT } else { OTHER_TIMEOUT };
-            match forward_http(addr, body.as_bytes(), &session_id, timeout) {
-                Ok(Some(reply_body)) if !reply_body.trim().is_empty() => write_line(&stdout, reply_body.trim()),
-                Ok(_) => {}
-                Err(e) => {
-                    if id.is_none() || method.starts_with("notifications/") {
-                        return;
-                    }
-                    let req_id = id.unwrap_or(Value::Null);
-                    let reply = handle_offline_request(req_id, method, &params, port, &e);
-                    write_line(&stdout, &reply.to_string());
-                }
-            }
-        });
+        if work_tx
+            .send(WorkItem {
+                body: trimmed.to_owned(),
+                parsed,
+            })
+            .is_err()
+        {
+            break;
+        }
+    }
+    drop(work_tx);
+    for h in workers {
+        let _ = h.join();
     }
     stop_push.store(true, Ordering::Relaxed);
 }
@@ -102,7 +176,13 @@ fn sleep_interruptible(stop_push: &AtomicBool, total: Duration) {
     }
 }
 
-fn run_sse_listener(addr: SocketAddr, stdout: Arc<Mutex<std::io::Stdout>>, session_id: Arc<String>, stop_push: Arc<AtomicBool>) {
+fn run_sse_listener(
+    addr: SocketAddr,
+    stdout: Arc<Mutex<std::io::Stdout>>,
+    session_id: Arc<String>,
+    tokens: Arc<TokenCache>,
+    stop_push: Arc<AtomicBool>,
+) {
     let mut last_event_id: Option<u64> = None;
     while !stop_push.load(Ordering::Relaxed) {
         // proxy-guard: loopback-only MCP stdio proxy connecting to 127.0.0.1
@@ -113,7 +193,8 @@ fn run_sse_listener(addr: SocketAddr, stdout: Arc<Mutex<std::io::Stdout>>, sessi
         let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
         let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
 
-        let auth_line = aurora_mcp::auth::client_token(addr.port())
+        let auth_line = tokens
+            .get()
             .map(|t| format!("Authorization: Bearer {t}\r\n"))
             .unwrap_or_default();
         let last_id_line = last_event_id.map(|id| format!("Last-Event-ID: {id}\r\n")).unwrap_or_default();
@@ -164,6 +245,9 @@ fn run_sse_listener(addr: SocketAddr, stdout: Arc<Mutex<std::io::Stdout>>, sessi
             }
         }
         if header_failed || !status_ok {
+            if !status_ok {
+                tokens.refresh();
+            }
             sleep_interruptible(&stop_push, Duration::from_secs(2));
             continue;
         }
@@ -231,7 +315,14 @@ fn handle_offline_request(req_id: Value, method: &str, params: &Value, port: u16
             }))
         }
         "ping" => Some(json!({})),
-        "tools/list" => Some(json!({ "tools": list_tools_for_profile(McpProfile::from_env()) })),
+        "tools/list" => {
+            static OFFLINE_TOOLS: OnceLock<Value> = OnceLock::new();
+            Some(
+                OFFLINE_TOOLS
+                    .get_or_init(|| json!({ "tools": list_tools_for_profile(McpProfile::from_env()) }))
+                    .clone(),
+            )
+        }
         "resources/list" => Some(aurora_mcp::resources::list_resources()),
         "resources/templates/list" => Some(aurora_mcp::resources::list_resource_templates()),
         "prompts/list" => Some(aurora_mcp::prompts::list_prompts()),
@@ -292,33 +383,173 @@ fn handle_offline_request(req_id: Value, method: &str, params: &Value, port: u16
     }
 }
 
-fn forward_http(addr: SocketAddr, body: &[u8], session_id: &str, read_timeout: Duration) -> Result<Option<String>, std::io::Error> {
-    // proxy-guard: loopback-only MCP stdio proxy connecting to 127.0.0.1
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3))?;
-    let _ = stream.set_read_timeout(Some(read_timeout));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+enum HttpAttempt {
+    Reply(Option<String>),
+    Unauthorized,
+    Failed(std::io::Error),
+}
 
-    // AURORA_MCP_TOKEN, else the token file the running viewer published
-    let auth_line = aurora_mcp::auth::client_token(addr.port())
+fn read_line_retry(reader: &mut BufReader<TcpStream>, buf: &mut String) -> std::io::Result<usize> {
+    loop {
+        match reader.read_line(buf) {
+            Ok(n) => return Ok(n),
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+fn forward_http_once(
+    addr: SocketAddr,
+    body: &[u8],
+    session_id: &str,
+    read_timeout: Duration,
+    token: Option<&str>,
+    conn: &mut Option<BufReader<TcpStream>>,
+) -> HttpAttempt {
+    let reader = match conn.as_mut() {
+        Some(r) => r,
+        None => {
+            // proxy-guard: loopback-only MCP stdio proxy connecting to 127.0.0.1
+            let stream = match TcpStream::connect_timeout(&addr, Duration::from_secs(3)) {
+                Ok(s) => s,
+                Err(e) => return HttpAttempt::Failed(e),
+            };
+            conn.insert(BufReader::new(stream))
+        }
+    };
+    let _ = reader.get_ref().set_read_timeout(Some(read_timeout));
+    let _ = reader.get_ref().set_write_timeout(Some(Duration::from_secs(5)));
+
+    let auth_line = token
         .map(|t| format!("Authorization: Bearer {t}\r\n"))
         .unwrap_or_default();
-
     let req = format!(
-        "POST /mcp HTTP/1.1\r\nHost: {addr}\r\n{auth_line}Mcp-Session-Id: {session_id}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "POST /mcp HTTP/1.1\r\nHost: {addr}\r\n{auth_line}Mcp-Session-Id: {session_id}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
         body.len()
     );
-    stream.write_all(req.as_bytes())?;
-    stream.write_all(body)?;
-    stream.flush()?;
-
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw)?;
-    let text = String::from_utf8_lossy(&raw);
-    let Some((head, payload)) = text.split_once("\r\n\r\n") else {
-        return Ok(None);
-    };
-    if head.starts_with("HTTP/1.1 202") || payload.trim().is_empty() {
-        return Ok(None);
+    if let Err(e) = reader
+        .get_mut()
+        .write_all(req.as_bytes())
+        .and_then(|()| reader.get_mut().write_all(body))
+        .and_then(|()| reader.get_mut().flush())
+    {
+        *conn = None;
+        return HttpAttempt::Failed(e);
     }
-    Ok(Some(payload.to_owned()))
+
+    let mut status_line = String::new();
+    match read_line_retry(reader, &mut status_line) {
+        Ok(0) => {
+            *conn = None;
+            return HttpAttempt::Failed(std::io::Error::new(ErrorKind::UnexpectedEof, "connection closed"));
+        }
+        Ok(_) => {}
+        Err(e) => {
+            *conn = None;
+            return HttpAttempt::Failed(e);
+        }
+    }
+    let status_code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+
+    let mut content_length: Option<usize> = None;
+    let mut server_close = false;
+    loop {
+        let mut line = String::new();
+        match read_line_retry(reader, &mut line) {
+            Ok(0) => {
+                *conn = None;
+                return HttpAttempt::Failed(std::io::Error::new(ErrorKind::UnexpectedEof, "eof in headers"));
+            }
+            Ok(_) => {
+                let trimmed = line.trim_end_matches(['\r', '\n']);
+                if trimmed.is_empty() {
+                    break;
+                }
+                if let Some((k, v)) = trimmed.split_once(':') {
+                    if k.trim().eq_ignore_ascii_case("content-length") {
+                        content_length = v.trim().parse::<usize>().ok();
+                    } else if k.trim().eq_ignore_ascii_case("connection")
+                        && v.split(',').any(|t| t.trim().eq_ignore_ascii_case("close"))
+                    {
+                        server_close = true;
+                    }
+                }
+            }
+            Err(e) => {
+                *conn = None;
+                return HttpAttempt::Failed(e);
+            }
+        }
+    }
+
+    let payload_res = if let Some(len) = content_length {
+        let mut buf = vec![0u8; len];
+        if len > 0 {
+            reader.read_exact(&mut buf).map(|()| buf)
+        } else {
+            Ok(buf)
+        }
+    } else {
+        server_close = true;
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).map(|_| buf)
+    };
+    let buf = match payload_res {
+        Ok(b) => b,
+        Err(e) => {
+            *conn = None;
+            return HttpAttempt::Failed(e);
+        }
+    };
+
+    if server_close || status_code == 401 {
+        *conn = None;
+    }
+    if status_code == 401 {
+        return HttpAttempt::Unauthorized;
+    }
+    if status_code == 202 || buf.is_empty() {
+        return HttpAttempt::Reply(None);
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        HttpAttempt::Reply(None)
+    } else {
+        HttpAttempt::Reply(Some(trimmed.to_owned()))
+    }
+}
+
+fn forward_http(
+    addr: SocketAddr,
+    body: &[u8],
+    session_id: &str,
+    read_timeout: Duration,
+    tokens: &TokenCache,
+    conn: &mut Option<BufReader<TcpStream>>,
+) -> Result<Option<String>, std::io::Error> {
+    for attempt in 0..3 {
+        let was_reused = conn.is_some();
+        let token = tokens.get();
+        match forward_http_once(addr, body, session_id, read_timeout, token.as_deref(), conn) {
+            HttpAttempt::Reply(r) => return Ok(r),
+            HttpAttempt::Unauthorized if attempt < 2 => {
+                *conn = None;
+                tokens.refresh();
+            }
+            HttpAttempt::Unauthorized => {
+                return Err(std::io::Error::new(ErrorKind::PermissionDenied, "HTTP 401 Unauthorized"));
+            }
+            HttpAttempt::Failed(_) if was_reused && attempt == 0 => {
+                *conn = None;
+            }
+            HttpAttempt::Failed(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::other("request failed after retries"))
 }

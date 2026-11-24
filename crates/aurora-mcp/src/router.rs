@@ -18,7 +18,7 @@ pub const MAX_CHAT_MESSAGE_BYTES: usize = 1023;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
@@ -67,6 +67,48 @@ pub struct ToolDefinition {
     pub in_compact_profile: bool,
 }
 
+const MAX_CACHED_MANIFESTS: usize = 64;
+
+#[derive(Default)]
+struct ManifestCache {
+    entries: HashMap<String, Arc<Value>>,
+    order: VecDeque<String>,
+}
+
+impl ManifestCache {
+    fn normalize_key(raw: &str) -> &str {
+        let trimmed = raw.trim();
+        let base = trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed);
+        base.strip_prefix("manifest-")
+            .and_then(|rest| rest.strip_suffix(".json"))
+            .unwrap_or(base)
+    }
+
+    fn insert(&mut self, manifest_id: String, value: Value) {
+        let arc = Arc::new(value);
+        if self.entries.contains_key(&manifest_id) {
+            self.entries.insert(manifest_id, arc);
+            return;
+        }
+        while self.entries.len() >= MAX_CACHED_MANIFESTS {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+        self.order.push_back(manifest_id.clone());
+        self.entries.insert(manifest_id, arc);
+    }
+
+    fn get(&self, key: &str) -> Option<Value> {
+        let norm = Self::normalize_key(key);
+        if let Some(found) = self.entries.get(norm) {
+            return Some(found.as_ref().clone());
+        }
+        self.entries.get(key.trim()).map(|v| v.as_ref().clone())
+    }
+}
+
 pub struct McpRouter {
     tx: mpsc::Sender<McpRequestEnvelope>,
     pub leases: Arc<LeaseManager>,
@@ -76,7 +118,10 @@ pub struct McpRouter {
     pub approvals: Arc<ApprovalQueue>,
     pub audit: Arc<AuditLog>,
     pub profile: McpProfile,
-    manifests: Mutex<HashMap<String, Value>>,
+    audit_all: bool,
+    cached_tools: Arc<Vec<ToolDefinition>>,
+    cached_tools_response: Value,
+    manifests: Mutex<ManifestCache>,
     pub status_snapshot: Arc<std::sync::RwLock<Value>>,
 }
 
@@ -85,6 +130,9 @@ impl McpRouter {
         let policy = Arc::new(McpPolicy::from_env_and_file());
         let leases = Arc::new(LeaseManager::default());
         leases.set_ask_deny_on_timeout(policy.ask_deny_on_timeout);
+        let cached_tools = Arc::new(list_tools_for_profile_with_hints(profile, policy.destructive_hints));
+        let cached_tools_response = json!({ "tools": &*cached_tools });
+        let audit_all = std::env::var("AURORA_MCP_AUDIT_ALL").as_deref().map(str::trim) == Ok("1");
         Self {
             tx,
             leases,
@@ -94,7 +142,10 @@ impl McpRouter {
             approvals: Arc::new(ApprovalQueue::new()),
             audit: Arc::new(AuditLog::from_env()),
             profile,
-            manifests: Mutex::new(HashMap::new()),
+            audit_all,
+            cached_tools,
+            cached_tools_response,
+            manifests: Mutex::new(ManifestCache::default()),
             status_snapshot: Arc::new(std::sync::RwLock::new(default_status_snapshot())),
         }
     }
@@ -108,12 +159,18 @@ impl McpRouter {
     /// Overrides the active policy (and syncs `ask_deny_on_timeout` on the lease manager).
     pub fn with_policy(mut self, policy: Arc<McpPolicy>) -> Self {
         self.leases.set_ask_deny_on_timeout(policy.ask_deny_on_timeout);
+        self.cached_tools = Arc::new(list_tools_for_profile_with_hints(self.profile, policy.destructive_hints));
+        self.cached_tools_response = json!({ "tools": &*self.cached_tools });
         self.policy = policy;
         self
     }
 
     pub fn list_tools(&self) -> Vec<ToolDefinition> {
-        list_tools_for_profile(self.profile)
+        (*self.cached_tools).clone()
+    }
+
+    pub fn list_tools_response(&self) -> Value {
+        self.cached_tools_response.clone()
     }
 
     async fn send_to_viewer(&self, lease_id: Option<String>, request: ViewerRequest, timeout_ms: u64) -> Result<ViewerResponse, McpError> {
@@ -218,7 +275,7 @@ impl McpRouter {
             .unwrap_or(session_id);
         let is_mutating = is_mutating_tool_call(name, &args);
         let is_dry_run = args.get("dry_run").and_then(Value::as_bool) == Some(true);
-        let audit_all = std::env::var("AURORA_MCP_AUDIT_ALL").as_deref().map(str::trim) == Ok("1");
+        let audit_all = self.audit_all;
 
         if is_dry_run && is_mutating {
             let res = self.preview_dry_run(eff_session, name, &args);
@@ -511,7 +568,7 @@ impl McpRouter {
                 let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50).clamp(1, 200) as usize;
                 let (events, used_after, last_seq, subscribed) =
                     self.events.read_for_session(eff_session, after, sources_override.as_deref(), limit);
-                let events_json: Vec<Value> = events.iter().map(crate::events::McpEvent::to_json).collect();
+                let events_json: Vec<Value> = events.iter().map(|e| e.to_json()).collect();
                 Ok(text_block(json!({
                     "session_id": eff_session,
                     "subscribed": subscribed,
@@ -1166,7 +1223,7 @@ impl McpRouter {
                     .unwrap_or("unspecified_viewer_scene")
                     .to_owned();
 
-                let mut captured_views = Vec::with_capacity(views);
+                let mut pending_encodes = Vec::with_capacity(views);
                 let mut moved_camera = false;
                 let mut loop_err: Option<McpError> = None;
                 for i in 0..views {
@@ -1224,27 +1281,8 @@ impl McpRouter {
                     };
                     if let ViewerResponse::FrameCaptured(raw) = frame_resp {
                         let view_label = format!("{label}-view-{i}");
-                        let encoded =
-                            match tokio::task::spawn_blocking(move || vision::encode_captured_frame(raw, (1024, 1024), &view_label))
-                                .await
-                                .map_err(|e| McpError::Internal(format!("encode join error: {e}")))
-                            {
-                                Ok(Ok(enc)) => enc,
-                                Ok(Err(e)) | Err(e) => {
-                                    loop_err = Some(e);
-                                    break;
-                                }
-                            };
-                        captured_views.push(json!({
-                            "view_index": i,
-                            "angle_deg": (angle.to_degrees() * 10.0).round() / 10.0,
-                            "camera_position": pos,
-                            "focus": focus,
-                            "path": encoded.path,
-                            "sha256": encoded.sha256,
-                            "width": encoded.width,
-                            "height": encoded.height,
-                        }));
+                        let handle = tokio::task::spawn_blocking(move || vision::encode_captured_frame(raw, (1024, 1024), &view_label));
+                        pending_encodes.push((i, angle, pos, focus, handle));
                     }
                 }
 
@@ -1261,7 +1299,37 @@ impl McpRouter {
                         .await;
                 }
                 if let Some(err) = loop_err {
+                    for (_, _, _, _, handle) in pending_encodes {
+                        handle.abort();
+                    }
                     return Err(err);
+                }
+
+                let mut captured_views = Vec::with_capacity(pending_encodes.len());
+                let mut iter = pending_encodes.into_iter();
+                while let Some((i, angle, pos, focus, handle)) = iter.next() {
+                    let encoded = match handle
+                        .await
+                        .map_err(|e| McpError::Internal(format!("encode join error: {e}")))
+                    {
+                        Ok(Ok(enc)) => enc,
+                        Ok(Err(e)) | Err(e) => {
+                            for (_, _, _, _, rem) in iter {
+                                rem.abort();
+                            }
+                            return Err(e);
+                        }
+                    };
+                    captured_views.push(json!({
+                        "view_index": i,
+                        "angle_deg": (angle.to_degrees() * 10.0).round() / 10.0,
+                        "camera_position": pos,
+                        "focus": focus,
+                        "path": encoded.path,
+                        "sha256": encoded.sha256,
+                        "width": encoded.width,
+                        "height": encoded.height,
+                    }));
                 }
 
                 let manifest_id = Uuid::new_v4().to_string();
@@ -1273,9 +1341,17 @@ impl McpRouter {
                     "radius": radius,
                     "views": captured_views,
                 });
-                let manifest_path = vision::capture_output_dir().join(format!("manifest-{manifest_id}.json"));
-                let _ = std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).unwrap_or_default());
-                self.manifests.lock().insert(manifest_path.display().to_string(), manifest.clone());
+                let manifest_json = serde_json::to_string_pretty(&manifest).unwrap_or_default();
+                let manifest_id_file = manifest_id.clone();
+                let manifest_path = tokio::task::spawn_blocking(move || {
+                    let out_dir = vision::capture_output_dir();
+                    let path = out_dir.join(format!("manifest-{manifest_id_file}.json"));
+                    let _ = std::fs::write(&path, manifest_json);
+                    vision::maybe_prune_capture_dir(&out_dir);
+                    path
+                })
+                .await
+                .map_err(|e| McpError::Internal(format!("manifest write join error: {e}")))?;
                 self.manifests.lock().insert(manifest_id, manifest.clone());
 
                 Ok(text_block(json!({
@@ -1292,10 +1368,14 @@ impl McpRouter {
                     .or_else(|| args.get("path"))
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                if let Some(m) = self.manifests.lock().get(key).cloned() {
+                if let Some(m) = self.manifests.lock().get(key) {
                     return Ok(text_block(m));
                 }
-                Ok(text_block(vision::read_capture_manifest(key)?))
+                let key_owned = key.to_owned();
+                let manifest = tokio::task::spawn_blocking(move || vision::read_capture_manifest(&key_owned))
+                    .await
+                    .map_err(|e| McpError::Internal(format!("manifest read join error: {e}")))??;
+                Ok(text_block(manifest))
             }
 
             "image_compare" => {
@@ -1646,15 +1726,37 @@ impl McpRouter {
                 let object_local_id = args.get("object_local_id").and_then(Value::as_u64).unwrap_or(0) as u32;
                 let script_item_id = parse_opt_uuid(args, "script_item_id")?;
                 let script_name = args.get("script_name").and_then(Value::as_str).unwrap_or("").trim().to_owned();
-                let source_code = req_str(args, "source_code")?;
+                let raw_source = req_str(args, "source_code")?;
                 let mono = args.get("mono").and_then(Value::as_bool).unwrap_or(true);
                 let compile_target = args.get("compile_target").and_then(Value::as_str).map(str::to_owned);
                 let running = args.get("running").and_then(Value::as_bool).unwrap_or(true);
                 let if_exists = args.get("if_exists").and_then(Value::as_str).map(str::to_owned);
                 let experience_id = args.get("experience_id").and_then(Value::as_str).map(str::to_owned);
+
+                let (effective_lease, source_code) = if let Some(path) = raw_source.strip_prefix("@file:") {
+                    if self.policy.mode == PolicyMode::Locked {
+                        return Err(McpError::PermissionDenied(
+                            "AURORA_MCP_POLICY=locked: mutating actions are disabled in read-only mode".into(),
+                        ));
+                    }
+                    let valid_lease = self.leases.verify_for_mutation(lease_id.as_deref())?;
+                    let trimmed = path.trim().to_owned();
+                    let path_for_err = trimmed.clone();
+                    let loaded = tokio::task::spawn_blocking(move || std::fs::read_to_string(&trimmed))
+                        .await
+                        .map_err(|e| McpError::Internal(format!("script file read join error: {e}")))?
+                        .map_err(|err| {
+                            McpError::InvalidParams(format!("Failed to read script source file '{path_for_err}': {err}"))
+                        })?;
+                    let normalized = loaded.strip_prefix('\u{feff}').unwrap_or(&loaded).replace("\r\n", "\n");
+                    (Some(valid_lease), normalized)
+                } else {
+                    (lease_id, raw_source)
+                };
+
                 let resp = self
                     .send_to_viewer(
-                        lease_id,
+                        effective_lease,
                         ViewerRequest::LslWriteAndCompile {
                             object_local_id,
                             script_item_id,
@@ -3519,7 +3621,7 @@ impl McpRouter {
                     "session_id": session_id,
                     "subscribed": subscribed,
                     "last_seq": last_seq,
-                    "events": events.iter().map(crate::events::McpEvent::to_json).collect::<Vec<_>>(),
+                    "events": events.iter().map(|e| e.to_json()).collect::<Vec<_>>(),
                 });
                 if has_world && let Value::Object(map) = &mut obj {
                     map.insert("trust".into(), json!("untrusted_world_content"));
@@ -3553,10 +3655,14 @@ impl McpRouter {
             }
             _ if uri.starts_with("aurora://capture/") => {
                 let id = uri.trim_start_matches("aurora://capture/");
-                if let Some(cached) = self.manifests.lock().get(id).cloned() {
+                if let Some(cached) = self.manifests.lock().get(id) {
                     cached
                 } else {
-                    vision::read_capture_manifest(id).map_err(|e| (-32002, e.to_string()))?
+                    let id_owned = id.to_owned();
+                    tokio::task::spawn_blocking(move || vision::read_capture_manifest(&id_owned))
+                        .await
+                        .map_err(|e| (-32002, format!("manifest read join error: {e}")))?
+                        .map_err(|e| (-32002, e.to_string()))?
                 }
             }
             _ => return Err((-32002, format!("resource not found: {uri}"))),
@@ -4118,7 +4224,11 @@ fn inspect_viewer_api(api: &str, operation: Option<&str>) -> Value {
 }
 
 pub fn list_tools_for_profile(profile: McpProfile) -> Vec<ToolDefinition> {
-    let all = all_tool_definitions();
+    list_tools_for_profile_with_hints(profile, policy::destructive_hints_enabled())
+}
+
+fn list_tools_for_profile_with_hints(profile: McpProfile, destructive_hints: bool) -> Vec<ToolDefinition> {
+    let all = all_tool_definitions_with_hints(destructive_hints);
     match profile {
         McpProfile::All => all,
         McpProfile::Compact => all.into_iter().filter(|t| t.in_compact_profile).collect(),
@@ -4126,7 +4236,12 @@ pub fn list_tools_for_profile(profile: McpProfile) -> Vec<ToolDefinition> {
 }
 
 pub fn all_tool_definitions() -> Vec<ToolDefinition> {
-    attach_lease_metadata(vec![
+    all_tool_definitions_with_hints(policy::destructive_hints_enabled())
+}
+
+fn all_tool_definitions_with_hints(destructive_hints: bool) -> Vec<ToolDefinition> {
+    attach_lease_metadata_with_hints(
+        vec![
         // Phase 0: Session, Leases & Dynamic Dispatch
         ToolDefinition {
             name: "connection_status".into(),
@@ -6643,7 +6758,9 @@ pub fn all_tool_definitions() -> Vec<ToolDefinition> {
             annotations: None,
             in_compact_profile: false,
         },
-    ])
+    ],
+        destructive_hints,
+    )
 }
 
 fn default_status_snapshot() -> Value {
@@ -7058,8 +7175,7 @@ fn output_schema_for(name: &str) -> Option<Value> {
     }
 }
 
-fn attach_lease_metadata(mut defs: Vec<ToolDefinition>) -> Vec<ToolDefinition> {
-    let destructive_hints = policy::destructive_hints_enabled();
+fn attach_lease_metadata_with_hints(mut defs: Vec<ToolDefinition>, destructive_hints: bool) -> Vec<ToolDefinition> {
     for def in &mut defs {
         let is_unconditional = REQUIRES_LEASE_TOOLS.contains(&def.name.as_str());
         let is_conditional = CONDITIONAL_LEASE_TOOLS.contains(&def.name.as_str());
@@ -8011,5 +8127,22 @@ mod tests {
 
         drop(router);
         let _ = responder.await;
+    }
+
+    #[test]
+    fn manifest_cache_normalizes_keys_and_evicts_oldest() {
+        let mut cache = ManifestCache::default();
+        for i in 0..MAX_CACHED_MANIFESTS {
+            cache.insert(format!("id-{i}"), json!({ "idx": i }));
+        }
+        assert!(cache.get("id-0").is_some());
+        assert!(cache.get("/tmp/aurora-mcp-captures/manifest-id-0.json").is_some());
+        assert!(cache.get("manifest-id-0.json").is_some());
+
+        // Inserting one more evicts id-0 while keeping id-1 and the newest entry.
+        cache.insert("id-new".into(), json!({ "idx": 999 }));
+        assert!(cache.get("id-0").is_none());
+        assert!(cache.get("id-1").is_some());
+        assert_eq!(cache.get("id-new").unwrap()["idx"], json!(999));
     }
 }

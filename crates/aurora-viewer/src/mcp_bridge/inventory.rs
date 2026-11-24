@@ -62,10 +62,17 @@ impl App {
         for seg in segments {
             let children: Vec<Uuid> = inv
                 .folders
-                .values()
-                .filter(|f| !f.library && f.info.parent == here && f.info.name == seg)
-                .map(|f| f.info.id)
-                .collect();
+                .get(&here)
+                .map(|parent| {
+                    parent
+                        .children
+                        .iter()
+                        .filter_map(|id| inv.folders.get(id))
+                        .filter(|f| !f.library && f.info.parent == here && f.info.name == seg)
+                        .map(|f| f.info.id)
+                        .collect()
+                })
+                .unwrap_or_default();
             walked.push('/');
             walked.push_str(seg);
             match children[..] {

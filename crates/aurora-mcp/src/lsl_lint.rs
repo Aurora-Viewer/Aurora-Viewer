@@ -515,7 +515,8 @@ fn tokenize_and_check_delimiters(source: &str, luau: bool, diags: &mut Vec<LintD
 }
 
 fn check_lsl_tokens(tokens: &[Token], byte_len: usize, target: &str, diags: &mut Vec<LintDiagnostic>) {
-    let builtins: HashMap<&'static str, usize> = LSL_BUILTINS.iter().copied().collect();
+    static LSL_BUILTIN_MAP: std::sync::OnceLock<HashMap<&'static str, usize>> = std::sync::OnceLock::new();
+    let builtins = LSL_BUILTIN_MAP.get_or_init(|| LSL_BUILTINS.iter().copied().collect());
     let mut depth = 0isize;
     let mut paren_depth = 0isize;
     let mut has_default = false;

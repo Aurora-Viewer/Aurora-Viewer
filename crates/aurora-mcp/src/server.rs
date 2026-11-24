@@ -33,6 +33,7 @@ pub fn negotiate_protocol_version(requested: Option<&str>) -> &'static str {
 
 const MAX_HTTP_BODY_BYTES: usize = 2 * 1024 * 1024;
 const HTTP_IO_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_KEEP_ALIVE_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_BATCH_SIZE: usize = 64;
 const MAX_SSE_CONNECTIONS: usize = 32;
 
@@ -104,10 +105,7 @@ pub async fn handle_jsonrpc_message_in_session(router: &McpRouter, msg: Value, s
             }))
         }
         "ping" => Ok(json!({})),
-        "tools/list" => {
-            let tools = router.list_tools();
-            Ok(json!({ "tools": tools }))
-        }
+        "tools/list" => Ok(router.list_tools_response()),
         "tools/call" => {
             let Some(name) = params.get("name").and_then(Value::as_str) else {
                 return Some(jsonrpc_error(req_id, -32602, "missing tool 'name' in tools/call params"));
@@ -257,291 +255,327 @@ async fn handle_http_connection(
     expected_token: Arc<Option<String>>,
 ) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream);
-    let mut request_line = String::new();
-    if reader.read_line(&mut request_line).await? == 0 {
-        return Ok(());
-    }
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 2 {
-        return Ok(());
-    }
-    let method = parts[0].to_ascii_uppercase();
-    let path = parts[1];
+    let mut first_request = true;
 
-    let mut content_length = 0usize;
-    let mut wants_sse = false;
-    let mut host_header: Option<String> = None;
-    let mut origin_header: Option<String> = None;
-    let mut auth_header: Option<String> = None;
-    let mut content_type: Option<String> = None;
-    let mut header_session_id: Option<String> = None;
-    let mut last_event_id: Option<u64> = None;
     loop {
-        let mut line = String::new();
-        let read_res = tokio::time::timeout(HTTP_IO_TIMEOUT, reader.read_line(&mut line)).await;
-        let Ok(Ok(n)) = read_res else {
+        let mut request_line = String::new();
+        let line_timeout = if first_request {
+            HTTP_IO_TIMEOUT
+        } else {
+            HTTP_KEEP_ALIVE_IDLE_TIMEOUT
+        };
+        let Ok(Ok(n)) = tokio::time::timeout(line_timeout, reader.read_line(&mut request_line)).await else {
             return Ok(());
         };
-        if n == 0 || line == "\r\n" || line == "\n" {
-            break;
+        if n == 0 {
+            return Ok(());
         }
-        if let Some((k, v)) = line.split_once(':') {
-            let k = k.trim().to_ascii_lowercase();
-            let v = v.trim();
-            if k == "content-length" {
-                content_length = v.parse::<usize>().unwrap_or(0);
-            } else if k == "accept" && v.contains("text/event-stream") {
-                wants_sse = true;
-            } else if k == "host" {
-                host_header = Some(v.to_owned());
-            } else if k == "origin" {
-                origin_header = Some(v.to_owned());
-            } else if k == "authorization" {
-                auth_header = Some(v.to_owned());
-            } else if k == "content-type" {
-                content_type = Some(v.to_ascii_lowercase());
-            } else if k == "mcp-session-id" && is_valid_session_id(v) {
-                header_session_id = Some(v.to_owned());
-            } else if k == "last-event-id" {
-                last_event_id = v.parse::<u64>().ok();
+        first_request = false;
+        let parts: Vec<&str> = request_line.split_whitespace().collect();
+        if parts.len() < 2 {
+            return Ok(());
+        }
+        let method = parts[0].to_ascii_uppercase();
+        let path = parts[1].to_owned();
+
+        let mut content_length = 0usize;
+        let mut wants_sse = false;
+        let mut client_keep_alive = false;
+        let mut host_header: Option<String> = None;
+        let mut origin_header: Option<String> = None;
+        let mut auth_header: Option<String> = None;
+        let mut content_type: Option<String> = None;
+        let mut header_session_id: Option<String> = None;
+        let mut last_event_id: Option<u64> = None;
+        loop {
+            let mut line = String::new();
+            let read_res = tokio::time::timeout(HTTP_IO_TIMEOUT, reader.read_line(&mut line)).await;
+            let Ok(Ok(n)) = read_res else {
+                return Ok(());
+            };
+            if n == 0 || line == "\r\n" || line == "\n" {
+                break;
+            }
+            if let Some((k, v)) = line.split_once(':') {
+                let k = k.trim().to_ascii_lowercase();
+                let v = v.trim();
+                if k == "content-length" {
+                    content_length = v.parse::<usize>().unwrap_or(0);
+                } else if k == "accept" && v.contains("text/event-stream") {
+                    wants_sse = true;
+                } else if k == "connection" {
+                    client_keep_alive = v.split(',').any(|t| t.trim().eq_ignore_ascii_case("keep-alive"));
+                } else if k == "host" {
+                    host_header = Some(v.to_owned());
+                } else if k == "origin" {
+                    origin_header = Some(v.to_owned());
+                } else if k == "authorization" {
+                    auth_header = Some(v.to_owned());
+                } else if k == "content-type" {
+                    content_type = Some(v.to_ascii_lowercase());
+                } else if k == "mcp-session-id" && is_valid_session_id(v) {
+                    header_session_id = Some(v.to_owned());
+                } else if k == "last-event-id" {
+                    last_event_id = v.parse::<u64>().ok();
+                }
             }
         }
-    }
 
-    if !is_allowed_host(host_header.as_deref()) {
-        let mut stream = reader.into_inner();
-        write_http_response(&mut stream, "403 Forbidden", "application/json", b"{\"error\":\"forbidden host\"}").await?;
-        return Ok(());
-    }
-
-    if !is_allowed_origin(origin_header.as_deref()) {
-        let mut stream = reader.into_inner();
-        write_http_response(
-            &mut stream,
-            "403 Forbidden",
-            "application/json",
-            b"{\"error\":\"forbidden origin\"}",
-        )
-        .await?;
-        return Ok(());
-    }
-
-    if method == "OPTIONS" {
-        let mut stream = reader.into_inner();
-        let resp = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-        stream.write_all(resp.as_bytes()).await?;
-        return Ok(());
-    }
-
-    if method == "GET" && path.starts_with("/health") {
-        let body = serde_json::to_vec(&json!({
-            "ok": true,
-            "server": "aurora-mcp",
-            "version": aurora_version::version(),
-        }))
-        .unwrap_or_default();
-        let mut stream = reader.into_inner();
-        write_http_response(&mut stream, "200 OK", "application/json", &body).await?;
-        return Ok(());
-    }
-
-    if !is_authorized(auth_header.as_deref(), expected_token.as_deref()) {
-        let mut stream = reader.into_inner();
-        write_http_response(&mut stream, "401 Unauthorized", "application/json", b"{\"error\":\"unauthorized\"}").await?;
-        return Ok(());
-    }
-
-    if method == "DELETE" && path.starts_with("/mcp") {
-        if let Some(sid) = header_session_id.as_deref() {
-            router.events.remove_session(sid);
+        if !is_allowed_host(host_header.as_deref()) {
+            write_http_response(reader.get_mut(), "403 Forbidden", "application/json", b"{\"error\":\"forbidden host\"}", false).await?;
+            return Ok(());
         }
-        let mut stream = reader.into_inner();
-        let resp = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-        stream.write_all(resp.as_bytes()).await?;
-        return Ok(());
-    }
 
-    if method == "GET" && (path.starts_with("/sse") || (path.starts_with("/mcp") && wants_sse)) {
-        let Ok(_permit) = sse_slots.try_acquire_owned() else {
-            let mut stream = reader.into_inner();
+        if !is_allowed_origin(origin_header.as_deref()) {
             write_http_response(
-                &mut stream,
-                "503 Service Unavailable",
+                reader.get_mut(),
+                "403 Forbidden",
                 "application/json",
-                b"{\"error\":\"too many SSE connections\"}",
+                b"{\"error\":\"forbidden origin\"}",
+                false,
             )
             .await?;
             return Ok(());
-        };
-        let (query_session, explicit_sources) = parse_sse_query(path);
-        let eff_session = query_session.or(header_session_id).unwrap_or_else(|| "default".to_owned());
-        let is_legacy_sse = path.starts_with("/sse");
-
-        let mut stream = reader.into_inner();
-        let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
-        stream.write_all(headers.as_bytes()).await?;
-        if is_legacy_sse {
-            stream.write_all(b"event: endpoint\ndata: /message\n\n").await?;
         }
-        stream.flush().await?;
 
-        async fn emit_sse_event(
-            stream: &mut TcpStream,
-            router: &McpRouter,
-            eff_session: &str,
-            explicit_sources: Option<&[String]>,
-            ev: &crate::events::McpEvent,
-        ) -> bool {
-            let allowed = match explicit_sources {
-                Some(list) => list.iter().any(|s| s == "*" || s == "all" || s == &ev.source),
-                None => router.events.session_matches(eff_session, &ev.source),
+        if method == "OPTIONS" {
+            let conn = if client_keep_alive { "keep-alive" } else { "close" };
+            let resp = format!("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: {conn}\r\n\r\n");
+            reader.get_mut().write_all(resp.as_bytes()).await?;
+            reader.get_mut().flush().await?;
+            if !client_keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        if method == "GET" && path.starts_with("/health") {
+            let body = serde_json::to_vec(&json!({
+                "ok": true,
+                "server": "aurora-mcp",
+                "version": aurora_version::version(),
+            }))
+            .unwrap_or_default();
+            write_http_response(reader.get_mut(), "200 OK", "application/json", &body, client_keep_alive).await?;
+            if !client_keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        if !is_authorized(auth_header.as_deref(), expected_token.as_deref()) {
+            write_http_response(reader.get_mut(), "401 Unauthorized", "application/json", b"{\"error\":\"unauthorized\"}", false).await?;
+            return Ok(());
+        }
+
+        if method == "DELETE" && path.starts_with("/mcp") {
+            if let Some(sid) = header_session_id.as_deref() {
+                router.events.remove_session(sid);
+            }
+            let conn = if client_keep_alive { "keep-alive" } else { "close" };
+            let resp = format!("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: {conn}\r\n\r\n");
+            reader.get_mut().write_all(resp.as_bytes()).await?;
+            reader.get_mut().flush().await?;
+            if !client_keep_alive {
+                return Ok(());
+            }
+            continue;
+        }
+
+        if method == "GET" && (path.starts_with("/sse") || (path.starts_with("/mcp") && wants_sse)) {
+            let Ok(_permit) = sse_slots.try_acquire_owned() else {
+                write_http_response(
+                    reader.get_mut(),
+                    "503 Service Unavailable",
+                    "application/json",
+                    b"{\"error\":\"too many SSE connections\"}",
+                    false,
+                )
+                .await?;
+                return Ok(());
             };
-            if allowed {
-                let frame = format!("id: {}\nevent: message\ndata: {}\n\n", ev.seq, ev.to_jsonrpc_notification());
-                if stream.write_all(frame.as_bytes()).await.is_err() {
-                    return false;
+            let (query_session, explicit_sources) = parse_sse_query(&path);
+            let eff_session = query_session.or(header_session_id).unwrap_or_else(|| "default".to_owned());
+            let is_legacy_sse = path.starts_with("/sse");
+
+            let mut stream = reader.into_inner();
+            let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
+            stream.write_all(headers.as_bytes()).await?;
+            if is_legacy_sse {
+                stream.write_all(b"event: endpoint\ndata: /message\n\n").await?;
+            }
+            stream.flush().await?;
+
+            async fn emit_sse_event(
+                stream: &mut TcpStream,
+                router: &McpRouter,
+                eff_session: &str,
+                explicit_sources: Option<&[String]>,
+                ev: &crate::events::McpEvent,
+            ) -> bool {
+                let (allowed, resource_uris) = router.events.sse_match(eff_session, &ev.source, explicit_sources);
+                let mut wrote = false;
+                if allowed {
+                    let frame = format!("id: {}\nevent: message\ndata: {}\n\n", ev.seq, ev.to_jsonrpc_notification());
+                    if stream.write_all(frame.as_bytes()).await.is_err() {
+                        return false;
+                    }
+                    wrote = true;
+                }
+                for uri in resource_uris {
+                    let notif = json!({
+                        "jsonrpc": "2.0",
+                        "method": "notifications/resources/updated",
+                        "params": { "uri": uri }
+                    });
+                    let frame = format!("id: {}\nevent: message\ndata: {notif}\n\n", ev.seq);
+                    if stream.write_all(frame.as_bytes()).await.is_err() {
+                        return false;
+                    }
+                    wrote = true;
+                }
+                if wrote {
+                    let _ = stream.flush().await;
+                }
+                true
+            }
+
+            // Subscribe before replaying so events emitted concurrently are never lost.
+            let mut rx = router.events.subscribe_broadcast();
+            let mut min_live_seq = last_event_id.unwrap_or(0);
+            if let Some(after_seq) = last_event_id {
+                for ev in router.events.replay_after(after_seq, 200) {
+                    min_live_seq = min_live_seq.max(ev.seq);
+                    if !emit_sse_event(&mut stream, &router, &eff_session, explicit_sources.as_deref(), &ev).await {
+                        return Ok(());
+                    }
                 }
             }
-            for uri in router.events.matching_subscribed_resources(eff_session, &ev.source) {
-                let notif = json!({
-                    "jsonrpc": "2.0",
-                    "method": "notifications/resources/updated",
-                    "params": { "uri": uri }
-                });
-                let frame = format!("id: {}\nevent: message\ndata: {notif}\n\n", ev.seq);
-                if stream.write_all(frame.as_bytes()).await.is_err() {
-                    return false;
+
+            loop {
+                match rx.recv().await {
+                    Ok(ev) => {
+                        if last_event_id.is_some() && ev.seq <= min_live_seq {
+                            continue;
+                        }
+                        min_live_seq = min_live_seq.max(ev.seq);
+                        if !emit_sse_event(&mut stream, &router, &eff_session, explicit_sources.as_deref(), &ev).await {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
-            let _ = stream.flush().await;
-            true
+            return Ok(());
         }
 
-        // Subscribe before replaying so events emitted concurrently are never lost.
-        let mut rx = router.events.subscribe_broadcast();
-        let mut min_live_seq = last_event_id.unwrap_or(0);
-        if let Some(after_seq) = last_event_id {
-            for ev in router.events.replay_after(after_seq, 200) {
-                min_live_seq = min_live_seq.max(ev.seq);
-                if !emit_sse_event(&mut stream, &router, &eff_session, explicit_sources.as_deref(), &ev).await {
+        if method == "POST" {
+            // A browser can send text/plain, form or untyped bodies cross-origin
+            // without a CORS preflight: JSON-RPC must say application/json.
+            if !content_type.as_deref().is_some_and(|ct| ct.starts_with("application/json")) {
+                write_http_response(
+                    reader.get_mut(),
+                    "415 Unsupported Media Type",
+                    "application/json",
+                    b"{\"error\":\"Content-Type must be application/json\"}",
+                    false,
+                )
+                .await?;
+                return Ok(());
+            }
+            if content_length > MAX_HTTP_BODY_BYTES {
+                write_http_response(
+                    reader.get_mut(),
+                    "413 Payload Too Large",
+                    "application/json",
+                    b"{\"error\":\"request body exceeds 2 MiB limit\"}",
+                    false,
+                )
+                .await?;
+                return Ok(());
+            }
+            let mut body = vec![0u8; content_length];
+            if content_length > 0 {
+                let read_res = tokio::time::timeout(HTTP_IO_TIMEOUT, reader.read_exact(&mut body)).await;
+                if !matches!(read_res, Ok(Ok(_))) {
                     return Ok(());
                 }
             }
-        }
 
-        loop {
-            match rx.recv().await {
-                Ok(ev) => {
-                    if last_event_id.is_some() && ev.seq <= min_live_seq {
-                        continue;
-                    }
-                    min_live_seq = min_live_seq.max(ev.seq);
-                    if !emit_sse_event(&mut stream, &router, &eff_session, explicit_sources.as_deref(), &ev).await {
-                        break;
+            let parsed: Value = match serde_json::from_slice(&body) {
+                Ok(v) => v,
+                Err(e) => {
+                    let err_body = serde_json::to_vec(&jsonrpc_error(Value::Null, -32700, &format!("parse error: {e}"))).unwrap_or_default();
+                    write_http_response(reader.get_mut(), "400 Bad Request", "application/json", &err_body, false).await?;
+                    return Ok(());
+                }
+            };
+
+            if let Value::Array(batch) = &parsed
+                && batch.len() > MAX_BATCH_SIZE
+            {
+                let err_body = serde_json::to_vec(&jsonrpc_error(
+                    Value::Null,
+                    -32600,
+                    &format!("batch exceeds maximum of {MAX_BATCH_SIZE} requests"),
+                ))
+                .unwrap_or_default();
+                write_http_response(reader.get_mut(), "400 Bad Request", "application/json", &err_body, false).await?;
+                return Ok(());
+            }
+
+            let is_init = match &parsed {
+                Value::Array(batch) => batch.iter().any(|m| m.get("method").and_then(Value::as_str) == Some("initialize")),
+                obj => obj.get("method").and_then(Value::as_str) == Some("initialize"),
+            };
+            let session_id = header_session_id.unwrap_or_else(|| {
+                if is_init {
+                    Uuid::new_v4().to_string()
+                } else {
+                    "default".to_owned()
+                }
+            });
+
+            let reply_opt = if let Value::Array(batch) = parsed {
+                let mut replies = Vec::new();
+                for item in batch {
+                    if let Some(r) = handle_jsonrpc_message_in_session(&router, item, &session_id).await {
+                        replies.push(r);
                     }
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => break,
-            }
-        }
-        return Ok(());
-    }
-
-    if method == "POST" {
-        // A browser can send text/plain, form or untyped bodies cross-origin
-        // without a CORS preflight: JSON-RPC must say application/json.
-        if !content_type.as_deref().is_some_and(|ct| ct.starts_with("application/json")) {
-            let mut stream = reader.into_inner();
-            write_http_response(
-                &mut stream,
-                "415 Unsupported Media Type",
-                "application/json",
-                b"{\"error\":\"Content-Type must be application/json\"}",
-            )
-            .await?;
-            return Ok(());
-        }
-        if content_length > MAX_HTTP_BODY_BYTES {
-            let mut stream = reader.into_inner();
-            write_http_response(
-                &mut stream,
-                "413 Payload Too Large",
-                "application/json",
-                b"{\"error\":\"request body exceeds 2 MiB limit\"}",
-            )
-            .await?;
-            return Ok(());
-        }
-        let mut body = vec![0u8; content_length];
-        if content_length > 0 {
-            let read_res = tokio::time::timeout(HTTP_IO_TIMEOUT, reader.read_exact(&mut body)).await;
-            if !matches!(read_res, Ok(Ok(_))) {
-                return Ok(());
-            }
-        }
-        let mut stream = reader.into_inner();
-
-        let parsed: Value = match serde_json::from_slice(&body) {
-            Ok(v) => v,
-            Err(e) => {
-                let err_body = serde_json::to_vec(&jsonrpc_error(Value::Null, -32700, &format!("parse error: {e}"))).unwrap_or_default();
-                write_http_response(&mut stream, "400 Bad Request", "application/json", &err_body).await?;
-                return Ok(());
-            }
-        };
-
-        if let Value::Array(batch) = &parsed
-            && batch.len() > MAX_BATCH_SIZE
-        {
-            let err_body = serde_json::to_vec(&jsonrpc_error(
-                Value::Null,
-                -32600,
-                &format!("batch exceeds maximum of {MAX_BATCH_SIZE} requests"),
-            ))
-            .unwrap_or_default();
-            write_http_response(&mut stream, "400 Bad Request", "application/json", &err_body).await?;
-            return Ok(());
-        }
-
-        let is_init = match &parsed {
-            Value::Array(batch) => batch.iter().any(|m| m.get("method").and_then(Value::as_str) == Some("initialize")),
-            obj => obj.get("method").and_then(Value::as_str) == Some("initialize"),
-        };
-        let session_id = header_session_id.unwrap_or_else(|| {
-            if is_init {
-                Uuid::new_v4().to_string()
+                (!replies.is_empty()).then_some(Value::Array(replies))
             } else {
-                "default".to_owned()
-            }
-        });
+                handle_jsonrpc_message_in_session(&router, parsed, &session_id).await
+            };
 
-        let reply_opt = if let Value::Array(batch) = parsed {
-            let mut replies = Vec::new();
-            for item in batch {
-                if let Some(r) = handle_jsonrpc_message_in_session(&router, item, &session_id).await {
-                    replies.push(r);
+            let sess_header = (session_id != "default").then_some(session_id.as_str());
+            match reply_opt {
+                Some(reply) => {
+                    let out = serde_json::to_vec(&reply).unwrap_or_default();
+                    write_http_response_with_session(reader.get_mut(), "200 OK", "application/json", &out, sess_header, client_keep_alive)
+                        .await?;
+                }
+                None => {
+                    write_http_response_with_session(
+                        reader.get_mut(),
+                        "202 Accepted",
+                        "application/json",
+                        b"",
+                        sess_header,
+                        client_keep_alive,
+                    )
+                    .await?;
                 }
             }
-            (!replies.is_empty()).then_some(Value::Array(replies))
-        } else {
-            handle_jsonrpc_message_in_session(&router, parsed, &session_id).await
-        };
-
-        let sess_header = (session_id != "default").then_some(session_id.as_str());
-        match reply_opt {
-            Some(reply) => {
-                let out = serde_json::to_vec(&reply).unwrap_or_default();
-                write_http_response_with_session(&mut stream, "200 OK", "application/json", &out, sess_header).await?;
+            if !client_keep_alive {
+                return Ok(());
             }
-            None => {
-                write_http_response_with_session(&mut stream, "202 Accepted", "application/json", b"", sess_header).await?;
-            }
+            continue;
         }
-        return Ok(());
-    }
 
-    let mut stream = reader.into_inner();
-    write_http_response(&mut stream, "404 Not Found", "application/json", b"{\"error\":\"not found\"}").await
+        return write_http_response(reader.get_mut(), "404 Not Found", "application/json", b"{\"error\":\"not found\"}", false).await;
+    }
 }
 
 /// The host part of `host[:port]` / `[v6][:port]`, lowercased; None when
@@ -645,8 +679,14 @@ fn parse_sse_query(path: &str) -> (Option<String>, Option<Vec<String>>) {
     (session, sources)
 }
 
-async fn write_http_response(stream: &mut TcpStream, status: &str, content_type: &str, body: &[u8]) -> std::io::Result<()> {
-    write_http_response_with_session(stream, status, content_type, body, None).await
+async fn write_http_response(
+    stream: &mut TcpStream,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+    keep_alive: bool,
+) -> std::io::Result<()> {
+    write_http_response_with_session(stream, status, content_type, body, None, keep_alive).await
 }
 
 async fn write_http_response_with_session(
@@ -655,10 +695,12 @@ async fn write_http_response_with_session(
     content_type: &str,
     body: &[u8],
     session_id: Option<&str>,
+    keep_alive: bool,
 ) -> std::io::Result<()> {
     let sess_line = session_id.map(|s| format!("Mcp-Session-Id: {s}\r\n")).unwrap_or_default();
+    let conn = if keep_alive { "keep-alive" } else { "close" };
     let header = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n{sess_line}Connection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n{sess_line}Connection: {conn}\r\n\r\n",
         body.len()
     );
     stream.write_all(header.as_bytes()).await?;
@@ -1059,5 +1101,63 @@ mod tests {
         del.read_to_end(&mut del_resp).await.unwrap();
         let del_text = String::from_utf8_lossy(&del_resp);
         assert!(del_text.starts_with("HTTP/1.1 204 No Content"), "{del_text}");
+    }
+
+    #[tokio::test]
+    async fn mcp_http_keep_alive_reuses_single_tcp_connection() {
+        let (tx, _rx) = create_bridge_channels();
+        let handle = spawn_server(&tokio::runtime::Handle::current(), tx, Some(0)).expect("spawn server");
+        let addr = handle.bind_addr;
+        let auth = handle
+            .auth_token
+            .as_deref()
+            .map(|t| format!("Authorization: Bearer {t}\r\n"))
+            .unwrap_or_default();
+
+        let mut stream = TcpStream::connect(addr).await.expect("connect");
+        let mut reader = BufReader::new(&mut stream);
+
+        for (id, method) in [(1, "ping"), (2, "tools/list")] {
+            let body = serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+            }))
+            .unwrap();
+            let req = format!(
+                "POST /mcp HTTP/1.1\r\nHost: {addr}\r\n{auth}Connection: keep-alive\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            reader.get_mut().write_all(req.as_bytes()).await.unwrap();
+            reader.get_mut().write_all(&body).await.unwrap();
+            reader.get_mut().flush().await.unwrap();
+
+            let mut status = String::new();
+            reader.read_line(&mut status).await.unwrap();
+            assert!(status.starts_with("HTTP/1.1 200 OK"), "req {id}: {status}");
+            let mut content_len = 0usize;
+            let mut saw_keep_alive = false;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    break;
+                }
+                if let Some((k, v)) = trimmed.split_once(':') {
+                    if k.eq_ignore_ascii_case("content-length") {
+                        content_len = v.trim().parse().unwrap_or(0);
+                    } else if k.eq_ignore_ascii_case("connection") && v.trim().eq_ignore_ascii_case("keep-alive") {
+                        saw_keep_alive = true;
+                    }
+                }
+            }
+            assert!(saw_keep_alive, "req {id} missing Connection: keep-alive");
+            let mut resp_body = vec![0u8; content_len];
+            reader.read_exact(&mut resp_body).await.unwrap();
+            let reply: Value = serde_json::from_slice(&resp_body).unwrap();
+            assert_eq!(reply["id"], json!(id));
+            assert!(reply.get("result").is_some(), "{reply}");
+        }
     }
 }

@@ -270,6 +270,11 @@ pub struct PickIndex {
 }
 
 impl PickIndex {
+    /// True when object slot `idx` has a pickable bounding entry in this index.
+    pub fn is_indexed(&self, idx: usize) -> bool {
+        self.entries.get(idx).is_some_and(PickEntry::pickable)
+    }
+
     /// A separate query for inventory placement; do not disturb hover's watch.
     pub fn ray_candidates(&self, ray: (Vec3, Vec3), out: &mut Vec<usize>) {
         self.candidates(&Probe { ray, depth: None }, out);

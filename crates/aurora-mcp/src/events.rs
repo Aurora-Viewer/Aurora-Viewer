@@ -5,6 +5,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
@@ -106,15 +107,33 @@ impl EventFilter {
         }
         if let Some(needle) = &self.contains_text
             && !needle.is_empty()
+            && !contains_ascii_icase(&ev.event_type, needle)
+            && !value_contains_ascii_icase(&ev.data, needle)
         {
-            let needle_lc = needle.to_ascii_lowercase();
-            let hay_type = ev.event_type.to_ascii_lowercase();
-            let hay_data = ev.data.to_string().to_ascii_lowercase();
-            if !hay_type.contains(&needle_lc) && !hay_data.contains(&needle_lc) {
-                return false;
-            }
+            return false;
         }
         true
+    }
+}
+
+fn contains_ascii_icase(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let n = needle.as_bytes();
+    haystack.as_bytes().windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+}
+
+fn value_contains_ascii_icase(val: &Value, needle: &str) -> bool {
+    match val {
+        Value::Null => contains_ascii_icase("null", needle),
+        Value::Bool(b) => contains_ascii_icase(if *b { "true" } else { "false" }, needle),
+        Value::Number(n) => contains_ascii_icase(&n.to_string(), needle),
+        Value::String(s) => contains_ascii_icase(s, needle),
+        Value::Array(arr) => arr.iter().any(|item| value_contains_ascii_icase(item, needle)),
+        Value::Object(map) => map
+            .iter()
+            .any(|(k, v)| contains_ascii_icase(k, needle) || value_contains_ascii_icase(v, needle)),
     }
 }
 
@@ -128,7 +147,7 @@ struct SessionSub {
 
 struct BusState {
     next_seq: u64,
-    buffer: VecDeque<McpEvent>,
+    buffer: VecDeque<Arc<McpEvent>>,
     sessions: HashMap<String, SessionSub>,
 }
 
@@ -136,7 +155,7 @@ struct BusState {
 /// live SSE broadcast, and blocking `wait_for` queries.
 pub struct EventBus {
     state: Mutex<BusState>,
-    tx: broadcast::Sender<McpEvent>,
+    tx: broadcast::Sender<Arc<McpEvent>>,
 }
 
 impl Default for EventBus {
@@ -167,17 +186,17 @@ impl EventBus {
             let mut st = self.state.lock();
             st.next_seq += 1;
             let seq = st.next_seq;
-            let ev = McpEvent {
+            let ev = Arc::new(McpEvent {
                 seq,
                 timestamp_ms: ts_ms,
                 source: norm_source,
                 event_type: event_type.to_owned(),
                 data,
-            };
+            });
             if st.buffer.len() >= MAX_EVENTS_BUFFER {
                 st.buffer.pop_front();
             }
-            st.buffer.push_back(ev.clone());
+            st.buffer.push_back(Arc::clone(&ev));
             ev
         };
         let seq = ev.seq;
@@ -270,7 +289,7 @@ impl EventBus {
         after: Option<u64>,
         sources_override: Option<&[String]>,
         limit: usize,
-    ) -> (Vec<McpEvent>, u64, u64, Vec<String>) {
+    ) -> (Vec<Arc<McpEvent>>, u64, u64, Vec<String>) {
         let limit = limit.clamp(1, 200);
         let now = Instant::now();
         let mut st = self.state.lock();
@@ -281,7 +300,7 @@ impl EventBus {
             .filter(|s| !s.is_empty())
             .map(|list| list.iter().map(|x| normalize_source(x)).collect());
 
-        let events: Vec<McpEvent> = st
+        let events: Vec<Arc<McpEvent>> = st
             .buffer
             .iter()
             .filter(|ev| ev.seq > used_after)
@@ -305,8 +324,28 @@ impl EventBus {
         (events, used_after, last_seq, active_sources)
     }
 
-    pub fn subscribe_broadcast(&self) -> broadcast::Receiver<McpEvent> {
+    pub fn subscribe_broadcast(&self) -> broadcast::Receiver<Arc<McpEvent>> {
         self.tx.subscribe()
+    }
+
+    /// Evaluates both session event subscription and affected subscribed resources under one lock.
+    pub fn sse_match(&self, session_id: &str, source: &str, explicit_sources: Option<&[String]>) -> (bool, Vec<&'static str>) {
+        let candidates = crate::resources::uris_for_event_source(source);
+        let explicit_allowed = explicit_sources.map(|list| sources_match_list(list, source));
+        let norm = explicit_allowed.is_none().then(|| normalize_source(source));
+        let st = self.state.lock();
+        let Some(sub) = st.sessions.get(session_id) else {
+            return (explicit_allowed.unwrap_or(false), Vec::new());
+        };
+        let allowed = explicit_allowed.unwrap_or_else(|| {
+            let s = norm.as_deref().unwrap_or("");
+            sub.sources.contains("*") || sub.sources.contains(s)
+        });
+        let resources = candidates
+            .into_iter()
+            .filter(|uri| sub.resource_subs.contains(*uri))
+            .collect();
+        (allowed, resources)
     }
 
     pub fn subscribe_resource(&self, session_id: &str, uri: &str) -> Vec<String> {
@@ -356,7 +395,7 @@ impl EventBus {
     }
 
     /// Replays buffered events with `seq > after_seq` (for Streamable HTTP `Last-Event-ID`).
-    pub fn replay_after(&self, after_seq: u64, limit: usize) -> Vec<McpEvent> {
+    pub fn replay_after(&self, after_seq: u64, limit: usize) -> Vec<Arc<McpEvent>> {
         let st = self.state.lock();
         st.buffer
             .iter()
@@ -369,7 +408,7 @@ impl EventBus {
     /// Waits up to `timeout` for the first event with `seq > after` matching `filter`.
     /// Subscribes to the broadcast channel before scanning the buffer so no events
     /// published concurrently can be missed.
-    pub async fn wait_for(&self, filter: &EventFilter, after: u64, timeout: Duration) -> Option<McpEvent> {
+    pub async fn wait_for(&self, filter: &EventFilter, after: u64, timeout: Duration) -> Option<Arc<McpEvent>> {
         let mut rx = self.tx.subscribe();
         if let Some(hit) = self.find_buffered(filter, after) {
             return Some(hit);
@@ -396,7 +435,7 @@ impl EventBus {
         }
     }
 
-    fn find_buffered(&self, filter: &EventFilter, after: u64) -> Option<McpEvent> {
+    fn find_buffered(&self, filter: &EventFilter, after: u64) -> Option<Arc<McpEvent>> {
         let st = self.state.lock();
         st.buffer.iter().find(|ev| ev.seq > after && filter.matches(ev)).cloned()
     }
@@ -548,5 +587,36 @@ mod tests {
         assert_eq!(bus.unsubscribe_resource("s1", "aurora://chat/recent"), Vec::<String>::new());
         assert!(bus.remove_session("s1"));
         assert!(!bus.remove_session("s1"));
+    }
+
+    #[test]
+    fn event_filter_matches_nested_leaves_and_sse_match_combines_checks() {
+        let ev = McpEvent {
+            seq: 1,
+            timestamp_ms: 42,
+            source: "chat".into(),
+            event_type: "ChatFromSimulator".into(),
+            data: json!({
+                "meta": { "nestedKey": true, "count": 9001, "tags": ["Alpha", "Beta"] },
+                "empty": null
+            }),
+        };
+        for needle in ["nestedkey", "TRUE", "9001", "beta", "NULL"] {
+            let f = EventFilter {
+                contains_text: Some(needle.into()),
+                ..Default::default()
+            };
+            assert!(f.matches(&ev), "expected filter to match '{needle}'");
+        }
+
+        let bus = EventBus::new();
+        bus.subscribe_session("sess-x", "chat");
+        bus.subscribe_resource("sess-x", "aurora://chat/recent");
+        let (allowed, uris) = bus.sse_match("sess-x", "chat", None);
+        assert!(allowed);
+        assert_eq!(uris, vec!["aurora://chat/recent"]);
+        let (allowed_other, uris_other) = bus.sse_match("sess-x", "radar", Some(&["*".into()]));
+        assert!(allowed_other);
+        assert!(uris_other.is_empty());
     }
 }

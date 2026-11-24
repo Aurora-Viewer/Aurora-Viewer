@@ -368,9 +368,19 @@ fn media_faces_to_json(data: &crate::media::entry::ObjectMediaData) -> Value {
     json!(entries)
 }
 
+fn ray_sphere_may_hit(origin: Vec3, dir: Vec3, center: Vec3, radius: f32, max_dist: f32) -> bool {
+    let to = center - origin;
+    let proj = to.dot(dir);
+    if proj + radius < 0.0 || proj - radius > max_dist {
+        return false;
+    }
+    let perp_sq = (to.length_squared() - proj * proj).max(0.0);
+    perp_sq <= radius * radius
+}
+
 impl App {
     pub(super) fn handle_mcp_raycast(
-        &self,
+        &mut self,
         mode: &str,
         origin_arg: Option<[f32; 3]>,
         target_arg: Option<[f32; 3]>,
@@ -464,16 +474,23 @@ impl App {
             }
         }
 
-        // 2. OBB fallback over world.objects (essential for headless/DemoSim + objects not yet in sceneBVH).
-        for (idx, obj) in self.world.objects.iter() {
-            if tested_slots.contains(&idx) {
-                continue;
+        let obb_hit = |obj: &crate::world::objects::Object, cap: f32| {
+            let radius = obj.scale.length() * 0.5 + 1e-3;
+            if !ray_sphere_may_hit(origin, dir, obj.position, radius, cap) {
+                return None;
             }
-            if obj.is_avatar() {
-                if !include_avatars || obj.full_id == self.world.agent_id {
+            ray_box_hit(origin, dir, obj.position, obj.rotation, obj.scale * 0.5)
+        };
+
+        // 2a. Avatars (using indexed avatar slots instead of scanning all prims).
+        if include_avatars {
+            self.world.objects.refresh_labelled();
+            for (idx, obj) in self.world.objects.avatars() {
+                if tested_slots.contains(&idx) || obj.full_id == self.world.agent_id {
                     continue;
                 }
-                if let Some((dist, normal)) = ray_box_hit(origin, dir, obj.position, obj.rotation, obj.scale * 0.5) {
+                let cap = best.as_ref().map_or(max_distance, |b| b.distance);
+                if let Some((dist, normal)) = obb_hit(obj, cap) {
                     consider(
                         &mut best,
                         HitCandidate {
@@ -491,12 +508,19 @@ impl App {
                         },
                     );
                 }
+            }
+        }
+
+        // 2b. OBB fallback over unindexed world objects (headless/DemoSim + not yet in PickIndex).
+        for (idx, obj) in self.world.objects.iter() {
+            if obj.is_avatar() || tested_slots.contains(&idx) || self.scene.pick.is_indexed(idx) {
                 continue;
             }
             if !include_phantom && (obj.update_flags & crate::build::edits::FLAGS_PHANTOM) != 0 {
                 continue;
             }
-            if let Some((dist, normal)) = ray_box_hit(origin, dir, obj.position, obj.rotation, obj.scale * 0.5) {
+            let cap = best.as_ref().map_or(max_distance, |b| b.distance);
+            if let Some((dist, normal)) = obb_hit(obj, cap) {
                 consider(
                     &mut best,
                     HitCandidate {

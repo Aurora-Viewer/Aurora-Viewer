@@ -5,9 +5,11 @@
 //! automatically restored when the lease is released or expires.
 
 use crate::bridge::{McpError, RollbackAction};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -183,6 +185,31 @@ pub struct LeaseManager {
     inner: Mutex<Option<ActiveLease>>,
     shared: Mutex<Shared>,
     auto_acquire: bool,
+    has_lease: AtomicBool,
+    has_shared_ui: AtomicBool,
+}
+
+struct SharedSyncGuard<'a>(MutexGuard<'a, Shared>, &'a AtomicBool);
+
+impl Deref for SharedSyncGuard<'_> {
+    type Target = Shared;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SharedSyncGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for SharedSyncGuard<'_> {
+    fn drop(&mut self) {
+        let active = self.0.mode == HumanMode::Hold || !self.0.queue.is_empty() || self.0.asking.is_some();
+        self.1.store(active, Ordering::Release);
+    }
 }
 
 impl Default for LeaseManager {
@@ -193,10 +220,11 @@ impl Default for LeaseManager {
 
 impl LeaseManager {
     pub fn new(auto_acquire: bool) -> Self {
+        let mode = HumanMode::from_env();
         Self {
             inner: Mutex::new(None),
             shared: Mutex::new(Shared {
-                mode: HumanMode::from_env(),
+                mode,
                 queue: Vec::new(),
                 asking: None,
                 approved: None,
@@ -204,7 +232,23 @@ impl LeaseManager {
                 ask_deny_on_timeout: false,
             }),
             auto_acquire,
+            has_lease: AtomicBool::new(false),
+            has_shared_ui: AtomicBool::new(mode == HumanMode::Hold),
         }
+    }
+
+    fn lock_shared(&self) -> SharedSyncGuard<'_> {
+        SharedSyncGuard(self.shared.lock(), &self.has_shared_ui)
+    }
+
+    fn sync_has_lease(&self, guard: &Option<ActiveLease>, now: Instant) {
+        let active = guard.as_ref().is_some_and(|l| !l.is_expired(now));
+        self.has_lease.store(active, Ordering::Release);
+    }
+
+    /// Lock-free hint indicating whether the agent control bar may need to draw.
+    pub fn has_ui_activity(&self) -> bool {
+        self.has_lease.load(Ordering::Acquire) || self.has_shared_ui.load(Ordering::Acquire)
     }
 
     /// Returns any rollbacks from an expired lease so the caller can dispatch
@@ -214,6 +258,7 @@ impl LeaseManager {
         let now = Instant::now();
         if guard.as_ref().is_some_and(|l| l.is_expired(now)) {
             let expired = guard.take()?;
+            self.sync_has_lease(&guard, now);
             let mut actions = expired.rollbacks;
             actions.reverse();
             return Some((expired.lease_id, actions));
@@ -253,7 +298,7 @@ impl LeaseManager {
                 return Ok(AcquireOutcome::Granted(snap, rb));
             }
         }
-        let mut sh = self.shared.lock();
+        let mut sh = self.lock_shared();
         sh.queue.retain(|w| now.duration_since(w.last_seen) < WAITER_STALE);
         sh.not_now.retain(|_, at| now.duration_since(*at) < NOT_NOW_FOR);
         if sh
@@ -375,40 +420,40 @@ impl LeaseManager {
     pub fn view(&self) -> ControlView {
         let now = Instant::now();
         let active = self.status();
-        let sh = self.shared.lock();
+        let mut sh = self.lock_shared();
+        sh.queue.retain(|w| now.duration_since(w.last_seen) < WAITER_STALE);
         let queued = |w: &Waiter| QueuedAgent {
             owner: w.owner.clone(),
             purpose: w.purpose.clone(),
             ttl_seconds: w.ttl_secs,
             waiting_secs: now.duration_since(w.since).as_secs(),
         };
-        let live: Vec<&Waiter> = sh.queue.iter().filter(|w| now.duration_since(w.last_seen) < WAITER_STALE).collect();
         let asking = sh
             .asking
             .as_ref()
             .filter(|_| sh.mode == HumanMode::Ask && active.is_none())
-            .and_then(|(o, at)| live.iter().find(|w| &w.owner == o).map(|w| (queued(w), *at)));
+            .and_then(|(o, at)| sh.queue.iter().find(|w| &w.owner == o).map(|w| (queued(w), *at)));
         ControlView {
             mode: sh.mode,
             asking_auto_in_secs: asking
                 .as_ref()
                 .map(|(_, at)| ASK_TIMEOUT.saturating_sub(now.duration_since(*at)).as_secs()),
             asking: asking.map(|(q, _)| q),
-            queue: live.iter().map(|w| queued(w)).collect(),
+            queue: sh.queue.iter().map(queued).collect(),
             active,
         }
     }
 
     /// The person allowed `owner` (Allow on the card).
     pub fn human_allow(&self, owner: &str) {
-        let mut sh = self.shared.lock();
+        let mut sh = self.lock_shared();
         sh.not_now.remove(owner);
         sh.approved = Some((owner.to_owned(), Instant::now()));
     }
 
     /// The person said Not now: `owner` waits NOT_NOW_FOR, behind the others.
     pub fn human_not_now(&self, owner: &str) {
-        let mut sh = self.shared.lock();
+        let mut sh = self.lock_shared();
         sh.not_now.insert(owner.to_owned(), Instant::now());
         if sh.asking.as_ref().is_some_and(|(o, _)| o == owner) {
             sh.asking = None;
@@ -422,8 +467,13 @@ impl LeaseManager {
     /// The person took the viewer back: the lease ends now (its rollbacks are
     /// returned to apply) and the mode becomes Hold until they change it.
     pub fn human_take_back(&self) -> Vec<RollbackAction> {
-        let taken = self.inner.lock().take();
-        self.shared.lock().mode = HumanMode::Hold;
+        let taken = {
+            let mut guard = self.inner.lock();
+            let taken = guard.take();
+            self.sync_has_lease(&guard, Instant::now());
+            taken
+        };
+        self.lock_shared().mode = HumanMode::Hold;
         taken.map_or_else(Vec::new, |l| {
             let mut rb = l.rollbacks;
             rb.reverse();
@@ -432,7 +482,7 @@ impl LeaseManager {
     }
 
     pub fn set_mode(&self, mode: HumanMode) {
-        let mut sh = self.shared.lock();
+        let mut sh = self.lock_shared();
         sh.mode = mode;
         if mode != HumanMode::Ask {
             sh.asking = None;
@@ -521,6 +571,7 @@ impl LeaseManager {
         };
         let snap = lease.snapshot(now);
         *guard = Some(lease);
+        self.sync_has_lease(&guard, now);
         Ok((snap, expired_rollbacks))
     }
 
@@ -530,6 +581,7 @@ impl LeaseManager {
         let mut guard = self.inner.lock();
         let now = Instant::now();
         let Some(active) = guard.as_ref() else {
+            self.sync_has_lease(&guard, now);
             return Ok((None, Vec::new()));
         };
         if !active.is_expired(now) && !lease_id.is_some_and(|id| !id.is_empty() && id == active.lease_id) {
@@ -539,6 +591,7 @@ impl LeaseManager {
             });
         }
         let released = guard.take().expect("checked active lease");
+        self.sync_has_lease(&guard, now);
         let snap = released.snapshot(now);
         let mut rollbacks = released.rollbacks;
         rollbacks.reverse();
@@ -549,6 +602,7 @@ impl LeaseManager {
     pub fn status(&self) -> Option<LeaseSnapshot> {
         let guard = self.inner.lock();
         let now = Instant::now();
+        self.sync_has_lease(&guard, now);
         guard.as_ref().filter(|l| !l.is_expired(now)).map(|l| l.snapshot(now))
     }
 
@@ -560,6 +614,7 @@ impl LeaseManager {
         if guard.as_ref().is_some_and(|l| l.is_expired(now)) {
             *guard = None;
         }
+        self.sync_has_lease(&guard, now);
         if let Some(active) = guard.as_ref() {
             if !lease_id.is_some_and(|id| !id.is_empty() && id == active.lease_id) {
                 return Err(McpError::LeaseConflict {
@@ -591,6 +646,7 @@ impl LeaseManager {
                 rollbacks: Vec::new(),
                 last_used: now,
             });
+            self.sync_has_lease(&guard, now);
             return Ok(lease_id);
         }
         Err(McpError::NoActiveLease)

@@ -41,16 +41,26 @@ pub fn hash_args_sha256(args: &Value) -> String {
 struct AuditState {
     next_seq: u64,
     entries: VecDeque<AuditEntry>,
-    file_path: Option<PathBuf>,
 }
 
 pub struct AuditLog {
     state: Mutex<AuditState>,
+    file_tx: Option<std::sync::mpsc::SyncSender<String>>,
+    writer_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Default for AuditLog {
     fn default() -> Self {
         Self::from_env()
+    }
+}
+
+impl Drop for AuditLog {
+    fn drop(&mut self) {
+        drop(self.file_tx.take());
+        if let Some(handle) = self.writer_thread.take() {
+            let _ = handle.join();
+        }
     }
 }
 
@@ -63,12 +73,24 @@ impl AuditLog {
     }
 
     pub fn new(file_path: Option<PathBuf>) -> Self {
+        let (file_tx, writer_thread) = match file_path {
+            Some(path) => {
+                let (tx, rx) = std::sync::mpsc::sync_channel::<String>(1024);
+                let handle = std::thread::Builder::new()
+                    .name("aurora-mcp-audit".to_owned())
+                    .spawn(move || audit_writer_loop(path, rx))
+                    .ok();
+                (handle.is_some().then_some(tx), handle)
+            }
+            None => (None, None),
+        };
         Self {
             state: Mutex::new(AuditState {
                 next_seq: 0,
                 entries: VecDeque::with_capacity(MAX_AUDIT_ENTRIES),
-                file_path,
             }),
+            file_tx,
+            writer_thread,
         }
     }
 
@@ -86,33 +108,31 @@ impl AuditLog {
     ) -> AuditEntry {
         let timestamp_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         let args_sha256 = hash_args_sha256(args);
-        let mut st = self.state.lock();
-        st.next_seq += 1;
-        let entry = AuditEntry {
-            seq: st.next_seq,
-            timestamp_ms,
-            session_id: session_id.to_owned(),
-            tool: tool.to_owned(),
-            args_sha256,
-            mutating,
-            dry_run,
-            outcome: outcome.to_owned(),
-            duration_ms,
-            error,
+        let entry = {
+            let mut st = self.state.lock();
+            st.next_seq += 1;
+            let entry = AuditEntry {
+                seq: st.next_seq,
+                timestamp_ms,
+                session_id: session_id.to_owned(),
+                tool: tool.to_owned(),
+                args_sha256,
+                mutating,
+                dry_run,
+                outcome: outcome.to_owned(),
+                duration_ms,
+                error,
+            };
+            if st.entries.len() >= MAX_AUDIT_ENTRIES {
+                st.entries.pop_front();
+            }
+            st.entries.push_back(entry.clone());
+            entry
         };
-        if st.entries.len() >= MAX_AUDIT_ENTRIES {
-            st.entries.pop_front();
-        }
-        st.entries.push_back(entry.clone());
-        if let Some(path) = &st.file_path {
-            if let Some(dir) = path.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path)
-                && let Ok(line) = serde_json::to_string(&entry)
-            {
-                let _ = writeln!(f, "{line}");
-            }
+        if let Some(tx) = &self.file_tx
+            && let Ok(line) = serde_json::to_string(&entry)
+        {
+            let _ = tx.try_send(line);
         }
         entry
     }
@@ -139,6 +159,47 @@ impl AuditLog {
             .cloned()
             .collect();
         (matched, st.next_seq)
+    }
+}
+
+fn write_audit_line(
+    path: &std::path::Path,
+    dir_created: &mut bool,
+    writer: &mut Option<std::io::BufWriter<std::fs::File>>,
+    line: &str,
+) {
+    if !*dir_created {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        *dir_created = true;
+    }
+    if writer.is_none()
+        && let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(path)
+    {
+        *writer = Some(std::io::BufWriter::new(f));
+    }
+    if let Some(w) = writer.as_mut()
+        && writeln!(w, "{line}").is_err()
+    {
+        *writer = None;
+    }
+}
+
+fn audit_writer_loop(path: PathBuf, rx: std::sync::mpsc::Receiver<String>) {
+    let mut dir_created = false;
+    let mut writer: Option<std::io::BufWriter<std::fs::File>> = None;
+    while let Ok(line) = rx.recv() {
+        write_audit_line(&path, &mut dir_created, &mut writer, &line);
+        while let Ok(next_line) = rx.try_recv() {
+            write_audit_line(&path, &mut dir_created, &mut writer, &next_line);
+        }
+        if let Some(w) = writer.as_mut() {
+            let _ = w.flush();
+        }
+    }
+    if let Some(w) = writer.as_mut() {
+        let _ = w.flush();
     }
 }
 
@@ -179,5 +240,22 @@ mod tests {
         assert_eq!(total, (MAX_AUDIT_ENTRIES + 28) as u64);
         assert_eq!(all_capped.len(), 200);
         assert!(all_capped[0].seq > 20);
+    }
+
+    #[test]
+    fn audit_writes_jsonl_to_file_without_blocking() {
+        let dir = std::env::temp_dir().join(format!("aurora-audit-test-{}", uuid::Uuid::new_v4().simple()));
+        let path = dir.join("nested").join("audit.jsonl");
+        {
+            let log = AuditLog::new(Some(path.clone()));
+            log.record("s1", "prim_rez_new", &json!({ "a": 1 }), true, false, "ok", 5, None);
+            log.record("s1", "prim_delete", &json!({ "a": 2 }), true, false, "ok", 7, None);
+        }
+        let content = std::fs::read_to_string(&path).expect("audit file written");
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"tool\":\"prim_rez_new\""));
+        assert!(lines[1].contains("\"tool\":\"prim_delete\""));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

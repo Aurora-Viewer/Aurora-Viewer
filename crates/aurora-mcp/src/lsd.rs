@@ -56,9 +56,26 @@ impl LsdEntry {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct LinksetDataStore {
     entries: BTreeMap<String, LsdEntry>,
+    #[serde(skip)]
+    used_bytes: usize,
+}
+
+impl<'de> Deserialize<'de> for LinksetDataStore {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            entries: BTreeMap<String, LsdEntry>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let used_bytes = raw.entries.iter().map(|(k, v)| v.byte_cost(k)).sum();
+        Ok(Self {
+            entries: raw.entries,
+            used_bytes,
+        })
+    }
 }
 
 impl LinksetDataStore {
@@ -67,11 +84,11 @@ impl LinksetDataStore {
     }
 
     pub fn used_bytes(&self) -> usize {
-        self.entries.iter().map(|(k, v)| v.byte_cost(k)).sum()
+        self.used_bytes
     }
 
     pub fn available_bytes(&self) -> usize {
-        LSD_MAX_BYTES.saturating_sub(self.used_bytes())
+        LSD_MAX_BYTES.saturating_sub(self.used_bytes)
     }
 
     pub fn count_keys(&self) -> usize {
@@ -80,41 +97,52 @@ impl LinksetDataStore {
 
     pub fn reset(&mut self) {
         self.entries.clear();
+        self.used_bytes = 0;
     }
 
     pub fn write(&mut self, key: &str, value: &str, passphrase: Option<&str>) -> i32 {
+        let pass_hash = passphrase.filter(|p| !p.is_empty()).map(hash_passphrase);
+        self.write_with_hash(key, value, pass_hash.as_deref())
+    }
+
+    fn write_with_hash(&mut self, key: &str, value: &str, pass_hash: Option<&str>) -> i32 {
         if key.is_empty() {
             return LINKSETDATA_ENOKEY;
         }
-        let pass = passphrase.filter(|p| !p.is_empty());
-        let pass_hash = pass.map(hash_passphrase);
 
-        if let Some(existing) = self.entries.get(key) {
-            if existing.pass_hash != pass_hash {
+        let old_cost = if let Some(existing) = self.entries.get(key) {
+            if existing.pass_hash.as_deref() != pass_hash {
                 return LINKSETDATA_EPROTECTED;
             }
+            let cost = existing.byte_cost(key);
             if value.is_empty() {
                 self.entries.remove(key);
+                self.used_bytes = self.used_bytes.saturating_sub(cost);
                 return LINKSETDATA_OK;
             }
             if existing.value == value {
                 return LINKSETDATA_NOUPDATE;
             }
+            cost
         } else if value.is_empty() {
             return LINKSETDATA_NOTFOUND;
-        }
-
-        let candidate = LsdEntry {
-            value: value.to_owned(),
-            pass_hash,
+        } else {
+            0
         };
-        let old_cost = self.entries.get(key).map_or(0, |e| e.byte_cost(key));
-        let new_cost = candidate.byte_cost(key);
-        let next_used = self.used_bytes().saturating_sub(old_cost) + new_cost;
+
+        let new_cost = key.len() + value.len() + if pass_hash.is_some() { 32 } else { 0 };
+        let next_used = self.used_bytes.saturating_sub(old_cost) + new_cost;
         if next_used > LSD_MAX_BYTES {
             return LINKSETDATA_EMEMORY;
         }
-        self.entries.insert(key.to_owned(), candidate);
+        self.used_bytes = next_used;
+        self.entries.insert(
+            key.to_owned(),
+            LsdEntry {
+                value: value.to_owned(),
+                pass_hash: pass_hash.map(str::to_owned),
+            },
+        );
         LINKSETDATA_OK
     }
 
@@ -127,7 +155,9 @@ impl LinksetDataStore {
         if existing.pass_hash != pass_hash {
             return LINKSETDATA_EPROTECTED;
         }
-        self.entries.remove(key);
+        if let Some(removed) = self.entries.remove(key) {
+            self.used_bytes = self.used_bytes.saturating_sub(removed.byte_cost(key));
+        }
         LINKSETDATA_OK
     }
 
@@ -231,10 +261,11 @@ impl LinksetDataStore {
                     }));
                 }
                 LsdOperation::ImportJson { entries, passphrase } => {
+                    let pass_hash = passphrase.as_deref().filter(|p| !p.is_empty()).map(hash_passphrase);
                     let mut written = 0usize;
                     let mut failed = 0usize;
                     for (k, v) in entries {
-                        let rc = self.write(k, v, passphrase.as_deref());
+                        let rc = self.write_with_hash(k, v, pass_hash.as_deref());
                         if rc == LINKSETDATA_OK || rc == LINKSETDATA_NOUPDATE {
                             written += 1;
                         } else {
@@ -275,7 +306,7 @@ pub fn stress_test_payload(payload: &Value, protected_keys: bool, filter_regex: 
     let mut store = LinksetDataStore::new();
     let mut oversized_values = Vec::new();
     let mut rejected_keys = Vec::new();
-    let pass = protected_keys.then_some("stress-test-passphrase");
+    let pass_hash = protected_keys.then(|| hash_passphrase("stress-test-passphrase"));
 
     match payload {
         Value::Object(map) => {
@@ -291,7 +322,7 @@ pub fn stress_test_payload(payload: &Value, protected_keys: bool, filter_regex: 
                         "warning": "exceeds safe 32 KiB LSL Mono single-string threshold"
                     }));
                 }
-                let rc = store.write(k, &val_str, pass);
+                let rc = store.write_with_hash(k, &val_str, pass_hash.as_deref());
                 if rc != LINKSETDATA_OK && rc != LINKSETDATA_NOUPDATE {
                     rejected_keys.push(json!({
                         "key": k,
@@ -303,7 +334,7 @@ pub fn stress_test_payload(payload: &Value, protected_keys: bool, filter_regex: 
         }
         other => {
             let serialized = serde_json::to_string(other).unwrap_or_default();
-            let rc = store.write("root", &serialized, pass);
+            let rc = store.write_with_hash("root", &serialized, pass_hash.as_deref());
             if rc != LINKSETDATA_OK {
                 rejected_keys.push(json!({
                     "key": "root",
@@ -366,5 +397,44 @@ mod tests {
         assert_eq!(report["fits_in_128kib"], true);
         assert_eq!(report["stored_keys"], 3);
         assert_eq!(report["regex_matched_keys"], 2);
+    }
+
+    #[test]
+    fn mcp_linkset_data_used_bytes_tracking_matches_exact_sum() {
+        let exact_sum = |s: &LinksetDataStore| -> usize { s.entries.iter().map(|(k, v)| v.byte_cost(k)).sum() };
+
+        let mut store = LinksetDataStore::new();
+        assert_eq!(store.used_bytes(), 0);
+        assert_eq!(store.write("a", "123", None), LINKSETDATA_OK);
+        assert_eq!(store.used_bytes(), exact_sum(&store));
+
+        // Overwrite protected & unprotected entries
+        assert_eq!(store.write("a", "123456", None), LINKSETDATA_OK);
+        assert_eq!(store.write("a", "123456", None), LINKSETDATA_NOUPDATE);
+        assert_eq!(store.write("p", "sec", Some("pw")), LINKSETDATA_OK);
+        assert_eq!(store.used_bytes(), exact_sum(&store));
+
+        // Delete via empty value and explicit delete
+        assert_eq!(store.write("a", "", None), LINKSETDATA_OK);
+        assert_eq!(store.used_bytes(), exact_sum(&store));
+        assert_eq!(store.delete("p", Some("pw")), LINKSETDATA_OK);
+        assert_eq!(store.used_bytes(), 0);
+
+        // Bulk import + overflow guard + serde roundtrip + reset
+        store.apply_operations(&[LsdOperation::ImportJson {
+            entries: [
+                ("k1".into(), "vv".into()),
+                ("k2".into(), "wwww".into()),
+                ("big".into(), "x".repeat(LSD_MAX_BYTES + 10)),
+            ]
+            .into_iter()
+            .collect(),
+            passphrase: Some("batch-pw".into()),
+        }]);
+        assert_eq!(store.used_bytes(), exact_sum(&store));
+        let roundtrip: LinksetDataStore = serde_json::from_value(serde_json::to_value(&store).unwrap()).unwrap();
+        assert_eq!(roundtrip.used_bytes(), exact_sum(&roundtrip));
+        store.reset();
+        assert_eq!(store.used_bytes(), 0);
     }
 }
