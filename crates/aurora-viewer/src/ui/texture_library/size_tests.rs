@@ -692,6 +692,10 @@ fn opening_a_resource_while_a_material_save_question_waits_keeps_the_question_in
     f.settle();
     assert_eq!(f.resources.preview_groups[0].selected, ids[1]);
     assert!(f.resources.windows[1].editor.as_ref().unwrap().confirm_close);
+    // the asking material itself opened again: the first one still waits
+    f.resources.open_preview(&f.ctx, &f.world, ids[1]);
+    f.settle();
+    assert_eq!(f.resources.preview_groups[0].selected, ids[1]);
     let _ = f.label(aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes"));
     f.click_label(aurora_i18n::tr!("common-cancel"));
     assert_eq!(f.resources.preview_groups[0].selected, ids[0], "then the one asked for");

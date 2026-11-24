@@ -489,7 +489,13 @@ impl LibraryUi {
             let asking = windows
                 .iter()
                 .any(|window| window.id == group.selected && window.editor.as_ref().is_some_and(|editor| editor.confirm_close));
-            if let Some(focus) = self.focus_preview.filter(|id| group.items.contains(id)) {
+            // (a focus on the asking tab itself, a failed save or the item
+            // opened again, keeps the request already waiting, as
+            // `preview_tabs::Group::select` does)
+            if let Some(focus) = self
+                .focus_preview
+                .filter(|id| group.items.contains(id) && !(asking && *id == group.selected))
+            {
                 group.pending = Some(focus);
             }
             if !asking {

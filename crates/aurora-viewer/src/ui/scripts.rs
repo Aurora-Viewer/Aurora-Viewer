@@ -1057,6 +1057,13 @@ impl Editors {
                         }
                     });
                 });
+                // a click in the script's window, or another script of its
+                // group raised from the inventory (`expand_floater`), raises
+                // that window: the question stays above it, never hidden
+                let prompt = format!("{id}_close");
+                if crate::ui::widgets::floater_above(ctx, &window_id, &prompt) {
+                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(&prompt)));
+                }
                 if !prompt_open {
                     e.close_prompt = false;
                     e.close_after_save = false;
@@ -1332,6 +1339,15 @@ mod tests {
         assert!(editors.tab_hosts.view(targets[0].item).unwrap().active());
         let question = aurora_i18n::tr!("ui-inventory-dialogs-this-document-has-unsaved-changes");
         assert!(drawn(&ctx, &mut editors, question));
+        // in front of the group's window, which the raise brought forward
+        let target = editors.documents[0].target;
+        let prompt = format!("script_editor_{}_{}_close", target.object, target.item);
+        let host = editors.documents[0].host_window.clone().expect("in a tab group");
+        settle(&ctx, &mut editors);
+        assert!(
+            !crate::ui::widgets::floater_above(&ctx, &host, &prompt),
+            "the question stays above its group's window"
+        );
         // answered (the prompt's Cancel clears it)
         editors.documents[0].close_prompt = false;
         settle(&ctx, &mut editors);
