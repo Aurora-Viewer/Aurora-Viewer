@@ -25113,8 +25113,16 @@ impl ApplicationHandler for App {
         if let WindowEvent::KeyboardInput { event: key, .. } = &event
             && let Some(text) = self.ctrl_alt_text(key)
         {
+            // typing like any other: activity for auto-away, and the pointer
+            // hidden over the field
+            self.last_input = Instant::now();
+            let held = self.cursor_hold.held() || self.clicks.scripted();
             if let Some(graphics) = &mut self.gfx {
-                graphics.egui_state.egui_input_mut().events.push(egui::Event::Text(text));
+                let events = &mut graphics.egui_state.egui_input_mut().events;
+                events.push(egui::Event::Text(text));
+                if !held {
+                    self.typing_pointer.on_text(&self.egui_ctx, self.cursor_pos, events);
+                }
             }
             return;
         }
