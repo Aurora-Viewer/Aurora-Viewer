@@ -112,6 +112,39 @@ pub(super) fn ray_may_hit(g: &super::ObjGpu, ray: (Vec3, Vec3)) -> bool {
     to.length_squared() - along * along <= r * r
 }
 
+/// How far along a ray from `eye` a click can select `g`: up to `limit`
+/// (the surface drawn under the cursor) when the GPU draws it with the draw
+/// distance `far`, its bounds coming within it (cull.wgsl, `d - r > eye.w`),
+/// and not at all when they do not. Without bounds yet, the draw distance
+/// bounds it too.
+pub(super) fn selection_reach(g: &super::ObjGpu, eye: Vec3, far: f32, limit: f32) -> Option<f32> {
+    if g.radius <= 0.0 {
+        Some(limit.min(far))
+    } else {
+        (g.center.distance(eye) - g.radius <= far).then_some(limit)
+    }
+}
+
+/// How far beyond the depth read under the cursor a surface found `t` along
+/// the click's ray `dir`, facing `normal`, is still the surface drawn there.
+/// The depth is that of the render texel under the cursor, which can lie up
+/// to about a texel beside the ray: on a surface seen at incidence θ that
+/// moves it `aside · tan θ` along the ray, more the farther away it is. With
+/// FSR, faces seen at an angle 70 to 120 m away missed the fixed 6 cm by 9
+/// to 28 cm, one click in ten, and the click fell through to the land
+/// (#4869). 6 cm still bounds a surface seen face-on and anything close by;
+/// a surface seen edge-on takes what one at about 78° does.
+pub(super) fn depth_slack(t: f32, dir: Vec3, normal: Vec3) -> f32 {
+    /// Close by, and on a surface facing the camera.
+    const NEAR: f32 = 0.06;
+    /// Metres beside the ray per metre of distance: about two texels with
+    /// the default 60° view on 450 rendered rows (a 900-row window drawn at
+    /// half its size).
+    const ASIDE: f32 = 0.005;
+    let c = dir.dot(normal).abs().clamp(0.2, 1.0);
+    NEAR.max(t * ASIDE * (1.0 - c * c).sqrt() / c)
+}
+
 /// A mesh without a skin worn by an avatar. It is placed by its attachment
 /// point like a worn prim, but the GPU draws its faces at a newer pose: the
 /// CPU only answers for the faces the GPU does not draw, those at alpha 0
@@ -444,7 +477,16 @@ impl Scene {
             depth
         };
         if let Some(ray) = ray {
-            let limit = point.map_or(far, |p| (p - ray.0).dot(ray.1) + 0.06).min(far);
+            // Up to the surface drawn under the cursor, wherever it is: the
+            // GPU draws an object whose bounds reach into the draw distance
+            // (cull.wgsl), so a large one shows surfaces beyond it, and a
+            // click there selected nothing (#4869). Only objects the GPU
+            // draws at all take it. With no depth (the sky), the draw
+            // distance bounds the ray as before. LLPickInfo::fetchResults
+            // (indra/newview/llviewerwindow.cpp) casts 512 m, whatever the
+            // draw distance. A hit takes `depth_slack` beyond the depth.
+            let depth_t = point.map(|p| (p - ray.0).dot(ray.1));
+            let limit = depth_t.unwrap_or(far);
             let hits = ray_hits(&candidates, |&idx| {
                 let g = self.gpu.get(idx)?;
                 let o = world.objects.get(idx)?;
@@ -458,8 +500,10 @@ impl Scene {
                 {
                     return None;
                 }
+                let reach = selection_reach(g, ray.0, far, limit)?;
                 let hit = self.face_hit_mode(world, idx, ray, now, true, mode)?;
-                (hit.t.is_finite() && hit.t <= limit).then_some((hit.t, idx))
+                let reach = reach + depth_t.map_or(0.0, |_| depth_slack(hit.t, ray.1, hit.normal));
+                (hit.t.is_finite() && hit.t <= reach).then_some((hit.t, idx))
             });
             let hit = nearest_hit(hits, |h| *h);
             if let Some((t, idx)) = hit {
@@ -2766,6 +2810,98 @@ pub(crate) mod tests {
         // and a ray that does meet its face still picks it
         let side = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
         assert_eq!(scene.selection_pick(&world, Some(side), None, false, false, 100.0).1, Some(front));
+    }
+
+    #[test]
+    fn a_surface_drawn_beyond_the_draw_distance_is_selected() {
+        // #4869: the GPU draws an object whose bounds reach into the draw
+        // distance, so a large one shows a surface beyond it. A click on
+        // that surface selected nothing in Build and opened the land's menu.
+        let (world, mut scene, front, back) = indexed_scene_with_two_objects();
+        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+            scene.gpu[idx].center = Vec3::new(x, 0.0, 50.0);
+            scene.gpu[idx].radius = 0.75f32.sqrt();
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let front_point = Vec3::new(2.5, 0.0, 50.0);
+        let behind = Vec3::new(6.5, 0.0, 50.0);
+        // The front cube's bounds start at 2.13 m: drawn at 2.4 m, its face at 2.5 m.
+        assert_eq!(
+            scene.left_selection_pick(&world, Some(ray), Some(front_point), true, false, 2.4),
+            (Some(front_point), Some(front))
+        );
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(front_point), false, false, 2.4),
+            (Some(front_point), Some(front))
+        );
+        // At 2 m the front cube is not drawn, a larger one behind it is:
+        // the click goes through the first to the second.
+        scene.gpu[back].radius = 5.5;
+        scene.pick.set(back, super::super::hover::PickEntry::of(&scene.gpu[back]));
+        assert_eq!(
+            scene.left_selection_pick(&world, Some(ray), Some(behind), true, false, 2.0),
+            (Some(behind), Some(back))
+        );
+        assert_eq!(
+            scene.selection_pick(&world, Some(ray), Some(behind), false, false, 2.0),
+            (Some(behind), Some(back))
+        );
+        // The sky: the draw distance still bounds the ray.
+        assert_eq!(scene.left_selection_pick(&world, Some(ray), None, true, false, 2.4), (None, None));
+        assert_eq!(
+            scene.left_selection_pick(&world, Some(ray), None, true, false, 3.0),
+            (Some(front_point), Some(front))
+        );
+    }
+
+    #[test]
+    fn a_far_surface_seen_at_an_angle_is_selected_a_little_behind_its_depth() {
+        // #4869: the depth under the cursor comes from a texel beside the
+        // ray; on faces seen at an angle 70 to 120 m away it read up to
+        // 28 cm short of the face, and the click fell through to the land.
+        let (mut world, scene, front, back) = indexed_scene_with_two_objects();
+        world.objects.get_mut(back).unwrap().position = Vec3::new(7.0, 20.0, 50.0);
+        let y = -0.5 * std::f32::consts::FRAC_1_SQRT_2;
+        let ray = (Vec3::new(0.0, y, 50.0), Vec3::X);
+        let pick = |world: &World, x: f32, short: f32| {
+            // the middle of the face, turned 45° toward -Y
+            let at = Vec3::new(x + y, y, 50.0);
+            let depth = at - Vec3::X * short;
+            (
+                scene.left_selection_pick(world, Some(ray), Some(depth), true, false, 256.0).1,
+                scene.selection_pick(world, Some(ray), Some(depth), false, false, 256.0).1,
+            )
+        };
+        for (x, short, selected) in [
+            // 100 m away: 28 cm short is the face; 3 m short, something
+            // drawn in front of it.
+            (100.0, 0.28, true),
+            (100.0, 3.0, false),
+            // 5 m away the depth is as good as before: 28 cm is in front.
+            (5.0, 0.28, false),
+            (5.0, 0.05, true),
+        ] {
+            let o = world.objects.get_mut(front).unwrap();
+            o.position = Vec3::new(x, 0.0, 50.0);
+            o.rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_4);
+            let want = selected.then_some(front);
+            assert_eq!(pick(&world, x, short), (want, want), "{x} m, {short} m short");
+        }
+    }
+
+    #[test]
+    fn the_depth_slack_grows_with_distance_and_incidence() {
+        let at = |deg: f32| Quat::from_rotation_z(deg.to_radians()) * -Vec3::X;
+        // Face-on, or close by: the 6 cm of before.
+        assert_eq!(super::depth_slack(100.0, Vec3::X, at(0.0)), 0.06);
+        assert_eq!(super::depth_slack(5.0, Vec3::X, at(45.0)), 0.06);
+        // At 45°, 100 m away: half a metre.
+        assert!((super::depth_slack(100.0, Vec3::X, at(45.0)) - 0.5).abs() < 1e-3);
+        // Edge-on (or no normal) takes what about 78° does.
+        let edge = super::depth_slack(100.0, Vec3::X, at(90.0));
+        assert!((edge - 100.0 * 0.005 * 0.96f32.sqrt() / 0.2).abs() < 1e-3);
+        assert_eq!(super::depth_slack(100.0, Vec3::X, Vec3::ZERO), edge);
     }
 
     /// `scene_with_two_objects` with both objects in the pick index, as
