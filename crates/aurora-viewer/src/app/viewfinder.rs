@@ -121,10 +121,15 @@ impl App {
         match (self.viewfinder_on(), self.snapshots.fov_before) {
             (true, None) => {
                 self.snapshots.fov_before = Some(self.settings.camera.fov);
-                self.vf_view_back();
+                // "Keep the framing" off: the photo mode opens on the camera
+                // as it is (the framing is still noted, for when it is on)
+                let keep = self.settings.snapshot.viewfinder.keep_framing;
+                if keep {
+                    self.vf_view_back();
+                }
                 // the tilt it had when it closed, unless the camera controls
                 // tilted the view meanwhile (theirs is kept)
-                if self.camera.roll == 0.0 && self.snapshots.roll_kept != 0.0 {
+                if keep && self.camera.roll == 0.0 && self.snapshots.roll_kept != 0.0 {
                     self.camera.roll = self.snapshots.roll_kept;
                     log::info!("viewfinder: tilt back to {:.1}°", self.camera.roll.to_degrees());
                 }

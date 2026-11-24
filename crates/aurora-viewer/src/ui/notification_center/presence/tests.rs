@@ -167,6 +167,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         fps: 60.0,
         flying: false,
         seated: false,
+        clouds_paused: false,
         ping_ms: 38,
         balance: Some(1000),
         show_balance: true,
@@ -234,6 +235,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         show_transparency: false,
         hidden_types: Default::default(),
         render_type_keys: Default::default(),
+        ui_feature_keys: Default::default(),
         conversation_thumbnails: 0,
     }
 }

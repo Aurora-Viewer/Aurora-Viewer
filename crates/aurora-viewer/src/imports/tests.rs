@@ -93,8 +93,116 @@ fn map_step(map: &LocalImage, options: import_texture::Options, cost: i32) -> St
     }
 }
 
-/// A Bulk upload scaled to 1K, with an entry set to 2K: the map's step key is
-/// built from the capped options, and the failure must still find its material.
+/// A paid texture whose upload is under way, with one more waiting behind it.
+fn paid_texture_batch() -> (Imports, Uuid) {
+    let texture = |name: &str| {
+        let mut entry = Entry::new(name.into(), Ok(Source::Texture(image(16, 16))), Default::default());
+        entry.status = Status::Preparing;
+        entry
+    };
+    let step = |entry: &Entry| Step {
+        key: entry.id,
+        entry: Some(entry.id),
+        kind: Kind::Texture,
+        folder: Uuid::nil(),
+        name: entry.name.clone(),
+        description: String::new(),
+        source: Source::Texture(image(16, 16)),
+        options: Default::default(),
+        sound_options: Default::default(),
+        cost: 10,
+        permissions: Default::default(),
+    };
+    let (failing, waiting) = (texture("failing.png"), texture("waiting.png"));
+    let request = Uuid::new_v4();
+    let imports = Imports {
+        choice: Choice::Bulk,
+        current: Some((request, step(&failing))),
+        queue: VecDeque::from([step(&waiting)]),
+        entries: vec![failing, waiting],
+        ..Default::default()
+    };
+    (imports, request)
+}
+
+#[test]
+fn a_failed_upload_leaves_the_files_added_after_it_priced() {
+    let (mut imports, request) = paid_texture_batch();
+
+    imports.uploaded(request, Err(Error::Unknown));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(
+        !imports.entries[0].selected,
+        "the failed row is left out, like a file that could not be read"
+    );
+    assert!(matches!(imports.entries[1].status, Status::Cancelled));
+
+    imports.entries.push(Entry::new(
+        "later.png".into(),
+        Ok(Source::Texture(image(16, 16))),
+        Default::default(),
+    ));
+    assert_eq!(imports.total(&prices()), Some(10), "only the new file is priced");
+    // "Resume remaining files"
+    imports.entries[1].status = Status::Ready;
+    assert_eq!(
+        imports.total(&prices()),
+        Some(20),
+        "the file that waited behind the failure counts again"
+    );
+}
+
+#[test]
+fn a_material_whose_free_map_failed_is_left_out_while_the_batch_goes_on() {
+    let (mut imports, request, _, _) = failed_map_batch(0);
+
+    imports.uploaded(request, Err(Error::Unknown));
+    assert!(matches!(imports.entries[0].status, Status::Error(_)));
+    assert!(!imports.entries[0].selected);
+    assert!(imports.entries[1].selected && matches!(imports.entries[1].status, Status::Preparing));
+}
+
+#[test]
+fn restoring_a_failed_upload_selects_it_again() {
+    let (mut imports, request) = paid_texture_batch();
+
+    imports.uploaded(request, Err(Error::Unknown));
+    let failed = imports.entries[0].id;
+    imports.restore_draft(failed);
+    assert!(imports.entries[0].selected && matches!(imports.entries[0].status, Status::Ready));
+    assert_eq!(imports.total(&prices()), Some(10));
+}
+
+#[test]
+fn restoring_a_draft_left_unselected_by_hand_keeps_it_unselected() {
+    let mut imports = Imports::default();
+    // (a reload that fails keeps the row's last source and its selection)
+    let mut entry = Entry::new("edited.png".into(), Ok(Source::Texture(image(16, 16))), Default::default());
+    entry.selected = false;
+    entry.status = Status::Error("Invalid".into());
+    let id = entry.id;
+    imports.entries.push(entry);
+    imports.restore_draft(id);
+    assert!(matches!(imports.entries[0].status, Status::Ready));
+    assert!(!imports.entries[0].selected);
+}
+
+#[test]
+fn a_failed_row_selected_by_hand_still_blocks_the_price() {
+    let (mut imports, request) = paid_texture_batch();
+
+    imports.uploaded(request, Err(Error::Unknown));
+    imports.entries.push(Entry::new(
+        "later.png".into(),
+        Ok(Source::Texture(image(16, 16))),
+        Default::default(),
+    ));
+    imports.entries[0].selected = true;
+    assert_eq!(imports.total(&prices()), None);
+}
+
+/// A default material whose cached options still say 2K follows the shared 1K
+/// limit: failure must find it with the same effective map key as the upload.
 fn failed_map_batch(map_cost: i32) -> (Imports, Uuid, Uuid, Uuid) {
     let map = files::local_image((*image(2048, 2048)).clone(), "map".into());
     let options = import_texture::Options {
@@ -124,7 +232,10 @@ fn failed_map_batch(map_cost: i32) -> (Imports, Uuid, Uuid, Uuid) {
     let (dependent_id, independent_id) = (dependent.id, independent.id);
     let mut imports = Imports {
         choice: Choice::Bulk,
-        scale_bulk_1k: true,
+        load_preferences: Preferences {
+            limit_texture_size: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let capped = imports.options(&dependent);
@@ -474,7 +585,7 @@ fn authored_native_animation_opens_the_normal_inspector_without_starting_or_char
 use std::time::{Duration, Instant};
 
 #[test]
-fn texture_size_limit_defaults_off_and_new_rows_capture_the_latest_persisted_choice() {
+fn image_size_limit_defaults_to_2k_and_loaded_textures_and_materials_follow_the_latest_choice() {
     let mut prefs: Preferences = serde_json::from_str(r#"{"max_width":1024,"max_height":1024}"#).expect("old settings");
     assert!(
         !prefs.limit_texture_size,
@@ -485,8 +596,8 @@ fn texture_size_limit_defaults_off_and_new_rows_capture_the_latest_persisted_cho
     let (jobs, _results) = crate::scene::jobs::Jobs::new();
     let mut imports = Imports::default();
     for limit in [false, true, false] {
-        let previous: Vec<_> = imports.entries.iter().map(|entry| entry.options).collect();
-        imports.load_preferences = prefs.clone();
+        let previous = imports.entries.len();
+        imports.sync_image_limits(&prefs);
         let request = Uuid::new_v4();
         imports.pending_files = Some(request);
         let loaded = vec![
@@ -509,39 +620,423 @@ fn texture_size_limit_defaults_off_and_new_rows_capture_the_latest_persisted_cho
         ];
         imports.tx.send(Worker::Loaded(request, loaded)).expect("loaded files");
         // The user can change the choice while the file worker is running.
-        imports.load_preferences.limit_texture_size = limit;
+        prefs.limit_texture_size = limit;
+        imports.sync_image_limits(&prefs);
         assert!(imports.poll(&ctx, &jobs, &world, &Default::default()).is_empty());
-        for (entry, old) in imports.entries.iter().zip(&previous) {
-            assert_eq!(&entry.options, old, "existing files keep their own limit");
-        }
-        let added = &imports.entries[previous.len()..];
         let maximum = if limit { 1024 } else { 2048 };
-        assert_eq!((added[0].options.max_width, added[0].options.max_height), (maximum, maximum));
-        for entry in &added[1..3] {
+        for entry in &imports.entries {
+            assert_eq!(entry.image_size_limit, ImageSizeLimit::Default);
             assert_eq!(
                 (entry.options.max_width, entry.options.max_height),
-                (2048, 2048),
-                "no unnecessary reduction for small uploads"
+                (maximum, maximum),
+                "existing and newly loaded defaults follow the shared limit"
             );
         }
+        let added = &imports.entries[previous..];
+        assert_eq!((added[0].options.max_width, added[0].options.max_height), (maximum, maximum));
+        assert_eq!(
+            added[1].source.as_ref().expect("small image").dimensions(added[1].options),
+            (256, 128)
+        );
         assert_eq!(
             added[2].source.as_ref().expect("rounded image").dimensions(added[2].options),
-            (1024, 1024)
+            if limit { (1024, 512) } else { (1024, 1024) }
         );
-        assert_eq!((added[3].options.max_width, added[3].options.max_height), (2048, 2048));
+        assert_eq!((added[3].options.max_width, added[3].options.max_height), (maximum, maximum));
         let Some(Source::Material { images, .. }) = &added[3].source else {
             panic!("material source")
         };
         let map = images[0].as_ref().expect("base color map");
         assert_eq!(
             import_texture::dimensions(map.pixels.width, map.pixels.height, added[3].options),
-            (2048, 1024),
-            "material maps retain the Legacy Viewer 2K upload size, even when texture uploads are limited"
+            (maximum, maximum / 2),
+            "the same shared limit controls material maps"
         );
         prefs.limit_texture_size = limit;
         prefs = serde_json::from_slice(&serde_json::to_vec(&prefs).expect("save preferences")).expect("restore preferences");
         assert_eq!(prefs.limit_texture_size, limit);
     }
+}
+
+#[test]
+fn individual_image_limits_override_the_shared_choice_in_both_directions_in_every_window() {
+    let pixels = image(4096, 2048);
+    let material = Source::Material {
+        value: PbrMaterial::default(),
+        images: Box::new([Some(files::local_image((*pixels).clone(), "Map".into())), None, None, None]),
+    };
+    let mut imports = Imports::default();
+    for source in [Source::Texture(pixels.clone()), material] {
+        for limit in [ImageSizeLimit::Default, ImageSizeLimit::Size1024, ImageSizeLimit::Size2048] {
+            let mut entry = Entry::new("image".into(), Ok(source.clone()), Default::default());
+            entry.image_size_limit = limit;
+            imports.entries.push(entry);
+        }
+    }
+    for shared in [true, false, true] {
+        let prefs = Preferences {
+            limit_texture_size: shared,
+            ..Default::default()
+        };
+        imports.sync_image_limits(&prefs);
+        for window in [Choice::Bulk, Choice::Texture, Choice::Material, Choice::Local] {
+            imports.with_window(window, |imports| {
+                for entry in &imports.entries {
+                    let expected = match entry.image_size_limit {
+                        ImageSizeLimit::Default => {
+                            if shared {
+                                1024
+                            } else {
+                                2048
+                            }
+                        }
+                        ImageSizeLimit::Size1024 => 1024,
+                        ImageSizeLimit::Size2048 => 2048,
+                    };
+                    let options = imports.options(entry);
+                    assert_eq!((options.max_width, options.max_height), (expected, expected));
+                    assert_eq!(entry.options, options);
+                    let source = match entry.source.as_ref().expect("source") {
+                        Source::Texture(source) => source,
+                        Source::Material { images, .. } => &images[0].as_ref().expect("map").pixels,
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(
+                        (source.width, source.height),
+                        (4096, 2048),
+                        "retain original detail for later choices"
+                    );
+                    assert_eq!(
+                        import_texture::dimensions(source.width, source.height, options),
+                        (expected, expected / 2)
+                    );
+                }
+            });
+        }
+    }
+}
+
+#[test]
+fn changing_the_shared_limit_refreshes_default_previews_and_textured_mesh_quotes_only_once() {
+    let ctx = egui::Context::default();
+    let mut texture = Entry::new(
+        "image.png".into(),
+        Ok(Source::Texture(image(2048, 1024))),
+        Preferences::default().texture(),
+    );
+    texture.preview = Some(ctx.load_texture(
+        "old-preview",
+        egui::ColorImage::from_rgba_unmultiplied([1, 1], &[255; 4]),
+        Default::default(),
+    ));
+    texture.local = true;
+    texture.preview_generation = 7;
+    texture.local_generation = 7;
+    let mut fixed = Entry::new(
+        "fixed.png".into(),
+        Ok(Source::Texture(image(2048, 1024))),
+        Preferences::default().texture(),
+    );
+    fixed.image_size_limit = ImageSizeLimit::Size2048;
+    let mut mesh = mesh_fixture();
+    mesh.options.textures = true;
+    let token = Uuid::new_v4();
+    mesh.quote = Some(aurora_net::inventory::mesh_upload::Quote {
+        token,
+        cost: 20,
+        data: aurora_llsd::Llsd::Undef,
+    });
+    let mesh = Entry::new(
+        "mesh.dae".into(),
+        Ok(Source::Mesh(Box::new(mesh))),
+        Preferences::default().texture(),
+    );
+    let mut imports = Imports {
+        entries: vec![texture, fixed, mesh],
+        ..Default::default()
+    };
+    let prefs = Preferences {
+        limit_texture_size: true,
+        ..Default::default()
+    };
+    imports.sync_image_limits(&prefs);
+    assert_eq!(imports.entries[0].preview_generation, 8);
+    assert!(
+        imports.entries[0].preview.is_none(),
+        "the 2D preview loader must request the resized image"
+    );
+    assert_eq!(imports.entries[0].local_generation, 7, "the live local image needs republishing");
+    assert_eq!(imports.entries[1].preview_generation, 0, "explicit 2K stays unchanged");
+    assert_eq!(imports.entries[2].preview_generation, 1);
+    let Some(Source::Mesh(mesh)) = &imports.entries[2].source else {
+        panic!("mesh")
+    };
+    assert!(mesh.quote.is_none());
+    assert_eq!(imports.discarded_quotes, vec![token]);
+    imports.sync_image_limits(&prefs);
+    assert_eq!(imports.entries[0].preview_generation, 8);
+    assert_eq!(imports.entries[2].preview_generation, 1);
+    assert_eq!(imports.discarded_quotes, vec![token]);
+}
+
+#[test]
+fn changing_the_image_limit_retires_a_pending_mesh_quote_even_without_texture_uploads() {
+    use std::sync::atomic::Ordering;
+
+    let ctx = egui::Context::default();
+    let (jobs, _) = crate::scene::jobs::Jobs::new();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut mesh = mesh_fixture();
+    mesh.options.textures = false;
+    let request = Uuid::new_v4();
+    mesh.pending = Some((request, 0));
+    let cancelled = mesh.cancel.clone();
+    let entry = Entry::new(
+        "mesh.dae".into(),
+        Ok(Source::Mesh(Box::new(mesh))),
+        Preferences::default().texture(),
+    );
+    let id = entry.id;
+    let mut imports = Imports {
+        entries: vec![entry],
+        ..Default::default()
+    };
+    assert!(!imports.busy(), "the shared limit is editable while a fee query is pending");
+    imports.sync_image_limits(&Preferences {
+        limit_texture_size: true,
+        ..Default::default()
+    });
+    assert!(cancelled.load(Ordering::Relaxed), "stop preparation at the previous limit");
+    assert_eq!(imports.entries[0].preview_generation, 1);
+    let Some(Source::Mesh(draft)) = &imports.entries[0].source else {
+        panic!("mesh")
+    };
+    assert!(
+        draft.pending.is_none(),
+        "a discarded generation must not leave fee calculation stuck"
+    );
+    assert!(
+        !draft.cancel.load(Ordering::Relaxed),
+        "new fee calculation has a fresh cancellation flag"
+    );
+
+    imports
+        .tx
+        .send(Worker::MeshPrepared(id, request, 0, Err("Cancelled old preparation".into())))
+        .expect("late worker reply");
+    assert!(imports.poll(&ctx, &jobs, &world, &Default::default()).is_empty());
+    assert!(imports.message.is_empty(), "late work cannot report an error on the current draft");
+
+    let next = Uuid::new_v4();
+    let Some(Source::Mesh(draft)) = &mut imports.entries[0].source else {
+        panic!("mesh")
+    };
+    draft.pending = Some((next, 1));
+    let token = Uuid::new_v4();
+    imports.mesh_quoted(
+        next,
+        Ok(aurora_net::inventory::mesh_upload::Quote {
+            token,
+            cost: 10,
+            data: aurora_llsd::Llsd::Undef,
+        }),
+    );
+    imports.sync_image_limits(&Preferences::default());
+    let Some(Source::Mesh(draft)) = &imports.entries[0].source else {
+        panic!("mesh")
+    };
+    assert!(draft.pending.is_none());
+    assert_eq!(draft.quote.as_ref().expect("new fee query succeeded").token, token);
+    assert!(
+        imports.discarded_quotes.is_empty(),
+        "a completed geometry-only quote remains usable"
+    );
+}
+
+#[test]
+fn material_map_file_results_survive_image_limit_changes_and_prepare_at_the_current_limit() {
+    let ctx = egui::Context::default();
+    let (jobs, _) = crate::scene::jobs::Jobs::new();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let map = files::local_image((*image(4096, 128)).clone(), "Large map".into());
+    for (choice, maximum) in [(ImageSizeLimit::Default, 1024), (ImageSizeLimit::Size2048, 2048)] {
+        let mut entry = Entry::new(
+            "material.gltf".into(),
+            Ok(Source::Material {
+                value: Default::default(),
+                images: Box::new([None, None, None, None]),
+            }),
+            Preferences::default().texture(),
+        );
+        let id = entry.id;
+        let request = entry.begin_map_file_request(0).expect("start file selection");
+        let mut imports = Imports {
+            entries: vec![entry],
+            ..Default::default()
+        };
+        imports.sync_image_limits(&Preferences {
+            limit_texture_size: true,
+            ..Default::default()
+        });
+        imports.entries[0].image_size_limit = choice;
+        imports.entries[0].sync_image_size(true);
+        assert_ne!(imports.entries[0].preview_generation, 0);
+        imports
+            .tx
+            .send(Worker::Map(id, request, 0, Ok(Some(map.clone()))))
+            .expect("file decoded");
+        assert!(imports.poll(&ctx, &jobs, &world, &Default::default()).is_empty());
+        let entry = &imports.entries[0];
+        assert!(entry.material_map_requests[0].is_none());
+        let Some(Source::Material { images, .. }) = &entry.source else {
+            panic!("material")
+        };
+        let accepted = images[0]
+            .as_ref()
+            .expect("changing the size limit must not discard a selected file");
+        assert!(Arc::ptr_eq(&accepted.pixels, &map.pixels));
+        let prepared = import_texture::prepare(&accepted.pixels, imports.options(entry)).expect("prepare at current limit");
+        assert_eq!((prepared.width, prepared.height), (maximum, maximum / 32));
+    }
+}
+
+#[test]
+fn material_map_file_requests_are_per_slot_and_stale_results_cannot_replace_later_choices() {
+    let ctx = egui::Context::default();
+    let (jobs, _) = crate::scene::jobs::Jobs::new();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let source = || Source::Material {
+        value: Default::default(),
+        images: Box::new([None, None, None, None]),
+    };
+    let mut entry = Entry::new("material.gltf".into(), Ok(source()), Preferences::default().texture());
+    let id = entry.id;
+    let first = entry.begin_map_file_request(0).expect("first file");
+    let latest = entry.begin_map_file_request(0).expect("replacement file");
+    let other_slot = entry.begin_map_file_request(1).expect("independent normal map");
+    let map = files::local_image((*image(16, 16)).clone(), "Chosen map".into());
+    let mut imports = Imports {
+        entries: vec![entry],
+        ..Default::default()
+    };
+    for result in [Ok(Some(map.clone())), Ok(None), Err("Obsolete failure".into())] {
+        imports.tx.send(Worker::Map(id, first, 0, result)).expect("obsolete reply");
+    }
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert_eq!(imports.entries[0].material_map_requests[0], Some(latest));
+    assert!(imports.message.is_empty());
+    imports
+        .tx
+        .send(Worker::Map(id, other_slot, 1, Ok(Some(map.clone()))))
+        .expect("normal map");
+    imports
+        .tx
+        .send(Worker::Map(id, latest, 0, Ok(Some(map.clone()))))
+        .expect("base map");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    let Some(Source::Material { images, .. }) = &imports.entries[0].source else {
+        panic!("material")
+    };
+    assert!(
+        images[0].is_some() && images[1].is_some(),
+        "one slot's preview revision must not cancel another slot"
+    );
+
+    for replacement in [Uuid::new_v4(), Uuid::nil()] {
+        let old = imports.entries[0].begin_map_file_request(0).expect("pending file");
+        imports.select_map(id, 0, replacement);
+        imports.tx.send(Worker::Map(id, old, 0, Ok(Some(map.clone())))).expect("late file");
+        imports.poll(&ctx, &jobs, &world, &Default::default());
+        let Some(Source::Material { value, images }) = &imports.entries[0].source else {
+            panic!("material")
+        };
+        assert_eq!(value.base_color_texture, (!replacement.is_nil()).then_some(replacement));
+        assert!(images[0].is_none(), "replacement or removal wins over an older selected file");
+    }
+
+    let old = imports.entries[0].begin_map_file_request(0).expect("file before reload");
+    imports
+        .tx
+        .send(Worker::Reloaded(
+            id,
+            Ok(vec![Entry::new(
+                "material.gltf".into(),
+                Ok(source()),
+                Preferences::default().texture(),
+            )]),
+        ))
+        .expect("reload with the same map contents");
+    imports
+        .tx
+        .send(Worker::Map(id, old, 0, Ok(Some(map))))
+        .expect("file from before reload");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(imports.entries[0].material_map_requests.iter().all(Option::is_none));
+    let Some(Source::Material { images, .. }) = &imports.entries[0].source else {
+        panic!("material")
+    };
+    assert!(images.iter().all(Option::is_none));
+
+    let current = imports.entries[0].begin_map_file_request(0).expect("cancelled dialog");
+    imports
+        .tx
+        .send(Worker::Map(id, current, 0, Ok(None)))
+        .expect("cancel current selection");
+    imports.poll(&ctx, &jobs, &world, &Default::default());
+    assert!(imports.entries[0].material_map_requests[0].is_none());
+}
+
+#[test]
+fn material_image_overrides_control_encoded_upload_dimensions_deduplication_and_price() {
+    let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.balance = Some(1000);
+    world.inventory.root = Uuid::from_u128(720);
+    world.inventory.created_folders(vec![aurora_net::inventory::InvFolder {
+        id: world.inventory.root,
+        type_default: 8,
+        name: "Inventory".into(),
+        ..Default::default()
+    }]);
+    let shared = files::local_image((*image(4096, 2048)).clone(), "Shared map".into());
+    let mut existing = files::local_image((*image(4, 4)).clone(), "Existing map".into());
+    existing.asset = Some(Uuid::new_v4());
+    let source = Source::Material {
+        value: PbrMaterial::default(),
+        images: Box::new([Some(shared), Some(existing), None, None]),
+    };
+    let prefs = Preferences {
+        limit_texture_size: true,
+        ..Default::default()
+    };
+    let mut imports = Imports::default();
+    for (name, limit) in [
+        ("Small", ImageSizeLimit::Size1024),
+        ("Large", ImageSizeLimit::Size2048),
+        ("Default", ImageSizeLimit::Default),
+    ] {
+        let mut entry = Entry::new(name.into(), Ok(source.clone()), prefs.texture());
+        entry.folder = world.inventory.root;
+        entry.image_size_limit = limit;
+        imports.entries.push(entry);
+    }
+    imports.sync_image_limits(&prefs);
+    assert_eq!(imports.total(&prices()), Some(50));
+    assert!(imports.has_shared_textures());
+    imports.start(&world, &Default::default(), &prefs, &prices());
+    assert!(imports.message.is_empty(), "{}", imports.message);
+    let maps: Vec<_> = imports.queue.iter().filter(|step| step.kind == Kind::Texture).collect();
+    assert_eq!(
+        maps.len(),
+        2,
+        "default 1K shares its upload; explicit 2K and existing assets stay distinct"
+    );
+    assert_eq!(maps.iter().map(|step| step.cost).sum::<i32>(), 50);
+    for (step, expected) in maps.into_iter().zip([(1024, 512), (2048, 1024)]) {
+        let bytes = files::encode(&step.source, step.options, step.sound_options).expect("encode material map");
+        let image = aurora_assets::decode_j2k(&bytes, 0).expect("decode uploaded map");
+        assert_eq!((image.width, image.height), expected);
+    }
+    assert_eq!(imports.queue.iter().filter(|step| step.kind == Kind::Material).count(), 3);
 }
 
 #[test]
@@ -948,6 +1443,36 @@ pub(super) fn mesh_fixture() -> mesh::Draft {
     mesh::Draft::new(scene, HashMap::new())
 }
 
+/// Shared corners let the automatic reducer change geometry without a UV/normal seam.
+pub(super) fn reducible_mesh_fixture() -> mesh::Draft {
+    let mut draft = mesh_fixture();
+    let model = &mut Arc::make_mut(&mut draft.scene).models[0];
+    model.center = glam::Vec3::ZERO;
+    model.size = glam::Vec3::ONE;
+    model.faces.truncate(1);
+    let face = &mut model.faces[0];
+    let prototype = face.vertices[0].clone();
+    face.vertices = [-0.5, 0.5]
+        .into_iter()
+        .flat_map(|x| {
+            let prototype = prototype.clone();
+            [-0.5, 0.5].into_iter().flat_map(move |y| {
+                let prototype = prototype.clone();
+                [-0.5, 0.5].into_iter().map(move |z| aurora_assets::import_mesh::Vertex {
+                    position: [x, y, z],
+                    normal: [0.0, 0.0, 1.0],
+                    uv: [0.0; 2],
+                    ..prototype.clone()
+                })
+            })
+        })
+        .collect();
+    face.indices = vec![
+        0, 2, 3, 0, 3, 1, 4, 5, 7, 4, 7, 6, 0, 1, 5, 0, 5, 4, 2, 6, 7, 2, 7, 3, 0, 4, 6, 0, 6, 2, 1, 3, 7, 1, 7, 5,
+    ];
+    draft
+}
+
 pub(super) fn invalid_physics_fixture() -> mesh::Draft {
     let mut draft = mesh_fixture();
     for lod in &mut draft.lods[..3] {
@@ -1210,10 +1735,8 @@ fn avatar_preview_preference_round_trips_on_and_off_and_defaults_off() {
 
 #[test]
 fn triangle_budget_ignores_the_inactive_error_threshold_and_reduces_lods() {
-    let mut draft = mesh_fixture();
-    // Select the budget-driven method explicitly; Legacy keeps this box whole.
+    let mut draft = reducible_mesh_fixture();
     for lod in &mut draft.lods[..3] {
-        lod.source = mesh::LodSource::Auto;
         lod.error = 0.0;
     }
     let prepared = mesh::prepare(&draft).expect("prepare");
@@ -1394,8 +1917,9 @@ fn shared_material_maps_are_charged_once_with_equivalent_effective_encoding() {
         .entries
         .push(Entry::new("a.gltf".into(), Ok(source.clone()), Default::default()));
     let mut second = Entry::new("b.gltf".into(), Ok(source), Default::default());
-    second.options.max_width = 2048;
-    second.options.max_height = 2048;
+    second.image_size_limit = ImageSizeLimit::Size2048;
+    second.sync_image_size(false);
+    imports.entries[0].image_size_limit = ImageSizeLimit::Size1024;
     imports.entries.push(second);
     assert_eq!(imports.total(&prices()), Some(10));
     assert!(imports.has_shared_textures());
@@ -1426,7 +1950,7 @@ fn shared_material_maps_are_charged_once_with_equivalent_effective_encoding() {
     assert_eq!(imports.total(&prices()), Some(0));
 }
 #[test]
-fn bulk_scaling_uses_area_pricing_and_failed_selected_rows_block_payment() {
+fn shared_image_limit_uses_area_pricing_and_failed_selected_rows_block_payment() {
     let mut imports = Imports {
         choice: Choice::Bulk,
         ..Default::default()
@@ -1440,7 +1964,7 @@ fn bulk_scaling_uses_area_pricing_and_failed_selected_rows_block_payment() {
         .entries
         .push(Entry::new("large.png".into(), Ok(Source::Texture(image(2048, 1024))), options));
     assert_eq!(imports.total(&prices()), Some(40));
-    imports.scale_bulk_1k = true;
+    imports.load_preferences.limit_texture_size = true;
     assert_eq!(imports.total(&prices()), Some(10));
     let mut failed = Entry::new("broken.png".into(), Err("Invalid".into()), options);
     failed.selected = true;

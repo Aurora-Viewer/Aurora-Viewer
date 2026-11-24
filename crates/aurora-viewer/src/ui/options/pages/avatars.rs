@@ -137,7 +137,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 let choices: Vec<(PlateClick, &str)> = PlateClick::ALL.iter().map(|a| (*a, plate_click_label(*a))).collect();
                 cx.combo(
                     tr!("ui-options-plate-click"),
-                    tr!("ui-options-plate-click-help"),
+                    tr!("ui-options-plate-click-own-help"),
                     &field!(plate_click),
                     &choices,
                 );
@@ -362,6 +362,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-customize-animation"),
                     tr!("ui-options-customize-animation-hint"),
                     &field!(customize_animation),
+                );
+                // FSPlayDefaultBentoAnimation (panel_preferences_firestorm.xml, Extras)
+                cx.keywords("FSPlayDefaultBentoAnimation").toggle(
+                    tr!("ui-options-bento-idle"),
+                    tr!("ui-options-bento-idle-hint"),
+                    &field!(bento_idle),
                 );
             });
         }

@@ -1,13 +1,11 @@
 //! Texture uploads, following LLFloaterImagePreview::loadImage and
-//! LLImageRaw::biasedDimToPowerOfTwo (Firestorm, originally LGPL 2.1).
+//! LLImageRaw::biasedDimToPowerOfTwo (Legacy Viewer, originally LGPL 2.1).
 //! This module runs on background workers; it keeps source pixels so changes
 //! of maximum size or alpha policy never compound a previous resampling.
 
 use crate::{AssetError, DecodedImage};
 use image::{ImageReader, imageops::FilterType};
 use std::io::Cursor;
-
-pub const MAX_SOURCE_PIXELS: u64 = 8096 * 8096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
@@ -63,13 +61,10 @@ pub fn decode_map(bytes: &[u8]) -> Result<DecodedImage, AssetError> {
     decode_inner(bytes, true)
 }
 fn decode_inner(bytes: &[u8], maps: bool) -> Result<DecodedImage, AssetError> {
-    if bytes.len() > 256 * 1024 * 1024 {
-        return Err(AssetError::TooLarge("texture file"));
-    }
     if bytes.starts_with(&[0xff, 0x4f]) || bytes.get(4..12) == Some(b"jP  \r\n\x87\n") {
-        let mut image = crate::decode_j2k(bytes, 0)?;
+        let mut image = crate::j2k::decode_j2k_for_import(bytes)?;
         if maps {
-            expand_luminance(&mut image);
+            expand_luminance(&mut image)?;
         }
         validate(&image)?;
         return Ok(image);
@@ -84,14 +79,28 @@ fn decode_inner(bytes: &[u8], maps: bool) -> Result<DecodedImage, AssetError> {
     }
     let mut limits = image::Limits::default();
     limits.max_alloc = Some(256 * 1024 * 1024);
-    limits.max_image_width = Some(8096 * 8096 / 4);
-    limits.max_image_height = Some(8096 * 8096 / 4);
+    // Requested difference from LLFloaterImagePreview::loadImage: a local
+    // source may exceed its 8096² pixel cap. The upload is resized in prepare;
+    // keep the original pixels for subsequent 1K/2K choices. The decoder's
+    // metadata budget stays bounded; pixel allocation is checked separately.
     reader.limits(limits);
+    let tga = reader.format() == Some(image::ImageFormat::Tga);
     let decoder = reader.into_decoder().map_err(|e| AssetError::invalid(e.to_string()))?;
     use image::ImageDecoder;
     let (w, h) = decoder.dimensions();
-    if u64::from(w) * u64::from(h) > MAX_SOURCE_PIXELS {
-        return Err(AssetError::TooLarge("texture pixel area"));
+    if tga {
+        // TGA RLE stores at most 128 pixels per packet. A truncated header
+        // with gigantic dimensions must fail before reserving its pixels.
+        let pixel_size = u64::from(*bytes.get(16).ok_or(AssetError::Truncated("TGA header"))?).div_ceil(8);
+        let pixels = u64::from(w) * u64::from(h);
+        let minimum = if matches!(bytes[2], 9..=11) {
+            pixels.div_ceil(128) * (pixel_size + 1)
+        } else {
+            pixels * pixel_size
+        };
+        if (bytes.len() as u64) < 18 + minimum {
+            return Err(AssetError::Truncated("TGA pixels"));
+        }
     }
     if !matches!(
         decoder.color_type(),
@@ -106,18 +115,25 @@ fn decode_inner(bytes: &[u8], maps: bool) -> Result<DecodedImage, AssetError> {
     ) {
         return Err(AssetError::invalid("texture must have RGB or RGBA channels"));
     }
-    let source = image::DynamicImage::from_decoder(decoder).map_err(|e| AssetError::invalid(e.to_string()))?;
-    let components = source.color().channel_count();
+    let color = decoder.color_type();
+    let components = color.channel_count();
+    let length = pixel_bytes(w, h, color.bytes_per_pixel())?;
+    let mut data = Vec::new();
+    data.try_reserve_exact(length)
+        .map_err(|_| AssetError::invalid("not enough memory to decode texture"))?;
+    data.resize(length, 0);
+    decoder.read_image(&mut data).map_err(|e| AssetError::invalid(e.to_string()))?;
     // LLPngWrapper::normalizeImage (indra/llimage/llpngwrapper.cpp) uses
     // png_set_strip_16: keep the high byte, rather than rounding to 8 bits.
-    let high_bytes = |data: Vec<u16>| data.into_iter().map(|sample| (sample >> 8) as u8).collect();
-    let data = match source {
-        image::DynamicImage::ImageLuma16(pixels) => high_bytes(pixels.into_raw()),
-        image::DynamicImage::ImageLumaA16(pixels) => high_bytes(pixels.into_raw()),
-        image::DynamicImage::ImageRgb16(pixels) => high_bytes(pixels.into_raw()),
-        image::DynamicImage::ImageRgba16(pixels) => high_bytes(pixels.into_raw()),
-        _ => source.into_bytes(),
-    };
+    // ImageDecoder returns native-endian samples. Compact in place instead
+    // of allocating another full-size image for a large 16-bit source.
+    if color.bytes_per_pixel() == components * 2 {
+        let samples = data.len() / 2;
+        for index in 0..samples {
+            data[index] = (u16::from_ne_bytes([data[index * 2], data[index * 2 + 1]]) >> 8) as u8;
+        }
+        data.truncate(samples);
+    }
     let mut image = DecodedImage {
         width: w,
         height: h,
@@ -125,34 +141,55 @@ fn decode_inner(bytes: &[u8], maps: bool) -> Result<DecodedImage, AssetError> {
         data,
         discard: 0,
     };
-    expand_luminance(&mut image);
+    expand_luminance(&mut image)?;
     validate(&image)?;
     Ok(image)
 }
 
 /// LLPngWrapper::normalizeImage expands gray to RGB before upload validation.
-fn expand_luminance(image: &mut DecodedImage) {
+fn expand_luminance(image: &mut DecodedImage) -> Result<(), AssetError> {
     if matches!(image.components, 1 | 2) {
         let alpha = image.components == 2;
-        let mut data = Vec::with_capacity(image.width as usize * image.height as usize * if alpha { 4 } else { 3 });
-        for pixel in image.data.chunks_exact(image.components as usize) {
-            data.extend_from_slice(&[pixel[0]; 3]);
+        let components = if alpha { 4 } else { 3 };
+        let source_components = usize::from(image.components);
+        let length = pixel_bytes(image.width, image.height, components)?;
+        if image.data.len() != pixel_bytes(image.width, image.height, image.components)? {
+            return Err(AssetError::invalid("texture channels or pixels"));
+        }
+        image
+            .data
+            .try_reserve_exact(length - image.data.len())
+            .map_err(|_| AssetError::invalid("not enough memory to expand texture channels"))?;
+        image.data.resize(length, 0);
+        // Work backwards so the expanded pixel never overwrites input that
+        // remains to be read; keep the existing allocation where possible.
+        for index in (0..length / usize::from(components)).rev() {
+            let gray = image.data[index * source_components];
+            let opacity = if alpha { image.data[index * source_components + 1] } else { 255 };
+            let start = index * usize::from(components);
+            image.data[start..start + 3].fill(gray);
             if alpha {
-                data.push(pixel[1]);
+                image.data[start + 3] = opacity;
             }
         }
-        image.data = data;
-        image.components = if alpha { 4 } else { 3 };
+        image.components = components;
     }
+    Ok(())
+}
+
+fn pixel_bytes(width: u32, height: u32, components: u8) -> Result<usize, AssetError> {
+    if width == 0 || height == 0 {
+        return Err(AssetError::invalid("texture dimensions must be nonzero"));
+    }
+    (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(usize::from(components)))
+        .filter(|&bytes| bytes <= isize::MAX as usize)
+        .ok_or(AssetError::TooLarge("texture allocation"))
 }
 
 pub(crate) fn validate(image: &DecodedImage) -> Result<(), AssetError> {
-    if image.width == 0 || image.height == 0 || u64::from(image.width) * u64::from(image.height) > MAX_SOURCE_PIXELS {
-        return Err(AssetError::TooLarge("texture dimensions"));
-    }
-    if !matches!(image.components, 3 | 4)
-        || image.data.len() != image.width as usize * image.height as usize * usize::from(image.components)
-    {
+    if !matches!(image.components, 3 | 4) || image.data.len() != pixel_bytes(image.width, image.height, image.components)? {
         return Err(AssetError::invalid("texture channels or pixels"));
     }
     Ok(())
@@ -165,29 +202,31 @@ pub fn empty_alpha(image: &DecodedImage) -> bool {
 
 pub fn prepare(source: &DecodedImage, options: Options) -> Result<DecodedImage, AssetError> {
     validate(source)?;
-    let rgba: Vec<u8> = if source.components == 4 {
-        source.data.clone()
-    } else {
-        source
-            .data
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|p| [p[0], p[1], p[2], 255])
-            .collect()
-    };
-    let pixels = image::RgbaImage::from_raw(source.width, source.height, rgba).ok_or_else(|| AssetError::invalid("texture pixels"))?;
     let (width, height) = dimensions(source.width, source.height, options);
-    let pixels = if (width, height) == (source.width, source.height) {
-        pixels
-    } else {
-        image::imageops::resize(&pixels, width, height, FilterType::Triangle)
-    };
+    // Borrow the original RGB/RGBA storage: a 16K source must not be cloned
+    // or expanded to a second full-size RGBA image just to resize its upload.
     let strip = source.components == 3 || (options.strip_alpha && empty_alpha(source));
-    let data = if strip {
-        pixels.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect()
+    let data = if source.components == 3 {
+        let pixels = image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(source.width, source.height, source.data.as_slice())
+            .ok_or_else(|| AssetError::invalid("texture pixels"))?;
+        if (width, height) == (source.width, source.height) {
+            source.data.clone()
+        } else {
+            image::imageops::resize(&pixels, width, height, FilterType::Triangle).into_raw()
+        }
     } else {
-        pixels.into_raw()
+        let pixels = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(source.width, source.height, source.data.as_slice())
+            .ok_or_else(|| AssetError::invalid("texture pixels"))?;
+        let data = if (width, height) == (source.width, source.height) {
+            source.data.clone()
+        } else {
+            image::imageops::resize(&pixels, width, height, FilterType::Triangle).into_raw()
+        };
+        if strip {
+            data.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect()
+        } else {
+            data
+        }
     };
     Ok(DecodedImage {
         width,
@@ -208,7 +247,7 @@ pub fn encode(pixels: &DecodedImage, options: Options) -> Result<Vec<u8>, AssetE
         pixels.height,
         pixels.components,
         &pixels.data,
-        options.lossless_small && pixels.width * pixels.height <= 128 * 128,
+        options.lossless_small && u64::from(pixels.width) * u64::from(pixels.height) <= 128 * 128,
     )
 }
 
@@ -270,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn tga_imports_reject_truncated_invalid_and_oversized_sources() {
+    fn tga_imports_reject_truncated_pixels_even_when_the_header_declares_a_large_image() {
         let mut bytes = Vec::new();
         image::codecs::tga::TgaEncoder::new(&mut bytes)
             .encode(&[10; 4 * 4 * 4], 4, 4, image::ExtendedColorType::Rgba8)
@@ -286,10 +325,103 @@ mod tests {
             }
             let mut oversized = bytes[..18].to_vec();
             oversized[12..16].copy_from_slice(&[255; 4]);
-            assert!(matches!(loader(&oversized), Err(AssetError::TooLarge(_))));
+            assert!(matches!(loader(&oversized), Err(AssetError::Truncated("TGA pixels"))));
             let mut empty = bytes.clone();
             empty[12..14].fill(0);
             assert!(loader(&empty).is_err());
+        }
+    }
+
+    fn solid_tga(width: u16, height: u16, pixel: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0; 18];
+        bytes[2] = 10;
+        bytes[12..14].copy_from_slice(&width.to_le_bytes());
+        bytes[14..16].copy_from_slice(&height.to_le_bytes());
+        bytes[16] = (pixel.len() * 8) as u8;
+        bytes[17] = 0x20 | if pixel.len() == 4 { 8 } else { 0 };
+        let mut remaining = usize::from(width) * usize::from(height);
+        while remaining > 0 {
+            let count = remaining.min(128);
+            bytes.push(0x80 | (count as u8 - 1));
+            bytes.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
+            if pixel.len() == 4 {
+                bytes.push(pixel[3]);
+            }
+            remaining -= count;
+        }
+        bytes
+    }
+
+    #[test]
+    fn import_large_sources_resize_to_each_upload_limit_without_losing_the_original() {
+        // 8192² exceeds the former 8096² source cap. The narrow 16K case
+        // checks a larger side and alpha without another huge allocation.
+        for (width, height, pixel) in [(8192, 8192, &[30, 80, 150][..]), (16384, 128, &[30, 80, 150, 96][..])] {
+            let file = solid_tga(width, height, pixel);
+            let source = decode(&file).expect("large texture is importable");
+            assert_eq!((source.width, source.height), (u32::from(width), u32::from(height)));
+            assert_eq!(source.components as usize, pixel.len());
+            let original_len = source.data.len();
+            for maximum in [1024, 2048, 1024] {
+                let options = Options {
+                    max_width: maximum,
+                    max_height: maximum,
+                    ..Default::default()
+                };
+                let prepared = prepare(&source, options).expect("resize large source");
+                assert_eq!((prepared.width, prepared.height), dimensions(source.width, source.height, options));
+                assert!(prepared.width <= maximum && prepared.height <= maximum);
+                assert_eq!(prepared.components as usize, pixel.len());
+                assert!(prepared.data.chunks_exact(pixel.len()).all(|actual| actual == pixel));
+                assert_eq!(source.data.len(), original_len, "preparing never replaces source pixels");
+                assert_eq!(&source.data[..pixel.len()], pixel);
+            }
+            // Material maps use the same decoder; exercise their separate
+            // entry point with the inexpensive 16K fixture.
+            if width == 16384 {
+                assert_eq!(decode_map(&file).expect("large material map"), source);
+            }
+        }
+        assert_eq!(pixel_bytes(16384, 16384, 4).expect("16K layout"), 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn import_texture_validation_rejects_overflow_zero_dimensions_and_missing_pixels() {
+        assert!(pixel_bytes(u32::MAX, u32::MAX, 4).is_err());
+        for (width, height, components) in [(0, 4, 4), (4, 0, 4), (16384, 16384, 4), (4, 4, 2)] {
+            let source = DecodedImage {
+                width,
+                height,
+                components,
+                data: Vec::new(),
+                discard: 0,
+            };
+            assert!(prepare(&source, Options::default()).is_err());
+        }
+    }
+
+    #[test]
+    fn import_large_sixteen_bit_png_maps_expand_gray_alpha_and_keep_high_bytes() {
+        let source = image::ImageBuffer::from_pixel(16384, 32, image::LumaA([0x80ff_u16, 0x60ff]));
+        let mut file = Cursor::new(Vec::new());
+        image::DynamicImage::ImageLumaA16(source)
+            .write_to(&mut file, image::ImageFormat::Png)
+            .expect("16K PNG");
+        for loader in [decode, decode_map] {
+            let decoded = loader(file.get_ref()).expect("16K PNG source");
+            assert_eq!((decoded.width, decoded.height, decoded.components), (16384, 32, 4));
+            assert!(decoded.data.as_chunks::<4>().0.iter().all(|pixel| *pixel == [128, 128, 128, 96]));
+            for maximum in [1024, 2048] {
+                let options = Options {
+                    max_width: maximum,
+                    max_height: maximum,
+                    ..Default::default()
+                };
+                let pixels = prepare(&decoded, options).expect("resize PNG map");
+                assert_eq!((pixels.width, pixels.height), (maximum, 4));
+                assert_eq!(pixels.components, 4);
+                assert!(pixels.data.as_chunks::<4>().0.iter().all(|pixel| *pixel == [128, 128, 128, 96]));
+            }
         }
     }
 

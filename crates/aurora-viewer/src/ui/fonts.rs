@@ -7,7 +7,7 @@
 //! system's fonts (`fallback`).
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Once, OnceLock};
 
 pub mod fallback;
 pub mod preview;
@@ -233,6 +233,34 @@ fn first_visit(seen: &mut std::collections::HashSet<PathBuf>, dir: &std::path::P
     std::fs::canonicalize(dir).map_or(true, |real| seen.insert(real))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Tests: the scan looks unfinished on this thread, however fast it is.
+    pub(crate) static FONT_LIST_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The installed fonts once a background scan has listed them, `None` until
+/// then (never blocks). The first call starts the scan: `system_fonts` opens
+/// every font file, which takes the frame with it on a cold disk.
+pub fn system_fonts_ready() -> Option<&'static [SystemFont]> {
+    #[cfg(test)]
+    if FONT_LIST_HELD.get() {
+        return None;
+    }
+    static LIST: OnceLock<Vec<SystemFont>> = OnceLock::new();
+    static STARTED: Once = Once::new();
+    STARTED.call_once(|| {
+        let spawned = std::thread::Builder::new().name("aurora-font-list".into()).spawn(|| {
+            LIST.get_or_init(system_fonts);
+        });
+        if let Err(e) = spawned {
+            log::warn!("system fonts: no thread ({e}), the list stays empty");
+            LIST.get_or_init(Vec::new);
+        }
+    });
+    LIST.get().map(Vec::as_slice)
+}
+
 /// Regular-weight TrueType/OpenType fonts installed on the system, by family name.
 pub fn system_fonts() -> Vec<SystemFont> {
     let mut out: Vec<SystemFont> = Vec::new();
@@ -429,7 +457,7 @@ pub fn chat_size(ctx: &egui::Context, size: f32) -> f32 {
 /// Keep the unscaled faces so live changes never compound their scale and
 /// late system fallbacks or a font change inherit the current preference.
 fn install(ctx: &egui::Context, definitions: egui::FontDefinitions) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     let heavier =
         definitions.font_data.contains_key(SEMIBOLD) || definitions.font_data.get(MAIN).is_some_and(|face| has_weight_axis(face.bytes()));
     ctx.data_mut(|data| {
@@ -1178,6 +1206,20 @@ mod tests {
                 .and_then(|n| n.to_string())
         };
         name(16).or_else(|| name(1))
+    }
+
+    #[test]
+    fn the_background_font_list_is_the_scan_s_list() {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let list = loop {
+            if let Some(list) = system_fonts_ready() {
+                break list;
+            }
+            assert!(std::time::Instant::now() < until, "the scan never ended");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let names = |fonts: &[SystemFont]| fonts.iter().map(|f| f.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(list), names(&system_fonts()));
     }
 
     #[test]

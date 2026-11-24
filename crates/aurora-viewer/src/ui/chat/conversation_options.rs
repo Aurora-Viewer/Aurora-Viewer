@@ -31,7 +31,6 @@ use crate::ui::fonts::TextEmphasis;
 use crate::world::names::{AvatarName, NameOptions};
 use crate::world::{ChatKind, ChatLine, Origin};
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::RwLock;
 use uuid::Uuid;
@@ -287,13 +286,12 @@ pub(super) fn you(s: &Settings, line: &ChatLine) -> Option<&'static str> {
     (s.show_you && line.kind.is_own() && line.origin == Origin::Live).then(|| aurora_i18n::tr!("ui-chat-you-name"))
 }
 
-/// A system line's text, in brackets with the option.
-pub(super) fn system_text<'a>(s: &Settings, text: &'a str) -> Cow<'a, str> {
-    if s.system_brackets {
-        Cow::Owned(format!("[{text}]"))
-    } else {
-        Cow::Borrowed(text)
-    }
+/// Whether a system line is drawn in brackets: the option, but never the
+/// radar's own lines. FSChatHistory::appendMessage leaves CHAT_TYPE_RADAR out
+/// (`chat.mChatType != CHAT_TYPE_RADAR`), and appends `[` and `]` as their
+/// own runs, outside the text its links are found in.
+pub(super) fn system_brackets(s: &Settings, radar: bool) -> bool {
+    s.system_brackets && !radar
 }
 
 /// The colour of a history line, faded.
@@ -452,11 +450,13 @@ mod tests {
     }
 
     #[test]
-    fn system_lines_get_brackets_with_the_option() {
+    fn system_lines_get_brackets_with_the_option_but_never_the_radars() {
         let mut s = Settings::DEFAULT;
-        assert_eq!(system_text(&s, "Nova is online."), "Nova is online.");
+        assert!(!system_brackets(&s, false), "off by default");
         s.system_brackets = true;
-        assert_eq!(system_text(&s, "Nova is online."), "[Nova is online.]");
+        assert!(system_brackets(&s, false));
+        // the radar's alerts, and friends online or offline (CHAT_TYPE_RADAR)
+        assert!(!system_brackets(&s, true));
     }
 
     #[test]

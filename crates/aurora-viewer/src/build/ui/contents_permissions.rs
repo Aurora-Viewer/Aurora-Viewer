@@ -297,7 +297,7 @@ pub(crate) fn controls(
                 aurora_i18n::tr!("content-perms-next-owner"),
                 aurora_i18n::tr!("common-transfer"),
             )
-            .max(column_width(ui, p, 0.0, "", aurora_i18n::tr!("common-edit")))
+            .max(column_width(ui, p, 0.0, "", aurora_i18n::tr!("common-modify")))
             .max(column_width(ui, p, 0.0, "", aurora_i18n::tr!("common-copy-2")));
             // Preserve complete words in every permission column; larger text
             // moves a column to the next row instead of squeezing the last one.
@@ -319,7 +319,7 @@ pub(crate) fn controls(
                 ui.allocate_ui_with_layout(Vec2::new(next_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_width(next_width);
                     label(ui, p, aurora_i18n::tr!("content-perms-next-owner"));
-                    if let Some(v) = check(ui, p, b.next_modify, false, aurora_i18n::tr!("common-edit"), true) {
+                    if let Some(v) = check(ui, p, b.next_modify, false, aurora_i18n::tr!("common-modify"), true) {
                         b.next_modify = v;
                     }
                     if let Some(v) = check(ui, p, b.next_copy, false, aurora_i18n::tr!("common-copy-2"), true) {

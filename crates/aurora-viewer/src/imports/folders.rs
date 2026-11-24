@@ -136,6 +136,7 @@ impl Imports {
         world: &crate::world::World,
         inventory: &crate::ui::inventory::InventoryPreferences,
     ) {
+        self.sync_image_limits(prefs);
         self.load_preferences = prefs.clone();
         if self.busy() || self.confirm {
             return;

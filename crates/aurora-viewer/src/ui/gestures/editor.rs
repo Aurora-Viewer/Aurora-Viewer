@@ -54,7 +54,7 @@ fn flag(ui: &mut egui::Ui, p: &Palette, flags: &mut u32, bit: u32, label: &str) 
 
 fn asset_choice(ui: &mut egui::Ui, inv: &Inventory, assets: &Assets, kind: i32, asset: &mut Uuid, name: &mut String) {
     let choices = assets.choices.iter().filter(|(asset_kind, _, _)| *asset_kind == kind);
-    egui::ComboBox::from_id_salt("asset")
+    let picker = egui::ComboBox::from_id_salt("asset")
         .selected_text(if asset.is_nil() {
             aurora_i18n::tr!("common-none-2")
         } else {
@@ -79,17 +79,28 @@ fn asset_choice(ui: &mut egui::Ui, inv: &Inventory, assets: &Assets, kind: i32, 
                 }
             }
         });
-    if let Some(cargo) = egui::DragAndDrop::payload::<crate::ui::inventory::InvDrag>(ui.ctx())
-        && let Some(original) = rules::original(inv, cargo.0)
-        && let Some(it) = inv.items.get(&original)
-        && it.asset_type == kind
-        && rules::held(inv, it) & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER
-        && ui.rect_contains_pointer(ui.min_rect())
-        && ui.input(|i| i.pointer.any_released())
-    {
+    if let Some(it) = dropped_asset(ui, picker.response.rect, inv, Some(kind)) {
         *asset = it.asset_id;
         *name = it.name.clone();
     }
+}
+
+fn dropped_asset<'a>(ui: &egui::Ui, rect: egui::Rect, inv: &'a Inventory, kind: Option<i32>) -> Option<&'a aurora_net::inventory::InvItem> {
+    if !ui.is_enabled() || !ui.rect_contains_pointer(rect) || !ui.input(|i| i.pointer.primary_released()) {
+        return None;
+    }
+    let cargo = egui::DragAndDrop::payload::<crate::ui::inventory::InvDrag>(ui.ctx())?;
+    let it = inv.items.get(&rules::original(inv, cargo.0)?)?;
+    if kind.is_some_and(|k| k != it.asset_type)
+        || !rules::gesture_asset_allowed(inv, it)
+        || cargo.0 != it.id && rules::in_type(inv, cargo.0, 14)
+    {
+        return None;
+    }
+    // A drop on the selected step's picker replaces its asset. Do not
+    // also append a step when the containing window processes this release.
+    egui::DragAndDrop::clear_payload(ui.ctx());
+    Some(it)
 }
 
 fn parameters(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, assets: &Assets, step: &mut Step) {
@@ -344,6 +355,20 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
                     ui.label(RichText::new(&editor.message).color(p.warn));
                 }
             });
+            if modifiable
+                && editor.saving.is_none()
+                && g.steps.len() < MAX_STEPS
+                && let Some(it) = dropped_asset(ui, ui.max_rect(), inv, None)
+            {
+                let name = it.name.clone();
+                let asset = it.asset_id;
+                g.steps.push(if it.asset_type == 20 {
+                    Step::Animation { name, asset, flags: 0 }
+                } else {
+                    Step::Sound { name, asset, flags: 0 }
+                });
+                editor.step = Some(g.steps.len() - 1);
+            }
         });
         if !open && editor.dirty() {
             state.discard = Some(*id);
@@ -416,13 +441,7 @@ impl Assets {
         self.choices = inv
             .items
             .values()
-            .filter(|it| {
-                matches!(it.asset_type, 1 | 20)
-                    && !it.asset_id.is_nil()
-                    && rules::held(inv, it) & (rules::COPY | rules::MODIFY | rules::TRANSFER)
-                        == rules::COPY | rules::MODIFY | rules::TRANSFER
-                    && !rules::in_type(inv, it.id, 14)
-            })
+            .filter(|it| rules::gesture_asset_allowed(inv, it))
             .map(|it| (it.asset_type, it.asset_id, it.name.clone()))
             .collect();
         self.choices

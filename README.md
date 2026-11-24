@@ -111,37 +111,38 @@ while rethinking the user interface.
   </tr>
 </table>
 
-### New in 0.9.11 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
+### New in 0.9.13 <img src="docs/readme/pill-new.svg" alt="New" height="18" align="absmiddle">
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>A complete Director</h3>
-      Ready-made shots, renders up to 4K, films with their sound, montages
-      of several tracks, the photo looks and LUTs, and move and turn
-      handles on the cameras. No ffmpeg yet? The Director downloads it in
-      one click.
+      <h3>Ray tracing: Deluxe (RT)</h3>
+      On cards with ray tracing, the Deluxe (RT) level traces the shadows
+      of the sun, the moon and the lamps, exact where things touch, with
+      coloured glass tinting the light, and lets the light bounce into
+      rooms. A ray tracing quality fits it to smaller cards.
     </td>
     <td width="50%" valign="top">
-      <h3>Gaming mode</h3>
-      Aurora steps back while you play a game: the world stops drawing
-      and gives the video memory and RAM back, while chat, sounds and
-      notifications keep working. Coming back to the window ends it.
+      <h3>Windows outside the viewer</h3>
+      Send Conversations, the inventory or any other window to a screen
+      of its own and bring it back; drag and drop still works between
+      them. Voice chat can play on its own output device.
     </td>
   </tr>
   <tr>
     <td valign="top">
-      <h3>360° pictures and better photos</h3>
-      Take a 360° picture and view it as a panorama, keep the camera's
-      tilt in presets, let you and others look at the camera, and tune
-      shadows and ambient occlusion in the viewfinder.
+      <h3>A new LiveMesh and photo filters</h3>
+      LiveMesh is rebuilt with live thumbnails, Quick look, a weight bend
+      test and an Undo button. Photo filters become cards you drag, with
+      a catalogue that previews each effect, and Phototools gets its
+      Light and DoF &amp; glow tabs.
     </td>
     <td valign="top">
-      <h3>More like the Legacy Viewer</h3>
-      The Omnifilter, the pose stand, Favorite wearables, a target frame
-      rate (Autotune), proxy settings, script sync with outside editors,
-      saved poses from the Legacy Viewer and Alchemy, and the missing
-      interface sounds.
+      <h3>Faster textures, a rounder world</h3>
+      aurora-j2k, a JPEG 2000 decoder written in Rust, decodes textures
+      faster. Soft sun shadows and planet curvature are new options, a
+      Mini AO window stays open, and updates install only when signed by
+      the Release workflow.
     </td>
   </tr>
 </table>
@@ -220,8 +221,10 @@ are planned or in progress: they are not in the viewer yet.
   fences and hair stay solid in the distance, and textures load as finely as
   you expect close to the camera.
 - **Graphics levels matched to your machine**, chosen at first launch: GTAO
-  from Medium up, contact shadows from High, screen-space indirect light
-  (experimental) in Deluxe with a 192 m draw distance; per-section resets
+  from Medium up, contact shadows from High, and Deluxe (RT): High with the
+  sun's and the lamps' shadows and the indirect light ray-traced, on the
+  cards with ray queries, at a ray tracing quality of your choice (Low,
+  Medium, High) that keeps every traced effect on; per-section resets
   when you want to start over. Save your own settings as named graphics
   profiles and switch between them from Preferences or the FPS counter.
 - **HDR, or the older look**: the Legacy Viewer's HDR and Emissive switch,
@@ -651,8 +654,12 @@ frame on your own PC.
   PBR and legacy materials, shadows, GTAO ambient occlusion with specular
   occlusion, sun contact shadows, specular anti-aliasing, reflection probes,
   water, glow, particles, rainbows, 22° halos and depth of field;
-  screen-space indirect light, GPU occlusion and enhanced water effects (all
-  experimental), graphics presets and per-section resets; headset viewing
+  ray-traced sun and local light shadows and indirect light (the Deluxe
+  (RT) graphics level, on the cards with ray queries; the shadow maps
+  elsewhere); screen-space indirect light,
+  GPU occlusion, enhanced water effects and ray-traced indirect light and
+  reflections (all experimental),
+  graphics presets and per-section resets; headset viewing
   through OpenXR (experimental, view only).
 - **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;
@@ -1100,7 +1107,9 @@ git clone https://github.com/Aurora-Viewer/Aurora-Viewer aurora-viewer
 The tools check the environment and offer to **repair** it: they install
 whatever is missing (GitHub CLI, the Visual Studio C++ tools, Rust), clone
 the Legacy Viewer sources next to the repository, and download the Rust
-toolchain and the crates. Then, driven by the keyboard: release /
+toolchain and the crates. On Linux, `aurora-tools.sh` is the same tool (see
+[Installing on Linux](docs/LINUX.md#development-environment)). Then, driven by
+the keyboard: release /
 dev / debug viewers, demo, agents' tasks, disk, logs, live pull requests with
 Windows notifications, releases (see
 [HUMANS.md](HUMANS.md)).

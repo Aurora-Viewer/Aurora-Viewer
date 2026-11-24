@@ -52,8 +52,9 @@ here under GPL-3.0-or-later as described above. Rows are retained top-down.
 
 The RLVa command parser, restriction rules, inventory conventions and camera
 behaviors in `crates/aurora-viewer/src/world/rlva/` and `world/rlva.rs` follow
-the Legacy Viewer's `indra/newview/rlv*.cpp` and `rlv*.h`: Copyright ©
-2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
+the Legacy Viewer's `indra/newview/rlv*.cpp` and `rlv*.h`, and
+`world/rlva/legacy_strings.rs` the texts of its
+`skins/default/xui/*/rlva_strings.xml`: Copyright © 2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
 GPL-3.0-or-later as described above.
 
 ## Authors of the ported code
@@ -77,7 +78,7 @@ GPL-3.0-or-later as described above.
 | Texture tab, `newview/fspanelface.cpp` — Copyright © 2024 Zi Ree | `aurora-viewer/src/build/ui/texture.rs`, `build/ui/texture_drop.rs`, `build/contents_drop.rs` | Originally LGPL 2.1 |
 | Face selection cycling, `newview/llviewermenu.cpp`, `LLToolsSelectNextPartFace` (`FS:Zi` contributions) — Zi Ree | `aurora-viewer/src/build/ui/mod.rs` | Originally LGPL 2.1 |
 | Omnifilter and object message filter, `newview/omnifilterengine.cpp`, `omnifilterengine.h`, `omnifilter.cpp` — Copyright © 2025 Zi Ree | `aurora-viewer/src/omnifilter.rs`, `omnifilter/file.rs`, `ui/omnifilter.rs`, `world/omnifilter.rs`, `world/object_im_filter.rs` | Originally LGPL 2.1 |
-| Quick preferences, `newview/quickprefs.cpp` — Copyright © 2011 WoLf Loonie, © 2013 Zi Ree, © 2013 Ansariel Hiller, © 2013 Cinder Biscuits | `aurora-viewer/src/ui/quick_prefs.rs`, `ui/environment.rs`, `world/eep_photo.rs`, `world/env_select.rs` | Originally LGPL 2.1 |
+| Quick preferences, `newview/quickprefs.cpp` — Copyright © 2011 WoLf Loonie, © 2013 Zi Ree, © 2013 Ansariel Hiller, © 2013 Cinder Biscuits | `aurora-viewer/src/ui/quick_prefs.rs`, `ui/phototools.rs`, `ui/options/phototools.rs`, `app/phototools.rs`, `ui/environment.rs`, `world/eep_photo.rs`, `world/env_select.rs` | Originally LGPL 2.1 |
 | Radar, `newview/fsradar.cpp`, `fsradarentry.cpp`, `fspanelradar.cpp` — Copyright © 2013 Ansariel Hiller; `fsradarlistctrl.cpp` — Copyright © 2011 Arrehn Oberlander | `aurora-net/src/bridge/query.rs`; `aurora-viewer/src/world/radar.rs`, `ui/people/radar.rs`, `ui/people/nearby.rs`, `world/friend_join.rs`, `app.rs` | Originally LGPL 2.1 |
 | Money tracker, `newview/fsmoneytracker.cpp` — Copyright © 2011 Arrehn Oberlander, © 2015 Ansariel Hiller | `aurora-viewer/src/ui/money_tracker.rs` | Originally LGPL 2.1 |
 | Asset blacklist, `newview/fsassetblacklist.cpp`, `fsfloaterassetblacklist.cpp` — Copyright © 2012 Wolfspirit Magic, © 2016 Ansariel Hiller | `aurora-viewer/src/world/derender.rs`, `ui/blacklist.rs` | Originally LGPL 2.1 |
@@ -106,6 +107,7 @@ GPL-3.0-or-later as described above.
 | Search and replace, `newview/llfloatersearchreplace.cpp` — Copyright © 2010-2013 Kitty Barnett | `aurora-viewer/src/ui/scripts/dialogs.rs`, `ui/inventory/find.rs` | Originally LGPL 2.1 |
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
+| Minimap world map overlay (Catznip, `[SL:KB] - Patch: World-MinimapOverlay`): the region's map tiles, `LLViewerRegion::getWorldMapTiles` in `newview/llviewerregion.cpp` and the tile overlay of `LLNetMap` in `newview/llnetmap.cpp` — by Kitty Barnett | `aurora-viewer/src/ui/map_tiles.rs`, `ui/minimap.rs` | Originally LGPL 2.1 |
 | Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
 
 ## Ideas from other viewers
@@ -209,6 +211,99 @@ cryptography (`aws-lc-sys`, `ring`: ISC, Apache-2.0 and the OpenSSL and
 BoringSSL notices they carry), the OpenXR loader (`openxr-sys`, Apache-2.0) and
 egui's default fonts (`epaint_default_fonts`: Ubuntu Font Licence 1.0 and SIL
 Open Font License 1.1).
+
+## JPEG 2000 decoder (neo-j2k and OpenJPEG)
+
+The texture decoder, `crates/aurora-j2k/`, is a Rust port of neo-j2k by Anne
+Skydancer (https://github.com/anne-skydancer/neo-j2k, revision `16eb836d`),
+a C++ decoder derived from OpenJPEG 2.5.4
+(https://github.com/uclouvain/openjpeg). Each ported file names the files it
+follows and keeps their copyright notices at its top: `src/header.rs`,
+`decode.rs`, `tile.rs`, `t2.rs`, `t1.rs`, `t1_luts.rs`, `dwt.rs` and `mct.rs`.
+Both are under the BSD 2-Clause License; this port is distributed under
+GPL-3.0-or-later with the rest of Aurora Viewer, and their notices follow.
+
+neo-j2k:
+
+```text
+BSD 2-Clause License
+
+Copyright (c) 2026, Anne Skydancer (neo-j2k)
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+OpenJPEG, whose code neo-j2k ports (the ported files carry these notices as
+well):
+
+```text
+The copyright in this software is being made available under the 2-clauses
+BSD License, included below. This software may be subject to other third
+party and contributor rights, including patent rights, and no such rights
+are granted under this license.
+
+Copyright (c) 2002-2014, Universite catholique de Louvain (UCL), Belgium
+Copyright (c) 2002-2014, Professor Benoit Macq
+Copyright (c) 2003-2014, Antonin Descampe
+Copyright (c) 2003-2009, Francois-Olivier Devaux
+Copyright (c) 2005, Herve Drolon, FreeImage Team
+Copyright (c) 2002-2003, Yannick Verschueren
+Copyright (c) 2001-2003, David Janssens
+Copyright (c) 2011-2012, Centre National d'Etudes Spatiales (CNES), France
+Copyright (c) 2012, CS Systemes d'Information, France
+Copyright (c) 2006-2007, Parvatha Elangovan
+Copyright (c) 2008, Jerome Fimes, Communications & Systemes <jerome.fimes@c-s.fr>
+Copyright (c) 2010-2011, Kaori Hagihara
+Copyright (c) 2008, 2011-2012, Centre National d'Etudes Spatiales (CNES), FR
+Copyright (c) 2017, IntoPIX SA <support@intopix.com>
+Copyright (c) 2003-2007, Francois-Olivier Devaux
+Copyright (c) 2007, Callum Lerwick <seg@haxxed.com>
+Copyright (c) 2007, Jonathan Ballard <dzonatas@dzonux.net>
+Copyright (c) 2012, Carl Hetherington
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS `AS IS'
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+```
 
 ## HIDAPI
 
