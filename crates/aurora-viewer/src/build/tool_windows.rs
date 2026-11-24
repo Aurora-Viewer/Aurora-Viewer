@@ -42,30 +42,43 @@ impl BuildTool {
         }
     }
 
-    /// Closes the window of `tool`. The tool in use then goes to the
-    /// window opened last, or to Edit with the main window; with no
-    /// window left the build tools close (LLFloaterTools::onClose).
+    /// The tool in use once its window closed: the window opened last, but
+    /// never Create, which comes back only from its shapes (it puts a shape
+    /// under the pointer to rez: human request, 2026-11-24); else Edit.
+    fn fallback_tool(&self) -> Tool {
+        self.tool_windows
+            .iter()
+            .rev()
+            .copied()
+            .find(|t| *t != Tool::Create)
+            .unwrap_or(Tool::Edit)
+    }
+
+    /// Closes the window of `tool`. The tool in use then goes to
+    /// `fallback_tool`; with no window left the build tools close
+    /// (LLFloaterTools::onClose).
     pub fn close_tool_window(&mut self, tool: Tool, world: &mut World, s: &mut BuildSettings) {
         self.tool_windows.retain(|t| *t != tool);
         if !self.main_open && self.tool_windows.is_empty() {
             self.close_all(world, s);
         } else if self.tool == tool {
-            self.set_tool(self.tool_windows.last().copied().unwrap_or(Tool::Edit));
+            self.set_tool(self.fallback_tool());
         }
     }
 
     /// Closes the Aurora main window; the tool windows stay, the last one
-    /// opened taking over from Edit.
+    /// opened (Create aside: `fallback_tool`) taking over from Edit.
     pub fn close_main(&mut self, world: &mut World, s: &mut BuildSettings) {
         if self.ui.legacy() || self.tool_windows.is_empty() {
             self.close_all(world, s);
             return;
         }
         self.main_open = false;
-        if self.tool == Tool::Edit
-            && let Some(last) = self.tool_windows.last().copied()
-        {
-            self.set_tool(last);
+        if self.tool == Tool::Edit {
+            let next = self.fallback_tool();
+            if next != Tool::Edit {
+                self.set_tool(next);
+            }
         }
     }
 

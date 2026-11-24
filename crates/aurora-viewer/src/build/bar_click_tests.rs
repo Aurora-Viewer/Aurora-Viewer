@@ -106,14 +106,43 @@ fn aurora_tool_windows_stay_open_together_and_the_last_one_holds_the_tool() {
     b.tool.activate(Tool::Edit);
     assert_eq!(b.tool.tool, Tool::Edit);
     assert_eq!(b.tool.tool_windows(), [Tool::Create, Tool::Land]);
-    // closing the window of the tool in use gives it to the last one left
+    // closing the window of the tool in use gives it to the last one left,
+    // never to Create, which comes back only from its shapes: Edit
     b.tool.activate(Tool::Land);
     b.button(Some(Tool::Land));
-    assert_eq!(b.tool.tool, Tool::Create);
-    // then to Edit, the main window's
+    assert_eq!(b.tool.tool, Tool::Edit);
+    b.button(Some(Tool::Focus));
+    b.button(Some(Tool::Land));
+    b.button(Some(Tool::Land));
+    assert_eq!(b.tool.tool, Tool::Focus, "the last one left that is not Create");
+    b.button(Some(Tool::Focus));
+    assert_eq!(b.tool.tool, Tool::Edit);
     b.button(Some(Tool::Create));
     assert_eq!(b.tool.tool, Tool::Edit);
     assert!(b.tool.open && b.tool.main_open);
+}
+
+#[test]
+fn aurora_closing_the_main_window_never_makes_create_the_tool_in_use() {
+    // the human's report of 2026-11-24: the main window closed beside the
+    // Create window put a shape under the pointer to rez
+    let mut b = Bench::new(false);
+    b.button(None);
+    b.button(Some(Tool::Create));
+    b.tool.activate(Tool::Edit);
+    b.tool.close_main(&mut b.world, &mut b.settings);
+    assert!(b.tool.open && !b.tool.main_open);
+    assert_eq!(b.tool.tool_windows(), [Tool::Create]);
+    assert_ne!(b.tool.tool, Tool::Create);
+    assert!(!b.tool.lit(None) && b.tool.lit(Some(Tool::Create)));
+    // a Move window beside it takes over instead
+    let mut b = Bench::new(false);
+    b.button(None);
+    b.button(Some(Tool::Grab));
+    b.button(Some(Tool::Create));
+    b.tool.activate(Tool::Edit);
+    b.tool.close_main(&mut b.world, &mut b.settings);
+    assert_eq!(b.tool.tool, Tool::Grab);
 }
 
 #[test]
