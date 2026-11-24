@@ -11206,6 +11206,9 @@ at frame 700. `tattoo:local-reload` replaces the violet checker with a green
 one at frame 900 using the importer's reload generation; capture before and
 after frame 1100. `tattoo:local-cancel` cancels at frame 1000 and restores the
 server appearance. These modes also accept the other wearable types.
+`tattoo:local-shape` opens the worn shape at frame 900 with the checker still
+on the unsaved tattoo. Move a shape slider, then close Shape to resume the tattoo.
+`skin:local-save-shape` saves the layer at frame 650 before opening Shape.
 `tattoo:local-save` saves at frame 650 and acknowledges the saved wearable;
 `skin:local-save` and `universal:local-save` cover body parts and extra slots.
 Save, Save As and Save on closing accept confirmed local bitmap references,

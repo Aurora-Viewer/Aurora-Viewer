@@ -992,7 +992,9 @@ explicit Cancel restores the slot. Closing the editor retains the unsaved
 Save/Discard/Cancel confirmation, including when its picker was still open.
 Wearable texture pickers accept local textures for private previews; pixel
 revisions trigger a new bake after a watched file reload. Removing a local
-texture restores the edited slots, and saving requires inventory textures.
+texture restores the edited slots. Shape editing uses the same compositor for
+regions with local maps on worn layers. A local layer draft resumes after
+closing Shape, and shape hints sample a small mip of each published bake.
 The wearable picker snapshots its target slot, previews each selection and
 restores that snapshot only on explicit Cancel; OK or close keeps the preview. The build
 and wearable editors share `build/ui/common.rs::swatch`, including bordered,
