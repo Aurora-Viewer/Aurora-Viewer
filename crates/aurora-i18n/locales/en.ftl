@@ -9070,6 +9070,7 @@ build-ui-texture-suction = suction
 build-ui-texture-weave = weave
 fetch-redirect-failed = Redirect failed
 world-mod-declined = declined
+fetch-invalid-url = Invalid URL
 fetch-request-failed = Request failed
 session-land-unreadable-response = unreadable response
 session-land-no-land-resources = The region does not provide the LandResources capability.
