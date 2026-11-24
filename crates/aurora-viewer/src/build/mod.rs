@@ -240,6 +240,9 @@ pub struct BuildSettings {
     pub create_shape: usize,
     /// CreateToolKeepSelected.
     pub keep_tool: bool,
+    /// The Aurora Create window shows its options under the shapes (the
+    /// section folds; Aurora's own).
+    pub create_options_shown: bool,
     /// Firestorm RezUnderLandGroup, enabled by default.
     pub rez_under_land_group: bool,
     /// New prim size (FSBuildPrefs_X/Y/Zsize).
@@ -811,6 +814,7 @@ impl Default for BuildSettings {
             show_probe_volumes: false,
             create_shape: 0,
             keep_tool: false,
+            create_options_shown: true,
             rez_under_land_group: true,
             new_prim_size: [0.5; 3],
             new_prim_material: 3,

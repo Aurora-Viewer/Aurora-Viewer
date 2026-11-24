@@ -4356,3 +4356,42 @@ fn the_rail_tool_buttons_open_and_close_their_own_windows() {
     assert_eq!(inspector.tool.tool, Tool::Edit);
     assert!(inspector.tool.open && inspector.tool.main_open);
 }
+
+/// The Create window (human request, 2026-11-24): no "Click in the world
+/// to build" line, and its options fold under the shapes, the choice kept
+/// in the build settings.
+#[test]
+fn the_create_window_folds_its_options_and_has_no_hint() {
+    let mut inspector = Inspector::new();
+    inspector.tool.open_build(Tool::Create);
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    let window = inspector
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+        .expect("the Create window");
+    let find = |texts: &[(String, egui::Rect)], label: &str| {
+        texts
+            .iter()
+            .find(|(text, rect)| text == label && window.contains_rect(*rect))
+            .map(|(_, rect)| *rect)
+    };
+    let keep = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
+    let texts = inspector.show(vec![]).1;
+    assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-click-in-the-world-to-build")).is_none());
+    assert!(find(&texts, keep).is_some(), "shown by default");
+    let header = find(&texts, aurora_i18n::tr!("build-create-options")).expect("the options' header");
+    click_at(&mut inspector, header.center());
+    for _ in 0..20 {
+        inspector.show(vec![]);
+    }
+    assert!(!inspector.settings.create_options_shown);
+    assert!(find(&inspector.show(vec![]).1, keep).is_none(), "folded");
+    click_at(&mut inspector, header.center());
+    for _ in 0..20 {
+        inspector.show(vec![]);
+    }
+    assert!(inspector.settings.create_options_shown);
+    assert!(find(&inspector.show(vec![]).1, keep).is_some(), "shown again");
+}

@@ -804,8 +804,9 @@ pub(super) fn tool_panel(
         }
         Tool::Edit => {}
     }
-    // the line says what the tool in use does: this one's when it is
-    if tool.tool == which {
+    // the line says what the tool in use does: this one's when it is;
+    // the Create window has none (the human's request, 2026-11-24)
+    if tool.tool == which && which != Tool::Create {
         common::small(ui, p, tools::status_text(tool, s, mods));
     }
 }

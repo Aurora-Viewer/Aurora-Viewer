@@ -10705,6 +10705,7 @@ build-compact-paste-vector = Coller le vecteur copié
 build-compact-copy-vector = Copier le vecteur
 build-compact-camera = Caméra
 build-tool-in-use = En cours
+build-create-options = Options de création
 build-compact-move-tool = Déplacer
 build-compact-edit = Modifier
 build-compact-create = Créer
