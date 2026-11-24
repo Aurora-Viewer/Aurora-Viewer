@@ -1740,6 +1740,23 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
     // depth under the water does not dim (water_scene_lit)
     var own = m.emissive;
     let classic = is_classic_sky();
+    // Limit native shader expansion by sharing receiver visibility across
+    // the sky models. Set the traced glass tint before thin backlighting.
+    var sh = 1.0;
+    if ((rec.flags.x & FLAG_FULLBRIGHT) == 0u) {
+        // softenLightF: scol = max(shadow, emissive)
+        sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
+    }
+    // Keep one transmission-shadow callsite across the sky models. The
+    // classic branch uses its atmospheric sun colour at this surface.
+    var thin_backlight = vec3<f32>(0.0);
+    if ((rec.flags.x & FLAG_FULLBRIGHT) == 0u && pbr_thin_matches(rec)) {
+        var thin_sun = frame.sun_color.rgb;
+        if (classic) {
+            thin_sun = ll_sun_linear(ll_atmos(in.world_pos - frame.camera_pos.xyz));
+        }
+        thin_backlight = pbr_thin_backlight(m.color.rgb, m.geo_n, in.world_pos, in.view_depth, thin_sun);
+    }
     var hazed = false;
     if ((rec.flags.x & FLAG_FULLBRIGHT) != 0u) {
         col = m.color.rgb + m.emissive;
@@ -1747,8 +1764,6 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         hazed = classic;
     } else if (classic) {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
-        // softenLightF: scol = max(shadow, emissive)
-        let sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
         let a = ll_atmos(in.world_pos - frame.camera_pos.xyz);
         // softenLightF: (sun + sky + specular + environment + emissive) x
         // final_scale, then the local lights pass, then hazeF
@@ -1757,7 +1772,7 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
             col = ll_classic_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy, a);
             local = ll_classic_pbr_local(m.color.rgb, m.metallic, m.roughness, m.n, v, in.world_pos, in.clip.xy);
             if (pbr_thin_matches(rec)) {
-                col += pbr_thin_backlight(m.color.rgb, m.geo_n, in.world_pos, in.view_depth, ll_sun_linear(a));
+                col += thin_backlight;
             }
         } else {
             col = ll_classic_sun_ambient(m.color.rgb, m.n, sh, in.clip.xy, a);
@@ -1772,14 +1787,13 @@ fn shade_material(in: VsOut, m: Material) -> Shaded {
         hazed = true;
     } else {
         let v = normalize(frame.camera_pos.xyz - in.world_pos);
-        let sh = max(sun_shadow(in.world_pos, shadow_normal(m), in.view_depth, in.clip.xy), m.unlit);
         // a sky with a probe ambiance: softenLightF's non-classic branch, a
         // face without a PBR material lit as a legacy one
         let legacy = (rec.flags.x & FLAG_PBR) == 0u;
         col = shade_pbr(m.color.rgb, m.metallic, m.roughness, m.ao, m.n, v, in.world_pos, sh, in.clip.xy, legacy) + m.emissive;
         own += shade_pbr_local;
         if (!legacy && pbr_thin_matches(rec)) {
-            col += pbr_thin_backlight(m.color.rgb, m.geo_n, in.world_pos, in.view_depth, frame.sun_color.rgb);
+            col += thin_backlight;
         }
         if (m.legacy_spec.a > 0.0 || m.legacy_env > 0.0 || m.unlit > 0.0) {
             // legacy_light mixes the local lights' share toward the

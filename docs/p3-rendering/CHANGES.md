@@ -4,6 +4,8 @@ The original P3 port targeted Aurora `v0.9.13-beta.20261121.2` (`231c88a3`). Sub
 
 ## Shader compilation during login
 
+- Directional filtering shares adaptive disk and graded-map call sites to limit native compiler expansion while preserving sample counts and map coverage.
+- Object lighting shares receiver visibility and optional thin-surface backlighting across the classic and modern sky branches. Receiver visibility runs first so traced glass tint is available to transmission. The sampling and lighting helpers retain their existing arithmetic; this reduces duplicated shadow graphs in the material shader.
 - Stochastic transparency builds its optional GPU pipelines on a worker when the first eligible blended frame arrives. Frames use the existing sorted draw path until a complete set for the current sample count is ready.
 - Live Bend contact shadows use the existing 60-sample pipeline while a worker prepares the requested reach. The renderer caches completed variants by their exact sample settings. Explicit captures request the matching kernel before drawing.
 - Stall snapshots record known pipeline work on the affected render thread. The window continues to offer Wait or Close for persistent stalls, and confirmed device loss follows the existing recovery path.
