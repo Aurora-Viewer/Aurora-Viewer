@@ -4,7 +4,8 @@
     (arrows, Enter, Esc): diagnosis and repair of the environment,
     release / dev / debug viewers, demo, agent tasks, disk, logs,
     live PR tracking (bottom bar, notifications), release
-    management, shortcuts, Claude Code permissions, repository reset. Started by aurora-tools.cmd, at the repository root.
+    management, shortcuts, Claude Code permissions, repository reset. Started by aurora-tools.cmd
+    (aurora-tools.sh on Linux), at the repository root.
 
 .DESCRIPTION
     Without a repository (first installation: the one-line command runs
@@ -40,11 +41,13 @@ try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 function Find-Project {
     $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     if (-not (Test-Path (Join-Path $repo 'AGENTS.md'))) { return $null }
+    # the checkout these tools run from: a worktree's branch can differ from main
+    $toolsRepo = $repo
     $common = if (Get-Command git -ErrorAction SilentlyContinue) { git -C $repo rev-parse --path-format=absolute --git-common-dir 2>$null }
     if ($common) { $repo = Split-Path $common.Trim() -Parent }
     $p = Get-Paths (Split-Path $repo -Parent)
     $p.Repo = $repo
-    $p
+    $p | Add-Member -NotePropertyName ToolsRepo -NotePropertyValue $toolsRepo -PassThru
 }
 
 function Show-Failure($Err) {
@@ -63,10 +66,11 @@ function Get-ToolsFingerprint([string]$RepoPath) {
 }
 
 function Invoke-ToolsRepair($P) {
+    $tools = if ($P.ToolsRepo) { $P.ToolsRepo } else { $P.Repo }
     try { Invoke-Repair $P } finally {
         # A later repair step may fail after git has already updated the tools.
-        if ($ToolsFingerprint -ne (Get-ToolsFingerprint $P.Repo)) {
-            $script:ToolsRestartPath = Join-Path $P.Repo 'scripts\tools\aurora-tools.ps1'
+        if ($ToolsFingerprint -ne (Get-ToolsFingerprint $tools)) {
+            $script:ToolsRestartPath = Join-Path $tools 'scripts\tools\aurora-tools.ps1'
         }
     }
 }
@@ -96,7 +100,7 @@ function Start-Install {
         Show-Checks (Get-Checks (Get-Paths $root)) "Proposed project folder: $root"
         if (-not $Yes -and -not (Read-YesNo "Install everything in ${root}?")) {
             do {
-                $answer = Read-Text 'Path of the Aurora-Viewer folder (created if missing), for example D:\Dev\Aurora-Viewer; empty: cancel'
+                $answer = Read-Text "Path of the Aurora-Viewer folder (created if missing), for example $(if ($IsLinux) { '~/Dev/Aurora-Viewer' } else { 'D:\Dev\Aurora-Viewer' }); empty: cancel"
                 if (-not $answer) { Write-Color '  Nothing was installed.' muted; exit 0 }
                 $root = [IO.Path]::GetFullPath($answer)
                 if (Test-Path -LiteralPath $root -PathType Leaf) { Write-Color "  $root is a file, not a folder." warn; $root = $null }
@@ -117,7 +121,7 @@ function Start-Install {
     Write-Color "    $($p.Repo)" ink
     Write-Color '    Open your agent (Claude Code…) in this folder; your role is explained in HUMANS.md.' muted
     $tools = Join-Path $p.Repo 'scripts\tools\aurora-tools.ps1'
-    if (-not $Yes -and (Test-Path $tools) -and (Read-YesNo 'Open the Aurora tools (aurora-tools.cmd)?')) {
+    if (-not $Yes -and (Test-Path $tools) -and (Read-YesNo "Open the Aurora tools ($LauncherName)?")) {
         & $tools
     }
 }
@@ -151,16 +155,16 @@ function Show-Main {
         $items = @()
         if ($problems) { $items += @{ Key = 'r'; Label = "Repair / update ($($problems.Count))"; Hint = 'installs what is missing, updates the rest' } }
         $items += @(
-            @{ Key = '1'; Label = 'Release viewer'; Hint = 'latest main from GitHub, --release, in RELEASE\' }
+            @{ Key = '1'; Label = 'Release viewer'; Hint = "latest main from GitHub, --release, in RELEASE$DirSep" }
             @{ Key = '2'; Label = 'Dev viewer'; Hint = 'your local repository, default profile' }
             @{ Key = '3'; Label = 'Debug viewer'; Hint = 'with console and debugging controls' }
             @{ Key = '4'; Label = 'Demo'; Hint = 'offline, choice of scenario' }
-            @{ Key = '5'; Label = 'Agent tasks'; Hint = 'folders of work\, PRs, cleanup' }
+            @{ Key = '5'; Label = 'Agent tasks'; Hint = "folders of work$DirSep, PRs, cleanup" }
             @{ Key = '6'; Label = 'Disk'; Hint = 'space taken by builds, cleanup' }
             @{ Key = '7'; Label = 'Viewer logs'; Hint = 'open, read the end, copy the path' }
             @{ Key = 'p'; Label = 'PR tracking'; Hint = 'live, to keep in a corner of the screen' }
             @{ Key = 'm'; Label = 'Manage releases'; Hint = 'create or delete a release' }
-            @{ Key = '8'; Label = 'Shortcuts'; Hint = 'Desktop and Start menu' }
+            @{ Key = '8'; Label = 'Shortcuts'; Hint = $(if ($IsLinux) { 'Desktop and applications menu' } else { 'Desktop and Start menu' }) }
             @{ Key = 'c'; Label = 'Claude permissions'; Hint = 'let the agents follow and merge their PRs, handle the issues' }
             @{ Key = 'v'; Label = 'Check again'; Hint = 'the full table of the environment' }
             @{ Key = 'x'; Label = 'Reset the repository'; Hint = 'fresh clone from GitHub, erases everything local (inventory first)' }
@@ -199,7 +203,7 @@ function Show-Main {
 
 $Paths = Find-Project
 if ($Action -eq 'install' -or -not $Paths) { Start-Install; exit }
-$ToolsFingerprint = Get-ToolsFingerprint $Paths.Repo
+$ToolsFingerprint = Get-ToolsFingerprint $Paths.ToolsRepo
 $ToolsRestartPath = $null
 $sessionCursorVisible = $true
 if ($Interactive) { try { $sessionCursorVisible = [Console]::CursorVisible } catch { } }

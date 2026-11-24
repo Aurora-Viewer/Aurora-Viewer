@@ -227,11 +227,6 @@ pub(super) fn show(
             actions.push(Action::Resume);
         }
     });
-    if unified && imports.choice == Choice::Bulk {
-        ui.add_enabled_ui(!busy, |ui| {
-            checkbox(ui, p, &mut imports.scale_bulk_1k, aurora_i18n::tr!("import-limit-bulk-1k"));
-        });
-    }
     ui.ctx()
         .data_mut(|data| data.insert_temp(footer_key, ui.cursor().top() - footer_top + ui.spacing().item_spacing.y));
 }

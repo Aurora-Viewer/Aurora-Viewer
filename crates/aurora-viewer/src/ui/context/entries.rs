@@ -281,6 +281,19 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             ui.item_if(icon, label, o.scripts, CtxAction::Scripts { id, action });
         }
     });
+    // Not on the Legacy Viewer's object menu: its closest model is the
+    // attachment's "Show original" (handle_object_show_original,
+    // menu_attachment_self.xml), which keeps its icon and label here and is
+    // greyed out the same way under @showinv (enable_object_show_original,
+    // llviewermenu.cpp). Shown once the properties have named the object.
+    if o.owned && !o.local_preview && !o.name.trim().is_empty() {
+        ui.item_if(
+            "briefcase-filled",
+            aurora_i18n::tr!("ui-context-show-in-inventory"),
+            !o.inventory_hidden,
+            CtxAction::FindInInventory(id),
+        );
+    }
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point, None));
     ui.item(
         "list-details-filled",
@@ -1950,6 +1963,46 @@ mod tests {
             .into_iter()
             .find(|e| e.label == label)
             .unwrap_or_else(|| panic!("{key} missing"))
+    }
+
+    /// "Show in inventory" of a rezzed object: on the menu of what the agent
+    /// owns itself (never a group-deeded or someone else's object, nor a
+    /// local mesh), greyed out under @showinv, with the attachment's icon.
+    #[test]
+    fn show_in_inventory_of_a_rezzed_object_follows_ownership_and_showinv() {
+        let (me, group, other) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let find = |f: &Facts| {
+            rows(world_menu(&object_target(), f, Vec3::ZERO))
+                .into_iter()
+                .find(|e| matches!(e.kind, Kind::Action(CtxAction::FindInInventory(_))))
+        };
+        let mut f = Facts::default();
+        f.object.name = "Chair".into();
+        // owned: shown and enabled, with the attachment's icon and label
+        f.object.owned = crate::ui::context::owns_rezzed(me, me);
+        let entry = find(&f).expect("owned object has the entry");
+        assert!(entry.enabled);
+        assert_eq!(entry.icon, "briefcase-filled");
+        assert_eq!(entry.label, aurora_i18n::text("ui-context-show-in-inventory"));
+        assert!(matches!(entry.kind, Kind::Action(CtxAction::FindInInventory(id)) if id == ID));
+        // @showinv greys it out
+        f.object.inventory_hidden = true;
+        assert!(!find(&f).expect("still listed under @showinv").enabled);
+        f.object.inventory_hidden = false;
+        // group owned (OwnerID is the group) and someone else's: not listed
+        for owner in [group, other, Uuid::nil()] {
+            f.object.owned = crate::ui::context::owns_rezzed(owner, me);
+            assert!(find(&f).is_none(), "owner {owner} must not offer it");
+        }
+        // a nil agent (not logged in) owns nothing
+        assert!(!crate::ui::context::owns_rezzed(Uuid::nil(), Uuid::nil()));
+        // no name yet (properties not arrived), or a local mesh: not listed
+        f.object.owned = true;
+        f.object.name = " ".into();
+        assert!(find(&f).is_none());
+        f.object.name = "Chair".into();
+        f.object.local_preview = true;
+        assert!(find(&f).is_none());
     }
 
     #[test]
