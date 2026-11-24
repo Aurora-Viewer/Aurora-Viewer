@@ -404,77 +404,59 @@ impl InspectUi {
             .corner_radius(radius)
             .inner_margin(10)
             .show(ui, |ui| {
+                let m = SummaryMetrics::new(ui);
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), m.height), Sense::hover());
                 let limit = self.avatar().then_some(frame.max_complexity);
-                ui.horizontal(|ui| {
-                    // egui cannot centre a block before it knows its size: the
-                    // row takes its height first (the box, the picture, and the
-                    // text block as the last frame measured it), and the box
-                    // and the text get the margins that centre them on it
-                    let text_id = ui.scope_id().with("inspect_summary_text");
-                    let box_h = complexity_box_height(ui);
-                    let text_h = ui.data(|d| d.get_temp::<f32>(text_id)).unwrap_or(box_h);
-                    let row_h = box_h.max(38.0).max(text_h);
-                    ui.set_min_height(row_h);
-                    let (pic, _) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::hover());
-                    let title = match self.subject {
-                        Subject::Avatar(id) => {
-                            self.wanted_pics.insert(id);
-                            widgets::avatar_disc(ui, p, pic, frame.pics.get(&id), frame.subject_name, false);
-                            frame.subject_name.to_owned()
+                // the box takes the card's whole height, so its edges, the
+                // picture's and the two text blocks' share one middle line
+                let boxed = complexity_box(ui, p, rect, &m, frame.totals.complexity, limit);
+                let pic = egui::Rect::from_center_size(
+                    egui::pos2(rect.left() + SUMMARY_PICTURE / 2.0, rect.center().y),
+                    Vec2::splat(SUMMARY_PICTURE),
+                );
+                let title = match self.subject {
+                    Subject::Avatar(id) => {
+                        self.wanted_pics.insert(id);
+                        let tex = frame.pics.get(&id);
+                        widgets::avatar_disc(ui, p, pic, tex, "", false);
+                        if tex.is_none() {
+                            initials_at(ui, p, pic, frame.subject_name);
                         }
-                        Subject::Objects => {
-                            ui.painter().rect_filled(pic, radius, p.raised);
-                            crate::ui::sheet::icon_at(ui, "cube", pic.center(), 20.0, p.violet_light);
-                            aurora_i18n::tr!("inspect-objects-title", count = items.len())
-                        }
-                    };
-                    ui.add_space(4.0);
-                    // the box first, from the right: the name and the username
-                    // take what is left, on one line each, cut short with "…"
-                    // (the counts are on the tabs below)
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                            ui.add_space(((row_h - box_h) / 2.0).max(0.0));
-                            complexity_box(ui, p, frame.totals.complexity, limit);
+                        frame.subject_name.to_owned()
+                    }
+                    Subject::Objects => {
+                        ui.painter().rect_filled(pic, radius, p.raised);
+                        crate::ui::sheet::icon_at(ui, "cube", pic.center(), 20.0, p.violet_light);
+                        aurora_i18n::tr!("inspect-objects-title", count = items.len())
+                    }
+                };
+                // one line each, cut short with "…" (the counts are on the
+                // tabs below)
+                let left = pic.right() + 12.0;
+                let right = boxed.left() - 10.0;
+                let base = if frame.subject_username.is_some() {
+                    m.top(rect) + m.name.cap
+                } else {
+                    rect.center().y + m.name.cap / 2.0
+                };
+                let link_w = if frame.subject_profile.is_some() { 24.0 } else { 0.0 };
+                let room = (right - left - link_w).max(20.0);
+                let name = RichText::new(&title).font(m.name.font.clone()).color(p.ink);
+                let drawn = text_on(ui, &m.name, egui::pos2(left, base), room, name);
+                if let Some(id) = frame.subject_profile {
+                    let middle = egui::pos2(drawn.right() + 14.0, base - m.name.cap / 2.0);
+                    if profile_link(ui, p, middle) {
+                        actions.push(Action::Profile {
+                            who: id,
+                            named_here_alone: false,
                         });
-                        ui.add_space(6.0);
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.vertical(|ui| {
-                                ui.spacing_mut().item_spacing.y = 0.0;
-                                // the name's line is as tall as the name, not as a button
-                                ui.spacing_mut().interact_size.y = 0.0;
-                                let pad = ((row_h - text_h) / 2.0).max(0.0);
-                                ui.add_space(pad);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 4.0;
-                                    let bold = crate::ui::fonts::semibold(ui.ctx());
-                                    let room = (ui.available_width() - 24.0).max(20.0);
-                                    ui.scope(|ui| {
-                                        ui.set_max_width(room);
-                                        let name = RichText::new(&title).size(15.0).family(bold).color(p.ink);
-                                        ui.add(egui::Label::new(name).truncate());
-                                    });
-                                    if let Some(id) = frame.subject_profile
-                                        && profile_link(ui, p)
-                                    {
-                                        actions.push(Action::Profile {
-                                            who: id,
-                                            named_here_alone: false,
-                                        });
-                                    }
-                                });
-                                if let Some(username) = frame.subject_username {
-                                    ui.add(egui::Label::new(RichText::new(username).size(12.0).color(p.muted)).truncate());
-                                }
-                                let measured = ui.min_rect().height() - pad;
-                                if (measured - text_h).abs() > 0.5 {
-                                    ui.data_mut(|d| d.insert_temp(text_id, measured));
-                                    ui.ctx().request_repaint();
-                                }
-                            });
-                        });
-                    });
-                });
+                    }
+                }
+                if let Some(username) = frame.subject_username {
+                    let text = RichText::new(username).font(m.username.font.clone()).color(p.muted);
+                    let at = egui::pos2(left, m.bottom(rect));
+                    text_on(ui, &m.username, at, (right - left).max(20.0), text);
+                }
             });
     }
 
@@ -614,35 +596,134 @@ impl InspectUi {
     }
 }
 
+/// Side of the picture in the summary card.
+const SUMMARY_PICTURE: f32 = 38.0;
+
+/// A font and where its capitals stand in a line, as drawn: a line's box
+/// leaves more room under the letters than above, and the face is drawn a
+/// fraction of a pixel off its baseline, so texts of different sizes centred
+/// by their boxes do not look centred.
+struct Ink {
+    font: egui::FontId,
+    /// From the line's top to the foot of the capitals, on a whole pixel.
+    base: f32,
+    /// Height of a capital.
+    cap: f32,
+}
+
+impl Ink {
+    fn new(ui: &egui::Ui, font: egui::FontId) -> Self {
+        let galley = ui
+            .painter()
+            .layout_no_wrap("H".to_owned(), font.clone(), egui::Color32::PLACEHOLDER);
+        let glyph = galley
+            .rows
+            .first()
+            .and_then(|row| row.glyphs.first().map(|g| (row.pos.y + g.pos.y, g.uv_rect)));
+        let (base, cap) = match glyph {
+            Some((line, uv)) if uv.size.y > 0.0 => (line + uv.offset.y + uv.size.y, uv.size.y),
+            _ => (font.size, font.size * 0.7),
+        };
+        let px = ui.ctx().pixels_per_point();
+        let base = (base * px).round() / px;
+        Self { font, base, cap }
+    }
+}
+
+/// The summary card's lines: the name over the username on the left, the
+/// label over the figure in the complexity box. Both blocks have the same
+/// height, from the top of their capitals to their last baseline, and so the
+/// same top, middle and bottom.
+struct SummaryMetrics {
+    name: Ink,
+    username: Ink,
+    label: Ink,
+    figure: Ink,
+    /// Height of a text block.
+    block: f32,
+    /// Height of the card's inside, and of the complexity box.
+    height: f32,
+}
+
+impl SummaryMetrics {
+    fn new(ui: &egui::Ui) -> Self {
+        let bold = crate::ui::fonts::semibold(ui.ctx());
+        let name = Ink::new(ui, egui::FontId::new(15.0, bold.clone()));
+        let username = Ink::new(ui, egui::FontId::proportional(12.0));
+        let label = Ink::new(ui, egui::FontId::new(10.5, bold.clone()));
+        let figure = Ink::new(ui, egui::FontId::new(14.0, bold));
+        let gap = 6.0 * crate::ui::fonts::scale(ui.ctx());
+        let block = (name.cap + username.cap).max(label.cap + figure.cap) + gap;
+        Self {
+            name,
+            username,
+            label,
+            figure,
+            block,
+            height: (block + 12.0).max(SUMMARY_PICTURE),
+        }
+    }
+
+    /// Top of the blocks' capitals.
+    fn top(&self, card: egui::Rect) -> f32 {
+        card.center().y - self.block / 2.0
+    }
+
+    /// Last baseline of the blocks.
+    fn bottom(&self, card: egui::Rect) -> f32 {
+        card.center().y + self.block / 2.0
+    }
+}
+
+/// A line of text with its baseline at `at`, at most `width` wide.
+fn text_on(ui: &mut egui::Ui, ink: &Ink, at: egui::Pos2, width: f32, text: impl Into<egui::WidgetText>) -> egui::Rect {
+    let line = egui::Rect::from_min_size(egui::pos2(at.x, at.y - ink.base), Vec2::new(width, ink.base + ink.cap));
+    let layout = egui::Layout::top_down(egui::Align::Min);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(line).layout(layout));
+    child.add(egui::Label::new(text).truncate()).rect
+}
+
+/// The initials of `name` in the disc of a resident without a picture, their
+/// capitals in its middle.
+fn initials_at(ui: &egui::Ui, p: &Palette, disc: egui::Rect, name: &str) {
+    let size = disc.height() * 0.42 / crate::ui::fonts::scale(ui.ctx());
+    let ink = Ink::new(ui, egui::FontId::proportional(size));
+    let galley = ui.painter().layout_no_wrap(widgets::initials(name), ink.font, p.violet_pale);
+    let at = egui::pos2(disc.center().x - galley.size().x / 2.0, disc.center().y + ink.cap / 2.0 - ink.base);
+    ui.painter().galley(at, galley, p.violet_pale);
+}
+
 /// The complexity of the inspected objects. For an avatar above the user's
 /// RenderAvatarMaxComplexity (0: no limit), beyond which the Legacy Viewer
 /// draws them as a jelly doll, the figure turns orange; the tooltip says
 /// which side of the limit it is.
-fn complexity_box(ui: &mut egui::Ui, p: &Palette, complexity: u32, limit: Option<u32>) {
-    let bold = crate::ui::fonts::semibold(ui.ctx());
+fn complexity_box(ui: &mut egui::Ui, p: &Palette, card: egui::Rect, m: &SummaryMetrics, complexity: u32, limit: Option<u32>) -> egui::Rect {
+    const SPACING: f32 = 0.7;
     let above = limit.is_some_and(|limit| limit != 0 && complexity > limit);
-    let shown = egui::Frame::new()
-        .fill(p.raised.gamma_multiply(0.5))
-        .corner_radius(ui.visuals().window_corner_radius)
-        .inner_margin(egui::Margin::symmetric(9, 5))
-        .show(ui, |ui| {
-            ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("inspect-totals-complexity").to_uppercase())
-                        .size(10.5)
-                        .extra_letter_spacing(0.7)
-                        .family(bold.clone())
-                        .color(p.muted),
-                );
-                ui.label(
-                    RichText::new(aurora_i18n::integer(i64::from(complexity)))
-                        .size(14.0)
-                        .family(bold)
-                        .color(if above { p.warn } else { p.ink }),
-                );
-            });
-        });
+    let mut format = egui::TextFormat::simple(m.label.font.clone(), p.muted);
+    format.extra_letter_spacing = SPACING;
+    let label = aurora_i18n::tr!("inspect-totals-complexity").to_uppercase();
+    let label = ui.painter().layout_job(egui::text::LayoutJob::single_section(label, format));
+    let ink = if above { p.warn } else { p.ink };
+    let figure = ui
+        .painter()
+        .layout_no_wrap(aurora_i18n::integer(i64::from(complexity)), m.figure.font.clone(), ink);
+    // the last letter's spacing is not part of the word
+    let label_w = label.size().x - SPACING;
+    let width = label_w.max(figure.size().x) + 18.0;
+    let rect = egui::Rect::from_min_max(egui::pos2(card.right() - width, card.top()), card.right_bottom());
+    ui.painter()
+        .rect_filled(rect, ui.visuals().window_corner_radius, p.raised.gamma_multiply(0.5));
+    let right = rect.right() - 9.0;
+    let (label_room, figure_w) = (label.size().x, figure.size().x);
+    text_on(
+        ui,
+        &m.label,
+        egui::pos2(right - label_w, m.top(card) + m.label.cap),
+        label_room,
+        label,
+    );
+    text_on(ui, &m.figure, egui::pos2(right - figure_w, m.bottom(card)), figure_w, figure);
     if let Some(limit) = limit.filter(|limit| *limit != 0) {
         let side = if above {
             aurora_i18n::tr!("inspect-over-limit")
@@ -653,24 +734,17 @@ fn complexity_box(ui: &mut egui::Ui, p: &Palette, complexity: u32, limit: Option
             "{side}\n{}",
             aurora_i18n::tr!("inspect-limit-tip", limit = aurora_i18n::integer(i64::from(limit)))
         );
-        shown.response.on_hover_text(tip);
+        ui.interact(rect, ui.scope_id().with("inspect_complexity"), Sense::hover())
+            .on_hover_text(tip);
     }
+    rect
 }
 
-/// Height of `complexity_box`: its margins and its two lines.
-fn complexity_box_height(ui: &egui::Ui) -> f32 {
-    let bold = crate::ui::fonts::semibold(ui.ctx());
-    ui.ctx()
-        .fonts_mut(|f| 10.0 + f.row_height(&egui::FontId::new(10.5, bold.clone())) + f.row_height(&egui::FontId::new(14.0, bold)))
-}
-
-/// The quiet link beside the name in the summary card: a small icon, a face
-/// only when pointed at.
-fn profile_link(ui: &mut egui::Ui, p: &Palette) -> bool {
-    // 20 px to click, in a line no taller than its icon
-    let (slot, spot) = ui.allocate_exact_size(Vec2::new(20.0, 14.0), Sense::hover());
-    let r = egui::Rect::from_center_size(slot.center(), Vec2::splat(20.0));
-    let resp = ui.interact(r, spot.id.with("link"), Sense::click());
+/// The quiet link beside the name in the summary card, 20 px around
+/// `middle`: a small icon, a face only when pointed at.
+fn profile_link(ui: &mut egui::Ui, p: &Palette, middle: egui::Pos2) -> bool {
+    let r = egui::Rect::from_center_size(middle, Vec2::splat(20.0));
+    let resp = ui.interact(r, ui.scope_id().with("inspect_profile_link"), Sense::click());
     let hovered = resp.hovered();
     if hovered {
         ui.painter().rect_filled(r, ui.visuals().widgets.inactive.corner_radius, p.raised);
