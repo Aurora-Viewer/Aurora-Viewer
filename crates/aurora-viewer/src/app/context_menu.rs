@@ -495,8 +495,13 @@ impl App {
     /// Show on map, from any button or link: the map tracks the place and
     /// opens, or expands when it is minimized (LLFloaterReg::showInstance
     /// "world_map" → LLFloater::openFloater → setMinimized(false)).
+    /// The search takes the keyboard again when the map is already open:
+    /// LLFloaterWorldMap::onOpen runs on every show.
     pub(super) fn show_on_map(&mut self, x: f64, y: f64, z: f32) {
         self.world.map.show_location(x, y, z);
+        if self.panels.world_map {
+            self.worldmap_ui.focus_search_on_show();
+        }
         ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
     }
 
@@ -511,6 +516,19 @@ impl App {
     /// (AURORA_DEMO_LAND=…:classic shows them without saving it).
     pub(super) fn classic_land(&self) -> bool {
         self.settings.classic_about_land || (self.demo && crate::demo::land::scenario().is_some_and(|s| s.classic))
+    }
+
+    /// Region / Estate shows the Legacy Viewer's tabs
+    /// (AURORA_DEMO_REGION=…:classic shows them without saving it).
+    pub(super) fn classic_region(&self) -> bool {
+        self.settings.classic_region_estate || self.region_ui.forced_classic()
+    }
+
+    /// The layouts About Land and Region / Estate draw, for the bars'
+    /// buttons that expand them by window id.
+    pub(super) fn sync_layout_mirrors(&mut self) {
+        self.panels.about_land_classic = self.classic_land();
+        self.panels.region_estate_classic = self.classic_region();
     }
 
     /// "Show in inventory" of a rezzed object the agent owns. The Legacy

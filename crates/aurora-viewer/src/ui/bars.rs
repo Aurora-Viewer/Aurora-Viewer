@@ -2563,7 +2563,7 @@ pub fn top_bars(
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
                     graphics::hover(&fps, p, st, &mut action);
                     if fps.clicked() {
-                        panels.perf = !panels.perf;
+                        super::widgets::toggle_floater(ui.ctx(), "perf", &mut panels.perf);
                     }
                     audio_action = super::audio::top_controls(ui, p, icons, audio, audio_ui, media, super::audio::BAR_SLOT);
                     if voice_light(ui, p, icons, st.voice.0, &st.voice.1) {
@@ -2681,7 +2681,8 @@ pub fn top_bars(
                             }
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                 if info_button(ui, p, icons) {
-                                    panels.about_land = !panels.about_land;
+                                    let id = super::land::window_id(panels.about_land_classic);
+                                    super::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
                                 }
                                 // keep the maturity badge and the parcel icons visible when
                                 // the field is narrow; the icons go first in a very narrow
@@ -2709,7 +2710,8 @@ pub fn top_bars(
                                     ui.add_space((ui.available_width() - icons_w + 8.0 - STAR_W).max(0.0));
                                     ui.scope(|ui| {
                                         if super::parcel_icons::show(ui, p, icons, &st.parcel_icons, p.field) {
-                                            panels.about_land = !panels.about_land;
+                                            let id = super::land::window_id(panels.about_land_classic);
+                                            super::widgets::toggle_floater(ui.ctx(), id, &mut panels.about_land);
                                         }
                                     });
                                 } else {

@@ -3973,8 +3973,12 @@ impl App {
             // sets by default: process_script_teleport_request sets the
             // floater's auto-focus from it before openFloater
             // (indra/newview/llviewermessage.cpp).
+            // An already open map's search takes it again only with the flag
+            // (LLFloaterWorldMap::onOpen runs on every show).
             if !self.panels.world_map && flags & aurora_net::beacon::FOCUS_MAP == 0 {
                 self.worldmap_ui.open_for_script();
+            } else if self.panels.world_map && flags & aurora_net::beacon::FOCUS_MAP != 0 {
+                self.worldmap_ui.focus_search_on_show();
             }
             ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
             return;
@@ -5697,7 +5701,7 @@ impl App {
             }
             Action::RegionEstate => ui::widgets::toggle_floater(
                 &self.egui_ctx,
-                ui::region::window_id(self.settings.classic_region_estate),
+                ui::region::window_id(self.classic_region()),
                 &mut self.panels.region_estate,
             ),
             Action::Search => ui::widgets::toggle_floater(&self.egui_ctx, ui::search::WINDOW, &mut self.panels.search),
@@ -19053,6 +19057,9 @@ impl App {
                 // (no landmark of this parcel under @showloc: its name is the place's)
                 let parcel_landmark = self.parcel_landmark().filter(|_| !self.world.rlva.has("showloc"));
                 self.follow_favorites_access();
+                // the window ids the bars' About Land and Region / Estate
+                // buttons expand, from the layouts drawn (demo ones included)
+                self.sync_layout_mirrors();
                 let favorites_shown = ui::bars::favorites::take_shown(&ctx);
                 let here = parcel_landmark.as_ref().is_some_and(|lm| lm.favorite);
                 let favorites = self.favorites_view(favorites_shown, here);
@@ -21016,8 +21023,7 @@ impl App {
                     .flatten()
                     .and_then(|h| self.minimap_ui.region_image(&ctx, &self.world, &mut self.map_tiles, h));
                 let classic_land = self.classic_land();
-                self.panels.about_land_classic = classic_land;
-                self.panels.region_estate_classic = self.settings.classic_region_estate;
+                self.sync_layout_mirrors();
                 if self.land_ui.show(
                     &ctx,
                     &p,
@@ -21035,7 +21041,7 @@ impl App {
                 self.panels.about_land = open;
                 // Region / Estate: asked by About Land or the restart notice
                 if ui::region::take_open_request(&ctx) {
-                    let id = ui::region::window_id(self.settings.classic_region_estate);
+                    let id = ui::region::window_id(self.classic_region());
                     ui::widgets::open_floater(&ctx, id, &mut self.panels.region_estate);
                 }
                 let mut open = self.panels.region_estate && self.world.rlva_can_view_region();

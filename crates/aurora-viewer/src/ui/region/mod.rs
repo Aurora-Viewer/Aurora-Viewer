@@ -269,6 +269,12 @@ impl RegionUi {
         self.classic_tab = tab;
     }
 
+    /// AURORA_DEMO_REGION's `classic` holds: the window shows the Legacy
+    /// Viewer's tabs whatever the saved layout.
+    pub fn forced_classic(&self) -> bool {
+        self.force_classic
+    }
+
     /// AURORA_DEMO_REGION on People: a row ticked, a dialog or the picker.
     pub fn demo_people(&mut self, people: PeopleDemo) {
         self.people.demo = Some(people);

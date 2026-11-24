@@ -76,13 +76,14 @@ impl RegionTrackerUi {
     }
 
     /// ALFloaterRegionTracker::openMap: the world map on the region, or
-    /// simply opened without one.
-    fn open_map(world: &mut World, region: Option<&str>, map_open: &mut bool) {
+    /// simply opened without one; a minimized map expands
+    /// (LLFloaterReg::showInstance → LLFloater::openFloater).
+    fn open_map(ctx: &egui::Context, world: &mut World, region: Option<&str>, map_open: &mut bool) {
         if let Some(name) = region {
             world.map.track_region(name, glam::Vec3::new(128.0, 128.0, 0.0));
             world.map.focus_track = true;
         }
-        *map_open = true;
+        widgets::open_floater(ctx, "worldmap", map_open);
     }
 
     pub fn show(&mut self, ctx: &egui::Context, p: &Palette, world: &mut World, open: &mut bool, map_open: &mut bool) {
@@ -238,7 +239,7 @@ impl RegionTrackerUi {
                 });
             });
             if let Some(name) = open_region {
-                Self::open_map(world, Some(name.as_str()).filter(|n| !n.is_empty()), map_open);
+                Self::open_map(ctx, world, Some(name.as_str()).filter(|n| !n.is_empty()), map_open);
             }
         });
         if changed {
@@ -271,6 +272,20 @@ mod tests {
             RegionTrackerUi::default,
             |ui, ctx, p| ui.show(ctx, p, &mut world, &mut true, &mut false),
         );
+    }
+
+    /// World map, or a double-clicked row, expands a minimized map instead
+    /// of leaving it on its title bar (LLFloater::openFloater).
+    #[test]
+    fn world_map_expands_a_minimized_map() {
+        let ctx = egui::Context::default();
+        let mut world = world();
+        crate::ui::widgets::minimize_floater(&ctx, "worldmap");
+        let mut map_open = true;
+        RegionTrackerUi::open_map(&ctx, &mut world, Some("Region 3"), &mut map_open);
+        assert!(map_open);
+        assert!(crate::ui::widgets::floater_expand_pending(&ctx, "worldmap"));
+        assert!(world.map.focus_track);
     }
 
     /// A region added again under another case keeps the list's spelling

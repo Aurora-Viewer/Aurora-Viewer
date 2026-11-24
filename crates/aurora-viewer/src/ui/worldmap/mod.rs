@@ -157,6 +157,16 @@ impl WorldMapUi {
         self.opened_by_script = true;
     }
 
+    /// The map, already open (minimized or not), is shown again by a show
+    /// that takes the keyboard: LLFloater::openFloater runs
+    /// LLFloaterWorldMap::onOpen on every showInstance, and its location
+    /// editor takes the keyboard again. A closed map does it when it opens.
+    pub fn focus_search_on_show(&mut self) {
+        if self.was_open {
+            self.focus_search = true;
+        }
+    }
+
     /// AURORA_DEMO_MAP=search:<text>: the region search, as if typed.
     pub fn demo_search(&mut self, world: &mut World, text: &str) {
         self.search = text.to_owned();
@@ -2154,5 +2164,23 @@ mod privacy_tests {
             position: glam::Vec3::ZERO,
             message: command.into(),
         }));
+    }
+}
+
+#[cfg(test)]
+mod reshow_tests {
+    use super::*;
+
+    /// A show of the map already open puts the keyboard in its search again
+    /// (LLFloaterWorldMap::onOpen on every show); a closed map leaves it to
+    /// its opening, which a script without BEACON_FOCUS_MAP skips.
+    #[test]
+    fn a_show_of_the_open_map_takes_the_keyboard_again() {
+        let mut map = WorldMapUi::default();
+        map.focus_search_on_show();
+        assert!(!map.focus_search, "a closed map takes it when it opens");
+        map.was_open = true;
+        map.focus_search_on_show();
+        assert!(map.focus_search);
     }
 }
