@@ -1404,7 +1404,7 @@ mod tests {
         const TOAST: egui::Pos2 = egui::pos2(600.0, 20.0);
         const MENU: egui::Pos2 = egui::pos2(320.0, 120.0);
         let button = egui::Rect::from_min_size(egui::pos2(100.0, 320.0), egui::vec2(24.0, 24.0));
-        let menu = egui::Id::new("favourite menu");
+        let menu = egui::Id::unique("favourite menu");
         let pass = |ctx: &egui::Context, events: Vec<egui::Event>| {
             let raw = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
@@ -1414,11 +1414,11 @@ mod tests {
             let mut away = false;
             let _ = ctx.run_ui(raw, |ui| {
                 let ctx = ui.ctx();
-                egui::Area::new(egui::Id::new("toast"))
+                egui::Area::new(egui::Id::unique("toast"))
                     .order(egui::Order::Foreground)
                     .fixed_pos(TOAST)
                     .show(ctx, |ui| ui.allocate_space(egui::vec2(100.0, 40.0)));
-                let picker = egui::Area::new(egui::Id::new("picker"))
+                let picker = egui::Area::new(egui::Id::unique("picker"))
                     .order(egui::Order::Foreground)
                     .fixed_pos(PICKER)
                     .show(ctx, |ui| ui.allocate_space(egui::vec2(200.0, 200.0)));
@@ -1463,7 +1463,7 @@ mod tests {
         assert!(after(primary(MENU + egui::vec2(10.0, 10.0)), false), "where the menu was, closed");
         let ctx = egui::Context::default();
         assert!(!pass(&ctx, Vec::new()));
-        crate::outside::focus_for_test(&ctx, Some(egui::Id::new("people")));
+        crate::outside::focus_for_test(&ctx, Some(egui::Id::unique("people")));
         assert!(pass(&ctx, Vec::new()), "the focus in another window of the viewer");
     }
 }
