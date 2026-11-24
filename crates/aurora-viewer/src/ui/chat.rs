@@ -3117,6 +3117,7 @@ impl Copied<'_> {
 /// as the report asks.
 fn press_focuses_field(ui: &egui::Ui, before: Option<egui::Id>, field: egui::Id) {
     let ctx = ui.ctx();
+    let lines = lines_focus(ui);
     let at = ui.input(|i| {
         if i.pointer.primary_pressed() {
             i.pointer.press_origin()
@@ -3137,10 +3138,38 @@ fn press_focuses_field(ui: &egui::Ui, before: Option<egui::Id>, field: egui::Id)
     // (a widget takes the keyboard at once, `Memory::request_focus`; a
     // focus elsewhere is surrendered only at the end of the click's pass)
     let now = ctx.memory(|m| m.focused());
-    let kept = now.is_some_and(|focused| now != before || ctx.read_response(focused).is_some_and(|r| r.hovered()));
+    // the lines keep the keyboard on a press in their scroll area, its bar
+    // included: a drag of the bar must leave Ctrl+C to the selection, as
+    // LLFloater::setFocus keeps a focused child
+    let in_lines = lines.is_some_and(|(area, id)| now == Some(id) && area.contains(origin));
+    let kept = now.is_some_and(|focused| in_lines || now != before || ctx.read_response(focused).is_some_and(|r| r.hovered()));
     if !kept {
         ctx.memory_mut(|m| m.request_focus(field));
     }
+}
+
+/// The id under which a window's conversation lines leave their scroll
+/// area and their own id for `press_focuses_field`, by the window's layer.
+fn lines_focus_id(layer: egui::LayerId) -> egui::Id {
+    egui::Id::unique("conv_lines_focus").with(layer)
+}
+
+/// Leaves the lines' scroll area (`area`, its bar included) and their id
+/// for this pass's `press_focuses_field` of the same window.
+fn keep_lines_focus(ui: &egui::Ui, area: egui::Rect, id: egui::Id) {
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(lines_focus_id(ui.layer_id()), (area, id, pass)));
+}
+
+/// The lines' scroll area and id left in this pass by `keep_lines_focus`
+/// in the window of `ui`, never those of an earlier pass (the lines no
+/// longer drawn: the Contacts tab, no conversation).
+fn lines_focus(ui: &egui::Ui) -> Option<(egui::Rect, egui::Id)> {
+    let pass = ui.ctx().cumulative_pass_nr_for(egui::ViewportId::ROOT);
+    ui.ctx()
+        .data(|d| d.get_temp::<(egui::Rect, egui::Id, u64)>(lines_focus_id(ui.layer_id())))
+        .and_then(|(area, id, at)| (at == pass).then_some((area, id)))
 }
 
 /// The focus when a conversation window's body begins, for
@@ -3393,6 +3422,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     let current = search.find.as_ref().and_then(|f| f.current_line(view));
     // the folded run of blocked lines whose Show was clicked, by its first line
     let mut opened_fold = None;
+    // the lines' id, once they are drawn (`keep_lines_focus`)
+    let mut lines_id = None;
     let area = super::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("conv", st.selected));
     let out = area
         .stick_to_bottom(!paused)
@@ -3503,6 +3534,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             if let Some(mode) = st.demo_select.take_if(|_| !drawn.is_empty()) {
                 demo_selection(selection, &mode, &drawn, copied.ends());
             }
+            lines_id = Some(content.id);
             to_field = select_lines(ui, &content, &drawn, selection, &copied);
             if matches!(rows, Rows::Thread(_)) {
                 line_menu::demo_mark(ui, &drawn);
@@ -3518,6 +3550,11 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         });
     if let Some(seq) = opened_fold {
         st.blocked_opened.insert(seq);
+    }
+    if let Some(id) = lines_id {
+        // the scroll bar is beside the lines, never over them (theme)
+        let bar = ui.spacing().scroll.allocated_width();
+        keep_lines_focus(ui, out.inner_rect.with_max_x(out.inner_rect.max.x + bar), id);
     }
     let mut offset = out.state.unclamped_offset();
     let mut store = false;
@@ -7609,6 +7646,113 @@ mod tests {
     fn the_workspace_lines_select_and_copy_like_a_transcript() {
         select_and_copy_like_a_transcript(crate::settings::ChatStyle::Aurora);
         select_and_copy_like_a_transcript(crate::settings::ChatStyle::Compact);
+    }
+
+    /// A drag of the lines' scroll bar leaves them the keyboard: the
+    /// selection still copies after it, as LLFloater::setFocus keeps a
+    /// focused child (the bar takes no keyboard of its own).
+    #[test]
+    fn a_drag_of_the_scroll_bar_leaves_the_selection_its_copy() {
+        let mut frames = Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
+        let mut emoji = crate::ui::emoji::Emoji::load();
+        let pics = HashMap::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        // more lines than the window holds: the bar shows
+        for i in 0..80 {
+            world.chat.push_back(crate::world::ChatLine {
+                time: std::time::SystemTime::now(),
+                from: "Jane".into(),
+                text: format!("line {i}"),
+                kind: ChatKind::Local(ChatType::Normal),
+                source: uuid::Uuid::from_u128(0xA),
+                origin: Origin::Live,
+                blocked: false,
+                beyond_range: false,
+                speaker: Default::default(),
+            });
+            world.chat_clock.pushed_back();
+        }
+        let gestures = crate::gestures::Manager::default();
+        let mut st = ChatUi {
+            style: crate::settings::ChatStyle::Bubbles,
+            ..ChatUi::default()
+        };
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut contacts_settings = crate::ui::contacts::ContactsSettings::default();
+        let mut open = true;
+        let ctx = frames.ctx.clone();
+        let mut frame = |st: &mut ChatUi, events: Vec<egui::Event>| {
+            frames.run_with_output(events, |ui| {
+                show(
+                    ui.ctx(),
+                    &p,
+                    &icons,
+                    &mut emoji,
+                    &pics,
+                    &pics,
+                    &mut world,
+                    &gestures,
+                    st,
+                    &mut contacts,
+                    &mut contacts_settings,
+                    false,
+                    None,
+                    &mut open,
+                );
+            })
+        };
+        let copied = |out: &egui::PlatformOutput| {
+            out.commands.iter().find_map(|c| match c {
+                egui::OutputCommand::CopyText(t) => Some(t.clone()),
+                _ => None,
+            })
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = frame(&mut st, Vec::new()).0;
+        }
+        // the keyboard on the lines (a click on one), then all of them selected
+        let last = painted(&texts, "line 79").rect;
+        let on = last.center();
+        frame(&mut st, vec![egui::Event::PointerMoved(on), button(on, true)]);
+        frame(&mut st, vec![button(on, false)]);
+        let ctrl_a = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        frame(&mut st, vec![ctrl_a]);
+        let (_, out) = frame(&mut st, vec![egui::Event::Copy]);
+        assert_eq!(copied(&out).expect("everything is copied").lines().count(), 80);
+        // the bar's thumb, at the bottom of the lines' scroll area (the
+        // conversation stays at its end), dragged up
+        let layer = ctx.layer_id_at(on).expect("the window under the lines");
+        let (area, lines, _) = ctx
+            .data(|d| d.get_temp::<(egui::Rect, egui::Id, u64)>(lines_focus_id(layer)))
+            .expect("the lines' scroll area");
+        let scroll = ctx.global_style().spacing.scroll;
+        let thumb = egui::pos2(
+            area.right() - scroll.bar_outer_margin - scroll.bar_width / 2.0,
+            area.bottom() - 12.0,
+        );
+        frame(&mut st, vec![egui::Event::PointerMoved(thumb), button(thumb, true)]);
+        let up = thumb - egui::vec2(0.0, 60.0);
+        frame(&mut st, vec![egui::Event::PointerMoved(up)]);
+        frame(&mut st, vec![button(up, false)]);
+        assert!(ctx.memory(|m| m.has_focus(lines)), "the lines keep the keyboard");
+        let (_, out) = frame(&mut st, vec![egui::Event::Copy]);
+        let text = copied(&out).expect("the selection is still copied after the drag");
+        assert_eq!(text.lines().count(), 80, "{text:?}");
     }
 
     fn select_and_copy_like_a_transcript(style: crate::settings::ChatStyle) {
