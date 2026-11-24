@@ -24020,6 +24020,7 @@ impl ApplicationHandler for App {
                         | "aurora-favorites-parents"
                         | "aurora-folder-window"
                         | "aurora-folder-window-wide"
+                        | "aurora-single-folder-window"
                         | "additional"
                         | "aurora-additional"
                         | "show-original"
@@ -24215,6 +24216,13 @@ impl ApplicationHandler for App {
                         if view.starts_with("aurora-folder-window") {
                             // the right-click tests in a window of their own
                             self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                            if let Some(window) = self.inventory_ui.windows.last_mut() {
+                                window.id = ui::inventory::AURORA_DEMO_FOLDER_WINDOW;
+                            }
+                        }
+                        if view == "aurora-single-folder-window" {
+                            // "Open in a new window" on the right-click tests
+                            self.inventory_ui.open_single_folder_window(uuid::Uuid::from_u128(8000));
                             if let Some(window) = self.inventory_ui.windows.last_mut() {
                                 window.id = ui::inventory::AURORA_DEMO_FOLDER_WINDOW;
                             }
@@ -24502,6 +24510,8 @@ impl ApplicationHandler for App {
                             }
                             .into(),
                         });
+                    } else if view == "single-folder-window" {
+                        self.inventory_ui.open_single_folder_window(id);
                     } else if matches!(view.as_str(), "folder-window" | "folder-window-search") {
                         self.inventory_ui.open_folder_window(id);
                         if view == "folder-window-search"

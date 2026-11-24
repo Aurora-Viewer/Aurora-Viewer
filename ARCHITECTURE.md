@@ -940,6 +940,13 @@ policy, preserving body parts and RLVa removal restrictions.
 The application constructor returns its runtime state on the heap, avoiding
 large return-value temporaries on the Windows startup stack as editors grow.
 
+`ui/inventory/single_folder.rs` is the window of "Open in a new window": the
+whole inventory in the Legacy Viewer's single folder mode on one folder (its
+`browse`), drawn by the explorer in the Aurora style and by its own Back,
+Forward and Up row over a flat list in the Legacy style.
+`ui/inventory.rs::bring_forward_shown` keeps one "Show in a new window" tree
+and one single folder window per folder.
+
 `ui/inventory/context_catalog/extra.rs` adds inventory commands to the shared
 customization catalogue without changing existing identities or placements.
 Folder UUID copying starts in the recoverable hidden area. Native document,
