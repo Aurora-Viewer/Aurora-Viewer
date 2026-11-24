@@ -79,9 +79,12 @@ pub const CANDIDATES: &[Candidate] = &[
     // and `♱ ♰ ✞` stayed squares. Symbols 2 also lacks `░`, and Fedora
     // ships the symbols face as the variable file `NotoSansSymbols[wght].ttf`
     // rather than `NotoSansSymbols-Regular.ttf`. Box drawing stays on the
-    // faces that have `░`. The crosses and the ballot marks (`✘`, which
-    // Symbols 2 has) are their own probes.
-    candidate("box drawing, dingbats", '░', "seguisym.ttf|Apple Symbols.ttf|DejaVuSans.ttf|NotoSansSymbols2-Regular.ttf"),
+    // faces that have `░`: without DejaVu, Noto Sans Mono has all of
+    // `░▒▓█╔═╗` (Arch's noto-fonts and Fedora's static package install
+    // `NotoSansMono-Regular.ttf`, Fedora's default the variable file). The
+    // crosses and the ballot marks (`✘`, which Symbols 2 has) are their own
+    // probes.
+    candidate("box drawing, dingbats", '░', "seguisym.ttf|Apple Symbols.ttf|DejaVuSans.ttf|NotoSansMono-Regular.ttf|NotoSansMono[wght].ttf"),
     candidate("crosses, dingbats", '♱', "seguisym.ttf|Apple Symbols.ttf|NotoSansSymbols-Regular.ttf|NotoSansSymbols[wght].ttf|DejaVuSans.ttf"),
     candidate("ballot marks", '✘', "seguisym.ttf|Apple Symbols.ttf|NotoSansSymbols2-Regular.ttf|NotoSansSymbols[wght].ttf|NotoSansSymbols-Regular.ttf|DejaVuSans.ttf"),
     // Noto Sans CJK's collection holds the faces JP, KR, SC, TC, HK, then
@@ -122,11 +125,13 @@ pub const CANDIDATES: &[Candidate] = &[
     candidate("rare Han characters", '𠀀', "simsunb.ttf|mingliub.ttc"),
     // Balinese, Batak, Lepcha, Tai Tham… (Windows 11 Sans Serif Collection).
     // The scripts below are not in that probe, so each has its own file.
-    // `LLWindowSDL::getDynamicFallbackFontList` (llwindowsdl2.cpp) would
-    // take them from fontconfig, at most 40 faces, dropping a font whose
-    // coverage an earlier one already has. This list stays one face per
-    // script instead: a sort would change which face draws a shared
-    // character on every distro, and the squares were files never named.
+    // On Linux the Legacy Viewer asks fontconfig for one face per missing
+    // character (`LLWindowSDL::findFallbackFontForChar`, one `FcFontMatch`,
+    // indra/llwindow/llwindowsdl.cpp), and LLFontFreetype loads it only once
+    // every face it has fails (llfontfreetype.cpp). egui's font families
+    // are fixed when installed, so there is no lookup at draw time here: the
+    // faces are chosen once, off the UI thread, one file per script, and the
+    // squares were files never named.
     candidate("other scripts", 'ᬅ', "SansSerifCollection.ttf|NotoSansBalinese-Regular.ttf"),
     // Segoe UI Historic has the Egyptian hieroglyphs (Microsoft's list of
     // its scripts; not checked on a Windows file here).
@@ -319,10 +324,11 @@ fn select(candidates: &[Candidate], mut probe: impl FnMut(&'static str, char) ->
         let Some((file, index)) = c.files().find_map(|f| probe(f, c.probe).map(|i| (face_spec(f).0, i))) else {
             // Once per scan, not per drawn glyph: egui does not report the
             // character it replaced with a square. Only a line none of whose
-            // files is installed with the probe logs this; a face another
-            // script already took is found here and skipped below.
+            // files is installed with the probe logs this (a file can be
+            // installed and lack it); a face another script already took is
+            // found here and skipped below.
             log::debug!(
-                "system fallback font for {} ({}): none of {} is installed",
+                "system fallback font for {} ({}): no installed file of {} draws it",
                 c.script,
                 c.probe,
                 c.files
@@ -488,6 +494,10 @@ mod tests {
         assert!(has("crosses, dingbats", "NotoSansSymbols[wght].ttf"));
         assert!(has("ballot marks", "NotoSansSymbols2-Regular.ttf"));
         assert!(has("ballot marks", "NotoSansSymbols[wght].ttf"));
+        // Box drawing without DejaVu (Fedora): Symbols 2 has no `░`.
+        assert!(has("box drawing, dingbats", "NotoSansMono-Regular.ttf"));
+        assert!(has("box drawing, dingbats", "NotoSansMono[wght].ttf"));
+        assert!(!has("box drawing, dingbats", "NotoSansSymbols2-Regular.ttf"));
         assert!(has("Chinese (traditional)", "NotoSansCJK-Regular.ttc"));
         assert!(has("Vai", "NotoSansVai-Regular.ttf"));
         assert!(has("Egyptian hieroglyphs", "NotoSansEgyptianHieroglyphs-Regular.ttf"));
