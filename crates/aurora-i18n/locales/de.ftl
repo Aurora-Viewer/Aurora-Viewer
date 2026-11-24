@@ -4858,7 +4858,6 @@ world-profiles-joined-today = Heute beigetreten
 keybinds-insert = Einfügen
 ui-context-inspect-2 = Untersuchen
 ui-context-inspect-all-attachments = Alle Anhänge untersuchen
-inspect-title = Objekte untersuchen
 inspect-col-name = Objektname
 inspect-col-description = Beschreibung
 inspect-col-owner = Eigentümer

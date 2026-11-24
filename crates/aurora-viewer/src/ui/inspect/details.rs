@@ -13,13 +13,12 @@ use egui::{Rect, RichText, Sense, Stroke, Vec2};
 /// Narrowest the name column gets before a column of figures leaves.
 const MIN_NAME: f32 = 120.0;
 
-/// The columns shown after the name: the chosen ones (not Owner and Created
-/// for what an avatar wears), as many as fit `width`.
-fn visible(columns: u32, avatar: bool, width: f32) -> Vec<Column> {
+/// The columns shown after the name: the chosen ones, as many as fit `width`.
+fn visible(columns: u32, width: f32) -> Vec<Column> {
     let mut list = vec![Column::Name];
     let mut room = width - MIN_NAME;
     for column in Column::ALL.into_iter().skip(1) {
-        if !shown(columns, column) || (avatar && column.for_objects_only()) {
+        if !shown(columns, column) {
             continue;
         }
         let w = column.fixed_width().unwrap_or(110.0);
@@ -125,12 +124,35 @@ pub(super) fn show(
     super::list::tiles(ui, p, &tiles, 3);
     let avatar = state.avatar();
     let width = widgets::header_width(ui, ui.scope_id().with("inspect_rows")) - 26.0;
-    let columns = visible(*frame.columns, avatar, width);
-    header(state, ui, p, &columns, frame.columns, avatar);
-    rows(state, ui, p, frame.rows, &columns, actions);
+    let columns = visible(*frame.columns, width);
+    header(state, ui, p, &columns, Some(frame.columns));
+    rows(state, ui, p, frame.rows, &columns, true, avatar, actions);
 }
 
-fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, columns: &[Column], chosen: &mut u32, avatar: bool) {
+/// The whole table in a grown tile: every chosen column, scrolled sideways
+/// when they do not fit.
+pub(super) fn table(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, list: &[Row], chosen: u32, actions: &mut Vec<Action>) {
+    let columns: Vec<Column> = Column::ALL
+        .into_iter()
+        .filter(|c| *c == Column::Name || shown(chosen, *c))
+        .collect();
+    let least: f32 = columns
+        .iter()
+        .map(|c| c.fixed_width().unwrap_or(if *c == Column::Name { 170.0 } else { 130.0 }))
+        .sum();
+    let width = ui.available_width().max(least + 30.0);
+    let avatar = state.avatar();
+    egui::ScrollArea::horizontal()
+        .id_salt("inspect_prims_across")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.set_width(width);
+            header(state, ui, p, &columns, None);
+            rows(state, ui, p, list, &columns, false, avatar, actions);
+        });
+}
+
+fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, columns: &[Column], chosen: Option<&mut u32>) {
     let width = widgets::header_width(ui, ui.scope_id().with("inspect_rows"));
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
     let menu_at = Rect::from_min_max(
@@ -171,6 +193,9 @@ fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, columns: &[Colu
         }
         resp.on_hover_text(column.title());
     }
+    let stroke = widgets::divider_stroke(p);
+    ui.painter().hline(rect.x_range(), rect.bottom(), stroke);
+    let Some(chosen) = chosen else { return };
     // menu_fs_inspect_options.xml: the columns shown
     let mut child = ui.new_child(
         egui::UiBuilder::new()
@@ -179,20 +204,25 @@ fn header(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, columns: &[Colu
     );
     widgets::icon_menu(&mut child, p, "adjustments-filled", aurora_i18n::tr!("inspect-options"), |ui| {
         for column in Column::ALL.into_iter().skip(1) {
-            if avatar && column.for_objects_only() {
-                continue;
-            }
             let mut on = shown(*chosen, column);
             if crate::ui::menu::toggle(ui, p, "", column.title(), &mut on) {
                 *chosen ^= column.bit();
             }
         }
     });
-    let stroke = widgets::divider_stroke(p);
-    ui.painter().hline(rect.x_range(), rect.bottom(), stroke);
 }
 
-fn rows(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, rows: &[Row], columns: &[Column], actions: &mut Vec<Action>) {
+#[allow(clippy::too_many_arguments)]
+fn rows(
+    state: &mut InspectUi,
+    ui: &mut egui::Ui,
+    p: &Palette,
+    rows: &[Row],
+    columns: &[Column],
+    opens: bool,
+    avatar: bool,
+    actions: &mut Vec<Action>,
+) {
     let query = state.query.trim().to_lowercase();
     let list: Vec<&Row> = sorted(rows, state.sort)
         .into_iter()
@@ -208,7 +238,7 @@ fn rows(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, rows: &[Row], col
         let radius = ui.visuals().widgets.inactive.corner_radius;
         for row in list {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
-            let open = state.detail_open == Some(row.id);
+            let open = opens && state.detail_open == Some(row.id);
             if ui.is_rect_visible(rect) {
                 if state.selected == Some(row.id) {
                     ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.18));
@@ -248,12 +278,14 @@ fn rows(state: &mut InspectUi, ui: &mut egui::Ui, p: &Palette, rows: &[Row], col
                 aurora_i18n::tr!("inspect-col-triangles")
             );
             resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, open, &label));
-            if resp.clicked() {
+            if resp.clicked() && !opens {
+                state.selected = Some(row.id);
+            } else if resp.clicked() {
                 state.selected = Some(row.id);
                 state.detail_open = if open { None } else { Some(row.id) };
             }
             if open {
-                facts(ui, p, row, state.avatar(), actions);
+                facts(ui, p, row, avatar, actions);
             }
         }
     });
@@ -278,9 +310,6 @@ fn facts(ui: &mut egui::Ui, p: &Palette, row: &Row, avatar: bool, actions: &mut 
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 2.0;
             for column in Column::ALL.into_iter().skip(1) {
-                if avatar && column.for_objects_only() {
-                    continue;
-                }
                 let value = cell_text(row, column);
                 ui.horizontal(|ui| {
                     ui.add_sized(
@@ -362,15 +391,12 @@ mod tests {
     }
 
     #[test]
-    fn columns_that_do_not_fit_leave_and_avatars_lose_owner_and_dates() {
+    fn columns_that_do_not_fit_leave() {
         // wide: every chosen column of figures fits
-        let wide = visible(ALL_COLUMNS, false, 1200.0);
+        let wide = visible(ALL_COLUMNS, 1200.0);
         assert!(wide.contains(&Column::Owner) && wide.contains(&Column::Created));
-        // what an avatar wears: no owner, no date
-        let worn = visible(ALL_COLUMNS, true, 1200.0);
-        assert!(!worn.contains(&Column::Owner) && !worn.contains(&Column::Created));
         // narrow: the name and the first chosen column only
-        let narrow = visible(Column::Name.bit() | Column::Triangles.bit() | Column::Faces.bit(), true, 200.0);
+        let narrow = visible(Column::Name.bit() | Column::Triangles.bit() | Column::Faces.bit(), 200.0);
         assert_eq!(narrow, [Column::Name, Column::Faces]);
     }
 

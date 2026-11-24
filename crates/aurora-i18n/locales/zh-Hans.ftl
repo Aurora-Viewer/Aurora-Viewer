@@ -4807,7 +4807,6 @@ world-profiles-joined-today = 今天加入
 keybinds-insert = Insert
 ui-context-inspect-2 = 检查
 ui-context-inspect-all-attachments = 检查所有附件
-inspect-title = 检查物件
 inspect-col-name = 物件名称
 inspect-col-description = 描述
 inspect-col-owner = 所有者

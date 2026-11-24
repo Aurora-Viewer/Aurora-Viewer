@@ -4906,7 +4906,6 @@ world-profiles-joined-today = Зареєстровано сьогодні
 keybinds-insert = Insert
 ui-context-inspect-2 = Оглянути
 ui-context-inspect-all-attachments = Оглянути всі приєднані об'єкти
-inspect-title = Огляд об'єктів
 inspect-col-name = Назва об'єкта
 inspect-col-description = Опис
 inspect-col-owner = Власник

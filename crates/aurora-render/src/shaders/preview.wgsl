@@ -3,6 +3,8 @@ struct Uniforms {
     emissive_metallic: vec4<f32>, params: vec4<f32>,
     edge_color: vec4<f32>, ambient: vec4<f32>, surface: vec4<f32>,
     uv: array<mat2x4<f32>,4>,
+    // a displayed colour the part is mixed with, and how much of it
+    tone: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var base: texture_2d<f32>;
@@ -93,6 +95,7 @@ struct Vertex {
     let opacity = select(1.0, base_color.a, u.params.z == 1.0);
     if u.params.z == 2.0 && base_color.a < u.params.y { discard; }
     if !front && u.surface.y < 0.5 { discard; }
-    return vec4(pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2)), opacity);
+    let shown = pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
+    return vec4(mix(shown, u.tone.rgb, u.tone.a), opacity);
 }
 @fragment fn fs_edge(v: Vertex) -> @location(0) vec4<f32> { return u.edge_color; }

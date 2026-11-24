@@ -3,7 +3,8 @@
 //! sends for selected prims, the scene for geometry and textures. Follows
 //! LLFloaterInspect::onOpen / refresh (indra/newview/llfloaterinspect.cpp).
 use super::*;
-use crate::ui::inspect::{Action, Row, Subject, Totals};
+use crate::object_stage::{Group, Place};
+use crate::ui::inspect::{Action, Person, Row, Subject, Totals};
 use crate::world::names::NameScope;
 use aurora_net::RegionHandle;
 use aurora_net::build::BuildCmd;
@@ -61,6 +62,7 @@ impl App {
     pub(super) fn inspect_closed(&mut self) {
         self.inspect_wire(false);
         self.inspect_ui.roots.clear();
+        self.inspect_ui.stage.stage.clear(&self.scene);
     }
 
     /// Prims of the inspected objects, root first: (index, is the root).
@@ -173,6 +175,9 @@ impl App {
                 triangles: stats.triangles,
                 point,
                 complexity: complexity.get(&idx).copied().unwrap_or(0),
+                land_impact: (root && point == 0)
+                    .then(|| self.build.costs.objects.get(&id).map(|c| c.linked_set))
+                    .flatten(),
                 ..Row::default()
             };
             for texture in &stats.textures {
@@ -204,6 +209,7 @@ impl App {
                         .map(|g| g.name.clone())
                         .unwrap_or_else(|| aurora_i18n::tr!("common-group").into());
                     row.owner_name = aurora_i18n::tr!("inspect-group-owner", name = group);
+                    row.owner_group = Some(props.group_id);
                 } else if !props.owner_id.is_nil() {
                     self.world.social.want_name(props.owner_id);
                     (row.owner_name, row.owner) = owner_shown(&self.world, props.owner_id);
@@ -228,6 +234,21 @@ impl App {
             return;
         }
         let (rows, totals) = self.inspect_rows();
+        // (a demo's view is never kept in the settings)
+        let forced = self.inspect_ui.forced_wide;
+        let mut wide = forced.unwrap_or(self.settings.inspect_wide);
+        let board = self.inspect_ui.is_wide(ctx, wide);
+        let objects = self.inspect_ui.subject == Subject::Objects;
+        let people = if board && !objects { self.inspect_people() } else { Vec::new() };
+        let parcel = (board && objects).then(|| self.inspect_parcel(&rows)).flatten();
+        if board {
+            self.inspect_stage(ctx);
+            if objects {
+                self.inspect_costs();
+            }
+        } else {
+            self.inspect_ui.stage.stage.clear(&self.scene);
+        }
         let (name, username, profile) = match self.inspect_ui.subject {
             Subject::Avatar(id) => {
                 self.world.social.want_name(id);
@@ -242,7 +263,11 @@ impl App {
             }
             Subject::Objects => (String::new(), None, None),
         };
-        let mut columns = self.settings.inspect_columns;
+        let mut columns = if objects {
+            self.settings.inspect_columns
+        } else {
+            self.settings.inspect_avatar_columns
+        };
         let mut view = self.settings.inspect_view;
         let actions = self.inspect_ui.show(
             ctx,
@@ -256,13 +281,24 @@ impl App {
                 pics: &self.avatar_pics,
                 point_names: &self.world.avatar_lib.attach_names,
                 max_complexity: self.settings.max_complexity,
+                people: &people,
+                parcel,
                 columns: &mut columns,
                 view: &mut view,
             },
+            &mut wide,
         );
-        if columns != self.settings.inspect_columns || view != self.settings.inspect_view {
-            self.settings.inspect_columns = columns;
+        let kept = if objects {
+            &mut self.settings.inspect_columns
+        } else {
+            &mut self.settings.inspect_avatar_columns
+        };
+        if columns != *kept || view != self.settings.inspect_view || (forced.is_none() && wide != self.settings.inspect_wide) {
+            *kept = columns;
             self.settings.inspect_view = view;
+            if forced.is_none() {
+                self.settings.inspect_wide = wide;
+            }
             self.settings.save();
         }
         for action in actions {
@@ -278,6 +314,7 @@ impl App {
                     crate::ui::profile::request_open_in(ctx, NameScope::Roster, who);
                 }
                 Action::LookAt(id) => self.inspect_look_at(id),
+                Action::Group(id) => self.group_profile_ui.open(&mut self.world, id),
             }
         }
         if !self.inspect_ui.open {
@@ -285,7 +322,98 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_INSPECT=wolf|self|objects[:open|creators|details|view]:
+    /// Keep the 3D view of the wide window up to date with what is inspected.
+    fn inspect_stage(&mut self, ctx: &egui::Context) {
+        let w = &self.world;
+        let place = match self.inspect_ui.subject {
+            Subject::Avatar(id) => w.objects.index_of_uuid(&id).map_or(Place::World, Place::Worn),
+            Subject::Objects => Place::World,
+        };
+        let groups: Vec<Group> = self
+            .inspect_ui
+            .roots
+            .iter()
+            .filter_map(|id| Some((*id, w.objects.index_of_uuid(id)?)))
+            .map(|(root, idx)| Group {
+                root,
+                prims: crate::build::family(w, idx)
+                    .into_iter()
+                    .filter(|i| w.objects.get(*i).is_some_and(|o| !o.is_avatar()))
+                    .collect(),
+            })
+            .collect();
+        self.inspect_ui
+            .stage
+            .stage
+            .update(w, &self.scene, &groups, place, ctx, std::time::Instant::now());
+    }
+
+    /// The people here and their complexity, as the world names them.
+    fn inspect_people(&mut self) -> Vec<Person> {
+        let own = self.world.agent_id;
+        let seen = self.seen_avatars();
+        seen.into_iter()
+            .filter(|s| s.weight > 0)
+            .map(|s| {
+                self.world.social.want_name(s.id);
+                let shown = self.world.rlva_shows_name(NameScope::World, s.id);
+                Person {
+                    id: s.id,
+                    pic: shown.then_some(s.id),
+                    name: self.world.social.display_name_in(NameScope::World, &s.id),
+                    complexity: s.weight,
+                    you: s.id == own,
+                    friend: shown && self.world.social.is_friend(&s.id),
+                    drawn: !s.too_complex,
+                }
+            })
+            .collect()
+    }
+
+    /// Land impact used and allowed on our parcel, when every object listed
+    /// stands on it.
+    fn inspect_parcel(&self, rows: &[Row]) -> Option<(i32, i32)> {
+        let parcel = self.world.parcel.as_ref().filter(|p| !p.bitmap.is_empty())?;
+        let origin = self.world.main_origin()?;
+        let now = std::time::Instant::now();
+        let here = rows.iter().filter(|r| r.root).all(|r| {
+            self.world
+                .objects
+                .index_of_uuid(&r.id)
+                .and_then(|idx| crate::scene::Scene::object_transform(&self.world, idx, now, 0))
+                .is_some_and(|xf| {
+                    let (x, y) = crate::ui::minimap::to_global(&self.world, xf.0);
+                    crate::world::landmarks::in_parcel(&parcel.bitmap, origin, glam::DVec3::new(x, y, f64::from(xf.0.z)))
+                })
+        });
+        let max_tasks = self
+            .world
+            .main_region
+            .and_then(|h| self.world.regions.get(&h))
+            .map_or(0, |r| r.max_tasks);
+        let usage = crate::world::land::PrimUsage::of(parcel, max_tasks);
+        here.then_some((usage.used, usage.max))
+    }
+
+    /// Ask for the land impact of the inspected objects not known yet, once
+    /// each (GetObjectCost, as LLSelectMgr asks for its selection).
+    fn inspect_costs(&mut self) {
+        let mut by_region: HashMap<RegionHandle, Vec<Uuid>> = HashMap::new();
+        for id in &self.inspect_ui.roots {
+            let Some(o) = self.world.objects.index_of_uuid(id).and_then(|i| self.world.objects.get(i)) else {
+                continue;
+            };
+            if !o.is_attachment() && self.build.costs.ask_once(o.full_id) {
+                by_region.entry(o.key.region).or_default().push(o.full_id);
+            }
+        }
+        for (handle, ids) in by_region {
+            self.build.ask_costs(handle, ids);
+        }
+    }
+
+    /// AURORA_DEMO_INSPECT=wolf|self|objects[:options], the options separated
+    /// by commas (`InspectUi::demo`: wide, small, open, creators, details, view…):
     /// Inspect on what Violet Wolf or the demo agent wears, or on objects of
     /// the plaza, once they are in view.
     pub(super) fn demo_inspect(&mut self) {
@@ -324,8 +452,7 @@ impl App {
                 self.inspect_avatar(id);
             }
         }
-        // `:open` the third object's card, `:creators`, `:details`, `:view`
-        self.inspect_ui.demo(option);
+        option.split(',').for_each(|o| self.inspect_ui.demo(o));
         self.inspect_ui.demo_done = true;
     }
 

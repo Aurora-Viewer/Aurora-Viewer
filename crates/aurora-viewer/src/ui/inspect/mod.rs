@@ -9,12 +9,16 @@
 //!
 //! The Outfit and Creators lists, the summary card and the View panel are
 //! Aurora's own presentation of the same data (human request, 2026-11-23):
-//! the Legacy Viewer only has the table, kept as the Details tab.
+//! the Legacy Viewer only has the table, kept as the Details tab. Wide, the
+//! window is a board of tiles (`wide.rs`).
 
 mod details;
 mod list;
 pub(crate) mod model;
+mod people;
+pub(crate) mod wide;
 
+use super::board;
 use super::widgets::{self, Floater};
 use crate::theme::Palette;
 use egui::{RichText, Sense, TextureHandle, Vec2};
@@ -40,6 +44,9 @@ pub enum Column {
 
 /// FSInspectColumnConfig's default: every column.
 pub const ALL_COLUMNS: u32 = 1023;
+/// What an avatar wears: the owner (its wearer) and the dates are there to be
+/// chosen, not shown at first.
+pub const AVATAR_COLUMNS: u32 = ALL_COLUMNS & !(4 | 512);
 
 impl Column {
     pub const ALL: [Column; 10] = [
@@ -103,12 +110,6 @@ impl Column {
             Column::Faces | Column::Vertices | Column::Triangles | Column::TextureMemory | Column::Vram
         )
     }
-
-    /// Columns that say nothing about what an avatar wears: every worn
-    /// object is the wearer's, and the dates were not wanted there.
-    fn for_objects_only(self) -> bool {
-        matches!(self, Column::Owner | Column::Created)
-    }
 }
 
 fn shown(columns: u32, column: Column) -> bool {
@@ -129,6 +130,8 @@ pub struct Row {
     /// Whose profile "See Owner Profile" opens: none for an
     /// object owned by a group.
     pub owner: Option<Uuid>,
+    /// The group that owns it.
+    pub owner_group: Option<Uuid>,
     pub creator: Option<Uuid>,
     /// RLVa's `@shownames` hides the creator in the world while this row
     /// names them (they neither own the object nor stand around): their
@@ -147,6 +150,9 @@ pub struct Row {
     pub point: u8,
     /// Complexity of its linkset, on the root row only.
     pub complexity: u32,
+    /// Land impact of its linkset, on the root row of an object of the world,
+    /// once the region has answered.
+    pub land_impact: Option<f32>,
 }
 
 /// "Total stats" of floater_inspect.xml.
@@ -220,6 +226,32 @@ impl InspectView {
     }
 }
 
+/// Someone here, for the complexity strip.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Person {
+    pub id: Uuid,
+    /// Whose picture shows; None when RLVa hides them.
+    pub pic: Option<Uuid>,
+    /// As the world shows it.
+    pub name: String,
+    pub complexity: u32,
+    pub you: bool,
+    pub friend: bool,
+    /// Not above the limit (or an exception to it).
+    pub drawn: bool,
+}
+
+impl Person {
+    /// Never gathered with others on the scale.
+    fn kept(&self) -> bool {
+        self.you || self.friend
+    }
+
+    fn shown_name(&self) -> &str {
+        if self.you { aurora_i18n::tr!("inspect-you") } else { &self.name }
+    }
+}
+
 /// What the window needs from the app this frame.
 pub struct Frame<'a> {
     pub rows: &'a [Row],
@@ -238,6 +270,10 @@ pub struct Frame<'a> {
     pub point_names: &'a HashMap<u8, String>,
     /// RenderAvatarMaxComplexity; 0: no limit.
     pub max_complexity: u32,
+    /// The people here with their complexity (the wide window, for an avatar).
+    pub people: &'a [Person],
+    /// Land impact used and allowed on the parcel the objects are on.
+    pub parcel: Option<(i32, i32)>,
     pub columns: &'a mut u32,
     pub view: &'a mut InspectView,
 }
@@ -251,7 +287,17 @@ pub enum Action {
     Profile { who: Uuid, named_here_alone: bool },
     /// Move the camera to an object (the menu's Zoom).
     LookAt(Uuid),
+    /// The profile of a group that owns an object.
+    Group(Uuid),
 }
+
+/// The compact window and the wide one.
+const VIEWS: board::Views = board::Views {
+    window: "inspect",
+    small: Vec2::new(420.0, 600.0),
+    wide: Vec2::new(800.0, 760.0),
+    from: 700.0,
+};
 
 #[derive(Default)]
 pub struct InspectUi {
@@ -276,6 +322,13 @@ pub struct InspectUi {
     pub wanted_pics: HashSet<Uuid>,
     /// AURORA_DEMO_INSPECT has opened the window (or is not set).
     pub demo_done: bool,
+    /// The 3D view of the wide window.
+    pub stage: super::object_stage::StageUi,
+    wide: wide::Wide,
+    /// AURORA_DEMO_INSPECT's view; None: the one chosen last.
+    pub forced_wide: Option<bool>,
+    /// The window opens this frame: it takes the view chosen last.
+    opening: bool,
 }
 
 /// Date and time in SLT (the timeStamp of floater_inspect.xml, kept short).
@@ -312,12 +365,17 @@ impl InspectUi {
         self.detail_open = None;
         self.query.clear();
         self.tab = 0;
+        self.opening = true;
+        self.wide.restart();
+        self.stage.restart();
         self.subject = subject;
         self.roots = roots;
     }
 
-    /// AURORA_DEMO_INSPECT's options: `open` the third object's card,
-    /// `creators` or `details` that tab, `view` the View panel.
+    /// AURORA_DEMO_INSPECT's options: `wide` or `small` the view; small, `open`
+    /// the third object's card, `creators` or `details` that tab, `view` the
+    /// View panel; wide, `item` the third object, `apart` the 3D view pulled
+    /// apart, `grow-…` a tile grown.
     pub fn demo(&mut self, option: &str) {
         match option {
             "open" => {
@@ -328,7 +386,29 @@ impl InspectUi {
             "creators" => self.tab = 1,
             "details" => self.tab = 2,
             "view" => self.view_open = true,
+            "wide" => self.forced_wide = Some(true),
+            "small" => self.forced_wide = Some(false),
+            "item" => {
+                let root = self.roots.get(2).or(self.roots.first()).copied();
+                self.open_item(root);
+            }
+            "grow-items" => self.wide.grown = Some(wide::Tile::Items),
+            "grow-complexity" => self.wide.grown = Some(wide::Tile::Weight),
+            "grow-makers" => self.wide.grown = Some(wide::Tile::Makers),
+            "grow-places" => self.wide.grown = Some(wide::Tile::Places),
+            "grow-figures" => self.wide.grown = Some(wide::Tile::Figures),
+            "grow-prims" => self.wide.grown = Some(wide::Tile::Prims),
+            "grow-3d" => self.wide.grown = Some(wide::Tile::Stage),
+            "apart" => self.stage.pull_apart(1.0),
             _ => {}
+        }
+    }
+
+    /// Open an item (its root prim outlined in the world), or none.
+    fn open_item(&mut self, root: Option<Uuid>) {
+        self.opened = root;
+        if root.is_some() {
+            self.selected = root;
         }
     }
 
@@ -336,12 +416,19 @@ impl InspectUi {
         matches!(self.subject, Subject::Avatar(_))
     }
 
+    /// Whether the window shows its board of tiles this frame.
+    pub fn is_wide(&self, ctx: &egui::Context, saved: bool) -> bool {
+        self.open && board::is_wide(ctx, &VIEWS, saved, self.opening)
+    }
+
     /// Draw the window. Returns what the window asks of the app.
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, frame: Frame<'_>) -> Vec<Action> {
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, frame: Frame<'_>, saved_wide: &mut bool) -> Vec<Action> {
         let mut actions = Vec::new();
         if !self.open {
             return actions;
         }
+        let wide = self.is_wide(ctx, *saved_wide);
+        self.opening = false;
         let rows = frame.rows;
         // the highlighted prim is gone: the first one (refresh's selectNthItem(0))
         if !rows.iter().any(|r| Some(r.id) == self.selected) {
@@ -354,13 +441,20 @@ impl InspectUi {
         let mut open = true;
         let mut floater = Floater::new(
             "inspect",
-            aurora_i18n::tr!("inspect-title"),
-            egui::pos2(240.0, 120.0),
-            Vec2::new(420.0, 600.0),
+            aurora_i18n::tr!("inspect-window"),
+            egui::pos2(240.0, 60.0),
+            VIEWS.size(ctx, *saved_wide),
         );
         floater.min_size = Vec2::new(360.0, 380.0);
+        let mut resize = false;
+        let (icon, tip) = board::size_button(wide);
+        let floater = floater.action(icon, tip, &mut resize);
         let mut frame = frame;
         floater.show(ctx, p, &mut open, |ui| {
+            if wide {
+                wide::show(self, ui, p, &mut frame, &items, &mut actions);
+                return;
+            }
             self.summary(ui, p, &frame, &items, &mut actions);
             ui.add_space(8.0);
             self.search_row(ui, p, frame.view);
@@ -389,6 +483,7 @@ impl InspectUi {
             }
             foot.show(ui, |ui| self.footer(ui, p, rows));
         });
+        board::after(ctx, &VIEWS, resize, wide, saved_wide);
         if !open {
             self.open = false;
         }
@@ -807,6 +902,7 @@ mod tests {
             |ui, ctx, p| {
                 let mut columns = ALL_COLUMNS;
                 let mut view = InspectView::default();
+                let mut saved = false;
                 ui.show(
                     ctx,
                     p,
@@ -819,9 +915,12 @@ mod tests {
                         pics: &pics,
                         point_names: &names,
                         max_complexity: 350_000,
+                        people: &[],
+                        parcel: None,
                         columns: &mut columns,
                         view: &mut view,
                     },
+                    &mut saved,
                 );
             },
         );
@@ -849,8 +948,9 @@ mod tests {
     }
 
     #[test]
-    fn owner_and_dates_are_for_objects_of_the_world() {
-        let only: Vec<Column> = Column::ALL.into_iter().filter(|c| c.for_objects_only()).collect();
-        assert_eq!(only, [Column::Owner, Column::Created]);
+    fn owner_and_dates_wait_to_be_chosen_for_an_avatar() {
+        let hidden: Vec<Column> = Column::ALL.into_iter().filter(|c| !shown(AVATAR_COLUMNS, *c)).collect();
+        assert_eq!(hidden, [Column::Owner, Column::Created]);
+        assert!(Column::ALL.into_iter().all(|c| shown(ALL_COLUMNS, c)));
     }
 }

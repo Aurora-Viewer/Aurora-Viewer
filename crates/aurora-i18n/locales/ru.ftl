@@ -4950,7 +4950,6 @@ world-profiles-joined-today = Аккаунт создан сегодня
 keybinds-insert = Insert
 ui-context-inspect-2 = Осмотреть
 ui-context-inspect-all-attachments = Осмотреть все прикреплённые объекты
-inspect-title = Осмотр объектов
 inspect-col-name = Название объекта
 inspect-col-description = Описание
 inspect-col-owner = Владелец

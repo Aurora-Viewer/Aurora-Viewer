@@ -4815,7 +4815,6 @@ world-profiles-joined-today = Bugün katıldı
 keybinds-insert = Insert
 ui-context-inspect-2 = İncele
 ui-context-inspect-all-attachments = Tüm aksesuarları incele
-inspect-title = Nesneleri İncele
 inspect-col-name = Nesne Adı
 inspect-col-description = Açıklama
 inspect-col-owner = Sahip

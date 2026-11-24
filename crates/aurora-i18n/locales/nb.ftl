@@ -4814,7 +4814,6 @@ world-profiles-joined-today = Ble med i dag
 keybinds-insert = Insert
 ui-context-inspect-2 = Inspiser
 ui-context-inspect-all-attachments = Inspiser alle vedheng
-inspect-title = Inspiser objekter
 inspect-col-name = Objektnavn
 inspect-col-description = Beskrivelse
 inspect-col-owner = Eier

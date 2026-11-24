@@ -594,6 +594,8 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "options" => "settings-filled",
         "worldmap" | "minimap" => "map",
         "beacons" => "radar-filled",
+        "inspect" => "scan-eye",
+        "area_search" => "radar-2",
         "environment_selector" | "personal_lighting" => "sun-filled",
         "perf" | "performance" => "gauge-filled",
         "photo" | "photo_classic" => "camera-filled",

@@ -868,6 +868,11 @@ pub struct Settings {
     pub standalone_place_details: bool,
     /// FSInspectColumnConfig: columns of the Inspect window's Details table (ui/inspect).
     pub inspect_columns: u32,
+    /// The same for what an avatar wears.
+    pub inspect_avatar_columns: u32,
+    /// Inspect and Area Search open on their wide view (a board of tiles).
+    pub inspect_wide: bool,
+    pub area_search_wide: bool,
     /// The Inspect window's View panel: order, creator on the rows, what
     /// else the rows show (Aurora's own).
     pub inspect_view: crate::ui::inspect::InspectView,
@@ -2586,6 +2591,9 @@ impl Default for Settings {
             show_movement_controls: false,
             standalone_place_details: false,
             inspect_columns: crate::ui::inspect::ALL_COLUMNS,
+            inspect_avatar_columns: crate::ui::inspect::AVATAR_COLUMNS,
+            inspect_wide: false,
+            area_search_wide: true,
             inspect_view: Default::default(),
             landmarks_by_date: true,
             tp_history_zone: HistoryZone::Slt,

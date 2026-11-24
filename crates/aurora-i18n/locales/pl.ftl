@@ -4907,7 +4907,6 @@ world-profiles-joined-today = Konto od dzisiaj
 keybinds-insert = Insert
 ui-context-inspect-2 = Zbadaj
 ui-context-inspect-all-attachments = Zbadaj wszystkie dodatki
-inspect-title = Zbadaj obiekty
 inspect-col-name = Nazwa obiektu
 inspect-col-description = Opis
 inspect-col-owner = Właściciel

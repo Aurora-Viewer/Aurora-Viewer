@@ -204,7 +204,7 @@ fn spoken(row: &Row, item: &Item, point: Option<&str>) -> String {
 
 /// The attachment point's name (avatar_lad.xml), as the Appearance window
 /// names it.
-fn point_label(frame: &Frame<'_>, point: u8) -> String {
+pub(super) fn point_label(frame: &Frame<'_>, point: u8) -> String {
     frame
         .point_names
         .get(&point)
@@ -229,15 +229,20 @@ fn card(
     let row = &frame.rows[item.first];
     let open = state.opened == Some(item.root);
     let radius = ui.visuals().window_corner_radius;
-    // an open card only gains an outline: the accent is for the prim outlined
-    // in the world, at its foot
-    let fill = p.raised.gamma_multiply(0.45);
+    // the accent is what is outlined in the world: the open item, then the
+    // prim picked in it (the item turns grey)
+    let outlined = open && state.selected == Some(item.root);
+    let fill = if outlined {
+        p.violet.gamma_multiply(0.22)
+    } else {
+        p.raised.gamma_multiply(0.45)
+    };
     let stroke = Stroke::new(
         1.0,
-        if open {
-            p.muted.gamma_multiply(0.5)
-        } else {
-            egui::Color32::TRANSPARENT
+        match (open, outlined) {
+            (true, true) => p.violet_light,
+            (true, false) => p.muted.gamma_multiply(0.5),
+            _ => egui::Color32::TRANSPARENT,
         },
     );
     let point = (item.point != 0).then(|| point_label(frame, item.point));
@@ -529,7 +534,7 @@ fn body(
             for &i in &item.prims {
                 let prim = &frame.rows[i];
                 let (r, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::click());
-                let selected = state.selected == Some(prim.id);
+                let selected = state.selected == Some(prim.id) && !prim.root;
                 let radius = ui.visuals().widgets.inactive.corner_radius;
                 if selected {
                     ui.painter().rect_filled(r, radius, p.violet.gamma_multiply(0.18));

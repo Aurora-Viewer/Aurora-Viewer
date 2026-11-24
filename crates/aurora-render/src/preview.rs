@@ -36,6 +36,10 @@ pub struct Skin {
     pub rest: Vec<Mat4>,
 }
 pub type Pose = Arc<[[[f32; 4]; 4]]>;
+/// What each part of a model is mixed with, in the order of its parts: a
+/// displayed colour and how much of it (0: the part as it is). Parts past the
+/// end keep their own look.
+pub type Tones = Arc<[[f32; 4]]>;
 #[derive(Clone)]
 pub struct Image {
     pub size: [u32; 2],
@@ -132,17 +136,34 @@ impl View {
         );
         let right = Vec3::Z.cross(outward).normalize_or_zero();
         let up = outward.cross(right);
-        let height = 2.0 * model.radius.max(0.001) * self.distance * (0.75_f32 * 0.5).tan();
+        let height = 2.0 * model.radius.max(0.001) * self.distance * (FOV_Y * 0.5).tan();
         // Pan in screen coordinates at any orbit/zoom, following the pointer.
         let center = model.center - right * self.pan[0] * height * aspect + up * self.pan[1] * height;
         (center + outward * model.radius.max(0.001) * self.distance, center)
     }
+
+    /// The ray through `at`, a point of a preview drawn over `rect`: where it
+    /// starts and its direction, in the model's space.
+    pub fn ray(&self, model: &Model, rect: egui::Rect, at: egui::Pos2) -> (Vec3, Vec3) {
+        let aspect = (rect.width() / rect.height().max(1.0)).max(0.01);
+        let (eye, center) = self.camera(model, aspect);
+        let forward = (center - eye).normalize_or(Vec3::NEG_X);
+        let right = forward.cross(Vec3::Z).normalize_or(Vec3::Y);
+        let up = right.cross(forward);
+        let half = (FOV_Y * 0.5).tan();
+        let x = (at.x - rect.center().x) / (rect.width() * 0.5).max(1.0) * half * aspect;
+        let y = (rect.center().y - at.y) / (rect.height() * 0.5).max(1.0) * half;
+        (eye, (forward + right * x + up * y).normalize())
+    }
 }
+/// Vertical field of view of the previews, in radians.
+const FOV_Y: f32 = 0.75;
 struct Region {
     id: egui::Id,
     model: Arc<Model>,
     view: View,
     pose: Option<Pose>,
+    tones: Option<Tones>,
 }
 
 /// A window that shows previews: the viewer's own, or one of the interface
@@ -222,6 +243,7 @@ fn paint_tile(ui: &mut egui::Ui, id: egui::Id, model: Arc<Model>, view: View, si
                 model,
                 view,
                 pose: None,
+                tones: None,
             }),
         }));
     }
@@ -263,9 +285,27 @@ pub fn paint_with_pose(
             model,
             view: *view,
             pose,
+            tones: None,
         }),
     }));
     response
+}
+
+/// A preview over `rect`, drawn only: its caller turns the camera and reads
+/// the clicks itself.
+pub fn paint_stage(ui: &egui::Ui, id: egui::Id, model: Arc<Model>, view: View, rect: egui::Rect, pose: Option<Pose>, tones: Option<Tones>) {
+    if ui.is_rect_visible(rect) {
+        ui.painter().add(egui::Shape::Callback(egui::PaintCallback {
+            rect,
+            callback: Arc::new(Region {
+                id,
+                model,
+                view,
+                pose,
+                tones,
+            }),
+        }));
+    }
 }
 
 #[repr(C)]
@@ -280,6 +320,7 @@ struct Uniform {
     ambient: [f32; 4],
     surface: [f32; 4],
     uv: [[[f32; 4]; 2]; 4],
+    tone: [f32; 4],
 }
 /// The palette a part's skin shares with its other parts (0: no skin).
 fn skin_key(skin: Option<&Arc<Skin>>) -> usize {
@@ -314,6 +355,7 @@ struct Target {
     texture: egui::TextureId,
     last: Option<View>,
     last_pose: Option<Pose>,
+    last_tones: Option<Tones>,
 }
 #[derive(Default)]
 pub(crate) struct Cache {
@@ -646,23 +688,38 @@ impl Target {
             texture,
             last: None,
             last_pose: None,
+            last_tones: None,
         }
     }
-    fn draw(&mut self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, pipeline: &Pipelines, view: View, pose: Option<&Pose>) {
+    fn draw(
+        &mut self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &Pipelines,
+        view: View,
+        pose: Option<&Pose>,
+        tones: Option<&Tones>,
+    ) {
         let same_pose = match (pose, self.last_pose.as_ref()) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
             _ => false,
         };
-        if self.last == Some(view) && same_pose {
+        let same_tones = match (tones, self.last_tones.as_ref()) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if self.last == Some(view) && same_pose && same_tones {
             return;
         }
         self.last = Some(view);
         self.last_pose = pose.cloned();
+        self.last_tones = tones.cloned();
         let radius = self.model.radius.max(0.001);
         let (eye, center) = view.camera(&self.model, self.size[0] as f32 / self.size[1] as f32);
         let projection =
-            glam::camera::rh::proj::directx::perspective(0.75, self.size[0] as f32 / self.size[1] as f32, radius * 0.01, radius * 100.0)
+            glam::camera::rh::proj::directx::perspective(FOV_Y, self.size[0] as f32 / self.size[1] as f32, radius * 0.01, radius * 100.0)
                 * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z);
         let mut posed = HashSet::new();
         for part in &self.parts {
@@ -702,6 +759,7 @@ impl Target {
                 ambient: [view.ambient[0], view.ambient[1], view.ambient[2], 1.0],
                 surface: [material.normal_scale, if material.double_sided { 1.0 } else { 0.0 }, 0.0, 0.0],
                 uv: material.uv,
+                tone: tones.and_then(|tones| tones.get(part.source)).copied().unwrap_or_default(),
             };
             queue.write_buffer(&part.uniform, 0, bytemuck::bytes_of(&uniforms));
         }
@@ -848,7 +906,7 @@ impl Cache {
                     .insert(region.id, Target::new(device, queue, egui, pipeline, region.model.clone(), size));
             }
             let target = self.targets.get_mut(&region.id).expect("preview target initialized");
-            target.draw(queue, encoder, pipeline, region.view, region.pose.as_ref());
+            target.draw(queue, encoder, pipeline, region.view, region.pose.as_ref(), region.tones.as_ref());
             seen.insert(region.id);
             let mut mesh = egui::Mesh::with_texture(target.texture);
             mesh.add_rect_with_uv(
@@ -981,6 +1039,7 @@ mod tests {
                     distance: 3.0,
                     ..Default::default()
                 },
+                None,
                 None,
             );
             let pixels = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1202,6 +1261,7 @@ mod tests {
                 ambient: [0.2, 0.2, 0.2, 1.0],
                 surface: [1.0, 1.0, 0.0, 0.0],
                 uv: Material::default().uv,
+                tone: [0.0; 4],
             }),
             wgpu::BufferUsages::UNIFORM,
         );
