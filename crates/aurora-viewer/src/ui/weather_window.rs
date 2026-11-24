@@ -146,7 +146,8 @@ fn cards(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
         let x = top_left.x + i as f32 * (column_w + gap);
         let rect = egui::Rect::from_min_size(egui::pos2(x, top_left.y), Vec2::new(column_w, f32::INFINITY));
         // the column's place in the order, not the frame's count: the same
-        // ids whatever the layout
+        // ids from frame to frame at one width (a card changes column, and
+        // its widgets their ids, when the width changes the column count)
         let mut col = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt(("weather_column", i))
@@ -820,8 +821,8 @@ fn wind_rows(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings) {
     });
 }
 
-/// The side of the wind's compass in a card row `width` wide: a third of
-/// it, between [`COMPASS_MIN`] and [`COMPASS`].
+/// The side of the wind's compass in a card row `width` wide: about a
+/// third of it (0.36), between [`COMPASS_MIN`] and [`COMPASS`].
 fn compass_side(width: f32) -> f32 {
     (width * 0.36).clamp(COMPASS_MIN, COMPASS)
 }
