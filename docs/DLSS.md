@@ -11,7 +11,7 @@ has no DLSS choice.
 
 - **Windows:** NVIDIA's own signed Streamline release.
 - **Linux:** NVIDIA ships Streamline for Windows only. The setup builds
-  [sl-ngx](https://github.com/circuskid/sl-ngx), an MIT library that
+  [sl-ngx](https://github.com/Aurora-Viewer/sl-ngx), an MIT library that
   implements Streamline's interface for Vulkan on NVIDIA's NGX, against
   NVIDIA's DLSS SDK.
 

@@ -17,7 +17,7 @@ set -euo pipefail
 REPO=https://github.com/NVIDIA/DLSS.git
 # sl-ngx (MIT): NVIDIA Streamline's interface for Vulkan on NVIDIA NGX, the
 # library the viewer speaks to. Fetched at this commit, never a branch.
-SL_NGX_REPO=https://github.com/circuskid/sl-ngx.git
+SL_NGX_REPO=https://github.com/Aurora-Viewer/sl-ngx.git
 SL_NGX_COMMIT=4016e7cbd5d05dd07b5c0d7743d76b1a3d248380
 
 die() { printf 'dlss-setup: %s\n' "$*" >&2; exit 1; }
