@@ -613,8 +613,9 @@ pub(in super::super) fn item(
     }
 }
 
-/// A folder's row: with its caret in a tree, without it in the explorer,
-/// where a double-click goes into the folder.
+/// A folder's row: with its caret in a tree (none when it `branches` not:
+/// `rows::branches`), without it in the explorer, where a double-click goes
+/// into the folder.
 #[allow(clippy::too_many_arguments)]
 pub(in super::super) fn folder(
     ui: &mut egui::Ui,
@@ -623,6 +624,7 @@ pub(in super::super) fn folder(
     inv: &Inventory,
     id: Uuid,
     open: &mut bool,
+    branches: bool,
     st: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     facts: &Facts,
@@ -683,7 +685,7 @@ pub(in super::super) fn folder(
     background(ui, p, full, selected);
     focus_ring(ui, p, full, st, id);
     paint_icon(ui, icons, icon, icon_center, tint);
-    let caret = (!frame.explorer).then(|| {
+    let caret = (!frame.explorer && branches).then(|| {
         let caret_rect = Rect::from_center_size(caret_center, Vec2::splat(CARET + 4.0));
         let caret = ui.interact(caret_rect, ui.make_persistent_id(("inv_caret", id)), Sense::click());
         let color = if caret.hovered() { p.ink } else { p.muted };
@@ -785,7 +787,7 @@ pub(in super::super) fn folder(
             st.selected = None;
         }
         *open = false;
-    } else if r.double_clicked() {
+    } else if r.double_clicked() && branches {
         *open = !*open;
     }
 }

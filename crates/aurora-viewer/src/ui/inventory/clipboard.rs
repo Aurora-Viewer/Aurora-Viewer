@@ -1443,6 +1443,81 @@ mod tests {
         }
     }
 
+    /// Issue #4765: a fetched empty folder has no caret, and a double-click
+    /// on it selects it without opening it, in both window styles; a folder
+    /// with contents still folds on a double-click.
+    #[test]
+    fn a_double_click_leaves_an_empty_folder_shut_in_both_styles() {
+        let shown = |h: &Harness, n| h.st.plain.rows.iter().find(|row| row.id == id(n)).map(|row| row.kind);
+        for (classic, width) in [(true, 680.0), (false, 440.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(width, 950.0));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let empty = &h.world.inventory.folders[&id(8001)];
+            assert!(empty.state == FetchState::Fetched && empty.children.is_empty() && empty.items.is_empty());
+            assert!(h.st.plain.is_open(id(8001)), "{classic}: Expand all left it open");
+            let leaf = rows::Kind::Folder {
+                open: false,
+                branches: false,
+            };
+            assert_eq!(shown(&h, 8001), Some(leaf), "{classic}: shown shut, without a caret");
+            let double_click = |h: &mut Harness, pos: Pos2| {
+                let press = |pressed| Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: Default::default(),
+                };
+                h.frame(vec![Event::PointerMoved(pos), press(true), press(false), press(true), press(false)]);
+                h.frame(Vec::new());
+            };
+            h.st.plain.set_open(id(8001), false);
+            h.frame(Vec::new());
+            let pos = h.row(id(8001));
+            double_click(&mut h, pos);
+            assert_eq!(h.st.selected, Some(id(8001)), "{classic}: the double-click reached the row");
+            assert!(!h.st.plain.is_open(id(8001)), "{classic}: not even left open for later");
+            assert_eq!(shown(&h, 8001), Some(leaf), "{classic}: still shut");
+            assert!(
+                !h.st
+                    .plain
+                    .rows
+                    .iter()
+                    .any(|row| row.id == id(8001) && row.kind == rows::Kind::Empty),
+                "{classic}: no Empty line"
+            );
+            assert!(!h.st.visible.is_empty());
+            let pos = h.row(id(8000));
+            double_click(&mut h, pos);
+            assert_eq!(
+                shown(&h, 8000),
+                Some(rows::Kind::Folder {
+                    open: false,
+                    branches: true
+                }),
+                "{classic}: a folder with contents folds"
+            );
+            if classic {
+                // the Legacy-style single folder window lists 8000 flat:
+                // there an empty folder is gone into, as any other
+                h.st.open_single_folder_window(id(8000));
+                for _ in 0..4 {
+                    h.frame(Vec::new());
+                }
+                let window = h.st.windows.last().expect("single folder window");
+                assert!(window.state.lists_flat());
+                let name = format!("inventory_{}", window.id);
+                let pos = h.row_in(id(8001), &name);
+                double_click(&mut h, pos);
+                let window = h.st.windows.last().expect("single folder window");
+                assert_eq!(window.state.browse, id(8001), "the empty folder is gone into");
+            }
+        }
+    }
+
     #[test]
     fn enter_on_the_selected_inventory_object_opens_it_like_a_double_click() {
         use crate::world::appearance::Action as Wear;

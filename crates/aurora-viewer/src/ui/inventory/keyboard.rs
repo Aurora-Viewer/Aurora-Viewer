@@ -256,8 +256,11 @@ fn open_selected(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPrefere
                 st.selection.clear();
                 st.selected = None;
             } else if st.result_view() {
-                st.result_tree.toggle(id, st.tab);
-            } else {
+                // a folder without a caret stays shut (`rows::branches`)
+                if st.result_tree.folds(id) {
+                    st.result_tree.toggle(id, st.tab);
+                }
+            } else if st.plain.folds(id) {
                 st.plain.set_open(id, !st.plain.is_open(id));
             }
         } else {
@@ -280,7 +283,14 @@ fn fold(inv: &Inventory, st: &mut InventoryUi, filtered: bool, right: bool) {
     let Some(current) = st.selected.filter(|id| st.selection.contains(id)) else {
         return;
     };
-    let folder = inv.folders.contains_key(&current);
+    // A folder without a caret neither opens nor counts as open: Left goes
+    // to its parent (`rows::branches`).
+    let folder = inv.folders.contains_key(&current)
+        && if filtered {
+            st.result_tree.folds(current)
+        } else {
+            st.plain.folds(current)
+        };
     let open = folder
         && if filtered {
             st.result_tree.is_open(current, st.tab)
@@ -433,18 +443,23 @@ mod tests {
             st.selection = HashSet::from([id(n)]);
         };
         let mut st = InventoryUi::default();
+        st.view.prepare(&inv, view::Sort::default());
         // The root (1) is hidden: 10 and 20 are top rows.
-        st.plain.order = vec![id(10), id(20)];
+        let list = |st: &mut InventoryUi| {
+            st.plain.prepare(&st.view, &inv, id(1), false, true);
+            st.plain.order.clone()
+        };
+        assert_eq!(list(&mut st), [id(10), id(20)]);
         select(&mut st, 10);
         fold(&inv, &mut st, false, true);
         assert!(st.plain.is_open(id(10)));
         assert!(!st.plain.is_open(id(20)), "only the current folder opens");
         fold(&inv, &mut st, false, true);
         assert!(st.plain.is_open(id(10)), "Right again keeps it open");
-        st.plain.order = vec![id(10), id(11), id(20)];
+        assert_eq!(list(&mut st), [id(10), id(11), id(20)]);
         select(&mut st, 11);
         fold(&inv, &mut st, false, true);
-        st.plain.order = vec![id(10), id(11), id(12), id(20)];
+        assert_eq!(list(&mut st), [id(10), id(11), id(12), id(20)]);
         select(&mut st, 12);
         fold(&inv, &mut st, false, true);
         assert_eq!(st.selected, Some(id(12)), "Right on an item does nothing");
@@ -463,8 +478,25 @@ mod tests {
         assert_eq!(st.selected, Some(id(10)), "no row above a top folder of a hidden root");
         assert!(!st.plain.is_open(id(1)));
 
+        // An empty folder has no caret: Right leaves it shut, Left climbs.
+        list(&mut st);
+        select(&mut st, 20);
+        fold(&inv, &mut st, false, true);
+        assert!(!st.plain.is_open(id(20)), "Right does not open an empty folder");
+        open_selected(&inv, &mut st, &InventoryPreferences::default(), &Facts::default(), &mut Vec::new());
+        assert!(!st.plain.is_open(id(20)), "nor does Enter");
+
         // A search's result tree keeps its own open state per tab.
         st.result_tree.order = vec![id(10), id(11), id(12)];
+        st.result_tree.rows = [(10, true), (11, true), (12, false)]
+            .map(|(n, folder)| view::TreeRow {
+                id: id(n),
+                depth: 0,
+                folder,
+                open: folder,
+                branches: folder,
+            })
+            .to_vec();
         select(&mut st, 11);
         assert!(st.result_tree.is_open(id(11), st.tab));
         fold(&inv, &mut st, true, false);
@@ -647,9 +679,12 @@ mod tests {
             selection: HashSet::from([id(10), id(100)]),
             ..Default::default()
         };
+        st.view.prepare(&inv, view::Sort::default());
+        st.plain.prepare(&st.view, &inv, id(1), false, true);
         let mut actions = Vec::new();
         open_selected(&inv, &mut st, &prefs, &facts, &mut actions);
         assert!(st.plain.is_open(id(10)), "the folder folds open");
+        st.plain.prepare(&st.view, &inv, id(1), false, true);
         assert!(
             matches!(&actions[..], [InvAction::Appearance(Wear::WearItem { item, .. })] if *item == id(100)),
             "the item under it is put on"

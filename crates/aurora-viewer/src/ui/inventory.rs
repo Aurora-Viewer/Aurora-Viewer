@@ -1872,13 +1872,14 @@ fn folder_row(
     inv: &Inventory,
     id: Uuid,
     open: &mut bool,
+    branches: bool,
     state: &mut InventoryUi,
     prefs: &mut InventoryPreferences,
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
     if state.aurora.is_some() {
-        aurora::rows::folder(ui, p, icons, inv, id, open, state, prefs, facts, actions);
+        aurora::rows::folder(ui, p, icons, inv, id, open, branches, state, prefs, facts, actions);
         return;
     }
     let Some(folder) = inv.folders.get(&id) else { return };
@@ -1888,17 +1889,20 @@ fn folder_row(
         let opacity = ui.opacity();
         ui.multiply_opacity(clipboard::opacity(inv, state, id));
         ui.spacing_mut().item_spacing.x = 4.0;
-        // A single folder list has no carets: its folders are gone into.
+        // A single folder list has no carets: its folders are gone into. A
+        // folder known to be empty has none either (`rows::branches`). The
+        // caret's place stays, so the icons line up.
         let flat = state.lists_flat();
-        let resp = if flat {
-            ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover()).1
+        let lead = if flat || !branches {
+            ui.allocate_exact_size(tree::CARET, egui::Sense::hover()).0
         } else {
-            tree::caret(ui, p, *open)
+            let resp = tree::caret(ui, p, *open);
+            clipboard::demo_caret(&resp, state, id);
+            if resp.clicked() {
+                *open = !*open;
+            }
+            resp.rect
         };
-        clipboard::demo_caret(&resp, state, id);
-        if resp.clicked() {
-            *open = !*open;
-        }
         let tint = folder_colors::tint(prefs, id);
         tree::icon(ui, icons, folder_icon(folder.info.type_default, *open && !flat), p, tint);
         let label = match fetch_state {
@@ -1924,7 +1928,7 @@ fn folder_row(
         });
         let r = super::widgets::inventory_item_label_tagged(ui, job, state.selection.contains(&id), sense, None, tag);
         ui.set_opacity(opacity);
-        if folder_response(ui, p, inv, id, r, Some(resp.rect), open, state, prefs, facts, actions).double_clicked() {
+        if folder_response(ui, p, inv, id, r, Some(lead), open, state, prefs, facts, actions).double_clicked() && (branches || flat) {
             *open = !*open;
         }
     });
@@ -2377,8 +2381,8 @@ fn search_rows(
             ui.add_space(row.depth.min(24) as f32 * ui.spacing().indent);
             if row.folder {
                 let mut open = row.open;
-                folder_row(ui, p, icons, inv, row.id, &mut open, st, prefs, facts, actions);
-                if open != row.open {
+                folder_row(ui, p, icons, inv, row.id, &mut open, row.branches, st, prefs, facts, actions);
+                if open != row.open && row.branches {
                     st.result_tree.toggle(row.id, st.tab);
                 }
             } else {
