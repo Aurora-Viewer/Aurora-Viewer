@@ -11134,6 +11134,7 @@ impl App {
             }
             // outfit restore at login (queues the COF fetch below)
             let second_life = !matches!(self.settings.grid, crate::settings::GridChoice::Custom);
+            self.world.second_life = self.second_life();
             self.world.update_outfit(second_life, Instant::now());
             // copies of the worn objects on their way (world/avatar_cache)
             self.world.avatar_cache.set_enabled(self.settings.avatar_cache);

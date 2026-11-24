@@ -478,6 +478,8 @@ pub enum LocalAssetRequest {
 }
 
 pub struct World {
+    /// Whether the current session is on Second Life rather than OpenSim.
+    pub second_life: bool,
     /// mScreen's Y scale (LLVOAvatarSelf::updateCharacter).
     pub hud_aspect: f32,
     /// Where the HUDs are laid out in the window (left, top, right, bottom
@@ -1062,6 +1064,7 @@ impl World {
 
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
         World {
+            second_life: false,
             hud_aspect: 1.0,
             hud_area: None,
             hud_zoom: 1.0,

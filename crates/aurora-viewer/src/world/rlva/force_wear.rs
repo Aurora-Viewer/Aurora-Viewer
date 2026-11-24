@@ -94,7 +94,7 @@ impl World {
             .requested_wears
             .retain(|item, at| !points.contains_key(item) && now.saturating_duration_since(*at) < WEAR_RETRY);
         let requested = self.rlva.requested_wears.keys().copied().collect();
-        if appearance::force_changes_nothing(&self.inventory, action, &points, &requested) {
+        if appearance::force_changes_nothing(&self.inventory, action, &points, &requested, self.attachment_limit()) {
             return true;
         }
         if let Action::Force { wear, .. } = action {
