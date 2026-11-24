@@ -71,6 +71,47 @@ pub(super) fn selected_fixture() -> (World, Editor) {
     editor.select(rig.names["mHead"], rig, &frame);
     (world, editor)
 }
+/// An animation loaded into the poser drives the joints it keys: a joint
+/// switched off is posed again and switched on (a selective load too, as a
+/// pose file's selective load re-enables what it applies), and a selective
+/// load still leaves a joint the user posed.
+#[test]
+fn a_loaded_animation_switches_its_joints_back_on_and_selective_keeps_posed_ones() {
+    use aurora_assets::anim::{JointMotion, RotKey};
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = Frame::new(&world).unwrap();
+    let (head, chest) = (rig.names["mHead"], rig.names["mChest"]);
+    let keyed = Quat::from_rotation_y(0.5);
+    let mut animation = clip::document::Document::new().meta;
+    for name in ["mHead", "mChest"] {
+        animation.joints.push(JointMotion {
+            joint_name: name.to_owned(),
+            priority: -1,
+            rot_keys: [0.0, animation.duration].map(|time| RotKey { time, rotation: keyed }).to_vec(),
+            pos_keys: Vec::new(),
+        });
+    }
+    for (mode, chest_loaded) in [(document::LoadMode::All, true), (document::LoadMode::Selective, false)] {
+        let mut session = data::Session::new(SubjectPose::capture(rig, &frame).unwrap());
+        let pose = Arc::make_mut(&mut session.pose);
+        let own = Quat::from_rotation_x(0.3);
+        pose.rotations[head] = (pose.rotations[head] * own).normalize();
+        pose.enabled[head] = false;
+        pose.rotations[chest] = (pose.rotations[chest] * own).normalize();
+        assert!(session.edited(head) && session.edited(chest));
+        let chest_before = session.pose.rotations[chest];
+        super::load_animation(rig, &mut session, animation.clone(), mode);
+        assert!(session.pose.enabled[head], "{mode:?}: the head is posed again");
+        assert!(
+            session.pose.rotations[head].dot(keyed).abs() > 0.9999,
+            "{mode:?}: the head takes the file's"
+        );
+        let chest_kept = session.pose.rotations[chest].dot(chest_before).abs() > 0.9999;
+        assert_eq!(!chest_kept, chest_loaded, "{mode:?}: the posed chest");
+    }
+}
+
 #[test]
 fn poser_joint_toggle_falls_back_tracks_undo_and_survives_saved_pose_loads() {
     let (world, _) = fixture();
@@ -125,13 +166,23 @@ fn poser_joint_toggle_falls_back_tracks_undo_and_survives_saved_pose_loads() {
     assert!(loaded.pose.enabled[bone], "selective load enables joints it applies");
 
     let authored = session.authored(rig, frame.model).unwrap();
+    // the head alone, switched off: nothing to write, refused like an
+    // untouched pose
+    assert!(storage::native(rig, &authored, "Disabled head".into(), 4).is_err());
+    // with a posed chest beside it: the chest's track, none for the head
+    let mut with_chest = authored.clone();
+    let chest = rig.names["mChest"];
+    with_chest.rotations[chest] = (with_chest.rotations[chest] * Quat::from_rotation_x(0.3)).normalize();
+    let names = storage::native(rig, &with_chest, "Disabled head".into(), 4)
+        .unwrap()
+        .animation
+        .joints
+        .iter()
+        .map(|joint| joint.joint_name.clone())
+        .collect::<Vec<_>>();
     assert!(
-        !storage::native(rig, &authored, "Disabled head".into(), 4)
-            .unwrap()
-            .animation
-            .joints
-            .iter()
-            .any(|joint| joint.joint_name == "mHead")
+        names.contains(&"mChest".to_owned()) && !names.contains(&"mHead".to_owned()),
+        "{names:?}"
     );
     let bvh = bvh::encode(rig, &authored, false).unwrap();
     let mut neutral_head = authored.clone();
@@ -2252,6 +2303,36 @@ fn poser_exports_nothing_of_a_captured_animation_through_any_format() {
         "a saved file brings none of it to another avatar"
     );
     assert!(storage::native(rig, &other.authored(rig, Mat4::IDENTITY).unwrap(), "Pose".into(), 4).is_err());
+}
+/// A joint switched off keeps its animation through Flip and the side
+/// copies, and so does its opposite (FSPoserAnimator::flipEntirePose,
+/// symmetrizeLeftToRightOrRightToLeft); T-pose keeps which joints are posed.
+#[test]
+fn flip_and_side_copies_leave_a_switched_off_pair_and_t_pose_keeps_it_off() {
+    let (world, mut editor, left, right, played) = captured_animation();
+    let rig = world.avatar_lib.rig.clone();
+    let frame = Frame::new(&world).unwrap();
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    let pose = Arc::make_mut(&mut session.pose);
+    pose.rotations[left] = played * Quat::from_rotation_z(0.2);
+    pose.enabled[right] = false;
+    let before = session.pose.clone();
+    for operation in [
+        controls::Operation::LeftToRight,
+        controls::Operation::RightToLeft,
+        controls::Operation::Flip,
+    ] {
+        editor.pose_operation(&rig, &frame, operation);
+        let pose = &editor.poser.sessions[&world.agent_id].pose;
+        assert!(
+            near(pose.rotations[right], before.rotations[right]),
+            "{operation:?}: the right side"
+        );
+        assert!(near(pose.rotations[left], before.rotations[left]), "{operation:?}: the left side");
+    }
+    editor.pose_operation(&rig, &frame, controls::Operation::TPose);
+    let pose = &editor.poser.sessions[&world.agent_id].pose;
+    assert!(!pose.enabled[right] && pose.enabled[left], "T-pose keeps the switches");
 }
 #[test]
 fn poser_touching_or_mirroring_joints_exports_the_change_and_not_the_captured_rotation() {

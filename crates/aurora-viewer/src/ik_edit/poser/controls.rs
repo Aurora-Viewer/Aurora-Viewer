@@ -5,7 +5,7 @@ use std::collections::HashMap;
 fn reflected(q: Quat) -> Quat {
     Quat::from_xyzw(-q.x, q.y, -q.z, q.w)
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) enum Operation {
     Mirror,
     Flip,
@@ -61,9 +61,19 @@ impl Editor {
                     }
                 }
             }
+            // a joint left out of the pose, or whose opposite is, keeps
+            // its animation: FSPoserAnimator::flipEntirePose and
+            // symmetrizeLeftToRightOrRightToLeft skip it (isPosingAvatarJoint,
+            // indra/newview/fsposeranimator.cpp)
             Operation::Flip | Operation::LeftToRight | Operation::RightToLeft => {
                 for b in 0..rig.len() {
+                    if !before.enabled[b] {
+                        continue;
+                    }
                     if let Some(other) = self.mirrors.counterpart(b) {
+                        if !before.enabled[other] {
+                            continue;
+                        }
                         let name = &rig.canonical_names[b];
                         let left = name.ends_with("Left") || name.starts_with("L_") || name.starts_with("LEFT_");
                         if matches!(operation, Operation::Flip)
@@ -96,7 +106,12 @@ impl Editor {
             }
             Operation::ResetAll => *pose = (*session.base).clone(),
             Operation::TPose => {
-                *pose = (*session.base).clone();
+                // which joints are posed stays as it was
+                // (FSPoserAnimator::setAllAvatarStartingRotationsToZero)
+                *pose = SubjectPose {
+                    enabled: before.enabled.clone(),
+                    ..(*session.base).clone()
+                };
                 pose.rotations.clone_from(&rig.local_rot);
                 // from here on the whole pose is the user's: it exports in
                 // full (FSPoserAnimator::setAllAvatarStartingRotationsToZero)
