@@ -13,6 +13,21 @@ pub const FT_OUTFIT: i32 = 47;
 pub const FT_MY_OUTFITS: i32 = 48;
 /// The Clothing system folder (LLFolderType::FT_CLOTHING).
 pub const FT_CLOTHING: i32 = 5;
+/// LLAgentBenefits::getAttachmentLimit when neither the login nor the
+/// region names one (Second Life's ordinary account, and OpenSim until
+/// MaxAgentAttachments arrives).
+pub const DEFAULT_ATTACHMENT_LIMIT: usize = 38;
+
+/// LLAgentBenefits::getAttachmentLimit: the login benefit, else the region's
+/// MaxAgentAttachments (OpenSim), else 38.
+pub fn attachment_limit_from(benefit: i32, feature: Option<u32>, second_life: bool) -> usize {
+    let limit = if second_life {
+        (benefit > 0).then_some(benefit as u32)
+    } else {
+        feature.filter(|n| *n > 0)
+    };
+    limit.map_or(DEFAULT_ATTACHMENT_LIMIT, |n| n as usize)
+}
 pub fn wearables() -> &'static Vec<&'static str> {
     static TABLE: aurora_i18n::Localized<Vec<&'static str>> = aurora_i18n::Localized::new();
     TABLE.get(|| {
@@ -642,7 +657,13 @@ fn wear_link(
 }
 
 /// Produces one acknowledged AIS operation. No optimistic inventory mutation.
+/// Callers that do not know the account's limit keep the ordinary 38.
 pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result<(OutfitMutation, bool), String> {
+    plan_limited(inv, action, worn, DEFAULT_ATTACHMENT_LIMIT)
+}
+
+/// [`plan`] with the account's attachment limit (`World::attachment_limit`).
+pub fn plan_limited(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>, limit: usize) -> Result<(OutfitMutation, bool), String> {
     // DeleteFromOutfit removes the saved links, never the originals or the worn items.
     if let Action::DeleteFromOutfit { folder, items } = action {
         if !inv
@@ -949,13 +970,14 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             change.links = next;
         }
         Action::Revert => {
-            return plan(
+            return plan_limited(
                 inv,
                 Action::Wear(
                     base(inv).ok_or(aurora_i18n::tr!("world-appearance-no-saved-outfit-to-restore"))?,
                     false,
                 ),
                 worn,
+                limit,
             );
         }
         Action::Remove(_) | Action::RemoveItems(_) => {
@@ -1130,8 +1152,8 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
         .iter()
         .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type == 6))
         .count();
-    if sync && count > 38 {
-        return Err(aurora_i18n::tr!("world-appearance-the-outfit-exceeds-the-38-attachment-limit").into());
+    if sync && count > limit {
+        return Err(aurora_i18n::tr!("world-appearance-outfit-exceeds-attachment-limit", limit = limit));
     }
     for kind in 4..=16 {
         if sync
@@ -1480,7 +1502,7 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
 /// LLAttachmentsMgr::wasRequestedRecently) and is linked when it arrives
 /// (`update_attachment_inventory`). Gestures are always applied, their state
 /// is not in the links.
-pub fn force_changes_nothing(inv: &Inventory, action: &Action, worn: &HashMap<Uuid, u8>, requested: &HashSet<Uuid>) -> bool {
+pub fn force_changes_nothing(inv: &Inventory, action: &Action, worn: &HashMap<Uuid, u8>, requested: &HashSet<Uuid>, limit: usize) -> bool {
     let Action::Force { remove, wear } = action else {
         return false;
     };
@@ -1505,7 +1527,7 @@ pub fn force_changes_nothing(inv: &Inventory, action: &Action, worn: &HashMap<Uu
     if !remove.iter().all(settled_off) || !wear.iter().all(settled_on) {
         return false;
     }
-    let (Some(cof), Ok((change, _))) = (cof(inv), plan(inv, action.clone(), worn)) else {
+    let (Some(cof), Ok((change, _))) = (cof(inv), plan_limited(inv, action.clone(), worn, limit)) else {
         return false;
     };
     let arriving: HashSet<_> = wear
@@ -2314,6 +2336,49 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    /// Issue #3738: a lifetime account's benefit is above 38, so an outfit
+    /// the ordinary limit refuses is worn when the account allows it.
+    #[test]
+    fn an_outfit_over_38_follows_the_account_limit() {
+        let mut inv = fixture();
+        let template = inv.items[&Uuid::from_u128(723)].clone();
+        let objects: Vec<_> = (8000..8045)
+            .map(|id| InvItem {
+                id: Uuid::from_u128(id),
+                ..template.clone()
+            })
+            .collect();
+        inv.add_items(objects.clone());
+        demo_replace(
+            &mut inv,
+            Uuid::from_u128(1),
+            Uuid::from_u128(703),
+            &objects.iter().map(item_link).collect::<Vec<_>>(),
+        );
+        let id = Uuid::from_u128(703);
+        assert!(plan_limited(&inv, Action::Wear(id, false), &HashMap::new(), 50).is_ok());
+        assert!(plan_limited(&inv, Action::Wear(id, false), &HashMap::new(), 38).is_err());
+        let saved = base(&inv).expect("saved outfit");
+        demo_replace(
+            &mut inv,
+            Uuid::from_u128(1),
+            saved,
+            &objects.iter().map(item_link).collect::<Vec<_>>(),
+        );
+        assert!(plan_limited(&inv, Action::Revert, &HashMap::new(), 50).is_ok());
+        assert!(plan_limited(&inv, Action::Revert, &HashMap::new(), 38).is_err());
+    }
+
+    #[test]
+    fn attachment_limit_falls_back_from_the_benefit_to_the_region_then_38() {
+        assert_eq!(attachment_limit_from(64, Some(50), true), 64);
+        assert_eq!(attachment_limit_from(0, Some(50), true), 38);
+        assert_eq!(attachment_limit_from(64, Some(50), false), 50);
+        assert_eq!(attachment_limit_from(64, Some(0), false), 38);
+        assert_eq!(attachment_limit_from(0, None, false), 38);
+        assert_eq!(attachment_limit_from(-1, None, true), 38);
     }
 
     #[test]
@@ -3653,7 +3718,9 @@ mod tests {
         };
         let on = HashMap::from([(linked, 5)]);
         let none = HashMap::new();
-        let nothing = |action: &Action, worn: &HashMap<Uuid, u8>| force_changes_nothing(&inv, action, worn, &HashSet::new());
+        let nothing = |action: &Action, worn: &HashMap<Uuid, u8>| {
+            force_changes_nothing(&inv, action, worn, &HashSet::new(), DEFAULT_ATTACHMENT_LIMIT)
+        };
         assert!(nothing(&remove(&[other]), &on), "off already, no link");
         assert!(!nothing(&remove(&[other]), &HashMap::from([(other, 5)])), "still on");
         assert!(!nothing(&remove(&[linked]), &none), "its link is still there");
@@ -3664,9 +3731,18 @@ mod tests {
         assert!(nothing(&wear(other, 0), &HashMap::from([(other, 5)])), "on, linked when it arrived");
         assert!(!nothing(&wear(other, 0), &none), "off, no request");
         let requested = HashSet::from([other]);
-        assert!(force_changes_nothing(&inv, &wear(other, 0), &none, &requested), "on its way");
         assert!(
-            !force_changes_nothing(&inv, &wear(other, 6), &HashMap::from([(other, 5)]), &requested),
+            force_changes_nothing(&inv, &wear(other, 0), &none, &requested, DEFAULT_ATTACHMENT_LIMIT),
+            "on its way"
+        );
+        assert!(
+            !force_changes_nothing(
+                &inv,
+                &wear(other, 6),
+                &HashMap::from([(other, 5)]),
+                &requested,
+                DEFAULT_ATTACHMENT_LIMIT
+            ),
             "still to be moved"
         );
         assert!(nothing(&wear(shirt, 0), &none), "clothing already linked");

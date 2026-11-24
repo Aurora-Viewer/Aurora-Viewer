@@ -205,6 +205,9 @@ pub struct Region {
     /// SimulatorFeatures' GameControlEnabled: the region reads
     /// GameControlData (LLViewerRegion::gameControlEnabled).
     pub game_control: bool,
+    /// SimulatorFeatures' MaxAgentAttachments (OpenSim). None until the
+    /// features arrive, and on Second Life: the login benefit, else 38.
+    pub max_agent_attachments: Option<u32>,
     pub max_link_children: Option<u32>,
     /// OpenRegionInfo (Aurora-Sim based grids): the Region / Estate
     /// window's "Region settings".
@@ -475,6 +478,8 @@ pub enum LocalAssetRequest {
 }
 
 pub struct World {
+    /// Whether the current session is on Second Life rather than OpenSim.
+    pub second_life: bool,
     /// mScreen's Y scale (LLVOAvatarSelf::updateCharacter).
     pub hud_aspect: f32,
     /// Where the HUDs are laid out in the window (left, top, right, bottom
@@ -1059,6 +1064,7 @@ impl World {
 
     pub fn new(avatar_lib: Arc<AvatarLibrary>) -> World {
         World {
+            second_life: false,
             hud_aspect: 1.0,
             hud_area: None,
             hud_zoom: 1.0,
@@ -2738,6 +2744,7 @@ impl World {
             export_supported: false,
             group_chat_post_links: false,
             game_control: false,
+            max_agent_attachments: None,
         });
         if inserted || grew {
             self.dirty_terrain_dependents(h);
@@ -3403,6 +3410,7 @@ impl World {
                 currency_symbol,
                 export_supported,
                 group_chat_post_links,
+                max_agent_attachments,
                 game_control,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
@@ -3415,6 +3423,7 @@ impl World {
                 r.currency_symbol = currency_symbol;
                 r.export_supported = export_supported;
                 r.group_chat_post_links = group_chat_post_links;
+                r.max_agent_attachments = max_agent_attachments;
                 r.game_control = game_control;
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
@@ -10218,6 +10227,7 @@ mod motion_tests {
                 export_supported: false,
                 group_chat_post_links: false,
                 game_control: false,
+                max_agent_attachments: None,
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

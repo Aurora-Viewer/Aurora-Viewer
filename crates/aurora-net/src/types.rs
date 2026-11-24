@@ -408,6 +408,14 @@ pub struct OpenSimExtras {
 /// Viewer's OS_MAX_PRIM_SCALE (indra/llmath/xform.h).
 const MAX_REGION_FIGURE: f32 = 65536.0;
 
+/// MaxAgentAttachments at the top of SimulatorFeatures (not in
+/// OpenSimExtras): None when absent or not a positive count, so the
+/// login benefit, else 38, stays the limit.
+pub fn max_agent_attachments(v: &aurora_llsd::Llsd) -> Option<u32> {
+    let n = v["MaxAgentAttachments"].as_u32();
+    (n > 0).then_some(n)
+}
+
 impl OpenSimExtras {
     /// Read from SimulatorFeatures' "OpenSimExtras" map.
     pub fn from_llsd(extras: &aurora_llsd::Llsd) -> Self {
@@ -722,6 +730,10 @@ pub enum NetEvent {
         /// "GameControlEnabled": the region reads GameControlData
         /// (LLViewerRegion::gameControlEnabled).
         game_control: bool,
+        /// "MaxAgentAttachments": an OpenSim region's attachment limit
+        /// (LLAgentBenefits::getAttachmentLimit). None on Second Life, and
+        /// when the region does not name one: the login benefit, else 38.
+        max_agent_attachments: Option<u32>,
     },
     /// SimStats' LL_SIM_STAT_FPS of any region (process_sim_stats): the
     /// simulator's frame rate, which paces GameControlData
@@ -2776,5 +2788,14 @@ mod opensim_extras_tests {
         assert_eq!(OpenSimExtras::from_llsd(&huge).say_range, Some(MAX_REGION_FIGURE));
         // Second Life: no OpenSimExtras at all
         assert_eq!(OpenSimExtras::from_llsd(&Llsd::Undef), OpenSimExtras::default());
+    }
+
+    #[test]
+    fn max_agent_attachments_is_a_positive_count_or_absent() {
+        let given = Llsd::Map([("MaxAgentAttachments".to_owned(), Llsd::Integer(80))].into_iter().collect());
+        assert_eq!(super::max_agent_attachments(&given), Some(80));
+        assert_eq!(super::max_agent_attachments(&Llsd::new_map()), None);
+        let zero = Llsd::Map([("MaxAgentAttachments".to_owned(), Llsd::Integer(0))].into_iter().collect());
+        assert_eq!(super::max_agent_attachments(&zero), None);
     }
 }

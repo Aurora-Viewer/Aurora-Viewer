@@ -112,6 +112,16 @@ impl World {
         self.outfit_attachments().collect()
     }
 
+    /// LLAgentBenefits::getAttachmentLimit: the login's account benefit on
+    /// Second Life, otherwise this region's MaxAgentAttachments, else 38.
+    pub fn attachment_limit(&self) -> usize {
+        let benefit = self
+            .login
+            .as_ref()
+            .map_or(0, |l| l.raw["account_level_benefits"]["attachment_limit"].as_i32());
+        super::appearance::attachment_limit_from(benefit, self.main().and_then(|r| r.max_agent_attachments), self.second_life)
+    }
+
     /// LLAgentWearables::getTempAttachments, by attachment point.
     pub fn temp_attachments(&self) -> Vec<TempAttachment> {
         let Some(me) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
