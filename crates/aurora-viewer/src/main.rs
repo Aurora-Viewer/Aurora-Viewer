@@ -34,6 +34,8 @@ mod credentials;
 mod cursors;
 mod deep_profile;
 mod demo;
+#[cfg(target_os = "linux")]
+mod desktop_entry;
 mod destination_guide;
 mod dev_toolbox;
 mod director;
@@ -216,6 +218,9 @@ fn main() -> anyhow::Result<()> {
     // the interface language file, read with the settings before the log
     language_file::report();
     splash::settings();
+    // Linux: the menu entry and the icon the window's app_id points to
+    #[cfg(target_os = "linux")]
+    desktop_entry::install();
     // started by an update: its helper waits while the start moves on
     splash::report_to_update();
     splash::test_slow_start();
