@@ -669,8 +669,13 @@ fn rows(
                 Kind::Folder { open, branches } => {
                     let mut now = open;
                     folder_row(ui, p, icons, inv, row.id, &mut now, branches, st, prefs, facts, actions);
-                    // cargo held over an empty folder does not open it either
-                    if now != open && branches {
+                    if now != open && st.aurora.is_none() && st.lists_flat() {
+                        // the Legacy-style single folder window goes in
+                        // (Aurora's explorer goes in from its own row),
+                        // empty or not
+                        st.browse = row.id;
+                    } else if now != open && branches {
+                        // cargo held over an empty folder does not open it
                         st.plain.set_open(row.id, now);
                     }
                 }
