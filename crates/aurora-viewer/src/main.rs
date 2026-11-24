@@ -78,13 +78,13 @@ mod legacy_profile;
 mod link_preview;
 mod link_trust;
 mod links;
+mod linux_badge;
 mod local_bakes;
 mod logging;
 mod login_accounts;
 mod login_favorites;
 mod login_places;
 mod login_wait;
-mod linux_badge;
 mod lsl_keywords;
 #[cfg(target_os = "macos")]
 mod mac_quit;
