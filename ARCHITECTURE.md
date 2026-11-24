@@ -4286,7 +4286,13 @@ Each texture in use holds a slot of the renderer's table (262,144 of them,
 `aurora-render/src/textures.rs`); one that found it full is drawn white
 until a slot frees up, then gets it and loads again, and the objects that
 draw it are built again (`TextureStreamer::give_slots`,
-`Scene::rebuild_reslotted`; #2822).
+`Scene::rebuild_reslotted`; #2822). The built-in transparent texture, the
+invisible bake and the water-exclusion ramp are never downloaded;
+`TextureStreamer::has_alpha_channel` still reports an alpha channel for
+them, so the build tools offer Alpha mode (Alpha blending by default) the
+way `LLPanelFace` does for the preloaded `transparent.j2c` and alpha ramp;
+the invisible bake, a downloaded asset in the Legacy Viewer, is drawn here
+with the transparent slot and reports its alpha (#2826).
 
 Alpha coverage restoration (`aurora-render/src/textures.rs`) only increases
 the box-filtered mip alpha. A texture may be shared by faces with different
