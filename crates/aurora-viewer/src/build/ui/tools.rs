@@ -57,10 +57,14 @@ pub fn focus_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: M
             tool.focus_mode == FocusMode::Zoom,
             egui::Slider::new(&mut v, 0.0..=0.5)
                 .custom_parser(aurora_i18n::parse_number)
-                .step_by(0.01)
                 .show_value(false),
         );
-        if r.changed() {
+        // no step, and only the user's own move: egui rounded a value off
+        // its 0.01 step at every frame and called it changed, which put the
+        // camera back on the slider's notches all through a zoom drag (the
+        // human's report of 2026-11-24); LLSliderCtrl::setValue commits
+        // nothing either
+        if r.changed() && (r.is_pointer_button_down_on() || r.has_focus()) {
             tool.ui.requests.push(Request::ZoomFraction(v * 2.0));
         }
     });

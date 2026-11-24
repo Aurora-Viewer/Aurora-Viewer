@@ -1401,6 +1401,8 @@ struct Inspector {
     escape_taken_first: bool,
     /// The keys the build tools are given as held.
     mods: Mods,
+    /// The camera's zoom the Focus tool's slider shows.
+    zoom_fraction: f32,
 }
 
 impl Inspector {
@@ -1432,6 +1434,7 @@ impl Inspector {
             numeric_drag: None,
             escape_taken_first: false,
             mods: Mods::default(),
+            zoom_fraction: 0.0,
             native_pixels_per_point: 1.0,
             screen: egui::vec2(1280.0, 900.0),
             text_fonts: Vec::new(),
@@ -1469,7 +1472,7 @@ impl Inspector {
                 images: &Default::default(),
                 media: &mut self.media,
                 scene: &mut self.scene,
-                zoom_fraction: 0.0,
+                zoom_fraction: self.zoom_fraction,
                 property_lines: &mut false,
                 demo: false,
             };
@@ -4360,6 +4363,30 @@ fn the_shape_picker_arms_alone_and_the_captured_shapes_are_chosen_and_removed() 
     click_at(&mut inspector, item.center());
     assert!(inspector.settings.captured_shapes.is_empty());
     assert_eq!(inspector.settings.create_shape, 0, "its removal chooses the cube");
+}
+
+/// The Focus tool's zoom slider sends a zoom only when the user moves it:
+/// a camera zoom off its 0.01 step was rounded and sent back at every
+/// frame, and a zoom drag went by notches (2026-11-24).
+#[test]
+fn the_focus_zoom_slider_leaves_the_camera_zoom_alone_until_moved() {
+    let mut inspector = Inspector::new();
+    inspector.tool.open_build(Tool::Focus);
+    for zoom in [0.3337, 0.71, 0.0049] {
+        inspector.zoom_fraction = zoom;
+        for _ in 0..4 {
+            inspector.show(vec![]);
+        }
+        assert!(
+            !inspector
+                .tool
+                .ui
+                .requests
+                .iter()
+                .any(|r| matches!(r, super::super::Request::ZoomFraction(_))),
+            "zoom {zoom}: nothing sent"
+        );
+    }
 }
 
 /// The Aurora style's tools in windows of their own (human request,
