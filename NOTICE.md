@@ -107,6 +107,7 @@ GPL-3.0-or-later as described above.
 | Search and replace, `newview/llfloatersearchreplace.cpp` — Copyright © 2010-2013 Kitty Barnett | `aurora-viewer/src/ui/scripts/dialogs.rs`, `ui/inventory/find.rs` | Originally LGPL 2.1 |
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
+| Minimap world map overlay (Catznip, `[SL:KB] - Patch: World-MinimapOverlay`): the region's map tiles, `LLViewerRegion::getWorldMapTiles` in `newview/llviewerregion.cpp` and the tile overlay of `LLNetMap` in `newview/llnetmap.cpp` — by Kitty Barnett | `aurora-viewer/src/ui/map_tiles.rs`, `ui/minimap.rs` | Originally LGPL 2.1 |
 | Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
 
 ## Ideas from other viewers
