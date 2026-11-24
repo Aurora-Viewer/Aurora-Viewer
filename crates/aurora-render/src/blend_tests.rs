@@ -709,10 +709,13 @@ fn a_blended_fragment_is_measured_against_the_solid_surfaces_only() {
 fn contact_depth_and_blend_receivers_share_half_coverage() {
     let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
     let renderer = include_str!("renderer.rs").replace("\r\n", "\n");
-    let start = renderer
-        .find("let more = crate::contact_shadows::Override::from_env().all_casters()")
-        .unwrap();
-    let pass = &renderer[start..renderer[start..].find("self.contact.encode(").unwrap() + start];
+    assert!(renderer.contains("let contact_blend = self.contact_now && crate::contact_shadows::Override::from_env().all_casters();"));
+    let (_, extra_casters) = renderer
+        .split_once("let more = contact_blend && (n_blend > 0 || n_sprites > 0);")
+        .expect("the contact pass includes eligible blended faces and sprites");
+    let (pass, _) = extra_casters
+        .split_once("self.contact.encode(")
+        .expect("the contact tracer consumes this depth");
     assert!(pass.contains("self.targets.depth_ss_tex.as_image_copy()"));
     assert!(!pass.contains("ao_depth"));
     assert!(pass.contains("self.pipelines.pre_contact, rg.blend"));
