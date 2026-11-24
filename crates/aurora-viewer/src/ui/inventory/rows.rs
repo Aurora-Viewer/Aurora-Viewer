@@ -71,6 +71,12 @@ pub enum Kind {
     Item,
     /// "Empty" or "Loading folder" under an open folder without children.
     Empty,
+    /// The header of a group of the explorer's list (`groups.rs`), the
+    /// `index`th of `PlainTree::groups`; its `id` is the folder listed.
+    Group {
+        index: usize,
+        open: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +102,8 @@ pub enum Tiles {
     None,
     All,
     Pictured,
+    /// Every entry, in the list's own order (the Compact and Tiles views).
+    Listed,
 }
 
 #[derive(Default)]
@@ -115,9 +123,75 @@ pub struct PlainTree {
     pub listed_open: Vec<Uuid>,
     /// The widest row measured since the last rebuild (horizontal range).
     pub width: f32,
+    /// The words the explorer's folder filter keeps (Ctrl+Alt+F, lowercase):
+    /// only its own entries, not a whole tree's.
+    filter: Vec<String>,
+    /// The entries the filter left out of the folder listed.
+    pub filtered_out: usize,
+    /// What the explorer's folder is grouped by, and what changes its groups
+    /// (the creators' names known).
+    group: (super::groups::GroupBy, u64),
+    /// The groups listed: their names and how many entries each holds.
+    pub groups: Vec<(String, usize)>,
+    /// The groups closed, by name.
+    closed_groups: HashSet<String>,
+    /// The filter or a closed group hid entries since the list was last
+    /// drawn: the selection drops what is no longer shown (`take_hidden`).
+    hid: bool,
 }
 
 impl PlainTree {
+    /// Lists only the folder's entries whose names hold every word of
+    /// `text` (Dolphin's filter bar, any case); empty lists them all.
+    pub fn set_filter(&mut self, text: &str) {
+        let words: Vec<String> = text.to_lowercase().split_whitespace().map(str::to_owned).collect();
+        if words != self.filter {
+            self.hid |= !words.is_empty();
+            self.filter = words;
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
+    /// Groups the folder's entries (`groups.rs`), `context` being what
+    /// changes their groups.
+    pub fn set_group(&mut self, by: super::groups::GroupBy, context: u64) {
+        let context = if by == super::groups::GroupBy::Creator { context } else { 0 };
+        if self.group != (by, context) {
+            // another grouping opens every group (their names may repeat)
+            if self.group.0 != by {
+                self.closed_groups.clear();
+            }
+            self.group = (by, context);
+            self.revision = self.revision.wrapping_add(1);
+        }
+    }
+
+    /// Opens or closes the group `name`.
+    pub fn toggle_group(&mut self, name: &str) {
+        if !self.closed_groups.remove(name) {
+            self.closed_groups.insert(name.to_owned());
+            self.hid = true;
+        }
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Whether entries were hidden since the last call.
+    pub fn take_hidden(&mut self) -> bool {
+        std::mem::take(&mut self.hid)
+    }
+
+    /// Whether the folder filter keeps `id`.
+    fn kept(&self, inv: &Inventory, id: Uuid) -> bool {
+        if self.filter.is_empty() {
+            return true;
+        }
+        let name = match inv.items.get(&id) {
+            Some(it) => it.name.to_lowercase(),
+            None => folder_name(inv, id).to_lowercase(),
+        };
+        self.filter.iter().all(|word| name.contains(word.as_str()))
+    }
+
     pub fn is_open(&self, id: Uuid) -> bool {
         self.open.contains(&id)
     }
@@ -167,6 +241,8 @@ impl PlainTree {
         self.listed_open.clear();
         self.width = 0.0;
         self.tiles = 0;
+        self.filtered_out = 0;
+        self.groups.clear();
         if show_root {
             self.folder(view, inv, show_library, root, 0, 0, NONE);
         } else {
@@ -192,6 +268,11 @@ impl PlainTree {
     fn tiled(&mut self, view: &ViewCache, inv: &Inventory, show_library: bool, folder: Uuid, tiles: Tiles) {
         let mut entries: Vec<(Uuid, bool, bool)> = view
             .children_iter(folder, show_library, inv.lib_root)
+            .filter(|id| {
+                let kept = self.kept(inv, *id);
+                self.filtered_out += usize::from(!kept);
+                kept
+            })
             .filter_map(|id| {
                 let is_folder = inv.folders.contains_key(&id);
                 (is_folder || inv.items.contains_key(&id)).then(|| (id, is_folder, thumbnail::tile_picture(inv, id).is_some()))
@@ -199,10 +280,11 @@ impl PlainTree {
             .collect();
         match tiles {
             Tiles::All => entries.sort_by_key(|&(_, is_folder, pictured)| (!is_folder, !pictured)),
+            Tiles::Listed => {}
             _ => entries.sort_by_key(|&(_, _, pictured)| !pictured),
         }
         self.tiles = match tiles {
-            Tiles::All => entries.len(),
+            Tiles::All | Tiles::Listed => entries.len(),
             _ => entries.iter().filter(|(_, _, pictured)| *pictured).count(),
         };
         for (id, is_folder, _) in entries {
@@ -250,8 +332,18 @@ impl PlainTree {
 
     #[allow(clippy::too_many_arguments)]
     fn children(&mut self, view: &ViewCache, inv: &Inventory, show_library: bool, folder: Uuid, depth: usize, level: usize, parent: usize) {
+        if level == 0 && self.group.0 != super::groups::GroupBy::None {
+            self.grouped(view, inv, show_library, folder);
+            return;
+        }
         let mut any = false;
         for child in view.children_iter(folder, show_library, inv.lib_root) {
+            // the filter keeps the folder's own entries (the explorer lists
+            // them at the first level), not its subfolders' in a tree
+            if level == 0 && !self.kept(inv, child) {
+                self.filtered_out += 1;
+                continue;
+            }
             any = true;
             if inv.folders.contains_key(&child) {
                 self.folder(view, inv, show_library, child, depth, level, parent);
@@ -277,9 +369,63 @@ impl PlainTree {
         }
     }
 
+    /// The explorer's folder in its groups: a header row each, then its
+    /// entries while it is open.
+    fn grouped(&mut self, view: &ViewCache, inv: &Inventory, show_library: bool, folder: Uuid) {
+        let mut kept = Vec::new();
+        for child in view.children_iter(folder, show_library, inv.lib_root) {
+            if !self.kept(inv, child) {
+                self.filtered_out += 1;
+            } else if inv.folders.contains_key(&child) || inv.items.contains_key(&child) {
+                kept.push(child);
+            }
+        }
+        if kept.is_empty() {
+            self.rows.push(Row {
+                id: folder,
+                level: 0,
+                kind: Kind::Empty,
+                parent: NONE,
+                end: self.rows.len(),
+            });
+            return;
+        }
+        for (group, members) in super::groups::split(inv, view, &kept, self.group.0, super::view::now()) {
+            let index = self.groups.len();
+            let open = !self.closed_groups.contains(&group.label);
+            self.groups.push((group.label, members.len()));
+            self.rows.push(Row {
+                id: folder,
+                level: 0,
+                kind: Kind::Group { index, open },
+                parent: NONE,
+                end: self.rows.len(),
+            });
+            if !open {
+                continue;
+            }
+            for id in members {
+                self.rows.push(Row {
+                    id,
+                    level: 0,
+                    kind: if inv.folders.contains_key(&id) {
+                        Kind::Folder { open: false }
+                    } else {
+                        Kind::Item
+                    },
+                    parent: NONE,
+                    end: self.rows.len(),
+                });
+                self.order.push(id);
+            }
+        }
+    }
+
     /// The row of a folder or an item (not of a placeholder).
     pub fn position(&self, id: Uuid) -> Option<usize> {
-        self.rows.iter().position(|row| row.id == id && row.kind != Kind::Empty)
+        self.rows
+            .iter()
+            .position(|row| row.id == id && matches!(row.kind, Kind::Folder { .. } | Kind::Item))
     }
 
     /// The open folders whose guide crosses `range`: the ancestors of its
@@ -346,7 +492,10 @@ pub(super) fn scroll(
     if st.ui_id.is_nil() && !st.aurora.is_some_and(|frame| frame.explorer) {
         st.plain.persist(ui.ctx(), egui::Id::unique("inventory_open_folders"));
     }
-    st.view.prepare(inv, prefs.sort_for(st.tab));
+    // the Legacy style sorts as the Legacy Viewer: by name or date, the
+    // explorer's columns and reversed orders staying in the Aurora style
+    let sort = prefs.sort_for(st.tab);
+    st.view.prepare(inv, if st.aurora.is_some() { sort } else { sort.legacy() });
     let collapsed = st.expand_all.take().is_some_and(|open| {
         st.plain.expand(&st.view, inv, root, show_root, prefs.show_library, open);
         !open
@@ -366,6 +515,15 @@ pub(super) fn scroll(
     // The ancestors of a revealed row open until it is shown.
     st.plain.open_all(st.reveal_path.iter().copied());
     st.plain.prepare(&st.view, inv, root, show_root, prefs.show_library);
+    // what the filter or a closed group hides leaves the selection: a
+    // Delete after Ctrl+A acts only on what is shown
+    if st.plain.take_hidden() {
+        let shown: HashSet<Uuid> = st.plain.order.iter().copied().collect();
+        st.selection.retain(|id| shown.contains(id));
+        if st.selected.is_some_and(|id| !shown.contains(&id)) {
+            st.selected = None;
+        }
+    }
     let navigated = keyboard::navigate(ui, inv, st, false);
     let now = std::time::Instant::now();
     for id in &st.plain.listed_open {
@@ -482,8 +640,16 @@ fn rows(
                     }
                 }
                 Kind::Item => item_row(ui, p, icons, inv, &row.id, st, prefs, facts, actions),
+                Kind::Group { index, open } => {
+                    if let Some((name, count)) = st.plain.groups.get(index).cloned()
+                        && super::aurora::rows::group_header(ui, p, &name, count, open)
+                    {
+                        st.plain.toggle_group(&name);
+                    }
+                }
                 Kind::Empty => {
                     let text = match inv.folders.get(&row.id).map(|f| f.state) {
+                        _ if st.plain.filtered_out > 0 => aurora_i18n::tr!("inventory-filter-nothing"),
                         Some(FetchState::Fetched) => aurora_i18n::tr!("status-empty"),
                         // asked again after `SHOWN_RETRY`, not loading meanwhile
                         Some(FetchState::Failed) => aurora_i18n::tr!("ui-inventory-folder-not-loaded"),

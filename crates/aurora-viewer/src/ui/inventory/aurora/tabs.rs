@@ -16,7 +16,8 @@
 //!
 //! The tab shown lives in the pane's own fields (`InventoryUi::browse`,
 //! `history`, `selection`…), so the rest of the explorer never knows about
-//! tabs: switching swaps them with the stored tab's. The tabs last the
+//! tabs: switching swaps them with the stored tab's (the filter bar too, as
+//! Dolphin's tabs each keep theirs). The tabs last the
 //! session, as the history does.
 
 use super::super::shortcuts::{self, Command};
@@ -40,6 +41,10 @@ pub(crate) struct Tab {
     selection: HashSet<Uuid>,
     selected: Option<Uuid>,
     anchor: Option<Uuid>,
+    /// Its filter bar (Ctrl+Alt+F) and the folder it filters, as each of
+    /// Dolphin's tabs keeps its own.
+    folder_filter: Option<String>,
+    folder_filter_at: Option<Uuid>,
 }
 
 /// A pane's tabs. With fewer than two the pane has none (`list` empty);
@@ -69,6 +74,8 @@ fn take(st: &mut InventoryUi) -> Tab {
         selection: std::mem::take(&mut st.selection),
         selected: st.selected.take(),
         anchor: st.anchor.take(),
+        folder_filter: st.folder_filter.take(),
+        folder_filter_at: st.folder_filter_at.take(),
     }
 }
 
@@ -82,6 +89,9 @@ fn put(st: &mut InventoryUi, prefs: &InventoryPreferences, tab: Tab) {
     st.selection = tab.selection;
     st.selected = tab.selected;
     st.anchor = tab.anchor;
+    st.folder_filter = tab.folder_filter;
+    st.folder_filter_at = tab.folder_filter_at;
+    st.focus_folder_filter = false;
     // the keyboard's place, a typed path, a rename or a menu belong to the
     // tab left
     st.focus = None;
@@ -620,6 +630,8 @@ mod tests {
         assert!(open(&mut st, &prefs, id(3), true));
         assert_eq!((st.tabs.len(), st.tabs.active, at(&st)), (3, 2, id(3)));
         assert!(st.selection.is_empty() && !st.history.can_back());
+        st.folder_filter = Some("hat".into());
+        st.folder_filter_at = Some(id(3));
         st.history.observe(Place { tab: 0, folder: id(3) });
         st.browse = id(4);
         st.history.observe(Place { tab: 0, folder: id(4) });
@@ -628,6 +640,11 @@ mod tests {
         switch(&mut st, &prefs, 0);
         assert_eq!(at(&st), id(1));
         assert_eq!(st.selected, Some(id(11)));
+        assert_eq!(
+            (st.folder_filter.as_deref(), st.folder_filter_at),
+            (None, None),
+            "its own filter bar"
+        );
         assert!(st.selection.contains(&id(11)));
         assert!(!st.history.can_back());
         // in their order of opening: the one behind, the one shown (now at 4)
@@ -637,6 +654,7 @@ mod tests {
         cycle(&mut st, &prefs, true);
         assert_eq!(at(&st), id(4));
         assert!(st.history.can_back(), "its own history");
+        assert_eq!(st.folder_filter.as_deref(), Some("hat"), "the filter bar comes back with its tab");
         cycle(&mut st, &prefs, true);
         assert_eq!(at(&st), id(1), "wraps");
         cycle(&mut st, &prefs, false);

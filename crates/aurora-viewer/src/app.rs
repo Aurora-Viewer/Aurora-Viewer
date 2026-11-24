@@ -23980,6 +23980,13 @@ impl ApplicationHandler for App {
                         | "aurora-wide"
                         | "aurora-columns"
                         | "aurora-columns-hidden"
+                        | "aurora-columns-all"
+                        | "aurora-explorer-filter"
+                        | "aurora-explorer-preview"
+                        | "aurora-compact"
+                        | "aurora-groups"
+                        | "aurora-folder-previews"
+                        | "aurora-tiles"
                         | "aurora-gallery"
                         | "aurora-gallery-system-folders"
                         | "aurora-system-folders"
@@ -24102,13 +24109,26 @@ impl ApplicationHandler for App {
                             self.settings.inventory.rights = ui::inventory::permissions::Rights::Both;
                         }
                         if view.starts_with("aurora-columns") {
-                            let columns = &mut self.settings.inventory.explorer;
-                            columns.sidebar_width = 280;
-                            columns.kind_width = 176;
-                            columns.rights_width = 80;
-                            columns.date_width = 110;
-                            columns.show_kind = view != "aurora-columns-hidden";
-                            columns.show_date = view != "aurora-columns-hidden";
+                            use ui::inventory::view::{ColumnId, SortColumn};
+                            let explorer = &mut self.settings.inventory.explorer;
+                            explorer.sidebar_width = 280;
+                            let columns = &mut explorer.columns;
+                            columns.slot_mut(ColumnId::Kind).width = 176;
+                            columns.slot_mut(ColumnId::Rights).width = 80;
+                            columns.slot_mut(ColumnId::Date).width = 110;
+                            columns.slot_mut(ColumnId::Kind).show = view != "aurora-columns-hidden";
+                            columns.slot_mut(ColumnId::Date).show = view != "aurora-columns-hidden";
+                            // every column, the creator first, sorted by type
+                            // in reverse: the details' columns and their order
+                            if view == "aurora-columns-all" {
+                                for id in ColumnId::ALL {
+                                    columns.slot_mut(id).show = true;
+                                }
+                                columns.move_to(ColumnId::Creator, 0);
+                                let sort = &mut self.settings.inventory.sort;
+                                sort.column = Some(SortColumn::Kind);
+                                sort.descending = true;
+                            }
                         }
                         if view.ends_with("-no-details") {
                             self.settings.inventory.show_details = false;
@@ -24123,12 +24143,45 @@ impl ApplicationHandler for App {
                                 ui::inventory::view::ExplorerView::Gallery
                             };
                         }
+                        // the Compact and Tiles views of the right-click
+                        // tests, with the gallery's pictures
+                        if view == "aurora-groups" {
+                            self.settings.inventory.explorer.group_by = ui::inventory::groups::GroupBy::Kind;
+                        }
+                        if view == "aurora-compact" || view == "aurora-tiles" {
+                            crate::world::inventory::demo::seed_gallery(&mut self.world.inventory);
+                            self.settings.inventory.explorer.view = if view == "aurora-tiles" {
+                                ui::inventory::view::ExplorerView::Tiles
+                            } else {
+                                ui::inventory::view::ExplorerView::Compact
+                            };
+                        }
                         if view.ends_with("system-folders") {
                             // every system folder's icon, at the root, and
                             // the open icon of the sidebar's selected one
                             crate::world::inventory::demo::seed_system_folders(&mut self.world.inventory);
                             self.inventory_ui.demo_browse_root(&self.world.inventory);
                             self.panels.camera_controls = false;
+                        }
+                        // the preview pane on the demo's notecard
+                        if view == "aurora-explorer-preview" {
+                            self.settings.inventory.preview_pane = true;
+                            self.settings.inventory.show_details = true;
+                        }
+                        // the folders' borrowed pictures: the top in the
+                        // large gallery
+                        if view == "aurora-folder-previews" {
+                            crate::world::inventory::demo::seed_gallery(&mut self.world.inventory);
+                            self.inventory_ui.demo_browse_root(&self.world.inventory);
+                            self.settings.inventory.explorer.view = ui::inventory::view::ExplorerView::Gallery;
+                            self.settings.inventory.explorer.tile_size = 192;
+                            // the right-click tests, which hold pictures
+                            self.inventory_ui.demo_reveal(uuid::Uuid::from_u128(8000));
+                            self.panels.camera_controls = false;
+                        }
+                        // the Ctrl+I bar open on the right-click tests' folder
+                        if view == "aurora-explorer-filter" {
+                            self.inventory_ui.demo_folder_filter("demo o");
                         }
                         if view == "aurora-filtered" {
                             // the type filters' symbols in the list and on
