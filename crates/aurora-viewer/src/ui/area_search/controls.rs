@@ -142,7 +142,7 @@ impl AreaSearchUi {
             // A sizing pass can be discarded. Retain the demo's request
             // until the popup has survived a complete subsequent frame.
             let request_id = response.id.with("area_search_requested");
-            let frame = ui.ctx().cumulative_frame_nr();
+            let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
             if self.demo_columns && open {
                 let first = ui.ctx().data_mut(|d| {
                     let first = d.get_temp::<u64>(request_id).unwrap_or(frame);

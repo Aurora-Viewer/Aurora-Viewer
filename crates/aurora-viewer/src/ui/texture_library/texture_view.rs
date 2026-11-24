@@ -454,7 +454,7 @@ pub(crate) fn show_image(
 
 /// The picture, in all the room `ui` has; its rect once drawn. `drag_item`
 /// is the inventory item its drag carries.
-pub(super) fn picture(
+pub(crate) fn picture(
     ui: &mut egui::Ui,
     p: &Palette,
     image: Option<&egui::TextureHandle>,

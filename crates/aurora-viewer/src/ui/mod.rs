@@ -27,6 +27,7 @@ pub mod beams;
 pub mod buy_currency;
 pub mod buy_land;
 pub mod call_invite;
+pub mod camera_position;
 pub mod chat;
 pub mod chat_bubbles;
 pub mod click_away_focus;
@@ -288,6 +289,10 @@ pub struct Panels {
     /// window).
     pub camera_controls: bool,
     pub movement_controls: bool,
+    /// The camera position window, from the Controls window's Position
+    /// button (LLFloaterPreferenceViewAdvanced); not kept across sessions,
+    /// like the Legacy Viewer's.
+    pub camera_position: bool,
     /// Navigation bar location being edited (text) and "just opened" (select all).
     pub nav_edit: Option<String>,
     pub nav_edit_new: bool,
@@ -303,6 +308,7 @@ impl Panels {
             chat: settings.show_chat,
             perf: settings.show_perf,
             debug_settings: false,
+            camera_position: false,
             dev_toolbox: false,
             sim_console: false,
             group_titles: false,

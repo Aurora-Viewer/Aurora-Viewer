@@ -562,12 +562,8 @@ impl Editor {
             self.poser.storage.message = Some(aurora_i18n::text("anim-edit-invalid").to_owned());
             return;
         };
-        let translations = (0..rig.len())
-            .filter(|b| authored.positions[*b].distance_squared(rig.local_pos[*b]) > 1e-10)
-            .collect();
         self.poser.storage.job = Some(storage::Job::Import(
             Arc::new(authored),
-            translations,
             self.poser.name.clone(),
             self.poser.priority,
         ));

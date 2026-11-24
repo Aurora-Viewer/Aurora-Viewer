@@ -709,7 +709,7 @@ fn thumbs(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, items: &[(Uuid, Stri
         }
         if let Some((count, limit)) = add {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(col_w, THUMB_IMG_H + 40.0), Sense::click());
-            dashed(ui, rect, p.violet_light.gamma_multiply(0.45));
+            crate::ui::widgets::dashed_outline(ui.painter(), rect, p.violet_light.gamma_multiply(0.45));
             let c = rect.center();
             paint_icon(ui, "plus", c - Vec2::new(0.0, 22.0), 18.0, p.violet_light);
             let g = ui.painter().layout(
@@ -744,14 +744,6 @@ fn thumbs(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, items: &[(Uuid, Stri
     if adding {
         start_new_pick(w, env.world);
     }
-}
-
-/// A dashed outline (the cards that add something, the Give zone).
-fn dashed(ui: &egui::Ui, rect: Rect, color: Color32) {
-    let r = rect.shrink(0.75);
-    let path = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
-    ui.painter()
-        .extend(egui::Shape::dashed_line(&path, egui::Stroke::new(1.5, color), 5.0, 4.0));
 }
 
 // ------------------------------------------------------------------ classifieds
@@ -1593,7 +1585,7 @@ pub(in super::super) fn first_life(ui: &mut egui::Ui, env: &mut Env, w: &mut Win
         match env.images.get(&image).filter(|_| !image.is_nil()) {
             Some(t) => cover(ui, t, rect, radius),
             None => {
-                dashed(ui, rect, env.p.ink.gamma_multiply(0.16));
+                crate::ui::widgets::dashed_outline(ui.painter(), rect, env.p.ink.gamma_multiply(0.16));
                 paint_icon(ui, "camera-filled", rect.center() - Vec2::new(0.0, 14.0), 22.0, env.p.muted_dim);
                 ui.painter().text(
                     rect.center() + Vec2::new(0.0, 12.0),
