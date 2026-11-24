@@ -630,6 +630,50 @@ mod tests {
         assert_eq!(run(s, dd, |_| load(0, 200.0, 100.0), t0, Duration::from_secs(3)).1, 32.0);
     }
 
+    /// A step back from a user distance between 32 m and 64 m halves to
+    /// under 32 m: it stops at 32 m.
+    #[test]
+    fn a_step_back_stops_at_32() {
+        let t0 = Instant::now();
+        let s = Stepping {
+            user: 40.0,
+            step: 40.0,
+            changed: t0,
+            heavy_since: None,
+            ceiling: None,
+        };
+        let (s, dd) = run(s, 40.0, |_| load(0, 200.0, 100.0), t0, Duration::from_secs(2));
+        assert_eq!((dd, s.step), (32.0, 32.0));
+    }
+
+    /// The saved draw distance: the user's while a step holds it, but one
+    /// the user set since the last step (a graphics level, the slider) is
+    /// theirs and saved as it is, though the steps only end at the next
+    /// tick.
+    #[test]
+    fn a_distance_set_since_the_last_step_is_the_one_saved() {
+        let t0 = Instant::now();
+        let stepping = |step: f32| Stepping {
+            user: 256.0,
+            step,
+            changed: t0,
+            heavy_since: None,
+            ceiling: None,
+        };
+        let stepped = Settings {
+            draw_distance: 64.0,
+            draw_stepping: Some(stepping(64.0)),
+            ..Settings::default()
+        };
+        assert_eq!(stepped.to_saved().draw_distance, 256.0);
+        let set_since = Settings {
+            draw_distance: 128.0,
+            draw_stepping: Some(stepping(256.0)),
+            ..Settings::default()
+        };
+        assert_eq!(set_since.to_saved().draw_distance, 128.0);
+    }
+
     #[test]
     fn no_start_under_the_photo_quality() {
         let mut s = Settings {

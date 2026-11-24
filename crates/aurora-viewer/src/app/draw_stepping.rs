@@ -69,9 +69,11 @@ impl App {
     /// The arrival queue and the last finished frame. Absent GPU times stay
     /// absent: a device without timestamps does not pretend the frame was
     /// slow. Only a new measure counts, and not a photo's
-    /// (`draw_stepping::Readback`).
+    /// (`draw_stepping::Readback`): only while a photo's own frame is drawn,
+    /// not while one is saved or its file dialog is open, when the frames
+    /// are the world's and must still be able to step back.
     fn draw_load(&mut self) -> draw_stepping::Load {
-        let photo = self.photo_busy();
+        let photo = self.photo_frame_drawn();
         let tex = &self.scene.textures.stats;
         let waiting = tex
             .fetching

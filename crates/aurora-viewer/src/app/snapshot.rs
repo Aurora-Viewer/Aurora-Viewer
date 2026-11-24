@@ -1416,6 +1416,15 @@ impl App {
             || self.capture_360.busy()
     }
 
+    /// A photo's own frame is drawn: a snapshot job (not the preview drawn
+    /// again and again) or a 360° capture's faces. Its GPU time is the
+    /// photo's, not the world's. Saving or uploading a photo, waiting for
+    /// its detail or the 360° file dialog draw ordinary world frames
+    /// (`photo_busy` covers those too).
+    pub(super) fn photo_frame_drawn(&self) -> bool {
+        self.snapshots.job.as_ref().is_some_and(|j| !j.purpose.quiet()) || self.capture_360.capturing()
+    }
+
     /// Any photo work that still owns the renderer's snapshot slot: a
     /// part or a preview drawn or awaited, a request out, an answer not yet
     /// taken (a 360° capture waits for all of it).

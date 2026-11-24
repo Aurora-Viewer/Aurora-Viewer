@@ -3949,8 +3949,12 @@ impl Settings {
             held.sync(&copy);
             held.restore(&mut copy);
         }
-        // the draw distance being stepped: the user's
-        if let Some(steps) = copy.draw_stepping.take() {
+        // the draw distance being stepped: the user's, unless the user set
+        // another since the last step (a graphics level, the slider): that
+        // one is theirs, saved now (the next tick ends the steps on it)
+        if let Some(steps) = copy.draw_stepping.take()
+            && copy.draw_distance == steps.step
+        {
             copy.draw_distance = steps.user;
         }
         // the values Autotune holds: the user's (after the two above, whose
