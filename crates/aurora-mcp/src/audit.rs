@@ -15,6 +15,21 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MAX_AUDIT_ENTRIES: usize = 500;
+const MAX_AUDIT_ERROR_CHARS: usize = 256;
+
+fn sanitize_audit_error(raw: String) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(MAX_AUDIT_ERROR_CHARS + 1)
+        .collect();
+    if cleaned.chars().count() > MAX_AUDIT_ERROR_CHARS {
+        let truncated: String = cleaned.chars().take(MAX_AUDIT_ERROR_CHARS).collect();
+        format!("{truncated}...")
+    } else {
+        cleaned
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
@@ -108,6 +123,7 @@ impl AuditLog {
     ) -> AuditEntry {
         let timestamp_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
         let args_sha256 = hash_args_sha256(args);
+        let sanitized_error = error.map(sanitize_audit_error);
         let entry = {
             let mut st = self.state.lock();
             st.next_seq += 1;
@@ -121,7 +137,7 @@ impl AuditLog {
                 dry_run,
                 outcome: outcome.to_owned(),
                 duration_ms,
-                error,
+                error: sanitized_error,
             };
             if st.entries.len() >= MAX_AUDIT_ENTRIES {
                 st.entries.pop_front();
@@ -174,10 +190,17 @@ fn write_audit_line(
         }
         *dir_created = true;
     }
-    if writer.is_none()
-        && let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(path)
-    {
-        *writer = Some(std::io::BufWriter::new(f));
+    if writer.is_none() {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        if let Ok(f) = opts.open(path) {
+            *writer = Some(std::io::BufWriter::new(f));
+        }
     }
     if let Some(w) = writer.as_mut()
         && writeln!(w, "{line}").is_err()
@@ -256,6 +279,23 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"tool\":\"prim_rez_new\""));
         assert!(lines[1].contains("\"tool\":\"prim_delete\""));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).expect("stat audit").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "audit log file must be owner-only (0600)");
+        }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn audit_sanitizes_control_chars_and_truncates_errors() {
+        let log = AuditLog::new(None);
+        let noisy = format!("line1\nline2\r\t{}", "x".repeat(MAX_AUDIT_ERROR_CHARS + 40));
+        let e = log.record("s1", "setting_set", &json!({}), true, false, "error", 1, Some(noisy));
+        let err = e.error.expect("error preserved");
+        assert!(!err.contains('\n') && !err.contains('\r') && !err.contains('\t'));
+        assert!(err.ends_with("..."));
+        assert!(err.len() <= MAX_AUDIT_ERROR_CHARS + 3);
     }
 }

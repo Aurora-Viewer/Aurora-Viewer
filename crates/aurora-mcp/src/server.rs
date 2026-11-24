@@ -32,6 +32,9 @@ pub fn negotiate_protocol_version(requested: Option<&str>) -> &'static str {
 }
 
 const MAX_HTTP_BODY_BYTES: usize = 2 * 1024 * 1024;
+const MAX_HTTP_LINE_BYTES: usize = 16 * 1024;
+const MAX_HTTP_HEADERS: usize = 64;
+const MAX_HTTP_CONNECTIONS: usize = 128;
 const HTTP_IO_TIMEOUT: Duration = Duration::from_secs(10);
 const HTTP_KEEP_ALIVE_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_BATCH_SIZE: usize = 64;
@@ -199,6 +202,7 @@ pub fn spawn_server(
     let policy = router.policy.clone();
     let approvals = router.approvals.clone();
     let sse_slots = Arc::new(Semaphore::new(MAX_SSE_CONNECTIONS));
+    let conn_slots = Arc::new(Semaphore::new(MAX_HTTP_CONNECTIONS));
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
     rt.spawn(async move {
@@ -220,11 +224,18 @@ pub fn spawn_server(
                     let Ok((stream, _peer)) = accept_res else {
                         continue;
                     };
+                    let Ok(conn_permit) = conn_slots.clone().try_acquire_owned() else {
+                        let _ = stream.try_write(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 43\r\nConnection: close\r\n\r\n{\"error\":\"too many concurrent connections\"}"
+                        );
+                        continue;
+                    };
                     let router = router.clone();
                     let sse_slots = sse_slots.clone();
                     let token = server_token.clone();
                     let mut conn_shutdown = shutdown_rx.clone();
                     tokio::spawn(async move {
+                        let _conn_permit = conn_permit;
                         let _ = tokio::select! {
                             _ = conn_shutdown.changed() => Ok(()),
                             res = handle_http_connection(stream, router, sse_slots, token) => res,
@@ -248,6 +259,42 @@ pub fn spawn_server(
     })
 }
 
+enum LineRead {
+    Eof,
+    Line(String),
+    TooLong,
+}
+
+async fn read_line_limited(reader: &mut BufReader<TcpStream>, max_bytes: usize) -> std::io::Result<LineRead> {
+    let mut buf = Vec::new();
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            if buf.is_empty() {
+                return Ok(LineRead::Eof);
+            }
+            return Ok(LineRead::Line(String::from_utf8_lossy(&buf).into_owned()));
+        }
+        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+            let take = pos + 1;
+            if buf.len().saturating_add(take) > max_bytes {
+                reader.consume(take);
+                return Ok(LineRead::TooLong);
+            }
+            buf.extend_from_slice(&available[..take]);
+            reader.consume(take);
+            return Ok(LineRead::Line(String::from_utf8_lossy(&buf).into_owned()));
+        }
+        let len = available.len();
+        if buf.len().saturating_add(len) > max_bytes {
+            reader.consume(len);
+            return Ok(LineRead::TooLong);
+        }
+        buf.extend_from_slice(available);
+        reader.consume(len);
+    }
+}
+
 async fn handle_http_connection(
     stream: TcpStream,
     router: Arc<McpRouter>,
@@ -258,18 +305,26 @@ async fn handle_http_connection(
     let mut first_request = true;
 
     loop {
-        let mut request_line = String::new();
         let line_timeout = if first_request {
             HTTP_IO_TIMEOUT
         } else {
             HTTP_KEEP_ALIVE_IDLE_TIMEOUT
         };
-        let Ok(Ok(n)) = tokio::time::timeout(line_timeout, reader.read_line(&mut request_line)).await else {
-            return Ok(());
+        let request_line = match tokio::time::timeout(line_timeout, read_line_limited(&mut reader, MAX_HTTP_LINE_BYTES)).await {
+            Ok(Ok(LineRead::Line(s))) => s,
+            Ok(Ok(LineRead::TooLong)) => {
+                write_http_response(
+                    reader.get_mut(),
+                    "414 URI Too Long",
+                    "application/json",
+                    b"{\"error\":\"request line too long\"}",
+                    false,
+                )
+                .await?;
+                return Ok(());
+            }
+            _ => return Ok(()),
         };
-        if n == 0 {
-            return Ok(());
-        }
         first_request = false;
         let parts: Vec<&str> = request_line.split_whitespace().collect();
         if parts.len() < 2 {
@@ -287,14 +342,38 @@ async fn handle_http_connection(
         let mut content_type: Option<String> = None;
         let mut header_session_id: Option<String> = None;
         let mut last_event_id: Option<u64> = None;
+        let mut header_count = 0usize;
         loop {
-            let mut line = String::new();
-            let read_res = tokio::time::timeout(HTTP_IO_TIMEOUT, reader.read_line(&mut line)).await;
-            let Ok(Ok(n)) = read_res else {
-                return Ok(());
+            let line = match tokio::time::timeout(HTTP_IO_TIMEOUT, read_line_limited(&mut reader, MAX_HTTP_LINE_BYTES)).await {
+                Ok(Ok(LineRead::Line(s))) => s,
+                Ok(Ok(LineRead::Eof)) => break,
+                Ok(Ok(LineRead::TooLong)) => {
+                    write_http_response(
+                        reader.get_mut(),
+                        "431 Request Header Fields Too Large",
+                        "application/json",
+                        b"{\"error\":\"header line too long\"}",
+                        false,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                _ => return Ok(()),
             };
-            if n == 0 || line == "\r\n" || line == "\n" {
+            if line == "\r\n" || line == "\n" {
                 break;
+            }
+            header_count += 1;
+            if header_count > MAX_HTTP_HEADERS {
+                write_http_response(
+                    reader.get_mut(),
+                    "431 Request Header Fields Too Large",
+                    "application/json",
+                    b"{\"error\":\"too many headers\"}",
+                    false,
+                )
+                .await?;
+                return Ok(());
             }
             if let Some((k, v)) = line.split_once(':') {
                 let k = k.trim().to_ascii_lowercase();
@@ -1159,5 +1238,41 @@ mod tests {
             assert_eq!(reply["id"], json!(id));
             assert!(reply.get("result").is_some(), "{reply}");
         }
+    }
+
+    #[tokio::test]
+    async fn mcp_http_rejects_oversized_headers_and_too_many_headers() {
+        let (tx, _rx) = create_bridge_channels();
+        let handle = spawn_server(&tokio::runtime::Handle::current(), tx, Some(0)).expect("spawn server");
+        let addr = handle.bind_addr;
+
+        // 1. Oversized header line -> 431
+        let mut s1 = TcpStream::connect(addr).await.expect("connect");
+        let big_val = "a".repeat(MAX_HTTP_LINE_BYTES + 64);
+        let req1 = format!("GET /health HTTP/1.1\r\nHost: {addr}\r\nX-Big: {big_val}\r\n\r\n");
+        s1.write_all(req1.as_bytes()).await.unwrap();
+        let mut resp1 = Vec::new();
+        s1.read_to_end(&mut resp1).await.unwrap();
+        assert!(
+            String::from_utf8_lossy(&resp1).starts_with("HTTP/1.1 431"),
+            "expected 431, got: {}",
+            String::from_utf8_lossy(&resp1)
+        );
+
+        // 2. Too many headers -> 431
+        let mut s2 = TcpStream::connect(addr).await.expect("connect");
+        let mut req2 = format!("GET /health HTTP/1.1\r\nHost: {addr}\r\n");
+        for i in 0..=MAX_HTTP_HEADERS {
+            req2.push_str(&format!("X-H-{i}: v\r\n"));
+        }
+        req2.push_str("\r\n");
+        s2.write_all(req2.as_bytes()).await.unwrap();
+        let mut resp2 = Vec::new();
+        s2.read_to_end(&mut resp2).await.unwrap();
+        assert!(
+            String::from_utf8_lossy(&resp2).starts_with("HTTP/1.1 431"),
+            "expected 431, got: {}",
+            String::from_utf8_lossy(&resp2)
+        );
     }
 }

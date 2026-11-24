@@ -267,12 +267,17 @@ impl McpRouter {
     /// event subscriptions and read cursors between concurrent clients).
     pub async fn call_tool_in_session(&self, session_id: &str, name: &str, args: Value) -> Value {
         let started = Instant::now();
-        let eff_session = args
-            .get("session_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(session_id);
+        // Transport-provided Mcp-Session-Id is authoritative so one client
+        // cannot hijack another session's event bus or supervised approval queue.
+        let eff_session = if session_id != "default" {
+            session_id
+        } else {
+            args.get("session_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(session_id)
+        };
         let is_mutating = is_mutating_tool_call(name, &args);
         let is_dry_run = args.get("dry_run").and_then(Value::as_bool) == Some(true);
         let audit_all = self.audit_all;
@@ -381,12 +386,17 @@ impl McpRouter {
             // any call carrying the lease shows its holder is still at work
             self.leases.touch(id);
         }
-        let eff_session = args
-            .get("session_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(session_id);
+        // Transport-provided Mcp-Session-Id is authoritative so one client
+        // cannot hijack another session's event bus or supervised approval queue.
+        let eff_session = if session_id != "default" {
+            session_id
+        } else {
+            args.get("session_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(session_id)
+        };
 
         match name {
             // ---- Phase 0: Control Leases, Status & Dynamic API Inspection ----
@@ -1346,7 +1356,7 @@ impl McpRouter {
                 let manifest_path = tokio::task::spawn_blocking(move || {
                     let out_dir = vision::capture_output_dir();
                     let path = out_dir.join(format!("manifest-{manifest_id_file}.json"));
-                    let _ = std::fs::write(&path, manifest_json);
+                    let _ = vision::write_private_file(&path, manifest_json.as_bytes());
                     vision::maybe_prune_capture_dir(&out_dir);
                     path
                 })
@@ -1742,12 +1752,18 @@ impl McpRouter {
                     let valid_lease = self.leases.verify_for_mutation(lease_id.as_deref())?;
                     let trimmed = path.trim().to_owned();
                     let path_for_err = trimmed.clone();
-                    let loaded = tokio::task::spawn_blocking(move || std::fs::read_to_string(&trimmed))
-                        .await
-                        .map_err(|e| McpError::Internal(format!("script file read join error: {e}")))?
-                        .map_err(|err| {
-                            McpError::InvalidParams(format!("Failed to read script source file '{path_for_err}': {err}"))
-                        })?;
+                    let loaded = tokio::task::spawn_blocking(move || -> Result<String, McpError> {
+                        let canonical = asset_inspect::validate_local_file_path(
+                            &trimmed,
+                            asset_inspect::ALLOWED_SCRIPT_EXTENSIONS,
+                            Some(asset_inspect::MAX_SCRIPT_FILE_BYTES),
+                        )?;
+                        let bytes = asset_inspect::read_bounded_bytes(&canonical, asset_inspect::MAX_SCRIPT_FILE_BYTES)?;
+                        String::from_utf8(bytes)
+                            .map_err(|e| McpError::InvalidParams(format!("Script source file '{path_for_err}' is not valid UTF-8: {e}")))
+                    })
+                    .await
+                    .map_err(|e| McpError::Internal(format!("script file read join error: {e}")))??;
                     let normalized = loaded.strip_prefix('\u{feff}').unwrap_or(&loaded).replace("\r\n", "\n");
                     (Some(valid_lease), normalized)
                 } else {
@@ -1920,7 +1936,7 @@ impl McpRouter {
             }
 
             "asset_upload" => {
-                let action = args.get("action").and_then(Value::as_str).unwrap_or("status").to_owned();
+                let action = args.get("action").and_then(Value::as_str).unwrap_or("status").trim().to_owned();
                 let mut paths: Vec<String> = args
                     .get("paths")
                     .and_then(Value::as_array)
@@ -1929,6 +1945,32 @@ impl McpRouter {
                 if let Some(single) = args.get("path").or_else(|| args.get("file_path")).and_then(Value::as_str) {
                     paths.push(single.to_owned());
                 }
+                let effective_lease = if matches!(action.to_ascii_lowercase().as_str(), "stage" | "load") {
+                    if self.policy.mode == PolicyMode::Locked {
+                        return Err(McpError::PermissionDenied(
+                            "AURORA_MCP_POLICY=locked: mutating actions are disabled in read-only mode".into(),
+                        ));
+                    }
+                    let valid_lease = self.leases.verify_for_mutation(lease_id.as_deref())?;
+                    let raw_paths = std::mem::take(&mut paths);
+                    paths = tokio::task::spawn_blocking(move || -> Result<Vec<String>, McpError> {
+                        let mut validated = Vec::with_capacity(raw_paths.len());
+                        for p in raw_paths {
+                            let canonical = asset_inspect::validate_local_file_path(
+                                &p,
+                                asset_inspect::ALLOWED_UPLOAD_EXTENSIONS,
+                                Some(asset_inspect::MAX_UPLOAD_ASSET_BYTES),
+                            )?;
+                            validated.push(canonical.to_string_lossy().into_owned());
+                        }
+                        Ok(validated)
+                    })
+                    .await
+                    .map_err(|e| McpError::Internal(format!("asset path validation join error: {e}")))??;
+                    Some(valid_lease)
+                } else {
+                    lease_id
+                };
                 let choice = args
                     .get("choice")
                     .or_else(|| args.get("asset_type"))
@@ -1945,7 +1987,7 @@ impl McpRouter {
                     .unwrap_or_default();
                 let resp = self
                     .send_to_viewer(
-                        lease_id,
+                        effective_lease,
                         ViewerRequest::AssetUpload {
                             action,
                             paths,
@@ -3909,6 +3951,14 @@ fn is_untrusted_world_tool(name: &str) -> bool {
             | "im_sessions_list"
             | "im_session_read"
             | "social_offers_list"
+            | "inventory_browse"
+            | "inventory_search"
+            | "appearance_get_worn"
+            | "lsl_inspect_object_scripts"
+            | "voice_participants_list"
+            | "ui_inspect"
+            | "ui_find"
+            | "ui_get_value"
     )
 }
 
@@ -8144,5 +8194,77 @@ mod tests {
         assert!(cache.get("id-0").is_none());
         assert!(cache.get("id-1").is_some());
         assert_eq!(cache.get("id-new").unwrap()["idx"], json!(999));
+    }
+
+    #[tokio::test]
+    async fn security_file_confinement_session_isolation_and_trust_tags() {
+        let (tx, mut rx) = crate::bridge::create_bridge_channels();
+        let router = McpRouter::new(tx, McpProfile::All);
+
+        let responder = tokio::spawn(async move {
+            while let Some(env) = rx.recv().await {
+                let _ = env.reply_tx.send(Ok(ViewerResponse::Json(json!({ "ok": true }))));
+            }
+        });
+
+        let acq = router.call_tool("control_acquire", json!({ "owner": "sec-test" })).await;
+        let lid = acq["structuredContent"]["lease"]["lease_id"].as_str().unwrap().to_owned();
+
+        // S1: lsl_write_and_compile @file: must refuse paths outside allowed roots / disallowed exts.
+        let lsl_res = router
+            .call_tool(
+                "lsl_write_and_compile",
+                json!({
+                    "lease_id": lid,
+                    "object_local_id": 1,
+                    "source_code": "@file:/etc/passwd",
+                }),
+            )
+            .await;
+        assert_eq!(lsl_res["isError"], json!(true), "must block /etc/passwd: {lsl_res}");
+
+        // S2: asset_upload stage must refuse paths outside allowed roots.
+        let stage_res = router
+            .call_tool(
+                "asset_upload",
+                json!({
+                    "lease_id": lid,
+                    "action": "stage",
+                    "paths": ["/etc/passwd"],
+                }),
+            )
+            .await;
+        assert_eq!(stage_res["isError"], json!(true), "must block staging /etc/passwd: {stage_res}");
+
+        // S7: authenticated session_id cannot be overridden by args.session_id.
+        let sub = router
+            .call_tool_in_session("victim-session", "events_subscribe", json!({ "source": "chat" }))
+            .await;
+        assert_eq!(sub["isError"], json!(false), "{sub}");
+        let unsub = router
+            .call_tool_in_session(
+                "attacker-session",
+                "events_unsubscribe",
+                json!({ "session_id": "victim-session", "source": "chat" }),
+            )
+            .await;
+        assert_eq!(unsub["isError"], json!(false), "{unsub}");
+        assert_eq!(unsub["structuredContent"]["session_id"], json!("attacker-session"));
+        // Victim subscription must remain intact.
+        let (allowed, _) = router.events.sse_match("victim-session", "chat", None);
+        assert!(allowed, "attacker session must not modify victim session subscriptions");
+
+        // S10: inventory/appearance/ui tools carry untrusted_world_content trust tag.
+        for tool in ["inventory_browse", "appearance_get_worn", "ui_inspect"] {
+            let out = router.call_tool(tool, json!({})).await;
+            assert_eq!(
+                out["structuredContent"]["trust"],
+                json!("untrusted_world_content"),
+                "{tool} must be trust-tagged"
+            );
+        }
+
+        drop(router);
+        let _ = responder.await;
     }
 }

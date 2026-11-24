@@ -389,13 +389,41 @@ enum HttpAttempt {
     Failed(std::io::Error),
 }
 
-fn read_line_retry(reader: &mut BufReader<TcpStream>, buf: &mut String) -> std::io::Result<usize> {
+const MAX_PROXY_LINE_BYTES: usize = 16 * 1024;
+const MAX_PROXY_HEADERS: usize = 64;
+const MAX_PROXY_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+
+fn read_line_limited_retry(reader: &mut BufReader<TcpStream>, max_bytes: usize) -> std::io::Result<Option<String>> {
+    let mut buf = Vec::new();
     loop {
-        match reader.read_line(buf) {
-            Ok(n) => return Ok(n),
+        let available = match reader.fill_buf() {
+            Ok(b) => b,
             Err(e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) => return Err(e),
+        };
+        if available.is_empty() {
+            if buf.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
         }
+        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+            let take = pos + 1;
+            if buf.len().saturating_add(take) > max_bytes {
+                reader.consume(take);
+                return Err(std::io::Error::new(ErrorKind::InvalidData, "HTTP header line exceeds limit"));
+            }
+            buf.extend_from_slice(&available[..take]);
+            reader.consume(take);
+            return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
+        }
+        let len = available.len();
+        if buf.len().saturating_add(len) > max_bytes {
+            reader.consume(len);
+            return Err(std::io::Error::new(ErrorKind::InvalidData, "HTTP header line exceeds limit"));
+        }
+        buf.extend_from_slice(available);
+        reader.consume(len);
     }
 }
 
@@ -438,18 +466,17 @@ fn forward_http_once(
         return HttpAttempt::Failed(e);
     }
 
-    let mut status_line = String::new();
-    match read_line_retry(reader, &mut status_line) {
-        Ok(0) => {
+    let status_line = match read_line_limited_retry(reader, MAX_PROXY_LINE_BYTES) {
+        Ok(None) => {
             *conn = None;
             return HttpAttempt::Failed(std::io::Error::new(ErrorKind::UnexpectedEof, "connection closed"));
         }
-        Ok(_) => {}
+        Ok(Some(line)) => line,
         Err(e) => {
             *conn = None;
             return HttpAttempt::Failed(e);
         }
-    }
+    };
     let status_code = status_line
         .split_whitespace()
         .nth(1)
@@ -458,17 +485,22 @@ fn forward_http_once(
 
     let mut content_length: Option<usize> = None;
     let mut server_close = false;
+    let mut header_count = 0usize;
     loop {
-        let mut line = String::new();
-        match read_line_retry(reader, &mut line) {
-            Ok(0) => {
+        match read_line_limited_retry(reader, MAX_PROXY_LINE_BYTES) {
+            Ok(None) => {
                 *conn = None;
                 return HttpAttempt::Failed(std::io::Error::new(ErrorKind::UnexpectedEof, "eof in headers"));
             }
-            Ok(_) => {
+            Ok(Some(line)) => {
                 let trimmed = line.trim_end_matches(['\r', '\n']);
                 if trimmed.is_empty() {
                     break;
+                }
+                header_count += 1;
+                if header_count > MAX_PROXY_HEADERS {
+                    *conn = None;
+                    return HttpAttempt::Failed(std::io::Error::new(ErrorKind::InvalidData, "too many HTTP response headers"));
                 }
                 if let Some((k, v)) = trimmed.split_once(':') {
                     if k.trim().eq_ignore_ascii_case("content-length") {
@@ -488,6 +520,13 @@ fn forward_http_once(
     }
 
     let payload_res = if let Some(len) = content_length {
+        if len > MAX_PROXY_RESPONSE_BYTES {
+            *conn = None;
+            return HttpAttempt::Failed(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "HTTP response body exceeds 16 MiB limit",
+            ));
+        }
         let mut buf = vec![0u8; len];
         if len > 0 {
             reader.read_exact(&mut buf).map(|()| buf)
@@ -497,7 +536,19 @@ fn forward_http_once(
     } else {
         server_close = true;
         let mut buf = Vec::new();
-        reader.read_to_end(&mut buf).map(|_| buf)
+        reader
+            .take(MAX_PROXY_RESPONSE_BYTES as u64 + 1)
+            .read_to_end(&mut buf)
+            .and_then(|_| {
+                if buf.len() > MAX_PROXY_RESPONSE_BYTES {
+                    Err(std::io::Error::new(
+                        ErrorKind::InvalidData,
+                        "HTTP response body exceeds 16 MiB limit",
+                    ))
+                } else {
+                    Ok(buf)
+                }
+            })
     };
     let buf = match payload_res {
         Ok(b) => b,

@@ -7,7 +7,7 @@
 //!   string/list serialization checks.
 
 use crate::bridge::{LsdOperation, McpError};
-use regex::Regex;
+use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -17,6 +17,21 @@ use std::collections::BTreeMap;
 pub const LSD_MAX_BYTES: usize = 131_072;
 /// Maximum LSL string payload safely handled by a single Mono script event/call.
 pub const LSL_MONO_SAFE_STRING_BYTES: usize = 32_768;
+const MAX_LSD_REGEX_BYTES: usize = 512;
+const MAX_LSD_REGEX_COMPILED_BYTES: usize = 256 * 1024;
+
+fn compile_lsd_regex(pattern: &str) -> Result<regex::Regex, McpError> {
+    if pattern.len() > MAX_LSD_REGEX_BYTES {
+        return Err(McpError::InvalidParams(format!(
+            "filter_regex exceeds maximum length of {MAX_LSD_REGEX_BYTES} bytes"
+        )));
+    }
+    RegexBuilder::new(pattern)
+        .size_limit(MAX_LSD_REGEX_COMPILED_BYTES)
+        .dfa_size_limit(MAX_LSD_REGEX_COMPILED_BYTES)
+        .build()
+        .map_err(|e| McpError::InvalidParams(e.to_string()))
+}
 
 /// Return codes matching LSL `LINKSETDATA_*` constants.
 pub const LINKSETDATA_OK: i32 = 0;
@@ -181,7 +196,7 @@ impl LinksetDataStore {
         limit: usize,
     ) -> Result<Value, McpError> {
         let re = match filter_regex.filter(|s| !s.is_empty()) {
-            Some(pattern) => Some(Regex::new(pattern).map_err(|e| McpError::InvalidParams(e.to_string()))?),
+            Some(pattern) => Some(compile_lsd_regex(pattern)?),
             None => None,
         };
         let pass_hash = passphrase.filter(|p| !p.is_empty()).map(hash_passphrase);
@@ -346,7 +361,7 @@ pub fn stress_test_payload(payload: &Value, protected_keys: bool, filter_regex: 
     }
 
     let regex_matches = if let Some(pattern) = filter_regex.filter(|p| !p.is_empty()) {
-        let re = Regex::new(pattern).map_err(|e| McpError::InvalidParams(e.to_string()))?;
+        let re = compile_lsd_regex(pattern)?;
         store.entries.keys().filter(|k| re.is_match(k)).count()
     } else {
         store.count_keys()
@@ -436,5 +451,20 @@ mod tests {
         assert_eq!(roundtrip.used_bytes(), exact_sum(&roundtrip));
         store.reset();
         assert_eq!(store.used_bytes(), 0);
+    }
+
+    #[test]
+    fn mcp_linkset_data_rejects_oversized_regex_patterns() {
+        let store = LinksetDataStore::new();
+        let huge_pattern = "a".repeat(MAX_LSD_REGEX_BYTES + 1);
+        assert!(matches!(
+            store.inspect(Some(&huge_pattern), false, None, 10),
+            Err(McpError::InvalidParams(_))
+        ));
+        // Pathological repetition exceeding compiled NFA size limit
+        assert!(matches!(
+            store.inspect(Some("a{1000}{1000}"), false, None, 10),
+            Err(McpError::InvalidParams(_))
+        ));
     }
 }

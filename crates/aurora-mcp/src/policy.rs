@@ -213,20 +213,35 @@ impl McpPolicy {
                 (amount > i64::from(self.supervised_pay_threshold)).then(|| format!("Pay object {lid} L${amount}"))
             }
             "asset_upload" => {
-                let action = args.get("action").and_then(Value::as_str).unwrap_or("");
+                let action = args.get("action").and_then(Value::as_str).unwrap_or("").trim();
                 matches!(action.to_ascii_lowercase().as_str(), "upload" | "start")
                     .then(|| "Upload staged assets to grid inventory".to_owned())
+            }
+            "ui_click" => {
+                let path = args.get("path").and_then(Value::as_str).unwrap_or("").trim().to_ascii_lowercase();
+                path.ends_with("/local_mesh/import")
+                    .then(|| "Upload staged assets via UI button".to_owned())
+            }
+            "ui_invoke_menu" => {
+                let menu = args.get("name").and_then(Value::as_str).unwrap_or("").trim().to_ascii_lowercase();
+                matches!(menu.as_str(), "world.login" | "viewer.login" | "login")
+                    .then(|| "Initiate viewer login via menu".to_owned())
             }
             "script_prompt_respond" => {
                 (args.get("grant").and_then(Value::as_bool) == Some(true)).then(|| "Grant script permission request".to_owned())
             }
             "parcel_eject" => Some("Eject / ban avatar from parcel".to_owned()),
+            "parcel_access_list_modify" => Some("Modify parcel access/ban list".to_owned()),
+            "parcel_set_properties" => Some("Modify parcel properties".to_owned()),
             "give_inventory" => Some("Give inventory item to another avatar".to_owned()),
             "inventory_delete" => Some("Move inventory items to Trash".to_owned()),
+            "task_item_remove" => Some("Remove item from in-world object inventory".to_owned()),
+            "rlva_execute" => Some("Execute RLVa commands".to_owned()),
             "prim_delete" => Some("Delete in-world prims".to_owned()),
+            "viewer_login" => Some("Initiate viewer login".to_owned()),
             "viewer_shutdown" => Some("Shut down Aurora Viewer".to_owned()),
             "object_take_or_derez" => {
-                let action = args.get("action").and_then(Value::as_str).unwrap_or("");
+                let action = args.get("action").and_then(Value::as_str).unwrap_or("").trim();
                 matches!(action.to_ascii_lowercase().as_str(), "delete" | "derez").then(|| "Delete / derez in-world object".to_owned())
             }
             _ => None,
@@ -633,5 +648,35 @@ settings_allow = ["camera.fov", "draw_distance"]
             q.check_or_request("s1", "economy_pay_avatar", "hash1", &summary),
             ApprovalCheck::Denied
         ));
+    }
+
+    #[test]
+    fn supervised_gates_prevent_whitespace_ui_and_high_impact_bypasses() {
+        let p = McpPolicy {
+            mode: PolicyMode::Supervised,
+            ..Default::default()
+        };
+        // Whitespace-padded action must not bypass asset_upload or object_take_or_derez
+        assert!(p.requires_supervised_approval("asset_upload", &json!({ "action": " upload " })).is_some());
+        assert!(p.requires_supervised_approval("asset_upload", &json!({ "action": "\tSTART\n" })).is_some());
+        assert!(p.requires_supervised_approval("asset_upload", &json!({ "action": "status" })).is_none());
+        assert!(p.requires_supervised_approval("object_take_or_derez", &json!({ "action": " delete " })).is_some());
+
+        // UI click shortcut to L$-spending upload and UI login menu must be gated
+        assert!(p.requires_supervised_approval("ui_click", &json!({ "path": "/main_view/local_mesh/import" })).is_some());
+        assert!(p.requires_supervised_approval("ui_click", &json!({ "path": "/main_view/floaters/inventory" })).is_none());
+        assert!(p.requires_supervised_approval("ui_invoke_menu", &json!({ "name": " world.login " })).is_some());
+        assert!(p.requires_supervised_approval("ui_invoke_menu", &json!({ "name": "build.open" })).is_none());
+
+        // High-impact destructive / privilege tools
+        for tool in [
+            "task_item_remove",
+            "rlva_execute",
+            "parcel_access_list_modify",
+            "parcel_set_properties",
+            "viewer_login",
+        ] {
+            assert!(p.requires_supervised_approval(tool, &json!({})).is_some(), "{tool} must require approval");
+        }
     }
 }

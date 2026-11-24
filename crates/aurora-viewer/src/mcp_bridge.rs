@@ -367,6 +367,37 @@ pub struct McpBridge {
     pub(crate) shutdown_completed: bool,
 }
 
+const MAX_PENDING_PER_QUEUE: usize = 32;
+const MAX_MCP_URL_BYTES: usize = 1024;
+
+/// Validates an in-world media/music URL: empty string clears it; non-empty
+/// URLs must start with one of `allowed_schemes`, contain no ASCII whitespace
+/// or control characters, and fit within [`MAX_MCP_URL_BYTES`].
+pub(super) fn validate_mcp_url(raw: &str, allowed_schemes: &[&str], field: &str) -> Result<String, McpError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    if trimmed.len() > MAX_MCP_URL_BYTES {
+        return Err(McpError::InvalidParams(format!(
+            "{field} exceeds maximum length of {MAX_MCP_URL_BYTES} bytes"
+        )));
+    }
+    if trimmed.bytes().any(|b| b.is_ascii_control() || b.is_ascii_whitespace()) {
+        return Err(McpError::InvalidParams(format!(
+            "{field} must not contain whitespace or control characters"
+        )));
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if !allowed_schemes.iter().any(|scheme| lower.starts_with(scheme)) {
+        return Err(McpError::PermissionDenied(format!(
+            "{field} scheme is not permitted; allowed: {}",
+            allowed_schemes.join(", ")
+        )));
+    }
+    Ok(trimmed.to_owned())
+}
+
 impl McpBridge {
     #[inline]
     pub(super) fn is_active(&self) -> bool {
@@ -376,6 +407,55 @@ impl McpBridge {
     #[inline]
     pub(super) fn has_pending_capture(&self) -> bool {
         !self.pending_captures.is_empty()
+    }
+
+    fn check_queue_capacity_for(&self, req: &ViewerRequest) -> Result<(), McpError> {
+        let queue: Option<(&'static str, usize)> = match req {
+            ViewerRequest::ViewportCapture { .. } => Some(("viewport_capture", self.pending_captures.len())),
+            ViewerRequest::RadarScanObjects { .. } => Some(("radar_scan_objects", self.pending_radar.len())),
+            ViewerRequest::LslInspectObjectScripts { .. } => Some(("lsl_inspect_object_scripts", self.pending_script_inspects.len())),
+            ViewerRequest::LslReadScript { .. } => Some(("lsl_read_script", self.pending_script_reads.len())),
+            ViewerRequest::LslWriteAndCompile { .. } => Some((
+                "lsl_write_and_compile",
+                self.pending_script_creations.len().max(self.pending_script_compiles.len()),
+            )),
+            ViewerRequest::NotecardWrite { .. } => Some((
+                "notecard_write",
+                self.pending_notecard_creates.len().max(self.pending_notecard_drops.len()),
+            )),
+            ViewerRequest::ObjectContents { .. }
+            | ViewerRequest::ObjectCopyContents { .. }
+            | ViewerRequest::TaskItemPermissions { .. }
+            | ViewerRequest::ObjectSetPermissions { .. }
+            | ViewerRequest::TaskItemRemove { .. }
+            | ViewerRequest::TaskItemAdd { .. }
+            | ViewerRequest::TaskNotecardWrite { .. } => Some(("object_contents", self.pending_contents.len())),
+            ViewerRequest::ObjectTakeOrDerez { .. } => Some(("object_take_or_derez", self.pending_takes.len())),
+            ViewerRequest::InventoryDelete { .. } => Some(("inventory_delete", self.pending_trash.len())),
+            ViewerRequest::InventoryOfferRespond { .. } => Some(("inventory_offer_respond", self.pending_offers.len())),
+            ViewerRequest::ObjectInspect { .. } => Some(("object_inspect", self.pending_object_inspects.len())),
+            ViewerRequest::MapLookup { .. } => Some(("map_lookup", self.pending_map_lookups.len())),
+            ViewerRequest::SearchPeople { .. } | ViewerRequest::SearchPlaces { .. } => Some(("search", self.pending_searches.len())),
+            ViewerRequest::AvatarProfile { .. } => Some(("avatar_profile", self.pending_profiles.len())),
+            ViewerRequest::MediaInfo { .. } => Some(("media_info", self.pending_media_info.len())),
+            ViewerRequest::LandmarkCreate { .. } => Some(("landmark_create", self.pending_landmarks.len())),
+            ViewerRequest::PrimDuplicate { .. } => Some(("prim_duplicate", self.pending_duplicates.len())),
+            ViewerRequest::InventoryCreateFolder { .. } => Some(("inventory_create_folder", self.pending_folder_creates.len())),
+            ViewerRequest::InventoryMove { .. } => Some(("inventory_move", self.pending_inv_moves.len())),
+            ViewerRequest::InventoryRename { .. } => Some(("inventory_rename", self.pending_inv_renames.len())),
+            ViewerRequest::PrimRezNew { .. } => Some(("prim_rez_new", self.build_tx_mgr.pending_rez.len())),
+            _ => None,
+        };
+        if let Some((name, len)) = queue
+            && len >= MAX_PENDING_PER_QUEUE
+        {
+            return Err(McpError::RateLimited {
+                category: name.to_owned(),
+                retry_after_ms: 1000,
+                detail: format!("too many in-flight '{name}' requests ({len}/{MAX_PENDING_PER_QUEUE})"),
+            });
+        }
+        Ok(())
     }
 
     fn clear_session_caches(&mut self, region_only: bool) {
@@ -1683,6 +1763,10 @@ impl App {
             request,
             reply_tx,
         } = envelope;
+        if let Err(err) = self.mcp_bridge.check_queue_capacity_for(&request) {
+            let _ = reply_tx.send(Err(err));
+            return;
+        }
         match request {
             ViewerRequest::ConnectionStatus | ViewerRequest::GetAgentStatus => {
                 let status = self.build_mcp_status_snapshot(renderer.as_deref());
@@ -5393,11 +5477,14 @@ impl App {
                         "Provide at least one file path in 'paths' or 'path'".into(),
                     ));
                 }
-                let path_bufs: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
-                for p in &path_bufs {
-                    if !p.exists() {
-                        return Err(McpError::InvalidParams(format!("File does not exist: {}", p.display())));
-                    }
+                let mut path_bufs = Vec::with_capacity(paths.len());
+                for raw in &paths {
+                    let validated = aurora_mcp::asset_inspect::validate_local_file_path(
+                        raw,
+                        aurora_mcp::asset_inspect::ALLOWED_UPLOAD_EXTENSIONS,
+                        Some(aurora_mcp::asset_inspect::MAX_UPLOAD_ASSET_BYTES),
+                    )?;
+                    path_bufs.push(validated);
                 }
                 let choice = parse_choice(choice_str, paths.first().map(String::as_str));
                 let local = choice == crate::imports::Choice::Local;
@@ -7298,6 +7385,7 @@ impl App {
     }
 
     fn handle_mcp_parcel_set_music(&mut self, music_url: &str) -> Result<ViewerResponse, McpError> {
+        let music_url = validate_mcp_url(music_url, &["http://", "https://", "icy://"], "music_url")?;
         let Some(handle) = self.world.main_region else {
             return Err(McpError::NotInWorld);
         };
@@ -7311,7 +7399,7 @@ impl App {
         };
 
         let mut update = ParcelUpdate::from_parcel(p);
-        update.music_url = music_url.to_string();
+        update.music_url = music_url.clone();
 
         self.mcp_send(NetCommand::Land(LandCommand::Update {
             handle,
@@ -7319,7 +7407,7 @@ impl App {
         }))?;
 
         if let Some(parcel) = self.world.parcel.as_mut() {
-            Arc::make_mut(parcel).music_url = music_url.to_string();
+            Arc::make_mut(parcel).music_url = music_url.clone();
         }
         self.parcel_music.enter(true);
 
@@ -8104,12 +8192,11 @@ fn mcp_setting_protected(key: &str, extra: &str) -> bool {
     let matches = |prefix: &str| {
         let prefix = prefix.trim().to_ascii_lowercase();
         !prefix.is_empty()
-            && (key == prefix || key.starts_with(&format!("{prefix}.")) || (prefix.ends_with('_') && key.starts_with(&prefix)))
+            && (key == prefix
+                || key.starts_with(&format!("{prefix}."))
+                || ((prefix.ends_with('_') || prefix.ends_with('.')) && key.starts_with(&prefix)))
     };
-    MCP_PROTECTED_SETTINGS.iter().any(|p| matches(p))
-        && !extra
-            .split(',')
-            .any(|p| matches(p) || (!p.trim().is_empty() && key.starts_with(&p.trim().to_ascii_lowercase())))
+    MCP_PROTECTED_SETTINGS.iter().any(|p| matches(p)) && !extra.split(',').any(matches)
 }
 
 /// LSL PERMISSION_DEBIT.
@@ -8588,5 +8675,69 @@ mod tests {
 
         bridge.events = Some(std::sync::Arc::new(aurora_mcp::EventBus::new()));
         assert!(bridge.is_active());
+    }
+
+    #[test]
+    fn mcp_url_validation_allows_http_https_icy_and_blocks_dangerous_schemes() {
+        assert_eq!(super::validate_mcp_url("", &["http://", "https://"], "url").unwrap(), "");
+        assert_eq!(
+            super::validate_mcp_url("https://example.com/stream.mp3", &["http://", "https://"], "url").unwrap(),
+            "https://example.com/stream.mp3"
+        );
+        assert_eq!(
+            super::validate_mcp_url("icy://radio.example.com:8000", &["http://", "https://", "icy://"], "music_url").unwrap(),
+            "icy://radio.example.com:8000"
+        );
+        assert!(matches!(
+            super::validate_mcp_url("file:///etc/passwd", &["http://", "https://"], "url"),
+            Err(McpError::PermissionDenied(_))
+        ));
+        assert!(matches!(
+            super::validate_mcp_url("javascript:alert(1)", &["http://", "https://"], "url"),
+            Err(McpError::PermissionDenied(_))
+        ));
+        assert!(matches!(
+            super::validate_mcp_url("https://example.com/a\nb", &["http://", "https://"], "url"),
+            Err(McpError::InvalidParams(_))
+        ));
+    }
+
+    #[test]
+    fn mcp_settings_allow_does_not_over_match_short_prefixes() {
+        // Short entry "p" must NOT unlock proxy or payment_confirm_threshold.
+        assert!(super::mcp_setting_protected("proxy.host", "p"));
+        assert!(super::mcp_setting_protected("payment_confirm_threshold", "p"));
+        // Exact match, dot-namespace, and trailing-underscore prefix work as intended.
+        assert!(!super::mcp_setting_protected("proxy.host", "proxy"));
+        assert!(!super::mcp_setting_protected("update_channel", "update_"));
+        assert!(!super::mcp_setting_protected("payment_confirm_threshold", "payment_confirm_threshold"));
+    }
+
+    #[test]
+    fn mcp_pending_queue_capacity_caps_inflight_requests() {
+        let mut bridge = super::McpBridge::default();
+        let req = ViewerRequest::RadarScanObjects {
+            max_radius_m: 64.0,
+            root_only: true,
+            name_filter: None,
+            limit: 20,
+        };
+        assert!(bridge.check_queue_capacity_for(&req).is_ok());
+        for _ in 0..super::MAX_PENDING_PER_QUEUE {
+            let (tx, _rx) = oneshot::channel();
+            bridge.pending_radar.push_back(super::PendingRadar {
+                max_radius_m: 64.0,
+                root_only: true,
+                name_filter: None,
+                limit: 20,
+                missing_uuids: Vec::new(),
+                started: Instant::now(),
+                reply_tx: tx,
+            });
+        }
+        assert!(matches!(
+            bridge.check_queue_capacity_for(&req),
+            Err(McpError::RateLimited { .. })
+        ));
     }
 }

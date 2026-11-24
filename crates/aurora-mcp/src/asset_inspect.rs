@@ -8,32 +8,129 @@
 use crate::bridge::McpError;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 
 const MAX_INSPECT_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 const ALLOWED_ASSET_EXTENSIONS: &[&str] = &["gltf", "glb", "dae", "png", "jpg", "jpeg", "tga", "bmp", "webp", "gif"];
+pub const ALLOWED_UPLOAD_EXTENSIONS: &[&str] = &[
+    "gltf", "glb", "dae", "png", "jpg", "jpeg", "tga", "bmp", "webp", "gif", "j2c", "jp2", "wav", "bvh", "anim",
+];
+pub const ALLOWED_SCRIPT_EXTENSIONS: &[&str] = &["lsl", "luau", "lua", "txt"];
+pub const MAX_UPLOAD_ASSET_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_SCRIPT_FILE_BYTES: u64 = 256 * 1024;
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn collect_allowed_roots() -> Vec<PathBuf> {
+    let mut allowed_roots: Vec<PathBuf> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir()
+        && let Ok(c) = std::fs::canonicalize(cwd)
+    {
+        allowed_roots.push(c);
+    }
+    let capture_dir = crate::vision::capture_output_dir();
+    if let Ok(c) = std::fs::canonicalize(&capture_dir) {
+        allowed_roots.push(c);
+    }
+    for sub in ["aurora-mcp-captures", "aurora-live-mesh"] {
+        let dir = std::env::temp_dir().join(sub);
+        if let Ok(c) = std::fs::canonicalize(dir)
+            && !allowed_roots.contains(&c)
+        {
+            allowed_roots.push(c);
+        }
+    }
+    if let Ok(env_roots) = std::env::var("AURORA_MCP_ASSET_ROOTS") {
+        for entry in std::env::split_paths(&env_roots) {
+            if let Ok(c) = std::fs::canonicalize(entry)
+                && !allowed_roots.contains(&c)
+            {
+                allowed_roots.push(c);
+            }
+        }
+    }
+    allowed_roots
+}
+
+/// Reads at most `max_bytes` from `path` using a bounded reader to avoid
+/// TOCTOU file-growth OOMs after validation.
+pub fn read_bounded_bytes(path: &Path, max_bytes: u64) -> Result<Vec<u8>, McpError> {
+    let file = std::fs::File::open(path).map_err(|e| McpError::InvalidParams(format!("cannot read '{}': {e}", path.display())))?;
+    let mut buf = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut buf)
+        .map_err(|e| McpError::InvalidParams(format!("cannot read '{}': {e}", path.display())))?;
+    if buf.len() as u64 > max_bytes {
+        return Err(McpError::InvalidParams(format!(
+            "file '{}' exceeds maximum allowed size ({max_bytes} bytes)",
+            path.display()
+        )));
+    }
+    Ok(buf)
+}
 
 /// Validates that `raw_path` points to a regular file with an allowed extension
-/// inside an approved local root (current working directory, `aurora-mcp-captures`,
+/// inside an approved local root (current working directory, `capture_output_dir`,
 /// `aurora-live-mesh`, or `AURORA_MCP_ASSET_ROOTS`) and within `max_bytes`.
 pub fn validate_local_file_path(raw_path: &str, allowed_exts: &[&str], max_bytes: Option<u64>) -> Result<PathBuf, McpError> {
     let trimmed = raw_path.trim();
     if trimmed.is_empty() {
         return Err(McpError::InvalidParams("file_path cannot be empty".into()));
     }
-    let canonical =
-        std::fs::canonicalize(Path::new(trimmed)).map_err(|e| McpError::InvalidParams(format!("cannot resolve '{trimmed}': {e}")))?;
+    let allowed_roots = collect_allowed_roots();
+    let outside_err = || {
+        McpError::PermissionDenied(format!(
+            "path '{trimmed}' is outside allowed asset roots (cwd, capture/temp dirs, or AURORA_MCP_ASSET_ROOTS)"
+        ))
+    };
 
-    let meta = std::fs::metadata(&canonical).map_err(|e| McpError::InvalidParams(format!("cannot stat '{}': {e}", canonical.display())))?;
+    let raw = Path::new(trimmed);
+    let canonical = match std::fs::canonicalize(raw) {
+        Ok(c) => c,
+        Err(e) => {
+            // Avoid an existence oracle for paths outside allowed roots.
+            let candidate = if raw.is_absolute() {
+                lexical_normalize(raw)
+            } else if let Ok(cwd) = std::env::current_dir() {
+                lexical_normalize(&cwd.join(raw))
+            } else {
+                return Err(outside_err());
+            };
+            if !allowed_roots.iter().any(|root| candidate.starts_with(root)) {
+                return Err(outside_err());
+            }
+            return Err(McpError::InvalidParams(format!("cannot resolve '{trimmed}': {e}")));
+        }
+    };
+
+    // Enforce root confinement BEFORE probing metadata, size, or extension so
+    // callers cannot use error messages as a filesystem/symlink oracle.
+    if !allowed_roots.iter().any(|root| canonical.starts_with(root)) {
+        return Err(outside_err());
+    }
+
+    let meta = std::fs::metadata(&canonical).map_err(|e| McpError::InvalidParams(format!("cannot stat '{trimmed}': {e}")))?;
     if !meta.is_file() {
-        return Err(McpError::InvalidParams(format!("'{}' is not a regular file", canonical.display())));
+        return Err(McpError::InvalidParams(format!("'{trimmed}' is not a regular file")));
     }
     if let Some(limit) = max_bytes
         && meta.len() > limit
     {
         return Err(McpError::InvalidParams(format!(
-            "file '{}' ({} bytes) exceeds maximum allowed size ({limit} bytes)",
-            canonical.display(),
+            "file '{trimmed}' ({} bytes) exceeds maximum allowed size ({limit} bytes)",
             meta.len()
         )));
     }
@@ -46,39 +143,12 @@ pub fn validate_local_file_path(raw_path: &str, allowed_exts: &[&str], max_bytes
         )));
     }
 
-    let mut allowed_roots: Vec<PathBuf> = Vec::new();
-    if let Ok(cwd) = std::env::current_dir()
-        && let Ok(c) = std::fs::canonicalize(cwd)
-    {
-        allowed_roots.push(c);
-    }
-    for sub in ["aurora-mcp-captures", "aurora-live-mesh"] {
-        let dir = std::env::temp_dir().join(sub);
-        if let Ok(c) = std::fs::canonicalize(dir) {
-            allowed_roots.push(c);
-        }
-    }
-    if let Ok(env_roots) = std::env::var("AURORA_MCP_ASSET_ROOTS") {
-        for entry in std::env::split_paths(&env_roots) {
-            if let Ok(c) = std::fs::canonicalize(entry) {
-                allowed_roots.push(c);
-            }
-        }
-    }
-
-    if !allowed_roots.iter().any(|root| canonical.starts_with(root)) {
-        return Err(McpError::PermissionDenied(format!(
-            "path '{}' is outside allowed asset roots (cwd, capture/temp dirs, or AURORA_MCP_ASSET_ROOTS)",
-            canonical.display()
-        )));
-    }
-
     Ok(canonical)
 }
 
 pub fn inspect_local_asset(file_path: &str) -> Result<Value, McpError> {
     let path = validate_local_file_path(file_path, ALLOWED_ASSET_EXTENSIONS, Some(MAX_INSPECT_ASSET_BYTES))?;
-    let bytes = std::fs::read(&path).map_err(|e| McpError::InvalidParams(format!("cannot read '{}': {e}", path.display())))?;
+    let bytes = read_bounded_bytes(&path, MAX_INSPECT_ASSET_BYTES)?;
 
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
@@ -346,5 +416,14 @@ mod tests {
             inspect_local_asset(&outside_png.display().to_string()),
             Err(McpError::PermissionDenied(_))
         ));
+
+        // Nonexistent paths outside allowed roots must return the same
+        // PermissionDenied error (no filesystem existence oracle).
+        let nonexistent_outside = dir.join("definitely-does-not-exist.png");
+        assert!(matches!(
+            validate_local_file_path(&nonexistent_outside.display().to_string(), ALLOWED_ASSET_EXTENSIONS, Some(1024)),
+            Err(McpError::PermissionDenied(_))
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

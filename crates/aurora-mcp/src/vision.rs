@@ -33,9 +33,51 @@ pub struct EncodedCapture {
 }
 
 pub fn capture_output_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join("aurora-mcp-captures");
+    let dir = if let Some(custom) = std::env::var_os("AURORA_MCP_CAPTURE_DIR").filter(|d| !d.is_empty()) {
+        PathBuf::from(custom)
+    } else if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()) {
+        PathBuf::from(runtime).join("aurora-mcp-captures")
+    } else if cfg!(windows)
+        && let Some(local) = std::env::var_os("LOCALAPPDATA").filter(|d| !d.is_empty())
+    {
+        PathBuf::from(local).join("Aurora").join("mcp-captures")
+    } else if let Some(home) = std::env::var_os("HOME").filter(|d| !d.is_empty()) {
+        PathBuf::from(home).join(".cache").join("aurora").join("mcp-captures")
+    } else {
+        std::env::temp_dir().join("aurora-mcp-captures")
+    };
     let _ = std::fs::create_dir_all(&dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
     dir
+}
+
+/// Writes `bytes` to `path` with owner-only (`0o600`) permissions on Unix,
+/// unlinking any pre-existing file first so symlinks cannot be followed.
+pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    let _ = std::fs::remove_file(path);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut file = opts.open(path)?;
+    file.write_all(bytes)?;
+    file.flush()
 }
 
 /// Periodically prunes oldest files in `aurora-mcp-captures` to bound disk usage.
@@ -114,7 +156,9 @@ pub fn read_capture_manifest(key: &str) -> Result<serde_json::Value, McpError> {
     if !meta.is_file() || meta.len() > MAX_MANIFEST_BYTES {
         return Err(refuse());
     }
-    let text = std::fs::read_to_string(&canon).map_err(|e| McpError::InvalidParams(format!("cannot read manifest '{key}': {e}")))?;
+    let bytes = crate::asset_inspect::read_bounded_bytes(&canon, MAX_MANIFEST_BYTES)
+        .map_err(|_| refuse())?;
+    let text = String::from_utf8(bytes).map_err(|e| McpError::InvalidParams(format!("invalid manifest UTF-8: {e}")))?;
     serde_json::from_str(&text).map_err(|e| McpError::InvalidParams(format!("invalid manifest JSON: {e}")))
 }
 
@@ -190,7 +234,7 @@ pub fn encode_captured_frame(mut raw: RawCapturedFrame, max_dimensions: (u32, u3
     );
     let out_dir = capture_output_dir();
     let path = out_dir.join(file_name);
-    std::fs::write(&path, &png_bytes).map_err(|e| McpError::Internal(format!("failed to write capture PNG: {e}")))?;
+    write_private_file(&path, &png_bytes).map_err(|e| McpError::Internal(format!("failed to write capture PNG: {e}")))?;
     maybe_prune_capture_dir(&out_dir);
 
     let base64_png = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
@@ -265,8 +309,20 @@ pub fn compare_images(reference_path: &str, observed_path: &str) -> Result<Value
 
     let out_dir = capture_output_dir();
     let diff_path = out_dir.join(format!("diff-{}.png", Uuid::new_v4()));
-    diff_img
-        .save(&diff_path)
+    let mut diff_png = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut diff_png, w, h);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| McpError::Internal(format!("diff PNG header error: {e}")))?;
+        writer
+            .write_image_data(diff_img.as_raw())
+            .map_err(|e| McpError::Internal(format!("diff PNG encode error: {e}")))?;
+    }
+    write_private_file(&diff_path, &diff_png)
         .map_err(|e| McpError::Internal(format!("failed to save diff image: {e}")))?;
     maybe_prune_capture_dir(&out_dir);
 

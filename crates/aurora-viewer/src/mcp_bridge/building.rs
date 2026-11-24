@@ -923,13 +923,14 @@ impl App {
         } else {
             let mut entry = faces[face as usize].clone().unwrap_or_default();
             if let Some(u) = spec.get("url").or_else(|| spec.get("current_url")).and_then(Value::as_str) {
-                entry.current_url = u.to_owned();
+                let valid = super::validate_mcp_url(u, &["http://", "https://"], "current_url")?;
+                entry.current_url = valid.clone();
                 if entry.home_url.is_empty() {
-                    entry.home_url = u.to_owned();
+                    entry.home_url = valid;
                 }
             }
             if let Some(h) = spec.get("home_url").and_then(Value::as_str) {
-                entry.home_url = h.to_owned();
+                entry.home_url = super::validate_mcp_url(h, &["http://", "https://"], "home_url")?;
             }
             if let Some(v) = spec.get("auto_play").and_then(Value::as_bool) {
                 entry.auto_play = v;
