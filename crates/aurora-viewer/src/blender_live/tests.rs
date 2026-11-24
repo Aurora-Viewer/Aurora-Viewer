@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-fn triangle() -> serde_json::Value {
+pub(super) fn triangle() -> serde_json::Value {
     let vertices: Vec<_> = [[0.0,0.0,0.0], [0.2,0.0,0.0], [0.0,0.2,0.0]].into_iter().map(|position| {
         serde_json::json!({"position":position,"normal":[0.0,0.0,1.0],"uv":[0.0,0.0],"joints":[0,0,0,0],"weights":[2.0,0.0,0.0,0.0]})
     }).collect();
@@ -50,10 +50,11 @@ fn blender_live_window_stays_steady_at_reported_ui_scales() {
     for language in ["en", "fr"] {
         aurora_i18n::select(language, None);
         assert_eq!(aurora_i18n::language(), language);
+        let header = aurora_i18n::tr!("blender-live-connection");
         let label = aurora_i18n::tr!("blender-live-clear");
         crate::ui::widgets::steady_tests::assert_window_steady_at_scales(
             "blender_live",
-            &[egui::vec2(560.0, 660.0), egui::vec2(460.0, 350.0)],
+            &[egui::vec2(400.0, 660.0), egui::vec2(340.0, 350.0)],
             &[(0.94, 1.0), (0.947, 1.0), (0.953, 1.0)],
             || {
                 let mut live = Live {
@@ -66,11 +67,11 @@ fn blender_live_window_stays_steady_at_reported_ui_scales() {
             |live, ctx, palette| {
                 super::ui::show(live, ctx, palette, false);
             },
-            |frames, live, case, window, texts| {
+            |frames, live, case, window, _| {
                 use crate::ui::widgets::elide_tests::Text;
                 let id = egui::Id::unique("blender_live");
                 let layer = egui::LayerId::new(egui::Order::Middle, id);
-                let button = |ctx: &egui::Context, texts: &[Text]| -> Option<egui::WidgetRect> {
+                let button = |ctx: &egui::Context, texts: &[Text], label: &str| -> Option<egui::WidgetRect> {
                     let text = texts.iter().find(|t| t.source == label)?;
                     ctx.viewport(|v| {
                         v.prev_pass
@@ -81,63 +82,78 @@ fn blender_live_window_stays_steady_at_reported_ui_scales() {
                             .copied()
                     })
                 };
-                let visible = |b: &egui::WidgetRect| window.contains_rect(b.rect) && b.interact_rect.contains_rect(b.rect);
-                let before = button(&frames.ctx, texts);
+                // (a full-width section header may lose a fraction of a point
+                // to the body's clip at a fractional scale)
+                let visible = |b: &egui::WidgetRect| window.contains_rect(b.rect) && b.interact_rect.expand(1.0).contains_rect(b.rect);
                 let source = live.selected.expect("one mesh");
                 let palette = crate::theme::Theme::default().palette();
                 let mut draw = |ui: &mut egui::Ui| {
                     super::ui::show(live, ui.ctx(), &palette, false);
                 };
-                let mut after = before;
-                // Scroll the body under the pointer in small steps. Stop on the
-                // button, even if the panel below it is taller than the window.
-                for step in 0..40 {
-                    if after.as_ref().is_some_and(&visible) && (step > 0 || window.height() > 500.0) {
-                        break;
+                let mut texts = frames.run(vec![], &mut draw);
+                // The Connection section first, then its Remove meshes button:
+                // scroll the body under the pointer in small steps, stop on the
+                // control, even if the panel below it is taller than the window.
+                for target in [header, label] {
+                    let before = button(&frames.ctx, &texts, target);
+                    let mut after = before;
+                    for step in 0..40 {
+                        if after.as_ref().is_some_and(&visible) && (step > 0 || window.height() > 500.0) {
+                            break;
+                        }
+                        let wheel = egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(0.0, -18.0),
+                            phase: egui::TouchPhase::Move,
+                            source: egui::MouseWheelSource::Wheel,
+                            modifiers: Default::default(),
+                        };
+                        texts = frames.run(vec![egui::Event::PointerMoved(window.center()), wheel], &mut draw);
+                        assert_eq!(
+                            frames.ctx.memory(|m| m.area_rect(id)),
+                            Some(window),
+                            "{language}, {case}: scrolling moved the window"
+                        );
+                        after = button(&frames.ctx, &texts, target);
                     }
-                    let wheel = egui::Event::MouseWheel {
-                        unit: egui::MouseWheelUnit::Point,
-                        delta: egui::vec2(0.0, -18.0),
-                        phase: egui::TouchPhase::Move,
-                        source: egui::MouseWheelSource::Wheel,
-                        modifiers: Default::default(),
-                    };
-                    let texts = frames.run(vec![egui::Event::PointerMoved(window.center()), wheel], &mut draw);
+                    let after = after.unwrap_or_else(|| panic!("{language}, {case}: {target:?} is drawn after scrolling"));
+                    assert!(
+                        visible(&after),
+                        "{language}, {case}: {target:?} {:?}, hit area {:?}, window {window:?}",
+                        after.rect,
+                        after.interact_rect
+                    );
+                    if let Some(before) = before
+                        && !visible(&before)
+                    {
+                        assert!(
+                            after.rect.top() < before.rect.top(),
+                            "{language}, {case}: the wheel brings {target:?} into view"
+                        );
+                    }
+                    let pos = after.rect.center();
+                    for pressed in [true, false] {
+                        texts = frames.run(
+                            vec![
+                                egui::Event::PointerMoved(pos),
+                                egui::Event::PointerButton {
+                                    pos,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Default::default(),
+                                },
+                            ],
+                            &mut draw,
+                        );
+                    }
+                    // the section unfolds over a few frames
+                    for _ in 0..12 {
+                        texts = frames.run(vec![], &mut draw);
+                    }
                     assert_eq!(
                         frames.ctx.memory(|m| m.area_rect(id)),
                         Some(window),
-                        "{language}, {case}: scrolling moved the window"
-                    );
-                    after = button(&frames.ctx, &texts);
-                }
-                let after = after.expect("the localized button is drawn after scrolling");
-                assert!(
-                    visible(&after),
-                    "{language}, {case}: button {:?}, hit area {:?}, window {window:?}",
-                    after.rect,
-                    after.interact_rect
-                );
-                if let Some(before) = before
-                    && !visible(&before)
-                {
-                    assert!(
-                        after.rect.top() < before.rect.top(),
-                        "{language}, {case}: the wheel brings the button into view"
-                    );
-                }
-                let pos = after.rect.center();
-                for pressed in [true, false] {
-                    frames.run(
-                        vec![
-                            egui::Event::PointerMoved(pos),
-                            egui::Event::PointerButton {
-                                pos,
-                                button: egui::PointerButton::Primary,
-                                pressed,
-                                modifiers: Default::default(),
-                            },
-                        ],
-                        &mut draw,
+                        "{language}, {case}: unfolding moved or resized the window"
                     );
                 }
                 assert_eq!(
@@ -150,7 +166,7 @@ fn blender_live_window_stays_steady_at_reported_ui_scales() {
     }
 }
 
-fn static_triangle() -> serde_json::Value {
+pub(super) fn static_triangle() -> serde_json::Value {
     let mut value = triangle();
     value["meshes"][0]["joints"] = serde_json::json!([]);
     value["meshes"][0]["inverse_bind"] = serde_json::json!([]);
@@ -158,6 +174,40 @@ fn static_triangle() -> serde_json::Value {
         vertex["weights"] = serde_json::json!([0, 0, 0, 0]);
     }
     value
+}
+
+#[test]
+fn blender_live_object_warnings_are_bounded_and_never_refuse_the_snapshot() {
+    use protocol::WarningKind;
+    let id = Uuid::from_u128(7);
+    let mut value = static_triangle();
+    value["warnings"] = serde_json::json!([
+        {"source_id": id, "name": "Textured", "kind": "textures", "reason": "Bake procedural shaders"},
+        {"name": "Too large", "kind": "not-sent", "reason": format!("limit\n{}", "r".repeat(900))},
+        {"name": "Later plug-in", "kind": "something-new", "reason": "skipped"},
+        {"name": "  ", "kind": "textures", "reason": "no name: skipped"}
+    ]);
+    let prepared = prepare(&value).expect("a snapshot with warnings");
+    assert_eq!(prepared.sources.len(), 1, "the meshes are untouched");
+    assert_eq!(prepared.warnings.len(), 2, "unknown kinds and empty names are dropped");
+    assert_eq!(prepared.warnings[0].source, Some(id));
+    assert_eq!(prepared.warnings[0].kind, WarningKind::Textures);
+    assert_eq!(prepared.warnings[1].source, None);
+    assert_eq!(prepared.warnings[1].kind, WarningKind::NotSent);
+    let reason = &prepared.warnings[1].reason;
+    assert!(
+        reason.starts_with("limit r") && !reason.contains('\n'),
+        "control characters become spaces"
+    );
+    assert_eq!(reason.chars().count(), 512);
+    // many warnings are cut, not refused
+    value["warnings"] = serde_json::json!(vec![serde_json::json!({"name": "n", "kind": "not-sent", "reason": ""}); 200]);
+    assert_eq!(prepare(&value).expect("many warnings").warnings.len(), protocol::MAX_WARNINGS);
+    // an unknown field in a warning is a protocol error, like the rest of the snapshot
+    value["warnings"] = serde_json::json!([{"name": "n", "kind": "textures", "reason": "", "extra": 1}]);
+    assert!(prepare(&value).is_err());
+    // a snapshot without warnings has none
+    assert!(prepare(&static_triangle()).expect("plain").warnings.is_empty());
 }
 
 #[test]
@@ -226,7 +276,7 @@ fn blender_live_static_sources_reject_accidental_skin_data() {
     assert!(!prepared.sources[0].rigged());
     assert!(prepared.sources[1].rigged());
 }
-fn prepare(value: &serde_json::Value) -> Result<protocol::Prepared, String> {
+pub(super) fn prepare(value: &serde_json::Value) -> Result<protocol::Prepared, String> {
     protocol::prepare(&serde_json::to_vec(value).expect("JSON"), &supported())
 }
 
@@ -764,7 +814,7 @@ fn blender_live_legacy_identity_survives_reordering_and_rejects_duplicate_explic
 }
 
 #[test]
-fn blender_live_row_buttons_import_their_own_source_only_when_available() {
+fn blender_live_cards_tabs_and_import_follow_the_selection() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
     theme.apply(&ctx, 1.0);
@@ -811,97 +861,105 @@ fn blender_live_row_buttons_import_their_own_source_only_when_available() {
             })
             .collect::<Vec<_>>()
     };
-    let readable = |out: &egui::FullOutput, label: &str| {
-        out.shapes.iter().any(|shape| {
-            if let egui::Shape::Text(text) = &shape.shape {
-                text.galley.text() == label && text.galley.job.sections.iter().all(|section| section.format.font_id.size >= 16.0)
-            } else {
-                false
-            }
-        })
-    };
     for _ in 0..6 {
         frame(&mut live, true, vec![]);
     }
     let out = frame(&mut live, true, vec![]);
     assert!(!live.installer_scan, "opening LiveMesh must wait for an explicit Blender search");
     assert!(!live.installer.scanned && !live.installer.busy);
-    assert_eq!(live.tab, Tab::Connection);
-    assert!(readable(&out, aurora_i18n::tr!("blender-live-connection")));
+    assert_eq!(live.tab, Tab::Objects);
     assert!(
         positions(&out, aurora_i18n::tr!("blender-live-detect")).is_empty(),
         "installation controls belong to Plugins"
     );
     assert!(positions(&out, aurora_i18n::tr!("common-remove")).is_empty());
-    let click = |pos, pressed| {
-        vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ]
-    };
+    for name in ["Test garment", "Other garment"] {
+        assert_eq!(positions(&out, name).len(), 1, "one card per object");
+    }
+    /// A click at `at`, then the frames a section takes to unfold.
+    fn press(
+        frame: &mut impl FnMut(&mut Live, bool, Vec<egui::Event>) -> egui::FullOutput,
+        live: &mut Live,
+        can_upload: bool,
+        at: egui::Pos2,
+    ) -> egui::FullOutput {
+        for pressed in [true, false] {
+            frame(
+                live,
+                can_upload,
+                vec![
+                    egui::Event::PointerMoved(at),
+                    egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        for _ in 0..12 {
+            frame(live, can_upload, vec![]);
+        }
+        frame(live, can_upload, vec![])
+    }
+    // Hide all, then Show all
+    let hide = positions(&out, aurora_i18n::tr!("blender-live-hide-all"))[0];
+    let out = press(&mut frame, &mut live, true, hide);
+    assert!(sources.iter().all(|id| live.state(*id) == SourceState::Hidden));
+    let show = positions(&out, aurora_i18n::tr!("blender-live-show-all"))[0];
+    let out = press(&mut frame, &mut live, true, show);
+    assert!(sources.iter().all(|id| live.state(*id) == SourceState::Visible));
+    // a card's name selects its object
+    let other = positions(&out, "Other garment")[0];
+    press(&mut frame, &mut live, true, other);
+    assert_eq!(live.selected, Some(sources[1]));
+    // Remove meshes sits in the folded Connection section
+    let connection = positions(&out, aurora_i18n::tr!("blender-live-connection"))[0];
+    let out = press(&mut frame, &mut live, true, connection);
+    assert!(!positions(&out, aurora_i18n::tr!("blender-live-port")).is_empty());
     let clear = positions(&out, aurora_i18n::tr!("blender-live-clear"))[0];
-    frame(&mut live, true, click(clear, true));
-    frame(&mut live, true, click(clear, false));
+    let out = press(&mut frame, &mut live, true, clear);
     assert!(sources.iter().all(|id| live.state(*id) == SourceState::Removed));
-    let out = frame(&mut live, true, vec![]);
-    assert!(positions(&out, aurora_i18n::tr!("blender-live-upload")).is_empty());
+    assert!(positions(&out, "Test garment").is_empty());
     assert!(positions(&out, aurora_i18n::tr!("blender-live-restore")).is_empty());
     for id in &sources {
         live.set_state(*id, SourceState::Visible);
     }
-    assert!(sources.iter().all(|id| live.state(*id) == SourceState::Visible));
+    let out = frame(&mut live, true, vec![]);
+    let other = positions(&out, "Other garment")[0];
+    press(&mut frame, &mut live, true, other);
+    assert_eq!(live.selected, Some(sources[1]));
+    // the Import tab freezes the selected object; a busy importer refuses
     let out = frame(&mut live, false, vec![]);
-    let imports = positions(&out, aurora_i18n::tr!("blender-live-upload"));
-    assert_eq!(imports.len(), 2, "each source has its own row action");
-    for import in imports {
-        frame(&mut live, false, click(import, true));
-        frame(&mut live, false, click(import, false));
-    }
+    let import_tab = positions(&out, aurora_i18n::tr!("blender-live-upload"))[0];
+    assert_eq!(
+        positions(&out, aurora_i18n::tr!("blender-live-upload")).len(),
+        1,
+        "Import is a tab, not a card button"
+    );
+    let out = press(&mut frame, &mut live, false, import_tab);
+    assert_eq!(live.tab, Tab::Import);
+    let mut imports = positions(&out, aurora_i18n::tr!("blender-live-upload"));
+    assert_eq!(imports.len(), 2, "the tab and its button");
+    // the button is under the tab strip
+    imports.sort_by(|a, b| a.y.total_cmp(&b.y));
+    press(&mut frame, &mut live, false, imports[1]);
     assert!(live.upload_requested.is_none(), "busy importer cannot receive another draft");
-    live.set_state(sources[0], SourceState::Hidden);
-    live.selected = Some(sources[1]);
-    let out = frame(&mut live, true, vec![]);
-    let imports = positions(&out, aurora_i18n::tr!("blender-live-upload"));
-    for (index, name) in ["Test garment", "Other garment"].into_iter().enumerate() {
-        let name_pos = positions(&out, name)[0];
-        assert!((name_pos.y - imports[index].y).abs() < 3.0, "import stays on its object's row");
-        frame(&mut live, true, click(imports[index], true));
-        frame(&mut live, true, click(imports[index], false));
-        assert_eq!(
-            live.upload_requested.take(),
-            Some(sources[index]),
-            "row import ignores the previous selection"
-        );
-    }
-    let out = frame(&mut live, true, vec![]);
+    // (egui hits what the previous frame drew: an enabled button first)
+    frame(&mut live, true, vec![]);
+    let out = press(&mut frame, &mut live, true, imports[1]);
+    assert_eq!(live.upload_requested.take(), Some(sources[1]), "Import takes the selected object");
     let plugins_tab = positions(&out, aurora_i18n::tr!("blender-live-plugins"))[0];
-    frame(&mut live, true, click(plugins_tab, true));
-    frame(&mut live, true, click(plugins_tab, false));
+    let out = press(&mut frame, &mut live, true, plugins_tab);
     assert_eq!(live.tab, Tab::Plugins);
     assert!(!live.installer_scan, "opening Plugins must not run discovery");
-    let out = frame(&mut live, true, vec![]);
     assert!(positions(&out, aurora_i18n::tr!("blender-live-port")).is_empty());
-    assert!(positions(&out, aurora_i18n::tr!("blender-live-upload")).is_empty());
-    assert!(readable(&out, aurora_i18n::tr!("blender-live-detect")));
     let manual = positions(&out, aurora_i18n::tr!("blender-live-manual-install"))[0];
-    frame(&mut live, true, click(manual, true));
-    frame(&mut live, true, click(manual, false));
-    for _ in 0..12 {
-        frame(&mut live, true, vec![]);
-    }
-    let out = frame(&mut live, true, vec![]);
-    assert!(
-        readable(&out, aurora_i18n::tr!("blender-live-package-extension")),
-        "manual ZIP labels use readable text too"
-    );
+    let out = press(&mut frame, &mut live, true, manual);
+    assert!(!positions(&out, aurora_i18n::tr!("blender-live-package-extension")).is_empty());
     let search = positions(&out, aurora_i18n::tr!("blender-live-detect"))[0];
-    frame(&mut live, true, click(search, true));
-    frame(&mut live, true, click(search, false));
+    press(&mut frame, &mut live, true, search);
     assert!(
         std::mem::take(&mut live.installer_scan),
         "the search button requests Blender discovery"
@@ -914,8 +972,7 @@ fn blender_live_row_buttons_import_their_own_source_only_when_available() {
     assert_eq!(live.tab, Tab::Plugins, "reopening retains the active tab");
     let out = frame(&mut live, true, vec![]);
     let choose = positions(&out, aurora_i18n::tr!("blender-live-choose-blender"))[0];
-    frame(&mut live, true, click(choose, true));
-    frame(&mut live, true, click(choose, false));
+    press(&mut frame, &mut live, true, choose);
     assert!(live.installer_choose, "the picker requests installation in the selected Blender");
     assert!(!live.installer_scan, "choosing one Blender must not request global discovery");
     live.installer.demo("installer-done");
@@ -932,12 +989,11 @@ fn blender_live_row_buttons_import_their_own_source_only_when_available() {
         success.y < first_installation.y,
         "completion must stay above a long installation list"
     );
-    let connection_tab = positions(&out, aurora_i18n::tr!("blender-live-connection"))[0];
-    frame(&mut live, true, click(connection_tab, true));
-    frame(&mut live, true, click(connection_tab, false));
-    assert_eq!(live.tab, Tab::Connection);
+    let objects_tab = positions(&out, aurora_i18n::tr!("blender-live-objects"))[0];
+    press(&mut frame, &mut live, true, objects_tab);
+    assert_eq!(live.tab, Tab::Objects);
+    live.set_state(sources[0], SourceState::Hidden);
     assert_eq!(live.selected, Some(sources[1]));
-    assert_eq!(live.state(sources[0]), SourceState::Hidden);
     assert_eq!(live.state(sources[1]), SourceState::Visible);
     assert!(live.installer.success.is_some(), "changing tabs preserves installer results");
     assert!(
@@ -974,6 +1030,7 @@ fn blender_live_static_controls_request_derez_rez_and_hud_attachment_for_the_sel
     );
     live.instances.insert((source, 0), Uuid::new_v4());
     live.attach_choices = vec![(6, false, "Right hand".into()), (31, true, "HUD center".into())];
+    live.tab = Tab::Place;
     let mut time = 0.0;
     let mut frame = |live: &mut Live, events| {
         time += 1.0 / 60.0;
@@ -1039,6 +1096,142 @@ fn blender_live_static_controls_request_derez_rez_and_hud_attachment_for_the_sel
     frame(&mut live, click(at, true));
     frame(&mut live, click(at, false));
     assert!(matches!(live.object_action.take(), Some((id, objects::Action::Attach(31))) if id == source));
+}
+
+#[test]
+fn blender_live_cards_show_blenders_warnings_and_list_what_it_could_not_send() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
+    let palette = theme.palette();
+    let lib = crate::scene::avatar::AvatarLibrary::load();
+    let mut live = Live {
+        open: true,
+        ..Default::default()
+    };
+    live.receive(super::demo::warnings_fixture(&lib.rig).expect("fixture"));
+    let texts = |live: &mut Live| -> Vec<String> {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1200.0))),
+                ..Default::default()
+            },
+            |ui| {
+                super::ui::show(live, ui.ctx(), &palette, true);
+            },
+        );
+        out.textures_delta.clear();
+        out.shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    };
+    for _ in 0..3 {
+        texts(&mut live);
+    }
+    let shown = texts(&mut live);
+    let textures = aurora_i18n::tr!("blender-live-warning-textures");
+    let not_sent = aurora_i18n::tr!("blender-live-warning-not-sent");
+    assert!(
+        shown
+            .iter()
+            .any(|t| t.starts_with(textures) && t.ends_with("Bake procedural shaders to UV image textures for live materials")),
+        "the textured object's card says why: {shown:?}"
+    );
+    for name in ["Sculpted rock", "Hair cards"] {
+        assert!(shown.iter().any(|t| t == name), "{name} has its own card");
+    }
+    assert_eq!(shown.iter().filter(|t| t.starts_with(not_sent)).count(), 2);
+    // the next revision without warnings clears them
+    live.receive(prepare(&static_triangle()).expect("plain"));
+    let shown = texts(&mut live);
+    assert!(
+        !shown
+            .iter()
+            .any(|t| t.starts_with(textures) || t.starts_with(not_sent) || t == "Hair cards")
+    );
+}
+
+#[test]
+fn blender_live_undo_toast_shows_over_the_world_while_the_window_is_closed() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
+    let palette = theme.palette();
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let mut live = Live::default();
+    let snapshot = prepare(&static_triangle()).expect("source");
+    live.receive(snapshot.clone());
+    live.prepare_placements(&snapshot, &world);
+    let source = live.selected.expect("selected");
+    live.place_object(source, objects::Action::Rez, &world);
+    // the world's menu derezzes it while the window is closed
+    live.place_object(source, objects::Action::Derez, &world);
+    assert!(live.undo.is_some());
+    let mut time = 0.0;
+    let mut frame = |live: &mut Live, events| {
+        time += 1.0 / 60.0;
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1000.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                super::ui::show(live, ui.ctx(), &palette, true);
+            },
+        );
+        out.textures_delta.clear();
+        out
+    };
+    let undo = aurora_i18n::tr!("blender-live-undo");
+    let positions = |out: &egui::FullOutput| -> Vec<egui::Pos2> {
+        out.shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == undo => Some(text.pos + text.galley.size() * 0.5),
+                _ => None,
+            })
+            .collect()
+    };
+    for _ in 0..4 {
+        frame(&mut live, vec![]);
+    }
+    let out = frame(&mut live, vec![]);
+    let shown = positions(&out);
+    assert_eq!(shown.len(), 1, "one toast, over the world");
+    assert!(shown[0].y > 800.0, "above the toolbar, at the bottom of the window");
+    let at = shown[0];
+    let click = |pressed| {
+        vec![
+            egui::Event::PointerMoved(at),
+            egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+    frame(&mut live, click(true));
+    frame(&mut live, click(false));
+    assert!(live.undo_requested, "its Undo works like the window's");
+    live.undo_requested = false;
+    // open, the toast is the window's only
+    live.open = true;
+    for _ in 0..4 {
+        frame(&mut live, vec![]);
+    }
+    let out = frame(&mut live, vec![]);
+    let shown = positions(&out);
+    assert_eq!(shown.len(), 1, "no second toast over the world");
+    assert!(shown[0].y < 800.0, "in the window");
 }
 
 #[test]
@@ -1245,4 +1438,91 @@ fn blender_lods_transport_negotiates_ignores_stale_results_and_keeps_live_revisi
     assert_eq!(exchange(&serde_json::to_vec(&next).expect("snapshot"))["revision"], 2);
     assert_eq!(shared.status.lock().received, 2);
     drop(owner);
+}
+
+/// A card's time moves only for the object a revision changed.
+#[test]
+fn blender_live_change_times_follow_each_source() {
+    let mut value = static_triangle();
+    let mut other = value["meshes"][0].clone();
+    other["name"] = "Other part".into();
+    value["meshes"].as_array_mut().expect("meshes").push(other);
+    let mut live = Live::default();
+    live.receive(prepare(&value).expect("two sources"));
+    let ids: Vec<_> = live.snapshot.as_ref().expect("snapshot").sources.iter().map(|s| s.id).collect();
+    let first: Vec<_> = ids.iter().map(|id| live.changed[id]).collect();
+    assert!(live.received_at.is_some());
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    // the same geometry again: no change
+    value["revision"] = 2.into();
+    live.receive(prepare(&value).expect("same"));
+    assert_eq!(ids.iter().map(|id| live.changed[id]).collect::<Vec<_>>(), first);
+    // the second object moves a vertex
+    value["revision"] = 3.into();
+    value["meshes"][1]["faces"][0]["vertices"][0]["position"][0] = 0.25.into();
+    live.receive(prepare(&value).expect("edited"));
+    assert_eq!(live.changed[&ids[0]], first[0], "the untouched object keeps its time");
+    assert_ne!(live.changed[&ids[1]].0, first[1].0, "the edited object has a new digest");
+    assert!(live.changed[&ids[1]].1 > first[1].1, "and a new time");
+    live.stop();
+    assert!(live.changed.is_empty() && live.received_at.is_none(), "Stop forgets the times");
+}
+
+#[test]
+fn blender_live_placement_changes_are_undone_with_their_prims_and_states() {
+    use glam::Vec3;
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let root = Uuid::from_u128(1);
+    let child = Uuid::from_u128(2);
+    let snapshot = prepare(&linked_objects()).expect("snapshot");
+    let mut live = Live::default();
+    live.receive(snapshot.clone());
+    live.prepare_placements(&snapshot, &world);
+    live.place_object(root, objects::Action::Rez, &world);
+    assert!(live.undo.is_none(), "a Rez has no toast");
+    live.states.insert(child, SourceState::Hidden);
+    let (root_before, child_before) = (live.placements[&root], live.placements[&child]);
+    // Derez of a prim moves its whole linkset; Undo puts both back
+    live.place_object(child, objects::Action::Derez, &world);
+    let undo = live.undo.as_ref().expect("toast");
+    assert_eq!(undo.source, root);
+    assert!(matches!(undo.action, objects::Action::Derez));
+    assert_eq!(live.placements[&child].location, objects::Location::Detached);
+    live.revision = Some(4);
+    live.undo_placement();
+    assert!(live.undo.is_none());
+    assert_eq!(live.revision, None, "the preview is rebuilt");
+    assert!(live.placement_dirty.contains(&root));
+    for (id, before) in [(root, root_before), (child, child_before)] {
+        let after = live.placements[&id];
+        assert_eq!(after.location, objects::Location::World);
+        assert!(after.position.abs_diff_eq(before.position, 1e-6));
+    }
+    assert_eq!(live.state(child), SourceState::Hidden, "a hidden prim stays hidden");
+    // an Attach is undone to its place in the world
+    live.place_object(root, objects::Action::Attach(31), &world);
+    assert!(matches!(live.undo.as_ref().map(|u| u.action), Some(objects::Action::Attach(31))));
+    assert_eq!(live.placements[&root].position, Vec3::ZERO);
+    live.undo_placement();
+    assert_eq!(live.placements[&root].location, objects::Location::World);
+    assert!(live.placements[&root].position.abs_diff_eq(root_before.position, 1e-6));
+    // a move of the fields is not a placement change
+    let p = live.placements[&root];
+    live.place_object(
+        root,
+        objects::Action::Transform {
+            position: p.position + Vec3::X,
+            rotation: p.rotation,
+            scale: p.scale,
+        },
+        &world,
+    );
+    assert!(live.undo.is_none());
+    // the toast closes on its own, and Stop forgets it
+    live.place_object(root, objects::Action::Derez, &world);
+    let at = live.undo.as_ref().expect("toast").at;
+    assert!(!live.undo.as_ref().expect("toast").expired(at));
+    assert!(live.undo.as_ref().expect("toast").expired(at + objects::Undo::SHOWN));
+    live.stop();
+    assert!(live.undo.is_none());
 }

@@ -419,7 +419,7 @@ pub(super) fn demo_open_start_menu(ui: &egui::Ui, salt: &str, favorites: &StartF
     static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !favorites.list.is_empty()
         && crate::login_favorites::demo() == Some(crate::login_favorites::Demo::Open)
-        && ui.ctx().cumulative_frame_nr() >= 30
+        && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) >= 30
         && !OPENED.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
         egui::Popup::open_id(ui.ctx(), ui.make_persistent_id(egui::IdSalt::new(salt)).with("popup"));
@@ -1490,7 +1490,7 @@ mod tests {
         let p = crate::theme::Theme::default().palette();
         let icons = Icons::default();
         let info = LoginInfo::preview_release("0.3.0");
-        for size in [Vec2::new(1000.0, 700.0), Vec2::new(1600.0, 900.0)] {
+        for size in [Vec2::new(1000.0, 700.0), Vec2::new(1280.0, 600.0), Vec2::new(1600.0, 900.0)] {
             let ctx = egui::Context::default();
             let mut settings = Settings::default();
             let mut form = LoginForm::default();

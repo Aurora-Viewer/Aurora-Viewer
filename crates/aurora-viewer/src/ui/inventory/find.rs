@@ -82,7 +82,7 @@ fn scroll_id(editor: Id) -> Id {
 
 /// The open bar's matches in the editor `editor`, if any.
 pub(super) fn highlights(ctx: &egui::Context, editor: Id) -> Option<Highlights> {
-    let now = ctx.cumulative_frame_nr();
+    let now = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<Highlights>(highlights_id(editor)))
         .filter(|h| h.frame + 1 >= now)
 }
@@ -268,7 +268,7 @@ impl Find {
         let highlights = Highlights {
             current: self.current(ctx, editor, &ranges),
             ranges,
-            frame: ctx.cumulative_frame_nr(),
+            frame: ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT),
         };
         ctx.data_mut(|d| d.insert_temp(highlights_id(editor), highlights));
     }

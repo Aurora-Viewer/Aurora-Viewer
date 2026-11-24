@@ -84,9 +84,16 @@ pub(super) fn double_clicked(response: &egui::Response) -> bool {
 /// (lloutfitslist.cpp, llpanelwearing.cpp): add beside the worn items,
 /// remove a worn item, and only replace body parts. Act on the clicked row
 /// alone, independently of the inventory's Add/Replace preferences.
-pub(super) fn double_click(response: &egui::Response, world: &World, it: &InvItem, worn: bool, actions: &mut Vec<Action>) {
+pub(super) fn double_click(
+    response: &egui::Response,
+    world: &World,
+    it: &InvItem,
+    worn: bool,
+    outfit: Option<Uuid>,
+    actions: &mut Vec<Action>,
+) {
     if double_clicked(response)
-        && let Some(action) = wear_toggle(world, it, worn)
+        && let Some(action) = wear_toggle(world, it, worn, outfit)
     {
         actions.push(action);
     }
@@ -95,7 +102,7 @@ pub(super) fn double_click(response: &egui::Response, world: &World, it: &InvIte
 /// What a double-click on `it` does (`double_click`), when RLVa allows it:
 /// None for what cannot be worn, a worn body part, or a lock. Also the
 /// Favorite Wearables rows' Wear / Take off button.
-pub(super) fn wear_toggle(world: &World, it: &InvItem, worn: bool) -> Option<Action> {
+pub(super) fn wear_toggle(world: &World, it: &InvItem, worn: bool, outfit: Option<Uuid>) -> Option<Action> {
     if !matches!(it.asset_type, 5 | 6 | 13) {
         return None;
     }
@@ -104,13 +111,32 @@ pub(super) fn wear_toggle(world: &World, it: &InvItem, worn: bool) -> Option<Act
         (it.asset_type != 13 && locks.can_remove(it.id)).then_some(Action::Remove(it.id))
     } else {
         let replace = it.asset_type == 13;
-        let allowed = locks.wear(&world.inventory, it.id, 0);
+        let entry = outfit.map_or(it.id, |folder| outfit_wear_entry(&world.inventory, folder, it.id));
+        let allowed = locks.wear(&world.inventory, entry, 0);
         (if replace { allowed.replace } else { allowed.add }).then_some(Action::WearItem {
-            item: it.id,
+            item: entry,
             replace,
             point: 0,
         })
     }
+}
+
+/// Outfit lists display originals. Find the link in the clicked outfit,
+/// using the same last occurrence as folder_links when it holds duplicates.
+pub(super) fn outfit_wear_entry(inv: &crate::world::inventory::Inventory, folder: Uuid, target: Uuid) -> Uuid {
+    if !inv.items.get(&target).is_some_and(|it| it.asset_type == 5) {
+        return target;
+    }
+    inv.folders
+        .get(&folder)
+        .and_then(|f| {
+            f.items
+                .iter()
+                .rev()
+                .filter_map(|id| inv.items.get(id))
+                .find(|it| it.parent == folder && it.asset_type == 24 && it.asset_id == target)
+        })
+        .map_or(target, |it| it.id)
 }
 
 /// The list a row's menu is opened in: an outfit of My Outfits, which
@@ -156,7 +182,11 @@ pub(super) fn context_menu(
         // the others (World::rlva_prepare_outfit).
         let locks = world.rlva_wear_locks();
         if !wearable.is_empty() {
-            let wear = |id: &Uuid| locks.wear(&world.inventory, *id, 0);
+            let entry = |id| match list {
+                List::Outfit(folder) => outfit_wear_entry(&world.inventory, folder, id),
+                List::Favorites(_) => id,
+            };
+            let wear = |id: &Uuid| locks.wear(&world.inventory, entry(*id), 0);
             if menu::item_if(
                 ui,
                 p,
@@ -164,7 +194,7 @@ pub(super) fn context_menu(
                 aurora_i18n::tr!("common-wear"),
                 wearable.iter().any(|id| wear(id).replace),
             ) {
-                actions.push(wear_action(wearable.clone(), true, 0));
+                actions.push(wear_action(wearable.iter().copied().map(entry).collect(), true, 0));
             }
             let addable: Vec<Uuid> = wearable
                 .iter()
@@ -172,7 +202,7 @@ pub(super) fn context_menu(
                 .copied()
                 .collect();
             if !addable.is_empty() && menu::item_if(ui, p, "plus", aurora_i18n::tr!("common-add"), addable.iter().any(|id| wear(id).add)) {
-                actions.push(wear_action(addable, false, 0));
+                actions.push(wear_action(addable.into_iter().map(entry).collect(), false, 0));
             }
             // the attach menus when the selection is only unworn objects
             if unworn.iter().all(|it| it.asset_type == 6) {

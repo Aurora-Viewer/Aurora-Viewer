@@ -281,7 +281,7 @@ fn unified_import_queue_clicks_switch_panels_without_changing_mesh_options_or_wi
     let output = f.settle();
     assert_eq!(f.imports.active, Some(texture));
     assert_eq!(f.imports.tab, Tab::Batch);
-    text_position(&output, aurora_i18n::tr!("import-max-size"));
+    text_position(&output, aurora_i18n::tr!("import-image-size-limit"));
     assert!(
         !output
             .shapes

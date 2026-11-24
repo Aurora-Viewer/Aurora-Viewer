@@ -11,7 +11,7 @@ pub mod favorites;
 mod graphics;
 pub mod islands;
 mod location_suggest;
-mod place;
+pub(crate) mod place;
 pub mod side;
 pub(crate) mod sizing;
 mod tp_list;
@@ -21,6 +21,7 @@ use super::icons::Icons;
 use super::menu;
 use super::skin::Layout;
 use crate::theme::Palette;
+use crate::world::tphistory::HistoryItem;
 use egui::{Color32, RichText, Vec2};
 
 /// Advanced › Admin's entries (menu_viewer.xml, the Admin menu).
@@ -86,6 +87,12 @@ pub enum BarAction {
     ToggleFlyOverride,
     /// The toolbar's Snapshot to disk (File.TakeSnapshotToDisk).
     PhotoToDisk,
+    /// The menu's Photo, as its Ctrl+Shift+S (Take Snapshot, `Floater.Show`
+    /// snapshot): opens the photo window, or brings it forward.
+    PhotoWindow,
+    /// The toolbar's Photo button (the snapshot command, `Floater.Toggle`):
+    /// the photo window of the chosen style opened or closed.
+    PhotoToggle,
     /// The toolbar's Photo roll: the reel's quick view on its newest photo.
     PhotoRoll,
     /// The toolbar's 360° snapshot (Floater.ToggleOrBringToFront
@@ -149,6 +156,8 @@ pub enum BarAction {
         handle: aurora_net::RegionHandle,
         position: glam::Vec3,
     },
+    /// The exact visit selected in the place menu, including its grid.
+    TeleportSavedPlace(HistoryItem),
     /// Communicate > Online status changed.
     SetStatus(crate::world::status::StatusModes),
     /// Open the chat preferences (automatic responses).
@@ -229,6 +238,9 @@ pub enum BarAction {
     /// Show User Interface (Alt+Shift+U), and hiding it once confirmed.
     ToggleInterface,
     HideInterface,
+    /// Advanced › Rendering features › UI (Ctrl+Alt+F1): the whole
+    /// interface drawn or not (#4092).
+    ToggleUiFeature,
     /// Immersive mode (#859): the interface hidden but the chat.
     ToggleImmersive,
     /// The HUDs shown or hidden in immersive mode (#1190).
@@ -252,14 +264,6 @@ pub struct IslandsLook {
     pub stretch: bool,
     /// The parcel rights are named when there is room.
     pub rights_text: bool,
-}
-
-/// A place of the teleport history, in the place menu.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RecentPlace {
-    pub name: String,
-    pub region: String,
-    pub slurl: String,
 }
 
 pub struct StatusInfo<'a> {
@@ -378,7 +382,7 @@ pub struct StatusInfo<'a> {
     pub own_pic: Option<&'a egui::TextureHandle>,
     /// The last places of the teleport history, newest first, without the
     /// one we are in (the place menu).
-    pub recent: Vec<RecentPlace>,
+    pub recent: Vec<HistoryItem>,
     /// The favourites and where they live.
     pub favorites: &'a favorites::View,
     /// What the system island shows, the traffic indicator, the
@@ -414,6 +418,8 @@ pub struct StatusInfo<'a> {
     /// shortcut, in the order of `RENDER_TYPE_ACTIONS`.
     pub hidden_types: crate::scene::render_types::Hidden,
     pub render_type_keys: [String; 10],
+    /// The keys of Advanced › Rendering features › UI.
+    pub ui_feature_keys: String,
     /// The conversations' thumbnails at the top right (#1134): how many,
     /// 0 for none (`thumbnails::reserve_top`).
     pub conversation_thumbnails: usize,
@@ -814,7 +820,9 @@ fn status_dot(ui: &mut egui::Ui, p: &Palette, status: crate::world::status::Stat
     // demo captures: AURORA_DEMO_STATUSMENU=1 opens it (=invisible: with
     // that status, set by the viewer)
     static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300 {
+    if *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_STATUSMENU").is_some())
+        && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300
+    {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
     }
     menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
@@ -1499,18 +1507,36 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::ToggleNameTags;
         }
         menu::separator(ui, p);
-        // Firestorm's View › Camera Controls and Movement Controls
+        // The Legacy Viewer's View › Camera Controls and Movement Controls: checked
+        // while shown, a click toggles them as the toolbar buttons do
+        // (View.ToggleCameraFloater, Floater.Toggle "moveview"), compact
+        // windows included (#3904); here in the World menu
         let camera = crate::keybinds::chord_label("KeyC", true, false, true);
-        if menu::item_keys(ui, p, "video-filled", aurora_i18n::tr!("controls-camera-title"), &camera) {
+        if menu::check_keys(
+            ui,
+            p,
+            "video-filled",
+            aurora_i18n::tr!("controls-camera-title"),
+            panels.camera_controls,
+            true,
+            &camera,
+        ) {
             *action = BarAction::Controls {
                 movement: false,
-                toggle: false,
+                toggle: true,
             };
         }
-        if menu::item(ui, p, "walk", aurora_i18n::tr!("controls-movement-title")) {
+        if menu::check(
+            ui,
+            p,
+            "walk",
+            aurora_i18n::tr!("controls-movement-title"),
+            panels.movement_controls,
+            true,
+        ) {
             *action = BarAction::Controls {
                 movement: true,
-                toggle: false,
+                toggle: true,
             };
         }
         if menu::item(ui, p, "eye-filled", aurora_i18n::tr!("common-mouselook-m")) {
@@ -1521,7 +1547,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
         let photo = crate::keybinds::chord_label("KeyS", true, false, true);
         if menu::item_keys(ui, p, "photo-filled", aurora_i18n::tr!("photo-title"), &photo) {
-            super::widgets::toggle_floater(ui.ctx(), super::snapshot::WINDOW, &mut panels.snapshot);
+            *action = BarAction::PhotoWindow;
         }
         // Phototools (menu_viewer.xml `phototools_item_call`, alt|P)
         let phototools = crate::keybinds::chord_label("KeyP", false, true, false);
@@ -1588,6 +1614,19 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             // Develop › Rendering Types (LLAdvancedToggleRenderType)
             menu::submenu(ui, p, RENDER_TYPE_ICONS[0], aurora_i18n::tr!("render-types-menu"), true, |ui| {
                 render_types_menu(ui, p, st, action);
+            });
+            // Advanced › Rendering Features › UI (menu_viewer.xml, ToggleUI:
+            // Advanced.CheckFeature / ToggleFeature "ui"), ticked while the
+            // interface is drawn, which is whenever this menu shows; its
+            // shortcut brings the interface back. The Legacy Viewer's other
+            // features (Selected, Highlighted, Dynamic Textures, Foot
+            // Shadows, Fog, Test FRInfo, Flexible Objects) are debugging
+            // switches of its own pipeline, not ported.
+            menu::submenu(ui, p, "stack-filled", aurora_i18n::tr!("render-features-menu"), true, |ui| {
+                let label = aurora_i18n::tr!("render-features-ui");
+                if menu::check_keys(ui, p, "app-window-filled", label, true, true, &st.ui_feature_keys) {
+                    *action = BarAction::ToggleUiFeature;
+                }
             });
             // Develop › Consoles › Region Debug Console, for those the
             // region gives the console to
@@ -2292,7 +2331,7 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &Stat
             panels.nav_edit_new = true;
         }
         // AURORA_DEMO_BARS=legacy,locations: a place being typed
-        if demo::get().locations && ui.ctx().cumulative_frame_nr() == location_suggest::DEMO_FRAME {
+        if demo::get().locations && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == location_suggest::DEMO_FRAME {
             panels.nav_edit = Some(location_suggest::DEMO_TYPED.to_owned());
             panels.nav_edit_new = true;
         }
@@ -2755,7 +2794,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         // the Legacy Viewer's Statistics (Floater.Toggle stats) opens
         // Aurora's Performance window
         "performance" | "statistics" => toggle("perf", &mut panels.perf),
-        "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
+        // Floater.Toggle snapshot: the app knows the window's style
+        "snapshot" => return BarAction::PhotoToggle,
         // Floater.ToggleOrBringToFront 360capture
         "360capture" => return BarAction::Photo360,
         // File.TakeSnapshotToDisk: a photo saved with the last settings,
@@ -3375,7 +3415,8 @@ fn mic_button(
 
     // demo captures: AURORA_DEMO_MICMENU=1 opens the panel
     static DEMO_OPEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let demo = *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_MICMENU").is_some()) && ui.ctx().cumulative_frame_nr() == 300;
+    let demo = *DEMO_OPEN.get_or_init(|| std::env::var_os("AURORA_DEMO_MICMENU").is_some())
+        && ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT) == 300;
     let toggle = match &arrow {
         Some(arrow) => arrow.clicked(),
         None => !toolbar_menu && resp.secondary_clicked(),
@@ -4686,6 +4727,15 @@ mod tests {
         assert!(!command_active("ao_mini", &panels, false, false, false));
         panels.ao_mini = true;
         assert!(command_active("ao_mini", &panels, false, false, false));
+    }
+
+    /// The toolbar's Photo button is left to the app, which toggles the
+    /// window of the chosen style (#4625).
+    #[test]
+    fn snapshot_button_asks_the_app_to_toggle_the_photo_window() {
+        let ctx = egui::Context::default();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        assert!(matches!(run_command(&ctx, "snapshot", &mut panels), BarAction::PhotoToggle));
     }
 
     #[test]
