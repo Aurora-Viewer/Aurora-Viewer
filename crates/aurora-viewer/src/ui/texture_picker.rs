@@ -129,12 +129,19 @@ pub struct TexturePicker {
     /// Rights an item dropped on the open picker needs (LLTextureCtrl's
     /// DnD filter), on top of `required_permissions`.
     pub(crate) drop_permissions: u32,
-    /// Rights an item needs for a live preview; 0: copy, as for any picker
-    /// (FSPanelFace::onTextureSelectionChanged / onPbrSelectionChanged).
-    pub(crate) live_permissions: u32,
     /// The objects the choice goes on are the agent's and not for sale: a
     /// no-transfer item may be confirmed only then (setCanApply).
     pub(crate) owned_target: bool,
+    /// The caller warns when a click cannot preview the item chosen (the
+    /// build picker, its `warn_live_preview` setting).
+    pub(crate) warn_live_preview: bool,
+    /// That warning, from this input time on: once a double click could no
+    /// longer follow the click (a double click confirms instead).
+    live_preview_warning: Option<f64>,
+    live_preview_dont_show: bool,
+    /// The warning's "Do not show again" was ticked: the caller turns its
+    /// setting off.
+    pub(crate) stop_warning_live_preview: bool,
     uuid_text: String,
     uuid_from_user: bool,
     /// Selection, inventory permissions and local membership used by the UUID field.
@@ -200,22 +207,23 @@ impl TexturePicker {
         self.selected_item.filter(|_| self.selected == Some(asset))
     }
 
-    /// Whether choosing the item `id` previews it live: `live_permissions`
-    /// when a caller sets them (a Library item always), else `can_preview`.
+    /// Whether choosing the item `id` applies it at once (a live preview):
+    /// a copyable item OK could confirm here. LLFloaterTexturePicker::
+    /// onSelectionChange calls the panel's selection callback
+    /// (FSPanelFace::onTextureSelectionChanged / onPbrSelectionChanged, which
+    /// turn the preview off for an item that is not copy and transfer, or a
+    /// material that is not full permission), then `setCanApply(true, true)`,
+    /// which turns it back on; commitIfImmediateSet then only refuses a
+    /// no-copy item (mNoCopyTextureSelected). Stricter than the Legacy
+    /// Viewer, as for OK: no preview of a no-transfer item on an object the
+    /// agent does not own or sells (`confirm_blocked`), since closing keeps
+    /// a preview.
     fn previewable(&self, inv: &Inventory, agent: Uuid, id: Uuid) -> bool {
-        Self::previewable_with(self.live_permissions, inv, agent, id)
+        Self::previewable_with(self.owned_target, inv, agent, id)
     }
 
-    fn previewable_with(live_permissions: u32, inv: &Inventory, agent: Uuid, id: Uuid) -> bool {
-        if live_permissions == 0 {
-            return can_preview(inv, id);
-        }
-        let Some(original) = actions::original(inv, id) else { return false };
-        actions::library(inv, original)
-            || inv
-                .items
-                .get(&original)
-                .is_some_and(|item| !lacks_rights(item, agent, live_permissions))
+    fn previewable_with(owned_target: bool, inv: &Inventory, agent: Uuid, id: Uuid) -> bool {
+        can_preview(inv, id) && !Self::confirm_blocked_with(owned_target, Some(id), inv, agent)
     }
 
     /// OK is refused for a no-transfer item unless `owned_target`
@@ -288,8 +296,10 @@ impl TexturePicker {
         self.allow_local = false;
         self.required_permissions = 0;
         self.drop_permissions = 0;
-        self.live_permissions = 0;
         self.owned_target = true;
+        self.warn_live_preview = false;
+        self.live_preview_warning = None;
+        self.live_preview_dont_show = false;
         self.uuid_text = current.to_string();
         self.uuid_from_user = false;
         self.uuid_lookup = None;
@@ -796,7 +806,6 @@ impl TexturePicker {
                     .layout(egui::Layout::top_down(egui::Align::Min)),
             );
             list.spacing_mut().item_spacing.y = 0.0;
-            let live_permissions = self.live_permissions;
             let owned_target = self.owned_target;
             let rows = &self.tree.state.rows;
             let filter = self.filter.trim().to_lowercase();
@@ -919,8 +928,15 @@ impl TexturePicker {
                             ui.painter().add(egui::Shape::convex_polygon(points, p.muted, egui::Stroke::NONE));
                         }
                         x += 12.0;
+                        // a system folder (the Trash, My Suitcase) keeps its
+                        // inventory icon
                         let icon = if folder {
-                            if row_open { "folder-open-filled" } else { "folder-filled" }
+                            let kind = if local {
+                                -1
+                            } else {
+                                inv.folders.get(&id).map_or(-1, |f| f.info.type_default)
+                            };
+                            super::inventory::tree::folder_icon(kind, row_open)
                         } else if self.materials {
                             "droplet-filled"
                         } else {
@@ -973,8 +989,20 @@ impl TexturePicker {
                                 self.uuid_from_user = false;
                                 self.uuid_lookup = None;
                                 self.uuid_error = false;
-                                self.preview = (local || Self::previewable_with(live_permissions, &world.inventory, world.agent_id, id))
-                                    .then_some(asset);
+                                let previewable = local || Self::previewable_with(owned_target, &world.inventory, world.agent_id, id);
+                                self.preview = previewable.then_some(asset);
+                                // FSPanelFace::onTextureSelectionChanged /
+                                // onPbrSelectionChanged: LivePreviewUnavailable(PBR)
+                                // when TextureLivePreview is on. The Legacy
+                                // Viewer also shows it for a no-transfer or
+                                // no-modify item it then previews
+                                // (setCanApply(true, true) follows): here only
+                                // for a no-copy item, which a click never
+                                // applies (a no-transfer one refused on this
+                                // object has the footer's owner-only line).
+                                let no_copy = !local && !can_preview(&world.inventory, id);
+                                self.live_preview_warning = (no_copy && self.warn_live_preview)
+                                    .then(|| ui.input(|i| i.time) + ui.ctx().options(|o| o.input_options.max_double_click_delay));
                             }
                         }
                         if !folder
@@ -1112,11 +1140,7 @@ impl TexturePicker {
                 .selected_item
                 .is_some_and(|id| !self.previewable(&world.inventory, world.agent_id, id))
             {
-                if self.live_permissions == 0 {
-                    aurora_i18n::tr!("ui-texture-picker-confirm-no-copy")
-                } else {
-                    aurora_i18n::tr!("ui-texture-picker-no-live-preview")
-                }
+                aurora_i18n::tr!("ui-texture-picker-confirm-no-copy")
             } else if self.source == 2 && library.is_none() {
                 aurora_i18n::tr!("picker-empty-library")
             } else if self.tree.loading {
@@ -1170,8 +1194,47 @@ impl TexturePicker {
         }
         if !self.open {
             self.stop_pipette(ctx);
+            self.live_preview_warning = None;
         }
+        self.live_preview_alert(ctx, p);
         chosen
+    }
+
+    /// LivePreviewUnavailable / LivePreviewUnavailablePBR (notifications.xml,
+    /// "okignore"): the chosen item is no-copy, only OK applies it.
+    fn live_preview_alert(&mut self, ctx: &egui::Context, p: &Palette) {
+        let Some(at) = self.live_preview_warning else {
+            return;
+        };
+        let now = ctx.input(|i| i.time);
+        if now < at {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(at - now));
+            return;
+        }
+        let mut done = false;
+        let modal = widgets::Modal::new(egui::Id::unique("texture_picker_live_preview")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            let text = if self.materials {
+                aurora_i18n::tr!("ui-texture-picker-live-preview-material")
+            } else {
+                aurora_i18n::tr!("ui-texture-picker-live-preview-texture")
+            };
+            ui.add(egui::Label::new(RichText::new(text).size(13.0).color(p.ink)).wrap());
+            ui.add_space(8.0);
+            widgets::checkbox(
+                ui,
+                p,
+                &mut self.live_preview_dont_show,
+                aurora_i18n::tr!("ui-context-do-not-show-again"),
+            );
+            ui.add_space(8.0);
+            let size = Vec2::new(0.0, 26.0);
+            done = widgets::action_button(ui, p, "check", aurora_i18n::tr!("common-ok"), widgets::ActionKind::Primary, size).clicked();
+        });
+        if done || modal.should_close() {
+            self.live_preview_warning = None;
+            self.stop_warning_live_preview |= std::mem::take(&mut self.live_preview_dont_show);
+        }
     }
 }
 
@@ -1227,40 +1290,82 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_build_picker_previews_copy_and_transfer_items_and_keeps_ok_for_the_owner() {
+    fn a_click_applies_what_ok_could_confirm_and_never_a_no_copy_item() {
         let mut inv = Inventory::default();
         let agent = Uuid::from_u128(0xd0);
-        let both = actions::COPY | actions::TRANSFER;
-        for (n, owner_mask) in [(1u128, both), (2, actions::COPY | actions::MODIFY), (3, actions::FULL)] {
+        inv.owner = agent;
+        let other = Uuid::from_u128(0xd1);
+        let library_root = Uuid::from_u128(0x11b);
+        inv.folders.insert(
+            library_root,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: library_root,
+                    ..Default::default()
+                },
+                state: crate::world::inventory::FetchState::Fetched,
+                children: Vec::new(),
+                items: Vec::new(),
+                library: true,
+            },
+        );
+        let (copy, modify, transfer) = (actions::COPY, actions::MODIFY, actions::TRANSFER);
+        // (item, owner, group-owned, owner mask, everyone mask, in the Library)
+        let items = [
+            (1u128, agent, false, actions::FULL, 0, false), // full permissions
+            (2, agent, false, copy | transfer, 0, false),   // no modify
+            (3, agent, false, copy | modify, 0, false),     // no transfer
+            (4, agent, false, modify | transfer, 0, false), // no copy
+            (5, other, true, actions::FULL, 0, false),      // group-owned
+            (6, other, false, actions::FULL, copy, false),  // someone else's: no transfer for us
+            (7, other, false, 0, 0, true),                  // a Library item
+        ];
+        for (n, owner, group_owned, owner_mask, everyone_mask, library) in items {
             let id = Uuid::from_u128(n);
             inv.items.insert(
                 id,
                 aurora_net::inventory::InvItem {
                     id,
-                    owner: agent,
+                    parent: if library { library_root } else { Uuid::nil() },
+                    owner,
+                    group_owned,
                     owner_mask,
+                    everyone_mask,
                     ..Default::default()
                 },
             );
         }
-        let (both_item, no_transfer, full) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
-        let mut picker = TexturePicker::default();
-        // any picker: copy is enough for a live preview
-        assert!(picker.previewable(&inv, agent, no_transfer));
-        picker.live_permissions = both;
-        assert!(picker.previewable(&inv, agent, both_item));
-        assert!(!picker.previewable(&inv, agent, no_transfer), "no live preview without transfer");
-        picker.live_permissions = actions::FULL;
-        assert!(!picker.previewable(&inv, agent, both_item), "a material needs modify too");
-        assert!(picker.previewable(&inv, agent, full));
-        // OK: a no-transfer item only on an object the agent owns, not for sale
-        picker.selected_item = Some(no_transfer);
-        picker.owned_target = true;
-        assert!(!picker.confirm_blocked(&inv, agent));
+        let id = Uuid::from_u128;
+        // On an object the agent owns and does not sell, OK takes them all;
+        // a click applies everything but the no-copy item
+        // (LLFloaterTexturePicker::onSelectionChange, commitIfImmediateSet).
+        let mut picker = TexturePicker {
+            owned_target: true,
+            ..Default::default()
+        };
+        for n in [1, 2, 3, 6, 7] {
+            assert!(picker.previewable(&inv, agent, id(n)), "item {n} applies on a click");
+        }
+        for n in [4, 5] {
+            assert!(!picker.previewable(&inv, agent, id(n)), "item {n} cannot be copied: OK only");
+        }
+        for n in 1..=7 {
+            picker.selected_item = Some(id(n));
+            assert!(!picker.confirm_blocked(&inv, agent), "item {n} is confirmed with OK");
+        }
+        // Elsewhere a no-transfer item is refused, by a click as by OK.
         picker.owned_target = false;
-        assert!(picker.confirm_blocked(&inv, agent));
-        picker.selected_item = Some(both_item);
-        assert!(!picker.confirm_blocked(&inv, agent));
+        for n in [1, 2, 7] {
+            assert!(picker.previewable(&inv, agent, id(n)), "item {n} applies on a click");
+            picker.selected_item = Some(id(n));
+            assert!(!picker.confirm_blocked(&inv, agent));
+        }
+        for n in [3, 5, 6] {
+            assert!(!picker.previewable(&inv, agent, id(n)), "no-transfer item {n} is not applied");
+            picker.selected_item = Some(id(n));
+            assert!(picker.confirm_blocked(&inv, agent), "no-transfer item {n} has no OK");
+        }
+        assert!(!picker.previewable(&inv, agent, id(4)));
     }
 
     #[test]
@@ -1878,6 +1983,89 @@ pub(crate) mod tests {
         });
         assert_eq!(changes, [asset]);
         assert!(!picker.open);
+    }
+
+    #[test]
+    fn a_click_that_applies_nothing_warns_once_a_double_click_is_out_of_reach() {
+        // FSPanelFace::onTextureSelectionChanged: LivePreviewUnavailable,
+        // "okignore"; only for a build picker (the caller's setting).
+        let mut ui = PickerUi::new();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let root = Uuid::from_u128(1);
+        world.inventory.root = root;
+        let items = [
+            (2u128, "No-copy texture", actions::MODIFY | actions::TRANSFER),
+            (3, "Full texture", actions::FULL),
+            (4, "No-transfer texture", actions::COPY | actions::MODIFY),
+        ];
+        for (n, name, owner_mask) in items {
+            let id = Uuid::from_u128(n);
+            world.inventory.items.insert(
+                id,
+                aurora_net::inventory::InvItem {
+                    id,
+                    parent: root,
+                    asset_id: Uuid::from_u128(n + 100),
+                    name: name.into(),
+                    inv_type: INV_TEXTURE,
+                    owner: world.agent_id,
+                    owner_mask,
+                    ..Default::default()
+                },
+            );
+        }
+        world.inventory.owner = world.agent_id;
+        world.inventory.folders.insert(
+            root,
+            crate::world::inventory::Folder {
+                info: aurora_net::inventory::InvFolder {
+                    id: root,
+                    ..Default::default()
+                },
+                state: crate::world::inventory::FetchState::Fetched,
+                children: Vec::new(),
+                items: vec![Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4)],
+                library: false,
+            },
+        );
+        let warning = aurora_i18n::tr!("ui-texture-picker-live-preview-texture");
+        let mut picker = TexturePicker::default();
+        let draw = |picker: &mut TexturePicker, world: &mut World, ctx: &egui::Context, p: &Palette| {
+            picker.show(ctx, p, world, &HashMap::new());
+        };
+        for warn in [false, true] {
+            picker.open("Texture", Uuid::nil());
+            picker.warn_live_preview = warn;
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+            ui.click("Full texture", |ctx, p| draw(&mut picker, &mut world, ctx, p));
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+            assert!(!ui.labels.contains_key(warning), "a click that applies warns of nothing");
+            ui.click("No-copy texture", |ctx, p| draw(&mut picker, &mut world, ctx, p));
+            assert!(picker.take_preview().is_none());
+            assert!(!ui.labels.contains_key(warning), "a double click could still confirm");
+            for _ in 0..6 {
+                ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+            }
+            assert_eq!(ui.labels.contains_key(warning), warn, "only a picker that asks for it warns");
+        }
+        ui.click(aurora_i18n::tr!("ui-context-do-not-show-again"), |ctx, p| {
+            draw(&mut picker, &mut world, ctx, p)
+        });
+        assert!(!picker.stop_warning_live_preview, "the box is kept for the answer");
+        ui.click(aurora_i18n::tr!("common-ok"), |ctx, p| draw(&mut picker, &mut world, ctx, p));
+        ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+        assert!(!ui.labels.contains_key(warning));
+        assert!(picker.stop_warning_live_preview, "the caller turns its setting off");
+        assert!(picker.open, "the warning leaves the picker open, OK still applies the item");
+        // a no-transfer item refused on this object: the footer says why, no alert
+        picker.stop_warning_live_preview = false;
+        picker.owned_target = false;
+        ui.click("No-transfer texture", |ctx, p| draw(&mut picker, &mut world, ctx, p));
+        for _ in 0..6 {
+            ui.settle(|ctx, p| draw(&mut picker, &mut world, ctx, p));
+        }
+        assert!(picker.take_preview().is_none());
+        assert!(!ui.labels.contains_key(warning), "only a no-copy item is warned of");
     }
 
     fn frame(

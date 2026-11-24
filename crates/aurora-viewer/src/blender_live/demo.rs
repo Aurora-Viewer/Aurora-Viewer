@@ -79,6 +79,40 @@ pub fn static_fixture(rig: &Rig, linked: bool) -> Result<protocol::Prepared, Str
     Ok(snapshot)
 }
 
+/// `AURORA_DEMO_BLENDER_LIVE=warnings`: the static object, whose textures
+/// Blender could not read, and two objects Blender could not send, with the
+/// plug-in's own messages, as plug-in 0.16 sends them.
+pub fn warnings_fixture(rig: &Rig) -> Result<protocol::Prepared, String> {
+    let mut snapshot = static_fixture(rig, false)?;
+    let warning = |source, name: &str, kind, reason: &str| protocol::ObjectWarning {
+        source,
+        name: name.to_owned(),
+        kind,
+        reason: reason.to_owned(),
+    };
+    snapshot.warnings = vec![
+        warning(
+            Some(uuid::Uuid::from_u128(101)),
+            "Live static object",
+            protocol::WarningKind::Textures,
+            "Bake procedural shaders to UV image textures for live materials",
+        ),
+        warning(
+            Some(uuid::Uuid::from_u128(103)),
+            "Sculpted rock",
+            protocol::WarningKind::NotSent,
+            "This object exceeds the LiveMesh transfer limit; reduce its geometry or textures",
+        ),
+        warning(
+            Some(uuid::Uuid::from_u128(104)),
+            "Hair cards",
+            protocol::WarningKind::NotSent,
+            "Unsupported weighted bones: Hair.001, Hair.002",
+        ),
+    ];
+    Ok(snapshot)
+}
+
 /// `AURORA_DEMO_BLENDER_LIVE=sleeves`: one rigged object of eight tubes, the
 /// upper arms and thighs weighted to the shoulders and hips, the forearms and
 /// shins to the elbows and knees, so the Avatar tab's bend shows on the

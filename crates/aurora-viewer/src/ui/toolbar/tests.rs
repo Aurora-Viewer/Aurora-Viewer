@@ -323,7 +323,7 @@ impl Default for Bench {
 impl Bench {
     fn frame(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
         // the dock is an egui area: shown from its second frame on
-        if self.islands && self.ctx.cumulative_frame_nr() == 0 {
+        if self.islands && self.ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) == 0 {
             self.frame_once(Vec::new());
         }
         self.frame_once(events)

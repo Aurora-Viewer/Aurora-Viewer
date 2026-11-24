@@ -977,7 +977,14 @@ fn animation_controls(ui: &mut egui::Ui, p: &Palette, animation: &mut Animation,
                 ui.label(label);
                 ui.add(
                     egui::DragValue::new(value)
-                        .range(0.0..=animation.duration)
+                        .range(
+                            0.0..=if animation.looping {
+                                super::animation::MAX_LOOP_FADE_INPUT
+                            } else {
+                                animation.duration
+                            },
+                        )
+                        .clamp_existing_to_range(!animation.looping)
                         .suffix(" s")
                         .speed(0.01)
                         .fixed_decimals(3),

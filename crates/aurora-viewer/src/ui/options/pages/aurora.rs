@@ -357,19 +357,24 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-aurora-controls-classic"),
                 &field!(classic_controls),
             );
-            // the compact window is Aurora's: greyed in the Classic style
+            // the compact camera is both styles' (the Classic style's small
+            // camera window, the Legacy Viewer's FSUseSmallCameraFloater);
+            // the compact Movement tab is Aurora's: greyed in the Classic
+            // style, whose movement window is small already
             let classic_controls = cx.s.classic_controls;
-            cx.subs(classic_controls, |cx| {
+            cx.subs(false, |cx| {
                 cx.toggle(
                     tr!("ui-options-aurora-controls-compact"),
                     tr!("ui-options-aurora-controls-compact-help"),
                     &field!(compact_controls),
                 );
+                cx.greyed(classic_controls);
                 cx.toggle(
                     tr!("ui-options-aurora-controls-compact-movement"),
                     tr!("ui-options-aurora-controls-compact-movement-help"),
                     &field!(compact_movement_controls),
                 );
+                cx.greyed(false);
             });
         }),
         1 => {

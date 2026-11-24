@@ -7,6 +7,7 @@ pub(crate) use app_links::{group_name as app_link_group_name, take_wanted as tak
 mod bubbles;
 mod call;
 mod channel;
+mod close_all;
 mod completion;
 mod compose;
 mod console;
@@ -285,6 +286,9 @@ pub struct ChatUi {
     /// app; and what that menu asked for this frame.
     pub flash_nearby: bool,
     pub button_menu: Option<ButtonMenu>,
+    pub has_open_ims: bool,
+    /// Pending voice confirmation and its “do not ask again” choice.
+    close_all_prompt: Option<bool>,
     /// The thumbnails of the open conversations beside the chat bar or at
     /// the top right (`thumbnails.rs`, #1134).
     pub thumbnails: thumbnails::Thumbnails,
@@ -1852,6 +1856,7 @@ pub enum ConvAction {
     /// Close a conversation (the X of its tab in FSFloaterIMContainer): a
     /// group / conference session is left, a 1:1 conversation leaves the list.
     Close(uuid::Uuid),
+    CloseAll,
     /// Stop receiving a group's chat (and leave its session).
     BlockGroupChat(uuid::Uuid),
     /// Snooze a group chat: closed without leaving, its messages ignored
@@ -2955,19 +2960,34 @@ pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::Ch
     if line.origin != Origin::Live || line.anonymous() {
         return line.from.clone();
     }
-    let own = line.kind.is_own();
-    let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
-    let names = &world.social.avatar_names;
-    let cached = if object {
-        None
-    } else {
-        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
-    };
-    match cached {
-        Some(n) => n.display(&names.options),
-        None if own => own_name.to_owned(),
+    match cached_chat_sender(world, line) {
+        Some(n) => n.display(&world.social.avatar_names.options),
+        None if line.kind.is_own() => own_name.to_owned(),
         None => line.from.clone(),
     }
+}
+
+fn cached_chat_sender<'a>(world: &'a World, line: &crate::world::ChatLine) -> Option<&'a crate::world::names::AvatarName> {
+    if line.origin != Origin::Live || line.anonymous() || matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
+        return None;
+    }
+    let id = if line.kind.is_own() { &world.agent_id } else { &line.source };
+    world.social.avatar_names.get_in(NameScope::Roster, id)
+}
+
+/// Visible header label in Aurora, Compact and Bubbles. Preserve the text
+/// of emotes, saved transcripts and names frozen under RLVa.
+fn chat_header_name(world: &World, line: &crate::world::ChatLine, name: &str) -> String {
+    if let Some(alias) = conversation_options::you(&conversation_options::current(), line) {
+        return alias.to_owned();
+    }
+    if let Some(username) = cached_chat_sender(world, line).and_then(|n| n.chat_username(&world.social.avatar_names.options))
+        && !username.is_empty()
+        && !username.eq_ignore_ascii_case(name)
+    {
+        return format!("{name} ({username})");
+    }
+    name.to_owned()
 }
 
 /// The text of a message and whether it is in italics: an emote is the
@@ -3577,11 +3597,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
     // FSChatHistoryHeader: the display name, then " - username" in small
     let names = &world.social.avatar_names;
-    let cached = if object || logged || line.anonymous() {
-        None
-    } else {
-        names.get_in(NameScope::Roster, if own { &world.agent_id } else { &line.source })
-    };
+    let cached = cached_chat_sender(world, line);
     let name = match cached {
         Some(n) => n.display(&names.options),
         None if own && !logged => env.own_name.to_owned(),
@@ -4000,7 +4016,7 @@ pub fn show(
     }
     let style = st.demo_style.unwrap_or(st.style);
     popout::one_picker(st);
-    st.gifs.close_if_hidden(ctx.cumulative_pass_nr());
+    st.gifs.close_if_hidden(ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
     // every entry of the window, whatever the column's search: it never
     // shows a conversation that is in its own window (`popout.rs`)
     let entries: Vec<Option<uuid::Uuid>> = std::iter::once(None)

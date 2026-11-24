@@ -222,7 +222,11 @@ impl Quick {
         if response.clicked() {
             self.open = !self.open;
         }
-        self.anchor = Some((response.clone(), align, response.ctx.cumulative_frame_nr()));
+        self.anchor = Some((
+            response.clone(),
+            align,
+            response.ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT),
+        ));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -240,7 +244,7 @@ impl Quick {
     ) -> Vec<Action> {
         let mut out = Vec::new();
         let Some((anchor, align, frame)) = &self.anchor else { return out };
-        if *frame != ctx.cumulative_frame_nr() {
+        if *frame != ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT) {
             self.open = false;
             self.list_was_open = false;
             return out;

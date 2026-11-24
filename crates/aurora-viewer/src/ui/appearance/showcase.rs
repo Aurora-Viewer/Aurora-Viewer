@@ -985,14 +985,14 @@ fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi
                     st.outfit_selection.single(id);
                 }
                 st.select_item(&response, id, it.id, &order);
-                items::double_click(&response, world, it, label.is_some(), actions);
+                items::double_click(&response, world, it, label.is_some(), Some(id), actions);
                 let selected = st.selected_items(id, it.id, &order);
                 items::context_menu(&response, p, world, st, items::List::Outfit(id), it, &selected, actions);
                 // the menu's Wear, for this item alone (wear_action, replace)
                 if label.is_none()
                     && matches!(it.asset_type, 5 | 6 | 13)
                     && ui.rect_contains_pointer(response.rect)
-                    && locks.wear(inv, it.id, 0).replace
+                    && locks.wear(inv, items::outfit_wear_entry(inv, id, it.id), 0).replace
                 {
                     let wear = aurora_i18n::tr!("common-wear");
                     let width = widgets::action_button_fit(ui, "", wear);
@@ -1006,7 +1006,7 @@ fn contents(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi
                         .clicked()
                     {
                         actions.push(Action::WearItem {
-                            item: it.id,
+                            item: items::outfit_wear_entry(inv, id, it.id),
                             replace: true,
                             point: 0,
                         });
