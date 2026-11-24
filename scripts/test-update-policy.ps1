@@ -103,6 +103,7 @@ try {
 } finally {
     $taskResolved = [IO.Path]::GetFullPath($taskRoot)
     $taskTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-    if ((Split-Path $taskResolved -Parent).TrimEnd('\') -ne $taskTemp.TrimEnd('\') -or (Split-Path $taskResolved -Leaf) -notlike 'aurora-policy-test-*') { throw 'Refused to clean up outside the fixture.' }
+    $taskSep = [IO.Path]::DirectorySeparatorChar
+    if ((Split-Path $taskResolved -Parent).TrimEnd($taskSep) -ne $taskTemp.TrimEnd($taskSep) -or (Split-Path $taskResolved -Leaf) -notlike 'aurora-policy-test-*') { throw 'Refused to clean up outside the fixture.' }
     Remove-Item -LiteralPath $taskResolved -Recurse -Force
 }

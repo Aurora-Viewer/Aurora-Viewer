@@ -26,6 +26,73 @@ pub struct Snapshot {
     pub meshes: Vec<Mesh>,
     #[serde(default)]
     pub images: Vec<Image>,
+    /// Blender's export warnings, per object (feature `object-warnings`).
+    #[serde(default)]
+    pub warnings: Vec<WireWarning>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WireWarning {
+    #[serde(default)]
+    pub source_id: Option<Uuid>,
+    pub name: String,
+    pub kind: String,
+    pub reason: String,
+}
+
+/// At most this many warnings are kept; Blender sends one per object.
+pub const MAX_WARNINGS: usize = 64;
+const MAX_WARNING_TEXT: usize = 512;
+
+/// What Blender says about one of its objects: the card shows it, or a row
+/// for an object that is not in the revision. `reason` is Blender's own
+/// message, untranslated (it names a node, an image, a limit…).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ObjectWarning {
+    pub source: Option<Uuid>,
+    pub name: String,
+    pub kind: WarningKind,
+    pub reason: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WarningKind {
+    /// Its textures could not be read: it syncs in its plain colour.
+    Textures,
+    /// It is not in this revision: an export error, or over the transfer limit.
+    NotSent,
+}
+
+/// The warnings worth showing: a known kind, bounded text without control
+/// characters. A warning is information only, so a bad one is dropped
+/// instead of refusing the snapshot; a later plug-in's new kinds are skipped.
+fn object_warnings(wire: Vec<WireWarning>) -> Vec<ObjectWarning> {
+    let clean = |text: &str| -> String {
+        text.chars()
+            .take(MAX_WARNING_TEXT)
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect::<String>()
+            .trim()
+            .to_owned()
+    };
+    wire.into_iter()
+        .take(MAX_WARNINGS)
+        .filter_map(|warning| {
+            let kind = match warning.kind.as_str() {
+                "textures" => WarningKind::Textures,
+                "not-sent" => WarningKind::NotSent,
+                _ => return None,
+            };
+            let name = clean(&warning.name);
+            (!name.is_empty()).then(|| ObjectWarning {
+                source: warning.source_id,
+                name,
+                kind,
+                reason: clean(&warning.reason),
+            })
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -73,6 +140,7 @@ pub struct Prepared {
     pub triangles: usize,
     pub images: Vec<PreparedImage>,
     pub sources: Vec<PreparedSource>,
+    pub warnings: Vec<ObjectWarning>,
 }
 
 #[derive(Clone)]
@@ -191,6 +259,7 @@ pub(super) fn prepare_snapshot(
         return Err(aurora_i18n::tr!("blender-live-invalid-protocol").into());
     }
     let images = appearance::images(snapshot.images, pool, cache)?;
+    let warnings = object_warnings(snapshot.warnings);
     let mut total = 0usize;
     let mut total_indices = 0usize;
     let mut meshes = Vec::new();
@@ -426,5 +495,6 @@ pub(super) fn prepare_snapshot(
         triangles,
         images,
         sources,
+        warnings,
     })
 }

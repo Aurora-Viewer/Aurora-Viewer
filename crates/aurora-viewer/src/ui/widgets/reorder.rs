@@ -227,7 +227,7 @@ where
     // A list not drawn for a frame or more (its window closed, another
     // folder shown) forgets its carry: the button let go meanwhile would
     // otherwise read as a drop on its return, and its rows start in place.
-    let frame = ui.ctx().cumulative_frame_nr();
+    let frame = ui.ctx().cumulative_frame_nr_for(egui::ViewportId::ROOT);
     if st.frame + 1 < frame {
         st = State::default();
     }

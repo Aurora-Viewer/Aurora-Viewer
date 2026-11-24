@@ -1011,6 +1011,8 @@ pub struct Scene {
     /// Bounds of the objects for the hover search, and its kept answer
     /// (hover.rs).
     pick: hover::PickIndex,
+    /// Drawn world volumes with the Ignore Object click action.
+    ignored_draws: FastSet<usize>,
     pub hover: hover::HoverCache,
     /// Our own HUD objects with a geometry, in index order, as
     /// `build_huds` found them for the HUD view of the frame: what a HUD
@@ -1806,6 +1808,7 @@ impl Scene {
             sync_budget: std::time::Duration::from_millis(1),
             geom_trash: Default::default(),
             pick: Default::default(),
+            ignored_draws: Default::default(),
             hover: Default::default(),
             hud_own: Vec::new(),
             exact_tests: Default::default(),
@@ -2373,8 +2376,31 @@ impl Scene {
 
     // ------------------------------------------------------------ objects
 
+    /// Changing a click action leaves geometry, textures and draw lists intact.
+    fn update_click_records(&mut self, records: &mut aurora_render::arena::RecordStore, idx: usize, action: u8) {
+        let g = &self.gpu[idx];
+        if g.hud || g.is_avatar || g.faces.is_empty() {
+            return;
+        }
+        let ignored = action == crate::interaction::code::IGNORE;
+        let changed = if ignored {
+            self.ignored_draws.insert(idx)
+        } else {
+            self.ignored_draws.remove(&idx)
+        };
+        if changed {
+            for face in &g.faces {
+                if let Some(mut rec) = records.get(face.record).copied() {
+                    rec.set_ignore_object_pick(ignored);
+                    records.set(face.record, rec);
+                }
+            }
+        }
+    }
+
     /// Free the draw records of an object's faces.
     fn drop_faces(&mut self, renderer: &mut Renderer, idx: usize, g: &mut ObjGpu) {
+        self.ignored_draws.remove(&idx);
         for f in g.faces.drain(..) {
             renderer.records.free(f.record);
             self.slot_users.remove(&(f.base_slot, idx as u32));
@@ -3188,6 +3214,7 @@ impl Scene {
 
         if self.update_origin(world) {
             renderer.cut_motion_history();
+            renderer.rebase_world();
             self.water.clear(renderer);
         }
 
@@ -3223,6 +3250,11 @@ impl Scene {
             }
             let rigged = self.gpu.get(idx).is_some_and(|g| g.moves_with_skeleton());
             self.sets.touched(&world.objects, agent, idx, rigged);
+            if let Some(object) = world.objects.get_mut_untracked(idx)
+                && std::mem::take(&mut object.render.click_pick_dirty)
+            {
+                self.update_click_records(&mut renderer.records, idx, object.click_action);
+            }
             // (its click action or flags may have changed)
             self.pick.changed(idx);
         }
@@ -4236,6 +4268,11 @@ impl Scene {
         animesh::owner(&world.objects, idx)
     }
 
+    /// The palette base of a skeleton owner that has one.
+    pub fn palette_of(&self, owner: &Uuid) -> Option<u32> {
+        self.palette_slots.get(owner).map(|s| *s * anim::PALETTE_JOINTS as u32)
+    }
+
     /// Palette base (first matrix index) for a skeleton owner.
     fn palette_base(&mut self, owner: Uuid) -> u32 {
         if let Some(s) = self.palette_slots.get(&owner) {
@@ -4270,6 +4307,7 @@ impl Scene {
         let old_tex: Vec<Uuid> = std::mem::take(&mut g.tex_ids);
         g.material_ids.clear();
         let wearer = Self::wearer_avatar(world, idx);
+        let ignored = !g.hud && o.click_action == crate::interaction::code::IGNORE;
         let bake_wearer = Self::bake_wearer(world, idx, g.hud);
         let rigged_owner = match g.geom {
             Some(GeomKey::Mesh { id, .. }) => match self.meshes.meta(&id).and_then(|m| m.skin).filter(|s| !s.joint_names.is_empty()) {
@@ -4462,7 +4500,8 @@ impl Scene {
                     legacy_glare = gloss > 0.0 || env > 0.0;
                     rec.spec_color = [lin(spec_rgb[0]), lin(spec_rgb[1]), lin(spec_rgb[2]), 1.0];
                     rec.params[3] = lm.alpha_cutoff as f32 / 255.0;
-                    if lm.diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE {
+                    // (the alpha `classify` reads too, so flag and pass agree)
+                    if emissive_mask_applies(lm.diffuse_alpha_mode, rec.base_color[3]) {
                         rec.flags[0] |= flags::EMISSIVE_MASK;
                     }
                     legacy_alpha = Some(lm.diffuse_alpha_mode);
@@ -4553,8 +4592,15 @@ impl Scene {
                 }
             }
             rec.set_hud_zoom(hud_zoom);
+            rec.set_ignore_object_pick(ignored);
             if !g.hud {
                 rec.flags[3] |= flags::OBJECT_MASK_PICK;
+            }
+            // Alt-focus keeps an emissive mask's clear texels whatever the
+            // face's alpha, also where EMISSIVE_MASK is dropped above
+            // (LLVOVolume::lineSegmentIntersect's `ignore_alpha`).
+            if legacy_alpha == Some(legacy_mat::alpha_mode::EMISSIVE) {
+                rec.flags[3] |= flags::PICK_IGNORES_ALPHA;
             }
             rec.set_world_blend_pick(
                 !g.hud
@@ -4605,6 +4651,9 @@ impl Scene {
         // just bound so the first classify already skips auto-Mask.
         let object_auto_mask = rigged_owner.is_none() && !g.hud;
         self.finish_faces(renderer, idx, &mut g, object_auto_mask);
+        if ignored && !g.faces.is_empty() {
+            self.ignored_draws.insert(idx);
+        }
         self.gpu[idx] = g;
     }
 
@@ -6848,6 +6897,20 @@ fn te_invisible(o: &Object, face: usize) -> bool {
     o.visual_texture_face(face).color[3] < 0.004 && o.visual_material(face).is_none()
 }
 
+/// Whether a legacy material's "emissive mask" applies to a face whose
+/// texture-entry alpha is `te_alpha`. A transparent face (alpha below
+/// 0.999) takes the alpha pass with the blend shader whatever the
+/// material's mode, so its texture alpha is opacity again, not glow:
+/// LLVolumeGeometryManager::genDrawInfo (`blinn_phong_transparent` sends
+/// the face to PASS_ALPHA) and LLVolumeGeometryManager::registerFace (the
+/// shader mask of PASS_ALPHA is DIFFUSE_ALPHA_MODE_BLEND's), llvovolume.cpp.
+/// The click pick keeps the material's mode (`legacy_alpha`) and Alt-focus
+/// keeps the face's clear texels (`flags::PICK_IGNORES_ALPHA`), as
+/// LLVOVolume::lineSegmentIntersect ignores the face's alpha there.
+fn emissive_mask_applies(diffuse_alpha_mode: u8, te_alpha: f32) -> bool {
+    diffuse_alpha_mode == legacy_mat::alpha_mode::EMISSIVE && te_alpha >= 0.999
+}
+
 fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
     // fully transparent face, or the transparent texture (unused layers of
     // mesh heads and bodies): nothing to draw. A blended legacy material
@@ -8184,6 +8247,21 @@ mod tests {
         let mut usage = Vec::new();
         note_face_usage(&mut usage, &face, 256.0, true);
         assert!(usage.contains(&(source, texture_importance::per_repeats(256.0, 2.0), true)));
+    }
+
+    /// #4517: an emissive mask on a transparent face blends like any
+    /// transparent face (texture alpha = opacity), as in the Legacy Viewer;
+    /// on an opaque face it stays an emissive mask.
+    #[test]
+    fn emissive_mask_is_dropped_on_a_transparent_face() {
+        use legacy_mat::alpha_mode::{BLEND, EMISSIVE, MASK, NONE};
+        assert!(emissive_mask_applies(EMISSIVE, 1.0));
+        assert!(emissive_mask_applies(EMISSIVE, 0.999));
+        assert!(!emissive_mask_applies(EMISSIVE, 0.99));
+        assert!(!emissive_mask_applies(EMISSIVE, 0.5));
+        for other in [NONE, BLEND, MASK] {
+            assert!(!emissive_mask_applies(other, 1.0));
+        }
     }
 
     /// materialF.glsl (blend): a transparent texture under a glossy or shiny
