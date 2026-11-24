@@ -2017,6 +2017,56 @@ fn a_click_away_closes_the_pickers() {
     }
 }
 
+/// The field's pickers in every style (#4867): a press away closes one
+/// before its release, the press that starts a drag included; a click on
+/// its own button closes it, and does not open it again; another
+/// conversation shown, however it came, closes it.
+#[test]
+fn a_press_away_or_another_conversation_closes_the_pickers() {
+    let away = egui::pos2(1150.0, 750.0);
+    for style in ALL {
+        let mut h = H::new(style);
+        h.st.gifs.demo = true;
+        h.open(Some(JANE));
+        let (emoji_button, gif_button) = if style.workspace() {
+            (control_id("box-mood-smile-filled"), control_id("box-gif"))
+        } else {
+            (classic_id("mood-smile-filled"), classic_id("gif"))
+        };
+        h.press(emoji_button);
+        assert!(h.st.emoji_open, "{style:?}: the emoji picker opens");
+        h.press(emoji_button);
+        assert!(!h.st.emoji_open, "{style:?}: its button closes it");
+        h.press(emoji_button);
+        h.frame(vec![egui::Event::PointerMoved(away)]);
+        h.frame(vec![egui::Event::PointerButton {
+            pos: away,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        assert!(!h.st.emoji_open, "{style:?}: a press away closes it, before its release");
+        h.frame(vec![egui::Event::PointerMoved(away + egui::vec2(-40.0, 0.0))]);
+        h.frame(vec![egui::Event::PointerButton {
+            pos: away + egui::vec2(-40.0, 0.0),
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        h.settle();
+        for gif in [false, true] {
+            h.press(if gif { gif_button } else { emoji_button });
+            assert!(h.st.emoji_open != gif && h.st.gif_open == gif, "{style:?}: a picker opens");
+            // as a name's menu or a conversation asking for the front does
+            h.st.selected = Some(BOB);
+            h.settle();
+            assert!(!h.st.emoji_open && !h.st.gif_open, "{style:?}: Bob's conversation closes it");
+            h.open(Some(JANE));
+            assert!(!h.st.emoji_open && !h.st.gif_open, "{style:?}: back on Jane's, it stays closed");
+        }
+    }
+}
+
 /// The field (Aurora, Compact): emoji, the volume's menu, inventory,
 /// channel, send.
 #[test]

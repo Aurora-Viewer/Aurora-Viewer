@@ -340,6 +340,9 @@ pub struct ChatUi {
     main_was_minimized: bool,
     /// The window whose emoji picker is open (`popout::one_picker`).
     picker_window: Option<popout::WindowKey>,
+    /// The conversation shown, and the Contacts tab, last frame
+    /// (`popout::pickers_follow_view`).
+    picker_view: Option<(Option<uuid::Uuid>, bool)>,
 }
 
 /// What the column's resident picker starts.
@@ -549,6 +552,11 @@ impl ChatUi {
         }
         if self.picker_window == Some(Some(old)) {
             self.picker_window = Some(Some(new));
+        }
+        if let Some((selected, contacts)) = self.picker_view
+            && selected == old
+        {
+            self.picker_view = Some((new, contacts));
         }
         self.popped.rekey(from, to);
         if let Some(draft) = self.drafts.remove(&old) {
@@ -4114,6 +4122,7 @@ pub fn show(
         st.contacts = false;
     }
     let style = st.demo_style.unwrap_or(st.style);
+    popout::pickers_follow_view(st);
     popout::one_picker(st);
     st.gifs.close_if_hidden(ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT));
     // every entry of the window, whatever the column's search: it never
@@ -4580,6 +4589,7 @@ fn classic_pane(
         Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
     };
     let mut emoji_btn = None;
+    let mut gif_btn = None;
     let mut send_clicked = false;
     let mut draft = std::mem::take(st.draft_mut(st.selected));
     // the recent emojis, over the field (under it with the Legacy chat style)
@@ -4602,6 +4612,7 @@ fn classic_pane(
             // shown once a key is entered (Preferences › Chat › GIFs)
             if st.gifs.usable() {
                 let b = tool_resp(ui, p, icons, "gif", st.gif_open).on_hover_text(aurora_i18n::tr!("ui-chat-gif"));
+                gif_btn = Some(b.rect);
                 gif_picker::button(&b, p, st);
             }
             // leave exactly the send button + spacing (else the row overflows
@@ -4665,6 +4676,7 @@ fn classic_pane(
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
+    let picker_buttons: Vec<egui::Rect> = emoji_btn.into_iter().chain(gif_btn).collect();
     if st.emoji_open && popout::claim_picker(ui.ctx()) {
         let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
         let mut close = false;
@@ -4691,13 +4703,24 @@ fn classic_pane(
         if close {
             st.emoji_open = false;
             ui.ctx().memory_mut(|m| m.request_focus(conv_input));
-        } else if popout::clicked_away(ui.ctx(), &shown.response) {
+        } else if popout::pressed_away(ui.ctx(), &shown.response, &picker_buttons) {
             // the click goes where it landed, the keyboard with it
             st.emoji_open = false;
         }
     }
     let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
-    gif_picker::popup(ui.ctx(), p, icons, st, anchor, 4.0, conv_input, ChatType::Normal, actions);
+    gif_picker::popup(
+        ui.ctx(),
+        p,
+        icons,
+        st,
+        anchor,
+        4.0,
+        &picker_buttons,
+        conv_input,
+        ChatType::Normal,
+        actions,
+    );
     // the Enter that asked for the keyboard (start_chat) is not one typed in
     // the field (compose.rs, Aurora's style, does the same)
     let focusing = std::mem::take(&mut st.conv_focus_request);
