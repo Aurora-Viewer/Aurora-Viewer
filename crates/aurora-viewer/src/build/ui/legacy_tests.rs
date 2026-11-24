@@ -734,3 +734,63 @@ fn legacy_texture_blinn_phong_keeps_rows_apart_at_large_text_size() {
     });
     assert!(maps.windows(2).all(|pair| pair[0].bottom() <= pair[1].top() + 1.0));
 }
+
+/// The Create options (human requests, 2026-11-25): the Aurora window has
+/// "Keep creating" and its own Center and Rotate, for every shape, and no
+/// "Copy selection"; the Legacy style's window keeps floater_tools.xml's.
+#[test]
+fn the_aurora_create_window_has_its_own_center_and_rotate_and_the_legacy_one_copy_selection() {
+    let find = |texts: &[(String, egui::Rect)], label: &str| texts.iter().find(|(text, _)| text == label).map(|(_, rect)| rect.center());
+    let mut inspector = Inspector::new();
+    inspector.settings.copy_selection = true;
+    inspector.tool.open_build(Tool::Create);
+    for _ in 0..3 {
+        inspector.show(vec![]);
+    }
+    let window = inspector
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+        .expect("the Create window");
+    // the Create window's own labels ("Rotate" is a main-window word too)
+    let (_, mut texts) = inspector.show(vec![]);
+    texts.retain(|(_, rect)| window.contains_rect(*rect));
+    assert!(find(&texts, aurora_i18n::tr!("build-create-keep-creating")).is_some());
+    assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-copy-selection")).is_none());
+    assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-keep-selection-tool")).is_none());
+    assert!(!inspector.settings.copy_selection, "no copy from a window that has no such option");
+    for (label, which) in [
+        (aurora_i18n::tr!("build-ui-tools-center"), 0),
+        (aurora_i18n::tr!("common-rotate"), 1),
+    ] {
+        let at = find(&texts, label).unwrap_or_else(|| panic!("{label}"));
+        click(&mut inspector, at);
+        let on = [inspector.settings.create_centers, inspector.settings.create_rotates];
+        assert!(on[which], "{label} on with the cube chosen");
+    }
+    assert_eq!(
+        (inspector.settings.copy_centers, inspector.settings.copy_rotates),
+        (BuildSettings::default().copy_centers, BuildSettings::default().copy_rotates),
+        "Copy selection's own options are left alone"
+    );
+
+    let mut inspector = legacy();
+    inspector.settings.copy_centers = false;
+    let rect = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("legacy-build-tool", Tool::Create as u8))))
+        .expect("the Create tool button");
+    click(&mut inspector, rect.center());
+    let (_, texts) = inspector.show(vec![]);
+    assert!(find(&texts, aurora_i18n::tr!("build-ui-tools-keep-selection-tool")).is_some());
+    let copy = find(&texts, aurora_i18n::tr!("build-ui-tools-copy-selection")).expect("Copy selection");
+    assert!(find(&texts, aurora_i18n::tr!("build-create-keep-creating")).is_none());
+    click(&mut inspector, copy);
+    assert!(inspector.settings.copy_selection);
+    let (_, texts) = inspector.show(vec![]);
+    click(
+        &mut inspector,
+        find(&texts, aurora_i18n::tr!("build-ui-tools-center")).expect("Center"),
+    );
+    assert!(inspector.settings.copy_centers);
+    assert!(!inspector.settings.create_centers, "the Legacy style's Center is Copy selection's");
+}

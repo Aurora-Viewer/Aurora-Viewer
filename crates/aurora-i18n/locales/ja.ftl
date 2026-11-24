@@ -10602,6 +10602,7 @@ build-compact-copy-vector = ベクトルをコピー
 build-compact-camera = カメラ
 build-tool-in-use = 使用中
 build-create-options-toggle = オプションの表示 / 非表示
+build-create-keep-creating = 作成を続ける
 build-capture-shape-button = プリムの形状をコピー：ここをクリックしてから、ワールド内のプリムをクリックします
 build-capture-shape-armed = プリムをクリックして形状をコピーします（Escでキャンセル）
 build-capture-shape-full = 形状は20個まで保存できます。別の形状をコピーするには1つ削除してください

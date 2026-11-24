@@ -733,7 +733,7 @@ fn a_created_prim_takes_the_new_objects_look_once_when_ours_with_full_rights() {
     // asked for, but not ours with every right: untouched, still awaited
     tool.out.clear();
     tool.expect_created(&world);
-    tool.expect_new_defaults();
+    tool.expect_new_defaults(None);
     arrive_created(&mut world, 99951, OBJECT_YOU_OWNER | OBJECT_MODIFY);
     tool.pick_up_created(&mut world, &settings);
     assert_eq!(sent_defaults(&tool), (0, 0));
@@ -752,7 +752,7 @@ fn a_created_prim_takes_the_new_objects_look_once_when_ours_with_full_rights() {
     // an inventory rez clears what the Create tool still awaited
     tool.out.clear();
     tool.expect_created(&world);
-    tool.expect_new_defaults();
+    tool.expect_new_defaults(None);
     tool.forget_new_defaults();
     arrive_created(&mut world, 99954, full);
     tool.pick_up_created(&mut world, &settings);

@@ -119,10 +119,13 @@ pub enum CreateClick {
 pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, active: bool, capturing: bool) -> Option<CreateClick> {
     ui.vertical(|ui| {
         let cell = Vec2::splat((ui.available_width() - 24.0) / 5.0);
+        // no "Copy selection" in this window (human request, 2026-11-25):
+        // the Legacy style's window keeps it
+        s.copy_selection = false;
         let picked = create_shapes(ui, p, s, cell, active, Some(capturing));
         if s.create_options_shown {
             ui.add_space(12.0);
-            create_options(ui, p, s);
+            create_options(ui, p, s, false);
         }
         ui.add_space(6.0);
         let icon = if s.create_options_shown {
@@ -166,7 +169,7 @@ pub(super) fn create_legacy_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildS
         egui::Rect::from_min_max(egui::pos2(middle + 5.0, rect.top()), rect.max),
         "legacy-create-options",
     );
-    create_options(&mut options, p, s);
+    create_options(&mut options, p, s, true);
 }
 
 /// The shape grid. The chosen shape is lit in the accent while Create is
@@ -309,45 +312,57 @@ fn capture_button(ui: &mut egui::Ui, p: &Palette, s: &BuildSettings, rect: egui:
     resp.on_hover_text(tip).clicked()
 }
 
-fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+/// The Create options. The Legacy style's (`legacy`) are floater_tools.xml's:
+/// "Copy selection" with its Center and Rotate. The Aurora window's
+/// (human requests, 2026-11-25) have no "Copy selection", and its Center
+/// and Rotate place every shape it makes (`BuildSettings::create_centers`).
+fn create_options(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, legacy: bool) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-        if let Some(v) = check(
-            ui,
-            p,
-            s.keep_tool,
-            false,
-            aurora_i18n::tr!("build-ui-tools-keep-selection-tool"),
-            true,
-        ) {
+        let keep = if legacy {
+            aurora_i18n::tr!("build-ui-tools-keep-selection-tool")
+        } else {
+            aurora_i18n::tr!("build-create-keep-creating")
+        };
+        if let Some(v) = check(ui, p, s.keep_tool, false, keep, true) {
             s.keep_tool = v;
         }
-        if let Some(v) = check(
-            ui,
-            p,
-            s.copy_selection,
-            false,
-            aurora_i18n::tr!("build-ui-tools-copy-selection"),
-            true,
-        ) {
-            s.copy_selection = v;
-        }
-        ui.indent("copy_opts", |ui| {
+        if legacy {
             if let Some(v) = check(
                 ui,
                 p,
-                s.copy_centers,
-                false,
-                aurora_i18n::tr!("build-ui-tools-center"),
                 s.copy_selection,
+                false,
+                aurora_i18n::tr!("build-ui-tools-copy-selection"),
+                true,
             ) {
-                s.copy_centers = v;
+                s.copy_selection = v;
             }
-            if let Some(v) = check(ui, p, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
-                s.copy_rotates = v;
+            ui.indent("copy_opts", |ui| {
+                if let Some(v) = check(
+                    ui,
+                    p,
+                    s.copy_centers,
+                    false,
+                    aurora_i18n::tr!("build-ui-tools-center"),
+                    s.copy_selection,
+                ) {
+                    s.copy_centers = v;
+                }
+                if let Some(v) = check(ui, p, s.copy_rotates, false, aurora_i18n::tr!("common-rotate"), s.copy_selection) {
+                    s.copy_rotates = v;
+                }
+            });
+        } else {
+            let prim = s.create_volume().is_some();
+            if let Some(v) = check(ui, p, s.create_centers, false, aurora_i18n::tr!("build-ui-tools-center"), prim) {
+                s.create_centers = v;
             }
-        });
+            if let Some(v) = check(ui, p, s.create_rotates, false, aurora_i18n::tr!("common-rotate"), prim) {
+                s.create_rotates = v;
+            }
+        }
         // tree_grass_combo (FIRE-7802)
         let tree = s.create_shape == shapes().len();
         let grass = s.create_shape == shapes().len() + 1;

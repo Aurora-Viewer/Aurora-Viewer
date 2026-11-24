@@ -22,9 +22,10 @@ pub struct Placement {
 }
 
 impl Placement {
-    /// LLToolPlacer's shape, orientation and size; the simulator still
-    /// decides the final placement from ObjectAdd's unchanged surface ray.
-    pub fn new(world: &World, settings: &BuildSettings, point: Vec3) -> Option<Self> {
+    /// LLToolPlacer's shape, orientation and size, on the surface at
+    /// `point` whose `normal` faces the camera (`BuildSettings::
+    /// creation_pose`: the Aurora window's Center and Rotate).
+    pub fn new(world: &World, settings: &BuildSettings, point: Vec3, normal: Vec3) -> Option<Self> {
         if !point.is_finite()
             || settings
                 .select_limit()
@@ -37,14 +38,15 @@ impl Placement {
         let scale = world
             .prim_limits()
             .clamp3(own_size.unwrap_or(Vec3::from_array(settings.new_prim_size)));
+        let (position, rotation) = settings.creation_pose(rotation, scale, point, normal);
         let axes = glam::Mat3::from_quat(rotation);
         let half_height = Vec3::new(axes.x_axis.z, axes.y_axis.z, axes.z_axis.z).abs().dot(scale) * 0.5;
         Some(Self {
             shape,
-            position: point + Vec3::Z * half_height,
+            position,
             rotation,
             scale,
-            bottom: point.z,
+            bottom: position.z - half_height,
             height: half_height * 2.0,
         })
     }
@@ -225,7 +227,7 @@ mod tests {
                 new_prim_size: [1.0, 2.0, 3.0],
                 ..Default::default()
             };
-            let placement = Placement::new(&world, &settings, point).expect("valid demo surface");
+            let placement = Placement::new(&world, &settings, point, Vec3::Z).expect("valid demo surface");
             assert_eq!(placement.rotation, shape.rotation());
             assert_eq!(placement.scale, Vec3::new(1.0, 2.0, 3.0));
             let record = placement.record(123);
@@ -245,20 +247,20 @@ mod tests {
             assert!((lowest - point.z).abs() < 1e-4);
         }
         let settings = BuildSettings::default();
-        assert!(Placement::new(&world, &settings, Vec3::NAN).is_none());
+        assert!(Placement::new(&world, &settings, Vec3::NAN, Vec3::Z).is_none());
         // LimitSelectDistance refuses a far surface
         let far = point + Vec3::X * (crate::build::MAX_SELECT_DISTANCE + 10.0);
         let limited = BuildSettings {
             limit_select_distance: true,
             ..settings.clone()
         };
-        assert!(Placement::new(&world, &limited, far).is_none());
+        assert!(Placement::new(&world, &limited, far, Vec3::Z).is_none());
         let settings = BuildSettings {
             create_shape: shapes::shapes().len(),
             ..settings
         };
         assert!(
-            Placement::new(&world, &settings, point).is_none(),
+            Placement::new(&world, &settings, point, Vec3::Z).is_none(),
             "Plants have no primitive hologram"
         );
         // a captured shape: its own shape and size, upright
@@ -272,7 +274,7 @@ mod tests {
             new_prim_size: [1.0; 3],
             ..settings.clone()
         };
-        let placement = Placement::new(&world, &captured, point).expect("valid demo surface");
+        let placement = Placement::new(&world, &captured, point, Vec3::Z).expect("valid demo surface");
         assert_eq!(placement.shape, torus);
         assert_eq!(placement.rotation, Quat::IDENTITY);
         assert_eq!(placement.scale, Vec3::new(0.5, 1.5, 2.5));
@@ -282,6 +284,9 @@ mod tests {
             create_shape: shapes::shapes().len() + 3,
             ..captured
         };
-        assert!(Placement::new(&world, &gone, point).is_none(), "a captured shape no longer there");
+        assert!(
+            Placement::new(&world, &gone, point, Vec3::Z).is_none(),
+            "a captured shape no longer there"
+        );
     }
 }

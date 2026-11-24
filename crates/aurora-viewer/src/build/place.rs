@@ -200,6 +200,23 @@ fn unit(i: usize) -> Vec3 {
     v
 }
 
+/// The normal of the surface the Create tool's prim goes on at `point`,
+/// toward the camera: the object `target`'s face under the ray, else the
+/// ground's. Only looked for while the Aurora window's Center or Rotate is
+/// on (straight up otherwise: nothing reads it).
+pub fn creation_normal(world: &World, scene: &Scene, s: &BuildSettings, ray: (Vec3, Vec3), point: Vec3, target: Option<usize>) -> Vec3 {
+    if !s.create_centers && !s.create_rotates {
+        return Vec3::Z;
+    }
+    let normal = target
+        .and_then(|i| scene.left_touch_surface(world, i, ray))
+        .map(|t| t.normal)
+        .filter(|n| n.is_finite() && n.length_squared() > 1e-6)
+        .unwrap_or_else(|| ground_normal(world, point))
+        .normalize_or(Vec3::Z);
+    if normal.dot(ray.1) > 0.0 { -normal } else { normal }
+}
+
 /// The ground's normal at `p`, from the height map around it.
 fn ground_normal(world: &World, p: Vec3) -> Vec3 {
     let e = 0.5;

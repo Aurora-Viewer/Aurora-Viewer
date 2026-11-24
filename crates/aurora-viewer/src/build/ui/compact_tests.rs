@@ -1639,7 +1639,7 @@ fn create_window_holds_still_at_every_width() {
     // the grid at every width, and nothing moves from frame to frame.
     let mut inspector = Inspector::new();
     inspector.tool.open_build(Tool::Create);
-    let label = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
+    let label = aurora_i18n::tr!("build-create-keep-creating");
     let place = |texts: &[(String, egui::Rect)]| texts.iter().find(|(text, _)| text == label).map(|(_, rect)| rect.min);
     for width in (300..=450).step_by(3) {
         crate::ui::widgets::size_floater(&inspector.ctx, "build_tool_create", vec2(width as f32, 420.0));
@@ -4425,7 +4425,7 @@ fn the_rail_tool_buttons_open_and_close_their_own_windows() {
     let (main, texts) = inspector.show(vec![]);
     let options = texts
         .iter()
-        .find(|(text, _)| text == aurora_i18n::tr!("build-ui-tools-keep-selection-tool"))
+        .find(|(text, _)| text == aurora_i18n::tr!("build-create-keep-creating"))
         .expect("the Create panel")
         .1;
     assert!(window.contains_rect(options), "the panel is in the Create window");
@@ -4517,7 +4517,7 @@ fn the_create_window_fits_its_content_and_hides_its_options_part() {
             inspector.show(vec![]);
         }
     };
-    let keep = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
+    let keep = aurora_i18n::tr!("build-create-keep-creating");
     assert!(!shows(
         &mut inspector,
         aurora_i18n::tr!("build-ui-tools-click-in-the-world-to-build")
@@ -4623,7 +4623,7 @@ fn only_a_shape_clicked_makes_create_the_tool_in_use_again() {
         .ctx
         .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-shapes")))
         .expect("the shapes");
-    let keep = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
+    let keep = aurora_i18n::tr!("build-create-keep-creating");
     let option = inspector
         .show(vec![])
         .1

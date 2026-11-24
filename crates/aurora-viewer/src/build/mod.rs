@@ -304,10 +304,18 @@ pub struct BuildSettings {
     pub select_surrounding: bool,
     /// FSBuildToolDecimalPrecision: decimals of the Object tab numbers.
     pub decimal_precision: u8,
-    /// CreateToolCopySelection / CopyCenters / CopyRotates.
+    /// CreateToolCopySelection / CopyCenters / CopyRotates (the Legacy
+    /// style's Create options).
     pub copy_selection: bool,
     pub copy_centers: bool,
     pub copy_rotates: bool,
+    /// The Aurora Create window's Center and Rotate, for every prim it
+    /// makes (Aurora's own, human request 2026-11-25): its centre on the
+    /// point clicked instead of resting on the surface, and turned to stand
+    /// on the surface clicked (`creation_pose`). Off, as the Legacy
+    /// Viewer's Create tool places a prim.
+    pub create_centers: bool,
+    pub create_rotates: bool,
     /// LastSelectedTree / LastSelectedGrass: species name, empty = random.
     pub last_tree: String,
     pub last_grass: String,
@@ -418,6 +426,35 @@ impl BuildSettings {
         }
         let captured = self.captured_shapes.get(shapes::captured_index(self.create_shape)?)?;
         Some((captured.shape, Quat::IDENTITY, Some(Vec3::from_array(captured.scale))))
+    }
+
+    /// Where the Create tool's prim of `scale`, turned by its shape's own
+    /// `rotation`, goes on the surface at `point` whose `normal` faces the
+    /// camera: its centre and its rotation. It rests on the point, upright,
+    /// as the region places LLToolPlacer's prim; with the Aurora window's
+    /// Rotate it stands on the surface instead, and with Center its centre
+    /// is the point (`create_centers`).
+    pub fn creation_pose(&self, rotation: Quat, scale: Vec3, point: Vec3, normal: Vec3) -> (Vec3, Quat) {
+        let up = if self.create_rotates {
+            normal.normalize_or(Vec3::Z)
+        } else {
+            Vec3::Z
+        };
+        let rotation = if self.create_rotates {
+            (Quat::from_rotation_arc(Vec3::Z, up) * rotation).normalize()
+        } else {
+            rotation
+        };
+        if self.create_centers {
+            return (point, rotation);
+        }
+        // half its extent along `up`
+        let axes = glam::Mat3::from_quat(rotation);
+        let half = Vec3::new(axes.x_axis.dot(up), axes.y_axis.dot(up), axes.z_axis.dot(up))
+            .abs()
+            .dot(scale)
+            * 0.5;
+        (point + up * half, rotation)
     }
 
     /// Removes the captured shape `k`; the choice follows its shape, or
@@ -874,6 +911,8 @@ impl Default for BuildSettings {
             copy_selection: false,
             copy_centers: true,
             copy_rotates: false,
+            create_centers: false,
+            create_rotates: false,
             last_tree: String::new(),
             last_grass: String::new(),
             expanded: true,
@@ -1095,6 +1134,14 @@ pub struct BuildTool {
     /// Prims the Create tool asked for whose new objects' look is still to
     /// be given (new_defaults.rs).
     new_defaults_pending: u32,
+    /// For each of those, the place and rotation it is put at once it
+    /// arrives, when the Aurora window's Center or Rotate chose them (the
+    /// region's own placement is not exact: FSFloaterImport::
+    /// processPrimCreated sends the position again the same way).
+    new_poses: std::collections::VecDeque<Option<(RegionHandle, Vec3, Quat)>>,
+    /// The normal of the surface under the Create tool's click, toward the
+    /// camera (`place::creation_normal`), given by the app with the click.
+    pub creation_normal: Option<Vec3>,
     /// Selection rectangle being dragged (start, current in pixels, extend).
     pub rect: Option<((f32, f32), (f32, f32), bool)>,
     /// The press behind `rect`, until it is known to be a click: the object
@@ -1174,6 +1221,8 @@ impl Default for BuildTool {
             pending_create: None,
             shape_capture: false,
             new_defaults_pending: 0,
+            new_poses: Default::default(),
+            creation_normal: None,
             rect: None,
             press: None,
             press_face: None,
@@ -2885,6 +2934,7 @@ impl BuildTool {
         let random = Uuid::new_v4().as_u128() as u32;
         let n = shapes::shapes().len();
         let plant = s.create_shape == n || s.create_shape == n + 1;
+        let mut exact = None;
         let (pcode, shape, rotation, state, scale, flags) = if plant {
             // trees and grass: not created selected (LLToolPlacer)
             let tree = s.create_shape == n;
@@ -2910,12 +2960,18 @@ impl BuildTool {
             let Some((shape, rotation, own_size)) = s.create_volume() else {
                 return;
             };
+            let scale = world.prim_limits().clamp3(own_size.unwrap_or(Vec3::from_array(s.new_prim_size)));
+            let normal = self.creation_normal.take().unwrap_or(Vec3::Z);
+            let (center, rotation) = s.creation_pose(rotation, scale, point, normal);
+            if s.create_centers || s.create_rotates {
+                exact = Some((handle, center - off, rotation));
+            }
             (
                 aurora_prim::params::LL_PCODE_VOLUME,
                 shape,
                 rotation,
                 0,
-                world.prim_limits().clamp3(own_size.unwrap_or(Vec3::from_array(s.new_prim_size))),
+                scale,
                 FLAGS_CREATE_SELECTED,
             )
         };
@@ -2940,7 +2996,7 @@ impl BuildTool {
         if !plant {
             self.expect_created(world);
             // (trees and grass are not created selected: no look of their own)
-            self.expect_new_defaults();
+            self.expect_new_defaults(exact);
         }
         // LLToolPlacer::addObject
         world.ui_sounds.push(crate::ui_sound::UiSound::ObjectCreate);

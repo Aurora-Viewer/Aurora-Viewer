@@ -1,4 +1,6 @@
-//! The Create window's shape picker (`BuildTool::capture_shape`): the rule
+//! The Aurora Create window: its Center and Rotate on every prim
+//! (`BuildSettings::creation_pose`), and its shape picker
+//! (`BuildTool::capture_shape`): the rule
 //! of LLPanelObject::onCopyParams (a prim we may modify, not a mesh), the
 //! captured shapes kept in the settings and rezzed with their own size.
 
@@ -159,4 +161,100 @@ fn the_picker_is_put_down_with_the_create_window() {
     tool.close_tool_window(Tool::Create, &mut world, &mut s);
     assert!(!tool.shape_capture);
     assert!(!tool.capturing_shape());
+}
+
+#[test]
+fn center_and_rotate_place_the_prim_on_the_surface_clicked() {
+    let scale = Vec3::new(1.0, 2.0, 3.0);
+    let point = Vec3::new(10.0, 20.0, 30.0);
+    let wall = Vec3::X;
+    let mut s = BuildSettings::default();
+    // off: upright, resting on the point, whatever the surface
+    let (center, rotation) = s.creation_pose(Quat::IDENTITY, scale, point, wall);
+    assert_eq!(rotation, Quat::IDENTITY);
+    assert!(center.abs_diff_eq(point + Vec3::Z * 1.5, 1e-5));
+    // Center: its centre on the point
+    s.create_centers = true;
+    let (center, _) = s.creation_pose(Quat::IDENTITY, scale, point, wall);
+    assert!(center.abs_diff_eq(point, 1e-5));
+    // Rotate: standing on the wall, its top toward the camera
+    s.create_centers = false;
+    s.create_rotates = true;
+    let (center, rotation) = s.creation_pose(Quat::IDENTITY, scale, point, wall);
+    assert!((rotation * Vec3::Z).abs_diff_eq(wall, 1e-5));
+    assert!(center.abs_diff_eq(point + wall * 1.5, 1e-5), "{center:?}");
+    // a shape with its own turn (the sphere's) keeps it on the surface
+    let turned = shapes::shapes()[8].rotation();
+    let (center, rotation) = s.creation_pose(turned, scale, point, Vec3::Z);
+    assert!(rotation.abs_diff_eq(turned, 1e-5));
+    assert!(
+        center.abs_diff_eq(point + Vec3::Z * 0.5, 1e-5),
+        "the turned shape's own height: {center:?}"
+    );
+}
+
+#[test]
+fn a_prim_placed_by_center_and_rotate_is_put_there_once_it_arrives() {
+    let (mut world, mut tool, mut s, _) = fixture();
+    s.create_centers = true;
+    s.create_rotates = true;
+    s.new_prim_size = [0.5, 0.5, 0.5];
+    let point = world.agent.position + Vec3::X * 5.0;
+    let wall = Vec3::Y;
+    tool.creation_normal = Some(wall);
+    tool.place(&mut world, &s, Some(point), None, (0.0, 0.0));
+    assert!(tool.creation_normal.is_none(), "taken by the click");
+    let commands = std::mem::take(&mut tool.out);
+    let prim = commands
+        .iter()
+        .find_map(|command| match command {
+            NetCommand::Build(BuildCmd::Add(prim)) => Some(prim.clone()),
+            _ => None,
+        })
+        .expect("ObjectAdd");
+    assert!((prim.rotation * Vec3::Z).abs_diff_eq(wall, 1e-5), "sent turned to the surface");
+    let mut sim = demo_sim::DemoSim::default();
+    for event in sim.reply(&world, &BuildCmd::Add(prim.clone())) {
+        world.apply(event);
+    }
+    tool.pick_up_created(&mut world, &s);
+    let (handle, update) = tool
+        .out
+        .iter()
+        .find_map(|command| match command {
+            NetCommand::Build(BuildCmd::Transform { handle, updates }) => Some((*handle, updates[0])),
+            _ => None,
+        })
+        .expect("the place sent again once the prim arrived");
+    assert_eq!(handle, prim.handle);
+    let off = world.region_offset(handle).expect("the region");
+    assert!(update.position.expect("a position").abs_diff_eq(point - off, 1e-4));
+    assert!(update.rotation.expect("a rotation").abs_diff_eq(prim.rotation, 1e-5));
+}
+
+#[test]
+fn a_prim_placed_as_the_legacy_viewer_does_is_left_where_the_region_puts_it() {
+    let (mut world, mut tool, s, _) = fixture();
+    let point = world.agent.position + Vec3::X * 5.0;
+    tool.creation_normal = Some(Vec3::Y);
+    tool.place(&mut world, &s, Some(point), None, (0.0, 0.0));
+    let prim = tool
+        .out
+        .iter()
+        .find_map(|command| match command {
+            NetCommand::Build(BuildCmd::Add(prim)) => Some(prim.clone()),
+            _ => None,
+        })
+        .expect("ObjectAdd");
+    assert_eq!(prim.rotation, Quat::IDENTITY);
+    tool.out.clear();
+    let mut sim = demo_sim::DemoSim::default();
+    for event in sim.reply(&world, &BuildCmd::Add(prim)) {
+        world.apply(event);
+    }
+    tool.pick_up_created(&mut world, &s);
+    assert!(
+        !tool.out.iter().any(|c| matches!(c, NetCommand::Build(BuildCmd::Transform { .. }))),
+        "no place of our own"
+    );
 }

@@ -8595,6 +8595,9 @@ impl App {
                 .scene
                 .creation_surface(&self.world, ray, self.settings.draw_distance, &mut candidates);
             self.scene.creation_preview.candidates = candidates;
+            self.build.creation_normal = surface.map(|(point, target)| {
+                crate::build::place::creation_normal(&self.world, &self.scene, &self.settings.build, ray, point, target)
+            });
             (surface.map(|s| s.0), surface.and_then(|s| s.1), ray)
         } else if self.build.tool == crate::build::Tool::Edit && self.build.edit_mode == crate::build::EditMode::Face {
             // LLToolFace: CPU ray for ordinary prims, then the drawn-face pick
@@ -12462,7 +12465,10 @@ impl App {
                     .scene
                     .creation_surface(&self.world, ray, self.settings.draw_distance, &mut candidates);
                 self.scene.creation_preview.candidates = candidates;
-                surface.and_then(|(point, _)| crate::scene::creation_preview::Placement::new(&self.world, &self.settings.build, point))
+                surface.and_then(|(point, target)| {
+                    let normal = crate::build::place::creation_normal(&self.world, &self.scene, &self.settings.build, ray, point, target);
+                    crate::scene::creation_preview::Placement::new(&self.world, &self.settings.build, point, normal)
+                })
             } else {
                 None
             };

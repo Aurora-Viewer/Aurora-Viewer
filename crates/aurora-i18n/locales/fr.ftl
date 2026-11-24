@@ -10706,6 +10706,7 @@ build-compact-copy-vector = Copier le vecteur
 build-compact-camera = Caméra
 build-tool-in-use = En cours
 build-create-options-toggle = Afficher / masquer les options
+build-create-keep-creating = Continuer à créer
 build-capture-shape-button = Copier la forme d’une prim : cliquez ici, puis sur une prim dans le monde
 build-capture-shape-armed = Cliquez sur une prim pour copier sa forme (Échap annule)
 build-capture-shape-full = 20 formes sont gardées. Retirez-en une pour en copier une autre
