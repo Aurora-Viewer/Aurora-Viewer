@@ -1,7 +1,8 @@
 //! The Aurora style's tool windows: Camera, Move, Create and Land, each
 //! with its panel (tools.rs) in a window of its own (build/tool_windows.rs
 //! has the rules). The window of the tool in use says so in its title; a
-//! press in a window makes its tool the one in use.
+//! press in a window makes its tool the one in use, in the Create window
+//! only a click on a shape.
 
 use super::{Env, INSPECTOR_ID, common, compact};
 use crate::build::{BuildSettings, BuildTool, Mods, Tool};
@@ -97,7 +98,8 @@ pub(super) fn show(
         });
         if !open {
             tool.close_tool_window(which, world, s);
-        } else if pressed_in(ctx, id) {
+        } else if which != Tool::Create && pressed_in(ctx, id) {
+            // (the Create window: a shape clicked, compact::tool_panel)
             tool.activate(which);
         }
     }

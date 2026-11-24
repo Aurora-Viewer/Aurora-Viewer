@@ -797,7 +797,14 @@ pub(super) fn tool_panel(
     match which {
         Tool::Focus => tools::focus_panel(ui, p, tool, mods, env),
         Tool::Grab => tools::grab_panel(ui, p, tool, mods),
-        Tool::Create => tools::create_panel(ui, p, s),
+        Tool::Create => {
+            // only a shape picked makes Create the tool in use again, with
+            // its shape under the pointer in the world (human request,
+            // 2026-11-24)
+            if tools::create_panel(ui, p, s) {
+                tool.activate(Tool::Create);
+            }
+        }
         Tool::Land => {
             tools::land_panel(ui, p, tool, world, s);
             tools::parcel_panel(ui, p, tool, world, s, env.property_lines);

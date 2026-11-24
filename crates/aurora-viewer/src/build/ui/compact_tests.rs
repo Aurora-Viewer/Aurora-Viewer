@@ -4347,11 +4347,18 @@ fn the_rail_tool_buttons_open_and_close_their_own_windows() {
             .any(|(text, rect)| text == aurora_i18n::tr!("build-tool-in-use") && window.contains_rect(*rect)),
         "its title says its tool is the one in use"
     );
-    // a press in the main window: Edit; in the Create window: Create
+    // a press in the main window: Edit; in the Create window, a shape
+    // clicked: Create (its title bar leaves Edit)
     click_at(&mut inspector, main.left_top() + vec2(40.0, 12.0));
     assert_eq!(inspector.tool.tool, Tool::Edit);
     assert!(inspector.tool.tool_window_open(Tool::Create));
     click_at(&mut inspector, window.left_top() + vec2(40.0, 12.0));
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    let shapes = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-shapes")))
+        .expect("the shapes");
+    click_at(&mut inspector, shapes.left_top() + vec2(10.0, 10.0));
     assert_eq!(inspector.tool.tool, Tool::Create);
     // lit, the rail button closes the window; Edit is back
     click_at(&mut inspector, create);
@@ -4499,4 +4506,55 @@ fn the_create_window_fits_its_content_and_hides_its_options_part() {
         let edge = least.right_center() - vec2(1.0, 0.0);
         drag(&mut inspector, edge, edge + vec2(120.0, 0.0));
     }
+}
+
+/// The Create window (human request, 2026-11-24): opened, its tool is the
+/// one in use, its last shape under the pointer in the world; once another
+/// tool took over, only a click on a shape gives it back, not a press
+/// elsewhere in the window (its options, its caret, its title bar).
+#[test]
+fn only_a_shape_clicked_makes_create_the_tool_in_use_again() {
+    let mut inspector = Inspector::new();
+    inspector.tool.open_build(Tool::Create);
+    assert_eq!(inspector.tool.tool, Tool::Create, "in use once opened");
+    inspector.tool.activate(Tool::Edit);
+    for _ in 0..4 {
+        inspector.show(vec![]);
+    }
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    let window = inspector
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("build_tool_create")))
+        .expect("the Create window");
+    let caret = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-options-toggle")))
+        .expect("the caret");
+    let shapes = inspector
+        .ctx
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build-create-shapes")))
+        .expect("the shapes");
+    let keep = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
+    let option = inspector
+        .show(vec![])
+        .1
+        .into_iter()
+        .find(|(text, at)| text == keep && window.contains_rect(*at))
+        .expect("the options")
+        .1;
+    // between two shapes, beside the options, on the title bar
+    let gap = egui::pos2(shapes.left() + shapes.width() / 5.0 - 2.0, shapes.top() + 4.0);
+    for at in [gap, option.right_center() + vec2(60.0, 0.0), window.center_top() + vec2(0.0, 14.0)] {
+        click_at(&mut inspector, at);
+        assert_eq!(inspector.tool.tool, Tool::Edit, "a press at {at:?} leaves Edit in use");
+    }
+    let shown = inspector.settings.create_options_shown;
+    click_at(&mut inspector, caret.center());
+    assert_ne!(inspector.settings.create_options_shown, shown, "the caret still works");
+    assert_eq!(inspector.tool.tool, Tool::Edit, "the caret leaves Edit in use");
+    // a shape: Create again, with that shape
+    let third = egui::pos2(shapes.left() + shapes.width() * 0.5, shapes.top() + 10.0);
+    click_at(&mut inspector, third);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert_eq!(inspector.settings.create_shape, 2);
 }
