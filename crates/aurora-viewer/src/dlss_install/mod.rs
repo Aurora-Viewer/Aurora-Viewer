@@ -161,10 +161,9 @@ impl Net {
             .enable_all()
             .build()
             .map_err(|e| e.to_string())?;
-        let client = reqwest::Client::builder()
-            .user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| e.to_string())?;
+        // through the user's proxy setting, like every request of the viewer
+        let client =
+            aurora_proxy::http_client(|b| b.user_agent(concat!("AuroraViewer/", env!("CARGO_PKG_VERSION")))).map_err(|e| e.to_string())?;
         Ok(Self { rt, client })
     }
 

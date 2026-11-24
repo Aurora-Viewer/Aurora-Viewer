@@ -1780,7 +1780,7 @@ pub(in crate::ui::options) fn dlss_install_modal(
                     tr!("ui-options-dlss-install-intro-linux")
                 });
                 ui.add_space(4.0);
-                egui::Frame::group(ui.style()).show(ui, |ui| {
+                widgets::surface(ui, p, |ui| {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.label(RichText::new(text.as_str()).small());
@@ -1801,7 +1801,8 @@ pub(in crate::ui::options) fn dlss_install_modal(
                     Step::Building => tr!("ui-options-dlss-install-building"),
                     Step::Installing => tr!("ui-options-dlss-install-installing"),
                 });
-                ui.add(egui::ProgressBar::new(*f).show_percentage());
+                let percent = format!("{:.0} %", f * 100.0);
+                widgets::progress(ui, p, "dlss_install_progress", *f, ui.available_width(), &percent, None);
                 ctx.request_repaint_after(std::time::Duration::from_millis(100));
             }
             State::Done => {
