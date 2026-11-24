@@ -43,6 +43,8 @@ struct Vertex {
     let mr_uv = vec2(dot(u.uv[2][0],coord),dot(u.uv[2][1],coord));
     let emissive_uv = vec2(dot(u.uv[3][0],coord),dot(u.uv[3][1],coord));
     let base_color = textureSample(base, samp, base_uv) * u.color;
+    // how much of the pixel a cut-out covers, its edge one pixel wide
+    let covered = clamp((base_color.a - u.params.y) / max(fwidth(base_color.a), 0.0001) + 0.5, 0.0, 1.0);
     let facing = select(-1.0, 1.0, front);
     var n = normalize(v.normal) * facing;
     // Cotangent frame from screen derivatives, the construction of
@@ -92,8 +94,12 @@ struct Vertex {
         let grid = abs(fract(v.uv * 10.0) - vec2<f32>(0.5));
         if max(grid.x, grid.y) > 0.48 { color = u.edge_color.rgb; }
     }
-    let opacity = select(1.0, base_color.a, u.params.z == 1.0);
-    if u.params.z == 2.0 && base_color.a < u.params.y { discard; }
+    var opacity = select(1.0, base_color.a, u.params.z == 1.0);
+    if u.params.z == 2.0 {
+        // several samples a pixel: the coverage smooths the edge
+        if u.surface.z > 0.5 { opacity = covered; if covered <= 0.0 { discard; } }
+        else if base_color.a < u.params.y { discard; }
+    }
     if !front && u.surface.y < 0.5 { discard; }
     let shown = pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
     return vec4(mix(shown, u.tone.rgb, u.tone.a), opacity);

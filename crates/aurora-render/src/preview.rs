@@ -338,11 +338,18 @@ struct GpuPart {
     source: usize,
     group: wgpu::BindGroup,
 }
-struct Pipelines {
-    layout: wgpu::BindGroupLayout,
+/// The pipelines of one sample count.
+struct Passes {
     triangles: wgpu::RenderPipeline,
     blended: wgpu::RenderPipeline,
     edges: wgpu::RenderPipeline,
+}
+struct Pipelines {
+    layout: wgpu::BindGroupLayout,
+    shader: wgpu::ShaderModule,
+    pipeline_layout: wgpu::PipelineLayout,
+    /// Without anti-aliasing, and with it, each made when first used.
+    passes: [Option<Passes>; 2],
     sampler: wgpu::Sampler,
     assets: SharedAssets,
 }
@@ -351,7 +358,10 @@ struct Target {
     parts: Vec<GpuPart>,
     size: [u32; 2],
     color: wgpu::TextureView,
+    /// What is drawn to before `color`, with anti-aliasing.
+    smooth: Option<wgpu::TextureView>,
     depth: wgpu::TextureView,
+    samples: u32,
     texture: egui::TextureId,
     last: Option<View>,
     last_pose: Option<Pose>,
@@ -359,6 +369,8 @@ struct Target {
 }
 #[derive(Default)]
 pub(crate) struct Cache {
+    /// Samples a pixel of the previews drawn from now on (0: one).
+    samples: u32,
     pipeline: Option<Pipelines>,
     targets: HashMap<egui::Id, Target>,
     shown: Shown<egui::Id>,
@@ -436,12 +448,49 @@ impl Pipelines {
             label: Some("Asset preview"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/preview.wgsl").into()),
         });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Preview textures"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        Self {
+            layout,
+            shader,
+            pipeline_layout,
+            passes: [None, None],
+            sampler,
+            assets: SharedAssets::default(),
+        }
+    }
+
+    /// The pipelines of `samples` a pixel (1, or `SMOOTH`), made if needed.
+    fn prepare(&mut self, device: &wgpu::Device, samples: u32) -> &Passes {
+        let Self {
+            shader,
+            pipeline_layout,
+            passes,
+            ..
+        } = self;
+        passes[usize::from(samples > 1)].get_or_insert_with(|| Passes::new(device, shader, pipeline_layout, samples))
+    }
+
+    fn passes(&self, samples: u32) -> &Passes {
+        self.passes[usize::from(samples > 1)].as_ref().expect("prepared with the target")
+    }
+}
+
+impl Passes {
+    fn new(device: &wgpu::Device, shader: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, samples: u32) -> Self {
         let pipeline = |topology, entry, depth_write| {
+            let solid = samples > 1 && depth_write;
             device.create_render_pipeline_cached(&wgpu::RenderPipelineDescriptor {
                 label: Some("Asset preview"),
-                layout: Some(&pipeline_layout),
+                layout: Some(layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
+                    module: shader,
                     entry_point: Some("vs"),
                     compilation_options: Default::default(),
                     buffers: &[Some(wgpu::VertexBufferLayout {
@@ -451,13 +500,15 @@ impl Pipelines {
                     })],
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module: shader,
                     entry_point: Some(entry),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: wgpu::TextureFormat::Rgba8Unorm,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
+                        // (the covered part of a cut-out is the opacity:
+                        // blending it too would thin it twice)
+                        blend: (!solid).then_some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: if solid { wgpu::ColorWrites::COLOR } else { wgpu::ColorWrites::ALL },
                     })],
                 }),
                 primitive: wgpu::PrimitiveState {
@@ -472,43 +523,29 @@ impl Pipelines {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: Default::default(),
+                multisample: wgpu::MultisampleState {
+                    count: samples,
+                    // the edges of the cut-outs (hair, lashes) too
+                    alpha_to_coverage_enabled: solid,
+                    ..Default::default()
+                },
                 multiview_mask: None,
                 cache: None,
             })
         };
-        let triangles = pipeline(wgpu::PrimitiveTopology::TriangleList, "fs", true);
-        let blended = pipeline(wgpu::PrimitiveTopology::TriangleList, "fs", false);
-        let edges = pipeline(wgpu::PrimitiveTopology::LineList, "fs_edge", false);
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Preview textures"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
         Self {
-            layout,
-            triangles,
-            blended,
-            edges,
-            sampler,
-            assets: SharedAssets::default(),
+            triangles: pipeline(wgpu::PrimitiveTopology::TriangleList, "fs", true),
+            blended: pipeline(wgpu::PrimitiveTopology::TriangleList, "fs", false),
+            edges: pipeline(wgpu::PrimitiveTopology::LineList, "fs_edge", false),
         }
     }
 }
 
 impl Target {
-    fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        egui: &mut egui_wgpu::Renderer,
-        pipeline: &mut Pipelines,
-        model: Arc<Model>,
-        size: [u32; 2],
-    ) -> Self {
-        let target = |label, format| {
+    /// What it draws to: the picture, the samples before it (with
+    /// anti-aliasing), the depth.
+    fn surfaces(device: &wgpu::Device, size: [u32; 2], samples: u32) -> (wgpu::TextureView, Option<wgpu::TextureView>, wgpu::TextureView) {
+        let target = |label, format, samples| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some(label),
@@ -518,7 +555,7 @@ impl Target {
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
-                    sample_count: 1,
+                    sample_count: samples,
                     dimension: wgpu::TextureDimension::D2,
                     format,
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -526,8 +563,31 @@ impl Target {
                 })
                 .create_view(&Default::default())
         };
-        let color = target("Preview color", wgpu::TextureFormat::Rgba8Unorm);
-        let depth = target("Preview depth", wgpu::TextureFormat::Depth32Float);
+        let color = target("Preview color", wgpu::TextureFormat::Rgba8Unorm, 1);
+        let smooth = (samples > 1).then(|| target("Preview samples", wgpu::TextureFormat::Rgba8Unorm, samples));
+        let depth = target("Preview depth", wgpu::TextureFormat::Depth32Float, samples);
+        (color, smooth, depth)
+    }
+
+    /// Another size or sample count of the same model: its parts stay.
+    fn resize(&mut self, device: &wgpu::Device, egui: &mut egui_wgpu::Renderer, pipeline: &mut Pipelines, size: [u32; 2], samples: u32) {
+        pipeline.prepare(device, samples);
+        (self.color, self.smooth, self.depth) = Self::surfaces(device, size, samples);
+        egui.update_egui_texture_from_wgpu_texture(device, &self.color, wgpu::FilterMode::Linear, self.texture);
+        (self.size, self.samples, self.last) = (size, samples, None);
+    }
+
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        egui: &mut egui_wgpu::Renderer,
+        pipeline: &mut Pipelines,
+        model: Arc<Model>,
+        size: [u32; 2],
+        samples: u32,
+    ) -> Self {
+        pipeline.prepare(device, samples);
+        let (color, smooth, depth) = Self::surfaces(device, size, samples);
         let texture = egui.register_native_texture(device, &color, wgpu::FilterMode::Linear);
         let assets = &mut pipeline.assets;
         let mut parts = Vec::new();
@@ -684,7 +744,9 @@ impl Target {
             parts,
             size,
             color,
+            smooth,
             depth,
+            samples,
             texture,
             last: None,
             last_pose: None,
@@ -757,7 +819,12 @@ impl Target {
                     view.edge_color
                 },
                 ambient: [view.ambient[0], view.ambient[1], view.ambient[2], 1.0],
-                surface: [material.normal_scale, if material.double_sided { 1.0 } else { 0.0 }, 0.0, 0.0],
+                surface: [
+                    material.normal_scale,
+                    if material.double_sided { 1.0 } else { 0.0 },
+                    if self.samples > 1 { 1.0 } else { 0.0 },
+                    0.0,
+                ],
                 uv: material.uv,
                 tone: tones.and_then(|tones| tones.get(part.source)).copied().unwrap_or_default(),
             };
@@ -766,9 +833,9 @@ impl Target {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Asset preview"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.color,
+                view: self.smooth.as_ref().unwrap_or(&self.color),
                 depth_slice: None,
-                resolve_target: None,
+                resolve_target: self.smooth.is_some().then_some(&self.color),
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
                         r: view.background[0] as f64,
@@ -776,7 +843,11 @@ impl Target {
                         b: view.background[2] as f64,
                         a: 1.0,
                     }),
-                    store: wgpu::StoreOp::Store,
+                    store: if self.smooth.is_some() {
+                        wgpu::StoreOp::Discard
+                    } else {
+                        wgpu::StoreOp::Store
+                    },
                 },
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -791,10 +862,11 @@ impl Target {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        let passes = pipeline.passes(self.samples);
         // Like the world passes, skin/masked faces precede blended cosmetics.
         // A transparent layer must never write depth over the face behind it.
         for blended in [false, true] {
-            pass.set_pipeline(if blended { &pipeline.blended } else { &pipeline.triangles });
+            pass.set_pipeline(if blended { &passes.blended } else { &passes.triangles });
             for part in &self.parts {
                 if (effective_material(&self.model.parts[part.source], &view).alpha_mode == 1) != blended {
                     continue;
@@ -806,7 +878,7 @@ impl Target {
             }
         }
         if view.edges || self.model.parts.iter().any(|p| p.diagnostic) {
-            pass.set_pipeline(&pipeline.edges);
+            pass.set_pipeline(&passes.edges);
             for part in &self.parts {
                 if !view.edges && !self.model.parts[part.source].diagnostic {
                     continue;
@@ -847,7 +919,22 @@ pub(crate) fn target_size(size: egui::Vec2, scale: f32) -> [u32; 2] {
     ]
 }
 
+/// Samples a pixel with anti-aliasing: the count every card has.
+const SMOOTH: u32 = 4;
+
 impl Cache {
+    pub fn new(aa: crate::AntiAliasing) -> Self {
+        let mut cache = Self::default();
+        cache.set_anti_aliasing(aa);
+        cache
+    }
+
+    /// Follow the viewer's anti-aliasing: none, or smooth edges (the world's
+    /// own kind, FXAA, SMAA, TAA…, needs the frame's passes).
+    pub fn set_anti_aliasing(&mut self, aa: crate::AntiAliasing) {
+        self.samples = if aa == crate::AntiAliasing::None { 1 } else { SMOOTH };
+    }
+
     /// The previews of `shower`'s pass become meshes of their targets,
     /// drawn first when they changed. What no window shows any more goes.
     #[allow(clippy::too_many_arguments)]
@@ -893,19 +980,25 @@ impl Cache {
                 continue;
             }
             let size = target_size(rect.size(), scale);
+            let samples = self.samples.max(1);
             let pipeline = self.pipeline.get_or_insert_with(|| Pipelines::new(device));
             let changed = self
                 .targets
                 .get(&region.id)
-                .is_none_or(|target| target.size != size || !Arc::ptr_eq(&target.model, &region.model));
+                .is_none_or(|target| !Arc::ptr_eq(&target.model, &region.model));
             if changed {
                 if let Some(old) = self.targets.remove(&region.id) {
                     egui.free_texture(&old.texture);
                 }
-                self.targets
-                    .insert(region.id, Target::new(device, queue, egui, pipeline, region.model.clone(), size));
+                self.targets.insert(
+                    region.id,
+                    Target::new(device, queue, egui, pipeline, region.model.clone(), size, samples),
+                );
             }
             let target = self.targets.get_mut(&region.id).expect("preview target initialized");
+            if (target.size, target.samples) != (size, samples) {
+                target.resize(device, egui, pipeline, size, samples);
+            }
             target.draw(queue, encoder, pipeline, region.view, region.pose.as_ref(), region.tones.as_ref());
             seen.insert(region.id);
             let mut mesh = egui::Mesh::with_texture(target.texture);
@@ -955,6 +1048,105 @@ impl Cache {
 mod tests {
     use super::*;
     use wgpu::util::DeviceExt;
+
+    /// With anti-aliasing a slanted edge has in-between pixels; without, none.
+    #[test]
+    fn anti_aliasing_smooths_the_edges_of_a_preview() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())) else {
+            eprintln!("no GPU adapter: skipped");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let mut egui = egui_wgpu::Renderer::new(&device, wgpu::TextureFormat::Rgba8UnormSrgb, Default::default());
+        const SIZE: u32 = 64;
+        let corner = |x: f32, z: f32| Vertex::new([0.0, x, z], [-1.0, 0.0, 0.0], [0.0, 0.0]);
+        let part = Part {
+            diagnostic: false,
+            vertices: vec![corner(-0.8, -0.7), corner(0.8, -0.5), corner(0.1, 0.8)].into(),
+            indices: vec![0, 1, 2].into(),
+            textures: [None, None, None, None],
+            material: Material {
+                // its own light: one colour whatever the angle
+                color: [0.0, 0.0, 0.0, 1.0],
+                emissive: [1.0; 3],
+                double_sided: true,
+                ..Default::default()
+            },
+            skin: None,
+        };
+        let model = Arc::new(Model {
+            parts: vec![part],
+            center: Vec3::ZERO,
+            radius: 1.0,
+        });
+        let mut pipeline = Pipelines::new(&device);
+        let mut between = |samples| {
+            let mut target = Target::new(&device, &queue, &mut egui, &mut pipeline, model.clone(), [SIZE; 2], 1);
+            target.resize(&device, &mut egui, &mut pipeline, [SIZE; 2], samples);
+            let color = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Edge test"),
+                size: wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            target.color = color.create_view(&Default::default());
+            let mut encoder = device.create_command_encoder(&Default::default());
+            let view = View {
+                yaw: 0.0,
+                pitch: 0.0,
+                distance: 3.0,
+                background: [0.0, 0.0, 0.0, 1.0],
+                ..Default::default()
+            };
+            target.draw(&queue, &mut encoder, &pipeline, view, None, None);
+            let pixels = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Edge pixels"),
+                size: crate::readback::readback_size(u64::from(SIZE * SIZE * 4)),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_texture_to_buffer(
+                color.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &pixels,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(SIZE * 4),
+                        rows_per_image: Some(SIZE),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: SIZE,
+                    height: SIZE,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([encoder.finish()]);
+            pixels.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+            device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU work");
+            let data = pixels.slice(..).get_mapped_range().expect("mapped").to_vec();
+            let red: Vec<u8> = data.chunks(4).take((SIZE * SIZE) as usize).map(|p| p[0]).collect();
+            assert!(
+                data.chunks(4).take((SIZE * SIZE) as usize).all(|p| p[3] == 255),
+                "the picture stays opaque"
+            );
+            let full = red.iter().copied().max().unwrap_or(0);
+            assert!(full > 100, "the triangle shows");
+            red.iter().filter(|r| **r > 8 && **r < full - 8).count()
+        };
+        assert_eq!(between(1), 0);
+        assert!(between(SMOOTH) > 20);
+    }
 
     #[test]
     fn large_preview_targets_keep_the_shape_of_their_rectangle() {
@@ -1012,7 +1204,7 @@ mod tests {
                 center: Vec3::ZERO,
                 radius: 1.0,
             });
-            let mut target = Target::new(&device, &queue, egui, pipeline, model, [SIZE; 2]);
+            let mut target = Target::new(&device, &queue, egui, pipeline, model, [SIZE; 2], 1);
             let color = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Layered head test"),
                 size: wgpu::Extent3d {
@@ -1327,7 +1519,7 @@ mod tests {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&pipeline.triangles);
+            pass.set_pipeline(&pipeline.passes(1).triangles);
             pass.set_bind_group(0, &group, &[]);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -1381,7 +1573,8 @@ mod tests {
             return;
         };
         let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
-        let pipeline = Pipelines::new(&device);
+        let mut pipeline = Pipelines::new(&device);
+        pipeline.prepare(&device, 1);
         for (mirrored, back, name) in [
             (false, false, "regular UV"),
             (true, false, "mirrored UV"),

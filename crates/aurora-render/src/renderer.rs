@@ -4679,7 +4679,7 @@ impl Backend {
             targets_shrunk: false,
             ui_targets_backoff: crate::gpu_alloc::Backoff::default(),
             ui_glass: None,
-            previews: Default::default(),
+            previews: crate::preview::Cache::new(settings.aa),
             selection: None,
             cutout: None,
             equirect: None,
@@ -7667,6 +7667,7 @@ impl Backend {
             self.shadow_merge.atlas_changed(&self.device, &self.shadow_view, res, SHADOW_FORMAT);
         }
         self.settings = s;
+        self.previews.set_anti_aliasing(self.settings.aa);
         self.follow_ray_tracing();
         if matches!(s.aa, AntiAliasing::Taa | AntiAliasing::Fsr(_)) {
             // FSR in the place of the TAA pass, or the TAA pass again
