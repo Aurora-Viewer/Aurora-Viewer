@@ -965,6 +965,12 @@ pub struct Settings {
     pub show_appearance: bool,
     /// Crop outfit gallery previews to fill their frames (off: fit the whole image).
     pub appearance_fill_previews: bool,
+    /// The width of the outfit showcase's collection rail in logical points
+    /// (0: the 176-point default, `ui/appearance/showcase.rs`).
+    pub showcase_rail_width: u16,
+    /// The width of the outfit showcase's preview in logical points (0: the
+    /// 300-point default).
+    pub showcase_preview_width: u16,
     /// The order of the Favorite Wearables list (FSWearableFavoritesSortOrder).
     pub wearable_favorites_sort: crate::world::wearable_favorites::SortOrder,
     /// The Favorite Wearables' custom orders (`SortOrder::Custom`), per
@@ -2616,6 +2622,8 @@ impl Default for Settings {
             show_inventory: false,
             show_appearance: false,
             appearance_fill_previews: false,
+            showcase_rail_width: 0,
+            showcase_preview_width: 0,
             wearable_favorites_sort: Default::default(),
             wearable_favorites_order: Default::default(),
             appearance_tab: 0,

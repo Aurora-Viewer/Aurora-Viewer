@@ -49,6 +49,13 @@ pub struct AppearanceUi {
     /// The gallery tab as Aurora's showcase (`showcase.rs`) rather than the
     /// Legacy Viewer's tiles: the app sets it from Preferences › Aurora.
     pub showcase: bool,
+    /// The showcase rail and preview widths in logical points; 0 keeps their
+    /// defaults. The app copies them from the settings and saves a change.
+    pub showcase_rail_width: u16,
+    pub showcase_preview_width: u16,
+    /// A showcase width changed this session: save the settings once the
+    /// pointer is up (`app.rs`).
+    pub preferences_dirty: bool,
     pub editing: bool,
     edit_tab: usize,
     search: String,

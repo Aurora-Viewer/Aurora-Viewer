@@ -310,6 +310,47 @@ pub(super) fn sidebar(ui: &mut egui::Ui, p: &Palette, area: Rect, pane: f32, lay
     }
 }
 
+/// The wide layout's details pane, dragged by its left edge. The list keeps
+/// at least 360 points and the folder sidebar at least 140; a width saved in
+/// a wider window is only clamped for the frame, like the others.
+pub(super) fn details(ui: &mut egui::Ui, p: &Palette, area: Rect, prefs: &mut ExplorerPreferences) -> f32 {
+    const DEFAULT: f32 = 300.0;
+    const MIN: f32 = 240.0;
+    const CONTENT_MIN: f32 = 360.0;
+    const SIDEBAR_MIN: f32 = 140.0;
+    let max = (area.width() - SIDEBAR_MIN - 16.0 - CONTENT_MIN).max(MIN);
+    let width = if prefs.details_width == 0 {
+        DEFAULT
+    } else {
+        f32::from(prefs.details_width)
+    }
+    .clamp(MIN, max);
+    let hit = Rect::from_min_max(
+        egui::pos2(area.right() - width - 8.0, area.top()),
+        egui::pos2(area.right() - width, area.bottom()),
+    );
+    let response = widgets::splitter(
+        ui,
+        p,
+        hit,
+        ui.scope_id().with("inventory_details_resize"),
+        aurora_i18n::tr!("inventory-resize-details"),
+    );
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique("inventory_details_handle"), hit));
+    if response.double_clicked() {
+        prefs.details_width = 0;
+        DEFAULT.clamp(MIN, max)
+    } else if response.dragged() && response.drag_delta().x != 0.0 {
+        let width = (width - response.drag_delta().x).clamp(MIN, max);
+        prefs.details_width = width.round() as u16;
+        width
+    } else {
+        width
+    }
+}
+
 /// The label of a column, as its title and its menu entry say it.
 pub(super) fn title(id: ColumnId, frame: Frame) -> &'static str {
     match id {
@@ -437,6 +478,7 @@ mod tests {
         assert_eq!(old.explorer, ExplorerPreferences::default());
         let mut changed = old.clone();
         changed.explorer.sidebar_width = 314;
+        changed.explorer.details_width = 282;
         changed.explorer.columns.slot_mut(ColumnId::Kind).width = 230;
         changed.explorer.columns.slot_mut(ColumnId::Date).show = false;
         changed.explorer.columns.slot_mut(ColumnId::Creator).show = true;

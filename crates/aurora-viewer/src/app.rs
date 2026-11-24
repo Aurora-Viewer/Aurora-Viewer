@@ -20530,6 +20530,8 @@ impl App {
                 self.appearance_ui.fill_previews = self.settings.appearance_fill_previews;
                 self.appearance_ui.showcase = !self.settings.classic_outfit_gallery;
                 self.appearance_ui.sort = self.settings.appearance_outfit_sort;
+                self.appearance_ui.showcase_rail_width = self.settings.showcase_rail_width;
+                self.appearance_ui.showcase_preview_width = self.settings.showcase_preview_width;
                 for action in ui::appearance::show(
                     &ctx,
                     &p,
@@ -20550,6 +20552,17 @@ impl App {
                 }
                 if self.settings.appearance_outfit_sort != self.appearance_ui.sort {
                     self.settings.appearance_outfit_sort = self.appearance_ui.sort;
+                    self.settings.save();
+                }
+                if self.settings.showcase_rail_width != self.appearance_ui.showcase_rail_width
+                    || self.settings.showcase_preview_width != self.appearance_ui.showcase_preview_width
+                {
+                    self.settings.showcase_rail_width = self.appearance_ui.showcase_rail_width;
+                    self.settings.showcase_preview_width = self.appearance_ui.showcase_preview_width;
+                    self.appearance_ui.preferences_dirty = true;
+                }
+                if self.appearance_ui.preferences_dirty && !ctx.input(|input| input.pointer.any_down()) {
+                    self.appearance_ui.preferences_dirty = false;
                     self.settings.save();
                 }
                 self.panels.appearance = open;

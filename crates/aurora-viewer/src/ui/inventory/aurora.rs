@@ -538,7 +538,11 @@ fn explorer(
     toolbar::explorer_row(ui, p, inv, st, prefs, facts, layout, actions);
     ui.add_space(8.0);
     let area = ui.available_rect_before_wrap();
-    let pane_w = if layout == Layout::Wide && prefs.show_details { 300.0 } else { 0.0 };
+    let pane_w = if layout == Layout::Wide && prefs.show_details {
+        columns::details(ui, p, area, &mut prefs.explorer)
+    } else {
+        0.0
+    };
     const GAP: f32 = 8.0;
     let side_w = if narrow {
         0.0
@@ -798,12 +802,17 @@ mod tests {
             h.frames(8);
             h.actions.clear();
             let selection = h.st.selection.clone();
-            for key in [
+            let wide = Layout::for_width(width - 20.0) == Layout::Wide;
+            let mut splitters = vec![
                 egui::Id::unique("inventory_sidebar_handle"),
                 egui::Id::unique(("inventory_column_handle", 0_usize)),
                 egui::Id::unique(("inventory_column_handle", 1_usize)),
                 egui::Id::unique(("inventory_column_handle", 2_usize)),
-            ] {
+            ];
+            if wide {
+                splitters.push(egui::Id::unique("inventory_details_handle"));
+            }
+            for key in splitters {
                 let hit = h.ctx.data(|data| data.get_temp::<Rect>(key)).expect("splitter drawn");
                 let start = hit.center();
                 h.run(vec![egui::Event::PointerMoved(start)]);
@@ -829,6 +838,9 @@ mod tests {
             assert!(h.prefs.explorer.sidebar_width > 0);
             assert!(h.prefs.explorer.columns.slot(view::ColumnId::Kind).width > 0);
             assert!(h.prefs.explorer.columns.slot(view::ColumnId::Date).width > 0);
+            if wide {
+                assert!(h.prefs.explorer.details_width > 0);
+            }
             assert_eq!(h.st.selection, selection);
             assert!(h.actions.is_empty(), "splitters cannot perform inventory operations");
             let saved = h.prefs.explorer;
@@ -859,6 +871,16 @@ mod tests {
             assert_eq!(h.prefs.explorer.sidebar_width, 0, "double click restores the responsive default");
             h.click(h.row(8101).center(), Default::default());
             assert_eq!(h.st.selected, Some(Uuid::from_u128(8101)), "ordinary row selection still works");
+            if wide {
+                widgets::size_floater(&h.ctx, "aurora_inventory_test", egui::vec2(WIDE_SIZE, 720.0));
+                h.frames(8);
+                let hit = h
+                    .ctx
+                    .data(|data| data.get_temp::<Rect>(egui::Id::unique("inventory_details_handle")))
+                    .unwrap();
+                h.double_click(hit.center());
+                assert_eq!(h.prefs.explorer.details_width, 0, "double click restores the details default");
+            }
         }
     }
 
