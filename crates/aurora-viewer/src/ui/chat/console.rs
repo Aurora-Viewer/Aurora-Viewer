@@ -160,7 +160,7 @@ pub(super) fn cards(
     let mut shift = egui::Vec2::ZERO;
     let lift = -(ctx.content_rect().bottom() - bottom) - 6.0;
     egui::Area::new(egui::Id::unique("chat_toasts"))
-        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(8.0, lift))
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(super::toasts_left(ctx), lift))
         .interactable(false)
         .order(egui::Order::Background)
         .show(ctx, |ui| {

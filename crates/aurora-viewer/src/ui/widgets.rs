@@ -81,7 +81,37 @@ pub(crate) use workspace::{
 /// grips consume the press outside their window too, as LLResizeHandle and
 /// LLResizeBar::handleMouseDown do, and egui retains the subsequent drag.
 pub(crate) fn pointer_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
-    ctx.is_pointer_over_egui() || ctx.egui_wants_pointer_input() || resize::contains_pointer(ctx, pos) || solid_background_at(ctx, pos)
+    ctx.is_pointer_over_egui()
+        || ctx.egui_wants_pointer_input()
+        || resize::contains_pointer(ctx, pos)
+        || solid_background_at(ctx, pos)
+        || on_inset_bar(ctx, pos)
+}
+
+/// On a screen that keeps some of the viewport for itself (a tablet's
+/// status and home bars, the on-screen keyboard), the bars are laid out in
+/// a child of egui's root (app.rs), and `Context::is_pointer_over_egui`,
+/// which asks the root what it has left, no longer counts a bar's panel:
+/// what lies outside the work area is counted here. Nothing changes on a
+/// screen without such insets.
+fn on_inset_bar(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    ctx.content_rect() != ctx.viewport_rect()
+        && ctx.layer_id_at(pos).is_some_and(|layer| layer.order == egui::Order::Background)
+        && !super::layout::work_area(ctx).contains(pos)
+}
+
+/// Whether the interface is at `pos` (logical points), for a finger that
+/// lands there: `pointer_over_ui` asks it of the pointer egui follows, which
+/// is not where a new finger is.
+pub(crate) fn point_over_ui(ctx: &egui::Context, pos: egui::Pos2) -> bool {
+    let layer = match ctx.layer_id_at(pos) {
+        // (as `Context::is_pointer_over_egui`: the background layer counts
+        // where a panel covers it, which is outside the work area)
+        Some(layer) if layer.order == egui::Order::Background => !super::layout::work_area(ctx).contains(pos),
+        Some(_) => true,
+        None => false,
+    };
+    layer || resize::contains_pointer(ctx, pos) || solid_background_at(ctx, pos)
 }
 
 /// The background areas that are panels of their own, by layer id.

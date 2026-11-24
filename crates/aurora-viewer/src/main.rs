@@ -126,6 +126,7 @@ mod system_notify;
 mod text_validation;
 mod theme;
 mod tolerant;
+mod touch;
 mod ui;
 mod ui_sound;
 mod uninstall;

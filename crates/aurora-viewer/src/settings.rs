@@ -1406,6 +1406,9 @@ pub struct Settings {
     /// The full-width top and bottom bars of Firestorm instead of the glass
     /// islands of `ui/bars/islands.rs`.
     pub classic_bars: bool,
+    /// Fingers on a touch screen drive the camera and the avatar, with the
+    /// movement stick and the touch buttons (src/touch.rs).
+    pub touch_controls: TouchControls,
     /// The place island stretches to the islands on its right (on by
     /// default); off, it is as wide as its content.
     pub place_bar_stretch: bool,
@@ -2237,6 +2240,18 @@ pub fn audio_channels() -> [&'static str; 7] {
     ]
 }
 
+/// Preferences › Controls › Touch screen: when fingers drive the world.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TouchControls {
+    /// On a tablet; on a computer, from the first finger that touches the
+    /// window in the session.
+    #[default]
+    Auto,
+    On,
+    /// A finger is a pointer and nothing else, as before.
+    Off,
+}
+
 /// ShowStreamMetadata: 0 off, 1 toast, 2 nearby chat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum StreamTitleShow {
@@ -2771,6 +2786,7 @@ impl Default for Settings {
             classic_pay_window: false,
             legacy_money_tracker: false,
             classic_bars: false,
+            touch_controls: TouchControls::default(),
             place_bar_stretch: true,
             place_bar_rights_text: false,
             favorites_access: FavoritesAccess::Menu,
@@ -3157,6 +3173,14 @@ pub(crate) fn window_starts_maximized(saved_maximized: Option<bool>, saved_size:
 }
 
 impl Settings {
+    /// A new profile on a tablet or a phone: the windows a computer opens
+    /// with the session stay closed, since they would cover the world and
+    /// the touch controls of a small screen. The dock opens them.
+    pub fn start_for_touch(&mut self) {
+        self.show_chat = false;
+        self.show_people = false;
+    }
+
     /// Rendering exception of an avatar: 0 none, 1 never render fully,
     /// 2 always render fully.
     pub fn render_exception(&self, id: &uuid::Uuid) -> u8 {
@@ -6179,6 +6203,15 @@ mod tests {
 
         assert!(loaded.window_fullscreen);
         let _ = std::fs::remove_dir_all(path.parent().expect("settings directory"));
+    }
+
+    #[test]
+    fn a_new_profile_on_a_touch_device_opens_no_window_over_the_world() {
+        let mut s = Settings::default();
+        assert!(s.show_chat && s.show_people, "a computer opens both");
+        s.start_for_touch();
+        assert!(!s.show_chat && !s.show_people);
+        assert!(s.show_minimap, "the mini-map stays");
     }
 
     #[test]
