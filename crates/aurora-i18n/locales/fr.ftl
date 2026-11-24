@@ -1383,6 +1383,17 @@ inventory-move-to = Déplacer vers…
 inventory-move-filter = Filtrer les dossiers par nom…
 inventory-move-selection-name = Déplacer « { $name } »
 inventory-move-selection-count = Déplacer { $count } éléments
+inventory-copy-selection-count = { $count ->
+    [one] Copier 1 élément
+   *[other] Copier { $count } éléments
+}
+inventory-link-selection-count = { $count ->
+    [one] Lier 1 élément
+   *[other] Lier { $count } éléments
+}
+inventory-drop-move-here = Déplacer ici
+inventory-drop-copy-here = Copier ici
+inventory-drop-link-here = Créer des liens ici
 inventory-move-no-folders = Aucun dossier disponible pour ce filtre.
 inventory-widen = Élargir la fenêtre
 inventory-additional-window = Fenêtre d’inventaire supplémentaire
@@ -1415,6 +1426,8 @@ inventory-search-in = Rechercher dans
 inventory-sort-menu = Trier
 inventory-sort-date = Date
 inventory-sort-name = Nom
+inventory-sort-description = Description
+inventory-sort-reversed = { $order } (inversé)
 inventory-sort-folders-first = Dossiers d’abord · { $order }
 inventory-new = Nouveau
 inventory-new-menu = Nouvel élément ou dossier
@@ -1436,13 +1449,103 @@ inventory-column-both-rights = Vous → prochain
 inventory-columns = Colonnes
 inventory-column-permissions = Permissions
 inventory-columns-reset = Réinitialiser la disposition de l’inventaire
-inventory-resize-columns = Faites glisser pour redimensionner les colonnes. Double-cliquez pour rétablir leurs largeurs.
+inventory-column-creator = Créateur
+inventory-column-count = Éléments
+inventory-columns-fit = Ajuster toutes les colonnes
+inventory-columns-reset-widths = Rétablir la largeur des colonnes
+inventory-back = Précédent
+inventory-forward = Suivant
+inventory-up = Dossier parent
+keybinds-inventory-root = Aller tout en haut
+keybinds-inventory-search = Rechercher dans l’inventaire
+keybinds-inventory-filter = Filtrer le dossier
+keybinds-inventory-preview = Afficher le volet d’aperçu
+keybinds-inventory-view-large = Grandes images
+keybinds-inventory-view-medium = Images moyennes
+keybinds-inventory-view-small = Petites images
+keybinds-inventory-view-compact = Vue compacte
+keybinds-inventory-view-details = Vue détaillée
+keybinds-inventory-view-tiles = Vue en mosaïque
+keybinds-inventory-toggle = Sélectionner ou désélectionner la ligne active
+keybinds-inventory-menu = Ouvrir le menu de la sélection
+keybinds-inventory-purge = Purger de la corbeille
+keybinds-inventory-refused = { $keys } reste une touche propre à la liste de l’inventaire : choisissez-en une autre.
+inventory-path-edit = Saisir un chemin
+inventory-path-subfolders = Sous-dossiers
+inventory-copy-path = Copier le chemin
+inventory-show-in-folder = Afficher dans le dossier
+inventory-pin = Épingler à l’accès rapide
+inventory-unpin = Désépingler de l’accès rapide
+inventory-quick-access = Accès rapide
+inventory-quick-access-drop = Déposez un dossier ici pour l’épingler
+inventory-invert-selection = Inverser la sélection
+inventory-undo = Annuler
+inventory-redo = Rétablir
+inventory-undo-step = Annuler { $what }
+inventory-redo-step = Rétablir { $what }
+inventory-history-move = { $count ->
+    [one] le déplacement d’un élément
+   *[other] le déplacement de { $count } éléments
+    }
+inventory-history-delete = { $count ->
+    [one] la suppression d’un élément
+   *[other] la suppression de { $count } éléments
+    }
+inventory-history-rename = le changement de nom
+inventory-history-new-folder = la création du dossier
+inventory-history-copy = { $count ->
+    [one] la copie d’un élément
+   *[other] la copie de { $count } éléments
+    }
+inventory-history-link = { $count ->
+    [one] le lien vers un élément
+   *[other] les liens vers { $count } éléments
+    }
+inventory-undo-nothing = Plus rien à annuler : ces éléments ont été déplacés ou n’existent plus.
+inventory-redo-nothing = Plus rien à rétablir : ces éléments ont été déplacés ou n’existent plus.
+inventory-undo-empty = Rien à annuler.
+inventory-redo-empty = Rien à rétablir.
+inventory-undo-dropped = Les éléments de la dernière étape ont été déplacés ou n’existent plus : elle est abandonnée. Annulez de nouveau pour l’étape précédente.
+inventory-redo-dropped = Les éléments de l’étape suivante ont été déplacés ou n’existent plus : elle est abandonnée. Rétablissez de nouveau pour l’étape d’après.
+inventory-undo-folder-not-empty = Ce nouveau dossier contient des éléments ajoutés depuis : sortez-les d’abord, ou supprimez le dossier vous-même.
+inventory-undo-kept-out = Ces éléments sont maintenant dans la tenue actuelle ou les annonces de la Place du marché : modifiez-les là-bas.
+inventory-restore-to = { "Restaurer dans « " }{ $folder }{ " »" }
+inventory-restore-to-origins = Restaurer dans leurs dossiers
+inventory-purge-no-undo = Annuler ne pourra pas les récupérer.
+inventory-new-tab = Nouvel onglet
+inventory-close-tab = Fermer l’onglet
+inventory-next-tab = Onglet suivant
+inventory-previous-tab = Onglet précédent
+inventory-open-in-new-tab = Ouvrir dans un nouvel onglet
+inventory-tabs-limit = { $count } onglets au plus.
+inventory-copy-to-other-pane = Copier dans l’autre volet
+inventory-move-to-other-pane = Déplacer dans l’autre volet
+inventory-resize-columns = Faites glisser pour redimensionner les colonnes. Double-cliquez pour ajuster la colonne de gauche à son contenu.
+inventory-resize-columns-first = Faites glisser pour redimensionner les colonnes. Double-cliquez pour rendre à la première colonne sa largeur habituelle.
+inventory-sort-by-column = Cliquez pour trier selon cette colonne, une seconde fois pour inverser l’ordre. Faites glisser pour déplacer la colonne.
+inventory-filter-hint = Filtrer ce dossier…
+inventory-filter-close = Fermer le filtre (Échap)
+inventory-filter-nothing = Rien ici ne correspond au filtre
 inventory-resize-sidebar = Faites glisser pour redimensionner le panneau des dossiers. Double-cliquez pour rétablir sa largeur.
 inventory-resize-gallery = Faites glisser pour partager la place entre les vignettes et la liste. Double-cliquez pour la rétablir.
 inventory-view-menu = Affichage
 inventory-view-list = Vue liste
 inventory-view-gallery = Vue galerie
 inventory-view-combination = Vue combinée
+inventory-view-compact = Vue compacte
+inventory-view-tiles = Vue en mosaïque
+inventory-view-per-folder = Retenir la vue de chaque dossier
+inventory-group-by = Regrouper par
+inventory-group-none = Aucun
+inventory-group-folders = Dossiers
+inventory-group-unknown-creator = Créateur pas encore connu
+inventory-group-today = Aujourd’hui
+inventory-group-yesterday = Hier
+inventory-group-this-week = Ces 7 derniers jours
+inventory-group-this-month = Ces 30 derniers jours
+inventory-group-this-year = Plus tôt cette année
+inventory-group-earlier = Il y a longtemps
+inventory-group-no-date = Sans date
 inventory-tile-size = Taille des vignettes
 inventory-tile-small = Petite
 inventory-tile-medium = Moyenne
@@ -2638,7 +2741,7 @@ app-gpu-lost =
     • fermer les autres programmes qui utilisent beaucoup la carte graphique ;
     • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora n'a pas encore d'animation overrider (AO).
-cmdline-mod-use-hover-height-in-appearance = Ajustez la hauteur de survol de votre avatar dans Apparence → Hauteur de survol.
+cmdline-mod-zoffset-usage = Régler la hauteur de survol de votre avatar (utilisation : /zoffset valeur ou +écart).
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni vos informations de paiement.
 demo-auto-blend = Auto : fondu
 demo-auto-mask = Auto : masque
@@ -7719,6 +7822,8 @@ ui-options-asked-elsewhere = Demandés par d’autres pages
 ui-options-warnings-and-notices = Avertissements et notices
 ui-options-confirm-hide-interface = Confirmer avant de masquer l’interface
 ui-options-confirm-hide-interface-help = Avec les barres Legacy, masquer l’interface demande d’abord et indique comment la faire revenir.
+ui-options-warn-live-preview = Avertir quand une texture ou un matériau ne peut pas être prévisualisé
+ui-options-warn-live-preview-help = Dans le sélecteur de la fenêtre de construction, cliquer un élément sans copie n’applique rien avant OK : le signaler.
 ui-options-poser-confirm-close-help = Demander avant que la fermeture du poseur arrête une pose dont vous avez modifié les articulations.
 ui-options-debug-settings-warning = Avertir à l’ouverture des Paramètres de débogage
 ui-options-debug-settings-warning-help = Afficher l’avertissement sur la modification des paramètres de débogage à chaque ouverture de la fenêtre.
@@ -7839,7 +7944,8 @@ ui-inventory-thumbnail-image-uuid = UUID de l’image
 ui-inventory-thumbnail-invalid-image-uuid = UUID d’image invalide.
 ui-texture-picker-invalid-uuid = UUID invalide
 ui-texture-picker-confirm-no-copy = Texture sans copie : validez avec OK.
-ui-texture-picker-no-live-preview = Pas d'aperçu en direct pour une texture sans copie ou sans transfert : validez avec OK.
+ui-texture-picker-live-preview-texture = Impossible d’afficher un aperçu de cette texture : elle est sans copie.
+ui-texture-picker-live-preview-material = Impossible d’afficher un aperçu de ce matériau : il est sans copie.
 ui-texture-picker-owner-only = Une texture sans transfert ne peut aller que sur un objet qui vous appartient et n'est pas à vendre.
 ui-texture-picker-preview = Aperçu
 ui-texture-picker-adjust-list-width = Ajuster la largeur de la liste
@@ -9013,6 +9119,7 @@ build-ui-texture-bricks = briques
 build-ui-texture-gravel = gravier
 fetch-redirect-failed = redirect failed
 world-mod-declined = refusé
+fetch-invalid-url = URL non valide
 fetch-request-failed = request failed
 session-land-unreadable-response = réponse illisible
 session-land-no-land-resources = La région ne fournit pas la capability LandResources.
@@ -13420,7 +13527,6 @@ texture-library-no-copy-drop-question = Déplacer l’élément ?
 texture-library-no-copy-drop-move = Déplacer
 texture-library-worn-drop-all-faces = Toutes les faces
 texture-library-worn-drop-linked = Tous les éléments liés
-texture-library-applied = Texture ou matériau appliqué.
 texture-library-no-results = Aucune ressource ne correspond.
 texture-library-demo-wood = Bois
 texture-library-demo-stone = Pierre
@@ -14962,6 +15068,8 @@ blender-live-quick-look-drag = Faites glisser pour le tourner, double-cliquez po
 blender-live-quick-look-changed = Modifié dans Blender il y a { $ago }.
 blender-live-quick-look-bend = Plié comme dans l’onglet Avatar : coudes { $elbows }°, genoux { $knees }°.
 blender-live-undo = Annuler
+blender-live-warning-textures = Textures ignorées, couleur unie affichée
+blender-live-warning-not-sent = Absent de l’aperçu
 blender-live-undo-derez = { $name } dérezzé · toujours dans la liste de Blender
 blender-live-undo-detach = { $name } détaché · toujours dans la liste de Blender
 blender-live-undo-drop = { $name } posé au sol
@@ -15089,7 +15197,10 @@ inventory-new-outfit = Nouvelle tenue
 inventory-listing-refresh = Actualiser la fiche
 inventory-recover-folder = Déplacer vers les objets perdus et trouvés
 inventory-show-main = Afficher dans la vue principale
-inventory-open-current = Ouvrir dans cette fenêtre
+inventory-open-current = Ouvrir
+inventory-folder-back = Précédent
+inventory-folder-forward = Suivant
+inventory-folder-up = Niveau supérieur
 inventory-copy-outfit-list = Copier la liste de la tenue dans le presse-papiers
 appearance-outfit-copy-entry = { $item } - { $creator }
 appearance-outfit-copy-preparing = Préparation de la liste de la tenue…
