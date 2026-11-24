@@ -354,7 +354,7 @@ there (`scripts/test-tools-console.py`, Python 3).
 | Dev viewer | Your local repository, default profile (the agents' one) |
 | Debug viewer | Your local repository with a console, the debug controls and full debug information (`debugging` profile, its own folder of a few GB) |
 | Demo | The viewer offline, with the choice of an `AURORA_DEMO_*` scenario (read from [docs/TESTING.md](docs/TESTING.md)) |
-| Agent tasks | The folders of `work\`: PR, changes in progress, last build, size; cleanup of those whose PR is merged |
+| Agent tasks | The folders of `work\`: PR, changes in progress, last build, size; cleanup of those whose PR is merged. A task's PR is found whether its branch was pushed to the main repository or to your own fork (PR opened from the fork), as for `end-task.ps1` and the housekeeping of `new-task.ps1` |
 | Disk | The space taken by the builds, and the cleanup (`clean.ps1`) |
 | Viewer logs | Open the folder, read the end of the last log, copy its path for an agent |
 | PR tracking | The live panel (see below) |

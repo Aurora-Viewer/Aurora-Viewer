@@ -328,9 +328,22 @@ pub fn thread_died() -> Option<&'static str> {
 
 pub fn finished(success: bool) {
     if let Some(session) = SESSION.get() {
-        let marker = if success { "normal" } else { "failed" };
-        let _ = std::fs::write(session.dir.join(marker), []);
+        end_session(&session.dir, success, GPU_LOST.get().map(Vec::as_slice));
     }
+}
+
+/// The session's end marker. A device lost for good ends it as failed
+/// whatever the event loop returned, with the loss marked again: when the
+/// loss came from running out of open files (#2970), the markers written
+/// at the loss failed, and only `normal` would have reached the disk, a
+/// clean close whose folder the next start deletes.
+fn end_session(dir: &Path, success: bool, gpu_lost: Option<&[u8]>) {
+    if let Some(when) = gpu_lost {
+        write_gpu_lost(dir, when);
+        return;
+    }
+    let marker = if success { "normal" } else { "failed" };
+    let _ = std::fs::write(dir.join(marker), []);
 }
 
 pub fn failure(message: &str) {
@@ -416,12 +429,21 @@ pub fn gpu_lost_at_start() {
     mark_gpu_lost(GPU_LOST_AT_START.as_bytes());
 }
 
+/// The device was lost for good, with the text of `gpu-lost.txt`: kept in
+/// memory as well, for [`finished`] to write again ([`end_session`]).
+static GPU_LOST: OnceLock<Vec<u8>> = OnceLock::new();
+
 fn mark_gpu_lost(when: &[u8]) {
+    let _ = GPU_LOST.set(when.to_vec());
     if let Some(session) = SESSION.get() {
-        let _ = std::fs::write(session.dir.join("gpu-lost.txt"), when);
-        let _ = std::fs::write(session.dir.join("failed"), []);
-        ending_in_gpu_trouble(&session.dir);
+        write_gpu_lost(&session.dir, when);
     }
+}
+
+fn write_gpu_lost(dir: &Path, when: &[u8]) {
+    let _ = std::fs::write(dir.join("gpu-lost.txt"), when);
+    let _ = std::fs::write(dir.join("failed"), []);
+    ending_in_gpu_trouble(dir);
 }
 
 /// In the session folder while the photo window's "Photo quality" holds
@@ -1001,6 +1023,30 @@ mod tests {
         assert!(!closed.exists());
         assert!(killed.join("recovery-attempted").exists());
         assert!(!running.join("recovery-attempted").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_session_ending_after_a_lost_device_is_reported_as_one() {
+        let root = std::env::temp_dir().join(format!("aurora-crash-test-{}", uuid::Uuid::new_v4()));
+        let dir = root.join("session");
+        std::fs::create_dir_all(&dir).unwrap();
+        // the markers written at the loss failed (no open file left, #2970);
+        // the event loop then returned Ok
+        end_session(&dir, true, Some(b""));
+        assert!(!dir.join("normal").exists());
+        assert!(dir.join("failed").exists());
+        assert!(dir.join("gpu-lost.txt").exists());
+        // (on Windows the watcher marks it once the viewer is gone)
+        #[cfg(not(windows))]
+        assert!(root.join(GPU_TROUBLE).exists());
+        assert!(should_report(&dir, 0));
+        // with no loss, the same end is a clean close
+        let clean = root.join("clean");
+        std::fs::create_dir(&clean).unwrap();
+        end_session(&clean, true, None);
+        assert!(clean.join("normal").exists());
+        assert!(!should_report(&clean, 0));
         std::fs::remove_dir_all(root).unwrap();
     }
 
