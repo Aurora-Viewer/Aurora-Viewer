@@ -5916,6 +5916,10 @@ impl Scene {
         let va = world.viewer_asset_url();
         let va = va.as_deref();
         self.textures.set_agent(&world.agent_id);
+        // an unfinished host bake follows its avatar to another simulator
+        // even when nothing rebuilds its faces (a rebake held back, an
+        // appearance not sent again)
+        self.textures.retarget_host_bakes(|avatar| world.avatar_host_region(*avatar));
         self.textures.update(&self.jobs, &net.fetcher, va);
         let t = self.parts.lap(Part::TexUpdate, t);
         let rig = self.avatar_lib.rig.clone();

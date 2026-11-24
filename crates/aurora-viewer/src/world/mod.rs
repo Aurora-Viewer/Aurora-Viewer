@@ -3305,12 +3305,17 @@ impl World {
     /// The simulator that holds this avatar's bakes: the object's region,
     /// otherwise the region we are in. A preview attachment is not a grid.
     fn host_bake_region(&self, avatar: Uuid) -> Option<RegionHandle> {
-        let from_object = self
-            .objects
+        self.avatar_host_region(avatar)
+            .or_else(|| self.main_region.and_then(usable_host_region))
+    }
+
+    /// The simulator an avatar is on now, from its object: where its
+    /// unfinished host bakes are asked (`TextureStreamer::retarget_host_bakes`).
+    pub(crate) fn avatar_host_region(&self, avatar: Uuid) -> Option<RegionHandle> {
+        self.objects
             .index_of_uuid(&avatar)
             .and_then(|i| self.objects.get(i))
-            .and_then(|object| usable_host_region(object.key.region));
-        from_object.or_else(|| self.main_region.and_then(usable_host_region))
+            .and_then(|object| usable_host_region(object.key.region))
     }
 
     /// Bakes the session reassembled, for the texture streamer.

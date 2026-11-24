@@ -4449,10 +4449,6 @@ impl Session<'_> {
         self.sims.get(&addr).map(|s| s.handle).unwrap_or(0)
     }
 
-    fn addr_of_handle(&self, handle: RegionHandle) -> Option<SocketAddr> {
-        self.sims.iter().find(|(_, sim)| sim.handle == handle).map(|(addr, _)| *addr)
-    }
-
     /// `LLMessageSystem::sendSemiReliable`: one reliable send, no resend,
     /// timeout `max(1s, 5 × ping)` (`llmessage/message.cpp`).
     fn send_semi<M: Msg>(&mut self, addr: SocketAddr, msg: &M) {
@@ -4472,9 +4468,15 @@ impl Session<'_> {
     }
 
     fn flush_host_images(&mut self, now: Instant) {
-        for batch in self.images.take_outbound(now) {
-            let Some(addr) = self.addr_of_handle(batch.region) else {
-                log::debug!("host bake request for region {:#x} has no circuit yet", batch.region);
+        // a region without a circuit keeps its requests due: they leave when
+        // it connects, not 10 s later (LLMessageSystem drops a send to an
+        // unknown host, and the Legacy Viewer waits for its next pass)
+        let sims = &self.sims;
+        let batches = self
+            .images
+            .take_outbound(now, |region| sims.values().any(|sim| sim.handle == region));
+        for batch in batches {
+            let Some(addr) = self.sim_for_handle(batch.region) else {
                 continue;
             };
             let message = crate::image_udp::request_message(self.agent_id(), self.session_id(), &batch.items);
@@ -4482,11 +4484,13 @@ impl Session<'_> {
         }
     }
 
-    fn on_image_data(&mut self, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
+    fn on_image_data(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let message: ImageData = pkt.decode()?;
         let id = message.image_id.id;
+        let region = self.handle_of(from);
         if let Some(arrival) = self.images.header(
             id,
+            region,
             message.image_id.packets,
             message.image_id.size,
             message.image_data.data,
@@ -4508,12 +4512,13 @@ impl Session<'_> {
         emit(self.sh, NetEvent::HostImage { id, bytes });
     }
 
-    fn on_image_packet(&mut self, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
+    fn on_image_packet(&mut self, from: SocketAddr, pkt: &IncomingPacket) -> Result<(), aurora_msg::DecodeError> {
         let message: ImagePacket = pkt.decode()?;
         let id = message.image_id.id;
+        let region = self.handle_of(from);
         if let Some(arrival) = self
             .images
-            .packet(id, message.image_id.packet, message.image_data.data, Instant::now())
+            .packet(id, region, message.image_id.packet, message.image_data.data, Instant::now())
         {
             self.emit_host_image(id, arrival);
         }
@@ -4547,9 +4552,9 @@ impl Session<'_> {
             return Ok(());
         }
         if id == ImageData::ID {
-            return self.on_image_data(pkt);
+            return self.on_image_data(from, pkt);
         } else if id == ImagePacket::ID {
-            return self.on_image_packet(pkt);
+            return self.on_image_packet(from, pkt);
         } else if id == ImageNotInDatabase::ID {
             return self.on_image_missing(from, pkt);
         }

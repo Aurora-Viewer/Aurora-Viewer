@@ -25,7 +25,7 @@ use aurora_assets::J2kInfo;
 use aurora_net::fetch::ByteRange;
 use aurora_net::{FetchRequest, FetchResult, Fetcher, Lane};
 use aurora_render::{MipLevel, Renderer, StagedTexture, StagingPool, TexelFormat, build_mips};
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -1122,6 +1122,9 @@ fn set_slot_alpha(alpha: &mut Vec<AlphaKind>, generation: &mut u64, changes: &mu
 
 pub struct TextureStreamer {
     entries: HashMap<Uuid, Entry>,
+    /// The host bakes that may still be asked of a simulator
+    /// (`retarget_host_bakes`), pruned there once finished or gone.
+    host_bakes: HashSet<Uuid>,
     /// The textures `update` has something to do for (`Entry::has_work`),
     /// each listed once. It only visits these: walking every texture at
     /// each frame cost 0.14 to 0.17 ms for the 4,300 textures of a skybox
@@ -1576,6 +1579,7 @@ impl TextureStreamer {
     pub fn new(cache_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(cache_dir.join("tex"));
         TextureStreamer {
+            host_bakes: HashSet::new(),
             // (room for a busy region, ~14,000 textures at BackBone: a
             // table of that size growing moves every entry in one frame)
             entries: HashMap::with_capacity(28_000),
@@ -1924,6 +1928,9 @@ impl TextureStreamer {
             .entry(id)
             .or_insert_with(|| Entry::new(slot, source, self.max_resolution));
         e.urgent = own_bake(&self.own_bakes, self.own_agent, &e.source);
+        if matches!(e.source, TexSource::Host { .. }) && !e.complete {
+            self.host_bakes.insert(id);
+        }
         Self::settle(&mut self.todo, &mut self.counts, id, e);
         if slot == NO_SLOT {
             self.slotless_ids.push(id);
@@ -2272,17 +2279,53 @@ impl TextureStreamer {
                     // and one the old region did not have may be there.
                     *region = *now;
                     e.clear_failures();
-                } else if unheld {
-                    // Acquired again after nothing held it: asked again, as
+                } else if unheld || e.gone {
+                    // Acquired again (a rebuild, an appearance applied),
+                    // held or not: a missing bake is asked again, as
                     // LLVOAvatar::getBakedTextureImage clears the missing
-                    // flag on each setTETexture.
+                    // flag on each setTETexture whoever holds the texture
+                    // (llvoavatar.cpp). Rebuilds come from events, so this
+                    // is no per-frame storm.
                     e.clear_failures();
                     e.host_retry = true;
                 }
             }
         }
+        if matches!(e.source, TexSource::Host { .. }) && !e.complete {
+            self.host_bakes.insert(id);
+        }
         Self::settle(&mut self.todo, &mut self.counts, id, e);
         Some(e.slot)
+    }
+
+    /// Each unfinished host bake is asked of the simulator its avatar is on
+    /// now (`region_of`, from the avatar's object), not of the one it was on
+    /// when its faces were last built: a crossing or a teleport rebuilds
+    /// them only when the new region sends the appearance again, and a
+    /// rebake held back behind the shown one is never rebuilt. One the old
+    /// region did not have is asked again there. Only the few host bakes in
+    /// flight are visited.
+    pub fn retarget_host_bakes(&mut self, region_of: impl Fn(&Uuid) -> Option<u64>) {
+        let (entries, todo, counts) = (&mut self.entries, &mut self.todo, &mut self.counts);
+        self.host_bakes.retain(|id| {
+            let Some(e) = entries.get_mut(id) else {
+                return false;
+            };
+            if e.complete {
+                return false;
+            }
+            let TexSource::Host { region, avatar } = &mut e.source else {
+                return false;
+            };
+            if let Some(now) = region_of(avatar)
+                && now != *region
+            {
+                *region = now;
+                e.clear_failures();
+                Self::settle(todo, counts, *id, e);
+            }
+            true
+        });
     }
 
     fn set_local_slot(&mut self, id: Uuid, slot: u32) {
@@ -2886,7 +2929,9 @@ impl TextureStreamer {
                 e.retry_at = None;
                 e.failures = e.failures.max(1);
                 unavailable = !was && e.unavailable();
-                log::info!("texture {id} host bake missing (ImageNotInDatabase)");
+                // ImageNotInDatabase, or packets that never added up (the
+                // session's own line says which)
+                log::info!("texture {id} host bake missing: the simulator does not have it, or its packets never added up");
             }
             Some(bytes) => {
                 e.data = Arc::new(bytes);
@@ -6520,10 +6565,12 @@ mod tests {
             refs,
             ..entry(None, 100.0)
         };
-        // still held (the avatar built again): it stays missing
+        // still held (the avatar built again, an appearance applied): asked
+        // again too, as getBakedTextureImage clears the missing flag on each
+        // setTETexture, whoever holds the texture
         s.entries.insert(id, missing(1));
         assert!(s.acquire_known(id, &host(0xB2)).is_some());
-        assert!(s.entries[&id].gone && !s.entries[&id].host_retry);
+        assert!(!s.entries[&id].gone && s.entries[&id].host_retry);
         // nothing held it any more: asked again
         s.entries.insert(id, missing(0));
         assert!(s.acquire_known(id, &host(0xB2)).is_some());
@@ -6538,6 +6585,64 @@ mod tests {
         assert!(s.acquire_known(id, &moved).is_some());
         let e = &s.entries[&id];
         assert!(!e.gone && e.source == moved);
+    }
+
+    /// A bake still in flight follows its avatar to another simulator with
+    /// no rebuild of its faces (a rebake held back behind the shown one): it
+    /// is asked there, even after the old region said it had none.
+    #[test]
+    fn an_unfinished_host_bake_follows_its_avatar_without_a_rebuild() {
+        let mut s = TextureStreamer::new(PathBuf::new());
+        let id = Uuid::from_u128(0x2864);
+        let avatar = Uuid::from_u128(0xB2);
+        s.entries.insert(
+            id,
+            Entry {
+                source: host(0xB2),
+                gone: true,
+                failures: 1,
+                refs: 1,
+                ..entry(None, 100.0)
+            },
+        );
+        s.host_bakes.insert(id);
+        let TexSource::Host { region: before, .. } = s.entries[&id].source else {
+            unreachable!()
+        };
+        // same region: nothing changes
+        s.retarget_host_bakes(|_| Some(before));
+        assert!(s.entries[&id].gone);
+        // its avatar crossed: asked of the new region, its failures forgotten
+        s.retarget_host_bakes(|a| (*a == avatar).then_some(before + 1));
+        let e = &s.entries[&id];
+        assert_eq!(
+            e.source,
+            TexSource::Host {
+                region: before + 1,
+                avatar
+            }
+        );
+        assert!(!e.gone && e.failures == 0);
+        // an unknown region (the avatar out of view) keeps the last one
+        s.retarget_host_bakes(|_| None);
+        assert_eq!(
+            s.entries[&id].source,
+            TexSource::Host {
+                region: before + 1,
+                avatar
+            }
+        );
+        // finished: no longer visited
+        s.entries.get_mut(&id).unwrap().complete = true;
+        s.retarget_host_bakes(|_| Some(before + 2));
+        assert!(!s.host_bakes.contains(&id));
+        assert_eq!(
+            s.entries[&id].source,
+            TexSource::Host {
+                region: before + 1,
+                avatar
+            }
+        );
     }
 
     #[test]

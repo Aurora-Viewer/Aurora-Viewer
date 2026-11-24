@@ -173,8 +173,18 @@ impl Fetch {
                     // The avatar's new simulator is asked at once, not at the
                     // next lazy flush, and the old one is told to stop
                     // (an unfinished bake follows its avatar).
-                    if !slot.done && slot.sent_discard.is_some() {
-                        self.cancels.push((slot.region, w.image));
+                    if !slot.done {
+                        if slot.sent_discard.is_some() {
+                            self.cancels.push((slot.region, w.image));
+                        }
+                        // From packet 0: two simulators need not serve the
+                        // same bytes for an id (OpenSim sends its MissingImage
+                        // under the id asked, J2KImage), so the old one's
+                        // packets are not joined to the new one's. The Legacy
+                        // Viewer starts over too (LLTextureFetch::createRequest
+                        // removes a request whose host changed).
+                        *slot = Slot::new(w);
+                        continue;
                     }
                     slot.region = w.region;
                     slot.sent_discard = None;
@@ -215,13 +225,17 @@ impl Fetch {
     /// was under 100 ms ago, or when nothing is due. The timer advances only
     /// when something is returned, so the first want leaves at once and an
     /// idle fetch does not postpone the next one.
-    pub fn take_outbound(&mut self, now: Instant) -> Vec<Batch> {
+    ///
+    /// `has_circuit` says whether a region can be sent to: a slot of a region
+    /// without one is left unmarked, so it leaves at once when the circuit
+    /// comes, and a cancel to it is dropped (nothing there to stop).
+    pub fn take_outbound(&mut self, now: Instant, has_circuit: impl Fn(u64) -> bool) -> Vec<Batch> {
         if self.last_flush.is_some_and(|t| now.saturating_duration_since(t) < REQUEST_DELTA) {
             return Vec::new();
         }
         let mut requests: BTreeMap<u64, Vec<ImageRequest>> = BTreeMap::new();
         for (id, slot) in &mut self.slots {
-            if !slot.due(now) {
+            if !slot.due(now) || !has_circuit(slot.region) {
                 continue;
             }
             let item = ImageRequest {
@@ -237,7 +251,10 @@ impl Fetch {
             requests.entry(slot.region).or_default().push(item);
         }
         let mut cancel_by: BTreeMap<u64, Vec<ImageRequest>> = BTreeMap::new();
-        for (region, image) in std::mem::take(&mut self.cancels) {
+        for (region, image) in std::mem::take(&mut self.cancels)
+            .into_iter()
+            .filter(|(region, _)| has_circuit(*region))
+        {
             cancel_by.entry(region).or_default().push(ImageRequest {
                 image,
                 discard: -1,
@@ -263,9 +280,10 @@ impl Fetch {
 
     /// `ImageData`: packet 0. `None` when it is ignored or the file is not
     /// complete yet.
-    pub fn header(&mut self, id: Uuid, packets: u16, size: u32, data: Vec<u8>, now: Instant) -> Option<Arrival> {
+    pub fn header(&mut self, id: Uuid, region: u64, packets: u16, size: u32, data: Vec<u8>, now: Instant) -> Option<Arrival> {
         let slot = self.slots.get_mut(&id)?;
-        if slot.missing || slot.done || slot.header {
+        // (a late answer of the simulator it was asked of before)
+        if slot.region != region || slot.missing || slot.done || slot.header {
             return None;
         }
         // receiveImageHeader: empty data, and data that is neither the first
@@ -293,10 +311,10 @@ impl Fetch {
     /// `ImagePacket`. Stored by index even before the header, so a packet
     /// that overtakes `ImageData` is not thrown away, up to
     /// [`MAX_EARLY_PACKETS`] for all the images. A duplicate is ignored.
-    pub fn packet(&mut self, id: Uuid, num: u16, data: Vec<u8>, now: Instant) -> Option<Arrival> {
+    pub fn packet(&mut self, id: Uuid, region: u64, num: u16, data: Vec<u8>, now: Instant) -> Option<Arrival> {
         let early = self.early_packets();
         let slot = self.slots.get_mut(&id)?;
-        if slot.missing || slot.done || data.is_empty() {
+        if slot.region != region || slot.missing || slot.done || data.is_empty() {
             return None;
         }
         if slot.header && !packet_fits(num, slot.total, &data) {
@@ -506,7 +524,7 @@ mod tests {
         let wants: Vec<Want> = (1..=51).map(want).collect();
         fetch.sync(&wants);
         let t0 = Instant::now();
-        let batches = fetch.take_outbound(t0);
+        let batches = fetch.take_outbound(t0, |_| true);
         assert_eq!(batches.len(), 2, "{batches:?}");
         assert_eq!(batches[0].items.len(), 50);
         assert_eq!(batches[1].items.len(), 1);
@@ -532,7 +550,25 @@ mod tests {
         let back: RequestImage = parse_packet(&buf).unwrap().decode().unwrap();
         assert_eq!(back, message);
         // 10 Hz: nothing else leaves in the same tenth of a second.
-        assert!(fetch.take_outbound(t0 + Duration::from_millis(50)).is_empty());
+        assert!(fetch.take_outbound(t0 + Duration::from_millis(50), |_| true).is_empty());
+    }
+
+    /// A want for a region with no circuit yet is not spent on a send that
+    /// cannot leave: it goes out as soon as the circuit is there, not after
+    /// SIM_LAZY_FLUSH; a cancel to such a region is dropped.
+    #[test]
+    fn a_region_without_a_circuit_keeps_its_requests_due() {
+        let mut fetch = Fetch::default();
+        fetch.sync(&[want(1)]);
+        let t0 = Instant::now();
+        assert!(fetch.take_outbound(t0, |_| false).is_empty());
+        let out = fetch.take_outbound(t0 + REQUEST_DELTA, |region| region == 7);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert_eq!(out[0].items[0].packet, 0);
+        // given up while unreachable: no cancel is sent anywhere
+        fetch.sync(&[]);
+        assert!(fetch.take_outbound(t0 + REQUEST_DELTA * 2, |_| false).is_empty());
+        assert!(fetch.take_outbound(t0 + REQUEST_DELTA * 3, |_| true).is_empty());
     }
 
     #[test]
@@ -541,11 +577,11 @@ mod tests {
         let id = Uuid::from_u128(4);
         fetch.sync(&[want(4)]);
         let t0 = Instant::now();
-        let first = fetch.take_outbound(t0);
+        let first = fetch.take_outbound(t0, |_| true);
         assert_eq!(first[0].items[0].packet, 0);
         let header = vec![1u8; FIRST_PACKET_SIZE];
-        assert!(fetch.header(id, 2, 610, header, t0).is_none());
-        let again = fetch.take_outbound(t0 + SIM_LAZY_FLUSH);
+        assert!(fetch.header(id, 7, 2, 610, header, t0).is_none());
+        let again = fetch.take_outbound(t0 + SIM_LAZY_FLUSH, |_| true);
         assert_eq!(again.len(), 1);
         assert_eq!(again[0].items[0].packet, 1);
         assert_eq!(again[0].items[0].type_, TYPE_AVATAR_BAKE);
@@ -558,12 +594,12 @@ mod tests {
         fetch.sync(&[want(5)]);
         let t0 = Instant::now();
         let tail = vec![2u8; 10];
-        assert!(fetch.packet(id, 1, tail.clone(), t0).is_none());
+        assert!(fetch.packet(id, 7, 1, tail.clone(), t0).is_none());
         // a duplicate is ignored, not a reason to cancel the transfer
-        assert!(fetch.packet(id, 1, vec![9u8; 10], t0).is_none());
+        assert!(fetch.packet(id, 7, 1, vec![9u8; 10], t0).is_none());
         let head = vec![1u8; FIRST_PACKET_SIZE];
         let got = fetch
-            .header(id, 2, (FIRST_PACKET_SIZE + tail.len()) as u32, head.clone(), t0)
+            .header(id, 7, 2, (FIRST_PACKET_SIZE + tail.len()) as u32, head.clone(), t0)
             .unwrap();
         let mut expect = head;
         expect.extend_from_slice(&tail);
@@ -577,13 +613,13 @@ mod tests {
         let w = want(6);
         fetch.sync(std::slice::from_ref(&w));
         let t0 = Instant::now();
-        assert_eq!(fetch.take_outbound(t0).len(), 1);
+        assert_eq!(fetch.take_outbound(t0, |_| true).len(), 1);
         assert!(fetch.not_in_database(id, 7));
         assert!(fetch.is_missing(&id));
-        assert!(fetch.take_outbound(t0 + Duration::from_secs(600)).is_empty());
+        assert!(fetch.take_outbound(t0 + Duration::from_secs(600), |_| true).is_empty());
         // still missing: the viewer is told again, nothing is asked
         assert_eq!(fetch.sync(std::slice::from_ref(&w)), vec![id]);
-        assert!(fetch.take_outbound(t0 + Duration::from_secs(601)).is_empty());
+        assert!(fetch.take_outbound(t0 + Duration::from_secs(601), |_| true).is_empty());
     }
 
     #[test]
@@ -591,9 +627,9 @@ mod tests {
         let mut fetch = Fetch::default();
         fetch.sync(&[want(3)]);
         let t0 = Instant::now();
-        assert_eq!(fetch.take_outbound(t0).len(), 1);
+        assert_eq!(fetch.take_outbound(t0, |_| true).len(), 1);
         fetch.sync(&[]);
-        let cancel = fetch.take_outbound(t0 + REQUEST_DELTA);
+        let cancel = fetch.take_outbound(t0 + REQUEST_DELTA, |_| true);
         assert_eq!(cancel.len(), 1);
         assert_eq!(
             cancel[0].items,
@@ -614,16 +650,16 @@ mod tests {
         fetch.sync(&[want(10)]);
         let t0 = Instant::now();
         // a packet index past the largest image accepted is not kept
-        assert!(fetch.packet(id, u16::MAX, vec![0u8; 1000], t0).is_none());
-        assert!(fetch.packet(id, 1, vec![0u8; MAX_IMG_PACKET_SIZE + 1], t0).is_none());
+        assert!(fetch.packet(id, 7, u16::MAX, vec![0u8; 1000], t0).is_none());
+        assert!(fetch.packet(id, 7, 1, vec![0u8; MAX_IMG_PACKET_SIZE + 1], t0).is_none());
         assert!(fetch.slots[&id].parts.is_empty());
         // a size beyond the limit, or a packet count that does not match it
         let head = vec![1u8; FIRST_PACKET_SIZE];
-        assert!(fetch.header(id, 2, u32::MAX, head.clone(), t0).is_none());
-        assert!(fetch.header(id, 60_000, 610, head.clone(), t0).is_none());
+        assert!(fetch.header(id, 7, 2, u32::MAX, head.clone(), t0).is_none());
+        assert!(fetch.header(id, 7, 60_000, 610, head.clone(), t0).is_none());
         assert!(!fetch.slots[&id].header);
         // a sane header is still taken
-        assert!(fetch.header(id, 2, 610, head, t0).is_none());
+        assert!(fetch.header(id, 7, 2, 610, head, t0).is_none());
         assert!(fetch.slots[&id].header);
     }
 
@@ -633,25 +669,25 @@ mod tests {
         let id = Uuid::from_u128(11);
         fetch.sync(&[want(11)]);
         let t0 = Instant::now();
-        fetch.take_outbound(t0);
+        fetch.take_outbound(t0, |_| true);
         // header says 2600 bytes in 3 packets; the last one comes short
         let head = vec![1u8; FIRST_PACKET_SIZE];
-        assert!(fetch.header(id, 3, 2600, head, t0).is_none());
+        assert!(fetch.header(id, 7, 3, 2600, head, t0).is_none());
         assert!(fetch.slots[&id].header);
-        assert!(fetch.packet(id, 1, vec![2u8; 1000], t0).is_none());
-        assert!(fetch.packet(id, 2, vec![4u8; 10], t0).is_none());
+        assert!(fetch.packet(id, 7, 1, vec![2u8; 1000], t0).is_none());
+        assert!(fetch.packet(id, 7, 2, vec![4u8; 10], t0).is_none());
         // asked again from the start, but not before a second has passed
-        assert!(fetch.take_outbound(t0 + REQUEST_DELTA).is_empty());
-        let again = fetch.take_outbound(t0 + MIN_REQUEST_TIME);
+        assert!(fetch.take_outbound(t0 + REQUEST_DELTA, |_| true).is_empty());
+        let again = fetch.take_outbound(t0 + MIN_REQUEST_TIME, |_| true);
         assert_eq!(again[0].items[0].packet, 0, "{again:?}");
     }
 
     /// Header, middle packet and a short last packet: 2600 bytes announced,
     /// 1610 sent.
     fn send_short(fetch: &mut Fetch, id: Uuid, now: Instant) -> Option<Arrival> {
-        assert!(fetch.header(id, 3, 2600, vec![1u8; FIRST_PACKET_SIZE], now).is_none());
-        assert!(fetch.packet(id, 1, vec![2u8; 1000], now).is_none());
-        fetch.packet(id, 2, vec![4u8; 10], now)
+        assert!(fetch.header(id, 7, 3, 2600, vec![1u8; FIRST_PACKET_SIZE], now).is_none());
+        assert!(fetch.packet(id, 7, 1, vec![2u8; 1000], now).is_none());
+        fetch.packet(id, 7, 2, vec![4u8; 10], now)
     }
 
     #[test]
@@ -660,20 +696,20 @@ mod tests {
         let id = Uuid::from_u128(16);
         fetch.sync(&[want(16)]);
         let mut now = Instant::now();
-        assert_eq!(fetch.take_outbound(now).len(), 1);
+        assert_eq!(fetch.take_outbound(now, |_| true).len(), 1);
         for wait in [1, 2, 4] {
             assert!(send_short(&mut fetch, id, now).is_none());
             let wait = Duration::from_secs(wait);
             assert!(
-                fetch.take_outbound(now + wait - REQUEST_DELTA).is_empty(),
+                fetch.take_outbound(now + wait - REQUEST_DELTA, |_| true).is_empty(),
                 "asked again before {wait:?}"
             );
             now += wait;
-            assert_eq!(fetch.take_outbound(now).len(), 1, "asked again after {wait:?}");
+            assert_eq!(fetch.take_outbound(now, |_| true).len(), 1, "asked again after {wait:?}");
         }
         assert_eq!(send_short(&mut fetch, id, now), Some(Arrival::GaveUp));
         assert!(fetch.is_missing(&id));
-        assert!(fetch.take_outbound(now + SIM_LAZY_FLUSH).is_empty());
+        assert!(fetch.take_outbound(now + SIM_LAZY_FLUSH, |_| true).is_empty());
     }
 
     #[test]
@@ -682,13 +718,13 @@ mod tests {
         let id = Uuid::from_u128(17);
         fetch.sync(&[want(17)]);
         let t0 = Instant::now();
-        fetch.take_outbound(t0);
+        fetch.take_outbound(t0, |_| true);
         assert!(fetch.not_in_database(id, 7));
-        assert!(fetch.take_outbound(t0 + REQUEST_DELTA).is_empty());
+        assert!(fetch.take_outbound(t0 + REQUEST_DELTA, |_| true).is_empty());
         let fresh = Want { fresh: true, ..want(17) };
         assert!(fetch.sync(std::slice::from_ref(&fresh)).is_empty());
         assert!(!fetch.is_missing(&id));
-        let out = fetch.take_outbound(t0 + REQUEST_DELTA * 2);
+        let out = fetch.take_outbound(t0 + REQUEST_DELTA * 2, |_| true);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].items[0].packet, 0);
     }
@@ -699,13 +735,13 @@ mod tests {
         let id = Uuid::from_u128(18);
         fetch.sync(&[want(18)]);
         let t0 = Instant::now();
-        fetch.take_outbound(t0);
+        fetch.take_outbound(t0, |_| true);
         // another simulator does not decide for the one asked
         assert!(!fetch.not_in_database(id, 8));
         assert!(!fetch.is_missing(&id));
         // a finished image stays finished
         assert_eq!(
-            fetch.header(id, 1, 300, vec![5u8; 300], t0),
+            fetch.header(id, 7, 1, 300, vec![5u8; 300], t0),
             Some(Arrival::Complete(vec![5u8; 300]))
         );
         assert!(!fetch.not_in_database(id, 7));
@@ -718,22 +754,29 @@ mod tests {
         let id = Uuid::from_u128(19);
         fetch.sync(&[want(19)]);
         let t0 = Instant::now();
-        assert!(fetch.header(id, 2, 610, vec![1u8; FIRST_PACKET_SIZE], t0).is_none());
-        assert_eq!(fetch.take_outbound(t0).len(), 1);
+        assert!(fetch.header(id, 7, 2, 610, vec![1u8; FIRST_PACKET_SIZE], t0).is_none());
+        assert_eq!(fetch.take_outbound(t0, |_| true).len(), 1);
         let moved = Want { region: 8, ..want(19) };
         fetch.sync(std::slice::from_ref(&moved));
-        let out = fetch.take_outbound(t0 + REQUEST_DELTA);
+        let out = fetch.take_outbound(t0 + REQUEST_DELTA, |_| true);
         let by_region: Vec<(u64, i8, u32)> = out
             .iter()
             .flat_map(|batch| batch.items.iter().map(|item| (batch.region, item.discard, item.packet)))
             .collect();
-        // the new simulator continues after the packets already held
-        assert!(by_region.contains(&(8, moved.discard, 1)), "{out:?}");
+        // the new simulator is asked from packet 0: its bytes may differ
+        assert!(by_region.contains(&(8, moved.discard, 0)), "{out:?}");
         assert!(by_region.contains(&(7, -1, 0)), "{out:?}");
         assert_eq!(by_region.len(), 2, "{out:?}");
         // the same region again sends no cancel
         fetch.sync(std::slice::from_ref(&moved));
-        assert!(fetch.take_outbound(t0 + REQUEST_DELTA * 2).is_empty());
+        assert!(fetch.take_outbound(t0 + REQUEST_DELTA * 2, |_| true).is_empty());
+        // a late answer of the old simulator is not joined to the new one's
+        assert!(fetch.packet(id, 7, 1, vec![2u8; 10], t0).is_none());
+        assert!(fetch.slots[&id].parts.is_empty() && !fetch.slots[&id].header);
+        assert_eq!(
+            fetch.header(id, 8, 1, 300, vec![5u8; 300], t0),
+            Some(Arrival::Complete(vec![5u8; 300]))
+        );
     }
 
     #[test]
@@ -745,7 +788,7 @@ mod tests {
         let mut kept = 0;
         for w in &wants {
             for num in 1..=100u16 {
-                fetch.packet(w.image, num, vec![0u8; MAX_IMG_PACKET_SIZE], t0);
+                fetch.packet(w.image, 7, num, vec![0u8; MAX_IMG_PACKET_SIZE], t0);
             }
             kept += fetch.slots[&w.image].parts.len();
         }
@@ -756,11 +799,11 @@ mod tests {
         let held = fetch.slots[&first].parts.len();
         assert!(
             fetch
-                .header(first, 200, 600 + 199 * 1000, vec![1u8; FIRST_PACKET_SIZE], t0)
+                .header(first, 7, 200, 600 + 199 * 1000, vec![1u8; FIRST_PACKET_SIZE], t0)
                 .is_none()
         );
         assert_eq!(fetch.early_packets(), MAX_EARLY_PACKETS - held);
-        assert!(fetch.packet(wants[9].image, 101, vec![0u8; MAX_IMG_PACKET_SIZE], t0).is_none());
+        assert!(fetch.packet(wants[9].image, 7, 101, vec![0u8; MAX_IMG_PACKET_SIZE], t0).is_none());
         assert_eq!(fetch.early_packets(), MAX_EARLY_PACKETS - held + 1);
     }
 
@@ -769,10 +812,10 @@ mod tests {
         let mut fetch = Fetch::default();
         fetch.sync(&[want(12)]);
         let t0 = Instant::now();
-        fetch.take_outbound(t0);
+        fetch.take_outbound(t0, |_| true);
         fetch.sync(&[]);
         fetch.sync(&[want(12)]);
-        let out = fetch.take_outbound(t0 + REQUEST_DELTA);
+        let out = fetch.take_outbound(t0 + REQUEST_DELTA, |_| true);
         let items: Vec<&ImageRequest> = out.iter().flat_map(|batch| &batch.items).collect();
         assert_eq!(items.len(), 1, "{out:?}");
         assert_eq!(items[0].discard, 3);
@@ -784,10 +827,10 @@ mod tests {
         let id = Uuid::from_u128(13);
         fetch.sync(&[want(13)]);
         let t0 = Instant::now();
-        fetch.take_outbound(t0);
-        assert!(fetch.header(id, 1, 300, vec![5u8; 300], t0).is_some());
+        fetch.take_outbound(t0, |_| true);
+        assert!(fetch.header(id, 7, 1, 300, vec![5u8; 300], t0).is_some());
         fetch.sync(&[]);
-        assert!(fetch.take_outbound(t0 + REQUEST_DELTA).is_empty());
+        assert!(fetch.take_outbound(t0 + REQUEST_DELTA, |_| true).is_empty());
     }
 
     #[test]
@@ -803,12 +846,12 @@ mod tests {
         let id = Uuid::from_u128(15);
         fetch.sync(&[want(15)]);
         let t0 = Instant::now();
-        fetch.take_outbound(t0);
+        fetch.take_outbound(t0, |_| true);
         assert!(fetch.not_in_database(id, 7));
         let moved = Want { region: 8, ..want(15) };
         fetch.sync(std::slice::from_ref(&moved));
         assert!(!fetch.is_missing(&id));
-        let out = fetch.take_outbound(t0 + REQUEST_DELTA);
+        let out = fetch.take_outbound(t0 + REQUEST_DELTA, |_| true);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].region, 8);
     }
