@@ -292,7 +292,9 @@ pub(crate) fn read(text: &str) -> Result<Profile, String> {
 pub(crate) fn apply(profile: Profile, settings: &mut crate::settings::Settings) {
     settings.classic_bars = profile.base == Base::Legacy;
     settings.show_bug_report = profile.toolbar.location("report_bug", &Layout::default()).is_some();
-    settings.toolbar = Some(profile.toolbar);
+    let mut toolbar = profile.toolbar;
+    toolbar.migrate_build_icons();
+    settings.toolbar = Some(toolbar);
 }
 
 #[cfg(test)]

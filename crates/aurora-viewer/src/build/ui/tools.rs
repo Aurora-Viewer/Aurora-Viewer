@@ -96,23 +96,37 @@ pub fn grab_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: Mo
     }
 }
 
-/// Create tool: the 15 shapes, then the options and tree / grass species
-/// in a section the user folds (kept in the build settings).
+/// Create tool: the 15 shapes, then the options and tree / grass species,
+/// which the caret at the bottom shows or hides as the Legacy style's
+/// window does its lower part (kept in the build settings; the window
+/// follows, tool_floaters.rs).
 pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
     ui.vertical(|ui| {
         let cell = Vec2::splat((ui.available_width() - 24.0) / 5.0);
         create_shapes(ui, p, s, cell);
-        ui.add_space(8.0);
-        let section = crate::ui::widgets::collapsing_forced(
+        if s.create_options_shown {
+            ui.add_space(12.0);
+            create_options(ui, p, s);
+        }
+        ui.add_space(6.0);
+        let icon = if s.create_options_shown {
+            "caret-up-filled"
+        } else {
+            "caret-down-filled"
+        };
+        let response = crate::ui::widgets::action_button(
             ui,
             p,
-            "build_create_options",
-            aurora_i18n::tr!("build-create-options"),
-            true,
-            Some(s.create_options_shown),
-            |ui| create_options(ui, p, s),
-        );
-        if section.header.clicked() {
+            icon,
+            "",
+            crate::ui::widgets::ActionKind::Flat,
+            Vec2::new(ui.available_width(), 14.0),
+        )
+        .on_hover_text(aurora_i18n::tr!("build-create-options-toggle"));
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique("build-create-options-toggle"), response.rect));
+        if response.clicked() {
             s.create_options_shown = !s.create_options_shown;
         }
     });

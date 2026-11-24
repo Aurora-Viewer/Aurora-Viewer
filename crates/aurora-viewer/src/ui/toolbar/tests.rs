@@ -2224,6 +2224,32 @@ fn menu_toolbar_commands_have_icons_of_their_own() {
     }
 }
 
+/// Build - Edit and Build - Create saved with their former icons take the
+/// build window's (pointer, wand) on every bar; another icon stays.
+#[test]
+fn saved_build_buttons_take_the_build_window_icons() {
+    let saved = |command: &str, icon: &str| ToolButton {
+        command: command.into(),
+        icon: icon.into(),
+        tooltip: String::new(),
+    };
+    let mut settings = ToolbarSettings {
+        buttons: Some(vec![saved("build_edit", "pencil-filled"), saved("inventory", "pencil-filled")]),
+        left: vec![saved("build_create", "circle-plus-filled")],
+        top: vec![saved("build_edit", "star-filled")],
+        ..Default::default()
+    };
+    assert!(settings.migrate_build_icons());
+    let icons = |bar: &[ToolButton]| bar.iter().map(|b| b.icon.clone()).collect::<Vec<_>>();
+    assert_eq!(
+        icons(settings.buttons.as_deref().expect("bottom bar")),
+        ["pointer-filled", "pencil-filled"]
+    );
+    assert_eq!(icons(&settings.left), ["wand"]);
+    assert_eq!(icons(&settings.top), ["star-filled"]);
+    assert!(!settings.migrate_build_icons(), "once");
+}
+
 #[test]
 fn director_button_is_added_next_to_the_photo_button_once() {
     let commands = |bar: &[ToolButton]| bar.iter().map(|b| b.command.clone()).collect::<Vec<_>>();

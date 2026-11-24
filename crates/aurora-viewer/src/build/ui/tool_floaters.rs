@@ -71,10 +71,27 @@ pub(super) fn show(
         if tool.tool == which {
             floater = floater.title_state(p.violet, aurora_i18n::tr!("build-tool-in-use"));
         }
+        // The Create window without its options: as short as its shapes, at
+        // the width it had, like the Legacy style's folded window.
+        let folded = which == Tool::Create && !s.create_options_shown;
+        // (not the floater's own "expanded_size", which follows the window
+        // at every frame, folded too)
+        let size_id = egui::Id::unique(id).with("options_shown_size");
+        if folded {
+            floater.default_size.x = ctx
+                .data_mut(|d| d.get_persisted::<Vec2>(size_id))
+                .map_or(floater.default_size.x, |size| size.x);
+            floater = floater.auto_height();
+        }
+        let shown_before = s.create_options_shown;
         let mut open = true;
         floater.show(ctx, p, &mut open, |ui| {
             common::typography(ui);
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            if folded {
+                compact::tool_panel(ui, p, tool, world, s, mods, env, which);
+                return;
+            }
             // laid out at the width it keeps once the scroll bar shows: the
             // Create shape grid grows taller as it widens, and a width that
             // follows the bar would make it come and go (#1092)
@@ -87,6 +104,19 @@ pub(super) fn show(
                     compact::tool_panel(ui, p, tool, world, s, mods, env, which);
                 });
         });
+        if which == Tool::Create && s.create_options_shown != shown_before {
+            if s.create_options_shown {
+                // shown again: the size it had (kept across sessions), or
+                // its first height at its width
+                let width = ctx.memory(|m| m.area_rect(egui::Id::unique(id))).map(|rect| rect.width());
+                let size = ctx
+                    .data_mut(|d| d.get_persisted::<Vec2>(size_id))
+                    .unwrap_or_else(|| Vec2::new(width.unwrap_or(default_size(which).x), default_size(which).y));
+                widgets::size_floater(ctx, id, size);
+            } else if let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::unique(id))) {
+                ctx.data_mut(|d| d.insert_persisted(size_id, rect.size()));
+            }
+        }
         if !open {
             tool.close_tool_window(which, world, s);
         } else if pressed_in(ctx, id) {

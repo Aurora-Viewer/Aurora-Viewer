@@ -445,6 +445,34 @@ impl ToolbarSettings {
         true
     }
 
+    /// Build - Edit and Build - Create took the build window's icons
+    /// (2026-11-24): a button saved with the former ones, on any bar or in
+    /// a drawer, takes the new ones; an icon the user chose is in its
+    /// appearance and stays.
+    pub fn migrate_build_icons(&mut self) -> bool {
+        const FORMER: [(&str, &str); 2] = [("build_edit", "pencil-filled"), ("build_create", "circle-plus-filled")];
+        let mut changed = false;
+        let drawers = self.drawers.values_mut().flat_map(|drawer| drawer.buttons.iter_mut());
+        let bars = self
+            .buttons
+            .iter_mut()
+            .flatten()
+            .chain(&mut self.left)
+            .chain(&mut self.right)
+            .chain(&mut self.top);
+        for button in bars.chain(drawers) {
+            if let Some((command, _)) = FORMER
+                .iter()
+                .find(|(command, icon)| button.command == *command && button.icon == *icon)
+                && let Some(current) = catalogue::find(command)
+            {
+                button.icon = current.icon.into();
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub fn buttons<'a>(&'a self, layout: &'a Layout) -> &'a [ToolButton] {
         self.buttons.as_deref().unwrap_or(&layout.toolbar)
     }

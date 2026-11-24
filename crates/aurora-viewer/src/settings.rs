@@ -3964,6 +3964,7 @@ impl Settings {
         if let Some(toolbar) = &mut self.toolbar {
             changed |= toolbar.migrate_vr_button();
             changed |= toolbar.migrate_director_button();
+            changed |= toolbar.migrate_build_icons();
         }
         if !self.legacy_toolbars.is_empty() {
             self.legacy_toolbars.clear();
