@@ -202,6 +202,14 @@ impl Popped {
         self.windows.iter().any(|w| w.conversation == conversation && !w.hidden)
     }
 
+    #[cfg(test)]
+    pub(super) fn focus_requested(&self, conversation: Option<Uuid>) -> bool {
+        self.windows
+            .iter()
+            .find(|w| w.conversation == conversation && !w.hidden)
+            .is_some_and(|w| w.view.conv_focus_request)
+    }
+
     /// Put the window of `conversation` away, or show it back; false when
     /// it has none.
     pub(super) fn set_hidden(&mut self, conversation: Option<Uuid>, hidden: bool) -> bool {
@@ -289,7 +297,7 @@ pub(super) fn one_picker(st: &mut ChatUi) {
 /// `one_picker` has closed the other.
 pub(super) fn claim_picker(ctx: &egui::Context) -> bool {
     let id = egui::Id::unique("conversation_emoji_picker_frame");
-    let frame = ctx.cumulative_pass_nr();
+    let frame = ctx.cumulative_pass_nr_for(egui::ViewportId::ROOT);
     let free = ctx.data(|d| d.get_temp::<u64>(id)) != Some(frame);
     if free {
         ctx.data_mut(|d| d.insert_temp(id, frame));

@@ -435,6 +435,7 @@ struct Period {
     gpu_contact: f32,
     /// The volumetric clouds' compute alone (inside g_terrain_sky).
     gpu_clouds: f32,
+    gpu_soft: f32,
     /// The bloom levels alone (inside g_post).
     gpu_bloom: f32,
     /// The rest of g_effects: planar reflections, probe, scene copy, SSR.
@@ -481,6 +482,27 @@ struct Period {
     /// in a single frame.
     ui: [u64; 3],
     ui_vertices_max: u32,
+    /// The interface's windows outside the viewer's (aurora-render's
+    /// outside.rs): their draws, the render thread's time on them and the
+    /// longest it spent on them after one frame.
+    outside_draws: u64,
+    outside_ms: f32,
+    outside_ms_max: f32,
+}
+
+/// The windows outside in a summary, when one was drawn: draws per frame
+/// of the viewer, the render thread's time on one draw, and the longest it
+/// spent on them after one frame (ms).
+fn outside_text(draws: u64, ms: f32, ms_max: f32, frames: f32) -> String {
+    if draws == 0 {
+        return String::new();
+    }
+    format!(
+        " out_draws={:.2} out_ms={:.3} out_ms_max={:.2}",
+        draws as f32 / frames,
+        ms / draws as f32,
+        ms_max
+    )
 }
 
 pub struct FrameProfile {
@@ -714,6 +736,7 @@ impl FrameProfile {
         p.gpu_ssao += render.gpu_ssao.unwrap_or(0.0);
         p.gpu_contact += render.gpu_contact.unwrap_or(0.0);
         p.gpu_clouds += render.gpu_clouds.unwrap_or(0.0);
+        p.gpu_soft += render.gpu_soft.unwrap_or(0.0);
         p.gpu_bloom += render.gpu_bloom.unwrap_or(0.0);
         if let Some(e) = render.gpu_effects {
             add(&mut p.gpu_effects, &e);
@@ -780,6 +803,9 @@ impl FrameProfile {
             *sum += v as u64;
         }
         p.ui_vertices_max = p.ui_vertices_max.max(render.ui_vertices);
+        p.outside_draws += u64::from(render.outside_windows);
+        p.outside_ms += render.outside_ms;
+        p.outside_ms_max = p.outside_ms_max.max(render.outside_ms);
         let elapsed = now - started;
         if elapsed < PERIOD {
             return None;
@@ -1021,6 +1047,7 @@ fn summary(p: &Period, elapsed: Duration) -> String {
         count(p.ui[2]),
         p.ui_vertices_max
     );
+    out.push_str(&outside_text(p.outside_draws, p.outside_ms, p.outside_ms_max, n));
     let gpu_n = p.gpu_frames.max(1) as f32;
     let _ = write!(out, " | gpu={:.2}", p.gpu.iter().sum::<f32>() / gpu_n);
     for (el, ms) in GpuElement::ALL.iter().zip(p.gpu) {
@@ -1048,6 +1075,8 @@ fn summary(p: &Period, elapsed: Duration) -> String {
     let _ = write!(out, " g_contact={:.3}", p.gpu_contact / gpu_n);
     // the volumetric clouds' compute alone (inside g_terrain_sky; 0 while off)
     let _ = write!(out, " g_clouds={:.3}", p.gpu_clouds / gpu_n);
+    // the soft sun shadows alone (inside g_effects)
+    let _ = write!(out, " g_soft={:.3}", p.gpu_soft / gpu_n);
     // the bloom levels alone (inside g_post)
     let _ = write!(out, " g_bloom={:.3}", p.gpu_bloom / gpu_n);
     let _ = write!(out, " | shadow_path={}", aurora_render::shadow_cull::path_name(p.shadow_path));
@@ -1114,6 +1143,13 @@ fn summary(p: &Period, elapsed: Duration) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_windows_outside_are_in_the_summary_only_when_one_was_drawn() {
+        assert_eq!(outside_text(0, 0.0, 0.0, 240.0), "");
+        // 120 draws in 240 frames, 0.3 ms each, 1.25 ms after the worst frame
+        assert_eq!(outside_text(120, 36.0, 1.25, 240.0), " out_draws=0.50 out_ms=0.300 out_ms_max=1.25");
+    }
+
     fn ms(m: u64) -> Duration {
         Duration::from_millis(m)
     }
@@ -1177,7 +1213,9 @@ mod tests {
         assert!(l.contains(" calls=40 "), "{l}");
         assert!(l.contains(" r_finish=0.00 ") && l.contains(" g_objects=0.000 "), "{l}");
         assert!(
-            l.contains(" g_depth=0.000 g_depth_msaa=0.000 g_ssao=0.000 g_contact=0.000 g_clouds=0.000 g_bloom=0.000 | shadow_path="),
+            l.contains(
+                " g_depth=0.000 g_depth_msaa=0.000 g_ssao=0.000 g_contact=0.000 g_clouds=0.000 g_soft=0.000 g_bloom=0.000 | shadow_path="
+            ),
             "{l}"
         );
         assert!(

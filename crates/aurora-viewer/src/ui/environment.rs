@@ -30,6 +30,20 @@ pub enum EnvAction {
     Shared,
     /// A time of day preset (1..=4).
     Preset(u8),
+    /// Keep the local environment for the parcel under the agent.
+    SaveParcel,
+    /// Forget what is kept for that parcel.
+    ForgetParcel,
+}
+
+/// What can be done for the parcel under the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ParcelChoice {
+    /// No local environment to keep, or no parcel yet.
+    #[default]
+    Nothing,
+    Save,
+    Saved,
 }
 
 /// LLFloaterEnvironmentAdjust slider scales.
@@ -107,8 +121,9 @@ pub struct EnvironmentUi {
     /// everywhere as deep as a long snowfall leaves it).
     pub weather_fill: bool,
     catalog: SettingsCatalog,
-    /// Inventory generation the lists were built from, and when.
-    built: Option<(u64, super::inventory::view::Sort)>,
+    /// Inventory generation, sort and A–Z choice the lists were built
+    /// from, and when.
+    built: Option<(u64, super::inventory::view::Sort, bool)>,
     built_at: Option<std::time::Instant>,
     /// Folders still to load for the lists (0: complete).
     pub scan_left: usize,
@@ -122,6 +137,8 @@ pub struct EnvironmentUi {
     pub night: Option<NightSkyPick>,
     /// The Aurora Weather window is open (from the Environment window).
     pub weather_open: bool,
+    /// The parcel button (kept by the app).
+    pub parcel_choice: ParcelChoice,
     /// Open this list's drop-down on the next frame (demo captures).
     pub open_list: Option<SettingsKind>,
     /// Type this into an open list's search field (demo captures).
@@ -141,12 +158,12 @@ impl EnvironmentUi {
     /// Rebuild the lists when the inventory changed (loadPresets), at most
     /// once a second while folders keep arriving.
     pub fn refresh(&mut self, ctx: &egui::Context, inv: &Inventory) {
-        let version = (inv.generation, super::inventory::view::picker_sort(ctx));
+        let version = (inv.generation, super::inventory::view::picker_sort(ctx), lists_by_name(ctx));
         let due = self.built_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) || self.scan_left == 0;
-        let sort_changed = self.built.is_some_and(|built| built.1 != version.1);
+        let sort_changed = self.built.is_some_and(|built| (built.1, built.2) != (version.1, version.2));
         if self.built != Some(version) && (due || sort_changed) {
-            let order = super::inventory::view::picker_order(ctx, inv);
-            self.catalog = SettingsCatalog::build(inv, |id| order.rank(id));
+            let ranks = list_ranks(ctx, inv);
+            self.catalog = SettingsCatalog::build(inv, |id| ranks.rank(id));
             self.built = Some(version);
             self.built_at = Some(std::time::Instant::now());
         }
@@ -313,6 +330,27 @@ impl EnvironmentUi {
             ) {
                 out.push(EnvAction::Shared);
             }
+            // the parcel pin beside it: it keeps or forgets this same
+            // sky, water and day cycle for the parcel; greyed while RLVa
+            // holds the environment, like the lists
+            if self.parcel_choice == ParcelChoice::Saved {
+                let forget = ui
+                    .add_enabled_ui(free, |ui| {
+                        widgets::icon_toggle(ui, p, "map-pin-filled", aurora_i18n::tr!("parcel-environment-forget"), true)
+                    })
+                    .inner;
+                if forget && free {
+                    out.push(EnvAction::ForgetParcel);
+                }
+            } else if widgets::icon_button(
+                ui,
+                p,
+                "map-pin-filled",
+                aurora_i18n::tr!("parcel-environment-save"),
+                free && self.parcel_choice == ParcelChoice::Save,
+            ) {
+                out.push(EnvAction::SaveParcel);
+            }
             // Aurora Weather after them ("Aurora" in the aurora gradient):
             // this viewer's own weather, nothing for a region to set
             let Some(open) = weather_open else {
@@ -323,7 +361,7 @@ impl EnvironmentUi {
                 let font = widgets::control_font(ui, 12.0);
                 let label = crate::ui::options::aurora_word(p, aurora_i18n::tr!("ui-weather-aurora"), font, p.ink);
                 if ui
-                    .add(egui::Button::new(label).min_size(Vec2::new(0.0, 20.0)))
+                    .add_enabled(free, egui::Button::new(label).min_size(Vec2::new(0.0, 20.0)))
                     .on_hover_text(aurora_i18n::tr!("ui-weather-window-tip"))
                     .clicked()
                 {
@@ -833,19 +871,24 @@ pub fn settings_list(
                 // Aurora addition: the Legacy Viewer's lists only jump to
                 // the first name starting with the letters typed
                 // (LLScrollListCtrl::handleUnicodeCharHere). `search_field`
-                // with ↑ ↓ left to the list, so ↓ reaches the names.
-                let search = {
-                    let width = ui.available_width();
-                    crate::ui::widgets::search_text_edit(ui, p, &mut query, |edit| {
-                        edit.hint_text(aurora_i18n::tr!("ui-environment-search-by-name"))
-                            .desired_width(width)
-                            .event_filter(egui::EventFilter {
-                                horizontal_arrows: true,
-                                vertical_arrows: false,
-                                ..Default::default()
-                            })
+                // with ↑ ↓ left to the list, so ↓ reaches the names, and
+                // the A–Z switch at its end (also an Aurora addition).
+                let search = ui
+                    .horizontal(|ui| {
+                        let width = ui.available_width() - 20.0 - ui.spacing().item_spacing.x;
+                        let search = crate::ui::widgets::search_text_edit(ui, p, &mut query, |edit| {
+                            edit.hint_text(aurora_i18n::tr!("ui-environment-search-by-name"))
+                                .desired_width(width)
+                                .event_filter(egui::EventFilter {
+                                    horizontal_arrows: true,
+                                    vertical_arrows: false,
+                                    ..Default::default()
+                                })
+                        });
+                        order_toggle(ui, p);
+                        search
                     })
-                };
+                    .inner;
                 if opening {
                     search.request_focus();
                 }
@@ -920,6 +963,94 @@ pub fn settings_list(
 /// (demo captures).
 pub(crate) fn demo_open_id(salt: &(impl std::hash::Hash + std::fmt::Debug)) -> egui::Id {
     egui::Id::unique("env_list_demo_open").with(salt)
+}
+
+/// Whether the sky, water and day cycle lists are A–Z (`env_lists_by_name`
+/// of the settings), published by the app once per frame like the
+/// inventory selectors' sort. Every list of settings items follows it: the
+/// selector and the photo's Light section, the editors' Load menus, the
+/// parcel and region pickers.
+pub fn set_lists_by_name(ctx: &egui::Context, by_name: bool) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("env_lists_by_name"), by_name));
+}
+
+pub fn lists_by_name(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp(egui::Id::unique("env_lists_by_name"))).unwrap_or_default()
+}
+
+/// The choice a list's switch made since the app last saved it.
+pub fn take_lists_by_name_change(ctx: &egui::Context) -> Option<bool> {
+    ctx.data_mut(|d| d.remove_temp(egui::Id::unique("env_lists_by_name_changed")))
+}
+
+fn flip_lists_by_name(ctx: &egui::Context, by_name: bool) {
+    set_lists_by_name(ctx, by_name);
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("env_lists_by_name_changed"), by_name));
+}
+
+/// The A–Z switch beside a list's search field.
+pub fn order_toggle(ui: &mut egui::Ui, p: &Palette) {
+    let mut by_name = lists_by_name(ui.ctx());
+    let tip = if by_name {
+        aurora_i18n::tr!("ui-environment-sorted-by-name")
+    } else {
+        aurora_i18n::tr!("ui-environment-in-inventory-order")
+    };
+    if widgets::sort_by_name_toggle(ui, p, &mut by_name, tip) {
+        flip_lists_by_name(ui.ctx(), by_name);
+    }
+}
+
+/// The same switch as the first row of a Load menu, which stays open.
+pub fn order_menu_row(ui: &mut egui::Ui, p: &Palette) {
+    let mut by_name = lists_by_name(ui.ctx());
+    if super::menu::toggle(
+        ui,
+        p,
+        "sort-ascending-letters",
+        aurora_i18n::tr!("ui-environment-sort-by-name"),
+        &mut by_name,
+    ) {
+        flip_lists_by_name(ui.ctx(), by_name);
+    }
+    super::menu::separator(ui, p);
+}
+
+/// The place of each settings item in the lists ([`env_select::ranks`]),
+/// kept until the inventory, its sort or the lists' order change.
+pub struct ListRanks {
+    version: (Uuid, Uuid, u64, super::inventory::view::Sort, &'static str, bool),
+    ranks: std::collections::HashMap<Uuid, usize>,
+}
+
+impl ListRanks {
+    pub fn rank(&self, id: Uuid) -> usize {
+        self.ranks.get(&id).copied().unwrap_or(usize::MAX)
+    }
+}
+
+pub fn list_ranks(ctx: &egui::Context, inv: &Inventory) -> std::sync::Arc<ListRanks> {
+    let key = egui::Id::unique("env_list_ranks");
+    let version = (
+        inv.root,
+        inv.lib_root,
+        inv.generation,
+        super::inventory::view::picker_sort(ctx),
+        aurora_i18n::language(),
+        lists_by_name(ctx),
+    );
+    if let Some(ranks) = ctx.data(|d| d.get_temp::<std::sync::Arc<ListRanks>>(key))
+        && ranks.version == version
+    {
+        return ranks;
+    }
+    let order = super::inventory::view::picker_order(ctx, inv);
+    let ranks = std::sync::Arc::new(ListRanks {
+        version,
+        ranks: env_select::ranks(inv, version.5, |id| order.rank(id)),
+    });
+    ctx.data_mut(|d| d.insert_temp(key, ranks.clone()));
+    ranks
 }
 
 /// Azimuth and elevation (degrees) of a sun or moon rotation

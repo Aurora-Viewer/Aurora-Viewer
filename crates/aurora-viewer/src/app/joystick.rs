@@ -522,7 +522,7 @@ impl App {
         if self.camera.mouselook() {
             if player_movement_input {
                 self.camera.reset_gamepad_mouselook_zoom();
-            } else if motion.avatar_zoom != 0.0 && self.world.rlva.camera_owner().is_none() {
+            } else if motion.avatar_zoom != 0.0 {
                 self.camera
                     .gamepad_mouselook_zoom(motion.avatar_zoom, dt, &self.settings.camera, self.view_aspect());
             }

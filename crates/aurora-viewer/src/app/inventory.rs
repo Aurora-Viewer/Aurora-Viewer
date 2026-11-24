@@ -284,6 +284,8 @@ impl App {
             0 => {
                 if texture_preview {
                     st.attachment_preview = Some(item);
+                } else {
+                    self.rlva_view_blocked(0);
                 }
             }
             2 => {
@@ -341,6 +343,7 @@ impl App {
             change.copies.len()
         );
         self.inventory_ui.begin_mutation(request, &change);
+        let delete = selection.is_some();
         if let Some(selection) = selection {
             self.inventory_pane(selection.window()).begin_delete(request, selection);
         }
@@ -354,12 +357,17 @@ impl App {
             }
         });
         pane.message.clear();
+        // RLVa judges a Delete's moves to the Trash as removals
+        if delete {
+            self.world.rlva.deletes.insert(request);
+        }
         self.send(NetCommand::EditInventory { request, change });
+        self.world.rlva.deletes.remove(&request);
     }
 
     /// An inventory change, after the listings' questions; `drag` when it
     /// comes from a drop on a folder.
-    fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
+    pub(super) fn edit_inventory(&mut self, change: aurora_net::inventory::operations::Mutation, drag: bool, editor: Uuid) {
         // the clipboard is shared by both panes: the main window holds it
         let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
         if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut, drag) {
@@ -403,6 +411,32 @@ impl App {
         ui::inventory::resize_for_dual(&self.egui_ctx, self.panels.inventory_dual);
     }
 
+    /// Demo: the Detach and Delete confirmation's button, then where `item`
+    /// is at `log_frame` (worn or active, in the Trash, the wait, the message).
+    pub(super) fn demo_detach_delete_steps(&mut self, label: &str, item: uuid::Uuid, confirm: bool, log: bool) {
+        let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+        if confirm {
+            let actions = self
+                .inventory_ui
+                .demo_confirm_detach_delete(&self.world.inventory, &self.settings.inventory, &facts);
+            log::info!("demo {label}: confirmed at frame {}, {} action(s)", self.frame_count, actions.len());
+            for action in actions {
+                self.apply_inventory_action(action);
+            }
+        }
+        if log {
+            log::info!(
+                "demo {label}: frame {} worn={} active={} trash={} waiting={} message={:?}",
+                self.frame_count,
+                facts.worn.contains(&item),
+                facts.active_gestures.contains(&item),
+                crate::world::inventory::actions::in_type(&self.world.inventory, item, 14),
+                self.inventory_ui.demo_detach_waiting(),
+                self.inventory_ui.message,
+            );
+        }
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         self.apply_inventory_action_from(Uuid::nil(), action);
     }
@@ -430,6 +464,7 @@ impl App {
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::StopConfirmingDelete => self.settings.inventory.confirm_delete = false,
+            InvAction::Notice(text) => self.world.system_message(text),
             InvAction::Edit(change) => self.edit_inventory(change, false, editor),
             InvAction::Delete(deletion) => {
                 if let Some(deletion) = self.listings_ui.guard_inventory_delete(&self.world.inventory, *deletion) {
@@ -478,8 +513,13 @@ impl App {
                 }
             }
             InvAction::Appearance(action) => {
+                let asked = removed_items(&action);
                 self.inventory_ui.message.clear();
                 self.apply_appearance_action(action);
+                if !asked.is_empty() && !self.inventory_ui.message.is_empty() {
+                    let reason = self.inventory_ui.message.clone();
+                    self.inventory_ui.detach_refused(&asked, &reason);
+                }
             }
             InvAction::Animation { asset, local, start } => {
                 if start {
@@ -499,13 +539,8 @@ impl App {
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id, owner) => {
-                if self
-                    .world
-                    .inventory
-                    .items
-                    .get(&id)
-                    .is_some_and(|it| !self.world.inventory.can_preview(it.asset_type))
-                {
+                let kind = self.world.inventory.items.get(&id).map(|it| it.asset_type);
+                if kind.is_some_and(|kind| self.rlva_preview_refused(kind)) {
                     return;
                 }
                 if crate::ui::texture_library::catalogue::resource(&self.world.inventory, id).is_some() {
@@ -625,10 +660,16 @@ impl App {
             }
             InvAction::Environment(asset, flags) => {
                 if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
-                    self.world.eep.request_local(asset, kind);
+                    self.world.eep.request_local_item(asset, kind);
                 }
             }
             InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
+            InvAction::EnvironmentSaveParcel(asset, flags) => {
+                if let Some(kind) = crate::world::env_select::SettingsKind::from_flags(flags) {
+                    self.world.eep.request_local(asset, kind);
+                    self.world.save_parcel_environment();
+                }
+            }
             InvAction::Marketplace(item, command) => self.inventory_marketplace_command(item, command),
             InvAction::ShowMain(item) => {
                 let inv = &self.world.inventory;
@@ -1025,10 +1066,17 @@ impl App {
             .appearance_ui
             .pending
             .is_none_or(|(request, _)| self.world.attachment_inventory.owns(request));
+        let asked = removed_items(&action);
         let (detach, action) = self.world.recover_attachment_removal(action, allow_recovery);
         let recovered = !detach.is_empty();
         for command in detach {
             self.send_from(command, actor);
+        }
+        if recovered {
+            // what the outfit update still has to take off was not detached here
+            let left = action.as_ref().map(removed_items).unwrap_or_default();
+            let detached: Vec<_> = asked.into_iter().filter(|id| !left.contains(id)).collect();
+            self.inventory_ui.take_off_sent(&detached);
         }
         let Some(action) = action else {
             if recovered {
@@ -1083,8 +1131,8 @@ impl App {
                 self.open_outfit_portrait(id, super::outfit_portrait::Kind::Viewfinder);
                 return;
             }
-            crate::world::appearance::Action::OutfitBatch(outfits) => {
-                self.open_outfit_batch(outfits);
+            crate::world::appearance::Action::OutfitBatch(outfits, folder) => {
+                self.open_outfit_batch(outfits, folder);
                 return;
             }
             _ => {}
@@ -1115,7 +1163,21 @@ impl App {
                 | crate::world::appearance::Action::SaveIn(..)
                 | crate::world::appearance::Action::ImportJson { .. }
         );
-        let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
+        // RLVa: a link is worn by its own folder's locks (rlva_note_wear_entry)
+        self.world.rlva_note_wear_request(&action);
+        let mut attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
+        // RLVa: rez_attachment takes the point the names give while a point
+        // is locked (Wear, Add, a drop on the avatar; not an outfit)
+        if matches!(
+            action,
+            crate::world::appearance::Action::WearItem { .. }
+                | crate::world::appearance::Action::WearItems { .. }
+                | crate::world::appearance::Action::Add(_)
+        ) {
+            for attachment in &mut attachments {
+                attachment.point = self.world.rlva_rez_point(attachment.item_id, attachment.point);
+            }
+        }
         match crate::world::appearance::plan(&self.world.inventory, action, &self.world.outfit_attachment_points()) {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();
@@ -1178,6 +1240,17 @@ impl App {
         for action in actions {
             self.apply_inventory_action(action);
         }
+    }
+}
+
+/// The items an outfit action takes off.
+fn removed_items(action: &crate::world::appearance::Action) -> Vec<Uuid> {
+    match action {
+        crate::world::appearance::Action::Remove(item) => vec![*item],
+        crate::world::appearance::Action::RemoveItems(items) | crate::world::appearance::Action::Force { remove: items, .. } => {
+            items.clone()
+        }
+        _ => Vec::new(),
     }
 }
 

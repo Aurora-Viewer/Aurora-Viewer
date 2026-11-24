@@ -45,6 +45,7 @@ pub fn arrival(inv: &Inventory, agent: Uuid) -> Option<NetEvent> {
         })
         .collect();
     Some(NetEvent::InventoryUpdated {
+        bulk: false,
         folders: Vec::new(),
         items,
     })

@@ -989,6 +989,14 @@ fn aurora_preview(ui: &mut egui::Ui, p: &Palette, w: &WeatherSettings) {
     );
 }
 
+/// How much of the curtain shows at `u` across it (0 and 1 its sides).
+/// `sin(PI)` is a hair below zero in `f32`, and its power 1.5 is NaN: a NaN
+/// alpha that stopped a development build at the colour's assertion (the
+/// merge queue's run of 2026-11-21), so the sine is held at zero first.
+fn side_fade(u: f32) -> f32 {
+    (u * std::f32::consts::PI).sin().max(0.0).powf(1.5)
+}
+
 /// The curtain of light: a mesh whose colour goes from `low` at its foot to
 /// `high` toward its top, fading out at its top, its foot and its sides.
 #[allow(clippy::too_many_arguments)]
@@ -1013,7 +1021,7 @@ fn curtain(
         for col in 0..=COLS {
             let u = col as f32 / COLS as f32;
             // a gentle wave along it, the sides fading out
-            let side = (u * std::f32::consts::PI).sin().powf(1.5);
+            let side = side_fade(u);
             let wave = (u * std::f32::consts::TAU * 1.5).sin() * 3.0 * v;
             let alpha = (profile * side * strength * if enabled { 1.0 } else { 0.4 }).clamp(0.0, 1.0);
             let pos = egui::pos2(cx - width * 0.5 + u * width, foot - v * height + wave);
@@ -1095,6 +1103,17 @@ fn foot(ui: &mut egui::Ui, p: &Palette, w: &mut WeatherSettings, actions: &mut W
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_curtain_fades_out_at_both_sides_without_a_nan() {
+        // the right side's sine is a hair below zero in f32
+        for col in 0..=16 {
+            let side = side_fade(col as f32 / 16.0);
+            assert!(side.is_finite() && (0.0..=1.0).contains(&side), "{col}: {side}");
+        }
+        assert_eq!(side_fade(1.0), 0.0);
+        assert!((side_fade(0.5) - 1.0).abs() < 1e-6);
+    }
 
     #[test]
     fn the_compass_reads_clockwise_from_north_with_north_up() {

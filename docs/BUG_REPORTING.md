@@ -143,7 +143,12 @@ What each part tells the one who fixes it:
   Meta, Virtual Desktop, Monado, Windows Mixed Reality or other), and
   whether it created the Vulkan device. Only shown when one was loaded.
 - **Last state**: screen, frame rate, frame time, window size, graphics
-  preset, memory, video memory used / budget, the tightest video memory
+  preset, memory (the viewer's working set, and what it has committed,
+  resident or paged out), the PC's memory (available / total, and on
+  Windows the commit charge of all programs against its limit, RAM and
+  page file: at the limit every allocation fails, so an out of memory with
+  a viewer far below it means another program filled the PC), video
+  memory used / budget, the tightest video memory
   headroom of the last 60 seconds (the driver's budget less what it
   counted for the viewer, in MB, negative while the viewer was past its
   budget: a card shared with another program, where the driver moves

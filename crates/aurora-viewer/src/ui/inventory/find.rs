@@ -33,6 +33,7 @@ pub(super) struct Find {
     query: String,
     replacement: String,
     insensitive: bool,
+    whole_words: bool,
     up: bool,
     /// Put the keyboard in the text to find, its text selected.
     focus: bool,
@@ -47,6 +48,7 @@ struct Cached {
     text: String,
     query: String,
     insensitive: bool,
+    whole_words: bool,
     ranges: Arc<Vec<Range<usize>>>,
 }
 
@@ -80,7 +82,7 @@ fn scroll_id(editor: Id) -> Id {
 
 /// The open bar's matches in the editor `editor`, if any.
 pub(super) fn highlights(ctx: &egui::Context, editor: Id) -> Option<Highlights> {
-    let now = ctx.cumulative_frame_nr();
+    let now = ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT);
     ctx.data(|d| d.get_temp::<Highlights>(highlights_id(editor)))
         .filter(|h| h.frame + 1 >= now)
 }
@@ -112,6 +114,18 @@ impl Find {
         self.open = true;
         self.focus = true;
         self.status.clear();
+        // The selected match stays the current one (LLFloaterSearchReplace
+        // keeps the editor's selection), so Replace changes that one even
+        // after the bar takes the keyboard and egui shrinks the selection.
+        // Without one, the match the bar went to stays current while the
+        // caret egui left on it has not moved (Ctrl+F again after Find).
+        let ranges = self.matches(text);
+        let selected = Self::selected(ctx, editor);
+        self.current = if ranges.contains(&selected) {
+            Some(selected)
+        } else {
+            self.current(ctx, editor, &ranges)
+        };
     }
 
     /// Close the bar and give the keyboard back to the text (onClose).
@@ -161,6 +175,10 @@ impl Find {
             if widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive")).changed() {
                 self.status.clear();
             }
+            if widgets::checkbox(ui, p, &mut self.whole_words, aurora_i18n::tr!("script-search-whole-words")).changed() {
+                self.current = None;
+                self.status.clear();
+            }
             widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
             if widgets::flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
                 self.find(&ctx, editor, text);
@@ -205,16 +223,18 @@ impl Find {
         let query = plain(&self.query);
         if let Some(cached) = &self.cached
             && cached.insensitive == self.insensitive
+            && cached.whole_words == self.whole_words
             && cached.query == query
             && cached.text == text
         {
             return cached.ranges.clone();
         }
-        let ranges = Arc::new(editing::matches(text, &query, self.insensitive));
+        let ranges = Arc::new(editing::matches_filtered(text, &query, self.insensitive, self.whole_words));
         self.cached = Some(Cached {
             text: text.to_owned(),
             query,
             insensitive: self.insensitive,
+            whole_words: self.whole_words,
             ranges: ranges.clone(),
         });
         ranges
@@ -222,12 +242,13 @@ impl Find {
 
     /// The match the bar went to, while it is still one and the editor's
     /// cursor has not moved since. egui keeps a selection only in the field
-    /// with the keyboard: elsewhere it shrinks to its end, which is where
-    /// the cursor of a match the bar selected stays.
+    /// with the keyboard: elsewhere it shrinks to its moving end, the start
+    /// of a match selected right to left, else its end.
     fn current(&self, ctx: &egui::Context, editor: Id, ranges: &[Range<usize>]) -> Option<Range<usize>> {
         let current = self.current.clone()?;
         let selected = Self::selected(ctx, editor);
-        (ranges.contains(&current) && (selected == current || selected == (current.end..current.end))).then_some(current)
+        let caret_at_edge = selected.is_empty() && (selected.start == current.start || selected.start == current.end);
+        (ranges.contains(&current) && (selected == current || caret_at_edge)).then_some(current)
     }
 
     fn selected(ctx: &egui::Context, editor: Id) -> Range<usize> {
@@ -247,7 +268,7 @@ impl Find {
         let highlights = Highlights {
             current: self.current(ctx, editor, &ranges),
             ranges,
-            frame: ctx.cumulative_frame_nr(),
+            frame: ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT),
         };
         ctx.data_mut(|d| d.insert_temp(highlights_id(editor), highlights));
     }
@@ -348,6 +369,34 @@ mod tests {
         text[editing::bytes(text, editing::cursor(ctx, id))].to_owned()
     }
 
+    #[test]
+    fn whole_words_filters_matches_and_refreshes_cache() {
+        let ctx = egui::Context::default();
+        let id = Id::unique("note_whole_words");
+        let mut bar = find("hi", false);
+        let mut text = "hi high hi_there (hi)".to_owned();
+
+        // Without the option, partial-word matches are included.
+        let all = bar.matches(&text);
+        assert_eq!(all.len(), 4);
+
+        // Changing the option must invalidate cached results.
+        bar.whole_words = true;
+        let whole = bar.matches(&text);
+        assert_eq!(whole.len(), 2);
+        assert!(!Arc::ptr_eq(&all, &whole));
+
+        // Highlighting and replacement use the same filtered matches.
+        bar.publish(&ctx, id, &text);
+        assert_eq!(highlights(&ctx, id).expect("published").ranges.len(), 2);
+
+        bar.replacement = "HELLO".into();
+        assert!(bar.replace_all(&ctx, id, &mut text));
+        assert_eq!(text, "HELLO high hi_there (HELLO)");
+
+        bar.whole_words = false;
+        assert_eq!(bar.matches(&text).len(), 2);
+    }
     #[test]
     fn find_is_case_sensitive_by_default_and_wraps_both_ways() {
         let ctx = egui::Context::default();
@@ -460,6 +509,32 @@ mod tests {
         editing::select(&ctx, id, 0..20, false);
         bar.begin(&ctx, id, NOTE);
         assert_eq!(bar.query, " P");
+    }
+
+    #[test]
+    fn replace_after_begin_changes_the_selected_word_whichever_way_it_was_selected() {
+        // egui shrinks the editor's selection to its moving end once the bar
+        // takes the keyboard: the start of a word selected right to left.
+        for (anchor, caret) in [(7, 12), (12, 7)] {
+            let ctx = egui::Context::default();
+            let id = Id::unique(("note_replace_selected", anchor));
+            let mut text = "count, count, count_max".to_owned();
+            let mut state = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
+            state.cursor.set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(anchor),
+                egui::text::CCursor::new(caret),
+            )));
+            state.store(&ctx, id);
+            let mut bar = Find {
+                replacement: "total".into(),
+                ..Default::default()
+            };
+            bar.begin(&ctx, id, &text);
+            assert_eq!(bar.query, "count");
+            editing::select(&ctx, id, caret..caret, false);
+            assert!(bar.replace(&ctx, id, &mut text), "{anchor}..{caret}");
+            assert_eq!(text, "count, total, count_max", "{anchor}..{caret}");
+        }
     }
 
     #[test]

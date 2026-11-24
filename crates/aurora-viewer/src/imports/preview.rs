@@ -721,6 +721,7 @@ impl Imports {
         let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else {
             return;
         };
+        entry.sync_image_size(self.load_preferences.limit_texture_size);
         let Some(Source::Material { images, .. }) = &entry.source else {
             return;
         };
@@ -732,17 +733,30 @@ impl Imports {
         }
         entry.material_large_pending[slot] = true;
         let image = image.clone();
+        let options = if image.asset.is_none() {
+            entry.options
+        } else {
+            // Existing inventory maps are reused, not resized for upload.
+            import_texture::Options {
+                max_width: 2048,
+                max_height: 2048,
+                ..entry.options
+            }
+        };
         let generation = entry.preview_generation;
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
-            let pixels = &image.pixels;
-            let rgba = crate::scene::jobs::to_rgba(pixels.components, &pixels.data, pixels.width as usize * pixels.height as usize);
-            let pixels = image::RgbaImage::from_raw(pixels.width, pixels.height, rgba).map(|rgba| {
-                let scaled = image::DynamicImage::ImageRgba8(rgba)
-                    .thumbnail(pixels.width.min(2048), pixels.height.min(2048))
-                    .to_rgba8();
-                egui::ColorImage::from_rgba_unmultiplied([scaled.width() as usize, scaled.height() as usize], scaled.as_raw())
+            // The loupe keeps native detail when it already fits. Larger maps
+            // show the actual upload reduction instead of a 2K-only preview.
+            let pixels = if image.pixels.width <= options.max_width && image.pixels.height <= options.max_height {
+                Some(image.pixels.clone())
+            } else {
+                import_texture::prepare(&image.pixels, options).ok().map(Arc::new)
+            };
+            let pixels = pixels.map(|pixels| {
+                let rgba = crate::scene::jobs::to_rgba(pixels.components, &pixels.data, pixels.width as usize * pixels.height as usize);
+                egui::ColorImage::from_rgba_unmultiplied([pixels.width as usize, pixels.height as usize], &rgba)
             });
             let _ = tx.send(Worker::MaterialLargePreview(id, generation, slot, image.key, pixels));
             wake.request_repaint();
@@ -819,6 +833,48 @@ impl Imports {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn enlarged_material_maps_show_the_effective_upload_limit_and_keep_existing_assets() {
+        let ctx = egui::Context::default();
+        let (jobs, _) = crate::scene::jobs::Jobs::new();
+        let mut map = crate::imports::files::local_image((*crate::imports::tests::image(4096, 128)).clone(), "Map".into());
+        for (limit, existing, expected) in [
+            (ImageSizeLimit::Default, false, [1024, 32]),
+            (ImageSizeLimit::Size2048, false, [2048, 64]),
+            (ImageSizeLimit::Default, true, [2048, 64]),
+        ] {
+            map.asset = existing.then(Uuid::new_v4);
+            let mut entry = Entry::new(
+                "material.gltf".into(),
+                Ok(Source::Material {
+                    value: PbrMaterial::default(),
+                    images: Box::new([Some(map.clone()), None, None, None]),
+                }),
+                Default::default(),
+            );
+            entry.image_size_limit = limit;
+            let id = entry.id;
+            let mut imports = Imports {
+                entries: vec![entry],
+                load_preferences: Preferences {
+                    limit_texture_size: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            imports.request_large_map(id, 0, &jobs, &ctx);
+            let result = imports
+                .rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("large map worker");
+            let Worker::MaterialLargePreview(returned, _, 0, _, Some(pixels)) = result else {
+                panic!("large map preview")
+            };
+            assert_eq!(returned, id);
+            assert_eq!(pixels.size, expected);
+        }
+    }
+
     #[test]
     fn mesh_preview_ignores_blend_without_changing_the_source_or_material_preview() {
         let avatars = crate::scene::avatar::AvatarLibrary::load();
@@ -1028,11 +1084,7 @@ mod tests {
 
     #[test]
     fn preview_uses_the_selected_prepared_lod_geometry() {
-        let mut draft = crate::imports::tests::mesh_fixture();
-        // Select different LODs explicitly; Legacy keeps this box whole.
-        for lod in &mut draft.lods[..3] {
-            lod.source = super::super::mesh::LodSource::Auto;
-        }
+        let mut draft = crate::imports::tests::reducible_mesh_fixture();
         draft.prepared = Some(Arc::new(super::super::mesh::prepare(&draft).expect("LODs")));
         let avatars = crate::scene::avatar::AvatarLibrary::load();
         let mut counts = Vec::new();
