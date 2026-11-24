@@ -10442,7 +10442,8 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   visitors can do", `general` on "Sale and ownership", `covenant` on the
   overview); `visibility` opens "Visibility and search" with its
   advanced rows unfolded and a five-paragraph parcel description (the
-  description field taller than its label, #4647); `people` asks for the
+  description field taller than its label, #4647; with `:owner`, since a
+  member sees the field greyed); `people` asks for the
   object owners as Refresh does, `owners`
   also scrolls down to them; `environment-picker` and `experience-picker`
   open the settings picker (the demo library's skies, waters and days, also

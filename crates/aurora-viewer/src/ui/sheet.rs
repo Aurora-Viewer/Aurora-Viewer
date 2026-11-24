@@ -614,8 +614,11 @@ pub fn srow_ext(ui: &mut egui::Ui, p: &Palette, text: &RowText<'_>, controls_w: 
     let used = child.min_rect().height();
     if (used - controls_h).abs() > 0.5 {
         ui.ctx().data_mut(|d| d.insert_temp(controls_id, used));
-        // the row takes its new height on the next frame
-        ui.ctx().request_repaint();
+        // the row takes its new height in this frame's next pass: the
+        // height is kept by the row's place, which a section folded or
+        // unfolded above it shifts, and a frame drawn with another row's
+        // height would cover the rows below
+        ui.ctx().request_discard("a settings row changed height");
     }
     clicked
 }
