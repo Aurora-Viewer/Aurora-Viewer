@@ -54,7 +54,10 @@ The RLVa command parser, restriction rules, inventory conventions and camera
 behaviors in `crates/aurora-viewer/src/world/rlva/` and `world/rlva.rs` follow
 the Legacy Viewer's `indra/newview/rlv*.cpp` and `rlv*.h`, and
 `world/rlva/legacy_strings.rs` the texts of its
-`skins/default/xui/*/rlva_strings.xml`: Copyright © 2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
+`skins/default/xui/*/rlva_strings.xml`; the outfit link comparison in
+`crates/aurora-net/src/outfits.rs` follows its `sync_inventory_folder`
+(`indra/newview/llviewerinventory.cpp`) and `RlvPredIsEqualOrLinkedItem`
+(`rlvcommon.cpp`): Copyright © 2009-2020 Kitty Barnett, originally LGPL 2.1, distributed here under
 GPL-3.0-or-later as described above.
 
 ## Authors of the ported code
@@ -107,6 +110,7 @@ GPL-3.0-or-later as described above.
 | Search and replace, `newview/llfloatersearchreplace.cpp` — Copyright © 2010-2013 Kitty Barnett | `aurora-viewer/src/ui/scripts/dialogs.rs`, `ui/inventory/find.rs` | Originally LGPL 2.1 |
 | Script recovery, `newview/llfloaterscriptrecover.cpp` — Copyright © 2011-2012 Kitty Barnett | `aurora-net/src/session/asset_imports.rs`; `aurora-viewer/src/app/script_recovery.rs`, `ui/scripts/recovery.rs` | Originally LGPL 2.1 |
 | RLVa visual effects, `newview/rlveffects.cpp`, `app_settings/shaders/class1/deferred/rlvF.glsl` — Copyright © 2018-2021 Kitty Barnett | `aurora-render/src/rlva.rs`, `rlva/overlay.rs`, `shaders/rlva.wgsl`; `aurora-viewer/src/world/rlva/effects.rs` | Originally LGPL 2.1 |
+| Minimap world map overlay (Catznip, `[SL:KB] - Patch: World-MinimapOverlay`): the region's map tiles, `LLViewerRegion::getWorldMapTiles` in `newview/llviewerregion.cpp` and the tile overlay of `LLNetMap` in `newview/llnetmap.cpp` — by Kitty Barnett | `aurora-viewer/src/ui/map_tiles.rs`, `ui/minimap.rs` | Originally LGPL 2.1 |
 | Pose stand, `newview/fsfloaterposestand.cpp`, `fsfloaterposestand.h`, `fspose.cpp`, `fspose.h` — by Cinder Roxley | `aurora-viewer/src/pose_stand.rs`, `ui/pose_stand.rs`, `app/pose_stand.rs` | Beer-Ware Licence (Revision 42) |
 
 ## Ideas from other viewers
@@ -122,7 +126,8 @@ written anew for Aurora, without its code. Their authors are thanked here.
 
 | Asset | Location | License |
 |---|---|---|
-| Tabler Icons — Copyright © 2020-2026 Paweł Kuna | `assets/tabler-icons/`, `crates/aurora-viewer/assets/icons/tabler/` | MIT ([LICENSE](assets/tabler-icons/LICENSE)) |
+| Tabler Icons — Copyright © 2020-2026 Paweł Kuna | `assets/tabler-icons/`, `crates/aurora-viewer/assets/icons/tabler/`, `assets/icons/aurora/folders/` and `assets/icons/aurora/links/` (Tabler icons combined by `scripts/generate-inventory-icons.py`) | MIT ([LICENSE](assets/tabler-icons/LICENSE)) |
+| Pants, skirt, underpants and undershirt icons, drawn for Aurora by Zakka in the Tabler filled style and dedicated by them to the public domain on 2026-11-20 ("I Zakka approve the use of the pants, skirt, and undies icons that I designed for the Aurora Viewer to the public domain under CC0 1.0"; "undies" came as one drawing of a set, split afterwards into the underpants and the undershirt icons); their link icons add the shortcut corner (`scripts/generate-inventory-icons.py`) | `assets/icons/aurora/clothing/`, `assets/icons/aurora/links/{pants,skirt,underpants,undershirt}-link.svg` | CC0 1.0 |
 | Inter typeface, Regular and SemiBold, version 4.001 | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-Inter.txt](crates/aurora-viewer/assets/fonts/LICENSE-Inter.txt)) |
 | Noto Sans, Regular and SemiBold, version 2.015 (notofonts/latin-greek-cyrillic, hinted) | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-NotoSans.txt](crates/aurora-viewer/assets/fonts/LICENSE-NotoSans.txt)) |
 | Roboto, Regular and Medium, version 3.011 (googlefonts/roboto-3-classic, hinted) | `crates/aurora-viewer/assets/fonts/` | SIL Open Font License 1.1 ([LICENSE-Roboto.txt](crates/aurora-viewer/assets/fonts/LICENSE-Roboto.txt)) |

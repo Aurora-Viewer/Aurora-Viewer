@@ -10,7 +10,9 @@ pub fn page(cx: &mut Cx) {
     cx.track(&field!(inventory.filter_defaults));
     cx.track(&field!(inventory.tab_filter_defaults));
     cx.group(tr!("ui-options-sorting"), |cx| {
-        cx.choice(
+        // as the window's own menu (`Sort::set_by_date`): the order chosen
+        // here replaces an explorer column's
+        if cx.choice(
             tr!("ui-inventory-controls-display-order"),
             "",
             &field!(inventory.sort.by_date),
@@ -18,7 +20,10 @@ pub fn page(cx: &mut Cx) {
                 (true, tr!("ui-inventory-controls-newest-first"), false),
                 (false, tr!("common-by-name"), false),
             ],
-        );
+        ) {
+            let by_date = cx.s.inventory.sort.by_date;
+            cx.s.inventory.sort.set_by_date(by_date);
+        }
         cx.toggle(
             tr!("ui-inventory-controls-folders-always-by-name"),
             "",

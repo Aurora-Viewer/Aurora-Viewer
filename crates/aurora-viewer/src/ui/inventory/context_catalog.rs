@@ -1,4 +1,5 @@
 //! Native inventory commands and their current availability, before presentation.
+mod explorer;
 mod extra;
 use super::menu_layout::{Direction, Entry, Kind, LOCK, TEXT, children};
 use super::*;
@@ -26,7 +27,10 @@ pub(super) enum Command {
     Protect(Vec<Uuid>),
     FolderColor(Vec<Uuid>),
     Reload(Uuid),
-    Window(Uuid),
+    /// "Show in a new window": the folder's tree alone.
+    ShowWindow(Uuid),
+    /// "Open in a new window": a single folder window on it.
+    OpenWindow(Uuid),
     Asset(Uuid),
     Copy(Vec<Uuid>, bool),
     Move(Uuid),
@@ -39,6 +43,7 @@ pub(super) enum Command {
     Favorite(Vec<Uuid>, bool),
     Worn(crate::ui::context::CtxAction),
     Marketplace(Vec<Uuid>, bool),
+    Explorer(explorer::ExplorerCommand),
 }
 
 #[derive(Default)]
@@ -274,7 +279,16 @@ pub(super) fn lock_entry() -> Entry {
 }
 
 pub(super) fn build(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
-    build_mode(inv, id, st, prefs, facts, false)
+    build_mode(inv, id, st, prefs, facts, false, false)
+}
+
+/// The menu of the explorer's empty space, showing `folder`: what acts on
+/// the folder shown rather than on the folder itself
+/// (`explorer::kept_in_background`).
+pub(super) fn build_background(inv: &Inventory, folder: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
+    let mut c = build_mode(inv, folder, st, prefs, facts, false, true);
+    c.entries.retain(explorer::kept_in_background);
+    c
 }
 
 /// Reuse the native definitions, independent of inventory contents and selection.
@@ -290,6 +304,7 @@ pub(super) fn editing_entries(live: &[Entry], facts: &Facts) -> Vec<Entry> {
                 &InventoryPreferences::default(),
                 &Facts::default(),
                 true,
+                false,
             )
             .entries
         })
@@ -323,7 +338,16 @@ pub(super) fn editing_entries(live: &[Entry], facts: &Facts) -> Vec<Entry> {
     entries
 }
 
-fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts, all: bool) -> Catalog {
+#[allow(clippy::too_many_arguments)]
+fn build_mode(
+    inv: &Inventory,
+    id: Uuid,
+    st: &InventoryUi,
+    prefs: &InventoryPreferences,
+    facts: &Facts,
+    all: bool,
+    background: bool,
+) -> Catalog {
     let mut c = Catalog {
         editing: all,
         ..Default::default()
@@ -1016,6 +1040,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         c.slot("delete", 7);
     }
     extra::build(&mut c, inv, id, st, prefs, facts, all);
+    explorer::build(&mut c, inv, id, st, prefs, all, background);
     if !all {
         super::listings::restrict(&mut c, inv, id);
     }
@@ -1037,7 +1062,7 @@ fn navigation(c: &mut Catalog, inv: &Inventory, id: Uuid, single: bool) {
         "external-link-filled",
         aurora_i18n::tr!("ui-inventory-context-show-in-a-new-window"),
         single,
-        Command::Window(id),
+        Command::ShowWindow(id),
     );
     c.add(
         "open-window",
@@ -1045,7 +1070,7 @@ fn navigation(c: &mut Catalog, inv: &Inventory, id: Uuid, single: bool) {
         "folder-open-filled",
         aurora_i18n::tr!("ui-inventory-context-open-in-a-new-window"),
         single,
-        Command::Window(id),
+        Command::OpenWindow(id),
     );
 }
 
@@ -1194,6 +1219,31 @@ fn item_attachments(
     }
 }
 
+/// The properties of `ids`, each in a window of its own (one already open
+/// for an item is kept, not doubled), the list free behind them.
+pub(super) fn properties_windows(st: &mut InventoryUi, ids: Vec<Uuid>) {
+    for id in ids {
+        if !st
+            .windows
+            .iter()
+            .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
+        {
+            let state = InventoryUi {
+                ui_id: Uuid::new_v4(),
+                dialog: Some(EditDialog::Properties(id)),
+                ..Default::default()
+            };
+            st.windows.push(InventoryWindow {
+                id: state.ui_id,
+                root: Uuid::nil(),
+                additional: false,
+                state: Box::new(state),
+                open: false,
+            });
+        }
+    }
+}
+
 pub(super) fn execute(
     command: Command,
     ui: &egui::Ui,
@@ -1246,28 +1296,7 @@ pub(super) fn execute(
             }
         }
         Command::Batch(batch) => actions.extend(batch),
-        Command::PropertiesMany(ids) => {
-            for id in ids {
-                if !st
-                    .windows
-                    .iter()
-                    .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
-                {
-                    let state = InventoryUi {
-                        ui_id: Uuid::new_v4(),
-                        dialog: Some(EditDialog::Properties(id)),
-                        ..Default::default()
-                    };
-                    st.windows.push(InventoryWindow {
-                        id: state.ui_id,
-                        root: Uuid::nil(),
-                        additional: false,
-                        state: Box::new(state),
-                        open: false,
-                    });
-                }
-            }
-        }
+        Command::PropertiesMany(ids) => properties_windows(st, ids),
         Command::Properties(id) => {
             st.property_edit = None;
             st.dialog = Some(EditDialog::Properties(id));
@@ -1299,7 +1328,8 @@ pub(super) fn execute(
             st.message.clear();
             actions.push(InvAction::Preview(id, Some(clipboard::focus_id(st))));
         }
-        Command::Window(id) => st.open_folder_window(id),
+        Command::ShowWindow(id) => st.open_folder_window(id),
+        Command::OpenWindow(id) => st.open_single_folder_window(id),
         Command::Asset(id) => ui.ctx().copy_text(id.to_string()),
         Command::Copy(ids, cut) => clipboard::store(ui.ctx(), st, ids, cut),
         Command::Move(id) => st.begin_move_to(id),
@@ -1319,6 +1349,7 @@ pub(super) fn execute(
         }),
         Command::Worn(action) => crate::ui::context::request(ui.ctx(), action),
         Command::Marketplace(ids, copy) => submit(rules::marketplace(inv, &ids, copy, &prefs.protected, &facts.worn)),
+        Command::Explorer(command) => explorer::execute(command, ui, inv, st, prefs),
     }
 }
 
@@ -1522,7 +1553,11 @@ mod tests {
         let prefs = InventoryPreferences::default();
         let state = InventoryUi::default();
         assert_eq!(build(&inv, folder, &state, &prefs, &facts()).prepare_outfit, Some(folder));
-        assert!(build_mode(&inv, folder, &state, &prefs, &facts(), true).prepare_outfit.is_none());
+        assert!(
+            build_mode(&inv, folder, &state, &prefs, &facts(), true, false)
+                .prepare_outfit
+                .is_none()
+        );
         let mut multi = InventoryUi::default();
         multi.selection.extend([folder, Uuid::from_u128(8100)]);
         assert!(build(&inv, folder, &multi, &prefs, &facts()).prepare_outfit.is_none());
@@ -1553,6 +1588,7 @@ mod tests {
             &prefs,
             &Facts::default(),
             true,
+            false,
         );
         assert!(metadata.commands.is_empty());
         assert!(
@@ -1720,6 +1756,66 @@ mod tests {
                 .unwrap()
                 .enabled
         );
+    }
+    /// #4735: LLFolderBridge::addOpenFolderMenuOptions offers "Open" in a
+    /// single folder list only (the Legacy-style window of "Open in a new
+    /// window" outside a search, Aurora's explorer), never in the tree of a
+    /// "Show in a new window" window or the main tree; the two new-window
+    /// rows run their own command.
+    #[test]
+    fn open_is_offered_only_where_one_folder_is_listed_flat() {
+        let inv = inventory();
+        let folder = Uuid::from_u128(8001);
+        assert!(inv.folders.contains_key(&folder));
+        let prefs = InventoryPreferences::default();
+        let menu = |st: &InventoryUi| build(&inv, folder, st, &prefs, &facts());
+        let has_open = |st: &InventoryUi| menu(st).entries.iter().any(|e| e.id == "open-current");
+        let aurora = |layout| {
+            Some(super::super::aurora::Frame {
+                layout,
+                rights: prefs.rights,
+                columns: prefs.explorer,
+                explorer: false,
+            })
+        };
+        let tree = InventoryUi {
+            scope: Uuid::from_u128(8000),
+            ..Default::default()
+        };
+        assert!(!has_open(&InventoryUi::default()), "the main tree");
+        assert!(!has_open(&tree), "the tree of Show in a new window");
+        let single = InventoryUi {
+            single_folder: Some(super::super::single_folder::Nav::at(Uuid::from_u128(8000))),
+            ..Default::default()
+        };
+        assert!(has_open(&single), "the Legacy-style single folder window");
+        let searching = InventoryUi {
+            search: "hood".into(),
+            ..InventoryUi {
+                single_folder: single.single_folder.clone(),
+                ..Default::default()
+            }
+        };
+        assert!(!has_open(&searching), "its search results are a tree");
+        let medium = InventoryUi {
+            aurora: aurora(super::super::aurora::Layout::Medium),
+            ..Default::default()
+        };
+        assert!(has_open(&medium), "Aurora's explorer");
+        let compact = InventoryUi {
+            aurora: aurora(super::super::aurora::Layout::Compact),
+            ..Default::default()
+        };
+        assert!(!has_open(&compact), "Aurora's tree");
+        let c = menu(&tree);
+        let command = |key: &str| {
+            c.entries.iter().find(|e| e.id == key).and_then(|e| match &e.kind {
+                Kind::Action(index) => c.commands.get(*index).and_then(Option::as_ref),
+                _ => None,
+            })
+        };
+        assert!(matches!(command("show-window"), Some(Command::ShowWindow(id)) if *id == folder));
+        assert!(matches!(command("open-window"), Some(Command::OpenWindow(id)) if *id == folder));
     }
     #[test]
     fn trash_has_exactly_its_five_commands_and_the_separator_precedes_reload() {

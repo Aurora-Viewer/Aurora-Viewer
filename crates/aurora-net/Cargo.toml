@@ -36,6 +36,8 @@ rcgen = "0.14.10"
 # the bundle test (sim_tls.rs): the DER validity and the fingerprint of the
 # certificates shipped in lindenlab.pem
 sha2 = "0.11.1"
+# paused time for the tests of retries and backoffs (`start_paused`)
+tokio = { version = "1.53.2", features = ["test-util"] }
 x509-parser = "0.18.1"
 
 # rustls-webpki is used: its library is named `webpki` (sim_tls.rs), which
