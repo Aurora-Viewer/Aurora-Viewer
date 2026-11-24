@@ -13,6 +13,21 @@ fn check(ui: &mut egui::Ui, p: &Palette, label: &str, value: &mut bool) -> bool 
     .inner
 }
 
+/// A type filter's switch: the type's symbol before its name, as its items
+/// show it (`category::filter_glyph`).
+fn type_check(ui: &mut egui::Ui, p: &Palette, kind: i32, label: &str, value: &mut bool) -> bool {
+    ui.horizontal(|ui| {
+        let changed = switch(ui, p, value).changed();
+        if let Some((glyph, tint)) = super::category::filter_glyph(kind, p) {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
+            widgets::paint_glyph(ui.painter(), glyph, rect.center(), 14.0, tint);
+        }
+        ui.label(RichText::new(label).color(p.ink));
+        changed
+    })
+    .inner
+}
+
 pub(super) fn preferences_for_tab(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences, tab: usize) -> bool {
     let mut changed = false;
     let sort = prefs.sort_for_mut(tab);
@@ -412,7 +427,7 @@ pub fn dialogs(ctx: &egui::Context, p: &Palette, st: &mut InventoryUi, prefs: &m
                     for (n, (kind, label)) in types().iter().enumerate() {
                         let bit = 1_u32 << kind;
                         let mut on = f.types & bit != 0;
-                        if check(ui, p, label, &mut on) {
+                        if type_check(ui, p, *kind, label, &mut on) {
                             if on {
                                 f.types |= bit;
                             } else {

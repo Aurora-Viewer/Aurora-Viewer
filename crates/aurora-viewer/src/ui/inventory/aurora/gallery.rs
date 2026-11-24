@@ -751,7 +751,8 @@ fn tile(
 }
 
 fn paint_icon(ui: &egui::Ui, icons: &Icons, name: &str, center: Pos2, size: f32, tint: Color32) {
-    if let Some(texture) = icons.get(name) {
+    // sharp up to 256-point tiles at 200%
+    if let Some(texture) = icons.sized(ui.ctx(), name, size) {
         ui.painter().image(
             texture.id(),
             Rect::from_center_size(center, Vec2::splat(size)),
