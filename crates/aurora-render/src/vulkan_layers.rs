@@ -208,7 +208,7 @@ pub fn to_disable(keep: Option<&str>, allow_overlays: bool, is_set: impl Fn(&str
 /// not say which layers an instance enabled. Only names that look like a
 /// layer's (`VK_LAYER_` and word characters) are kept, at most 16, sorted.
 /// Empty without a Vulkan loader or on macOS.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 pub fn loaded_names() -> Vec<String> {
     // SAFETY: loading the system's Vulkan library, as the XR start does.
     let Ok(entry) = (unsafe { ash::Entry::load() }) else {
@@ -224,7 +224,7 @@ pub fn loaded_names() -> Vec<String> {
 
 /// The loader's offered layer names with their Vulkan and implementation
 /// versions, for a startup log that can identify stale vendor layers.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 pub fn offered_descriptions() -> Vec<String> {
     // SAFETY: loading the system's Vulkan library, as the XR start does.
     let Ok(entry) = (unsafe { ash::Entry::load() }) else {
@@ -248,7 +248,7 @@ pub fn offered_descriptions() -> Vec<String> {
 }
 
 /// Vulkan instance version offered by the loader.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 pub fn loader_version() -> String {
     // SAFETY: loading the system Vulkan loader.
     let Ok(entry) = (unsafe { ash::Entry::load() }) else {
@@ -267,7 +267,7 @@ pub fn loader_version() -> String {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 pub fn loader_version() -> String {
     "not applicable (Metal)".to_owned()
 }
@@ -347,7 +347,7 @@ fn redact_home(value: &str, home: &str) -> String {
 /// Use ash directly to preserve the count-call VkResult that wgpu-hal logs
 /// only as a translated error. Implicit layers remain active unless disabled
 /// through their own environment setting.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 pub fn physical_device_count_probe() -> String {
     use ash::vk;
     use std::ptr;
@@ -381,22 +381,22 @@ pub fn physical_device_count_probe() -> String {
     report
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 fn format_count_result(result: ash::vk::Result, count: u32) -> String {
     format!("{result:?} (count {count})")
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 pub fn loaded_names() -> Vec<String> {
     Vec::new()
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 pub fn offered_descriptions() -> Vec<String> {
     Vec::new()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 fn layer_description(name: &str, spec_version: u32, implementation_version: u32) -> Option<String> {
     let name = clean_names(std::iter::once(name)).pop()?;
     Some(format!(
@@ -476,7 +476,7 @@ mod tests {
         assert_eq!(super::clean_names(names.into_iter()), ["VK_LAYER_NV_optimus", "VK_LAYER_OBS_HOOK"]);
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     #[test]
     fn startup_layer_details_keep_only_safe_names_and_versions() {
         assert_eq!(
@@ -563,7 +563,7 @@ mod tests {
         assert!(retry_plan(true, false, false).is_empty());
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     #[test]
     fn raw_count_probe_keeps_the_vk_result_and_count() {
         assert_eq!(format_count_result(ash::vk::Result::INCOMPLETE, 0), "INCOMPLETE (count 0)");

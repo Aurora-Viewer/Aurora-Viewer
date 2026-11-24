@@ -19,6 +19,13 @@
 //! there into holes or specks. Without alpha, every block decodes at alpha
 //! 255 ([`seal_opaque`]) for the same reason.
 
+// The iOS simulator and Mac Catalyst: `intel_tex_2` ships no library for
+// them, so nothing is encoded there and every texture stays RGBA8
+// ([`encode_chain`]). The checks the encoder alone calls stay unused in
+// those builds.
+#![cfg_attr(any(target_abi = "sim", target_abi = "macabi"), allow(dead_code))]
+
+#[cfg(not(any(target_abi = "sim", target_abi = "macabi")))]
 use intel_tex_2::{RgbaSurface, bc7};
 
 /// A texel channel off by more than this (of 255) puts its block off. With
@@ -40,6 +47,7 @@ pub type Chain = Vec<(u32, u32, Vec<u8>)>;
 /// with the same level sizes in texels. `alpha`: the texture has
 /// see-through texels. None when level 0 is not made of whole blocks, when
 /// a level is short, or when the texture would be harmed.
+#[cfg(not(any(target_abi = "sim", target_abi = "macabi")))]
 pub fn encode_chain(mips: &[(u32, u32, Vec<u8>)], alpha: bool) -> Option<Chain> {
     let (w, h, _) = mips.first()?;
     if *w == 0 || *h == 0 || !w.is_multiple_of(4) || !h.is_multiple_of(4) {
@@ -61,10 +69,17 @@ pub fn encode_chain(mips: &[(u32, u32, Vec<u8>)], alpha: bool) -> Option<Chain> 
     try_chain(&single_line, mips, alpha).or_else(|| alpha.then(|| try_chain(&bc7::alpha_ultra_fast_settings(), mips, alpha)).flatten())
 }
 
+/// The iOS simulator and Mac Catalyst have no encoder: the texture stays RGBA8.
+#[cfg(any(target_abi = "sim", target_abi = "macabi"))]
+pub fn encode_chain(_mips: &[(u32, u32, Vec<u8>)], _alpha: bool) -> Option<Chain> {
+    None
+}
+
 /// The chain encoded with `settings`, unless a level comes out harmed. Every
 /// level is checked, not only the first: what is on screen is most often a
 /// reduced level, and the reduced levels are the harder ones (more detail
 /// per block). Level 0 first, which settles most refusals at once.
+#[cfg(not(any(target_abi = "sim", target_abi = "macabi")))]
 fn try_chain(settings: &bc7::EncodeSettings, mips: &[(u32, u32, Vec<u8>)], alpha: bool) -> Option<Chain> {
     let mut out = Vec::with_capacity(mips.len());
     for (w, h, rgba) in mips {
@@ -132,6 +147,7 @@ fn under_opaque(src: &[u8; 64]) -> bool {
 /// texels when the encoder still misses an end ([`snap_alpha`]: in mixed
 /// blocks it puts them a few steps in). Every block is looked at, not a
 /// sample: one block off is enough to show.
+#[cfg(not(any(target_abi = "sim", target_abi = "macabi")))]
 fn mend_alpha_ends(rgba: &[u8], blocks: &mut [u8], w: usize, h: usize) -> bool {
     let columns = w.div_ceil(4);
     let mut decoded = [0u8; 64];
@@ -292,6 +308,7 @@ fn mend_mode6(block: &mut [u8], src: &[u8; 64]) -> bool {
 
 /// Blocks of one level; a level that is not made of whole blocks is padded
 /// with its edge texels (they only show through filtering at the border).
+#[cfg(not(any(target_abi = "sim", target_abi = "macabi")))]
 fn encode_level(settings: &bc7::EncodeSettings, w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
     let (pw, ph) = (w.next_multiple_of(4), h.next_multiple_of(4));
     if (pw, ph) == (w, h) {

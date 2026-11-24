@@ -183,6 +183,13 @@ pub(crate) struct TextMenu {
 }
 
 impl TextMenu {
+    /// Paste was chosen in the menu: the next `before` reads the clipboard
+    /// to paste it, where its other reads only ask whether there is text.
+    #[cfg(target_os = "ios")]
+    pub fn paste_pending(&self) -> bool {
+        matches!(self.pending, Some((_, Pending::Entry(Entry::Paste))))
+    }
+
     /// On the raw input, before the pass. `clipboard` reads the system
     /// clipboard (only on a right click or for Paste); `demo_frame` is the
     /// app's frame in demo mode.

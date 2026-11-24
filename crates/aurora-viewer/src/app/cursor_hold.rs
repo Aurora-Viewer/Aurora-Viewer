@@ -18,7 +18,7 @@
 //! (LLViewerWindow::moveCursorToCenter, isWrapMouse is !mCursorDecoupled,
 //! indra/llwindow/llwindowmacosx.h).
 
-use super::App;
+use super::{App, ViewSize};
 use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::KeyCode;
 use winit::window::CursorGrabMode;
@@ -301,7 +301,7 @@ impl App {
         let Some(g) = &self.gfx else {
             return;
         };
-        let size = g.window.inner_size();
+        let size = g.window.view_size();
         let center = (size.width as f32 / 2.0, size.height as f32 / 2.0);
         if (self.cursor_pos.0 - center.0).abs() > 0.5 || (self.cursor_pos.1 - center.1).abs() > 0.5 {
             self.move_cursor(center);
@@ -348,7 +348,7 @@ impl App {
         let Some(g) = &self.gfx else {
             return;
         };
-        let size = g.window.inner_size();
+        let size = g.window.view_size();
         self.move_cursor((size.width as f32 / 2.0, size.height as f32 / 2.0));
     }
 

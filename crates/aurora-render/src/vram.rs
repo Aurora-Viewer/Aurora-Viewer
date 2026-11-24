@@ -49,7 +49,7 @@
 //! enabled, and the viewer only reads the figures. A wrapped figure is no
 //! reading ([`plausible`]).
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 use ash::vk;
 use std::sync::Arc;
 use std::time::Duration;
@@ -74,13 +74,13 @@ pub struct VideoMemory {
 /// both device-local and host-visible is classified as shared once, not
 /// counted as both dedicated and shared.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 struct HeapRoles {
     dedicated: Option<usize>,
     shared: Option<usize>,
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 fn heap_roles(memory: &vk::PhysicalDeviceMemoryProperties, integrated: bool) -> HeapRoles {
     let heaps = memory.memory_heaps_as_slice();
     let types = memory.memory_types_as_slice();
@@ -138,7 +138,7 @@ fn heap_roles(memory: &vk::PhysicalDeviceMemoryProperties, integrated: bool) -> 
 /// Physical heap capacities in MiB for startup diagnostics and settings.
 /// The result is `(dedicated, shared)`; an integrated unified heap appears
 /// only in the shared value.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 pub fn heap_sizes_mb(adapter: &wgpu::Adapter) -> Option<(Option<u64>, Option<u64>)> {
     let info = adapter.get_info();
     // SAFETY: the hal adapter is borrowed only for this physical-device query.
@@ -156,7 +156,7 @@ pub fn heap_sizes_mb(adapter: &wgpu::Adapter) -> Option<(Option<u64>, Option<u64
     Some((mb(roles.dedicated), mb(roles.shared)))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 pub fn heap_sizes_mb(_adapter: &wgpu::Adapter) -> Option<(Option<u64>, Option<u64>)> {
     None
 }
@@ -169,7 +169,7 @@ pub fn heap_sizes_mb(_adapter: &wgpu::Adapter) -> Option<(Option<u64>, Option<u6
 /// 256 MB, the PCI window the whole desktop shares (#2171); with Resizable
 /// BAR, or on an integrated GPU, it is the whole video memory. None when
 /// the driver has no such type: mapped buffers then live in system memory.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 fn mappable_heap_bytes(memory: &vk::PhysicalDeviceMemoryProperties) -> Option<u64> {
     let mappable = vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
     let ty = memory
@@ -191,7 +191,7 @@ fn mappable_override(value: Option<&str>) -> Option<u64> {
     value?.trim().parse().ok()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 fn mappable_mb_of(adapter: &wgpu::Adapter) -> Option<u64> {
     // SAFETY: the hal adapter is borrowed only for this physical-device query.
     let hal = unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }?;
@@ -205,7 +205,7 @@ fn mappable_mb_of(adapter: &wgpu::Adapter) -> Option<u64> {
     mappable_heap_bytes(&memory).map(|bytes| bytes >> 20)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 fn mappable_mb_of(_adapter: &wgpu::Adapter) -> Option<u64> {
     None
 }
@@ -284,7 +284,7 @@ struct Sample {
 pub struct VideoMemoryProbe {
     sampler: BudgetSampler,
     /// For the card's identity, read once on demand (`card`).
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     adapter: wgpu::Adapter,
 }
 
@@ -470,13 +470,13 @@ impl Drop for BudgetSampler {
 const BUDGET_LOG_STEP: u64 = 256 << 20;
 
 /// Where the figures come from, for the log.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 const SOURCE: &str = "VK_EXT_memory_budget";
-#[cfg(target_os = "macos")]
+#[cfg(target_vendor = "apple")]
 const SOURCE: &str = "MTLDevice working set";
 
 /// Whether the driver lists VK_EXT_memory_budget.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(target_vendor = "apple"))]
 fn lists_memory_budget(extensions: &[vk::ExtensionProperties]) -> bool {
     extensions
         .iter()
@@ -494,11 +494,11 @@ fn plausible(budget: u64, usage: u64) -> bool {
 
 impl VideoMemoryProbe {
     pub fn new(adapter: wgpu::Adapter) -> Self {
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(target_vendor = "apple"))]
         let card = adapter.clone();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(target_vendor = "apple"))]
         let roles = std::sync::OnceLock::new();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(target_vendor = "apple"))]
         let sampler = BudgetSampler::new(
             move || {
                 let roles = *roles.get_or_init(|| {
@@ -509,11 +509,11 @@ impl VideoMemoryProbe {
             },
             PROBE_INTERVAL,
         );
-        #[cfg(target_os = "macos")]
+        #[cfg(target_vendor = "apple")]
         let sampler = BudgetSampler::new(move || Self::query(&adapter), PROBE_INTERVAL);
         VideoMemoryProbe {
             sampler,
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(target_vendor = "apple"))]
             adapter: card,
         }
     }
@@ -552,7 +552,7 @@ impl VideoMemoryProbe {
     /// memory (a discrete GPU: on an integrated one it is system RAM, often
     /// full by design, and no size to measure the card's load against); None
     /// without the Vulkan 1.1 query.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     pub fn card(&self) -> Option<(u64, u64, bool)> {
         // SAFETY: the hal adapter is only borrowed for this call; the queries
         // read properties and change no state.
@@ -591,7 +591,7 @@ impl VideoMemoryProbe {
     }
 
     /// Metal has no adapter-wide counters to name.
-    #[cfg(target_os = "macos")]
+    #[cfg(target_vendor = "apple")]
     pub fn card(&self) -> Option<(u64, u64, bool)> {
         None
     }
@@ -599,7 +599,7 @@ impl VideoMemoryProbe {
     /// The largest device-local heap and, on an integrated GPU, the largest
     /// separate host-visible system heap, when the extension and the query
     /// it extends are there.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     fn budget_heaps(adapter: &wgpu::Adapter, integrated: bool) -> Option<HeapRoles> {
         // SAFETY: the hal adapter is only borrowed for this call; the
         // queries below read properties and change no state.
@@ -630,7 +630,7 @@ impl VideoMemoryProbe {
     }
 
     /// (budget, usage) of a heap.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     fn query(adapter: &wgpu::Adapter, roles: HeapRoles) -> Option<(u64, u64, u64, u64)> {
         // SAFETY: the hal adapter is only borrowed for this call; a physical
         // device query, valid from any thread, with the budget structure the
@@ -661,7 +661,7 @@ impl VideoMemoryProbe {
     /// device has allocated. The Legacy Viewer reads a fixed figure once
     /// (`kCGLRPVideoMemoryMegabytes`, indra/llwindow/llopenglview-objc.mm);
     /// both are read again here, as on Vulkan.
-    #[cfg(target_os = "macos")]
+    #[cfg(target_vendor = "apple")]
     fn query(adapter: &wgpu::Adapter) -> Option<(u64, u64, u64, u64)> {
         use objc2_metal::MTLDevice;
         // SAFETY: the hal adapter is only borrowed for this call; MTLDevice
@@ -775,7 +775,7 @@ mod tests {
 
     /// wgpu drops the extension from its own list on RADV: only the
     /// driver's list says the budget can be read there.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     #[test]
     fn the_budget_extension_is_found_in_the_list_of_the_driver() {
         let named = |name: &std::ffi::CStr| {
@@ -868,7 +868,7 @@ mod tests {
     /// Memory types of a discrete NVIDIA GPU: video memory alone, system
     /// memory (plain and cached), and video memory the CPU can map, on the
     /// heap `mappable_heap`.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     fn discrete_memory(heaps: &[(u64, bool)], mappable_heap: Option<u32>) -> vk::PhysicalDeviceMemoryProperties {
         let host = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
         let mut memory = vk::PhysicalDeviceMemoryProperties {
@@ -906,7 +906,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     #[test]
     fn mappable_video_memory_is_the_small_heap_without_resizable_bar() {
         // Resizable BAR: the mappable type sits on the video memory itself
@@ -946,7 +946,7 @@ mod tests {
         assert_eq!(mappable_heap_bytes(&unified), Some(16_000 * MB));
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     #[test]
     fn integrated_heap_roles_include_shared_ram_once_and_discrete_roles_stay_local() {
         let mut split = vk::PhysicalDeviceMemoryProperties {

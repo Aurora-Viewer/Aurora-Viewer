@@ -623,7 +623,8 @@ are planned or in progress: they are not in the viewer yet.
   desktop, the resource monitor and web pages from a Legacy Viewer install's
   plugins, and a macOS application for
   Apple Silicon, drawn through Metal, with web pages and video in the world
-  ([install guide](docs/MACOS.md)).
+  ([install guide](docs/MACOS.md)). An iPad and iPhone app exists as a
+  prototype to build and sideload yourself ([guide](docs/IPAD.md)).
 - **Touch screens**: fingers drive the camera and the avatar (tap, hold for
   the menu, drag to look around, pinch to zoom), with a movement stick and
   buttons over the world (Preferences › Controls › Touch screen).

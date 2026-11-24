@@ -8772,6 +8772,7 @@ photo-reel-on-profile = Voir le profil
 photo-reel-delete-title = Supprimer cette photo ?
 photo-reel-delete-recycle = { $name } part dans la Corbeille.
 photo-reel-delete-trash-file = { $name } part dans la Corbeille.
+photo-reel-delete-for-good = { $name } est supprimé définitivement.
 photo-reel-delete-item = Son élément de l'Album photo part dans la corbeille de l'inventaire.
 photo-reel-delete-sent = Ce qui a été publié ou envoyé par e-mail le reste : impossible de le reprendre.
 photo-reel-delete-reel-only = Elle quitte seulement les photos de cette session.

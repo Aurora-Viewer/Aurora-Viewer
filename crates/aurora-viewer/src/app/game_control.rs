@@ -13,7 +13,7 @@
 //! gamepads and would move the avatar twice (LL keeps 3D mice and gamepads
 //! apart for the same reason, LLViewerJoystick::is3DConnexionDevice).
 
-use super::App;
+use super::{App, ViewSize};
 use crate::agent::MoveInput;
 use crate::game_control::{
     Mode, actions,
@@ -105,7 +105,7 @@ impl App {
             self.world.agent.is_sitting(),
         );
         let cursor = (mode == Mode::Cursor)
-            .then(|| self.gfx.as_ref().map(|g| g.window.inner_size()))
+            .then(|| self.gfx.as_ref().map(|g| g.window.view_size()))
             .flatten()
             .map(|size| {
                 let (w, h) = (size.width as i32, size.height as i32);
@@ -422,7 +422,7 @@ impl App {
             return;
         }
         let Some(g) = &self.gfx else { return };
-        let size = g.window.inner_size();
+        let size = g.window.view_size();
         // round(DX · 1200 · dt); +DY is up on the stick, down on the screen
         let dx = (a.mouse_dx * CURSOR_SPEED * dt).round();
         let dy = (a.mouse_dy * CURSOR_SPEED * dt).round();

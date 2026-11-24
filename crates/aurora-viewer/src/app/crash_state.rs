@@ -466,7 +466,7 @@ impl App {
         live: Live,
     ) -> crate::crash::State {
         let video = renderer.video_memory.read(&renderer.device);
-        let size = window.inner_size();
+        let size = window.view_size();
         let mut state = crate::crash::State {
             screen: match self.screen {
                 Screen::Login => "login",

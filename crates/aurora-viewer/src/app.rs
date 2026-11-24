@@ -248,7 +248,7 @@ impl WindowedGeometry {
     }
 
     fn from_window(window: &Window) -> Self {
-        let size = window.inner_size();
+        let size = window.view_size();
         let scale = window.scale_factor();
         Self {
             width: (size.width as f64 / scale).round() as u32,
@@ -1792,6 +1792,23 @@ fn apply_poser_framing(
 /// gesture, Build keeps selecting, and our name tag keeps its menu.
 fn world_press_stops_for_poser_subject(posing_self: bool, alt: bool, build_open: bool, on_own_body: bool) -> bool {
     posing_self && !alt && !build_open && on_own_body
+}
+
+/// The size of the window's view, where the world and the interface are
+/// drawn. On iPadOS winit's `inner_size` is the safe area, the view without
+/// its status and home bars, while the surface takes the whole view.
+pub(crate) trait ViewSize {
+    fn view_size(&self) -> winit::dpi::PhysicalSize<u32>;
+}
+
+impl ViewSize for Window {
+    fn view_size(&self) -> winit::dpi::PhysicalSize<u32> {
+        if cfg!(target_os = "ios") {
+            self.outer_size()
+        } else {
+            self.inner_size()
+        }
+    }
 }
 
 impl App {
@@ -7486,6 +7503,17 @@ impl App {
         crate::autoreplace::save_before_exit();
         crate::tolerant::save_before_exit();
         event_loop.exit();
+        #[cfg(target_os = "ios")]
+        self.exit_ios(event_loop);
+    }
+
+    /// winit's exit does nothing on iOS, where the system ends the apps and
+    /// the event loop never returns: what follows it on the other systems
+    /// (`exiting`, then the end of `run_viewer` and of `main`) is done here.
+    #[cfg(target_os = "ios")]
+    fn exit_ios(&mut self, event_loop: &ActiveEventLoop) -> ! {
+        ApplicationHandler::exiting(self, event_loop);
+        crate::finish_ios()
     }
 
     /// Hide as soon as Quit is confirmed. A hidden native window may lose its
@@ -7500,7 +7528,7 @@ impl App {
                 self.settings.window_maximized = window.is_maximized();
                 // The last restored size and position already belong to a maximized window.
                 if !self.settings.window_maximized && !window.is_minimized().unwrap_or(false) {
-                    let size = window.inner_size();
+                    let size = window.view_size();
                     let scale = window.scale_factor();
                     if size.width > 0 && size.height > 0 {
                         self.settings.window_width = (size.width as f64 / scale) as u32;
@@ -7555,7 +7583,7 @@ impl App {
         if g.window.fullscreen().is_some() || g.window.is_maximized() || g.window.is_minimized().unwrap_or(false) {
             return;
         }
-        let s = g.window.inner_size();
+        let s = g.window.view_size();
         if s.width == 0 || s.height == 0 {
             return;
         }
@@ -7573,7 +7601,8 @@ impl App {
     /// full screen the system entered or left by itself (the macOS green
     /// button, a window manager's rule) is left alone.
     fn apply_fullscreen_setting(&mut self) {
-        if self.capture.is_some() || forced_window_size().is_some() {
+        // (iPadOS: the window is the system's to place, gpu_recovery.rs)
+        if cfg!(target_os = "ios") || self.capture.is_some() || forced_window_size().is_some() {
             return;
         }
         let Some(window) = self.gfx.as_ref().map(|g| g.window.clone()) else {
@@ -9402,13 +9431,12 @@ impl App {
     /// The headset has no viewer UI yet. Restrict keyboard actions so an
     /// accidental shortcut cannot open an invisible window or enter text.
     fn vr_keyboard_input(&mut self, key: &winit::event::KeyEvent) {
-        use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
         let PhysicalKey::Code(code) = key.physical_key else {
             return;
         };
         let code = crate::keybinds::binding_code(code, &key.logical_key);
         let input = Input::key(code);
-        let gesture = crate::gestures::keys::from_key(code, &key.key_without_modifiers());
+        let gesture = crate::gestures::keys::from_key(code, &crate::keybinds::key_without_modifiers(key));
         if key.state == ElementState::Released {
             self.down.remove(&input);
             self.check_temp_run();
@@ -10752,6 +10780,12 @@ impl App {
     }
 
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
+        // behind another app the system allows no drawing (a Metal call
+        // from the background ends the app): the frames wait for the return
+        #[cfg(target_os = "ios")]
+        if crate::ios::in_background() {
+            return;
+        }
         // the input this frame reads came with the events just handled: its
         // time to the screen starts here (Performance › latency, pacing.rs)
         if let Some(g) = &mut self.gfx {
@@ -11045,6 +11079,9 @@ impl App {
             && now >= t
         {
             event_loop.exit();
+            #[cfg(target_os = "ios")]
+            self.exit_ios(event_loop);
+            #[cfg(not(target_os = "ios"))]
             return;
         }
 
@@ -12085,7 +12122,7 @@ impl App {
                 },
             );
             self.frame_profile.lap(Lap::Complexity);
-            let hud_size = gfx.window.inner_size();
+            let hud_size = gfx.window.view_size();
             self.world.hud_area = self.hud_area([hud_size.width, hud_size.height]);
             self.world.hud_aspect = match (self.snapshots.capturing, self.world.hud_area) {
                 // the HUD laid out for the photo's proportions
@@ -13580,10 +13617,28 @@ impl App {
         {
             self.inventory_ui.clipboard_changed(egui_state.clipboard_text().as_deref());
         }
+        #[cfg(target_os = "ios")]
+        let pasting = self.text_menu.paste_pending();
         self.text_menu.before(
             &ctx,
             &mut raw,
-            || egui_state.clipboard_text(),
+            || {
+                // iPadOS asks the user before it hands over what another
+                // app copied: that is read once Paste is chosen, and the
+                // menu only learns whether there is something to paste
+                // (ios.rs)
+                #[cfg(target_os = "ios")]
+                {
+                    if pasting {
+                        if let Some(text) = crate::ios::pasteboard_news() {
+                            egui_state.set_clipboard_text(text);
+                        }
+                    } else if crate::ios::pasteboard_has_text() {
+                        return Some(String::from("\u{2026}"));
+                    }
+                }
+                egui_state.clipboard_text()
+            },
             self.demo.then_some(self.frame_count),
         );
         let mut inventory_drop = Vec::new();
@@ -13604,7 +13659,7 @@ impl App {
             // the second, or a click that changed a row's size is lost.
             // egui hands its root the whole viewport, and clips it to the
             // part the screen leaves free (a tablet's status bar and home
-            // bar): the bars are laid out in that part
+            // bar, the on-screen keyboard): the bars are laid out in that part
             let content = ui.ctx().content_rect();
             if ui.max_rect() == content {
                 actions.merge(self.draw_ui(ui, &projector, &gfx.renderer));
@@ -13871,6 +13926,13 @@ impl App {
             .take()
             .and_then(|image| self.cursor_shown.cursor(event_loop, &image));
         let icon = full.platform_output.cursor_icon;
+        // (egui-winit's clipboard stays inside the app on iPadOS: ios.rs)
+        #[cfg(target_os = "ios")]
+        for command in &full.platform_output.commands {
+            if let egui::OutputCommand::CopyText(text) = command {
+                crate::ios::set_pasteboard_text(text);
+            }
+        }
         gfx.egui_state
             .handle_platform_output_with_event_loop(&gfx.window, event_loop, full.platform_output);
         match (self.cursor_shown.step(picture.as_ref().map(|(number, _)| *number), icon), picture) {
@@ -21948,6 +22010,14 @@ impl UiActions {
 }
 
 impl ApplicationHandler for App {
+    /// iPadOS: the app is no longer the active one (the Control Center, a
+    /// system question, the app switcher): its fingers are taken away. The
+    /// frames go on until it is behind another app (ios.rs).
+    #[cfg(target_os = "ios")]
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        self.touch_drop();
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gfx.is_some() {
             return;
@@ -22025,7 +22095,7 @@ impl ApplicationHandler for App {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");
-                let message = if cfg!(target_os = "macos") {
+                let message = if cfg!(target_vendor = "apple") {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-metal", e = format!("{}", e))
                 } else {
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
@@ -22041,6 +22111,11 @@ impl ApplicationHandler for App {
                 // vanished (#894)
                 let memory_full = matches!(e, aurora_render::RenderError::VideoMemoryFull);
                 graphics_start::report(&e.to_string(), memory_full, capture);
+                // iPadOS shows the message in this window, at the next turn
+                // of the run loop, and an app there cannot close itself: the
+                // window stays, with the message
+                #[cfg(target_os = "ios")]
+                std::mem::forget(window);
                 event_loop.exit();
                 return;
             }
@@ -25828,8 +25903,7 @@ impl ApplicationHandler for App {
                     }
                     // Releases always go through so keys never get stuck.
                     let typing = self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx);
-                    use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
-                    let gesture_key = crate::gestures::keys::from_key(code, &ke.key_without_modifiers());
+                    let gesture_key = crate::gestures::keys::from_key(code, &crate::keybinds::key_without_modifiers(ke));
                     if !pressed && let Some(key) = gesture_key {
                         self.gesture_state.manager.release(Some(key));
                     }
@@ -25864,8 +25938,7 @@ impl ApplicationHandler for App {
                     let web = self.focused_web();
                     let web_focused = web.is_some();
                     if !typing && let Some(p) = web {
-                        use winit::platform::scancode::PhysicalKeyExtScancode;
-                        let scancode = ke.physical_key.to_scancode().unwrap_or(0);
+                        let scancode = crate::keybinds::scancode(ke.physical_key);
                         if crate::media::keys::edit(p, letter, code, pressed, ke.repeat, web_mods)
                             || crate::media::keys::forward(p, code, scancode, pressed, ke.repeat, ke.text.as_deref(), web_mods)
                             || pressed
@@ -25875,8 +25948,7 @@ impl ApplicationHandler for App {
                     }
                     // a focused media page gets the keyboard (LLViewerMediaFocus)
                     if self.media.focus.is_some() && !typing && (!resp.consumed || !pressed) {
-                        use winit::platform::scancode::PhysicalKeyExtScancode;
-                        let scancode = ke.physical_key.to_scancode().unwrap_or(0);
+                        let scancode = crate::keybinds::scancode(ke.physical_key);
                         let mods = aurora_media::Modifiers {
                             control: self.ctrl,
                             alt: self.alt,

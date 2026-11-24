@@ -31,6 +31,18 @@ pub fn interface_long_press(start: f64, now: f64, moved: bool, spent: bool) -> b
     !moved && !spent && now - start > LONG_PRESS
 }
 
+/// A keyboard whose frame starts at `top` and is `height` tall covers this
+/// much of a view `view_height` tall that ends at `bottom` (points). A
+/// hardware keyboard leaves the frame under the screen, or a short bar: a
+/// frame is never counted for more than half the view.
+#[cfg(any(target_os = "ios", test))]
+pub fn keyboard_cover(bottom: f32, view_height: f32, top: f32, height: f32) -> f32 {
+    if !(top.is_finite() && height.is_finite() && view_height.is_finite()) || height <= 0.0 || view_height <= 0.0 {
+        return 0.0;
+    }
+    (bottom - top).clamp(0.0, view_height * 0.5)
+}
+
 /// `AURORA_SAFE_AREA="top,right,bottom,left"`: the insets a test gives the
 /// window, in points (a tablet's rounded corners and home bar, without one).
 pub fn safe_area(spec: &str) -> Option<[f32; 4]> {
@@ -748,6 +760,20 @@ mod tests {
         assert!(interface_long_press(1.0, 1.52, false, false));
         assert!(!interface_long_press(1.0, 2.0, true, false), "a drag is not a long press");
         assert!(!interface_long_press(1.0, 2.0, false, true), "once per press");
+    }
+
+    #[test]
+    fn the_keyboard_covers_the_bottom_of_the_view_and_never_most_of_it() {
+        // an on-screen keyboard 340 points tall on a view of 1024
+        assert_eq!(keyboard_cover(1024.0, 1024.0, 684.0, 340.0), 340.0);
+        // hidden: its frame starts at the view's bottom
+        assert_eq!(keyboard_cover(1024.0, 1024.0, 1024.0, 340.0), 0.0);
+        // a hardware keyboard's bar
+        assert_eq!(keyboard_cover(1024.0, 1024.0, 969.0, 55.0), 55.0);
+        // a frame that makes no sense takes nothing, or half at most
+        assert_eq!(keyboard_cover(1024.0, 1024.0, 0.0, 2000.0), 512.0);
+        assert_eq!(keyboard_cover(1024.0, 1024.0, f32::NAN, 340.0), 0.0);
+        assert_eq!(keyboard_cover(1024.0, 1024.0, 684.0, 0.0), 0.0);
     }
 
     #[test]

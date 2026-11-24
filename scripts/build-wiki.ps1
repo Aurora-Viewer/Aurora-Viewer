@@ -31,6 +31,7 @@ $pages = @(
     @{ Section = 'For testers'; Page = 'VR'; Title = 'Experimental VR scene viewing'; Source = 'docs/VR.md' }
     @{ Section = 'For testers'; Page = 'Windows-VR'; Title = 'Experimental Windows VR'; Source = 'docs/VR_WINDOWS.md' }
     @{ Section = 'For testers'; Page = 'Installing-on-macOS'; Title = 'Installing on macOS'; Source = 'docs/MACOS.md' }
+    @{ Section = 'For testers'; Page = 'iPad-prototype'; Title = 'iPad and iPhone prototype'; Source = 'docs/IPAD.md' }
     @{ Section = 'For testers'; Page = 'Updates'; Title = 'Updates'; Source = 'docs/UPDATES.md' }
     @{ Section = 'For testers'; Page = 'Asset-imports'; Title = 'Asset imports'; Source = 'docs/IMPORTS.md' }
     @{ Section = 'For testers'; Page = 'Blender-Live'; Title = 'LiveMesh'; Source = 'docs/BLENDER_LIVE.md' }

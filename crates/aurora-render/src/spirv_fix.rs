@@ -94,7 +94,7 @@ pub struct VulkanFacts {
 impl VulkanFacts {
     /// Reads the facts from the device's Vulkan objects. `None` on another
     /// backend.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(target_vendor = "apple"))]
     pub fn query(adapter: &wgpu::Adapter, device: &wgpu::Device, instance_flags: wgpu::InstanceFlags) -> Option<Self> {
         use ash::vk;
         // SAFETY: the hal adapter and device are only borrowed for this
@@ -178,7 +178,7 @@ impl VulkanFacts {
     }
 
     /// macOS draws through Metal: nothing to fix there.
-    #[cfg(target_os = "macos")]
+    #[cfg(target_vendor = "apple")]
     pub fn query(_adapter: &wgpu::Adapter, _device: &wgpu::Device, _instance_flags: wgpu::InstanceFlags) -> Option<Self> {
         None
     }

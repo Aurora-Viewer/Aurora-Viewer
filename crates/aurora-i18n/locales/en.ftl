@@ -8764,6 +8764,7 @@ photo-reel-on-profile = View profile
 photo-reel-delete-title = Delete this photo?
 photo-reel-delete-recycle = { $name } goes to the Recycle Bin.
 photo-reel-delete-trash-file = { $name } goes to the Trash.
+photo-reel-delete-for-good = { $name } is deleted for good.
 photo-reel-delete-item = Its Photo Album item goes to the inventory Trash.
 photo-reel-delete-sent = What was posted or e-mailed stays sent: it cannot be taken back.
 photo-reel-delete-reel-only = It only leaves this session's photos.

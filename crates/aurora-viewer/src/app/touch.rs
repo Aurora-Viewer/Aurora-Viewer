@@ -191,13 +191,22 @@ fn forced() -> Option<bool> {
     })
 }
 
-/// What the viewer runs on: `AURORA_DEVICE` for a test, else a desktop.
+/// What the viewer runs on: `AURORA_DEVICE` for a test, else the device
+/// itself on iPadOS and iOS, a desktop elsewhere. Asked on the main thread
+/// first (the start), as UIKit wants.
 pub(super) fn device() -> touch::Device {
     static DEVICE: std::sync::OnceLock<touch::Device> = std::sync::OnceLock::new();
     *DEVICE.get_or_init(|| {
         if let Some(device) = std::env::var("AURORA_DEVICE").ok().and_then(|v| touch::Device::parse(&v)) {
             return device;
         }
+        #[cfg(target_os = "ios")]
+        return if crate::ios::phone() {
+            touch::Device::Phone
+        } else {
+            touch::Device::Tablet
+        };
+        #[cfg(not(target_os = "ios"))]
         touch::Device::Desktop
     })
 }
@@ -438,6 +447,7 @@ impl App {
         // the others act when the finger lands, like a key
         if pressed {
             self.touch_button_act(button);
+            crate::haptics::tap();
         }
     }
 
@@ -478,6 +488,7 @@ impl App {
                     return;
                 }
                 self.open_context_menu();
+                crate::haptics::press();
             }
             Gesture::Drag(by) => {
                 self.touch_release_tap();
@@ -524,6 +535,7 @@ impl App {
                 } else {
                     self.reset_camera_view();
                 }
+                crate::haptics::tap();
             }
         }
     }
@@ -605,8 +617,9 @@ impl App {
 
     /// The interface's input of this frame: what the touch layer adds to it
     /// (the long press of its finger, `pending`), and the room the screen
-    /// does not give: the insets of a test (`AURORA_SAFE_AREA`), which the
-    /// windows and the bars then stay clear of as they do of a notch.
+    /// does not give: the insets of a test (`AURORA_SAFE_AREA`) and the
+    /// on-screen keyboard, which the windows and the bars then stay clear of
+    /// as they do of a notch.
     pub(super) fn touch_raw_input(&mut self, raw: &mut egui::RawInput) {
         // the controls are the pass's to draw: none where it does not (the
         // interface off, the Director's playback, a photo's full frame)
@@ -627,20 +640,29 @@ impl App {
                 self.touch
                     .pending
                     .extend(hold_events(egui::pos2(f.origin.x / ppp, f.origin.y / ppp)));
+                crate::haptics::press();
             }
         }
         raw.events.append(&mut self.touch.pending);
 
         static TEST: std::sync::OnceLock<Option<[f32; 4]>> = std::sync::OnceLock::new();
         let test = *TEST.get_or_init(|| std::env::var("AURORA_SAFE_AREA").ok().and_then(|v| touch::safe_area(&v)));
-        let Some([top, right, bottom, left]) = test else {
+        #[cfg(target_os = "ios")]
+        let keyboard = crate::ios::keyboard_inset();
+        #[cfg(not(target_os = "ios"))]
+        let keyboard = 0.0_f32;
+        if test.is_none() && keyboard <= 0.0 && raw.safe_area_insets.is_none() {
             return;
-        };
+        }
         let mut insets = raw.safe_area_insets.unwrap_or_default().0;
-        insets.top += top;
-        insets.right += right;
-        insets.bottom += bottom;
-        insets.left += left;
+        if let Some([top, right, bottom, left]) = test {
+            insets.top += top;
+            insets.right += right;
+            insets.bottom += bottom;
+            insets.left += left;
+        }
+        // (the keyboard lies over the home bar's inset, not above it)
+        insets.bottom = insets.bottom.max(keyboard);
         raw.safe_area_insets = Some(egui::SafeAreaInsets(insets));
     }
 

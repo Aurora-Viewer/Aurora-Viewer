@@ -8671,6 +8671,7 @@ photo-reel-on-profile = プロフィールを表示
 photo-reel-delete-title = この写真を削除しますか？
 photo-reel-delete-recycle = { $name }はごみ箱に移動します。
 photo-reel-delete-trash-file = { $name }はごみ箱に移動します。
+photo-reel-delete-for-good = { $name }は完全に削除されます。
 photo-reel-delete-item = フォトアルバムのアイテムはインベントリのごみ箱に移動します。
 photo-reel-delete-sent = 投稿またはＥメールで送信したものは取り消せません。
 photo-reel-delete-reel-only = このセッションの写真から外れるだけです。

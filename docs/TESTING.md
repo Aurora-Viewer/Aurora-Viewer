@@ -1193,8 +1193,8 @@ when unfocused") is ignored during a screenshot.
   screen. The touch buttons answer the mouse too:
   `AURORA_DEMO_POINTER="x,y,l"` on one clicks it.
 
-  For a tablet's screen: `AURORA_DEVICE=tablet AURORA_WINDOW_SIZE=1366,1024
-  AURORA_SAFE_AREA=24,0,20,0`; for a phone held sideways:
+  For an iPad's screen: `AURORA_DEVICE=tablet AURORA_WINDOW_SIZE=1366,1024
+  AURORA_SAFE_AREA=24,0,20,0`; for an iPhone held sideways:
   `AURORA_DEVICE=phone AURORA_WINDOW_SIZE=874,402 AURORA_SAFE_AREA=0,59,21,59`
   (a phone's window is allowed under the usual smallest size). The bars,
   the windows' work area and the touch controls must stay inside the

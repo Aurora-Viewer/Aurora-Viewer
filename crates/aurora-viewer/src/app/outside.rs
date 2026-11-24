@@ -134,7 +134,7 @@ impl App {
     pub(super) fn carry_window_event(&mut self, id: WindowId, event: &WindowEvent) -> bool {
         use crate::outside::carry::{Event, Step};
         let size = match &self.gfx {
-            Some(g) if g.window.id() == id => Some(g.window.inner_size()),
+            Some(g) if g.window.id() == id => Some(g.window.view_size()),
             _ => self.outside.size_of(id),
         };
         let Some(size) = size else {

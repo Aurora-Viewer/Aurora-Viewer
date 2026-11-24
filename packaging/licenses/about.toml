@@ -23,11 +23,13 @@ accepted = [
     "Zlib",
     "GPL-3.0-or-later",
 ]
-# The systems the viewer is published for.
+# The systems the viewer is published for, and the one a tester packages it
+# for (scripts/package-ios.ps1: the .ipa carries the file too).
 targets = [
     "x86_64-pc-windows-msvc",
     "x86_64-unknown-linux-gnu",
     "aarch64-apple-darwin",
+    "aarch64-apple-ios",
 ]
 # Build scripts, code generators and tests are not part of the viewer.
 ignore-build-dependencies = true

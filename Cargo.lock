@@ -591,6 +591,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aurora-ios-files"
+version = "0.1.0"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "log",
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
+ "objc2-ui-kit 0.3.2",
+ "objc2-uniform-type-identifiers 0.3.2",
+]
+
+[[package]]
 name = "aurora-j2k"
 version = "0.1.0"
 dependencies = [
@@ -612,6 +625,7 @@ dependencies = [
 name = "aurora-media"
 version = "0.1.0"
 dependencies = [
+ "aurora-ios-files",
  "aurora-llsd",
  "env_logger",
  "image",
@@ -746,12 +760,14 @@ name = "aurora-viewer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "apple-native-keyring-store",
  "arboard",
  "async-io",
  "aurora-assets",
  "aurora-audio",
  "aurora-editor-sync",
  "aurora-i18n",
+ "aurora-ios-files",
  "aurora-llsd",
  "aurora-media",
  "aurora-net",
@@ -785,6 +801,7 @@ dependencies = [
  "iana-time-zone",
  "image",
  "keyring",
+ "keyring-core",
  "libc",
  "libmimalloc-sys",
  "log",
@@ -794,8 +811,10 @@ dependencies = [
  "mimalloc",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
+ "objc2-avf-audio",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
+ "objc2-ui-kit 0.3.2",
  "parking_lot 0.13.0",
  "png",
  "pulldown-cmark",
@@ -3667,9 +3686,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.31.3"
+version = "0.31.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+checksum = "2bc81ce8148d3b4f3274da811f11cdd824ae661ee4ef732cdb229825cf5be7f7"
 dependencies = [
  "bitflags 2.13.2",
  "cfg-if",
@@ -4178,7 +4197,7 @@ dependencies = [
  "objc2-link-presentation",
  "objc2-quartz-core 0.2.2",
  "objc2-symbols",
- "objc2-uniform-type-identifiers",
+ "objc2-uniform-type-identifiers 0.2.2",
  "objc2-user-notifications",
 ]
 
@@ -4189,9 +4208,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d87d638e33c06f577498cbcc50491496a3ed4246998a7fbba7ccb98b1e7eab22"
 dependencies = [
  "bitflags 2.13.2",
+ "block2 0.6.2",
  "objc2 0.6.5",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
+ "objc2-uniform-type-identifiers 0.3.2",
 ]
 
 [[package]]
@@ -4203,6 +4224,16 @@ dependencies = [
  "block2 0.5.1",
  "objc2 0.5.3",
  "objc2-foundation 0.2.2",
+]
+
+[[package]]
+name = "objc2-uniform-type-identifiers"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7902ac02859fc1f7045f8b598c63f1ae0cc7efeaa06a9bc9f3d9a3c955974fa4"
+dependencies = [
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
 ]
 
 [[package]]
