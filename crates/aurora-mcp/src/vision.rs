@@ -156,8 +156,7 @@ pub fn read_capture_manifest(key: &str) -> Result<serde_json::Value, McpError> {
     if !meta.is_file() || meta.len() > MAX_MANIFEST_BYTES {
         return Err(refuse());
     }
-    let bytes = crate::asset_inspect::read_bounded_bytes(&canon, MAX_MANIFEST_BYTES)
-        .map_err(|_| refuse())?;
+    let bytes = crate::asset_inspect::read_bounded_bytes(&canon, MAX_MANIFEST_BYTES).map_err(|_| refuse())?;
     let text = String::from_utf8(bytes).map_err(|e| McpError::InvalidParams(format!("invalid manifest UTF-8: {e}")))?;
     serde_json::from_str(&text).map_err(|e| McpError::InvalidParams(format!("invalid manifest JSON: {e}")))
 }
@@ -192,7 +191,7 @@ pub fn encode_captured_frame(mut raw: RawCapturedFrame, max_dimensions: (u32, u3
     let (width, height) = (final_img.width(), final_img.height());
     let rgba = final_img.as_raw();
     let mut rgb_bytes = Vec::with_capacity((width as usize).saturating_mul(height as usize).saturating_mul(3));
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         rgb_bytes.extend_from_slice(&px[..3]);
     }
     let mut png_bytes = Vec::new();
@@ -322,8 +321,7 @@ pub fn compare_images(reference_path: &str, observed_path: &str) -> Result<Value
             .write_image_data(diff_img.as_raw())
             .map_err(|e| McpError::Internal(format!("diff PNG encode error: {e}")))?;
     }
-    write_private_file(&diff_path, &diff_png)
-        .map_err(|e| McpError::Internal(format!("failed to save diff image: {e}")))?;
+    write_private_file(&diff_path, &diff_png).map_err(|e| McpError::Internal(format!("failed to save diff image: {e}")))?;
     maybe_prune_capture_dir(&out_dir);
 
     Ok(json!({

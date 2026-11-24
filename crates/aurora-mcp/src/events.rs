@@ -341,10 +341,7 @@ impl EventBus {
             let s = norm.as_deref().unwrap_or("");
             sub.sources.contains("*") || sub.sources.contains(s)
         });
-        let resources = candidates
-            .into_iter()
-            .filter(|uri| sub.resource_subs.contains(*uri))
-            .collect();
+        let resources = candidates.into_iter().filter(|uri| sub.resource_subs.contains(*uri)).collect();
         (allowed, resources)
     }
 

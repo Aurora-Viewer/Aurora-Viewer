@@ -49,7 +49,6 @@ impl App {
 
     /// Steps world perception, locomotion, network controls, and timers without rendering.
     pub(super) fn step_headless_world(&mut self, dt: f32, still: bool, frozen: bool, world_now: impl Fn() -> Instant) -> bool {
-
         if self.in_world() {
             self.step_draw_distance();
             self.update_autopilot(dt);

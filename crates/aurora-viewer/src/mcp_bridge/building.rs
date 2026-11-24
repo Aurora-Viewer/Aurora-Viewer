@@ -224,7 +224,10 @@ impl App {
         let now = Instant::now();
         for mut p in std::mem::take(&mut self.mcp_bridge.pending_duplicates) {
             let expired = now.duration_since(p.started) >= p.deadline;
-            if !expired && p.last_polled.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_millis(50)) {
+            if !expired
+                && p.last_polled
+                    .is_some_and(|t| now.saturating_duration_since(t) < Duration::from_millis(50))
+            {
                 self.mcp_bridge.pending_duplicates.push_back(p);
                 continue;
             }

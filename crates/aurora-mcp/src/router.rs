@@ -86,8 +86,8 @@ impl ManifestCache {
 
     fn insert(&mut self, manifest_id: String, value: Value) {
         let arc = Arc::new(value);
-        if self.entries.contains_key(&manifest_id) {
-            self.entries.insert(manifest_id, arc);
+        if let Some(slot) = self.entries.get_mut(&manifest_id) {
+            *slot = arc;
             return;
         }
         while self.entries.len() >= MAX_CACHED_MANIFESTS {
@@ -1318,10 +1318,7 @@ impl McpRouter {
                 let mut captured_views = Vec::with_capacity(pending_encodes.len());
                 let mut iter = pending_encodes.into_iter();
                 while let Some((i, angle, pos, focus, handle)) = iter.next() {
-                    let encoded = match handle
-                        .await
-                        .map_err(|e| McpError::Internal(format!("encode join error: {e}")))
-                    {
+                    let encoded = match handle.await.map_err(|e| McpError::Internal(format!("encode join error: {e}"))) {
                         Ok(Ok(enc)) => enc,
                         Ok(Err(e)) | Err(e) => {
                             for (_, _, _, _, rem) in iter {

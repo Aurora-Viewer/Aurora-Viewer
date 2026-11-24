@@ -94,36 +94,34 @@ fn main() {
         let stdout = Arc::clone(&stdout);
         let session_id = Arc::clone(&session_id);
         let tokens = Arc::clone(&tokens);
-        let handle = std::thread::Builder::new()
-            .name(format!("aurora-stdio-{idx}"))
-            .spawn(move || {
-                let mut conn: Option<BufReader<TcpStream>> = None;
-                loop {
-                    let item = {
-                        let guard = rx.lock().unwrap_or_else(|e| e.into_inner());
-                        guard.recv()
-                    };
-                    let Ok(item) = item else {
-                        break;
-                    };
-                    let id = item.parsed.get("id").cloned();
-                    let method = item.parsed.get("method").and_then(Value::as_str).unwrap_or("");
-                    let params = item.parsed.get("params").cloned().unwrap_or_else(|| json!({}));
-                    let timeout = if method == "tools/call" { TOOL_CALL_TIMEOUT } else { OTHER_TIMEOUT };
-                    match forward_http(addr, item.body.as_bytes(), &session_id, timeout, &tokens, &mut conn) {
-                        Ok(Some(reply_body)) if !reply_body.trim().is_empty() => write_line(&stdout, reply_body.trim()),
-                        Ok(_) => {}
-                        Err(e) => {
-                            if id.is_none() || method.starts_with("notifications/") {
-                                continue;
-                            }
-                            let req_id = id.unwrap_or(Value::Null);
-                            let reply = handle_offline_request(req_id, method, &params, port, &e);
-                            write_line(&stdout, &reply.to_string());
+        let handle = std::thread::Builder::new().name(format!("aurora-stdio-{idx}")).spawn(move || {
+            let mut conn: Option<BufReader<TcpStream>> = None;
+            loop {
+                let item = {
+                    let guard = rx.lock().unwrap_or_else(|e| e.into_inner());
+                    guard.recv()
+                };
+                let Ok(item) = item else {
+                    break;
+                };
+                let id = item.parsed.get("id").cloned();
+                let method = item.parsed.get("method").and_then(Value::as_str).unwrap_or("");
+                let params = item.parsed.get("params").cloned().unwrap_or_else(|| json!({}));
+                let timeout = if method == "tools/call" { TOOL_CALL_TIMEOUT } else { OTHER_TIMEOUT };
+                match forward_http(addr, item.body.as_bytes(), &session_id, timeout, &tokens, &mut conn) {
+                    Ok(Some(reply_body)) if !reply_body.trim().is_empty() => write_line(&stdout, reply_body.trim()),
+                    Ok(_) => {}
+                    Err(e) => {
+                        if id.is_none() || method.starts_with("notifications/") {
+                            continue;
                         }
+                        let req_id = id.unwrap_or(Value::Null);
+                        let reply = handle_offline_request(req_id, method, &params, port, &e);
+                        write_line(&stdout, &reply.to_string());
                     }
                 }
-            });
+            }
+        });
         if let Ok(h) = handle {
             workers.push(h);
         }
@@ -193,10 +191,7 @@ fn run_sse_listener(
         let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
         let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
 
-        let auth_line = tokens
-            .get()
-            .map(|t| format!("Authorization: Bearer {t}\r\n"))
-            .unwrap_or_default();
+        let auth_line = tokens.get().map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
         let last_id_line = last_event_id.map(|id| format!("Last-Event-ID: {id}\r\n")).unwrap_or_default();
         let req = format!(
             "GET /mcp HTTP/1.1\r\nHost: {addr}\r\nAccept: text/event-stream\r\n{auth_line}Mcp-Session-Id: {session_id}\r\n{last_id_line}\r\n"
@@ -449,9 +444,7 @@ fn forward_http_once(
     let _ = reader.get_ref().set_read_timeout(Some(read_timeout));
     let _ = reader.get_ref().set_write_timeout(Some(Duration::from_secs(5)));
 
-    let auth_line = token
-        .map(|t| format!("Authorization: Bearer {t}\r\n"))
-        .unwrap_or_default();
+    let auth_line = token.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
     let req = format!(
         "POST /mcp HTTP/1.1\r\nHost: {addr}\r\n{auth_line}Mcp-Session-Id: {session_id}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
         body.len()
@@ -505,9 +498,7 @@ fn forward_http_once(
                 if let Some((k, v)) = trimmed.split_once(':') {
                     if k.trim().eq_ignore_ascii_case("content-length") {
                         content_length = v.trim().parse::<usize>().ok();
-                    } else if k.trim().eq_ignore_ascii_case("connection")
-                        && v.split(',').any(|t| t.trim().eq_ignore_ascii_case("close"))
-                    {
+                    } else if k.trim().eq_ignore_ascii_case("connection") && v.split(',').any(|t| t.trim().eq_ignore_ascii_case("close")) {
                         server_close = true;
                     }
                 }

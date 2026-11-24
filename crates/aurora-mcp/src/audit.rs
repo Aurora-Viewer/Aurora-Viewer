@@ -178,12 +178,7 @@ impl AuditLog {
     }
 }
 
-fn write_audit_line(
-    path: &std::path::Path,
-    dir_created: &mut bool,
-    writer: &mut Option<std::io::BufWriter<std::fs::File>>,
-    line: &str,
-) {
+fn write_audit_line(path: &std::path::Path, dir_created: &mut bool, writer: &mut Option<std::io::BufWriter<std::fs::File>>, line: &str) {
     if !*dir_created {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);

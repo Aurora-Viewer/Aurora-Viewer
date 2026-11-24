@@ -432,7 +432,11 @@ impl App {
                         .get(&fid)
                         .filter(|f| f.state == crate::world::inventory::FetchState::Fetched)
                     {
-                        f.items.iter().filter_map(|id| inv.items.get(id)).filter(|it| it.parent == fid).collect()
+                        f.items
+                            .iter()
+                            .filter_map(|id| inv.items.get(id))
+                            .filter(|it| it.parent == fid)
+                            .collect()
                     } else {
                         inv.items.values().filter(|it| it.parent == fid).collect()
                     };
@@ -749,11 +753,7 @@ impl App {
                         .map(|it| it.id)
                         .collect()
                 } else {
-                    inv.items
-                        .values()
-                        .filter(|it| it.name == name)
-                        .map(|it| it.id)
-                        .collect()
+                    inv.items.values().filter(|it| it.name == name).map(|it| it.id).collect()
                 };
                 self.send(NetCommand::CreateNotecardItem {
                     request: Uuid::new_v4(),

@@ -224,8 +224,7 @@ impl McpPolicy {
             }
             "ui_invoke_menu" => {
                 let menu = args.get("name").and_then(Value::as_str).unwrap_or("").trim().to_ascii_lowercase();
-                matches!(menu.as_str(), "world.login" | "viewer.login" | "login")
-                    .then(|| "Initiate viewer login via menu".to_owned())
+                matches!(menu.as_str(), "world.login" | "viewer.login" | "login").then(|| "Initiate viewer login via menu".to_owned())
             }
             "script_prompt_respond" => {
                 (args.get("grant").and_then(Value::as_bool) == Some(true)).then(|| "Grant script permission request".to_owned())
@@ -657,16 +656,40 @@ settings_allow = ["camera.fov", "draw_distance"]
             ..Default::default()
         };
         // Whitespace-padded action must not bypass asset_upload or object_take_or_derez
-        assert!(p.requires_supervised_approval("asset_upload", &json!({ "action": " upload " })).is_some());
-        assert!(p.requires_supervised_approval("asset_upload", &json!({ "action": "\tSTART\n" })).is_some());
-        assert!(p.requires_supervised_approval("asset_upload", &json!({ "action": "status" })).is_none());
-        assert!(p.requires_supervised_approval("object_take_or_derez", &json!({ "action": " delete " })).is_some());
+        assert!(
+            p.requires_supervised_approval("asset_upload", &json!({ "action": " upload " }))
+                .is_some()
+        );
+        assert!(
+            p.requires_supervised_approval("asset_upload", &json!({ "action": "\tSTART\n" }))
+                .is_some()
+        );
+        assert!(
+            p.requires_supervised_approval("asset_upload", &json!({ "action": "status" }))
+                .is_none()
+        );
+        assert!(
+            p.requires_supervised_approval("object_take_or_derez", &json!({ "action": " delete " }))
+                .is_some()
+        );
 
         // UI click shortcut to L$-spending upload and UI login menu must be gated
-        assert!(p.requires_supervised_approval("ui_click", &json!({ "path": "/main_view/local_mesh/import" })).is_some());
-        assert!(p.requires_supervised_approval("ui_click", &json!({ "path": "/main_view/floaters/inventory" })).is_none());
-        assert!(p.requires_supervised_approval("ui_invoke_menu", &json!({ "name": " world.login " })).is_some());
-        assert!(p.requires_supervised_approval("ui_invoke_menu", &json!({ "name": "build.open" })).is_none());
+        assert!(
+            p.requires_supervised_approval("ui_click", &json!({ "path": "/main_view/local_mesh/import" }))
+                .is_some()
+        );
+        assert!(
+            p.requires_supervised_approval("ui_click", &json!({ "path": "/main_view/floaters/inventory" }))
+                .is_none()
+        );
+        assert!(
+            p.requires_supervised_approval("ui_invoke_menu", &json!({ "name": " world.login " }))
+                .is_some()
+        );
+        assert!(
+            p.requires_supervised_approval("ui_invoke_menu", &json!({ "name": "build.open" }))
+                .is_none()
+        );
 
         // High-impact destructive / privilege tools
         for tool in [
@@ -676,7 +699,10 @@ settings_allow = ["camera.fov", "draw_distance"]
             "parcel_set_properties",
             "viewer_login",
         ] {
-            assert!(p.requires_supervised_approval(tool, &json!({})).is_some(), "{tool} must require approval");
+            assert!(
+                p.requires_supervised_approval(tool, &json!({})).is_some(),
+                "{tool} must require approval"
+            );
         }
     }
 }

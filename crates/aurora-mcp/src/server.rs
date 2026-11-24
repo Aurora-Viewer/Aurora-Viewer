@@ -401,7 +401,14 @@ async fn handle_http_connection(
         }
 
         if !is_allowed_host(host_header.as_deref()) {
-            write_http_response(reader.get_mut(), "403 Forbidden", "application/json", b"{\"error\":\"forbidden host\"}", false).await?;
+            write_http_response(
+                reader.get_mut(),
+                "403 Forbidden",
+                "application/json",
+                b"{\"error\":\"forbidden host\"}",
+                false,
+            )
+            .await?;
             return Ok(());
         }
 
@@ -443,7 +450,14 @@ async fn handle_http_connection(
         }
 
         if !is_authorized(auth_header.as_deref(), expected_token.as_deref()) {
-            write_http_response(reader.get_mut(), "401 Unauthorized", "application/json", b"{\"error\":\"unauthorized\"}", false).await?;
+            write_http_response(
+                reader.get_mut(),
+                "401 Unauthorized",
+                "application/json",
+                b"{\"error\":\"unauthorized\"}",
+                false,
+            )
+            .await?;
             return Ok(());
         }
 
@@ -585,7 +599,8 @@ async fn handle_http_connection(
             let parsed: Value = match serde_json::from_slice(&body) {
                 Ok(v) => v,
                 Err(e) => {
-                    let err_body = serde_json::to_vec(&jsonrpc_error(Value::Null, -32700, &format!("parse error: {e}"))).unwrap_or_default();
+                    let err_body =
+                        serde_json::to_vec(&jsonrpc_error(Value::Null, -32700, &format!("parse error: {e}"))).unwrap_or_default();
                     write_http_response(reader.get_mut(), "400 Bad Request", "application/json", &err_body, false).await?;
                     return Ok(());
                 }
@@ -653,7 +668,14 @@ async fn handle_http_connection(
             continue;
         }
 
-        return write_http_response(reader.get_mut(), "404 Not Found", "application/json", b"{\"error\":\"not found\"}", false).await;
+        return write_http_response(
+            reader.get_mut(),
+            "404 Not Found",
+            "application/json",
+            b"{\"error\":\"not found\"}",
+            false,
+        )
+        .await;
     }
 }
 

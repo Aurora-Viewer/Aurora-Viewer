@@ -3742,7 +3742,13 @@ impl App {
     }
 
     /// The same, without asking for names again (while waiting for them).
-    fn mcp_radar_objects_quiet(&mut self, max_radius_m: f32, root_only: bool, name_filter: Option<String>, limit: usize) -> (Value, Vec<Uuid>) {
+    fn mcp_radar_objects_quiet(
+        &mut self,
+        max_radius_m: f32,
+        root_only: bool,
+        name_filter: Option<String>,
+        limit: usize,
+    ) -> (Value, Vec<Uuid>) {
         self.mcp_radar_objects_ask(max_radius_m, root_only, name_filter, limit, false)
     }
 
@@ -8710,7 +8716,10 @@ mod tests {
         // Exact match, dot-namespace, and trailing-underscore prefix work as intended.
         assert!(!super::mcp_setting_protected("proxy.host", "proxy"));
         assert!(!super::mcp_setting_protected("update_channel", "update_"));
-        assert!(!super::mcp_setting_protected("payment_confirm_threshold", "payment_confirm_threshold"));
+        assert!(!super::mcp_setting_protected(
+            "payment_confirm_threshold",
+            "payment_confirm_threshold"
+        ));
     }
 
     #[test]
@@ -8735,9 +8744,6 @@ mod tests {
                 reply_tx: tx,
             });
         }
-        assert!(matches!(
-            bridge.check_queue_capacity_for(&req),
-            Err(McpError::RateLimited { .. })
-        ));
+        assert!(matches!(bridge.check_queue_capacity_for(&req), Err(McpError::RateLimited { .. })));
     }
 }
