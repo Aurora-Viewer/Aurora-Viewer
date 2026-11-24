@@ -62,6 +62,7 @@ mod replace_links;
 mod rows;
 mod select_keys;
 mod shortcuts;
+mod single_folder;
 pub(crate) mod smart;
 mod smart_builder;
 pub(crate) mod smart_store;
@@ -512,6 +513,42 @@ pub struct InventoryWindow {
     pub open: bool,
 }
 
+/// The folder a window opened by "Show in a new window" (false) or "Open in
+/// a new window" (true) shows, as LLFloaterReg keys the first and
+/// LLPanelMainInventory::newFolderWindow looks for the second.
+fn shown_folder(w: &InventoryWindow) -> Option<(bool, Uuid)> {
+    if w.id == listings::PANEL || w.additional {
+        None
+    } else if w.state.single_folder.is_some() {
+        Some((true, w.state.browse))
+    } else {
+        (!w.root.is_nil()).then_some((false, w.root))
+    }
+}
+
+/// A window just opened on a folder that another window of the same kind
+/// already shows is dropped, and that one comes forward (expanded, on top):
+/// LLFloaterReg::showInstance for fs_partial_inventory, and the `setFocus`
+/// of LLPanelMainInventory::newFolderWindow.
+fn bring_forward_shown(ctx: &egui::Context, windows: &mut Vec<InventoryWindow>) {
+    if !windows.iter().any(|w| w.state.fresh) {
+        return;
+    }
+    let mut kept: Vec<InventoryWindow> = Vec::with_capacity(windows.len());
+    for mut w in windows.drain(..) {
+        if std::mem::take(&mut w.state.fresh)
+            && let Some(shown) = shown_folder(&w)
+            && let Some(old) = kept.iter_mut().find(|old| shown_folder(old) == Some(shown))
+        {
+            old.open = true;
+            super::widgets::expand_floater(ctx, &floater_id(old.id));
+            continue;
+        }
+        kept.push(w);
+    }
+    *windows = kept;
+}
+
 /// Whether an inventory window stays in the list this frame: open, the main
 /// panel, or closed with a document, confirmation or pending Detach and
 /// Delete of its own still running.
@@ -855,7 +892,13 @@ pub struct InventoryUi {
     /// The folder a folder window shows (nil: the whole inventory). Its
     /// lists, searches, column and breadcrumb stay under it.
     scope: Uuid,
-    navigate_to: Option<Uuid>,
+    /// "Open in a new window": the window's single folder mode, its folder
+    /// being `browse` (`single_folder`).
+    single_folder: Option<single_folder::Nav>,
+    /// Opened this frame by "Show in a new window" or "Open in a new
+    /// window": a window already showing its folder comes forward instead
+    /// (`bring_forward_shown`).
+    fresh: bool,
     pending_cleanup: Option<Uuid>,
     cleanup_generation: Option<u64>,
 }
@@ -917,14 +960,39 @@ impl InventoryUi {
         }
     }
 
-    /// FSFloaterPartialInventory: show only descendants of the chosen folder.
-    /// Firestorm indra/newview/fsfloaterpartialinventory.cpp (LGPL 2.1).
+    /// "Show in a new window" (show_in_new_window, LLFolderBridge::
+    /// performAction, indra/newview/llinventorybridge.cpp): the folder's
+    /// tree alone, FSFloaterPartialInventory
+    /// (indra/newview/fsfloaterpartialinventory.cpp, LGPL 2.1). One window
+    /// per folder, as LLFloaterReg keys it by the folder.
     pub fn open_folder_window(&mut self, root: Uuid) {
         self.windows.push(InventoryWindow {
             id: Uuid::new_v4(),
             root,
             additional: false,
-            state: Box::new(InventoryUi::default()),
+            state: Box::new(InventoryUi {
+                fresh: true,
+                ..InventoryUi::default()
+            }),
+            open: true,
+        });
+    }
+
+    /// "Open in a new window" (Inventory.OpenNewFolderWindow,
+    /// LLPanelMainInventory::newFolderWindow, indra/newview/
+    /// llpanelmaininventory.cpp): a new whole-inventory window in single
+    /// folder mode on `folder`, or the one already showing it.
+    pub fn open_single_folder_window(&mut self, folder: Uuid) {
+        self.windows.push(InventoryWindow {
+            id: Uuid::new_v4(),
+            root: Uuid::nil(),
+            additional: false,
+            state: Box::new(InventoryUi {
+                browse: folder,
+                single_folder: Some(single_folder::Nav::at(folder)),
+                fresh: true,
+                ..InventoryUi::default()
+            }),
             open: true,
         });
     }
@@ -990,10 +1058,14 @@ impl InventoryUi {
         }
     }
 
-    /// RLVa's @showinv closes the additional window with the main one
-    /// (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>, rlvhandler.cpp).
-    pub fn close_additional_window(&mut self) {
-        for w in self.windows.iter_mut().filter(|w| w.additional) {
+    /// RLVa's @showinv closes, with the main window, every "inventory"
+    /// floater (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>::onCommandToggle
+    /// and its floater filter, rlvhandler.cpp): the additional window and
+    /// the single folder windows of "Open in a new window", run every frame
+    /// so that none opens while it holds. Like the Legacy Viewer, the trees
+    /// of "Show in a new window" (fs_partial_inventory) are left alone.
+    pub fn close_showinv_windows(&mut self) {
+        for w in self.windows.iter_mut().filter(|w| w.additional || w.state.single_folder.is_some()) {
             w.open = false;
         }
     }
@@ -1340,6 +1412,18 @@ impl InventoryUi {
     /// thousands of rows.
     fn result_view(&self) -> bool {
         !self.search.trim().is_empty() || self.filters.active() || self.links_filter.is_some() || self.tab >= RECEIVED_TAB
+    }
+
+    /// The list shows one folder flat, the Legacy Viewer's single folder
+    /// mode: Aurora's explorer, or the Legacy-style window of "Open in a new
+    /// window" outside a search. Its folders are gone into, never opened in
+    /// place, and its menu has "Open" (LLFolderBridge::
+    /// addOpenFolderMenuOptions, with `comb_single_folder_inv` active).
+    pub(super) fn lists_flat(&self) -> bool {
+        match self.aurora {
+            Some(frame) => frame.explorer,
+            None => self.single_folder.is_some() && !self.result_view(),
+        }
     }
 
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
@@ -1804,13 +1888,19 @@ fn folder_row(
         let opacity = ui.opacity();
         ui.multiply_opacity(clipboard::opacity(inv, state, id));
         ui.spacing_mut().item_spacing.x = 4.0;
-        let resp = tree::caret(ui, p, *open);
+        // A single folder list has no carets: its folders are gone into.
+        let flat = state.lists_flat();
+        let resp = if flat {
+            ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover()).1
+        } else {
+            tree::caret(ui, p, *open)
+        };
         clipboard::demo_caret(&resp, state, id);
         if resp.clicked() {
             *open = !*open;
         }
         let tint = folder_colors::tint(prefs, id);
-        tree::icon(ui, icons, folder_icon(folder.info.type_default, *open), p, tint);
+        tree::icon(ui, icons, folder_icon(folder.info.type_default, *open && !flat), p, tint);
         let label = match fetch_state {
             FetchState::Fetching => aurora_i18n::tr!("status-name-loading", name = name.to_string()),
             FetchState::Failed => aurora_i18n::tr!("ui-inventory-failed-2", name = name.to_string()),
@@ -3281,6 +3371,7 @@ pub fn show(
         }));
     }
     let mut windows = std::mem::take(&mut st.windows);
+    bring_forward_shown(ctx, &mut windows);
     let mut spawned = Vec::new();
     for w in &mut windows {
         if !w.open {
@@ -3323,6 +3414,20 @@ pub fn show(
                 additional_window_pos(ctx, screen),
                 DEFAULT_SIZE,
             )
+        } else if w.state.single_folder.is_some() {
+            // updateTitle: a single folder window is named after its folder.
+            // The Aurora style opens on its explorer, the single folder mode.
+            let size = if classic {
+                Vec2::new(420.0, 440.0)
+            } else {
+                Vec2::new(aurora::Layout::MEDIUM + 60.0, 480.0)
+            };
+            super::widgets::Floater::new(
+                &window_id,
+                folder_name(&world.inventory, w.state.browse),
+                screen.center() - size / 2.0,
+                size,
+            )
         } else {
             super::widgets::Floater::new(
                 &window_id,
@@ -3337,6 +3442,8 @@ pub fn show(
             floater.show(ctx, p, &mut w.open, |ui| {
                 if w.additional {
                     inventory_contents(ui, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
+                } else if w.state.single_folder.is_some() {
+                    single_folder::contents(ui, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
                 } else {
                     folder_window_contents(
                         ui,
@@ -3392,11 +3499,6 @@ pub fn show(
             .hover
             .show(p, &world.inventory, prefs, hover_images, &mut w.state.wanted_hover_images);
         w.state.was_open = w.open && !super::widgets::floater_minimized(ctx, &window_id);
-        if let Some(root) = w.state.navigate_to.take() {
-            w.root = root;
-            w.state.scope = root;
-            w.state.view = Default::default();
-        }
         bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, world.agent_id, &mut actions);
         if w.id != listings::PANEL {
             finish_hidden_rename(&world.inventory, &mut w.state, &mut actions);
@@ -4477,6 +4579,85 @@ mod tests {
         }
     }
 
+    /// #4735: "Show in a new window" and "Open in a new window" open their
+    /// own windows, one per folder each, as the Legacy Viewer's
+    /// fs_partial_inventory and LLPanelMainInventory::newFolderWindow; only
+    /// the single folder window has "Open", which goes into the folder.
+    #[test]
+    fn show_and_open_in_a_new_window_open_their_own_window_once_per_folder() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let (outfits, sub) = (Uuid::from_u128(8000), Uuid::from_u128(8001));
+        for classic in [false, true] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            crate::world::inventory::demo::seed(&mut world.inventory, crate::demo::DEMO_AGENT);
+            assert!(world.inventory.folders.contains_key(&outfits) && world.inventory.folders.contains_key(&sub));
+            let mut st = InventoryUi::default();
+            let mut prefs = InventoryPreferences::default();
+            let images = Default::default();
+            let scripts = Default::default();
+            let mut frame = |st: &mut InventoryUi| {
+                frames.run(Vec::new(), |ui| {
+                    show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut world,
+                        st,
+                        None,
+                        &mut prefs,
+                        &mut true,
+                        false,
+                        &images,
+                        &Default::default(),
+                        &Default::default(),
+                        &scripts,
+                        classic,
+                    );
+                })
+            };
+            st.open_folder_window(outfits);
+            st.open_single_folder_window(outfits);
+            frame(&mut st);
+            st.open_folder_window(outfits);
+            st.open_single_folder_window(outfits);
+            frame(&mut st);
+            frame(&mut st);
+            let kinds: Vec<_> = st.windows.iter().map(shown_folder).collect();
+            assert_eq!(kinds, [Some((false, outfits)), Some((true, outfits))], "classic={classic}");
+            assert!(st.windows.iter().all(|w| w.open && !w.state.fresh));
+            let (tree, single) = (&st.windows[0].state, &st.windows[1].state);
+            if classic {
+                // the Legacy style lists the single folder flat, the tree not
+                assert!(single.lists_flat() && !tree.lists_flat());
+            } else {
+                // Aurora's windows keep to their scope: the second is the
+                // whole inventory
+                assert!(tree.scope == outfits && single.scope.is_nil());
+            }
+            // Elsewhere in the single folder window the same folder opens a
+            // new window: the first one moved on.
+            st.windows[1].state.browse = sub;
+            st.open_single_folder_window(outfits);
+            frame(&mut st);
+            frame(&mut st);
+            assert_eq!(st.windows.len(), 3, "classic={classic}");
+            // RLVa off: nothing closes them; @showinv closes the single
+            // folder windows (inventory floaters), not the tree.
+            frame(&mut st);
+            assert!(st.windows.iter().all(|w| w.open));
+            st.close_showinv_windows();
+            frame(&mut st);
+            let kinds: Vec<_> = st.windows.iter().map(shown_folder).collect();
+            assert_eq!(kinds, [Some((false, outfits))], "classic={classic}: @showinv");
+        }
+    }
+
     /// #1090: the main window's button opens the additional window on the
     /// whole inventory and stays lit while it shows; that window has neither
     /// the button nor the Received tab; a second click closes it and forgets
@@ -4590,7 +4771,7 @@ mod tests {
             frame(&mut st, true, Vec::new());
             assert!(st.additional_open());
             assert!(st.windows[0].state.search.is_empty(), "classic={classic}: a fresh window");
-            st.close_additional_window();
+            st.close_showinv_windows();
             frame(&mut st, true, Vec::new());
             assert!(!st.additional_open(), "classic={classic}: @showinv closes it");
         }

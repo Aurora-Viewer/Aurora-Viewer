@@ -12038,6 +12038,10 @@ separate searches enabled and disabled; that preference controls only the text.
   column holds the folder itself and its subfolders only (no shortcuts, no
   Trash); the explorer and the breadcrumb stop at the folder; a search stays
   inside it.
+- `aurora-single-folder-window`: "Open in a new window" on the same folder,
+  beside the narrow main window: the whole inventory at the explorer's width
+  (800 px), on that folder and named after it; the column and the
+  breadcrumb go above it, and its folders' menu has "Open".
 - `aurora-additional`: the narrow main window, its "Additional inventory
   window" button (a second briefcase, right of CMT) lit, and the additional
   window on its left: the whole inventory with its tabs but no Received
@@ -12392,6 +12396,13 @@ separate searches enabled and disabled; that preference controls only the text.
   rights red and struck through (no-copy object, no-transfer object), detail
   of the current owner and of the next owner on hover. A link
   takes the permissions of its original.
+- `single-folder-window`: "Open in a new window" on the same folder: a
+  window named after the folder, with Back, Forward and Up above its search,
+  that lists the folder flat (no carets, no Collapse / Expand). A
+  double-click, Enter or "Open" on a subfolder goes into it; Up and Back
+  come back. Delete a row: the next one is selected. Choosing "Show in a
+  new window" or "Open in a new window" again on a folder that such a
+  window already shows brings that window forward instead of a second one.
 - `rename`, `new-script`, `new-note`, `new-folder`: renaming in the
   row, without a window (their screenshots simulate the focus of the field
   without activating the Windows window).

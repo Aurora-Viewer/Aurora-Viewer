@@ -10,16 +10,11 @@ use super::*;
 /// Run after rebuilding the displayed order and before laying out its viewport,
 /// including while Aurora's explorer has swapped its flat tree into `plain`.
 pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, filtered: bool) -> bool {
-    // The explorer lists one folder flat (the Legacy Viewer's single folder
-    // mode): its folders never open in place, so Left and Right stay unused.
-    let explorer = st.aurora.is_some_and(|frame| frame.explorer);
-    st.shown_order = if filtered {
-        ShownOrder::Results
-    } else if explorer {
-        ShownOrder::Flat
-    } else {
-        ShownOrder::Plain
-    };
+    // The explorer and the Legacy-style single folder window list one folder
+    // flat (the Legacy Viewer's single folder mode): its folders never open
+    // in place, so Left and Right stay unused.
+    let explorer = st.lists_flat();
+    st.shown_order = order_kind(st, filtered);
     let selected_after_delete = delete::reconcile_selection(inv, st);
     if !clipboard::list_has_focus(ui, st) || st.rename.is_some() {
         return selected_after_delete;
@@ -179,6 +174,20 @@ pub(super) enum ShownOrder {
     Results,
 }
 
+/// Which list holds the rows shown. Only Aurora's explorer keeps its rows in
+/// `flat` (swapped in while it draws); the Legacy-style single folder window
+/// lists its folder in `plain`, like the tree, so that a delete there finds
+/// the next row (LLFolderView::getNextUnselectedItem).
+pub(super) fn order_kind(st: &InventoryUi, filtered: bool) -> ShownOrder {
+    if filtered {
+        ShownOrder::Results
+    } else if st.aurora.is_some_and(|frame| frame.explorer) {
+        ShownOrder::Flat
+    } else {
+        ShownOrder::Plain
+    }
+}
+
 /// The actual displayed order, including when the explorer temporarily swaps
 /// its rows into `plain`. Deletion without a confirmation can start there.
 pub(super) fn shown_order(st: &InventoryUi) -> &[Uuid] {
@@ -240,8 +249,9 @@ fn open_selected(inv: &Inventory, st: &mut InventoryUi, prefs: &InventoryPrefere
             }
         }
         if inv.folders.contains_key(&id) {
-            // The explorer steps into a folder; anywhere else Enter folds it.
-            if st.aurora.is_some_and(|frame| frame.explorer) {
+            // A single folder list steps into a folder; anywhere else Enter
+            // folds it.
+            if st.lists_flat() {
                 st.browse = id;
                 st.selection.clear();
                 st.selected = None;

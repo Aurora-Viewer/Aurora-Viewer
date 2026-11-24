@@ -27,7 +27,10 @@ pub(super) enum Command {
     Protect(Vec<Uuid>),
     FolderColor(Vec<Uuid>),
     Reload(Uuid),
-    Window(Uuid),
+    /// "Show in a new window": the folder's tree alone.
+    ShowWindow(Uuid),
+    /// "Open in a new window": a single folder window on it.
+    OpenWindow(Uuid),
     Asset(Uuid),
     Copy(Vec<Uuid>, bool),
     Move(Uuid),
@@ -1059,7 +1062,7 @@ fn navigation(c: &mut Catalog, inv: &Inventory, id: Uuid, single: bool) {
         "external-link-filled",
         aurora_i18n::tr!("ui-inventory-context-show-in-a-new-window"),
         single,
-        Command::Window(id),
+        Command::ShowWindow(id),
     );
     c.add(
         "open-window",
@@ -1067,7 +1070,7 @@ fn navigation(c: &mut Catalog, inv: &Inventory, id: Uuid, single: bool) {
         "folder-open-filled",
         aurora_i18n::tr!("ui-inventory-context-open-in-a-new-window"),
         single,
-        Command::Window(id),
+        Command::OpenWindow(id),
     );
 }
 
@@ -1325,7 +1328,8 @@ pub(super) fn execute(
             st.message.clear();
             actions.push(InvAction::Preview(id, Some(clipboard::focus_id(st))));
         }
-        Command::Window(id) => st.open_folder_window(id),
+        Command::ShowWindow(id) => st.open_folder_window(id),
+        Command::OpenWindow(id) => st.open_single_folder_window(id),
         Command::Asset(id) => ui.ctx().copy_text(id.to_string()),
         Command::Copy(ids, cut) => clipboard::store(ui.ctx(), st, ids, cut),
         Command::Move(id) => st.begin_move_to(id),
@@ -1752,6 +1756,66 @@ mod tests {
                 .unwrap()
                 .enabled
         );
+    }
+    /// #4735: LLFolderBridge::addOpenFolderMenuOptions offers "Open" in a
+    /// single folder list only (the Legacy-style window of "Open in a new
+    /// window" outside a search, Aurora's explorer), never in the tree of a
+    /// "Show in a new window" window or the main tree; the two new-window
+    /// rows run their own command.
+    #[test]
+    fn open_is_offered_only_where_one_folder_is_listed_flat() {
+        let inv = inventory();
+        let folder = Uuid::from_u128(8001);
+        assert!(inv.folders.contains_key(&folder));
+        let prefs = InventoryPreferences::default();
+        let menu = |st: &InventoryUi| build(&inv, folder, st, &prefs, &facts());
+        let has_open = |st: &InventoryUi| menu(st).entries.iter().any(|e| e.id == "open-current");
+        let aurora = |layout| {
+            Some(super::super::aurora::Frame {
+                layout,
+                rights: prefs.rights,
+                columns: prefs.explorer,
+                explorer: false,
+            })
+        };
+        let tree = InventoryUi {
+            scope: Uuid::from_u128(8000),
+            ..Default::default()
+        };
+        assert!(!has_open(&InventoryUi::default()), "the main tree");
+        assert!(!has_open(&tree), "the tree of Show in a new window");
+        let single = InventoryUi {
+            single_folder: Some(super::super::single_folder::Nav::at(Uuid::from_u128(8000))),
+            ..Default::default()
+        };
+        assert!(has_open(&single), "the Legacy-style single folder window");
+        let searching = InventoryUi {
+            search: "hood".into(),
+            ..InventoryUi {
+                single_folder: single.single_folder.clone(),
+                ..Default::default()
+            }
+        };
+        assert!(!has_open(&searching), "its search results are a tree");
+        let medium = InventoryUi {
+            aurora: aurora(super::super::aurora::Layout::Medium),
+            ..Default::default()
+        };
+        assert!(has_open(&medium), "Aurora's explorer");
+        let compact = InventoryUi {
+            aurora: aurora(super::super::aurora::Layout::Compact),
+            ..Default::default()
+        };
+        assert!(!has_open(&compact), "Aurora's tree");
+        let c = menu(&tree);
+        let command = |key: &str| {
+            c.entries.iter().find(|e| e.id == key).and_then(|e| match &e.kind {
+                Kind::Action(index) => c.commands.get(*index).and_then(Option::as_ref),
+                _ => None,
+            })
+        };
+        assert!(matches!(command("show-window"), Some(Command::ShowWindow(id)) if *id == folder));
+        assert!(matches!(command("open-window"), Some(Command::OpenWindow(id)) if *id == folder));
     }
     #[test]
     fn trash_has_exactly_its_five_commands_and_the_separator_precedes_reload() {
