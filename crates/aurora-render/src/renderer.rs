@@ -2820,8 +2820,7 @@ const SOFT_PATH_ON: &str = "const SOFT_PATH: bool = true;";
 
 /// The common shader with the soft shadows' path (`SOFT_PATH`, common.wgsl)
 /// when `soft`, else without: the branches are folded away at compile time.
-pub(crate) fn common_shader_for(soft: bool, limits: &wgpu::Limits) -> std::borrow::Cow<'static, str> {
-    let common = crate::common_shader_source(limits);
+pub(crate) fn common_shader_for(soft: bool, common: std::borrow::Cow<'static, str>) -> std::borrow::Cow<'static, str> {
     if soft {
         return common;
     }
@@ -3734,10 +3733,10 @@ impl Impostors {
 
     /// The pictures are drawn with the scene's own shaders.
     /// `soft`: with the soft shadows' path (`common_shader_for`).
-    fn shader_source(features: wgpu::Features, soft: bool, limits: &wgpu::Limits) -> String {
+    fn shader_source(features: wgpu::Features, soft: bool, common: std::borrow::Cow<'static, str>) -> String {
         format!(
             "{}\n{}\n{}",
-            common_shader_for(soft, limits),
+            common_shader_for(soft, common),
             crate::object_shader_source(features),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         )
@@ -3755,7 +3754,9 @@ impl Impostors {
     ) -> ImpostorPipelines {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("impostors"),
-            source: wgpu::ShaderSource::Wgsl(Self::shader_source(device.features(), soft, &device.limits()).into()),
+            source: wgpu::ShaderSource::Wgsl(
+                Self::shader_source(device.features(), soft, crate::device_common_shader_source(device)).into(),
+            ),
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("impostors"),
@@ -4394,8 +4395,11 @@ impl Backend {
                 count: None,
             },
         ];
-        let detail_supported = crate::graded_shadow_supported(&device.limits());
-        if detail_supported {
+        // Preserve the physical bind-group layout, including unused dummy views.
+        // The active material shader can sample fewer maps on this driver.
+        let detail_binding = crate::graded_shadow_supported(&device.limits());
+        let detail_supported = detail_binding && crate::graded_shadow_layout_available(&device);
+        if detail_binding {
             frame_entries.push(tex_entry(33, wgpu::TextureSampleType::Depth));
         }
         if crate::portrait_shadow_supported(&device.limits()) {
@@ -5317,7 +5321,7 @@ impl Backend {
         // `make_st`, when the method is first on)
         let src = format!(
             "{}\n{}\n{}",
-            common_shader_for(soft, &device.limits()),
+            common_shader_for(soft, crate::device_common_shader_source(device)),
             crate::oit_stochastic::without_st(&crate::object_shader_source(device.features())),
             crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
         );
@@ -6061,7 +6065,7 @@ impl Backend {
         let ssr_pipes = ssr.then(|| {
             let src = format!(
                 "{}\n{}",
-                common_shader_for(soft, &device.limits()),
+                common_shader_for(soft, crate::device_common_shader_source(device)),
                 include_str!("shaders/ssr.wgsl")
             );
             let m = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -14552,8 +14556,8 @@ mod tests {
     #[test]
     fn the_scene_shader_without_soft_shadows_drops_their_path() {
         let limits = wgpu::Limits::default();
-        let with = common_shader_for(true, &limits);
-        let without = common_shader_for(false, &limits);
+        let with = common_shader_for(true, crate::common_shader_source(&limits));
+        let without = common_shader_for(false, crate::common_shader_source(&limits));
         assert!(with.contains(SOFT_PATH_ON), "common.wgsl has its SOFT_PATH line");
         assert!(!without.contains(SOFT_PATH_ON));
         assert!(without.contains("const SOFT_PATH: bool = false;"));
@@ -15067,11 +15071,22 @@ mod tests {
             max_bindings_per_bind_group: 35,
             ..Default::default()
         };
-        if let Err(e) = valid(&Impostors::shader_source(wgpu::Features::empty(), true, &limits)) {
+        if let Err(e) = valid(&Impostors::shader_source(
+            wgpu::Features::empty(),
+            true,
+            crate::common_shader_source(&limits),
+        )) {
             panic!("{e}");
         }
         // the source a device with the test takes is refused there
-        assert!(valid(&Impostors::shader_source(crate::blend_exact::EARLY_TEST, true, &limits)).is_err());
+        assert!(
+            valid(&Impostors::shader_source(
+                crate::blend_exact::EARLY_TEST,
+                true,
+                crate::common_shader_source(&limits)
+            ))
+            .is_err()
+        );
     }
 
     #[test]
@@ -15589,7 +15604,7 @@ mod tests {
             source: wgpu::ShaderSource::Wgsl(
                 format!(
                     "{}\n{}\n{}",
-                    crate::common_shader_source(&device.limits()),
+                    crate::device_common_shader_source(&device),
                     crate::object_shader_source(device.features()),
                     crate::water_shader_source(&["env.wgsl"], include_str!("shaders/env.wgsl"))
                 )

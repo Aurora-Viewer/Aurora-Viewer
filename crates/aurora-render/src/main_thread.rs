@@ -592,6 +592,9 @@ impl Renderer {
         let (dedicated_mb, shared_mb) = memories[index];
         let vram_mb = candidates[index].vram_mb;
         let ainfo = adapter.get_info();
+        if crate::swiftshader_cascade_layout(&ainfo) {
+            log::info!("sun shadows: SwiftShader uses the three-cascade layout; directional PCSS and contact shadows remain available");
+        }
         log::info!(
             "GPU: {} ({:?}, driver {} {}, memory {})",
             ainfo.name,

@@ -210,6 +210,43 @@ pub fn portrait_shadow_supported(limits: &wgpu::Limits) -> bool {
     limits.max_sampled_textures_per_shader_stage >= 31 && limits.max_bindings_per_bind_group >= 35
 }
 
+/// SwiftShader's Vulkan CPU driver faults on the ordinary material draw
+/// when the same shader contains both directional-shadow layout traversals.
+/// Keep the three atlas cascades, directional PCSS and contact shadows.
+/// Mesa llvmpipe and hardware drivers retain the combined material shader.
+pub(crate) fn swiftshader_cascade_layout(info: &wgpu::AdapterInfo) -> bool {
+    info.backend == wgpu::Backend::Vulkan
+        && info.device_type == wgpu::DeviceType::Cpu
+        && info.vendor == 0x1ae0
+        && info.device == 0xc0de
+        && info.driver == "SwiftShader driver"
+}
+
+/// Whether this device compiles the graded traversal alongside atlas cascades.
+/// A detail depth texture also needs enough physical binding slots.
+pub fn graded_shadow_layout_available(device: &wgpu::Device) -> bool {
+    !swiftshader_cascade_layout(&device.adapter_info())
+}
+
+const GRADED_LAYOUT_RETURN: &str = "return graded_shadow(world_pos, n, graded_distance(world_pos));";
+
+pub(crate) fn device_common_shader_source(device: &wgpu::Device) -> std::borrow::Cow<'static, str> {
+    material_shadow_layout(
+        common_shader_source(&device.limits()),
+        swiftshader_cascade_layout(&device.adapter_info()),
+    )
+}
+
+fn material_shadow_layout(common: std::borrow::Cow<'static, str>, cascades_only: bool) -> std::borrow::Cow<'static, str> {
+    if cascades_only {
+        // Unlink the graded traversal from mapped_shadow before the driver
+        // compiles the shader. A uniform set to zero still faults at draw.
+        common.replace(GRADED_LAYOUT_RETURN, "").into()
+    } else {
+        common
+    }
+}
+
 pub(crate) fn common_shader_source(limits: &wgpu::Limits) -> std::borrow::Cow<'static, str> {
     let mut source = water_shader_source(&["common.wgsl", "water_spectrum.wgsl"], COMMON_SHADER);
     // The renderer clears the corresponding coverage flags for unavailable
@@ -352,6 +389,58 @@ mod shader_tests {
     #[test]
     fn asset_preview_shader_is_valid() {
         validate(include_str!("shaders/preview.wgsl"));
+    }
+
+    #[test]
+    fn swiftshader_uses_a_single_directional_shadow_layout() {
+        let mut swift = wgpu::AdapterInfo::new(wgpu::DeviceType::Cpu, wgpu::Backend::Vulkan);
+        swift.vendor = 0x1ae0;
+        swift.device = 0xc0de;
+        swift.driver = "SwiftShader driver".into();
+        assert!(crate::swiftshader_cascade_layout(&swift));
+        for other in [
+            wgpu::AdapterInfo {
+                vendor: 0x10005,
+                device: 0,
+                driver: "llvmpipe".into(),
+                ..swift.clone()
+            },
+            wgpu::AdapterInfo {
+                device_type: wgpu::DeviceType::DiscreteGpu,
+                ..swift.clone()
+            },
+            wgpu::AdapterInfo {
+                backend: wgpu::Backend::Metal,
+                ..swift.clone()
+            },
+            wgpu::AdapterInfo {
+                driver: "another Vulkan driver".into(),
+                ..swift.clone()
+            },
+        ] {
+            assert!(!crate::swiftshader_cascade_layout(&other));
+        }
+
+        let common = crate::COMMON_SHADER;
+        assert_eq!(crate::material_shadow_layout(common.into(), false), common);
+        assert_eq!(common.matches(crate::GRADED_LAYOUT_RETURN).count(), 1);
+        let cascades = crate::material_shadow_layout(common.into(), true);
+        let mapped = cascades
+            .split_once("fn mapped_shadow(")
+            .unwrap()
+            .1
+            .split_once("fn cascade_visibility(")
+            .unwrap()
+            .0;
+        assert!(!mapped.contains("graded_shadow("));
+        assert!(mapped.contains("cascade_visibility(world_pos, n, vertex_depth)"));
+        validate(&format!(
+            "{}\n{}\n{}",
+            cascades,
+            include_str!("shaders/object.wgsl"),
+            include_str!("shaders/env.wgsl")
+        ));
+        validate(&format!("{}\n{}", cascades, include_str!("shaders/ssr.wgsl")));
     }
 
     #[test]
@@ -1272,7 +1361,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     /// false in common.wgsl) are valid too.
     #[test]
     fn scene_and_ssr_shaders_without_the_soft_path_are_valid() {
-        let common = crate::renderer::common_shader_for(false, &wgpu::Limits::default());
+        let common = crate::renderer::common_shader_for(false, crate::common_shader_source(&wgpu::Limits::default()));
         validate(&format!(
             "{}\n{}\n{}",
             common,

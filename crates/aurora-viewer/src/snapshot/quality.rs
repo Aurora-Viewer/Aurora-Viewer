@@ -392,8 +392,10 @@ pub struct Screen {
     pub pixels: u64,
     /// The most MSAA samples the GPU supports (the renderer takes no more).
     pub max_samples: u32,
-    /// The separate near map and independent quality resolution schedule are in use.
+    /// The requested layout sets the quality resolution schedule.
     pub graded_shadows: bool,
+    /// The active shader layout can use the additional near depth map.
+    pub detail_supported: bool,
     /// The adapter can bind the optional camera-close depth map.
     pub portrait_supported: bool,
     /// Whether active sun maps use an additional half-resolution blocker layer.
@@ -405,10 +407,14 @@ pub struct Screen {
     pub target_bytes: u64,
 }
 
-fn shadow_bytes(v: &Values, graded: bool) -> u64 {
-    let res = u64::from(Settings::shadow_resolution_for(v.shadow_quality, graded, v.shadow_map_resolution));
+fn shadow_bytes(v: &Values, screen: Screen) -> u64 {
+    let res = u64::from(Settings::shadow_resolution_for(
+        v.shadow_quality,
+        screen.graded_shadows,
+        v.shadow_map_resolution,
+    ));
     // Base atlas + merge scratch (17 bytes per tile pixel); a separate Depth32 detail tile adds 4.
-    res * res * if graded { 21 } else { 17 }
+    res * res * if screen.graded_shadows && screen.detail_supported { 21 } else { 17 }
 }
 
 /// The second Depth32 mip occupies one byte per base atlas pixel. Its
@@ -416,8 +422,8 @@ fn shadow_bytes(v: &Values, graded: bool) -> u64 {
 fn planned_shadow_bytes(v: &Values, screen: Screen) -> u64 {
     // The crop can become active as the camera moves during capture. Reserve its
     // fixed texture on eligible adapters for any step that enables graded shadows.
-    let portrait = screen.graded_shadows && screen.portrait_supported && v.shadow_quality > 0;
-    let baseline = shadow_bytes(v, screen.graded_shadows) + u64::from(portrait) * aurora_render::PORTRAIT_SHADOW_BYTES;
+    let portrait = screen.graded_shadows && screen.detail_supported && screen.portrait_supported && v.shadow_quality > 0;
+    let baseline = shadow_bytes(v, screen) + u64::from(portrait) * aurora_render::PORTRAIT_SHADOW_BYTES;
     if !screen.layered_sun || v.shadow_quality == 0 {
         return baseline;
     }
@@ -762,6 +768,7 @@ mod tests {
             max_samples: 8,
             target_bytes: 87,
             graded_shadows: false,
+            detail_supported: true,
             portrait_supported: false,
             layered_sun: false,
             max_texture_dimension: 16_384,
@@ -861,6 +868,23 @@ mod tests {
             ),
             0
         );
+    }
+
+    #[test]
+    fn a_cascade_only_device_keeps_the_requested_resolution_without_charging_for_graded_targets() {
+        let requested = Values {
+            shadow_quality: 1,
+            shadow_map_resolution: 0,
+            ..user()
+        };
+        let constrained = Screen {
+            graded_shadows: true,
+            detail_supported: false,
+            portrait_supported: true,
+            ..screen(800, 560)
+        };
+        let requested_size = u64::from(Settings::shadow_resolution_for(1, true, 0));
+        assert_eq!(planned_shadow_bytes(&requested, constrained), 17 * requested_size * requested_size);
     }
 
     #[test]

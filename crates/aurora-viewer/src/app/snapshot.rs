@@ -3168,6 +3168,7 @@ LUT_3D_SIZE {n}
         let samples = self.msaa_samples(renderer);
         let screen = snapshot::quality::Screen {
             graded_shadows: self.settings.graded_sun_shadows,
+            detail_supported: aurora_render::graded_shadow_layout_available(&renderer.device),
             portrait_supported: aurora_render::portrait_shadow_supported(&renderer.device.limits()),
             layered_sun: self.settings.sun_shadow_contact_hardening,
             max_texture_dimension: renderer.max_texture_dimension(),
