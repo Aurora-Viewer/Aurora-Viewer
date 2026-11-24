@@ -958,7 +958,7 @@ impl Values {
     /// ray tracing only with the shadows, and its reflections only with SSR.
     /// The Glow switch never counts: no level sets it, so turning it off
     /// keeps the level lit instead of "Custom".
-    fn as_shown(self) -> Values {
+    pub(crate) fn as_shown(self) -> Values {
         use crate::scene::complexity::slider;
         let round = |v: f32, step: f32| (v / step).round() * step;
         let ao_method = if self.ssao == 0 { 0 } else { self.ao_method };
