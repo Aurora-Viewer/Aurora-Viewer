@@ -4557,4 +4557,17 @@ fn only_a_shape_clicked_makes_create_the_tool_in_use_again() {
     click_at(&mut inspector, third);
     assert_eq!(inspector.tool.tool, Tool::Create);
     assert_eq!(inspector.settings.create_shape, 2);
+    // that shape clicked again while in use: Create ends, the shape stays
+    // chosen and the window open; clicked once more, Create is back
+    click_at(&mut inspector, third);
+    assert_eq!(inspector.tool.tool, Tool::Edit);
+    assert_eq!(inspector.settings.create_shape, 2);
+    assert!(inspector.tool.tool_window_open(Tool::Create));
+    click_at(&mut inspector, third);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    // another shape while in use: Create stays, with it
+    let first = shapes.left_top() + vec2(10.0, 10.0);
+    click_at(&mut inspector, first);
+    assert_eq!(inspector.tool.tool, Tool::Create);
+    assert_eq!(inspector.settings.create_shape, 0);
 }

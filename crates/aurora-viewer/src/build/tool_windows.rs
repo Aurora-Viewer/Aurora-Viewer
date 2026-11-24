@@ -54,6 +54,14 @@ impl BuildTool {
             .unwrap_or(Tool::Edit)
     }
 
+    /// Create no longer the tool in use, its window staying open (its
+    /// chosen shape clicked again): the tool goes to `fallback_tool`.
+    pub fn deactivate_create(&mut self) {
+        if self.tool == Tool::Create {
+            self.set_tool(self.fallback_tool());
+        }
+    }
+
     /// Closes the window of `tool`. The tool in use then goes to
     /// `fallback_tool`; with no window left the build tools close
     /// (LLFloaterTools::onClose).

@@ -799,10 +799,14 @@ pub(super) fn tool_panel(
         Tool::Grab => tools::grab_panel(ui, p, tool, mods),
         Tool::Create => {
             // only a shape picked makes Create the tool in use again, with
-            // its shape under the pointer in the world (human request,
+            // its shape under the pointer in the world; the shape already
+            // chosen, clicked while in use, ends it (human requests,
             // 2026-11-24)
-            if tools::create_panel(ui, p, s) {
-                tool.activate(Tool::Create);
+            let active = tool.tool == Tool::Create;
+            match tools::create_panel(ui, p, s, active) {
+                Some(true) if active => tool.deactivate_create(),
+                Some(_) => tool.activate(Tool::Create),
+                None => {}
             }
         }
         Tool::Land => {

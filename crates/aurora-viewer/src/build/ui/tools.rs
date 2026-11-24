@@ -100,11 +100,12 @@ pub fn grab_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, mods: Mo
 /// which the caret at the bottom shows or hides as the Legacy style's
 /// window does its lower part (kept in the build settings; the window
 /// follows, tool_floaters.rs).
-/// The Aurora Create panel; true when a shape was clicked.
-pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) -> bool {
+/// The Aurora Create panel, `active` while Create is the tool in use. A
+/// shape clicked gives whether it was the shape already chosen.
+pub fn create_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, active: bool) -> Option<bool> {
     ui.vertical(|ui| {
         let cell = Vec2::splat((ui.available_width() - 24.0) / 5.0);
-        let picked = create_shapes(ui, p, s, cell);
+        let picked = create_shapes(ui, p, s, cell, active);
         if s.create_options_shown {
             ui.add_space(12.0);
             create_options(ui, p, s);
@@ -145,7 +146,7 @@ pub(super) fn create_legacy_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildS
         "legacy-create-shapes",
     );
     let cell = Vec2::splat((shapes.available_width() - 24.0) / 5.0);
-    create_shapes(&mut shapes, p, s, cell);
+    create_shapes(&mut shapes, p, s, cell, true);
     let mut options = super::legacy::pane(
         ui,
         egui::Rect::from_min_max(egui::pos2(middle + 5.0, rect.top()), rect.max),
@@ -154,8 +155,10 @@ pub(super) fn create_legacy_panel(ui: &mut egui::Ui, p: &Palette, s: &mut BuildS
     create_options(&mut options, p, s);
 }
 
-/// The shape grid; true when a shape was clicked.
-fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Vec2) -> bool {
+/// The shape grid. The chosen shape is lit in the accent while Create is
+/// the tool in use (`active`), on a dimmer accent otherwise (human request,
+/// 2026-11-24). A shape clicked gives whether it was the one chosen.
+fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Vec2, active: bool) -> Option<bool> {
     // Five cells a row, placed from this frame's cell size: an egui::Grid
     // keeps its last frame's column widths, and a window narrowed around it
     // was held at its old width (the Create window, 2026-11-24).
@@ -168,21 +171,28 @@ fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Ve
     );
     #[cfg(test)]
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("build-create-shapes"), block));
-    let mut picked = false;
+    let mut picked = None;
     for i in 0..count {
         let sel = s.create_shape == i && !s.copy_selection;
         let at = block.min + Vec2::new((i % 5) as f32 * (cell.x + GAP), (i / 5) as f32 * (cell.y + GAP));
         let rect = egui::Rect::from_min_size(at, cell);
         let resp = ui.interact(rect, ui.make_persistent_id(("create_shape", i)), egui::Sense::click());
-        let fill = if sel {
+        let fill = if sel && active {
             p.violet
+        } else if sel {
+            // chosen, Create not in use
+            p.violet.gamma_multiply(0.35)
         } else if resp.hovered() {
             p.raised
         } else {
             p.field
         };
+        if sel && !active {
+            // under the dim accent, the panel's field
+            ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
+        }
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
-        let col = if sel { p.on_accent } else { p.ink };
+        let col = if sel && active { p.on_accent } else { p.ink };
         let name = match i {
             i if i < shapes().len() => {
                 let sh = &shapes()[i];
@@ -202,7 +212,7 @@ fn create_shapes(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings, cell: Ve
             // LLFloaterTools::setObjectType also unticks "Copy selection"
             s.create_shape = i;
             s.copy_selection = false;
-            picked = true;
+            picked = Some(sel);
         }
     }
     picked
