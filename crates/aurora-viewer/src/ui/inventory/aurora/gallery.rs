@@ -850,6 +850,8 @@ fn tile(
                 st.browse = id;
                 st.selection.clear();
                 st.selected = None;
+            } else if r.middle_clicked() {
+                super::tabs::open(st, prefs, id, false);
             }
         }
         _ => {}

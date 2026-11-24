@@ -14,6 +14,9 @@ pub(super) enum Command {
     Upload(usize, Uuid),
     Empty(Uuid),
     DefaultFolder(Vec<Uuid>),
+    /// Out of the Trash, each to the folder it came from, else to the
+    /// default folder of its type (`trash_origins`).
+    Restore(Vec<Uuid>),
     Delete(Vec<Uuid>, bool),
     Share(Vec<Uuid>),
     Open(Uuid),
@@ -279,7 +282,14 @@ pub(super) fn lock_entry() -> Entry {
 }
 
 pub(super) fn build(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
-    build_mode(inv, id, st, prefs, facts, false, false)
+    let mut c = build_mode(inv, id, st, prefs, facts, false, false);
+    // Aurora's window: New labelled at the head of every menu, into the
+    // row's folder (a folder's own, an item's parent); the Legacy-style
+    // window keeps the Legacy Viewer's place for it
+    if st.aurora.is_some() {
+        explorer::new_first(&mut c.entries);
+    }
+    c
 }
 
 /// The menu of the explorer's empty space, showing `folder`: what acts on
@@ -288,6 +298,13 @@ pub(super) fn build(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &Invento
 pub(super) fn build_background(inv: &Inventory, folder: Uuid, st: &InventoryUi, prefs: &InventoryPreferences, facts: &Facts) -> Catalog {
     let mut c = build_mode(inv, folder, st, prefs, facts, false, true);
     c.entries.retain(explorer::kept_in_background);
+    // Recent, Worn and Favorites show no folder of their own: what acts on
+    // one goes
+    if st.tab != 0 {
+        c.entries
+            .retain(|e| !matches!(e.id.as_str(), "paste" | "paste-link" | "reload" | "properties" | "show-window"));
+    }
+    explorer::new_first(&mut c.entries);
     c
 }
 
@@ -366,12 +383,22 @@ fn build_mode(
     let worn = target.is_some_and(|id| facts.worn.contains(&id));
     let trash = rules::in_type(inv, id, 14);
     let linked = item.is_some_and(|it| matches!(it.asset_type, 24 | 25));
-    let to = folder.map(|_| id).or_else(|| rules::parent(inv, id));
+    // the empty space of Recent, Worn or Favorites lists no folder: New
+    // goes to its type's own folder (a nil parent, `App::apply_inventory_
+    // action`), as the Legacy Viewer's creation with no real folder
+    // selected (LLPanelMainInventory, findCategoryUUIDForType)
+    let shortcut = background && st.tab != 0;
+    let to = if shortcut {
+        Some(Uuid::nil())
+    } else {
+        folder.map(|_| id).or_else(|| rules::parent(inv, id))
+    };
     let trash_root = folder.is_some_and(|f| f.info.type_default == 14);
     let can_create = ready
-        && single
-        && !trash
-        && to.is_some_and(|to| rules::destination(inv, to) && inv.folders.get(&to).is_some_and(|f| f.info.type_default != 16));
+        && (shortcut
+            || single
+                && !trash
+                && to.is_some_and(|to| rules::destination(inv, to) && inv.folders.get(&to).is_some_and(|f| f.info.type_default != 16)));
     let new = c.group(
         "new",
         "top",
@@ -498,9 +525,9 @@ fn build_mode(
             "restore",
             TEXT,
             "restore",
-            aurora_i18n::tr!("ui-inventory-context-restore-object"),
+            &restore_label(inv, &ids, c.editing),
             ready && movable,
-            Command::DefaultFolder(ids.clone()),
+            Command::Restore(ids.clone()),
         );
     }
     if !trash || all {
@@ -1040,7 +1067,7 @@ fn build_mode(
         c.slot("delete", 7);
     }
     extra::build(&mut c, inv, id, st, prefs, facts, all);
-    explorer::build(&mut c, inv, id, st, prefs, all, background);
+    explorer::build(&mut c, inv, id, st, prefs, facts, all, background);
     if !all {
         super::listings::restrict(&mut c, inv, id);
     }
@@ -1219,6 +1246,28 @@ fn item_attachments(
     }
 }
 
+/// Where Restore puts `id` back: the folder it went to the Trash from
+/// (Windows' Recycle Bin), else the Legacy Viewer's place, the default
+/// folder of its type (LLItemBridge::restoreItem / LLFolderBridge::restoreItem,
+/// indra/newview/llinventorybridge.cpp).
+fn restore_folder(inv: &Inventory, id: Uuid) -> Option<Uuid> {
+    inv.trash_origins.origin(inv, id).or_else(|| rules::default_folder(inv, id))
+}
+
+/// "Restore to “Clothes”" when every entry came from one folder still
+/// there, "Restore to their folders" when some came from others, the Legacy
+/// Viewer's "Restore" when none is known.
+fn restore_label(inv: &Inventory, ids: &[Uuid], editing: bool) -> String {
+    let origins: Vec<Option<Uuid>> = ids.iter().map(|id| inv.trash_origins.origin(inv, *id)).collect();
+    match origins.first() {
+        Some(Some(first)) if !editing && origins.iter().all(|o| *o == Some(*first)) => {
+            aurora_i18n::tr!("inventory-restore-to", folder = rules::name(inv, *first))
+        }
+        _ if !editing && origins.iter().any(Option::is_some) => aurora_i18n::tr!("inventory-restore-to-origins").to_owned(),
+        _ => aurora_i18n::tr!("ui-inventory-context-restore-object").to_owned(),
+    }
+}
+
 /// The properties of `ids`, each in a window of its own (one already open
 /// for an item is kept, not doubled), the list free behind them.
 pub(super) fn properties_windows(st: &mut InventoryUi, ids: Vec<Uuid>) {
@@ -1263,12 +1312,26 @@ pub(super) fn execute(
     match command {
         Command::Extra(command) => extra::execute(command, ui, inv, st, prefs, facts, actions),
         Command::Invoke(action) => actions.push(action),
-        Command::Folder(id) => submit(rules::create_folder(id, crate::text_validation::default_name("common-new-folder"))),
+        // nil: from Recent, Worn or Favorites, at the top
+        Command::Folder(id) => submit(rules::create_folder(
+            if id.is_nil() { inv.root } else { id },
+            crate::text_validation::default_name("common-new-folder"),
+        )),
         Command::Upload(slot, id) => prefs.upload_folders[slot] = id,
         Command::Empty(id) => st.dialog = Some(EditDialog::Empty(id)),
         Command::DefaultFolder(ids) => {
             let plan = ids.iter().try_fold(Mutation::default(), |mut plan, id| {
                 let to = rules::default_folder(inv, *id).ok_or_else(|| aurora_i18n::tr!("common-folder-not-found").to_owned())?;
+                let change = rules::move_selection(inv, &[*id], to, &prefs.protected, &facts.worn)?;
+                plan.operations.extend(change.operations);
+                plan.refresh.extend(change.refresh);
+                Ok::<_, String>(plan)
+            });
+            submit(plan);
+        }
+        Command::Restore(ids) => {
+            let plan = ids.iter().try_fold(Mutation::default(), |mut plan, id| {
+                let to = restore_folder(inv, *id).ok_or_else(|| aurora_i18n::tr!("common-folder-not-found").to_owned())?;
                 let change = rules::move_selection(inv, &[*id], to, &prefs.protected, &facts.worn)?;
                 plan.operations.extend(change.operations);
                 plan.refresh.extend(change.refresh);
@@ -1349,7 +1412,7 @@ pub(super) fn execute(
         }),
         Command::Worn(action) => crate::ui::context::request(ui.ctx(), action),
         Command::Marketplace(ids, copy) => submit(rules::marketplace(inv, &ids, copy, &prefs.protected, &facts.worn)),
-        Command::Explorer(command) => explorer::execute(command, ui, inv, st, prefs),
+        Command::Explorer(command) => explorer::execute(command, ui, inv, st, prefs, facts, actions),
     }
 }
 
