@@ -3975,9 +3975,9 @@ impl App {
             // (indra/newview/llviewermessage.cpp).
             // An already open map's search takes it again only with the flag
             // (LLFloaterWorldMap::onOpen runs on every show).
-            if !self.panels.world_map && flags & aurora_net::beacon::FOCUS_MAP == 0 {
+            if flags & aurora_net::beacon::FOCUS_MAP == 0 {
                 self.worldmap_ui.open_for_script();
-            } else if self.panels.world_map && flags & aurora_net::beacon::FOCUS_MAP != 0 {
+            } else {
                 self.worldmap_ui.focus_search_on_show();
             }
             ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);

@@ -2751,8 +2751,14 @@ pub fn expand_floater(ctx: &egui::Context, id: &str) {
 /// (`expand_floater`) or a "Reset window positions and sizes" not yet
 /// applied to it.
 pub fn floater_expand_pending(ctx: &egui::Context, id: &str) -> bool {
+    floater_expand_asked(ctx, id) || super::layout::reset_pending(ctx, egui::Id::unique(id))
+}
+
+/// A button, link or shortcut asked the floater `id` to expand
+/// (`expand_floater`) and it has not drawn since: not its title button, not
+/// a window reset.
+pub fn floater_expand_asked(ctx: &egui::Context, id: &str) -> bool {
     ctx.data(|d| d.get_temp::<bool>(egui::Id::unique(id).with(EXPAND))).unwrap_or(false)
-        || super::layout::reset_pending(ctx, egui::Id::unique(id))
 }
 
 /// Drops an expand asked for by `expand_floater` that the floater `id` has
