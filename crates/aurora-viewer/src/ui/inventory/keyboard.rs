@@ -14,13 +14,7 @@ pub(super) fn navigate(ui: &egui::Ui, inv: &Inventory, st: &mut InventoryUi, fil
     // flat (the Legacy Viewer's single folder mode): its folders never open
     // in place, so Left and Right stay unused.
     let explorer = st.lists_flat();
-    st.shown_order = if filtered {
-        ShownOrder::Results
-    } else if explorer {
-        ShownOrder::Flat
-    } else {
-        ShownOrder::Plain
-    };
+    st.shown_order = order_kind(st, filtered);
     let selected_after_delete = delete::reconcile_selection(inv, st);
     if !clipboard::list_has_focus(ui, st) || st.rename.is_some() {
         return selected_after_delete;
@@ -178,6 +172,20 @@ pub(super) enum ShownOrder {
     Plain,
     Flat,
     Results,
+}
+
+/// Which list holds the rows shown. Only Aurora's explorer keeps its rows in
+/// `flat` (swapped in while it draws); the Legacy-style single folder window
+/// lists its folder in `plain`, like the tree, so that a delete there finds
+/// the next row (LLFolderView::getNextUnselectedItem).
+pub(super) fn order_kind(st: &InventoryUi, filtered: bool) -> ShownOrder {
+    if filtered {
+        ShownOrder::Results
+    } else if st.aurora.is_some_and(|frame| frame.explorer) {
+        ShownOrder::Flat
+    } else {
+        ShownOrder::Plain
+    }
 }
 
 /// The actual displayed order, including when the explorer temporarily swaps

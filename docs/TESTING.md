@@ -12392,16 +12392,17 @@ separate searches enabled and disabled; that preference controls only the text.
 - `folder-window`: a window limited to the contents of the personal folder,
   with its name as the title and a filter of its own; `folder-window-search`
   shows this search limited to the descendants.
-- `single-folder-window`: "Open in a new window" on the same folder: a
-  window named after the folder, with Back, Forward and Up above its search,
-  that lists the folder flat (no carets). A double-click, Enter or "Open"
-  on a subfolder goes into it; Up and Back come back. Choosing "Show in a
-  new window" or "Open in a new window" again on a folder that such a
-  window already shows brings that window forward instead of a second one.
   Check the compact C·M·T indicators: granted rights green, denied
   rights red and struck through (no-copy object, no-transfer object), detail
   of the current owner and of the next owner on hover. A link
   takes the permissions of its original.
+- `single-folder-window`: "Open in a new window" on the same folder: a
+  window named after the folder, with Back, Forward and Up above its search,
+  that lists the folder flat (no carets, no Collapse / Expand). A
+  double-click, Enter or "Open" on a subfolder goes into it; Up and Back
+  come back. Delete a row: the next one is selected. Choosing "Show in a
+  new window" or "Open in a new window" again on a folder that such a
+  window already shows brings that window forward instead of a second one.
 - `rename`, `new-script`, `new-note`, `new-folder`: renaming in the
   row, without a window (their screenshots simulate the focus of the field
   without activating the Windows window).
