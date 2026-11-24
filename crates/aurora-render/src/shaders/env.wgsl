@@ -1900,6 +1900,7 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
     // a wave crashing on a wall or a rock, and the white water it leaves
     // (scene/water_crash.rs, water_crash_particle)
     let crash=event.params.y==9.0 || event.params.y==10.0;
+    let drip=event.params.y==11.0;
     let footfall=fan && event.params.w>0.5;
     let h=water_fx_hash(vec2<f32>(f32(index)+event.motion.x*8.0,event.position.w*19.0+event.motion.y*8.0));
     let angle=h.x*6.283185; let direction=vec2<f32>(cos(angle),sin(angle));
@@ -1913,6 +1914,32 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
         life*=smoothstep(0.0,0.04,particle_water_level(pos.xy,event.params.z)-pos.z);
         let bubbles=2u+min(water_fx.counts.w,2u);
         if(index>=bubbles){life=0.0;}
+    } else if (event.params.y==11.0 && water_fx_on(64u)) {
+        // Drops dripping off a wet avatar (scene/avatar_drip.rs, after
+        // Radiance's rdwetdrip.cpp): the event's drops leave one after
+        // another (params.w s apart: close together, a stream), from about
+        // where it starts, with the limb's motion; air drag holds them near
+        // 7 m/s (drops of a few millimetres); each stretches with its speed
+        // and ends where it stops falling (params.z: the water, the ground
+        // or the feet), where the CPU rings the water.
+        let t=age-(f32(index)+h.x*0.4)*event.params.w;
+        let start=event.position.xyz+vec3<f32>((h.xy-0.5)*0.01,0.0);
+        let fall=7.0;let k=9.81/fall;
+        let ease=(1.0-exp(-max(t,0.0)*1.5))/1.5;
+        let drop=fall/k*log(cosh(k*max(t,0.0)));
+        pos=start+vec3<f32>(event.motion.xy*ease,event.motion.z*(1.0-exp(-max(t,0.0)*2.0))*0.5-drop);
+        velocity=vec3<f32>(event.motion.xy*exp(-max(t,0.0)*1.5),event.motion.z*exp(-max(t,0.0)*2.0)-fall*tanh(k*max(t,0.0)));
+        // never thinner than RAIN_MIN_PX pixels, fainter by as much (as the
+        // rain: a drop of a few millimetres vanished at arm's length), and
+        // streaked over the eye's 1/20 s as it falls
+        let clip0=world_clip(pos);let clip1=world_clip(pos+frame.cam_right.xyz);
+        let px_per_m=length((clip1.xy/max(clip1.w,1e-3)-clip0.xy/max(clip0.w,1e-3))*frame.screen.xy*0.5);
+        let real=event.params.x*(0.75+0.5*h.y)*2.0;
+        let wide=max(real,RAIN_MIN_PX*1.25/max(px_per_m,1e-3));
+        size=wide*0.5;
+        elongation=min(length(velocity)*RAIN_EXPOSURE,0.3);
+        life=smoothstep(0.0,0.02,t)*step(event.params.z,pos.z)*pow(clamp(real/wide,0.0,1.0),0.5);
+        if(index>=u32(event.motion.w)){life=0.0;}
     } else if ((event.params.y==0.0 || entry || fan) && water_fx_on(64u)) {
         var launch=0.85+h.y*0.65+event.motion.w*0.9;
         var horizontal=direction*(0.25+event.motion.w*0.5)+event.motion.xy*0.15;
@@ -2019,7 +2046,10 @@ fn vs_water_particle(@builtin(vertex_index) vertex: u32,@builtin(instance_index)
     let offset=across*corner.x*size+along*corner.y*(size+elongation);
     pos+=frame.cam_right.xyz*offset.x+frame.cam_up.xyz*offset.y;
     var out: WaterParticleOut; out.clip=world_clip(pos);out.world=pos;out.uv=corner;
-    out.life=life;out.kind=select(select(0u,3u,entry),1u,bubble);out.level=event.params.z;out.normal=vec3<f32>(0.0,0.0,1.0);
+    out.life=life;out.kind=select(select(select(0u,3u,entry),1u,bubble),6u,drip);out.level=event.params.z;out.normal=vec3<f32>(0.0,0.0,1.0);
+    // a drip is shaded as the rain's drops are (water_drip_color): its
+    // side across the streak, in the world
+    if(drip){out.normal=normalize(frame.cam_right.xyz*across.x+frame.cam_up.xyz*across.y);}
     return out;
 }
 // A wave crashing on a wall or a rock (scene/water_crash.rs). Kind 9, the
@@ -2250,9 +2280,52 @@ fn water_crash_sheet_color(in: WaterParticleOut) -> vec4<f32> {
     }
     return vec4<f32>(apply_fog(color,in.world)*a,a);
 }
+// A drop dripping off a wet avatar (kind 6, scene/avatar_drip.rs), as the
+// rain's drops are drawn (rain_streak): a thin cylinder of water across
+// its streak (`normal` its side), reflecting the sky, the sun shining
+// through it from behind and the lamps around lighting it; soft where it
+// meets what is behind. Only the light it adds, as the rain's drops over
+// the water: what is behind it comes from the scene's copy, which lacks
+// what is drawn later (a blended prim the avatar stands on showed the sea
+// under it through the drops, as if they fell behind it), and a drop of a
+// few millimetres shows what is behind it hardly bent.
+const DRIP_BODY: f32 = 0.55;
+fn water_drip_color(in: WaterParticleOut) -> vec4<f32> {
+    if(in.life<=0.001){discard;}
+    let across=in.uv.x;
+    let r=1.0-across*across;
+    if(r<=0.0){discard;}
+    let view=normalize(frame.camera_pos.xyz-in.world);
+    let normal=normalize(in.normal*across+view*sqrt(r));
+    let taper=1.0-smoothstep(0.55,1.0,abs(in.uv.y));
+    let fresnel=0.02037+0.97963*pow(1.0-max(dot(normal,view),0.0),5.0);
+    let suv=screen_uv(in.clip.xy);
+    let reflection=reflect(-view,normal);
+    let reflected=sky_color(vec3<f32>(reflection.xy,abs(reflection.z)));
+    let toward_sun=max(dot(-view,frame.sun_dir.xyz),0.0);
+    let glint=frame.sun_color.rgb*frame.sun_dir.w*(pow(toward_sun,12.0)*1.5+pow(toward_sun,3.0)*0.15);
+    let ambient=frame.sky_horizon.rgb*0.12;
+    let lamps=rain_lamps(in.world,in.clip.xy,view);
+    // a body of its own: the sky it reflects across it (brightest at its
+    // edges) and a soft fill, over what is behind (only added light was
+    // too faint to see)
+    let color=reflected*(0.3+0.7*fresnel)+frame.sky_horizon.rgb*0.12+(glint+ambient)*(0.35+fresnel)+lamps*(0.3+fresnel*0.5);
+    var alpha=taper*sqrt(r)*(0.45+fresnel*0.55)*in.life;
+    let depth=scene_depth_at(suv);
+    if(depth>0.0){
+        let behind=world_from_depth(suv,depth);
+        alpha*=clamp((distance(behind,frame.camera_pos.xyz)-distance(in.world,frame.camera_pos.xyz))/0.05,0.0,1.0);
+    }
+    if(alpha<0.003){discard;}
+    // (covering what is behind up to some half at its core: DRIP_BODY)
+    return vec4<f32>(apply_fog(color,in.world)*alpha,alpha*DRIP_BODY);
+}
 fn water_particle_color(in: WaterParticleOut) -> vec4<f32> {
     if(in.kind>=7u) {
         return water_crash_color(in);
+    }
+    if(in.kind==6u) {
+        return water_drip_color(in);
     }
     if(in.kind==2u || in.kind==4u) {
         let top=in.uv.y*0.5+0.5;

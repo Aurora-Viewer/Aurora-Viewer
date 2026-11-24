@@ -8,6 +8,7 @@ pub mod animesh;
 pub mod animesh_report;
 mod auto_hover;
 pub mod avatar;
+pub mod avatar_drip;
 pub mod avatar_snow;
 pub mod avatar_studio;
 pub mod avatar_wet;

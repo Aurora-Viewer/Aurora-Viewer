@@ -328,6 +328,23 @@ impl AvatarWet {
             .map_or(([0.0; 4], 0.0), |w| (w.line, w.block.map_or(0.0, |b| b as f32 + 1.0)))
     }
 
+    /// How wet joint `joint` of `id` (a palette entry: a joint, or an
+    /// attachment point from `ANCHOR_BASE`) keeps point `at`, the joint
+    /// placed in the world by `world`: its cells' wetness there (0..1, the
+    /// film draining above 0.5). For the drips (avatar_drip.rs).
+    pub fn wetness(&self, id: &Uuid, joint: usize, world: Mat4, at: Vec3) -> f32 {
+        let Some(j) = self.avatars.get(id).and_then(|w| w.joints.get(joint)).filter(|j| j.active) else {
+            return 0.0;
+        };
+        let reach = if joint < ANCHOR_BASE { REACH_JOINT } else { REACH_POINT };
+        let up = (Mat3::from_mat4(world) * j.axis).normalize_or(Vec3::Z);
+        let t = ((at - world.w_axis.truncate()).dot(up) / (2.0 * reach) + 0.5).clamp(0.0, 1.0) * CELLS as f32 - 0.5;
+        let i = (t.floor().max(0.0) as usize).min(CELLS - 1);
+        let next = (i + 1).min(CELLS - 1);
+        let f = (t - i as f32).clamp(0.0, 1.0);
+        j.wet[i] + (j.wet[next] - j.wet[i]) * f
+    }
+
     /// No avatar is wet or near the water.
     pub fn is_clear(&self) -> bool {
         self.avatars.is_empty()

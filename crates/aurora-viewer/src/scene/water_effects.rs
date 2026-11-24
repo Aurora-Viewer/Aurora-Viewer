@@ -53,6 +53,8 @@ pub struct Effects {
     /// changed when it is baked again.
     sea_parts: [u64; 4],
     crashes: super::water_crash::Crashes,
+    /// Water dripping off the wet avatars (avatar_drip.rs).
+    drip: super::avatar_drip::AvatarDrip,
 }
 
 /// The sea grid baked last (water_shelter.rs) and the one before it,
@@ -259,6 +261,7 @@ impl Effects {
                 5.0 | 6.0 => 1.6, // Sheet flight and its expanding foam rim.
                 9.0 => 4.0,       // A crash's spray falls back; its mist hangs on.
                 10.0 => 4.5,      // The foam it leaves spreads and fades.
+                11.0 => 2.0,      // Drops dripping off an avatar fall a metre or two.
                 0.0 | 7.0 => 0.8,
                 _ => 3.0,
             };
@@ -788,6 +791,25 @@ impl Scene {
             effects.crashes.update(&effects.ground, sea, time, &mut effects.events, budget);
         } else {
             effects.crashes.clear();
+        }
+        // water drips off the wet avatars (avatar_drip.rs)
+        if settings.enabled && settings.wet_avatars && settings.splashes {
+            let avatars: Vec<uuid::Uuid> = world.objects.avatars().map(|(_, o)| o.full_id).collect();
+            let slots = &self.palette_slots;
+            effects.drip.update(
+                &self.avatar_wet,
+                &self.palettes,
+                super::anim::PALETTE_JOINTS,
+                |id| slots.get(id).copied(),
+                &self.avatar_lib.rig.names,
+                &avatars,
+                &effects.ground,
+                eye,
+                time,
+                &mut effects.events,
+            );
+        } else {
+            effects.drip.clear();
         }
         // how far the sea grid's crossfade has gone (read alike by the
         // shaders and the CPU's samplers)
