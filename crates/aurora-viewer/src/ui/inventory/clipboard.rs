@@ -1500,6 +1500,21 @@ mod tests {
                 }),
                 "{classic}: a folder with contents folds"
             );
+            if classic {
+                // the Legacy-style single folder window lists 8000 flat:
+                // there an empty folder is gone into, as any other
+                h.st.open_single_folder_window(id(8000));
+                for _ in 0..4 {
+                    h.frame(Vec::new());
+                }
+                let window = h.st.windows.last().expect("single folder window");
+                assert!(window.state.lists_flat());
+                let name = format!("inventory_{}", window.id);
+                let pos = h.row_in(id(8001), &name);
+                double_click(&mut h, pos);
+                let window = h.st.windows.last().expect("single folder window");
+                assert_eq!(window.state.browse, id(8001), "the empty folder is gone into");
+            }
         }
     }
 
