@@ -3,6 +3,12 @@ use super::*;
 
 impl App {
     pub(super) fn close_wearable_editor(&mut self) -> bool {
+        if self.wearable_ui.suspended_for_shape {
+            if !self.close_shape_editor_for_physics() {
+                return false;
+            }
+            self.wearable_ui.resume_layer(&mut self.world);
+        }
         if !self.wearable_ui.open {
             return true;
         }
@@ -23,6 +29,13 @@ impl App {
     pub(super) fn open_wearable_editor(&mut self, item: uuid::Uuid) {
         if !self.close_shape_editor_for_physics() || !self.close_physics_editor_for_shape() {
             return;
+        }
+        if self.wearable_ui.suspended_for_shape {
+            self.wearable_ui.resume_layer(&mut self.world);
+            if self.wearable_ui.draft.as_ref().is_some_and(|d| d.item.id == item) {
+                self.focus_wearable_category();
+                return;
+            }
         }
         if let Some(command) = self.wearable_ui.open_item(&mut self.world, item) {
             self.panels.appearance = false;
@@ -65,6 +78,9 @@ impl App {
     }
 
     pub(super) fn wearable_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        if !self.shape_ui.open {
+            self.wearable_ui.resume_layer(&mut self.world);
+        }
         self.wearable_local_demo();
         self.wearable_ui.update(&mut self.world);
         let group = self.wearable_ui.group.clone();
@@ -94,25 +110,39 @@ impl App {
         }
         if self.demo
             && self.frame_count == 650
-            && std::env::var("AURORA_DEMO_WEARABLE").is_ok_and(|mode| mode.ends_with(":save") || mode.ends_with(":local-save"))
+            && std::env::var("AURORA_DEMO_WEARABLE").is_ok_and(|mode| {
+                mode.split_once(':').is_some_and(|(_, mode)| matches!(mode, "save" | "local-save" | "local-save-shape"))
+            })
             && let Some(command) = self.wearable_ui.save(&self.world, None)
         {
             self.demo_save_wearable(command);
         }
-        if self.wearable_ui.open
-            && let Some(draft) = &self.wearable_ui.draft
-        {
-            let commands = self.wearable_ui.preview.update(&self.world, &mut self.scene, draft, Some(ctx));
+        use crate::wearable_editor::preview::Target;
+        let draft = self.wearable_ui.draft.as_ref();
+        let target = if self.shape_ui.open && !self.world.local_assets.is_empty() {
+            Some(Target::Shape(draft))
+        } else {
+            draft.filter(|_| self.wearable_ui.open).map(Target::Layer)
+        };
+        if let Some(target) = target {
+            let commands = self.wearable_ui.preview.update(&self.world, &mut self.scene, target, Some(ctx));
             for command in commands {
                 if self.demo {
                     if let NetCommand::PreviewInventoryItem(item) = command {
-                        let data = demo_asset(&item, self.world.agent_id);
+                        let data = self
+                            .demo_documents
+                            .get(&item.id)
+                            .cloned()
+                            .map(Ok)
+                            .unwrap_or_else(|| demo_asset(&item, self.world.agent_id));
                         self.wearable_ui.preview.loaded(item.id, item.asset_id, &data);
                     }
                 } else {
                     self.send(command);
                 }
             }
+        } else {
+            self.wearable_ui.preview.cancel(&mut self.world);
         }
     }
 
@@ -325,6 +355,12 @@ impl App {
         {
             self.wearable_ui.open_picker(&self.world, *slot);
             self.wearable_ui.picker.show_local_tab();
+        }
+        if self.frame_count == 900
+            && matches!(variant, "local-shape" | "local-save-shape")
+            && let Some(shape) = crate::shape_editor::worn_shape(&self.world)
+        {
+            self.open_shape_editor(shape);
         }
     }
 
